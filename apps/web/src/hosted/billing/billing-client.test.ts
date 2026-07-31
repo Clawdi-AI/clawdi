@@ -138,12 +138,48 @@ describe("managed model catalog", () => {
 		const client = testClient(async (request) => {
 			requests.push(request.clone());
 			return jsonResponse({
-				models: [{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: true }],
+				models: [
+					{
+						id: "gpt-5.6-luna",
+						display_name: "GPT-5.6-Luna",
+						is_default: true,
+						is_featured: true,
+						summary: "High-volume Codex work",
+						cost_hint: "Low cost",
+						capabilities: {
+							context_window: 272_000,
+							max_input_tokens: 272_000,
+							max_output_tokens: 128_000,
+							input_modalities: ["text", "image"],
+							supports_vision: true,
+							supports_reasoning: true,
+							supports_tools: true,
+						},
+					},
+				],
 			});
 		});
 
 		await expect(client.getManagedModelCatalog()).resolves.toEqual({
-			models: [{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: true }],
+			models: [
+				{
+					id: "gpt-5.6-luna",
+					display_name: "GPT-5.6-Luna",
+					is_default: true,
+					is_featured: true,
+					summary: "High-volume Codex work",
+					cost_hint: "Low cost",
+					capabilities: {
+						context_window: 272_000,
+						max_input_tokens: 272_000,
+						max_output_tokens: 128_000,
+						input_modalities: ["text", "image"],
+						supports_vision: true,
+						supports_reasoning: true,
+						supports_tools: true,
+					},
+				},
+			],
 		});
 		expect(new URL(requests[0]?.url ?? "https://invalid").pathname).toBe(
 			"/v2/ai-providers/managed/models",

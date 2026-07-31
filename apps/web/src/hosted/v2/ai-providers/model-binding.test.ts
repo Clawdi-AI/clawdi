@@ -16,6 +16,20 @@ import {
 } from "@/hosted/v2/ai-providers/model-binding";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
+const managedMetadata = {
+	summary: null,
+	cost_hint: null,
+	capabilities: {
+		context_window: 128_000,
+		max_input_tokens: 128_000,
+		max_output_tokens: null,
+		input_modalities: ["text" as const],
+		supports_vision: false,
+		supports_reasoning: null,
+		supports_tools: null,
+	},
+};
+
 describe("model binding", () => {
 	test("uses the canonical Clawdi AI product label", () => {
 		expect(MANAGED_PROVIDER_LABEL).toBe("Clawdi AI");
@@ -29,9 +43,27 @@ describe("model binding", () => {
 
 	test("preserves backend catalog order while selecting its declared default", () => {
 		const managedModels = [
-			{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false, is_featured: true },
-			{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: true },
-			{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false, is_featured: false },
+			{
+				...managedMetadata,
+				id: "gpt-5.6-sol",
+				display_name: "GPT-5.6-Sol",
+				is_default: false,
+				is_featured: true,
+			},
+			{
+				...managedMetadata,
+				id: "gpt-5.6-luna",
+				display_name: "GPT-5.6-Luna",
+				is_default: true,
+				is_featured: true,
+			},
+			{
+				...managedMetadata,
+				id: "gpt-5.6-terra",
+				display_name: "GPT-5.6-Terra",
+				is_default: false,
+				is_featured: false,
+			},
 		];
 
 		expect(
@@ -40,39 +72,101 @@ describe("model binding", () => {
 		expect(firstModelForProvider(MANAGED_AI_CHOICE, [], managedModels)).toBe("gpt-5.6-luna");
 		expect(modelOptionsForProvider(MANAGED_AI_CHOICE, [], managedModels)).toEqual(managedModels);
 		expect(modelPickerItems(MANAGED_AI_CHOICE, [], managedModels)).toEqual([
-			{ value: "gpt-5.6-sol", label: "Sol" },
-			{ value: "gpt-5.6-luna", label: "Luna" },
-			{ value: "gpt-5.6-terra", label: "Terra" },
+			{ value: "gpt-5.6-sol", label: "GPT-5.6-Sol" },
+			{ value: "gpt-5.6-luna", label: "GPT-5.6-Luna" },
+			{ value: "gpt-5.6-terra", label: "GPT-5.6-Terra" },
 		]);
-		expect(modelDisplayName("gpt-5.6-sol", managedModels)).toBe("Sol");
+		expect(modelDisplayName("gpt-5.6-sol", managedModels)).toBe("GPT-5.6-Sol");
 	});
 
 	test("splits featured and overflow models without changing backend order", () => {
 		const managedModels = [
-			{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false, is_featured: true },
-			{ id: "k3", display_name: "Kimi K3", is_default: false, is_featured: true },
-			{ id: "future-model", display_name: "Future model", is_default: false, is_featured: false },
-			{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: false },
-			{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false, is_featured: false },
+			{
+				...managedMetadata,
+				id: "gpt-5.6-sol",
+				display_name: "GPT-5.6-Sol",
+				is_default: false,
+				is_featured: true,
+			},
+			{
+				...managedMetadata,
+				id: "k3",
+				display_name: "Kimi K3",
+				is_default: false,
+				is_featured: true,
+			},
+			{
+				...managedMetadata,
+				id: "future-model",
+				display_name: "Future model",
+				is_default: false,
+				is_featured: false,
+			},
+			{
+				...managedMetadata,
+				id: "gpt-5.6-luna",
+				display_name: "GPT-5.6-Luna",
+				is_default: true,
+				is_featured: false,
+			},
+			{
+				...managedMetadata,
+				id: "gpt-5.6-terra",
+				display_name: "GPT-5.6-Terra",
+				is_default: false,
+				is_featured: false,
+			},
 		];
 
 		expect(managedModelPickerItems(managedModels)).toEqual({
 			featured: [
-				{ value: "gpt-5.6-sol", label: "Sol" },
+				{ value: "gpt-5.6-sol", label: "GPT-5.6-Sol" },
 				{ value: "k3", label: "Kimi K3" },
 			],
 			overflow: [
 				{ value: "future-model", label: "Future model" },
-				{ value: "gpt-5.6-luna", label: "Luna" },
-				{ value: "gpt-5.6-terra", label: "Terra" },
+				{ value: "gpt-5.6-luna", label: "GPT-5.6-Luna" },
+				{ value: "gpt-5.6-terra", label: "GPT-5.6-Terra" },
 			],
 		});
+	});
+
+	test("keeps authoritative managed display names unchanged", () => {
+		const items = managedModelPickerItems([
+			{
+				...managedMetadata,
+				id: "provider-model-a",
+				display_name: "Provider Model A (Canonical)",
+				is_default: true,
+				is_featured: true,
+			},
+			{
+				...managedMetadata,
+				id: "provider-model-b",
+				display_name: "Provider Model B — Full Name",
+				is_default: false,
+				is_featured: false,
+			},
+		]);
+
+		expect(items.featured).toEqual([
+			{ value: "provider-model-a", label: "Provider Model A (Canonical)" },
+		]);
+		expect(items.overflow).toEqual([
+			{ value: "provider-model-b", label: "Provider Model B — Full Name" },
+		]);
 	});
 
 	test("uses catalog metadata before the shared formatter and raw id fallback", () => {
 		expect(
 			modelDisplayName("model", [
-				{ id: "model", display_name: "Display", is_default: false, is_featured: false },
+				{
+					...managedMetadata,
+					id: "model",
+					display_name: "Display",
+					is_default: false,
+					is_featured: false,
+				},
 			]),
 		).toBe("Display");
 		expect(modelDisplayName("model", [{ id: "model", label: "Label", alias: "Alias" }])).toBe(

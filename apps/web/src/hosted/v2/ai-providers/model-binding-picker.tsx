@@ -26,6 +26,49 @@ import {
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { cn } from "@/lib/utils";
 
+function formatContextWindow(tokens: number): string {
+	return `${new Intl.NumberFormat("en", {
+		notation: "compact",
+		maximumFractionDigits: tokens >= 1_000_000 ? 1 : 0,
+	}).format(tokens)} context`;
+}
+
+function ManagedModelDetails({ model }: { model: ManagedModelCatalogItem }) {
+	const capabilities = [
+		formatContextWindow(model.capabilities.context_window),
+		model.capabilities.supports_vision || model.capabilities.input_modalities.includes("image")
+			? "Vision"
+			: null,
+		model.capabilities.supports_reasoning ? "Reasoning" : null,
+		model.capabilities.supports_tools ? "Tools" : null,
+	].filter((capability): capability is string => capability !== null);
+
+	return (
+		<section
+			className="mt-1 grid gap-1 border-l border-primary/30 py-0.5 pl-3 text-xs"
+			data-testid="managed-model-details"
+			aria-label="Selected model details"
+			aria-live="polite"
+		>
+			{model.summary ? (
+				<p data-testid="managed-model-summary">
+					<span className="mr-1.5 font-medium text-muted-foreground">Best for</span> {model.summary}
+				</p>
+			) : null}
+			<p className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+				<span className="font-medium text-muted-foreground">Capabilities</span>
+				{capabilities.map((capability) => (
+					<span key={capability}>{capability}</span>
+				))}
+			</p>
+			<p data-testid="managed-model-cost-hint">
+				<span className="mr-1.5 font-medium text-muted-foreground">Cost guide</span>{" "}
+				{model.cost_hint ?? "Info unavailable"}
+			</p>
+		</section>
+	);
+}
+
 export function ModelBindingPicker({
 	idPrefix,
 	className,
@@ -69,6 +112,7 @@ export function ModelBindingPicker({
 	const isManaged = primaryProviderChoice === MANAGED_AI_CHOICE;
 	const catalogModelItems = modelPickerItems(primaryProviderChoice, providers, managedModels);
 	const compactManagedItems = managedModelPickerItems(managedModels);
+	const selectedManagedModel = managedModels.find((model) => model.id === primaryModel);
 	const hasCatalogModels = catalogModelItems.some((item) => item.value !== CUSTOM_MODEL_CHOICE);
 	const modelChoice = catalogModelItems.some((item) => item.value === primaryModel)
 		? primaryModel
@@ -187,6 +231,7 @@ export function ModelBindingPicker({
 								</Select>
 							) : null}
 						</div>
+						{selectedManagedModel ? <ManagedModelDetails model={selectedManagedModel} /> : null}
 					</div>
 				) : hasCatalogModels ? (
 					<div className="flex flex-col gap-1.5">

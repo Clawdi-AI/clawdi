@@ -1785,16 +1785,48 @@ export interface components {
             /** By Day */
             by_day: components["schemas"]["V2HostedUsageDay"][];
         };
+        /** V2ManagedModelCapabilities */
+        V2ManagedModelCapabilities: {
+            /** Context Window */
+            context_window: number;
+            /** Max Input Tokens */
+            max_input_tokens: number;
+            /** Max Output Tokens */
+            max_output_tokens: number | null;
+            /** Input Modalities */
+            input_modalities: ("text" | "image")[];
+            /** Supports Vision */
+            supports_vision: boolean | null;
+            /** Supports Reasoning */
+            supports_reasoning: boolean | null;
+            /** Supports Tools */
+            supports_tools: boolean | null;
+        };
         /** V2ManagedModelCatalogItem */
         V2ManagedModelCatalogItem: {
             /** Id */
             id: string;
-            /** Display Name */
+            /**
+             * Display Name
+             * @description Authoritative full display name copied verbatim from the bundled Hosted model catalog.
+             */
             display_name: string;
             /** Is Default */
             is_default: boolean;
             /** Is Featured */
             is_featured: boolean;
+            /**
+             * Summary
+             * @description Concise operator-authored capability or use-case guidance.
+             */
+            summary: string | null;
+            /**
+             * Cost Hint
+             * @description Concise operator-authored relative-cost guidance.
+             */
+            cost_hint: string | null;
+            /** @description Factual metadata from the bundled Hosted model catalog. */
+            capabilities: components["schemas"]["V2ManagedModelCapabilities"];
         };
         /** V2ManagedModelCatalogResponse */
         V2ManagedModelCatalogResponse: {

@@ -15,7 +15,23 @@ import {
 } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 
 const managedModels = [
-	{ id: "gpt-managed", display_name: "Managed", is_default: true, is_featured: true },
+	{
+		id: "gpt-managed",
+		display_name: "Managed",
+		is_default: true,
+		is_featured: true,
+		summary: null,
+		cost_hint: null,
+		capabilities: {
+			context_window: 128_000,
+			max_input_tokens: 128_000,
+			max_output_tokens: null,
+			input_modalities: ["text" as const],
+			supports_vision: false,
+			supports_reasoning: null,
+			supports_tools: null,
+		},
+	},
 ];
 
 const apiKeyProvider: AiProvider = {

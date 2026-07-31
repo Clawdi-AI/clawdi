@@ -196,10 +196,14 @@ export function modelPickerItems(
 	managedModels: readonly ManagedModelCatalogItem[],
 ): ModelBindingPickerItem[] {
 	const models = modelOptionsForProvider(choice, providers, managedModels);
+	const isManagedChoice = choice === MANAGED_AI_CHOICE || isManagedProviderId(choice);
 	return [
 		...models.map((model) => ({
 			value: model.id,
-			label: modelDisplayName(model.id, [model]),
+			label:
+				isManagedChoice && "display_name" in model
+					? model.display_name
+					: modelDisplayName(model.id, [model]),
 		})),
 		...(choice === MANAGED_AI_CHOICE
 			? []
@@ -218,7 +222,9 @@ export function managedModelPickerItems(
 		seen.add(modelId);
 		const item = {
 			value: modelId,
-			label: modelDisplayName(modelId, [model]),
+			// Managed display names are authoritative catalog data. Keep them
+			// verbatim instead of deriving a friendlier label from the model id.
+			label: model.display_name,
 		};
 		sections[model.is_featured ? "featured" : "overflow"].push(item);
 	}

@@ -1,5 +1,6 @@
 import type { DeploymentRead } from "@clawdi/shared/api";
 import { expect, type Page, type Route, test } from "@playwright/test";
+import type { ManagedModelCatalogItem } from "../src/hosted/billing/contracts";
 
 declare global {
 	interface Window {
@@ -31,6 +32,16 @@ const emptyPage = { items: [], total: 0, page: 1, page_size: 25 };
 const CLOUD_API = "http://127.0.0.1:8000";
 const DEPLOY_API = "http://127.0.0.1:8001";
 
+const textModelCapabilities: ManagedModelCatalogItem["capabilities"] = {
+	context_window: 272_000,
+	max_input_tokens: 272_000,
+	max_output_tokens: 128_000,
+	input_modalities: ["text", "image"],
+	supports_vision: true,
+	supports_reasoning: true,
+	supports_tools: true,
+};
+
 function deferred() {
 	let resolve = () => {};
 	const promise = new Promise<void>((nextResolve) => {
@@ -39,21 +50,91 @@ function deferred() {
 	return { promise, resolve };
 }
 
-const managedModelCatalog = {
+const managedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 	models: [
-		{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: true },
-		{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false, is_featured: false },
-		{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false, is_featured: false },
+		{
+			id: "gpt-5.6-luna",
+			display_name: "GPT-5.6-Luna",
+			is_default: true,
+			is_featured: true,
+			summary: "High-volume Codex work",
+			cost_hint: "Low cost",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "gpt-5.6-sol",
+			display_name: "GPT-5.6-Sol",
+			is_default: false,
+			is_featured: false,
+			summary: "Complex coding and agentic work",
+			cost_hint: "High cost",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "gpt-5.6-terra",
+			display_name: "GPT-5.6-Terra",
+			is_default: false,
+			is_featured: false,
+			summary: "Everyday Codex work",
+			cost_hint: "Balanced cost",
+			capabilities: textModelCapabilities,
+		},
 	],
 };
 
-const dynamicManagedModelCatalog = {
+const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 	models: [
-		{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false, is_featured: true },
-		{ id: "k3", display_name: "Kimi K3", is_default: false, is_featured: true },
-		{ id: "future-model", display_name: "Future model", is_default: false, is_featured: false },
-		{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: false },
-		{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false, is_featured: false },
+		{
+			id: "gpt-5.6-sol",
+			display_name: "GPT-5.6-Sol",
+			is_default: false,
+			is_featured: true,
+			summary: "Complex coding and agentic work",
+			cost_hint: "High cost",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "k3",
+			display_name: "Kimi K3",
+			is_default: false,
+			is_featured: true,
+			summary: "Long-context work",
+			cost_hint: "Pricing varies",
+			capabilities: {
+				...textModelCapabilities,
+				context_window: 262_144,
+				max_input_tokens: 262_144,
+				max_output_tokens: null,
+				supports_tools: null,
+			},
+		},
+		{
+			id: "future-model",
+			display_name: "Future model",
+			is_default: false,
+			is_featured: false,
+			summary: null,
+			cost_hint: null,
+			capabilities: { ...textModelCapabilities, supports_reasoning: null, supports_tools: null },
+		},
+		{
+			id: "gpt-5.6-luna",
+			display_name: "GPT-5.6-Luna",
+			is_default: true,
+			is_featured: false,
+			summary: "High-volume Codex work",
+			cost_hint: "Low cost",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "gpt-5.6-terra",
+			display_name: "GPT-5.6-Terra",
+			is_default: false,
+			is_featured: false,
+			summary: "Everyday Codex work",
+			cost_hint: "Balanced cost",
+			capabilities: textModelCapabilities,
+		},
 	],
 };
 
@@ -2544,7 +2625,7 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 		});
 		expect(metrics.managedModelChoices, `${viewport.name} managed model choices`).not.toBeNull();
 		expect(metrics.managedModelChoices?.labels, `${viewport.name} featured model order`).toEqual([
-			"Sol",
+			"GPT-5.6-Sol",
 			"Kimi K3",
 		]);
 		expect(
@@ -2961,14 +3042,25 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	await expect(managedModels).toHaveAccessibleName("Main model");
 	const featuredModels = managedModels.getByRole("radio");
 	await expect(featuredModels).toHaveCount(2);
-	await expect(featuredModels.nth(0)).toHaveAccessibleName("Sol");
+	await expect(featuredModels.nth(0)).toHaveAccessibleName("GPT-5.6-Sol");
 	await expect(featuredModels.nth(1)).toHaveAccessibleName("Kimi K3");
 	const overflowModels = page.getByTestId("managed-model-overflow");
 	await expect(overflowModels).toHaveAccessibleName("More managed models");
-	await expect(overflowModels).toContainText("Luna");
+	await expect(overflowModels).toContainText("GPT-5.6-Luna");
 	await expect(featuredModels.nth(0)).not.toBeChecked();
 	await expect(featuredModels.nth(1)).not.toBeChecked();
 	await expect(page.locator("#deploy-primary-model")).toHaveCount(0);
+	await featuredModels.nth(0).click();
+	await expect(featuredModels.nth(0)).toBeChecked();
+	const selectedModelDetails = page.getByTestId("managed-model-details");
+	await expect(selectedModelDetails).toHaveAccessibleName("Selected model details");
+	await expect(page.getByTestId("managed-model-summary")).toHaveText(
+		"Best for Complex coding and agentic work",
+	);
+	await expect(selectedModelDetails).toContainText("272K context");
+	await expect(selectedModelDetails).toContainText("Vision");
+	await expect(page.getByTestId("managed-model-cost-hint")).toHaveText("Cost guide High cost");
+	await expect(selectedModelDetails).not.toContainText("GPT-5.6-Sol");
 
 	for (const viewport of [
 		{ width: 1280, height: 900 },
@@ -2986,15 +3078,46 @@ test("deploy managed model picker preserves featured and overflow order and subm
 		);
 		await expect(managedModels).toBeVisible();
 		await expect(overflowModels).toBeVisible();
+		await expect(selectedModelDetails).toBeVisible();
+		if (viewport.width === 1280) {
+			await selectedModelDetails.locator("..").screenshot({
+				path: `/tmp/managed-model-guidance-${viewport.width}.png`,
+			});
+		} else if (viewport.width === 390) {
+			const screenshotStyle = await page.addStyleTag({
+				content: ".sticky.bottom-0 { display: none !important; }",
+			});
+			await selectedModelDetails.locator("..").screenshot({
+				path: `/tmp/managed-model-guidance-${viewport.width}.png`,
+			});
+			await screenshotStyle.evaluate((element) => element.parentNode?.removeChild(element));
+		}
+		const detailsBox = await selectedModelDetails.boundingBox();
+		expect(
+			detailsBox?.x ?? viewport.width,
+			`model details at ${viewport.width}px`,
+		).toBeGreaterThanOrEqual(0);
+		expect(
+			(detailsBox?.x ?? 0) + (detailsBox?.width ?? viewport.width),
+			`model details right edge at ${viewport.width}px`,
+		).toBeLessThanOrEqual(viewport.width);
 	}
 
-	await featuredModels.nth(0).click();
-	await expect(featuredModels.nth(0)).toBeChecked();
 	await expect(overflowModels).toContainText("More models");
 	await overflowModels.click();
-	await expect(page.getByRole("option")).toHaveText(["Future model", "Luna", "Terra"]);
-	await page.getByRole("option", { name: "Terra" }).click();
-	await expect(overflowModels).toContainText("Terra");
+	await expect(page.getByRole("option")).toHaveText([
+		"Future model",
+		"GPT-5.6-Luna",
+		"GPT-5.6-Terra",
+	]);
+	await page.getByRole("option", { name: "Future model" }).click();
+	await expect(page.getByTestId("managed-model-summary")).toHaveCount(0);
+	await expect(page.getByTestId("managed-model-cost-hint")).toHaveText(
+		"Cost guide Info unavailable",
+	);
+	await overflowModels.click();
+	await page.getByRole("option", { name: "GPT-5.6-Terra" }).click();
+	await expect(overflowModels).toContainText("GPT-5.6-Terra");
 	await expect(featuredModels.nth(0)).not.toBeChecked();
 	await page.getByRole("button", { name: "Deploy", exact: true }).click();
 	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
@@ -3127,7 +3250,7 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 	const agentModelSelect = page.locator("#agent-catalog-model");
 	await expect(agentModelSelect).toHaveRole("combobox");
 	await expect(agentModelSelect).toHaveAccessibleName("Main model");
-	await expect(agentModelSelect).toContainText("Luna");
+	await expect(agentModelSelect).toContainText("GPT-5.6-Luna");
 	await expect(page.getByTestId("managed-model-choices")).toHaveCount(0);
 	const agentModelFrame = await agentModelSelect.evaluate((element) => {
 		const frame = element.closest('div[data-hosted="true"][data-v2="true"]');
