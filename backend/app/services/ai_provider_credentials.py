@@ -169,6 +169,8 @@ async def reconcile_runtime_oauth_claims(
         for provider in providers
         if provider.auth_type in {"agent_profile", "oauth_profile"}
     }
+    if len(oauth_provider_ids) > 1:
+        raise OAuthCredentialClaimConflict("A runtime cannot bind more than one OAuth AI Provider")
     payloads = list(
         (
             await db.execute(

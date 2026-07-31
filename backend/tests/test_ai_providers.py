@@ -3,10 +3,12 @@ import base64
 import hashlib
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -15,15 +17,31 @@ from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
 from app.core.database import get_session
 from app.main import app
-from app.models.ai_provider import AiProvider, AiProviderAuthPayload
+from app.models.ai_provider import (
+    AiProvider,
+    AiProviderAuthPayload,
+    AiProviderOAuthAttempt,
+    AiProviderOAuthRevokeTombstone,
+)
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.platform_idempotency import PlatformMutationIdempotency
 from app.models.session import AgentEnvironment
+from app.routes import ai_providers as ai_provider_routes
 from app.schemas.ai_provider import AiProviderAcceptRequest
 from app.services import sync_events
 from app.services.ai_provider_connection import ConnectionProbeResult
-from app.services.ai_provider_credentials import release_runtime_oauth_claims
+from app.services.ai_provider_credentials import (
+    OAuthCredentialClaimConflict,
+    reconcile_runtime_oauth_claims,
+    release_runtime_oauth_claims,
+)
+from app.services.ai_provider_oauth_revoke_worker import (
+    OAUTH_REVOKE_ATTEMPT_STALE_SECONDS,
+    AiProviderOAuthRevokeWorker,
+    claim_oauth_revoke_tombstone,
+    record_oauth_revoke_result,
+)
 from app.services.managed_ai_provider import (
     CLAWDI_MANAGED_PROVIDER_ID,
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
@@ -95,6 +113,58 @@ async def test_oauth_consumer_fk_restricts_agent_delete_until_claim_pair_is_rele
     await db_session.refresh(payload)
     assert payload.consumer_environment_id is None
     assert payload.consumer_runtime is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_state_rejects_multiple_oauth_providers_before_payload_claims(
+    db_session,
+    seed_user,
+):
+    provider_ids = ["oauth-family-one", "oauth-family-two"]
+    environment = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"oauth-family-boundary-{uuid.uuid4().hex}",
+        machine_name="OAuth family boundary",
+        agent_type="openclaw",
+    )
+    for provider_id in provider_ids:
+        db_session.add(
+            AiProvider(
+                owner_user_id=seed_user.id,
+                provider_id=provider_id,
+                type="openai",
+                base_url="https://api.openai.com/v1",
+                api_mode="openai_responses",
+                auth_type="agent_profile",
+                auth_metadata={"tool": "codex", "profile": "default"},
+                managed_by="user",
+            )
+        )
+    runtimes = {
+        "openclaw": {
+            "enabled": True,
+            "providerMode": "configured",
+            "provider_ids": provider_ids,
+            "primary_model": {
+                "provider_id": provider_ids[0],
+                "model": "gpt-test",
+            },
+            "install": {"source": "official"},
+        }
+    }
+    await db_session.flush()
+
+    with pytest.raises(
+        OAuthCredentialClaimConflict,
+        match="cannot bind more than one OAuth",
+    ):
+        await reconcile_runtime_oauth_claims(
+            db_session,
+            owner_user_id=seed_user.id,
+            environment_id=environment.id,
+            runtimes=runtimes,
+        )
 
 
 async def _use_db_session_for_short_ai_provider_sessions(
@@ -285,6 +355,32 @@ def _test_jwt(account_id: str = "account-123") -> str:
     )
 
 
+def _codex_oauth_envelope(access_token: str, refresh_token: str) -> str:
+    return json.dumps(
+        {
+            "kind": "local_agent_profile",
+            "tool": "codex",
+            "profile": "default",
+            "files": [
+                {
+                    "logicalName": "auth.json",
+                    "content": json.dumps(
+                        {
+                            "auth_mode": "chatgpt",
+                            "tokens": {
+                                "id_token": _test_jwt(),
+                                "access_token": access_token,
+                                "refresh_token": refresh_token,
+                                "account_id": "account-123",
+                            },
+                        }
+                    ),
+                }
+            ],
+        }
+    )
+
+
 def _api_key_accept_body(value: str = "sk-atomic-secret") -> dict:
     return {
         "provider": {
@@ -359,7 +455,11 @@ async def test_ai_provider_crud_is_account_scoped_metadata(client: httpx.AsyncCl
 
     deleted = await client.delete("/v1/ai-providers/openai-main")
     assert deleted.status_code == 200, deleted.text
-    assert deleted.json() == {"status": "deleted", "provider_id": "openai-main"}
+    assert deleted.json() == {
+        "status": "deleted",
+        "provider_id": "openai-main",
+        "remote_revoke_status": "not_required",
+    }
     empty = await client.get("/v1/ai-providers")
     assert empty.status_code == 200, empty.text
     assert empty.json()["providers"] == []
@@ -1005,13 +1105,21 @@ async def test_api_key_accept_atomically_replaces_provider_and_credential(
     provider_id = created.json()["provider"]["id"]
 
     queued: list[tuple[uuid.UUID, str]] = []
+    route_queued: list[tuple[uuid.UUID, str]] = []
 
     async def capture_runtime_change(_db, user_id, changed_provider_id):
         queued.append((user_id, changed_provider_id))
 
+    async def capture_route_runtime_change(_db, user_id, changed_provider_id):
+        route_queued.append((user_id, changed_provider_id))
+
+    monkeypatch.setattr(
+        "app.services.ai_provider_auth_transition.queue_provider_runtime_manifest_changed",
+        capture_runtime_change,
+    )
     monkeypatch.setattr(
         "app.routes.ai_providers.queue_provider_runtime_manifest_changed",
-        capture_runtime_change,
+        capture_route_runtime_change,
     )
 
     replacement_body = _api_key_accept_body("sk-new-secret")
@@ -1034,6 +1142,7 @@ async def test_api_key_accept_atomically_replaces_provider_and_credential(
     assert replaced.json()["provider"]["id"] == provider_id
     assert replaced.json()["provider"]["label"] == "Updated provider"
     assert queued == [(seed_user.id, "openai-atomic")]
+    assert route_queued == []
     assert "sk-old-secret" not in replaced.text
     assert "sk-new-secret" not in replaced.text
     assert (
@@ -1302,6 +1411,16 @@ async def test_user_ai_provider_item_routes_hide_deployment_managed_row(
                 "redirect_uri": "https://cloud.example/oauth/callback",
             },
             id="oauth-start",
+        ),
+        pytest.param(
+            "/{provider_id}/auth/oauth/device/start",
+            {"provider": "codex"},
+            id="oauth-device-start",
+        ),
+        pytest.param(
+            "/{provider_id}/auth/oauth/device/poll",
+            {"state": "must-not-be-read"},
+            id="oauth-device-poll",
         ),
         pytest.param(
             "/{provider_id}/auth/oauth/complete",
@@ -1738,6 +1857,66 @@ async def test_ai_provider_patch_preserves_persisted_oauth_auth_when_auth_is_omi
         },
     )
     assert explicit_oauth.status_code == 422, explicit_oauth.text
+
+
+@pytest.mark.asyncio
+async def test_metadata_auth_transitions_never_reactivate_api_key_or_oauth_material(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+):
+    body = _api_key_accept_body("sk-transition-api-key")
+    body["provider"]["provider_id"] = "openai-transition-invalidation"
+    accepted = await client.post(
+        "/v1/ai-providers/accept",
+        headers={"Idempotency-Key": "provider-transition-invalidation"},
+        json=body,
+    )
+    assert accepted.status_code == 201, accepted.text
+
+    to_oauth_metadata = await client.patch(
+        "/v1/ai-providers/openai-transition-invalidation",
+        json={"auth": {"type": "agent_profile", "tool": "codex", "profile": "default"}},
+    )
+    assert to_oauth_metadata.status_code == 200, to_oauth_metadata.text
+    assert to_oauth_metadata.json()["usable"] is False
+    imported = await client.post(
+        "/v1/ai-providers/openai-transition-invalidation/auth/import",
+        json={
+            "type": "agent_profile",
+            "tool": "codex",
+            "profile": "default",
+            "payload": _codex_oauth_envelope("transition-access", "transition-refresh"),
+        },
+    )
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["usable"] is True
+
+    to_api_metadata = await client.patch(
+        "/v1/ai-providers/openai-transition-invalidation",
+        json={"auth": {"type": "api_key", "source": "managed", "profile": "default"}},
+    )
+    assert to_api_metadata.status_code == 200, to_api_metadata.text
+    assert to_api_metadata.json()["usable"] is False
+    back_to_oauth_metadata = await client.patch(
+        "/v1/ai-providers/openai-transition-invalidation",
+        json={"auth": {"type": "agent_profile", "tool": "codex", "profile": "default"}},
+    )
+    assert back_to_oauth_metadata.status_code == 200, back_to_oauth_metadata.text
+    assert back_to_oauth_metadata.json()["usable"] is False
+
+    active_payloads = list(
+        (
+            await db_session.execute(
+                select(AiProviderAuthPayload).where(
+                    AiProviderAuthPayload.owner_user_id == seed_user.id,
+                    AiProviderAuthPayload.provider_id == "openai-transition-invalidation",
+                    AiProviderAuthPayload.archived_at.is_(None),
+                )
+            )
+        ).scalars()
+    )
+    assert active_payloads == []
 
 
 @pytest.mark.asyncio
@@ -2204,6 +2383,48 @@ async def test_ai_provider_imports_agent_profile_payload_without_echo(client: ht
 
 
 @pytest.mark.asyncio
+async def test_ai_provider_reimport_same_oauth_envelope_does_not_revoke_active_token(
+    client: httpx.AsyncClient,
+    db_session,
+):
+    created = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "openai-codex-reimport",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_mode": "openai_responses",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    envelope = _codex_oauth_envelope("same-access", "same-refresh")
+    request = {
+        "type": "agent_profile",
+        "tool": "codex",
+        "profile": "default",
+        "payload": envelope,
+    }
+
+    first = await client.post(
+        "/v1/ai-providers/openai-codex-reimport/auth/import",
+        json=request,
+    )
+    second = await client.post(
+        "/v1/ai-providers/openai-codex-reimport/auth/import",
+        json=request,
+    )
+
+    assert first.status_code == second.status_code == 200
+    assert "same-refresh" not in first.text
+    assert "same-refresh" not in second.text
+    assert (
+        await db_session.scalar(select(func.count()).select_from(AiProviderOAuthRevokeTombstone))
+        == 0
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "body",
     [
@@ -2654,6 +2875,1071 @@ async def test_ai_provider_oauth_start_requires_clean_redirect_and_params(
 
 
 @pytest.mark.asyncio
+async def test_oauth_reconnect_start_keeps_current_credential_active(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    await _use_db_session_for_short_ai_provider_sessions(db_session, monkeypatch)
+    provider_id = "openai-codex-reconnect-start"
+    owner_user_id = seed_user.id
+    created = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": provider_id,
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_mode": "openai_responses",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    imported = await client.post(
+        f"/v1/ai-providers/{provider_id}/auth/import",
+        json={
+            "type": "agent_profile",
+            "tool": "codex",
+            "profile": "default",
+            "payload": _codex_oauth_envelope("old-access", "old-refresh"),
+        },
+    )
+    assert imported.status_code == 200, imported.text
+    before = await db_session.scalar(
+        select(AiProviderAuthPayload).where(
+            AiProviderAuthPayload.owner_user_id == owner_user_id,
+            AiProviderAuthPayload.provider_id == provider_id,
+            AiProviderAuthPayload.auth_profile == "default",
+        )
+    )
+    assert before is not None
+    old_revision = before.credential_revision
+    old_ciphertext = before.encrypted_payload
+
+    previous = settings.ai_provider_oauth_config_json
+    settings.ai_provider_oauth_config_json = json.dumps(
+        {
+            "codex": {
+                "authorization_url": "https://oauth.example/authorize",
+                "token_url": "https://oauth.example/token",
+                "client_id": "clawdi-client",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            }
+        }
+    )
+    started = await client.post(
+        f"/v1/ai-providers/{provider_id}/auth/oauth/start",
+        json={"provider": "codex"},
+    )
+
+    assert started.status_code == 200, started.text
+    await db_session.refresh(before)
+    after = before
+    provider = await db_session.scalar(
+        select(AiProvider).where(
+            AiProvider.owner_user_id == owner_user_id,
+            AiProvider.provider_id == provider_id,
+        )
+    )
+    assert after is not None
+    assert provider is not None
+    assert after.archived_at is None
+    assert after.credential_revision == old_revision
+    assert after.encrypted_payload == old_ciphertext
+    assert decrypt(after.encrypted_payload, after.nonce) == _codex_oauth_envelope(
+        "old-access", "old-refresh"
+    )
+    assert provider.auth_type == "agent_profile"
+    assert provider.auth_metadata == {"tool": "codex", "profile": "default"}
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(AiProviderOAuthRevokeTombstone)
+            .where(AiProviderOAuthRevokeTombstone.owner_user_id == owner_user_id)
+        )
+        == 0
+    )
+
+    class FakeOAuthClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, data):
+            if data["grant_type"] == "authorization_code":
+                return httpx.Response(
+                    200,
+                    json={
+                        "id_token": _test_jwt(),
+                        "access_token": "new-access",
+                        "refresh_token": "new-refresh",
+                    },
+                )
+            return httpx.Response(200, json={"access_token": "sk-new"})
+
+    monkeypatch.setattr("app.routes.ai_providers.httpx.AsyncClient", FakeOAuthClient)
+    try:
+        completed = await client.post(
+            f"/v1/ai-providers/{provider_id}/auth/oauth/complete",
+            json={
+                "state": started.json()["state"],
+                "code": "reconnect-code",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+    finally:
+        settings.ai_provider_oauth_config_json = previous
+
+    assert completed.status_code == 200, completed.text
+    await db_session.refresh(before)
+    active = before
+    assert active is not None
+    assert active.credential_revision != old_revision
+    assert "new-refresh" in decrypt(active.encrypted_payload, active.nonce)
+    tombstones = list(
+        (
+            await db_session.execute(
+                select(AiProviderOAuthRevokeTombstone).where(
+                    AiProviderOAuthRevokeTombstone.owner_user_id == owner_user_id,
+                    AiProviderOAuthRevokeTombstone.provider_id == provider_id,
+                )
+            )
+        ).scalars()
+    )
+    by_digest = {row.token_sha256: row for row in tombstones}
+    old_digest = hashlib.sha256(b"old-refresh").hexdigest()
+    new_digest = hashlib.sha256(b"new-refresh").hexdigest()
+    assert by_digest[old_digest].status == "pending"
+    assert by_digest[old_digest].encrypted_token is not None
+    assert b"old-refresh" not in by_digest[old_digest].encrypted_token
+    assert by_digest[new_digest].status == "cancelled"
+    assert by_digest[new_digest].encrypted_token is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tombstone_state", ["pending", "processing", "revoked"])
+async def test_same_token_delete_reconnect_cannot_adopt_revoke_tombstone(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+    tombstone_state: str,
+):
+    await _use_db_session_for_short_ai_provider_sessions(db_session, monkeypatch)
+    provider_id = f"openai-codex-same-token-{tombstone_state}"
+    owner_user_id = seed_user.id
+    created = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": provider_id,
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_mode": "openai_responses",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    imported = await client.post(
+        f"/v1/ai-providers/{provider_id}/auth/import",
+        json={
+            "type": "agent_profile",
+            "tool": "codex",
+            "profile": "default",
+            "payload": _codex_oauth_envelope("same-access", "same-refresh"),
+        },
+    )
+    assert imported.status_code == 200, imported.text
+    deleted = await client.delete(f"/v1/ai-providers/{provider_id}")
+    assert deleted.status_code == 200, deleted.text
+    tombstone = await db_session.scalar(
+        select(AiProviderOAuthRevokeTombstone).where(
+            AiProviderOAuthRevokeTombstone.owner_user_id == owner_user_id,
+            AiProviderOAuthRevokeTombstone.provider_id == provider_id,
+        )
+    )
+    assert tombstone is not None
+    tombstone_id = tombstone.id
+    claim = None
+    if tombstone_state != "pending":
+        claim = await claim_oauth_revoke_tombstone(
+            db_session,
+            now=datetime.now(UTC) + timedelta(seconds=1),
+        )
+        assert claim is not None
+        await db_session.commit()
+    if tombstone_state == "revoked":
+        assert claim is not None
+        assert await record_oauth_revoke_result(
+            db_session,
+            claim=claim,
+            revoked=True,
+        )
+        await db_session.commit()
+
+    recreated = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": provider_id,
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_mode": "openai_responses",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert recreated.status_code == 200, recreated.text
+    previous = settings.ai_provider_oauth_config_json
+    settings.ai_provider_oauth_config_json = json.dumps(
+        {
+            "codex": {
+                "authorization_url": "https://oauth.example/authorize",
+                "token_url": "https://oauth.example/token",
+                "client_id": "clawdi-client",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            }
+        }
+    )
+
+    class SameTokenOAuthClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, data):
+            if data["grant_type"] == "authorization_code":
+                return httpx.Response(
+                    200,
+                    json={
+                        "id_token": _test_jwt(),
+                        "access_token": "same-access",
+                        "refresh_token": "same-refresh",
+                    },
+                )
+            return httpx.Response(200, json={"access_token": "sk-same-token"})
+
+    monkeypatch.setattr("app.routes.ai_providers.httpx.AsyncClient", SameTokenOAuthClient)
+    try:
+        started = await client.post(
+            f"/v1/ai-providers/{provider_id}/auth/oauth/start",
+            json={"provider": "codex"},
+        )
+        assert started.status_code == 200, started.text
+        completed = await client.post(
+            f"/v1/ai-providers/{provider_id}/auth/oauth/complete",
+            json={
+                "state": started.json()["state"],
+                "code": "same-token-code",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+    finally:
+        settings.ai_provider_oauth_config_json = previous
+
+    assert completed.status_code == 409, completed.text
+    assert "compensation already started" in completed.text
+    db_session.expire_all()
+    tombstone = await db_session.get(AiProviderOAuthRevokeTombstone, tombstone_id)
+    assert tombstone is not None
+    assert tombstone.status == tombstone_state
+    assert tombstone.oauth_attempt_id is None
+    assert (tombstone.encrypted_token is None) == (tombstone_state == "revoked")
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(AiProviderAuthPayload)
+            .where(
+                AiProviderAuthPayload.owner_user_id == owner_user_id,
+                AiProviderAuthPayload.provider_id == provider_id,
+                AiProviderAuthPayload.archived_at.is_(None),
+            )
+        )
+        == 0
+    )
+    attempt = await db_session.scalar(
+        select(AiProviderOAuthAttempt).where(
+            AiProviderOAuthAttempt.flow_id == uuid.UUID(started.json()["flow_id"])
+        )
+    )
+    assert attempt is not None
+    assert attempt.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_oauth_reverse_completion_and_expired_committed_receipt_replay(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    await _use_db_session_for_short_ai_provider_sessions(db_session, monkeypatch)
+    provider_id = "openai-codex-reverse"
+    created = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": provider_id,
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_mode": "openai_responses",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    previous = settings.ai_provider_oauth_config_json
+    settings.ai_provider_oauth_config_json = json.dumps(
+        {
+            "codex": {
+                "authorization_url": "https://oauth.example/authorize",
+                "token_url": "https://oauth.example/token",
+                "client_id": "clawdi-client",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            }
+        }
+    )
+    requests: list[dict] = []
+
+    class FakeOAuthClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, data):
+            requests.append({"url": url, "data": data})
+            if data["grant_type"] == "authorization_code":
+                return httpx.Response(
+                    200,
+                    json={
+                        "id_token": _test_jwt(),
+                        "access_token": "reverse-access",
+                        "refresh_token": "reverse-refresh",
+                    },
+                )
+            return httpx.Response(200, json={"access_token": "sk-reverse"})
+
+    monkeypatch.setattr("app.routes.ai_providers.httpx.AsyncClient", FakeOAuthClient)
+    try:
+        first = await client.post(
+            f"/v1/ai-providers/{provider_id}/auth/oauth/start",
+            json={"provider": "codex"},
+        )
+        second = await client.post(
+            f"/v1/ai-providers/{provider_id}/auth/oauth/start",
+            json={"provider": "codex"},
+        )
+        assert first.status_code == second.status_code == 200
+        stale = await client.post(
+            f"/v1/ai-providers/{provider_id}/auth/oauth/complete",
+            json={
+                "state": first.json()["state"],
+                "code": "first-code",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+        assert stale.status_code == 409, stale.text
+        assert requests == []
+        completed = await client.post(
+            f"/v1/ai-providers/{provider_id}/auth/oauth/complete",
+            json={
+                "state": second.json()["state"],
+                "code": "second-code",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+        assert completed.status_code == 200, completed.text
+        stale_after_commit = await client.post(
+            f"/v1/ai-providers/{provider_id}/auth/oauth/complete",
+            json={
+                "state": first.json()["state"],
+                "code": "first-code",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+        assert stale_after_commit.status_code == 409, stale_after_commit.text
+        assert len(requests) == 2
+
+        attempt = await db_session.scalar(
+            select(AiProviderOAuthAttempt).where(
+                AiProviderOAuthAttempt.flow_id == uuid.UUID(second.json()["flow_id"])
+            )
+        )
+        assert attempt is not None
+        assert attempt.status == "committed"
+        assert "reverse-access" not in json.dumps(attempt.receipt)
+        assert "reverse-refresh" not in json.dumps(attempt.receipt)
+        attempt.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await db_session.commit()
+
+        replay = await client.post(
+            f"/v1/ai-providers/{provider_id}/auth/oauth/complete",
+            json={
+                "state": second.json()["state"],
+                "code": "second-code",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+    finally:
+        settings.ai_provider_oauth_config_json = previous
+
+    assert replay.status_code == 200, replay.text
+    assert replay.json() == completed.json()
+    assert len(requests) == 2
+    tombstone = await db_session.scalar(
+        select(AiProviderOAuthRevokeTombstone).where(
+            AiProviderOAuthRevokeTombstone.owner_user_id == seed_user.id,
+            AiProviderOAuthRevokeTombstone.provider_id == provider_id,
+        )
+    )
+    assert tombstone is not None
+    assert tombstone.status == "cancelled"
+    assert tombstone.encrypted_token is None
+    assert tombstone.token_nonce is None
+
+
+@pytest.mark.asyncio
+async def test_stale_exchanging_oauth_attempt_is_fenced_without_reexchange(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider_id = "openai-codex-stale-exchange"
+    created = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": provider_id,
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_mode": "openai_responses",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    previous = settings.ai_provider_oauth_config_json
+    settings.ai_provider_oauth_config_json = json.dumps(
+        {
+            "codex": {
+                "authorization_url": "https://oauth.example/authorize",
+                "token_url": "https://oauth.example/token",
+                "client_id": "clawdi-client",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            }
+        }
+    )
+    connection = await db_session.connection()
+    short_sessions = async_sessionmaker(
+        bind=connection,
+        expire_on_commit=True,
+        join_transaction_mode="create_savepoint",
+    )
+    monkeypatch.setattr(ai_provider_routes, "async_session_factory", short_sessions)
+    network_calls = 0
+
+    class NoNetworkClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, data):
+            nonlocal network_calls
+            network_calls += 1
+            raise AssertionError("stale exchange must not be replayed")
+
+    monkeypatch.setattr("app.routes.ai_providers.httpx.AsyncClient", NoNetworkClient)
+    try:
+        started = await client.post(
+            f"/v1/ai-providers/{provider_id}/auth/oauth/start",
+            json={"provider": "codex"},
+        )
+        assert started.status_code == 200, started.text
+        attempt_id, replay = await ai_provider_routes._begin_oauth_attempt_exchange(
+            owner_user_id=seed_user.id,
+            provider_id=provider_id,
+            state=started.json()["state"],
+            flow_kind="authorization_code",
+            payload_updates={
+                "authorization_code": "one-time-code",
+                "requested_redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+        assert replay is None
+        attempt = await db_session.get(AiProviderOAuthAttempt, attempt_id)
+        assert attempt is not None
+        attempt.exchange_started_at = datetime.now(UTC) - timedelta(
+            seconds=ai_provider_routes.OAUTH_EXCHANGE_STALE_SECONDS + 1
+        )
+        await db_session.commit()
+
+        retried = await client.post(
+            f"/v1/ai-providers/{provider_id}/auth/oauth/complete",
+            json={
+                "state": started.json()["state"],
+                "code": "one-time-code",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+    finally:
+        settings.ai_provider_oauth_config_json = previous
+
+    assert retried.status_code == 409, retried.text
+    assert "start sign-in again" in retried.text
+    assert network_calls == 0
+    db_session.expire_all()
+    attempt = await db_session.get(AiProviderOAuthAttempt, attempt_id)
+    assert attempt is not None
+    assert attempt.status == "failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_stale_exchange_revoke_claim_fences_original_commit(
+    client: httpx.AsyncClient,
+    engine,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider_id = "openai-codex-stale-worker-race"
+    owner_user_id = seed_user.id
+    created = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": provider_id,
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_mode": "openai_responses",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    previous_config = settings.ai_provider_oauth_config_json
+    settings.ai_provider_oauth_config_json = json.dumps(
+        {
+            "codex": {
+                "authorization_url": "https://oauth.example/authorize",
+                "token_url": "https://oauth.example/token",
+                "client_id": "clawdi-client",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            }
+        }
+    )
+    payload_build_started = asyncio.Event()
+    release_payload_build = asyncio.Event()
+    revoke_started = asyncio.Event()
+    release_revoke = asyncio.Event()
+
+    class FakeOAuthClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, data):
+            return httpx.Response(
+                200,
+                json={
+                    "id_token": _test_jwt(),
+                    "access_token": "stale-race-access",
+                    "refresh_token": "stale-race-refresh",
+                },
+            )
+
+    async def blocking_payload_build(*args, **kwargs):
+        payload_build_started.set()
+        await release_payload_build.wait()
+        return (
+            _codex_oauth_envelope("stale-race-access", "stale-race-refresh"),
+            "agent_profile",
+            {"tool": "codex", "profile": "default", "source": "oauth_pkce"},
+        )
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=True)
+
+    async def _independent_session():
+        async with session_factory() as session:
+            yield session
+
+    async def blocking_revoke(claim):
+        assert claim.token == "stale-race-refresh"
+        revoke_started.set()
+        await release_revoke.wait()
+
+    previous_get_session = app.dependency_overrides[get_session]
+    app.dependency_overrides[get_session] = _independent_session
+    monkeypatch.setattr("app.routes.ai_providers.httpx.AsyncClient", FakeOAuthClient)
+    monkeypatch.setattr(
+        "app.routes.ai_providers._oauth_payload_from_token_response",
+        blocking_payload_build,
+    )
+    completion_task = None
+    worker_task = None
+    try:
+        started = await client.post(
+            f"/v1/ai-providers/{provider_id}/auth/oauth/start",
+            json={"provider": "codex"},
+        )
+        assert started.status_code == 200, started.text
+        flow_id = uuid.UUID(started.json()["flow_id"])
+        completion_task = asyncio.create_task(
+            client.post(
+                f"/v1/ai-providers/{provider_id}/auth/oauth/complete",
+                json={
+                    "state": started.json()["state"],
+                    "code": "stale-worker-race-code",
+                    "redirect_uri": "https://cloud.example/oauth/callback",
+                },
+            )
+        )
+        await asyncio.wait_for(payload_build_started.wait(), timeout=2)
+
+        async with session_factory() as aging:
+            attempt = await aging.scalar(
+                select(AiProviderOAuthAttempt)
+                .where(AiProviderOAuthAttempt.flow_id == flow_id)
+                .with_for_update()
+            )
+            assert attempt is not None
+            attempt.exchange_started_at = datetime.now(UTC) - timedelta(
+                seconds=OAUTH_REVOKE_ATTEMPT_STALE_SECONDS + 1
+            )
+            await aging.commit()
+
+        worker = AiProviderOAuthRevokeWorker(session_factory, revoke=blocking_revoke)
+        worker_task = asyncio.create_task(worker.run_once())
+        await asyncio.wait_for(revoke_started.wait(), timeout=2)
+        release_payload_build.set()
+        completed = await asyncio.wait_for(completion_task, timeout=2)
+        assert completed.status_code == 409, completed.text
+
+        async with session_factory() as verification:
+            attempt = await verification.scalar(
+                select(AiProviderOAuthAttempt).where(AiProviderOAuthAttempt.flow_id == flow_id)
+            )
+            tombstones = list(
+                (
+                    await verification.execute(
+                        select(AiProviderOAuthRevokeTombstone).where(
+                            AiProviderOAuthRevokeTombstone.owner_user_id == owner_user_id,
+                            AiProviderOAuthRevokeTombstone.provider_id == provider_id,
+                        )
+                    )
+                ).scalars()
+            )
+            active_payload_count = await verification.scalar(
+                select(func.count())
+                .select_from(AiProviderAuthPayload)
+                .where(
+                    AiProviderAuthPayload.owner_user_id == owner_user_id,
+                    AiProviderAuthPayload.provider_id == provider_id,
+                    AiProviderAuthPayload.archived_at.is_(None),
+                )
+            )
+        assert attempt is not None
+        assert attempt.status == "failed"
+        assert active_payload_count == 0
+        assert len(tombstones) == 1
+        assert tombstones[0].status == "processing"
+        assert tombstones[0].oauth_attempt_id == attempt.id
+        assert tombstones[0].encrypted_token is not None
+
+        release_revoke.set()
+        assert await asyncio.wait_for(worker_task, timeout=2) == tombstones[0].id
+        async with session_factory() as verification:
+            tombstone = await verification.get(
+                AiProviderOAuthRevokeTombstone,
+                tombstones[0].id,
+            )
+            assert tombstone is not None
+            assert tombstone.status == "revoked"
+            assert tombstone.encrypted_token is None
+            assert tombstone.token_nonce is None
+    finally:
+        release_payload_build.set()
+        release_revoke.set()
+        if completion_task is not None and not completion_task.done():
+            completion_task.cancel()
+        if worker_task is not None and not worker_task.done():
+            worker_task.cancel()
+        app.dependency_overrides[get_session] = previous_get_session
+        settings.ai_provider_oauth_config_json = previous_config
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_oauth_commit_and_new_start_follow_provider_attempt_lock_order(
+    client: httpx.AsyncClient,
+    engine,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider_id = "openai-codex-commit-start-order"
+    auth = AuthContext(user=seed_user)
+    created = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": provider_id,
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_mode": "openai_responses",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    imported = await client.post(
+        f"/v1/ai-providers/{provider_id}/auth/import",
+        json={
+            "type": "agent_profile",
+            "tool": "codex",
+            "profile": "default",
+            "payload": _codex_oauth_envelope("old-order-access", "old-order-refresh"),
+        },
+    )
+    assert imported.status_code == 200, imported.text
+    previous_config = settings.ai_provider_oauth_config_json
+    settings.ai_provider_oauth_config_json = json.dumps(
+        {
+            "codex": {
+                "authorization_url": "https://oauth.example/authorize",
+                "token_url": "https://oauth.example/token",
+                "client_id": "clawdi-client",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            }
+        }
+    )
+    session_factory = async_sessionmaker(engine, expire_on_commit=True)
+
+    async def _independent_session():
+        async with session_factory() as session:
+            yield session
+
+    previous_get_session = app.dependency_overrides[get_session]
+    app.dependency_overrides[get_session] = _independent_session
+    transition_started = asyncio.Event()
+    release_transition = asyncio.Event()
+    original_transition = ai_provider_routes.transition_ai_provider_auth
+
+    async def blocking_transition(*args, **kwargs):
+        transition_started.set()
+        await release_transition.wait()
+        return await original_transition(*args, **kwargs)
+
+    monkeypatch.setattr(ai_provider_routes, "transition_ai_provider_auth", blocking_transition)
+    commit_task = None
+    start_task = None
+    try:
+        started_a = await client.post(
+            f"/v1/ai-providers/{provider_id}/auth/oauth/start",
+            json={"provider": "codex"},
+        )
+        assert started_a.status_code == 200, started_a.text
+        attempt_a_id, replay = await ai_provider_routes._begin_oauth_attempt_exchange(
+            owner_user_id=auth.user_id,
+            provider_id=provider_id,
+            state=started_a.json()["state"],
+            flow_kind="authorization_code",
+            payload_updates={
+                "authorization_code": "commit-start-order-code",
+                "requested_redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+        assert replay is None
+        commit_task = asyncio.create_task(
+            ai_provider_routes._commit_oauth_attempt(
+                attempt_id=attempt_a_id,
+                auth=auth,
+                provider_auth_type="agent_profile",
+                payload_text=_codex_oauth_envelope(
+                    "new-order-access",
+                    "new-order-refresh",
+                ),
+                metadata={"tool": "codex", "profile": "default", "source": "oauth_pkce"},
+                compensation=None,
+            )
+        )
+        await asyncio.wait_for(transition_started.wait(), timeout=2)
+        start_task = asyncio.create_task(
+            client.post(
+                f"/v1/ai-providers/{provider_id}/auth/oauth/start",
+                json={"provider": "codex"},
+            )
+        )
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(asyncio.shield(start_task), timeout=0.05)
+        release_transition.set()
+        committed, started_b = await asyncio.wait_for(
+            asyncio.gather(commit_task, start_task),
+            timeout=2,
+        )
+        assert committed.usable is True
+        assert started_b.status_code == 200, started_b.text
+
+        async with session_factory() as verification:
+            attempts = list(
+                (
+                    await verification.execute(
+                        select(AiProviderOAuthAttempt)
+                        .where(AiProviderOAuthAttempt.provider_id == provider_id)
+                        .order_by(AiProviderOAuthAttempt.created_at)
+                    )
+                ).scalars()
+            )
+            payload = await verification.scalar(
+                select(AiProviderAuthPayload).where(
+                    AiProviderAuthPayload.owner_user_id == auth.user_id,
+                    AiProviderAuthPayload.provider_id == provider_id,
+                    AiProviderAuthPayload.archived_at.is_(None),
+                )
+            )
+        assert [attempt.status for attempt in attempts] == ["committed", "pending"]
+        assert payload is not None
+        assert attempts[1].base_credential_revision == payload.credential_revision
+    finally:
+        release_transition.set()
+        if commit_task is not None and not commit_task.done():
+            commit_task.cancel()
+        if start_task is not None and not start_task.done():
+            start_task.cancel()
+        app.dependency_overrides[get_session] = previous_get_session
+        settings.ai_provider_oauth_config_json = previous_config
+
+
+@pytest.mark.asyncio
+async def test_post_exchange_commit_failure_leaves_durable_compensation(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    await _use_db_session_for_short_ai_provider_sessions(db_session, monkeypatch)
+    provider_id = "openai-codex-post-exchange-failure"
+    auth = AuthContext(user=seed_user)
+    created = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": provider_id,
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_mode": "openai_responses",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    previous_config = settings.ai_provider_oauth_config_json
+    settings.ai_provider_oauth_config_json = json.dumps(
+        {
+            "codex": {
+                "authorization_url": "https://oauth.example/authorize",
+                "token_url": "https://oauth.example/token",
+                "client_id": "clawdi-client",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            }
+        }
+    )
+
+    class FakeOAuthClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, data):
+            if data["grant_type"] == "authorization_code":
+                return httpx.Response(
+                    200,
+                    json={
+                        "id_token": _test_jwt(),
+                        "access_token": "post-exchange-access",
+                        "refresh_token": "post-exchange-refresh",
+                    },
+                )
+            return httpx.Response(200, json={"access_token": "sk-post-exchange"})
+
+    async def fail_transition(*args, **kwargs):
+        raise RuntimeError("forced credential commit failure")
+
+    monkeypatch.setattr("app.routes.ai_providers.httpx.AsyncClient", FakeOAuthClient)
+    monkeypatch.setattr(ai_provider_routes, "transition_ai_provider_auth", fail_transition)
+    try:
+        started = await client.post(
+            f"/v1/ai-providers/{provider_id}/auth/oauth/start",
+            json={"provider": "codex"},
+        )
+        assert started.status_code == 200, started.text
+        attempt_id, replay = await ai_provider_routes._begin_oauth_attempt_exchange(
+            owner_user_id=auth.user_id,
+            provider_id=provider_id,
+            state=started.json()["state"],
+            flow_kind="authorization_code",
+            payload_updates={
+                "authorization_code": "post-exchange-code",
+                "requested_redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+        assert replay is None
+        with pytest.raises(RuntimeError, match="forced credential commit failure"):
+            await ai_provider_routes._exchange_and_commit_oauth_attempt(attempt_id, auth)
+    finally:
+        settings.ai_provider_oauth_config_json = previous_config
+
+    attempt = await db_session.get(AiProviderOAuthAttempt, attempt_id)
+    assert attempt is not None
+    assert attempt.status == "failed"
+    tombstone = await db_session.scalar(
+        select(AiProviderOAuthRevokeTombstone).where(
+            AiProviderOAuthRevokeTombstone.oauth_attempt_id == attempt_id
+        )
+    )
+    assert tombstone is not None
+    assert tombstone.status == "pending"
+    assert tombstone.encrypted_token is not None
+    assert tombstone.token_nonce is not None
+    assert b"post-exchange-refresh" not in tombstone.encrypted_token
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(AiProviderAuthPayload)
+            .where(
+                AiProviderAuthPayload.owner_user_id == auth.user_id,
+                AiProviderAuthPayload.provider_id == provider_id,
+                AiProviderAuthPayload.archived_at.is_(None),
+            )
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_post_exchange_provider_shape_change_fails_commit_and_keeps_compensation(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    await _use_db_session_for_short_ai_provider_sessions(db_session, monkeypatch)
+    provider_id = "openai-codex-shape-race"
+    auth = AuthContext(user=seed_user)
+    created = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": provider_id,
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_mode": "openai_responses",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    previous_config = settings.ai_provider_oauth_config_json
+    settings.ai_provider_oauth_config_json = json.dumps(
+        {
+            "codex": {
+                "authorization_url": "https://oauth.example/authorize",
+                "token_url": "https://oauth.example/token",
+                "client_id": "clawdi-client",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            }
+        }
+    )
+    try:
+        started = await client.post(
+            f"/v1/ai-providers/{provider_id}/auth/oauth/start",
+            json={"provider": "codex"},
+        )
+        assert started.status_code == 200, started.text
+        attempt_id, replay = await ai_provider_routes._begin_oauth_attempt_exchange(
+            owner_user_id=auth.user_id,
+            provider_id=provider_id,
+            state=started.json()["state"],
+            flow_kind="authorization_code",
+            payload_updates={
+                "authorization_code": "shape-race-code",
+                "requested_redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+        assert replay is None
+        async with ai_provider_routes.async_session_factory() as compensation_db:
+            compensation = await ai_provider_routes.enqueue_oauth_revoke_tombstone(
+                compensation_db,
+                owner_user_id=auth.user_id,
+                provider_id=provider_id,
+                oauth_provider="codex",
+                revocable=("shape-race-refresh", "refresh_token"),
+                oauth_attempt_id=attempt_id,
+            )
+            await compensation_db.commit()
+        assert compensation is not None
+
+        changed = await client.patch(
+            f"/v1/ai-providers/{provider_id}",
+            json={
+                "type": "custom_openai_compatible",
+                "base_url": "https://proxy.example/v1",
+                "api_mode": "openai_chat",
+            },
+        )
+        assert changed.status_code == 200, changed.text
+
+        with pytest.raises(HTTPException) as error:
+            await ai_provider_routes._commit_oauth_attempt(
+                attempt_id=attempt_id,
+                auth=auth,
+                provider_auth_type="agent_profile",
+                payload_text=_codex_oauth_envelope(
+                    "shape-race-access",
+                    "shape-race-refresh",
+                ),
+                metadata={"tool": "codex", "profile": "default", "source": "oauth_pkce"},
+                compensation=compensation,
+            )
+        assert error.value.status_code == 409
+    finally:
+        settings.ai_provider_oauth_config_json = previous_config
+
+    attempt = await db_session.get(AiProviderOAuthAttempt, attempt_id)
+    tombstone = await db_session.get(AiProviderOAuthRevokeTombstone, compensation.id)
+    assert attempt is not None
+    assert attempt.status == "failed"
+    assert tombstone is not None
+    assert tombstone.status == "pending"
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(AiProviderAuthPayload)
+            .where(
+                AiProviderAuthPayload.owner_user_id == auth.user_id,
+                AiProviderAuthPayload.provider_id == provider_id,
+                AiProviderAuthPayload.archived_at.is_(None),
+            )
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
 async def test_oauth_device_accept_polls_then_persists_tokens(
     client: httpx.AsyncClient,
     db_session,
@@ -2662,7 +3948,7 @@ async def test_oauth_device_accept_polls_then_persists_tokens(
     connection = await db_session.connection()
     device_session_factory = async_sessionmaker(
         bind=connection,
-        expire_on_commit=False,
+        expire_on_commit=True,
         join_transaction_mode="create_savepoint",
     )
     monkeypatch.setattr(
@@ -2758,6 +4044,7 @@ async def test_oauth_device_accept_polls_then_persists_tokens(
         authorization = accepted.json()["authorization"]
         assert authorization == {
             "flow": "device_code",
+            "flow_id": authorization["flow_id"],
             "provider_id": "openai-codex",
             "oauth_provider": "codex",
             "profile": "default",
@@ -2796,12 +4083,17 @@ async def test_oauth_device_accept_polls_then_persists_tokens(
         "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
         "code_verifier": "device-code-verifier",
     }
-    revoke = next(item for item in requests if item["url"].endswith("/oauth/revoke"))
-    assert revoke["json"] == {
-        "token": "oauth-refresh-token",
-        "token_type_hint": "refresh_token",
-        "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
-    }
+    assert not any(item["url"].endswith("/oauth/revoke") for item in requests)
+    assert deleted.json()["remote_revoke_status"] == "pending"
+    tombstone = await db_session.scalar(
+        select(AiProviderOAuthRevokeTombstone).where(
+            AiProviderOAuthRevokeTombstone.provider_id == "openai-codex"
+        )
+    )
+    assert tombstone is not None
+    assert tombstone.status == "pending"
+    assert tombstone.encrypted_token is not None
+    assert b"oauth-refresh-token" not in tombstone.encrypted_token
 
 
 @pytest.mark.asyncio
@@ -2811,6 +4103,7 @@ async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
     monkeypatch: pytest.MonkeyPatch,
     seed_user,
 ):
+    await _use_db_session_for_short_ai_provider_sessions(db_session, monkeypatch)
     consumer = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
@@ -2973,6 +4266,7 @@ async def test_ai_provider_oauth_complete_omits_missing_codex_api_key(
     monkeypatch: pytest.MonkeyPatch,
     seed_user,
 ):
+    await _use_db_session_for_short_ai_provider_sessions(db_session, monkeypatch)
     consumer = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
@@ -3586,7 +4880,7 @@ async def test_oauth_complete_cannot_revive_a_concurrently_deleted_provider(
                 )
             return httpx.Response(200, json={"access_token": "sk-codex-api-key-race"})
 
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    session_factory = async_sessionmaker(engine, expire_on_commit=True)
 
     async def _independent_session():
         async with session_factory() as session:
@@ -3618,7 +4912,7 @@ async def test_oauth_complete_cannot_revive_a_concurrently_deleted_provider(
         app.dependency_overrides[get_session] = previous_get_session
         settings.ai_provider_oauth_config_json = previous_config
 
-    assert completed.status_code == 404, completed.text
+    assert completed.status_code == 409, completed.text
     async with session_factory() as verification:
         provider = await verification.scalar(
             select(AiProvider).where(
@@ -3635,9 +4929,19 @@ async def test_oauth_complete_cannot_revive_a_concurrently_deleted_provider(
                 AiProviderAuthPayload.archived_at.is_(None),
             )
         )
+        compensation = await verification.scalar(
+            select(AiProviderOAuthRevokeTombstone).where(
+                AiProviderOAuthRevokeTombstone.owner_user_id == seed_user.id,
+                AiProviderOAuthRevokeTombstone.provider_id == "openai-codex-delete-race",
+            )
+        )
     assert provider is not None
     assert provider.archived_at is not None
     assert active_payload_count == 0
+    assert compensation is not None
+    assert compensation.status == "pending"
+    assert compensation.encrypted_token is not None
+    assert b"oauth-refresh-race" not in compensation.encrypted_token
 
 
 @pytest.mark.asyncio

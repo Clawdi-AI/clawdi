@@ -391,6 +391,44 @@ def test_runtime_source_delivers_owned_oauth_only_to_selected_runtime(monkeypatc
     assert "auth" not in terminal_provider
 
 
+def test_runtime_source_rejects_multiple_oauth_families_before_decrypt(monkeypatch) -> None:
+    from app.services import runtime_source
+
+    batch = _batch()
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    provider_ids = ["oauth-family-one", "oauth-family-two"]
+    runtime = dict(state.runtimes["openclaw"])
+    runtime["provider_ids"] = provider_ids
+    runtime["primary_model"] = {
+        "provider_id": provider_ids[0],
+        "model": "gpt-test",
+    }
+    state.runtimes = {"openclaw": runtime}
+    for provider_id in provider_ids:
+        batch.providers[(USER_ID, provider_id)] = AiProvider(
+            id=uuid4(),
+            owner_user_id=USER_ID,
+            provider_id=provider_id,
+            type="openai",
+            base_url="https://api.openai.com/v1",
+            api_mode="openai_responses",
+            auth_type="agent_profile",
+            auth_metadata={"tool": "codex", "profile": "default"},
+            managed_by="user",
+        )
+
+    def reject_decrypt(*args):
+        raise AssertionError("multiple OAuth families must fail before secret decryption")
+
+    monkeypatch.setattr(runtime_source, "decrypt", reject_decrypt)
+    with pytest.raises(
+        RuntimeSourceError,
+        match="cannot bind more than one OAuth",
+    ):
+        _render(batch)
+
+
 def test_runtime_source_refuses_oauth_owned_by_another_runtime() -> None:
     batch = _batch()
     state = batch.rows[ENV_ID].state

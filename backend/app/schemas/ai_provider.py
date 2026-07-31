@@ -418,6 +418,7 @@ class AiProviderListResponse(BaseModel):
 class AiProviderDeleteResponse(BaseModel):
     status: Literal["deleted"]
     provider_id: str
+    remote_revoke_status: Literal["pending", "not_required"] = "not_required"
 
 
 class AiProviderValidationResponse(BaseModel):
@@ -582,6 +583,7 @@ class AiProviderSavedConnectionTestRequest(BaseModel):
 
 class AiProviderOAuthStartResponse(BaseModel):
     flow: Literal["authorization_code"] = "authorization_code"
+    flow_id: UUID
     provider_id: str
     oauth_provider: str
     profile: str
@@ -599,6 +601,7 @@ class AiProviderOAuthDeviceStartRequest(BaseModel):
 
 class AiProviderOAuthDeviceStartResponse(BaseModel):
     flow: Literal["device_code"] = "device_code"
+    flow_id: UUID
     provider_id: str
     oauth_provider: str
     profile: str

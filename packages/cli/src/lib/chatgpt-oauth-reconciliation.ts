@@ -1,80 +1,173 @@
 export type NativeOAuthCredentialObservation = "missing" | "managed" | "foreign";
 
-export type OAuthCredentialReceiptState = "seeded" | "adopted" | "revoked";
+export type OAuthCredentialLedgerStableState = "seeded" | "adopted" | "revoked" | "retired";
 
-export interface OAuthCredentialReceiptSnapshot {
+export type OAuthCredentialLedgerState = "intent" | OAuthCredentialLedgerStableState;
+
+export interface OAuthCredentialLedgerSnapshot {
 	nativeProfileId: string;
 	credentialRevision: string;
-	state: OAuthCredentialReceiptState;
+	state: OAuthCredentialLedgerState;
+	operation?: "seed" | "remove";
+	credentialFingerprint?: string;
 }
 
 export type NativeOAuthCredentialAction = "preserve" | "seed" | "upsert" | "remove";
 
 export interface OAuthCredentialReconciliationDecision {
 	nativeAction: NativeOAuthCredentialAction;
-	nextReceipt: OAuthCredentialReceiptSnapshot | null;
+	nextLedger: OAuthCredentialLedgerSnapshot;
+	requiresWriteAheadIntent: boolean;
 }
 
-/** Pure lifecycle decision shared by local apply and hosted runtime convergence. */
+/**
+ * Decide one native OAuth ownership transition.
+ *
+ * A caller must persist `intentLedgerForDecision` before executing every
+ * decision with `requiresWriteAheadIntent`. If recovery observes native
+ * material for a same-revision seed intent, it adopts that material instead
+ * of replaying the write: the native agent may already have rotated the
+ * refresh token after the original seed completed.
+ */
 export function decideChatGptOAuthCredentialReconciliation(input: {
 	desiredCredentialRevision: string | null;
 	desiredNativeProfileId: string | null;
-	receipt: OAuthCredentialReceiptSnapshot | null;
+	ledger: OAuthCredentialLedgerSnapshot | null;
 	native: NativeOAuthCredentialObservation;
 }): OAuthCredentialReconciliationDecision {
-	if (input.desiredCredentialRevision === null) {
+	const { desiredCredentialRevision, desiredNativeProfileId, ledger, native } = input;
+
+	if (desiredCredentialRevision === null) {
+		const nativeAction = ledger?.state === "seeded" && native === "managed" ? "remove" : "preserve";
 		return {
-			nativeAction:
-				input.receipt?.state === "seeded" && input.native === "managed" ? "remove" : "preserve",
-			nextReceipt: null,
+			nativeAction,
+			requiresWriteAheadIntent: nativeAction === "remove",
+			nextLedger: retiredLedger(ledger),
 		};
 	}
-	if (input.desiredNativeProfileId === null) {
+	if (desiredNativeProfileId === null) {
 		throw new Error("Desired OAuth credential requires a native profile identity");
 	}
 
-	if (!input.receipt) {
+	if (
+		ledger?.state === "intent" &&
+		ledger.operation === "seed" &&
+		ledger.nativeProfileId === desiredNativeProfileId &&
+		ledger.credentialRevision === desiredCredentialRevision
+	) {
+		if (native !== "missing") {
+			return {
+				nativeAction: "preserve",
+				requiresWriteAheadIntent: false,
+				nextLedger: {
+					nativeProfileId: desiredNativeProfileId,
+					credentialRevision: desiredCredentialRevision,
+					state: "adopted",
+				},
+			};
+		}
 		return {
-			nativeAction: input.native === "missing" ? "seed" : "upsert",
-			nextReceipt: {
-				nativeProfileId: input.desiredNativeProfileId,
-				credentialRevision: input.desiredCredentialRevision,
-				state: "seeded",
-			},
+			nativeAction: "seed",
+			requiresWriteAheadIntent: true,
+			nextLedger: seededLedger(
+				desiredNativeProfileId,
+				desiredCredentialRevision,
+				ledger.credentialFingerprint,
+			),
 		};
 	}
 
 	if (
-		input.receipt.nativeProfileId !== input.desiredNativeProfileId ||
-		input.receipt.credentialRevision !== input.desiredCredentialRevision
+		ledger &&
+		ledger.nativeProfileId === desiredNativeProfileId &&
+		ledger.credentialRevision === desiredCredentialRevision
 	) {
-		return {
-			nativeAction: "upsert",
-			nextReceipt: {
-				nativeProfileId: input.desiredNativeProfileId,
-				credentialRevision: input.desiredCredentialRevision,
-				state: "seeded",
-			},
-		};
-	}
-
-	if (input.native === "missing") {
+		if (native === "missing") {
+			if (ledger.state === "retired") {
+				return {
+					nativeAction: "seed",
+					requiresWriteAheadIntent: true,
+					nextLedger: seededLedger(
+						desiredNativeProfileId,
+						desiredCredentialRevision,
+						ledger.credentialFingerprint,
+					),
+				};
+			}
+			return {
+				nativeAction: "preserve",
+				requiresWriteAheadIntent: false,
+				nextLedger: {
+					nativeProfileId: desiredNativeProfileId,
+					credentialRevision: desiredCredentialRevision,
+					state: "revoked",
+				},
+			};
+		}
 		return {
 			nativeAction: "preserve",
-			nextReceipt: {
-				nativeProfileId: input.desiredNativeProfileId,
-				credentialRevision: input.desiredCredentialRevision,
-				state: "revoked",
+			requiresWriteAheadIntent: false,
+			nextLedger: {
+				nativeProfileId: desiredNativeProfileId,
+				credentialRevision: desiredCredentialRevision,
+				state: ledger.state === "seeded" && native === "managed" ? "seeded" : "adopted",
+				...(ledger.state === "seeded" && native === "managed" && ledger.credentialFingerprint
+					? { credentialFingerprint: ledger.credentialFingerprint }
+					: {}),
 			},
 		};
 	}
 
+	const nativeAction = native === "missing" ? "seed" : "upsert";
 	return {
-		nativeAction: "preserve",
-		nextReceipt: {
-			nativeProfileId: input.desiredNativeProfileId,
-			credentialRevision: input.desiredCredentialRevision,
-			state: input.receipt.state === "seeded" && input.native === "managed" ? "seeded" : "adopted",
-		},
+		nativeAction,
+		requiresWriteAheadIntent: true,
+		nextLedger: seededLedger(desiredNativeProfileId, desiredCredentialRevision),
+	};
+}
+
+export function intentLedgerForDecision(input: {
+	decision: OAuthCredentialReconciliationDecision;
+	current: OAuthCredentialLedgerSnapshot | null;
+	desiredNativeProfileId: string;
+	desiredCredentialRevision: string;
+	credentialFingerprint?: string;
+}): OAuthCredentialLedgerSnapshot {
+	if (!input.decision.requiresWriteAheadIntent) {
+		throw new Error("OAuth credential decision does not require a write-ahead intent");
+	}
+	return {
+		nativeProfileId: input.desiredNativeProfileId,
+		credentialRevision: input.desiredCredentialRevision,
+		state: "intent",
+		operation: input.decision.nativeAction === "remove" ? "remove" : "seed",
+		...(input.credentialFingerprint
+			? { credentialFingerprint: input.credentialFingerprint }
+			: input.current?.credentialFingerprint
+				? { credentialFingerprint: input.current.credentialFingerprint }
+				: {}),
+	};
+}
+
+function seededLedger(
+	nativeProfileId: string,
+	credentialRevision: string,
+	credentialFingerprint?: string,
+): OAuthCredentialLedgerSnapshot {
+	return {
+		nativeProfileId,
+		credentialRevision,
+		state: "seeded",
+		...(credentialFingerprint ? { credentialFingerprint } : {}),
+	};
+}
+
+function retiredLedger(
+	ledger: OAuthCredentialLedgerSnapshot | null,
+): OAuthCredentialLedgerSnapshot {
+	return {
+		nativeProfileId: ledger?.nativeProfileId ?? "retired",
+		credentialRevision: ledger?.credentialRevision ?? "retired",
+		state: "retired",
 	};
 }

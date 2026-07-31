@@ -29,8 +29,10 @@ import { agentSkillTargetDir } from "../adapters/registry";
 import { type AgentPrimaryModel, buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import {
 	decideChatGptOAuthCredentialReconciliation,
+	intentLedgerForDecision,
 	type NativeOAuthCredentialAction,
 	type NativeOAuthCredentialObservation,
+	type OAuthCredentialLedgerSnapshot,
 } from "../lib/chatgpt-oauth-reconciliation";
 import {
 	HERMES_CODEX_AUTH_HELPER,
@@ -54,6 +56,13 @@ import {
 	renderHermesMcpServerRemoval,
 	renderHermesRuntimeLocale,
 } from "../lib/hermes-config-merge";
+import {
+	type OAuthCredentialLedger,
+	oauthCredentialLedgerPath,
+	oauthCredentialLedgerSnapshot,
+	readOAuthCredentialLedger,
+	writeOAuthCredentialLedger,
+} from "../lib/oauth-credential-ledger";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { readRuntimeAppliedState, runtimeContentSha256 } from "./applied-state";
 import type { RuntimeApplyContext } from "./apply-identity";
@@ -277,25 +286,7 @@ interface RuntimeInstallObservation {
 	error: string | null;
 }
 
-const RUNTIME_OAUTH_RECEIPT_SCHEMA_VERSION = "clawdi.runtimeOAuthCredential.v1";
 const OPENCLAW_CODEX_PROVIDER_ID = "openai";
-
-const runtimeOAuthReceiptSchema = z
-	.object({
-		schemaVersion: z.literal(RUNTIME_OAUTH_RECEIPT_SCHEMA_VERSION),
-		runtime: z.enum(["hermes", "openclaw"]),
-		providerId: z.string().min(1),
-		nativeProfileId: z.string().min(1),
-		credentialRevision: z.string().min(1).max(64),
-		state: z.enum(["seeded", "adopted", "revoked"]),
-		credentialFingerprint: z
-			.string()
-			.regex(/^sha256:[a-f0-9]{64}$/)
-			.optional(),
-	})
-	.strict();
-
-type RuntimeOAuthReceipt = z.infer<typeof runtimeOAuthReceiptSchema>;
 
 interface RuntimeOAuthMaterial {
 	accessToken: string;
@@ -1816,27 +1807,35 @@ function agentTargetProjectionInput(
 	};
 }
 
-function runtimeOAuthReceiptPath(
+function runtimeOAuthLedgerPath(
 	paths: RuntimePaths,
 	runtime: "hermes" | "openclaw",
 	providerId: string,
 ): string {
-	const key = createHash("sha256").update(providerId).digest("hex");
-	return join(paths.oauthCredentialRoot, runtime, `${key}.json`);
+	return oauthCredentialLedgerPath(paths.oauthCredentialRoot, runtime, providerId);
 }
 
-function readRuntimeOAuthReceipt(path: string): RuntimeOAuthReceipt | null {
-	if (!existsSync(path)) return null;
-	return runtimeOAuthReceiptSchema.parse(JSON.parse(readFileSync(path, "utf8")) as unknown);
-}
-
-function writeRuntimeOAuthReceipt(path: string, receipt: RuntimeOAuthReceipt): void {
-	writePrivateFileAtomic(path, `${JSON.stringify(receipt, null, 2)}\n`, {
-		mode: 0o600,
-		dirMode: 0o700,
+function writeRuntimeOAuthLedger(
+	path: string,
+	runtime: "hermes" | "openclaw",
+	providerId: string,
+	snapshot: OAuthCredentialLedgerSnapshot,
+): void {
+	writeOAuthCredentialLedger(path, { runtime, providerId }, snapshot, {
+		afterWrite: (writtenPath, parent) => {
+			makeRootOwned(writtenPath);
+			makeRootOwned(parent);
+		},
 	});
-	makeRootOwned(path);
-	makeRootOwned(dirname(path));
+}
+
+function readRuntimeOAuthLedger(path: string): OAuthCredentialLedger | null {
+	return readOAuthCredentialLedger(path, {
+		afterMigrate: (migratedPath, parent) => {
+			makeRootOwned(migratedPath);
+			makeRootOwned(parent);
+		},
+	});
 }
 
 function decodeJwtExpiryMs(token: string): number | null {
@@ -2186,10 +2185,10 @@ function runOpenClawProviderAuth(
 	);
 }
 
-function runtimeOAuthReceiptOwnership(
-	receipt: RuntimeOAuthReceipt | null,
+function runtimeOAuthLedgerOwnership(
+	ledger: OAuthCredentialLedger | null,
 ): OAuthCredentialOwnership | undefined {
-	return receipt?.state === "seeded" ? { nativeProfileId: receipt.nativeProfileId } : undefined;
+	return ledger?.state === "seeded" ? { nativeProfileId: ledger.nativeProfileId } : undefined;
 }
 
 function observeHostedRuntimeOAuthCredential(input: {
@@ -2295,43 +2294,60 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 		throw new Error(`${input.runtime} cannot consume more than one Codex OAuth credential family`);
 	}
 	const desiredProviderIds = new Set(desired.map((credential) => credential.providerId));
-	const receiptDir = join(input.paths.oauthCredentialRoot, input.runtime);
-	if (existsSync(receiptDir)) {
-		for (const filename of readdirSync(receiptDir).filter((name) => name.endsWith(".json"))) {
-			const path = join(receiptDir, filename);
-			const receipt = readRuntimeOAuthReceipt(path);
-			if (!receipt || desiredProviderIds.has(receipt.providerId)) continue;
-			const ownership = runtimeOAuthReceiptOwnership(receipt);
+	const ledgerDir = join(input.paths.oauthCredentialRoot, input.runtime);
+	if (existsSync(ledgerDir)) {
+		for (const filename of readdirSync(ledgerDir).filter((name) => name.endsWith(".json"))) {
+			const path = join(ledgerDir, filename);
+			const ledger = readRuntimeOAuthLedger(path);
+			if (!ledger || desiredProviderIds.has(ledger.providerId) || ledger.state === "retired") {
+				continue;
+			}
+			const snapshot = oauthCredentialLedgerSnapshot(ledger);
+			const ownership = runtimeOAuthLedgerOwnership(ledger);
 			const native = observeHostedRuntimeOAuthCredential({
 				runtime: input.runtime,
 				observation: input.observation,
 				home: input.home,
 				workspaceRoot: input.workspaceRoot,
-				nativeProfileId: receipt.nativeProfileId,
+				nativeProfileId: ledger.nativeProfileId,
 				ownership,
 			});
 			const decision = decideChatGptOAuthCredentialReconciliation({
 				desiredCredentialRevision: null,
 				desiredNativeProfileId: null,
-				receipt,
+				ledger: snapshot,
 				native,
 			});
+			if (decision.requiresWriteAheadIntent) {
+				writeRuntimeOAuthLedger(
+					path,
+					input.runtime,
+					ledger.providerId,
+					intentLedgerForDecision({
+						decision,
+						current: snapshot,
+						desiredNativeProfileId: ledger.nativeProfileId,
+						desiredCredentialRevision: ledger.credentialRevision,
+					}),
+				);
+			}
 			if (decision.nativeAction === "remove" && ownership) {
 				removeHostedRuntimeOAuthCredential({
 					runtime: input.runtime,
 					observation: input.observation,
 					home: input.home,
 					workspaceRoot: input.workspaceRoot,
-					nativeProfileId: receipt.nativeProfileId,
+					nativeProfileId: ledger.nativeProfileId,
 					ownership,
 				});
 			}
-			rmSync(path, { force: true });
+			writeRuntimeOAuthLedger(path, input.runtime, ledger.providerId, decision.nextLedger);
 		}
 	}
 	for (const credential of desired) {
-		const receiptPath = runtimeOAuthReceiptPath(input.paths, input.runtime, credential.providerId);
-		const receipt = readRuntimeOAuthReceipt(receiptPath);
+		const ledgerPath = runtimeOAuthLedgerPath(input.paths, input.runtime, credential.providerId);
+		const ledger = readRuntimeOAuthLedger(ledgerPath);
+		const snapshot = oauthCredentialLedgerSnapshot(ledger);
 		const nativeProfileId = nativeOAuthProfileId(input.runtime, credential.providerId);
 		const native = observeHostedRuntimeOAuthCredential({
 			runtime: input.runtime,
@@ -2339,14 +2355,27 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 			home: input.home,
 			workspaceRoot: input.workspaceRoot,
 			nativeProfileId,
-			ownership: runtimeOAuthReceiptOwnership(receipt),
+			ownership: runtimeOAuthLedgerOwnership(ledger),
 		});
 		const decision = decideChatGptOAuthCredentialReconciliation({
 			desiredCredentialRevision: credential.credentialRevision,
 			desiredNativeProfileId: nativeProfileId,
-			receipt,
+			ledger: snapshot,
 			native,
 		});
+		if (decision.requiresWriteAheadIntent) {
+			writeRuntimeOAuthLedger(
+				ledgerPath,
+				input.runtime,
+				credential.providerId,
+				intentLedgerForDecision({
+					decision,
+					current: snapshot,
+					desiredNativeProfileId: nativeProfileId,
+					desiredCredentialRevision: credential.credentialRevision,
+				}),
+			);
+		}
 		executeHostedRuntimeOAuthAction({
 			action: decision.nativeAction,
 			runtime: input.runtime,
@@ -2356,15 +2385,7 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 			nativeProfileId,
 			material: credential.material,
 		});
-		if (!decision.nextReceipt) {
-			throw new Error("Desired hosted OAuth reconciliation did not produce a receipt");
-		}
-		writeRuntimeOAuthReceipt(receiptPath, {
-			schemaVersion: RUNTIME_OAUTH_RECEIPT_SCHEMA_VERSION,
-			runtime: input.runtime,
-			providerId: credential.providerId,
-			...decision.nextReceipt,
-		});
+		writeRuntimeOAuthLedger(ledgerPath, input.runtime, credential.providerId, decision.nextLedger);
 	}
 }
 

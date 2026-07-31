@@ -1059,7 +1059,11 @@ async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped_an
         params=owner,
     )
     assert deleted.status_code == 200, deleted.text
-    assert deleted.json() == {"status": "deleted", "provider_id": provider_id}
+    assert deleted.json() == {
+        "status": "deleted",
+        "provider_id": provider_id,
+        "remote_revoke_status": "not_required",
+    }
 
     provider = (
         await db_session.execute(

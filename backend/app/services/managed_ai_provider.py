@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import re
-import secrets
-from datetime import UTC, datetime
 from urllib.parse import urlparse
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.ai_provider import AiProvider, AiProviderAuthPayload
+from app.models.ai_provider import AiProvider
 from app.models.user import User
-from app.services.vault_crypto import encrypt
+from app.services.ai_provider_auth_transition import (
+    AuthCredentialWrite,
+    transition_ai_provider_auth,
+)
 
 CLAWDI_MANAGED_PROVIDER_ID = "clawdi"
 V1_MANAGED_AI_PROVIDER_ID = "clawdi-managed"
@@ -152,6 +153,9 @@ async def upsert_clawdi_managed_provider(
     provider = existing or AiProvider(
         owner_user_id=user.id,
         provider_id=provider_id,
+        auth_type="api_key",
+        auth_ref=None,
+        auth_metadata={"source": "managed", "profile": MANAGED_AI_PROVIDER_PROFILE},
     )
     provider.type = MANAGED_AI_PROVIDER_TYPE
     provider.label = label or MANAGED_AI_PROVIDER_LABEL
@@ -162,60 +166,25 @@ async def upsert_clawdi_managed_provider(
         provider.models = models
     else:
         provider.models = [{"id": default_model}] if default_model else None
-    provider.auth_type = "api_key"
-    provider.auth_ref = None
-    provider.auth_metadata = {"source": "managed", "profile": MANAGED_AI_PROVIDER_PROFILE}
     provider.managed_by = "clawdi"
     provider.runtime_env_name = MANAGED_AI_PROVIDER_RUNTIME_ENV
     provider.archived_at = None
     db.add(provider)
-
-    ciphertext, nonce = encrypt(api_key)
-    payload = (
-        await db.execute(
-            select(AiProviderAuthPayload)
-            .where(
-                AiProviderAuthPayload.owner_user_id == user.id,
-                AiProviderAuthPayload.provider_id == provider_id,
-                AiProviderAuthPayload.auth_profile == MANAGED_AI_PROVIDER_PROFILE,
-            )
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
-    if payload is None:
-        payload = AiProviderAuthPayload(
-            owner_user_id=user.id,
-            provider_id=provider_id,
-            auth_profile=MANAGED_AI_PROVIDER_PROFILE,
+    await db.flush()
+    auth_metadata = {"source": "managed", "profile": MANAGED_AI_PROVIDER_PROFILE}
+    await transition_ai_provider_auth(
+        db,
+        owner_user_id=user.id,
+        provider=provider,
+        auth_type="api_key",
+        auth_ref=None,
+        auth_metadata=auth_metadata,
+        credential=AuthCredentialWrite(
+            profile=MANAGED_AI_PROVIDER_PROFILE,
             kind="api_key",
-            source="managed",
-            encrypted_payload=ciphertext,
-            nonce=nonce,
-            payload_metadata={"runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV},
-        )
-        db.add(payload)
-    else:
-        payload.kind = "api_key"
-        payload.source = "managed"
-        payload.encrypted_payload = ciphertext
-        payload.nonce = nonce
-        payload.payload_metadata = {"runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV}
-        payload.credential_revision = secrets.token_hex(16)
-        payload.archived_at = None
-
-    await db.execute(
-        update(AiProviderAuthPayload)
-        .where(
-            AiProviderAuthPayload.owner_user_id == user.id,
-            AiProviderAuthPayload.provider_id == provider_id,
-            AiProviderAuthPayload.auth_profile != MANAGED_AI_PROVIDER_PROFILE,
-            AiProviderAuthPayload.archived_at.is_(None),
-        )
-        .values(
-            archived_at=datetime.now(UTC),
-            consumer_environment_id=None,
-            consumer_runtime=None,
-        )
+            plaintext=api_key,
+            metadata={"runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV},
+        ),
     )
     return provider
 
@@ -261,19 +230,13 @@ async def archive_clawdi_managed_provider(
     ).scalar_one_or_none()
     if provider is None:
         return None
-    archived_at = datetime.now(UTC)
-    provider.archived_at = archived_at
-    await db.execute(
-        update(AiProviderAuthPayload)
-        .where(
-            AiProviderAuthPayload.owner_user_id == owner_user_id,
-            AiProviderAuthPayload.provider_id == provider_id,
-            AiProviderAuthPayload.archived_at.is_(None),
-        )
-        .values(
-            archived_at=archived_at,
-            consumer_environment_id=None,
-            consumer_runtime=None,
-        )
+    await transition_ai_provider_auth(
+        db,
+        owner_user_id=owner_user_id,
+        provider=provider,
+        auth_type=provider.auth_type,
+        auth_ref=provider.auth_ref,
+        auth_metadata=provider.auth_metadata,
+        archive_provider=True,
     )
     return provider
