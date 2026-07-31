@@ -54,6 +54,8 @@ from app.models.skill import (
 from app.models.user import User
 from app.schemas.common import Paginated
 from app.schemas.skill import (
+    PersistedProjectKind,
+    PersistedSkillAuthority,
     SkillContentUpdateRequest,
     SkillDeleteResponse,
     SkillDetailResponse,
@@ -114,6 +116,24 @@ log = logging.getLogger(__name__)
 file_store = get_file_store()
 _SKILLS_LIST_CACHE_CONTROL = "no-transform"
 _SKILLS_ETAG_VERSION = "skills-v2"
+
+
+def _persisted_skill_authority(value: str) -> PersistedSkillAuthority:
+    if value == SKILL_AUTHORITY_AGENT_SYNC:
+        return "agent_sync"
+    if value == SKILL_AUTHORITY_CLOUD:
+        return "cloud"
+    raise ValueError(f"Unsupported persisted Skill authority: {value}")
+
+
+def _persisted_project_kind(value: str) -> PersistedProjectKind:
+    if value == "environment":
+        return "environment"
+    if value == "personal":
+        return "personal"
+    if value == "workspace":
+        return "workspace"
+    raise ValueError(f"Unsupported persisted Project kind: {value}")
 
 
 def _file_key(user_id, project_id, skill_key: str) -> str:
@@ -240,7 +260,7 @@ def _compute_file_tree_hash(tar_bytes: bytes, skill_key: str | None = None) -> s
 # ---------------------------------------------------------------------------
 
 
-@router.get("")
+@router.get("", response_model=Paginated[SkillSummaryResponse])
 async def list_skills(
     auth: AuthContext = Depends(require_scope_short_session("skills:read")),
     q: str | None = Query(default=None, description="Search name / description / skill_key"),
@@ -260,7 +280,7 @@ async def list_skills(
     ),
     if_none_match: str | None = Header(default=None, alias="If-None-Match"),
     skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
-) -> Paginated[SkillSummaryResponse]:
+) -> Paginated[SkillSummaryResponse] | Response:
     if (
         (auth.is_cli or auth.oauth_cli)
         and auth.api_key is not None
@@ -292,7 +312,7 @@ async def _list_skills_with_db(
     project_id: UUID | None,
     if_none_match: str | None,
     skill_sync_protocol: str | None,
-) -> Paginated[SkillSummaryResponse]:
+) -> Paginated[SkillSummaryResponse] | Response:
     # Keep every query that contributes to the strong collection ETag and its
     # response body in one snapshot. Cross-page consistency remains fenced by
     # the shared collection revision because released CLI 0.13.13 performs a
@@ -426,7 +446,7 @@ async def _list_skills_with_db(
                 description=s.description,
                 version=s.version,
                 source=s.source,
-                authority=s.authority,
+                authority=_persisted_skill_authority(s.authority),
                 source_repo=s.source_repo,
                 agent_types=s.agent_types,
                 file_count=s.file_count,
@@ -679,7 +699,7 @@ async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> S
     description = skill.description
     version = skill.version
     source = skill.source
-    authority = skill.authority
+    authority = _persisted_skill_authority(skill.authority)
     source_repo = skill.source_repo
     file_count = skill.file_count
     agent_types = skill.agent_types
@@ -709,7 +729,7 @@ async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> S
         ).first()
         if project_row is not None:
             project_name = project_row.name
-            project_kind = project_row.kind
+            project_kind = _persisted_project_kind(project_row.kind)
             if project_row.origin_environment_id is not None:
                 environment_id = str(project_row.origin_environment_id)
                 env_row = (

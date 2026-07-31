@@ -38,6 +38,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -135,8 +136,9 @@ async def _stream(
         )
         for task in pending:
             task.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        for task in pending:
+            with suppress(asyncio.CancelledError):
+                await task
         if revoked_task in done or revoked.is_set():
             return
         if event_task not in done:
