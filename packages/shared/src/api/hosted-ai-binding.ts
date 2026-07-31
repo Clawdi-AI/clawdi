@@ -1,5 +1,4 @@
 import {
-	AI_PROVIDER_CAPABILITY_CONTRACT_VERSION,
 	type AiProviderCatalog,
 	CLAWDI_MANAGED_PROVIDER_ID,
 	isFirstPartyManagedAiProvider,
@@ -20,7 +19,6 @@ export type HostedAiProviderAuthKind = "api_key" | "codex_oauth";
 
 export interface HostedAiProviderBootstrap extends Record<string, unknown> {
 	schema_version: 1;
-	capability_contract_version: typeof AI_PROVIDER_CAPABILITY_CONTRACT_VERSION;
 	selected_provider_id: string;
 	auth_kind: HostedAiProviderAuthKind;
 	catalog: AiProviderCatalog;
@@ -41,7 +39,6 @@ export type HostedAiBindingOperationMode = "create" | "update";
 export class HostedAiBindingError extends Error {
 	readonly code:
 		| "invalid_provider_metadata"
-		| "provider_contract_mismatch"
 		| "first_party_managed_provider"
 		| "managed_model_unavailable"
 		| "model_required"
@@ -58,7 +55,7 @@ export class HostedAiBindingError extends Error {
 export type HostedAiProviderRuntime = "hermes" | "openclaw";
 
 export type HostedAiProviderAvailabilityIssue = {
-	kind: "claimed" | "contract" | "delivery" | "runtime";
+	kind: "claimed" | "delivery" | "runtime";
 	message: string;
 };
 
@@ -82,10 +79,10 @@ export function hostedAiProviderAvailabilityIssue(
 		};
 	}
 	const readiness = provider.readiness;
-	if (!readiness || readiness.contract_version !== AI_PROVIDER_CAPABILITY_CONTRACT_VERSION) {
+	if (!readiness) {
 		return {
-			kind: "contract",
-			message: "Provider readiness metadata is outdated. Refresh providers before selecting it.",
+			kind: "delivery",
+			message: "Provider readiness metadata is unavailable. Refresh providers before selecting it.",
 		};
 	}
 	if (!readiness.deployable || provider.auth.type === "none") {
@@ -157,7 +154,6 @@ export function buildHostedAiProviderPoolBootstrap(
 	}
 	return {
 		schema_version: 1,
-		capability_contract_version: AI_PROVIDER_CAPABILITY_CONTRACT_VERSION,
 		selected_provider_id: selectedProvider.id,
 		auth_kind: authKind,
 		catalog,
@@ -305,13 +301,10 @@ function savedProvidersForIds(
 		if (isFirstPartyManagedAiProvider(provider)) {
 			throw firstPartyManagedProviderError(providerId);
 		}
-		if (
-			!provider.readiness ||
-			provider.readiness.contract_version !== AI_PROVIDER_CAPABILITY_CONTRACT_VERSION
-		) {
+		if (!provider.readiness) {
 			throw new HostedAiBindingError(
-				"provider_contract_mismatch",
-				`${provider.label?.trim() || provider.provider_id} has outdated Hosted readiness metadata. Refresh providers and try again.`,
+				"provider_unusable",
+				`${provider.label?.trim() || provider.provider_id} has no Hosted readiness metadata. Refresh providers and try again.`,
 			);
 		}
 		if (!provider.readiness.deployable || provider.auth.type === "none") {

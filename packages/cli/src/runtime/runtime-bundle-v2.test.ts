@@ -38,6 +38,8 @@ const goldenPath = resolve(
 	import.meta.dir,
 	"../../../../test-fixtures/runtime-bundle-v2.golden.json",
 );
+const EXPECTED_GOLDEN_SOURCE_REVISION =
+	"da635b29601dbb9543e936faacd7864b6ff300651b452bd861181f06419edbd1";
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
 const roots: string[] = [];
@@ -143,9 +145,7 @@ describe("hosted runtime bundle v2", () => {
 		});
 		const projected = applyRuntimeBundleChannelsToManifestLoad(load);
 
-		expect(projected.sourceRevision).toBe(
-			"da635b29601dbb9543e936faacd7864b6ff300651b452bd861181f06419edbd1",
-		);
+		expect(projected.sourceRevision).toBe(EXPECTED_GOLDEN_SOURCE_REVISION);
 		expect(projected.manifest.runtimes.openclaw.run?.secretEnv).toMatchObject({
 			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
 		});
@@ -992,14 +992,13 @@ describe("hosted runtime bundle v2", () => {
 			bootNonce: "boot-nonce-golden-000001",
 		});
 		const paths = getRuntimePaths({ mode: "hosted" });
-		const sourceRevision = "da635b29601dbb9543e936faacd7864b6ff300651b452bd861181f06419edbd1";
 		globalThis.fetch = Object.assign(
 			async () =>
 				new Response(readFileSync(goldenPath, "utf-8"), {
 					status: 200,
 					headers: {
 						"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
-						etag: `"sha256:${sourceRevision}"`,
+						etag: `"sha256:${EXPECTED_GOLDEN_SOURCE_REVISION}"`,
 					},
 				}),
 			{ preconnect: () => undefined },
@@ -1007,8 +1006,8 @@ describe("hosted runtime bundle v2", () => {
 
 		const loaded = await loadRemoteRuntimeManifest(paths);
 		if (!("manifest" in loaded)) throw new Error(JSON.stringify(loaded));
-		expect(loaded.etag).toBe(`"sha256:${sourceRevision}"`);
-		expect(loaded.sourceRevision).toBe(sourceRevision);
+		expect(loaded.etag).toBe(`"sha256:${EXPECTED_GOLDEN_SOURCE_REVISION}"`);
+		expect(loaded.sourceRevision).toBe(EXPECTED_GOLDEN_SOURCE_REVISION);
 		expect(loaded.channelBindings).toHaveLength(1);
 	});
 
@@ -1105,6 +1104,7 @@ describe("hosted runtime bundle v2", () => {
 			sourceRevision: string;
 			manifest: { egressEngine: { version: string; sha256: string } };
 		};
+		expect(goldenRaw.sourceRevision).toBe(EXPECTED_GOLDEN_SOURCE_REVISION);
 		const goldenEngine = goldenRaw.manifest.egressEngine;
 		const goldenMitmdump = join(
 			paths.egressEngineMaintainedRoot,
@@ -1128,7 +1128,7 @@ describe("hosted runtime bundle v2", () => {
 					status: 200,
 					headers: {
 						"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
-						etag: `"sha256:${goldenRaw.sourceRevision}"`,
+						etag: `"sha256:${EXPECTED_GOLDEN_SOURCE_REVISION}"`,
 					},
 				});
 			},

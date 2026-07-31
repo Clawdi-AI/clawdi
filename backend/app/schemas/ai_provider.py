@@ -30,7 +30,6 @@ ApiMode = Literal[
 AuthType = Literal["secret_ref", "api_key", "oauth_profile", "agent_profile", "none"]
 CredentialMaterialState = Literal["available", "referenced", "not_required", "missing"]
 VerificationState = Literal["not_tested", "verified", "failed"]
-AI_PROVIDER_CAPABILITY_CONTRACT_VERSION = 1
 ConnectionErrorCategory = Literal[
     "validation",
     "credential",
@@ -372,9 +371,6 @@ class AiProviderRuntimeCompatibility(BaseModel):
 class AiProviderReadiness(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    contract_version: Literal[AI_PROVIDER_CAPABILITY_CONTRACT_VERSION] = (
-        AI_PROVIDER_CAPABILITY_CONTRACT_VERSION
-    )
     credential_material: CredentialMaterialState
     runtime_compatibility: AiProviderRuntimeCompatibility
     deployable: bool
@@ -402,7 +398,7 @@ class AiProviderResponse(AiProviderBase):
     )
     readiness: AiProviderReadiness | None = Field(
         default=None,
-        description="Structured readiness dimensions; omitted by older compatible servers.",
+        description="Structured readiness dimensions used for Hosted runtime admission.",
     )
     consumer: AiProviderConsumer | None = Field(
         default=None,

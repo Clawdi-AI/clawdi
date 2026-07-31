@@ -16,7 +16,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { AI_PROVIDER_CAPABILITY_CONTRACT_VERSION } from "@clawdi/shared";
 import { parse as parseYaml } from "yaml";
 import {
 	applySystemdRuntimeUpdate,
@@ -615,7 +614,6 @@ const TEST_HOSTED_CODEX_TERMINAL_TOOLING = {
 
 function hostedRequiredState() {
 	return {
-		aiProviderCapabilityContractVersion: AI_PROVIDER_CAPABILITY_CONTRACT_VERSION,
 		egressEngine: TEST_EGRESS_ENGINE_PIN,
 		providers: {
 			default: {

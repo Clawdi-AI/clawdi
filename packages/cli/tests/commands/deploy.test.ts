@@ -99,7 +99,6 @@ function savedProvider(
 		auth: options.auth ?? { type: "api_key", source: "managed" },
 		usable: options.usable ?? true,
 		readiness: options.readiness ?? {
-			contract_version: 1,
 			credential_material: options.usable === false ? "missing" : "available",
 			runtime_compatibility: { openclaw: true, hermes: true, codex: true },
 			deployable: options.usable !== false,
@@ -686,7 +685,6 @@ describe("deploy orchestration", () => {
 				provider: savedProvider("vault-local", {
 					auth: { type: "api_key", source: "vault", ref: "clawdi://default/key" },
 					readiness: {
-						contract_version: 1,
 						credential_material: "referenced",
 						runtime_compatibility: { openclaw: true, hermes: true, codex: true },
 						deployable: false,
@@ -699,7 +697,6 @@ describe("deploy orchestration", () => {
 			{
 				provider: savedProvider("openclaw-only", {
 					readiness: {
-						contract_version: 1,
 						credential_material: "available",
 						runtime_compatibility: { openclaw: true, hermes: false, codex: false },
 						deployable: true,

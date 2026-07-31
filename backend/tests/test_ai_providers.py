@@ -585,7 +585,6 @@ async def test_ai_provider_connection_test_is_real_readiness_but_non_mutating(
     assert response.status_code == 200, response.text
     assert response.json()["ok"] is True
     assert response.json()["readiness"] == {
-        "contract_version": 1,
         "credential_material": "available",
         "runtime_compatibility": {
             "openclaw": True,
@@ -703,7 +702,6 @@ async def test_saved_ai_provider_connection_test_uses_active_managed_key_without
     assert response.json() == {
         "ok": True,
         "readiness": {
-            "contract_version": 1,
             "credential_material": "available",
             "runtime_compatibility": {
                 "openclaw": True,
@@ -2044,7 +2042,6 @@ async def test_ai_provider_readiness_separates_material_runtime_and_verification
     assert created.status_code == 200, created.text
     assert created.json()["usable"] is False
     assert created.json()["readiness"] == {
-        "contract_version": 1,
         "credential_material": "missing",
         "runtime_compatibility": {
             "openclaw": True,

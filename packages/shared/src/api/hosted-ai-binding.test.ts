@@ -33,7 +33,6 @@ const apiKeyProvider = {
 	auth: { type: "api_key", source: "managed", profile: "work" },
 	usable: true,
 	readiness: {
-		contract_version: 1,
 		credential_material: "available",
 		runtime_compatibility: { openclaw: true, hermes: true, codex: true },
 		deployable: true,
@@ -188,7 +187,6 @@ describe("shared Hosted AI provider binding", () => {
 				},
 				ai_provider_bootstrap: {
 					schema_version: 1,
-					capability_contract_version: 1,
 					selected_provider_id: "openai-main",
 					auth_kind: "api_key",
 					catalog: {
@@ -366,6 +364,9 @@ describe("shared Hosted AI provider binding", () => {
 				},
 			]),
 		).toThrow("cannot deliver its credential");
+		expect(() => buildSaved([{ ...apiKeyProvider, readiness: undefined }])).toThrow(
+			"has no Hosted readiness metadata",
+		);
 		expect(() =>
 			buildHostedAiBindingFields({
 				managedModels,

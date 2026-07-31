@@ -29,7 +29,6 @@ const savedOpenAiProvider = {
 	auth: { type: "api_key", source: "managed" },
 	usable: true,
 	readiness: {
-		contract_version: 1,
 		credential_material: "available",
 		runtime_compatibility: { openclaw: true, hermes: true, codex: true },
 		deployable: true,
@@ -146,7 +145,6 @@ describe("model binding", () => {
 
 	test("uses structured deployability instead of the legacy credential-only flag", () => {
 		const readiness = {
-			contract_version: 1,
 			credential_material: "available",
 			runtime_compatibility: { openclaw: true, hermes: true, codex: false },
 			deployable: true,
@@ -199,7 +197,6 @@ describe("model binding", () => {
 		const provider = {
 			...savedOpenAiProvider,
 			readiness: {
-				contract_version: 1,
 				credential_material: "available",
 				runtime_compatibility: { openclaw: true, hermes: false, codex: false },
 				deployable: true,

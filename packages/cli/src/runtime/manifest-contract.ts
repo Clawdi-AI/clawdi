@@ -1,4 +1,3 @@
-import { AI_PROVIDER_CAPABILITY_CONTRACT_VERSION } from "@clawdi/shared";
 import { z } from "zod";
 import { isValidSemver } from "../lib/semver";
 import { egressProfileInputBundleSchema } from "./egress-profiles";
@@ -610,7 +609,6 @@ const hostedRuntimeManifestBaseSchema = z
 		environmentId: z.string().min(1),
 		instanceId: z.string().min(1),
 		generation: z.number().int().nonnegative(),
-		aiProviderCapabilityContractVersion: z.literal(AI_PROVIDER_CAPABILITY_CONTRACT_VERSION),
 		minimumCliVersion: semverSchema,
 		issuedAt: z.string().min(1),
 		expiresAt: z.string().min(1).optional(),

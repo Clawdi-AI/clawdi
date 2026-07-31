@@ -23,7 +23,7 @@ from app.models.channel import (
 )
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
-from app.schemas.ai_provider import AI_PROVIDER_CAPABILITY_CONTRACT_VERSION, AiProviderModel
+from app.schemas.ai_provider import AiProviderModel
 from app.schemas.runtime import (
     _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION,
     HostedCodexProviderProjection,
@@ -396,7 +396,6 @@ def render_runtime_source(
         "generation": state.generation,
         "issuedAt": runtime_manifest_issued_at(state),
         "runtime": runtime_name,
-        "aiProviderCapabilityContractVersion": AI_PROVIDER_CAPABILITY_CONTRACT_VERSION,
         "locale": locale.model_dump(),
         "system": system.model_dump(
             exclude={"hermesDashboardAuth"}, exclude_none=True, mode="json"

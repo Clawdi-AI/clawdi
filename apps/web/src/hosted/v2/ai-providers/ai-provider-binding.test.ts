@@ -30,7 +30,6 @@ const apiKeyProvider: AiProvider = {
 	auth: { type: "api_key", source: "managed" },
 	usable: true,
 	readiness: {
-		contract_version: 1,
 		credential_material: "available",
 		runtime_compatibility: { openclaw: true, hermes: true, codex: true },
 		deployable: true,
@@ -222,7 +221,6 @@ describe("AI provider binding fields", () => {
 			...oauthProvider,
 			usable: false,
 			readiness: {
-				contract_version: 1 as const,
 				credential_material: "missing" as const,
 				runtime_compatibility: { openclaw: true, hermes: true, codex: true },
 				deployable: false,

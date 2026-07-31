@@ -18,8 +18,6 @@ export const AI_PROVIDER_API_MODES = [
 
 export type AiProviderApiMode = (typeof AI_PROVIDER_API_MODES)[number];
 
-export const AI_PROVIDER_CAPABILITY_CONTRACT_VERSION = 1 as const;
-
 export interface AiProviderRuntimeCompatibility {
 	openclaw: boolean;
 	hermes: boolean;

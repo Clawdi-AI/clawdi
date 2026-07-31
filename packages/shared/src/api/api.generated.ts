@@ -3522,12 +3522,6 @@ export interface components {
         /** AiProviderReadiness */
         AiProviderReadiness: {
             /**
-             * Contract Version
-             * @default 1
-             * @constant
-             */
-            contract_version: 1;
-            /**
              * Credential Material
              * @enum {string}
              */
@@ -3596,7 +3590,7 @@ export interface components {
              * @description Whether the provider has the credential material required for runtime use. This does not validate the credential or test endpoint connectivity.
              */
             usable: boolean;
-            /** @description Structured readiness dimensions; omitted by older compatible servers. */
+            /** @description Structured readiness dimensions used for Hosted runtime admission. */
             readiness?: components["schemas"]["AiProviderReadiness"] | null;
             /** @description Non-secret hosted runtime claim for single-consumer credentials; omitted when the connection is unclaimed. */
             consumer?: components["schemas"]["AiProviderConsumer"] | null;

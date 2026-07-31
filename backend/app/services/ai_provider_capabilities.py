@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.schemas.ai_provider import (
-    AI_PROVIDER_CAPABILITY_CONTRACT_VERSION,
     AiProviderReadiness,
     AiProviderRuntimeCompatibility,
     CredentialMaterialState,
@@ -121,7 +120,6 @@ def provider_readiness(
 
 
 __all__ = [
-    "AI_PROVIDER_CAPABILITY_CONTRACT_VERSION",
     "AiProviderCapabilityInput",
     "effective_provider_api_mode",
     "provider_readiness",

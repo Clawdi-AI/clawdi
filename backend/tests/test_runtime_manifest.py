@@ -36,7 +36,6 @@ from app.models.user import User
 from app.routes.admin import _admin_upsert_runtime_state
 from app.routes.sessions import _runtime_observed_health
 from app.schemas.admin import AdminRuntimeStateUpsert
-from app.schemas.ai_provider import AI_PROVIDER_CAPABILITY_CONTRACT_VERSION
 from app.schemas.runtime import (
     HostedEgressEngine,
     HostedEgressProfiles,
@@ -943,9 +942,6 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     payload = response.json()
     manifest = payload["manifest"]
     assert manifest["schemaVersion"] == "clawdi.hosted-runtime.manifest.v1"
-    assert (
-        manifest["aiProviderCapabilityContractVersion"] == AI_PROVIDER_CAPABILITY_CONTRACT_VERSION
-    )
     assert manifest["minimumCliVersion"] == "0.12.10-beta.57"
     assert manifest["runtime"] == "openclaw"
     assert set(manifest["runtimes"]) == {"openclaw"}
