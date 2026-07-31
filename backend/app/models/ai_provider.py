@@ -121,6 +121,7 @@ class AiProviderOAuthAttempt(Base, TimestampMixin):
     state_sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     encrypted_flow_payload: Mapped[bytes | None] = mapped_column(LargeBinary)
     flow_payload_nonce: Mapped[bytes | None] = mapped_column(LargeBinary)
+    poll_claim_id: Mapped[str | None] = mapped_column(String(64))
     receipt: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     exchange_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -132,14 +133,20 @@ class AiProviderOAuthAttempt(Base, TimestampMixin):
             name="ck_ai_provider_oauth_attempts_flow_kind",
         ),
         CheckConstraint(
-            "status IN ('pending', 'exchanging', 'committed', 'failed')",
+            "status IN ('pending', 'polling', 'exchanging', 'committed', 'failed')",
             name="ck_ai_provider_oauth_attempts_status",
         ),
         CheckConstraint(
-            "((status IN ('pending', 'exchanging')) AND encrypted_flow_payload IS NOT NULL AND "
-            "flow_payload_nonce IS NOT NULL) OR ((status IN ('committed', 'failed')) AND "
-            "encrypted_flow_payload IS NULL AND flow_payload_nonce IS NULL)",
+            "((status IN ('pending', 'polling', 'exchanging')) AND "
+            "encrypted_flow_payload IS NOT NULL AND flow_payload_nonce IS NOT NULL) OR "
+            "((status IN ('committed', 'failed')) AND encrypted_flow_payload IS NULL AND "
+            "flow_payload_nonce IS NULL)",
             name="ck_ai_provider_oauth_attempts_material",
+        ),
+        CheckConstraint(
+            "(status = 'polling' AND poll_claim_id IS NOT NULL) OR "
+            "(status <> 'polling' AND poll_claim_id IS NULL)",
+            name="ck_ai_provider_oauth_attempts_poll_claim",
         ),
         Index(
             "ix_ai_provider_oauth_attempts_terminal_completed_at",

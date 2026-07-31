@@ -89,7 +89,10 @@ from app.services.agent_skill_projection import (
     delete_agent_project_skill_rows,
     delete_agent_skill_files_best_effort,
 )
-from app.services.ai_provider_credentials import release_runtime_oauth_claims
+from app.services.ai_provider_credentials import (
+    lock_ai_provider_owner,
+    release_runtime_oauth_claims,
+)
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.memory_extraction import extract_memories_from_session
@@ -1526,6 +1529,20 @@ async def _delete_agent_identity(
     )
     env = result.scalar_one_or_none()
     if not env:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
+    await lock_ai_provider_owner(db, auth.user_id)
+    env = (
+        await db.execute(
+            select(AgentEnvironment)
+            .where(
+                AgentEnvironment.id == agent_id,
+                AgentEnvironment.user_id == auth.user_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
     if env.registration_key is None:
         raise HTTPException(

@@ -95,6 +95,7 @@ from app.services.agent_skill_projection import (
 )
 from app.services.ai_provider_credentials import (
     OAuthCredentialClaimConflict,
+    lock_ai_provider_owner,
     reconcile_runtime_oauth_claims,
     release_runtime_oauth_claims,
 )
@@ -1466,6 +1467,20 @@ async def _admin_delete_environment(
         env=env,
         target_clerk_id=target_clerk_id,
     )
+    await lock_ai_provider_owner(db, target_user_id)
+    env = (
+        await db.execute(
+            select(AgentEnvironment)
+            .where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == target_user_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
     record_control_plane_audit(
         db,
         actor_type="admin",
@@ -1551,9 +1566,7 @@ async def _admin_upsert_runtime_state(
     db: AsyncSession,
 ) -> AdminRuntimeStateResponse:
     env = (
-        await db.execute(
-            select(AgentEnvironment).where(AgentEnvironment.id == environment_id).with_for_update()
-        )
+        await db.execute(select(AgentEnvironment).where(AgentEnvironment.id == environment_id))
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
@@ -1562,6 +1575,20 @@ async def _admin_upsert_runtime_state(
         env=env,
         target_clerk_id=body.target_clerk_id,
     )
+    await lock_ai_provider_owner(db, target_user_id)
+    env = (
+        await db.execute(
+            select(AgentEnvironment)
+            .where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == target_user_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
 
     # Lock the parent before the optional child row so concurrent first creates
     # serialize even when there is no HostedRuntimeState row to lock yet.
@@ -1758,6 +1785,20 @@ async def _admin_delete_runtime_state(
         env=env,
         target_clerk_id=target_clerk_id,
     )
+    await lock_ai_provider_owner(db, target_user_id)
+    env = (
+        await db.execute(
+            select(AgentEnvironment)
+            .where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == target_user_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
 
     state = (
         await db.execute(

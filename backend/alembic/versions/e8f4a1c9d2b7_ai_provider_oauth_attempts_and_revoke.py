@@ -34,6 +34,7 @@ def upgrade() -> None:
         sa.Column("state_sha256", sa.String(length=64), nullable=False),
         sa.Column("encrypted_flow_payload", sa.LargeBinary(), nullable=True),
         sa.Column("flow_payload_nonce", sa.LargeBinary(), nullable=True),
+        sa.Column("poll_claim_id", sa.String(length=64), nullable=True),
         sa.Column("receipt", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("exchange_started_at", sa.DateTime(timezone=True), nullable=True),
@@ -45,14 +46,20 @@ def upgrade() -> None:
             name="ck_ai_provider_oauth_attempts_flow_kind",
         ),
         sa.CheckConstraint(
-            "status IN ('pending', 'exchanging', 'committed', 'failed')",
+            "status IN ('pending', 'polling', 'exchanging', 'committed', 'failed')",
             name="ck_ai_provider_oauth_attempts_status",
         ),
         sa.CheckConstraint(
-            "((status IN ('pending', 'exchanging')) AND encrypted_flow_payload IS NOT NULL AND "
-            "flow_payload_nonce IS NOT NULL) OR ((status IN ('committed', 'failed')) AND "
-            "encrypted_flow_payload IS NULL AND flow_payload_nonce IS NULL)",
+            "((status IN ('pending', 'polling', 'exchanging')) AND "
+            "encrypted_flow_payload IS NOT NULL AND flow_payload_nonce IS NOT NULL) OR "
+            "((status IN ('committed', 'failed')) AND encrypted_flow_payload IS NULL AND "
+            "flow_payload_nonce IS NULL)",
             name="ck_ai_provider_oauth_attempts_material",
+        ),
+        sa.CheckConstraint(
+            "(status = 'polling' AND poll_claim_id IS NOT NULL) OR "
+            "(status <> 'polling' AND poll_claim_id IS NULL)",
+            name="ck_ai_provider_oauth_attempts_poll_claim",
         ),
         sa.ForeignKeyConstraint(["owner_user_id"], ["users.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["provider_row_id"], ["ai_providers.id"], ondelete="CASCADE"),

@@ -33,9 +33,9 @@ def validate_public_https_url(url: str, *, label: str) -> None:
         or not parsed.hostname
         or parsed.username is not None
         or parsed.password is not None
-        or bool(parsed.params)
-        or bool(parsed.query)
-        or bool(parsed.fragment)
+        or ";" in candidate
+        or "?" in candidate
+        or "#" in candidate
     ):
         raise UnsafePublicHttpsUrlError(f"{label} must be a public HTTPS URL")
     if is_private_hostname(parsed.hostname):

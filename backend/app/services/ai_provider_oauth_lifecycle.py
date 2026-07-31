@@ -4,13 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models.ai_provider import (
-    AiProviderOAuthAttempt,
-    AiProviderOAuthRevokeTombstone,
-)
+from app.models.ai_provider import AiProviderOAuthAttempt
 
 OAuthAttemptTerminalStatus = Literal["committed", "failed"]
 
@@ -30,6 +24,7 @@ class OAuthAttemptTerminalTransition:
         attempt.receipt = self.receipt
         attempt.encrypted_flow_payload = None
         attempt.flow_payload_nonce = None
+        attempt.poll_claim_id = None
 
     def update_values(self) -> dict[str, object]:
         return {
@@ -38,6 +33,7 @@ class OAuthAttemptTerminalTransition:
             "receipt": self.receipt,
             "encrypted_flow_payload": None,
             "flow_payload_nonce": None,
+            "poll_claim_id": None,
         }
 
 
@@ -62,79 +58,10 @@ def terminal_oauth_attempt(
     )
 
 
-async def purge_expired_oauth_records(
-    db: AsyncSession,
-    *,
-    now: datetime | None = None,
-    retention: timedelta = OAUTH_TERMINAL_RETENTION,
-    limit: int = OAUTH_RETENTION_BATCH_SIZE,
-) -> OAuthRetentionPurgeResult:
-    """Delete one bounded batch of expired terminal OAuth audit rows."""
-
-    batch_limit = max(0, limit)
-    if batch_limit == 0:
-        return OAuthRetentionPurgeResult(attempts=0, tombstones=0)
-    cutoff = (now or datetime.now(UTC)) - retention
-
-    attempt_ids = list(
-        (
-            await db.execute(
-                select(AiProviderOAuthAttempt.id)
-                .where(
-                    AiProviderOAuthAttempt.status.in_(("committed", "failed")),
-                    AiProviderOAuthAttempt.completed_at < cutoff,
-                )
-                .order_by(
-                    AiProviderOAuthAttempt.completed_at,
-                    AiProviderOAuthAttempt.id,
-                )
-                .limit(batch_limit)
-                .with_for_update(skip_locked=True)
-            )
-        ).scalars()
-    )
-    if attempt_ids:
-        await db.execute(
-            delete(AiProviderOAuthAttempt).where(AiProviderOAuthAttempt.id.in_(attempt_ids))
-        )
-
-    tombstone_ids = list(
-        (
-            await db.execute(
-                select(AiProviderOAuthRevokeTombstone.id)
-                .where(
-                    AiProviderOAuthRevokeTombstone.status.in_(
-                        ("cancelled", "revoked", "quarantined")
-                    ),
-                    AiProviderOAuthRevokeTombstone.updated_at < cutoff,
-                )
-                .order_by(
-                    AiProviderOAuthRevokeTombstone.updated_at,
-                    AiProviderOAuthRevokeTombstone.id,
-                )
-                .limit(batch_limit)
-                .with_for_update(skip_locked=True)
-            )
-        ).scalars()
-    )
-    if tombstone_ids:
-        await db.execute(
-            delete(AiProviderOAuthRevokeTombstone).where(
-                AiProviderOAuthRevokeTombstone.id.in_(tombstone_ids)
-            )
-        )
-
-    return OAuthRetentionPurgeResult(
-        attempts=len(attempt_ids),
-        tombstones=len(tombstone_ids),
-    )
-
-
 __all__ = [
     "OAUTH_RETENTION_BATCH_SIZE",
     "OAUTH_TERMINAL_RETENTION",
     "OAuthAttemptTerminalTransition",
     "OAuthRetentionPurgeResult",
-    "purge_expired_oauth_records",
     "terminal_oauth_attempt",
 ]

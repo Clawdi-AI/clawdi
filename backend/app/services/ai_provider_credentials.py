@@ -13,6 +13,7 @@ from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.schemas.runtime import validate_hosted_runtime_desired_state
+from app.services.url_security import is_public_https_url
 
 OAuthConsumerRuntime = Literal["codex", "hermes", "openclaw"]
 OAUTH_CONSUMER_RUNTIMES = frozenset({"codex", "hermes", "openclaw"})
@@ -124,6 +125,25 @@ async def claim_unique_bound_runtime(
     payload: AiProviderAuthPayload,
     prospective_auth_type: str,
 ) -> None:
+    consumers = await validate_prospective_bound_runtime_auth(
+        db,
+        owner_user_id=owner_user_id,
+        provider_id=provider_id,
+        prospective_auth_type=prospective_auth_type,
+    )
+    if consumers:
+        await claim_oauth_payload(db, payload=payload, consumer=consumers[0])
+
+
+async def validate_prospective_bound_runtime_auth(
+    db: AsyncSession,
+    *,
+    owner_user_id: UUID,
+    provider_id: str,
+    prospective_auth_type: str,
+) -> list[OAuthCredentialConsumer]:
+    """Validate every runtime containing a provider under its prospective auth type."""
+
     rows = (
         await db.execute(
             select(AgentEnvironment.id, HostedRuntimeState.runtimes)
@@ -141,15 +161,15 @@ async def claim_unique_bound_runtime(
         if binding is None or provider_id not in binding[1]:
             continue
         consumers.append(OAuthCredentialConsumer(environment_id, binding[0]))
-    if len(consumers) > 1:
+    if prospective_auth_type in {"agent_profile", "oauth_profile"} and len(consumers) > 1:
         raise OAuthCredentialClaimConflict(
             "OAuth credential cannot be bound to multiple Agent runtimes"
         )
-    if consumers:
+    for consumer in consumers:
         binding = next(
             selected_runtime_binding(runtimes)
             for environment_id, runtimes in rows
-            if environment_id == consumers[0].environment_id
+            if environment_id == consumer.environment_id
         )
         if binding is None:  # pragma: no cover - consumer construction invariant
             raise OAuthCredentialClaimConflict("Hosted runtime provider pool is invalid")
@@ -160,7 +180,7 @@ async def claim_unique_bound_runtime(
             prospective_provider_id=provider_id,
             prospective_auth_type=prospective_auth_type,
         )
-        await claim_oauth_payload(db, payload=payload, consumer=consumers[0])
+    return consumers
 
 
 async def provider_has_hosted_runtime_consumer(
@@ -225,6 +245,14 @@ async def _lock_and_validate_runtime_oauth_pool(
         oauth_provider_ids.add(prospective_provider_id)
     if len(oauth_provider_ids) > 1:
         raise OAuthCredentialClaimConflict("A runtime cannot bind more than one OAuth AI Provider")
+    invalid_endpoint_ids = sorted(
+        provider.provider_id for provider in providers if not is_public_https_url(provider.base_url)
+    )
+    if invalid_endpoint_ids:
+        raise OAuthCredentialClaimConflict(
+            "Hosted runtime AI Provider base_url must be a public HTTPS URL: "
+            + ", ".join(invalid_endpoint_ids)
+        )
     return providers
 
 
@@ -289,6 +317,7 @@ async def release_runtime_oauth_claims(
     owner_user_id: UUID,
     environment_id: UUID,
 ) -> None:
+    await lock_ai_provider_owner(db, owner_user_id)
     payloads = list(
         (
             await db.execute(

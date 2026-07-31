@@ -1,21 +1,17 @@
 import base64
-import binascii
 import hashlib
-import json
-import logging
 import re
 import secrets
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Literal
+from typing import Annotated
 from urllib.parse import urlencode, urlparse
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
@@ -25,14 +21,11 @@ from app.core.auth import (
     require_user_auth_unbound,
     require_user_cli,
 )
-from app.core.config import settings
 from app.core.database import async_session_factory, get_session
 from app.models.ai_provider import (
     AiProvider,
     AiProviderAuthPayload,
-    AiProviderOAuthAttempt,
 )
-from app.models.user import User
 from app.schemas.ai_provider import (
     AiProviderAcceptRequest,
     AiProviderAcceptResponse,
@@ -73,9 +66,6 @@ from app.schemas.ai_provider import (
 )
 from app.services.ai_provider_auth_transition import (
     AuthCredentialWrite,
-    OAuthRevokeTombstoneRef,
-    cancel_oauth_revoke_tombstone,
-    enqueue_oauth_revoke_tombstone,
     transition_ai_provider_auth,
 )
 from app.services.ai_provider_capabilities import (
@@ -90,15 +80,34 @@ from app.services.ai_provider_credentials import (
     claim_oauth_payload,
     environment_binds_provider,
     environment_matches_runtime,
+    lock_ai_provider_owner,
+    provider_has_hosted_runtime_consumer,
+    validate_prospective_bound_runtime_auth,
 )
-from app.services.ai_provider_oauth_lifecycle import terminal_oauth_attempt
+from app.services.ai_provider_oauth_attempt import (
+    CODEX_OAUTH_PROVIDER,
+    AiProviderOAuthAttemptService,
+    OAuthDevicePollPending,
+)
+from app.services.ai_provider_oauth_attempt import (
+    oauth_config_for as _oauth_config_for,
+)
+from app.services.ai_provider_oauth_attempt import (
+    required_oauth_config as _required_oauth_config,
+)
+from app.services.ai_provider_oauth_attempt import (
+    validate_codex_oauth_provider_shape as _validate_codex_oauth_provider_shape,
+)
+from app.services.ai_provider_oauth_attempt import (
+    validate_oauth_url as _validate_oauth_url,
+)
+from app.services.ai_provider_oauth_attempt import (
+    validate_redirect_uri as _validate_redirect_uri,
+)
 from app.services.codex_oauth import (
     CODEX_DEVICE_VERIFICATION_URL,
     CODEX_OAUTH_CLIENT_ID,
-    CODEX_OAUTH_TOKEN_URL,
     CodexOAuthUpstreamError,
-    exchange_device_code,
-    poll_device_authorization,
     start_device_authorization,
 )
 from app.services.managed_ai_provider import (
@@ -117,11 +126,12 @@ from app.services.platform_contract import (
     read_platform_replay,
     store_platform_response,
 )
+from app.services.private_ip import is_private_hostname
 from app.services.sync_events import queue_provider_runtime_manifest_changed
-from app.services.vault_crypto import decrypt, encrypt
+from app.services.url_security import is_public_https_url
+from app.services.vault_crypto import decrypt
 
 router = APIRouter(prefix="/ai-providers", tags=["ai-providers"])
-logger = logging.getLogger(__name__)
 AI_PROVIDER_SCOPE = "account_global"
 
 ALLOWED_API_MODES: dict[str, set[str]] = {
@@ -137,23 +147,8 @@ ALLOWED_API_MODES: dict[str, set[str]] = {
 }
 OAUTH_STATE_TTL_SECONDS = 10 * 60
 OAUTH_DEVICE_STATE_TTL_SECONDS = 15 * 60
-OAUTH_EXCHANGE_STALE_SECONDS = 2 * 60
-CODEX_OAUTH_PROVIDER = "codex"
-CODEX_OPENAI_BASE_URL = "https://api.openai.com/v1"
 SUPPORTED_AGENT_PROFILE_TOOLS = {CODEX_OAUTH_PROVIDER}
 SUPPORTED_OAUTH_PROVIDERS = {CODEX_OAUTH_PROVIDER}
-CODEX_OAUTH_CONFIG = {
-    "authorization_url": "https://auth.openai.com/oauth/authorize",
-    "token_url": CODEX_OAUTH_TOKEN_URL,
-    "client_id": CODEX_OAUTH_CLIENT_ID,
-    "scope": "openid profile email offline_access api.connectors.read api.connectors.invoke",
-    "extra_authorize_params": {
-        "id_token_add_organizations": "true",
-        "codex_cli_simplified_flow": "true",
-        "originator": "codex_cli_rs",
-    },
-}
-BUILTIN_OAUTH_CONFIGS = {CODEX_OAUTH_PROVIDER: CODEX_OAUTH_CONFIG}
 RESERVED_OAUTH_AUTHORIZE_PARAMS = {
     "audience",
     "client_id",
@@ -171,6 +166,16 @@ IdempotencyKey = Annotated[
 ]
 
 _AI_PROVIDER_ACCEPT_OPERATION = "ai_provider.accept"
+
+
+def _oauth_attempt_service(auth: AuthContext) -> AiProviderOAuthAttemptService:
+    async def build_response(db: AsyncSession, provider: AiProvider) -> AiProviderResponse:
+        return await _to_response(db, auth, provider)
+
+    return AiProviderOAuthAttemptService(
+        response_builder=build_response,
+        session_factory=async_session_factory,
+    )
 
 
 async def _require_ai_provider_accept_auth(
@@ -229,7 +234,13 @@ async def upsert_ai_provider(
     errors = _validate_provider(body)
     if errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": errors})
-    await _lock_provider_pool(db, auth.user_id)
+    await lock_ai_provider_owner(db, auth.user_id)
+    await _validate_hosted_consumer_endpoint(
+        db,
+        owner_user_id=auth.user_id,
+        provider_id=body.provider_id,
+        base_url=body.base_url,
+    )
     await _validate_runtime_env_unique(db, auth, body)
     existing = await _find_provider(db, auth, body.provider_id, include_archived=True)
     if existing is not None and existing.archived_at is None and not replace:
@@ -240,18 +251,30 @@ async def upsert_ai_provider(
     _apply_provider_body(provider, body, apply_auth=False)
     auth_ref, auth_metadata = body.auth.persistence_fields()
     if existing is None:
+        try:
+            await validate_prospective_bound_runtime_auth(
+                db,
+                owner_user_id=auth.user_id,
+                provider_id=provider.provider_id,
+                prospective_auth_type=body.auth.type,
+            )
+        except OAuthCredentialClaimConflict as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
         provider.auth_type = body.auth.type
         provider.auth_ref = auth_ref
         provider.auth_metadata = auth_metadata
     else:
-        transition = await transition_ai_provider_auth(
-            db,
-            owner_user_id=auth.user_id,
-            provider=provider,
-            auth_type=body.auth.type,
-            auth_ref=auth_ref,
-            auth_metadata=auth_metadata,
-        )
+        try:
+            transition = await transition_ai_provider_auth(
+                db,
+                owner_user_id=auth.user_id,
+                provider=provider,
+                auth_type=body.auth.type,
+                auth_ref=auth_ref,
+                auth_metadata=auth_metadata,
+            )
+        except OAuthCredentialClaimConflict as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
         auth_event_queued = transition.manifest_event_queued
     provider.archived_at = None
     db.add(provider)
@@ -277,85 +300,17 @@ async def poll_ai_provider_oauth_device(
     request_db: AsyncSession = Depends(get_session),
 ) -> AiProviderOAuthDevicePollResponse:
     await _get_provider_or_404(request_db, auth, provider_id)
-    async with async_session_factory() as db:
-        attempt = await _load_oauth_attempt(
-            db,
-            state_identity=_oauth_attempt_state_identity(body.state),
-            owner_user_id=auth.user_id,
-            provider_id=provider_id,
-            flow_kind="device_code",
-        )
-        replay = _oauth_attempt_replay(attempt)
-        if replay is not None:
-            return AiProviderOAuthDeviceReadyResponse(status="ready", provider=replay)
-        if attempt.status != "pending":
-            raise HTTPException(status.HTTP_409_CONFLICT, "OAuth completion is not pending")
-        oauth_state = _oauth_attempt_flow_payload(attempt)
-        oauth_provider = attempt.oauth_provider
-        await db.rollback()
-
-    interval_seconds = oauth_state.get("poll_interval_seconds")
-    retry_after_seconds = (
-        min(max(interval_seconds, 1), 30) if isinstance(interval_seconds, int) else 5
-    )
-    config = _oauth_config_for(oauth_provider)
-    client_id = _required_oauth_config(config, "client_id", oauth_provider)
-    if client_id != CODEX_OAUTH_CLIENT_ID:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "ChatGPT device sign-in requires the official Codex OAuth client",
-        )
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            poll_result = await poll_device_authorization(
-                client,
-                device_auth_id=str(oauth_state.get("device_auth_id") or ""),
-                user_code=str(oauth_state.get("user_code") or ""),
-            )
-            if poll_result.pending:
-                return AiProviderOAuthDevicePendingResponse(
-                    status="pending",
-                    retry_after_seconds=retry_after_seconds,
-                )
-            if poll_result.authorization_code is None or poll_result.code_verifier is None:
-                raise HTTPException(
-                    status.HTTP_502_BAD_GATEWAY,
-                    "ChatGPT device authorization response was incomplete",
-                )
-    except CodexOAuthUpstreamError as exc:
-        if exc.pending_retry and exc.retry_after is not None:
-            return AiProviderOAuthDevicePendingResponse(
-                status="pending",
-                retry_after_seconds=exc.retry_after,
-            )
-        raise HTTPException(
-            status.HTTP_429_TOO_MANY_REQUESTS
-            if exc.retry_after is not None
-            else (
-                status.HTTP_503_SERVICE_UNAVAILABLE
-                if exc.unavailable
-                else status.HTTP_502_BAD_GATEWAY
-            ),
-            str(exc),
-            headers=(
-                {"Retry-After": str(exc.retry_after)} if exc.retry_after is not None else None
-            ),
-        ) from exc
-
-    attempt_id, replay = await _begin_oauth_attempt_exchange(
+    result = await _oauth_attempt_service(auth).poll_device_attempt(
         owner_user_id=auth.user_id,
         provider_id=provider_id,
-        state=body.state,
-        flow_kind="device_code",
-        payload_updates={
-            "authorization_code": poll_result.authorization_code,
-            "code_verifier": poll_result.code_verifier,
-        },
+        state_value=body.state,
     )
-    if replay is not None:
-        return AiProviderOAuthDeviceReadyResponse(status="ready", provider=replay)
-    provider_response = await _exchange_and_commit_oauth_attempt(attempt_id, auth)
-    return AiProviderOAuthDeviceReadyResponse(status="ready", provider=provider_response)
+    if isinstance(result, OAuthDevicePollPending):
+        return AiProviderOAuthDevicePendingResponse(
+            status="pending",
+            retry_after_seconds=result.retry_after_seconds,
+        )
+    return AiProviderOAuthDeviceReadyResponse(status="ready", provider=result)
 
 
 @router.post(
@@ -374,6 +329,7 @@ async def accept_ai_provider(
 
     request_hash = _ai_provider_accept_request_hash(body)
     try:
+        await lock_ai_provider_owner(db, auth.user_id)
         replay = await _load_ai_provider_accept_replay(
             db,
             operation=_AI_PROVIDER_ACCEPT_OPERATION,
@@ -702,7 +658,7 @@ async def patch_ai_provider(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
-    await _lock_provider_pool(db, auth.user_id)
+    await lock_ai_provider_owner(db, auth.user_id)
     provider = await _get_provider_or_404_for_update(db, auth, provider_id)
     previous_non_auth_signature = _runtime_manifest_provider_non_auth_signature(provider)
     auth_event_queued = False
@@ -716,18 +672,28 @@ async def patch_ai_provider(
     errors = _validate_provider(merged)
     if errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": errors})
+    await _validate_hosted_consumer_endpoint(
+        db,
+        owner_user_id=auth.user_id,
+        provider_id=provider.provider_id,
+        base_url=merged.base_url,
+    )
     await _validate_runtime_env_unique(db, auth, merged, exclude_provider_id=provider.provider_id)
-    _apply_provider_body(provider, merged, apply_auth=False)
     if "auth" in body.model_fields_set:
         auth_ref, auth_metadata = merged.auth.persistence_fields()
-        transition = await transition_ai_provider_auth(
-            db,
-            owner_user_id=auth.user_id,
-            provider=provider,
-            auth_type=merged.auth.type,
-            auth_ref=auth_ref,
-            auth_metadata=auth_metadata,
-        )
+    _apply_provider_body(provider, merged, apply_auth=False)
+    if "auth" in body.model_fields_set:
+        try:
+            transition = await transition_ai_provider_auth(
+                db,
+                owner_user_id=auth.user_id,
+                provider=provider,
+                auth_type=merged.auth.type,
+                auth_ref=auth_ref,
+                auth_metadata=auth_metadata,
+            )
+        except OAuthCredentialClaimConflict as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
         auth_event_queued = transition.manifest_event_queued
     if (
         previous_non_auth_signature != _runtime_manifest_provider_non_auth_signature(provider)
@@ -745,7 +711,7 @@ async def delete_ai_provider(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderDeleteResponse:
-    await _lock_provider_pool(db, auth.user_id)
+    await lock_ai_provider_owner(db, auth.user_id)
     provider = await _get_provider_or_404_for_update(db, auth, provider_id)
     result = await transition_ai_provider_auth(
         db,
@@ -788,7 +754,7 @@ async def set_ai_provider_api_key(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
-    await _lock_provider_pool(db, auth.user_id)
+    await lock_ai_provider_owner(db, auth.user_id)
     provider = await _get_provider_or_404_for_update(db, auth, provider_id)
     profile = "default"
     runtime_env_name = body.runtime_env_name
@@ -834,6 +800,7 @@ async def import_ai_provider_auth(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
+    await lock_ai_provider_owner(db, auth.user_id)
     provider = await _get_provider_or_404_for_update(db, auth, provider_id)
     auth_import = body.root
     profile = _normalize_profile(auth_import.profile)
@@ -871,18 +838,6 @@ async def import_ai_provider_auth(
     return await _to_response(db, auth, provider)
 
 
-def _validate_codex_oauth_provider_shape(provider: AiProvider | AiProviderUpsert) -> None:
-    if (
-        provider.type != "openai"
-        or effective_provider_api_mode(provider.type, provider.api_mode) != "openai_responses"
-        or provider.base_url.rstrip("/") != CODEX_OPENAI_BASE_URL
-    ):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "ChatGPT sign-in requires the canonical OpenAI Responses provider",
-        )
-
-
 async def _build_codex_device_authorization(
     *,
     db: AsyncSession,
@@ -917,7 +872,7 @@ async def _build_codex_device_authorization(
         ) from exc
     profile = "default"
     expires_at = datetime.now(UTC) + timedelta(seconds=OAUTH_DEVICE_STATE_TTL_SECONDS)
-    state_value = await _persist_oauth_attempt(
+    state_value = await _oauth_attempt_service(auth).persist_attempt(
         db,
         owner_user_id=auth.user_id,
         provider=provider,
@@ -993,7 +948,7 @@ async def start_ai_provider_oauth(
     code_verifier = secrets.token_urlsafe(48)
     code_challenge = _code_challenge(code_verifier)
     expires_at = datetime.now(UTC) + timedelta(seconds=OAUTH_STATE_TTL_SECONDS)
-    state = await _persist_oauth_attempt(
+    state = await _oauth_attempt_service(auth).persist_attempt(
         db,
         owner_user_id=auth.user_id,
         provider=provider,
@@ -1058,560 +1013,23 @@ async def complete_ai_provider_oauth(
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
     await _get_provider_or_404(db, auth, provider_id)
-    attempt_id, replay = await _begin_oauth_attempt_exchange(
+    service = _oauth_attempt_service(auth)
+    begin = await service.begin_exchange(
         owner_user_id=auth.user_id,
         provider_id=provider_id,
-        state=body.state,
+        state_value=body.state,
         flow_kind="authorization_code",
         payload_updates={
             "authorization_code": body.code,
             "requested_redirect_uri": body.redirect_uri,
         },
     )
-    if replay is not None:
-        return replay
-    return await _exchange_and_commit_oauth_attempt(attempt_id, auth)
-
-
-async def _persist_oauth_attempt(
-    db: AsyncSession,
-    *,
-    owner_user_id: UUID,
-    provider: AiProvider,
-    oauth_provider: str,
-    profile: str,
-    flow_kind: Literal["authorization_code", "device_code"],
-    expires_at: datetime,
-    flow_payload: dict,
-) -> str:
-    locked_provider = (
-        await db.execute(
-            select(AiProvider)
-            .where(
-                AiProvider.id == provider.id,
-                AiProvider.owner_user_id == owner_user_id,
-                AiProvider.archived_at.is_(None),
-            )
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-    ).scalar_one_or_none()
-    if locked_provider is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "AI Provider not found")
-    _validate_codex_oauth_provider_shape(locked_provider)
-    now = datetime.now(UTC)
-    await db.execute(
-        update(AiProviderOAuthAttempt)
-        .where(
-            AiProviderOAuthAttempt.provider_row_id == locked_provider.id,
-            AiProviderOAuthAttempt.status.in_(("pending", "exchanging")),
-        )
-        .values(**terminal_oauth_attempt("failed", completed_at=now).update_values())
+    if begin.replay is not None:
+        return begin.replay
+    return await service.exchange_and_commit(
+        attempt_id=begin.attempt_id,
+        owner_user_id=auth.user_id,
     )
-    payload = (
-        await db.execute(
-            select(AiProviderAuthPayload)
-            .where(
-                AiProviderAuthPayload.owner_user_id == owner_user_id,
-                AiProviderAuthPayload.provider_id == locked_provider.provider_id,
-                AiProviderAuthPayload.auth_profile == profile,
-                AiProviderAuthPayload.archived_at.is_(None),
-            )
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
-    base_revision = payload.credential_revision if payload is not None else None
-    flow_id = uuid4()
-    state = _encode_oauth_state(
-        {
-            "flow_id": str(flow_id),
-            "fence": secrets.token_urlsafe(24),
-        }
-    )
-    encrypted_payload, payload_nonce = encrypt(
-        json.dumps(flow_payload, separators=(",", ":"), sort_keys=True)
-    )
-    attempt = AiProviderOAuthAttempt(
-        id=uuid4(),
-        flow_id=flow_id,
-        owner_user_id=owner_user_id,
-        provider_row_id=locked_provider.id,
-        provider_id=locked_provider.provider_id,
-        oauth_provider=oauth_provider,
-        auth_profile=profile,
-        flow_kind=flow_kind,
-        status="pending",
-        base_credential_revision=base_revision,
-        state_sha256=hashlib.sha256(state.encode()).hexdigest(),
-        encrypted_flow_payload=encrypted_payload,
-        flow_payload_nonce=payload_nonce,
-        expires_at=expires_at,
-    )
-    db.add(attempt)
-    await db.flush()
-    return state
-
-
-# Transaction and lock boundary for the durable attempt state machine:
-# - the request transaction creates `pending` while holding provider -> credential locks;
-# - begin uses one short provider -> attempt transaction to commit `exchanging`;
-# - token exchange runs without an open database transaction;
-# - commit uses the same provider -> attempt lock order for `committed`;
-# - stale or failed exchanges use a separate best-effort transition to `failed`.
-@dataclass(frozen=True, slots=True)
-class _OAuthAttemptStateIdentity:
-    flow_id: UUID
-    state_sha256: str
-
-
-def _oauth_attempt_state_identity(state: str) -> _OAuthAttemptStateIdentity:
-    decoded = _decode_oauth_state(state)
-    try:
-        flow_id = UUID(str(decoded.get("flow_id") or ""))
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state") from exc
-    if not isinstance(decoded.get("fence"), str):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state")
-    return _OAuthAttemptStateIdentity(
-        flow_id=flow_id,
-        state_sha256=hashlib.sha256(state.encode()).hexdigest(),
-    )
-
-
-async def _load_oauth_attempt(
-    db: AsyncSession,
-    *,
-    state_identity: _OAuthAttemptStateIdentity,
-    owner_user_id: UUID,
-    provider_id: str,
-    flow_kind: Literal["authorization_code", "device_code"],
-    for_update: bool = False,
-) -> AiProviderOAuthAttempt:
-    statement = select(AiProviderOAuthAttempt).where(
-        AiProviderOAuthAttempt.flow_id == state_identity.flow_id,
-        AiProviderOAuthAttempt.owner_user_id == owner_user_id,
-        AiProviderOAuthAttempt.provider_id == provider_id,
-        AiProviderOAuthAttempt.flow_kind == flow_kind,
-        AiProviderOAuthAttempt.state_sha256 == state_identity.state_sha256,
-    )
-    if for_update:
-        statement = statement.with_for_update().execution_options(populate_existing=True)
-    attempt = (await db.execute(statement)).scalar_one_or_none()
-    if attempt is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state does not match this user")
-    if attempt.status != "committed" and attempt.expires_at < datetime.now(UTC):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state expired")
-    return attempt
-
-
-def _oauth_attempt_flow_payload(attempt: AiProviderOAuthAttempt) -> dict:
-    if attempt.encrypted_flow_payload is None or attempt.flow_payload_nonce is None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Stored OAuth attempt is invalid")
-    try:
-        payload = json.loads(decrypt(attempt.encrypted_flow_payload, attempt.flow_payload_nonce))
-    except Exception as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Stored OAuth attempt is invalid") from exc
-    if not isinstance(payload, dict):
-        raise HTTPException(status.HTTP_409_CONFLICT, "Stored OAuth attempt is invalid")
-    return payload
-
-
-def _oauth_attempt_replay(attempt: AiProviderOAuthAttempt) -> AiProviderResponse | None:
-    if attempt.status != "committed":
-        return None
-    if not isinstance(attempt.receipt, dict):
-        raise HTTPException(status.HTTP_409_CONFLICT, "Stored OAuth receipt is invalid")
-    try:
-        return AiProviderResponse.model_validate(attempt.receipt)
-    except ValidationError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Stored OAuth receipt is invalid") from exc
-
-
-async def _begin_oauth_attempt_exchange(
-    *,
-    owner_user_id: UUID,
-    provider_id: str,
-    state: str,
-    flow_kind: Literal["authorization_code", "device_code"],
-    payload_updates: dict,
-) -> tuple[UUID, AiProviderResponse | None]:
-    state_identity = _oauth_attempt_state_identity(state)
-    async with async_session_factory() as db:
-        identity = await _load_oauth_attempt(
-            db,
-            state_identity=state_identity,
-            owner_user_id=owner_user_id,
-            provider_id=provider_id,
-            flow_kind=flow_kind,
-        )
-        replay = _oauth_attempt_replay(identity)
-        if replay is not None:
-            attempt_id = identity.id
-            await db.rollback()
-            return attempt_id, replay
-        attempt_id = identity.id
-        provider_row_id = identity.provider_row_id
-        attempt_provider_id = identity.provider_id
-        provider = (
-            await db.execute(
-                select(AiProvider)
-                .where(
-                    AiProvider.id == provider_row_id,
-                    AiProvider.owner_user_id == owner_user_id,
-                    AiProvider.provider_id == attempt_provider_id,
-                )
-                .with_for_update()
-            )
-        ).scalar_one_or_none()
-        attempt = await _load_oauth_attempt(
-            db,
-            state_identity=state_identity,
-            owner_user_id=owner_user_id,
-            provider_id=provider_id,
-            flow_kind=flow_kind,
-            for_update=True,
-        )
-        replay = _oauth_attempt_replay(attempt)
-        if replay is not None:
-            await db.rollback()
-            return attempt_id, replay
-        if provider is None or provider.archived_at is not None:
-            terminal_oauth_attempt("failed").apply(attempt)
-            await db.commit()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "AI Provider changed after sign-in started",
-            )
-        if attempt.status != "pending":
-            if _oauth_attempt_exchange_is_stale(attempt):
-                terminal_oauth_attempt("failed").apply(attempt)
-                await db.commit()
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    "OAuth completion became stale; start sign-in again",
-                )
-            await db.rollback()
-            raise HTTPException(status.HTTP_409_CONFLICT, "OAuth completion is not pending")
-        _validate_codex_oauth_provider_shape(provider)
-        current_payload = (
-            await db.execute(
-                select(AiProviderAuthPayload)
-                .where(
-                    AiProviderAuthPayload.owner_user_id == owner_user_id,
-                    AiProviderAuthPayload.provider_id == attempt.provider_id,
-                    AiProviderAuthPayload.auth_profile == attempt.auth_profile,
-                    AiProviderAuthPayload.archived_at.is_(None),
-                )
-                .with_for_update()
-            )
-        ).scalar_one_or_none()
-        current_revision = (
-            current_payload.credential_revision if current_payload is not None else None
-        )
-        if current_revision != attempt.base_credential_revision:
-            terminal_oauth_attempt("failed").apply(attempt)
-            await db.commit()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "AI Provider credentials changed after this sign-in started",
-            )
-        flow_payload = _oauth_attempt_flow_payload(attempt)
-        requested_redirect_uri = payload_updates.get("requested_redirect_uri")
-        if flow_kind == "authorization_code":
-            redirect_uri = str(flow_payload.get("redirect_uri") or "")
-            _validate_redirect_uri(redirect_uri)
-            if requested_redirect_uri is not None:
-                _validate_redirect_uri(str(requested_redirect_uri))
-                if not secrets.compare_digest(str(requested_redirect_uri), redirect_uri):
-                    raise HTTPException(
-                        status.HTTP_400_BAD_REQUEST,
-                        "OAuth redirect_uri does not match state",
-                    )
-        flow_payload.update(
-            {
-                key: value
-                for key, value in payload_updates.items()
-                if key != "requested_redirect_uri" and value is not None
-            }
-        )
-        attempt.encrypted_flow_payload, attempt.flow_payload_nonce = encrypt(
-            json.dumps(flow_payload, separators=(",", ":"), sort_keys=True)
-        )
-        attempt.status = "exchanging"
-        attempt.exchange_started_at = datetime.now(UTC)
-        await db.commit()
-    return attempt_id, None
-
-
-async def _exchange_and_commit_oauth_attempt(
-    attempt_id: UUID,
-    auth: AuthContext,
-) -> AiProviderResponse:
-    async with async_session_factory() as db:
-        attempt = await db.get(AiProviderOAuthAttempt, attempt_id)
-        if attempt is None or attempt.owner_user_id != auth.user_id:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "OAuth attempt not found")
-        replay = _oauth_attempt_replay(attempt)
-        if replay is not None:
-            await db.rollback()
-            return replay
-        if attempt.status != "exchanging":
-            raise HTTPException(status.HTTP_409_CONFLICT, "OAuth completion is not exchanging")
-        oauth_provider = attempt.oauth_provider
-        profile = attempt.auth_profile
-        flow_kind = attempt.flow_kind
-        attempt_provider_id = attempt.provider_id
-        flow_payload = _oauth_attempt_flow_payload(attempt)
-        await db.rollback()
-
-    config = _oauth_config_for(oauth_provider)
-    client_id = _required_oauth_config(config, "client_id", oauth_provider)
-    compensation = None
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            if flow_kind == "device_code":
-                response = await exchange_device_code(
-                    client,
-                    client_id=client_id,
-                    authorization_code=str(flow_payload.get("authorization_code") or ""),
-                    code_verifier=str(flow_payload.get("code_verifier") or ""),
-                )
-                source = "device_code"
-            else:
-                token_url = _required_oauth_config(config, "token_url", oauth_provider)
-                _validate_oauth_url(token_url, "token_url")
-                form = {
-                    "grant_type": "authorization_code",
-                    "client_id": client_id,
-                    "code": str(flow_payload.get("authorization_code") or ""),
-                    "redirect_uri": str(flow_payload.get("redirect_uri") or ""),
-                    "code_verifier": str(flow_payload.get("code_verifier") or ""),
-                }
-                client_secret = str(config.get("client_secret") or "")
-                if client_secret:
-                    form["client_secret"] = client_secret
-                response = await client.post(token_url, data=form)
-                if response.status_code >= 400:
-                    raise HTTPException(
-                        status.HTTP_502_BAD_GATEWAY,
-                        "OAuth token exchange failed",
-                    )
-                source = "oauth_pkce"
-            revocable = _revocable_token_from_token_response(response)
-            if revocable is not None:
-                async with async_session_factory() as compensation_db:
-                    compensation = await enqueue_oauth_revoke_tombstone(
-                        compensation_db,
-                        owner_user_id=auth.user_id,
-                        provider_id=attempt_provider_id,
-                        oauth_provider=oauth_provider,
-                        revocable=revocable,
-                        oauth_attempt_id=attempt_id,
-                    )
-                    await compensation_db.commit()
-            payload_text, provider_auth_type, metadata = await _oauth_payload_from_token_response(
-                client,
-                oauth_provider,
-                config,
-                response,
-                profile,
-                source=source,
-            )
-    except CodexOAuthUpstreamError as exc:
-        await _fail_oauth_attempt(attempt_id)
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE if exc.unavailable else status.HTTP_502_BAD_GATEWAY,
-            str(exc),
-        ) from exc
-    except httpx.HTTPError as exc:
-        await _fail_oauth_attempt(attempt_id)
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OAuth token exchange failed") from exc
-    except Exception:
-        await _fail_oauth_attempt(attempt_id)
-        raise
-
-    try:
-        return await _commit_oauth_attempt(
-            attempt_id=attempt_id,
-            auth=auth,
-            provider_auth_type=provider_auth_type,
-            payload_text=payload_text,
-            metadata=metadata,
-            compensation=compensation,
-        )
-    except Exception:
-        await _fail_oauth_attempt(attempt_id)
-        raise
-
-
-async def _commit_oauth_attempt(
-    *,
-    attempt_id: UUID,
-    auth: AuthContext,
-    provider_auth_type: str,
-    payload_text: str,
-    metadata: dict,
-    compensation: OAuthRevokeTombstoneRef | None,
-) -> AiProviderResponse:
-    async with async_session_factory() as db:
-        identity = (
-            await db.execute(
-                select(AiProviderOAuthAttempt).where(
-                    AiProviderOAuthAttempt.id == attempt_id,
-                    AiProviderOAuthAttempt.owner_user_id == auth.user_id,
-                )
-            )
-        ).scalar_one_or_none()
-        if identity is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "OAuth attempt not found")
-        replay = _oauth_attempt_replay(identity)
-        if replay is not None:
-            await db.rollback()
-            return replay
-        provider_row_id = identity.provider_row_id
-        attempt_provider_id = identity.provider_id
-        provider = (
-            await db.execute(
-                select(AiProvider)
-                .where(
-                    AiProvider.id == provider_row_id,
-                    AiProvider.owner_user_id == auth.user_id,
-                    AiProvider.provider_id == attempt_provider_id,
-                )
-                .with_for_update()
-            )
-        ).scalar_one_or_none()
-        attempt = (
-            await db.execute(
-                select(AiProviderOAuthAttempt)
-                .where(
-                    AiProviderOAuthAttempt.id == attempt_id,
-                    AiProviderOAuthAttempt.owner_user_id == auth.user_id,
-                    AiProviderOAuthAttempt.provider_row_id == provider_row_id,
-                    AiProviderOAuthAttempt.provider_id == attempt_provider_id,
-                )
-                .with_for_update()
-                .execution_options(populate_existing=True)
-            )
-        ).scalar_one_or_none()
-        if attempt is None:
-            raise HTTPException(status.HTTP_409_CONFLICT, "OAuth completion lost its fence")
-        replay = _oauth_attempt_replay(attempt)
-        if replay is not None:
-            await db.rollback()
-            return replay
-        if provider is None or provider.archived_at is not None:
-            terminal_oauth_attempt("failed").apply(attempt)
-            await db.commit()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "AI Provider changed after sign-in started",
-            )
-        if attempt.status != "exchanging":
-            raise HTTPException(status.HTTP_409_CONFLICT, "OAuth completion lost its fence")
-        try:
-            _validate_codex_oauth_provider_shape(provider)
-        except HTTPException as exc:
-            terminal_oauth_attempt("failed").apply(attempt)
-            await db.commit()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "AI Provider changed after sign-in started",
-            ) from exc
-        current_payload = (
-            await db.execute(
-                select(AiProviderAuthPayload)
-                .where(
-                    AiProviderAuthPayload.owner_user_id == auth.user_id,
-                    AiProviderAuthPayload.provider_id == attempt.provider_id,
-                    AiProviderAuthPayload.auth_profile == attempt.auth_profile,
-                    AiProviderAuthPayload.archived_at.is_(None),
-                )
-                .with_for_update()
-            )
-        ).scalar_one_or_none()
-        current_revision = (
-            current_payload.credential_revision if current_payload is not None else None
-        )
-        if current_revision != attempt.base_credential_revision:
-            terminal_oauth_attempt("failed").apply(attempt)
-            await db.commit()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "AI Provider credentials changed after this sign-in started",
-            )
-        if compensation is not None and not await cancel_oauth_revoke_tombstone(
-            db,
-            compensation.id,
-            oauth_attempt_id=attempt.id,
-        ):
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "OAuth completion compensation already started; sign in again",
-            )
-        try:
-            await transition_ai_provider_auth(
-                db,
-                owner_user_id=auth.user_id,
-                provider=provider,
-                auth_type=provider_auth_type,
-                auth_ref=None,
-                auth_metadata=metadata,
-                credential=AuthCredentialWrite(
-                    profile=attempt.auth_profile,
-                    kind=provider_auth_type,
-                    plaintext=payload_text,
-                    metadata=metadata,
-                ),
-                keep_oauth_attempt_id=attempt.id,
-            )
-        except OAuthCredentialClaimConflict as exc:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-        await db.flush()
-        await db.refresh(provider)
-        response = await _to_response(db, auth, provider)
-        terminal_oauth_attempt(
-            "committed",
-            receipt=response.model_dump(mode="json", exclude_none=True),
-        ).apply(attempt)
-        await db.commit()
-        return response
-
-
-def _oauth_attempt_exchange_is_stale(attempt: AiProviderOAuthAttempt) -> bool:
-    started_at = attempt.exchange_started_at
-    return (
-        attempt.status == "exchanging"
-        and started_at is not None
-        and started_at <= datetime.now(UTC) - timedelta(seconds=OAUTH_EXCHANGE_STALE_SECONDS)
-    )
-
-
-async def _fail_oauth_attempt(attempt_id: UUID) -> None:
-    try:
-        async with async_session_factory() as db:
-            await db.execute(
-                update(AiProviderOAuthAttempt)
-                .where(
-                    AiProviderOAuthAttempt.id == attempt_id,
-                    AiProviderOAuthAttempt.status == "exchanging",
-                )
-                .values(**terminal_oauth_attempt("failed").update_values())
-            )
-            await db.commit()
-    except Exception:
-        logger.exception("oauth_attempt_failure_state_write_failed attempt_id=%s", attempt_id)
-
-
-def _revocable_token_from_token_response(response: httpx.Response) -> tuple[str, str] | None:
-    data = _token_response_json(response)
-    refresh_token = data.get("refresh_token")
-    if isinstance(refresh_token, str) and refresh_token:
-        return refresh_token, "refresh_token"
-    access_token = data.get("access_token")
-    if isinstance(access_token, str) and access_token:
-        return access_token, "access_token"
-    return None
 
 
 def _ai_provider_accept_request_hash(body: AiProviderAcceptRequest) -> str:
@@ -1673,7 +1091,13 @@ async def _accept_ai_provider(
     if errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": errors})
 
-    await _lock_provider_pool(db, auth.user_id)
+    await lock_ai_provider_owner(db, auth.user_id)
+    await _validate_hosted_consumer_endpoint(
+        db,
+        owner_user_id=auth.user_id,
+        provider_id=provider_body.provider_id,
+        base_url=provider_body.base_url,
+    )
     await _validate_runtime_env_unique(db, auth, provider_body)
     existing = await _find_provider(
         db,
@@ -1697,6 +1121,19 @@ async def _accept_ai_provider(
     )
     auth_ref, auth_metadata = provider_body.auth.persistence_fields()
     _apply_provider_body(provider, provider_body, apply_auth=False)
+    if existing is None or (
+        isinstance(body.credential, AiProviderOAuthAcceptCredential)
+        and provider_body.auth.type != existing.auth_type
+    ):
+        try:
+            await validate_prospective_bound_runtime_auth(
+                db,
+                owner_user_id=auth.user_id,
+                provider_id=provider.provider_id,
+                prospective_auth_type=provider_body.auth.type,
+            )
+        except OAuthCredentialClaimConflict as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     if existing is None:
         provider.auth_type = provider_body.auth.type
         provider.auth_ref = auth_ref
@@ -1863,151 +1300,6 @@ async def _get_provider_or_404_for_update(
     return provider
 
 
-async def _oauth_payload_from_token_response(
-    client: httpx.AsyncClient,
-    oauth_provider: str,
-    config: dict,
-    response: httpx.Response,
-    profile: str,
-    *,
-    source: str = "oauth_pkce",
-) -> tuple[str, str, dict]:
-    if oauth_provider == CODEX_OAUTH_PROVIDER:
-        payload = await _codex_auth_profile_payload(client, config, response, profile)
-        return (
-            payload,
-            "agent_profile",
-            {
-                "tool": "codex",
-                "profile": profile,
-                "source": source,
-            },
-        )
-    return (
-        response.text,
-        "oauth_profile",
-        {
-            "provider": oauth_provider,
-            "profile": profile,
-            "source": source,
-        },
-    )
-
-
-async def _codex_auth_profile_payload(
-    client: httpx.AsyncClient,
-    config: dict,
-    response: httpx.Response,
-    profile: str,
-) -> str:
-    token_data = _token_response_json(response)
-    access_token = _required_token_field(token_data, "access_token")
-    refresh_token = _required_token_field(token_data, "refresh_token")
-    id_token_value = token_data.get("id_token")
-    id_token = id_token_value if isinstance(id_token_value, str) and id_token_value else None
-    api_key = await _obtain_codex_api_key(client, config, id_token) if id_token else None
-    claims = _jwt_auth_claims(id_token or access_token)
-    account_id = claims.get("chatgpt_account_id")
-    tokens = {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "account_id": account_id if isinstance(account_id, str) and account_id else None,
-    }
-    if id_token:
-        tokens["id_token"] = id_token
-    auth_json = {
-        "auth_mode": "chatgpt",
-        "tokens": tokens,
-        "last_refresh": datetime.now(UTC).isoformat(),
-    }
-    if api_key:
-        auth_json["OPENAI_API_KEY"] = api_key
-    content = json.dumps(auth_json, indent=2)
-    envelope = {
-        "schemaVersion": 1,
-        "kind": "local_agent_profile",
-        "tool": "codex",
-        "profile": profile,
-        "importedAt": datetime.now(UTC).isoformat(),
-        "files": [
-            {
-                "logicalName": "auth.json",
-                "sourcePath": "codex-oauth",
-                "targetStrategy": "adapter_default",
-                "sourceKind": "file",
-                "content": content,
-                "mode": 0o600,
-                "size": len(content.encode("utf-8")),
-            }
-        ],
-    }
-    return json.dumps(envelope, separators=(",", ":"))
-
-
-def _token_response_json(response: httpx.Response) -> dict:
-    try:
-        data = response.json()
-    except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "OAuth token response was not JSON",
-        ) from exc
-    if not isinstance(data, dict):
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OAuth token response had invalid shape")
-    return data
-
-
-def _required_token_field(data: dict, field: str) -> str:
-    value = data.get(field)
-    if not isinstance(value, str) or not value:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            f"OAuth token response missing {field}",
-        )
-    return value
-
-
-async def _obtain_codex_api_key(
-    client: httpx.AsyncClient,
-    config: dict,
-    id_token: str,
-) -> str | None:
-    token_url = _required_oauth_config(config, "token_url", CODEX_OAUTH_PROVIDER)
-    client_id = _required_oauth_config(config, "client_id", CODEX_OAUTH_PROVIDER)
-    response = await client.post(
-        token_url,
-        data={
-            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-            "client_id": client_id,
-            "requested_token": "openai-api-key",
-            "subject_token": id_token,
-            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
-        },
-    )
-    if response.status_code >= 400:
-        return None
-    data = _token_response_json(response)
-    access_token = data.get("access_token")
-    return access_token if isinstance(access_token, str) and access_token else None
-
-
-def _jwt_auth_claims(jwt: str) -> dict:
-    parts = jwt.split(".")
-    if len(parts) < 2:
-        return {}
-    payload = parts[1]
-    padding = "=" * (-len(payload) % 4)
-    try:
-        decoded = base64.urlsafe_b64decode(f"{payload}{padding}".encode())
-        claims = json.loads(decoded)
-    except (binascii.Error, ValueError, json.JSONDecodeError):
-        return {}
-    if not isinstance(claims, dict):
-        return {}
-    auth_claims = claims.get("https://api.openai.com/auth")
-    return auth_claims if isinstance(auth_claims, dict) else {}
-
-
 @router.post("/{provider_id}/auth/resolve", response_model=AiProviderAuthResolveResponse)
 async def resolve_ai_provider_auth(
     provider_id: str,
@@ -2015,6 +1307,7 @@ async def resolve_ai_provider_auth(
     auth: AuthContext = Depends(require_user_cli),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderAuthResolveResponse:
+    await lock_ai_provider_owner(db, auth.user_id)
     provider = await _get_provider_or_404_for_update(db, auth, provider_id)
     metadata = provider.auth_metadata or {}
     if provider.auth_type == "api_key" and metadata.get("source") != "managed":
@@ -2108,99 +1401,12 @@ async def resolve_ai_provider_auth(
     )
 
 
-def _oauth_config_for(oauth_provider: str) -> dict:
-    config: dict = dict(BUILTIN_OAUTH_CONFIGS.get(oauth_provider, {}))
-    raw = settings.ai_provider_oauth_config_json.strip()
-    if raw:
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise HTTPException(
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-                "AI Provider OAuth config is invalid JSON",
-            ) from exc
-        if not isinstance(data, dict):
-            raise HTTPException(
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-                "AI Provider OAuth config must be an object",
-            )
-        configured = data.get(oauth_provider)
-        if configured is not None and not isinstance(configured, dict):
-            raise HTTPException(
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-                f"AI Provider OAuth config for {oauth_provider} must be an object",
-            )
-        if isinstance(configured, dict):
-            config = _merge_oauth_config(config, configured)
-    if not config:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            f"AI Provider OAuth config not found for {oauth_provider}",
-        )
-    return config
-
-
-def _merge_oauth_config(base: dict, override: dict) -> dict:
-    merged = {**base, **override}
-    base_extra = base.get("extra_authorize_params")
-    override_extra = override.get("extra_authorize_params")
-    if isinstance(base_extra, dict) or isinstance(override_extra, dict):
-        merged["extra_authorize_params"] = {
-            **(base_extra if isinstance(base_extra, dict) else {}),
-            **(override_extra if isinstance(override_extra, dict) else {}),
-        }
-    return merged
-
-
-def _required_oauth_config(config: dict, key: str, oauth_provider: str) -> str:
-    value = config.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            f"AI Provider OAuth config for {oauth_provider} is missing {key}",
-        )
-    return value.strip()
-
-
-def _encode_oauth_state(payload: dict[str, object]) -> str:
-    ciphertext, nonce = encrypt(json.dumps(payload, separators=(",", ":"), sort_keys=True))
-    return f"v1.{_base64url(nonce)}.{_base64url(ciphertext)}"
-
-
-def _decode_oauth_state(state: str) -> dict:
-    try:
-        version, nonce, ciphertext = state.split(".", 2)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state") from exc
-    if version != "v1":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state")
-    try:
-        plaintext = decrypt(_base64url_decode_bytes(ciphertext), _base64url_decode_bytes(nonce))
-        decoded = json.loads(plaintext)
-    except Exception as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state") from exc
-    if not isinstance(decoded, dict):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state")
-    return decoded
-
-
 def _code_challenge(code_verifier: str) -> str:
     return _base64url(hashlib.sha256(code_verifier.encode()).digest())
 
 
 def _base64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-
-def _base64url_decode_bytes(raw: str) -> bytes:
-    padding = "=" * ((4 - len(raw) % 4) % 4)
-    return base64.urlsafe_b64decode(f"{raw}{padding}")
-
-
-def _validate_oauth_url(input: str, label: str) -> None:
-    parsed = urlparse(input)
-    if parsed.scheme != "https" or not parsed.netloc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"{label} must be an https URL")
 
 
 def _oauth_authorization_code_redirect_uri(
@@ -2239,46 +1445,24 @@ def _oauth_authorization_code_redirect_uri(
     return registered
 
 
-def _validate_redirect_uri(input: str) -> None:
-    parsed = urlparse(input)
-    if parsed.scheme == "https" and parsed.netloc:
+async def _validate_hosted_consumer_endpoint(
+    db: AsyncSession,
+    *,
+    owner_user_id: UUID,
+    provider_id: str,
+    base_url: str,
+) -> None:
+    if is_public_https_url(base_url):
         return
-    if parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
-        return
-    if (
-        settings.environment == "development"
-        and parsed.scheme == "http"
-        and _url_origin(parsed) in _development_oauth_redirect_origins()
+    if await provider_has_hosted_runtime_consumer(
+        db,
+        owner_user_id=owner_user_id,
+        provider_id=provider_id,
     ):
-        return
-    raise HTTPException(
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
-        "redirect_uri must be https or loopback http",
-    )
-
-
-def _url_origin(parsed) -> str | None:
-    if not parsed.scheme or not parsed.netloc or parsed.username or parsed.password:
-        return None
-    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
-
-
-def _development_oauth_redirect_origins() -> set[str]:
-    origins = [settings.web_origin, *settings.cors_origins]
-    allowed_origins: set[str] = set()
-    for origin in origins:
-        parsed = urlparse(origin)
-        if parsed.scheme == "http":
-            parsed_origin = _url_origin(parsed)
-            if parsed_origin:
-                allowed_origins.add(parsed_origin)
-    return allowed_origins
-
-
-async def _lock_provider_pool(db: AsyncSession, owner_user_id: UUID) -> None:
-    """Serialize user-provider mutations across the runtime env-name boundary."""
-
-    await db.execute(select(User.id).where(User.id == owner_user_id).with_for_update())
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Hosted AI Provider base_url must be a public HTTPS URL",
+        )
 
 
 async def _validate_runtime_env_unique(
@@ -2777,25 +1961,10 @@ def _validate_base_url(base_url: str, auth: AiProviderAuth) -> list[str]:
     if auth.type != "none":
         return errors
     hostname = parsed.hostname or ""
-    if _is_loopback_host(hostname):
-        return errors
-    if _is_private_host(hostname):
+    if is_private_hostname(hostname):
         return errors
     errors.append("none auth is only allowed for loopback or private-network base_url")
     return errors
-
-
-def _is_loopback_host(hostname: str) -> bool:
-    return hostname in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
-
-
-def _is_private_host(hostname: str) -> bool:
-    if hostname.startswith("10.") or hostname.startswith("192.168."):
-        return True
-    match = re.fullmatch(r"172\.(\d+)\..*", hostname)
-    if not match:
-        return False
-    return 16 <= int(match.group(1)) <= 31
 
 
 def _compact(data: dict) -> dict | None:

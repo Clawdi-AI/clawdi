@@ -58,6 +58,7 @@ from app.services.managed_ai_provider import (
     runtime_managed_provider_id,
     v2_deployment_managed_provider_id,
 )
+from app.services.url_security import UnsafePublicHttpsUrlError, validate_public_https_url
 from app.services.vault_crypto import decrypt
 
 RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
@@ -350,6 +351,10 @@ def render_runtime_source(
             consumer = runtime_name if agent_provider_id in runtime_provider_ids else "codex tool"
             provider_material[agent_provider_id] = _unhealthy_provider(agent_provider_id, consumer)
             continue
+        try:
+            validate_public_https_url(provider.base_url, label="AI Provider base_url")
+        except UnsafePublicHttpsUrlError as exc:
+            raise RuntimeSourceError(str(exc)) from exc
         payload = _selected_auth_payload(
             batch,
             provider,

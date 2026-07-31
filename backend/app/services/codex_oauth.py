@@ -1,7 +1,7 @@
 """OpenAI Codex device authorization protocol adapter.
 
-This module contains only the upstream HTTP contract. Persistence, ownership,
-and API response shaping stay in the AI provider route.
+This module contains only the upstream HTTP contract. Persistence and ownership
+stay in the AI provider OAuth-attempt service, while routes shape HTTP responses.
 """
 
 from dataclasses import dataclass
