@@ -3888,9 +3888,26 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	await expect(featuredModels.nth(1)).toHaveAccessibleName("GPT-5.6-Luna");
 	await expect(featuredModels.nth(2)).toHaveAccessibleName("GPT-5.6-Sol");
 	await expect(featuredModels.nth(3)).toHaveAccessibleName("Kimi K3");
-	await expect(featuredCards.nth(0).getByText("O", { exact: true })).toBeVisible();
+	const openAiIcon = featuredCards.nth(0).getByRole("img", { name: "OpenAI" });
+	const kimiIcon = featuredCards.nth(3).getByRole("img", { name: "Kimi" });
+	await expect(openAiIcon).toBeVisible();
+	await expect(kimiIcon).toBeVisible();
+	await expect(openAiIcon).toHaveAttribute("data-icon-source", "lobehub");
+	await expect(kimiIcon).toHaveAttribute("data-icon-source", "lobehub");
+	for (const icon of [openAiIcon, kimiIcon]) {
+		const src = await icon.getAttribute("src");
+		if (!src) throw new Error("Expected the LobeHub icon to have a local SVG source.");
+		if (src.startsWith("data:")) {
+			expect(src).toMatch(/^data:image\/svg\+xml[;,]/);
+		} else {
+			const iconUrl = new URL(src, page.url());
+			expect(iconUrl.origin).toBe(new URL(page.url()).origin);
+			expect(iconUrl.pathname).toMatch(/\.svg$/);
+		}
+		expect(src).not.toContain("cdn.simpleicons.org");
+	}
+	await expect(featuredCards.nth(0).getByText("O", { exact: true })).toHaveCount(0);
 	await expect(featuredCards.nth(0).getByText("S", { exact: true })).toHaveCount(0);
-	await expect(featuredCards.nth(3).getByRole("img", { name: /kimi-coding/i })).toBeVisible();
 	for (const radio of await featuredModels.all()) {
 		const visualControl = await radio.evaluate((element) => {
 			const style = getComputedStyle(element);
@@ -3978,9 +3995,11 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	await overflowModels.click();
 	await expect(page.getByRole("option")).toHaveCount(6);
 	await expect(page.getByRole("option").nth(0)).toContainText("GPT-5.5");
-	await expect(page.getByRole("option").nth(0).getByText("O", { exact: true })).toBeVisible();
+	await expect(page.getByRole("option").nth(0).getByRole("img", { name: "OpenAI" })).toBeVisible();
+	await expect(page.getByRole("option").nth(0).getByText("O", { exact: true })).toHaveCount(0);
 	await expect(page.getByRole("option").nth(1)).toContainText("GPT-5.4");
-	await expect(page.getByRole("option").nth(1).getByText("O", { exact: true })).toBeVisible();
+	await expect(page.getByRole("option").nth(1).getByRole("img", { name: "OpenAI" })).toBeVisible();
+	await expect(page.getByRole("option").nth(1).getByText("O", { exact: true })).toHaveCount(0);
 	await expect(page.getByRole("option").nth(1)).toContainText(
 		"Balanced cost for coding and tools.",
 	);
