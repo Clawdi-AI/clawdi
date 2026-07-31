@@ -2,19 +2,19 @@ import { describe, expect, it } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HOSTED_RUNTIME_CONTEXT_FILE } from "../src/runtime/apply-identity";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cliRoot = join(here, "..");
 const binPath = join(cliRoot, "bin", "clawdi.mjs");
 const srcEntry = join(cliRoot, "src", "index.ts");
 function writeRuntimeContext(
+	path: string,
 	options: { authToken?: string | null; manifestUrl?: string } = {},
 ): void {
 	const authToken = options.authToken === undefined ? "smoke-runtime-token" : options.authToken;
-	mkdirSync(dirname(HOSTED_RUNTIME_CONTEXT_FILE), { recursive: true });
+	mkdirSync(dirname(path), { recursive: true });
 	writeFileSync(
-		HOSTED_RUNTIME_CONTEXT_FILE,
+		path,
 		`${JSON.stringify({
 			schemaVersion: "clawdi.runtimeContext.v2",
 			apply: {
@@ -209,6 +209,7 @@ describe("CLI smoke — src entry", () => {
 		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
 		const serviceStateRoot = join(root, "var", "lib", "clawdi");
 		const runRoot = join(root, "run", "clawdi");
+		const contextPath = join(root, "runtime-context", "runtime-context.json");
 		mkdirSync(dirname(policyPath), { recursive: true });
 		mkdirSync(home, { recursive: true });
 		writeFileSync(
@@ -221,7 +222,7 @@ describe("CLI smoke — src entry", () => {
 			}),
 		);
 
-		writeRuntimeContext({ authToken: null });
+		writeRuntimeContext(contextPath, { authToken: null });
 		const env = {
 			HOME: home,
 			CLAWDI_RUNTIME_MODE: "hosted",
@@ -229,6 +230,8 @@ describe("CLI smoke — src entry", () => {
 			CLAWDI_SERVICE_STATE_DIR: serviceStateRoot,
 			CLAWDI_RUN_DIR: runRoot,
 			CLAWDI_AUTH_TOKEN: undefined,
+			CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
+			CLAWDI_RUNTIME_TEST_CONTEXT_FILE: contextPath,
 		};
 
 		try {
@@ -241,9 +244,7 @@ describe("CLI smoke — src entry", () => {
 			expect(parsed.mode).toBe("repair");
 			expect(parsed.status).toBe("error");
 			expect(parsed.stage).toBe("local");
-			expect(parsed.errors[0]).toContain(
-				`invalid runtime context file ${HOSTED_RUNTIME_CONTEXT_FILE}`,
-			);
+			expect(parsed.errors[0]).toContain(`invalid runtime context file ${contextPath}`);
 			expect(parsed.errors[0]).toContain("manifestSource.auth: Invalid input");
 			expect(parsed.datasource).toBe("RuntimeSource");
 			expect(parsed.hostPolicy.valid).toBe(true);
@@ -273,16 +274,19 @@ describe("CLI smoke — src entry", () => {
 		const policyPath = join(root, "etc", "clawdi", "missing-host-policy.json");
 		const serviceStateRoot = join(root, "var", "lib", "clawdi");
 		const runRoot = join(root, "run", "clawdi");
+		const contextPath = join(root, "runtime-context", "runtime-context.json");
 		mkdirSync(home, { recursive: true });
 
 		try {
-			writeRuntimeContext();
+			writeRuntimeContext(contextPath);
 			const { stdout, code } = await runCli(["runtime", "init", "--non-interactive", "--json"], {
 				HOME: home,
 				CLAWDI_RUNTIME_MODE: "hosted",
 				CLAWDI_HOST_POLICY_PATH: policyPath,
 				CLAWDI_SERVICE_STATE_DIR: serviceStateRoot,
 				CLAWDI_RUN_DIR: runRoot,
+				CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
+				CLAWDI_RUNTIME_TEST_CONTEXT_FILE: contextPath,
 			});
 			expect(code).toBe(21);
 			const parsed = JSON.parse(stdout);

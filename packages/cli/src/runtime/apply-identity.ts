@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { z } from "zod";
 import {
 	HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
@@ -39,6 +40,7 @@ export function runtimeApplyIdentitiesEqual(
 }
 
 export const HOSTED_RUNTIME_CONTEXT_FILE = "/etc/clawdi/runtime-context/runtime-context.json";
+const TEST_RUNTIME_CONTEXT_FILE_ENV = "CLAWDI_RUNTIME_TEST_CONTEXT_FILE";
 
 const runtimeBootstrapSecretSchema = z
 	.string()
@@ -98,13 +100,13 @@ export interface RuntimeApplyContext {
 }
 
 export function readRuntimeApplyIdentity(
-	contextPath: string = HOSTED_RUNTIME_CONTEXT_FILE,
+	contextPath: string = runtimeContextFilePath(),
 ): RuntimeApplyIdentity {
 	return readRuntimeApplyContext(contextPath).identity;
 }
 
 export function readRuntimeApplyContext(
-	contextPath: string = HOSTED_RUNTIME_CONTEXT_FILE,
+	contextPath: string = runtimeContextFilePath(),
 ): RuntimeApplyContext {
 	const parsed = readRuntimeContextFile(contextPath);
 	return {
@@ -113,6 +115,20 @@ export function readRuntimeApplyContext(
 		cliPackageSpec: parsed.cliPackageSpec,
 		manifestSource: parsed.manifestSource,
 	};
+}
+
+function runtimeContextFilePath(): string {
+	const testPath = process.env[TEST_RUNTIME_CONTEXT_FILE_ENV];
+	if (testPath === undefined) return HOSTED_RUNTIME_CONTEXT_FILE;
+	if (process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS !== "1") {
+		throw new Error(
+			`${TEST_RUNTIME_CONTEXT_FILE_ENV} is available only with CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS=1`,
+		);
+	}
+	if (!testPath || testPath !== testPath.trim() || !isAbsolute(testPath)) {
+		throw new Error(`${TEST_RUNTIME_CONTEXT_FILE_ENV} must be a canonical absolute path`);
+	}
+	return testPath;
 }
 
 function readRuntimeContextFile(contextPath: string): RuntimeContextFile {

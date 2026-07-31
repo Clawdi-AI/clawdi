@@ -5,7 +5,6 @@ import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HOSTED_RUNTIME_CONTEXT_FILE } from "../../src/runtime/apply-identity";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cliRoot = join(here, "..", "..");
@@ -29,6 +28,7 @@ interface Fixture {
 	serviceStateDir: string;
 	runDir: string;
 	codexHome: string;
+	contextPath: string;
 }
 
 let server: ReturnType<typeof Bun.serve>;
@@ -278,6 +278,7 @@ function createFixture(): Fixture {
 	const serviceStateDir = join(root, "service-state");
 	const runDir = join(root, "run");
 	const codexHome = join(home, ".codex");
+	const contextPath = join(root, "runtime-context", "runtime-context.json");
 	mkdirSync(join(clawdiHome, "environments"), { recursive: true });
 	mkdirSync(join(codexHome, "skills"), { recursive: true });
 	mkdirSync(join(codexHome, "sessions"), { recursive: true });
@@ -306,7 +307,7 @@ function createFixture(): Fixture {
 			projectedProviderIds: { codex: ["managed"] },
 		})}\n`,
 	);
-	return { root, home, clawdiHome, stateDir, serviceStateDir, runDir, codexHome };
+	return { root, home, clawdiHome, stateDir, serviceStateDir, runDir, codexHome, contextPath };
 }
 
 function startDaemon(fixture: Fixture): ReturnType<typeof Bun.spawn> {
@@ -340,9 +341,9 @@ async function runCli(
 }
 
 function cliEnv(fixture: Fixture): Record<string, string> {
-	mkdirSync(dirname(HOSTED_RUNTIME_CONTEXT_FILE), { recursive: true });
+	mkdirSync(dirname(fixture.contextPath), { recursive: true });
 	writeFileSync(
-		HOSTED_RUNTIME_CONTEXT_FILE,
+		fixture.contextPath,
 		`${JSON.stringify({
 			schemaVersion: "clawdi.runtimeContext.v2",
 			apply: {
@@ -369,6 +370,8 @@ function cliEnv(fixture: Fixture): Record<string, string> {
 		CLAWDI_NO_UPDATE_CHECK: "1",
 		CLAWDI_SERVE_MODE: "container",
 		CLAWDI_RUNTIME_MODE: "hosted",
+		CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
+		CLAWDI_RUNTIME_TEST_CONTEXT_FILE: fixture.contextPath,
 		CLAWDI_RUNTIME_HOME: fixture.home,
 		CLAWDI_RUN_DIR: fixture.runDir,
 		CLAWDI_SERVICE_STATE_DIR: fixture.serviceStateDir,

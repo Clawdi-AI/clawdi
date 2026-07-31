@@ -11,6 +11,7 @@ import {
 
 const roots: string[] = [];
 const originalAllowTestInstallers = process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS;
+const originalRuntimeContextFile = process.env.CLAWDI_RUNTIME_TEST_CONTEXT_FILE;
 
 afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -18,6 +19,11 @@ afterEach(() => {
 		delete process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS;
 	} else {
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = originalAllowTestInstallers;
+	}
+	if (originalRuntimeContextFile === undefined) {
+		delete process.env.CLAWDI_RUNTIME_TEST_CONTEXT_FILE;
+	} else {
+		process.env.CLAWDI_RUNTIME_TEST_CONTEXT_FILE = originalRuntimeContextFile;
 	}
 });
 
@@ -88,6 +94,19 @@ describe("runtime apply identity", () => {
 			},
 		});
 		expect(readRuntimeApplyIdentity(path)).toEqual(context.identity);
+	});
+
+	test("allows an explicit process fixture path only behind the test gate", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-context-fixture-"));
+		roots.push(root);
+		const path = contextFile(root);
+		process.env.CLAWDI_RUNTIME_TEST_CONTEXT_FILE = path;
+		expect(() => readRuntimeApplyContext()).toThrow(/available only with/);
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		expect(readRuntimeApplyContext().identity.generation).toBe(8);
+
+		process.env.CLAWDI_RUNTIME_TEST_CONTEXT_FILE = "relative/runtime-context.json";
+		expect(() => readRuntimeApplyContext()).toThrow(/canonical absolute path/);
 	});
 
 	test("accepts the fixed paired-image CLI fixture path only behind the test gate", () => {
