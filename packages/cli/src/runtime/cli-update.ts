@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	accessSync,
@@ -7,6 +7,7 @@ import {
 	constants,
 	existsSync,
 	mkdirSync,
+	mkdtempSync,
 	readdirSync,
 	readFileSync,
 	readlinkSync,
@@ -15,6 +16,7 @@ import {
 	statSync,
 	symlinkSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
@@ -803,15 +805,24 @@ function smokeCliVersion(command: string): string {
 }
 
 function verifyCliRuntime(command: string): void {
-	const result = spawnSync(command, ["runtime", "verify", "--json"], {
-		encoding: "utf8",
-		timeout: RUNTIME_VERIFY_TIMEOUT_MS,
-		env: {
-			...process.env,
-			CLAWDI_NO_AUTO_UPDATE: "1",
-			CLAWDI_NO_UPDATE_CHECK: "1",
-		},
-	});
+	const verifyRoot = mkdtempSync(join(tmpdir(), "clawdi-runtime-verify-"));
+	let result: SpawnSyncReturns<string>;
+	try {
+		result = spawnSync(command, ["runtime", "verify", "--json"], {
+			encoding: "utf8",
+			timeout: RUNTIME_VERIFY_TIMEOUT_MS,
+			env: {
+				...process.env,
+				HOME: join(verifyRoot, "home"),
+				CLAWDI_SERVICE_STATE_DIR: join(verifyRoot, "state"),
+				CLAWDI_RUN_DIR: join(verifyRoot, "run"),
+				CLAWDI_NO_AUTO_UPDATE: "1",
+				CLAWDI_NO_UPDATE_CHECK: "1",
+			},
+		});
+	} finally {
+		rmSync(verifyRoot, { recursive: true, force: true });
+	}
 	if (result.status !== 0) {
 		throw new Error(
 			`installed clawdi did not pass runtime verify self-check${
