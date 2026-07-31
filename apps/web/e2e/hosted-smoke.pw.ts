@@ -973,6 +973,36 @@ async function stubCompletedStripeCheckout(page: Page) {
 	});
 }
 
+async function stubFailedStripeCheckoutLoad(page: Page) {
+	await page.addInitScript(() => {
+		const browserState = window as typeof window & { __stripeConfirmCalls?: number };
+		browserState.__stripeConfirmCalls = 0;
+		const mockStripe = Object.assign(
+			() => ({
+				elements: () => ({}),
+				createToken: async () => ({}),
+				createPaymentMethod: async () => ({}),
+				confirmCardPayment: async () => {
+					browserState.__stripeConfirmCalls = (browserState.__stripeConfirmCalls ?? 0) + 1;
+					return {};
+				},
+				_registerWrapper: () => undefined,
+				initCheckoutElementsSdk: () => ({
+					loadActions: async () => ({
+						type: "error",
+						error: { message: "Mock Elements load failure" },
+					}),
+					on: () => undefined,
+					changeAppearance: () => undefined,
+					loadFonts: () => undefined,
+				}),
+			}),
+			{ version: "dahlia" },
+		);
+		Object.defineProperty(window, "Stripe", { configurable: true, value: mockStripe });
+	});
+}
+
 async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	const deployments = options.deployments ?? [];
 	const acceptedDeleteIds = new Set<string>();
@@ -2193,6 +2223,78 @@ test("failed checkout start stays contextual and retries without duplicate or in
 	const retryDeployRequestId = checkoutDeployRequestId(checkoutRequests[1] ?? "{}");
 	expect(initialDeployRequestId).not.toBeNull();
 	expect(retryDeployRequestId).toBe(initialDeployRequestId);
+});
+
+test("Elements load failure replaces the Session before hosted Checkout navigation", async ({
+	page,
+}) => {
+	const checkoutRequests: string[] = [];
+	const sourceSessionId = "cs_test_elements_failed";
+	const hostedUrl = "http://127.0.0.1:3100/deploy?hosted_fallback=1";
+	await stubFailedStripeCheckoutLoad(page);
+	await stubHostedApi(page, {
+		checkoutRequests,
+		checkoutResponses: [
+			{
+				status: 200,
+				body: {
+					flow_type: "checkout_session",
+					funding_source: "stripe",
+					action_url: null,
+					checkout_url: "",
+					client_secret: "cs_test_elements_failed_secret",
+					checkout_session_id: sourceSessionId,
+				},
+			},
+			{ status: 503, body: { detail: "fallback_transport_failure" } },
+			{
+				status: 200,
+				body: {
+					flow_type: "checkout_session",
+					funding_source: "stripe",
+					action_url: hostedUrl,
+					checkout_url: hostedUrl,
+					client_secret: null,
+					checkout_session_id: "cs_test_hosted_replacement",
+				},
+			},
+		],
+		deployments: [includedBasicDeployment],
+		plans: [basicPlan],
+	});
+	await page.goto("/deploy");
+
+	await page.getByRole("button", { name: "Continue to checkout" }).click();
+	await expect.poll(() => checkoutRequests.length).toBe(2);
+	const initialRequest = JSON.parse(checkoutRequests[0] ?? "{}") as Record<string, unknown>;
+	const automaticFallback = JSON.parse(checkoutRequests[1] ?? "{}") as Record<string, unknown>;
+	expect(initialRequest).toMatchObject({ ui_mode: "custom" });
+	expect(automaticFallback).toMatchObject({
+		ui_mode: "hosted",
+		fallback_from_checkout_session_id: sourceSessionId,
+	});
+	expect(checkoutDeployRequestId(checkoutRequests[1] ?? "{}")).toBe(
+		checkoutDeployRequestId(checkoutRequests[0] ?? "{}"),
+	);
+	await expect(page).not.toHaveURL(/hosted_fallback=1/);
+
+	const dialog = page.getByRole("dialog", { name: /Complete .* checkout/ });
+	await dialog.getByRole("button", { name: "Continue in Stripe", exact: true }).click();
+	await expect.poll(() => checkoutRequests.length).toBe(3);
+	const userFallback = JSON.parse(checkoutRequests[2] ?? "{}") as Record<string, unknown>;
+	expect(userFallback).toMatchObject({
+		ui_mode: "hosted",
+		fallback_from_checkout_session_id: sourceSessionId,
+	});
+	expect(checkoutDeployRequestId(checkoutRequests[2] ?? "{}")).toBe(
+		checkoutDeployRequestId(checkoutRequests[0] ?? "{}"),
+	);
+	await expect(page).toHaveURL(hostedUrl);
+	expect(
+		await page.evaluate(
+			() => (window as typeof window & { __stripeConfirmCalls?: number }).__stripeConfirmCalls,
+		),
+	).toBe(0);
 });
 
 test("accepted detail delete dismisses immediately while teardown finishes in the background", async ({
