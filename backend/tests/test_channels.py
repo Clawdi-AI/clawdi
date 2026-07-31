@@ -43,6 +43,7 @@ from app.models.channel import (
     DELIVERY_STATUS_PENDING,
     MESSAGE_DIRECTION_INBOUND,
     MESSAGE_DIRECTION_OUTBOUND,
+    PAIR_CODE_STATUS_CLAIMED,
     PAIR_CODE_STATUS_PENDING,
     PAIR_CODE_STATUS_REVOKED,
     ChannelAccount,
@@ -1759,7 +1760,7 @@ async def test_public_bot_pool_capacity_rejects_new_agent_links(
         ("openclaw", CHANNEL_PROVIDER_DISCORD),
     ],
 )
-async def test_hosted_agent_rejects_second_link_when_provider_session_is_not_account_aware(
+async def test_hosted_agent_allows_multiple_bot_accounts_per_provider(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
@@ -1795,14 +1796,22 @@ async def test_hosted_agent_rejects_second_link_when_provider_session_is_not_acc
             f"/v1/channels/{second_account.json()['id']}/agent-links",
             json={"agent_id": str(agent.id)},
         )
+        api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="multi-account")
+        async with _client_for_api_key(db_session, user, api_key) as runtime_client:
+            runtime_channels = await runtime_client.get("/v1/channels")
 
     assert first_link.status_code == 201, first_link.text
-    assert second_link.status_code == 409
-    assert second_link.json()["detail"].startswith(f"one-{provider}-link-per-{agent_type}-agent")
+    assert second_link.status_code == 201, second_link.text
+    assert first_link.json()["id"] != second_link.json()["id"]
+    assert runtime_channels.status_code == 200, runtime_channels.text
+    assert {item["id"] for item in runtime_channels.json()} == {
+        first_account.json()["id"],
+        second_account.json()["id"],
+    }
 
 
 @pytest.mark.asyncio
-async def test_second_managed_telegram_account_is_rejected_before_provider_io(
+async def test_second_managed_telegram_account_is_configured_and_runtime_visible(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -1813,6 +1822,7 @@ async def test_second_managed_telegram_account_is_rejected_before_provider_io(
     )
     _reset_fake_provider_client({"ok": True, "result": {"username": "AdmissionTestBot"}})
     monkeypatch.setattr(settings, "public_api_url", "https://cloud.example.test")
+    real_async_client = httpx.AsyncClient
 
     async with _client_for_user(db_session, user) as user_client:
         monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
@@ -1837,12 +1847,36 @@ async def test_second_managed_telegram_account_is_rejected_before_provider_io(
                 "provider": CHANNEL_PROVIDER_TELEGRAM,
                 "name": "telegram-provider-admission-second",
                 "provider_token": "123456:second-token",
-                "agent_id": str(agent.id),
             },
         )
+        second_body = second.json()
+        second_pair = await user_client.post(
+            f"/v1/channels/{second_body['id']}/pair-codes",
+            json={"agent_link_id": second_body["agent_link_id"], "ttl_seconds": 900},
+        )
+        second_rotate = await user_client.post(
+            f"/v1/channels/{second_body['id']}/agent-links/{second_body['agent_link_id']}/token"
+        )
+        monkeypatch.setattr("app.services.channels.httpx.AsyncClient", real_async_client)
+        api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="telegram-multi-account")
+        async with _client_for_api_key(db_session, user, api_key) as runtime_client:
+            runtime_channels = await runtime_client.get("/v1/channels")
 
-    assert second.status_code == 409, second.text
-    assert _FakeProviderClient.calls == []
+    assert second.status_code == 201, second.text
+    assert [call["url"].rsplit("/", 1)[-1] for call in _FakeProviderClient.calls] == [
+        "getMe",
+        "setWebhook",
+    ]
+    assert second_body["agent_id"] == str(agent.id)
+    assert second_pair.status_code == 201, second_pair.text
+    assert second_pair.json()["agent_link_id"] == second_body["agent_link_id"]
+    assert second_rotate.status_code == 200, second_rotate.text
+    assert second_rotate.json()["agent_token"] != second_body["agent_token"]
+    assert runtime_channels.status_code == 200, runtime_channels.text
+    assert {item["id"] for item in runtime_channels.json()} == {
+        first.json()["id"],
+        second_body["id"],
+    }
 
 
 @pytest.mark.asyncio
@@ -1886,7 +1920,7 @@ async def test_interrupted_link_archive_is_completed_before_replacement(
 
 
 @pytest.mark.asyncio
-async def test_historical_duplicate_managed_accounts_fail_closed_on_runtime_and_pairing(
+async def test_historical_multiple_managed_accounts_keep_runtime_and_pairing_authority(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
@@ -1938,7 +1972,7 @@ async def test_historical_duplicate_managed_accounts_fail_closed_on_runtime_and_
         raw_code="PAIRDUPLICATE01",
         external_chat_id="duplicate-account-chat",
         external_chat_type="private",
-        external_chat_name="Must fail closed",
+        external_chat_name="Second bot chat",
         external_user_id="duplicate-user",
     )
     await db_session.commit()
@@ -1960,14 +1994,18 @@ async def test_historical_duplicate_managed_accounts_fail_closed_on_runtime_and_
         headers={"Authorization": f"Bearer {second_token}"},
     )
 
-    assert claim.binding is None
-    assert claim.reason == "invalid"
+    assert claim.binding is not None
+    assert claim.binding.bot_agent_link_id == second_link.id
+    assert claim.reason is None
     await db_session.refresh(pair_code)
-    assert pair_code.status == PAIR_CODE_STATUS_REVOKED
+    assert pair_code.status == PAIR_CODE_STATUS_CLAIMED
     assert runtime_channels.status_code == 200
-    assert runtime_channels.json() == []
-    assert first_auth.status_code == 401
-    assert second_auth.status_code == 401
+    assert {item["id"] for item in runtime_channels.json()} == {
+        first.json()["id"],
+        second.json()["id"],
+    }
+    assert first_auth.status_code == 200
+    assert second_auth.status_code == 200
     assert first_link.id != second_link.id
 
 
@@ -4310,7 +4348,6 @@ async def test_channel_send_uses_current_chat_route_after_repair(
 async def test_telegram_same_provider_multiple_bots_are_account_scoped(
     client: httpx.AsyncClient,
     channel_agent,
-    second_channel_agent,
 ):
     first = (
         await client.post(
@@ -4328,11 +4365,11 @@ async def test_telegram_same_provider_multiple_bots_are_account_scoped(
             json={
                 "provider": "telegram",
                 "name": "telegram-bot-two",
-                "agent_id": str(second_channel_agent.id),
+                "agent_id": str(channel_agent.id),
             },
         )
     ).json()
-    assert first["agent_id"] != second["agent_id"]
+    assert first["agent_id"] == second["agent_id"]
     assert first["agent_link_id"] != second["agent_link_id"]
     assert first["agent_token"] != second["agent_token"]
 

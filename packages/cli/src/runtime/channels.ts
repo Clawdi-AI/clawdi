@@ -313,6 +313,9 @@ function applyHermesRuntimeChannelSettings(
 	const hermes = manifest.runtimes.hermes;
 	if (!hermes?.enabled) return manifest;
 
+	// Hermes 0.19.1 exposes one native adapter token per provider. Keep every
+	// link in the shared channel projection, credentials, and egress state; this
+	// native selection is not a control-plane admission or authority boundary.
 	const telegram = firstLinkForProvider(links, "telegram");
 	const discord = firstLinkForProvider(links, "discord");
 	const whatsapp = WHATSAPP_UPSTREAM_READY ? firstLinkForProvider(links, "whatsapp") : null;

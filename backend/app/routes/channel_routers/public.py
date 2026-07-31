@@ -580,8 +580,8 @@ async def create_channel(
         config=body.config,
     )
     if initial_agent_id is not None:
-        # Admission must precede Telegram setWebhook or any other provider I/O.
-        # These locks serialize concurrent creates for the same Agent/provider.
+        # Runtime authority and provider support checks must precede Telegram
+        # setWebhook or any other provider I/O.
         await get_strict_v2_hosted_channel_agent_or_409(
             db,
             user_id=auth.user_id,
@@ -593,7 +593,6 @@ async def create_channel(
             account=account,
             agent_id=initial_agent_id,
             user_id=auth.user_id,
-            existing_same_account_link=False,
         )
     db.add(account)
     try:

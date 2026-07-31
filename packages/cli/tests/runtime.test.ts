@@ -6422,8 +6422,23 @@ exit 64
 		};
 
 		const projected = applyRuntimeBundleChannelsToManifestLoad(loaded);
+		const hermesProjected = applyRuntimeBundleChannelsToManifestLoad({
+			...loaded,
+			manifest: {
+				...loaded.manifest,
+				runtimes: { hermes: { enabled: true } },
+			},
+		});
 
 		expect(projected.manifest.projection?.channels).toMatchObject({
+			telegram: {
+				accounts: {
+					[firstAccount]: { enabled: true },
+					[secondAccount]: { enabled: true },
+				},
+			},
+		});
+		expect(hermesProjected.manifest.projection?.channels).toMatchObject({
 			telegram: {
 				accounts: {
 					[firstAccount]: { enabled: true },

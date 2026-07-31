@@ -111,13 +111,6 @@ DELIVERY_LINK_LOCK_CONTENTION_MAX_DELAY_SECONDS = 30
 HERMES_AGENT_TYPE = "hermes"
 OPENCLAW_AGENT_TYPE = "openclaw"
 HOSTED_RUNTIME_AGENT_TYPES = frozenset({HERMES_AGENT_TYPE, OPENCLAW_AGENT_TYPE})
-SINGLE_LINK_PROVIDERS_BY_HOSTED_AGENT_TYPE = {
-    HERMES_AGENT_TYPE: frozenset({CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD}),
-    # OpenClaw's non-DM session keys do not include the physical account for
-    # either adapter. Keep one account per provider until upstream does.
-    OPENCLAW_AGENT_TYPE: frozenset({CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD}),
-}
-HOSTED_AGENT_TYPE_LABELS = {HERMES_AGENT_TYPE: "Hermes", OPENCLAW_AGENT_TYPE: "OpenClaw"}
 STRICT_V2_AGENT_LINK_DETAIL = "Only Cloud Agents can be linked or paired with channels."
 WHATSAPP_COMING_SOON_DETAIL = (
     "WhatsApp channels are coming soon for hosted agents. Telegram and Discord are available now."
@@ -468,14 +461,13 @@ async def get_or_create_bot_agent_link(
             if not await bot_agent_link_has_strict_v2_authority(db, link=link):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail=_single_link_authority_detail(account.provider, row[0].agent_type),
+                    detail=STRICT_V2_AGENT_LINK_DETAIL,
                 )
             await ensure_hosted_agent_provider_link_available(
                 db,
                 account=account,
                 agent_id=agent_id,
                 user_id=link_user_id,
-                existing_same_account_link=True,
             )
             return link, None
 
@@ -484,7 +476,6 @@ async def get_or_create_bot_agent_link(
         account=account,
         agent_id=agent_id,
         user_id=link_user_id,
-        existing_same_account_link=False,
     )
     await ensure_bot_agent_link_capacity(db, account=account)
     raw_token = agent_token or generate_agent_token(account.provider)
@@ -615,7 +606,6 @@ async def bot_agent_link_has_strict_v2_authority(
     row = (
         await db.execute(
             select(
-                ChannelAccount,
                 AgentEnvironment,
                 HostedRuntimeState,
                 V2RuntimeEnvironmentFence,
@@ -642,39 +632,8 @@ async def bot_agent_link_has_strict_v2_authority(
     ).one_or_none()
     if row is None:
         return False
-    account, agent, state, fence = row
-    if not is_strict_v2_hosted_channel_agent(agent, state, fence):
-        return False
-    limited_providers = SINGLE_LINK_PROVIDERS_BY_HOSTED_AGENT_TYPE.get(agent.agent_type)
-    if limited_providers is None or account.provider not in limited_providers:
-        return True
-    active_link_ids = list(
-        (
-            await db.execute(
-                select(ChannelBotAgentLink.id)
-                .join(ChannelAccount, ChannelAccount.id == ChannelBotAgentLink.account_id)
-                .where(
-                    ChannelBotAgentLink.agent_id == agent.id,
-                    ChannelBotAgentLink.user_id == link.user_id,
-                    ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
-                    ChannelBotAgentLink.archived_at.is_(None),
-                    ChannelAccount.provider == account.provider,
-                    ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
-                    ChannelAccount.archived_at.is_(None),
-                )
-                .order_by(ChannelBotAgentLink.created_at, ChannelBotAgentLink.id)
-            )
-        ).scalars()
-    )
-    return active_link_ids == [link.id]
-
-
-def _single_link_authority_detail(provider: str, agent_type: str) -> str:
-    label = HOSTED_AGENT_TYPE_LABELS.get(agent_type, agent_type)
-    return (
-        f"one-{provider}-link-per-{agent_type}-agent: "
-        f"{label} agents support one active {provider} bot."
-    )
+    agent, state, fence = row
+    return is_strict_v2_hosted_channel_agent(agent, state, fence)
 
 
 async def list_strict_v2_hosted_channel_agent_ids(
@@ -704,26 +663,6 @@ async def list_strict_v2_hosted_channel_agent_ids(
             continue
         if provider == CHANNEL_PROVIDER_WHATSAPP:
             continue
-        limited_providers = SINGLE_LINK_PROVIDERS_BY_HOSTED_AGENT_TYPE.get(agent.agent_type)
-        if limited_providers is not None and provider in limited_providers:
-            existing_link = (
-                await db.execute(
-                    select(ChannelBotAgentLink.id)
-                    .join(ChannelAccount, ChannelAccount.id == ChannelBotAgentLink.account_id)
-                    .where(
-                        ChannelBotAgentLink.agent_id == agent.id,
-                        ChannelBotAgentLink.user_id == user_id,
-                        ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
-                        ChannelBotAgentLink.archived_at.is_(None),
-                        ChannelAccount.provider == provider,
-                        ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
-                        ChannelAccount.archived_at.is_(None),
-                    )
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            if existing_link is not None:
-                continue
         eligible.append(agent.id)
     return eligible
 
@@ -734,7 +673,6 @@ async def ensure_hosted_agent_provider_link_available(
     account: ChannelAccount,
     agent_id: UUID,
     user_id: UUID,
-    existing_same_account_link: bool,
 ) -> None:
     agent = (
         await db.execute(
@@ -757,42 +695,6 @@ async def ensure_hosted_agent_provider_link_available(
             status_code=status.HTTP_409_CONFLICT,
             detail=WHATSAPP_COMING_SOON_DETAIL,
         )
-    single_link_providers = SINGLE_LINK_PROVIDERS_BY_HOSTED_AGENT_TYPE.get(agent.agent_type)
-    if (
-        existing_same_account_link
-        or single_link_providers is None
-        or account.provider not in single_link_providers
-    ):
-        return
-
-    existing_link = (
-        await db.execute(
-            select(ChannelBotAgentLink.id)
-            .join(ChannelAccount, ChannelAccount.id == ChannelBotAgentLink.account_id)
-            .where(
-                ChannelBotAgentLink.agent_id == agent_id,
-                ChannelBotAgentLink.user_id == user_id,
-                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
-                ChannelBotAgentLink.archived_at.is_(None),
-                ChannelAccount.provider == account.provider,
-                ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
-                ChannelAccount.archived_at.is_(None),
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    if existing_link is None:
-        return
-
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail=(
-            f"one-{account.provider}-link-per-{agent.agent_type}-agent: "
-            f"{HOSTED_AGENT_TYPE_LABELS[agent.agent_type]} agents support one "
-            f"active {account.provider} link. Unlink the existing {account.provider} "
-            "channel before linking another."
-        ),
-    )
 
 
 def channel_bot_link_limit(account: ChannelAccount) -> int | None:

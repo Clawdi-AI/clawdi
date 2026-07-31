@@ -137,7 +137,6 @@ async def create_whatsapp_tenant_credential(
         account=account,
         agent_id=link.agent_id,
         user_id=link.user_id,
-        existing_same_account_link=True,
     )
     stored = await mint_whatsapp_agent_credential(
         db,
