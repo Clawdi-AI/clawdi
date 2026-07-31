@@ -86,7 +86,6 @@ import {
 	supportedTimezones,
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
-import { latestAction } from "@/hosted/billing/deploy/latest-action";
 import {
 	billingErrorNormalizer,
 	DeploymentRequestTerminalError,
@@ -398,7 +397,6 @@ export function DeployWizard() {
 	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const walletCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const includedCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
-	const retryDeployRef = useRef<() => void | Promise<void>>(() => undefined);
 	const assistantNameEditedRef = useRef(false);
 	const [runtime, setRuntime] = useState(DEFAULT_DEPLOY_RUNTIME);
 	const [assistantName, setAssistantName] = useState(() =>
@@ -666,7 +664,9 @@ export function DeployWizard() {
 			description: presentation.description,
 			action: {
 				label: "Retry",
-				onClick: latestAction(retryDeployRef),
+				onClick: () => {
+					if (canSubmit) void runAction(onDeploy);
+				},
 			},
 		});
 	}
@@ -932,7 +932,6 @@ export function DeployWizard() {
 			setSubmitTakingLong(false);
 		}
 	}
-	retryDeployRef.current = () => runAction(onDeploy);
 
 	const deployLabel = paidSelection
 		? paymentMethod === "wallet"
