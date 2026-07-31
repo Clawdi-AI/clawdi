@@ -41,8 +41,8 @@ Supported catalog fields for v1 apply:
   `models[].supports_vision`, `models[].supports_tools`,
   `models[].supports_reasoning`, `models[].context_window`,
   `models[].max_input_tokens`, and `models[].max_tokens`. Today this is
-  projected only where the pinned agent contract supports it, such as OpenClaw
-  model entries and Hermes custom provider model overrides.
+  projected only where the verified agent contract baseline supports it, such
+  as OpenClaw model entries and Hermes custom provider model overrides.
 
 For `managed_by: "clawdi"`, hosted runtime convergence enriches the manifest
 catalog from the managed OpenAI-compatible `/v1/models` endpoint. ID-only
@@ -70,8 +70,9 @@ Agent apply status:
 | Hermes | Enabled | `clawdi ai-provider apply <source>` merges `$HERMES_HOME/config.yaml` |
 | OpenClaw | Enabled | `clawdi ai-provider apply <source>` uses `openclaw config patch --stdin` |
 
-Pinned agent contracts are documented in
+Verified contract baselines and their audit evidence are documented in
 [`docs/ai-provider-agent-contract-audit.md`](./ai-provider-agent-contract-audit.md).
+These contracts are capability checks, not package-version allowlists.
 
 Apply uses a source/target model: source is an AI Provider id such as
 `openai-codex`, `openai-main`, `default`, or `all`; target is `codex`,
@@ -83,9 +84,9 @@ OAuth status:
 
 | Tool | Status |
 | --- | --- |
-| Codex | Enabled, pinned to the official Codex OAuth flow; each credential family can be owned by one Codex, Hermes, or OpenClaw runtime |
+| Codex | Enabled through the official Codex OAuth flow; each credential family can be owned by one Codex, Hermes, or OpenClaw runtime |
 | Claude Code | Not supported in AI Provider v1; use an Anthropic API key/env/Vault provider |
-| Other tools/providers | Not enabled until their public OAuth/config contracts are pinned |
+| Other tools/providers | Not enabled until their public OAuth/config contracts are verified |
 
 ## Add An Env-Backed Provider
 
@@ -151,7 +152,7 @@ clear unsupported error. That is expected.
 ## Use Codex OAuth
 
 Codex OAuth is the first enabled OAuth adapter because its public contract is
-pinned: authorization URL, client ID, scopes, loopback redirect, token exchange,
+verified: authorization URL, client ID, scopes, loopback redirect, token exchange,
 and `auth.json` shape.
 
 ```bash
@@ -198,6 +199,13 @@ native auth store:
 - OpenClaw: the database-first `agents/<agentId>/agent/openclaw-agent.sqlite`
   store through OpenClaw's provider-auth SDK
 
+Hermes writes only a provider-specific reserved
+`credential_pool.openai-codex` entry named `clawdi:<provider-hash>`, with
+`source: manual:device_code`; it never overwrites the user singleton under
+`providers.openai-codex`. OpenClaw writes a namespaced
+`openai:clawdi-<provider-hash>` profile and places it first in `order.openai`
+without discarding the user's remaining profile order.
+
 The provider's credential revision is only a seed authority. Re-applying the
 same revision does not overwrite refresh-token rotation performed by Codex,
 Hermes, or OpenClaw. A missing credential after logout is recorded as revoked
@@ -218,11 +226,15 @@ Then launch Codex with:
 codex --profile clawdi-ai-provider
 ```
 
-Supported contract:
+Verified contract baseline:
 
 ```text
-@openai/codex 0.134.0 through 0.142.4 with profile config, model_providers, and responses wire_api support
+Codex profile config with model_providers and responses wire_api capabilities
 ```
+
+Local Codex apply does not install or pin a Codex package version. The separate
+Hosted terminal Codex runtime remains governed by its own managed-runtime
+install contract.
 
 Codex apply requires Responses-compatible providers. Chat-only providers cannot
 be applied to Codex.
@@ -248,19 +260,24 @@ config sections, such as `mcp_servers`, are preserved. Clawdi does not print or
 copy existing inline Hermes secrets during dry-run; dry-run prints only the
 generated provider patch.
 
-Supported contract:
+Verified contract baseline:
 
 ```text
-Hermes Agent 0.13.0 through 0.18.2 with providers dict compatibility
+Hermes providers-dict compatibility reader with codex_responses transport support
 ```
 
+Hermes uses its official unversioned installer. Clawdi does not pass a package
+version lock and does not reject a future Hermes version solely by version
+number.
+
 Hosted converge uses this same native `model`/`providers` authority for every
-supported Hermes version and removes the obsolete Clawdi model-provider plugin
-if an earlier converge left it behind. User BYOK keys arrive through the hosted
-encrypted bootstrap/external-secret pipeline and are materialized from resolved
-runtime `secretEnv` references. Clawdi-managed credentials use the separate
-deployment-scoped egress injection path. Neither path depends on Vault, and
-agent config files contain only environment variable names, never key values.
+compatible Hermes installation and removes the obsolete Clawdi model-provider
+plugin if an earlier converge left it behind. User BYOK keys arrive through the
+hosted encrypted bootstrap/external-secret pipeline and are materialized from
+resolved runtime `secretEnv` references. Clawdi-managed credentials use the
+separate deployment-scoped egress injection path. Neither path depends on
+Vault, and agent config files contain only environment variable names, never
+key values.
 
 Hermes custom-provider output mapping. Users configure standard Clawdi
 `api_mode` values; the Hermes adapter writes Hermes' target-native transport
@@ -272,10 +289,10 @@ labels in `config.yaml`:
 
 When the selected provider uses Codex OAuth (`auth: agent:codex/<profile>`),
 Hermes apply writes `model.provider: openai-codex` and the Codex backend base
-URL instead of a `providers` custom-provider entry. Non-dry-run apply also
-writes Hermes' Codex OAuth state and `credential_pool.openai-codex` entry into
-`$HERMES_HOME/auth.json`, so Hermes can launch without a separate Hermes auth
-import step.
+URL instead of a `providers` custom-provider entry. Non-dry-run apply writes
+only the reserved `clawdi:<provider-hash>` `credential_pool.openai-codex`
+entry into `$HERMES_HOME/auth.json`. Its `manual:device_code` source refreshes
+independently; the user singleton and other pool entries remain untouched.
 
 `google_generate_content` is not projected to Hermes custom providers in v1.
 Use OpenClaw for native Gemini projection, or configure Hermes' own Gemini
@@ -285,7 +302,7 @@ provider outside AI Provider until that contract is added.
 
 AI Provider v1 intentionally does not try to normalize every provider-native
 setting. The following stay outside the portable catalog until each target
-agent's contract is pinned and tested:
+agent's public contract baseline is verified and tested:
 
 - Static or env-backed custom HTTP headers, such as OpenRouter attribution
   headers or OpenAI organization/project headers.
@@ -310,11 +327,16 @@ clawdi ai-provider apply openai-main --target openclaw --dry-run
 clawdi ai-provider apply openai-main --target openclaw
 ```
 
-Supported contract:
+Verified contract baseline:
 
 ```text
-openclaw 2026.7.1-2 config patch and database-first provider-auth contracts
+OpenClaw config patch and public provider-auth SDK contracts with namespaced SQLite profiles
 ```
+
+OpenClaw uses its official unversioned installer with `--json --no-onboard`.
+Clawdi neither passes `--version` nor rejects a future OpenClaw version solely
+by version number; convergence fails closed if the required public SDK export is
+not present.
 
 Clawdi sends a patch over stdin instead of editing OpenClaw config files
 directly. The patch uses `models.mode: "merge"`,
@@ -330,10 +352,18 @@ for API-key providers.
 For Codex OAuth providers, OpenClaw apply uses the native subscription-backed
 route instead: it enables the bundled Codex plugin and sets
 `agents.defaults.model.primary` to `openai/<model>` without writing
-`models.providers.<id>.apiKey`. Non-dry-run apply writes the active agent's
-canonical `openai:<profile>` OAuth entry and `order.openai` into
-`openclaw-agent.sqlite` through OpenClaw's provider-auth SDK with
-`copyToAgents: false`.
+`models.providers.<id>.apiKey`. Non-dry-run apply writes
+`openai:clawdi-<provider-hash>` and `order.openai` into
+`openclaw-agent.sqlite` through the public
+`openclaw/plugin-sdk/provider-auth` package export with `copyToAgents: false`.
+It does not overwrite `openai:default`.
+
+Hosted manifests carry the AI Provider capability-contract version. The CLI
+rejects a mismatched strict manifest before applying provider state. An existing
+OpenClaw installation is capability-probed only when selected OAuth requires the
+public provider-auth export; Hosted may run the official unversioned installer
+to repair that capability before any credential or config mutation. Local apply
+never installs or repairs OpenClaw automatically.
 
 ## Local No-Auth Endpoint
 
@@ -373,7 +403,7 @@ provider IDs to overwrite existing providers.
 ## Import Or Materialize A Local Auth Profile
 
 Existing credential profile commands are moving under AI Provider auth when the
-target contract is pinned. Codex is the supported local auth profile source in v1:
+target contract is verified. Codex is the supported local auth profile source in v1:
 
 ```bash
 clawdi ai-provider import-auth openai-codex --tool codex
@@ -386,7 +416,7 @@ auth stores for Codex, Hermes, and OpenClaw when the source uses
 `agent:codex/<profile>`.
 
 Claude Code credential sync remains on the legacy `clawdi agent credentials`
-path until its public credential and OAuth contracts are pinned.
+path until its public credential and OAuth contracts are verified.
 
 ## Export And Import Provider Catalogs
 

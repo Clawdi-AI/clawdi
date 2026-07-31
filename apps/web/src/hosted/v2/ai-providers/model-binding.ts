@@ -1,5 +1,6 @@
 import {
 	CLAWDI_MANAGED_PROVIDER_ID,
+	hostedAiProviderAvailabilityIssue,
 	isClawdiManagedProviderId,
 	isFirstPartyManagedAiProvider,
 } from "@clawdi/shared";
@@ -33,6 +34,13 @@ export type PrimaryModelRef = {
 };
 
 export type PrimaryModelInput = string | PrimaryModelRef | null | undefined;
+
+export type ProviderAvailabilityContext = {
+	runtime: HostedRuntime;
+	environmentId: string | null;
+};
+
+export type ProviderAvailabilityIssue = ReturnType<typeof hostedAiProviderAvailabilityIssue>;
 
 export function isPrimaryModelRef(value: PrimaryModelInput): value is PrimaryModelRef {
 	return (
@@ -91,15 +99,22 @@ export function providerRuntimeIncompatibility(
 	return null;
 }
 
+export function providerAvailabilityIssue(
+	provider: AiProvider,
+	context: ProviderAvailabilityContext,
+): ProviderAvailabilityIssue {
+	return hostedAiProviderAvailabilityIssue(provider, context);
+}
+
 export function usableProviders(
 	providers: readonly AiProvider[],
-	runtime?: HostedRuntime,
+	context?: ProviderAvailabilityContext,
 ): AiProvider[] {
 	return providers.filter(
 		(provider) =>
-			(provider.readiness?.deployable ?? provider.usable) &&
+			provider.readiness?.deployable === true &&
 			provider.auth.type !== "none" &&
-			(!runtime || providerRuntimeIncompatibility(provider, runtime) === null),
+			(!context || providerAvailabilityIssue(provider, context) === null),
 	);
 }
 

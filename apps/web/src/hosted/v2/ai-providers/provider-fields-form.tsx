@@ -177,7 +177,7 @@ export function ProviderFieldsForm({
 							type="password"
 							value={form.apiKey}
 							onChange={(event) => onUpdate({ apiKey: event.target.value })}
-							placeholder="sk-…"
+							placeholder="Enter API key"
 							autoComplete="off"
 							spellCheck={false}
 						/>
@@ -186,6 +186,9 @@ export function ProviderFieldsForm({
 						{isEdit
 							? "Leave blank to keep the current key. A new key and settings are committed together."
 							: "Encrypted at rest and never shown again."}
+					</p>
+					<p className="text-xs text-muted-foreground">
+						Testing sends one minimal inference request and may incur a small provider charge.
 					</p>
 					{apiKeyUrl ? (
 						<a

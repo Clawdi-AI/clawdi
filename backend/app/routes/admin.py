@@ -1398,6 +1398,11 @@ async def _admin_delete_environment(
             status.HTTP_409_CONFLICT,
             "Agent Project ownership could not be proven; no resources were deleted.",
         ) from None
+    await release_runtime_oauth_claims(
+        db,
+        owner_user_id=env.user_id,
+        environment_id=environment_id,
+    )
     await queue_environment_runtime_manifest_changed(db, env.user_id, environment_id)
     await db.delete(env)
     await db.commit()

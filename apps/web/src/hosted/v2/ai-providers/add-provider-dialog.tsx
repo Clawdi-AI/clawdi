@@ -32,10 +32,7 @@ import {
 	usePatchProvider,
 	useTestDraftProviderConnection,
 } from "@/hosted/v2/ai-providers/ai-providers-hooks";
-import {
-	CLAWDI_CODEX_OAUTH_PROVIDER_ID,
-	codexProviderBody,
-} from "@/hosted/v2/ai-providers/codex-oauth";
+import { codexProviderBody } from "@/hosted/v2/ai-providers/codex-oauth";
 import { type ProviderChoice, ProviderChooser } from "@/hosted/v2/ai-providers/provider-chooser";
 import { ProviderFieldsForm } from "@/hosted/v2/ai-providers/provider-fields-form";
 import { ProviderOAuthFlow } from "@/hosted/v2/ai-providers/provider-oauth-flow";
@@ -131,20 +128,11 @@ export function AddProviderDialog({
 	const runtimeEnv = form.runtimeEnv.trim() || meta.defaultRuntimeEnv;
 	const presetCatalog = selectedPreset ? presetCatalogToProviderModels(selectedPreset) : [];
 	const providerListReady = providerListAllowsSubmit(isEdit, providers.isSuccess);
-	const oauthAlreadyConnected =
-		!isEdit &&
-		form.authMethod === "oauth" &&
-		providers.data?.providers.some(
-			(item) =>
-				item.provider_id === CLAWDI_CODEX_OAUTH_PROVIDER_ID &&
-				(item.readiness?.deployable ?? item.usable),
-		) === true;
 	const canSubmit =
 		providerListReady &&
 		Boolean(providerId) &&
 		Boolean(form.baseUrl.trim()) &&
-		(isEdit || form.authMethod === "oauth" || Boolean(form.apiKey.trim())) &&
-		!oauthAlreadyConnected;
+		(isEdit || form.authMethod === "oauth" || Boolean(form.apiKey.trim()));
 
 	useEffect(() => {
 		if (!open) return;
@@ -295,7 +283,7 @@ export function AddProviderDialog({
 		fresh?: boolean;
 	} = {}): Promise<OAuthSession | null> {
 		const body = {
-			provider: codexProviderBody(),
+			provider: codexProviderBody(identity),
 			credential: { type: "oauth", provider: "codex", flow: "device_code" },
 			replace: false,
 		} satisfies AiProviderAcceptRequest;
@@ -505,12 +493,6 @@ export function AddProviderDialog({
 									{providers.isLoading
 										? "Providers are still loading."
 										: "Providers couldn't be loaded. Refresh and try again."}
-								</div>
-							) : null}
-							{oauthAlreadyConnected ? (
-								<div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-muted p-3 text-xs text-warning-muted-foreground">
-									<CircleAlert className="mt-0.5 size-3.5 shrink-0" /> ChatGPT is already connected.
-									Edit the existing provider to reconnect it.
 								</div>
 							) : null}
 							<ProviderFieldsForm

@@ -662,6 +662,11 @@ async def platform_delete_agent(
                 ),
             },
         ) from None
+    await release_runtime_oauth_claims(
+        db,
+        owner_user_id=owner.id,
+        environment_id=agent_id,
+    )
     await queue_environment_runtime_manifest_changed(db, owner.id, agent_id)
     await db.delete(agent)
     await _complete_mutation(

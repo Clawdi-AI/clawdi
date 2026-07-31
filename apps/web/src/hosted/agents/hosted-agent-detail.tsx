@@ -216,8 +216,10 @@ import {
 	normalizeSelectedProviderIds,
 	primaryModelProviderId,
 	primaryModelValue,
+	providerAvailabilityIssue,
 	providerCatalogDescription,
 	providerDisplayLabel,
+	usableProviders,
 } from "@/hosted/v2/ai-providers/model-binding";
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
@@ -655,7 +657,11 @@ export function HostedAgentDetail({
 						)
 					) : null}
 					{deploymentStatus.known && activeTab === "ai" ? (
-						<AiProviderTab deployment={deployment} runtime={runtime} />
+						<AiProviderTab
+							deployment={deployment}
+							runtime={runtime}
+							environmentId={environmentId}
+						/>
 					) : null}
 					{deploymentStatus.known && activeTab === "channels" ? (
 						!deploymentProjectionQueryable ? (
@@ -2006,9 +2012,11 @@ function selectableCard(active: boolean): string {
 function AiProviderTab({
 	deployment,
 	runtime,
+	environmentId,
 }: {
 	deployment: HostedDeployment;
 	runtime: Runtime;
+	environmentId: string;
 }) {
 	const providers = useUserAiProviders();
 	const managedModelCatalog = useManagedModelCatalog();
@@ -2017,6 +2025,8 @@ function AiProviderTab({
 		deploymentStatusFromResource(deployment.resource.status).kind === "updating";
 	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
 	const list = providers.data ?? [];
+	const availabilityContext = { runtime, environmentId };
+	const availableProviders = usableProviders(list, availabilityContext);
 	const managedModels = managedModelCatalog.data?.models ?? [];
 	// Selected-runtime binding: the deployment owns one runtime in the v2 model.
 	const configuredProviders = runtimeConfiguration.providers;
@@ -2199,11 +2209,14 @@ function AiProviderTab({
 				{list.map((p) => {
 					const selected =
 						bindingMode === "configured" && selectedProviders.includes(p.provider_id);
+					const issue = providerAvailabilityIssue(p, availabilityContext);
+					const disabled = Boolean(issue) && !selected;
 					return (
 						<button
 							key={p.provider_id}
 							type="button"
 							onClick={() => toggleProvider(p.provider_id)}
+							disabled={disabled}
 							className={`flex items-center gap-3 ${selectableCard(selected)}`}
 						>
 							<ProviderTypeChip type={p.type} />
@@ -2213,13 +2226,15 @@ function AiProviderTab({
 									<AuthBadge auth={p.auth} />
 								</span>
 								<span className="block text-xs text-muted-foreground">
-									{providerCatalogDescription(p)}
+									{issue?.message ?? providerCatalogDescription(p)}
 								</span>
 							</span>
 							{bindingMode === "configured" && primaryProviderChoice === p.provider_id ? (
 								<Badge variant="secondary">Primary</Badge>
 							) : selected ? (
 								<Badge variant="outline">Bound</Badge>
+							) : issue ? (
+								<Badge variant="secondary">Unavailable</Badge>
 							) : null}
 						</button>
 					);
@@ -2250,7 +2265,7 @@ function AiProviderTab({
 					managedModelsError={managedModelCatalog.error}
 					managedModelsErrorNormalizer={billingErrorNormalizer}
 					onManagedModelsRetry={() => void managedModelCatalog.refetch()}
-					customProviders={list}
+					customProviders={availableProviders}
 					additionalProviderItems={selectedProviderChoices
 						.filter(isUnresolvedProviderChoice)
 						.map((choice) => ({

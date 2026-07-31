@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { AI_PROVIDER_CAPABILITY_CONTRACT_VERSION } from "@clawdi/shared";
 import { parse as parseYaml } from "yaml";
 import { commitRuntimeAppliedState } from "../commands/runtime";
 import {
@@ -337,6 +338,7 @@ function commitTestRuntimeAuthority(
 function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
 		schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+		aiProviderCapabilityContractVersion: AI_PROVIDER_CAPABILITY_CONTRACT_VERSION,
 		minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 		runtime: "openclaw",
 		deploymentId: "hdep_locale",
@@ -529,6 +531,14 @@ afterEach(() => {
 });
 
 describe("runtime manifest reconciliation invariants", () => {
+	test("rejects a mismatched AI provider capability contract", () => {
+		expect(
+			hostedRuntimeManifestSchema.safeParse(
+				hostedManifestFixture({ aiProviderCapabilityContractVersion: 2 }),
+			).success,
+		).toBe(false);
+	});
+
 	test.each([
 		["OpenClaw", hostedOpenClawV2ManifestFixture()],
 		["Hermes", hostedHermesManifestFixture()],
@@ -1556,6 +1566,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		const hostedResponse = {
 			manifest: {
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				aiProviderCapabilityContractVersion: AI_PROVIDER_CAPABILITY_CONTRACT_VERSION,
 				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 				runtime: "openclaw",
 				deploymentId: "hdep_normalize",
@@ -1815,6 +1826,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(() =>
 			hostedRuntimeManifestSchema.parse({
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				aiProviderCapabilityContractVersion: AI_PROVIDER_CAPABILITY_CONTRACT_VERSION,
 				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 				runtime: "openclaw",
 				deploymentId: "hdep_multi",

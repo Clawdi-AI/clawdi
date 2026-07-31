@@ -42,7 +42,7 @@ def upgrade() -> None:
         "agent_environments",
         ["consumer_environment_id"],
         ["id"],
-        ondelete="SET NULL",
+        ondelete="RESTRICT",
     )
     op.create_check_constraint(
         "ck_ai_provider_auth_payloads_consumer",

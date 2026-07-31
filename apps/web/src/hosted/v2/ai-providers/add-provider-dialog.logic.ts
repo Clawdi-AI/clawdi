@@ -129,16 +129,22 @@ export function providerFormIdentity({
 	editing?: Pick<AiProvider, "provider_id" | "label"> | null;
 	preset?: ProviderPreset | null;
 }): ProviderFormIdentity {
-	if (authMethod === "oauth") {
-		return {
-			providerId: CLAWDI_CODEX_OAUTH_PROVIDER_ID,
-			label: "Codex (ChatGPT)",
-		};
-	}
 	if (editing) {
 		return {
 			providerId: editing.provider_id,
-			label: normalizeLabel(labelInput) ?? null,
+			label: normalizeLabel(labelInput) ?? editing.label ?? null,
+		};
+	}
+	if (authMethod === "oauth") {
+		const baseId = CLAWDI_CODEX_OAUTH_PROVIDER_ID;
+		const baseLabel = "ChatGPT (Codex)";
+		let suffix = 1;
+		while (existingProviderIds.includes(suffix === 1 ? baseId : `${baseId}-${suffix}`)) {
+			suffix += 1;
+		}
+		return {
+			providerId: suffix === 1 ? baseId : `${baseId}-${suffix}`,
+			label: suffix === 1 ? baseLabel : `${baseLabel} ${suffix}`,
 		};
 	}
 	const baseLabel =

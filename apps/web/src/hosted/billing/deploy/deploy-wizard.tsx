@@ -156,9 +156,9 @@ import {
 	MANAGED_PROVIDER_LABEL,
 	modelDisplayName,
 	modelOptionsForProvider,
+	providerAvailabilityIssue,
 	providerCatalogDescription,
 	providerDisplayLabel,
-	providerRuntimeIncompatibility,
 	usableProviders,
 } from "@/hosted/v2/ai-providers/model-binding";
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
@@ -483,7 +483,8 @@ export function DeployWizard() {
 	const basicUnavailable = basicSelection.mode === "unavailable";
 
 	const savedProviderList = usableProviders(aiProviders.data ?? []);
-	const providerList = usableProviders(savedProviderList, runtime);
+	const availabilityContext = { runtime, environmentId: null };
+	const providerList = usableProviders(savedProviderList, availabilityContext);
 	const managedModels = managedModelCatalog.data?.models ?? [];
 	const {
 		draft: aiBindingDraft,
@@ -1099,23 +1100,23 @@ export function DeployWizard() {
 								</div>
 							) : null}
 							{savedProviderList.map((provider) => {
-								const incompatibility = providerRuntimeIncompatibility(provider, runtime);
+								const issue = providerAvailabilityIssue(provider, availabilityContext);
 								return (
 									<EntityChoiceCard
 										key={provider.provider_id}
 										selected={
-											!incompatibility &&
+											!issue &&
 											aiAccessMode === "configured" &&
 											primaryProviderChoice === provider.provider_id
 										}
 										onClick={() => selectAiProviderChoice(provider.provider_id)}
-										disabled={Boolean(incompatibility)}
+										disabled={Boolean(issue)}
 										icon={<ProviderTypeChip type={provider.type} />}
 										title={providerDisplayLabel(provider)}
-										description={incompatibility ?? providerCatalogDescription(provider)}
+										description={issue?.message ?? providerCatalogDescription(provider)}
 										badge={
-											incompatibility ? (
-												<Badge variant="secondary">Not for {runtimeDisplayName(runtime)}</Badge>
+											issue ? (
+												<Badge variant="secondary">Unavailable</Badge>
 											) : primaryProviderChoice === provider.provider_id ? (
 												<Badge variant="secondary">Selected</Badge>
 											) : (

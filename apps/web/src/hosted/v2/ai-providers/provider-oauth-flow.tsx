@@ -81,7 +81,7 @@ export function ProviderOAuthFlow({
 				)}
 			</div>
 
-			<Button variant="outline" onClick={onRestart} disabled={starting || polling}>
+			<Button variant="outline" onClick={onRestart} disabled={starting}>
 				{starting ? <Spinner /> : null}
 				Get a new code
 			</Button>

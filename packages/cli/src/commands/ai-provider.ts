@@ -39,12 +39,18 @@ import {
 	publicAiProviderAuthStatus,
 } from "../lib/ai-provider-test";
 import { ApiClient } from "../lib/api-client";
+import {
+	decideChatGptOAuthCredentialReconciliation,
+	type NativeOAuthCredentialObservation,
+} from "../lib/chatgpt-oauth-reconciliation";
+import { oauthCredentialFingerprint } from "../lib/codex-oauth-native-store";
 import { getClawdiDir } from "../lib/config";
 import { PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { getEnvIdByAgent } from "../lib/select-adapter";
 import {
 	collectAgentCredentialProfilePayload,
 	materializeAgentCredentialProfilePayload,
+	parseAgentCredentialProfilePayload,
 } from "./agent-credentials";
 
 interface AiProviderAddOptions {
@@ -177,6 +183,7 @@ interface OAuthMaterializationReceipt {
 	nativeProfileId: "default";
 	credentialRevision: string;
 	state: "seeded" | "adopted" | "revoked";
+	credentialFingerprint?: string;
 }
 
 function readOAuthMaterializationReceipt(path: string): OAuthMaterializationReceipt | null {
@@ -189,7 +196,9 @@ function readOAuthMaterializationReceipt(path: string): OAuthMaterializationRece
 		parsed.nativeProfileId !== "default" ||
 		typeof parsed.credentialRevision !== "string" ||
 		!parsed.state ||
-		!["seeded", "adopted", "revoked"].includes(parsed.state)
+		!["seeded", "adopted", "revoked"].includes(parsed.state) ||
+		(parsed.credentialFingerprint !== undefined &&
+			!/^sha256:[a-f0-9]{64}$/.test(parsed.credentialFingerprint))
 	) {
 		throw new Error(`Invalid OAuth materialization receipt: ${path}`);
 	}
@@ -210,9 +219,66 @@ function cleanupStaleCodexOAuthMaterializations(currentProviderId: string, authP
 		const path = join(receiptDir, filename);
 		const receipt = readOAuthMaterializationReceipt(path);
 		if (!receipt || receipt.providerId === currentProviderId) continue;
-		if (receipt.state === "seeded") rmSync(authPath, { force: true });
+		const native = observeCodexOAuthMaterialization(authPath, receipt);
+		const decision = decideChatGptOAuthCredentialReconciliation({
+			desiredCredentialRevision: null,
+			desiredNativeProfileId: null,
+			receipt,
+			native,
+		});
+		if (decision.nativeAction === "remove") rmSync(authPath, { force: true });
 		rmSync(path, { force: true });
 	}
+}
+
+function codexOAuthFingerprintFromAuthJson(
+	content: string,
+	credentialRevision: string,
+): string | null {
+	try {
+		const parsed: unknown = JSON.parse(content);
+		const auth = asRecord(parsed, "Codex auth.json");
+		const tokens = asRecord(auth.tokens, "Codex auth.json tokens");
+		const accessToken = stringField(tokens, "access_token");
+		const refreshToken = stringField(tokens, "refresh_token");
+		return accessToken && refreshToken
+			? oauthCredentialFingerprint(credentialRevision, accessToken, refreshToken)
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+function resolvedCodexOAuthFingerprint(
+	profile: string,
+	payload: string,
+	credentialRevision: string,
+): string {
+	const envelope = parseAgentCredentialProfilePayload("codex", profile, payload);
+	const authFile = envelope.files.find((file) => file.logicalName === "auth.json");
+	if (!authFile) throw new Error("Stored Codex credential profile is missing auth.json.");
+	const fingerprint = codexOAuthFingerprintFromAuthJson(authFile.content, credentialRevision);
+	if (!fingerprint) throw new Error("Stored Codex auth.json is missing OAuth token material.");
+	return fingerprint;
+}
+
+function observeCodexOAuthMaterialization(
+	authPath: string,
+	receipt: OAuthMaterializationReceipt | null,
+): NativeOAuthCredentialObservation {
+	if (existsSync(authPath)) {
+		if (receipt?.state === "seeded" && receipt.credentialFingerprint) {
+			const fingerprint = codexOAuthFingerprintFromAuthJson(
+				readFileSync(authPath, "utf8"),
+				receipt.credentialRevision,
+			);
+			if (fingerprint === receipt.credentialFingerprint) return "managed";
+		}
+		return "foreign";
+	}
+	return spawnSync("codex", ["login", "status"], { env: process.env, stdio: "ignore" }).status === 0
+		? "foreign"
+		: "missing";
 }
 
 interface AiProviderOAuthStartBackendResponse {
@@ -537,77 +603,52 @@ export async function aiProviderMaterializeAuthCommand(
 	const authPath = join(getCodexHome(), "auth.json");
 	if (!opts.dryRun) cleanupStaleCodexOAuthMaterializations(providerId, authPath);
 	const existingReceipt = readOAuthMaterializationReceipt(receiptPath);
-	const nativePresent = codexCredentialPresent(authPath, existingReceipt?.state === "seeded");
-	if (existingReceipt?.credentialRevision === resolved.credential_revision) {
-		if (!opts.dryRun && !nativePresent && existingReceipt.state === "seeded") {
-			writeOAuthMaterializationReceipt(receiptPath, {
-				...existingReceipt,
-				state: "revoked",
-			});
-		} else if (!opts.dryRun && nativePresent && existingReceipt.state === "revoked") {
-			writeOAuthMaterializationReceipt(receiptPath, {
-				...existingReceipt,
-				state: "adopted",
-			});
-		}
-		return;
+	const native = observeCodexOAuthMaterialization(authPath, existingReceipt);
+	const decision = decideChatGptOAuthCredentialReconciliation({
+		desiredCredentialRevision: resolved.credential_revision,
+		desiredNativeProfileId: "default",
+		receipt: existingReceipt,
+		native,
+	});
+	if (!decision.nextReceipt) {
+		throw new Error("Desired OAuth materialization did not produce a receipt.");
 	}
-	if (!existingReceipt && nativePresent) {
-		if (!opts.dryRun) {
-			writeOAuthMaterializationReceipt(receiptPath, {
-				schemaVersion: "clawdi.runtimeOAuthCredential.v1",
-				runtime: "codex",
-				providerId,
-				nativeProfileId: "default",
-				credentialRevision: resolved.credential_revision,
-				state: "adopted",
-			});
-		}
-		return;
-	}
-	if (
-		(existingReceipt?.state === "adopted" || existingReceipt?.state === "revoked") &&
-		nativePresent
-	) {
-		if (!opts.dryRun) {
-			writeOAuthMaterializationReceipt(receiptPath, {
-				...existingReceipt,
-				credentialRevision: resolved.credential_revision,
-				state: "adopted",
-			});
-		}
-		return;
-	}
-	await materializeAgentCredentialProfilePayload(
-		resolved.tool ?? provider.auth.tool,
+	const desiredFingerprint = resolvedCodexOAuthFingerprint(
 		resolved.profile ?? profile,
 		resolved.payload,
-		{
-			to: opts.to,
-			yes: opts.yes,
-			dryRun: opts.dryRun,
-			json: opts.json,
-			backup: opts.backup,
-		},
+		resolved.credential_revision,
 	);
-	if (!opts.dryRun) {
-		writeOAuthMaterializationReceipt(receiptPath, {
-			schemaVersion: "clawdi.runtimeOAuthCredential.v1",
-			runtime: "codex",
-			providerId,
-			nativeProfileId: "default",
-			credentialRevision: resolved.credential_revision,
-			state: "seeded",
-		});
+	if (decision.nativeAction !== "preserve") {
+		const materialized = await materializeAgentCredentialProfilePayload(
+			resolved.tool ?? provider.auth.tool,
+			resolved.profile ?? profile,
+			resolved.payload,
+			{
+				to: opts.to,
+				yes: opts.yes,
+				dryRun: opts.dryRun,
+				json: opts.json,
+				backup: opts.backup,
+			},
+		);
+		if (!opts.dryRun && !materialized) return;
 	}
-}
-
-function codexCredentialPresent(authPath: string, requireManagedFile: boolean): boolean {
-	if (existsSync(authPath)) return true;
-	if (requireManagedFile) return false;
-	return (
-		spawnSync("codex", ["login", "status"], { env: process.env, stdio: "ignore" }).status === 0
-	);
+	if (opts.dryRun) return;
+	const credentialFingerprint =
+		decision.nextReceipt.state === "seeded"
+			? decision.nativeAction === "seed" || decision.nativeAction === "upsert"
+				? desiredFingerprint
+				: existingReceipt?.credentialFingerprint
+			: undefined;
+	writeOAuthMaterializationReceipt(receiptPath, {
+		schemaVersion: "clawdi.runtimeOAuthCredential.v1",
+		runtime: "codex",
+		providerId,
+		nativeProfileId: "default",
+		credentialRevision: decision.nextReceipt.credentialRevision,
+		state: decision.nextReceipt.state,
+		...(credentialFingerprint ? { credentialFingerprint } : {}),
+	});
 }
 
 export async function aiProviderConnectCommand(

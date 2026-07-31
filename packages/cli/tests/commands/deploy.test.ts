@@ -82,6 +82,8 @@ function savedProvider(
 		auth?: HostedSavedAiProvider["auth"];
 		managedBy?: HostedSavedAiProvider["managed_by"];
 		models?: HostedSavedAiProvider["models"];
+		readiness?: HostedSavedAiProvider["readiness"];
+		consumer?: HostedSavedAiProvider["consumer"];
 		usable?: boolean;
 	} = {},
 ): HostedSavedAiProvider {
@@ -94,12 +96,17 @@ function savedProvider(
 		api_mode: "openai_responses",
 		managed_by: options.managedBy ?? "user",
 		scope: "account_global",
-		auth: options.auth ?? {
-			type: "api_key",
-			source: "vault",
-			ref: `clawdi://default/${providerId}`,
-		},
+		auth: options.auth ?? { type: "api_key", source: "managed" },
 		usable: options.usable ?? true,
+		readiness: options.readiness ?? {
+			contract_version: 1,
+			credential_material: options.usable === false ? "missing" : "available",
+			runtime_compatibility: { openclaw: true, hermes: true, codex: true },
+			deployable: options.usable !== false,
+			endpoint_reachability: "not_tested",
+			inference_verification: "not_tested",
+		},
+		consumer: options.consumer,
 		models: options.models ?? [{ id: "gpt-saved" }],
 		created_at: "2026-07-28T00:00:00Z",
 		updated_at: "2026-07-28T00:00:00Z",
@@ -663,7 +670,7 @@ describe("deploy orchestration", () => {
 				client,
 				interactive: false,
 			}),
-		).rejects.toThrow("clawdi ai-provider test needs-key");
+		).rejects.toThrow("no Hosted-deliverable credential");
 		await expect(
 			runDeployFlow(parseDeployCommandOptions({ ...base, provider: "many-models" }), {
 				client,
@@ -671,6 +678,64 @@ describe("deploy orchestration", () => {
 			}),
 		).rejects.toThrow("--model is required");
 		expect(client.created).toBeNull();
+	});
+
+	test("rejects local-only, runtime-incompatible, and already claimed saved providers", async () => {
+		const cases: Array<{ provider: HostedSavedAiProvider; message: string }> = [
+			{
+				provider: savedProvider("vault-local", {
+					auth: { type: "api_key", source: "vault", ref: "clawdi://default/key" },
+					readiness: {
+						contract_version: 1,
+						credential_material: "referenced",
+						runtime_compatibility: { openclaw: true, hermes: true, codex: true },
+						deployable: false,
+						endpoint_reachability: "not_tested",
+						inference_verification: "not_tested",
+					},
+				}),
+				message: "local-only",
+			},
+			{
+				provider: savedProvider("openclaw-only", {
+					readiness: {
+						contract_version: 1,
+						credential_material: "available",
+						runtime_compatibility: { openclaw: true, hermes: false, codex: false },
+						deployable: true,
+						endpoint_reachability: "not_tested",
+						inference_verification: "not_tested",
+					},
+				}),
+				message: "Hermes cannot use",
+			},
+			{
+				provider: savedProvider("claimed-oauth", {
+					auth: { type: "agent_profile", tool: "codex", profile: "default" },
+					consumer: { environment_id: "existing-agent", runtime: "openclaw" },
+				}),
+				message: "Used by another agent",
+			},
+		];
+
+		for (const testCase of cases) {
+			const client = new FakeDeployGateway();
+			client.savedProviders = [testCase.provider];
+			await expect(
+				runDeployFlow(
+					parseDeployCommandOptions({
+						runtime: "hermes",
+						provider: testCase.provider.provider_id,
+						model: "gpt-saved",
+						compute: "basic",
+						requestId: "123e4567-e89b-42d3-a456-426614174085",
+						yes: true,
+					}),
+					{ client, interactive: false },
+				),
+			).rejects.toThrow(testCase.message);
+			expect(client.created).toBeNull();
+		}
 	});
 
 	test("quotes Wallet, confirms exact server quote, and reuses one request id", async () => {

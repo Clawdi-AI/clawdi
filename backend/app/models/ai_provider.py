@@ -62,7 +62,7 @@ class AiProviderAuthPayload(Base, TimestampMixin):
     )
     consumer_environment_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("agent_environments.id", ondelete="SET NULL"),
+        ForeignKey("agent_environments.id", ondelete="RESTRICT"),
         index=True,
     )
     consumer_runtime: Mapped[str | None] = mapped_column(String(32))

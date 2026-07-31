@@ -79,17 +79,28 @@ describe("providerFormIdentity", () => {
 		});
 	});
 
-	test("pins Codex OAuth to the canonical provider identity", () => {
+	test("allocates an independent provider identity for every ChatGPT connection", () => {
 		expect(
 			providerFormIdentity({
 				type: "openai",
 				authMethod: "oauth",
 				labelInput: "",
-				existingProviderIds: ["openai", "openai-2"],
+				existingProviderIds: ["openai-codex", "openai-codex-2"],
+			}),
+		).toEqual({
+			providerId: "openai-codex-3",
+			label: "ChatGPT (Codex) 3",
+		});
+		expect(
+			providerFormIdentity({
+				type: "openai",
+				authMethod: "oauth",
+				labelInput: "",
+				existingProviderIds: [],
 			}),
 		).toEqual({
 			providerId: "openai-codex",
-			label: "Codex (ChatGPT)",
+			label: "ChatGPT (Codex)",
 		});
 	});
 

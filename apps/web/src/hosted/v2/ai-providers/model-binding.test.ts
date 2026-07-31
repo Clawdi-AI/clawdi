@@ -10,6 +10,7 @@ import {
 	modelOptionsForProvider,
 	modelPickerItems,
 	primaryProviderPickerItems,
+	providerAvailabilityIssue,
 	providerChoiceFromRef,
 	providerDisplayLabel,
 	providerRuntimeIncompatibility,
@@ -27,6 +28,14 @@ const savedOpenAiProvider = {
 	api_mode: "openai_responses",
 	auth: { type: "api_key", source: "managed" },
 	usable: true,
+	readiness: {
+		contract_version: 1,
+		credential_material: "available",
+		runtime_compatibility: { openclaw: true, hermes: true, codex: true },
+		deployable: true,
+		endpoint_reachability: "not_tested",
+		inference_verification: "not_tested",
+	},
 	managed_by: "user",
 	runtime_env_name: "OPENAI_API_KEY",
 	capabilities: null,
@@ -137,6 +146,7 @@ describe("model binding", () => {
 
 	test("uses structured deployability instead of the legacy credential-only flag", () => {
 		const readiness = {
+			contract_version: 1,
 			credential_material: "available",
 			runtime_compatibility: { openclaw: true, hermes: true, codex: false },
 			deployable: true,
@@ -172,17 +182,24 @@ describe("model binding", () => {
 			type: "gemini",
 			api_mode: "google_generate_content",
 			models: [{ id: "gemini-3.1-pro-preview" }],
+			readiness: {
+				...savedOpenAiProvider.readiness,
+				runtime_compatibility: { openclaw: true, hermes: false, codex: false },
+			},
 		} satisfies AiProvider;
 
 		expect(providerRuntimeIncompatibility(geminiProvider, "openclaw")).toBeNull();
 		expect(providerRuntimeIncompatibility(geminiProvider, "hermes")).toContain("Choose OpenClaw");
-		expect(usableProviders([geminiProvider], "hermes")).toEqual([]);
+		expect(usableProviders([geminiProvider], { runtime: "hermes", environmentId: null })).toEqual(
+			[],
+		);
 	});
 
 	test("uses backend runtime compatibility for non-Gemini providers", () => {
 		const provider = {
 			...savedOpenAiProvider,
 			readiness: {
+				contract_version: 1,
 				credential_material: "available",
 				runtime_compatibility: { openclaw: true, hermes: false, codex: false },
 				deployable: true,
@@ -193,7 +210,34 @@ describe("model binding", () => {
 
 		expect(providerRuntimeIncompatibility(provider, "openclaw")).toBeNull();
 		expect(providerRuntimeIncompatibility(provider, "hermes")).toContain("Hermes cannot use");
-		expect(usableProviders([provider], "hermes")).toEqual([]);
+		expect(usableProviders([provider], { runtime: "hermes", environmentId: null })).toEqual([]);
+	});
+
+	test("gates claimed connections by current Agent ownership", () => {
+		const claimed = {
+			...savedOpenAiProvider,
+			consumer: { environment_id: "agent-a", runtime: "openclaw" },
+		} satisfies AiProvider;
+
+		expect(
+			providerAvailabilityIssue(claimed, {
+				runtime: "openclaw",
+				environmentId: "agent-a",
+			}),
+		).toBeNull();
+		expect(
+			providerAvailabilityIssue(claimed, {
+				runtime: "openclaw",
+				environmentId: "agent-b",
+			})?.message,
+		).toBe("Used by another agent. Add another ChatGPT connection.");
+		expect(
+			providerAvailabilityIssue(claimed, {
+				runtime: "hermes",
+				environmentId: "agent-a",
+			})?.message,
+		).toBe("Used by this agent's openclaw runtime. Add another ChatGPT connection.");
+		expect(usableProviders([claimed], { runtime: "openclaw", environmentId: null })).toEqual([]);
 	});
 
 	test("maps deployment-scoped managed provider ids to the friendly managed choice", () => {

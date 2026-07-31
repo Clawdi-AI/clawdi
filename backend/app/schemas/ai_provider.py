@@ -30,6 +30,7 @@ ApiMode = Literal[
 AuthType = Literal["secret_ref", "api_key", "oauth_profile", "agent_profile", "none"]
 CredentialMaterialState = Literal["available", "referenced", "not_required", "missing"]
 VerificationState = Literal["not_tested", "verified", "failed"]
+AI_PROVIDER_CAPABILITY_CONTRACT_VERSION = 1
 ConnectionErrorCategory = Literal[
     "validation",
     "credential",
@@ -371,11 +372,21 @@ class AiProviderRuntimeCompatibility(BaseModel):
 class AiProviderReadiness(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
+    contract_version: Literal[AI_PROVIDER_CAPABILITY_CONTRACT_VERSION] = (
+        AI_PROVIDER_CAPABILITY_CONTRACT_VERSION
+    )
     credential_material: CredentialMaterialState
     runtime_compatibility: AiProviderRuntimeCompatibility
     deployable: bool
     endpoint_reachability: VerificationState = "not_tested"
     inference_verification: VerificationState = "not_tested"
+
+
+class AiProviderConsumer(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    environment_id: UUID
+    runtime: Literal["codex", "hermes", "openclaw"]
 
 
 class AiProviderResponse(AiProviderBase):
@@ -392,6 +403,13 @@ class AiProviderResponse(AiProviderBase):
     readiness: AiProviderReadiness | None = Field(
         default=None,
         description="Structured readiness dimensions; omitted by older compatible servers.",
+    )
+    consumer: AiProviderConsumer | None = Field(
+        default=None,
+        description=(
+            "Non-secret hosted runtime claim for single-consumer credentials; omitted when "
+            "the connection is unclaimed."
+        ),
     )
     created_at: datetime
     updated_at: datetime
@@ -516,9 +534,12 @@ class AiProviderOAuthStartRequest(BaseModel):
     redirect_uri: str | None = Field(default=None, max_length=1000)
 
 
-class AiProviderOAuthAcceptCredential(AiProviderOAuthStartRequest):
+class AiProviderOAuthAcceptCredential(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
     type: Literal["oauth"]
-    flow: Literal["authorization_code", "device_code"] = "authorization_code"
+    provider: str = Field(min_length=1, max_length=80)
+    flow: Literal["device_code"] = "device_code"
 
 
 class AiProviderAcceptRequest(BaseModel):
@@ -592,12 +613,6 @@ class AiProviderOAuthDeviceStartResponse(BaseModel):
     poll_interval_seconds: int = Field(ge=1, le=30)
 
 
-type AiProviderOAuthAuthorization = Annotated[
-    AiProviderOAuthStartResponse | AiProviderOAuthDeviceStartResponse,
-    Field(discriminator="flow"),
-]
-
-
 class AiProviderReadyAcceptResponse(BaseModel):
     status: Literal["ready"]
     provider: AiProviderResponse
@@ -606,7 +621,7 @@ class AiProviderReadyAcceptResponse(BaseModel):
 class AiProviderOAuthPendingAcceptResponse(BaseModel):
     status: Literal["pending"]
     provider: AiProviderResponse
-    authorization: AiProviderOAuthAuthorization
+    authorization: AiProviderOAuthDeviceStartResponse
 
 
 type AiProviderAcceptResponse = Annotated[

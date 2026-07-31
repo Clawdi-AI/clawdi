@@ -74,8 +74,8 @@ export function ProviderConnectionTest({
 				<DialogHeader>
 					<DialogTitle>Test {providerLabel}</DialogTitle>
 					<DialogDescription>
-						Sends one minimal request using the saved endpoint, API mode, credential, and first
-						model.
+						Sends one minimal inference request using the saved endpoint, API mode, credential, and
+						first model. This may incur a small provider charge.
 					</DialogDescription>
 				</DialogHeader>
 				<div aria-live="polite" className="min-h-28 py-2">

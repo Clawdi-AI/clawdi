@@ -1,4 +1,5 @@
 import {
+	AI_PROVIDER_CAPABILITY_CONTRACT_VERSION,
 	type AiProviderCatalog,
 	CLAWDI_MANAGED_PROVIDER_ID,
 	isFirstPartyManagedAiProvider,
@@ -19,6 +20,7 @@ export type HostedAiProviderAuthKind = "api_key" | "codex_oauth";
 
 export interface HostedAiProviderBootstrap extends Record<string, unknown> {
 	schema_version: 1;
+	capability_contract_version: typeof AI_PROVIDER_CAPABILITY_CONTRACT_VERSION;
 	selected_provider_id: string;
 	auth_kind: HostedAiProviderAuthKind;
 	catalog: AiProviderCatalog;
@@ -39,6 +41,7 @@ export type HostedAiBindingOperationMode = "create" | "update";
 export class HostedAiBindingError extends Error {
 	readonly code:
 		| "invalid_provider_metadata"
+		| "provider_contract_mismatch"
 		| "first_party_managed_provider"
 		| "managed_model_unavailable"
 		| "model_required"
@@ -50,6 +53,60 @@ export class HostedAiBindingError extends Error {
 		this.name = "HostedAiBindingError";
 		this.code = code;
 	}
+}
+
+export type HostedAiProviderRuntime = "hermes" | "openclaw";
+
+export type HostedAiProviderAvailabilityIssue = {
+	kind: "claimed" | "contract" | "delivery" | "runtime";
+	message: string;
+};
+
+export function hostedAiProviderAvailabilityIssue(
+	provider: HostedSavedAiProvider,
+	context: { runtime: HostedAiProviderRuntime; environmentId: string | null },
+): HostedAiProviderAvailabilityIssue | null {
+	if (
+		provider.consumer &&
+		(context.environmentId === null ||
+			provider.consumer.environment_id !== context.environmentId ||
+			provider.consumer.runtime !== context.runtime)
+	) {
+		return {
+			kind: "claimed",
+			message:
+				context.environmentId === provider.consumer.environment_id &&
+				provider.consumer.runtime !== context.runtime
+					? `Used by this agent's ${provider.consumer.runtime} runtime. Add another ChatGPT connection.`
+					: "Used by another agent. Add another ChatGPT connection.",
+		};
+	}
+	const readiness = provider.readiness;
+	if (!readiness || readiness.contract_version !== AI_PROVIDER_CAPABILITY_CONTRACT_VERSION) {
+		return {
+			kind: "contract",
+			message: "Provider readiness metadata is outdated. Refresh providers before selecting it.",
+		};
+	}
+	if (!readiness.deployable || provider.auth.type === "none") {
+		return {
+			kind: "delivery",
+			message:
+				readiness.credential_material === "missing"
+					? "This provider has no Hosted-deliverable credential. Finish its setup or choose another provider."
+					: "This credential source is local-only and cannot be delivered to a Hosted agent.",
+		};
+	}
+	if (!readiness.runtime_compatibility[context.runtime]) {
+		return {
+			kind: "runtime",
+			message:
+				context.runtime === "hermes" && provider.api_mode === "google_generate_content"
+					? "Hermes cannot use Gemini GenerateContent yet. Choose OpenClaw, or use an OpenAI- or Anthropic-compatible provider."
+					: `${context.runtime === "hermes" ? "Hermes" : "OpenClaw"} cannot use this provider's authentication or API protocol.`,
+		};
+	}
+	return null;
 }
 
 const CAPABILITY_KEYS = [
@@ -100,6 +157,7 @@ export function buildHostedAiProviderPoolBootstrap(
 	}
 	return {
 		schema_version: 1,
+		capability_contract_version: AI_PROVIDER_CAPABILITY_CONTRACT_VERSION,
 		selected_provider_id: selectedProvider.id,
 		auth_kind: authKind,
 		catalog,
@@ -247,10 +305,19 @@ function savedProvidersForIds(
 		if (isFirstPartyManagedAiProvider(provider)) {
 			throw firstPartyManagedProviderError(providerId);
 		}
-		if (!provider.usable) {
+		if (
+			!provider.readiness ||
+			provider.readiness.contract_version !== AI_PROVIDER_CAPABILITY_CONTRACT_VERSION
+		) {
+			throw new HostedAiBindingError(
+				"provider_contract_mismatch",
+				`${provider.label?.trim() || provider.provider_id} has outdated Hosted readiness metadata. Refresh providers and try again.`,
+			);
+		}
+		if (!provider.readiness.deployable || provider.auth.type === "none") {
 			throw new HostedAiBindingError(
 				"provider_unusable",
-				`${provider.label?.trim() || provider.provider_id} has no usable credential. Finish its setup or choose another provider.`,
+				`${provider.label?.trim() || provider.provider_id} cannot deliver its credential to a Hosted agent.`,
 			);
 		}
 		selectedProviders.push(provider);

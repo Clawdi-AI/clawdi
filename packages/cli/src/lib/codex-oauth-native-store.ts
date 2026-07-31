@@ -1,56 +1,135 @@
 /** Canonical native credential-store helpers shared by local apply and hosted runtime. */
 
-export type HermesCodexAuthAction =
-	| "inspect-any"
-	| "inspect-clawdi"
-	| "seed-if-missing"
-	| "upsert"
-	| "remove";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+
+import type { NativeOAuthCredentialObservation } from "./chatgpt-oauth-reconciliation";
+
+export type HermesCodexAuthAction = "inspect" | "seed-if-missing" | "upsert" | "remove";
 
 export type OpenClawProviderAuthAction = "inspect" | "seed-if-missing" | "upsert" | "remove";
 
+export interface OAuthCredentialOwnership {
+	nativeProfileId: string;
+	credentialRevision?: string;
+	credentialFingerprint?: string;
+}
+
+export function nativeOAuthProfileId(
+	runtime: "codex" | "hermes" | "openclaw",
+	providerId: string,
+): string {
+	if (runtime === "codex") return "default";
+	const providerHash = createHash("sha256").update(providerId).digest("hex").slice(0, 24);
+	return runtime === "hermes" ? `clawdi:${providerHash}` : `openai:clawdi-${providerHash}`;
+}
+
+export function oauthCredentialFingerprint(
+	credentialRevision: string,
+	accessToken: string,
+	refreshToken: string,
+): string {
+	return `sha256:${createHash("sha256")
+		.update(
+			JSON.stringify([
+				"clawdi.runtimeOAuthCredential.v1",
+				credentialRevision,
+				accessToken,
+				refreshToken,
+			]),
+		)
+		.digest("hex")}`;
+}
+
+export function resolveOpenClawProviderAuthSdkExport(
+	startPaths: ReadonlyArray<string | null | undefined>,
+): string | null {
+	const packageRoots = new Set<string>();
+	for (const startPath of startPaths) {
+		if (!startPath || !existsSync(startPath)) continue;
+		let current = realpathSync(startPath);
+		if (!existsSync(join(current, "package.json"))) current = dirname(current);
+		for (let depth = 0; depth < 10; depth += 1) {
+			const packageJsonPath = join(current, "package.json");
+			if (existsSync(packageJsonPath)) {
+				try {
+					const parsed: unknown = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+					if (
+						typeof parsed === "object" &&
+						parsed !== null &&
+						"name" in parsed &&
+						parsed.name === "openclaw"
+					) {
+						packageRoots.add(current);
+					}
+				} catch {
+					// Ignore unrelated malformed package metadata while walking candidates.
+				}
+			}
+			const parent = dirname(current);
+			if (parent === current) break;
+			current = parent;
+		}
+	}
+	for (const packageRoot of packageRoots) {
+		try {
+			const resolved = createRequire(join(packageRoot, "package.json")).resolve(
+				"openclaw/plugin-sdk/provider-auth",
+			);
+			if (existsSync(resolved)) return resolved;
+		} catch {
+			// The installed package does not expose the public provider-auth SDK.
+		}
+	}
+	return null;
+}
+
+export function nativeOAuthObservation(value: unknown): NativeOAuthCredentialObservation {
+	if (value === "missing" || value === "managed" || value === "foreign") return value;
+	throw new Error("Native OAuth credential observation is invalid");
+}
+
 export const HERMES_CODEX_AUTH_HELPER = String.raw`
 import { closeSync, existsSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-const [authPath, action] = process.argv.slice(1);
+const [authPath, action, profileId, ownedProfileId = ""] = process.argv.slice(1);
 const material = process.stdin.isTTY ? null : JSON.parse(readFileSync(0, "utf8") || "null");
-const store = existsSync(authPath) ? JSON.parse(readFileSync(authPath, "utf8")) : {};
-const providers = store.providers && typeof store.providers === "object" ? { ...store.providers } : {};
-const pool = store.credential_pool && typeof store.credential_pool === "object" ? { ...store.credential_pool } : {};
-const providerState = providers["openai-codex"] && typeof providers["openai-codex"] === "object" ? providers["openai-codex"] : {};
-const providerTokens = providerState.tokens && typeof providerState.tokens === "object" ? providerState.tokens : {};
+const storeExists = existsSync(authPath);
+const store = storeExists ? JSON.parse(readFileSync(authPath, "utf8")) : {};
+if (!store || typeof store !== "object" || Array.isArray(store)) {
+  throw new Error("Hermes auth store must be an object");
+}
+if (store.version !== undefined && typeof store.version !== "number") {
+  throw new Error("Hermes auth store version must be numeric");
+}
+if (store.credential_pool !== undefined && (!store.credential_pool || typeof store.credential_pool !== "object" || Array.isArray(store.credential_pool))) {
+  throw new Error("Hermes credential_pool must be an object");
+}
+const pool = store.credential_pool ? { ...store.credential_pool } : {};
+if (pool["openai-codex"] !== undefined && !Array.isArray(pool["openai-codex"])) {
+  throw new Error("Hermes openai-codex credential pool must be an array");
+}
 const rawEntries = Array.isArray(pool["openai-codex"]) ? pool["openai-codex"] : [];
 const entries = rawEntries.filter((entry) => entry && typeof entry === "object");
 const valid = (entry) => typeof entry.access_token === "string" && entry.access_token.length > 0 && typeof entry.refresh_token === "string" && entry.refresh_token.length > 0;
-const presentAny = valid(providerTokens) || entries.some(valid);
-const presentClawdi = entries.some((entry) => entry.id === "clawdi" && valid(entry));
-const clawdiEntry = entries.find((entry) => entry.id === "clawdi" && valid(entry));
-const ownsProviderState = Boolean(clawdiEntry) && valid(providerTokens) && providerTokens.access_token === clawdiEntry.access_token && providerTokens.refresh_token === clawdiEntry.refresh_token;
-if (action === "inspect-any" || action === "inspect-clawdi") {
-  process.stdout.write(JSON.stringify({ present: action === "inspect-any" ? presentAny : presentClawdi }));
+const reservedEntry = entries.find((entry) => entry.id === profileId);
+const present = Boolean(reservedEntry);
+const managed = present && valid(reservedEntry) && reservedEntry.auth_type === "oauth" && reservedEntry.source === "manual:device_code" && ownedProfileId === profileId;
+if (action === "inspect") {
+  process.stdout.write(JSON.stringify({ observation: !present ? "missing" : managed ? "managed" : "foreign" }));
 } else {
   let updated = false;
-  if ((action === "seed-if-missing" && !presentAny) || action === "upsert") {
+  if ((action === "seed-if-missing" && !present) || action === "upsert") {
     if (!material || typeof material.accessToken !== "string" || typeof material.refreshToken !== "string") {
       throw new Error("Hermes Codex credential material is invalid");
     }
-    providers["openai-codex"] = {
-      ...providerState,
-      label: "clawdi",
-      auth_mode: "chatgpt",
-      tokens: {
-        access_token: material.accessToken,
-        refresh_token: material.refreshToken,
-        ...(material.idToken ? { id_token: material.idToken } : {}),
-        ...(material.accountId ? { account_id: material.accountId } : {}),
-      },
-      last_refresh: material.lastRefresh,
-    };
     pool["openai-codex"] = [{
-      id: "clawdi",
-      label: "clawdi",
+      id: profileId,
+      label: "Clawdi managed connection",
       auth_type: "oauth",
       priority: 0,
-      source: "device_code",
+      source: "manual:device_code",
       access_token: material.accessToken,
       refresh_token: material.refreshToken,
       base_url: "https://chatgpt.com/backend-api/codex",
@@ -61,29 +140,19 @@ if (action === "inspect-any" || action === "inspect-clawdi") {
       last_error_reason: null,
       last_error_message: null,
       last_error_reset_at: null,
-    }, ...entries.filter((entry) => entry.id !== "clawdi")];
-    const suppressed = store.suppressed_sources && typeof store.suppressed_sources === "object" ? { ...store.suppressed_sources } : {};
-    const nextSuppressed = Array.isArray(suppressed["openai-codex"]) ? suppressed["openai-codex"].filter((source) => source !== "device_code") : [];
-    if (nextSuppressed.length > 0) suppressed["openai-codex"] = nextSuppressed;
-    else delete suppressed["openai-codex"];
-    store.suppressed_sources = suppressed;
-    store.active_provider = "openai-codex";
+    }, ...entries.filter((entry) => entry.id !== profileId)];
     updated = true;
-  } else if (action === "remove" && presentClawdi) {
-    const remaining = entries.filter((entry) => entry.id !== "clawdi");
+  } else if (action === "remove" && managed) {
+    const remaining = entries.filter((entry) => entry.id !== profileId);
     if (remaining.length > 0) pool["openai-codex"] = remaining;
     else delete pool["openai-codex"];
-    if (ownsProviderState) delete providers["openai-codex"];
-    if (store.active_provider === "openai-codex" && !providers["openai-codex"] && remaining.length === 0) delete store.active_provider;
     updated = true;
   } else if (action !== "seed-if-missing" && action !== "remove") {
     throw new Error("unsupported Hermes Codex auth action");
   }
   if (updated) {
-    store.version = 1;
-    store.providers = providers;
+    if (store.version === undefined) store.version = 1;
     store.credential_pool = pool;
-    if (store.suppressed_sources && Object.keys(store.suppressed_sources).length === 0) delete store.suppressed_sources;
     store.updated_at = new Date().toISOString();
     const tempPath = authPath + ".tmp." + process.pid + "." + Math.random().toString(16).slice(2);
     const fd = openSync(tempPath, "wx", 0o600);
@@ -97,11 +166,14 @@ if (action === "inspect-any" || action === "inspect-clawdi") {
 export const OPENCLAW_PROVIDER_AUTH_HELPER = `
 import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
-const [sdkPath, agentDir, action, profileId] = process.argv.slice(1);
+const [sdkPath, agentDir, action, profileId, ownedProfileId = ""] = process.argv.slice(1);
 const sdk = await import(pathToFileURL(sdkPath).href);
 if (action === "inspect") {
   const store = sdk.ensureAuthProfileStoreForLocalUpdate(agentDir);
-  process.stdout.write(JSON.stringify({ present: sdk.listProfilesForProvider(store, "openai").includes(profileId) }));
+  const present = Object.prototype.hasOwnProperty.call(store.profiles, profileId);
+  const credential = present ? store.profiles[profileId] : undefined;
+  const managed = credential?.type === "oauth" && credential.provider === "openai" && typeof credential.access === "string" && typeof credential.refresh === "string" && ownedProfileId === profileId;
+  process.stdout.write(JSON.stringify({ observation: !present ? "missing" : managed ? "managed" : "foreign" }));
 } else {
   const credential = JSON.parse(readFileSync(0, "utf8") || "null");
   let changed = false;
@@ -112,12 +184,18 @@ if (action === "inspect") {
       if (action === "seed-if-missing" && present) return false;
       if (action === "seed-if-missing" || action === "upsert") {
         store.profiles[profileId] = credential;
-        store.order = { ...(store.order ?? {}), openai: [profileId, ...(store.order?.openai ?? []).filter((id) => id !== profileId)] };
+        const existingOrder = Array.isArray(store.order?.openai) ? store.order.openai : [];
+        store.order = {
+          ...(store.order ?? {}),
+          openai: [profileId, ...existingOrder.filter((id) => id !== profileId)],
+        };
         changed = true;
         return true;
       }
       if (action === "remove") {
-        if (!present) return false;
+        const current = present ? store.profiles[profileId] : undefined;
+        const owned = current?.type === "oauth" && current.provider === "openai" && typeof current.access === "string" && typeof current.refresh === "string" && ownedProfileId === profileId;
+        if (!owned) return false;
         delete store.profiles[profileId];
         if (store.order?.openai) store.order.openai = store.order.openai.filter((id) => id !== profileId);
         if (store.order?.openai?.length === 0) delete store.order.openai;

@@ -272,26 +272,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/ai-providers/{provider_id}/accept": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Complete Ai Provider Accept
-         * @description Complete an OAuth-pending provider without spanning remote I/O with a DB session.
-         */
-        post: operations["complete_ai_provider_accept_v1_ai_providers__provider_id__accept_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/ai-providers/{provider_id}/auth/resolve": {
         parameters: {
             query?: never;
@@ -3223,6 +3203,19 @@ export interface components {
             readiness: components["schemas"]["AiProviderReadiness"];
             error?: components["schemas"]["AiProviderConnectionError"] | null;
         };
+        /** AiProviderConsumer */
+        AiProviderConsumer: {
+            /**
+             * Environment Id
+             * Format: uuid
+             */
+            environment_id: string;
+            /**
+             * Runtime
+             * @enum {string}
+             */
+            runtime: "codex" | "hermes" | "openclaw";
+        };
         /** AiProviderDeleteResponse */
         AiProviderDeleteResponse: {
             /**
@@ -3348,23 +3341,20 @@ export interface components {
         };
         /** AiProviderOAuthAcceptCredential */
         AiProviderOAuthAcceptCredential: {
-            /** Provider */
-            provider: string;
-            /** Redirect Uri */
-            redirect_uri?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             type: "oauth";
+            /** Provider */
+            provider: string;
             /**
              * Flow
-             * @default authorization_code
-             * @enum {string}
+             * @default device_code
+             * @constant
              */
-            flow: "authorization_code" | "device_code";
+            flow: "device_code";
         };
-        AiProviderOAuthAuthorization: components["schemas"]["AiProviderOAuthStartResponse"] | components["schemas"]["AiProviderOAuthDeviceStartResponse"];
         /** AiProviderOAuthCompleteRequest */
         AiProviderOAuthCompleteRequest: {
             /** State */
@@ -3407,8 +3397,9 @@ export interface components {
         /** AiProviderOAuthDeviceStartResponse */
         AiProviderOAuthDeviceStartResponse: {
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
+             * Flow
+             * @default device_code
+             * @constant
              */
             flow: "device_code";
             /** Provider Id */
@@ -3439,7 +3430,7 @@ export interface components {
              */
             status: "pending";
             provider: components["schemas"]["AiProviderResponse"];
-            authorization: components["schemas"]["AiProviderOAuthAuthorization"];
+            authorization: components["schemas"]["AiProviderOAuthDeviceStartResponse"];
         };
         /** AiProviderOAuthProfileAuth */
         AiProviderOAuthProfileAuth: {
@@ -3483,8 +3474,9 @@ export interface components {
         /** AiProviderOAuthStartResponse */
         AiProviderOAuthStartResponse: {
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
+             * Flow
+             * @default authorization_code
+             * @constant
              */
             flow: "authorization_code";
             /** Provider Id */
@@ -3529,6 +3521,12 @@ export interface components {
         };
         /** AiProviderReadiness */
         AiProviderReadiness: {
+            /**
+             * Contract Version
+             * @default 1
+             * @constant
+             */
+            contract_version: 1;
             /**
              * Credential Material
              * @enum {string}
@@ -3600,6 +3598,8 @@ export interface components {
             usable: boolean;
             /** @description Structured readiness dimensions; omitted by older compatible servers. */
             readiness?: components["schemas"]["AiProviderReadiness"] | null;
+            /** @description Non-secret hosted runtime claim for single-consumer credentials; omitted when the connection is unclaimed. */
+            consumer?: components["schemas"]["AiProviderConsumer"] | null;
             /**
              * Created At
              * Format: date-time
@@ -8135,43 +8135,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AiProviderResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    complete_ai_provider_accept_v1_ai_providers__provider_id__accept_post: {
-        parameters: {
-            query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
-            path: {
-                provider_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AiProviderOAuthCompleteRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiProviderReadyAcceptResponse"];
                 };
             };
             /** @description Validation Error */

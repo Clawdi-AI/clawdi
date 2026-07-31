@@ -16,6 +16,15 @@ export interface OAuthSession {
 	pollIntervalSeconds: number;
 }
 
+export function isCurrentOAuthGeneration(input: {
+	stopped: boolean;
+	completed: boolean;
+	generation: number;
+	currentGeneration: number;
+}): boolean {
+	return !input.stopped && !input.completed && input.generation === input.currentGeneration;
+}
+
 export function useProviderOAuthDeviceFlow({
 	poll,
 	onReady,
@@ -26,18 +35,21 @@ export function useProviderOAuthDeviceFlow({
 	const [session, setSession] = useState<OAuthSession | null>(null);
 	const [issue, setIssue] = useState<OAuthIssue | null>(null);
 	const completedRef = useRef(false);
+	const generationRef = useRef(0);
 	const pollRef = useRef(poll);
 	const onReadyRef = useRef(onReady);
 	pollRef.current = poll;
 	onReadyRef.current = onReady;
 
 	const start = useCallback((next: OAuthSession) => {
+		generationRef.current += 1;
 		completedRef.current = false;
 		setIssue(null);
 		setSession(next);
 	}, []);
 
 	const cancel = useCallback(() => {
+		generationRef.current += 1;
 		completedRef.current = true;
 		setIssue(null);
 		setSession(null);
@@ -54,6 +66,7 @@ export function useProviderOAuthDeviceFlow({
 
 	useEffect(() => {
 		if (!session) return;
+		const generation = generationRef.current;
 		let stopped = false;
 		let consecutiveFailures = 0;
 		let pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -62,9 +75,25 @@ export function useProviderOAuthDeviceFlow({
 			pollTimer = setTimeout(() => void check(), Math.max(seconds, 1) * 1000);
 		};
 		const check = async () => {
-			if (stopped || completedRef.current) return;
+			if (
+				!isCurrentOAuthGeneration({
+					stopped,
+					completed: completedRef.current,
+					generation,
+					currentGeneration: generationRef.current,
+				})
+			)
+				return;
 			const result = await pollRef.current(session);
-			if (stopped) return;
+			if (
+				!isCurrentOAuthGeneration({
+					stopped,
+					completed: completedRef.current,
+					generation,
+					currentGeneration: generationRef.current,
+				})
+			)
+				return;
 			if (!result) {
 				consecutiveFailures += 1;
 				if (consecutiveFailures >= 3) {
@@ -89,7 +118,14 @@ export function useProviderOAuthDeviceFlow({
 		const expiry = Number.isFinite(remaining)
 			? setTimeout(
 					() => {
-						if (!completedRef.current) {
+						if (
+							isCurrentOAuthGeneration({
+								stopped,
+								completed: completedRef.current,
+								generation,
+								currentGeneration: generationRef.current,
+							})
+						) {
 							stopped = true;
 							setIssue("expired");
 						}

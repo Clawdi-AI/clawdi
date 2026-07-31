@@ -5,13 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.schemas.ai_provider import (
+    AI_PROVIDER_CAPABILITY_CONTRACT_VERSION,
     AiProviderReadiness,
     AiProviderRuntimeCompatibility,
     CredentialMaterialState,
     VerificationState,
 )
-
-AI_PROVIDER_CAPABILITY_CONTRACT_VERSION = 1
 
 _DEFAULT_API_MODES = {
     "openai": "openai_responses",
