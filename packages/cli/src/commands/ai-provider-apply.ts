@@ -70,6 +70,11 @@ interface AiProviderApplyPlan {
 	warnings: string[];
 }
 
+interface PreparedAiProviderApplyPlan {
+	plan: AiProviderApplyPlan;
+	secrets: Array<{ path: string; content: string }>;
+}
+
 type AiProviderApplyPlanBody = Omit<AiProviderApplyPlan, "source">;
 
 interface AiProviderApplySkippedTarget {
@@ -135,7 +140,9 @@ export async function aiProviderApplyCommand(opts: AiProviderApplyOptions = {}):
 		);
 	}
 	if (!opts.dryRun) {
-		for (const plan of plans) await applyAiProviderPlan(plan, selection.catalog);
+		// Resolve and validate every credential before the first target mutates local config.
+		const preparedPlans = await prepareAiProviderApplyPlans(plans, selection.catalog);
+		for (const prepared of preparedPlans) applyAiProviderPlan(prepared.plan, prepared.secrets);
 	}
 	printAiProviderApplyResult(plans, skipped, Boolean(opts.dryRun), Boolean(opts.json), multiTarget);
 }
@@ -497,10 +504,27 @@ function expandHome(input: string): string {
 	return input;
 }
 
-async function applyAiProviderPlan(
-	plan: AiProviderApplyPlan,
+async function prepareAiProviderApplyPlans(
+	plans: AiProviderApplyPlan[],
 	catalog: AiProviderCatalog,
-): Promise<void> {
+): Promise<PreparedAiProviderApplyPlan[]> {
+	const materialCache = new Map<string, Promise<CodexAuthMaterial>>();
+	return Promise.all(
+		plans.map(async (plan) => ({
+			plan,
+			secrets: await Promise.all(
+				plan.secret_writes.map((secretWrite) =>
+					prepareAiProviderSecretMaterial(plan.target, secretWrite, catalog, materialCache),
+				),
+			),
+		})),
+	);
+}
+
+function applyAiProviderPlan(
+	plan: AiProviderApplyPlan,
+	preparedSecrets: Array<{ path: string; content: string }>,
+): void {
 	for (const write of plan.writes) {
 		writeAiProviderFile(write.path, write.content);
 	}
@@ -510,16 +534,17 @@ async function applyAiProviderPlan(
 	for (const command of plan.commands) {
 		runAiProviderApplyCommand(command);
 	}
-	for (const secretWrite of plan.secret_writes) {
-		await writeAiProviderSecretMaterial(plan.target, secretWrite, catalog);
+	for (const prepared of preparedSecrets) {
+		writeAiProviderFile(prepared.path, prepared.content);
 	}
 }
 
-async function writeAiProviderSecretMaterial(
+async function prepareAiProviderSecretMaterial(
 	target: AgentTarget,
 	secretWrite: AiProviderApplySecretWrite,
 	catalog: AiProviderCatalog,
-): Promise<void> {
+	materialCache: Map<string, Promise<CodexAuthMaterial>>,
+): Promise<{ path: string; content: string }> {
 	const source = catalog.providers.find(
 		(provider) => provider.id === secretWrite.source_provider_id,
 	);
@@ -528,20 +553,32 @@ async function writeAiProviderSecretMaterial(
 			`AI Provider ${secretWrite.source_provider_id} is not a Codex auth profile source.`,
 		);
 	}
-	const payload = await resolveProviderAuthPayload(source.id, source.auth.profile);
-	const material = parseCodexAuthMaterial(source.auth.profile, payload);
+	if (source.auth.profile !== secretWrite.source_profile) {
+		throw new Error(`AI Provider ${source.id} auth profile changed while preparing apply.`);
+	}
+	const sourceProfile = source.auth.profile;
+	const cacheKey = `${source.id}\u0000${sourceProfile}`;
+	let materialPromise = materialCache.get(cacheKey);
+	if (!materialPromise) {
+		materialPromise = resolveProviderAuthPayload(source.id, sourceProfile).then((payload) =>
+			parseCodexAuthMaterial(sourceProfile, payload),
+		);
+		materialCache.set(cacheKey, materialPromise);
+	}
+	const material = await materialPromise;
 	if (target === "codex") {
-		writeAiProviderFile(secretWrite.path, material.rawContent);
-		return;
+		return { path: secretWrite.path, content: material.rawContent };
 	}
 	if (target === "hermes") {
-		writeAiProviderFile(secretWrite.path, buildHermesCodexAuthStore(secretWrite.path, material));
-		return;
+		return {
+			path: secretWrite.path,
+			content: buildHermesCodexAuthStore(secretWrite.path, material),
+		};
 	}
-	writeAiProviderFile(
-		secretWrite.path,
-		buildOpenClawCodexAuthProfileStore(secretWrite.path, material, source.auth.profile),
-	);
+	return {
+		path: secretWrite.path,
+		content: buildOpenClawCodexAuthProfileStore(secretWrite.path, material, sourceProfile),
+	};
 }
 
 async function resolveProviderAuthPayload(providerId: string, profile: string): Promise<string> {

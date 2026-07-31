@@ -6,6 +6,7 @@ import type {
 	AiProviderModel,
 } from "@clawdi/shared";
 import {
+	aiProviderRuntimeCompatibility,
 	CLAWDI_MANAGED_PROVIDER_ID,
 	defaultAiProviderApiMode,
 	defaultAiProviderBaseUrl,
@@ -228,6 +229,9 @@ function normalizeProjectionProvider(
 	if (target === "openclaw") {
 		const reason = openClawProjectionSkipReason(projectionProvider);
 		if (reason) return reason;
+	}
+	if (!aiProviderRuntimeCompatibility(provider)[target]) {
+		return `Provider ${providerId} skipped for ${target}: the provider protocol and auth shape are not runtime-compatible.`;
 	}
 	return projectionProvider;
 }

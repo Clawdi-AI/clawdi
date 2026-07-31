@@ -1,7 +1,15 @@
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, SecretStr, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic.json_schema import SkipJsonSchema
 
 ProviderType = Literal[
@@ -19,6 +27,24 @@ ApiMode = Literal[
     "google_generate_content",
 ]
 AuthType = Literal["secret_ref", "api_key", "oauth_profile", "agent_profile", "none"]
+CredentialMaterialState = Literal["available", "referenced", "not_required", "missing"]
+VerificationState = Literal["not_tested", "verified", "failed"]
+ConnectionErrorCategory = Literal[
+    "validation",
+    "credential",
+    "ssrf",
+    "dns",
+    "timeout",
+    "tls",
+    "network",
+    "authentication",
+    "authorization",
+    "rate_limit",
+    "redirect",
+    "endpoint",
+    "protocol_model",
+    "upstream",
+]
 InputModality = Literal["text", "image", "video", "audio"]
 AuthProfile = Annotated[
     str,
@@ -266,6 +292,7 @@ class AiProviderModel(BaseModel):
     supports_tools: bool | SkipJsonSchema[None] = None
     supports_reasoning: bool | SkipJsonSchema[None] = None
     context_window: int | SkipJsonSchema[None] = Field(default=None, gt=0)
+    max_input_tokens: int | SkipJsonSchema[None] = Field(default=None, gt=0)
     max_tokens: int | SkipJsonSchema[None] = Field(default=None, gt=0)
     cost: AiProviderModelCost | SkipJsonSchema[None] = None
     capabilities: AiProviderModelCapabilities | SkipJsonSchema[None] = None
@@ -285,6 +312,7 @@ class AiProviderModel(BaseModel):
                     "supports_tools",
                     "supports_reasoning",
                     "context_window",
+                    "max_input_tokens",
                     "max_tokens",
                     "cost",
                     "capabilities",
@@ -331,6 +359,24 @@ class AiProviderPatch(BaseModel):
         return _reject_normal_upsert_oauth(value)
 
 
+class AiProviderRuntimeCompatibility(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    openclaw: bool
+    hermes: bool
+    codex: bool
+
+
+class AiProviderReadiness(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    credential_material: CredentialMaterialState
+    runtime_compatibility: AiProviderRuntimeCompatibility
+    deployable: bool
+    endpoint_reachability: VerificationState = "not_tested"
+    inference_verification: VerificationState = "not_tested"
+
+
 class AiProviderResponse(AiProviderBase):
     id: str
     provider_id: str
@@ -341,6 +387,10 @@ class AiProviderResponse(AiProviderBase):
             "Whether the provider has the credential material required for runtime use. "
             "This does not validate the credential or test endpoint connectivity."
         )
+    )
+    readiness: AiProviderReadiness | None = Field(
+        default=None,
+        description="Structured readiness dimensions; omitted by older compatible servers.",
     )
     created_at: datetime
     updated_at: datetime
@@ -367,12 +417,26 @@ class AiProviderManagedApiKeyRequest(BaseModel):
     value: SecretStr
     runtime_env_name: str | None = Field(default=None, max_length=128)
 
+    @field_validator("value")
+    @classmethod
+    def _reject_blank_value(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("credential cannot be blank")
+        return value
+
 
 class AiProviderApiKeyAcceptCredential(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     type: Literal["api_key"]
     value: SecretStr
+
+    @field_validator("value")
+    @classmethod
+    def _reject_blank_value(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("credential cannot be blank")
+        return value
 
 
 class _AiProviderAuthImportRequest(BaseModel):
@@ -388,6 +452,13 @@ class _AiProviderAuthImportRequest(BaseModel):
             sanitized = dict(value)
             sanitized["payload"] = SecretStr(value["payload"])
             return sanitized
+        return value
+
+    @field_validator("payload")
+    @classmethod
+    def _reject_blank_payload(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("credential payload cannot be blank")
         return value
 
 
@@ -445,6 +516,32 @@ class AiProviderAcceptRequest(BaseModel):
         AiProviderApiKeyAcceptCredential | AiProviderOAuthAcceptCredential,
         Field(discriminator="type"),
     ]
+    replace: bool = False
+
+
+class AiProviderConnectionTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    provider: AiProviderUpsert
+    credential: AiProviderApiKeyAcceptCredential
+    model: str | None = Field(default=None, min_length=1, max_length=300)
+
+
+class AiProviderConnectionError(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    category: ConnectionErrorCategory
+    code: str
+    message: str
+    retryable: bool
+
+
+class AiProviderConnectionTestResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    ok: bool
+    readiness: AiProviderReadiness
+    error: AiProviderConnectionError | None = None
 
 
 class AiProviderOAuthStartResponse(BaseModel):

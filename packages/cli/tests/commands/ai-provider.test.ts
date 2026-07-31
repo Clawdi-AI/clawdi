@@ -940,6 +940,49 @@ describe("ai-provider commands", () => {
 		});
 	});
 
+	it("resolves and validates credentials before mutating Hermes config", async () => {
+		const hermesDir = join(tmpHome, ".hermes");
+		mkdirSync(hermesDir, { recursive: true });
+		const hermesConfig = join(hermesDir, "config.yaml");
+		const originalConfig = "model:\n  provider: custom:user-owned\nproviders:\n";
+		writeFileSync(hermesConfig, originalConfig);
+		const setup = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-codex", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "agent:codex/default",
+				json: true,
+			});
+		} finally {
+			setup.restore();
+		}
+		const { restore: restoreFetch } = mockFetch([
+			{
+				method: "POST",
+				path: "/v1/ai-providers/openai-codex/auth/resolve",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						auth_type: "agent_profile",
+						payload: "{}",
+						profile: "default",
+						tool: "codex",
+					}),
+			},
+		]);
+		const output = captureConsole();
+		try {
+			await expect(aiProviderApplyCommand({ target: "hermes", json: true })).rejects.toThrow();
+		} finally {
+			output.restore();
+			restoreFetch();
+		}
+
+		expect(readFileSync(hermesConfig, "utf-8")).toBe(originalConfig);
+		expect(existsSync(join(hermesDir, "auth.json"))).toBe(false);
+	});
+
 	it("applies one Codex OAuth source to all matching targets by default", async () => {
 		const codexHome = join(tmpHome, ".codex");
 		process.env.CODEX_HOME = codexHome;
@@ -993,7 +1036,7 @@ describe("ai-provider commands", () => {
 		expect(output()).not.toContain("anthropic-main");
 		expect(
 			captured.filter((request) => request.path === "/v1/ai-providers/openai-codex/auth/resolve"),
-		).toHaveLength(3);
+		).toHaveLength(1);
 		const codexProfile = readFileSync(join(codexHome, "clawdi-ai-provider.config.toml"), "utf-8");
 		expect(codexProfile).toContain('model_provider = "openai"');
 		expect(codexProfile).toContain('model = "gpt-5.2"');

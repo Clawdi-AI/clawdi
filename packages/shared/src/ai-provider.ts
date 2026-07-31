@@ -18,6 +18,14 @@ export const AI_PROVIDER_API_MODES = [
 
 export type AiProviderApiMode = (typeof AI_PROVIDER_API_MODES)[number];
 
+export const AI_PROVIDER_CAPABILITY_CONTRACT_VERSION = 1 as const;
+
+export interface AiProviderRuntimeCompatibility {
+	openclaw: boolean;
+	hermes: boolean;
+	codex: boolean;
+}
+
 export type AiProviderApiKeyAuth =
 	| {
 			type: "api_key";
@@ -120,6 +128,15 @@ const COMPATIBLE_API_MODES: Record<AiProviderType, readonly AiProviderApiMode[]>
 	gemini: ["google_generate_content"],
 	mistral: ["openai_chat"],
 	custom_openai_compatible: ["openai_chat", "openai_responses"],
+};
+
+const RUNTIME_API_MODES: Record<
+	keyof AiProviderRuntimeCompatibility,
+	readonly AiProviderApiMode[]
+> = {
+	openclaw: ["openai_chat", "openai_responses", "anthropic_messages", "google_generate_content"],
+	hermes: ["openai_chat", "openai_responses", "anthropic_messages"],
+	codex: ["openai_responses"],
 };
 
 const DEFAULT_API_MODE: Partial<Record<AiProviderType, AiProviderApiMode>> = {
@@ -281,6 +298,42 @@ export function defaultAiProviderModels(type: AiProviderType): readonly AiProvid
 	return DEFAULT_MODEL_CATALOG[type] ?? [];
 }
 
+export function aiProviderRuntimeCompatibility(
+	provider: Pick<AiProvider, "api_mode" | "auth" | "base_url" | "runtime_env_name" | "type">,
+): AiProviderRuntimeCompatibility {
+	const apiMode = provider.api_mode ?? defaultAiProviderApiMode(provider.type);
+	const nativeCodexAuth = provider.auth.type === "agent_profile" && provider.auth.tool === "codex";
+	const nativeCodexShape =
+		nativeCodexAuth &&
+		provider.type === "openai" &&
+		apiMode === "openai_responses" &&
+		normalizeUrl(provider.base_url) === normalizeUrl(DEFAULT_BASE_URL.openai ?? "");
+	const authRef = "ref" in provider.auth ? provider.auth.ref : undefined;
+	const hasRuntimeAuth =
+		provider.auth.type === "none" ||
+		nativeCodexAuth ||
+		Boolean(provider.runtime_env_name) ||
+		Boolean(authRef?.startsWith("env:"));
+	if (provider.auth.type === "oauth_profile") {
+		return { openclaw: false, hermes: false, codex: false };
+	}
+	if (nativeCodexAuth) {
+		return {
+			openclaw: nativeCodexShape,
+			hermes: nativeCodexShape,
+			codex: nativeCodexShape,
+		};
+	}
+	if (!apiMode || !hasRuntimeAuth) {
+		return { openclaw: false, hermes: false, codex: false };
+	}
+	return {
+		openclaw: RUNTIME_API_MODES.openclaw.includes(apiMode),
+		hermes: RUNTIME_API_MODES.hermes.includes(apiMode),
+		codex: RUNTIME_API_MODES.codex.includes(apiMode),
+	};
+}
+
 export function validateAiProviderCatalog(
 	catalog: AiProviderCatalog,
 	options: AiProviderValidationOptions = {},
@@ -297,6 +350,7 @@ export function validateAiProviderCatalog(
 	}
 
 	const ids = new Set<string>();
+	const runtimeEnvOwners = new Map<string, string>();
 	for (const entry of catalog.providers) {
 		if (!isRecord(entry)) {
 			errors.push("Provider entry must be an object.");
@@ -309,6 +363,17 @@ export function validateAiProviderCatalog(
 		}
 		if (typeof provider.id === "string") {
 			ids.add(provider.id);
+		}
+		const runtimeEnvName = effectiveRuntimeEnvName(provider);
+		if (runtimeEnvName) {
+			const existingOwner = runtimeEnvOwners.get(runtimeEnvName);
+			if (existingOwner && existingOwner !== provider.id) {
+				errors.push(
+					`Provider ${provider.id} runtime env ${runtimeEnvName} collides with provider ${existingOwner}.`,
+				);
+			} else if (typeof provider.id === "string") {
+				runtimeEnvOwners.set(runtimeEnvName, provider.id);
+			}
 		}
 	}
 
@@ -325,6 +390,20 @@ export function validateAiProviderCatalog(
 	}
 
 	return { valid: errors.length === 0, errors, warnings };
+}
+
+function effectiveRuntimeEnvName(provider: AiProvider): string | undefined {
+	const auth = (provider as { auth?: unknown }).auth;
+	if (!isRecord(auth)) return undefined;
+	if (typeof auth.ref === "string" && auth.ref.startsWith("env:")) {
+		return auth.ref.slice("env:".length);
+	}
+	if (auth.type !== "api_key" && auth.type !== "secret_ref") return undefined;
+	return typeof provider.runtime_env_name === "string" ? provider.runtime_env_name : undefined;
+}
+
+function normalizeUrl(value: string): string {
+	return value.replace(/\/+$/, "");
 }
 
 function validateProvider(
@@ -364,6 +443,14 @@ function validateProvider(
 		errors.push(`Provider ${prefix} auth must be an object.`);
 	} else {
 		validateAuth(prefix, provider, auth, errors, warnings, options);
+		if (
+			typeof auth.ref === "string" &&
+			auth.ref.startsWith("env:") &&
+			provider.runtime_env_name !== undefined &&
+			provider.runtime_env_name !== auth.ref.slice("env:".length)
+		) {
+			errors.push(`Provider ${prefix} runtime_env_name must match its env auth ref.`);
+		}
 	}
 	validateModels(prefix, (provider as { models?: unknown }).models, errors);
 }

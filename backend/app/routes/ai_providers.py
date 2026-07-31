@@ -26,6 +26,7 @@ from app.core.auth import (
 from app.core.config import settings
 from app.core.database import async_session_factory, get_session
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
+from app.models.user import User
 from app.schemas.ai_provider import (
     AiProviderAcceptRequest,
     AiProviderAcceptResponse,
@@ -34,6 +35,9 @@ from app.schemas.ai_provider import (
     AiProviderAuthImportRequest,
     AiProviderAuthResolveRequest,
     AiProviderAuthResolveResponse,
+    AiProviderConnectionError,
+    AiProviderConnectionTestRequest,
+    AiProviderConnectionTestResponse,
     AiProviderDeleteResponse,
     AiProviderListResponse,
     AiProviderManagedApiKeyRequest,
@@ -48,8 +52,16 @@ from app.schemas.ai_provider import (
     AiProviderResponse,
     AiProviderUpsert,
     AiProviderValidationResponse,
+    ConnectionErrorCategory,
+    CredentialMaterialState,
     ai_provider_auth_from_persistence,
 )
+from app.services.ai_provider_capabilities import (
+    AiProviderCapabilityInput,
+    effective_provider_api_mode,
+    provider_readiness,
+)
+from app.services.ai_provider_connection import test_ai_provider_connection
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_IDS,
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
@@ -83,7 +95,6 @@ ALLOWED_API_MODES: dict[str, set[str]] = {
         "openai_responses",
     },
 }
-
 OAUTH_STATE_TTL_SECONDS = 10 * 60
 CODEX_OAUTH_PROVIDER = "codex"
 SUPPORTED_AGENT_PROFILE_TOOLS = {CODEX_OAUTH_PROVIDER}
@@ -177,6 +188,8 @@ async def upsert_ai_provider(
     errors = _validate_provider(body)
     if errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": errors})
+    await _lock_provider_pool(db, auth.user_id)
+    await _validate_runtime_env_unique(db, auth, body)
     existing = await _find_provider(db, auth, body.provider_id, include_archived=True)
     if existing is not None and existing.archived_at is None and not replace:
         raise HTTPException(status.HTTP_409_CONFLICT, "AI Provider already exists")
@@ -204,7 +217,7 @@ async def accept_ai_provider(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderAcceptResponse | JSONResponse:
-    """Atomically create a provider and its first usable auth state."""
+    """Atomically create or explicitly replace a provider and credential."""
 
     request_hash = _ai_provider_accept_request_hash(body)
     try:
@@ -243,6 +256,94 @@ async def accept_ai_provider(
     return result
 
 
+@router.post(
+    "/test",
+    response_model=AiProviderConnectionTestResponse,
+    response_model_exclude_none=True,
+)
+async def test_ai_provider(
+    body: AiProviderConnectionTestRequest,
+    _auth: AuthContext = Depends(_require_ai_provider_accept_auth),
+) -> AiProviderConnectionTestResponse:
+    """Verify a draft credential, endpoint, protocol, and model without persisting it."""
+
+    provider = body.provider
+    errors = _validate_provider(provider)
+    if errors:
+        return _connection_test_failure(
+            provider,
+            credential_material="available",
+            category="validation",
+            code="invalid_provider",
+            message="Provider configuration is invalid.",
+            retryable=False,
+        )
+
+    credential_material = "available"
+    if provider.auth.type != "api_key" or provider.auth.source != "managed":
+        return _connection_test_failure(
+            provider,
+            credential_material=credential_material,
+            category="credential",
+            code="credential_contract_mismatch",
+            message="The supplied credential does not match the provider auth configuration.",
+            retryable=False,
+        )
+    credential = body.credential.value.get_secret_value()
+
+    model, model_api_mode = _connection_test_model(provider, body.model)
+    if not model:
+        return _connection_test_failure(
+            provider,
+            credential_material=credential_material,
+            category="validation",
+            code="model_required",
+            message="Choose a model before testing the provider.",
+            retryable=False,
+        )
+    api_mode = effective_provider_api_mode(provider.type, model_api_mode or provider.api_mode)
+    if api_mode is None:
+        return _connection_test_failure(
+            provider,
+            credential_material=credential_material,
+            category="validation",
+            code="protocol_required",
+            message="Choose a provider protocol before testing the provider.",
+            retryable=False,
+        )
+
+    result = await test_ai_provider_connection(
+        provider_type=provider.type,
+        base_url=provider.base_url,
+        api_mode=api_mode,
+        model=model,
+        credential=credential,
+    )
+    endpoint_state = (
+        "verified" if result.ok or (result.error and result.error.endpoint_reachable) else "failed"
+    )
+    readiness = provider_readiness(
+        _provider_capability_input(provider, effective_api_mode=api_mode),
+        credential_material=credential_material,
+        endpoint_reachability=endpoint_state,
+        inference_verification="verified" if result.ok else "failed",
+    )
+    if result.ok:
+        return AiProviderConnectionTestResponse(ok=True, readiness=readiness)
+    if result.error is None:  # pragma: no cover - service result invariant
+        raise RuntimeError("failed connection test is missing an error")
+    return AiProviderConnectionTestResponse(
+        ok=False,
+        readiness=readiness,
+        error=AiProviderConnectionError(
+            category=result.error.category,
+            code=result.error.code,
+            message=result.error.message,
+            retryable=result.error.retryable,
+        ),
+    )
+
+
 @router.get("/{provider_id}", response_model=AiProviderResponse, response_model_exclude_none=True)
 async def get_ai_provider(
     provider_id: str,
@@ -260,6 +361,7 @@ async def patch_ai_provider(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
+    await _lock_provider_pool(db, auth.user_id)
     provider = await _get_provider_or_404(db, auth, provider_id)
     previous_signature = _runtime_manifest_provider_signature(provider)
     merged = await _to_response(db, auth, provider)
@@ -272,6 +374,7 @@ async def patch_ai_provider(
     errors = _validate_provider(merged)
     if errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": errors})
+    await _validate_runtime_env_unique(db, auth, merged, exclude_provider_id=provider.provider_id)
     _apply_provider_body(provider, merged, apply_auth="auth" in body.model_fields_set)
     if previous_signature != _runtime_manifest_provider_signature(provider):
         await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
@@ -286,6 +389,7 @@ async def delete_ai_provider(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderDeleteResponse:
+    await _lock_provider_pool(db, auth.user_id)
     provider = await _get_provider_or_404(db, auth, provider_id)
     archived_at = datetime.now(UTC)
     provider.archived_at = archived_at
@@ -335,11 +439,19 @@ async def set_ai_provider_api_key(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
+    await _lock_provider_pool(db, auth.user_id)
     provider = await _get_provider_or_404(db, auth, provider_id)
     profile = "default"
     runtime_env_name = body.runtime_env_name
     if runtime_env_name is not None and not _is_runtime_env_name(runtime_env_name):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid runtime_env_name")
+    proposed_runtime_env_name = runtime_env_name or provider.runtime_env_name
+    await _validate_runtime_env_name_unique(
+        db,
+        auth,
+        proposed_runtime_env_name,
+        exclude_provider_id=provider.provider_id,
+    )
     await _store_auth_payload(
         db,
         auth,
@@ -666,12 +778,15 @@ def _ai_provider_accept_request_hash(body: AiProviderAcceptRequest) -> str:
         }
     else:
         credential_payload = credential.model_dump(mode="json", exclude_none=False)
-    return platform_request_hash(
-        {
-            "provider": body.provider.model_dump(mode="json", exclude_none=False),
-            "credential": credential_payload,
-        }
-    )
+    request_payload = {
+        "provider": body.provider.model_dump(mode="json", exclude_none=False),
+        "credential": credential_payload,
+    }
+    # Preserve hashes written before the optional replacement contract existed.
+    # A default create retry must continue replaying across a rolling deploy.
+    if body.replace:
+        request_payload["replace"] = True
+    return platform_request_hash(request_payload)
 
 
 def _ai_provider_oauth_complete_request_hash(
@@ -725,6 +840,8 @@ async def _accept_ai_provider(
     if errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": errors})
 
+    await _lock_provider_pool(db, auth.user_id)
+    await _validate_runtime_env_unique(db, auth, provider_body)
     existing = await _find_provider(
         db,
         auth,
@@ -733,7 +850,11 @@ async def _accept_ai_provider(
     )
     if existing is not None and existing.archived_at is None:
         existing_response = await _to_response(db, auth, existing)
-        if existing_response.usable or not _accept_can_resume(existing, body.credential):
+        can_resume = not existing_response.usable and _accept_can_resume(
+            existing,
+            body.credential,
+        )
+        if not body.replace and not can_resume:
             raise HTTPException(status.HTTP_409_CONFLICT, "AI Provider already exists")
 
     previous_signature = _runtime_manifest_provider_signature(existing)
@@ -759,12 +880,13 @@ async def _accept_ai_provider(
             body.credential.value.get_secret_value(),
             provider.auth_metadata,
         )
-        if previous_signature != _runtime_manifest_provider_signature(provider):
-            await queue_provider_runtime_manifest_changed(
-                db,
-                auth.user_id,
-                provider.provider_id,
-            )
+        # Credential rotation changes runtime secret material even when every
+        # public provider metadata field remains byte-for-byte identical.
+        await queue_provider_runtime_manifest_changed(
+            db,
+            auth.user_id,
+            provider.provider_id,
+        )
         await db.flush()
         await db.refresh(provider)
         provider_response = await _to_response(db, auth, provider)
@@ -1366,6 +1488,67 @@ def _development_oauth_redirect_origins() -> set[str]:
     return allowed_origins
 
 
+async def _lock_provider_pool(db: AsyncSession, owner_user_id: UUID) -> None:
+    """Serialize user-provider mutations across the runtime env-name boundary."""
+
+    await db.execute(select(User.id).where(User.id == owner_user_id).with_for_update())
+
+
+async def _validate_runtime_env_unique(
+    db: AsyncSession,
+    auth: AuthContext,
+    provider: AiProviderUpsert | AiProviderResponse,
+    *,
+    exclude_provider_id: str | None = None,
+) -> None:
+    auth_ref, _metadata = provider.auth.persistence_fields()
+    names = (
+        {provider.runtime_env_name}
+        if provider.runtime_env_name and provider.auth.type in {"api_key", "secret_ref"}
+        else set()
+    )
+    if auth_ref is not None and auth_ref.startswith("env:"):
+        names.add(auth_ref.removeprefix("env:"))
+    effective_exclude = exclude_provider_id or provider.provider_id
+    for runtime_env_name in names:
+        await _validate_runtime_env_name_unique(
+            db,
+            auth,
+            runtime_env_name,
+            exclude_provider_id=effective_exclude,
+        )
+
+
+async def _validate_runtime_env_name_unique(
+    db: AsyncSession,
+    auth: AuthContext,
+    runtime_env_name: str | None,
+    *,
+    exclude_provider_id: str,
+) -> None:
+    if runtime_env_name is None:
+        return
+    conflicting_provider_id = await db.scalar(
+        select(AiProvider.provider_id)
+        .where(
+            AiProvider.owner_user_id == auth.user_id,
+            AiProvider.provider_id != exclude_provider_id,
+            AiProvider.managed_by == "user",
+            AiProvider.archived_at.is_(None),
+            (
+                (AiProvider.runtime_env_name == runtime_env_name)
+                | (AiProvider.auth_ref == f"env:{runtime_env_name}")
+            ),
+        )
+        .limit(1)
+    )
+    if conflicting_provider_id is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "runtime_env_name is already used by another AI Provider",
+        )
+
+
 async def _find_provider(
     db: AsyncSession,
     auth: AuthContext,
@@ -1478,29 +1661,39 @@ async def _to_responses(
         ).all()
         payload_keys = {(row.provider_id, row.auth_profile, row.kind) for row in rows}
     return [
-        _build_response(provider, usable=_provider_is_usable(provider, payload_keys))
+        _build_response(
+            provider,
+            credential_material=_provider_credential_material(provider, payload_keys),
+        )
         for provider in providers
     ]
 
 
-def _provider_is_usable(
+def _provider_credential_material(
     provider: AiProvider,
     payload_keys: set[tuple[str, str, str]],
-) -> bool:
+) -> str:
     active_profile = _active_auth_profile(provider)
     if active_profile is not None:
-        return (provider.provider_id, active_profile, provider.auth_type) in payload_keys
+        if (provider.provider_id, active_profile, provider.auth_type) in payload_keys:
+            return "available"
+        return "missing"
     if provider.auth_type == "none":
-        return True
+        return "not_required"
     if provider.auth_type == "secret_ref":
-        return bool(provider.auth_ref)
+        return "referenced" if provider.auth_ref else "missing"
     if provider.auth_type == "api_key":
         source = (provider.auth_metadata or {}).get("source")
-        return source in {"env", "vault"} and bool(provider.auth_ref)
-    return False
+        if source in {"env", "vault"} and provider.auth_ref:
+            return "referenced"
+    return "missing"
 
 
-def _build_response(provider: AiProvider, *, usable: bool) -> AiProviderResponse:
+def _build_response(provider: AiProvider, *, credential_material: str) -> AiProviderResponse:
+    readiness = provider_readiness(
+        _provider_capability_input(provider),
+        credential_material=credential_material,
+    )
     return AiProviderResponse(
         id=str(provider.id),
         provider_id=runtime_managed_provider_id(provider.provider_id),
@@ -1510,7 +1703,8 @@ def _build_response(provider: AiProvider, *, usable: bool) -> AiProviderResponse
         base_url=provider.base_url,
         api_mode=provider.api_mode,
         auth=_to_auth(provider),
-        usable=usable,
+        usable=credential_material != "missing",
+        readiness=readiness,
         managed_by=provider.managed_by,
         runtime_env_name=provider.runtime_env_name,
         capabilities=provider.capabilities,
@@ -1537,6 +1731,85 @@ def _runtime_manifest_provider_signature(provider: AiProvider | None) -> dict | 
     }
 
 
+def _provider_capability_input(
+    provider: AiProvider | AiProviderUpsert | AiProviderResponse,
+    *,
+    effective_api_mode: str | None = None,
+) -> AiProviderCapabilityInput:
+    if isinstance(provider, AiProvider):
+        metadata = provider.auth_metadata or {}
+        return AiProviderCapabilityInput(
+            provider_type=provider.type,
+            api_mode=effective_api_mode or provider.api_mode,
+            base_url=provider.base_url,
+            auth_type=provider.auth_type,
+            auth_source=(str(metadata.get("source")) if metadata.get("source") else None),
+            auth_tool=str(metadata.get("tool")) if metadata.get("tool") else None,
+            auth_ref=provider.auth_ref,
+            runtime_env_name=provider.runtime_env_name,
+        )
+    auth_ref, metadata = provider.auth.persistence_fields()
+    return AiProviderCapabilityInput(
+        provider_type=provider.type,
+        api_mode=effective_api_mode or provider.api_mode,
+        base_url=provider.base_url,
+        auth_type=provider.auth.type,
+        auth_source=(str(metadata.get("source")) if metadata and metadata.get("source") else None),
+        auth_tool=(str(metadata.get("tool")) if metadata and metadata.get("tool") else None),
+        auth_ref=auth_ref,
+        runtime_env_name=provider.runtime_env_name,
+    )
+
+
+def _connection_test_model(
+    provider: AiProviderUpsert,
+    requested_model: str | None,
+) -> tuple[str | None, str | None]:
+    model_id = requested_model.strip() if requested_model is not None else None
+    if not model_id:
+        model_id = next(
+            (model.id.strip() for model in provider.models or [] if model.id.strip()),
+            None,
+        )
+    if model_id is None:
+        return None, None
+    model_api_mode = next(
+        (
+            model.api_mode
+            for model in provider.models or []
+            if model.id.strip() == model_id and model.api_mode is not None
+        ),
+        None,
+    )
+    return model_id, model_api_mode
+
+
+def _connection_test_failure(
+    provider: AiProviderUpsert,
+    *,
+    credential_material: CredentialMaterialState,
+    category: ConnectionErrorCategory,
+    code: str,
+    message: str,
+    retryable: bool,
+) -> AiProviderConnectionTestResponse:
+    return AiProviderConnectionTestResponse(
+        ok=False,
+        readiness=provider_readiness(
+            _provider_capability_input(provider),
+            credential_material=credential_material,
+            endpoint_reachability="not_tested",
+            inference_verification="not_tested",
+        ),
+        error=AiProviderConnectionError(
+            category=category,
+            code=code,
+            message=message,
+            retryable=retryable,
+        ),
+    )
+
+
 def _validate_provider(body: AiProviderUpsert | AiProviderResponse) -> list[str]:
     errors: list[str] = []
     errors.extend(_validate_base_url(body.base_url, body.auth))
@@ -1550,6 +1823,14 @@ def _validate_provider(body: AiProviderUpsert | AiProviderResponse) -> list[str]
         errors.append("custom_openai_compatible requires api_mode")
     errors.extend(_validate_managed_provider_contract(body))
     errors.extend(_validate_auth_business_rules(body.auth))
+    auth_ref, _auth_metadata = body.auth.persistence_fields()
+    if (
+        auth_ref is not None
+        and auth_ref.startswith("env:")
+        and body.runtime_env_name is not None
+        and body.runtime_env_name != auth_ref.removeprefix("env:")
+    ):
+        errors.append("runtime_env_name must match the env auth ref")
     return errors
 
 
@@ -1635,7 +1916,10 @@ def _validate_base_url(base_url: str, auth: AiProviderAuth) -> list[str]:
     errors: list[str] = []
     from urllib.parse import urlparse
 
-    parsed = urlparse(base_url)
+    try:
+        parsed = urlparse(base_url)
+    except ValueError:
+        return ["base_url must be an http(s) URL"]
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return ["base_url must be an http(s) URL"]
     if auth.type != "none":

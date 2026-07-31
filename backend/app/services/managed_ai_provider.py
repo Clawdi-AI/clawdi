@@ -136,7 +136,7 @@ async def upsert_clawdi_managed_provider(
         raise ValueError("unsupported managed provider id")
     validate_managed_provider_base_url(base_url)
     normalized_base_url = base_url.strip()
-    if not api_key:
+    if not api_key.strip():
         raise ValueError("api_key cannot be blank")
     existing = (
         await db.execute(

@@ -16,7 +16,9 @@ from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.platform_idempotency import PlatformMutationIdempotency
+from app.schemas.ai_provider import AiProviderAcceptRequest
 from app.services import sync_events
+from app.services.ai_provider_connection import ConnectionProbeResult
 from app.services.managed_ai_provider import (
     CLAWDI_MANAGED_PROVIDER_ID,
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
@@ -31,6 +33,7 @@ from app.services.managed_ai_provider import (
     runtime_managed_provider_id,
     v2_deployment_managed_provider_id,
 )
+from app.services.platform_contract import platform_request_hash
 from app.services.vault_crypto import decrypt
 from tests.conftest import create_env_with_project
 
@@ -476,6 +479,19 @@ async def test_api_key_accept_is_atomic_usable_and_idempotent(
         ).scalar_one()
         assert idempotency.resource_type == "ai_provider"
         assert b"sk-atomic-secret" not in idempotency.encrypted_response
+        request_model = AiProviderAcceptRequest.model_validate(_api_key_accept_body())
+        assert idempotency.request_hash == platform_request_hash(
+            {
+                "provider": request_model.provider.model_dump(
+                    mode="json",
+                    exclude_none=False,
+                ),
+                "credential": {
+                    "type": "api_key",
+                    "value_sha256": hashlib.sha256(b"sk-atomic-secret").hexdigest(),
+                },
+            }
+        )
 
         reused = await client.post(
             "/v1/ai-providers/accept",
@@ -486,6 +502,115 @@ async def test_api_key_accept_is_atomic_usable_and_idempotent(
         assert "sk-different-secret" not in reused.text
     finally:
         sync_events.unsubscribe(user_id, queue)
+
+
+@pytest.mark.asyncio
+async def test_ai_provider_connection_test_is_real_readiness_but_non_mutating(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, str | None] = {}
+
+    async def fake_connection_test(**kwargs):
+        captured.update(kwargs)
+        return ConnectionProbeResult(ok=True)
+
+    monkeypatch.setattr(
+        "app.routes.ai_providers.test_ai_provider_connection",
+        fake_connection_test,
+    )
+    response = await client.post(
+        "/v1/ai-providers/test",
+        json=_api_key_accept_body("sk-test-only"),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
+    assert response.json()["readiness"] == {
+        "credential_material": "available",
+        "runtime_compatibility": {
+            "openclaw": True,
+            "hermes": True,
+            "codex": True,
+        },
+        "deployable": True,
+        "endpoint_reachability": "verified",
+        "inference_verification": "verified",
+    }
+    assert captured == {
+        "provider_type": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "api_mode": "openai_responses",
+        "model": "gpt-5.2",
+        "credential": "sk-test-only",
+    }
+    assert "sk-test-only" not in response.text
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(AiProvider)
+            .where(AiProvider.owner_user_id == seed_user.id)
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_ai_provider_connection_test_uses_the_selected_model_protocol(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, str | None] = {}
+
+    async def fake_connection_test(**kwargs):
+        captured.update(kwargs)
+        return ConnectionProbeResult(ok=True)
+
+    monkeypatch.setattr(
+        "app.routes.ai_providers.test_ai_provider_connection",
+        fake_connection_test,
+    )
+    body = _api_key_accept_body("sk-model-protocol")
+    body["provider"]["models"] = [
+        {"id": "gpt-chat", "api_mode": "openai_chat"},
+    ]
+    body["model"] = "gpt-chat"
+
+    response = await client.post("/v1/ai-providers/test", json=body)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
+    assert captured["api_mode"] == "openai_chat"
+    assert response.json()["readiness"]["runtime_compatibility"] == {
+        "openclaw": True,
+        "hermes": True,
+        "codex": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_ai_provider_connection_test_does_not_offer_unsafe_none_auth(
+    client: httpx.AsyncClient,
+):
+    response = await client.post(
+        "/v1/ai-providers/test",
+        json={
+            "provider": {
+                "provider_id": "local-none",
+                "type": "custom_openai_compatible",
+                "base_url": "http://127.0.0.1:11434/v1",
+                "api_mode": "openai_chat",
+                "auth": {"type": "none"},
+                "models": [{"id": "local-model"}],
+            },
+            "credential": {"type": "none"},
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert "input_value" not in response.text
 
 
 @pytest.mark.asyncio
@@ -583,6 +708,142 @@ async def test_api_key_accept_rolls_back_everything_after_provider_write_failure
         )
     finally:
         sync_events.unsubscribe(user_id, queue)
+
+
+@pytest.mark.asyncio
+async def test_api_key_accept_atomically_replaces_provider_and_credential(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = await client.post(
+        "/v1/ai-providers/accept",
+        headers={"Idempotency-Key": "provider-accept-create-before-replace"},
+        json=_api_key_accept_body("sk-old-secret"),
+    )
+    assert created.status_code == 201, created.text
+    provider_id = created.json()["provider"]["id"]
+
+    queued: list[tuple[uuid.UUID, str]] = []
+
+    async def capture_runtime_change(_db, user_id, changed_provider_id):
+        queued.append((user_id, changed_provider_id))
+
+    monkeypatch.setattr(
+        "app.routes.ai_providers.queue_provider_runtime_manifest_changed",
+        capture_runtime_change,
+    )
+
+    replacement_body = _api_key_accept_body("sk-new-secret")
+    replacement_body["provider"]["label"] = "Updated provider"
+    replacement_body["replace"] = True
+    headers = {"Idempotency-Key": "provider-accept-replace"}
+    replaced = await client.post(
+        "/v1/ai-providers/accept",
+        headers=headers,
+        json=replacement_body,
+    )
+    replay = await client.post(
+        "/v1/ai-providers/accept",
+        headers=headers,
+        json=replacement_body,
+    )
+
+    assert replaced.status_code == replay.status_code == 201
+    assert replay.json() == replaced.json()
+    assert replaced.json()["provider"]["id"] == provider_id
+    assert replaced.json()["provider"]["label"] == "Updated provider"
+    assert queued == [(seed_user.id, "openai-atomic")]
+    assert "sk-old-secret" not in replaced.text
+    assert "sk-new-secret" not in replaced.text
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(AiProvider)
+            .where(
+                AiProvider.owner_user_id == seed_user.id,
+                AiProvider.provider_id == "openai-atomic",
+            )
+        )
+        == 1
+    )
+    payload = (
+        await db_session.execute(
+            select(AiProviderAuthPayload).where(
+                AiProviderAuthPayload.owner_user_id == seed_user.id,
+                AiProviderAuthPayload.provider_id == "openai-atomic",
+                AiProviderAuthPayload.archived_at.is_(None),
+            )
+        )
+    ).scalar_one()
+    assert decrypt(payload.encrypted_payload, payload.nonce) == "sk-new-secret"
+
+
+@pytest.mark.asyncio
+async def test_api_key_accept_failed_replace_restores_old_provider_and_credential(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    user_id = seed_user.id
+    created = await client.post(
+        "/v1/ai-providers/accept",
+        headers={"Idempotency-Key": "provider-accept-create-before-failure"},
+        json=_api_key_accept_body("sk-old-secret"),
+    )
+    assert created.status_code == 201, created.text
+    original_label = created.json()["provider"]["label"]
+
+    replacement_body = _api_key_accept_body("sk-never-committed")
+    replacement_body["provider"]["label"] = "Must roll back"
+    replacement_body["replace"] = True
+
+    def _fail_idempotency_write(*args, **kwargs):
+        raise RuntimeError("forced replace failure")
+
+    monkeypatch.setattr(
+        "app.routes.ai_providers.store_platform_response",
+        _fail_idempotency_write,
+    )
+    with pytest.raises(RuntimeError, match="forced replace failure"):
+        await client.post(
+            "/v1/ai-providers/accept",
+            headers={"Idempotency-Key": "provider-accept-replace-failure"},
+            json=replacement_body,
+        )
+
+    provider = (
+        await db_session.execute(
+            select(AiProvider).where(
+                AiProvider.owner_user_id == user_id,
+                AiProvider.provider_id == "openai-atomic",
+            )
+        )
+    ).scalar_one()
+    payload = (
+        await db_session.execute(
+            select(AiProviderAuthPayload).where(
+                AiProviderAuthPayload.owner_user_id == user_id,
+                AiProviderAuthPayload.provider_id == "openai-atomic",
+                AiProviderAuthPayload.archived_at.is_(None),
+            )
+        )
+    ).scalar_one()
+    assert provider.label == original_label
+    assert decrypt(payload.encrypted_payload, payload.nonce) == "sk-old-secret"
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(PlatformMutationIdempotency)
+            .where(
+                PlatformMutationIdempotency.operation == "ai_provider.accept",
+                PlatformMutationIdempotency.idempotency_key == "provider-accept-replace-failure",
+            )
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -1420,6 +1681,161 @@ async def test_ai_provider_allows_no_auth_local_endpoints(client: httpx.AsyncCli
             },
         )
         assert created.status_code == 200, created.text
+
+
+@pytest.mark.asyncio
+async def test_ai_provider_rejects_malformed_ipv6_url_without_server_error(
+    client: httpx.AsyncClient,
+):
+    response = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "invalid-ipv6",
+            "type": "custom_openai_compatible",
+            "base_url": "https://[2001:db8::1",
+            "api_mode": "openai_chat",
+            "auth": {"type": "api_key", "source": "managed"},
+            "runtime_env_name": "INVALID_IPV6_KEY",
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json() == {"detail": {"errors": ["base_url must be an http(s) URL"]}}
+
+
+@pytest.mark.asyncio
+async def test_ai_provider_rejects_runtime_env_collisions_in_active_user_pool(
+    client: httpx.AsyncClient,
+):
+    first = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "openai-one",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "secret_ref", "ref": "env:SHARED_PROVIDER_KEY"},
+            "runtime_env_name": "SHARED_PROVIDER_KEY",
+        },
+    )
+    second = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "openai-two",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "api_key", "source": "managed"},
+            "runtime_env_name": "SHARED_PROVIDER_KEY",
+        },
+    )
+    native_profile = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "codex-native",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "agent_profile", "tool": "codex", "profile": "default"},
+            "runtime_env_name": "SHARED_PROVIDER_KEY",
+        },
+    )
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 409, second.text
+    assert second.json() == {"detail": "runtime_env_name is already used by another AI Provider"}
+    assert native_profile.status_code == 200, native_profile.text
+
+
+@pytest.mark.asyncio
+async def test_ai_provider_readiness_separates_material_runtime_and_verification(
+    client: httpx.AsyncClient,
+):
+    created = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "gemini-readiness",
+            "type": "gemini",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta",
+            "api_mode": "google_generate_content",
+            "auth": {"type": "api_key", "source": "managed"},
+            "runtime_env_name": "GEMINI_READINESS_KEY",
+            "models": [{"id": "gemini-2.5-pro"}],
+        },
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["usable"] is False
+    assert created.json()["readiness"] == {
+        "credential_material": "missing",
+        "runtime_compatibility": {
+            "openclaw": True,
+            "hermes": False,
+            "codex": False,
+        },
+        "deployable": False,
+        "endpoint_reachability": "not_tested",
+        "inference_verification": "not_tested",
+    }
+
+    stored = await client.post(
+        "/v1/ai-providers/gemini-readiness/auth/api-key",
+        json={"value": "gemini-secret"},
+    )
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["usable"] is True
+    assert stored.json()["readiness"]["credential_material"] == "available"
+    assert stored.json()["readiness"]["deployable"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        pytest.param(
+            "/v1/ai-providers/accept",
+            {
+                **_api_key_accept_body("   "),
+                "replace": True,
+            },
+            id="accept",
+        ),
+        pytest.param(
+            "/v1/ai-providers/openai-blank/auth/api-key",
+            {"value": "\t\n"},
+            id="auth-api-key",
+        ),
+        pytest.param(
+            "/v1/ai-providers/openai-blank/auth/import",
+            {
+                "type": "agent_profile",
+                "tool": "codex",
+                "profile": "default",
+                "payload": "  \t",
+            },
+            id="auth-import",
+        ),
+    ],
+)
+async def test_ai_provider_rejects_blank_credentials_at_the_boundary(
+    client: httpx.AsyncClient,
+    path: str,
+    body: dict,
+):
+    if "openai-blank" in path:
+        created = await client.post(
+            "/v1/ai-providers",
+            json={
+                "provider_id": "openai-blank",
+                "type": "openai",
+                "base_url": "https://api.openai.com/v1",
+                "auth": {"type": "api_key", "source": "managed"},
+                "runtime_env_name": "OPENAI_BLANK_KEY",
+            },
+        )
+        assert created.status_code == 200, created.text
+    headers = {"Idempotency-Key": "blank-credential"} if path.endswith("/accept") else {}
+    response = await client.post(path, headers=headers, json=body)
+
+    assert response.status_code == 422, response.text
+    assert "credential" in response.text.lower()
+    assert "input_value" not in response.text
 
 
 @pytest.mark.asyncio

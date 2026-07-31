@@ -85,9 +85,29 @@ export interface paths {
         put?: never;
         /**
          * Accept Ai Provider
-         * @description Atomically create a provider and its first usable auth state.
+         * @description Atomically create or explicitly replace a provider and credential.
          */
         post: operations["accept_ai_provider_v1_ai_providers_accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai-providers/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Ai Provider
+         * @description Verify a draft credential, endpoint, protocol, and model without persisting it.
+         */
+        post: operations["test_ai_provider_v1_ai_providers_test_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3031,6 +3051,11 @@ export interface components {
             provider: components["schemas"]["AiProviderUpsert"];
             /** Credential */
             credential: components["schemas"]["AiProviderApiKeyAcceptCredential"] | components["schemas"]["AiProviderOAuthAcceptCredential"];
+            /**
+             * Replace
+             * @default false
+             */
+            replace: boolean;
         };
         AiProviderAcceptResponse: components["schemas"]["AiProviderReadyAcceptResponse"] | components["schemas"]["AiProviderOAuthPendingAcceptResponse"];
         /** AiProviderAgentProfileAuth */
@@ -3109,6 +3134,34 @@ export interface components {
             provider?: string | null;
             /** Profile */
             profile?: string | null;
+        };
+        /** AiProviderConnectionError */
+        AiProviderConnectionError: {
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "validation" | "credential" | "ssrf" | "dns" | "timeout" | "tls" | "network" | "authentication" | "authorization" | "rate_limit" | "redirect" | "endpoint" | "protocol_model" | "upstream";
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /** AiProviderConnectionTestRequest */
+        AiProviderConnectionTestRequest: {
+            provider: components["schemas"]["AiProviderUpsert"];
+            credential: components["schemas"]["AiProviderApiKeyAcceptCredential"];
+            /** Model */
+            model?: string | null;
+        };
+        /** AiProviderConnectionTestResponse */
+        AiProviderConnectionTestResponse: {
+            /** Ok */
+            ok: boolean;
+            readiness: components["schemas"]["AiProviderReadiness"];
+            error?: components["schemas"]["AiProviderConnectionError"] | null;
         };
         /** AiProviderDeleteResponse */
         AiProviderDeleteResponse: {
@@ -3190,6 +3243,8 @@ export interface components {
             supports_reasoning?: boolean;
             /** Context Window */
             context_window?: number;
+            /** Max Input Tokens */
+            max_input_tokens?: number;
             /** Max Tokens */
             max_tokens?: number;
             /** Cost */
@@ -3343,6 +3398,29 @@ export interface components {
             /** Models */
             models?: components["schemas"]["AiProviderModel"][] | null;
         };
+        /** AiProviderReadiness */
+        AiProviderReadiness: {
+            /**
+             * Credential Material
+             * @enum {string}
+             */
+            credential_material: "available" | "referenced" | "not_required" | "missing";
+            runtime_compatibility: components["schemas"]["AiProviderRuntimeCompatibility"];
+            /** Deployable */
+            deployable: boolean;
+            /**
+             * Endpoint Reachability
+             * @default not_tested
+             * @enum {string}
+             */
+            endpoint_reachability: "not_tested" | "verified" | "failed";
+            /**
+             * Inference Verification
+             * @default not_tested
+             * @enum {string}
+             */
+            inference_verification: "not_tested" | "verified" | "failed";
+        };
         /** AiProviderReadyAcceptResponse */
         AiProviderReadyAcceptResponse: {
             /**
@@ -3391,6 +3469,8 @@ export interface components {
              * @description Whether the provider has the credential material required for runtime use. This does not validate the credential or test endpoint connectivity.
              */
             usable: boolean;
+            /** @description Structured readiness dimensions; omitted by older compatible servers. */
+            readiness?: components["schemas"]["AiProviderReadiness"] | null;
             /**
              * Created At
              * Format: date-time
@@ -3401,6 +3481,15 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** AiProviderRuntimeCompatibility */
+        AiProviderRuntimeCompatibility: {
+            /** Openclaw */
+            openclaw: boolean;
+            /** Hermes */
+            hermes: boolean;
+            /** Codex */
+            codex: boolean;
         };
         /** AiProviderSecretRefAuth */
         AiProviderSecretRefAuth: {
@@ -7506,6 +7595,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AiProviderAcceptResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_ai_provider_v1_ai_providers_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderConnectionTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderConnectionTestResponse"];
                 };
             };
             /** @description Validation Error */
