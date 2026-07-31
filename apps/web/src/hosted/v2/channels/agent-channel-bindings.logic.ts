@@ -5,9 +5,9 @@ export type ChannelAccountSummary = { provider: string; name: string };
 
 export type AgentPairedChatItem = {
 	accountId: string;
+	agentLinkId: string;
 	binding: ChannelBinding;
 	provider: string;
-	channelName: string;
 };
 
 export function activeAgentChannelLinks(links: readonly AgentChannelLink[]): AgentChannelLink[] {
@@ -35,9 +35,9 @@ export function selectAgentPairedChats({
 			const account = link.account ?? accountSummaries.get(accountId);
 			items.push({
 				accountId,
+				agentLinkId: binding.agent_link_id,
 				binding,
 				provider: account?.provider ?? "",
-				channelName: account?.name ?? "Connected channel",
 			});
 		}
 	}

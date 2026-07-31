@@ -4,6 +4,7 @@ const SINGLE_LINK_PROVIDERS_BY_AGENT_TYPE: Readonly<Record<string, ReadonlySet<s
 	hermes: new Set(["telegram", "discord"]),
 	openclaw: new Set(["telegram"]),
 };
+
 export function channelProviderLinkingReady(provider: string): boolean {
 	return provider !== "whatsapp" || WHATSAPP_LINKING_READY;
 }

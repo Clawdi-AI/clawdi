@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { WHATSAPP_LINKING_READY } from "@/hosted/v2/channels/channel-linking.logic";
 import {
 	CHANNEL_PROVIDERS,
 	type ChannelProviderId,
@@ -31,7 +32,6 @@ import {
 	discordGuildIdError,
 	discordPublicKeyError,
 } from "@/hosted/v2/channels/connect-bot-dialog.logic";
-import { WHATSAPP_LINKING_READY } from "@/hosted/v2/channels/link-agent-dialog.logic";
 
 /**
  * Connect a channel. Each provider takes its OWN real inputs (grounded in

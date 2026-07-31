@@ -4,7 +4,7 @@ import {
 	channelProviderLinkingReady,
 	pairCodeExpired,
 	pairingCommand,
-} from "./link-agent-dialog.logic";
+} from "./channel-linking.logic";
 
 describe("hosted channel instructions and gates", () => {
 	test("renders the exact command accepted by the channel backend", () => {

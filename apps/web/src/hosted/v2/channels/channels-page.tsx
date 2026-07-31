@@ -20,7 +20,7 @@ import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
-import { CHANNEL_PROVIDERS, providerMeta } from "@/hosted/v2/channels/channel-providers";
+import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelAccount } from "@/hosted/v2/channels/channel-types";
 import {
 	ChannelStatusBadge,
@@ -33,6 +33,7 @@ import {
 	type ChannelProviderFilter,
 	orderedChannelsForFilter,
 	providerCounts,
+	providersWithOwnedBots,
 } from "@/hosted/v2/channels/channels-page.logic";
 import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
 import { cn } from "@/lib/utils";
@@ -49,6 +50,7 @@ export function ChannelsPage() {
 
 	const channelItems = channels.data ?? [];
 	const counts = providerCounts(channelItems);
+	const visibleProviders = providersWithOwnedBots(counts);
 	const totalCount = channelItems.length;
 
 	return (
@@ -62,7 +64,7 @@ export function ChannelsPage() {
 							All
 							<span className="text-muted-foreground tabular-nums">{totalCount}</span>
 						</FilterChip>
-						{CHANNEL_PROVIDERS.map((provider) => (
+						{visibleProviders.map((provider) => (
 							<FilterChip
 								key={provider}
 								active={filter === provider}

@@ -221,12 +221,18 @@ import {
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import {
+	type AgentPairedChatItem,
 	activeAgentChannelLinks,
 	type ChannelAccountSummary,
 	selectAgentPairedChats,
 } from "@/hosted/v2/channels/agent-channel-bindings.logic";
 import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
+import {
+	agentProviderHasSingleLinkLimit,
+	channelActivityAfterLink,
+	channelProviderLinkingReady,
+} from "@/hosted/v2/channels/channel-linking.logic";
 import {
 	ChannelStatusBadge,
 	CopyInline,
@@ -245,11 +251,6 @@ import {
 	useUnlinkAgentChannel,
 } from "@/hosted/v2/channels/channels-hooks";
 import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
-import {
-	agentProviderHasSingleLinkLimit,
-	channelActivityAfterLink,
-	channelProviderLinkingReady,
-} from "@/hosted/v2/channels/link-agent-dialog.logic";
 import { PairedChatRow } from "@/hosted/v2/channels/paired-chat-row";
 import { TelegramPairDialog } from "@/hosted/v2/channels/telegram-pair-dialog";
 import {
@@ -2380,6 +2381,25 @@ function ChannelsTab({
 		}
 		return map;
 	}, [channels.data, botPool.data]);
+	const activeAccountIds = useMemo(
+		() => Array.from(new Set(visibleActiveLinks.map((link) => link.account_id))),
+		[visibleActiveLinks],
+	);
+	const bindingQueries = useChannelBindingsForAccounts(activeAccountIds);
+	const pairedChats = selectAgentPairedChats({
+		visibleLinks: visibleActiveLinks,
+		bindingsByAccount: bindingQueries.flatMap((query, index) => {
+			const accountId = activeAccountIds[index];
+			return accountId ? [{ accountId, bindings: query.data ?? [] }] : [];
+		}),
+		accountSummaries,
+	});
+	const pairedChatsByLinkId = new Map<string, AgentPairedChatItem[]>();
+	for (const item of pairedChats) {
+		const items = pairedChatsByLinkId.get(item.agentLinkId) ?? [];
+		items.push(item);
+		pairedChatsByLinkId.set(item.agentLinkId, items);
+	}
 	const linkedProviders = useMemo(
 		() =>
 			new Set(
@@ -2503,8 +2523,8 @@ function ChannelsTab({
 	return (
 		<div className="flex flex-col gap-6">
 			<section data-agent-connected-channels className="flex flex-col gap-3">
-				<SectionLabel count={visibleLinks.length}>Connected channels</SectionLabel>
-				{linked.isLoading && visibleLinks.length === 0 ? (
+				<SectionLabel count={visibleActiveLinks.length}>Connected channels</SectionLabel>
+				{linked.isLoading && visibleActiveLinks.length === 0 ? (
 					<div className={AGENT_CHANNEL_LIST_CLASS}>
 						<div className={AGENT_CHANNEL_ROW_CLASS}>
 							<Skeleton className="size-8 shrink-0 rounded-md" />
@@ -2517,13 +2537,13 @@ function ChannelsTab({
 							</div>
 						</div>
 					</div>
-				) : linked.error && visibleLinks.length === 0 ? (
+				) : linked.error && visibleActiveLinks.length === 0 ? (
 					<ApiErrorPanel
 						error={linked.error}
 						onRetry={() => linked.refetch()}
 						title="Couldn't load linked channels"
 					/>
-				) : visibleLinks.length === 0 ? (
+				) : visibleActiveLinks.length === 0 ? (
 					<EmptyState
 						variant="inset"
 						title="No connected channels"
@@ -2531,22 +2551,29 @@ function ChannelsTab({
 					/>
 				) : (
 					<div className={AGENT_CHANNEL_LIST_CLASS}>
-						{visibleLinks.map((l) => (
-							<LinkedChannelRow
-								key={l.id}
-								link={l}
-								fallbackAccount={accountSummaries.get(l.account_id)}
-								health={healthByAccount.get(l.account_id)}
-								healthLoading={health.isLoading}
-								healthError={Boolean(health.error)}
-								onHealthRetry={() => void health.refetch()}
-								unlinking={unlinkingLinkIds.has(l.id)}
-								onUnlink={() => startUnlink(l.account_id, l.id)}
-							/>
-						))}
+						{visibleActiveLinks.map((link) => {
+							const bindingQuery = bindingQueries[activeAccountIds.indexOf(link.account_id)];
+							return (
+								<ConnectedChannelGroup
+									key={link.id}
+									link={link}
+									pairedChats={pairedChatsByLinkId.get(link.id) ?? []}
+									bindingsLoading={Boolean(bindingQuery?.isLoading)}
+									bindingsError={Boolean(bindingQuery?.error)}
+									onBindingsRetry={() => void bindingQuery?.refetch()}
+									fallbackAccount={accountSummaries.get(link.account_id)}
+									health={healthByAccount.get(link.account_id)}
+									healthLoading={health.isLoading}
+									healthError={Boolean(health.error)}
+									onHealthRetry={() => void health.refetch()}
+									unlinking={unlinkingLinkIds.has(link.id)}
+									onUnlink={() => startUnlink(link.account_id, link.id)}
+								/>
+							);
+						})}
 					</div>
 				)}
-				{linked.error && visibleLinks.length > 0 ? (
+				{linked.error && visibleActiveLinks.length > 0 ? (
 					<ApiErrorPanel
 						error={linked.error}
 						onRetry={() => linked.refetch()}
@@ -2554,14 +2581,6 @@ function ChannelsTab({
 					/>
 				) : null}
 			</section>
-
-			<AgentPairedChats
-				links={visibleActiveLinks}
-				accountSummaries={accountSummaries}
-				linksLoading={linked.isLoading}
-				linksError={linked.error}
-				onLinksRetry={() => void linked.refetch()}
-			/>
 
 			<section data-agent-add-channel className="flex flex-col gap-3 border-t pt-6">
 				<div className="space-y-1">
@@ -2683,93 +2702,79 @@ function ChannelsTab({
 	);
 }
 
-function AgentPairedChats({
-	links,
-	accountSummaries,
-	linksLoading,
-	linksError,
-	onLinksRetry,
+function ConnectedChannelGroup({
+	link,
+	pairedChats,
+	bindingsLoading,
+	bindingsError,
+	onBindingsRetry,
+	onUnlink,
+	unlinking,
+	fallbackAccount,
+	health,
+	healthLoading,
+	healthError,
+	onHealthRetry,
 }: {
-	links: AgentChannelLink[];
-	accountSummaries: ReadonlyMap<string, ChannelAccountSummary>;
-	linksLoading: boolean;
-	linksError: Error | null;
-	onLinksRetry: () => void;
+	link: AgentChannelLink;
+	pairedChats: AgentPairedChatItem[];
+	bindingsLoading: boolean;
+	bindingsError: boolean;
+	onBindingsRetry: () => void;
+	onUnlink: () => void;
+	unlinking: boolean;
+	fallbackAccount?: { provider: string; name: string };
+	health?: components["schemas"]["ChannelHealthItemResponse"];
+	healthLoading: boolean;
+	healthError: boolean;
+	onHealthRetry: () => void;
 }) {
-	const accountIds = useMemo(
-		() => Array.from(new Set(links.map((link) => link.account_id))),
-		[links],
-	);
-	const bindingQueries = useChannelBindingsForAccounts(accountIds);
-	const items = selectAgentPairedChats({
-		visibleLinks: links,
-		bindingsByAccount: bindingQueries.flatMap((query, index) => {
-			const accountId = accountIds[index];
-			return accountId ? [{ accountId, bindings: query.data ?? [] }] : [];
-		}),
-		accountSummaries,
-	});
-
-	const bindingsLoading = linksLoading || bindingQueries.some((query) => query.isLoading);
-	const failedQueries = bindingQueries.filter((query) => query.error);
-	if (links.length === 0 && !linksLoading && !linksError) return null;
+	const showChats = pairedChats.length > 0 || bindingsLoading || bindingsError;
 
 	return (
-		<section data-agent-paired-chats className="flex flex-col gap-3 border-t pt-6">
-			<SectionLabel count={items.length}>Paired chats</SectionLabel>
-			{linksError && links.length === 0 ? (
-				<ApiErrorPanel
-					error={linksError}
-					onRetry={onLinksRetry}
-					title="Couldn't verify paired chats"
-				/>
-			) : bindingsLoading && items.length === 0 ? (
-				<div className="ml-4 flex items-center gap-3 border-l-2 border-muted py-2 pl-3">
-					<Skeleton className="size-8 shrink-0 rounded-md" />
-					<div className="min-w-0 flex-1 space-y-2">
-						<Skeleton className="h-4 w-40" />
-						<Skeleton className="h-3 w-56 max-w-full" />
-					</div>
-				</div>
-			) : items.length === 0 && failedQueries.length === 0 ? (
-				<p className="ml-4 border-l-2 border-muted py-2 pl-3 text-sm text-muted-foreground">
-					No chats paired yet.
-				</p>
-			) : (
-				<div data-agent-paired-chats-list className="flex flex-col gap-1">
-					{items.map((item) => (
+		<div data-agent-channel-group-id={link.id} className="min-w-0">
+			<LinkedChannelRow
+				link={link}
+				fallbackAccount={fallbackAccount}
+				health={health}
+				healthLoading={healthLoading}
+				healthError={healthError}
+				onHealthRetry={onHealthRetry}
+				unlinking={unlinking}
+				onUnlink={onUnlink}
+			/>
+			{showChats ? (
+				<div data-agent-channel-chats-for={link.id} className="divide-y border-t px-4">
+					{pairedChats.map((item) => (
 						<PairedChatRow
 							key={item.binding.id}
 							accountId={item.accountId}
 							binding={item.binding}
 							provider={item.provider}
-							channelName={item.channelName}
 						/>
 					))}
-					{failedQueries.length > 0 ? (
-						<div role="alert" className={AGENT_CHANNEL_ROW_CLASS}>
-							<span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-destructive/10 text-destructive">
-								<AlertCircle className="size-4" />
-							</span>
-							<p className="min-w-0 text-sm font-medium">Couldn&apos;t load every paired chat</p>
-							<div className={AGENT_CHANNEL_ACTIONS_CLASS}>
-								<Button
-									type="button"
-									variant="outline"
-									size="sm"
-									onClick={() => {
-										for (const query of failedQueries) void query.refetch();
-									}}
-								>
-									<RefreshCw className="size-3.5" />
-									Retry
-								</Button>
-							</div>
+					{bindingsLoading && pairedChats.length === 0 ? (
+						<div className="ml-4 flex min-h-12 items-center gap-3 border-l-2 border-muted py-2 pl-3">
+							<Skeleton className="size-8 shrink-0 rounded-md" />
+							<Skeleton className="h-4 w-40 max-w-full" />
+						</div>
+					) : null}
+					{bindingsError ? (
+						<div
+							role="alert"
+							className="ml-4 flex min-h-12 flex-wrap items-center gap-2 border-l-2 border-muted py-2 pl-3"
+						>
+							<AlertCircle className="size-4 shrink-0 text-destructive" />
+							<p className="min-w-0 flex-1 text-sm font-medium">Couldn&apos;t load paired chats</p>
+							<Button type="button" variant="outline" size="sm" onClick={onBindingsRetry}>
+								<RefreshCw className="size-3.5" />
+								Retry
+							</Button>
 						</div>
 					) : null}
 				</div>
-			)}
-		</section>
+			) : null}
+		</div>
 	);
 }
 

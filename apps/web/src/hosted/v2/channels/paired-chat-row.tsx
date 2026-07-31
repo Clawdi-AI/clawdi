@@ -19,26 +19,17 @@ export function PairedChatRow({
 	accountId,
 	binding,
 	provider,
-	channelName,
-	agentName,
 	className,
 }: {
 	accountId: string;
 	binding: ChannelBinding;
 	provider: string;
-	channelName?: string;
-	agentName?: string;
 	className?: string;
 }) {
 	const unpair = useDeleteChannelBinding(accountId);
 	const chatType = binding.external_chat_type?.toLowerCase();
 	const privateChat = chatType === "private";
 	const chatName = pairedChatTitle(binding);
-	const relationship = agentName
-		? `Paired to ${agentName}`
-		: channelName
-			? `Through ${channelName}`
-			: null;
 
 	return (
 		<div
@@ -55,7 +46,6 @@ export function PairedChatRow({
 				icon={<IconChip size="sm">{privateChat ? <MessageCircle /> : <MessagesSquare />}</IconChip>}
 				title={chatName}
 				meta={[
-					...(relationship ? [<span key="relationship">{relationship}</span>] : []),
 					...(isNormalChannelStatus(binding.status)
 						? []
 						: [<ChannelStatusBadge key="status" status={binding.status} />]),

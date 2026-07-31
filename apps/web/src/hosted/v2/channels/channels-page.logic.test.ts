@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { orderedChannelsForFilter, providerCounts } from "./channels-page.logic";
+import {
+	orderedChannelsForFilter,
+	providerCounts,
+	providersWithOwnedBots,
+} from "./channels-page.logic";
 
 describe("owned bot inventory", () => {
 	test("keeps canonical provider order and stable order within each provider", () => {
@@ -27,13 +31,18 @@ describe("owned bot inventory", () => {
 	});
 
 	test("counts only owned bots for global filters", () => {
-		expect(
-			providerCounts([
-				{ provider: "telegram" },
-				{ provider: "telegram" },
-				{ provider: "discord" },
-				{ provider: "imessage" },
-			]),
-		).toEqual({ telegram: 2, discord: 1, whatsapp: 0 });
+		const counts = providerCounts([
+			{ provider: "telegram" },
+			{ provider: "telegram" },
+			{ provider: "discord" },
+			{ provider: "imessage" },
+		]);
+
+		expect(counts).toEqual({ telegram: 2, discord: 1, whatsapp: 0 });
+		expect(providersWithOwnedBots(counts)).toEqual(["telegram", "discord"]);
+	});
+
+	test("keeps an existing WhatsApp asset discoverable without showing empty providers", () => {
+		expect(providersWithOwnedBots({ telegram: 0, discord: 0, whatsapp: 1 })).toEqual(["whatsapp"]);
 	});
 });

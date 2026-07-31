@@ -33,6 +33,12 @@ export function providerCounts(
 	return counts;
 }
 
+export function providersWithOwnedBots(
+	counts: Readonly<Record<ChannelProviderId, number>>,
+): ChannelProviderId[] {
+	return CHANNEL_PROVIDERS.filter((provider) => counts[provider] > 0);
+}
+
 function isKnownProvider(provider: string): provider is ChannelProviderId {
 	return (CHANNEL_PROVIDERS as readonly string[]).includes(provider);
 }

@@ -574,10 +574,10 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 
 	return (
 		<div className="flex flex-col gap-4">
-			<InfoCard icon={KeyRound} title="Slash commands">
+			<InfoCard icon={KeyRound} title="Pairing commands">
 				{supportsCommands
-					? `Publish this agent's slash commands to ${meta.label}.`
-					: `${meta.label} doesn't support slash commands.`}
+					? `Publish Clawdi’s pairing commands to ${meta.label}.`
+					: `${meta.label} doesn't support pairing commands.`}
 			</InfoCard>
 
 			{supportsCommands ? (
@@ -601,7 +601,7 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 					) : sync.data ? (
 						<EmptyState
 							variant="inset"
-							description="Command sync completed. The agent returned no commands to publish."
+							description="Command sync completed. No pairing commands were returned."
 						/>
 					) : null}
 				</>

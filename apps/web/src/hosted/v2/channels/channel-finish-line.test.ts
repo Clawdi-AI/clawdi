@@ -41,20 +41,21 @@ describe("hosted-agent channel finish line", () => {
 		expect(channelsTab).not.toContain("source revision");
 	});
 
-	test("orders the page by connected channels, paired chats, then channel addition", () => {
+	test("nests paired chats under their channel before channel addition", () => {
 		const connectedIndex = channelsTab.indexOf("<section data-agent-connected-channels");
-		const pairedIndex = channelsTab.indexOf("<AgentPairedChats");
 		const addIndex = channelsTab.indexOf("<section data-agent-add-channel");
 		const readyBotIndex = channelsTab.indexOf('kind="Ready to use"');
 		const advancedIndex = channelsTab.indexOf("Use your own bot");
 		expect(connectedIndex).toBeGreaterThanOrEqual(0);
-		expect(pairedIndex).toBeGreaterThan(connectedIndex);
-		expect(addIndex).toBeGreaterThan(pairedIndex);
+		expect(addIndex).toBeGreaterThan(connectedIndex);
 		expect(readyBotIndex).toBeGreaterThan(addIndex);
 		expect(advancedIndex).toBeGreaterThan(readyBotIndex);
 		expect(channelsTab).toContain("data-agent-connected-channels");
-		expect(channelsTab).toContain("data-agent-paired-chats");
-		expect(channelsTab).toContain("Paired chats");
+		expect(channelsTab).toContain("data-agent-channel-group-id={link.id}");
+		expect(channelsTab).toContain("data-agent-channel-chats-for={link.id}");
+		expect(channelsTab).not.toContain("data-agent-paired-chats");
+		expect(channelsTab).not.toContain(">Paired chats<");
+		expect(channelsTab).not.toContain("No chats paired");
 		expect(channelsTab).toContain("data-agent-add-channel");
 		expect(channelsTab).toContain("data-add-channel-id");
 		expect(channelsTab).not.toContain("No bot connected yet");

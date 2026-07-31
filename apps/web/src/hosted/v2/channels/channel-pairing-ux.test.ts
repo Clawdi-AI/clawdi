@@ -34,7 +34,9 @@ describe("channel IA boundary", () => {
 
 	test("keeps Link, Pair, Unpair, and Unlink on Agent Channels", () => {
 		expect(agentDetail).toContain("data-agent-connected-channels");
-		expect(agentDetail).toContain("data-agent-paired-chats");
+		expect(agentDetail).toContain("data-agent-channel-group-id={link.id}");
+		expect(agentDetail).toContain("data-agent-channel-chats-for={link.id}");
+		expect(agentDetail).not.toContain("data-agent-paired-chats");
 		expect(agentDetail).toContain("data-agent-add-channel");
 		expect(agentDetail).toContain("Pair Telegram");
 		expect(agentDetail).toContain("Pair chat");
@@ -71,8 +73,9 @@ describe("channel IA boundary", () => {
 	});
 
 	test("shows chat identity and isolates Unpair to the selected chat with recovery", () => {
-		expect(agentDetail).toContain("useChannelBindingsForAccounts(accountIds)");
+		expect(agentDetail).toContain("useChannelBindingsForAccounts(activeAccountIds)");
 		expect(agentDetail).toContain("selectAgentPairedChats");
+		expect(agentDetail).toContain("pairedChatsByLinkId.get(link.id) ?? []");
 		expect(pairedChatRow).toContain("Only this chat will be disconnected");
 		expect(pairedChatRow).toContain("unpair.mutateAsync(binding.id)");
 		expect(pairedChatRow).toContain("unpair.isPending");
@@ -87,13 +90,13 @@ describe("channel IA boundary", () => {
 		expect(pairedChatRow).toContain("<IconChip");
 		expect(pairedChatRow).toContain("<MessageCircle");
 		expect(pairedChatRow).toContain("<MessagesSquare");
-		expect(pairedChatRow).toContain("Paired to");
-		expect(pairedChatRow).toContain("Through");
 		expect(pairedChatRow).toContain("pairedChatTitle(binding)");
 		expect(pairedChatRowLogic).toContain("external_chat_name?.trim()");
 		expect(pairedChatRowLogic).toContain("binding.external_chat_id");
 		expect(pairedChatRow).not.toContain("<ProviderChip");
 		expect(pairedChatRow).not.toContain("CopyInline");
+		expect(pairedChatRow).not.toContain("Paired to");
+		expect(pairedChatRow).not.toContain("Through");
 	});
 
 	test("filters Agent-page chats by the visible active link and account", () => {

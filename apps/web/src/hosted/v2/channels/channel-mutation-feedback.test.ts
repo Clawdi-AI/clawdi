@@ -38,7 +38,7 @@ describe("channel mutation feedback", () => {
 		);
 		expectFeedbackBeforeRequest(detail, "setCreatingPairCode(true)", "await pair.execute");
 		expectFeedbackBeforeRequest(pairDialog, "setGenerating(true)", "await pair.execute");
-		expect(detail).toContain("unlinking={unlinkingLinkIds.has(l.id)}");
+		expect(detail).toContain("unlinking={unlinkingLinkIds.has(link.id)}");
 		expect(detail).toContain('linking ? "Linking…" : "Link"');
 		expect(detail).toContain('creatingPairCode ? <Spinner className="size-3.5" />');
 		expect(detail).toContain('"Generating…"');
