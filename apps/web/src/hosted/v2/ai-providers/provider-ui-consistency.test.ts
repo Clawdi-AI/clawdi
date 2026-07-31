@@ -46,6 +46,8 @@ describe("AI provider icon coverage", () => {
 			expect(markup).toContain("<svg");
 			expect(markup).toContain('data-icon-source="lobehub"');
 			expect(markup).toContain(`aria-label="${brand?.label}"`);
+			expect(markup).toContain('width="72%"');
+			expect(markup).toContain('height="72%"');
 			expect(markup).not.toContain("<img");
 		}
 	});

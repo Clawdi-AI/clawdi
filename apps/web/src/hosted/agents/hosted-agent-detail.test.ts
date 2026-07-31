@@ -16,12 +16,18 @@ describe("hosted agent detail header", () => {
 		expect(sidebarSource).toContain("AgentSourceBadge");
 	});
 
-	test("keeps selected unavailable providers removable without exposing them as primary choices", () => {
+	test("keeps persisted provider state visible until a provider card is selected exclusively", () => {
 		const source = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
 		expect(source).toContain("const disabled = Boolean(issue) && !selected;");
 		expect(source).toContain("disabled={disabled}");
-		expect(source).toContain("customProviders={availableProviders}");
-		expect(source).toContain("onClick={() => toggleProvider(p.provider_id)}");
+		expect(source).toContain("selectProvider,");
+		expect(source).toContain("onClick={() => selectProvider(p.provider_id)}");
+		expect(source).toContain("onClick={() => selectProvider(MANAGED_AI_CHOICE)}");
+		expect(source).toContain('data-testid="provider-choice-grid"');
+		expect(source).toContain("<EntityAddCard");
+		expect(source).not.toContain("toggleProvider");
+		expect(source).not.toContain("customProviders=");
+		expect(source).not.toContain("onPrimaryProviderChange=");
 	});
 
 	test("removes the shared runtime dashboard action without removing Console access", () => {

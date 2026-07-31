@@ -293,25 +293,6 @@ export function modelBindingDisplayName(
 	return "Not set";
 }
 
-export function primaryProviderPickerItems(
-	selectedProviderChoices: readonly string[],
-	providers: readonly AiProvider[],
-	additionalItems: readonly ModelBindingPickerItem[] = [],
-): ModelBindingPickerItem[] {
-	return [
-		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
-			? [{ value: MANAGED_AI_CHOICE, label: MANAGED_PROVIDER_LABEL }]
-			: []),
-		...additionalItems,
-		...providers
-			.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
-			.map((provider) => ({
-				value: provider.provider_id,
-				label: providerDisplayLabel(provider),
-			})),
-	];
-}
-
 export function modelPickerItems(
 	choice: string,
 	providers: readonly AiProvider[],

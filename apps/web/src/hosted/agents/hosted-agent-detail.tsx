@@ -38,7 +38,12 @@ import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel"
 import { AgentSkillsTab } from "@/components/dashboard/agent-skills-tab";
 import type { DetailSectionMeta } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
-import { EntityCardSkeleton, EntityChoiceCard } from "@/components/entity-card";
+import {
+	ENTITY_CHOICE_GRID_CLASS,
+	EntityAddCard,
+	EntityCardSkeleton,
+	EntityChoiceCard,
+} from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -216,8 +221,8 @@ import {
 	primaryModelValue,
 	providerAvailabilityIssue,
 	providerCatalogDescription,
+	providerChoiceFromRef,
 	providerDisplayLabel,
-	usableProviders,
 } from "@/hosted/v2/ai-providers/model-binding";
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
@@ -2004,8 +2009,13 @@ function AiProviderTab({
 	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
 	const list = providers.data ?? [];
 	const availabilityContext = { runtime, environmentId };
-	const availableProviders = usableProviders(list, availabilityContext);
 	const managedModels = managedModelCatalog.data?.models ?? [];
+	// A provider reference is only unresolved after the catalog has settled. While
+	// it is loading, preserve the server id verbatim so an existing multi-provider
+	// binding does not briefly seed the draft with stale `unresolved:` choices.
+	const providerChoiceFromServerRef = providers.isPending
+		? providerChoiceFromRef
+		: updateProviderChoiceFromRef;
 	// Selected-runtime binding: the deployment owns one runtime in the v2 model.
 	const configuredProviders = runtimeConfiguration.providers;
 	const configuredPrimaryModel = runtimeConfiguration.primary_model;
@@ -2036,7 +2046,7 @@ function AiProviderTab({
 	const initialPrimaryChoice =
 		currentAuthKind === "unmanaged"
 			? MANAGED_AI_CHOICE
-			: (updateProviderChoiceFromRef(primaryProviderRef, list) ??
+			: (providerChoiceFromServerRef(primaryProviderRef, list) ??
 				(isManagedProviderId(primaryProviderRef)
 					? MANAGED_AI_CHOICE
 					: unresolvedProviderChoice(primaryProviderRef)));
@@ -2045,7 +2055,7 @@ function AiProviderTab({
 			? []
 			: normalizeSelectedProviderIds(
 					rawProviderRefs
-						.map((providerRef) => updateProviderChoiceFromRef(providerRef, list))
+						.map((providerRef) => providerChoiceFromServerRef(providerRef, list))
 						.filter((choice): choice is string => Boolean(choice)),
 					initialPrimaryChoice,
 				);
@@ -2077,10 +2087,9 @@ function AiProviderTab({
 		draft: aiBindingDraft,
 		managedPrimaryModelReady,
 		selectedProviderChoices,
+		selectProvider,
 		setBindingMode,
 		setPrimaryModel,
-		setPrimaryProvider,
-		toggleProvider,
 	} = useAiProviderBindingDraft({
 		initialDraft: {
 			bindingMode: initialMode,
@@ -2126,21 +2135,9 @@ function AiProviderTab({
 
 	return (
 		<div className="flex flex-col gap-4">
-			<div className="flex flex-col gap-2">
+			<div className={ENTITY_CHOICE_GRID_CLASS} data-testid="provider-choice-grid">
 				<EntityChoiceCard
-					onClick={() => setBindingMode("unmanaged")}
-					selected={bindingMode === "unmanaged"}
-					icon={
-						<IconChip tint="bg-muted text-muted-foreground">
-							<Settings />
-						</IconChip>
-					}
-					title={authCardLabel("unmanaged")}
-					description="Configure model access inside the agent."
-					badge={bindingMode === "unmanaged" ? <Badge variant="secondary">Current</Badge> : null}
-				/>
-				<EntityChoiceCard
-					onClick={() => toggleProvider(MANAGED_AI_CHOICE)}
+					onClick={() => selectProvider(MANAGED_AI_CHOICE)}
 					selected={bindingMode === "configured" && selectedProviders.includes(MANAGED_AI_CHOICE)}
 					icon={<ProviderIcon provider={MANAGED_PROVIDER_ID} />}
 					title={MANAGED_PROVIDER_LABEL}
@@ -2153,14 +2150,28 @@ function AiProviderTab({
 						) : null
 					}
 				/>
+				<EntityChoiceCard
+					onClick={() => setBindingMode("unmanaged")}
+					selected={bindingMode === "unmanaged"}
+					icon={
+						<IconChip tint="bg-muted text-muted-foreground">
+							<Settings />
+						</IconChip>
+					}
+					title={authCardLabel("unmanaged")}
+					description="Configure model access inside the agent."
+					badge={bindingMode === "unmanaged" ? <Badge variant="secondary">Current</Badge> : null}
+				/>
 				{providers.isLoading ? <EntityCardSkeleton titleBadge trailingBadge /> : null}
 				{providers.error ? (
-					<ApiErrorPanel
-						normalizer={billingErrorNormalizer}
-						error={providers.error}
-						onRetry={() => providers.refetch()}
-						title="Couldn't load providers"
-					/>
+					<div className="@2xl/main:col-span-2">
+						<ApiErrorPanel
+							normalizer={billingErrorNormalizer}
+							error={providers.error}
+							onRetry={() => providers.refetch()}
+							title="Couldn't load providers"
+						/>
+					</div>
 				) : null}
 				{bindingMode === "configured"
 					? selectedProviders
@@ -2185,7 +2196,7 @@ function AiProviderTab({
 					return (
 						<EntityChoiceCard
 							key={p.provider_id}
-							onClick={() => toggleProvider(p.provider_id)}
+							onClick={() => selectProvider(p.provider_id)}
 							disabled={disabled}
 							selected={selected}
 							icon={<ProviderIcon provider={p} />}
@@ -2205,16 +2216,11 @@ function AiProviderTab({
 						/>
 					);
 				})}
-				<Button
-					render={<Link to="/ai-providers" />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="justify-start text-muted-foreground"
-				>
-					<Plus className="size-3.5" />
-					Add a provider
-				</Button>
+				<EntityAddCard
+					title="Add a provider"
+					description="Connect OpenAI, Anthropic, or another endpoint."
+					href="/ai-providers"
+				/>
 			</div>
 
 			{bindingMode === "unmanaged" ? (
@@ -2231,17 +2237,8 @@ function AiProviderTab({
 					managedModelsError={managedModelCatalog.error}
 					managedModelsErrorNormalizer={billingErrorNormalizer}
 					onManagedModelsRetry={() => void managedModelCatalog.refetch()}
-					customProviders={availableProviders}
-					additionalProviderItems={selectedProviderChoices
-						.filter(isUnresolvedProviderChoice)
-						.map((choice) => ({
-							value: choice,
-							label: providerDisplayLabel(unresolvedProviderRef(choice), list),
-						}))}
-					selectedProviderChoices={selectedProviderChoices}
 					primaryProviderChoice={primaryProviderChoice}
 					primaryModel={primaryModel}
-					onPrimaryProviderChange={setPrimaryProvider}
 					onPrimaryModelChange={setPrimaryModel}
 				/>
 			)}

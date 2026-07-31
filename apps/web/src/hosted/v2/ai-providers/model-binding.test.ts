@@ -9,7 +9,6 @@ import {
 	modelDisplayName,
 	modelOptionsForProvider,
 	modelPickerItems,
-	primaryProviderPickerItems,
 	providerAvailabilityIssue,
 	providerChoiceFromRef,
 	providerDisplayLabel,
@@ -66,7 +65,6 @@ const savedOpenAiProvider = {
 describe("model binding", () => {
 	test("uses the canonical Clawdi AI product label", () => {
 		expect(MANAGED_PROVIDER_LABEL).toBe("Clawdi AI");
-		expect(primaryProviderPickerItems([MANAGED_AI_CHOICE], [])[0]?.label).toBe("Clawdi AI");
 	});
 
 	test("does not invent a managed model before the catalog loads", () => {
@@ -347,7 +345,6 @@ describe("model binding", () => {
 		const selectable = usableProviders([unfinishedProvider]);
 
 		expect(selectable).toEqual([]);
-		expect(primaryProviderPickerItems([unfinishedProvider.provider_id], selectable)).toEqual([]);
 	});
 
 	test("uses structured deployability instead of the legacy credential-only flag", () => {

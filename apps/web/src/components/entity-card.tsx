@@ -1,8 +1,9 @@
 "use client";
 
 import { Link, type LinkProps } from "@tanstack/react-router";
-import { Check, ChevronRight } from "lucide-react";
+import { Check, ChevronRight, Plus } from "lucide-react";
 import type { ReactNode } from "react";
+import { IconChip } from "@/components/icon-chip";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -33,6 +34,9 @@ export const HERO_GRID_CLASS = "grid gap-4 sm:grid-cols-2 xl:grid-cols-3";
 /** Responsive card grid every entity-card collection shares (providers,
  * channels, shared bots). */
 export const ENTITY_GRID_CLASS = "grid gap-2 sm:grid-cols-2 xl:grid-cols-3";
+
+/** Form-local choice cards follow their named main container instead of the viewport. */
+export const ENTITY_CHOICE_GRID_CLASS = "grid gap-2 @2xl/main:grid-cols-2";
 
 /** Stretched link that makes a whole card navigate while keeping inner
  * controls independently clickable — pairs with a `relative z-0` wrapper. */
@@ -375,6 +379,7 @@ export function EntityChoiceCard({
 	badge,
 	selected,
 	onClick,
+	href,
 	disabled,
 	variant = "card",
 	className,
@@ -390,6 +395,7 @@ export function EntityChoiceCard({
 	badge?: ReactNode;
 	selected?: boolean;
 	onClick?: () => void;
+	href?: string;
 	disabled?: boolean;
 	/** Compact, low-chrome treatment for dense chooser grids. */
 	variant?: "card" | "compact";
@@ -446,13 +452,20 @@ export function EntityChoiceCard({
 			: ENTITY_CARD_BASE,
 		"flex w-full text-left transition-colors",
 		variant === "compact" ? "items-center gap-2.5" : "items-start gap-3",
-		onClick && ENTITY_CARD_BUTTON_FOCUS_CLASS,
+		(onClick || href) && ENTITY_CARD_BUTTON_FOCUS_CLASS,
 		selected
 			? "border-primary bg-primary/5 ring-1 ring-primary/30"
-			: onClick && (variant === "compact" ? "hover:bg-muted/60" : "hover:bg-muted/50"),
+			: (onClick || href) && (variant === "compact" ? "hover:bg-muted/60" : "hover:bg-muted/50"),
 		disabled && "pointer-events-none opacity-60",
 		className,
 	);
+	if (href) {
+		return (
+			<Link to={href} className={cardClass}>
+				{content}
+			</Link>
+		);
+	}
 	if (!onClick) {
 		return <div className={cardClass}>{content}</div>;
 	}
@@ -466,5 +479,34 @@ export function EntityChoiceCard({
 		>
 			{content}
 		</button>
+	);
+}
+
+/** Dashed add action used at the end of form-local entity choice grids. */
+export function EntityAddCard({
+	title,
+	description,
+	onClick,
+	href,
+}: {
+	title: string;
+	description: string;
+	onClick?: () => void;
+	href?: string;
+}) {
+	return (
+		<EntityChoiceCard
+			selected={false}
+			onClick={onClick}
+			href={href}
+			icon={
+				<IconChip tint="bg-muted text-muted-foreground">
+					<Plus />
+				</IconChip>
+			}
+			title={title}
+			description={description}
+			className="h-full border-dashed bg-card"
+		/>
 	);
 }

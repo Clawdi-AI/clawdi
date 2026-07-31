@@ -3,7 +3,7 @@
 import type { components } from "@clawdi/shared/api";
 import { Link } from "@tanstack/react-router";
 import { ArrowUpRight } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
 import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
@@ -73,8 +73,6 @@ export interface AgentTile {
 	 * with no minted env id remains non-navigable. */
 	href: string | null;
 	external?: boolean;
-	/** Optional card-level action supplied by the owning integration. */
-	action?: ReactNode;
 	/** Optional remediation target for legacy status dialogs. */
 	manageHref?: string;
 	/** Hosted integrations can project compute-first status without making the
@@ -271,7 +269,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 				}
 				meta={meta.length > 0 ? meta : undefined}
 				titleAdornment={sourcePill}
-				className={cn("min-w-0 flex-1", tile.action && "pr-28")}
+				className="min-w-0 flex-1"
 			/>
 			{tile.external ? (
 				<ArrowUpRight
@@ -279,7 +277,6 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 					className="pointer-events-none absolute right-3 top-3.5 size-3.5 text-muted-foreground"
 				/>
 			) : null}
-			{tile.action ? <div className="absolute top-2 right-2 z-10">{tile.action}</div> : null}
 			{tile.href ? (
 				tile.external ? (
 					<a

@@ -29,7 +29,7 @@ export function BrandIconTile({
 			)}
 		>
 			<Icon
-				size="60%"
+				size="72%"
 				aria-hidden
 				className={cn("shrink-0", iconClassName)}
 				data-icon-source="lobehub"
