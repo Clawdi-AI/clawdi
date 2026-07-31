@@ -193,6 +193,14 @@ class ChannelBindingResponse(BaseModel):
     created_at: datetime
 
 
+class ChannelBindingDeleteResponse(BaseModel):
+    binding_id: UUID
+    unpaired: bool
+    notification_status: Literal["sent", "failed", "not_applicable"]
+    provider_cleanup_status: Literal["succeeded", "failed", "not_applicable"]
+    warning: str | None = None
+
+
 class ChannelSendMessageRequest(BaseModel):
     binding_id: UUID | None = None
     external_chat_id: str | None = Field(default=None, min_length=1, max_length=300)

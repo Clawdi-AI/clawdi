@@ -22,8 +22,8 @@ import {
 	type ChannelProviderId,
 	PROVIDER_META,
 } from "@/hosted/v2/channels/channel-providers";
-import type { ChannelCreate, ChannelCreated } from "@/hosted/v2/channels/channel-types";
-import { ProviderChip, TokenReveal } from "@/hosted/v2/channels/channel-ui";
+import type { ChannelCreate } from "@/hosted/v2/channels/channel-types";
+import { ProviderChip } from "@/hosted/v2/channels/channel-ui";
 import { useCreateChannel } from "@/hosted/v2/channels/channels-hooks";
 import {
 	discordApplicationIdError,
@@ -37,8 +37,7 @@ import { WHATSAPP_LINKING_READY } from "@/hosted/v2/channels/link-agent-dialog.l
  * Connect a channel. Each provider takes its OWN real inputs (grounded in
  * cloud-api): Telegram = bot token; Discord = bot token + application_id +
  * public_key (+ guild_id); WhatsApp = no token (agent/device linking is
- * gated during the beta). On success the
- * scoped agent token may be revealed once when an agent is auto-linked.
+ * gated during the beta). Runtime credentials reconcile automatically.
  */
 export function ConnectBotDialog({
 	open,
@@ -55,7 +54,11 @@ export function ConnectBotDialog({
 	const [applicationId, setApplicationId] = useState("");
 	const [publicKey, setPublicKey] = useState("");
 	const [guildId, setGuildId] = useState("");
-	const [created, setCreated] = useState<ChannelCreated | null>(null);
+	const [created, setCreated] = useState<{
+		id: string;
+		name: string;
+		provider: string;
+	} | null>(null);
 	const [submitting, setSubmitting] = useState(false);
 	const submitLocked = useRef(false);
 	const openRef = useRef(open);
@@ -131,7 +134,7 @@ export function ConnectBotDialog({
 			const data = await create.execute(body);
 			setToken("");
 			if (openRef.current && dialogSessionRef.current === dialogSession) {
-				setCreated(data);
+				setCreated({ id: data.id, name: data.name, provider: data.provider });
 			} else {
 				toast.success("Channel connected", {
 					description: `${data.name} is ready on the Channels page.`,
@@ -192,13 +195,6 @@ export function ConnectBotDialog({
 									relying on it.
 								</p>
 							</div>
-						) : null}
-						{created.agent_token ? (
-							<TokenReveal
-								label="Agent token"
-								value={created.agent_token}
-								note="An agent was auto-linked. This token lets it send and receive on the channel."
-							/>
 						) : null}
 						<DialogFooter>
 							<Button variant="outline" onClick={() => handleOpenChange(false)}>

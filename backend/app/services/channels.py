@@ -1304,6 +1304,7 @@ async def send_pairing_command_reply(
     account: ChannelAccount,
     external_chat_id: str,
     send_external_chat_id: str | None = None,
+    telegram_message_thread_id: int | None = None,
     command: ChannelPairCommand | None,
     binding_result: InboundBindingResult,
 ) -> ChannelMessage | None:
@@ -1324,6 +1325,7 @@ async def send_pairing_command_reply(
             text=reply,
             bot_agent_link_id=reply_link_id,
             bind_to_existing=bind_reply_to_existing,
+            telegram_message_thread_id=telegram_message_thread_id,
         )
     except HTTPException as exc:
         log.warning(
@@ -1380,6 +1382,27 @@ def telegram_message_id_from_update(payload: dict[str, Any]) -> str | None:
         return None
     message_id = message.get("message_id")
     return str(message_id) if message_id is not None else None
+
+
+def telegram_message_thread_id_from_update(payload: dict[str, Any]) -> int | None:
+    """Return a true Telegram topic for replies, never as binding identity."""
+    message = _telegram_message_from_update(payload)
+    if not isinstance(message, dict):
+        return None
+    message_thread_id = message.get("message_thread_id")
+    if isinstance(message_thread_id, bool) or not isinstance(message_thread_id, int):
+        return None
+    if message_thread_id <= 0 or message.get("is_topic_message") is not True:
+        return None
+    chat = message.get("chat")
+    if not isinstance(chat, dict):
+        return None
+    chat_type = _read_optional_str(chat.get("type"))
+    if chat_type == "private":
+        return message_thread_id
+    if chat_type in {"group", "supergroup"} and chat.get("is_forum") is True:
+        return message_thread_id
+    return None
 
 
 def telegram_event_id_from_update(payload: dict[str, Any]) -> str | None:
@@ -1487,7 +1510,6 @@ async def record_inbound_message(
         existing = await _find_existing_inbound_message(
             db,
             account=account,
-            binding=binding,
             external_chat_id=external_chat_id,
             provider_event_id=event_id,
         )
@@ -1514,7 +1536,6 @@ async def record_inbound_message(
         existing = await _find_existing_inbound_message(
             db,
             account=account,
-            binding=binding,
             external_chat_id=external_chat_id,
             provider_event_id=event_id,
         )
@@ -1529,25 +1550,19 @@ async def _find_existing_inbound_message(
     db: AsyncSession,
     *,
     account: ChannelAccount,
-    binding: ChannelBinding | None,
     external_chat_id: str,
     provider_event_id: str | None,
 ) -> ChannelMessage | None:
     if provider_event_id is None:
         return None
-    filters = [
-        ChannelMessage.account_id == account.id,
-        ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
-        ChannelMessage.external_chat_id == external_chat_id,
-        ChannelMessage.provider_event_id == provider_event_id,
-    ]
-    if binding is None:
-        filters.append(ChannelMessage.bot_agent_link_id.is_(None))
-    else:
-        filters.append(ChannelMessage.bot_agent_link_id == binding.bot_agent_link_id)
     result = await db.execute(
         select(ChannelMessage)
-        .where(*filters)
+        .where(
+            ChannelMessage.account_id == account.id,
+            ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+            ChannelMessage.external_chat_id == external_chat_id,
+            ChannelMessage.provider_event_id == provider_event_id,
+        )
         .order_by(ChannelMessage.created_at.asc(), ChannelMessage.id.asc())
         .limit(1)
     )
@@ -2470,6 +2485,7 @@ async def send_channel_outbound_message(
     text: str,
     bot_agent_link_id: UUID | None = None,
     bind_to_existing: bool = True,
+    telegram_message_thread_id: int | None = None,
 ) -> ChannelMessage:
     if account.provider == CHANNEL_PROVIDER_TELEGRAM:
         return await send_telegram_message(
@@ -2479,6 +2495,7 @@ async def send_channel_outbound_message(
             text=text,
             bot_agent_link_id=bot_agent_link_id,
             bind_to_existing=bind_to_existing,
+            message_thread_id=telegram_message_thread_id,
         )
     if account.provider == CHANNEL_PROVIDER_DISCORD:
         return await send_discord_message(
@@ -2542,12 +2559,14 @@ async def send_telegram_message(
     text: str,
     bot_agent_link_id: UUID | None = None,
     bind_to_existing: bool = True,
+    message_thread_id: int | None = None,
 ) -> ChannelMessage:
     _require_channel_provider(account, CHANNEL_PROVIDER_TELEGRAM)
     provider_message_id, payload = await _send_telegram_provider_payload(
         account=account,
         external_chat_id=external_chat_id,
         text=text,
+        message_thread_id=message_thread_id,
     )
     binding = (
         await find_binding(
@@ -2575,15 +2594,19 @@ async def _send_telegram_provider_payload(
     account: ChannelAccount,
     external_chat_id: str,
     text: str,
+    message_thread_id: int | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
     token = decrypt_provider_token(account)
     base_url = settings.channel_telegram_api_base_url.strip()
     url = f"{base_url.rstrip('/')}/bot{token}/sendMessage"
+    request_payload: dict[str, Any] = {"chat_id": external_chat_id, "text": text}
+    if message_thread_id is not None:
+        request_payload["message_thread_id"] = message_thread_id
     payload = await _post_provider_json(
         channel=CHANNEL_PROVIDER_TELEGRAM,
         method="sendMessage",
         url=url,
-        json_payload={"chat_id": external_chat_id, "text": text},
+        json_payload=request_payload,
         timeout_seconds=20.0,
         unreachable_detail="telegram api unreachable",
         rejected_detail="telegram api rejected message",

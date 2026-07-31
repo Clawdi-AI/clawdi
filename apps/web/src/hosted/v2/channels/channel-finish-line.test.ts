@@ -23,12 +23,14 @@ describe("hosted-agent channel finish line", () => {
 	});
 
 	test("explains linking, pairing, the target conversation, and the hosted token boundary", () => {
-		expect(agentChannels).toContain("Linking gives this agent access to the bot");
-		expect(agentChannels).toContain("Pairing chooses the exact conversation");
-		expect(agentChannels).toContain("Open Telegram and start a conversation");
+		expect(agentChannels).toContain("Choose the chat where this Agent should answer.");
+		expect(agentChannels).toContain("Pair Telegram");
+		expect(agentChannels).toContain("Generate Telegram link");
+		expect(agentChannels).toContain("Open @${code.bot_username");
 		expect(agentChannels).toContain("Open Discord and choose the server channel");
 		expect(agentChannels).toContain("Create pairing code");
-		expect(agentChannels).toContain("Hosted agents configure this automatically");
+		expect(agentChannels).toContain("Hosted agents apply channel credentials automatically");
+		expect(agentChannels).not.toContain("Agent token");
 	});
 
 	test("leads with the no-credential path and gives the empty advanced path a primary action", () => {

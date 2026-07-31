@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
-	acknowledgeRotatedToken,
-	hasAtRiskRotatedToken,
 	nativeTransportSummary,
+	pairCodeExpiryLabel,
 	pairCodeRequiresExplicitAgent,
-	rotatedTokenDisplayState,
+	telegramPairDeepLink,
 } from "./channel-detail-page.logic";
 
 describe("pairCodeRequiresExplicitAgent", () => {
@@ -15,23 +14,84 @@ describe("pairCodeRequiresExplicitAgent", () => {
 	});
 });
 
-describe("rotated token display state", () => {
-	test("keeps a returned token at risk until the user acknowledges it", () => {
-		const state = rotatedTokenDisplayState("one-time-secret");
-
-		expect(state).toEqual({
-			status: "available",
-			token: "one-time-secret",
-			acknowledged: false,
-		});
-		expect(hasAtRiskRotatedToken({ link: state }, false)).toBe(true);
-		expect(hasAtRiskRotatedToken({ link: acknowledgeRotatedToken(state) }, false)).toBe(false);
+describe("telegramPairDeepLink", () => {
+	test("accepts only the server-provided bot start link for this code", () => {
+		expect(
+			telegramPairDeepLink({
+				deepLink: "https://t.me/ClawdiBot?start=PAIR123",
+				qrPayload: "https://t.me/ClawdiBot?start=PAIR123",
+				botUsername: "ClawdiBot",
+				code: "PAIR123",
+			}),
+		).toBe("https://t.me/ClawdiBot?start=PAIR123");
+		expect(
+			telegramPairDeepLink({
+				deepLink: "https://t.me/ClawdiBot?start=PAIR123",
+				qrPayload: "https://t.me/ClawdiBot?start=PAIR123",
+				botUsername: null,
+				code: "PAIR123",
+			}),
+		).toBe("https://t.me/ClawdiBot?start=PAIR123");
 	});
 
-	test("treats an absent response token as unrecoverable and guards pending rotations", () => {
-		expect(rotatedTokenDisplayState(null)).toEqual({ status: "unrecoverable" });
-		expect(rotatedTokenDisplayState("   ")).toEqual({ status: "unrecoverable" });
-		expect(hasAtRiskRotatedToken({}, true)).toBe(true);
+	test("fails closed for missing, malformed, mismatched, or expanded links", () => {
+		const input = {
+			botUsername: "ClawdiBot",
+			code: "PAIR123",
+			qrPayload: "https://t.me/ClawdiBot?start=PAIR123",
+		};
+		expect(telegramPairDeepLink({ ...input, deepLink: null })).toBeNull();
+		expect(
+			telegramPairDeepLink({
+				...input,
+				deepLink: "https://t.me/ClawdiBot?start=PAIR123",
+				qrPayload: null,
+			}),
+		).toBeNull();
+		expect(
+			telegramPairDeepLink({
+				...input,
+				deepLink: "https://t.me/ClawdiBot?start=PAIR123",
+				qrPayload: "https://t.me/ClawdiBot?start=DIFFERENT",
+			}),
+		).toBeNull();
+		expect(
+			telegramPairDeepLink({
+				...input,
+				deepLink: "tg://resolve?domain=ClawdiBot",
+				qrPayload: "tg://resolve?domain=ClawdiBot",
+			}),
+		).toBeNull();
+		expect(
+			telegramPairDeepLink({
+				...input,
+				deepLink: "https://t.me/OtherBot?start=PAIR123",
+				qrPayload: "https://t.me/OtherBot?start=PAIR123",
+			}),
+		).toBeNull();
+		expect(
+			telegramPairDeepLink({
+				...input,
+				deepLink: "https://t.me/ClawdiBot?start=OTHER",
+				qrPayload: "https://t.me/ClawdiBot?start=OTHER",
+			}),
+		).toBeNull();
+		expect(
+			telegramPairDeepLink({
+				...input,
+				deepLink: "https://t.me/ClawdiBot?start=PAIR123&admin=true",
+				qrPayload: "https://t.me/ClawdiBot?start=PAIR123&admin=true",
+			}),
+		).toBeNull();
+	});
+});
+
+describe("pairCodeExpiryLabel", () => {
+	test("shows a live countdown and closes the action at expiry", () => {
+		const now = Date.parse("2026-07-30T12:00:00Z");
+		expect(pairCodeExpiryLabel("2026-07-30T12:01:05Z", now)).toBe("Expires in 1m 5s");
+		expect(pairCodeExpiryLabel("2026-07-30T12:00:00Z", now)).toBe("Expired — generate a new link");
+		expect(pairCodeExpiryLabel("invalid", now)).toBe("Expired — generate a new link");
 	});
 });
 

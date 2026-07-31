@@ -43,9 +43,12 @@ from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
 from app.models.app_setting import AppSetting
 from app.models.channel import (
+    BOT_AGENT_LINK_STATUS_ACTIVE,
+    CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDERS,
     ChannelAccount,
+    ChannelBotAgentLink,
 )
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
@@ -1231,7 +1234,25 @@ async def admin_delete_channel(
     db: AsyncSession = Depends(get_session),
 ) -> None:
     account, _owner = await _admin_get_channel_row(db, account_id=account_id)
+    active_links = list(
+        (
+            await db.execute(
+                select(ChannelBotAgentLink).where(
+                    ChannelBotAgentLink.account_id == account.id,
+                    ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                    ChannelBotAgentLink.archived_at.is_(None),
+                )
+            )
+        ).scalars()
+    )
     await archive_channel_account(db, account=account)
+    if account.provider in (CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD):
+        for link in active_links:
+            await queue_environment_runtime_manifest_changed(
+                db,
+                link.user_id,
+                link.agent_id,
+            )
     record_control_plane_audit(
         db,
         actor_type="admin",

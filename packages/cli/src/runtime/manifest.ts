@@ -3286,13 +3286,9 @@ function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record
 					},
 				}
 			: undefined,
-		...(isolatesTelegramDms
-			? {
-					session: {
-						dmScope: "per-account-channel-peer",
-					},
-				}
-			: {}),
+		session: {
+			dmScope: isolatesTelegramDms ? "per-account-channel-peer" : null,
+		},
 	};
 }
 

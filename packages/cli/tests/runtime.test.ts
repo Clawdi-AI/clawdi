@@ -5698,6 +5698,54 @@ exit 64
 		expect(projected.secretValues).toEqual({ "provider.default.apiKey": "sk-provider" });
 	});
 
+	it("projects multiple Telegram accounts into one hosted runtime", () => {
+		const firstAccount = "clawdi_00000000000000000000000000000001";
+		const secondAccount = "clawdi_00000000000000000000000000000002";
+		const agentRef = (account: string) => `secret://channels/telegram/${account}/agent-token`;
+		const placeholderRef = (account: string) =>
+			`secret://channels/telegram/${account}/placeholder-token`;
+		const bindings: RuntimeBundleChannelBinding[] = [firstAccount, secondAccount].map(
+			(accountKey) => ({
+				provider: "telegram",
+				accountKey,
+				agentTokenSecretRef: agentRef(accountKey),
+				placeholderTokenSecretRef: placeholderRef(accountKey),
+			}),
+		);
+		const loaded: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_multi_telegram",
+				environmentId: "env_multi_telegram",
+				instanceId: "iid_multi_telegram",
+				generation: 1,
+				issuedAt: "2026-07-30T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: { openclaw: { enabled: true } },
+			},
+			source: "remote-datasource",
+			sourcePath: "https://cloud-api.test/v1/runtime/manifest",
+			channelBindings: bindings,
+			secretValues: Object.fromEntries(
+				bindings.flatMap((binding, index) => [
+					[binding.agentTokenSecretRef, `agent-token-${index}`],
+					[binding.placeholderTokenSecretRef, `99999999${index}:${"a".repeat(32)}`],
+				]),
+			),
+		};
+
+		const projected = applyRuntimeBundleChannelsToManifestLoad(loaded);
+
+		expect(projected.manifest.projection?.channels).toMatchObject({
+			telegram: {
+				accounts: {
+					[firstAccount]: { enabled: true },
+					[secondAccount]: { enabled: true },
+				},
+			},
+		});
+	});
+
 	it("reconciles environment-scoped hosted bundle channel create, rotation, and removal", () => {
 		const accountKey = "clawdi_00000000000000000000000000000001";
 		const agentRef = `secret://channels/telegram/${accountKey}/agent-token`;
@@ -12520,11 +12568,16 @@ exit 64
 			offline: false,
 			secretValues: {},
 		});
+		const telegramChannel = {
+			enabled: true,
+			defaultAccount: "default",
+			accounts: { default: { enabled: true, botToken: "telegram-token" } },
+		};
 
 		const initial = convergeRuntimeManifest(
 			manifestWithChannels(
 				{
-					telegram: { enabled: true, botToken: "telegram-token" },
+					telegram: telegramChannel,
 					discord: { enabled: true, token: "discord-token" },
 				},
 				1,
@@ -12532,24 +12585,26 @@ exit 64
 			getRuntimePaths(),
 		);
 		const removed = convergeRuntimeManifest(
-			manifestWithChannels({ telegram: { enabled: true, botToken: "telegram-token" } }, 2),
+			manifestWithChannels({ telegram: telegramChannel }, 2),
 			getRuntimePaths(),
 		);
+		const unlinked = convergeRuntimeManifest(manifestWithChannels({}, 3), getRuntimePaths());
 
 		expect(initial.installErrors).toEqual([]);
 		expect(removed.installErrors).toEqual([]);
+		expect(unlinked.installErrors).toEqual([]);
 		const patches = readFileSync(openclawPatch, "utf-8")
 			.split("\n---\n")
 			.filter((entry) => entry.trim().length > 0)
 			.map((entry) => JSON.parse(entry));
-		expect(patches).toHaveLength(2);
+		expect(patches).toHaveLength(3);
 		expect(patches[0].channels.discord).toEqual({ enabled: true, token: "discord-token" });
+		expect(patches[0].session).toEqual({ dmScope: "per-account-channel-peer" });
 		expect(patches[1].channels.discord).toBeNull();
 		expect(patches[1].plugins.entries.discord).toBeNull();
-		expect(patches[1].channels.telegram).toEqual({
-			enabled: true,
-			botToken: "telegram-token",
-		});
+		expect(patches[1].channels.telegram).toEqual(telegramChannel);
+		expect(patches[2].session).toEqual({ dmScope: null });
+		expect(patches[2].channels.telegram).toBeNull();
 		expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe("@openclaw/discord\n");
 	});
 

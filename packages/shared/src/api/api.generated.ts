@@ -476,6 +476,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/channels/{account_id}/bindings/{binding_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Channel Binding */
+        delete: operations["delete_channel_binding_v1_channels__account_id__bindings__binding_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/channels/{account_id}/commands/sync": {
         parameters: {
             query?: never;
@@ -3826,6 +3843,28 @@ export interface components {
             /** Agent Token */
             agent_token?: string | null;
             account: components["schemas"]["ChannelAccountResponse"];
+        };
+        /** ChannelBindingDeleteResponse */
+        ChannelBindingDeleteResponse: {
+            /**
+             * Binding Id
+             * Format: uuid
+             */
+            binding_id: string;
+            /** Unpaired */
+            unpaired: boolean;
+            /**
+             * Notification Status
+             * @enum {string}
+             */
+            notification_status: "sent" | "failed" | "not_applicable";
+            /**
+             * Provider Cleanup Status
+             * @enum {string}
+             */
+            provider_cleanup_status: "succeeded" | "failed" | "not_applicable";
+            /** Warning */
+            warning?: string | null;
         };
         /** ChannelBindingResponse */
         ChannelBindingResponse: {
@@ -8325,6 +8364,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChannelBindingResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_channel_binding_v1_channels__account_id__bindings__binding_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelBindingDeleteResponse"];
                 };
             };
             /** @description Validation Error */
