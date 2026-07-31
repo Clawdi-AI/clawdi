@@ -1,7 +1,7 @@
 """Scope Telegram update identity to the physical account.
 
 Revision ID: d7e9f1a2b3c4
-Revises: c4a7e2d9f1b6
+Revises: 9f2c7a4d1e6b
 Create Date: 2026-07-31 00:00:00.000000
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "d7e9f1a2b3c4"
-down_revision: str | Sequence[str] | None = "c4a7e2d9f1b6"
+down_revision: str | Sequence[str] | None = "9f2c7a4d1e6b"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
