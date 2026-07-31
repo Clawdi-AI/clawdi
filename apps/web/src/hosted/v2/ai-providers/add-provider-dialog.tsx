@@ -96,9 +96,8 @@ export function AddProviderDialog({
 	const {
 		session: oauth,
 		issue: oauthIssue,
-		start: startOAuth,
 		cancel: cancelOAuth,
-		restart: restartOAuthFlow,
+		transition: transitionOAuth,
 	} = useProviderOAuthDeviceFlow({
 		poll: (session) =>
 			pollDeviceOAuth({ providerId: session.providerId, state: session.state }).catch(() => null),
@@ -135,8 +134,8 @@ export function AddProviderDialog({
 		(isEdit || form.authMethod === "oauth" || Boolean(form.apiKey.trim()));
 
 	useEffect(() => {
-		if (!open) return;
 		cancelOAuth();
+		if (!open) return;
 		setDraftTestResult(null);
 		acceptAttemptRef.current = null;
 
@@ -331,8 +330,7 @@ export function AddProviderDialog({
 	}
 
 	async function beginReconnectOAuth() {
-		const session = await reconnectOAuthSession();
-		if (session) startOAuth(session);
+		await transitionOAuth(reconnectOAuthSession);
 	}
 
 	async function submit() {
@@ -379,8 +377,7 @@ export function AddProviderDialog({
 		}
 
 		if (form.authMethod === "oauth") {
-			const session = await acceptedOAuthSession();
-			if (session) startOAuth(session);
+			await transitionOAuth(acceptedOAuthSession);
 			return;
 		}
 
@@ -428,7 +425,7 @@ export function AddProviderDialog({
 
 	async function restartOAuth() {
 		if (!oauth) return;
-		await restartOAuthFlow(() =>
+		await transitionOAuth(() =>
 			oauth.mode === "accept" ? acceptedOAuthSession({ fresh: true }) : reconnectOAuthSession(),
 		);
 	}

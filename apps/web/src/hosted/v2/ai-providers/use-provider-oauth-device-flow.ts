@@ -16,6 +16,34 @@ export interface OAuthSession {
 	pollIntervalSeconds: number;
 }
 
+export interface OAuthSessionLifecycle {
+	generation: number;
+	completed: boolean;
+}
+
+export function cancelOAuthSessionLifecycle(lifecycle: OAuthSessionLifecycle): void {
+	lifecycle.generation += 1;
+	lifecycle.completed = true;
+}
+
+export async function runOAuthSessionTransition({
+	lifecycle,
+	factory,
+	onStart,
+}: {
+	lifecycle: OAuthSessionLifecycle;
+	factory: () => Promise<OAuthSession | null>;
+	onStart: (session: OAuthSession) => void;
+}): Promise<boolean> {
+	cancelOAuthSessionLifecycle(lifecycle);
+	const generation = lifecycle.generation;
+	const next = await factory();
+	if (!next || lifecycle.generation !== generation || !lifecycle.completed) return false;
+	lifecycle.completed = false;
+	onStart(next);
+	return true;
+}
+
 export function isCurrentOAuthGeneration(input: {
 	stopped: boolean;
 	completed: boolean;
@@ -34,39 +62,38 @@ export function useProviderOAuthDeviceFlow({
 }) {
 	const [session, setSession] = useState<OAuthSession | null>(null);
 	const [issue, setIssue] = useState<OAuthIssue | null>(null);
-	const completedRef = useRef(false);
-	const generationRef = useRef(0);
+	const lifecycleRef = useRef<OAuthSessionLifecycle>({ generation: 0, completed: true });
 	const pollRef = useRef(poll);
 	const onReadyRef = useRef(onReady);
 	pollRef.current = poll;
 	onReadyRef.current = onReady;
 
-	const start = useCallback((next: OAuthSession) => {
-		generationRef.current += 1;
-		completedRef.current = false;
-		setIssue(null);
-		setSession(next);
-	}, []);
-
 	const cancel = useCallback(() => {
-		generationRef.current += 1;
-		completedRef.current = true;
+		cancelOAuthSessionLifecycle(lifecycleRef.current);
 		setIssue(null);
 		setSession(null);
 	}, []);
 
-	const restart = useCallback(
-		async (factory: () => Promise<OAuthSession | null>) => {
-			cancel();
-			const next = await factory();
-			if (next) start(next);
+	const transition = useCallback(async (factory: () => Promise<OAuthSession | null>) => {
+		setIssue(null);
+		setSession(null);
+		await runOAuthSessionTransition({
+			lifecycle: lifecycleRef.current,
+			factory,
+			onStart: setSession,
+		});
+	}, []);
+
+	useEffect(
+		() => () => {
+			cancelOAuthSessionLifecycle(lifecycleRef.current);
 		},
-		[cancel, start],
+		[],
 	);
 
 	useEffect(() => {
 		if (!session) return;
-		const generation = generationRef.current;
+		const generation = lifecycleRef.current.generation;
 		let stopped = false;
 		let consecutiveFailures = 0;
 		let pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -78,9 +105,9 @@ export function useProviderOAuthDeviceFlow({
 			if (
 				!isCurrentOAuthGeneration({
 					stopped,
-					completed: completedRef.current,
+					completed: lifecycleRef.current.completed,
 					generation,
-					currentGeneration: generationRef.current,
+					currentGeneration: lifecycleRef.current.generation,
 				})
 			)
 				return;
@@ -88,9 +115,9 @@ export function useProviderOAuthDeviceFlow({
 			if (
 				!isCurrentOAuthGeneration({
 					stopped,
-					completed: completedRef.current,
+					completed: lifecycleRef.current.completed,
 					generation,
-					currentGeneration: generationRef.current,
+					currentGeneration: lifecycleRef.current.generation,
 				})
 			)
 				return;
@@ -109,7 +136,7 @@ export function useProviderOAuthDeviceFlow({
 				schedule(result.retry_after_seconds);
 				return;
 			}
-			completedRef.current = true;
+			lifecycleRef.current.completed = true;
 			setSession(null);
 			onReadyRef.current(session);
 		};
@@ -121,9 +148,9 @@ export function useProviderOAuthDeviceFlow({
 						if (
 							isCurrentOAuthGeneration({
 								stopped,
-								completed: completedRef.current,
+								completed: lifecycleRef.current.completed,
 								generation,
-								currentGeneration: generationRef.current,
+								currentGeneration: lifecycleRef.current.generation,
 							})
 						) {
 							stopped = true;
@@ -140,5 +167,5 @@ export function useProviderOAuthDeviceFlow({
 		};
 	}, [session]);
 
-	return { session, issue, start, cancel, restart };
+	return { session, issue, cancel, transition };
 }
