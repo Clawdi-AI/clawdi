@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { providerBrandIcon } from "@/components/entity-brand-icons";
 import { EntityIcon } from "@/components/entity-icon";
@@ -41,7 +42,7 @@ describe("AI provider icon coverage", () => {
 		for (const id of BRANDED_PROVIDER_IDS) {
 			const brand = providerBrandIcon(id);
 			expect(brand).toBeDefined();
-			const markup = renderToStaticMarkup(<EntityIcon kind="provider" id={id} />);
+			const markup = renderToStaticMarkup(createElement(EntityIcon, { kind: "provider", id }));
 			expect(markup).toContain("<svg");
 			expect(markup).toContain('data-icon-source="lobehub"');
 			expect(markup).toContain(`aria-label="${brand?.label}"`);
@@ -68,7 +69,9 @@ describe("AI provider icon coverage", () => {
 	});
 
 	test("uses the neutral fallback only for an unknown provider", () => {
-		const markup = renderToStaticMarkup(<EntityIcon kind="provider" id="custom-provider" />);
+		const markup = renderToStaticMarkup(
+			createElement(EntityIcon, { kind: "provider", id: "custom-provider" }),
+		);
 		expect(markup).toContain(">C</span>");
 		expect(markup).not.toContain("<svg");
 	});
