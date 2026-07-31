@@ -50,6 +50,36 @@ export const HERO_STRETCHED_LINK_CLASS =
 export const ENTITY_CARD_BUTTON_FOCUS_CLASS =
 	"focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
+type EntityChoiceCardVariant = "card" | "compact";
+
+export function entityChoiceCardClass({
+	variant = "card",
+	selected = false,
+	interactive = false,
+	disabled = false,
+	className,
+}: {
+	variant?: EntityChoiceCardVariant;
+	selected?: boolean;
+	interactive?: boolean;
+	disabled?: boolean;
+	className?: string;
+}) {
+	return cn(
+		variant === "compact"
+			? "min-w-0 rounded-md border border-transparent bg-muted/30 p-2.5"
+			: ENTITY_CARD_BASE,
+		"flex w-full text-left transition-colors",
+		variant === "compact" ? "items-center gap-2.5" : "items-start gap-3",
+		interactive && ENTITY_CARD_BUTTON_FOCUS_CLASS,
+		selected
+			? "border-primary bg-primary/5 ring-1 ring-primary/30"
+			: interactive && (variant === "compact" ? "hover:bg-muted/60" : "hover:bg-muted/50"),
+		disabled && "pointer-events-none opacity-60",
+		className,
+	);
+}
+
 /** Shared loading shape for entity cards and selectable entity options. */
 export function EntityCardSkeleton({
 	iconSize = "md",
@@ -446,19 +476,13 @@ export function EntityChoiceCard({
 			) : null}
 		</>
 	);
-	const cardClass = cn(
-		variant === "compact"
-			? "min-w-0 rounded-md border border-transparent bg-muted/30 p-2.5"
-			: ENTITY_CARD_BASE,
-		"flex w-full text-left transition-colors",
-		variant === "compact" ? "items-center gap-2.5" : "items-start gap-3",
-		(onClick || href) && ENTITY_CARD_BUTTON_FOCUS_CLASS,
-		selected
-			? "border-primary bg-primary/5 ring-1 ring-primary/30"
-			: (onClick || href) && (variant === "compact" ? "hover:bg-muted/60" : "hover:bg-muted/50"),
-		disabled && "pointer-events-none opacity-60",
+	const cardClass = entityChoiceCardClass({
+		variant,
+		selected,
+		interactive: Boolean(onClick || href),
+		disabled,
 		className,
-	);
+	});
 	if (href) {
 		return (
 			<Link to={href} className={cardClass}>

@@ -3,6 +3,7 @@
 import { Check } from "lucide-react";
 import type { ApiErrorNormalizer } from "@/components/api-error-panel";
 import { ApiErrorPanel } from "@/components/api-error-panel";
+import { entityChoiceCardClass } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -99,11 +100,16 @@ export function ModelBindingPicker({
 									const radioId = `${catalogInputId}-featured-${index}`;
 									const titleId = `${catalogInputId}-featured-${index}-title`;
 									const descriptionId = `${catalogInputId}-featured-${index}-description`;
+									const selected = primaryModel === item.value;
 									return (
 										<Label
 											key={item.value}
 											htmlFor={radioId}
-											className="w-full min-w-0 cursor-pointer items-start gap-2 rounded-md border border-border/70 bg-transparent px-2.5 py-2 shadow-xs transition-[color,box-shadow] hover:bg-muted/60 has-data-checked:border-primary/50 has-data-checked:bg-muted"
+											className={entityChoiceCardClass({
+												selected,
+												interactive: true,
+												className: "cursor-pointer gap-2 px-2.5 py-2",
+											})}
 										>
 											<RadioGroupItem
 												id={radioId}
@@ -133,7 +139,7 @@ export function ModelBindingPicker({
 												aria-hidden
 												className={cn(
 													"size-4 shrink-0 text-primary transition-opacity",
-													primaryModel === item.value ? "opacity-100" : "opacity-0",
+													selected ? "opacity-100" : "opacity-0",
 												)}
 											/>
 										</Label>

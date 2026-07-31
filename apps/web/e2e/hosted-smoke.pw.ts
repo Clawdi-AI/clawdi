@@ -4233,6 +4233,27 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	await expect(featuredModels.nth(1)).not.toBeChecked();
 	await expect(featuredModels.nth(2)).not.toBeChecked();
 	await expect(featuredModels.nth(3)).not.toBeChecked();
+	const choiceSurfaceStyle = async (locator: ReturnType<Page["locator"]>) =>
+		locator.evaluate((element) => {
+			const style = getComputedStyle(element);
+			return {
+				backgroundColor: style.backgroundColor,
+				borderColor: style.borderColor,
+				borderRadius: style.borderRadius,
+				borderStyle: style.borderStyle,
+				borderWidth: style.borderWidth,
+				boxShadow: style.boxShadow,
+			};
+		});
+	const providerCards = page
+		.getByTestId("provider-choice-grid")
+		.locator(":scope > button, :scope > a");
+	expect(await choiceSurfaceStyle(featuredCards.nth(0))).toEqual(
+		await choiceSurfaceStyle(providerCards.nth(0)),
+	);
+	expect(await choiceSurfaceStyle(featuredCards.nth(1))).toEqual(
+		await choiceSurfaceStyle(providerCards.nth(1)),
+	);
 	await expect(page.locator("#deploy-primary-model")).toHaveCount(0);
 	await expect(managedModels).toContainText("Higher cost for complex work.");
 	await expect(managedModels).toContainText("Variable cost for long, detailed work.");
