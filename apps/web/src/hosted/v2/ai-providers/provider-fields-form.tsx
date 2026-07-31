@@ -1,10 +1,25 @@
 "use client";
 
-import { ChevronDown, ExternalLink, KeyRound, RefreshCw, UserRound } from "lucide-react";
-import { useCallback } from "react";
+import {
+	ChevronDown,
+	ExternalLink,
+	Eye,
+	EyeOff,
+	KeyRound,
+	RefreshCw,
+	UserRound,
+} from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { EntityChoiceCard } from "@/components/entity-card";
+import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+	InputGroup,
+	InputGroupAddon,
+	InputGroupButton,
+	InputGroupInput,
+} from "@/components/ui/input-group";
 import { Label } from "@/components/ui/label";
 import {
 	Select,
@@ -68,6 +83,7 @@ export function ProviderFieldsForm({
 	const isEdit = editing !== null;
 	const isOAuthEdit =
 		editing?.auth.type === "agent_profile" || editing?.auth.type === "oauth_profile";
+	const savedCredentialAvailable = editing !== null && editing.auth.type !== "none";
 	const apiModes = meta.apiModes;
 	const regions = preset?.region_variants ?? [];
 	const isCustomEndpoint = meta.custom === true && preset === null;
@@ -75,6 +91,10 @@ export function ProviderFieldsForm({
 	const showAdvancedName = preset !== null || (!showPrimaryName && isEdit);
 	const showRuntimeEnv = !isOAuthEdit && form.authMethod === "api_key";
 	const defaultAdvancedOpen = isCustomEndpoint;
+	const [apiKeyVisible, setApiKeyVisible] = useState(false);
+	useEffect(() => {
+		setApiKeyVisible(false);
+	}, [form.authMethod]);
 	// React has no defaultOpen prop for native details. Initialize once through a
 	// stable ref so later renders leave the user's disclosure state untouched.
 	const initializeAdvancedDetails = useCallback(
@@ -110,7 +130,7 @@ export function ProviderFieldsForm({
 							if (value) onRegionChange(value);
 						}}
 					>
-						<SelectTrigger id="provider-region">
+						<SelectTrigger id="provider-region" className="w-full">
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
@@ -131,16 +151,26 @@ export function ProviderFieldsForm({
 						<EntityChoiceCard
 							selected={form.authMethod === "api_key"}
 							onClick={() => onAuthMethodChange("api_key")}
-							icon={<KeyRound className="size-4" />}
+							icon={
+								<IconChip size="sm" className="size-6">
+									<KeyRound />
+								</IconChip>
+							}
 							title="Sign in with an API key"
 							description="For usage-based access"
+							variant="compact"
 						/>
 						<EntityChoiceCard
 							selected={form.authMethod === "oauth"}
 							onClick={() => onAuthMethodChange("oauth")}
-							icon={<UserRound className="size-4" />}
+							icon={
+								<IconChip size="sm" className="size-6">
+									<UserRound />
+								</IconChip>
+							}
 							title="Sign in with ChatGPT"
 							description="For subscription access"
+							variant="compact"
 						/>
 					</div>
 				</fieldset>
@@ -163,18 +193,35 @@ export function ProviderFieldsForm({
 			) : form.authMethod === "api_key" ? (
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="provider-key">API key</Label>
-					<div>
-						<Input
+					<InputGroup>
+						<InputGroupInput
 							id="provider-key"
-							type="password"
+							type={apiKeyVisible ? "text" : "password"}
 							value={form.apiKey}
 							onChange={(event) => onUpdate({ apiKey: event.target.value })}
-							placeholder="Enter API key"
+							placeholder={
+								isEdit && savedCredentialAvailable
+									? "Leave blank to keep current key"
+									: "Enter API key"
+							}
 							autoComplete="off"
+							autoCapitalize="none"
+							autoCorrect="off"
 							spellCheck={false}
+							aria-describedby="provider-key-help"
 						/>
-					</div>
-					<p className="text-xs text-muted-foreground">
+						<InputGroupAddon align="inline-end">
+							<InputGroupButton
+								size="icon-xs"
+								onClick={() => setApiKeyVisible((visible) => !visible)}
+								aria-label={apiKeyVisible ? "Hide API key" : "Show API key"}
+								aria-pressed={apiKeyVisible}
+							>
+								{apiKeyVisible ? <EyeOff /> : <Eye />}
+							</InputGroupButton>
+						</InputGroupAddon>
+					</InputGroup>
+					<p id="provider-key-help" className="text-xs text-muted-foreground">
 						{isEdit
 							? editing?.auth.type === "none"
 								? "Enter an API key to finish setup."
@@ -255,7 +302,7 @@ export function ProviderFieldsForm({
 										if (isApiMode(value)) onUpdate({ apiMode: value });
 									}}
 								>
-									<SelectTrigger id="provider-mode">
+									<SelectTrigger id="provider-mode" className="w-full">
 										<SelectValue />
 									</SelectTrigger>
 									<SelectContent>

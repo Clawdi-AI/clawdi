@@ -16,8 +16,8 @@ import { cn } from "@/lib/utils";
  *   - channel   → full-color app-icon PNG on Clawdi's CDN
  *   - framework → local app-icon PNG in /public/agents
  *   - provider  → colored brand logo from simpleicons (the CDN has no
- *                 provider PNGs) on a white tile so the brand color reads in
- *                 both themes; ids without a configured mark → monogram
+ *                 provider PNGs) in the same neutral tile used by monogram
+ *                 fallbacks; ids without a configured mark → monogram
  *   - anything unresolved → neutral monogram tile
  *
  * Uses plain image rendering — these are tiny/vector brand assets that don't
@@ -37,8 +37,8 @@ const CHANNEL_PNG: Record<string, string> = {
 
 /**
  * AI providers: no CDN PNG (those 404) → colored simpleicons brand logo. The
- * hex is pinned to a vivid, mid-tone brand color so it reads on a white tile
- * in both themes. `null` → neutral monogram (OpenAI isn't in simpleicons;
+ * hex is pinned to a vivid, mid-tone brand color so it reads in both themes.
+ * `null` → neutral monogram (OpenAI isn't in simpleicons;
  * custom endpoints have no brand).
  */
 const PROVIDER_SIMPLEICON: Record<string, { slug: string; hex: string } | null> = {
@@ -61,6 +61,7 @@ export type EntityIconSize = keyof typeof SIZE;
 export type EntityKind = "channel" | "provider" | "framework";
 
 const SHADOW = "shadow-[0_2px_6px_rgba(0,0,0,0.1)] dark:shadow-none";
+const PROVIDER_TILE = "border border-border/60 bg-muted/40 shadow-none";
 
 function NeutralMonogram({
 	label,
@@ -100,17 +101,14 @@ function ProviderBrandIcon({
 	className?: string;
 }) {
 	const [failed, setFailed] = useState(false);
-	if (failed) return <NeutralMonogram label={label} size={size} className={className} />;
+	if (failed) {
+		return <NeutralMonogram label={label} size={size} className={cn(PROVIDER_TILE, className)} />;
+	}
 
 	const s = SIZE[size];
 	return (
 		<span
-			className={cn(
-				s.box,
-				"flex shrink-0 items-center justify-center border border-border bg-white",
-				SHADOW,
-				className,
-			)}
+			className={cn(s.box, "flex shrink-0 items-center justify-center", PROVIDER_TILE, className)}
 		>
 			<img
 				src={src}
@@ -185,8 +183,9 @@ export function EntityIcon({
 				/>
 			);
 		}
+		return <NeutralMonogram label={alt} size={size} className={cn(PROVIDER_TILE, className)} />;
 	}
 
-	// Neutral fallback: a monogram tile (OpenAI, custom endpoints, unknown ids).
+	// Neutral fallback for unresolved channels/frameworks.
 	return <NeutralMonogram label={alt} size={size} className={className} />;
 }

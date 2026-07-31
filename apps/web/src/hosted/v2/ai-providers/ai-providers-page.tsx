@@ -233,23 +233,23 @@ function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage
 			<AlertDialogContent>
 				<AlertDialogHeader>
 					<AlertDialogTitle>Remove {providerLabel}?</AlertDialogTitle>
-					<AlertDialogDescription render={<div className="space-y-3" />}>
+					<AlertDialogDescription render={<div className="space-y-2" />}>
 						<p>This provider will be removed from your account and cannot be restored.</p>
 						<p>{impact.warning}</p>
-						{impact.acknowledgementRequired ? (
-							<div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
-								<Checkbox
-									id={acknowledgementId}
-									checked={acknowledged}
-									onCheckedChange={(checked) => setAcknowledged(checked === true)}
-								/>
-								<Label htmlFor={acknowledgementId} className="text-sm font-normal leading-snug">
-									I understand that affected agents will lose model access until reconfigured.
-								</Label>
-							</div>
-						) : null}
 					</AlertDialogDescription>
 				</AlertDialogHeader>
+				{impact.acknowledgementRequired ? (
+					<div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+						<Checkbox
+							id={acknowledgementId}
+							checked={acknowledged}
+							onCheckedChange={(checked) => setAcknowledged(checked === true)}
+						/>
+						<Label htmlFor={acknowledgementId} className="text-sm font-normal leading-snug">
+							I understand that affected agents will lose model access until reconfigured.
+						</Label>
+					</div>
+				) : null}
 				<AlertDialogFooter>
 					<AlertDialogCancel disabled={del.isPending}>Cancel</AlertDialogCancel>
 					<AlertDialogAction
