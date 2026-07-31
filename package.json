@@ -17,7 +17,7 @@
 		"@tailwindcss/postcss": "^4.3.3",
 		"@tailwindcss/vite": "^4.3.3",
 		"@tanstack/react-query": "^5.101.4",
-		"lucide-react": "^1.23.0",
+		"lucide-react": "^1.28.0",
 		"tailwind-merge": "^3.6.0",
 		"clsx": "^2.1.1"
 	},
