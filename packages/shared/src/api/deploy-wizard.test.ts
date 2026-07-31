@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type {
+	HostedDeployCheckoutUiMode,
 	HostedDeployDeployment,
 	HostedDeployPlan,
 	HostedDeployRequestStatus,
@@ -15,6 +16,18 @@ import {
 	usesHostedDeployIncludedBasicSlot,
 	validateAndBuildHostedDeployRequest,
 } from "./deploy-wizard";
+
+type Equal<Left, Right> =
+	(<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
+		? true
+		: false;
+type Assert<Condition extends true> = Condition;
+type CheckoutModeIsExact = Assert<Equal<HostedDeployCheckoutUiMode, "custom" | "hosted">>;
+
+const checkoutModeIsExact: CheckoutModeIsExact = true;
+// @ts-expect-error Stripe Checkout UI mode must stay on the backend's narrow generated union.
+const unsupportedCheckoutMode: HostedDeployCheckoutUiMode = "elements";
+void unsupportedCheckoutMode;
 
 function plan(
 	slug: HostedDeployPlan["slug"],
@@ -210,6 +223,10 @@ describe("hosted deploy request contract", () => {
 });
 
 describe("hosted deploy compute and payment contract", () => {
+	test("keeps every product checkout mode in the generated narrow union", () => {
+		expect(checkoutModeIsExact).toBe(true);
+	});
+
 	test("distinguishes an occupied, available, and unknown included Basic slot", () => {
 		expect(usesHostedDeployIncludedBasicSlot([includedDeployment(true)])).toBe(true);
 		expect(usesHostedDeployIncludedBasicSlot([includedDeployment(false)])).toBe(false);
@@ -308,22 +325,6 @@ describe("hosted deploy compute and payment contract", () => {
 			funding_source: "wallet",
 			ui_mode: "hosted",
 			quote,
-			deploy_config: { deploy_request_id: "request-stable" },
-		});
-
-		expect(
-			buildHostedDeployCheckoutRequest({
-				selection: { ...selection, fundingSource: "stripe" },
-				target: { kind: "new_deployment", deployRequest },
-				idempotencyKey: "request-stable",
-				quote: null,
-				uiMode: "hosted",
-				fallbackFromCheckoutSessionId: "cs_test_custom",
-			}),
-		).toMatchObject({
-			funding_source: "stripe",
-			ui_mode: "hosted",
-			fallback_from_checkout_session_id: "cs_test_custom",
 			deploy_config: { deploy_request_id: "request-stable" },
 		});
 	});

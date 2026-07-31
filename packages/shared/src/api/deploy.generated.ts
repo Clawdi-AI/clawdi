@@ -1085,8 +1085,6 @@ export interface components {
             checkout_url: string;
             /** Client Secret */
             client_secret?: string | null;
-            /** Checkout Session Id */
-            checkout_session_id?: string | null;
             /** Subscription Id */
             subscription_id?: string | null;
             /** Invoice Id */
@@ -1189,8 +1187,6 @@ export interface components {
              * @enum {string}
              */
             ui_mode: "custom" | "hosted";
-            /** Fallback From Checkout Session Id */
-            fallback_from_checkout_session_id?: string | null;
             /** Locale */
             locale?: string | null;
             quote?: components["schemas"]["V2ComputeSubscriptionQuoteResponse-Input"] | null;

@@ -1,6 +1,14 @@
 import type { DeploymentRead } from "@clawdi/shared/api";
 import { expect, type Page, type Route, test } from "@playwright/test";
 
+declare global {
+	interface Window {
+		__stripeCheckoutClientSecrets?: string[];
+		__stripeCheckoutLoadCalls?: number;
+		__stripeConfirmCalls?: number;
+	}
+}
+
 // HOSTED (Clawdi Cloud) smoke against the vite dev server with dev-auth-bypass
 // (NO Clerk key needed) + deploy-api enabled so /deploy renders. Exercises the
 // deploy wizard's Base UI Select asserting ZERO browser console/page errors.
@@ -973,9 +981,11 @@ async function stubCompletedStripeCheckout(page: Page) {
 	});
 }
 
-async function stubFailedStripeCheckoutLoad(page: Page) {
+async function stubRetriedStripeCheckoutLoad(page: Page) {
 	await page.addInitScript(() => {
-		const browserState = window as typeof window & { __stripeConfirmCalls?: number };
+		const browserState = window;
+		browserState.__stripeCheckoutClientSecrets = [];
+		browserState.__stripeCheckoutLoadCalls = 0;
 		browserState.__stripeConfirmCalls = 0;
 		const mockStripe = Object.assign(
 			() => ({
@@ -987,15 +997,44 @@ async function stubFailedStripeCheckoutLoad(page: Page) {
 					return {};
 				},
 				_registerWrapper: () => undefined,
-				initCheckoutElementsSdk: () => ({
-					loadActions: async () => ({
-						type: "error",
-						error: { message: "Mock Elements load failure" },
-					}),
-					on: () => undefined,
-					changeAppearance: () => undefined,
-					loadFonts: () => undefined,
-				}),
+				initCheckoutElementsSdk: (options: { clientSecret?: string }) => {
+					browserState.__stripeCheckoutClientSecrets?.push(options.clientSecret ?? "");
+					browserState.__stripeCheckoutLoadCalls =
+						(browserState.__stripeCheckoutLoadCalls ?? 0) + 1;
+					const failThisLoad = browserState.__stripeCheckoutLoadCalls === 1;
+					const session = { canConfirm: true, status: { type: "open" } };
+					const actions = {
+						getSession: () => session,
+						confirm: async () => {
+							browserState.__stripeConfirmCalls = (browserState.__stripeConfirmCalls ?? 0) + 1;
+							return {
+								type: "success",
+								session: { status: { type: "complete" } },
+							};
+						},
+					};
+					return {
+						loadActions: async () =>
+							failThisLoad
+								? {
+										type: "error",
+										error: { message: "Mock Elements load failure" },
+									}
+								: { type: "success", actions },
+						on: () => undefined,
+						changeAppearance: () => undefined,
+						loadFonts: () => undefined,
+						createPaymentElement: () => ({
+							mount: (node: HTMLElement) => {
+								node.textContent = "Mock retried secure payment form";
+							},
+							on: () => undefined,
+							off: () => undefined,
+							update: () => undefined,
+							destroy: () => undefined,
+						}),
+					};
+				},
 			}),
 			{ version: "dahlia" },
 		);
@@ -2119,6 +2158,7 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 test("paid checkout navigates on deployment acceptance without LRO convergence", async ({
 	page,
 }) => {
+	const checkoutRequests: string[] = [];
 	const deploymentRequestReads: string[] = [];
 	const operationPollRequests: string[] = [];
 	page.on("request", (request) => {
@@ -2133,6 +2173,7 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 		status: "creating",
 	};
 	await stubHostedApi(page, {
+		checkoutRequests,
 		checkoutResponses: [
 			{
 				status: 200,
@@ -2142,7 +2183,6 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 					action_url: null,
 					checkout_url: "https://checkout.stripe.test/session",
 					client_secret: "cs_test_paid_checkout",
-					checkout_session_id: "cs_test_paid_checkout",
 				},
 			},
 		],
@@ -2154,6 +2194,8 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	await page.goto("/deploy");
 
 	await page.getByRole("button", { name: "Continue to checkout" }).click();
+	await expect.poll(() => checkoutRequests.length).toBe(1);
+	expect(JSON.parse(checkoutRequests[0] ?? "{}")).toMatchObject({ ui_mode: "custom" });
 	const checkoutDialog = page.getByRole("dialog", { name: /Complete .* checkout/ });
 	await expect(checkoutDialog.getByText("Mock secure payment form", { exact: true })).toBeVisible();
 	await checkoutDialog.getByRole("button", { name: "Subscribe", exact: true }).click();
@@ -2189,7 +2231,6 @@ test("failed checkout start stays contextual and retries without duplicate or in
 					action_url: null,
 					checkout_url: "https://checkout.stripe.test/retry",
 					client_secret: "cs_test_checkout_retry",
-					checkout_session_id: "cs_test_checkout_retry",
 				},
 			},
 		],
@@ -2225,13 +2266,44 @@ test("failed checkout start stays contextual and retries without duplicate or in
 	expect(retryDeployRequestId).toBe(initialDeployRequestId);
 });
 
-test("Elements load failure replaces the Session before hosted Checkout navigation", async ({
-	page,
-}) => {
+test("missing publishable key starts hosted Checkout", async ({ page, baseURL }) => {
+	test.skip(
+		(process.env.E2E_STRIPE_PUBLISHABLE_KEY ?? "pk_test_browser").length > 0,
+		"Run with E2E_STRIPE_PUBLISHABLE_KEY='' to exercise hosted Checkout selection.",
+	);
+	if (!baseURL) throw new Error("Playwright baseURL is required for hosted Checkout.");
 	const checkoutRequests: string[] = [];
-	const sourceSessionId = "cs_test_elements_failed";
-	const hostedUrl = "http://127.0.0.1:3100/deploy?hosted_fallback=1";
-	await stubFailedStripeCheckoutLoad(page);
+	const hostedUrl = new URL("/deploy?hosted_checkout=1", baseURL).toString();
+	await stubHostedApi(page, {
+		checkoutRequests,
+		checkoutResponses: [
+			{
+				status: 200,
+				body: {
+					flow_type: "checkout_session",
+					funding_source: "stripe",
+					action_url: hostedUrl,
+					checkout_url: hostedUrl,
+					client_secret: null,
+				},
+			},
+		],
+		deployments: [includedBasicDeployment],
+		plans: [basicPlan],
+	});
+	await page.goto("/deploy");
+
+	await page.getByRole("button", { name: "Continue to checkout" }).click();
+	await expect.poll(() => checkoutRequests.length).toBe(1);
+	expect(JSON.parse(checkoutRequests[0] ?? "{}")).toMatchObject({ ui_mode: "hosted" });
+	await expect(page).toHaveURL(hostedUrl);
+	await expect(page.getByRole("dialog", { name: /Complete .* checkout/ })).toHaveCount(0);
+});
+
+test("Elements load failure retries the same Checkout Session", async ({ page }) => {
+	const checkoutRequests: string[] = [];
+	const clientSecret = "cs_test_elements_failed_secret";
+	await stubRetriedStripeCheckoutLoad(page);
 	await stubHostedApi(page, {
 		checkoutRequests,
 		checkoutResponses: [
@@ -2242,20 +2314,7 @@ test("Elements load failure replaces the Session before hosted Checkout navigati
 					funding_source: "stripe",
 					action_url: null,
 					checkout_url: "",
-					client_secret: "cs_test_elements_failed_secret",
-					checkout_session_id: sourceSessionId,
-				},
-			},
-			{ status: 503, body: { detail: "fallback_transport_failure" } },
-			{
-				status: 200,
-				body: {
-					flow_type: "checkout_session",
-					funding_source: "stripe",
-					action_url: hostedUrl,
-					checkout_url: hostedUrl,
-					client_secret: null,
-					checkout_session_id: "cs_test_hosted_replacement",
+					client_secret: clientSecret,
 				},
 			},
 		],
@@ -2265,36 +2324,32 @@ test("Elements load failure replaces the Session before hosted Checkout navigati
 	await page.goto("/deploy");
 
 	await page.getByRole("button", { name: "Continue to checkout" }).click();
-	await expect.poll(() => checkoutRequests.length).toBe(2);
-	const initialRequest = JSON.parse(checkoutRequests[0] ?? "{}") as Record<string, unknown>;
-	const automaticFallback = JSON.parse(checkoutRequests[1] ?? "{}") as Record<string, unknown>;
-	expect(initialRequest).toMatchObject({ ui_mode: "custom" });
-	expect(automaticFallback).toMatchObject({
-		ui_mode: "hosted",
-		fallback_from_checkout_session_id: sourceSessionId,
-	});
-	expect(checkoutDeployRequestId(checkoutRequests[1] ?? "{}")).toBe(
-		checkoutDeployRequestId(checkoutRequests[0] ?? "{}"),
-	);
-	await expect(page).not.toHaveURL(/hosted_fallback=1/);
-
 	const dialog = page.getByRole("dialog", { name: /Complete .* checkout/ });
-	await dialog.getByRole("button", { name: "Continue in Stripe", exact: true }).click();
-	await expect.poll(() => checkoutRequests.length).toBe(3);
-	const userFallback = JSON.parse(checkoutRequests[2] ?? "{}") as Record<string, unknown>;
-	expect(userFallback).toMatchObject({
-		ui_mode: "hosted",
-		fallback_from_checkout_session_id: sourceSessionId,
-	});
-	expect(checkoutDeployRequestId(checkoutRequests[2] ?? "{}")).toBe(
-		checkoutDeployRequestId(checkoutRequests[0] ?? "{}"),
-	);
-	await expect(page).toHaveURL(hostedUrl);
+	await expect(
+		dialog.getByText("We couldn’t load the secure payment form.", { exact: false }),
+	).toBeVisible();
+	await expect(dialog).not.toContainText("Mock Elements load failure");
+	await expect.poll(() => checkoutRequests.length).toBe(1);
 	expect(
-		await page.evaluate(
-			() => (window as typeof window & { __stripeConfirmCalls?: number }).__stripeConfirmCalls,
-		),
-	).toBe(0);
+		await page.evaluate(() => {
+			return {
+				clientSecrets: window.__stripeCheckoutClientSecrets,
+				confirmCalls: window.__stripeConfirmCalls,
+			};
+		}),
+	).toEqual({ clientSecrets: [clientSecret], confirmCalls: 0 });
+
+	await dialog.getByRole("button", { name: "Retry payment form", exact: true }).click();
+	await expect(dialog.getByText("Mock retried secure payment form", { exact: true })).toBeVisible();
+	await expect.poll(() => checkoutRequests.length).toBe(1);
+	expect(
+		await page.evaluate(() => {
+			return {
+				clientSecrets: window.__stripeCheckoutClientSecrets,
+				confirmCalls: window.__stripeConfirmCalls,
+			};
+		}),
+	).toEqual({ clientSecrets: [clientSecret, clientSecret], confirmCalls: 0 });
 });
 
 test("accepted detail delete dismisses immediately while teardown finishes in the background", async ({

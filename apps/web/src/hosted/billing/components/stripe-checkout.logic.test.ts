@@ -10,7 +10,7 @@ import type { CheckoutResult } from "@/hosted/billing/contracts";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 describe("stripe checkout logic", () => {
-	test("prefers the action_url for hosted fallback redirects", () => {
+	test("prefers the action_url for hosted Checkout redirects", () => {
 		const result: CheckoutResult = {
 			flow_type: "checkout_session",
 			funding_source: "stripe",

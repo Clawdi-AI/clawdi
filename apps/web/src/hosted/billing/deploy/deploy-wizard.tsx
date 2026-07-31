@@ -119,7 +119,6 @@ import { useSensitiveCreateSubscription } from "@/hosted/billing/sensitive-actio
 import {
 	type SubscriptionCreateRequestView,
 	type SubscriptionCreateSelection,
-	subscriptionHostedFallbackRequest,
 	supportedBillingTerm,
 } from "@/hosted/billing/subscription/subscription-create-adapter";
 import {
@@ -167,7 +166,6 @@ type Compute = "basic" | "performance";
 type DeployPaymentMethod = "card" | "wallet";
 type NativeDeployCheckout = {
 	clientSecret: string;
-	checkoutSessionId: string;
 	previousDeploymentIds: string[];
 	request: SubscriptionCreateRequestView;
 	summary: StripeCheckoutSummary;
@@ -875,10 +873,9 @@ export function DeployWizard() {
 					return;
 				}
 				const result = outcome.checkout;
-				if (hasCheckoutClientSecret(result) && result.checkout_session_id) {
+				if (cardCheckoutUiMode === CHECKOUT_ELEMENTS_UI_MODE && hasCheckoutClientSecret(result)) {
 					setCheckoutSession({
 						clientSecret: result.client_secret,
-						checkoutSessionId: result.checkout_session_id,
 						previousDeploymentIds: (deployments.data ?? []).map(
 							(deployment) => deployment.resource.id,
 						),
@@ -934,22 +931,6 @@ export function DeployWizard() {
 		} finally {
 			setSubmitting(false);
 			setSubmitTakingLong(false);
-		}
-	}
-
-	async function openHostedCheckoutFallback() {
-		if (!checkoutSession) throw new Error("Secure checkout fallback is unavailable.");
-		const fallbackRequest = subscriptionHostedFallbackRequest(
-			checkoutSession.request,
-			checkoutSession.checkoutSessionId,
-		);
-		const outcome = await createSubscription.execute(fallbackRequest);
-		if (outcome.flowType === "subscription_activation") {
-			navigateToReusedSubscription(outcome);
-			return;
-		}
-		if (!redirectTo(checkoutRedirectUrl(outcome.checkout))) {
-			throw new Error("Secure checkout fallback is unavailable.");
 		}
 	}
 
@@ -1565,7 +1546,6 @@ export function DeployWizard() {
 						checkoutSession?.request ?? null,
 					)
 				}
-				onFallback={openHostedCheckoutFallback}
 			/>
 		</div>
 	);

@@ -51,7 +51,6 @@ export type SubscriptionCreateRequestView = {
 	uiMode: HostedDeployCheckoutUiMode;
 	idempotencyKey: string;
 	quote: SubscriptionCreateQuoteView | null;
-	fallbackFromCheckoutSessionId?: string;
 };
 
 export type SubscriptionCreateOutcomeView =
@@ -118,23 +117,8 @@ export function subscriptionCreateRequest(request: SubscriptionCreateRequestView
 		idempotencyKey: request.idempotencyKey,
 		quote: request.quote?.serverQuote ?? null,
 		uiMode: request.uiMode,
-		fallbackFromCheckoutSessionId: request.fallbackFromCheckoutSessionId,
 	});
 	return { body, idempotencyKey: request.idempotencyKey };
-}
-
-export function subscriptionHostedFallbackRequest(
-	request: SubscriptionCreateRequestView,
-	checkoutSessionId: string,
-): SubscriptionCreateRequestView {
-	if (request.uiMode !== "custom" || !checkoutSessionId.trim()) {
-		throw new Error("Secure checkout fallback is unavailable.");
-	}
-	return {
-		...request,
-		uiMode: "hosted",
-		fallbackFromCheckoutSessionId: checkoutSessionId,
-	};
 }
 
 export function subscriptionCreateOutcome(result: CheckoutResult): SubscriptionCreateOutcomeView {
