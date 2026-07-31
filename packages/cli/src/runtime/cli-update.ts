@@ -1216,7 +1216,10 @@ function statusHasInstallIdentity(
 export function rollbackPendingRuntimeCliUpgrade(
 	paths: RuntimePaths,
 	reason: string,
+	authorityManifest?: RuntimeManifest,
 ): RuntimeCliRollbackResult {
+	const rootBootstrapRequired =
+		authorityManifest !== undefined && requiresHostedV2RootBootstrap(authorityManifest, paths);
 	let rootBinding: ReturnType<typeof promotedRootBootstrapBinding>;
 	try {
 		rootBinding = supersedeCliUpgradeStateWithRootBootstrap(paths);
@@ -1232,7 +1235,7 @@ export function rollbackPendingRuntimeCliUpgrade(
 			previousActiveTarget: null,
 		};
 	}
-	if (hasHostedRootBootstrapStatus(paths)) {
+	if (rootBootstrapRequired || hasHostedRootBootstrapStatus(paths)) {
 		return {
 			status: "not_pending",
 			version: null,
@@ -1311,11 +1314,15 @@ export function rollbackPendingRuntimeCliUpgrade(
 export function completePendingRuntimeCliUpgrade(
 	paths: RuntimePaths,
 	currentVersion: string,
+	authorityManifest?: RuntimeManifest,
 ): RuntimeCliReconciliationResult {
 	if (supersedeCliUpgradeStateWithRootBootstrap(paths)) {
 		return cliReconciliationResult(paths, "unchanged", currentVersion);
 	}
-	if (hasHostedRootBootstrapStatus(paths)) {
+	if (
+		(authorityManifest !== undefined && requiresHostedV2RootBootstrap(authorityManifest, paths)) ||
+		hasHostedRootBootstrapStatus(paths)
+	) {
 		return { status: "unchanged", selfReexec: false };
 	}
 	const reconciliation = reconcileCliUpgradeTransaction(paths, {
@@ -1340,11 +1347,15 @@ export function completePendingRuntimeCliUpgrade(
 export function reconcilePendingRuntimeCliUpgrade(
 	paths: RuntimePaths,
 	runningVersion: string,
+	authorityManifest?: RuntimeManifest,
 ): RuntimeCliReconciliationResult {
 	if (supersedeCliUpgradeStateWithRootBootstrap(paths)) {
 		return cliReconciliationResult(paths, "unchanged", runningVersion);
 	}
-	if (hasHostedRootBootstrapStatus(paths)) {
+	if (
+		(authorityManifest !== undefined && requiresHostedV2RootBootstrap(authorityManifest, paths)) ||
+		hasHostedRootBootstrapStatus(paths)
+	) {
 		return { status: "unchanged", selfReexec: false };
 	}
 	return reconcileCliUpgradeTransaction(paths, { runningVersion });

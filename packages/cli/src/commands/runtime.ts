@@ -1300,6 +1300,36 @@ function cacheRuntimeSourceManifest(load: RuntimeManifestLoad, paths: RuntimePat
 	return cacheRuntimeLastGoodManifest(load.manifest, paths, load.secretValues);
 }
 
+function readCommittedRuntimeCliManifestAuthority(
+	paths: RuntimePaths,
+	appliedState: NonNullable<ReturnType<typeof readRuntimeAppliedState>>,
+): RuntimeManifestLoad["manifest"] {
+	if (!existsSync(paths.manifestLastGood)) {
+		throw new Error("committed runtime manifest authority is missing");
+	}
+	let raw: unknown;
+	try {
+		raw = JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")) as unknown;
+	} catch (error) {
+		throw new Error(
+			`committed runtime manifest authority is unreadable: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	const parsed = runtimeDesiredStateSchema.safeParse(raw);
+	if (!parsed.success) {
+		throw new Error("committed runtime manifest authority is invalid");
+	}
+	const manifest = parsed.data;
+	if (
+		manifest.instanceId !== appliedState.instanceId ||
+		manifest.generation !== appliedState.generation ||
+		resolveRuntimeApplyGeneration(manifest) !== resolveRuntimeApplyGeneration(appliedState)
+	) {
+		throw new Error("committed runtime manifest authority does not match applied state");
+	}
+	return manifest;
+}
+
 export function runtimeAppliedContentIdentity(
 	load: RuntimeManifestLoad,
 ): RuntimeAppliedContentIdentity {
@@ -2152,38 +2182,6 @@ async function runtimeInitLocked(
 		process.exitCode = 20;
 		return;
 	}
-	try {
-		const reconciliation = reconcilePendingRuntimeCliUpgrade(paths, getCliVersion());
-		if (reconciliation.selfReexec) {
-			finishRuntimeInitCliHandoff({
-				opts,
-				paths,
-				mode,
-				bootId,
-				hostPolicy,
-				detail: { reconciliation },
-			});
-			return;
-		}
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		const status = repairStatus(
-			{
-				bootId,
-				runtimeMode: mode,
-				stage: "local",
-				exitCode: 23,
-				errors: [message],
-			},
-			paths,
-		);
-		writeRuntimeBootStatus(status, paths);
-		if (opts.json || !process.stdout.isTTY) console.log(JSON.stringify(status, null, 2));
-		else console.log(chalk.red(message));
-		process.exitCode = 23;
-		return;
-	}
-
 	const credentialAvailable = hasRuntimeCredential({ manifestPath: opts.manifestFile, paths });
 	const nonInteractiveOk = opts.nonInteractive === true;
 	const errors: string[] = [];
@@ -2237,6 +2235,41 @@ async function runtimeInitLocked(
 				console.log(chalk.gray(`  status: ${paths.bootStatus}`));
 			}
 			process.exitCode = exitCode;
+			return;
+		}
+		try {
+			const reconciliation = reconcilePendingRuntimeCliUpgrade(
+				paths,
+				getCliVersion(),
+				loaded.manifest,
+			);
+			if (reconciliation.selfReexec) {
+				finishRuntimeInitCliHandoff({
+					opts,
+					paths,
+					mode,
+					bootId,
+					hostPolicy,
+					detail: { reconciliation },
+				});
+				return;
+			}
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			const status = repairStatus(
+				{
+					bootId,
+					runtimeMode: mode,
+					stage: "local",
+					exitCode: 23,
+					errors: [message],
+				},
+				paths,
+			);
+			writeRuntimeBootStatus(status, paths);
+			if (opts.json || !process.stdout.isTTY) console.log(JSON.stringify(status, null, 2));
+			else console.log(chalk.red(message));
+			process.exitCode = 23;
 			return;
 		}
 
@@ -2387,7 +2420,9 @@ async function runtimeInitLocked(
 		const { convergence } = applyResult;
 		const runtimeErrors = [...convergence.installErrors];
 		const installOk = runtimeErrors.length === 0;
-		if (installOk) completePendingRuntimeCliUpgrade(paths, getCliVersion());
+		if (installOk) {
+			completePendingRuntimeCliUpgrade(paths, getCliVersion(), convergenceLoad.manifest);
+		}
 		const activeAppliedState = readRuntimeAppliedState(paths);
 		const status = buildRuntimeBootStatus(
 			{
@@ -2479,38 +2514,10 @@ async function runtimeWatchTickLocked(
 		recoverFailedSystemdUnits?: boolean;
 	},
 ): Promise<Record<string, unknown>> {
-	let reconciliation: RuntimeCliReconciliationResult;
-	try {
-		reconciliation = reconcilePendingRuntimeCliUpgrade(paths, getCliVersion());
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return {
-			schemaVersion: "clawdi.runtimeWatchEvent.v1",
-			status: "error",
-			stage: "cli-update",
-			errors: [message],
-			error: message,
-			selfReexec: false,
-		};
-	}
-	if (reconciliation.selfReexec) {
-		return {
-			schemaVersion: "clawdi.runtimeWatchEvent.v1",
-			status: "cli_handoff",
-			stage: "cli-update",
-			handoff: "cli_reexec",
-			reconciliation,
-			selfReexec: true,
-		};
-	}
-	const event = await runtimeWatchTickAfterCliReconciliation(paths, opts);
-	return {
-		...event,
-		selfReexec: reconciliation.selfReexec || event.selfReexec === true,
-	};
+	return runtimeWatchTickWithManifestAuthority(paths, opts);
 }
 
-async function runtimeWatchTickAfterCliReconciliation(
+async function runtimeWatchTickWithManifestAuthority(
 	paths: ReturnType<typeof getRuntimePaths>,
 	opts: {
 		forceRefresh: boolean;
@@ -2544,7 +2551,23 @@ async function runtimeWatchTickAfterCliReconciliation(
 			runtimeAppliedApplyIdentity(activeAppliedState),
 		)
 	) {
-		const completion = completePendingRuntimeCliUpgrade(paths, getCliVersion());
+		let committedManifest: RuntimeManifestLoad["manifest"];
+		try {
+			committedManifest = readCommittedRuntimeCliManifestAuthority(paths, activeAppliedState);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return {
+				schemaVersion: "clawdi.runtimeWatchEvent.v1",
+				status: "error",
+				mode: "repair",
+				stage: "local",
+				errors: [message],
+				error: message,
+				activeGeneration: activeAppliedState.generation,
+				rejectedGeneration: null,
+			};
+		}
+		const completion = completePendingRuntimeCliUpgrade(paths, getCliVersion(), committedManifest);
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
 			status: "not_modified",
@@ -2573,6 +2596,30 @@ async function runtimeWatchTickAfterCliReconciliation(
 			};
 		}
 		const loaded = applyRuntimeBundleChannelsToManifestLoad(fresh, paths);
+		let reconciliation: RuntimeCliReconciliationResult;
+		try {
+			reconciliation = reconcilePendingRuntimeCliUpgrade(paths, getCliVersion(), loaded.manifest);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return {
+				schemaVersion: "clawdi.runtimeWatchEvent.v1",
+				status: "error",
+				stage: "cli-update",
+				errors: [message],
+				error: message,
+				selfReexec: false,
+			};
+		}
+		if (reconciliation.selfReexec) {
+			return {
+				schemaVersion: "clawdi.runtimeWatchEvent.v1",
+				status: "cli_handoff",
+				stage: "cli-update",
+				handoff: "cli_reexec",
+				reconciliation,
+				selfReexec: true,
+			};
+		}
 		const bundleEtag = loaded.etag;
 		const sourceRevision = loaded.sourceRevision;
 		if (!bundleEtag || !sourceRevision) {
@@ -2674,7 +2721,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 			systemdApplyResult.systemUnitsChanged.length > 0 ||
 			systemdApplyResult.userUnitsChanged.length > 0;
 		if (errors.length > 0) {
-			const cliRollback = maybeRollbackFailedCliUpgrade(paths, errors);
+			const cliRollback = maybeRollbackFailedCliUpgrade(paths, errors, loaded.manifest);
 			if (cliRollback.status === "rolled_back") selfReexec = true;
 			const activeAppliedState = readRuntimeAppliedState(paths);
 			return {
@@ -2694,7 +2741,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 				convergence: convergence.outputs,
 			};
 		}
-		const completion = completePendingRuntimeCliUpgrade(paths, getCliVersion());
+		const completion = completePendingRuntimeCliUpgrade(paths, getCliVersion(), loaded.manifest);
 		selfReexec = selfReexec || completion.selfReexec;
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
@@ -2890,10 +2937,12 @@ function runtimeManifestIdentityForWatch(
 function maybeRollbackFailedCliUpgrade(
 	paths: RuntimePaths,
 	errors: string[],
+	authorityManifest: RuntimeManifestLoad["manifest"],
 ): RuntimeCliRollbackResult {
 	const rollback = rollbackPendingRuntimeCliUpgrade(
 		paths,
 		`first converge after CLI upgrade failed: ${errors[0] ?? "unknown error"}`,
+		authorityManifest,
 	);
 	if (rollback.status === "rolled_back") {
 		errors.push(
