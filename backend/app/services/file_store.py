@@ -1,11 +1,12 @@
 import asyncio
 from functools import lru_cache
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 import boto3
 from botocore.client import Config as BotoConfig
 from botocore.exceptions import ClientError
+from botocore.response import StreamingBody
 
 from app.core.config import settings
 
@@ -15,6 +16,24 @@ class FileStore(Protocol):
     async def get(self, key: str) -> bytes: ...
     async def delete(self, key: str) -> None: ...
     async def exists(self, key: str) -> bool: ...
+
+
+@runtime_checkable
+class _S3Client(Protocol):
+    """The small public boto3 S3 surface owned by this consumer."""
+
+    def put_object(
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        Body: bytes,
+        ContentType: str | None = None,
+    ) -> object: ...
+    def get_object(self, *, Bucket: str, Key: str) -> object: ...
+    def delete_object(self, *, Bucket: str, Key: str) -> object: ...
+    def head_object(self, *, Bucket: str, Key: str) -> object: ...
+    def close(self) -> None: ...
 
 
 class LocalFileStore:
@@ -85,39 +104,56 @@ class S3FileStore:
         config = BotoConfig(
             s3={"addressing_style": "path" if force_path_style else "auto"},
         )
-        kwargs = {
-            "service_name": "s3",
-            "region_name": region or None,
-            "endpoint_url": endpoint_url or None,
-            "config": config,
-        }
         if access_key_id or secret_access_key:
-            kwargs["aws_access_key_id"] = access_key_id
-            kwargs["aws_secret_access_key"] = secret_access_key
-        self.client = boto3.client(**kwargs)
+            client = boto3.client(
+                "s3",
+                region_name=region or None,
+                endpoint_url=endpoint_url or None,
+                aws_access_key_id=access_key_id,
+                aws_secret_access_key=secret_access_key,
+                config=config,
+            )
+        else:
+            client = boto3.client(
+                "s3",
+                region_name=region or None,
+                endpoint_url=endpoint_url or None,
+                config=config,
+            )
+        if not isinstance(client, _S3Client):
+            raise RuntimeError("boto3 returned an invalid S3 client")
+        self.client = client
 
     async def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
-        extra: dict[str, str] = {}
         if content_type:
-            extra["ContentType"] = content_type
-        await asyncio.to_thread(
-            self.client.put_object,
-            Bucket=self.bucket,
-            Key=key,
-            Body=data,
-            **extra,
-        )
+            await asyncio.to_thread(
+                self.client.put_object,
+                Bucket=self.bucket,
+                Key=key,
+                Body=data,
+                ContentType=content_type,
+            )
+        else:
+            await asyncio.to_thread(
+                self.client.put_object,
+                Bucket=self.bucket,
+                Key=key,
+                Body=data,
+            )
 
     async def get(self, key: str) -> bytes:
         def _read() -> bytes:
             try:
                 response = self.client.get_object(Bucket=self.bucket, Key=key)
             except ClientError as exc:
-                code = exc.response.get("Error", {}).get("Code")
-                if code in {"404", "NoSuchKey", "NotFound"}:
+                if _is_not_found(exc):
                     raise FileNotFoundError(key) from exc
                 raise
-            body = response["Body"]
+            if not isinstance(response, dict):
+                raise RuntimeError("S3 get_object returned a non-object response")
+            body = response.get("Body")
+            if not isinstance(body, StreamingBody):
+                raise RuntimeError("S3 get_object returned an invalid Body")
             try:
                 return body.read()
             finally:
@@ -134,12 +170,22 @@ class S3FileStore:
                 self.client.head_object(Bucket=self.bucket, Key=key)
                 return True
             except ClientError as exc:
-                code = exc.response.get("Error", {}).get("Code")
-                if code in {"404", "NoSuchKey", "NotFound"}:
+                if _is_not_found(exc):
                     return False
                 raise
 
         return await asyncio.to_thread(_exists)
+
+
+def _is_not_found(exc: ClientError) -> bool:
+    response = exc.response
+    if not isinstance(response, dict):
+        return False
+    error = response.get("Error")
+    if not isinstance(error, dict):
+        return False
+    code = error.get("Code")
+    return isinstance(code, str) and code in {"404", "NoSuchKey", "NotFound"}
 
 
 @lru_cache(maxsize=1)
@@ -149,7 +195,7 @@ def get_file_store() -> FileStore:
     Single factory read from `Settings`. Cached so route modules reuse
     the same local path / S3 client.
     """
-    kind = getattr(settings, "file_store_type", "local")
+    kind = settings.file_store_type
     if kind == "local":
         return LocalFileStore(settings.file_store_local_path)
     if kind == "s3":
