@@ -7,6 +7,7 @@ import {
 	modelBindingDisplayName,
 	modelDisplayName,
 	modelOptionsForProvider,
+	modelPickerItems,
 	primaryProviderPickerItems,
 	providerChoiceFromRef,
 	providerDisplayLabel,
@@ -25,7 +26,7 @@ describe("model binding", () => {
 		expect(modelOptionsForProvider(MANAGED_AI_CHOICE, [])).toEqual([]);
 	});
 
-	test("puts the catalog default first and exposes real managed model names", () => {
+	test("preserves backend catalog order while selecting its declared default", () => {
 		const managedModels = [
 			{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false },
 			{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true },
@@ -34,12 +35,13 @@ describe("model binding", () => {
 
 		expect(
 			modelOptionsForProvider(MANAGED_AI_CHOICE, [], managedModels).map((model) => model.id),
-		).toEqual(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]);
+		).toEqual(["gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra"]);
 		expect(firstModelForProvider(MANAGED_AI_CHOICE, [], managedModels)).toBe("gpt-5.6-luna");
-		expect(modelOptionsForProvider(MANAGED_AI_CHOICE, [], managedModels)).toEqual([
-			managedModels[1],
-			managedModels[0],
-			managedModels[2],
+		expect(modelOptionsForProvider(MANAGED_AI_CHOICE, [], managedModels)).toEqual(managedModels);
+		expect(modelPickerItems(MANAGED_AI_CHOICE, [], managedModels)).toEqual([
+			{ value: "gpt-5.6-sol", label: "Sol" },
+			{ value: "gpt-5.6-luna", label: "Luna" },
+			{ value: "gpt-5.6-terra", label: "Terra" },
 		]);
 		expect(modelDisplayName("gpt-5.6-sol", managedModels)).toBe("Sol");
 	});

@@ -12,6 +12,7 @@ import { walletDebitShortfallUsd } from "@/hosted/billing/wallet/wallet-debit-su
 export type ComputePricePresentation = {
 	primary: string;
 	secondary: string;
+	savings: string | null;
 };
 
 export type DeployAmountPresentation = {
@@ -32,6 +33,7 @@ export function computePricePresentation(
 		return {
 			primary: monthlyPrice(offer),
 			secondary: "Billed monthly",
+			savings: null,
 		};
 	}
 
@@ -53,7 +55,8 @@ export function computePricePresentation(
 
 	return {
 		primary: monthlyPrice(offer),
-		secondary: savingsCents > 0 ? `${billed} · save ${formatCents(savingsCents)}` : billed,
+		secondary: billed,
+		savings: savingsCents > 0 ? `save ${formatCents(savingsCents)}` : null,
 	};
 }
 

@@ -47,6 +47,16 @@ const managedModelCatalog = {
 	],
 };
 
+const dynamicManagedModelCatalog = {
+	models: [
+		{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false },
+		{ id: "k3", display_name: "Kimi K3", is_default: false },
+		{ id: "future-model", display_name: "Future model", is_default: false },
+		{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true },
+		{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false },
+	],
+};
+
 type DeploymentComputeSubscription = NonNullable<
 	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
 >;
@@ -1687,6 +1697,15 @@ async function capturePricingScreenshot(page: Page, path: string) {
 	await basicCard.locator("xpath=ancestor::section[1]").screenshot({ path });
 }
 
+async function captureModelScreenshot(page: Page, path: string) {
+	const modelPicker = page.locator("#deploy-catalog-model");
+	await modelPicker.evaluate((element) => {
+		element.scrollIntoView({ block: "center", inline: "nearest" });
+	});
+	await page.waitForTimeout(100);
+	await modelPicker.locator("xpath=ancestor::section[1]").screenshot({ path });
+}
+
 function collectBrowserErrors(page: Page): string[] {
 	const errors: string[] = [];
 	page.on("console", (m) => {
@@ -2129,9 +2148,11 @@ test("deploy keeps AI providers expanded and provider selection exclusive", asyn
 	await unmanaged.click();
 	await expect(unmanaged).toHaveAttribute("aria-pressed", "true");
 	await expect(managed).toHaveAttribute("aria-pressed", "false");
+	await expect(page.getByTestId("managed-model-choices")).toHaveCount(0);
 	await managed.click();
 	await expect(managed).toHaveAttribute("aria-pressed", "true");
 	await expect(unmanaged).toHaveAttribute("aria-pressed", "false");
+	await expect(page.getByTestId("managed-model-choices")).toBeVisible();
 	await expect(page.getByRole("button", { name: "Change", exact: true })).toHaveCount(0);
 });
 
@@ -2242,7 +2263,11 @@ test("deploy CTA-adjacent Wallet amount handles loading, retry, and insufficient
 });
 
 test("deploy form stays readable without stretching compact controls", async ({ page }) => {
-	await stubHostedApi(page, { plans: [basicPlan, performancePlan], deployments: [] });
+	await stubHostedApi(page, {
+		plans: [basicPlan, performancePlan],
+		deployments: [],
+		managedModels: dynamicManagedModelCatalog,
+	});
 	await page.goto("/deploy");
 	await page.getByRole("button", { name: /^Performance/ }).click();
 	await page.getByRole("button", { name: /Annual.*%/ }).click();
@@ -2278,6 +2303,31 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 							rect: rect(element),
 						}
 					: null;
+			const inlineTextMetrics = (element: Element | null | undefined) =>
+				element
+					? (() => {
+							const textRange = document.createRange();
+							textRange.selectNodeContents(element);
+							const lineTops = new Set(
+								Array.from(textRange.getClientRects()).map((box) => Math.round(box.top * 10)),
+							);
+							return {
+								lineCount: lineTops.size,
+								text: element.textContent?.trim() ?? "",
+								whiteSpace: getComputedStyle(element).whiteSpace,
+							};
+						})()
+					: null;
+			const labelMetrics = (controlId: string) => {
+				const label = document.querySelector(`[data-slot="label"][for="${controlId}"]`);
+				if (!label) return null;
+				const style = getComputedStyle(label);
+				return {
+					fontSize: style.fontSize,
+					fontWeight: style.fontWeight,
+					lineHeight: style.lineHeight,
+				};
+			};
 			const sectionGrid = (title: string) => {
 				const section = sectionFor(title);
 				return gridMetrics(section?.querySelector(":scope > div:nth-child(3) .grid"));
@@ -2305,24 +2355,38 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 					scrollWidth: title.scrollWidth,
 				}));
 			const computePlans = ["Basic", "Performance"].map((label) => {
+				const testIdPrefix = label === "Basic" ? "basic" : "performance";
 				const title = Array.from(
 					document.querySelectorAll<HTMLSpanElement>("button span.font-medium"),
 				).find((candidate) => candidate.textContent?.trim() === label);
 				const card = title?.closest("button");
 				const resources = card?.querySelector("p");
-				const price = card?.querySelector(
-					`[data-testid="${label === "Basic" ? "basic" : "performance"}-compute-price"]`,
-				);
+				const price = card?.querySelector(`[data-testid="${testIdPrefix}-compute-price"]`);
 				const primaryPrice = price?.querySelector("span.font-semibold");
 				return {
 					card: rect(card),
 					label,
 					price: rect(price),
 					primaryPrice: rect(primaryPrice),
+					ramUnit: inlineTextMetrics(
+						card?.querySelector(`[data-testid="${testIdPrefix}-ram-resource"]`),
+					),
 					resources: rect(resources),
+					savings: inlineTextMetrics(
+						price?.querySelector(`[data-testid="${testIdPrefix}-compute-price-savings"]`),
+					),
+					secondaryWhiteSpace: price
+						? getComputedStyle(price.querySelector(":scope > div:last-child") ?? price).whiteSpace
+						: null,
 					title: rect(title),
 				};
 			});
+			const catalogModel = document.querySelector("#deploy-catalog-model");
+			const modelPickerFrame = catalogModel?.closest('div[data-hosted="true"][data-v2="true"]');
+			const modelPickerFrameStyle = modelPickerFrame ? getComputedStyle(modelPickerFrame) : null;
+			const managedModelChoices = document.querySelector('[data-testid="managed-model-choices"]');
+			const modelLabel = document.querySelector("#deploy-catalog-model-label");
+			const firstModelChoice = managedModelChoices?.querySelector("button");
 			return {
 				document: {
 					clientWidth: document.documentElement.clientWidth,
@@ -2333,10 +2397,31 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 				aiProviders: sectionGrid("AI providers"),
 				compute: sectionGrid("Compute"),
 				payment: gridMetrics(paymentButton?.parentElement),
-				catalogModel: rect(document.querySelector("#deploy-catalog-model")),
+				catalogModel: rect(catalogModel),
+				firstModelChoice: rect(firstModelChoice),
+				managedModelChoices: managedModelChoices
+					? {
+							clientWidth: managedModelChoices.clientWidth,
+							labels: Array.from(managedModelChoices.querySelectorAll("button")).map(
+								(button) => button.textContent?.trim() ?? "",
+							),
+							rect: rect(managedModelChoices),
+							scrollWidth: managedModelChoices.scrollWidth,
+						}
+					: null,
+				modelLabel: rect(modelLabel),
+				modelPickerFrame: modelPickerFrameStyle
+					? {
+							borderTopWidth: Number.parseFloat(modelPickerFrameStyle.borderTopWidth),
+							paddingTop: Number.parseFloat(modelPickerFrameStyle.paddingTop),
+						}
+					: null,
 				name: rect(document.querySelector("#agent-name")),
+				nameLabel: labelMetrics("agent-name"),
 				language: rect(document.querySelector("#agent-language")),
+				languageLabel: labelMetrics("agent-language"),
 				timezone: rect(document.querySelector("#agent-timezone")),
+				timezoneLabel: labelMetrics("agent-timezone"),
 				billingTerm: rect(document.querySelector('[aria-label="Billing term"]')),
 				action: rect(document.querySelector('button[type="submit"]')),
 				amount: (() => {
@@ -2402,10 +2487,30 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 				plan.price?.top,
 				`${viewport.name} ${plan.label} price should stay with title and resources`,
 			).toBeLessThanOrEqual(plan.resources?.bottom ?? 0);
+			expect(plan.ramUnit?.text, `${viewport.name} ${plan.label} RAM unit`).toMatch(/^\d+ GB RAM$/);
+			expect(plan.ramUnit?.whiteSpace, `${viewport.name} ${plan.label} RAM unit`).toBe("nowrap");
+			expect(plan.ramUnit?.lineCount, `${viewport.name} ${plan.label} RAM unit`).toBe(1);
+			expect(
+				plan.secondaryWhiteSpace,
+				`${viewport.name} ${plan.label} billing copy may wrap naturally`,
+			).toBe("normal");
 		}
+		const performancePlanMetrics = metrics.computePlans.find(
+			(plan) => plan.label === "Performance",
+		);
+		expect(performancePlanMetrics?.savings?.text, `${viewport.name} annual savings copy`).toBe(
+			"· save $40.00",
+		);
+		expect(
+			performancePlanMetrics?.savings?.whiteSpace,
+			`${viewport.name} annual savings copy`,
+		).toBe("nowrap");
+		expect(performancePlanMetrics?.savings?.lineCount, `${viewport.name} annual savings copy`).toBe(
+			1,
+		);
 
 		for (const [label, control, maxWidth] of [
-			["Catalog model", metrics.catalogModel, 448],
+			["Model", metrics.catalogModel, 448],
 			["Name", metrics.name, 448],
 			["Language", metrics.language, 160],
 			["Timezone", metrics.timezone, 384],
@@ -2420,6 +2525,45 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 		expect(metrics.language?.width, `${viewport.name} compact Language select`).toBeLessThan(
 			metrics.name?.width ?? 0,
 		);
+		expect(metrics.languageLabel, `${viewport.name} Language label`).toEqual(metrics.nameLabel);
+		expect(metrics.timezoneLabel, `${viewport.name} Timezone label`).toEqual(metrics.nameLabel);
+		expect(metrics.modelPickerFrame, `${viewport.name} unframed deploy model picker`).toEqual({
+			borderTopWidth: 0,
+			paddingTop: 0,
+		});
+		expect(metrics.managedModelChoices, `${viewport.name} managed model choices`).not.toBeNull();
+		expect(metrics.managedModelChoices?.labels, `${viewport.name} backend model order`).toEqual([
+			"Sol",
+			"Kimi K3",
+			"Future model",
+			"Luna",
+			"Terra",
+		]);
+		expect(
+			metrics.managedModelChoices?.scrollWidth,
+			`${viewport.name} managed model choices should not overflow`,
+		).toBeLessThanOrEqual(metrics.managedModelChoices?.clientWidth ?? 0);
+		expect(
+			metrics.managedModelChoices?.rect?.right,
+			`${viewport.name} managed model choices right edge`,
+		).toBeLessThanOrEqual(viewport.width);
+		if (viewport.width >= 700) {
+			const modelLabelCenter = metrics.modelLabel
+				? (metrics.modelLabel.top + metrics.modelLabel.bottom) / 2
+				: 0;
+			const firstModelChoiceCenter = metrics.firstModelChoice
+				? (metrics.firstModelChoice.top + metrics.firstModelChoice.bottom) / 2
+				: Number.POSITIVE_INFINITY;
+			expect(firstModelChoiceCenter, `${viewport.name} inline Model choices`).toBeCloseTo(
+				modelLabelCenter,
+				0,
+			);
+		} else {
+			expect(
+				metrics.firstModelChoice?.top,
+				`${viewport.name} wrapped Model choices`,
+			).toBeGreaterThanOrEqual(metrics.modelLabel?.bottom ?? Number.POSITIVE_INFINITY);
+		}
 
 		expect(metrics.action, `${viewport.name} sticky action`).not.toBeNull();
 		expect(metrics.action?.top, `${viewport.name} sticky action top`).toBeGreaterThanOrEqual(0);
@@ -2451,6 +2595,7 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 			);
 		}
 		await capturePricingScreenshot(page, `/tmp/deploy-compute-card-${viewport.width}.png`);
+		await captureModelScreenshot(page, `/tmp/deploy-ai-provider-${viewport.width}.png`);
 	}
 });
 
@@ -2800,7 +2945,7 @@ test("rejected detail delete stays on the current agent without accepted cleanup
 	await expect(page.getByText("internal delete coordinator", { exact: false })).toHaveCount(0);
 });
 
-test("managed model picker lists the curated catalog without Custom or image models", async ({
+test("deploy managed model picker renders backend order and submits the selected model", async ({
 	page,
 }) => {
 	const createDeploymentRequests: Array<{ body: string; idempotencyKey: string | null }> = [];
@@ -2808,19 +2953,31 @@ test("managed model picker lists the curated catalog without Custom or image mod
 		plans: [basicPlan],
 		deployments: [],
 		createDeploymentRequests,
+		managedModels: dynamicManagedModelCatalog,
 	});
 	await page.goto("/deploy");
 
-	await expect(page.locator("#deploy-catalog-model")).toContainText("Luna");
-	await page.locator("#deploy-catalog-model").click();
-	await expect(page.getByRole("option", { name: "Luna", exact: true })).toBeVisible();
-	await expect(page.getByRole("option", { name: "Sol", exact: true })).toBeVisible();
-	await expect(page.getByRole("option", { name: "Terra", exact: true })).toBeVisible();
-	await expect(page.getByRole("option", { name: "Hosted default (Luna)" })).toHaveCount(0);
-	await expect(page.getByRole("option", { name: "Custom model" })).toHaveCount(0);
-	await expect(page.getByRole("option", { name: /gpt-image/i })).toHaveCount(0);
+	const managedModels = page.getByTestId("managed-model-choices");
+	await expect(managedModels).toHaveAccessibleName("Model");
+	await expect(managedModels.getByRole("button")).toHaveText([
+		"Sol",
+		"Kimi K3",
+		"Future model",
+		"Luna",
+		"Terra",
+	]);
+	await expect(managedModels.getByRole("button", { name: "Luna" })).toHaveAttribute(
+		"aria-pressed",
+		"true",
+	);
+	await expect(managedModels.getByRole("button", { name: "Kimi K3" })).toBeVisible();
+	await expect(page.locator("#deploy-primary-model")).toHaveCount(0);
 
-	await page.getByRole("option", { name: "Sol", exact: true }).click();
+	await managedModels.getByRole("button", { name: "Sol" }).click();
+	await expect(managedModels.getByRole("button", { name: "Sol" })).toHaveAttribute(
+		"aria-pressed",
+		"true",
+	);
 	await page.getByRole("button", { name: "Deploy", exact: true }).click();
 	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
 
@@ -2949,7 +3106,22 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 	await page.goto("/agents/hdep_unmanaged_model/model-provider?source=on-clawdi");
 
 	await page.getByRole("button", { name: /Clawdi AI/ }).click();
-	await expect(page.locator("#agent-catalog-model")).toContainText("Luna");
+	const agentModelSelect = page.locator("#agent-catalog-model");
+	await expect(agentModelSelect).toHaveRole("combobox");
+	await expect(agentModelSelect).toHaveAccessibleName("Model");
+	await expect(agentModelSelect).toContainText("Luna");
+	await expect(page.getByTestId("managed-model-choices")).toHaveCount(0);
+	const agentModelFrame = await agentModelSelect.evaluate((element) => {
+		const frame = element.closest('div[data-hosted="true"][data-v2="true"]');
+		const style = frame ? getComputedStyle(frame) : null;
+		return style
+			? {
+					borderTopWidth: Number.parseFloat(style.borderTopWidth),
+					paddingTop: Number.parseFloat(style.paddingTop),
+				}
+			: null;
+	});
+	expect(agentModelFrame).toEqual({ borderTopWidth: 1, paddingTop: 12 });
 	await page.locator("main").getByRole("button", { name: "Save changes" }).click();
 	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
 	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
