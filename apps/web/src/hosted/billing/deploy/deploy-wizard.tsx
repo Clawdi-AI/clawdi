@@ -45,6 +45,7 @@ import { useCheckoutReturnHandler } from "@/hosted/billing/checkout-return";
 import {
 	CHECKOUT_ELEMENTS_UI_MODE,
 	checkoutRedirectUrl,
+	checkoutUiModeForPublishableKey,
 	findNewDeploymentId,
 	hasCheckoutClientSecret,
 } from "@/hosted/billing/components/stripe-checkout.logic";
@@ -159,13 +160,13 @@ import {
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
+import { env } from "@/lib/env";
 import { cn } from "@/lib/utils";
 
 type Compute = "basic" | "performance";
 type DeployPaymentMethod = "card" | "wallet";
 type NativeDeployCheckout = {
 	clientSecret: string;
-	fallbackUrl: string | null;
 	previousDeploymentIds: string[];
 	request: SubscriptionCreateRequestView;
 	summary: StripeCheckoutSummary;
@@ -800,6 +801,7 @@ export function DeployWizard() {
 					billingTermMonths,
 					fundingSource: paymentMethod === "wallet" ? "wallet" : "stripe",
 				};
+				const cardCheckoutUiMode = checkoutUiModeForPublishableKey(env.VITE_STRIPE_PUBLISHABLE_KEY);
 				const target = { kind: "new_deployment", deployConfig } as const;
 				if (paymentMethod === "wallet") {
 					const fingerprint = idempotencyFingerprint({ selection, target });
@@ -851,7 +853,7 @@ export function DeployWizard() {
 					.execute({
 						selection,
 						target,
-						uiMode: CHECKOUT_ELEMENTS_UI_MODE,
+						uiMode: cardCheckoutUiMode,
 						idempotencyKey: checkoutAttemptRef.current.key,
 						quote: lastSuccessfulSubscriptionQuote,
 					})
@@ -869,17 +871,16 @@ export function DeployWizard() {
 					return;
 				}
 				const result = outcome.checkout;
-				if (hasCheckoutClientSecret(result)) {
+				if (cardCheckoutUiMode === CHECKOUT_ELEMENTS_UI_MODE && hasCheckoutClientSecret(result)) {
 					setCheckoutSession({
 						clientSecret: result.client_secret,
-						fallbackUrl: checkoutRedirectUrl(result),
 						previousDeploymentIds: (deployments.data ?? []).map(
 							(deployment) => deployment.resource.id,
 						),
 						request: {
 							selection,
 							target,
-							uiMode: CHECKOUT_ELEMENTS_UI_MODE,
+							uiMode: cardCheckoutUiMode,
 							idempotencyKey: checkoutAttemptRef.current.key,
 							quote: lastSuccessfulSubscriptionQuote,
 						},
@@ -1577,11 +1578,6 @@ export function DeployWizard() {
 						checkoutSession?.previousDeploymentIds ?? [],
 						checkoutSession?.request ?? null,
 					)
-				}
-				onFallback={() =>
-					redirectTo(checkoutSession?.fallbackUrl)
-						? Promise.resolve()
-						: Promise.reject(new Error("Secure checkout fallback is unavailable."))
 				}
 			/>
 		</div>

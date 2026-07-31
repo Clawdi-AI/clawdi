@@ -33,14 +33,13 @@ type StripeCheckoutDialogProps = {
 	clientSecret: string | null;
 	description: string;
 	onComplete: () => void;
-	onFallback: () => Promise<void>;
 	onOpenChange: (open: boolean) => void;
 	open: boolean;
 	summary: StripeCheckoutSummary | null;
 	title: string;
 };
 
-type DialogState = "loading" | "ready" | "redirecting" | "error";
+type DialogState = "loading" | "ready" | "error";
 type CheckoutAppearance = NonNullable<
 	NonNullable<StripeCheckoutElementsSdkOptions["elementsOptions"]>["appearance"]
 >;
@@ -204,7 +203,7 @@ function CheckoutElementForm({
 			<Alert data-hosted="true" variant="destructive">
 				<AlertCircle />
 				<AlertDescription>
-					We could not initialize the secure payment form. Opening Stripe instead.
+					We couldn’t load the secure payment form. Please try again.
 				</AlertDescription>
 			</Alert>
 		);
@@ -280,7 +279,6 @@ export function StripeCheckoutDialog({
 	clientSecret,
 	description,
 	onComplete,
-	onFallback,
 	onOpenChange,
 	open,
 	summary,
@@ -294,44 +292,23 @@ export function StripeCheckoutDialog({
 	const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
 	const appearance = useCheckoutAppearance(open);
 	const onCompleteRef = useRef(onComplete);
-	const onFallbackRef = useRef(onFallback);
-	const fallbackStartedRef = useRef(false);
 
 	useEffect(() => {
 		onCompleteRef.current = onComplete;
 	}, [onComplete]);
 
-	useEffect(() => {
-		onFallbackRef.current = onFallback;
-	}, [onFallback]);
-
 	const completeCheckout = useCallback(() => {
 		onCompleteRef.current();
 	}, []);
 
-	const startHostedFallback = useCallback(async (nextMessage: string) => {
-		if (fallbackStartedRef.current) return;
-		fallbackStartedRef.current = true;
-		setState("redirecting");
-		setMessage(nextMessage);
-		try {
-			await onFallbackRef.current();
-		} catch {
-			fallbackStartedRef.current = false;
-			setState("error");
-			setMessage("We could not open Stripe checkout. Please try again.");
-		}
+	const handleProviderLoadError = useCallback(() => {
+		setState("error");
+		setMessage("We couldn’t load the secure payment form. Please try again.");
 	}, []);
-
-	const handleProviderLoadError = useCallback(
-		() => startHostedFallback("We could not load the payment form. Opening Stripe instead."),
-		[startHostedFallback],
-	);
 
 	useEffect(() => {
 		if (!open || !clientSecret) return;
 		let cancelled = false;
-		fallbackStartedRef.current = false;
 		setCheckoutSubmitting(false);
 		setStripe(null);
 		setMessage(null);
@@ -339,9 +316,8 @@ export function StripeCheckoutDialog({
 		void (async () => {
 			if (!key) {
 				if (!cancelled) {
-					await startHostedFallback(
-						"Secure checkout is not configured in this environment. Opening Stripe instead.",
-					);
+					setState("error");
+					setMessage("We couldn’t load the secure payment form. Please try again.");
 				}
 				return;
 			}
@@ -356,16 +332,15 @@ export function StripeCheckoutDialog({
 			} catch {
 				resetStripeCache();
 				if (!cancelled) {
-					await startHostedFallback(
-						"We could not load Stripe.js. Opening Stripe checkout instead.",
-					);
+					setState("error");
+					setMessage("We couldn’t load the secure payment form. Please try again.");
 				}
 			}
 		})();
 		return () => {
 			cancelled = true;
 		};
-	}, [attempt, clientSecret, key, open, startHostedFallback]);
+	}, [attempt, clientSecret, key, open]);
 
 	const providerOptions = useMemo<StripeCheckoutElementsSdkOptions | null>(() => {
 		if (!clientSecret) return null;
@@ -383,7 +358,7 @@ export function StripeCheckoutDialog({
 	}, [appearance, clientSecret]);
 
 	function requestOpenChange(nextOpen: boolean) {
-		if (!nextOpen && (checkoutSubmitting || state === "redirecting")) return;
+		if (!nextOpen && checkoutSubmitting) return;
 		onOpenChange(nextOpen);
 	}
 
@@ -392,7 +367,7 @@ export function StripeCheckoutDialog({
 			<DialogContent
 				className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
 				data-hosted="true"
-				showCloseButton={state !== "redirecting" && !checkoutSubmitting}
+				showCloseButton={!checkoutSubmitting}
 			>
 				<DialogHeader>
 					<DialogTitle>{title}</DialogTitle>
@@ -427,14 +402,6 @@ export function StripeCheckoutDialog({
 									}}
 								>
 									<RefreshCw data-icon="inline-start" /> Retry payment form
-								</Button>
-								<Button
-									size="sm"
-									onClick={() => {
-										void startHostedFallback("Opening Stripe checkout…");
-									}}
-								>
-									Continue in Stripe
 								</Button>
 							</div>
 						</AlertDescription>

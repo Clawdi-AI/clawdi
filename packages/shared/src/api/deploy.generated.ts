@@ -1184,8 +1184,9 @@ export interface components {
             /**
              * Ui Mode
              * @default custom
+             * @enum {string}
              */
-            ui_mode: string;
+            ui_mode: "custom" | "hosted";
             /** Locale */
             locale?: string | null;
             quote?: components["schemas"]["V2ComputeSubscriptionQuoteResponse-Input"] | null;

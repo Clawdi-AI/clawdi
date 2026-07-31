@@ -7,6 +7,7 @@ if (!Number.isInteger(hostedPort) || hostedPort < 1 || hostedPort > 65_535) {
 	throw new Error("E2E_HOSTED_PORT must be a valid TCP port.");
 }
 const baseURL = process.env.E2E_HOSTED_BASE_URL ?? `http://127.0.0.1:${hostedPort}`;
+const stripePublishableKey = process.env.E2E_STRIPE_PUBLISHABLE_KEY ?? "pk_test_browser";
 
 export default defineConfig({
 	testDir: "./e2e",
@@ -28,7 +29,7 @@ export default defineConfig({
 			VITE_CLAWDI_DEPLOY_API_URL: "http://127.0.0.1:8001",
 			VITE_DEV_AUTH_BYPASS: "true",
 			VITE_DEV_AUTH_TOKEN: "dev-bypass",
-			VITE_STRIPE_PUBLISHABLE_KEY: "pk_test_browser",
+			VITE_STRIPE_PUBLISHABLE_KEY: stripePublishableKey,
 		},
 	},
 	projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],

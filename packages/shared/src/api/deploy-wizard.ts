@@ -353,7 +353,7 @@ export type HostedDeploySubscriptionSelection = {
 	fundingSource: (typeof HOSTED_DEPLOY_FUNDING_SOURCES)[number];
 };
 
-export type HostedDeployCheckoutUiMode = "custom" | "hosted";
+export type HostedDeployCheckoutUiMode = HostedDeployCheckoutRequest["ui_mode"];
 
 export type HostedDeployCheckoutTarget =
 	| { kind: "new_deployment"; deployRequest: HostedDeployRequest }
