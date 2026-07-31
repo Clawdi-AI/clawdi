@@ -3228,8 +3228,8 @@ export interface operations {
     create_wallet_topup_v2_wallet_topup_post: {
         parameters: {
             query?: never;
-            header?: {
-                "Idempotency-Key"?: string | null;
+            header: {
+                "Idempotency-Key": string;
             };
             path?: never;
             cookie?: never;
