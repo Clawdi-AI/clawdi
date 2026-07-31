@@ -74,6 +74,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/ai-providers/{provider_id}/auth/oauth/device/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Poll Ai Provider Oauth Device */
+        post: operations["poll_ai_provider_oauth_device_v1_ai_providers__provider_id__auth_oauth_device_poll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/ai-providers/accept": {
         parameters: {
             query?: never;
@@ -198,6 +215,23 @@ export interface paths {
         put?: never;
         /** Import Ai Provider Auth */
         post: operations["import_ai_provider_auth_v1_ai_providers__provider_id__auth_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai-providers/{provider_id}/auth/oauth/device/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Ai Provider Oauth Device */
+        post: operations["start_ai_provider_oauth_device_v1_ai_providers__provider_id__auth_oauth_device_start_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3323,7 +3357,14 @@ export interface components {
              * @enum {string}
              */
             type: "oauth";
+            /**
+             * Flow
+             * @default authorization_code
+             * @enum {string}
+             */
+            flow: "authorization_code" | "device_code";
         };
+        AiProviderOAuthAuthorization: components["schemas"]["AiProviderOAuthStartResponse"] | components["schemas"]["AiProviderOAuthDeviceStartResponse"];
         /** AiProviderOAuthCompleteRequest */
         AiProviderOAuthCompleteRequest: {
             /** State */
@@ -3333,6 +3374,63 @@ export interface components {
             /** Redirect Uri */
             redirect_uri?: string | null;
         };
+        /** AiProviderOAuthDevicePendingResponse */
+        AiProviderOAuthDevicePendingResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "pending";
+            /** Retry After Seconds */
+            retry_after_seconds: number;
+        };
+        /** AiProviderOAuthDevicePollRequest */
+        AiProviderOAuthDevicePollRequest: {
+            /** State */
+            state: string;
+        };
+        AiProviderOAuthDevicePollResponse: components["schemas"]["AiProviderOAuthDevicePendingResponse"] | components["schemas"]["AiProviderOAuthDeviceReadyResponse"];
+        /** AiProviderOAuthDeviceReadyResponse */
+        AiProviderOAuthDeviceReadyResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "ready";
+            provider: components["schemas"]["AiProviderResponse"];
+        };
+        /** AiProviderOAuthDeviceStartRequest */
+        AiProviderOAuthDeviceStartRequest: {
+            /** Provider */
+            provider: string;
+        };
+        /** AiProviderOAuthDeviceStartResponse */
+        AiProviderOAuthDeviceStartResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            flow: "device_code";
+            /** Provider Id */
+            provider_id: string;
+            /** Oauth Provider */
+            oauth_provider: string;
+            /** Profile */
+            profile: string;
+            /** Verification Url */
+            verification_url: string;
+            /** User Code */
+            user_code: string;
+            /** State */
+            state: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Poll Interval Seconds */
+            poll_interval_seconds: number;
+        };
         /** AiProviderOAuthPendingAcceptResponse */
         AiProviderOAuthPendingAcceptResponse: {
             /**
@@ -3341,7 +3439,7 @@ export interface components {
              */
             status: "pending";
             provider: components["schemas"]["AiProviderResponse"];
-            authorization: components["schemas"]["AiProviderOAuthStartResponse"];
+            authorization: components["schemas"]["AiProviderOAuthAuthorization"];
         };
         /** AiProviderOAuthProfileAuth */
         AiProviderOAuthProfileAuth: {
@@ -3384,6 +3482,11 @@ export interface components {
         };
         /** AiProviderOAuthStartResponse */
         AiProviderOAuthStartResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            flow: "authorization_code";
             /** Provider Id */
             provider_id: string;
             /** Oauth Provider */
@@ -7604,6 +7707,41 @@ export interface operations {
             };
         };
     };
+    poll_ai_provider_oauth_device_v1_ai_providers__provider_id__auth_oauth_device_poll_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderOAuthDevicePollRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderOAuthDevicePollResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     accept_ai_provider_v1_ai_providers_accept_post: {
         parameters: {
             query?: never;
@@ -7892,6 +8030,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AiProviderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_ai_provider_oauth_device_v1_ai_providers__provider_id__auth_oauth_device_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderOAuthDeviceStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderOAuthDeviceStartResponse"];
                 };
             };
             /** @description Validation Error */

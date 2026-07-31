@@ -4910,6 +4910,22 @@ exit 0
 		convergeRuntimeManifest(reconnectedLoad, paths);
 		auth = JSON.parse(readFileSync(authPath, "utf8"));
 		expect(auth.providers["openai-codex"].tokens.access_token).toBe("hermes-reconnected-access");
+		auth.providers["openai-codex"].runtime_metadata = { preserved: true };
+		writeFileSync(authPath, `${JSON.stringify(auth, null, 2)}\n`);
+		const rotatedLoad = hostedOAuthRuntimeLoad({
+			home,
+			runtime: "hermes",
+			generation: 4,
+			credentialRevision: "hermes-revision-4",
+			accessToken: "hermes-rotated-access",
+			refreshToken: "hermes-rotated-refresh",
+		});
+		convergeRuntimeManifest(rotatedLoad, paths);
+		auth = JSON.parse(readFileSync(authPath, "utf8"));
+		expect(auth.providers["openai-codex"]).toMatchObject({
+			runtime_metadata: { preserved: true },
+			tokens: { access_token: "hermes-rotated-access" },
+		});
 		auth.credential_pool["openai-codex"].push({
 			id: "user-independent",
 			label: "user-independent",
@@ -4921,14 +4937,14 @@ exit 0
 		writeFileSync(authPath, `${JSON.stringify(auth, null, 2)}\n`);
 
 		const removedLoad: RuntimeManifestLoad = {
-			...reconnectedLoad,
+			...rotatedLoad,
 			secretValues: {},
 			manifest: {
-				...reconnectedLoad.manifest,
-				generation: 4,
+				...rotatedLoad.manifest,
+				generation: 5,
 				runtimes: {},
 				projection: {
-					...reconnectedLoad.manifest.projection,
+					...rotatedLoad.manifest.projection,
 					providers: {},
 				},
 			},
@@ -4976,7 +4992,7 @@ exit 0
 		const adoptedLoad = hostedOAuthRuntimeLoad({
 			home,
 			runtime: "hermes",
-			generation: 5,
+			generation: 6,
 			credentialRevision: "hermes-revision-4",
 			accessToken: "must-not-overwrite",
 			refreshToken: "must-not-overwrite",
@@ -4991,7 +5007,7 @@ exit 0
 		});
 		const adoptedRemovedLoad: RuntimeManifestLoad = {
 			...removedLoad,
-			manifest: { ...removedLoad.manifest, generation: 6 },
+			manifest: { ...removedLoad.manifest, generation: 7 },
 		};
 		convergeRuntimeManifest(adoptedRemovedLoad, paths);
 		expect(existsSync(receiptPath)).toBe(false);

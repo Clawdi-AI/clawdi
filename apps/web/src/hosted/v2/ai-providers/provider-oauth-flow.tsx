@@ -1,93 +1,90 @@
 "use client";
 
-import { CircleAlert, ExternalLink } from "lucide-react";
+import { Check, CircleAlert, Copy, ExternalLink } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 
-export type OAuthIssue = "blocked" | "closed" | "expired";
+export type OAuthIssue = "expired" | "failed";
 
 export function ProviderOAuthFlow({
 	issue,
-	callbackUrl,
+	verificationUrl,
+	userCode,
 	starting,
-	completing,
-	onCallbackUrlChange,
+	polling,
 	onRestart,
-	onFinish,
 }: {
 	issue: OAuthIssue | null;
-	callbackUrl: string;
+	verificationUrl: string;
+	userCode: string;
 	starting: boolean;
-	completing: boolean;
-	onCallbackUrlChange: (value: string) => void;
+	polling: boolean;
 	onRestart: () => void;
-	onFinish: () => void;
 }) {
+	const [copied, setCopied] = useState(false);
+
+	async function copyCode() {
+		try {
+			await navigator.clipboard.writeText(userCode);
+			setCopied(true);
+			setTimeout(() => setCopied(false), 1500);
+		} catch {
+			toast.error("Couldn't copy the code");
+		}
+	}
+
 	return (
-		<div data-hosted="true" data-v2="true" className="flex flex-col gap-3">
+		<div data-hosted="true" data-v2="true" className="flex flex-col gap-4">
+			<div className="rounded-lg border bg-muted/20 p-4 text-center">
+				<p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+					One-time code
+				</p>
+				<div className="mt-2 flex items-center justify-center gap-2">
+					<code className="rounded-md bg-background px-3 py-2 font-mono text-xl font-semibold tracking-widest">
+						{userCode}
+					</code>
+					<Button
+						variant="ghost"
+						size="icon"
+						onClick={() => void copyCode()}
+						aria-label="Copy code"
+					>
+						{copied ? <Check /> : <Copy />}
+					</Button>
+				</div>
+			</div>
+
 			<Button
-				variant="outline"
+				render={<a href={verificationUrl} target="_blank" rel="noreferrer" />}
+				nativeButton={false}
 				className="w-full"
-				onClick={onRestart}
-				disabled={starting || completing}
 			>
-				{issue ? "Restart ChatGPT sign-in" : "Open a fresh ChatGPT sign-in"}
-				{starting ? <Spinner className="size-3.5" /> : <ExternalLink className="size-3.5" />}
+				Open ChatGPT and enter code <ExternalLink />
 			</Button>
+
 			<div aria-live="polite">
 				{issue === "expired" ? (
 					<p className="flex items-center gap-2 text-xs text-destructive">
-						<CircleAlert className="size-3.5" /> This sign-in link expired. Restart to get a fresh
-						one.
+						<CircleAlert className="size-3.5" /> This code expired. Start again for a new code.
 					</p>
-				) : issue === "blocked" ? (
+				) : issue === "failed" ? (
 					<p className="flex items-center gap-2 text-xs text-destructive">
-						<CircleAlert className="size-3.5" /> Pop-up blocked. Allow pop-ups, then restart.
-					</p>
-				) : issue === "closed" ? (
-					<p className="flex items-center gap-2 text-xs text-muted-foreground">
-						<CircleAlert className="size-3.5" /> The sign-in window closed before finishing.
-					</p>
-				) : completing ? (
-					<p className="flex items-center gap-2 text-xs text-muted-foreground">
-						<Spinner className="size-3.5" /> Connecting Codex…
+						<CircleAlert className="size-3.5" /> Sign-in could not be completed. Start again and
+						retry.
 					</p>
 				) : (
 					<p className="flex items-center gap-2 text-xs text-muted-foreground">
-						<Spinner className="size-3.5" /> Waiting for sign-in to finish…
+						{polling ? <Spinner className="size-3.5" /> : null} Waiting for ChatGPT authorization…
 					</p>
 				)}
 			</div>
-			<details className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
-				<summary className="cursor-pointer font-medium text-foreground">
-					Didn’t return automatically?
-				</summary>
-				<div className="mt-2 flex flex-col gap-2">
-					<p>Paste the full callback address from the OpenAI page.</p>
-					<Label htmlFor="provider-oauth-callback" className="sr-only">
-						OAuth callback URL
-					</Label>
-					<Input
-						id="provider-oauth-callback"
-						value={callbackUrl}
-						onChange={(event) => onCallbackUrlChange(event.target.value)}
-						placeholder="https://…/callback?code=…&state=…"
-						autoComplete="off"
-						spellCheck={false}
-					/>
-					<Button size="sm" onClick={onFinish} disabled={!callbackUrl.trim() || completing}>
-						{completing ? (
-							<>
-								<Spinner /> Finishing sign-in…
-							</>
-						) : (
-							"Finish sign-in"
-						)}
-					</Button>
-				</div>
-			</details>
+
+			<Button variant="outline" onClick={onRestart} disabled={starting || polling}>
+				{starting ? <Spinner /> : null}
+				Get a new code
+			</Button>
 		</div>
 	);
 }

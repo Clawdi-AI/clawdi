@@ -135,6 +135,24 @@ describe("model binding", () => {
 		expect(primaryProviderPickerItems([unfinishedProvider.provider_id], selectable)).toEqual([]);
 	});
 
+	test("uses structured deployability instead of the legacy credential-only flag", () => {
+		const readiness = {
+			credential_material: "available",
+			runtime_compatibility: { openclaw: true, hermes: true, codex: false },
+			deployable: true,
+			endpoint_reachability: "not_tested",
+			inference_verification: "not_tested",
+		} as const;
+		const deployable = { ...savedOpenAiProvider, usable: false, readiness } satisfies AiProvider;
+		const blocked = {
+			...savedOpenAiProvider,
+			provider_id: "blocked-provider",
+			readiness: { ...readiness, deployable: false },
+		} satisfies AiProvider;
+
+		expect(usableProviders([deployable, blocked])).toEqual([deployable]);
+	});
+
 	test("does not offer legacy local-only providers to hosted agents", () => {
 		const localProvider = {
 			...savedOpenAiProvider,
@@ -159,6 +177,23 @@ describe("model binding", () => {
 		expect(providerRuntimeIncompatibility(geminiProvider, "openclaw")).toBeNull();
 		expect(providerRuntimeIncompatibility(geminiProvider, "hermes")).toContain("Choose OpenClaw");
 		expect(usableProviders([geminiProvider], "hermes")).toEqual([]);
+	});
+
+	test("uses backend runtime compatibility for non-Gemini providers", () => {
+		const provider = {
+			...savedOpenAiProvider,
+			readiness: {
+				credential_material: "available",
+				runtime_compatibility: { openclaw: true, hermes: false, codex: false },
+				deployable: true,
+				endpoint_reachability: "not_tested",
+				inference_verification: "not_tested",
+			},
+		} satisfies AiProvider;
+
+		expect(providerRuntimeIncompatibility(provider, "openclaw")).toBeNull();
+		expect(providerRuntimeIncompatibility(provider, "hermes")).toContain("Hermes cannot use");
+		expect(usableProviders([provider], "hermes")).toEqual([]);
 	});
 
 	test("maps deployment-scoped managed provider ids to the friendly managed choice", () => {

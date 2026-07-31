@@ -22,7 +22,7 @@ const HOSTED_DIR = join(import.meta.dir);
 const SRC_DIR = join(import.meta.dir, "..");
 const HOSTED_V2_DIR = join(HOSTED_DIR, "v2");
 const PAGES_DIR = join(SRC_DIR, "pages");
-const CAPABILITY_INDEPENDENT_HOSTED_ROUTES = new Set(["oauth/codex/callback/page.tsx"]);
+const CAPABILITY_INDEPENDENT_HOSTED_ROUTES = new Set<string>();
 const GATED_ROUTE_DYNAMIC_IMPORT =
 	/\bimport\s*\(\s*["'](@\/hosted\/(?:v2\/|billing\/)[^"']+)["']\s*\)/g;
 
@@ -338,20 +338,6 @@ describe("hosted product route exposure", () => {
 		expect(src).toContain('router.navigate({ href: "/deploy" })');
 		expect(src).not.toContain('from "@/hosted/');
 		expect(src).not.toMatch(/href=["']https:\/\/[^"']+\/dashboard["']/);
-	});
-
-	test("the Codex OAuth callback relays independently of the capability gate", () => {
-		const route = readFileSync(join(PAGES_DIR, "oauth/codex/callback/page.tsx"), "utf8");
-		const callback = readFileSync(
-			join(HOSTED_V2_DIR, "ai-providers/codex-oauth-callback.tsx"),
-			"utf8",
-		);
-		expect(route).not.toContain("HostedProductGate");
-		expect(callback).toContain("ch.postMessage(result)");
-		expect(callback).toContain("window.opener?.postMessage(");
-		expect(callback).toContain("window.history.replaceState(");
-		expect(callback).not.toContain("localStorage");
-		expect(callback).not.toContain("sessionStorage");
 	});
 
 	test("Cloud-agents-off agent index copy stays neutral", () => {

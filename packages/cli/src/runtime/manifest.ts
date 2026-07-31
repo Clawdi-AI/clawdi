@@ -2080,6 +2080,7 @@ if (action === "inspect-any" || action === "inspect-clawdi") {
       throw new Error("Hermes Codex credential material is invalid");
     }
     providers["openai-codex"] = {
+      ...providerState,
       label: "clawdi",
       auth_mode: "chatgpt",
       tokens: {

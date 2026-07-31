@@ -83,7 +83,7 @@ OAuth status:
 
 | Tool | Status |
 | --- | --- |
-| Codex | Enabled, pinned to the official Codex OAuth flow; can be applied to Codex, Hermes, and OpenClaw native Codex routes |
+| Codex | Enabled, pinned to the official Codex OAuth flow; each credential family can be owned by one Codex, Hermes, or OpenClaw runtime |
 | Claude Code | Not supported in AI Provider v1; use an Anthropic API key/env/Vault provider |
 | Other tools/providers | Not enabled until their public OAuth/config contracts are pinned |
 
@@ -163,7 +163,7 @@ clawdi ai-provider add openai-codex \
   --auth env:OPENAI_API_KEY
 
 clawdi ai-provider connect openai-codex --tool codex
-clawdi ai-provider apply openai-codex
+clawdi ai-provider apply openai-codex --target codex
 codex --profile clawdi-ai-provider
 ```
 
@@ -186,8 +186,8 @@ OpenAI provider and writes the selected primary model into the generated
 profile. This Hermes correctness fix does not change the terminal Codex
 projection.
 
-The same `agent:codex/<profile>` provider can be applied to Hermes and
-OpenClaw. Hermes uses its native `openai-codex` provider selector. OpenClaw uses
+The same `agent:codex/<profile>` provider can be applied to exactly one of
+Codex, Hermes, or OpenClaw. Hermes uses its native `openai-codex` provider selector. OpenClaw uses
 the canonical `openai/<model>` route with the bundled Codex plugin enabled.
 Neither path writes an API key reference for Codex OAuth. During non-dry-run
 apply, Clawdi resolves the encrypted Codex auth profile and writes each target's
@@ -195,7 +195,13 @@ native auth store:
 
 - Codex: `$CODEX_HOME/auth.json`
 - Hermes: `$HERMES_HOME/auth.json`
-- OpenClaw: `agents/<agentId>/agent/auth-profiles.json`
+- OpenClaw: the database-first `agents/<agentId>/agent/openclaw-agent.sqlite`
+  store through OpenClaw's provider-auth SDK
+
+The provider's credential revision is only a seed authority. Re-applying the
+same revision does not overwrite refresh-token rotation performed by Codex,
+Hermes, or OpenClaw. A missing credential after logout is recorded as revoked
+and is not silently recreated.
 
 ## Apply Codex
 
@@ -307,7 +313,7 @@ clawdi ai-provider apply openai-main --target openclaw
 Supported contract:
 
 ```text
-openclaw 2026.5.12 through 2026.6.10 config patch contract and canonical openai auth-profiles
+openclaw 2026.7.1-2 config patch and database-first provider-auth contracts
 ```
 
 Clawdi sends a patch over stdin instead of editing OpenClaw config files
@@ -326,7 +332,8 @@ route instead: it enables the bundled Codex plugin and sets
 `agents.defaults.model.primary` to `openai/<model>` without writing
 `models.providers.<id>.apiKey`. Non-dry-run apply writes the active agent's
 canonical `openai:<profile>` OAuth entry and `order.openai` into
-`auth-profiles.json`.
+`openclaw-agent.sqlite` through OpenClaw's provider-auth SDK with
+`copyToAgents: false`.
 
 ## Local No-Auth Endpoint
 

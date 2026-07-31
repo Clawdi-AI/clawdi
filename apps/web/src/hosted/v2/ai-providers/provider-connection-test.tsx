@@ -15,13 +15,24 @@ import { Spinner } from "@/components/ui/spinner";
 import { useTestProviderConnection } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import type { AiProvider, AiProviderConnectionTestResponse } from "@/hosted/v2/ai-providers/types";
 
-const CATEGORY_LABEL: Record<NonNullable<AiProviderConnectionTestResponse["category"]>, string> = {
+const CATEGORY_LABEL: Record<
+	NonNullable<AiProviderConnectionTestResponse["error"]>["category"],
+	string
+> = {
+	validation: "Provider setup",
 	credential: "Credential",
-	endpoint: "Endpoint",
-	protocol: "Protocol",
-	model: "Model",
+	ssrf: "Endpoint safety",
+	dns: "DNS",
+	timeout: "Timeout",
+	tls: "TLS",
+	network: "Network",
+	authentication: "Authentication",
+	authorization: "Authorization",
 	rate_limit: "Rate limit",
-	unknown: "Provider response",
+	redirect: "Redirect",
+	endpoint: "Endpoint",
+	protocol_model: "Protocol or model",
+	upstream: "Provider",
 };
 
 export function ProviderConnectionTest({
@@ -33,6 +44,8 @@ export function ProviderConnectionTest({
 }) {
 	const testConnection = useTestProviderConnection();
 	const [open, setOpen] = useState(false);
+	const testable = provider.auth.type === "api_key" && provider.auth.source === "managed";
+	if (!testable) return null;
 
 	function runTest() {
 		const model = provider.models?.[0]?.id;
@@ -85,10 +98,8 @@ export function ProviderConnectionTest({
 							<CircleCheck className="mt-0.5 size-5 shrink-0 text-success" />
 							<div>
 								<p className="text-sm font-medium">Connection succeeded</p>
-								<p className="mt-1 text-xs text-muted-foreground">{result.message}</p>
-								<p className="mt-2 text-xs text-muted-foreground">
-									{result.model ? `Model ${result.model}` : "Provider model"}
-									{result.latency_ms !== undefined ? ` · ${result.latency_ms} ms` : ""}
+								<p className="mt-1 text-xs text-muted-foreground">
+									Credential, endpoint, protocol, and model all passed.
 								</p>
 							</div>
 						</div>
@@ -97,12 +108,12 @@ export function ProviderConnectionTest({
 							<CircleAlert className="mt-0.5 size-5 shrink-0 text-warning-muted-foreground" />
 							<div>
 								<p className="text-sm font-medium">
-									{result.category ? CATEGORY_LABEL[result.category] : "Connection"} needs attention
+									{result.error ? CATEGORY_LABEL[result.error.category] : "Connection"} needs
+									attention
 								</p>
-								<p className="mt-1 text-xs text-muted-foreground">{result.message}</p>
-								{result.model ? (
-									<p className="mt-2 font-mono text-xs text-muted-foreground">{result.model}</p>
-								) : null}
+								<p className="mt-1 text-xs text-muted-foreground">
+									{result.error?.message ?? "The provider did not accept the test request."}
+								</p>
 							</div>
 						</div>
 					) : null}

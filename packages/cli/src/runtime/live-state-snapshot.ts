@@ -63,7 +63,6 @@ export function runtimeLiveSnapshotPaths(manifest: RuntimeManifest, paths: Runti
 		paths.egressProfileRoot,
 		paths.installInventory,
 		paths.projectionRoot,
-		paths.oauthCredentialRoot,
 		join(paths.instanceRoot, manifest.instanceId),
 		paths.managedSecretFile,
 		paths.daemonAuthToken,

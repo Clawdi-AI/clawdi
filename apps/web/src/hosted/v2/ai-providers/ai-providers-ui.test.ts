@@ -2,28 +2,30 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AuthBadge, ProviderUsabilityBadge } from "@/hosted/v2/ai-providers/ai-providers-ui";
+import { AuthBadge, ProviderReadinessBadge } from "@/hosted/v2/ai-providers/ai-providers-ui";
 
 const providerPageSource = readFileSync(
 	new URL("./ai-providers-page.tsx", import.meta.url),
 	"utf8",
 );
 
-describe("ProviderUsabilityBadge", () => {
+describe("ProviderReadinessBadge", () => {
 	test("badges an unfinished provider as needing setup, never connected", () => {
-		const markup = renderToStaticMarkup(createElement(ProviderUsabilityBadge, { usable: false }));
+		const markup = renderToStaticMarkup(
+			createElement(ProviderReadinessBadge, { deployable: false }),
+		);
 
 		expect(markup).toContain("Needs setup");
 		expect(markup).not.toContain("Connected");
 		expect(markup).toContain('data-status="warning"');
 	});
 
-	test("requires a credential before presenting a provider as hosted-usable", () => {
+	test("requires hosted deployability before presenting a provider as ready", () => {
 		expect(providerPageSource).toContain(
-			'const hostedUsable = provider.usable && provider.auth.type !== "none";',
+			'(provider.readiness?.deployable ?? provider.usable) && provider.auth.type !== "none"',
 		);
-		expect(providerPageSource).toContain("<ProviderUsabilityBadge usable={hostedUsable} />");
-		expect(providerPageSource).toContain('hostedUsable ? "Edit" : "Finish setup"');
+		expect(providerPageSource).toContain("<ProviderReadinessBadge deployable={deployable} />");
+		expect(providerPageSource).toContain('deployable ? "Edit" : "Finish setup"');
 		expect(providerPageSource).toContain("<RemoveProviderAction provider={provider}");
 	});
 
@@ -34,10 +36,12 @@ describe("ProviderUsabilityBadge", () => {
 		expect(markup).not.toContain("No auth");
 	});
 
-	test("badges a credential-backed provider as saved without claiming connectivity", () => {
-		const markup = renderToStaticMarkup(createElement(ProviderUsabilityBadge, { usable: true }));
+	test("badges a deployable provider as ready without claiming connectivity", () => {
+		const markup = renderToStaticMarkup(
+			createElement(ProviderReadinessBadge, { deployable: true }),
+		);
 
-		expect(markup).toContain("Saved");
+		expect(markup).toContain("Ready");
 		expect(markup).not.toContain("Connected");
 		expect(markup).toContain('data-status="success"');
 	});

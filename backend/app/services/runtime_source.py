@@ -662,7 +662,7 @@ def _provider_entry(
             "code": "provider_secret_unavailable",
             "message": "provider requires an API key but no runtime secret value is available",
         }
-    if secret_ref:
+    if secret_ref and provider.auth_type in {"api_key", "secret_ref"}:
         result["apiKeySecretRef"] = secret_ref
     metadata = provider.auth_metadata or {}
     if provider.auth_type == "agent_profile" and metadata.get("tool") == "codex":

@@ -49,9 +49,7 @@ export function ProviderFieldsForm({
 	onUpdate,
 	onAuthMethodChange,
 	onRegionChange,
-	onReplaceApiKey,
 	onReconnectOAuth,
-	replacingApiKey,
 	startingOAuth,
 }: {
 	form: ProviderFormState;
@@ -64,18 +62,18 @@ export function ProviderFieldsForm({
 	onUpdate: (value: Partial<ProviderFormState>) => void;
 	onAuthMethodChange: (method: AuthMethod) => void;
 	onRegionChange: (regionId: string) => void;
-	onReplaceApiKey: () => void;
 	onReconnectOAuth: () => void;
-	replacingApiKey: boolean;
 	startingOAuth: boolean;
 }) {
 	const meta = providerTypeMeta(form.type);
 	const isEdit = editing !== null;
 	const isOAuthEdit =
 		editing?.auth.type === "agent_profile" || editing?.auth.type === "oauth_profile";
+	const editingReady = editing ? (editing.readiness?.deployable ?? editing.usable) : false;
 	const apiModes = meta.apiModes;
 	const regions = preset?.region_variants ?? [];
-	const showName = isEdit || meta.custom === true;
+	const showPrimaryName = meta.custom === true;
+	const showAdvancedName = !showPrimaryName && isEdit;
 	const showRuntimeEnv = !isOAuthEdit && form.authMethod === "api_key";
 
 	return (
@@ -89,12 +87,12 @@ export function ProviderFieldsForm({
 				<div className="min-w-0 flex-1">
 					<p className="text-sm font-medium text-foreground">{providerLabel}</p>
 					<p className="truncate text-xs text-muted-foreground">
-						Saved as <code className="font-mono">{providerId || "—"}</code>
+						Provider ID <code className="font-mono">{providerId || "—"}</code>
 					</p>
 				</div>
 			</div>
 
-			{showName ? (
+			{showPrimaryName ? (
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="provider-label">Name</Label>
 					<Input
@@ -171,9 +169,9 @@ export function ProviderFieldsForm({
 			) : form.authMethod === "api_key" ? (
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="provider-key">
-						API key{isEdit && editing?.usable ? " (leave blank to keep)" : ""}
+						API key{isEdit && editingReady ? " (leave blank to keep)" : ""}
 					</Label>
-					<div className="flex flex-col gap-2 sm:flex-row">
+					<div>
 						<Input
 							id="provider-key"
 							type="password"
@@ -183,21 +181,10 @@ export function ProviderFieldsForm({
 							autoComplete="off"
 							spellCheck={false}
 						/>
-						{isEdit ? (
-							<Button
-								type="button"
-								variant="outline"
-								onClick={onReplaceApiKey}
-								disabled={!form.apiKey.trim() || replacingApiKey}
-							>
-								{replacingApiKey ? <Spinner /> : <KeyRound />}
-								{editing?.usable ? "Replace key" : "Save key"}
-							</Button>
-						) : null}
 					</div>
 					<p className="text-xs text-muted-foreground">
 						{isEdit
-							? "Credential changes are saved separately, so a settings error cannot partially replace your key."
+							? "Leave blank to keep the current key. A new key and settings are committed together."
 							: "Encrypted at rest and never shown again."}
 					</p>
 					{apiKeyUrl ? (
@@ -219,82 +206,96 @@ export function ProviderFieldsForm({
 				</div>
 			) : (
 				<div className="rounded-lg border bg-muted/30 p-3 text-sm">
-					You’ll finish setup in a ChatGPT window. No API key is required here.
+					You’ll finish setup on ChatGPT. No API key is required here.
 				</div>
 			)}
 
-			<details className="group rounded-lg border bg-muted/20" open={meta.custom || isEdit}>
-				<summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-medium marker:hidden">
-					Advanced
-					<span className="float-right text-muted-foreground transition-transform group-open:rotate-180">
-						⌄
-					</span>
-				</summary>
-				<div className="flex flex-col gap-3 border-t p-3">
-					<div className="flex flex-col gap-1.5">
-						<Label htmlFor="provider-base">Base URL</Label>
-						<Input
-							id="provider-base"
-							value={form.baseUrl}
-							onChange={(event) => onUpdate({ baseUrl: event.target.value })}
-							placeholder="https://api.example.com/v1"
-							autoComplete="off"
-							spellCheck={false}
-						/>
-					</div>
-					<div className="grid gap-3 sm:grid-cols-2">
-						<div className="flex flex-col gap-1.5">
-							<Label htmlFor="provider-mode">API mode</Label>
-							<Select
-								items={apiModes.map((mode) => ({ value: mode, label: API_MODE_LABEL[mode] }))}
-								value={form.apiMode}
-								onValueChange={(value) => {
-									if (isApiMode(value)) onUpdate({ apiMode: value });
-								}}
-							>
-								<SelectTrigger id="provider-mode">
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									{apiModes.map((mode) => (
-										<SelectItem key={mode} value={mode}>
-											{API_MODE_LABEL[mode]}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-						</div>
-						{showRuntimeEnv ? (
+			{form.authMethod === "api_key" ? (
+				<details className="group rounded-lg border bg-muted/20" open={meta.custom || isEdit}>
+					<summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-medium marker:hidden">
+						Advanced
+						<span className="float-right text-muted-foreground transition-transform group-open:rotate-180">
+							⌄
+						</span>
+					</summary>
+					<div className="flex flex-col gap-3 border-t p-3">
+						{showAdvancedName ? (
 							<div className="flex flex-col gap-1.5">
-								<Label htmlFor="provider-env">Agent environment variable</Label>
+								<Label htmlFor="provider-label">Name</Label>
 								<Input
-									id="provider-env"
-									value={form.runtimeEnv}
-									onChange={(event) => onUpdate({ runtimeEnv: event.target.value.toUpperCase() })}
-									placeholder="OPENAI_API_KEY"
+									id="provider-label"
+									value={form.label}
+									onChange={(event) => onUpdate({ label: event.target.value })}
+									placeholder={preset?.label ?? providerLabel}
 									autoComplete="off"
-									spellCheck={false}
 								/>
 							</div>
 						) : null}
+						<div className="flex flex-col gap-1.5">
+							<Label htmlFor="provider-base">Base URL</Label>
+							<Input
+								id="provider-base"
+								value={form.baseUrl}
+								onChange={(event) => onUpdate({ baseUrl: event.target.value })}
+								placeholder="https://api.example.com/v1"
+								autoComplete="off"
+								spellCheck={false}
+							/>
+						</div>
+						<div className="grid gap-3 sm:grid-cols-2">
+							<div className="flex flex-col gap-1.5">
+								<Label htmlFor="provider-mode">API mode</Label>
+								<Select
+									items={apiModes.map((mode) => ({ value: mode, label: API_MODE_LABEL[mode] }))}
+									value={form.apiMode}
+									onValueChange={(value) => {
+										if (isApiMode(value)) onUpdate({ apiMode: value });
+									}}
+								>
+									<SelectTrigger id="provider-mode">
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{apiModes.map((mode) => (
+											<SelectItem key={mode} value={mode}>
+												{API_MODE_LABEL[mode]}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</div>
+							{showRuntimeEnv ? (
+								<div className="flex flex-col gap-1.5">
+									<Label htmlFor="provider-env">Agent environment variable</Label>
+									<Input
+										id="provider-env"
+										value={form.runtimeEnv}
+										onChange={(event) => onUpdate({ runtimeEnv: event.target.value.toUpperCase() })}
+										placeholder="OPENAI_API_KEY"
+										autoComplete="off"
+										spellCheck={false}
+									/>
+								</div>
+							) : null}
+						</div>
+						<div className="flex flex-col gap-1.5">
+							<Label htmlFor="provider-models">Model catalog</Label>
+							<Textarea
+								id="provider-models"
+								value={form.modelsText}
+								onChange={(event) => onUpdate({ modelsText: event.target.value })}
+								placeholder={meta.modelPlaceholder}
+								className="min-h-24 resize-y"
+								autoComplete="off"
+								spellCheck={false}
+							/>
+							<p className="text-xs text-muted-foreground">
+								One model id per line. The first is used by connection testing.
+							</p>
+						</div>
 					</div>
-					<div className="flex flex-col gap-1.5">
-						<Label htmlFor="provider-models">Model catalog</Label>
-						<Textarea
-							id="provider-models"
-							value={form.modelsText}
-							onChange={(event) => onUpdate({ modelsText: event.target.value })}
-							placeholder={meta.modelPlaceholder}
-							className="min-h-24 resize-y"
-							autoComplete="off"
-							spellCheck={false}
-						/>
-						<p className="text-xs text-muted-foreground">
-							One model id per line. The first is used by connection testing.
-						</p>
-					</div>
-				</div>
-			</details>
+				</details>
+			) : null}
 		</div>
 	);
 }

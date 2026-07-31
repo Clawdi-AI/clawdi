@@ -63,8 +63,21 @@ describe("provider mutation contract", () => {
 		);
 
 		expect(hooksSource).toContain('api.POST("/v1/ai-providers/accept"');
+		expect(hooksSource).toContain('api.POST("/v1/ai-providers/test"');
+		expect(hooksSource).toContain('api.POST("/v1/ai-providers/{provider_id}/test"');
+		expect(hooksSource).toContain(
+			'api.POST("/v1/ai-providers/{provider_id}/auth/oauth/device/start"',
+		);
+		expect(hooksSource).toContain(
+			'api.POST("/v1/ai-providers/{provider_id}/auth/oauth/device/poll"',
+		);
+		expect(hooksSource).not.toContain("test-connection");
 		expect(hooksSource).toContain('"Idempotency-Key": idempotencyKey');
+		expect(dialogSource).toContain("replace: true");
+		expect(dialogSource).not.toContain("useSetApiKey");
 		expect(dialogSource).not.toContain("restoreEditedProvider");
 		expect(dialogSource).not.toContain("deleteProviderQuiet");
+		expect(dialogSource).not.toContain("window.open");
+		expect(dialogSource).not.toContain("BroadcastChannel");
 	});
 });

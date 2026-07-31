@@ -2426,6 +2426,7 @@ async def test_ai_provider_oauth_start_returns_backend_generated_link(client: ht
                 "authorization_url": "https://oauth.example/authorize",
                 "token_url": "https://oauth.example/token",
                 "client_id": "clawdi-client",
+                "redirect_uri": "https://cloud.example/oauth/callback",
                 "scope": "openid profile",
             }
         }
@@ -2438,10 +2439,19 @@ async def test_ai_provider_oauth_start_returns_backend_generated_link(client: ht
                 "redirect_uri": "https://cloud.example/oauth/callback",
             },
         )
+        mismatched_redirect = await client.post(
+            "/v1/ai-providers/openai-codex/auth/oauth/start",
+            json={
+                "provider": "codex",
+                "redirect_uri": "https://attacker.example/oauth/callback",
+            },
+        )
     finally:
         settings.ai_provider_oauth_config_json = previous
 
     assert started.status_code == 200, started.text
+    assert mismatched_redirect.status_code == 422, mismatched_redirect.text
+    assert "server-registered" in mismatched_redirect.text
     body = started.json()
     assert body["provider_id"] == "openai-codex"
     assert body["oauth_provider"] == "codex"
@@ -2500,7 +2510,7 @@ async def test_ai_provider_oauth_start_uses_builtin_codex_config(client: httpx.A
 
 
 @pytest.mark.asyncio
-async def test_ai_provider_oauth_start_allows_dev_web_origin_http_redirect(
+async def test_ai_provider_oauth_start_rejects_web_redirect_for_official_codex_client(
     client: httpx.AsyncClient,
 ):
     created = await client.post(
@@ -2539,12 +2549,9 @@ async def test_ai_provider_oauth_start_allows_dev_web_origin_http_redirect(
         settings.web_origin = previous_web_origin
         settings.cors_origins = previous_cors_origins
 
-    assert started.status_code == 200, started.text
+    assert started.status_code == 422, started.text
     assert wrong_port.status_code == 422, wrong_port.text
-    params = parse_qs(urlparse(started.json()["auth_url"]).query)
-    assert params["redirect_uri"] == [
-        "http://dev.clawdi.test:33221/onboarding?step=provider&provider_oauth=codex"
-    ]
+    assert "loopback" in started.text
 
 
 @pytest.mark.asyncio
@@ -2611,6 +2618,157 @@ async def test_ai_provider_oauth_start_requires_clean_redirect_and_params(
 
 
 @pytest.mark.asyncio
+async def test_oauth_device_accept_polls_then_persists_tokens(
+    client: httpx.AsyncClient,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    connection = await db_session.connection()
+    device_session_factory = async_sessionmaker(
+        bind=connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    monkeypatch.setattr(
+        "app.routes.ai_providers.async_session_factory",
+        device_session_factory,
+    )
+    previous = settings.ai_provider_oauth_config_json
+    settings.ai_provider_oauth_config_json = json.dumps(
+        {
+            "codex": {
+                "authorization_url": "https://auth.openai.com/oauth/authorize",
+                "token_url": "https://auth.openai.com/oauth/token",
+                "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+            }
+        }
+    )
+    requests: list[dict] = []
+    device_poll_count = 0
+
+    class FakeDeviceClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, *, headers=None, json=None, data=None):
+            nonlocal device_poll_count
+            requests.append({"url": url, "headers": headers, "json": json, "data": data})
+            if url.endswith("/deviceauth/usercode"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "device_auth_id": "device-auth-id",
+                        "user_code": "ABCD-EFGH",
+                        "interval": 1,
+                    },
+                )
+            if url.endswith("/deviceauth/token"):
+                device_poll_count += 1
+                if device_poll_count == 1:
+                    return httpx.Response(403, json={"error": "authorization_pending"})
+                return httpx.Response(
+                    200,
+                    json={
+                        "authorization_code": "device-authorization-code",
+                        "code_verifier": "device-code-verifier",
+                    },
+                )
+            if data and data.get("grant_type") == "authorization_code":
+                return httpx.Response(
+                    200,
+                    json={
+                        "id_token": _test_jwt(),
+                        "access_token": "oauth-access-token",
+                        "refresh_token": "oauth-refresh-token",
+                    },
+                )
+            if data and data.get("grant_type") == "urn:ietf:params:oauth:grant-type:token-exchange":
+                return httpx.Response(200, json={"access_token": "sk-codex-api-key"})
+            if url.endswith("/oauth/revoke") and json:
+                return httpx.Response(200)
+            raise AssertionError(f"unexpected request: {url}")
+
+    monkeypatch.setattr("app.routes.ai_providers.httpx.AsyncClient", FakeDeviceClient)
+    try:
+        accepted = await client.post(
+            "/v1/ai-providers/accept",
+            headers={"Idempotency-Key": "device-accept"},
+            json={
+                "provider": {
+                    "provider_id": "openai-codex",
+                    "type": "openai",
+                    "label": "Codex (ChatGPT)",
+                    "base_url": "https://api.openai.com/v1",
+                    "api_mode": "openai_responses",
+                    "auth": {"type": "agent_profile", "tool": "codex", "profile": "default"},
+                    "managed_by": "user",
+                    "models": [{"id": "gpt-5.5"}],
+                },
+                "credential": {
+                    "type": "oauth",
+                    "provider": "codex",
+                    "flow": "device_code",
+                },
+                "replace": False,
+            },
+        )
+        assert accepted.status_code == 201, accepted.text
+        authorization = accepted.json()["authorization"]
+        assert authorization == {
+            "flow": "device_code",
+            "provider_id": "openai-codex",
+            "oauth_provider": "codex",
+            "profile": "default",
+            "verification_url": "https://auth.openai.com/codex/device",
+            "user_code": "ABCD-EFGH",
+            "state": authorization["state"],
+            "expires_at": authorization["expires_at"],
+            "poll_interval_seconds": 1,
+        }
+
+        pending = await client.post(
+            "/v1/ai-providers/openai-codex/auth/oauth/device/poll",
+            json={"state": authorization["state"]},
+        )
+        assert pending.status_code == 200, pending.text
+        assert pending.json() == {"status": "pending", "retry_after_seconds": 1}
+
+        completed = await client.post(
+            "/v1/ai-providers/openai-codex/auth/oauth/device/poll",
+            json={"state": authorization["state"]},
+        )
+        deleted = await client.delete("/v1/ai-providers/openai-codex")
+    finally:
+        settings.ai_provider_oauth_config_json = previous
+
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["status"] == "ready"
+    assert completed.json()["provider"]["usable"] is True
+    assert deleted.status_code == 200, deleted.text
+    assert "oauth-access-token" not in completed.text
+    exchange = next(item for item in requests if item["data"] and item["data"].get("code"))
+    assert exchange["data"] == {
+        "grant_type": "authorization_code",
+        "code": "device-authorization-code",
+        "redirect_uri": "https://auth.openai.com/deviceauth/callback",
+        "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+        "code_verifier": "device-code-verifier",
+    }
+    revoke = next(item for item in requests if item["url"].endswith("/oauth/revoke"))
+    assert revoke["json"] == {
+        "token": "oauth-refresh-token",
+        "token_type_hint": "refresh_token",
+        "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+    }
+
+
+@pytest.mark.asyncio
 async def test_oauth_accept_persists_pending_then_completes_same_provider_idempotently(
     client: httpx.AsyncClient,
     db_session,
@@ -2635,6 +2793,7 @@ async def test_oauth_accept_persists_pending_then_completes_same_provider_idempo
                 "authorization_url": "https://oauth.example/authorize",
                 "token_url": "https://oauth.example/token",
                 "client_id": "clawdi-client",
+                "redirect_uri": "https://cloud.example/oauth/callback",
                 "scope": "openid profile",
             }
         }
@@ -2794,6 +2953,7 @@ async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
                 "token_url": "https://oauth.example/token",
                 "client_id": "clawdi-client",
                 "client_secret": "oauth-client-secret",
+                "redirect_uri": "https://cloud.example/oauth/callback",
             }
         }
     )
@@ -2954,6 +3114,7 @@ async def test_ai_provider_oauth_complete_omits_missing_codex_api_key(
                 "authorization_url": "https://oauth.example/authorize",
                 "token_url": "https://oauth.example/token",
                 "client_id": "clawdi-client",
+                "redirect_uri": "https://cloud.example/oauth/callback",
             }
         }
     )

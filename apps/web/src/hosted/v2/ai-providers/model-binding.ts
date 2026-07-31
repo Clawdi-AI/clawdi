@@ -4,7 +4,7 @@ import {
 	isFirstPartyManagedAiProvider,
 } from "@clawdi/shared";
 import type { AiProviderAuthKind, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
-import type { HostedRuntime } from "@/hosted/runtimes";
+import { type HostedRuntime, runtimeDisplayName } from "@/hosted/runtimes";
 import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { formatModelLabel } from "@/lib/format";
@@ -80,8 +80,13 @@ export function providerRuntimeIncompatibility(
 	provider: AiProvider,
 	runtime: HostedRuntime,
 ): string | null {
+	const compatible = provider.readiness?.runtime_compatibility[runtime];
+	if (compatible === true) return null;
 	if (runtime === "hermes" && provider.api_mode === "google_generate_content") {
 		return "Hermes cannot use Gemini GenerateContent yet. Choose OpenClaw, or use an OpenAI- or Anthropic-compatible provider.";
+	}
+	if (compatible === false) {
+		return `${runtimeDisplayName(runtime)} cannot use this provider's authentication or API protocol.`;
 	}
 	return null;
 }
@@ -92,7 +97,7 @@ export function usableProviders(
 ): AiProvider[] {
 	return providers.filter(
 		(provider) =>
-			provider.usable &&
+			(provider.readiness?.deployable ?? provider.usable) &&
 			provider.auth.type !== "none" &&
 			(!runtime || providerRuntimeIncompatibility(provider, runtime) === null),
 	);

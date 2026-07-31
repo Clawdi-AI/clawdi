@@ -27,20 +27,14 @@ import {
 import {
 	useAcceptProvider,
 	useAiProviders,
-	useCompleteProviderAccept,
-	useOAuthComplete,
-	useOAuthStart,
+	useOAuthDevicePoll,
+	useOAuthDeviceStart,
 	usePatchProvider,
-	useSetApiKey,
+	useTestDraftProviderConnection,
 } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import {
 	CLAWDI_CODEX_OAUTH_PROVIDER_ID,
-	CODEX_OAUTH_CHANNEL,
-	type CodexOAuthResult,
-	codexOAuthStateMatches,
 	codexProviderBody,
-	codexRedirectUri,
-	parseCodexCallback,
 } from "@/hosted/v2/ai-providers/codex-oauth";
 import { type ProviderChoice, ProviderChooser } from "@/hosted/v2/ai-providers/provider-chooser";
 import { ProviderFieldsForm } from "@/hosted/v2/ai-providers/provider-fields-form";
@@ -56,39 +50,29 @@ import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 import type {
 	AiProvider,
 	AiProviderAcceptRequest,
+	AiProviderConnectionTestResponse,
 	AiProviderPatch,
 	AiProviderUpsert,
 } from "@/hosted/v2/ai-providers/types";
 import { useProviderForm } from "@/hosted/v2/ai-providers/use-provider-form";
 
 type DialogStep = "choose" | "configure";
-type OAuthMode = "accept" | "legacy";
+type OAuthMode = "accept" | "reconnect";
 
 interface OAuthSession {
 	mode: OAuthMode;
 	providerId: string;
 	state: string;
-	authUrl: string;
-	redirectUri: string;
+	verificationUrl: string;
+	userCode: string;
 	expiresAt: string;
+	pollIntervalSeconds: number;
 }
 
 interface AcceptAttempt {
 	fingerprint: string;
 	secret: string;
 	key: string;
-}
-
-function readOAuthResult(value: unknown): CodexOAuthResult | null {
-	if (!value || typeof value !== "object") return null;
-	const result = value as Record<string, unknown>;
-	if (typeof result.code !== "string" || typeof result.state !== "string") return null;
-	if (result.error !== undefined && typeof result.error !== "string") return null;
-	return {
-		code: result.code,
-		state: result.state,
-		...(typeof result.error === "string" ? { error: result.error } : {}),
-	};
 }
 
 export function AddProviderDialog({
@@ -105,22 +89,23 @@ export function AddProviderDialog({
 	const providers = useAiProviders();
 	const acceptProvider = useAcceptProvider();
 	const patchProvider = usePatchProvider();
-	const setKey = useSetApiKey();
-	const oauthStart = useOAuthStart();
-	const oauthComplete = useOAuthComplete();
-	const completeAccept = useCompleteProviderAccept();
+	const testDraft = useTestDraftProviderConnection();
+	const oauthDeviceStart = useOAuthDeviceStart();
+	const oauthDevicePoll = useOAuthDevicePoll();
+	const pollDeviceOAuth = oauthDevicePoll.execute;
 	const runAction = useActionLock();
 	const { state: form, reset: resetForm, update: updateForm } = useProviderForm();
 	const isEdit = Boolean(editing);
+	const isOAuthEdit =
+		editing?.auth.type === "agent_profile" || editing?.auth.type === "oauth_profile";
 	const [step, setStep] = useState<DialogStep>(editing ? "configure" : "choose");
 	const [oauth, setOauth] = useState<OAuthSession | null>(null);
-	const [oauthCode, setOauthCode] = useState("");
 	const [oauthIssue, setOauthIssue] = useState<OAuthIssue | null>(null);
-	const popupRef = useRef<Window | null>(null);
+	const [draftTestResult, setDraftTestResult] = useState<AiProviderConnectionTestResponse | null>(
+		null,
+	);
 	const completedRef = useRef(false);
-	const finishRef = useRef<(result: CodexOAuthResult) => void>(() => {});
 	const acceptAttemptRef = useRef<AcceptAttempt | null>(null);
-	const completionAttemptRef = useRef<AcceptAttempt | null>(null);
 
 	const selectedPreset = providerPresetById(form.presetId);
 	const selectedRegion = selectedPreset
@@ -145,7 +130,9 @@ export function AddProviderDialog({
 		!isEdit &&
 		form.authMethod === "oauth" &&
 		providers.data?.providers.some(
-			(item) => item.provider_id === CLAWDI_CODEX_OAUTH_PROVIDER_ID && item.usable,
+			(item) =>
+				item.provider_id === CLAWDI_CODEX_OAUTH_PROVIDER_ID &&
+				(item.readiness?.deployable ?? item.usable),
 		) === true;
 	const canSubmit =
 		providerListReady &&
@@ -157,12 +144,10 @@ export function AddProviderDialog({
 	useEffect(() => {
 		if (!open) return;
 		setOauth(null);
-		setOauthCode("");
 		setOauthIssue(null);
-		popupRef.current = null;
+		setDraftTestResult(null);
 		completedRef.current = false;
 		acceptAttemptRef.current = null;
-		completionAttemptRef.current = null;
 
 		if (editing) {
 			const type = editing.type;
@@ -250,6 +235,7 @@ export function AddProviderDialog({
 	function changeAuthMethod(authMethod: AuthMethod) {
 		const defaults = derivedProviderFields(form.type, authMethod, selectedPreset);
 		acceptAttemptRef.current = null;
+		setDraftTestResult(null);
 		updateForm({
 			authMethod,
 			apiKey: "",
@@ -265,6 +251,7 @@ export function AddProviderDialog({
 		const region = providerPresetRegion(selectedPreset, regionId);
 		if (!region) return;
 		acceptAttemptRef.current = null;
+		setDraftTestResult(null);
 		updateForm({ regionId: region.id, baseUrl: region.base_url });
 	}
 
@@ -299,106 +286,81 @@ export function AddProviderDialog({
 		return attempt.key;
 	}
 
-	function preparePopup(): Window | null {
-		setOauthIssue(null);
-		const popup = window.open("about:blank", "codex-oauth", "popup,width=520,height=720");
-		popupRef.current = popup;
-		if (!popup) {
-			setOauthIssue("blocked");
-			return null;
-		}
-		try {
-			popup.document.title = "Opening ChatGPT";
-			popup.document.body.textContent = "Opening ChatGPT sign-in…";
-			popup.document.body.style.cssText =
-				"font-family:system-ui,sans-serif;padding:24px;color:#555";
-		} catch {
-			// A browser may deny access even before navigation. The handle is still usable.
-		}
-		return popup;
-	}
-
-	function navigatePopup(popup: Window, url: string): boolean {
-		try {
-			if (popup.closed) {
-				setOauthIssue("closed");
-				return false;
-			}
-			popup.location.replace(url);
-			popup.focus();
-			return true;
-		} catch {
-			setOauthIssue("closed");
-			return false;
-		}
-	}
-
 	async function beginAcceptedOAuth({ fresh = false }: { fresh?: boolean } = {}) {
-		const popup = preparePopup();
-		if (!popup) return;
-		const redirectUri = codexRedirectUri();
 		const body = {
 			provider: codexProviderBody(),
-			credential: { type: "oauth", provider: "codex", redirect_uri: redirectUri },
+			credential: { type: "oauth", provider: "codex", flow: "device_code" },
+			replace: false,
 		} satisfies AiProviderAcceptRequest;
 		const result = await acceptProvider
-			.mutateAsync({
+			.execute({
 				body,
 				idempotencyKey: acceptKey(body, "oauth", fresh),
 			})
 			.catch(() => null);
-		if (!result) {
-			popup.close();
+		if (!result) return;
+		if (result.status !== "pending") {
+			toast.error("ChatGPT sign-in was already completed");
 			return;
 		}
-		if (result.status !== "pending") {
-			popup.close();
-			toast.error("ChatGPT sign-in was already completed");
+		if (result.authorization.flow !== "device_code") {
+			toast.error("ChatGPT device sign-in is unavailable");
 			return;
 		}
 		completedRef.current = false;
 		setOauthIssue(null);
-		setOauthCode("");
 		setOauth({
 			mode: "accept",
 			providerId: result.provider.provider_id,
 			state: result.authorization.state,
-			authUrl: result.authorization.auth_url,
-			redirectUri: result.authorization.redirect_uri,
+			verificationUrl: result.authorization.verification_url,
+			userCode: result.authorization.user_code,
 			expiresAt: result.authorization.expires_at,
+			pollIntervalSeconds: result.authorization.poll_interval_seconds,
 		});
-		navigatePopup(popup, result.authorization.auth_url);
 	}
 
-	async function beginLegacyOAuth() {
+	async function beginReconnectOAuth() {
 		if (!editing) return;
-		const popup = preparePopup();
-		if (!popup) return;
-		const redirectUri = codexRedirectUri();
-		const result = await oauthStart
-			.execute({ providerId: editing.provider_id, provider: "codex", redirect_uri: redirectUri })
+		const result = await oauthDeviceStart
+			.execute({ providerId: editing.provider_id, provider: "codex" })
 			.catch(() => null);
-		if (!result) {
-			popup.close();
-			return;
-		}
+		if (!result) return;
 		completedRef.current = false;
 		setOauthIssue(null);
-		setOauthCode("");
 		setOauth({
-			mode: "legacy",
+			mode: "reconnect",
 			providerId: editing.provider_id,
 			state: result.state,
-			authUrl: result.auth_url,
-			redirectUri,
+			verificationUrl: result.verification_url,
+			userCode: result.user_code,
 			expiresAt: result.expires_at,
+			pollIntervalSeconds: result.poll_interval_seconds,
 		});
-		navigatePopup(popup, result.auth_url);
 	}
 
 	async function submit() {
 		if (!canSubmit) return;
 		if (editing) {
+			const replacementKey = form.apiKey.trim();
+			if (replacementKey) {
+				const body = {
+					provider: providerBody(),
+					credential: { type: "api_key", value: replacementKey },
+					replace: true,
+				} satisfies AiProviderAcceptRequest;
+				const result = await acceptProvider
+					.execute({
+						body,
+						idempotencyKey: acceptKey(body, replacementKey),
+					})
+					.catch(() => null);
+				if (result?.status !== "ready") return;
+				updateForm({ apiKey: "" });
+				toast.success("Provider updated");
+				onOpenChange(false);
+				return;
+			}
 			const patch = {
 				type: form.type,
 				label: identity.label,
@@ -428,9 +390,10 @@ export function AddProviderDialog({
 		const body = {
 			provider: providerBody(),
 			credential: { type: "api_key", value: form.apiKey.trim() },
+			replace: false,
 		} satisfies AiProviderAcceptRequest;
 		const result = await acceptProvider
-			.mutateAsync({
+			.execute({
 				body,
 				idempotencyKey: acceptKey(body, form.apiKey.trim()),
 			})
@@ -442,37 +405,26 @@ export function AddProviderDialog({
 		onOpenChange(false);
 	}
 
-	async function replaceApiKey() {
-		if (!editing || !form.apiKey.trim() || setKey.isPending) return;
-		const result = await setKey
+	async function testDraftConnection() {
+		const credential = form.apiKey.trim();
+		if (!credential || form.authMethod !== "api_key") return;
+		setDraftTestResult(null);
+		const result = await testDraft
 			.execute({
-				providerId: editing.provider_id,
-				value: form.apiKey.trim(),
-				runtime_env_name: runtimeEnv,
+				provider: providerBody(),
+				credential: { type: "api_key", value: credential },
+				model: modelsFromText(form.modelsText, editing?.models, presetCatalog)?.[0]?.id ?? null,
 			})
 			.catch(() => null);
 		if (!result) return;
-		updateForm({ apiKey: "" });
-		toast.success(
-			editing.usable && editing.auth.type !== "none" ? "API key replaced" : "API key saved",
-		);
-	}
-
-	function closePopup() {
-		try {
-			if (popupRef.current && !popupRef.current.closed) popupRef.current.close();
-		} catch {
-			// Ignore a cross-origin close failure.
-		}
-		popupRef.current = null;
+		setDraftTestResult(result);
+		if (result.ok) toast.success("Connection verified");
 	}
 
 	function requestClose(next: boolean) {
 		if (!next) {
 			completedRef.current = true;
-			closePopup();
 			setOauth(null);
-			setOauthCode("");
 			updateForm({ apiKey: "" });
 		}
 		onOpenChange(next);
@@ -480,134 +432,75 @@ export function AddProviderDialog({
 
 	async function restartOAuth() {
 		if (!oauth) return;
-		if (oauth.mode === "accept") await beginAcceptedOAuth({ fresh: true });
-		else await beginLegacyOAuth();
-	}
-
-	function submitPastedCallback() {
-		const parsed = parseCodexCallback(oauthCode);
-		if (!parsed) {
-			toast.error("Couldn't read that callback address");
-			return;
-		}
-		finishRef.current(parsed);
-	}
-
-	finishRef.current = async (result: CodexOAuthResult) => {
-		if (!oauth || completedRef.current) return;
-		if (result.error || !result.code) {
-			toast.error("ChatGPT sign-in failed", {
-				description: "Restart sign-in and try again.",
-			});
-			return;
-		}
-		if (!codexOAuthStateMatches(oauth.state, result)) {
-			toast.error("ChatGPT sign-in could not be verified", {
-				description: "The state did not match. Restart sign-in and try again.",
-			});
-			return;
-		}
 		completedRef.current = true;
-		const completionFingerprint = `${oauth.mode}:${oauth.providerId}:${result.state}:${result.code}`;
-		const currentCompletion = completionAttemptRef.current;
-		const completionKey =
-			currentCompletion?.fingerprint === completionFingerprint
-				? currentCompletion.key
-				: newIdempotencyKey("ai-provider-oauth-complete");
-		completionAttemptRef.current = {
-			fingerprint: completionFingerprint,
-			secret: result.code,
-			key: completionKey,
-		};
-		const done =
-			oauth.mode === "accept"
-				? await completeAccept
-						.execute({
-							providerId: oauth.providerId,
-							state: result.state,
-							code: result.code,
-							redirect_uri: oauth.redirectUri,
-							idempotencyKey: completionKey,
-						})
-						.catch(() => null)
-				: await oauthComplete
-						.execute({
-							providerId: oauth.providerId,
-							state: result.state,
-							code: result.code,
-							redirect_uri: oauth.redirectUri,
-						})
-						.catch(() => null);
-		if (!done) {
-			completedRef.current = false;
-			return;
-		}
-		toast.success("Signed in with ChatGPT");
-		closePopup();
 		setOauth(null);
-		setOauthCode("");
-		if (!isEdit) onCreated?.(oauth.providerId);
-		onOpenChange(false);
-	};
+		if (oauth.mode === "accept") await beginAcceptedOAuth({ fresh: true });
+		else await beginReconnectOAuth();
+	}
 
 	useEffect(() => {
 		if (!oauth) return;
-		const handle = (value: unknown) => {
-			const result = readOAuthResult(value);
-			if (result) finishRef.current(result);
+		let stopped = false;
+		let consecutiveFailures = 0;
+		let pollTimer: ReturnType<typeof setTimeout> | undefined;
+		const schedule = (seconds: number) => {
+			if (stopped) return;
+			pollTimer = setTimeout(() => void check(), Math.max(seconds, 1) * 1000);
 		};
-		let channel: BroadcastChannel | null = null;
-		try {
-			channel = new BroadcastChannel(CODEX_OAUTH_CHANNEL);
-			channel.onmessage = (event) => handle(event.data);
-		} catch {
-			// postMessage and manual paste remain available.
-		}
-		const onMessage = (event: MessageEvent) => {
-			if (
-				event.origin === window.location.origin &&
-				event.source === popupRef.current &&
-				(event.data as { source?: unknown } | null)?.source === CODEX_OAUTH_CHANNEL
-			) {
-				handle(event.data);
+		const check = async () => {
+			if (stopped || completedRef.current) return;
+			const result = await pollDeviceOAuth({
+				providerId: oauth.providerId,
+				state: oauth.state,
+			}).catch(() => null);
+			if (stopped) return;
+			if (!result) {
+				consecutiveFailures += 1;
+				if (consecutiveFailures >= 3) {
+					stopped = true;
+					setOauthIssue("failed");
+				} else {
+					schedule(oauth.pollIntervalSeconds);
+				}
+				return;
 			}
-		};
-		window.addEventListener("message", onMessage);
-		return () => {
-			channel?.close();
-			window.removeEventListener("message", onMessage);
-		};
-	}, [oauth]);
-
-	useEffect(() => {
-		if (!oauth) return;
-		const poll = setInterval(() => {
-			if (!completedRef.current && popupRef.current?.closed) {
-				setOauthIssue((current) => current ?? "closed");
+			consecutiveFailures = 0;
+			if (result.status !== "ready") {
+				schedule(result.retry_after_seconds);
+				return;
 			}
-		}, 800);
+			completedRef.current = true;
+			toast.success("Signed in with ChatGPT");
+			setOauth(null);
+			if (oauth.mode === "accept") onCreated?.(oauth.providerId);
+			onOpenChange(false);
+		};
+		schedule(oauth.pollIntervalSeconds);
 		const remaining = new Date(oauth.expiresAt).getTime() - Date.now();
 		const expiry = Number.isFinite(remaining)
 			? setTimeout(
 					() => {
-						if (!completedRef.current) setOauthIssue("expired");
+						if (!completedRef.current) {
+							stopped = true;
+							setOauthIssue("expired");
+						}
 					},
 					Math.max(remaining, 0),
 				)
 			: undefined;
 		return () => {
-			clearInterval(poll);
+			stopped = true;
+			if (pollTimer) clearTimeout(pollTimer);
 			if (expiry) clearTimeout(expiry);
 		};
-	}, [oauth]);
+	}, [oauth, onCreated, onOpenChange, pollDeviceOAuth]);
 
 	const busy =
 		acceptProvider.isPending ||
 		patchProvider.isPending ||
-		setKey.isPending ||
-		oauthStart.isPending ||
-		oauthComplete.isPending ||
-		completeAccept.isPending;
+		testDraft.isPending ||
+		oauthDeviceStart.isPending ||
+		oauthDevicePoll.isPending;
 
 	return (
 		<Dialog open={open} onOpenChange={requestClose}>
@@ -621,7 +514,8 @@ export function AddProviderDialog({
 						{oauth
 							? "Sign in with ChatGPT"
 							: isEdit
-								? editing?.usable && editing.auth.type !== "none"
+								? (editing?.readiness?.deployable ?? editing?.usable) &&
+									editing.auth.type !== "none"
 									? "Edit provider"
 									: "Finish provider setup"
 								: step === "choose"
@@ -630,12 +524,14 @@ export function AddProviderDialog({
 					</DialogTitle>
 					<DialogDescription>
 						{oauth
-							? "Finish in the ChatGPT window. This page will continue automatically."
-							: isEdit
-								? "Edit this provider directly. Credential replacement is saved separately."
-								: step === "choose"
-									? "Choose a common provider or bring a custom endpoint."
-									: "Only the credential is required. Provider details stay in Advanced."}
+							? "Open ChatGPT, enter the one-time code, and this page will finish automatically."
+							: isOAuthEdit
+								? "Your ChatGPT connection is ready. Reconnect only to change or repair the account."
+								: isEdit
+									? "Update settings and, if entered, the API key in one atomic save."
+									: step === "choose"
+										? "Choose a common provider or bring a custom endpoint."
+										: "Only the credential is required. Provider details stay in Advanced."}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -643,12 +539,11 @@ export function AddProviderDialog({
 					{oauth ? (
 						<ProviderOAuthFlow
 							issue={oauthIssue}
-							callbackUrl={oauthCode}
-							starting={acceptProvider.isPending || oauthStart.isPending}
-							completing={oauthComplete.isPending || completeAccept.isPending}
-							onCallbackUrlChange={setOauthCode}
+							verificationUrl={oauth.verificationUrl}
+							userCode={oauth.userCode}
+							starting={acceptProvider.isPending || oauthDeviceStart.isPending}
+							polling={oauthDevicePoll.isPending}
 							onRestart={() => void runAction(restartOAuth)}
-							onFinish={() => void runAction(submitPastedCallback)}
 						/>
 					) : step === "choose" && !isEdit ? (
 						<ProviderChooser onSelect={selectProvider} />
@@ -668,12 +563,6 @@ export function AddProviderDialog({
 									Edit the existing provider to reconnect it.
 								</div>
 							) : null}
-							{oauthIssue === "blocked" ? (
-								<div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
-									<CircleAlert className="mt-0.5 size-3.5 shrink-0" /> Your browser blocked the
-									ChatGPT window. Allow pop-ups, then try again.
-								</div>
-							) : null}
 							<ProviderFieldsForm
 								form={form}
 								editing={editing ?? null}
@@ -684,15 +573,28 @@ export function AddProviderDialog({
 								apiKeyUrl={selectedRegion?.api_key_url ?? selectedPreset?.api_key_url ?? null}
 								onUpdate={(value) => {
 									acceptAttemptRef.current = null;
+									setDraftTestResult(null);
 									updateForm(value);
 								}}
 								onAuthMethodChange={changeAuthMethod}
 								onRegionChange={changeRegion}
-								onReplaceApiKey={() => void runAction(replaceApiKey)}
-								onReconnectOAuth={() => void runAction(beginLegacyOAuth)}
-								replacingApiKey={setKey.isPending}
-								startingOAuth={oauthStart.isPending}
+								onReconnectOAuth={() => void runAction(beginReconnectOAuth)}
+								startingOAuth={oauthDeviceStart.isPending}
 							/>
+							{draftTestResult ? (
+								<div
+									aria-live="polite"
+									className={
+										draftTestResult.ok
+											? "rounded-md border border-success/30 bg-success-muted p-3 text-xs text-success"
+											: "rounded-md border border-warning/30 bg-warning-muted p-3 text-xs text-warning-muted-foreground"
+									}
+								>
+									{draftTestResult.ok
+										? "Credential, endpoint, protocol, and model verified."
+										: (draftTestResult.error?.message ?? "Connection test failed.")}
+								</div>
+							) : null}
 						</div>
 					)}
 				</div>
@@ -705,6 +607,10 @@ export function AddProviderDialog({
 					) : step === "choose" && !isEdit ? (
 						<Button variant="outline" onClick={() => requestClose(false)}>
 							Cancel
+						</Button>
+					) : isOAuthEdit ? (
+						<Button variant="outline" onClick={() => requestClose(false)} disabled={busy}>
+							Close
 						</Button>
 					) : (
 						<>
@@ -719,6 +625,16 @@ export function AddProviderDialog({
 								{isEdit ? null : <ArrowLeft />}
 								{isEdit ? "Cancel" : "Back"}
 							</Button>
+							{form.authMethod === "api_key" ? (
+								<Button
+									variant="outline"
+									onClick={() => void runAction(testDraftConnection)}
+									disabled={!form.apiKey.trim() || busy}
+								>
+									{testDraft.isPending ? <Spinner data-icon="inline-start" /> : null}
+									Test connection
+								</Button>
+							) : null}
 							<Button onClick={() => void runAction(submit)} disabled={!canSubmit || busy}>
 								{busy ? <Spinner data-icon="inline-start" /> : null}
 								{form.authMethod === "oauth" && !isEdit

@@ -179,7 +179,13 @@ describe("structural secret boundaries without the denylist", () => {
 			],
 			[
 				"hosted/v2/ai-providers/ai-providers-hooks.ts",
-				["useSetApiKey", "useOAuthStart", "useOAuthComplete", "return useSensitiveAction"],
+				[
+					"useAcceptProvider",
+					"useTestDraftProviderConnection",
+					"useOAuthDeviceStart",
+					"useOAuthDevicePoll",
+					"return useSensitiveAction",
+				],
 			],
 			[
 				"hosted/billing/sensitive-actions.ts",

@@ -41,7 +41,7 @@ import {
 import {
 	AuthBadge,
 	ManagedProviderCard,
-	ProviderUsabilityBadge,
+	ProviderReadinessBadge,
 } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { modelDisplayName, providerDisplayLabel } from "@/hosted/v2/ai-providers/model-binding";
 import { ProviderConnectionTest } from "@/hosted/v2/ai-providers/provider-connection-test";
@@ -143,7 +143,8 @@ function ProviderCard({
 	const meta = providerTypeMeta(provider.type);
 	const providerLabel = providerDisplayLabel(provider);
 	const modelSummary = modelCatalogSummary(provider);
-	const hostedUsable = provider.usable && provider.auth.type !== "none";
+	const deployable =
+		(provider.readiness?.deployable ?? provider.usable) && provider.auth.type !== "none";
 
 	return (
 		<div className={cn(ENTITY_CARD_BASE, "flex h-full flex-col")}>
@@ -154,7 +155,7 @@ function ProviderCard({
 				titleAdornment={
 					<span className="inline-flex items-center gap-1.5">
 						<AuthBadge auth={provider.auth} />
-						<ProviderUsabilityBadge usable={hostedUsable} />
+						<ProviderReadinessBadge deployable={deployable} />
 					</span>
 				}
 				meta={[
@@ -169,9 +170,11 @@ function ProviderCard({
 					</span>,
 					provider.auth.type === "none"
 						? "Legacy provider without a credential. It is excluded from hosted deployment choices; add a hosted-reachable endpoint and API key."
-						: provider.usable
+						: deployable
 							? null
-							: "Credential setup is incomplete. Finish setup before using this provider.",
+							: provider.usable
+								? "This provider is not compatible with a hosted runtime. Review its API mode and authentication."
+								: "Credential setup is incomplete. Finish setup before using this provider.",
 				]}
 			/>
 			<div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
@@ -180,10 +183,10 @@ function ProviderCard({
 					variant="outline"
 					size="sm"
 					onClick={onEdit}
-					aria-label={`${hostedUsable ? "Edit" : "Finish setup for"} ${providerLabel}`}
+					aria-label={`${deployable ? "Edit" : "Finish setup for"} ${providerLabel}`}
 				>
-					{hostedUsable ? <Pencil /> : <CircleAlert />}
-					{hostedUsable ? "Edit" : "Finish setup"}
+					{deployable ? <Pencil /> : <CircleAlert />}
+					{deployable ? "Edit" : "Finish setup"}
 				</Button>
 				<RemoveProviderAction provider={provider} usage={usage} />
 			</div>

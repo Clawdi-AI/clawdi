@@ -349,7 +349,8 @@ def test_runtime_source_delivers_owned_oauth_only_to_selected_runtime(monkeypatc
         decrypt_secrets=True,
     )
 
-    auth = source.manifest["providers"]["openai-codex"]["auth"]
+    projected_provider = source.manifest["providers"]["openai-codex"]
+    auth = projected_provider["auth"]
     assert auth == {
         "type": "agent_profile",
         "tool": "codex",
@@ -360,6 +361,7 @@ def test_runtime_source_delivers_owned_oauth_only_to_selected_runtime(monkeypatc
     assert source.secret_values["provider.openai-codex.oauthProfile"] == (
         '{"kind":"local_agent_profile","files":[]}'
     )
+    assert "apiKeySecretRef" not in projected_provider
     terminal_provider = source.manifest["terminalTooling"]["codex"]["provider"]
     assert terminal_provider["apiKeySecretRef"] == "tool.codex.apiKey"
     assert "auth" not in terminal_provider

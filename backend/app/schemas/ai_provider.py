@@ -518,6 +518,7 @@ class AiProviderOAuthStartRequest(BaseModel):
 
 class AiProviderOAuthAcceptCredential(AiProviderOAuthStartRequest):
     type: Literal["oauth"]
+    flow: Literal["authorization_code", "device_code"] = "authorization_code"
 
 
 class AiProviderAcceptRequest(BaseModel):
@@ -563,6 +564,7 @@ class AiProviderSavedConnectionTestRequest(BaseModel):
 
 
 class AiProviderOAuthStartResponse(BaseModel):
+    flow: Literal["authorization_code"] = "authorization_code"
     provider_id: str
     oauth_provider: str
     profile: str
@@ -570,6 +572,30 @@ class AiProviderOAuthStartResponse(BaseModel):
     state: str
     redirect_uri: str
     expires_at: datetime
+
+
+class AiProviderOAuthDeviceStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    provider: str = Field(min_length=1, max_length=80)
+
+
+class AiProviderOAuthDeviceStartResponse(BaseModel):
+    flow: Literal["device_code"] = "device_code"
+    provider_id: str
+    oauth_provider: str
+    profile: str
+    verification_url: str
+    user_code: str
+    state: str
+    expires_at: datetime
+    poll_interval_seconds: int = Field(ge=1, le=30)
+
+
+type AiProviderOAuthAuthorization = Annotated[
+    AiProviderOAuthStartResponse | AiProviderOAuthDeviceStartResponse,
+    Field(discriminator="flow"),
+]
 
 
 class AiProviderReadyAcceptResponse(BaseModel):
@@ -580,11 +606,33 @@ class AiProviderReadyAcceptResponse(BaseModel):
 class AiProviderOAuthPendingAcceptResponse(BaseModel):
     status: Literal["pending"]
     provider: AiProviderResponse
-    authorization: AiProviderOAuthStartResponse
+    authorization: AiProviderOAuthAuthorization
 
 
 type AiProviderAcceptResponse = Annotated[
     AiProviderReadyAcceptResponse | AiProviderOAuthPendingAcceptResponse,
+    Field(discriminator="status"),
+]
+
+
+class AiProviderOAuthDevicePollRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    state: str = Field(min_length=1, max_length=8000)
+
+
+class AiProviderOAuthDevicePendingResponse(BaseModel):
+    status: Literal["pending"]
+    retry_after_seconds: int = Field(ge=1, le=30)
+
+
+class AiProviderOAuthDeviceReadyResponse(BaseModel):
+    status: Literal["ready"]
+    provider: AiProviderResponse
+
+
+type AiProviderOAuthDevicePollResponse = Annotated[
+    AiProviderOAuthDevicePendingResponse | AiProviderOAuthDeviceReadyResponse,
     Field(discriminator="status"),
 ]
 

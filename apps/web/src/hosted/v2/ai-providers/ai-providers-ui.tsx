@@ -50,10 +50,10 @@ export function AuthBadge({ auth }: { auth: AiProviderAuth }) {
 	);
 }
 
-export function ProviderUsabilityBadge({ usable }: { usable: boolean }) {
+export function ProviderReadinessBadge({ deployable }: { deployable: boolean }) {
 	return (
-		<StatusBadge status={usable ? "success" : "warning"} withDot>
-			{usable ? "Saved" : "Needs setup"}
+		<StatusBadge status={deployable ? "success" : "warning"} withDot>
+			{deployable ? "Ready" : "Needs setup"}
 		</StatusBadge>
 	);
 }

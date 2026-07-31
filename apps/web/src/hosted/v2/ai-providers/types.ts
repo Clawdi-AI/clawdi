@@ -17,4 +17,7 @@ export type AiProviderPatch = Schemas["AiProviderPatch"];
 export type AiProviderAcceptRequest = Schemas["AiProviderAcceptRequest"];
 export type AiProviderAcceptResponse = Schemas["AiProviderAcceptResponse"];
 export type AiProviderReadyAcceptResponse = Schemas["AiProviderReadyAcceptResponse"];
+export type AiProviderConnectionTestRequest = Schemas["AiProviderConnectionTestRequest"];
 export type AiProviderConnectionTestResponse = Schemas["AiProviderConnectionTestResponse"];
+export type AiProviderOAuthDeviceStartResponse = Schemas["AiProviderOAuthDeviceStartResponse"];
+export type AiProviderOAuthDevicePollResponse = Schemas["AiProviderOAuthDevicePollResponse"];

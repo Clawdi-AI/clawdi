@@ -2,6 +2,7 @@ import base64
 import binascii
 import hashlib
 import json
+import logging
 import re
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -10,6 +11,7 @@ from urllib.parse import urlencode, urlparse
 from uuid import UUID
 
 import httpx
+from cryptography.exceptions import InvalidTag
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -43,7 +45,14 @@ from app.schemas.ai_provider import (
     AiProviderManagedApiKeyRequest,
     AiProviderModel,
     AiProviderOAuthAcceptCredential,
+    AiProviderOAuthAuthorization,
     AiProviderOAuthCompleteRequest,
+    AiProviderOAuthDevicePendingResponse,
+    AiProviderOAuthDevicePollRequest,
+    AiProviderOAuthDevicePollResponse,
+    AiProviderOAuthDeviceReadyResponse,
+    AiProviderOAuthDeviceStartRequest,
+    AiProviderOAuthDeviceStartResponse,
     AiProviderOAuthPendingAcceptResponse,
     AiProviderOAuthStartRequest,
     AiProviderOAuthStartResponse,
@@ -92,6 +101,7 @@ from app.services.sync_events import queue_provider_runtime_manifest_changed
 from app.services.vault_crypto import decrypt, encrypt
 
 router = APIRouter(prefix="/ai-providers", tags=["ai-providers"])
+logger = logging.getLogger(__name__)
 AI_PROVIDER_SCOPE = "account_global"
 
 ALLOWED_API_MODES: dict[str, set[str]] = {
@@ -106,13 +116,21 @@ ALLOWED_API_MODES: dict[str, set[str]] = {
     },
 }
 OAUTH_STATE_TTL_SECONDS = 10 * 60
+OAUTH_DEVICE_STATE_TTL_SECONDS = 15 * 60
 CODEX_OAUTH_PROVIDER = "codex"
+CODEX_DEVICE_VERIFICATION_URL = "https://auth.openai.com/codex/device"
+CODEX_DEVICE_USER_CODE_URL = "https://auth.openai.com/api/accounts/deviceauth/usercode"
+CODEX_DEVICE_TOKEN_URL = "https://auth.openai.com/api/accounts/deviceauth/token"
+CODEX_DEVICE_CALLBACK_URL = "https://auth.openai.com/deviceauth/callback"
+CODEX_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
+CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+CODEX_OPENAI_BASE_URL = "https://api.openai.com/v1"
 SUPPORTED_AGENT_PROFILE_TOOLS = {CODEX_OAUTH_PROVIDER}
 SUPPORTED_OAUTH_PROVIDERS = {CODEX_OAUTH_PROVIDER}
 CODEX_OAUTH_CONFIG = {
     "authorization_url": "https://auth.openai.com/oauth/authorize",
     "token_url": "https://auth.openai.com/oauth/token",
-    "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+    "client_id": CODEX_OAUTH_CLIENT_ID,
     "scope": "openid profile email offline_access api.connectors.read api.connectors.invoke",
     "extra_authorize_params": {
         "id_token_add_organizations": "true",
@@ -213,6 +231,164 @@ async def upsert_ai_provider(
     await db.commit()
     await db.refresh(provider)
     return await _to_response(db, auth, provider)
+
+
+async def _validate_device_oauth_state(
+    db: AsyncSession,
+    auth: AuthContext,
+    provider: AiProvider,
+    encoded_state: str,
+) -> dict:
+    _validate_codex_oauth_provider_shape(provider)
+    state_payload = _decode_oauth_state(encoded_state)
+    if (
+        state_payload.get("flow") != "device_code"
+        or state_payload.get("provider_id") != provider.provider_id
+        or state_payload.get("owner_user_id") != str(auth.user_id)
+    ):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state does not match this user")
+    expires_at = _parse_state_datetime(str(state_payload.get("expires_at") or ""))
+    if expires_at < datetime.now(UTC):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state expired")
+    oauth_provider = _normalize_profile(str(state_payload.get("oauth_provider") or ""))
+    _validate_supported_oauth_provider(oauth_provider)
+    profile = _normalize_profile(str(state_payload.get("profile") or "default"))
+    payload = await _find_auth_payload(db, auth, provider.provider_id, profile)
+    current_revision = (
+        payload.credential_revision if payload is not None and payload.archived_at is None else None
+    )
+    base_revision = state_payload.get("base_credential_revision")
+    if base_revision != current_revision:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "AI Provider credentials changed after this sign-in started",
+        )
+    metadata = provider.auth_metadata or {}
+    if metadata.get("source") == _OAUTH_PENDING_SOURCE:
+        expected_hash = str(metadata.get("state_sha256") or "")
+        actual_hash = hashlib.sha256(encoded_state.encode()).hexdigest()
+        if not expected_hash or not secrets.compare_digest(expected_hash, actual_hash):
+            raise HTTPException(status.HTTP_409_CONFLICT, "AI Provider OAuth setup is not pending")
+    return state_payload
+
+
+@router.post(
+    "/{provider_id}/auth/oauth/device/poll",
+    response_model=AiProviderOAuthDevicePollResponse,
+    response_model_exclude_none=True,
+)
+async def poll_ai_provider_oauth_device(
+    provider_id: str,
+    body: AiProviderOAuthDevicePollRequest,
+    auth: AuthContext = Depends(require_user_auth_unbound),
+) -> AiProviderOAuthDevicePollResponse:
+    async with async_session_factory() as db:
+        provider = await _get_provider_or_404(db, auth, provider_id)
+        oauth_state = await _validate_device_oauth_state(db, auth, provider, body.state)
+        await db.rollback()
+
+    interval_seconds = oauth_state.get("poll_interval_seconds")
+    retry_after_seconds = (
+        min(max(interval_seconds, 1), 30) if isinstance(interval_seconds, int) else 5
+    )
+    oauth_provider = _normalize_profile(str(oauth_state.get("oauth_provider") or ""))
+    profile = _normalize_profile(str(oauth_state.get("profile") or "default"))
+    config = _oauth_config_for(oauth_provider)
+    client_id = _required_oauth_config(config, "client_id", oauth_provider)
+    if client_id != CODEX_OAUTH_CLIENT_ID:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "ChatGPT device sign-in requires the official Codex OAuth client",
+        )
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            poll_response = await client.post(
+                CODEX_DEVICE_TOKEN_URL,
+                headers=_codex_device_headers("application/json"),
+                json={
+                    "device_auth_id": str(oauth_state.get("device_auth_id") or ""),
+                    "user_code": str(oauth_state.get("user_code") or ""),
+                },
+            )
+            if poll_response.status_code in {
+                status.HTTP_403_FORBIDDEN,
+                status.HTTP_404_NOT_FOUND,
+            }:
+                return AiProviderOAuthDevicePendingResponse(
+                    status="pending",
+                    retry_after_seconds=retry_after_seconds,
+                )
+            if poll_response.status_code >= 400:
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY,
+                    "ChatGPT device authorization failed",
+                )
+            poll_data = _token_response_json(poll_response)
+            authorization_code = _required_token_field(poll_data, "authorization_code")
+            code_verifier = _required_token_field(poll_data, "code_verifier")
+            token_response = await client.post(
+                CODEX_OAUTH_TOKEN_URL,
+                headers=_codex_device_headers("application/x-www-form-urlencoded"),
+                data={
+                    "grant_type": "authorization_code",
+                    "code": authorization_code,
+                    "redirect_uri": CODEX_DEVICE_CALLBACK_URL,
+                    "client_id": client_id,
+                    "code_verifier": code_verifier,
+                },
+            )
+            if token_response.status_code >= 400:
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY,
+                    "ChatGPT device token exchange failed",
+                )
+            payload_text, provider_auth_type, metadata = await _oauth_payload_from_token_response(
+                client,
+                oauth_provider,
+                config,
+                token_response,
+                profile,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "ChatGPT device sign-in is temporarily unavailable",
+        ) from exc
+
+    async with async_session_factory() as db:
+        try:
+            provider = await _get_provider_or_404_for_update(db, auth, provider_id)
+            await _validate_device_oauth_state(db, auth, provider, body.state)
+            previous_signature = _runtime_manifest_provider_signature(provider)
+            await _store_auth_payload(
+                db,
+                auth,
+                provider.provider_id,
+                profile,
+                provider_auth_type,
+                payload_text,
+                metadata,
+            )
+            provider.auth_type = provider_auth_type
+            provider.auth_ref = None
+            provider.auth_metadata = metadata
+            if previous_signature != _runtime_manifest_provider_signature(provider):
+                await queue_provider_runtime_manifest_changed(
+                    db,
+                    auth.user_id,
+                    provider.provider_id,
+                )
+            await db.commit()
+            await db.refresh(provider)
+            provider_response = await _to_response(db, auth, provider)
+        except Exception:
+            await db.rollback()
+            await _revoke_oauth_material_best_effort(
+                _revocable_oauth_token_from_envelope(payload_text),
+                provider_id,
+            )
+            raise
+    return AiProviderOAuthDeviceReadyResponse(status="ready", provider=provider_response)
 
 
 @router.post(
@@ -608,6 +784,8 @@ async def delete_ai_provider(
         .all()
     )
     for payload in payloads:
+        if payload.kind in {"agent_profile", "oauth_profile"}:
+            await _revoke_oauth_payload_best_effort(payload)
         payload.archived_at = archived_at
         payload.consumer_environment_id = None
         payload.consumer_runtime = None
@@ -616,6 +794,91 @@ async def delete_ai_provider(
     return AiProviderDeleteResponse(
         status="deleted",
         provider_id=runtime_managed_provider_id(provider.provider_id),
+    )
+
+
+def _revocable_oauth_token_from_envelope(payload_text: str) -> tuple[str, str] | None:
+    try:
+        envelope = json.loads(payload_text)
+        files = envelope.get("files") if isinstance(envelope, dict) else None
+        if not isinstance(files, list):
+            return None
+        auth_file = next(
+            (
+                item
+                for item in files
+                if isinstance(item, dict)
+                and item.get("logicalName") == "auth.json"
+                and isinstance(item.get("content"), str)
+            ),
+            None,
+        )
+        if auth_file is None:
+            return None
+        auth_json = json.loads(auth_file["content"])
+        if not isinstance(auth_json, dict) or auth_json.get("auth_mode") != "chatgpt":
+            return None
+        tokens = auth_json.get("tokens")
+        if not isinstance(tokens, dict):
+            return None
+        refresh_token = tokens.get("refresh_token")
+        if isinstance(refresh_token, str) and refresh_token:
+            return refresh_token, "refresh_token"
+        access_token = tokens.get("access_token")
+        if isinstance(access_token, str) and access_token:
+            return access_token, "access_token"
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
+def _revocable_oauth_token(payload: AiProviderAuthPayload) -> tuple[str, str] | None:
+    try:
+        return _revocable_oauth_token_from_envelope(
+            decrypt(payload.encrypted_payload, payload.nonce)
+        )
+    except (InvalidTag, RuntimeError, TypeError, ValueError):
+        return None
+
+
+async def _revoke_oauth_material_best_effort(
+    revocable: tuple[str, str] | None,
+    provider_id: str,
+) -> None:
+    if revocable is None:
+        return
+    token, token_type = revocable
+    config = _oauth_config_for(CODEX_OAUTH_PROVIDER)
+    token_url = _required_oauth_config(config, "token_url", CODEX_OAUTH_PROVIDER)
+    parsed = urlparse(token_url)
+    revoke_url = parsed._replace(path="/oauth/revoke", query="", fragment="").geturl()
+    request: dict[str, str] = {"token": token, "token_type_hint": token_type}
+    if token_type == "refresh_token":
+        request["client_id"] = _required_oauth_config(
+            config,
+            "client_id",
+            CODEX_OAUTH_PROVIDER,
+        )
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(revoke_url, json=request)
+        if response.status_code >= 400:
+            logger.warning(
+                "oauth_revoke_failed provider_id=%s status=%s",
+                provider_id,
+                response.status_code,
+            )
+    except httpx.HTTPError:
+        logger.warning(
+            "oauth_revoke_failed provider_id=%s network_error=true",
+            provider_id,
+        )
+
+
+async def _revoke_oauth_payload_best_effort(payload: AiProviderAuthPayload) -> None:
+    await _revoke_oauth_material_best_effort(
+        _revocable_oauth_token(payload),
+        payload.provider_id,
     )
 
 
@@ -722,6 +985,126 @@ async def import_ai_provider_auth(
     return await _to_response(db, auth, provider)
 
 
+def _codex_device_headers(content_type: str) -> dict[str, str]:
+    return {
+        "Content-Type": content_type,
+        "User-Agent": "clawdi",
+        "originator": "clawdi",
+    }
+
+
+def _validate_codex_oauth_provider_shape(provider: AiProvider | AiProviderUpsert) -> None:
+    if (
+        provider.type != "openai"
+        or effective_provider_api_mode(provider.type, provider.api_mode) != "openai_responses"
+        or provider.base_url.rstrip("/") != CODEX_OPENAI_BASE_URL
+    ):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "ChatGPT sign-in requires the canonical OpenAI Responses provider",
+        )
+
+
+async def _build_codex_device_authorization(
+    *,
+    db: AsyncSession,
+    auth: AuthContext,
+    provider: AiProvider,
+    oauth_provider: str,
+) -> AiProviderOAuthDeviceStartResponse:
+    _validate_supported_oauth_provider(oauth_provider)
+    _validate_codex_oauth_provider_shape(provider)
+    config = _oauth_config_for(oauth_provider)
+    client_id = _required_oauth_config(config, "client_id", oauth_provider)
+    if client_id != CODEX_OAUTH_CLIENT_ID:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "ChatGPT device sign-in requires the official Codex OAuth client",
+        )
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                CODEX_DEVICE_USER_CODE_URL,
+                headers=_codex_device_headers("application/json"),
+                json={"client_id": client_id},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "ChatGPT device sign-in is temporarily unavailable",
+        ) from exc
+    if response.status_code == status.HTTP_404_NOT_FOUND:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "ChatGPT device sign-in is not enabled for this account or workspace",
+        )
+    if response.status_code >= 400:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "ChatGPT device sign-in could not be started",
+        )
+    data = _token_response_json(response)
+    device_auth_id = _required_token_field(data, "device_auth_id")
+    user_code_value = data.get("user_code") or data.get("usercode")
+    if not isinstance(user_code_value, str) or not user_code_value:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "ChatGPT device sign-in response was incomplete",
+        )
+    interval_value = data.get("interval")
+    interval_seconds = interval_value if isinstance(interval_value, int) else 5
+    interval_seconds = min(max(interval_seconds, 1), 30)
+    profile = "default"
+    payload = await _find_auth_payload(db, auth, provider.provider_id, profile)
+    base_revision = (
+        payload.credential_revision if payload is not None and payload.archived_at is None else None
+    )
+    expires_at = datetime.now(UTC) + timedelta(seconds=OAUTH_DEVICE_STATE_TTL_SECONDS)
+    state_value = _encode_oauth_state(
+        {
+            "flow": "device_code",
+            "provider_id": provider.provider_id,
+            "owner_user_id": str(auth.user_id),
+            "oauth_provider": oauth_provider,
+            "profile": profile,
+            "device_auth_id": device_auth_id,
+            "user_code": user_code_value,
+            "poll_interval_seconds": interval_seconds,
+            "base_credential_revision": base_revision,
+            "expires_at": expires_at.isoformat(),
+        }
+    )
+    return AiProviderOAuthDeviceStartResponse(
+        provider_id=runtime_managed_provider_id(provider.provider_id),
+        oauth_provider=oauth_provider,
+        profile=profile,
+        verification_url=CODEX_DEVICE_VERIFICATION_URL,
+        user_code=user_code_value,
+        state=state_value,
+        expires_at=expires_at,
+        poll_interval_seconds=interval_seconds,
+    )
+
+
+@router.post(
+    "/{provider_id}/auth/oauth/device/start",
+    response_model=AiProviderOAuthDeviceStartResponse,
+)
+async def start_ai_provider_oauth_device(
+    provider_id: str,
+    body: AiProviderOAuthDeviceStartRequest,
+    auth: AuthContext = Depends(require_user_auth_unbound),
+    db: AsyncSession = Depends(get_session),
+) -> AiProviderOAuthDeviceStartResponse:
+    provider = await _get_provider_or_404(db, auth, provider_id)
+    return await _build_codex_device_authorization(
+        db=db,
+        auth=auth,
+        provider=provider,
+        oauth_provider=_normalize_profile(body.provider),
+    )
+
+
 @router.post(
     "/{provider_id}/auth/oauth/start",
     response_model=AiProviderOAuthStartResponse,
@@ -733,19 +1116,20 @@ async def start_ai_provider_oauth(
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderOAuthStartResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
+    _validate_codex_oauth_provider_shape(provider)
     oauth_provider = _normalize_profile(body.provider)
     _validate_supported_oauth_provider(oauth_provider)
     profile = "default"
     config = _oauth_config_for(oauth_provider)
     authorization_url = _required_oauth_config(config, "authorization_url", oauth_provider)
     client_id = _required_oauth_config(config, "client_id", oauth_provider)
-    redirect_uri = body.redirect_uri or _required_oauth_config(
-        config,
-        "redirect_uri",
-        oauth_provider,
+    redirect_uri = _oauth_authorization_code_redirect_uri(
+        config=config,
+        client_id=client_id,
+        requested=body.redirect_uri,
+        oauth_provider=oauth_provider,
     )
     _validate_oauth_url(authorization_url, "authorization_url")
-    _validate_redirect_uri(redirect_uri)
 
     code_verifier = secrets.token_urlsafe(48)
     code_challenge = _code_challenge(code_verifier)
@@ -811,6 +1195,7 @@ async def complete_ai_provider_oauth(
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
+    _validate_codex_oauth_provider_shape(provider)
     state = _decode_oauth_state(body.state)
     if state.get("provider_id") != provider.provider_id or state.get("owner_user_id") != str(
         auth.user_id
@@ -857,6 +1242,7 @@ async def complete_ai_provider_oauth(
     # revalidate before writing so a concurrent delete or reconnect wins
     # cleanly instead of reviving archived credential state.
     provider = await _get_provider_or_404_for_update(db, auth, provider_id)
+    _validate_codex_oauth_provider_shape(provider)
     if state.get("provider_id") != provider.provider_id or state.get("owner_user_id") != str(
         auth.user_id
     ):
@@ -1108,9 +1494,10 @@ async def _accept_ai_provider(
             provider=provider_response,
         )
 
-    authorization = _build_oauth_accept_authorization(
-        provider_id=provider.provider_id,
-        owner_user_id=auth.user_id,
+    authorization = await _build_oauth_accept_authorization(
+        db=db,
+        auth=auth,
+        provider=provider,
         body=body.credential,
     )
     provider.auth_metadata = {
@@ -1118,7 +1505,7 @@ async def _accept_ai_provider(
         "profile": authorization.profile,
         "source": _OAUTH_PENDING_SOURCE,
         "state_sha256": hashlib.sha256(authorization.state.encode()).hexdigest(),
-        "redirect_uri": authorization.redirect_uri,
+        "redirect_uri": getattr(authorization, "redirect_uri", None),
         "expires_at": authorization.expires_at.isoformat(),
     }
     if previous_signature != _runtime_manifest_provider_signature(provider):
@@ -1153,6 +1540,7 @@ def _validate_ai_provider_accept_contract(
 
     oauth_provider = _normalize_profile(credential.provider)
     _validate_supported_oauth_provider(oauth_provider)
+    _validate_codex_oauth_provider_shape(provider)
     if (
         provider.auth.type != "agent_profile"
         or provider.auth.tool != oauth_provider
@@ -1178,14 +1566,27 @@ def _accept_can_resume(
     )
 
 
-def _build_oauth_accept_authorization(
+async def _build_oauth_accept_authorization(
     *,
-    provider_id: str,
-    owner_user_id: UUID,
+    db: AsyncSession,
+    auth: AuthContext,
+    provider: AiProvider,
     body: AiProviderOAuthAcceptCredential,
-) -> AiProviderOAuthStartResponse:
+) -> AiProviderOAuthAuthorization:
     oauth_provider = _normalize_profile(body.provider)
     _validate_supported_oauth_provider(oauth_provider)
+    if body.flow == "device_code":
+        if body.redirect_uri is not None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "device-code sign-in does not accept redirect_uri",
+            )
+        return await _build_codex_device_authorization(
+            db=db,
+            auth=auth,
+            provider=provider,
+            oauth_provider=oauth_provider,
+        )
     profile = "default"
     config = _oauth_config_for(oauth_provider)
     authorization_url = _required_oauth_config(
@@ -1207,8 +1608,8 @@ def _build_oauth_accept_authorization(
     expires_at = datetime.now(UTC) + timedelta(seconds=OAUTH_STATE_TTL_SECONDS)
     state = _encode_oauth_state(
         {
-            "provider_id": provider_id,
-            "owner_user_id": str(owner_user_id),
+            "provider_id": provider.provider_id,
+            "owner_user_id": str(auth.user_id),
             "oauth_provider": oauth_provider,
             "profile": profile,
             "redirect_uri": redirect_uri,
@@ -1243,7 +1644,7 @@ def _build_oauth_accept_authorization(
 
     separator = "&" if "?" in authorization_url else "?"
     return AiProviderOAuthStartResponse(
-        provider_id=runtime_managed_provider_id(provider_id),
+        provider_id=runtime_managed_provider_id(provider.provider_id),
         oauth_provider=oauth_provider,
         profile=profile,
         auth_url=f"{authorization_url}{separator}{urlencode(params)}",
@@ -1670,7 +2071,7 @@ def _required_oauth_config(config: dict, key: str, oauth_provider: str) -> str:
     return value.strip()
 
 
-def _encode_oauth_state(payload: dict[str, str]) -> str:
+def _encode_oauth_state(payload: dict[str, object]) -> str:
     ciphertext, nonce = encrypt(json.dumps(payload, separators=(",", ":"), sort_keys=True))
     return f"v1.{_base64url(nonce)}.{_base64url(ciphertext)}"
 
@@ -1719,6 +2120,42 @@ def _validate_oauth_url(input: str, label: str) -> None:
     parsed = urlparse(input)
     if parsed.scheme != "https" or not parsed.netloc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"{label} must be an https URL")
+
+
+def _oauth_authorization_code_redirect_uri(
+    *,
+    config: dict,
+    client_id: str,
+    requested: str | None,
+    oauth_provider: str,
+) -> str:
+    if client_id == CODEX_OAUTH_CLIENT_ID:
+        if requested is None:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                f"AI Provider OAuth config for {oauth_provider} is missing redirect_uri",
+            )
+        parsed = urlparse(requested)
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "the official Codex OAuth client only supports a loopback http redirect_uri",
+            )
+        return requested
+
+    registered = _required_oauth_config(config, "redirect_uri", oauth_provider)
+    _validate_redirect_uri(registered)
+    if requested is not None and not secrets.compare_digest(requested, registered):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "redirect_uri must match the server-registered OAuth callback",
+        )
+    return registered
 
 
 def _validate_redirect_uri(input: str) -> None:
