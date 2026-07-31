@@ -5,22 +5,24 @@ export type BrandIconComponent = ComponentType<
 	Omit<SVGProps<SVGSVGElement>, "size"> & { size?: number | string }
 >;
 
-const BRAND_ICON_SIZE = "84%";
-const BRAND_ICON_STYLE = { width: BRAND_ICON_SIZE, height: BRAND_ICON_SIZE };
+const DEFAULT_BRAND_ICON_SCALE = 0.84;
 
 export function BrandIconTile({
 	icon: Icon,
 	label,
 	boxClassName,
 	iconClassName,
+	iconScale = DEFAULT_BRAND_ICON_SCALE,
 	className,
 }: {
 	icon: BrandIconComponent;
 	label: string;
 	boxClassName: string;
 	iconClassName?: string;
+	iconScale?: number;
 	className?: string;
 }) {
+	const iconSize = `${iconScale * 100}%`;
 	return (
 		<span
 			role="img"
@@ -32,8 +34,8 @@ export function BrandIconTile({
 			)}
 		>
 			<Icon
-				size={BRAND_ICON_SIZE}
-				style={BRAND_ICON_STYLE}
+				size={iconSize}
+				style={{ width: iconSize, height: iconSize }}
 				aria-hidden
 				className={cn("shrink-0", iconClassName)}
 				data-icon-source="lobehub"

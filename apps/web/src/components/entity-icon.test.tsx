@@ -14,8 +14,14 @@ describe("EntityIcon LobeHub brands", () => {
 			for (const size of SIZES) {
 				const markup = renderToStaticMarkup(<EntityIcon {...kindAndId} size={size} />);
 				expect(markup).toContain('data-icon-source="lobehub"');
-				expect(markup).toContain('width="84%"');
-				expect(markup).toContain('height="84%"');
+				const expectedIconSize =
+					kindAndId.kind === "provider"
+						? "84%"
+						: kindAndId.id === "openclaw" || kindAndId.id === "hermes"
+							? "75%"
+							: "70%";
+				expect(markup).toContain(`width="${expectedIconSize}"`);
+				expect(markup).toContain(`height="${expectedIconSize}"`);
 			}
 		}
 	});

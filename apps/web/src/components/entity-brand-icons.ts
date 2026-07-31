@@ -1,6 +1,6 @@
 import Anthropic from "@lobehub/icons/es/Anthropic/components/Mono.js";
 import ClaudeCode from "@lobehub/icons/es/ClaudeCode/components/Color.js";
-import Codex from "@lobehub/icons/es/Codex/components/Color.js";
+import Codex from "@lobehub/icons/es/Codex/components/Inner.js";
 import DeepSeek from "@lobehub/icons/es/DeepSeek/components/Color.js";
 import Gemini from "@lobehub/icons/es/Gemini/components/Color.js";
 import Grok from "@lobehub/icons/es/Grok/components/Mono.js";
@@ -23,21 +23,27 @@ import type { FrameworkBrandIconId, ProviderBrandIconId } from "@/components/ent
 export type BrandIconMetadata = {
 	icon: BrandIconComponent;
 	iconClassName?: string;
+	iconScale?: number;
 	label: string;
 	tileClassName?: string;
 };
 
 const FRAMEWORK_BRAND_ICON_DEFINITIONS = {
-	openclaw: { icon: OpenClaw, label: "OpenClaw" },
+	openclaw: { icon: OpenClaw, iconScale: 0.75, label: "OpenClaw" },
 	hermes: {
 		icon: HermesAgent,
 		// LobeHub's Hermes avatar is intentionally a black mark on white.
 		iconClassName: "text-black",
+		iconScale: 0.75,
 		label: "Hermes Agent",
 		tileClassName: "bg-white",
 	},
-	"claude-code": { icon: ClaudeCode, label: "Claude Code" },
-	codex: { icon: Codex, label: "Codex" },
+	"claude-code": {
+		icon: ClaudeCode,
+		iconScale: 0.7,
+		label: "Claude Code",
+	},
+	codex: { icon: Codex, iconScale: 0.7, label: "Codex", tileClassName: "bg-white" },
 } satisfies Readonly<Record<FrameworkBrandIconId, BrandIconMetadata>>;
 
 const FRAMEWORK_BRAND_ICONS: Readonly<Record<string, BrandIconMetadata>> = {

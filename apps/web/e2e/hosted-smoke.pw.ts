@@ -67,14 +67,13 @@ async function expectVisibleLobeHubIconsContained(page: Page, minimumCount: numb
 		}),
 	);
 	for (const measurement of measurements) {
-		expect(measurement.width).toBe("84%");
-		expect(measurement.height).toBe("84%");
+		expect(["70%", "75%", "84%"]).toContain(measurement.width);
+		expect(measurement.height).toBe(measurement.width);
 		expect(measurement.contained).toBe(true);
 		expect(measurement.noOverflow).toBe(true);
-		expect(measurement.iconWidth).toBeGreaterThan(measurement.tileWidth * 0.75);
-		expect(measurement.iconHeight).toBeGreaterThan(measurement.tileHeight * 0.75);
-		expect(measurement.iconWidth).toBeLessThan(measurement.tileWidth * 0.81);
-		expect(measurement.iconHeight).toBeLessThan(measurement.tileHeight * 0.81);
+		const expectedRatio = Number.parseInt(measurement.width ?? "", 10) / 100;
+		expect(measurement.iconWidth).toBeCloseTo((measurement.tileWidth - 2) * expectedRatio, 1);
+		expect(measurement.iconHeight).toBeCloseTo((measurement.tileHeight - 2) * expectedRatio, 1);
 	}
 }
 

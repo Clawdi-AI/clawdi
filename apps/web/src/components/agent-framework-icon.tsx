@@ -66,6 +66,7 @@ export function AgentFrameworkIcon({
 			<BrandIconTile
 				icon={brand.icon}
 				iconClassName={brand.iconClassName}
+				iconScale={brand.iconScale}
 				label={alt || brand.label}
 				boxClassName={boxClassName}
 				className={cn(brand.tileClassName, className)}
