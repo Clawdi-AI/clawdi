@@ -938,3 +938,63 @@ async def test_connect_route_rejects_unknown_auth_type_without_oauth_link(
 
     assert exc_info.value.status_code == 502
     assert exc_info.value.detail == "Connector auth metadata unavailable"
+
+
+def test_composio_request_boundary_validates_complete_public_request_types():
+    connected_account_request = composio._connected_account_create_request(
+        auth_config_id="ac_posthog",
+        user_id="user_123",
+        auth_scheme="API_KEY",
+        credentials={"api_key": "test-secret"},
+    )
+    auth_config_request = composio._auth_config_create_request(
+        app_name="posthog", auth_scheme="API_KEY", managed=False
+    )
+
+    assert connected_account_request == {
+        "auth_config": {"id": "ac_posthog"},
+        "connection": {
+            "user_id": "user_123",
+            "state": {
+                "auth_scheme": "API_KEY",
+                "val": {"status": "ACTIVE", "api_key": "test-secret"},
+            },
+        },
+    }
+    assert auth_config_request == {
+        "toolkit": {"slug": "posthog"},
+        "auth_config": {
+            "type": "use_custom_auth",
+            "auth_scheme": "API_KEY",
+            "credentials": {},
+            "name": "Clawdi posthog api_key",
+        },
+    }
+
+
+def test_composio_request_boundary_rejects_unknown_auth_scheme():
+    with pytest.raises(ValidationError):
+        composio._connected_account_create_request(
+            auth_config_id="ac_example",
+            user_id="user_123",
+            auth_scheme="UNKNOWN",
+            credentials={"token": "test-secret"},
+        )
+
+    with pytest.raises(ValidationError):
+        composio._auth_config_create_request(
+            app_name="example", auth_scheme="UNKNOWN", managed=False
+        )
+
+
+async def test_close_composio_client_uses_public_sdk_lifecycles():
+    from composio import Composio
+    from composio_client import AsyncComposio
+
+    composio._client = AsyncComposio(api_key="test-key")
+    composio._sdk_client = Composio(api_key="test-key")
+
+    await composio.close_composio_client()
+
+    assert composio._client is None
+    assert composio._sdk_client is None

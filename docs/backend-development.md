@@ -84,7 +84,7 @@ Warnings and information diagnostics are both zero in every area. This table
 records inventory, not accepted debt: no baseline or suppression file is
 used, and only the explicit zero-diagnostic owned paths gate existing code.
 
-Done: the `owned` command exits 0 with `filesAnalyzed` equal to 2 and all
+Done: the `owned` command exits 0 with `filesAnalyzed` equal to 3 and all
 diagnostic counts equal to 0; the `inventory` command reports all four areas.
 
 Backend tests require a real PostgreSQL database with `pgvector` and `pg_trgm`

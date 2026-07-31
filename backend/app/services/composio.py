@@ -38,11 +38,12 @@ from app.core.config import settings
 if TYPE_CHECKING:
     from composio import Composio
     from composio_client import AsyncComposio
+    from composio_client.types import AuthConfigCreateParams, ConnectedAccountCreateParams
 
 logger = logging.getLogger(__name__)
 
-_client: Any = None
-_sdk_client: Any = None
+_client: AsyncComposio | None = None
+_sdk_client: Composio | None = None
 _tool_router_session_cache: dict[str, ComposioMcpSession] = {}
 
 _REDIRECT_AUTH_TYPES = {"oauth", "oauth1", "oauth2", "dcr_oauth", "composio_link"}
@@ -115,15 +116,10 @@ async def close_composio_client() -> None:
     global _client, _sdk_client
     _tool_router_session_cache.clear()
     if _client is not None:
-        close = getattr(_client, "close", None)
-        if callable(close):
-            await close()
+        await _client.close()
         _client = None
     if _sdk_client is not None:
-        sdk_http_client = getattr(_sdk_client, "client", None)
-        close = getattr(sdk_http_client, "close", None)
-        if callable(close):
-            await asyncio.to_thread(close)
+        await asyncio.to_thread(_sdk_client.client.close)
         _sdk_client = None
 
 
@@ -398,19 +394,13 @@ async def _create_non_oauth_connection(
         auth_type=auth_type,
         managed=False,
     )
-    result = await client.connected_accounts.create(
-        auth_config={"id": auth_config["id"]},
-        connection={
-            "user_id": user_id,
-            "state": {
-                "auth_scheme": auth_scheme,
-                "val": {
-                    "status": "ACTIVE",
-                    **credentials,
-                },
-            },
-        },
+    request = _connected_account_create_request(
+        auth_config_id=auth_config["id"],
+        user_id=user_id,
+        auth_scheme=auth_scheme,
+        credentials=credentials,
     )
+    result = await client.connected_accounts.create(**request)
     account_id = str(_value(result, "id", default=""))
     status = _normalize_status(_value(result, "status"))
     try:
@@ -499,24 +489,64 @@ async def _get_or_create_auth_config(
     if existing is not None:
         return existing
 
-    if managed:
-        auth_config: dict[str, Any] = {
+    request = _auth_config_create_request(
+        app_name=app_name,
+        auth_scheme=auth_scheme,
+        managed=managed,
+    )
+    created = await client.auth_configs.create(**request)
+    created_config = _value(created, "auth_config", default=created)
+    return _serialize_auth_config(created_config)
+
+
+def _connected_account_create_request(
+    *,
+    auth_config_id: str,
+    user_id: str,
+    auth_scheme: str,
+    credentials: dict[str, str],
+) -> ConnectedAccountCreateParams:
+    """Validate a complete request against the SDK's public generated type."""
+    from composio_client.types import ConnectedAccountCreateParams
+    from pydantic import TypeAdapter
+
+    return TypeAdapter(ConnectedAccountCreateParams).validate_python(
+        {
+            "auth_config": {"id": auth_config_id},
+            "connection": {
+                "user_id": user_id,
+                "state": {
+                    "auth_scheme": auth_scheme,
+                    "val": {"status": "ACTIVE", **credentials},
+                },
+            },
+        }
+    )
+
+
+def _auth_config_create_request(
+    *, app_name: str, auth_scheme: str, managed: bool
+) -> AuthConfigCreateParams:
+    """Validate a complete request against the SDK's public generated type."""
+    from composio_client.types import AuthConfigCreateParams
+    from pydantic import TypeAdapter
+
+    auth_config = (
+        {
             "type": "use_composio_managed_auth",
             "name": _auth_config_name(app_name, "managed"),
         }
-    else:
-        auth_config = {
+        if managed
+        else {
             "type": "use_custom_auth",
             "auth_scheme": auth_scheme,
             "credentials": {},
             "name": _auth_config_name(app_name, auth_scheme.lower()),
         }
-    created = await client.auth_configs.create(
-        toolkit={"slug": app_name},
-        auth_config=auth_config,
     )
-    created_config = _value(created, "auth_config", default=created)
-    return _serialize_auth_config(created_config)
+    return TypeAdapter(AuthConfigCreateParams).validate_python(
+        {"toolkit": {"slug": app_name}, "auth_config": auth_config}
+    )
 
 
 async def _get_redirect_auth_config(

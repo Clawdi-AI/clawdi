@@ -23,10 +23,10 @@ dependencies = [
     "sentry-sdk[fastapi]>=2.23",
     "websockets>=16.0",
     "pyyaml>=6.0",
-    # Keep the published pair exact: PyPI composio 0.18.0 metadata pins
-    # composio-client 1.42.0. https://pypi.org/pypi/composio/0.18.0/json
-    "composio==0.18.0",
-    "composio-client==1.42.0",
+    # Keep the published pair exact: PyPI composio 0.18.1 metadata pins
+    # composio-client 1.43.0. https://pypi.org/pypi/composio/0.18.1/json
+    "composio==0.18.1",
+    "composio-client==1.43.0",
     # Official Streamable HTTP client lifecycle for Composio Tool Router.
     "mcp==2.0.0",
     "prometheus-client>=0.25.0",
@@ -64,6 +64,7 @@ pythonVersion = "3.12"
 include = [
     "app/core/query_utils.py",
     "app/core/skill_key.py",
+    "app/services/composio.py",
 ]
 
 [tool.deptry]
