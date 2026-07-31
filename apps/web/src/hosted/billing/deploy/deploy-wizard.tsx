@@ -54,7 +54,6 @@ import {
 	type StripeCheckoutSummary,
 } from "@/hosted/billing/components/stripe-checkout-dialog";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
-import { WalletDebitEquation } from "@/hosted/billing/components/wallet-debit-equation";
 import type {
 	BillingOffer,
 	ComputePlanSlug,
@@ -75,6 +74,12 @@ import {
 	usesActiveIncludedBasicSlot,
 } from "@/hosted/billing/deploy/deploy-model";
 import {
+	type ComputePricePresentation,
+	cardDeployAmountPresentation,
+	computePricePresentation,
+	walletDeployAmountPresentation,
+} from "@/hosted/billing/deploy/deploy-price-presentation";
+import {
 	buildHostedDeployRequest,
 	DEPLOY_ASSISTANT_NAME_MAX_LENGTH,
 	type DeployAiFields,
@@ -82,8 +87,10 @@ import {
 import {
 	browserLanguage,
 	browserTimezone,
+	fallbackTimezones,
 	LANGUAGE_OPTIONS,
 	LANGUAGE_SELECT_ITEMS,
+	mergeTimezoneOptions,
 	supportedTimezones,
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
@@ -94,12 +101,7 @@ import {
 	isIdempotencyKeyReusedError,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
-import {
-	billingTermLabel,
-	billingTermSuffix,
-	formatCents,
-	formatUsdExact,
-} from "@/hosted/billing/format";
+import { billingTermLabel, formatCents, formatUsdExact } from "@/hosted/billing/format";
 import {
 	useCheckoutReturnRefresh,
 	useHostedDeployments,
@@ -252,35 +254,29 @@ function computeCheckoutSummary({
 	};
 }
 
-function recurringOfferLabel(offer: BillingOffer): string {
-	const monthly = `${formatCents(offer.effective_monthly_price_cents)}/mo`;
-	return offer.billing_term_months === 1
-		? monthly
-		: `${monthly}, billed ${formatCents(offer.price_cents)}${billingTermSuffix(
-				offer.billing_term_months,
-			)}`;
-}
-
-interface ComputeStatusInput {
-	compute: Compute;
-	basicSelection: ReturnType<typeof resolveBasicDeploySelection>;
-	basicOffer: BillingOffer | null;
-	perfOffer: BillingOffer | null;
-	paymentMethod: DeployPaymentMethod;
-}
-
-function ComputeStatusLine(input: ComputeStatusInput) {
-	const status = computeStatusLine(input);
-	if (!status) return null;
+function ComputePriceBlock({
+	presentation,
+	testId,
+}: {
+	presentation: ComputePricePresentation;
+	testId: string;
+}) {
 	return (
-		<p
-			className={cn(
-				"text-xs",
-				status.tone === "destructive" ? "text-destructive" : "text-muted-foreground",
-			)}
-		>
-			{status.message}
-		</p>
+		<div data-testid={testId} className="flex min-w-0 flex-col items-end text-right tabular-nums">
+			<div className="flex flex-wrap items-baseline justify-end gap-x-1.5">
+				<span className="whitespace-nowrap text-base font-semibold text-foreground">
+					{presentation.primary}
+				</span>
+				{presentation.comparison ? (
+					<span className="whitespace-nowrap text-xs text-muted-foreground line-through">
+						{presentation.comparison}
+					</span>
+				) : null}
+			</div>
+			<span className="whitespace-nowrap text-xs font-normal text-muted-foreground">
+				{presentation.secondary}
+			</span>
+		</div>
 	);
 }
 
@@ -300,64 +296,6 @@ function DeploySectionSkeleton({ columns = 2 }: { columns?: 2 | 3 }) {
 			</div>
 		</section>
 	);
-}
-
-function computeStatusLine({
-	compute,
-	basicSelection,
-	basicOffer,
-	perfOffer,
-	paymentMethod,
-}: ComputeStatusInput): { message: string; tone: "destructive" | "muted" } | null {
-	if (compute === "basic") {
-		if (basicSelection.mode === "unavailable") {
-			if (basicSelection.reason === "inventory_unavailable") return null;
-			return {
-				tone: "destructive",
-				message:
-					basicSelection.reason === "offers_missing"
-						? "Paid Basic checkout isn’t available from the billing service. Retry plans or choose Performance."
-						: "The Basic plan isn’t available from the billing service. Retry plans before deploying.",
-			};
-		}
-		if (basicSelection.mode === "included") {
-			return {
-				tone: "muted",
-				message: "Your first Basic agent is free. No compute subscription is required.",
-			};
-		}
-		if (basicOffer) {
-			return {
-				tone: "muted",
-				message:
-					paymentMethod === "wallet"
-						? `Wallet funds this Basic agent at ${recurringOfferLabel(basicOffer)}.`
-						: `Checkout opens here for this Basic agent at ${recurringOfferLabel(basicOffer)}.`,
-			};
-		}
-		return null;
-	}
-	if (paymentMethod === "wallet") {
-		return {
-			tone: "muted",
-			message: "Wallet charges the exact amount shown now and renews on the selected billing term.",
-		};
-	}
-
-	if (perfOffer && perfOffer.billing_term_months !== 1) {
-		return {
-			tone: "muted",
-			message: `Checkout opens here. Billed ${formatCents(
-				perfOffer.price_cents,
-			)}${billingTermSuffix(
-				perfOffer.billing_term_months,
-			)}; each Performance agent uses its own subscription.`,
-		};
-	}
-	return {
-		tone: "muted",
-		message: "Checkout opens here. Each Performance agent uses its own subscription.",
-	};
 }
 
 export function DeployWizard() {
@@ -404,6 +342,7 @@ export function DeployWizard() {
 	const [compute, setCompute] = useState<Compute>("basic");
 	const [language, setLanguage] = useState("");
 	const [timezone, setTimezone] = useState("");
+	const [timezoneOptions, setTimezoneOptions] = useState(fallbackTimezones);
 	const [addProviderOpen, setAddProviderOpen] = useState(false);
 	const [checkoutSession, setCheckoutSession] = useState<NativeDeployCheckout | null>(null);
 	const [term, setTerm] = useState(1);
@@ -417,10 +356,12 @@ export function DeployWizard() {
 	const [paymentMethod, setPaymentMethod] = useState<DeployPaymentMethod>("card");
 	const walletTopUp = useWalletTopUpDialog(SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY);
 
-	// Default language + timezone to the browser's after mount (avoids an SSR
-	// mismatch). Both stay explicitly unsettable back to the runtime default.
+	// Keep the first client render on the same deterministic fallback as SSR,
+	// then adopt runtime IANA data and best-effort browser defaults after mount.
 	useEffect(() => {
-		setTimezone((tz) => tz || browserTimezone());
+		const browserTimezoneValue = browserTimezone();
+		setTimezone((current) => current || browserTimezoneValue);
+		setTimezoneOptions(supportedTimezones(browserTimezoneValue ? [browserTimezoneValue] : []));
 		setLanguage((lang) => lang || browserLanguage());
 	}, []);
 	useEffect(() => {
@@ -429,10 +370,8 @@ export function DeployWizard() {
 		return () => window.clearTimeout(timeout);
 	}, [submitting]);
 	const tzOptions = useMemo(() => {
-		const all = supportedTimezones();
-		if (timezone && !all.includes(timezone)) return [timezone, ...all];
-		return all;
-	}, [timezone]);
+		return mergeTimezoneOptions(timezoneOptions, timezone ? [timezone] : []);
+	}, [timezone, timezoneOptions]);
 
 	const basicPlan = resolveBasicPlan(plans.data);
 	const perfPlan = resolvePerformancePlan(plans.data);
@@ -463,6 +402,10 @@ export function DeployWizard() {
 	const perfBillingTermMonths = perfOfferSelection?.billingTermMonths ?? term;
 	const basicOffers = basicPlan ? explicitPlanOffers(basicPlan) : [];
 	const perfOffers = perfPlan ? planOffers(perfPlan) : [];
+	const basicPricePresentation = basicOffer
+		? computePricePresentation(basicOffer, basicOffers)
+		: null;
+	const perfPricePresentation = perfOffer ? computePricePresentation(perfOffer, perfOffers) : null;
 	const paidSelection: PaidDeploySelection | null = !deployments.isSuccess
 		? null
 		: compute === "performance" && perfPlan && perfOfferSelection
@@ -507,6 +450,12 @@ export function DeployWizard() {
 	const walletDebit = lastSuccessfulSubscriptionQuote?.walletDebit ?? null;
 	const walletShortfallUsd = walletDebitShortfallUsd(walletDebit);
 	const walletInsufficient = walletShortfallUsd !== null;
+	const walletQuoteState =
+		(!wallet.data && wallet.error) || visibleSubscriptionQuoteError
+			? "error"
+			: walletDebit
+				? "ready"
+				: "loading";
 	const basicUnavailable = basicSelection.mode === "unavailable";
 
 	const providerList = usableProviders(aiProviders.data ?? []);
@@ -549,6 +498,7 @@ export function DeployWizard() {
 		compute === "performance" ? !!perfPlan && !!perfOfferSelection : !basicUnavailable;
 	const trimmedAssistantName = assistantName.trim();
 	const nameLimitReached = assistantName.length >= DEPLOY_ASSISTANT_NAME_MAX_LENGTH;
+	const showNameCount = assistantName.length >= DEPLOY_ASSISTANT_NAME_MAX_LENGTH - 10;
 	const personaIssues = validateHostedDeployPersona({
 		assistantName: trimmedAssistantName,
 		language,
@@ -556,6 +506,13 @@ export function DeployWizard() {
 	});
 	const nameError = personaIssues.find((issue) => issue.field === "assistantName")?.message ?? null;
 	const personaError = personaIssues[0]?.message ?? null;
+	const nameDescriptionIds = nameError
+		? showNameCount
+			? "agent-name-error agent-name-count"
+			: "agent-name-error"
+		: showNameCount
+			? "agent-name-count"
+			: undefined;
 	const submitBlockingReason = (() => {
 		if (submitting) return null;
 		if (personaError) return personaError;
@@ -578,7 +535,7 @@ export function DeployWizard() {
 					: "Loading your Wallet balance.";
 			}
 			if (visibleSubscriptionQuoteError) return "Retry the Wallet quote above.";
-			if (visibleSubscriptionQuoteFetching) return "Refreshing your Wallet quote.";
+			if (visibleSubscriptionQuoteFetching && !walletDebit) return "Refreshing your Wallet quote.";
 			if (!walletDebit) return "Waiting for your Wallet quote.";
 			if (walletInsufficient) return "Top up your Wallet to continue.";
 		}
@@ -620,6 +577,21 @@ export function DeployWizard() {
 
 	function setComputeTier(next: Compute) {
 		setCompute(next);
+	}
+
+	async function retryWalletQuote() {
+		try {
+			if (!wallet.data) {
+				const walletResult = await wallet.refetch();
+				if (walletResult.error) throw walletResult.error;
+			}
+			const quoteResult = await subscriptionCreateQuote.refetch();
+			if (quoteResult.error) throw quoteResult.error;
+		} catch (error) {
+			toast.error("Couldn’t refresh Wallet quote", {
+				description: normalizeBillingError(error),
+			});
+		}
 	}
 
 	function aiDeployFields(): DeployAiFields | null {
@@ -934,15 +906,11 @@ export function DeployWizard() {
 
 	const deployLabel = paidSelection
 		? paymentMethod === "wallet"
-			? visibleSubscriptionQuoteFetching
-				? "Getting wallet quote…"
-				: walletInsufficient
-					? "Top up to deploy"
-					: walletDebit
-						? `Pay ${formatUsdExact(walletDebit.debitAmountUsd)} from Wallet & deploy`
-						: "Review wallet quote"
+			? walletInsufficient
+				? "Top up Wallet"
+				: "Pay & deploy"
 			: "Continue to checkout"
-		: "Deploy agent";
+		: "Deploy";
 	const primaryProvider = providerList.find(
 		(provider) => provider.provider_id === primaryProviderChoice,
 	);
@@ -965,12 +933,28 @@ export function DeployWizard() {
 					.filter(Boolean)
 					.join(" · ");
 	const runtimeSummary = runtimeDisplayName(runtime);
-	const deployPriceLabel =
+	const deployAmount =
 		compute === "basic" && basicSelection.mode === "included"
-			? "Free"
+			? { amount: "Free", caption: null, detail: null }
 			: paidSelection
-				? recurringOfferLabel(paidSelection.offer)
+				? paymentMethod === "wallet"
+					? walletDeployAmountPresentation({
+							billingTermMonths: paidSelection.billingTermMonths,
+							state: walletQuoteState,
+							walletDebit,
+						})
+					: cardDeployAmountPresentation(paidSelection.offer)
 				: null;
+	const walletTopUpAction =
+		paidSelection !== null && paymentMethod === "wallet" && walletInsufficient;
+	const primaryActionDisabled = walletTopUpAction
+		? submitting || postPaymentBlocked || !wallet.data
+		: !canSubmit;
+	const amountExplainsBlocking =
+		paidSelection !== null &&
+		paymentMethod === "wallet" &&
+		(walletQuoteState !== "ready" || walletInsufficient);
+	const visibleSubmitBlockingReason = amountExplainsBlocking ? null : submitBlockingReason;
 	const summaryLine = [
 		`${compute === "performance" ? "Performance" : "Basic"} compute`,
 		aiSummary,
@@ -1022,14 +1006,8 @@ export function DeployWizard() {
 					if (canSubmit) void runAction(onDeploy);
 				}}
 			>
-				<PageHeader
-					title="Deploy an Agent"
-					description="Choose how your agent runs and which AI model it will use."
-				/>
-				<SettingsSection
-					title="Agent software"
-					description="Choose the software that will power your agent."
-				>
+				<PageHeader title="Deploy an Agent" />
+				<SettingsSection title="Agent software">
 					<div className={TWO_TILE_GRID_CLASS}>
 						<EntityChoiceCard
 							selected={runtime === "hermes"}
@@ -1053,10 +1031,7 @@ export function DeployWizard() {
 					</div>
 				</SettingsSection>
 
-				<SettingsSection
-					title="AI providers"
-					description="Choose how your agent accesses AI models and select its primary model."
-				>
+				<SettingsSection title="AI providers">
 					<div className="flex flex-col gap-4">
 						<div className={TWO_TILE_GRID_CLASS}>
 							<EntityChoiceCard
@@ -1122,11 +1097,7 @@ export function DeployWizard() {
 								onClick={() => setAddProviderOpen(true)}
 							/>
 						</div>
-						{aiAccessMode === "unmanaged" ? (
-							<p className="text-sm text-muted-foreground">
-								No AI provider will be selected for you. Add one inside the agent after it is ready.
-							</p>
-						) : (
+						{aiAccessMode !== "unmanaged" ? (
 							<ModelBindingPicker
 								idPrefix="deploy"
 								className="w-full max-w-md"
@@ -1144,14 +1115,11 @@ export function DeployWizard() {
 								onPrimaryProviderChange={selectAiProviderChoice}
 								onPrimaryModelChange={setPrimaryModel}
 							/>
-						)}
+						) : null}
 					</div>
 				</SettingsSection>
 
-				<SettingsSection
-					title="Compute"
-					description="Choose a compute plan and how paid plans renew."
-				>
+				<SettingsSection title="Compute">
 					<div className="flex flex-col gap-3">
 						{!deployments.isSuccess ? (
 							deployments.error ? (
@@ -1193,6 +1161,16 @@ export function DeployWizard() {
 								</AlertDescription>
 							</Alert>
 						) : null}
+						{paidSelection && (compute === "performance" ? perfOffers : basicOffers).length > 1 ? (
+							<div className="flex max-w-xs flex-col gap-1.5">
+								<span className="text-xs text-muted-foreground">Billing term</span>
+								<TermSwitcher
+									offers={compute === "performance" ? perfOffers : basicOffers}
+									value={compute === "performance" ? perfBillingTermMonths : basicBillingTermMonths}
+									onChange={setTerm}
+								/>
+							</div>
+						) : null}
 						<div className={TWO_TILE_GRID_CLASS}>
 							<EntityChoiceCard
 								selected={compute === "basic"}
@@ -1212,31 +1190,40 @@ export function DeployWizard() {
 										? deployments.error
 											? "Basic availability couldn't be checked"
 											: "Checking free Basic slot availability"
-										: basicSelection.mode === "included"
-											? `${basicPlan?.vcpu ?? 2} vCPU / ${basicPlan?.ram_gb ?? 4} GB · First Basic agent — Free`
-											: basicOffer
-												? `${basicPlan?.vcpu ?? 2} vCPU / ${basicPlan?.ram_gb ?? 4} GB · ${recurringOfferLabel(basicOffer)}`
-												: "Basic funding unavailable"
+										: `${basicPlan?.vcpu ?? 2} vCPU / ${basicPlan?.ram_gb ?? 4} GB`
+								}
+								details={
+									deployments.isSuccess && basicSelection.mode === "included" ? (
+										<ComputePriceBlock
+											testId="basic-compute-price"
+											presentation={{
+												primary: "Free",
+												comparison: null,
+												secondary: "First Basic agent",
+											}}
+										/>
+									) : deployments.isSuccess && basicPricePresentation ? (
+										<ComputePriceBlock
+											testId="basic-compute-price"
+											presentation={basicPricePresentation}
+										/>
+									) : null
 								}
 								badge={
-									<Badge variant="secondary">
-										{!deployments.isSuccess
-											? deployments.error
-												? "Unavailable"
-												: "Checking…"
-											: basicSelection.mode === "included"
-												? "Free"
-												: basicOffer
-													? `${formatCents(basicOffer.effective_monthly_price_cents)}/mo`
-													: "Unavailable"}
-									</Badge>
+									!deployments.isSuccess ? (
+										<Badge variant="secondary">
+											{deployments.error ? "Unavailable" : "Checking…"}
+										</Badge>
+									) : basicSelection.mode === "unavailable" ? (
+										<Badge variant="secondary">Unavailable</Badge>
+									) : null
 								}
 								disabled={!deployments.isSuccess || basicUnavailable}
 							/>
 							<EntityChoiceCard
 								selected={compute === "performance"}
 								onClick={
-									deployments.isSuccess && perfPlan
+									deployments.isSuccess && perfPlan && perfOfferSelection
 										? () => setComputeTier("performance")
 										: undefined
 								}
@@ -1248,41 +1235,24 @@ export function DeployWizard() {
 								title="Performance"
 								description={
 									perfPlan
-										? `${perfPlan.vcpu} vCPU / ${perfPlan.ram_gb} GB${
-												perfOffer ? ` · ${recurringOfferLabel(perfOffer)}` : ""
-											}`
+										? `${perfPlan.vcpu} vCPU / ${perfPlan.ram_gb} GB`
 										: "Performance plan unavailable"
 								}
-								badge={
-									<Badge>
-										{perfOffer
-											? `${formatCents(perfOffer.effective_monthly_price_cents)}/mo`
-											: perfPlan
-												? `${formatCents(perfPlan.price_cents)}/mo`
-												: "Unavailable"}
-									</Badge>
+								details={
+									perfPricePresentation ? (
+										<ComputePriceBlock
+											testId="performance-compute-price"
+											presentation={perfPricePresentation}
+										/>
+									) : null
 								}
-								disabled={!deployments.isSuccess || !perfPlan}
+								badge={perfPricePresentation ? null : <Badge>Unavailable</Badge>}
+								disabled={!deployments.isSuccess || !perfPlan || !perfOfferSelection}
 							/>
 						</div>
-						{paidSelection && (compute === "performance" ? perfOffers : basicOffers).length > 1 ? (
-							<div className="flex max-w-xs flex-col gap-1.5">
-								<span className="text-xs text-muted-foreground">Billing term</span>
-								<TermSwitcher
-									offers={compute === "performance" ? perfOffers : basicOffers}
-									value={compute === "performance" ? perfBillingTermMonths : basicBillingTermMonths}
-									onChange={setTerm}
-								/>
-							</div>
-						) : null}
 						{paidSelection ? (
 							<div className="flex flex-col gap-3">
-								<div>
-									<div className="text-sm font-medium">Payment method</div>
-									<p className="text-xs text-muted-foreground">
-										Choose how this agent’s compute renews. You can review the charge before paying.
-									</p>
-								</div>
+								<div className="text-sm font-medium">Payment method</div>
 								<div className={TWO_TILE_GRID_CLASS}>
 									<EntityChoiceCard
 										selected={paymentMethod === "card"}
@@ -1293,12 +1263,7 @@ export function DeployWizard() {
 											</IconChip>
 										}
 										title="Card subscription"
-										description="Pay securely with Stripe and manage the subscription from billing settings."
-										badge={
-											<Badge variant="secondary" className="hidden @3xl/main:inline-flex">
-												Monthly or Annual
-											</Badge>
-										}
+										description="Recurring subscription via Stripe. Manage or cancel anytime."
 									/>
 									<EntityChoiceCard
 										selected={paymentMethod === "wallet"}
@@ -1311,89 +1276,31 @@ export function DeployWizard() {
 										title="Wallet balance"
 										description={
 											walletDisabledReason ??
-											"Debit the exact quoted USD amount from Wallet, then renew on the selected term."
-										}
-										badge={
-											<Badge variant="outline" className="hidden @3xl/main:inline-flex">
-												Monthly or Annual
-											</Badge>
+											"Paid upfront from your Wallet balance. Renews from Wallet."
 										}
 										disabled={walletDisabledReason !== null}
 									/>
 								</div>
-
-								{paymentMethod === "wallet" ? (
-									<div className="flex flex-col gap-3">
-										{!wallet.data && wallet.isFetching ? (
-											<p className="text-sm text-muted-foreground" role="status">
-												Loading your Wallet balance…
-											</p>
-										) : !wallet.data && wallet.error ? (
-											<ApiErrorPanel
-												normalizer={billingErrorNormalizer}
-												error={wallet.error}
-												onRetry={() => void wallet.refetch()}
-												title="Couldn't load your Wallet balance"
-											/>
-										) : visibleSubscriptionQuoteFetching && !lastSuccessfulSubscriptionQuote ? (
-											<p className="text-sm text-muted-foreground" role="status">
-												Getting the exact wallet debit…
-											</p>
-										) : visibleSubscriptionQuoteError ? (
-											<ApiErrorPanel
-												normalizer={billingErrorNormalizer}
-												error={visibleSubscriptionQuoteError}
-												onRetry={() => void subscriptionCreateQuote.refetch()}
-												title="Couldn’t get subscription quote"
-											/>
-										) : walletDebit ? (
-											<>
-												<WalletDebitEquation
-													balanceBeforeUsd={walletDebit.balanceBeforeUsd}
-													debitAmountUsd={walletDebit.debitAmountUsd}
-													balanceAfterUsd={walletDebit.balanceAfterUsd}
-												/>
-												{walletInsufficient ? (
-													<Alert variant="destructive">
-														<TriangleAlert aria-hidden />
-														<AlertTitle>Not enough Wallet balance</AlertTitle>
-														<AlertDescription className="flex flex-col items-start gap-3">
-															<span>Top up the shortfall, then review a fresh wallet quote.</span>
-															<Button
-																type="button"
-																size="sm"
-																variant="outline"
-																disabled={!wallet.data}
-																onClick={() => walletTopUp.show(walletShortfallUsd)}
-															>
-																<WalletCards data-icon="inline-start" /> Top up Wallet
-															</Button>
-														</AlertDescription>
-													</Alert>
-												) : null}
-											</>
-										) : null}
-									</div>
-								) : null}
 							</div>
 						) : null}
-						<ComputeStatusLine
-							compute={compute}
-							basicSelection={basicSelection}
-							basicOffer={basicOffer}
-							perfOffer={perfOffer}
-							paymentMethod={paymentMethod}
-						/>
-						<p className="text-xs text-muted-foreground">
-							After your agent is running, connect channels from its page.
-						</p>
+						{compute === "basic" &&
+						basicSelection.mode === "unavailable" &&
+						basicSelection.reason !== "inventory_unavailable" ? (
+							<p className="text-xs text-destructive" role="alert">
+								{basicSelection.reason === "offers_missing"
+									? "Paid Basic checkout isn’t available. Retry plans or choose Performance."
+									: "The Basic plan isn’t available. Retry plans before deploying."}
+							</p>
+						) : null}
+						{compute === "performance" && perfPlan && !perfOfferSelection ? (
+							<p className="text-xs text-destructive" role="alert">
+								Performance pricing isn’t available. Retry plans before deploying.
+							</p>
+						) : null}
 					</div>
 				</SettingsSection>
 				<div className="pb-32 @2xl/main:pb-24">
-					<SettingsSection
-						title="Personalize"
-						description="Choose how this agent appears in Clawdi, plus its language and timezone."
-					>
+					<SettingsSection title="Personalize">
 						<div className="flex max-w-2xl flex-col gap-4">
 							<div className="flex w-full max-w-md flex-col gap-1.5">
 								<Label htmlFor="agent-name">Name in Clawdi</Label>
@@ -1403,11 +1310,7 @@ export function DeployWizard() {
 									maxLength={DEPLOY_ASSISTANT_NAME_MAX_LENGTH}
 									required
 									aria-invalid={nameError ? true : undefined}
-									aria-describedby={
-										nameError
-											? "agent-name-error agent-name-count"
-											: "agent-name-help agent-name-count"
-									}
+									aria-describedby={nameDescriptionIds}
 									onChange={(event) => {
 										assistantNameEditedRef.current = true;
 										setAssistantName(event.target.value);
@@ -1418,24 +1321,22 @@ export function DeployWizard() {
 									<p id="agent-name-error" className="text-xs text-destructive" role="alert">
 										{nameError}
 									</p>
-								) : (
-									<p id="agent-name-help" className="text-xs text-muted-foreground">
-										Used to identify this agent in Clawdi.
+								) : null}
+								{showNameCount ? (
+									<p
+										id="agent-name-count"
+										className={cn(
+											"text-xs",
+											nameLimitReached
+												? "font-medium text-warning-muted-foreground"
+												: "text-muted-foreground",
+										)}
+									>
+										{`${assistantName.length} / ${DEPLOY_ASSISTANT_NAME_MAX_LENGTH} characters${
+											nameLimitReached ? " — limit reached." : ""
+										}`}
 									</p>
-								)}
-								<p
-									id="agent-name-count"
-									className={cn(
-										"text-xs",
-										nameLimitReached
-											? "font-medium text-warning-muted-foreground"
-											: "text-muted-foreground",
-									)}
-								>
-									{`${assistantName.length} / ${DEPLOY_ASSISTANT_NAME_MAX_LENGTH} characters${
-										nameLimitReached ? " — limit reached." : ""
-									}`}
-								</p>
+								) : null}
 								{nameLimitReached ? (
 									<span className="sr-only" role="status" aria-live="polite">
 										{`Name limit reached. You can enter up to ${DEPLOY_ASSISTANT_NAME_MAX_LENGTH} characters.`}
@@ -1493,29 +1394,59 @@ export function DeployWizard() {
 					className="sticky bottom-0 z-10 -mx-4 border-t bg-background/90 px-4 pt-3 pb-[calc(--spacing(3)+env(safe-area-inset-bottom))] backdrop-blur lg:-mx-6 lg:px-6"
 				>
 					<div className="flex flex-col gap-2 @2xl/main:flex-row @2xl/main:items-center @2xl/main:justify-between">
-						<div className="flex min-w-0 max-w-full items-center gap-2 text-xs sm:text-sm">
-							{deployPriceLabel ? (
-								<>
-									<span
-										data-testid="deploy-price-label"
-										className="shrink-0 whitespace-nowrap font-medium text-foreground"
-									>
-										{deployPriceLabel}
-									</span>
-									<span aria-hidden="true" className="shrink-0 text-muted-foreground">
-										·
-									</span>
-								</>
-							) : null}
-							<span className="min-w-0 truncate text-muted-foreground">{summaryLine}</span>
+						<div
+							data-testid="deploy-configuration-summary"
+							className="min-w-0 truncate text-xs text-muted-foreground sm:text-sm"
+						>
+							{summaryLine}
 						</div>
-						<div className="flex min-w-0 flex-col gap-1 @2xl/main:items-end">
-							<div className="flex flex-col gap-2 @2xl/main:flex-row @2xl/main:items-center @2xl/main:justify-end">
+						<div className="flex w-full shrink-0 flex-col gap-2 @2xl/main:w-auto @2xl/main:flex-row @2xl/main:items-center @2xl/main:justify-end">
+							{deployAmount ? (
+								<div
+									data-testid="deploy-amount"
+									className="flex min-w-0 flex-col @2xl/main:items-end @2xl/main:text-right"
+									aria-live="polite"
+								>
+									<div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 @2xl/main:justify-end">
+										<span className="whitespace-nowrap font-semibold tabular-nums text-foreground">
+											{deployAmount.amount}
+										</span>
+										{paymentMethod === "wallet" && walletQuoteState === "error" ? (
+											<Button
+												type="button"
+												variant="link"
+												size="sm"
+												className="h-auto p-0"
+												disabled={wallet.isFetching || subscriptionCreateQuote.isFetching}
+												onClick={() => void retryWalletQuote()}
+											>
+												Retry
+											</Button>
+										) : null}
+									</div>
+									{deployAmount.caption ? (
+										<span className="whitespace-nowrap text-xs text-muted-foreground">
+											{deployAmount.caption}
+										</span>
+									) : null}
+									{deployAmount.detail ? (
+										<span className="whitespace-nowrap text-xs font-medium text-destructive">
+											{deployAmount.detail}
+										</span>
+									) : null}
+								</div>
+							) : null}
+							<div className="flex min-w-0 flex-col gap-1 @2xl/main:items-end">
 								<Button
-									type="submit"
+									type={walletTopUpAction ? "button" : "submit"}
 									size="lg"
-									disabled={!canSubmit}
-									aria-describedby={submitBlockingReason ? "deploy-blocking-reason" : undefined}
+									disabled={primaryActionDisabled}
+									aria-describedby={
+										visibleSubmitBlockingReason ? "deploy-blocking-reason" : undefined
+									}
+									onClick={
+										walletTopUpAction ? () => walletTopUp.show(walletShortfallUsd) : undefined
+									}
 									className="w-full shrink-0 @2xl/main:w-auto"
 								>
 									{submitting ? (
@@ -1525,26 +1456,26 @@ export function DeployWizard() {
 									)}
 									{submitting ? submitBusyLabel : deployLabel}
 								</Button>
+								{submitTakingLong ? (
+									<p
+										className="max-w-sm text-xs text-muted-foreground @2xl/main:text-right"
+										role="status"
+									>
+										{submitTakingLongCopy}
+									</p>
+								) : visibleSubmitBlockingReason ? (
+									<p
+										id="deploy-blocking-reason"
+										className={cn(
+											"max-w-sm text-xs @2xl/main:text-right",
+											nameError ? "text-destructive" : "text-muted-foreground",
+										)}
+										role="status"
+									>
+										{visibleSubmitBlockingReason}
+									</p>
+								) : null}
 							</div>
-							{submitTakingLong ? (
-								<p
-									className="max-w-sm text-xs text-muted-foreground @2xl/main:text-right"
-									role="status"
-								>
-									{submitTakingLongCopy}
-								</p>
-							) : submitBlockingReason ? (
-								<p
-									id="deploy-blocking-reason"
-									className={cn(
-										"max-w-sm text-xs @2xl/main:text-right",
-										nameError ? "text-destructive" : "text-muted-foreground",
-									)}
-									role="status"
-								>
-									{submitBlockingReason}
-								</p>
-							) : null}
 						</div>
 					</div>
 				</div>
@@ -1560,7 +1491,7 @@ export function DeployWizard() {
 				<TopUpDialog
 					{...walletTopUp.dialogProps}
 					onComplete={() => {
-						if (!submitting) void subscriptionCreateQuote.refetch();
+						if (!submitting) void retryWalletQuote();
 					}}
 				/>
 			) : null}

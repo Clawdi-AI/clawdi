@@ -1290,6 +1290,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 					balanceBeforeUsd,
 					balanceAfterUsd,
 				});
+			if (isStubResponse(response) && response.delayMs) {
+				await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+			}
 			return isStubResponse(response)
 				? fulfillJson(r, response.body, response.status)
 				: fulfillJson(r, response);
@@ -2132,35 +2135,106 @@ test("deploy keeps AI providers expanded and provider selection exclusive", asyn
 	await expect(page.getByRole("button", { name: "Change", exact: true })).toHaveCount(0);
 });
 
-test("deploy sticky action shows free, monthly, and annual offer prices", async ({ page }) => {
+test("deploy cards and CTA-adjacent amount distinguish free, monthly, and annual prices", async ({
+	page,
+}) => {
 	await page.setViewportSize({ width: 390, height: 844 });
 	await stubHostedApi(page, { plans: [basicPlan, performancePlan], deployments: [] });
 	await page.goto("/deploy");
 	await page.waitForLoadState("networkidle");
 
 	const actionBar = page.getByTestId("deploy-action-bar");
-	const priceLabel = actionBar.getByTestId("deploy-price-label");
-	await expect(priceLabel).toHaveText("Free");
+	const amount = actionBar.getByTestId("deploy-amount");
+	await expect(amount).toHaveText("Free");
+	await expect(actionBar.getByRole("button", { name: "Deploy" })).toBeVisible();
 
 	const performanceChoice = page.getByRole("button", { name: /^Performance/ });
 	await performanceChoice.click();
-	await expect(priceLabel).toHaveText("$20.00/mo");
-	await expect(performanceChoice).toContainText("4 vCPU / 8 GB · $20.00/mo");
+	const computePrice = page.getByTestId("performance-compute-price");
+	await expect(computePrice).toContainText("$20.00/mo");
+	await expect(computePrice).toContainText("Billed monthly");
+	await expect(performanceChoice).toContainText("4 vCPU / 8 GB");
+	await expect(amount).toContainText("$20.00/mo");
+	await expect(amount).toContainText("Billed monthly");
+	await expect(actionBar.getByRole("button", { name: "Continue to checkout" })).toBeVisible();
 
 	await page.getByRole("button", { name: /Annual.*%/ }).click();
-	await expect(priceLabel).toHaveText("$16.66/mo, billed $200.00/yr");
-	await expect(performanceChoice).toContainText("4 vCPU / 8 GB · $16.66/mo, billed $200.00/yr");
+	await expect(computePrice).toContainText("$16.66/mo");
+	await expect(computePrice.locator(".line-through")).toHaveText("$20.00/mo");
+	await expect(computePrice).toContainText("Billed $200.00 yearly · save $40.00");
+	await expect(amount).toContainText("$200.00/yr");
+	await expect(amount).toContainText("$16.66/mo, billed annually");
 
-	const priceMetrics = await priceLabel.evaluate((element) => ({
+	const amountMetrics = await amount.evaluate((element) => ({
 		clientWidth: element.clientWidth,
 		scrollWidth: element.scrollWidth,
 	}));
-	expect(priceMetrics.scrollWidth).toBeLessThanOrEqual(priceMetrics.clientWidth);
+	expect(amountMetrics.scrollWidth).toBeLessThanOrEqual(amountMetrics.clientWidth);
 	const pageMetrics = await page.evaluate(() => ({
 		clientWidth: document.documentElement.clientWidth,
 		scrollWidth: document.documentElement.scrollWidth,
 	}));
 	expect(pageMetrics.scrollWidth).toBe(pageMetrics.clientWidth);
+});
+
+test("deploy CTA-adjacent Wallet amount handles loading, retry, and insufficient balance", async ({
+	page,
+}) => {
+	const delayedQuote = walletSubscriptionQuote({
+		planSlug: "compute_basic",
+		billingTermMonths: 1,
+		termPriceCents: 1_000,
+		debitAmountUsd: "10.00",
+		balanceBeforeUsd: "25.00",
+		balanceAfterUsd: "15.00",
+	});
+	await stubHostedApi(page, {
+		deployments: [includedBasicDeployment],
+		plans: [basicPlan],
+		subscriptionQuoteResponses: [{ status: 200, body: delayedQuote, delayMs: 700 }],
+	});
+	await page.goto("/deploy");
+	await page.getByRole("button", { name: /Wallet balance/ }).click();
+
+	const amount = page.getByTestId("deploy-amount");
+	await expect(amount).toContainText("Debit today: —");
+	await expect(amount).toContainText("Getting quote…");
+	await expect(page.getByRole("button", { name: "Pay & deploy" })).toBeDisabled();
+	await expect(amount).toContainText("Debit today: $10.00");
+	await expect(amount).toContainText("From Wallet · renews monthly");
+	await expect(page.getByRole("button", { name: "Pay & deploy" })).toBeEnabled();
+
+	await page.unrouteAll({ behavior: "wait" });
+	await stubHostedApi(page, {
+		deployments: [includedBasicDeployment],
+		plans: [basicPlan],
+		subscriptionQuoteResponses: [
+			{ status: 400, body: { detail: "quote unavailable" } },
+			delayedQuote,
+		],
+	});
+	await page.goto("/deploy");
+	await page.getByRole("button", { name: /Wallet balance/ }).click();
+	await expect(amount).toContainText("Quote unavailable");
+	await expect(page.getByRole("button", { name: "Pay & deploy" })).toBeDisabled();
+	await amount.getByRole("button", { name: "Retry" }).click();
+	await expect(amount).toContainText("Debit today: $10.00");
+
+	await page.unrouteAll({ behavior: "wait" });
+	await stubHostedApi(page, {
+		deployments: [includedBasicDeployment],
+		plans: [basicPlan],
+		walletState: { ...walletState, balance_usd: "5.00" },
+	});
+	await page.goto("/deploy");
+	await page.getByRole("button", { name: /Wallet balance/ }).click();
+	await expect(amount).toContainText("Debit today: $10.00");
+	await expect(amount).toContainText("Available $5.00 · short $5.00");
+	const topUp = page.getByRole("button", { name: "Top up Wallet", exact: true });
+	await expect(topUp).toHaveCount(1);
+	await expect(topUp).toBeEnabled();
+	await topUp.click();
+	await expect(page.getByRole("dialog").filter({ hasText: "Top up Wallet" })).toBeVisible();
 });
 
 test("deploy form stays readable without stretching compact controls", async ({ page }) => {
@@ -2242,12 +2316,15 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 				timezone: rect(document.querySelector("#agent-timezone")),
 				billingTerm: rect(document.querySelector('[aria-label="Billing term"]')),
 				action: rect(document.querySelector('button[type="submit"]')),
-				price: (() => {
-					const element = document.querySelector('[data-testid="deploy-price-label"]');
+				amount: (() => {
+					const element = document.querySelector('[data-testid="deploy-amount"]');
+					const primary = element?.querySelector("span.font-semibold");
 					return element
 						? {
-								clientWidth: element.clientWidth,
-								scrollWidth: element.scrollWidth,
+								rect: rect(element),
+								primaryClientWidth: primary?.clientWidth ?? 0,
+								primaryScrollWidth: primary?.scrollWidth ?? 0,
+								primaryText: primary?.textContent,
 								text: element.textContent,
 							}
 						: null;
@@ -2312,18 +2389,36 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 		expect(metrics.action?.bottom, `${viewport.name} sticky action bottom`).toBeLessThanOrEqual(
 			viewport.height,
 		);
-		expect(metrics.price?.text, `${viewport.name} sticky annual price`).toBe(
-			"$16.66/mo, billed $200.00/yr",
+		expect(metrics.amount?.primaryText, `${viewport.name} sticky annual amount`).toBe("$200.00/yr");
+		expect(metrics.amount?.text, `${viewport.name} sticky annual caption`).toContain(
+			"$16.66/mo, billed annually",
 		);
 		expect(
-			metrics.price?.scrollWidth,
-			`${viewport.name} sticky price should not truncate`,
-		).toBeLessThanOrEqual(metrics.price?.clientWidth ?? 0);
+			metrics.amount?.primaryScrollWidth,
+			`${viewport.name} sticky amount should not truncate`,
+		).toBeLessThanOrEqual(metrics.amount?.primaryClientWidth ?? 0);
+		expect(metrics.amount?.rect?.right, `${viewport.name} amount right edge`).toBeLessThanOrEqual(
+			viewport.width,
+		);
 		if (viewport.columns === 1) {
 			expect(metrics.action?.width, `${viewport.name} full-width action`).toBeCloseTo(
 				metrics.compute?.rect?.width ?? 0,
 				0,
 			);
+			expect(metrics.amount?.rect?.bottom, `${viewport.name} amount above CTA`).toBeLessThanOrEqual(
+				metrics.action?.top ?? 0,
+			);
+		} else {
+			expect(metrics.amount?.rect?.right, `${viewport.name} amount beside CTA`).toBeLessThanOrEqual(
+				metrics.action?.left ?? 0,
+			);
+		}
+		if (viewport.width === 1_280 || viewport.width === 390) {
+			await page.getByRole("button", { name: /^Performance/ }).scrollIntoViewIfNeeded();
+			await page.waitForTimeout(100);
+			await page.screenshot({
+				path: `/tmp/deploy-pricing-${viewport.width}.png`,
+			});
 		}
 	}
 });
@@ -2368,7 +2463,7 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 	});
 	await page.goto("/deploy");
 
-	await page.getByRole("button", { name: "Deploy agent" }).click();
+	await page.getByRole("button", { name: "Deploy", exact: true }).click();
 	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
 	await expect.poll(() => deploymentListRequests.length).toBeGreaterThanOrEqual(2);
 	expect(new URL(page.url()).searchParams.has("setup")).toBe(false);
@@ -2634,7 +2729,7 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 	// therefore precedes teardown rather than waiting for a completed list read.
 	expect(completedDeleteIds.has("hdep_included")).toBe(false);
 	await page.goto("/deploy");
-	await expect(page.getByRole("button", { name: "Deploy agent", exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Deploy", exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Continue to checkout" })).toHaveCount(0);
 	expect(completedDeleteIds.has("hdep_included")).toBe(false);
 
@@ -2695,7 +2790,7 @@ test("managed model picker lists the curated catalog without Custom or image mod
 	await expect(page.getByRole("option", { name: /gpt-image/i })).toHaveCount(0);
 
 	await page.getByRole("option", { name: "Sol", exact: true }).click();
-	await page.getByRole("button", { name: "Deploy agent" }).click();
+	await page.getByRole("button", { name: "Deploy", exact: true }).click();
 	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
 
 	expect(JSON.parse(createDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
@@ -2715,10 +2810,11 @@ test("Basic paid checkout stays hidden until deployment inventory succeeds", asy
 	await expect(page.getByText("Checking your free Basic slot…", { exact: true })).toBeVisible();
 	await expect(page.getByText("$10.00/mo", { exact: true })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Continue to checkout" })).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Deploy agent" })).toBeDisabled();
+	await expect(page.getByRole("button", { name: "Deploy", exact: true })).toBeDisabled();
 
-	await expect(page.getByText("First Basic agent — Free", { exact: false })).toBeVisible();
-	await expect(page.getByRole("button", { name: "Deploy agent" })).toBeEnabled();
+	await expect(page.getByTestId("basic-compute-price")).toContainText("Free");
+	await expect(page.getByTestId("basic-compute-price")).toContainText("First Basic agent");
+	await expect(page.getByRole("button", { name: "Deploy", exact: true })).toBeEnabled();
 });
 
 test("empty plans and wallet failures expose working retries", async ({ page }) => {
@@ -2745,12 +2841,11 @@ test("empty plans and wallet failures expose working retries", async ({ page }) 
 	await page.goto("/deploy");
 	await page.getByRole("button", { name: /Wallet balance/ }).click();
 
-	const walletError = page
-		.getByRole("alert")
-		.filter({ hasText: "Couldn't load your Wallet balance" });
-	await expect(walletError).toBeVisible();
-	await walletError.getByRole("button", { name: "Retry" }).click();
-	await expect(page.getByTestId("wallet-debit-equation")).toBeVisible();
+	const amount = page.getByTestId("deploy-amount");
+	await expect(amount).toContainText("Quote unavailable");
+	await amount.getByRole("button", { name: "Retry" }).click();
+	await expect(amount).toContainText("Debit today: $10.00");
+	await expect(page.getByRole("button", { name: "Pay & deploy" })).toBeEnabled();
 	await expect.poll(() => walletRequests.length).toBe(2);
 });
 
@@ -3438,8 +3533,8 @@ test("Basic create always follows the wizard-selected funding path", async ({ pa
 	await page.goto("/deploy");
 	await page.waitForLoadState("networkidle");
 
-	await expect(page.getByText("$10.00/mo", { exact: true })).toBeVisible();
-	await expect(page.getByText(/2 vCPU \/ 4 GB · \$10\.00\/mo/)).toBeVisible();
+	await expect(page.getByTestId("basic-compute-price")).toContainText("$10.00/mo");
+	await expect(page.getByRole("button", { name: /^Basic/ })).toContainText("2 vCPU / 4 GB");
 	await expectNoQuarterlyCopy(page);
 	await capturePricingScreenshot(page, "/tmp/basic-paid-funded-slot-available-final.png");
 
@@ -3508,7 +3603,7 @@ test("free-funded Basic uses annual compute_basic checkout when the included slo
 	await page.goto("/deploy");
 	await page.waitForLoadState("networkidle");
 
-	await expect(page.getByText("$10.00/mo", { exact: true })).toBeVisible();
+	await expect(page.getByTestId("basic-compute-price")).toContainText("$10.00/mo");
 	await expect(page.getByText("Monthly", { exact: true })).toBeVisible();
 	const annualTerm = page.getByRole("button", { name: /Annual.*%/ });
 	await expect(annualTerm).toBeVisible();
@@ -3516,10 +3611,11 @@ test("free-funded Basic uses annual compute_basic checkout when the included slo
 	await annualTerm.click();
 	await expect(page.getByText("Wallet balance", { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: /Wallet balance/ })).toBeVisible();
-	await expect(page.getByText(/2 vCPU \/ 4 GB · \$8\.33\/mo, billed \$100\.00\/yr/)).toBeVisible();
-	await expect(
-		page.getByText(/this Basic agent at \$8\.33\/mo, billed \$100\.00\/yr/),
-	).toBeVisible();
+	const basicPrice = page.getByTestId("basic-compute-price");
+	await expect(basicPrice).toContainText("$8.33/mo");
+	await expect(basicPrice.locator(".line-through")).toHaveText("$10.00/mo");
+	await expect(basicPrice).toContainText("Billed $100.00 yearly · save $20.00");
+	await expect(page.getByTestId("deploy-amount")).toContainText("$100.00/yr");
 	await capturePricingScreenshot(page, "/tmp/basic-free-funded-slot-occupied-final.png");
 
 	await page.getByRole("button", { name: "Continue to checkout" }).click();
@@ -3576,20 +3672,16 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 	await page.goto("/deploy");
 	await page.waitForLoadState("networkidle");
 
-	await expect(page.getByText("$10.00/mo", { exact: true })).toBeVisible();
+	await expect(page.getByTestId("basic-compute-price")).toContainText("$10.00/mo");
 	await page.getByRole("button", { name: /Annual.*%/ }).click();
-	await expect(page.getByText(/2 vCPU \/ 4 GB · \$8\.33\/mo, billed \$100\.00\/yr/)).toBeVisible();
+	await expect(page.getByTestId("basic-compute-price")).toContainText("$8.33/mo");
 	await page.getByRole("button", { name: /Wallet balance/ }).click();
 	await expect.poll(() => subscriptionQuoteRequests.length).toBe(1);
-	const equation = page.getByTestId("wallet-debit-equation");
-	await expect(equation).toContainText("Balance before");
-	await expect(equation).toContainText("$100.00");
-	await expect(equation).toContainText("Exact debit");
-	await expect(equation).toContainText("$100.00");
-	await expect(equation).toContainText("Balance after");
-	await expect(equation).toContainText("$0.00");
+	const walletAmount = page.getByTestId("deploy-amount");
+	await expect(walletAmount).toContainText("Debit today: $100.00");
+	await expect(walletAmount).toContainText("From Wallet · renews yearly");
 
-	await page.getByRole("button", { name: "Pay $100.00 from Wallet & deploy" }).click();
+	await page.getByRole("button", { name: "Pay & deploy" }).click();
 	const accepting = page.getByRole("button", { name: "Confirming payment & creating agent…" });
 	await expect(accepting).toBeDisabled();
 	await page.evaluate(() => window.dispatchEvent(new Event("focus")));
@@ -4332,7 +4424,7 @@ test("paid Basic checkout abandonment preserves the checkout-ready wizard", asyn
 
 	await expect(page.getByText("Checkout canceled", { exact: true })).toBeVisible();
 	await expect(page.getByText("You were not charged. Your agent was not deployed.")).toBeVisible();
-	await expect(page.getByText("$10.00/mo", { exact: true })).toBeVisible();
+	await expect(page.getByTestId("basic-compute-price")).toContainText("$10.00/mo");
 	await expect(page.getByRole("button", { name: "Continue to checkout" })).toBeVisible();
 	await expect(page.getByText("First slot free", { exact: true })).toHaveCount(0);
 	expect(checkoutRequests).toEqual([]);

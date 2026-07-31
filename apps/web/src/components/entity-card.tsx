@@ -370,6 +370,7 @@ export function EntityChoiceCard({
 	icon,
 	title,
 	description,
+	details,
 	badge,
 	selected,
 	onClick,
@@ -379,6 +380,8 @@ export function EntityChoiceCard({
 	icon: ReactNode;
 	title: ReactNode;
 	description?: ReactNode;
+	/** Optional detail block below the description (for example, pricing). */
+	details?: ReactNode;
 	/** Trailing badge in the title row (e.g. "Default", an auth chip). */
 	badge?: ReactNode;
 	selected?: boolean;
@@ -397,6 +400,7 @@ export function EntityChoiceCard({
 				{description ? (
 					<p className="mt-0.5 break-words text-sm text-muted-foreground">{description}</p>
 				) : null}
+				{details ? <div className="mt-2">{details}</div> : null}
 			</div>
 			{selected ? <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden /> : null}
 		</>
