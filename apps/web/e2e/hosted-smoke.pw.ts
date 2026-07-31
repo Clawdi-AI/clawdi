@@ -3848,7 +3848,7 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	await expect(featuredModels.nth(1)).toHaveAccessibleName("Kimi K3");
 	await expect(featuredCards.nth(0).getByText("O", { exact: true })).toBeVisible();
 	await expect(featuredCards.nth(0).getByText("S", { exact: true })).toHaveCount(0);
-	await expect(featuredCards.nth(1).getByRole("img", { name: "Kimi" })).toBeVisible();
+	await expect(featuredCards.nth(1).getByRole("img", { name: /kimi-coding/i })).toBeVisible();
 	for (const radio of await featuredModels.all()) {
 		const visualControl = await radio.evaluate((element) => {
 			const style = getComputedStyle(element);

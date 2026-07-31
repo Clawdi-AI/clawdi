@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { providerIconMetadata } from "@/components/entity-icon";
 
 const entityIconSource = readFileSync(
 	new URL("../../../components/entity-icon.tsx", import.meta.url),
@@ -10,17 +9,9 @@ const presetsSource = readFileSync(new URL("./provider-presets.ts", import.meta.
 const typesSource = readFileSync(new URL("./provider-types.ts", import.meta.url), "utf8");
 
 describe("AI provider static boundaries", () => {
-	test("resolves managed provider ids through centralized brand metadata", () => {
-		expect(providerIconMetadata("openai-codex")).toEqual({
-			id: "openai",
-			label: "OpenAI",
-			simpleIcon: null,
-		});
-		expect(providerIconMetadata("kimi-coding")).toEqual({
-			id: "kimi",
-			label: "Kimi",
-			simpleIcon: { slug: "kimi", hex: "000000" },
-		});
+	test("keeps only the managed-model alias required for a provider logo", () => {
+		expect(entityIconSource).toContain('"kimi-coding": "kimi"');
+		expect(entityIconSource).not.toContain('"openai-codex": "openai"');
 	});
 
 	test("keeps unapproved icon catalogs and retired metadata out of provider UI", () => {

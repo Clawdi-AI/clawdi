@@ -53,28 +53,8 @@ const PROVIDER_SIMPLEICON: Record<string, { slug: string; hex: string } | null> 
 };
 
 const PROVIDER_ICON_ALIASES: Readonly<Record<string, string>> = {
-	"openai-codex": "openai",
 	"kimi-coding": "kimi",
 };
-
-const PROVIDER_ICON_LABELS: Readonly<Record<string, string>> = {
-	openai: "OpenAI",
-	kimi: "Kimi",
-};
-
-export function providerIconMetadata(id: string): {
-	id: string;
-	label: string;
-	simpleIcon: { slug: string; hex: string } | null | undefined;
-} {
-	const key = id.trim().toLowerCase();
-	const canonicalId = PROVIDER_ICON_ALIASES[key] ?? key;
-	return {
-		id: canonicalId,
-		label: PROVIDER_ICON_LABELS[canonicalId] ?? id,
-		simpleIcon: PROVIDER_SIMPLEICON[canonicalId],
-	};
-}
 
 const SIZE = {
 	sm: { px: 24, box: "size-6 rounded-md", mono: "text-3xs" },
@@ -164,8 +144,7 @@ export function EntityIcon({
 }) {
 	const s = SIZE[size];
 	const key = id?.toLowerCase?.() ?? "";
-	const providerMetadata = kind === "provider" ? providerIconMetadata(key) : null;
-	const alt = label ?? providerMetadata?.label ?? id ?? "";
+	const alt = label ?? id ?? "";
 
 	if (kind === "framework") {
 		return (
@@ -197,7 +176,7 @@ export function EntityIcon({
 
 	// Provider brand logo (colored simpleicon) on a white tile.
 	if (kind === "provider") {
-		const brand = providerMetadata?.simpleIcon;
+		const brand = PROVIDER_SIMPLEICON[PROVIDER_ICON_ALIASES[key] ?? key];
 		if (brand) {
 			return (
 				<ProviderBrandIcon
