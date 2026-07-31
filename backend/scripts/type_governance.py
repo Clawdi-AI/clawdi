@@ -21,6 +21,7 @@ EXPECTED_CONFIG = {
         "app/core/query_utils.py",
         "app/core/skill_key.py",
         "app/services/composio.py",
+        "app/services/discord_gateway_worker.py",
         "app/services/embedding.py",
         "app/services/file_store.py",
         "app/services/memory_extraction.py",
