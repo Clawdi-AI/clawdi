@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import parse_qsl, urlencode
+from urllib.parse import unquote_plus
 from uuid import UUID
 
 import httpx
@@ -23,7 +23,6 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.datastructures import UploadFile
 
 from app.core.config import settings
 from app.core.database import get_session
@@ -221,6 +220,37 @@ _TELEGRAM_SOURCE_MESSAGE_METHODS = frozenset(
     {"copymessage", "copymessages", "forwardmessage", "forwardmessages"}
 )
 
+# Bot API 10.2 accepts direct_messages_topic_id only on message sends. The
+# managed runtimes expose a channel-DM topic as message_thread_id, so translate
+# that compatibility field only for methods that actually use the direct topic.
+_TELEGRAM_DIRECT_TOPIC_SEND_METHODS = frozenset(
+    {
+        "copymessage",
+        "copymessages",
+        "forwardmessage",
+        "forwardmessages",
+        "sendanimation",
+        "sendaudio",
+        "sendchecklist",
+        "sendcontact",
+        "senddice",
+        "senddocument",
+        "sendgame",
+        "sendlivephoto",
+        "sendlocation",
+        "sendmediagroup",
+        "sendmessage",
+        "sendphoto",
+        "sendpoll",
+        "sendrichmessage",
+        "sendsticker",
+        "sendvenue",
+        "sendvideo",
+        "sendvideonote",
+        "sendvoice",
+    }
+)
+
 _TELEGRAM_BROAD_COMMAND_SCOPE_TYPES = frozenset(
     {
         "default",
@@ -240,97 +270,6 @@ class TelegramBindingUnpairOutcome:
     menu_reset: bool
 
 
-@dataclass(frozen=True)
-class _TelegramFilePolicy:
-    allow_file_id: bool
-    allow_url: bool
-
-
-_TELEGRAM_REUSABLE_FILE = _TelegramFilePolicy(allow_file_id=True, allow_url=True)
-_TELEGRAM_REUSABLE_FILE_NO_URL = _TelegramFilePolicy(allow_file_id=True, allow_url=False)
-_TELEGRAM_UPLOAD_ONLY_FILE = _TelegramFilePolicy(allow_file_id=False, allow_url=False)
-_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS = {
-    "thumbnail": _TELEGRAM_UPLOAD_ONLY_FILE,
-    # The pinned Bot API source still accepts the legacy alias.
-    "thumb": _TELEGRAM_UPLOAD_ONLY_FILE,
-}
-
-# Telegram file arguments are method- and field-specific. In particular,
-# thumbnails are upload-only while video covers are reusable. Keep these
-# shapes explicit so Bot API additions require an isolation review.
-_TELEGRAM_TOP_LEVEL_FILE_FIELDS = {
-    "sendanimation": {
-        "animation": _TELEGRAM_REUSABLE_FILE,
-        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
-    },
-    "sendaudio": {
-        "audio": _TELEGRAM_REUSABLE_FILE,
-        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
-    },
-    "senddocument": {
-        "document": _TELEGRAM_REUSABLE_FILE,
-        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
-    },
-    "sendlivephoto": {
-        "live_photo": _TELEGRAM_REUSABLE_FILE_NO_URL,
-        "photo": _TELEGRAM_REUSABLE_FILE_NO_URL,
-    },
-    "sendphoto": {"photo": _TELEGRAM_REUSABLE_FILE},
-    "sendsticker": {"sticker": _TELEGRAM_REUSABLE_FILE},
-    "sendvideo": {
-        "video": _TELEGRAM_REUSABLE_FILE,
-        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
-        "cover": _TELEGRAM_REUSABLE_FILE,
-    },
-    "sendvideonote": {
-        "video_note": _TELEGRAM_REUSABLE_FILE_NO_URL,
-        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
-    },
-    "sendvoice": {"voice": _TELEGRAM_REUSABLE_FILE},
-    "setchatphoto": {"photo": _TELEGRAM_UPLOAD_ONLY_FILE},
-}
-
-_TELEGRAM_INPUT_MEDIA_FILE_FIELDS = {
-    "animation": {
-        "media": _TELEGRAM_REUSABLE_FILE,
-        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
-    },
-    "audio": {
-        "media": _TELEGRAM_REUSABLE_FILE,
-        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
-    },
-    "document": {
-        "media": _TELEGRAM_REUSABLE_FILE,
-        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
-    },
-    "live_photo": {
-        "media": _TELEGRAM_REUSABLE_FILE_NO_URL,
-        "photo": _TELEGRAM_REUSABLE_FILE_NO_URL,
-    },
-    "photo": {"media": _TELEGRAM_REUSABLE_FILE},
-    "sticker": {
-        "media": _TELEGRAM_REUSABLE_FILE,
-        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
-    },
-    "video": {
-        "media": _TELEGRAM_REUSABLE_FILE,
-        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
-        "cover": _TELEGRAM_REUSABLE_FILE,
-    },
-    "voice_note": {"media": _TELEGRAM_REUSABLE_FILE},
-}
-
-_TELEGRAM_STANDARD_INPUT_MEDIA_TYPES = frozenset(
-    {"animation", "audio", "document", "live_photo", "photo", "video"}
-)
-_TELEGRAM_MEDIA_GROUP_TYPES = frozenset({"audio", "document", "live_photo", "photo", "video"})
-_TELEGRAM_POLL_MEDIA_TYPES = frozenset(
-    {"animation", "audio", "document", "live_photo", "location", "photo", "venue", "video"}
-)
-_TELEGRAM_POLL_OPTION_MEDIA_TYPES = frozenset(
-    {"animation", "link", "live_photo", "location", "photo", "sticker", "venue", "video"}
-)
-_TELEGRAM_RICH_MEDIA_TYPES = frozenset({"animation", "audio", "photo", "video", "voice_note"})
 _TELEGRAM_FILE_FIELD_NAMES = frozenset(
     {
         "animation",
@@ -351,54 +290,39 @@ _TELEGRAM_FILE_FIELD_NAMES = frozenset(
     }
 )
 
+_TELEGRAM_UNIQUE_TOP_LEVEL_PARAMETER_NAMES = frozenset(
+    {
+        "actor_chat_id",
+        "allow_paid_broadcast",
+        "business_connection_id",
+        "callback_query_id",
+        "chat_id",
+        "commands",
+        "direct_messages_topic_id",
+        "file_id",
+        "for_channels",
+        "from_chat_id",
+        "inline_message_id",
+        "language_code",
+        "menu_button",
+        "message_id",
+        "message_ids",
+        "message_thread_id",
+        "receiver_user_id",
+        "reply_parameters",
+        "rights",
+        "scope",
+        "secret_token",
+        "sender_chat_id",
+        "url",
+        *_TELEGRAM_FILE_FIELD_NAMES,
+    }
+)
 
-@dataclass(frozen=True)
-class _TelegramNestedMediaPolicy:
-    parameter_names: tuple[str, ...]
-    allowed_types: frozenset[str]
-    file_fields_by_type: dict[str, dict[str, _TelegramFilePolicy]]
-
-
-_TELEGRAM_NESTED_MEDIA_POLICIES = {
-    "sendmediagroup": (
-        _TelegramNestedMediaPolicy(
-            ("media",),
-            _TELEGRAM_MEDIA_GROUP_TYPES,
-            _TELEGRAM_INPUT_MEDIA_FILE_FIELDS,
-        ),
-    ),
-    "sendpoll": (
-        _TelegramNestedMediaPolicy(
-            ("media", "explanation_media"),
-            _TELEGRAM_POLL_MEDIA_TYPES,
-            _TELEGRAM_INPUT_MEDIA_FILE_FIELDS,
-        ),
-        _TelegramNestedMediaPolicy(
-            ("options",),
-            _TELEGRAM_POLL_OPTION_MEDIA_TYPES,
-            _TELEGRAM_INPUT_MEDIA_FILE_FIELDS,
-        ),
-    ),
-    **{
-        method: (
-            _TelegramNestedMediaPolicy(
-                ("media",),
-                _TELEGRAM_STANDARD_INPUT_MEDIA_TYPES,
-                _TELEGRAM_INPUT_MEDIA_FILE_FIELDS,
-            ),
-        )
-        for method in ("editmessagemedia", "editephemeralmessagemedia")
-    },
-    **{
-        method: (
-            _TelegramNestedMediaPolicy(
-                ("rich_message",),
-                _TELEGRAM_RICH_MEDIA_TYPES,
-                _TELEGRAM_INPUT_MEDIA_FILE_FIELDS,
-            ),
-        )
-        for method in ("editmessagetext", "sendrichmessage", "sendrichmessagedraft")
-    },
+_TELEGRAM_UNIQUE_NESTED_PARAMETER_NAMES = {
+    "menu_button": frozenset({"type"}),
+    "reply_parameters": frozenset({"chat_id", "message_id"}),
+    "scope": frozenset({"type", "chat_id", "user_id"}),
 }
 
 
@@ -429,7 +353,7 @@ async def telegram_bot_api(
     account = agent.account
     raw_body = await request.body()
     params = await _request_params(request)
-    duplicate_parameter = await _telegram_duplicate_parameter(request, raw_body, params)
+    duplicate_parameter = await _telegram_duplicate_security_parameter(request, raw_body, params)
     if duplicate_parameter is not None:
         return _telegram_error_response(
             f"Bad Request: duplicate parameter {duplicate_parameter}", 400
@@ -686,12 +610,7 @@ async def telegram_file_api(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="telegram api unreachable",
         ) from exc
-    return Response(
-        content=response.content,
-        status_code=response.status_code,
-        media_type=response.headers.get("content-type", "application/octet-stream"),
-        headers=_telegram_passthrough_headers(response),
-    )
+    return _telegram_proxy_response(response)
 
 
 async def _resolve_telegram_agent(
@@ -950,11 +869,11 @@ def _telegram_json_parameter(value: Any) -> Any:
         return value
 
 
-class _DuplicateTelegramJsonKey(ValueError):
+class _TelegramJsonObjectPairs(list[tuple[str, Any]]):
     pass
 
 
-async def _telegram_duplicate_parameter(
+async def _telegram_duplicate_security_parameter(
     request: Request,
     raw_body: bytes,
     params: dict[str, Any],
@@ -967,40 +886,72 @@ async def _telegram_duplicate_parameter(
         if is_form or is_multipart:
             values.extend((await request.form()).multi_items())
         else:
-            if _telegram_json_has_duplicate_key(raw_body):
-                return "JSON key"
+            duplicate_key = _telegram_json_duplicate_security_key(raw_body)
+            if duplicate_key is not None:
+                return duplicate_key
             values.extend(params.items())
 
     seen: set[str] = set()
     for key, value in values:
-        if key in seen:
+        if key in seen and key in _TELEGRAM_UNIQUE_TOP_LEVEL_PARAMETER_NAMES:
             return key
         seen.add(key)
-        if (
-            isinstance(value, str)
-            and value.strip().startswith(("{", "["))
-            and _telegram_json_has_duplicate_key(value)
-        ):
-            return key
+        if isinstance(value, str) and value.strip().startswith(("{", "[")):
+            duplicate_key = _telegram_json_duplicate_security_key(value, parameter_name=key)
+            if duplicate_key is not None:
+                return duplicate_key
     return None
 
 
-def _telegram_json_has_duplicate_key(value: str | bytes) -> bool:
-    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, item in pairs:
-            if key in result:
-                raise _DuplicateTelegramJsonKey
-            result[key] = item
-        return result
-
+def _telegram_json_duplicate_security_key(
+    value: str | bytes,
+    *,
+    parameter_name: str | None = None,
+) -> str | None:
     try:
-        json.loads(value, object_pairs_hook=unique_object)
-    except _DuplicateTelegramJsonKey:
-        return True
+        parsed = json.loads(value, object_pairs_hook=_TelegramJsonObjectPairs)
     except (UnicodeDecodeError, json.JSONDecodeError):
-        return False
-    return False
+        return None
+    return _telegram_duplicate_security_key_in_value(
+        parsed,
+        parameter_name=parameter_name,
+        request_root=parameter_name is None,
+    )
+
+
+def _telegram_duplicate_security_key_in_value(
+    value: Any,
+    *,
+    parameter_name: str | None,
+    request_root: bool = False,
+) -> str | None:
+    if isinstance(value, _TelegramJsonObjectPairs):
+        unique_names = (
+            _TELEGRAM_UNIQUE_TOP_LEVEL_PARAMETER_NAMES
+            if request_root
+            else _TELEGRAM_FILE_FIELD_NAMES
+            | _TELEGRAM_UNIQUE_NESTED_PARAMETER_NAMES.get(parameter_name or "", frozenset())
+        )
+        seen: set[str] = set()
+        for key, item in value:
+            if key in seen and key in unique_names:
+                return key
+            seen.add(key)
+            duplicate_key = _telegram_duplicate_security_key_in_value(
+                item,
+                parameter_name=key,
+            )
+            if duplicate_key is not None:
+                return duplicate_key
+    elif isinstance(value, list):
+        for item in value:
+            duplicate_key = _telegram_duplicate_security_key_in_value(
+                item,
+                parameter_name=parameter_name,
+            )
+            if duplicate_key is not None:
+                return duplicate_key
+    return None
 
 
 def _telegram_command_scope_key(params: dict[str, Any]) -> str:
@@ -1147,7 +1098,7 @@ async def _fan_out_telegram_commands(
     bot_agent_link_id: UUID,
     method: str,
     params: dict[str, Any],
-) -> JSONResponse | None:
+) -> Response | None:
     if not account.encrypted_provider_token or not account.provider_token_nonce:
         return None
 
@@ -1159,11 +1110,8 @@ async def _fan_out_telegram_commands(
             method=method,
             payload=_telegram_command_provider_payload(method, params, scope=scope),
         )
-        if response.status_code >= 400:
-            return JSONResponse(
-                status_code=response.status_code,
-                content=_telegram_response_json(response),
-            )
+        if not _telegram_provider_call_succeeded(response):
+            return _telegram_proxy_response(response)
         return None
 
     result = await db.execute(
@@ -1187,11 +1135,8 @@ async def _fan_out_telegram_commands(
                 scope=fanout_scope,
             ),
         )
-        if response.status_code >= 400:
-            return JSONResponse(
-                status_code=response.status_code,
-                content=_telegram_response_json(response),
-            )
+        if not _telegram_provider_call_succeeded(response):
+            return _telegram_proxy_response(response)
     return None
 
 
@@ -1460,7 +1405,11 @@ async def reconcile_telegram_link_unlink(
 def _telegram_provider_call_succeeded(response: httpx.Response) -> bool:
     if response.status_code >= 400:
         return False
-    return _telegram_response_json(response).get("ok") is not False
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+    return isinstance(payload, dict) and payload.get("ok") is not False
 
 
 def _telegram_command_shadow_parts(key: str) -> tuple[str, str]:
@@ -1517,10 +1466,8 @@ def _telegram_command_provider_payload(
     *,
     scope: dict[str, Any],
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {"scope": scope}
-    language_code = _telegram_language_code(params)
-    if language_code:
-        payload["language_code"] = language_code
+    payload = {key: _telegram_json_parameter(value) for key, value in params.items()}
+    payload["scope"] = scope
     if method.lower() == "setmycommands":
         commands = _telegram_json_parameter(params.get("commands"))
         payload["commands"] = commands if isinstance(commands, list) else []
@@ -1636,20 +1583,19 @@ async def _set_telegram_chat_menu_button(
         ]
 
     if account.encrypted_provider_token and account.provider_token_nonce:
+        provider_params = {key: _telegram_json_parameter(value) for key, value in params.items()}
         for binding in bindings:
             response = await _post_telegram_bot_payload(
                 account=account,
                 method="setChatMenuButton",
                 payload={
+                    **provider_params,
                     "chat_id": binding.external_chat_id,
                     "menu_button": menu_button,
                 },
             )
-            if response.status_code >= 400:
-                return JSONResponse(
-                    status_code=response.status_code,
-                    content=_telegram_response_json(response),
-                )
+            if not _telegram_provider_call_succeeded(response):
+                return _telegram_proxy_response(response)
 
     field_key = _telegram_menu_button_field_key(chat_id)
     _set_telegram_profile_value(link, params={}, field_key=field_key, value=menu_button)
@@ -1660,23 +1606,7 @@ def _normalize_telegram_menu_button(value: Any) -> dict[str, Any] | None:
     value = _telegram_json_parameter(value)
     if not isinstance(value, dict):
         return None
-    button_type = _optional_str(value.get("type"))
-    if button_type in {"default", "commands"}:
-        return {"type": button_type}
-    if button_type != "web_app":
-        return None
-    text = _optional_str(value.get("text"))
-    web_app = value.get("web_app")
-    url = _optional_str(web_app.get("url")) if isinstance(web_app, dict) else None
-    if text is None or url is None or not url.lower().startswith("https://"):
-        return None
-    try:
-        parsed_url = httpx.URL(url)
-    except httpx.InvalidURL:
-        return None
-    if parsed_url.scheme != "https" or not parsed_url.host:
-        return None
-    return {"type": "web_app", "text": text, "web_app": {"url": url}}
+    return dict(value) if _optional_str(value.get("type")) is not None else None
 
 
 async def _get_telegram_chat_menu_button(
@@ -1847,7 +1777,7 @@ async def _handle_telegram_get_file(
     params: dict[str, Any],
     raw_body: bytes,
     request: Request,
-) -> dict[str, Any] | JSONResponse:
+) -> Response:
     file_id = _optional_str(params.get("file_id"))
     if file_id is None:
         return _telegram_error_response("Bad Request: file_id is required", 400)
@@ -1868,22 +1798,43 @@ async def _handle_telegram_get_file(
         request=request,
         raw_body=raw_body,
     )
-    response_payload = _telegram_response_json(response)
-    if response.status_code >= 400:
-        return JSONResponse(status_code=response.status_code, content=response_payload)
-    result = response_payload.get("result")
+    response_payload: Any = None
+    if 200 <= response.status_code < 300:
+        try:
+            response_payload = response.json()
+        except ValueError:
+            pass
+    result = response_payload.get("result") if isinstance(response_payload, dict) else None
     file_path = result.get("file_path") if isinstance(result, dict) else None
-    if response_payload.get("ok") is True and isinstance(file_path, str) and file_path:
-        await record_channel_agent_reference(
-            db,
-            account=account,
-            ref_kind=TELEGRAM_REF_FILE_PATH,
-            ref_value=file_path,
-            bot_agent_link_id=bot_agent_link_id,
-            metadata={"file_id": file_id},
-        )
-        await db.commit()
-    return response_payload
+    if (
+        isinstance(response_payload, dict)
+        and response_payload.get("ok") is True
+        and isinstance(file_path, str)
+        and file_path
+    ):
+        try:
+            await record_channel_agent_reference(
+                db,
+                account=account,
+                ref_kind=TELEGRAM_REF_FILE_PATH,
+                ref_value=file_path,
+                bot_agent_link_id=bot_agent_link_id,
+                metadata={"file_id": file_id},
+            )
+            await db.commit()
+        except Exception:
+            log.exception(
+                "telegram_reference_recording_failed account_id=%s link_id=%s method=getFile",
+                account.id,
+                bot_agent_link_id,
+            )
+            await _rollback_telegram_reference_recording(
+                db,
+                account_id=account.id,
+                bot_agent_link_id=bot_agent_link_id,
+                method="getFile",
+            )
+    return _telegram_proxy_response(response)
 
 
 async def _handle_telegram_callback_answer(
@@ -1895,7 +1846,7 @@ async def _handle_telegram_callback_answer(
     params: dict[str, Any],
     raw_body: bytes,
     request: Request,
-) -> dict[str, Any] | JSONResponse:
+) -> Response:
     callback_query_id = _optional_str(params.get("callback_query_id"))
     if callback_query_id is None:
         return _telegram_error_response("Bad Request: callback_query_id is required", 400)
@@ -1916,10 +1867,7 @@ async def _handle_telegram_callback_answer(
         request=request,
         raw_body=raw_body,
     )
-    payload = _telegram_response_json(response)
-    if response.status_code >= 400:
-        return JSONResponse(status_code=response.status_code, content=payload)
-    return payload
+    return _telegram_proxy_response(response)
 
 
 async def _authorize_telegram_chat_method(
@@ -1976,6 +1924,11 @@ async def _authorize_telegram_chat_method(
             "message_thread_id",
             params.get("direct_messages_topic_id"),
         )
+        if topic_value is None and method_key in _TELEGRAM_DIRECT_TOPIC_SEND_METHODS:
+            return _telegram_error_response(
+                "Bad Request: direct message topic is required",
+                400,
+            )
         if topic_value is not None:
             topic_id = _optional_int_param(topic_value)
             if topic_id is None or topic_id <= 0:
@@ -2069,103 +2022,29 @@ def _telegram_outbound_file_references(
     method_key: str,
     params: dict[str, Any],
 ) -> tuple[set[str], str | None]:
+    del method_key
     references: set[str] = set()
-    modeled_top_level_fields = set(_TELEGRAM_TOP_LEVEL_FILE_FIELDS.get(method_key, {}))
-
-    for field_name, policy in _TELEGRAM_TOP_LEVEL_FILE_FIELDS.get(method_key, {}).items():
-        if field_name in params and not _collect_telegram_file_reference(
-            params[field_name], policy, references
-        ):
-            return references, f"invalid {field_name}"
-
-    for nested_policy in _TELEGRAM_NESTED_MEDIA_POLICIES.get(method_key, ()):
-        modeled_top_level_fields.update(
-            _TELEGRAM_FILE_FIELD_NAMES & set(nested_policy.parameter_names)
-        )
-        for parameter_name in nested_policy.parameter_names:
-            if parameter_name in params and not _collect_telegram_nested_media_references(
-                params[parameter_name], nested_policy, references
-            ):
-                return references, f"invalid {parameter_name} media"
-
-    unmodeled_fields = (params.keys() & _TELEGRAM_FILE_FIELD_NAMES) - modeled_top_level_fields
-    if unmodeled_fields:
-        return references, f"unmodeled media field {sorted(unmodeled_fields)[0]}"
-    return references, None
-
-
-def _collect_telegram_file_reference(
-    value: Any,
-    policy: _TelegramFilePolicy,
-    references: set[str],
-) -> bool:
-    if isinstance(value, UploadFile):
-        return True
-    if not isinstance(value, str):
-        return False
-    value = value.strip()
-    if not value:
-        return False
-    if value.startswith("attach://"):
-        return bool(value.removeprefix("attach://"))
-    if _telegram_media_url(value):
-        return policy.allow_url
-    if "://" in value or not policy.allow_file_id:
-        return False
-    references.add(value)
-    return True
-
-
-def _telegram_media_url(value: str) -> bool:
-    try:
-        parsed = httpx.URL(value)
-    except httpx.InvalidURL:
-        return False
-    return parsed.scheme in {"http", "https"} and parsed.host is not None
-
-
-def _collect_telegram_nested_media_references(
-    value: Any,
-    policy: _TelegramNestedMediaPolicy,
-    references: set[str],
-) -> bool:
-    value = _telegram_json_parameter(value)
-    if not isinstance(value, (dict, list)):
-        return False
-    stack = [value]
+    stack: list[Any] = [params]
     while stack:
-        current = stack.pop()
+        current = _telegram_json_parameter(stack.pop())
         if isinstance(current, list):
             stack.extend(current)
             continue
         if not isinstance(current, dict):
             continue
-
-        media_type = _optional_str(current.get("type"))
-        if (
-            media_type is not None
-            and "media" in current
-            and not isinstance(current["media"], (str, UploadFile))
-        ):
-            return False
-        direct_file_fields = {
-            field_name
-            for field_name in current.keys() & _TELEGRAM_FILE_FIELD_NAMES
-            if isinstance(current[field_name], (str, UploadFile))
-        }
-        if direct_file_fields:
-            file_fields = policy.file_fields_by_type.get(media_type or "")
-            if media_type not in policy.allowed_types or file_fields is None:
-                return False
-            if direct_file_fields - file_fields.keys():
-                return False
-            for field_name, file_policy in file_fields.items():
-                if field_name in current and not _collect_telegram_file_reference(
-                    current[field_name], file_policy, references
+        for field_name, value in current.items():
+            parsed = _telegram_json_parameter(value)
+            if field_name in _TELEGRAM_FILE_FIELD_NAMES and isinstance(parsed, str):
+                file_reference = parsed.strip()
+                if (
+                    file_reference
+                    and not file_reference.startswith("attach://")
+                    and "://" not in file_reference
                 ):
-                    return False
-        stack.extend(current.values())
-    return True
+                    references.add(file_reference)
+            elif isinstance(parsed, (dict, list)):
+                stack.append(parsed)
+    return references, None
 
 
 def _referenced_telegram_chat_ids(params: dict[str, Any]) -> set[str]:
@@ -2231,38 +2110,6 @@ def _telegram_boolean_param_is_true(value: Any) -> bool:
     return isinstance(value, str) and value.strip().lower() in {"1", "true", "yes"}
 
 
-async def _proxy_telegram_json_method(
-    *,
-    account: Any,
-    method: str,
-    request: Request,
-    raw_body: bytes,
-) -> dict[str, Any]:
-    response = await _telegram_provider_response(
-        account=account,
-        method=method,
-        request=request,
-        raw_body=raw_body,
-    )
-    return _telegram_response_json(response)
-
-
-def _telegram_response_json(response: Any) -> dict[str, Any]:
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="telegram api returned invalid json",
-        ) from exc
-    if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="telegram api returned invalid json",
-        )
-    return payload
-
-
 async def _proxy_telegram_bot_method(
     db: AsyncSession,
     *,
@@ -2276,7 +2123,7 @@ async def _proxy_telegram_bot_method(
     if request.method != "GET":
         request_params = {**dict(request.query_params), **request_params}
     chat_id = _optional_str(request_params.get("chat_id"))
-    direct_topic_transport = False
+    translate_direct_topic = False
     if chat_id is not None:
         binding = await find_binding(
             db,
@@ -2284,15 +2131,19 @@ async def _proxy_telegram_bot_method(
             external_chat_id=chat_id,
             bot_agent_link_id=bot_agent_link_id,
         )
-        direct_topic_transport = (
-            binding is not None and binding.external_chat_type == "direct_messages"
+        translate_direct_topic = (
+            binding is not None
+            and binding.external_chat_type == "direct_messages"
+            and method.lower() in _TELEGRAM_DIRECT_TOPIC_SEND_METHODS
+            and "message_thread_id" in request_params
+            and "direct_messages_topic_id" not in request_params
         )
     response = await _telegram_provider_response(
         account=account,
         method=method,
         request=request,
         raw_body=raw_body,
-        direct_topic_transport=direct_topic_transport,
+        translate_direct_topic=translate_direct_topic,
     )
     if 200 <= response.status_code < 300:
         try:
@@ -2301,34 +2152,61 @@ async def _proxy_telegram_bot_method(
             payload = None
         if isinstance(payload, dict) and payload.get("ok") is True:
             file_ids = telegram_file_ids(payload.get("result"))
-            for file_id in sorted(file_ids):
-                await record_channel_agent_reference(
-                    db,
-                    account=account,
-                    bot_agent_link_id=bot_agent_link_id,
-                    ref_kind=TELEGRAM_REF_FILE_ID,
-                    ref_value=file_id,
-                )
             message_references = _telegram_result_message_references(
                 payload.get("result"),
                 fallback_chat_id=chat_id,
             )
-            for ref_chat_id, message_id in sorted(message_references):
-                await record_channel_agent_reference(
-                    db,
-                    account=account,
-                    bot_agent_link_id=bot_agent_link_id,
-                    ref_kind=TELEGRAM_REF_MESSAGE_ID,
-                    ref_value=telegram_message_reference_value(ref_chat_id, message_id),
-                )
             if file_ids or message_references:
-                await db.commit()
-    return Response(
-        content=response.content,
-        status_code=response.status_code,
-        media_type=response.headers.get("content-type", "application/json"),
-        headers=_telegram_passthrough_headers(response),
-    )
+                try:
+                    for file_id in sorted(file_ids):
+                        await record_channel_agent_reference(
+                            db,
+                            account=account,
+                            bot_agent_link_id=bot_agent_link_id,
+                            ref_kind=TELEGRAM_REF_FILE_ID,
+                            ref_value=file_id,
+                        )
+                    for ref_chat_id, message_id in sorted(message_references):
+                        await record_channel_agent_reference(
+                            db,
+                            account=account,
+                            bot_agent_link_id=bot_agent_link_id,
+                            ref_kind=TELEGRAM_REF_MESSAGE_ID,
+                            ref_value=telegram_message_reference_value(ref_chat_id, message_id),
+                        )
+                    await db.commit()
+                except Exception:
+                    log.exception(
+                        "telegram_reference_recording_failed account_id=%s link_id=%s method=%s",
+                        account.id,
+                        bot_agent_link_id,
+                        method,
+                    )
+                    await _rollback_telegram_reference_recording(
+                        db,
+                        account_id=account.id,
+                        bot_agent_link_id=bot_agent_link_id,
+                        method=method,
+                    )
+    return _telegram_proxy_response(response)
+
+
+async def _rollback_telegram_reference_recording(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    bot_agent_link_id: UUID,
+    method: str,
+) -> None:
+    try:
+        await db.rollback()
+    except Exception:
+        log.exception(
+            "telegram_reference_recording_rollback_failed account_id=%s link_id=%s method=%s",
+            account_id,
+            bot_agent_link_id,
+            method,
+        )
 
 
 def _telegram_result_message_references(
@@ -2362,30 +2240,34 @@ async def _telegram_provider_response(
     method: str,
     request: Request,
     raw_body: bytes,
-    direct_topic_transport: bool = False,
+    translate_direct_topic: bool = False,
 ) -> httpx.Response:
     provider_token = decrypt_provider_token(account)
     base_url = settings.channel_telegram_api_base_url.strip()
     await _validate_telegram_provider_base_url(base_url)
-    url = f"{base_url.rstrip('/')}/bot{provider_token}/{method}"
+    url = httpx.URL(f"{base_url.rstrip('/')}/bot{provider_token}/{method}")
     headers = {}
     content_type = request.headers.get("content-type")
     if content_type:
         headers["content-type"] = content_type
-    query_params: list[tuple[str, str]] = list(request.query_params.multi_items())
-    if direct_topic_transport:
-        query_params = _telegram_direct_topic_query_params(query_params)
+    query_string = request.scope.get("query_string", b"")
+    if translate_direct_topic:
+        query_string = _rename_telegram_urlencoded_field(
+            query_string,
+            old_name="message_thread_id",
+            new_name="direct_messages_topic_id",
+        )
         raw_body = _telegram_direct_topic_request_body(raw_body, content_type or "")
-    forward_body = _resolve_telegram_attach_refs(raw_body, content_type or "")
+    if query_string:
+        url = url.copy_with(query=query_string)
     try:
         with track_proxy_latency("telegram", method):
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.request(
                     request.method,
                     url,
-                    content=forward_body if forward_body else None,
+                    content=raw_body if raw_body else None,
                     headers=headers,
-                    params=query_params,
                 )
     except httpx.HTTPError as exc:
         outbound_errors.labels(channel="telegram", method=method).inc()
@@ -2397,15 +2279,6 @@ async def _telegram_provider_response(
     if response.status_code >= 400:
         outbound_errors.labels(channel="telegram", method=method).inc()
     return response
-
-
-def _telegram_direct_topic_query_params(
-    values: list[tuple[str, str]],
-) -> list[tuple[str, str]]:
-    return [
-        ("direct_messages_topic_id" if key == "message_thread_id" else key, value)
-        for key, value in values
-    ]
 
 
 def _telegram_direct_topic_request_body(raw_body: bytes, content_type: str) -> bytes:
@@ -2420,8 +2293,11 @@ def _telegram_direct_topic_request_body(raw_body: bytes, content_type: str) -> b
             new_name="direct_messages_topic_id",
         )
     if "application/x-www-form-urlencoded" in lowered:
-        values = parse_qsl(raw_body.decode("utf-8"), keep_blank_values=True)
-        return urlencode(_telegram_direct_topic_query_params(values)).encode()
+        return _rename_telegram_urlencoded_field(
+            raw_body,
+            old_name="message_thread_id",
+            new_name="direct_messages_topic_id",
+        )
     if "application/json" in lowered or raw_body.lstrip().startswith(b"{"):
         try:
             value = json.loads(raw_body)
@@ -2429,10 +2305,77 @@ def _telegram_direct_topic_request_body(raw_body: bytes, content_type: str) -> b
             return raw_body
         if not isinstance(value, dict) or "message_thread_id" not in value:
             return raw_body
-        rewritten = dict(value)
-        rewritten["direct_messages_topic_id"] = rewritten.pop("message_thread_id")
-        return json.dumps(rewritten, separators=(",", ":"), ensure_ascii=False).encode()
+        return _rename_telegram_json_object_field(
+            raw_body,
+            old_name="message_thread_id",
+            new_name="direct_messages_topic_id",
+        )
     return raw_body
+
+
+def _rename_telegram_json_object_field(
+    value: bytes,
+    *,
+    old_name: str,
+    new_name: str,
+) -> bytes:
+    depth = 0
+    expect_top_level_key = False
+    index = 0
+    while index < len(value):
+        byte = value[index]
+        if byte == ord('"'):
+            start = index
+            index += 1
+            escaped = False
+            while index < len(value):
+                current = value[index]
+                if current == ord('"') and not escaped:
+                    break
+                if current == ord("\\") and not escaped:
+                    escaped = True
+                else:
+                    escaped = False
+                index += 1
+            if index >= len(value):
+                return value
+            if expect_top_level_key and depth == 1:
+                try:
+                    decoded_key = json.loads(value[start : index + 1])
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return value
+                if decoded_key == old_name:
+                    return value[:start] + json.dumps(new_name).encode("ascii") + value[index + 1 :]
+                expect_top_level_key = False
+        elif byte in (ord("{"), ord("[")):
+            depth += 1
+            if depth == 1 and byte == ord("{"):
+                expect_top_level_key = True
+        elif byte in (ord("}"), ord("]")):
+            depth -= 1
+        elif byte == ord(",") and depth == 1:
+            expect_top_level_key = True
+        index += 1
+    return value
+
+
+def _rename_telegram_urlencoded_field(
+    value: bytes,
+    *,
+    old_name: str,
+    new_name: str,
+) -> bytes:
+    rewritten: list[bytes] = []
+    for field in value.split(b"&"):
+        encoded_name, separator, encoded_value = field.partition(b"=")
+        try:
+            decoded_name = unquote_plus(encoded_name.decode("ascii"))
+        except UnicodeDecodeError:
+            decoded_name = ""
+        if decoded_name == old_name:
+            encoded_name = new_name.encode("ascii")
+        rewritten.append(encoded_name + separator + encoded_value)
+    return b"&".join(rewritten)
 
 
 def _rename_telegram_multipart_field(
@@ -2442,113 +2385,31 @@ def _rename_telegram_multipart_field(
     old_name: str,
     new_name: str,
 ) -> bytes:
-    boundary_match = re.search(r"boundary=([^;\s]+)", content_type)
+    boundary_match = re.search(r'boundary=(?:"([^"]+)"|([^;\s]+))', content_type)
     if boundary_match is None:
         return raw_body
-    boundary = boundary_match.group(1).strip('"')
-    separator = f"--{boundary}"
-    parts = raw_body.decode("latin-1").split(separator)
-    old_marker = f'name="{old_name}"'
-    new_marker = f'name="{new_name}"'
+    boundary = boundary_match.group(1) or boundary_match.group(2)
+    separator = f"--{boundary}".encode("ascii")
+    parts = raw_body.split(separator)
+    old_marker = re.compile(
+        rb'(?i)(?<![A-Za-z0-9_-])name="' + re.escape(old_name.encode("ascii")) + rb'"'
+    )
+    new_marker = f'name="{new_name}"'.encode("ascii")
     rewritten = [parts[0]]
     for part in parts[1:]:
-        header_end = part.find("\r\n\r\n")
+        header_end = part.find(b"\r\n\r\n")
         if header_end < 0:
             rewritten.append(part)
             continue
-        headers = part[:header_end].replace(old_marker, new_marker)
-        rewritten.append(headers + part[header_end:])
-    return separator.join(rewritten).encode("latin-1")
-
-
-def _resolve_telegram_attach_refs(raw_body: bytes, content_type: str) -> bytes:
-    if not raw_body or "multipart/form-data" not in content_type.lower():
-        return raw_body
-    boundary_match = re.search(r"boundary=([^;\s]+)", content_type)
-    if boundary_match is None:
-        return raw_body
-    boundary = boundary_match.group(1).strip('"')
-    separator = f"--{boundary}"
-    raw = raw_body.decode("latin-1")
-    parts = raw.split(separator)
-    refs: dict[str, str] = {}
-    ref_parts: dict[str, int] = {}
-
-    for index, part in enumerate(parts[1:], start=1):
-        if part.startswith("--"):
-            continue
-        header_end = part.find("\r\n\r\n")
-        if header_end < 0:
-            continue
-        headers = part[:header_end]
-        value = part[header_end + 4 :].removesuffix("\r\n")
-        name = _multipart_part_name(headers)
-        if name is None:
-            continue
-        attach_match = re.match(r"^attach://([^\r\n]+)", value)
-        if attach_match is not None:
-            refs[name] = attach_match.group(1)
-        if _multipart_part_filename(headers) is not None:
-            ref_parts[name] = index
-
-    if not refs:
-        return raw_body
-
-    used_ref_parts: set[int] = set()
-    rewritten_parts = [parts[0]]
-    for index, part in enumerate(parts[1:], start=1):
-        if part.startswith("--"):
-            rewritten_parts.append(part)
-            continue
-        if index in used_ref_parts:
-            continue
-        header_end = part.find("\r\n\r\n")
-        if header_end < 0:
-            rewritten_parts.append(part)
-            continue
-        headers = part[:header_end]
-        name = _multipart_part_name(headers)
-        if name is None:
-            rewritten_parts.append(part)
-            continue
-        ref_id = refs.get(name)
-        ref_part_index = ref_parts.get(ref_id) if ref_id else None
-        if ref_part_index is None:
-            rewritten_parts.append(part)
-            continue
-
-        file_part = parts[ref_part_index]
-        file_header_end = file_part.find("\r\n\r\n")
-        if file_header_end < 0:
-            rewritten_parts.append(part)
-            continue
-        file_headers = file_part[:file_header_end]
-        file_body = file_part[file_header_end + 4 :]
-        filename = _multipart_part_filename(file_headers) or "file"
-        file_content_type = _multipart_part_content_type(file_headers)
-        used_ref_parts.add(ref_part_index)
-        rewritten_parts.append(
-            "\r\n"
-            f'Content-Disposition: form-data; name="{name}"; filename="{filename}"'
-            f"\r\nContent-Type: {file_content_type}"
-            f"\r\n\r\n{file_body}"
+        header_lines = part[:header_end].split(b"\r\n")
+        headers = b"\r\n".join(
+            old_marker.sub(new_marker, line)
+            if line.lower().startswith(b"content-disposition:")
+            else line
+            for line in header_lines
         )
-    return separator.join(rewritten_parts).encode("latin-1")
-
-
-def _multipart_part_name(headers: str) -> str | None:
-    match = re.search(r'name="([^"]+)"', headers, flags=re.IGNORECASE)
-    return match.group(1) if match else None
-
-
-def _multipart_part_filename(headers: str) -> str | None:
-    match = re.search(r'filename=("?)([^"\r\n;]+)\1', headers, flags=re.IGNORECASE)
-    return match.group(2) if match else None
-
-
-def _multipart_part_content_type(headers: str) -> str:
-    match = re.search(r"content-type:([^\r\n]+)", headers, flags=re.IGNORECASE)
-    return match.group(1).strip() if match else "application/octet-stream"
+        rewritten.append(headers + part[header_end:])
+    return separator.join(rewritten)
 
 
 async def _validate_telegram_provider_base_url(base_url: str) -> None:
@@ -2565,8 +2426,31 @@ async def _validate_telegram_provider_base_url(base_url: str) -> None:
 def _telegram_passthrough_headers(response: Any) -> dict[str, str]:
     headers = getattr(response, "headers", {}) or {}
     passthrough: dict[str, str] = {}
-    for key in ("content-length", "cache-control"):
+    for key in (
+        "content-type",
+        "content-length",
+        "cache-control",
+        "retry-after",
+        "x-correlation-id",
+        "traceparent",
+        "tracestate",
+    ):
         value = headers.get(key)
         if value:
             passthrough[key] = value
+    for key, value in headers.items():
+        normalized_key = key.lower()
+        if normalized_key.startswith(("ratelimit-", "x-ratelimit-")) and value:
+            passthrough[normalized_key] = value
+    provider_request_id = headers.get("x-request-id")
+    if provider_request_id:
+        passthrough["x-telegram-request-id"] = provider_request_id
     return passthrough
+
+
+def _telegram_proxy_response(response: Any) -> Response:
+    return Response(
+        content=response.content,
+        status_code=response.status_code,
+        headers=_telegram_passthrough_headers(response),
+    )

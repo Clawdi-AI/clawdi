@@ -18,7 +18,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -443,7 +443,7 @@ class _FakeProviderClient:
         )
 
     async def request(self, method, url, **kwargs):
-        self.calls.append({"method": method, "url": url, **kwargs})
+        self.calls.append({"method": method, "url": str(url), **kwargs})
         return _FakeProviderResponse(
             self.response_payload,
             status_code=self.response_status_code,
@@ -5563,15 +5563,15 @@ async def test_telegram_bot_api_chat_capabilities_are_agent_link_scoped(
             "forwarded": False,
         },
         {
-            "name": "thumbnail cannot reuse file id",
+            "name": "provider validates thumbnail reuse semantics",
             "method": "sendVideo",
             "json": {
                 "chat_id": "111",
                 "video": "https://example.com/video.mp4",
                 "thumbnail": "file-first",
             },
-            "status": 400,
-            "forwarded": False,
+            "status": 200,
+            "forwarded": True,
         },
         {
             "name": "foreign media group item",
@@ -5770,32 +5770,32 @@ async def test_telegram_bot_api_chat_capabilities_are_agent_link_scoped(
             "forwarded": True,
         },
         {
-            "name": "URL unsupported for live photo",
+            "name": "provider validates live photo URL semantics",
             "method": "sendLivePhoto",
             "json": {
                 "chat_id": "111",
                 "live_photo": "https://example.com/live.mp4",
                 "photo": "file-first",
             },
-            "status": 400,
-            "forwarded": False,
+            "status": 200,
+            "forwarded": True,
         },
         {
-            "name": "unknown nested media type",
+            "name": "provider validates unknown nested media type",
             "method": "sendMediaGroup",
             "json": {
                 "chat_id": "111",
                 "media": [{"type": "future_media", "media": "file-first"}],
             },
-            "status": 400,
-            "forwarded": False,
+            "status": 200,
+            "forwarded": True,
         },
         {
-            "name": "unmodeled file field on non-media method",
+            "name": "provider validates future file field on allowed method",
             "method": "sendMessage",
             "json": {"chat_id": "111", "text": "hello", "photo": "file-first"},
-            "status": 400,
-            "forwarded": False,
+            "status": 200,
+            "forwarded": True,
         },
         {
             "name": "unscoped business connection",
@@ -5849,6 +5849,7 @@ async def test_telegram_bot_api_chat_capabilities_are_agent_link_scoped(
         },
     )
     for case in cases:
+        telegram_rate_limiter.reset()
         _reset_fake_provider_client({"ok": True, "result": True})
         request_headers = _telegram_agent_headers(created)
         if "params" in case:
@@ -5985,7 +5986,7 @@ async def test_telegram_profile_shadow_accepts_official_clear_and_boolean_wire_v
         headers=_telegram_agent_headers(created),
         json={"name": ""},
     )
-    rights = {"can_manage_chat": True}
+    rights = {"can_manage_chat": True, "future_administrator_right": True}
     set_channel_rights = await client.get(
         _telegram_bot_path(created, "setMyDefaultAdministratorRights"),
         headers=_telegram_agent_headers(created),
@@ -6039,16 +6040,19 @@ async def test_telegram_chat_menu_button_is_scoped_and_replayed_per_link(
         )
     ).json()
     await _pair_telegram_chat(client, created=created, chat_id="777", chat_type="private")
-    first_default = {"type": "web_app", "text": "First", "web_app": {"url": "https://a.test"}}
+    first_default = {
+        "type": "web_app",
+        "text": "First",
+        "web_app": {"url": "https://a.test", "future_web_app_field": "preserved"},
+        "future_menu_field": {"enabled": True},
+    }
     first_chat = {"type": "commands"}
     invalid_menu = await client.post(
         _telegram_bot_path(created, "setChatMenuButton"),
         headers=_telegram_agent_headers(created),
         json={
             "menu_button": {
-                "type": "web_app",
-                "text": "Unsafe",
-                "web_app": {"url": "http://a.test"},
+                "text": "Missing provider discriminator",
             }
         },
     )
@@ -6747,6 +6751,167 @@ async def test_telegram_generic_bot_api_proxies_only_bound_chats(
 
 
 @pytest.mark.asyncio
+async def test_telegram_ordinary_requests_preserve_raw_payload_query_and_content_type(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 7}})
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-opaque-provider-payloads",
+        chat_id="42",
+    )
+    raw_json = (
+        b'{  "chat_id" : 42, "text":"json", "future_hint":"first", '
+        b'"future_hint":"second", "future_payload":{"type":"first","type":"second"} }\n'
+    )
+    raw_form = b"chat_id=42&text=form+body&future_hint=%2f&future_hint=second&empty="
+    raw_query = "chat_id=42&text=query+body&future_hint=%2f&future_hint=second&empty="
+
+    json_response = await client.post(
+        _telegram_bot_path(created, "sendMessage"),
+        headers={**_telegram_agent_headers(created), "content-type": "application/json"},
+        content=raw_json,
+    )
+    form_response = await client.post(
+        _telegram_bot_path(created, "sendMessage"),
+        headers={
+            **_telegram_agent_headers(created),
+            "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        },
+        content=raw_form,
+    )
+    query_response = await client.get(
+        f"{_telegram_bot_path(created, 'sendMessage')}?{raw_query}",
+        headers=_telegram_agent_headers(created),
+    )
+
+    assert json_response.status_code == 200
+    assert form_response.status_code == 200
+    assert query_response.status_code == 200
+    assert _FakeProviderClient.calls[0]["content"] == raw_json
+    assert _FakeProviderClient.calls[0]["headers"]["content-type"] == "application/json"
+    assert _FakeProviderClient.calls[1]["content"] == raw_form
+    assert _FakeProviderClient.calls[1]["headers"]["content-type"] == (
+        "application/x-www-form-urlencoded; charset=UTF-8"
+    )
+    assert _FakeProviderClient.calls[2]["url"].endswith(f"/sendMessage?{raw_query}")
+
+
+@pytest.mark.asyncio
+async def test_telegram_private_and_forum_thread_methods_preserve_message_thread_id(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-native-private-forum-topics",
+        chat_id="42",
+        chat_type="private",
+    )
+    await _pair_telegram_chat(
+        client,
+        created=created,
+        chat_id="-10042",
+        update_id=2,
+        chat_type="supergroup",
+    )
+    _reset_fake_provider_client({"ok": True, "result": True})
+    requests = (
+        (
+            "sendMessageDraft",
+            b'{ "chat_id": 42, "message_thread_id": 7, "draft_id": 1, "text": "draft" }\n',
+        ),
+        (
+            "sendChatAction",
+            b'{ "chat_id": 42, "message_thread_id": 7, "action": "typing" }\n',
+        ),
+        (
+            "sendMessage",
+            b'{ "chat_id": -10042, "message_thread_id": 9, "text": "forum" }\n',
+        ),
+        (
+            "sendChatAction",
+            b'{ "chat_id": -10042, "message_thread_id": 9, "action": "typing" }\n',
+        ),
+    )
+
+    for method, body in requests:
+        response = await client.post(
+            _telegram_bot_path(created, method),
+            headers={**_telegram_agent_headers(created), "content-type": "application/json"},
+            content=body,
+        )
+        assert response.status_code == 200
+
+    assert [call["content"] for call in _FakeProviderClient.calls] == [
+        body for _method, body in requests
+    ]
+    assert [call["url"].rsplit("/", 1)[-1] for call in _FakeProviderClient.calls] == [
+        method for method, _body in requests
+    ]
+    assert all(
+        b"direct_messages_topic_id" not in call["content"] for call in _FakeProviderClient.calls
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "query"),
+    [
+        (b'{"chat_id":42,"chat_id":99,"text":"ambiguous"}', None),
+        (
+            b'{"chat_id":42,"text":"ambiguous",'
+            b'"reply_parameters":{"chat_id":42,"chat_id":99,"message_id":1}}',
+            None,
+        ),
+        (None, "chat_id=42&chat_id=99&text=ambiguous"),
+    ],
+)
+async def test_telegram_duplicate_authority_fields_are_rejected(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    content: bytes | None,
+    query: str | None,
+):
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-duplicate-authority",
+        chat_id="42",
+    )
+    if query is not None:
+        response = await client.get(
+            f"{_telegram_bot_path(created, 'sendMessage')}?{query}",
+            headers=_telegram_agent_headers(created),
+        )
+    else:
+        response = await client.post(
+            _telegram_bot_path(created, "sendMessage"),
+            headers={**_telegram_agent_headers(created), "content-type": "application/json"},
+            content=content,
+        )
+
+    assert response.status_code == 400
+    assert response.json()["description"].startswith("Bad Request: duplicate parameter")
+    assert _FakeProviderClient.calls == []
+
+
+@pytest.mark.asyncio
 async def test_telegram_multipart_reply_parameters_are_scope_checked(
     client: httpx.AsyncClient,
 ):
@@ -6772,7 +6937,7 @@ async def test_telegram_multipart_reply_parameters_are_scope_checked(
 
 
 @pytest.mark.asyncio
-async def test_telegram_uploaded_file_response_is_recorded_for_reuse(
+async def test_telegram_native_attach_multipart_is_forwarded_byte_for_byte_and_recorded(
     client: httpx.AsyncClient,
     monkeypatch,
 ):
@@ -6794,22 +6959,37 @@ async def test_telegram_uploaded_file_response_is_recorded_for_reuse(
     )
     created = await _create_paired_telegram_channel(
         client,
-        name="telegram-attach-rewrite",
+        name="telegram-native-attach",
         chat_id="42",
     )
+    boundary = "telegram-native-boundary"
+    content_type = f'multipart/form-data; boundary="{boundary}"'
+    multipart_body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="chat_id"\r\n\r\n'
+        "42\r\n"
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="photo"\r\n\r\n'
+        "attach://photo_file\r\n"
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="future_caption_style"\r\n\r\n'
+        "future-value\r\n"
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="photo_file"; filename="photo.png"\r\n'
+        "Content-Type: image/png\r\n\r\n"
+        "PNGDATA\r\n"
+        f"--{boundary}--\r\n"
+    ).encode("ascii")
 
     response = await client.post(
         _telegram_bot_path(created, "sendPhoto"),
-        headers=_telegram_agent_headers(created),
-        data={"chat_id": "42", "photo": "attach://photo_file"},
-        files={"photo_file": ("photo.png", b"PNGDATA", "image/png")},
+        headers={**_telegram_agent_headers(created), "content-type": content_type},
+        content=multipart_body,
     )
 
-    forwarded = _FakeProviderClient.calls[0]["content"].decode("latin-1")
     assert response.status_code == 200
-    assert 'name="photo"; filename="photo.png"' in forwarded
-    assert "attach://photo_file" not in forwarded
-    assert 'name="photo_file"; filename="photo.png"' not in forwarded
+    assert _FakeProviderClient.calls[0]["content"] == multipart_body
+    assert _FakeProviderClient.calls[0]["headers"]["content-type"] == content_type
 
     _reset_fake_provider_client({"ok": True, "result": {"message_id": 8}})
     reuse = await client.post(
@@ -6820,6 +7000,93 @@ async def test_telegram_uploaded_file_response_is_recorded_for_reuse(
 
     assert reuse.status_code == 200
     assert len(_FakeProviderClient.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_telegram_successful_send_survives_reference_recording_failure(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    provider_payload = {
+        "ok": True,
+        "result": {
+            "message_id": 71,
+            "chat": {"id": 42, "type": "private"},
+            "document": {"file_id": "telegram-file-before-recording-failure"},
+        },
+    }
+    provider_body = (
+        b'{  "ok" : true, "result" : { "message_id" : 71, '
+        b'"chat" : {"id":42,"type":"private"}, '
+        b'"document":{"file_id":"telegram-file-before-recording-failure"} } }\n'
+    )
+    provider_headers = {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": str(len(provider_body)),
+        "retry-after": "3",
+        "x-ratelimit-remaining": "9",
+        "x-request-id": "telegram-send-recording-request",
+        "x-correlation-id": "telegram-send-recording-correlation",
+    }
+    _reset_fake_provider_client(
+        provider_payload,
+        content=provider_body,
+        headers=provider_headers,
+    )
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-send-recording-failure",
+        chat_id="42",
+    )
+    recording_calls = 0
+
+    async def fail_second_reference_recording(db: AsyncSession, **kwargs):
+        nonlocal recording_calls
+        recording_calls += 1
+        if recording_calls == 2:
+            await db.execute(text("SELECT * FROM telegram_missing_reference_recording_table"))
+        return await channel_service.record_channel_agent_reference(db, **kwargs)
+
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.record_channel_agent_reference",
+        fail_second_reference_recording,
+    )
+
+    response = await client.post(
+        _telegram_bot_path(created, "sendDocument"),
+        headers=_telegram_agent_headers(created),
+        json={"chat_id": "42", "document": "https://example.test/report.pdf"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == provider_body
+    assert response.headers["content-type"] == provider_headers["content-type"]
+    assert response.headers["content-length"] == provider_headers["content-length"]
+    assert response.headers["retry-after"] == provider_headers["retry-after"]
+    assert response.headers["x-ratelimit-remaining"] == provider_headers["x-ratelimit-remaining"]
+    assert response.headers["x-telegram-request-id"] == provider_headers["x-request-id"]
+    assert response.headers["x-request-id"] != provider_headers["x-request-id"]
+    assert response.headers["x-correlation-id"] == provider_headers["x-correlation-id"]
+    assert recording_calls == 2
+    recorded_reference = (
+        await db_session.execute(
+            select(ChannelAgentReference.id).where(
+                ChannelAgentReference.account_id == UUID(created["id"]),
+                ChannelAgentReference.ref_value == "telegram-file-before-recording-failure",
+            )
+        )
+    ).scalar_one_or_none()
+    assert recorded_reference is None
+    assert (await db_session.execute(select(1))).scalar_one() == 1
+    assert "telegram_reference_recording_failed" in caplog.text
+    assert f"account_id={created['id']}" in caplog.text
+    assert "method=sendDocument" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -7698,6 +7965,257 @@ async def test_telegram_get_file_records_path_and_download_is_scoped(
     )
     assert unowned_download.status_code == 403
     assert unowned_download.json()["description"] == "Forbidden: file_path is not bound to this bot"
+
+
+@pytest.mark.asyncio
+async def test_telegram_get_file_success_survives_path_recording_failure(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-get-file-recording-failure",
+        chat_id="42",
+    )
+    inbound = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 2,
+            "message": {
+                "message_id": 2,
+                "chat": {"id": 42, "type": "private"},
+                "document": {"file_id": "telegram-owned-file"},
+            },
+        },
+    )
+    assert inbound.status_code == 200
+    provider_payload = {
+        "ok": True,
+        "result": {
+            "file_id": "telegram-owned-file",
+            "file_path": "documents/provider-success.dat",
+        },
+    }
+    provider_body = (
+        b'{ "ok" : true, "result" : {"file_id":"telegram-owned-file", '
+        b'"file_path":"documents/provider-success.dat"} }\n'
+    )
+    provider_headers = {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": str(len(provider_body)),
+        "retry-after": "5",
+        "ratelimit-reset": "8",
+        "x-request-id": "telegram-get-file-recording-request",
+        "x-correlation-id": "telegram-get-file-recording-correlation",
+    }
+    _reset_fake_provider_client(
+        provider_payload,
+        content=provider_body,
+        headers=provider_headers,
+    )
+
+    async def fail_file_path_recording(db: AsyncSession, **_kwargs):
+        await db.execute(text("SELECT * FROM telegram_missing_file_path_recording_table"))
+
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.record_channel_agent_reference",
+        fail_file_path_recording,
+    )
+
+    response = await client.post(
+        _telegram_bot_path(created, "getFile"),
+        headers=_telegram_agent_headers(created),
+        json={"file_id": "telegram-owned-file"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == provider_body
+    assert response.headers["content-type"] == provider_headers["content-type"]
+    assert response.headers["content-length"] == provider_headers["content-length"]
+    assert response.headers["retry-after"] == provider_headers["retry-after"]
+    assert response.headers["ratelimit-reset"] == provider_headers["ratelimit-reset"]
+    assert response.headers["x-telegram-request-id"] == provider_headers["x-request-id"]
+    assert response.headers["x-request-id"] != provider_headers["x-request-id"]
+    assert response.headers["x-correlation-id"] == provider_headers["x-correlation-id"]
+    recorded_path = (
+        await db_session.execute(
+            select(ChannelAgentReference.id).where(
+                ChannelAgentReference.account_id == UUID(created["id"]),
+                ChannelAgentReference.ref_value == "documents/provider-success.dat",
+            )
+        )
+    ).scalar_one_or_none()
+    assert recorded_path is None
+    assert (await db_session.execute(select(1))).scalar_one() == 1
+    assert "telegram_reference_recording_failed" in caplog.text
+    assert f"account_id={created['id']}" in caplog.text
+    assert "method=getFile" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "payload"),
+    [
+        ("getFile", {"file_id": "file-owned"}),
+        ("answerCallbackQuery", {"callback_query_id": "callback-owned", "text": "done"}),
+    ],
+)
+async def test_telegram_reference_methods_preserve_provider_failure_response(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    payload: dict[str, str],
+):
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name=f"telegram-transparent-{method.lower()}",
+        chat_id="42",
+    )
+    inbound = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 2,
+            "callback_query": {
+                "id": "callback-owned",
+                "data": "approve",
+                "message": {
+                    "message_id": 2,
+                    "chat": {"id": 42, "type": "private"},
+                    "document": {"file_id": "file-owned"},
+                },
+            },
+        },
+    )
+    assert inbound.status_code == 200
+    provider_body = b"telegram provider overloaded\n"
+    provider_headers = {
+        "content-type": "text/plain; charset=utf-8",
+        "content-length": str(len(provider_body)),
+        "retry-after": "11",
+        "x-ratelimit-reset-after": "11.5",
+        "x-request-id": "telegram-request-1",
+        "x-correlation-id": "telegram-correlation-1",
+    }
+    _reset_fake_provider_client(
+        {"ok": False, "future_error": {"retry_after": 11}},
+        status_code=429,
+        content=provider_body,
+        headers=provider_headers,
+    )
+
+    response = await client.post(
+        _telegram_bot_path(created, method),
+        headers=_telegram_agent_headers(created),
+        json=payload,
+    )
+
+    assert response.status_code == 429
+    assert response.content == provider_body
+    for key, value in provider_headers.items():
+        if key == "x-request-id":
+            assert response.headers["x-telegram-request-id"] == value
+            assert response.headers["x-request-id"] != value
+        else:
+            assert response.headers[key] == value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "payload"),
+    [
+        (
+            "setMyCommands",
+            {
+                "commands": [
+                    {
+                        "command": "future",
+                        "description": "Future command",
+                        "future_command_field": "preserved",
+                    }
+                ],
+                "future_top_level_option": {"enabled": True},
+            },
+        ),
+        (
+            "setChatMenuButton",
+            {
+                "chat_id": "42",
+                "menu_button": {
+                    "type": "future_button",
+                    "future_menu_field": {"enabled": True},
+                },
+                "future_top_level_option": "preserved",
+            },
+        ),
+    ],
+)
+async def test_telegram_materialized_shadow_methods_preserve_provider_error_and_unknown_fields(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    payload: dict[str, Any],
+):
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name=f"telegram-transparent-shadow-{method.lower()}",
+        chat_id="42",
+    )
+    provider_body = b'{  "ok" : false, "future_error":"provider-owned"  }\n'
+    provider_headers = {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": str(len(provider_body)),
+        "retry-after": "7",
+        "x-request-id": "telegram-shadow-request",
+    }
+    _reset_fake_provider_client(
+        {"ok": False, "future_error": "provider-owned"},
+        content=provider_body,
+        headers=provider_headers,
+    )
+
+    response = await client.post(
+        _telegram_bot_path(created, method),
+        headers=_telegram_agent_headers(created),
+        json=payload,
+    )
+
+    assert response.status_code == 200
+    assert response.content == provider_body
+    for key, value in provider_headers.items():
+        if key == "x-request-id":
+            assert response.headers["x-telegram-request-id"] == value
+            assert response.headers["x-request-id"] != value
+        else:
+            assert response.headers[key] == value
+    assert _FakeProviderClient.calls
+    provider_payload = _FakeProviderClient.calls[0]["json"]
+    assert provider_payload["future_top_level_option"] == payload["future_top_level_option"]
+    if method == "setMyCommands":
+        assert provider_payload["commands"][0]["future_command_field"] == "preserved"
+    else:
+        assert provider_payload["menu_button"]["future_menu_field"] == {"enabled": True}
 
 
 @pytest.mark.asyncio
@@ -10283,14 +10801,15 @@ async def test_telegram_channel_direct_message_pairing_replies_stay_in_originati
         headers=_telegram_agent_headers(created),
         json={},
     )
+    compatibility_body = (
+        b'{ "chat_id": -100987654326, "message_thread_id": 4242, '
+        b'"text": "reply through virtual topic transport", '
+        b'"future_hint":"first", "future_hint":"second" }\n'
+    )
     agent_reply = await client.post(
         _telegram_bot_path(created, "sendMessage"),
-        headers=_telegram_agent_headers(created),
-        json={
-            "chat_id": -100987654326,
-            "message_thread_id": 4242,
-            "text": "reply through virtual topic transport",
-        },
+        headers={**_telegram_agent_headers(created), "content-type": "application/json"},
+        content=compatibility_body,
     )
     edit_own_message = await client.post(
         _telegram_bot_path(created, "editMessageText"),
@@ -10337,6 +10856,36 @@ async def test_telegram_channel_direct_message_pairing_replies_stay_in_originati
             "text": "multipart topic transport",
         },
         files={"attachment": ("unused.txt", b"unused")},
+    )
+    telegram_rate_limiter.reset()
+    native_direct_body = (
+        b'{ "chat_id": -100987654326, "direct_messages_topic_id": 4242, '
+        b'"text": "native direct topic" }\n'
+    )
+    native_direct_reply = await client.post(
+        _telegram_bot_path(created, "sendMessage"),
+        headers={**_telegram_agent_headers(created), "content-type": "application/json"},
+        content=native_direct_body,
+    )
+    draft_body = (
+        b'{ "chat_id": -100987654326, "message_thread_id": 4242, '
+        b'"draft_id": 1, "text": "native draft" }\n'
+    )
+    draft = await client.post(
+        _telegram_bot_path(created, "sendMessageDraft"),
+        headers={**_telegram_agent_headers(created), "content-type": "application/json"},
+        content=draft_body,
+    )
+    typing_body = b'{ "chat_id": -100987654326, "message_thread_id": 4242, "action": "typing" }\n'
+    typing = await client.post(
+        _telegram_bot_path(created, "sendChatAction"),
+        headers={**_telegram_agent_headers(created), "content-type": "application/json"},
+        content=typing_body,
+    )
+    missing_direct_topic = await client.post(
+        _telegram_bot_path(created, "sendMessage"),
+        headers=_telegram_agent_headers(created),
+        json={"chat_id": -100987654326, "text": "ambiguous channel DM"},
     )
     duplicate_topic = await client.post(
         _telegram_bot_path(created, "sendMessage"),
@@ -10400,6 +10949,13 @@ async def test_telegram_channel_direct_message_pairing_replies_stay_in_originati
     assert query_reply.status_code == 200
     assert form_reply.status_code == 200
     assert multipart_reply.status_code == 200
+    assert native_direct_reply.status_code == 200
+    assert draft.status_code == 200
+    assert typing.status_code == 200
+    assert missing_direct_topic.status_code == 400
+    assert missing_direct_topic.json()["description"] == (
+        "Bad Request: direct message topic is required"
+    )
     assert duplicate_topic.status_code == 400
     assert other_topic_reply.status_code == 403
     assert other_actor.status_code == 200
@@ -10427,18 +10983,17 @@ async def test_telegram_channel_direct_message_pairing_replies_stay_in_originati
         for call in _FakeProviderClient.calls
         if call.get("method") == "POST" and call["url"].endswith("/sendMessage")
     )
-    assert json.loads(proxied_reply["content"]) == {
-        "chat_id": -100987654326,
-        "direct_messages_topic_id": 4242,
-        "text": "reply through virtual topic transport",
-    }
+    assert proxied_reply["content"] == compatibility_body.replace(
+        b'"message_thread_id"',
+        b'"direct_messages_topic_id"',
+    )
     query_call = next(
         call
         for call in _FakeProviderClient.calls
-        if call.get("method") == "GET" and call["url"].endswith("/sendMessage")
+        if call.get("method") == "GET" and "/sendMessage?" in call["url"]
     )
-    assert ("direct_messages_topic_id", "4242") in query_call["params"]
-    assert all(key != "message_thread_id" for key, _value in query_call["params"])
+    assert b"direct_messages_topic_id=4242" in httpx.URL(query_call["url"]).query
+    assert b"message_thread_id" not in httpx.URL(query_call["url"]).query
     form_call = next(
         call
         for call in _FakeProviderClient.calls
@@ -10457,6 +11012,26 @@ async def test_telegram_channel_direct_message_pairing_replies_stay_in_originati
     )
     assert b'name="direct_messages_topic_id"' in multipart_call["content"]
     assert b'name="message_thread_id"' not in multipart_call["content"]
+    native_direct_call = next(
+        call
+        for call in _FakeProviderClient.calls
+        if call.get("method") == "POST"
+        and call["url"].endswith("/sendMessage")
+        and b"native direct topic" in call.get("content", b"")
+    )
+    assert native_direct_call["content"] == native_direct_body
+    draft_call = next(
+        call
+        for call in _FakeProviderClient.calls
+        if call.get("method") == "POST" and call["url"].endswith("/sendMessageDraft")
+    )
+    typing_call = next(
+        call
+        for call in _FakeProviderClient.calls
+        if call.get("method") == "POST" and call["url"].endswith("/sendChatAction")
+    )
+    assert draft_call["content"] == draft_body
+    assert typing_call["content"] == typing_body
 
 
 @pytest.mark.asyncio
