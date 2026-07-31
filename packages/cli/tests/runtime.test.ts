@@ -8853,6 +8853,7 @@ chmod +x "$prefix/bin/clawdi"
 		const previousLog = console.log;
 		const previousUmask = process.umask(0o022);
 		const previousExitCode = process.exitCode;
+		const previousPath = process.env.PATH;
 		let runtimeExitCode: number | undefined;
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
@@ -8865,6 +8866,7 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
 		process.env.CLAWDI_RUNTIME_USER = String(process.getuid?.() ?? 0);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
 		const paths = getRuntimePaths();
 		writeFakeSystemdManager({
 			path: join(bin, "systemctl"),
@@ -8877,7 +8879,9 @@ chmod +x "$prefix/bin/clawdi"
 			`#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> '${installerLog}'
-if [ "$*" = "${installArgs}" ]; then
+if [ "$*" = "--version" ]; then
+  printf '%s\n' '${runtime}-test-version'
+elif [ "$*" = "${installArgs}" ]; then
   printf '%s\n' 'official ${runtime} installer' >> '${systemctlLog}'
   test -r '${paths.egressSystemCaFile}'
   test -s '${join(paths.systemdEnvRoot, `${serviceName}.service.env`)}'
@@ -8891,6 +8895,32 @@ exit 0
 `,
 		);
 		chmodSync(runtimeBin, 0o700);
+		if (runtime === "hermes") {
+			const distIndex = join(
+				home,
+				".hermes",
+				"hermes-agent",
+				"hermes_cli",
+				"web_dist",
+				"index.html",
+			);
+			mkdirSync(join(home, ".hermes", "hermes-agent"), { recursive: true });
+			writeFileSync(
+				join(bin, "npm"),
+				`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "npm $*" >> '${installerLog}'
+if [ "$*" = "--version" ]; then
+  printf '%s\n' '12.0.2'
+elif [ "$*" = "run build -w web" ]; then
+  mkdir -p '${dirname(distIndex)}'
+  printf '%s\n' '<html>Hermes dashboard</html>' > '${distIndex}'
+  printf '%s\n' 'official hermes dashboard artifact' >> '${systemctlLog}'
+fi
+`,
+			);
+			chmodSync(join(bin, "npm"), 0o700);
+		}
 		seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		const mitmproxy = seedMitmproxyCache(paths);
@@ -8913,6 +8943,8 @@ exit 0
 		} finally {
 			runtimeFetch.restore();
 			console.log = previousLog;
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
 			process.umask(previousUmask);
 			process.exitCode = previousExitCode;
 		}
@@ -8939,12 +8971,15 @@ exit 0
 			/^(start|restart) .*clawdi-runtime-sidecar\.service/.test(call),
 		);
 		const officialInstaller = calls.indexOf(`official ${runtime} installer`);
+		const dashboardArtifact = calls.indexOf("official hermes dashboard artifact");
 		const finalSystemActivation = calls.findIndex(
 			(call) => call.startsWith("start") && call.includes("clawdi-daemon.service"),
 		);
 		expect(sidecarActivation).toBeGreaterThanOrEqual(0);
 		expect(officialInstaller).toBeGreaterThan(sidecarActivation);
+		if (runtime === "hermes") expect(dashboardArtifact).toBeGreaterThan(officialInstaller);
 		expect(finalSystemActivation).toBeGreaterThan(officialInstaller);
+		if (runtime === "hermes") expect(finalSystemActivation).toBeGreaterThan(dashboardArtifact);
 		expect(calls).not.toContain(`--user restart ${serviceName}.service`);
 		const installerCalls = readFileSync(installerLog, "utf8").trim().split("\n");
 		const installIndex = installerCalls.indexOf(installArgs);
@@ -8952,7 +8987,18 @@ exit 0
 			expect(installIndex).toBeGreaterThan(0);
 			expect(installerCalls.slice(installIndex + 1)).not.toContain("config patch --stdin");
 		} else {
-			expect(installIndex).toBe(0);
+			expect(installIndex).toBeGreaterThanOrEqual(0);
+			const postInstallCalls = installerCalls.slice(installIndex + 1);
+			expect(postInstallCalls.filter((call) => call.startsWith("npm "))).toEqual([
+				"npm --version",
+				"npm install --workspace web",
+				"npm run build -w web",
+			]);
+			expect(
+				postInstallCalls
+					.filter((call) => !call.startsWith("npm "))
+					.every((call) => call === "--version"),
+			).toBe(true);
 			expect(existsSync(join(home, ".hermes", "config.yaml"))).toBe(true);
 		}
 		expect(readRuntimeAppliedState(paths)).toMatchObject({

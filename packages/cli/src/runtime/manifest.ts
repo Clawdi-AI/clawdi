@@ -154,8 +154,10 @@ import { runtimeImpactRevision, runtimeProgramRevision } from "./runtime-impact-
 import {
 	buildRuntimeSystemdUserProgram,
 	installOfficialRuntimeService,
+	planHermesDashboardArtifact,
 	planOfficialRuntimeServices,
 	planRuntimeSystemdUserMutations,
+	prepareHermesDashboardArtifact,
 	type RuntimeEgressSystemdProgram,
 	type RuntimeSystemdStaleFilePlan,
 	type RuntimeSystemdUserProgram,
@@ -4737,6 +4739,8 @@ export function runtimeUserMutationTargets(
 	observations: ReadonlyMap<string, Pick<RuntimeInstallObservation, "status">>,
 ): string[] {
 	const home = hostedRuntimeProjectionHome(manifest, paths);
+	const installerTargets = runtimeInstallerMutationTargets(manifest, home, observations);
+	const hermesAppRoot = join(home, ".hermes", "hermes-agent");
 	const openClawDatabase = join(openClawAgentDir(home), "openclaw-agent.sqlite");
 	const targets = new Set<string>([
 		join(home, ".openclaw", "openclaw.json"),
@@ -4750,9 +4754,16 @@ export function runtimeUserMutationTargets(
 		join(workspaceRoot, "SOUL.md"),
 		join(hostedCodexHome(home), CODEX_MANAGED_PROVIDER_CONFIG_FILE),
 		legacyHermesModelProviderPluginDir(home),
-		...runtimeInstallerMutationTargets(manifest, home, observations),
+		...installerTargets,
 		...hostedChannelCredentialMutationTargets(manifest, home),
 	]);
+	if (
+		manifest.runtimes.hermes?.enabled &&
+		manifest.runtimes.hermes.services?.dashboard &&
+		!installerTargets.includes(hermesAppRoot)
+	) {
+		targets.add(join(hermesAppRoot, "hermes_cli", "web_dist"));
+	}
 	for (const agentType of MANAGED_LIVE_SYNC_AGENTS) {
 		targets.add(join(paths.localEnvironments, `${agentType}.json`));
 	}
@@ -5491,8 +5502,22 @@ export function convergeRuntimeManifest(
 			opts.systemdApply !== undefined || opts.executeOfficialServiceInstallers === true,
 		);
 		installReceiptTargets.officialServices = officialServicePlan.targets;
+		const hermesDashboardArtifactPlan = planHermesDashboardArtifact(
+			runtimeSystemdUserPrograms,
+			paths,
+			previousInstallReceipts,
+			opts.systemdApply !== undefined || opts.executeOfficialServiceInstallers === true,
+		);
+		if (hermesDashboardArtifactPlan.receiptKey && hermesDashboardArtifactPlan.target) {
+			installReceiptTargets.officialServices.set(
+				hermesDashboardArtifactPlan.receiptKey,
+				hermesDashboardArtifactPlan.target,
+			);
+		}
 		if (
-			officialServicePlan.pending.length > 0 &&
+			(officialServicePlan.pending.length > 0 ||
+				(hermesDashboardArtifactPlan.program !== null &&
+					hermesDashboardArtifactPlan.target?.expectedCurrentRevision === null)) &&
 			systemdUnits.egressSidecarActive &&
 			opts.systemdApply
 		) {
@@ -5513,6 +5538,12 @@ export function convergeRuntimeManifest(
 			const error = installOfficialRuntimeService(item, paths);
 			if (error) throw new Error(error);
 		}
+		const artifactError = prepareHermesDashboardArtifact(
+			hermesDashboardArtifactPlan,
+			paths,
+			systemdUnits.egressSidecarActive ? egressSystemdProgram?.systemCaBundle : undefined,
+		);
+		if (artifactError) throw new Error(artifactError);
 
 		const bootFinished = join(instanceRoot, "boot-finished");
 		writePrivateFileAtomic(bootFinished, `${generatedAt}\n`);

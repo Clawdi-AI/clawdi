@@ -140,7 +140,7 @@ export function spawnRuntimeUserCommand(
 	args: string[],
 	home: string,
 	cwd: string,
-	options: { egressSystemCaFile?: string; input?: string } = {},
+	options: { egressSystemCaFile?: string; input?: string; timeoutMs?: number } = {},
 ): ReturnType<typeof spawnSync> {
 	const env = runtimeUserCommandEnv(home, options);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
@@ -151,20 +151,27 @@ export function spawnRuntimeUserCommand(
 				cwd,
 				encoding: "utf8",
 				input: options.input,
+				timeout: options.timeoutMs,
 			});
 		}
 		if (commandExists("runuser")) {
 			return spawnSync(
 				"runuser",
 				["-u", runtimeUser, "--", "env", `HOME=${home}`, `PATH=${env.PATH}`, command, ...args],
-				{ env, cwd, encoding: "utf8", input: options.input },
+				{ env, cwd, encoding: "utf8", input: options.input, timeout: options.timeoutMs },
 			);
 		}
 		throw new Error(
 			`runtime init is running as root but cannot drop to CLAWDI_RUNTIME_USER=${runtimeUser}; install gosu or runuser`,
 		);
 	}
-	return spawnSync(command, args, { env, cwd, encoding: "utf8", input: options.input });
+	return spawnSync(command, args, {
+		env,
+		cwd,
+		encoding: "utf8",
+		input: options.input,
+		timeout: options.timeoutMs,
+	});
 }
 
 export function runRuntimeUserCommand(
@@ -173,7 +180,7 @@ export function runRuntimeUserCommand(
 	stdin: string,
 	home: string,
 	cwd: string,
-	options: { egressSystemCaFile?: string } = {},
+	options: { egressSystemCaFile?: string; timeoutMs?: number } = {},
 ): void {
 	const env = runtimeUserCommandEnv(home, options);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
@@ -184,6 +191,7 @@ export function runRuntimeUserCommand(
 				env: { ...env, USER: runtimeUser, LOGNAME: runtimeUser },
 				cwd,
 				stdio: "pipe",
+				timeout: options.timeoutMs,
 			});
 			return;
 		}
@@ -191,7 +199,7 @@ export function runRuntimeUserCommand(
 			execFileSync(
 				"runuser",
 				["-u", runtimeUser, "--", "env", `HOME=${home}`, `PATH=${env.PATH}`, command, ...args],
-				{ input: stdin, env, cwd, stdio: "pipe" },
+				{ input: stdin, env, cwd, stdio: "pipe", timeout: options.timeoutMs },
 			);
 			return;
 		}
@@ -199,5 +207,11 @@ export function runRuntimeUserCommand(
 			`runtime init is running as root but cannot drop to CLAWDI_RUNTIME_USER=${runtimeUser}; install gosu or runuser`,
 		);
 	}
-	execFileSync(command, args, { input: stdin, env, cwd, stdio: "pipe" });
+	execFileSync(command, args, {
+		input: stdin,
+		env,
+		cwd,
+		stdio: "pipe",
+		timeout: options.timeoutMs,
+	});
 }
