@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -6,6 +7,29 @@ const here = dirname(fileURLToPath(import.meta.url));
 const cliRoot = join(here, "..");
 const binPath = join(cliRoot, "bin", "clawdi.mjs");
 const srcEntry = join(cliRoot, "src", "index.ts");
+const SMOKE_RUNTIME_ENV = {
+	CLAWDI_RUNTIME_MODE: "hosted",
+	CLAWDI_RUNTIME_USER: "clawdi",
+	CLAWDI_CLI_PACKAGE_SPEC: "clawdi@0.13.0-test",
+	CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
+};
+
+function writeRuntimeApplyIdentity(runRoot: string, runtimeEnv: Record<string, string>): string {
+	const path = join(runRoot, "secrets", "runtime-apply-identity.json");
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(
+		path,
+		`${JSON.stringify({
+			schemaVersion: "clawdi.runtimeApplyIdentity.v1",
+			generation: 1,
+			manifestETag: '"smoke-manifest-1"',
+			applyReceiptId: "smoke-apply-receipt-0001",
+			bootNonce: "smoke-boot-nonce-000001",
+			runtimeEnv,
+		})}\n`,
+	);
+	return path;
+}
 
 /**
  * Run the CLI and return stdout + stderr + exit code.
@@ -202,6 +226,7 @@ describe("CLI smoke — src entry", () => {
 			CLAWDI_HOST_POLICY_PATH: policyPath,
 			CLAWDI_SERVICE_STATE_DIR: serviceStateRoot,
 			CLAWDI_RUN_DIR: runRoot,
+			CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: writeRuntimeApplyIdentity(runRoot, SMOKE_RUNTIME_ENV),
 			CLAWDI_AUTH_TOKEN: undefined,
 		};
 
@@ -270,6 +295,7 @@ describe("CLI smoke — src entry", () => {
 					CLAWDI_RUNTIME_MODE: "hosted",
 					CLAWDI_SERVICE_STATE_DIR: state,
 					CLAWDI_RUN_DIR: run,
+					CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: writeRuntimeApplyIdentity(run, SMOKE_RUNTIME_ENV),
 				},
 			);
 			expect(result.code).toBe(22);
@@ -291,6 +317,7 @@ describe("CLI smoke — src entry", () => {
 		const run = join(root, "run", "clawdi");
 		const manifestPath = join(root, "strict-hosted-manifest.json");
 		const installer = join(root, "install-openclaw.sh");
+		const systemctl = join(root, "bin", "systemctl");
 		const managedCli = join(state, "bin", "clawdi");
 		const managedCliTarget = join(state, "npm", "bin", "clawdi");
 		const egressEngine = {
@@ -310,6 +337,7 @@ describe("CLI smoke — src entry", () => {
 		);
 		mkdirSync(home, { recursive: true });
 		mkdirSync(dirname(installer), { recursive: true });
+		mkdirSync(dirname(systemctl), { recursive: true });
 		mkdirSync(dirname(managedCli), { recursive: true });
 		mkdirSync(dirname(managedCliTarget), { recursive: true });
 		mkdirSync(join(state, "status"), { recursive: true });
@@ -322,6 +350,19 @@ printf '#!/usr/bin/env sh\nexit 0\n' > "$HOME/.openclaw/bin/openclaw"
 chmod +x "$HOME/.openclaw/bin/openclaw"
 `,
 		);
+		writeFileSync(
+			systemctl,
+			`#!/usr/bin/env sh
+if [ "\${1:-}" = "--user" ]; then shift; fi
+if [ "\${1:-}" = "show" ]; then
+  printf 'LoadState=loaded\\nActiveState=active\\n'
+elif [ "\${1:-}" = "is-enabled" ]; then
+  printf 'enabled\\n'
+fi
+exit 0
+`,
+		);
+		chmodSync(systemctl, 0o700);
 		chmodSync(installer, 0o700);
 		writeFileSync(
 			managedCliTarget,
@@ -436,13 +477,19 @@ exit 64
 					CLAWDI_RUNTIME_MODE: "hosted",
 					CLAWDI_SERVICE_STATE_DIR: state,
 					CLAWDI_RUN_DIR: run,
+					CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: writeRuntimeApplyIdentity(run, {
+						...SMOKE_RUNTIME_ENV,
+						OPENCLAW_GATEWAY_TOKEN: "gateway-token",
+					}),
 					CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
 					CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER: installer,
 					CLAWDI_CODEX_INSTALL_DISABLED: "1",
+					CLAWDI_SYSTEMD_APPLY: "1",
+					CLAWDI_SYSTEMCTL_PATH: systemctl,
 					OPENCLAW_GATEWAY_TOKEN: "gateway-token",
 				},
 			);
-			expect(result.code).toBe(0);
+			expect(result.code, result.stdout).toBe(0);
 			const parsed = JSON.parse(result.stdout);
 			expect(parsed.status).toBe("ok");
 			expect(parsed.stage).toBe("final");
@@ -463,6 +510,7 @@ exit 64
 		const home = join(root, "home", "clawdi");
 		const policyPath = join(root, "etc", "clawdi", "missing-host-policy.json");
 		const serviceStateRoot = join(root, "var", "lib", "clawdi");
+		const runRoot = join(root, "run", "clawdi");
 		mkdirSync(home, { recursive: true });
 
 		try {
@@ -471,7 +519,11 @@ exit 64
 				CLAWDI_RUNTIME_MODE: "hosted",
 				CLAWDI_HOST_POLICY_PATH: policyPath,
 				CLAWDI_SERVICE_STATE_DIR: serviceStateRoot,
-				CLAWDI_RUN_DIR: join(root, "run", "clawdi"),
+				CLAWDI_RUN_DIR: runRoot,
+				CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: writeRuntimeApplyIdentity(runRoot, {
+					...SMOKE_RUNTIME_ENV,
+					CLAWDI_AUTH_TOKEN: "auth-test-token",
+				}),
 				CLAWDI_AUTH_TOKEN: "auth-test-token",
 			});
 			expect(code).toBe(21);

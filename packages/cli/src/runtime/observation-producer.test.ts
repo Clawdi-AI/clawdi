@@ -49,13 +49,6 @@ function appliedState(generation: number): RuntimeAppliedStateV2 {
 	};
 }
 
-function setApplyIdentityEnvironment(generation: number): void {
-	process.env.CLAWDI_RUNTIME_GENERATION = String(generation);
-	process.env.CLAWDI_RUNTIME_MANIFEST_ETAG = `"manifest-${generation}"`;
-	process.env.CLAWDI_RUNTIME_APPLY_RECEIPT_ID = `apply-receipt-000${generation}`;
-	process.env.CLAWDI_RUNTIME_BOOT_NONCE = "boot-nonce-000001";
-}
-
 function writeApplyIdentityFile(paths: RuntimePaths, generation: number): void {
 	const path = join(paths.runRoot, "secrets", "runtime-apply-identity.json");
 	mkdirSync(dirname(path), { recursive: true });
@@ -91,7 +84,7 @@ async function observationSchedule(
 	transitionToOk = false,
 ): Promise<Array<{ at: number; status: "ok" | "error" | "unknown" }>> {
 	const paths = tempRuntimePaths();
-	setApplyIdentityEnvironment(1);
+	writeApplyIdentityFile(paths, 1);
 	writeRuntimeAppliedState(appliedState(1), paths);
 	writeObservationHealth(paths, initialStatus);
 	const abort = new AbortController();
@@ -122,7 +115,7 @@ async function observationSchedule(
 describe("hosted runtime observation producer", () => {
 	test("accepts apply generation three at checkpoint two and submits its exact identity", async () => {
 		const paths = tempRuntimePaths();
-		setApplyIdentityEnvironment(3);
+		writeApplyIdentityFile(paths, 3);
 		writeRuntimeAppliedState(
 			{
 				...appliedState(3),
@@ -222,6 +215,7 @@ describe("hosted runtime observation producer", () => {
 
 	test("stays idle when no successfully applied tuple exists", async () => {
 		const paths = tempRuntimePaths();
+		writeApplyIdentityFile(paths, 1);
 		let submits = 0;
 		const producer = new HostedRuntimeObservationProducer({
 			abort: new AbortController().signal,
@@ -238,7 +232,7 @@ describe("hosted runtime observation producer", () => {
 
 	test("does not attest a durable tuple that differs from the process environment", async () => {
 		const paths = tempRuntimePaths();
-		setApplyIdentityEnvironment(2);
+		writeApplyIdentityFile(paths, 2);
 		writeRuntimeAppliedState(appliedState(1), paths);
 		let submits = 0;
 		const producer = new HostedRuntimeObservationProducer({
@@ -256,7 +250,7 @@ describe("hosted runtime observation producer", () => {
 
 	test("drops a failed old-tuple pending event when the applied tuple rotates", async () => {
 		const paths = tempRuntimePaths();
-		setApplyIdentityEnvironment(1);
+		writeApplyIdentityFile(paths, 1);
 		writeRuntimeAppliedState(appliedState(1), paths);
 		const ids = ["boot-000000000001", "old-event-000001", "boot-000000000002", "new-event-000001"];
 		const submitted: components["schemas"]["RuntimeObservationEventV2"][] = [];
@@ -282,7 +276,7 @@ describe("hosted runtime observation producer", () => {
 		});
 
 		expect(await producer.sendOnce()).toEqual({ outcome: "failed" });
-		setApplyIdentityEnvironment(2);
+		writeApplyIdentityFile(paths, 2);
 		writeRuntimeAppliedState(appliedState(2), paths);
 		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
 
@@ -299,7 +293,7 @@ describe("hosted runtime observation producer", () => {
 
 	test("does not let an unresolved old-tuple request block rotation", async () => {
 		const paths = tempRuntimePaths();
-		setApplyIdentityEnvironment(1);
+		writeApplyIdentityFile(paths, 1);
 		writeRuntimeAppliedState(appliedState(1), paths);
 		const abort = new AbortController();
 		const submitted: components["schemas"]["RuntimeObservationEventV2"][] = [];
@@ -322,7 +316,7 @@ describe("hosted runtime observation producer", () => {
 			delay: async () => {
 				delayCalls += 1;
 				if (delayCalls === 1) {
-					setApplyIdentityEnvironment(2);
+					writeApplyIdentityFile(paths, 2);
 					writeRuntimeAppliedState(appliedState(2), paths);
 					return;
 				}

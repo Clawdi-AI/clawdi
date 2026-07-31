@@ -133,7 +133,6 @@ export class HostedRuntimeObservationProducer {
 
 	private readAttestedContext(): AttestedRuntimeObservationContext | null {
 		const expectedApplyIdentity = readRuntimeApplyIdentity();
-		if (!expectedApplyIdentity) return null;
 		const appliedState = readRuntimeAppliedState(this.paths);
 		const appliedIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
 		if (!appliedIdentity || !sameApplyIdentity(appliedIdentity, expectedApplyIdentity)) {

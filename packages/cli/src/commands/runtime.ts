@@ -47,6 +47,7 @@ import {
 	reconcilePendingRuntimeCliUpgrade,
 	rollbackPendingRuntimeCliUpgrade,
 } from "../runtime/cli-update";
+import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
 import { buildEgressEngineEnv, SYSTEM_CA_BUNDLE } from "../runtime/egress-env";
 import { readHostPolicy } from "../runtime/host-policy";
 import {
@@ -55,7 +56,6 @@ import {
 	loadRuntimeManifest,
 	type RuntimePrivateAppliedAuthority,
 	runtimeRecoverableSecretValues,
-	withRuntimeConvergeLockAsync,
 } from "../runtime/manifest";
 import { manifestSchema as runtimeDesiredStateSchema } from "../runtime/manifest-contract";
 import {

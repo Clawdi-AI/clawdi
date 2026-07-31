@@ -339,6 +339,19 @@ async function runCli(
 }
 
 function cliEnv(fixture: Fixture): Record<string, string> {
+	const applyIdentityPath = join(fixture.runDir, "secrets", "runtime-apply-identity.json");
+	mkdirSync(dirname(applyIdentityPath), { recursive: true });
+	writeFileSync(
+		applyIdentityPath,
+		`${JSON.stringify({
+			schemaVersion: "clawdi.runtimeApplyIdentity.v1",
+			generation: 1,
+			manifestETag: '"frozen-manifest"',
+			applyReceiptId: "apply-receipt-daemon-rpc",
+			bootNonce: "boot-nonce-daemon-rpc-01",
+			runtimeEnv: {},
+		})}\n`,
+	);
 	return {
 		CLAWDI_API_URL: server.url.origin,
 		CLAWDI_AUTH_TOKEN: API_KEY,
@@ -350,10 +363,7 @@ function cliEnv(fixture: Fixture): Record<string, string> {
 		CLAWDI_SERVE_MODE: "container",
 		CLAWDI_RUNTIME_MODE: "hosted",
 		CLAWDI_RUNTIME_HOME: fixture.home,
-		CLAWDI_RUNTIME_GENERATION: "1",
-		CLAWDI_RUNTIME_MANIFEST_ETAG: '"frozen-manifest"',
-		CLAWDI_RUNTIME_APPLY_RECEIPT_ID: "apply-receipt-daemon-rpc",
-		CLAWDI_RUNTIME_BOOT_NONCE: "boot-nonce-daemon-rpc-01",
+		CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: applyIdentityPath,
 		CLAWDI_RUN_DIR: fixture.runDir,
 		CLAWDI_SERVICE_STATE_DIR: fixture.serviceStateDir,
 		CLAWDI_STATE_DIR: fixture.stateDir,
