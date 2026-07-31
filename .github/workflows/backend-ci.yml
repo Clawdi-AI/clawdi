@@ -87,6 +87,8 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.14"
@@ -96,6 +98,10 @@ jobs:
         with:
           bun-version: "1.3.14"
       - run: uv sync --frozen --no-install-project
+      - name: uv lock is current
+        run: uv lock --check
+      - name: Dependency authority
+        run: uv run python scripts/check_dependency_authority.py
       - name: Ruff lint
         run: uv run ruff check app scripts
       - name: Ruff format (check-only)
@@ -111,6 +117,15 @@ jobs:
       # and flags drift. Config in `pyproject.toml [tool.deptry]`.
       - name: Dependency drift check
         run: uv run deptry app
+      - name: Owned-path type ratchet
+        run: uv run python scripts/type_governance.py owned
+      - name: Changed-production type gate
+        env:
+          TYPE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          TYPE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: uv run python scripts/type_governance.py changed-from "$TYPE_BASE_SHA" "$TYPE_HEAD_SHA"
+      - name: Complete BasedPyright inventory (non-gating diagnostics)
+        run: uv run python scripts/type_governance.py inventory
       - name: Generated OpenAPI client is current
         run: uv run python scripts/check_generated_api.py
   test:

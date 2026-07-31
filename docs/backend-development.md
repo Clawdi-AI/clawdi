@@ -47,10 +47,45 @@ Run these before sending backend changes for review:
 
 ```bash
 cd backend
+uv lock --check
+uv run python scripts/check_dependency_authority.py
+uv run python scripts/type_governance.py owned
 uv run ruff check .
 uv run ruff format --check .
 uv run python -m compileall app scripts tests alembic
 ```
+
+## Python type governance
+
+BasedPyright runs in standard mode from the uv development environment. The
+owned-path gate is a zero-diagnostic ratchet for the small explicit `include`
+list in `pyproject.toml`. CI also sends every changed `backend/app/**/*.py`
+file to the fail-closed exact-path gate. The gate rejects empty, missing,
+partial, or malformed analysis rather than treating it as success.
+
+Generate the complete non-gating inventory with:
+
+```bash
+cd backend
+uv run python scripts/type_governance.py inventory
+```
+
+The inventory at the initial BasedPyright 1.39.9 standard-mode baseline is:
+
+| Area | Files | Errors |
+| --- | ---: | ---: |
+| `app` | 177 | 157 |
+| `tests` | 111 | 177 |
+| `scripts` | 11 | 2 |
+| `alembic` | 54 | 4 |
+| **Total** | **353** | **340** |
+
+Warnings and information diagnostics are both zero in every area. This table
+records inventory, not accepted debt: no baseline or suppression file is
+used, and only the explicit zero-diagnostic owned paths gate existing code.
+
+Done: the `owned` command exits 0 with `filesAnalyzed` equal to 2 and all
+diagnostic counts equal to 0; the `inventory` command reports all four areas.
 
 Backend tests require a real PostgreSQL database with `pgvector` and `pg_trgm`
 available. The pytest fixtures read `DATABASE_URL` and do not create or migrate

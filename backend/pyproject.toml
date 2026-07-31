@@ -47,6 +47,7 @@ mem0 = ["mem0ai>=0.1"]
 
 [dependency-groups]
 dev = [
+    "basedpyright==1.39.9",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "aiosqlite>=0.20",
@@ -55,6 +56,14 @@ dev = [
     # the same class of bug that let mem0/mem0ai stay
     # undeclared for months without CI noticing.
     "deptry>=0.20",
+]
+
+[tool.basedpyright]
+typeCheckingMode = "standard"
+pythonVersion = "3.12"
+include = [
+    "app/core/query_utils.py",
+    "app/core/skill_key.py",
 ]
 
 [tool.deptry]
@@ -95,6 +104,8 @@ migrate = "alembic upgrade head"
 audit-ai-provider-models = "python -m scripts.audit_ai_provider_models"
 lint = "ruff check ."
 format = "ruff format ."
+typecheck = "python scripts/type_governance.py owned"
+type-inventory = "python scripts/type_governance.py inventory"
 test = { shell = "../scripts/test.sh backend" }
 
 [tool.ruff]
