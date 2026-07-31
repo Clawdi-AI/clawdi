@@ -14,7 +14,7 @@ import {
 	utimesSync,
 	writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
@@ -86,6 +86,8 @@ import {
 } from "../src/runtime/state";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "../src/runtime/systemd-user";
 import { mockFetch } from "./commands/helpers";
+
+const TEST_PROCESS_USER = userInfo().username;
 
 function explicitTestApplyContext(
 	manifest: Pick<RuntimeManifest, "generation" | "applyGeneration">,
@@ -1080,7 +1082,7 @@ function seedRuntimeWatchLocaleBaseline(home: string, state: string, run: string
 	process.env.CLAWDI_RUNTIME_MODE = "hosted";
 	process.env.CLAWDI_SERVICE_STATE_DIR = state;
 	process.env.CLAWDI_RUN_DIR = run;
-	process.env.CLAWDI_RUNTIME_USER = process.env.USER ?? "root";
+	process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 	process.env.CLAWDI_AUTH_TOKEN = "file-runtime-token";
 	setRuntimeApplyGeneration(1, CANONICAL_TEST_CONTEXT);
 	seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
@@ -1136,7 +1138,7 @@ exit 0
 	chmodSync(systemctlPath, 0o700);
 	process.env.CLAWDI_SYSTEMD_APPLY = "1";
 	process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
-	process.env.CLAWDI_RUNTIME_USER = process.env.USER ?? "root";
+	process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 }
 
 function seedMitmproxyCache(paths = getRuntimePaths()): typeof TEST_EGRESS_ENGINE_PIN {
@@ -6750,7 +6752,7 @@ exit 0
 		chmodSync(join(bin, "systemctl"), 0o700);
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
-		process.env.CLAWDI_RUNTIME_USER = "root";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		seedRuntimeWatchLocaleBaseline(home, state, run);
 		let resolveInitialWatchEvent: (() => void) | null = null;
 		const initialWatchEvent = new Promise<void>((resolveEvent) => {
@@ -7054,7 +7056,7 @@ fi
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
 		process.env.CLAWDI_SYSTEMD_APPLY = "0";
-		process.env.CLAWDI_RUNTIME_USER = process.env.USER ?? "root";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		setRuntimeApplyContextFixture(
 			{
 				generation: 12,
@@ -7281,7 +7283,7 @@ fi
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
-		process.env.CLAWDI_RUNTIME_USER = process.env.USER ?? "root";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
 		};
@@ -8995,7 +8997,7 @@ exit 0
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
-		process.env.CLAWDI_RUNTIME_USER = process.env.USER ?? "root";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
