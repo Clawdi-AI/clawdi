@@ -30,15 +30,23 @@ export function runningAsRoot(): boolean {
 }
 
 export function runtimeUserUid(runtimeUser: string): number {
-	const explicit = Number.parseInt(process.env.CLAWDI_RUNTIME_UID?.trim() ?? "", 10);
-	if (Number.isInteger(explicit) && explicit >= 0 && explicit <= 4_294_967_295) return explicit;
+	const explicit = linuxUid(process.env.CLAWDI_RUNTIME_UID?.trim() ?? "");
+	if (explicit !== null) return explicit;
+	const numericUser = linuxUid(runtimeUser);
+	if (numericUser !== null) return numericUser;
 	const resolved = spawnSync("id", ["-u", runtimeUser], { encoding: "utf8" });
 	if (resolved.status === 0) {
-		const uid = Number.parseInt(resolved.stdout.trim(), 10);
-		if (Number.isInteger(uid) && uid >= 0 && uid <= 4_294_967_295) return uid;
+		const uid = linuxUid(resolved.stdout.trim());
+		if (uid !== null) return uid;
 	}
 	if (runtimeUser === "clawdi") return 10_001;
 	throw new Error(`could not resolve uid for ${runtimeUser}`);
+}
+
+function linuxUid(value: string): number | null {
+	if (!/^(0|[1-9]\d*)$/.test(value)) return null;
+	const uid = Number(value);
+	return Number.isInteger(uid) && uid <= 4_294_967_295 ? uid : null;
 }
 
 function runtimeUserCommandEnv(

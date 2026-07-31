@@ -60,6 +60,7 @@ import {
 	type RuntimeManifestLoad,
 } from "../runtime/manifest-source";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
+import { runtimeUserUid } from "../runtime/runtime-user-command";
 import {
 	buildRuntimeBootStatus,
 	ensureRuntimeStateDirs,
@@ -1905,10 +1906,7 @@ function runtimeUserSystemctlResult(
 
 function assertRuntimeUserCanRead(path: string): void {
 	const runtimeUser = runtimeUserName();
-	const runtimeUid = Number.parseInt(commandOutput("id", ["-u", runtimeUser]).trim(), 10);
-	if (!Number.isSafeInteger(runtimeUid) || runtimeUid < 0) {
-		throw new Error(`could not resolve runtime uid for ${runtimeUser}`);
-	}
+	const runtimeUid = runtimeUserUid(runtimeUser);
 	const proof = buildRuntimeUserReadCommand(process.getuid?.(), runtimeUid, runtimeUser, path);
 	runCommand(proof.command, proof.args);
 }

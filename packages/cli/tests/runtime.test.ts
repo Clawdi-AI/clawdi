@@ -14,7 +14,7 @@ import {
 	utimesSync,
 	writeFileSync,
 } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
@@ -87,7 +87,7 @@ import {
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "../src/runtime/systemd-user";
 import { mockFetch } from "./commands/helpers";
 
-const TEST_PROCESS_USER = userInfo().username;
+const TEST_PROCESS_USER = String(process.getuid?.() ?? 0);
 
 function explicitTestApplyContext(
 	manifest: Pick<RuntimeManifest, "generation" | "applyGeneration">,
