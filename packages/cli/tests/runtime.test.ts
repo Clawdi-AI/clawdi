@@ -5687,7 +5687,13 @@ cp '${sdkSource}' '${sdkTarget}'
 		expect("manifest" in loaded).toBe(true);
 		if (!("manifest" in loaded)) throw new Error("expected hosted manifest load success");
 
-		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+			managedGatewayModelListFetcher: () => ({
+				status: "ok",
+				endpoint: "https://ai-gateway.example.test/v1/models",
+				models: [{ id: "gpt-5.5" }],
+			}),
+		});
 
 		expect(convergence.installErrors).toEqual([]);
 		const runConfig = JSON.parse(
@@ -7744,8 +7750,10 @@ exit 42
 		const run = join(root, "run", "clawdi");
 		const bin = join(root, "bin");
 		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		const openclawUnit = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
+		const previousPath = process.env.PATH;
 		const logs: string[] = [];
 		const providerSecretRef = "secret://provider.default.apiKey";
 		const channelSecretRef = "secret://channels/telegram/clawdi_accttelegram/agent-token";
@@ -7806,6 +7814,7 @@ exit 42
 				...TEST_RUNTIME_SERVICE_SECRET_VALUES,
 				...TEST_HOSTED_CODEX_SECRET_VALUES,
 				[providerSecretRef]: "sk-provider-watch",
+				[TEST_HOSTED_CODEX_SECRET_REF]: "sk-codex-watch",
 				[channelSecretRef]: "agent-token-watch",
 				[channelPlaceholderSecretRef]: "999999999:54db03c2296520629c70cfb6e3b15f8e",
 			},
@@ -7822,6 +7831,14 @@ exit 42
 
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
+		writeFakeSystemdManager({
+			path: join(bin, "systemctl"),
+			logPath: join(root, "systemctl-model-catalog.log"),
+			stateRoot: join(root, "systemctl-model-catalog-state"),
+			sidecarReadyPath: join(run, "egress", "systemd", "ca.pem"),
+		});
+		writeFileSync(join(bin, "gosu"), '#!/bin/sh\nshift\nexec "$@"\n');
+		chmodSync(join(bin, "gosu"), 0o700);
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(
 			openclawBin,
@@ -7831,15 +7848,24 @@ if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin
   cat >/dev/null
   exit 0
 fi
+if [ "$*" = "gateway install --force --json" ]; then
+  mkdir -p '${dirname(openclawUnit)}'
+  printf '%s\\n' '[Unit]' '[Service]' 'ExecStart=${openclawBin} gateway run' > '${openclawUnit}'
+  printf '{"ok":true}\\n'
+  exit 0
+fi
 printf 'unexpected openclaw command: %s\\n' "$*" >&2
 exit 64
 `,
 		);
 		chmodSync(openclawBin, 0o700);
+		mkdirSync(dirname(openclawUnit), { recursive: true });
+		writeFileSync(openclawUnit, `[Unit]\n[Service]\nExecStart=${openclawBin} gateway run\n`);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
+		process.env.PATH = [bin, previousPath].filter(Boolean).join(":");
 		process.exitCode = undefined;
 		writeCanonicalApplyContext(
 			{
@@ -7865,38 +7891,32 @@ exit 64
 			if (!("manifest" in manifestLoad) || "notModified" in manifestLoad) {
 				throw new Error("expected initial manifest load success");
 			}
-			const initialConvergence = convergeRuntimeManifest(
-				applyRuntimeBundleChannelsToManifestLoad(manifestLoad as RuntimeManifestLoad),
-				paths,
+			const initialLoad = applyRuntimeBundleChannelsToManifestLoad(
+				manifestLoad as RuntimeManifestLoad,
 			);
+			const initialConvergence = convergeRuntimeManifest(initialLoad, paths, {
+				cacheLastGood: false,
+				managedGatewayModelListFetcher: () => ({
+					status: "ok",
+					endpoint: "https://sub2api.test/v1/models",
+					etag: '"models-a"',
+					models: [{ id: "gpt-5.5" }],
+				}),
+			});
 			expect(initialConvergence.installErrors).toEqual([]);
 			expectEgressProfileBundleUsesSecretRef(
 				initialConvergence.outputs.egressProfileBundle,
 				"secret://provider.default.apiKey",
 				"sk-provider-watch",
 			);
-			mkdirSync(dirname(paths.appliedState), { recursive: true });
-			writeFileSync(
-				paths.appliedState,
-				JSON.stringify({
-					schemaVersion: "clawdi.runtimeAppliedState.v2",
-					appliedAt: "2026-07-13T00:00:00.000Z",
-					instanceId: "iid_watch_secret",
-					etag: stableBundleEtag,
-					sourceRevision: "d".repeat(64),
-					generation: 22,
-					applyGeneration: 22,
-					manifestETag: stableBundleEtag,
-					applyReceiptId: "test-apply-receipt-0022",
-					bootNonce: "test-boot-nonce-000022",
-					contentIdentity: {
-						sourcePath: "https://runtime.test/v1/runtime/manifest",
-						sha256: "a".repeat(64),
-					},
-					providerIds: ["clawdi-managed-v2"],
-					projectedProviderIds: { openclaw: ["clawdi-managed-v2"] },
-				}),
-			);
+			commitRuntimeAppliedState({
+				load: initialLoad,
+				paths,
+				etag: stableBundleEtag,
+				sourceRevision: hostedPayload.sourceRevision,
+				convergence: initialConvergence,
+				applyIdentity: initialLoad.applyContext?.identity ?? null,
+			});
 		} finally {
 			initial.restore();
 		}
@@ -7906,6 +7926,12 @@ exit 64
 		);
 		expect(baselineMitmSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
 		expect(baselineMitmSecrets[channelSecretRef]).toBe("agent-token-watch");
+		const baselineAppliedSha = readRuntimeAppliedState(paths)?.contentIdentity.sha256;
+		if (!baselineAppliedSha) throw new Error("expected committed model authority");
+		const baselineAppliedState = readRuntimeAppliedState(paths);
+		if (!baselineAppliedState) throw new Error("expected committed applied state");
+		writeRuntimeAppliedState({ ...baselineAppliedState, providerIds: [] }, paths);
+		const modelProbeValidators: Array<string | undefined> = [];
 
 		const watchFetch = mockFetch([
 			{
@@ -7922,7 +7948,19 @@ exit 64
 		]);
 
 		try {
-			await runtimeWatch({ once: true, json: true });
+			await runtimeWatch({
+				once: true,
+				json: true,
+				managedGatewayModelListFetcher: (input) => {
+					modelProbeValidators.push(input.ifNoneMatch);
+					return {
+						status: "ok",
+						endpoint: "https://sub2api.test/v1/models",
+						etag: '"models-b"',
+						models: [{ id: "gpt-5.5" }],
+					};
+				},
+			});
 
 			if (process.exitCode !== undefined && process.exitCode !== 0) {
 				throw new Error(logs.join("\n"));
@@ -7938,10 +7976,12 @@ exit 64
 				etag: stableBundleEtag,
 				sourceRevision: "d".repeat(64),
 				generation: 22,
-				providerIds: ["clawdi-managed-v2"],
+				providerIds: [],
 			});
 			expect(event.systemdUnitsChanged).toBeUndefined();
 			expect(event.systemdApply).toBeUndefined();
+			expect(modelProbeValidators).toEqual([undefined]);
+			expect(readRuntimeAppliedState(paths)?.contentIdentity.sha256).toBe(baselineAppliedSha);
 			const egressSecrets = JSON.parse(
 				readFileSync(join(run, "secrets", "egress-secrets.json"), "utf-8"),
 			);
@@ -7950,9 +7990,43 @@ exit 64
 			expect(systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
 				baselineRevision,
 			);
+
+			logs.length = 0;
+			process.exitCode = undefined;
+			await runtimeWatch({
+				once: true,
+				json: true,
+				managedGatewayModelListFetcher: () => ({
+					status: "ok",
+					endpoint: "https://sub2api.test/v1/models",
+					etag: '"models-c"',
+					models: [{ id: "gpt-5.5" }, { id: "gpt-5.6" }],
+				}),
+			});
+			if (process.exitCode !== undefined && process.exitCode !== 0) {
+				throw new Error(logs.join("\n"));
+			}
+			const changedEvent = JSON.parse(logs[0]);
+			expect(changedEvent.status).toBe("applied");
+			expect(changedEvent.etag).toBe(stableBundleEtag);
+			expect(changedEvent.sourceRevision).toBe(hostedPayload.sourceRevision);
+			expect(watchFetch.captured).toHaveLength(2);
+			expect(readRuntimeAppliedState(paths)?.contentIdentity.sha256).not.toBe(baselineAppliedSha);
+			expect(
+				(
+					JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")) as {
+						projection: { providers: Record<string, { models: unknown[] }> };
+					}
+				).projection.providers["clawdi-managed-v2"].models,
+			).toEqual([{ id: "gpt-5.5" }, { id: "gpt-5.6" }]);
+			expect(systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"))).not.toBe(
+				baselineRevision,
+			);
 		} finally {
 			watchFetch.restore();
 			console.log = previousLog;
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
 			process.exitCode = previousExitCode;
 		}
 	});
@@ -9342,7 +9416,7 @@ fi
 			expect(readFileSync(paths.manifestLastGood, "utf-8")).toBe(committedLastGood);
 			expect(readFileSync(paths.managedSecretCacheFile, "utf-8")).toBe(committedSecretCache);
 			const invalidEngineRollbackCalls = readFileSync(systemctlLog, "utf-8");
-			expect(invalidEngineRollbackCalls).toContain("--user restart openclaw-gateway.service");
+			expect(invalidEngineRollbackCalls).not.toContain("--user restart openclaw-gateway.service");
 		} finally {
 			console.log = previousLog;
 			process.exitCode = previousExitCode;
@@ -15106,7 +15180,13 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 			const loaded = await loadRuntimeManifest(getRuntimePaths());
 			if (!("manifest" in loaded))
 				throw new Error(`expected manifest load success: ${JSON.stringify(loaded)}`);
-			const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+			const convergence = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+				managedGatewayModelListFetcher: () => ({
+					status: "ok",
+					endpoint: "https://sub2api.test/v1/models",
+					models: [{ id: "gpt-test" }],
+				}),
+			});
 
 			expect(convergence.mode).toBe("normal");
 			expect(convergence.installErrors).toEqual([]);

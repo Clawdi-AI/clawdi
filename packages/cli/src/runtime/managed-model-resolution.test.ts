@@ -3,6 +3,7 @@ import {
 	buildManagedModelsEndpoint,
 	extractManagedLiveModelIds,
 	extractManagedLiveModels,
+	parseManagedLiveModels,
 	resolveManagedPrimaryModel,
 } from "./managed-model-resolution";
 
@@ -152,5 +153,32 @@ describe("managed model resolution", () => {
 				max_tokens: 16_384,
 			},
 		]);
+	});
+
+	test("strictly validates and canonicalizes an authority-bearing catalog", () => {
+		expect(
+			parseManagedLiveModels({
+				data: [
+					{ id: "model-b", supports_tools: true },
+					{ id: "model-a", context_window: 128_000 },
+				],
+			}),
+		).toEqual([
+			{ id: "model-a", context_window: 128_000 },
+			{ id: "model-b", supports_tools: true },
+		]);
+
+		for (const payload of [
+			null,
+			{},
+			{ data: [] },
+			{ data: [{ id: "model-a" }, { id: "model-a" }] },
+			{ data: [{ id: " model-a" }] },
+			{ data: [{ id: "model-a", supports_tools: "yes" }] },
+			{ data: [{ id: "model-a", cost: { input: 1 } }] },
+			{ data: Array.from({ length: 513 }, (_, index) => ({ id: `model-${index}` })) },
+		]) {
+			expect(() => parseManagedLiveModels(payload)).toThrow();
+		}
 	});
 });

@@ -73,13 +73,20 @@ import {
 
 import { managedMcpHeaderPlaceholder, normalizeSecretRef } from "./hosted-egress-profiles";
 import {
+	acceptManagedGatewayModelTransportValidators,
 	hostedAiProviderCatalog,
 	hostedProviderEnvironment,
 	hostedProviderRequiresApiKey,
+	type ManagedGatewayModelAuthorityResolution,
+	type ManagedGatewayModelFetchInput,
+	type ManagedGatewayModelFetchResult,
 	type ManagedGatewayModelListFetcher,
+	type ManagedGatewayModelOverrides,
+	type ManagedGatewayModelTransportValidators,
 	mergeRuntimeEnvWithProviderPlaceholders,
 	mergeRuntimeServiceEnvWithProviderPlaceholders,
-	resolveManagedGatewayModelOverrides,
+	requiresStrictManagedGatewayModelProbe,
+	resolveManagedGatewayModelAuthority,
 } from "./hosted-provider-resolution";
 import {
 	emptyRuntimeInstallReceipts,
@@ -95,7 +102,11 @@ import {
 	runtimeRootLiveMutationDirectories,
 	runtimeRootLiveMutationTargets,
 } from "./live-state-snapshot";
-import { buildManagedModelsEndpoint, extractManagedLiveModels } from "./managed-model-resolution";
+import {
+	buildManagedModelsEndpoint,
+	extractManagedLiveModels,
+	parseManagedLiveModels,
+} from "./managed-model-resolution";
 import {
 	installReservedManagedSkill,
 	managedSkillReservationOwner,
@@ -109,6 +120,13 @@ import {
 } from "./manifest-resources";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
 
+export {
+	acceptManagedGatewayModelTransportValidators,
+	type ManagedGatewayModelAuthorityResolution,
+	type ManagedGatewayModelListFetcher,
+	type ManagedGatewayModelTransportValidators,
+	resolveManagedGatewayModelAuthority,
+} from "./hosted-provider-resolution";
 export type { RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 export {
 	loadRuntimeManifest,
@@ -165,6 +183,7 @@ import {
 	runtimeSystemdCommonEnvironment,
 	uninstallStaleOfficialRuntimeServices,
 	validateRuntimeSystemdPlan,
+	writeRuntimeSidecarSystemdUnit,
 	writeRuntimeSystemdState,
 } from "./runtime-systemd-reconciliation";
 import {
@@ -185,10 +204,6 @@ import {
 	TRANSPARENT_EGRESS_TRANSPORT_VERSION,
 } from "./transparent-egress";
 import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
-
-type ManagedGatewayModelFetchInput = Parameters<ManagedGatewayModelListFetcher>[0];
-type ManagedGatewayModelFetchResult = ReturnType<ManagedGatewayModelListFetcher>;
-type ManagedGatewayModelOverrides = ReturnType<typeof resolveManagedGatewayModelOverrides>;
 
 export interface RuntimeConvergenceResult {
 	manifest: RuntimeManifest;
@@ -1451,21 +1466,45 @@ function applyHostedLocaleProjection(
 }
 
 const MANAGED_GATEWAY_MODEL_FETCH_TIMEOUT_MS = 3_000;
+const MAX_MANAGED_GATEWAY_MODEL_RESPONSE_BYTES = 1024 * 1024;
 
 const MANAGED_GATEWAY_MODEL_FETCH_SCRIPT = [
-	"const [url, timeoutRaw] = process.argv.slice(1);",
+	"const [url, timeoutRaw, maxBytesRaw, utf8Mode, ifNoneMatch] = process.argv.slice(1);",
 	"const timeoutMs = Number.parseInt(timeoutRaw ?? '', 10) || 3000;",
+	"const maxBytes = Number.parseInt(maxBytesRaw ?? '', 10);",
 	"const controller = new AbortController();",
 	"const timer = setTimeout(() => controller.abort(), timeoutMs);",
 	"(async () => {",
 	"  try {",
+	"    const headers = { accept: 'application/json' };",
+	"    if (ifNoneMatch) headers['if-none-match'] = ifNoneMatch;",
 	"    const response = await fetch(url, {",
 	"      method: 'GET',",
-	"      headers: { accept: 'application/json' },",
+	"      headers,",
 	"      signal: controller.signal,",
 	"    });",
-	"    const body = await response.text();",
-	"    process.stdout.write(JSON.stringify({ ok: response.ok, status: response.status, body }));",
+	"    const etag = response.headers.get('etag');",
+	"    if (response.status === 304) {",
+	"      process.stdout.write(JSON.stringify({ status: response.status, etag }));",
+	"      process.exit(0);",
+	"    }",
+	"    const contentLength = Number.parseInt(response.headers.get('content-length') ?? '', 10);",
+	"    if (maxBytes > 0 && Number.isFinite(contentLength) && contentLength > maxBytes) throw new Error('response exceeds byte limit');",
+	"    const chunks = [];",
+	"    let total = 0;",
+	"    if (response.body) {",
+	"      const reader = response.body.getReader();",
+	"      while (true) {",
+	"        const { done, value } = await reader.read();",
+	"        if (done) break;",
+	"        total += value.byteLength;",
+	"        if (maxBytes > 0 && total > maxBytes) { await reader.cancel(); throw new Error('response exceeds byte limit'); }",
+	"        chunks.push(value);",
+	"      }",
+	"    }",
+	"    const bodyBytes = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), total);",
+	"    const body = utf8Mode === 'fatal' ? new TextDecoder('utf-8', { fatal: true }).decode(bodyBytes) : bodyBytes.toString('utf8');",
+	"    process.stdout.write(JSON.stringify({ status: response.status, etag, body }));",
 	"    process.exit(response.ok ? 0 : 1);",
 	"  } catch (error) {",
 	"    const detail = error && typeof error === 'object' && 'name' in error && error.name === 'AbortError'",
@@ -1497,11 +1536,17 @@ function fetchManagedGatewayModelList(
 			MANAGED_GATEWAY_MODEL_FETCH_SCRIPT,
 			endpoint,
 			String(MANAGED_GATEWAY_MODEL_FETCH_TIMEOUT_MS),
+			String(input.validationMode === "strict-v2" ? MAX_MANAGED_GATEWAY_MODEL_RESPONSE_BYTES : 0),
+			input.validationMode === "strict-v2" ? "fatal" : "replace",
+			...(input.ifNoneMatch ? [input.ifNoneMatch] : []),
 		],
 		input.home,
 		input.workspaceRoot,
 		{
 			egressSystemCaFile: input.egressSystemCaFile,
+			...(input.validationMode === "strict-v2"
+				? { maxBuffer: MAX_MANAGED_GATEWAY_MODEL_RESPONSE_BYTES * 2 + 64 * 1024 }
+				: {}),
 		},
 	);
 	const stdout = typeof result.stdout === "string" ? result.stdout : result.stdout.toString("utf8");
@@ -1511,9 +1556,27 @@ function fetchManagedGatewayModelList(
 		return { status: "failed", detail, endpoint };
 	}
 	try {
-		const payload = JSON.parse(stdout) as { body?: string };
+		const payload = JSON.parse(stdout) as { body?: string; etag?: unknown; status?: unknown };
+		const etag = typeof payload.etag === "string" ? payload.etag : undefined;
+		if (payload.status === 304) {
+			return input.validationMode === "strict-v2"
+				? { status: "not_modified", endpoint, etag }
+				: { status: "failed", detail: "HTTP 304", endpoint };
+		}
+		const status = typeof payload.status === "number" ? payload.status : null;
+		const acceptedStatus =
+			input.validationMode === "strict-v2"
+				? status === 200
+				: status !== null && status >= 200 && status < 300;
+		if (!acceptedStatus) {
+			return { status: "failed", detail: `HTTP ${String(payload.status)}`, endpoint };
+		}
 		const body = payload.body ? JSON.parse(payload.body) : null;
-		return { status: "ok", endpoint, models: extractManagedLiveModels(body) };
+		const models =
+			input.validationMode === "strict-v2"
+				? parseManagedLiveModels(body)
+				: extractManagedLiveModels(body);
+		return { status: "ok", endpoint, etag, models };
 	} catch (error) {
 		return {
 			status: "failed",
@@ -1536,6 +1599,27 @@ function parseManagedGatewayFetchFailure(
 	}
 	const detail = stderr.trim() || stdout.trim();
 	return detail || `exit ${status ?? "unknown"}`;
+}
+
+export function resolveManagedGatewayModelAuthorityForLoad(
+	load: RuntimeManifestLoad,
+	paths: RuntimePaths,
+	fetcher: ManagedGatewayModelListFetcher = fetchManagedGatewayModelList,
+	transportValidators?: ManagedGatewayModelTransportValidators,
+): ManagedGatewayModelAuthorityResolution {
+	const enabledRuntimes = Object.entries(load.manifest.runtimes)
+		.filter(([, runtime]) => runtime.enabled)
+		.map(([name]) => name)
+		.sort();
+	return resolveManagedGatewayModelAuthority(
+		load,
+		enabledRuntimes,
+		hostedRuntimeProjectionHome(load.manifest, paths),
+		runtimeWorkspaceRoot(load.manifest, paths),
+		paths.egressSystemCaFile,
+		fetcher,
+		transportValidators,
+	);
 }
 
 function resolvedRuntimeServiceSettings(
@@ -4910,12 +4994,15 @@ export function convergeRuntimeManifest(
 			authority: RuntimePrivateAppliedAuthority,
 		) => void;
 		managedGatewayModelListFetcher?: ManagedGatewayModelListFetcher;
+		managedGatewayModelTransportValidators?: ManagedGatewayModelTransportValidators;
+		managedGatewayModelAuthorityResolution?: ManagedGatewayModelAuthorityResolution;
 		egressEngineEnsureOptions?: EnsureRuntimeMitmproxyOptions;
 		systemdApply?: RuntimeSystemdApplyHooks;
 		executeOfficialServiceInstallers?: boolean;
 	} = {},
 ): RuntimeConvergenceResult {
-	const { manifest } = load;
+	let manifest = load.manifest;
+	let convergenceLoad = load;
 	const secretValues = runtimeSecretValues(load);
 	const applyContext = load.applyContext;
 	if (!applyContext) {
@@ -4997,6 +5084,49 @@ export function convergeRuntimeManifest(
 		egress: null,
 	});
 	validateRuntimeSystemdPlan(plannedRuntimePrograms);
+	let managedModelResolution = opts.managedGatewayModelAuthorityResolution;
+	const adoptManagedModelResolution = (
+		resolution: ManagedGatewayModelAuthorityResolution,
+		prepared: boolean,
+	): void => {
+		const expectedRevision = prepared
+			? runtimeContentSha256(resolution.load.manifest)
+			: resolution.baseManifestRevision;
+		if (expectedRevision !== runtimeContentSha256(load.manifest)) {
+			throw new Error("managed model authority was resolved for a different runtime manifest");
+		}
+		convergenceLoad = resolution.load;
+		manifest = convergenceLoad.manifest;
+		validateRuntimeProjectionPlan({
+			manifest,
+			paths,
+			workspaceRoot,
+			secretValues,
+			observations,
+			previousProjectedProviderIds,
+			managedModelOverrides: resolution.overrides,
+		});
+	};
+	if (managedModelResolution) adoptManagedModelResolution(managedModelResolution, true);
+	const strictManagedProbeRequired = requiresStrictManagedGatewayModelProbe(
+		convergenceLoad,
+		enabledRuntimes,
+	);
+	if (
+		!managedModelResolution &&
+		(!strictManagedProbeRequired || opts.managedGatewayModelListFetcher !== undefined)
+	) {
+		managedModelResolution = resolveManagedGatewayModelAuthority(
+			convergenceLoad,
+			enabledRuntimes,
+			projectionHome,
+			workspaceRoot,
+			plannedEgressProfileBundlePath ? paths.egressSystemCaFile : null,
+			opts.managedGatewayModelListFetcher ?? fetchManagedGatewayModelList,
+			opts.managedGatewayModelTransportValidators,
+		);
+		adoptManagedModelResolution(managedModelResolution, false);
+	}
 	const mutationPlan = runtimeManagedMutationPlan({
 		manifest,
 		paths,
@@ -5006,6 +5136,10 @@ export function convergeRuntimeManifest(
 	});
 	const workspaceExistedBeforeApply = existsSync(workspaceRoot);
 	const liveSnapshot = captureRuntimeLiveSnapshot(mutationPlan.snapshot);
+	const runtimeInstallerWillRun = [...observations.values()].some(
+		(observation) => observation.install !== null && observation.status === "configured",
+	);
+	let systemdActivationAttempted = false;
 	let systemdActivationApplied = false;
 	let restartDaemon = false;
 	let desiredDaemonAuthTokenRevision: string | undefined;
@@ -5019,7 +5153,9 @@ export function convergeRuntimeManifest(
 		systemUnits: [],
 		userUnits: [],
 	};
+	let egressPrerequisiteActivated = false;
 	try {
+		if (runtimeInstallerWillRun && opts.systemdApply) systemdActivationAttempted = true;
 		observations.clear();
 		for (const [name, runtime] of runtimeEntries) {
 			const observation = observeRuntimeInstall(name, runtime, projectionHome);
@@ -5090,24 +5226,6 @@ export function convergeRuntimeManifest(
 			}
 		}
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
-
-		const managedModelOverrides = resolveManagedGatewayModelOverrides(
-			manifest,
-			enabledRuntimes,
-			projectionHome,
-			workspaceRoot,
-			plannedEgressProfileBundlePath ? paths.egressSystemCaFile : null,
-			opts.managedGatewayModelListFetcher ?? fetchManagedGatewayModelList,
-		);
-		validateRuntimeProjectionPlan({
-			manifest,
-			paths,
-			workspaceRoot,
-			secretValues,
-			observations,
-			previousProjectedProviderIds,
-			managedModelOverrides,
-		});
 
 		ensureRuntimeUserHome(paths.userHome);
 		withRuntimeUserFileAccess(() => {
@@ -5253,6 +5371,79 @@ export function convergeRuntimeManifest(
 				egress: egressSystemdProgram,
 			}),
 		);
+		const commonSystemdEnvironment = runtimeSystemdCommonEnvironment(paths);
+		const egressSidecarActive =
+			egressSystemdProgram !== null &&
+			egressIdentity !== null &&
+			runtimeSystemdUserPrograms.length > 0;
+		const committedEgressSidecarSecretRevision = appliedState?.egressSidecarSecretRevision;
+		if (egressSidecarActive) {
+			desiredEgressSidecarSecretRevision = egressSecretWrite.material.revision;
+			restartEgressSidecar =
+				egressSecretWrite.changed ||
+				committedEgressSidecarSecretRevision === undefined ||
+				committedEgressSidecarSecretRevision !== desiredEgressSidecarSecretRevision;
+			if (committedEgressSidecarSecretRevision === undefined) {
+				if (appliedState !== null || !strictManagedProbeRequired) {
+					rollbackEgressSecretOverride =
+						verifiedCommittedEgressSecretMaterial(paths, applyContext) ?? undefined;
+					egressRollbackAuthorityVerified = rollbackEgressSecretOverride !== undefined;
+				} else {
+					egressRollbackAuthorityVerified = false;
+				}
+			} else if (
+				committedEgressSidecarSecretRevision !== undefined &&
+				restartEgressSidecar &&
+				egressSecretWrite.previousRevision !== committedEgressSidecarSecretRevision
+			) {
+				if (desiredEgressSidecarSecretRevision === committedEgressSidecarSecretRevision) {
+					rollbackEgressSecretOverride = egressSecretWrite.material;
+				} else {
+					rollbackEgressSecretRevision = committedEgressSidecarSecretRevision;
+				}
+			}
+		}
+		if (strictManagedProbeRequired && managedModelResolution === undefined) {
+			if (!egressSidecarActive || !egressSystemdProgram || !egressIdentity || !opts.systemdApply) {
+				throw new Error(
+					"managed model probe requires the transparent-egress prerequisite on fresh boot",
+				);
+			}
+			writeRuntimeSidecarSystemdUnit({
+				program: egressSystemdProgram,
+				identity: egressIdentity,
+				manifest,
+				paths,
+				workspaceRoot,
+				commonEnvironment: commonSystemdEnvironment,
+			});
+			systemdActivationAttempted = true;
+			const prerequisite = opts.systemdApply.activateEgressPrerequisite({
+				restartDaemon: false,
+				restartEgressSidecar,
+				stopEgressSidecar: false,
+				reconcileUserUnits: [],
+				staleSystemUnits: [],
+				staleUserUnits: [],
+			});
+			if (!prerequisite.applied) {
+				throw new Error("transparent-egress system prerequisites did not reach readiness");
+			}
+			egressPrerequisiteActivated = true;
+		}
+		if (!managedModelResolution) {
+			managedModelResolution = resolveManagedGatewayModelAuthority(
+				convergenceLoad,
+				enabledRuntimes,
+				projectionHome,
+				workspaceRoot,
+				plannedEgressProfileBundlePath ? paths.egressSystemCaFile : null,
+				opts.managedGatewayModelListFetcher ?? fetchManagedGatewayModelList,
+				opts.managedGatewayModelTransportValidators,
+			);
+			adoptManagedModelResolution(managedModelResolution, false);
+		}
+		const managedModelOverrides = managedModelResolution.overrides;
 		const providerProjectionRevisions: Partial<Record<string, string | null>> = {};
 		for (const [name] of runtimeEntries) {
 			const observation = observations.get(name);
@@ -5266,7 +5457,6 @@ export function convergeRuntimeManifest(
 				managedModelOverrides,
 			);
 		}
-		const commonSystemdEnvironment = runtimeSystemdCommonEnvironment(paths);
 		try {
 			const codexProjection = withRuntimeUserFileAccess(() =>
 				applyHostedCodexManagedProviderProjection(manifest, projectionHome, codexCli),
@@ -5473,37 +5663,6 @@ export function convergeRuntimeManifest(
 			commonEnvironment: commonSystemdEnvironment,
 		});
 		staleSystemdFiles = systemdUnits.staleFiles;
-		const committedEgressSidecarSecretRevision = appliedState?.egressSidecarSecretRevision;
-		if (systemdUnits.egressSidecarActive) {
-			desiredEgressSidecarSecretRevision = egressSecretWrite.material.revision;
-			restartEgressSidecar =
-				egressSecretWrite.changed ||
-				committedEgressSidecarSecretRevision === undefined ||
-				committedEgressSidecarSecretRevision !== desiredEgressSidecarSecretRevision;
-			if (committedEgressSidecarSecretRevision === undefined) {
-				// Legacy applied state has no private egress revision. An exact
-				// applied content identity can still prove complete last-good material
-				// for rollback, but its absence must not block loading the desired
-				// material. If desired activation later fails, unverified live bytes
-				// must never be loaded by a rollback restart.
-				rollbackEgressSecretOverride =
-					verifiedCommittedEgressSecretMaterial(paths, applyContext) ?? undefined;
-				egressRollbackAuthorityVerified = rollbackEgressSecretOverride !== undefined;
-			} else if (
-				restartEgressSidecar &&
-				egressSecretWrite.previousRevision !== committedEgressSidecarSecretRevision
-			) {
-				if (desiredEgressSidecarSecretRevision === committedEgressSidecarSecretRevision) {
-					rollbackEgressSecretOverride = egressSecretWrite.material;
-				} else {
-					// A crash may have already advanced both the live file and last-good
-					// cache while the applied authority still describes the loaded secret.
-					// Do not require rollback material until activation actually fails:
-					// successfully restarting the desired material can safely commit it.
-					rollbackEgressSecretRevision = committedEgressSidecarSecretRevision;
-				}
-			}
-		}
 		const officialServicePlan = planOfficialRuntimeServices(
 			runtimeSystemdUserPrograms,
 			paths,
@@ -5528,8 +5687,10 @@ export function convergeRuntimeManifest(
 				(hermesDashboardArtifactPlan.program !== null &&
 					hermesDashboardArtifactPlan.target?.expectedCurrentRevision === null)) &&
 			systemdUnits.egressSidecarActive &&
-			opts.systemdApply
+			opts.systemdApply &&
+			!egressPrerequisiteActivated
 		) {
+			systemdActivationAttempted = true;
 			const prerequisite = opts.systemdApply.activateEgressPrerequisite({
 				restartDaemon,
 				restartEgressSidecar,
@@ -5541,6 +5702,14 @@ export function convergeRuntimeManifest(
 			if (!prerequisite.applied) {
 				throw new Error("transparent-egress system prerequisites did not reach readiness");
 			}
+			egressPrerequisiteActivated = true;
+		}
+		if (
+			officialServicePlan.pending.length > 0 ||
+			(hermesDashboardArtifactPlan.program !== null &&
+				hermesDashboardArtifactPlan.target?.expectedCurrentRevision === null)
+		) {
+			systemdActivationAttempted = true;
 		}
 
 		for (const item of officialServicePlan.pending) {
@@ -5557,6 +5726,7 @@ export function convergeRuntimeManifest(
 		const bootFinished = join(instanceRoot, "boot-finished");
 		writePrivateFileAtomic(bootFinished, `${generatedAt}\n`);
 		if (opts.systemdApply) {
+			systemdActivationAttempted = true;
 			const activation = opts.systemdApply.activate({
 				restartDaemon,
 				restartEgressSidecar,
@@ -5633,6 +5803,10 @@ export function convergeRuntimeManifest(
 					? { egressSidecarSecretRevision: desiredEgressSidecarSecretRevision }
 					: {}),
 			});
+			acceptManagedGatewayModelTransportValidators(
+				opts.managedGatewayModelTransportValidators,
+				managedModelResolution.transportValidators,
+			);
 			commitRuntimeInstallReceipts(installReceiptTargets, paths);
 			try {
 				for (const cleanupError of removeStaleRuntimeSystemdFiles(paths, systemdUnits.staleFiles)) {
@@ -5700,7 +5874,7 @@ export function convergeRuntimeManifest(
 				);
 			}
 		}
-		if (opts.systemdApply && filesystemRollbackSucceeded) {
+		if (systemdActivationAttempted && opts.systemdApply && filesystemRollbackSucceeded) {
 			try {
 				opts.systemdApply.rollback({
 					restartDaemon,
@@ -5717,7 +5891,7 @@ export function convergeRuntimeManifest(
 					}`,
 				);
 			}
-		} else if (opts.systemdApply) {
+		} else if (systemdActivationAttempted && opts.systemdApply) {
 			installErrors.push(
 				"runtime systemd rollback skipped because filesystem authority restoration failed",
 			);

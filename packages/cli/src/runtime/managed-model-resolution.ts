@@ -5,6 +5,9 @@ import {
 	isAiProviderApiMode,
 } from "@clawdi/shared";
 
+const MAX_MANAGED_LIVE_MODELS = 512;
+const MAX_MANAGED_MODEL_TEXT_LENGTH = 256;
+
 export interface ManagedPrimaryModelResolutionInput {
 	seedModel: string | null;
 	liveModelIds: readonly string[] | null;
@@ -39,6 +42,115 @@ export function extractManagedLiveModels(payload: unknown): AiProviderModel[] {
 		models.push(model);
 	}
 	return models;
+}
+
+export function parseManagedLiveModels(payload: unknown): AiProviderModel[] {
+	if (!isPlainRecord(payload) || !Array.isArray(payload.data)) {
+		throw new Error("catalog must be an object with a data array");
+	}
+	return normalizeManagedLiveModels(payload.data);
+}
+
+export function normalizeManagedLiveModels(models: readonly unknown[]): AiProviderModel[] {
+	if (models.length === 0) throw new Error("catalog data must not be empty");
+	if (models.length > MAX_MANAGED_LIVE_MODELS) {
+		throw new Error(`catalog exceeds ${MAX_MANAGED_LIVE_MODELS} models`);
+	}
+	const sorted = models
+		.map((model, index) => {
+			if (!isPlainRecord(model)) throw new Error(`catalog data[${index}] must be an object`);
+			validateManagedLiveModelEntry(model, index);
+			const canonical = extractManagedLiveModel(model);
+			if (!canonical) throw new Error(`catalog data[${index}] has an invalid id`);
+			return canonical;
+		})
+		.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+	if (new Set(sorted.map((model) => model.id)).size !== sorted.length) {
+		throw new Error("catalog model ids must be unique");
+	}
+	return sorted;
+}
+
+function validateManagedLiveModelEntry(entry: Record<string, unknown>, index: number): void {
+	for (const field of ["id", "label", "alias"] as const) {
+		if (entry[field] === undefined && field !== "id") continue;
+		const value = entry[field];
+		if (
+			typeof value !== "string" ||
+			value.length === 0 ||
+			value.length > MAX_MANAGED_MODEL_TEXT_LENGTH ||
+			value.trim() !== value
+		) {
+			throw new Error(`catalog data[${index}].${field} must be a canonical bounded string`);
+		}
+	}
+	if (
+		entry.api_mode !== undefined &&
+		(typeof entry.api_mode !== "string" || !isAiProviderApiMode(entry.api_mode))
+	) {
+		throw new Error(`catalog data[${index}].api_mode is invalid`);
+	}
+	if (entry.input_modalities !== undefined) {
+		if (
+			!Array.isArray(entry.input_modalities) ||
+			entry.input_modalities.length === 0 ||
+			entry.input_modalities.length > 4 ||
+			!entry.input_modalities.every(isManagedInputModality) ||
+			new Set(entry.input_modalities).size !== entry.input_modalities.length
+		) {
+			throw new Error(`catalog data[${index}].input_modalities is invalid`);
+		}
+	}
+	for (const field of ["supports_vision", "supports_tools", "supports_reasoning"] as const) {
+		if (entry[field] !== undefined && typeof entry[field] !== "boolean") {
+			throw new Error(`catalog data[${index}].${field} must be boolean`);
+		}
+	}
+	for (const field of [
+		"context_window",
+		"context_length",
+		"max_input_tokens",
+		"max_tokens",
+		"max_output_tokens",
+	] as const) {
+		if (entry[field] !== undefined && positiveInteger(entry[field]) === undefined) {
+			throw new Error(`catalog data[${index}].${field} must be a positive integer`);
+		}
+	}
+	if (entry.cost !== undefined) validateManagedLiveCost(entry.cost, index);
+	if (entry.capabilities !== undefined) validateManagedLiveCapabilities(entry.capabilities, index);
+}
+
+function validateManagedLiveCost(value: unknown, index: number): void {
+	if (!isPlainRecord(value)) throw new Error(`catalog data[${index}].cost must be an object`);
+	for (const field of ["input", "output"] as const) {
+		if (nonNegativeNumber(value[field]) === undefined) {
+			throw new Error(`catalog data[${index}].cost.${field} must be non-negative`);
+		}
+	}
+	for (const field of ["cache_read", "cache_write"] as const) {
+		if (value[field] !== undefined && nonNegativeNumber(value[field]) === undefined) {
+			throw new Error(`catalog data[${index}].cost.${field} must be non-negative`);
+		}
+	}
+}
+
+function validateManagedLiveCapabilities(value: unknown, index: number): void {
+	if (!isPlainRecord(value)) {
+		throw new Error(`catalog data[${index}].capabilities must be an object`);
+	}
+	for (const field of [
+		"chat",
+		"responses",
+		"tools",
+		"vision",
+		"embeddings",
+		"image_generation",
+	] as const) {
+		if (value[field] !== undefined && typeof value[field] !== "boolean") {
+			throw new Error(`catalog data[${index}].capabilities.${field} must be boolean`);
+		}
+	}
 }
 
 function extractManagedLiveModel(value: unknown): AiProviderModel | null {
