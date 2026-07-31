@@ -1179,11 +1179,13 @@ async def _accept_ai_provider(
             provider=provider_response,
         )
 
-    authorization = await _build_oauth_accept_authorization(
+    oauth_provider = _normalize_profile(body.credential.provider)
+    _validate_supported_oauth_provider(oauth_provider)
+    authorization = await _build_codex_device_authorization(
         db=db,
         auth=auth,
         provider=provider,
-        body=body.credential,
+        oauth_provider=oauth_provider,
     )
     if (
         previous_non_auth_signature != _runtime_manifest_provider_non_auth_signature(provider)
@@ -1241,23 +1243,6 @@ def _accept_can_resume(
         provider.auth_type == "agent_profile"
         and metadata.get("tool") == _normalize_profile(credential.provider)
         and str(metadata.get("profile") or "default") == "default"
-    )
-
-
-async def _build_oauth_accept_authorization(
-    *,
-    db: AsyncSession,
-    auth: AuthContext,
-    provider: AiProvider,
-    body: AiProviderOAuthAcceptCredential,
-) -> AiProviderOAuthDeviceStartResponse:
-    oauth_provider = _normalize_profile(body.provider)
-    _validate_supported_oauth_provider(oauth_provider)
-    return await _build_codex_device_authorization(
-        db=db,
-        auth=auth,
-        provider=provider,
-        oauth_provider=oauth_provider,
     )
 
 
