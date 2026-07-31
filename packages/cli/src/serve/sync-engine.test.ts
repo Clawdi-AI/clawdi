@@ -816,12 +816,13 @@ describe("isAuthFailure", () => {
 		expect(isAuthFailure(e)).toBe(true);
 	});
 
-	it.each([
-		400, 404, 408, 429, 500, 502, 503,
-	])("does not treat ApiError(%i) as auth failure", (status) => {
-		const e = new ApiError({ status, body: "", hint: "" });
-		expect(isAuthFailure(e)).toBe(false);
-	});
+	it.each([400, 404, 408, 429, 500, 502, 503])(
+		"does not treat ApiError(%i) as auth failure",
+		(status) => {
+			const e = new ApiError({ status, body: "", hint: "" });
+			expect(isAuthFailure(e)).toBe(false);
+		},
+	);
 
 	it("does not treat plain Error as auth failure", () => {
 		expect(isAuthFailure(new Error("boom"))).toBe(false);

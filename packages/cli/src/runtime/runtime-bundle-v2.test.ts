@@ -266,53 +266,45 @@ describe("hosted runtime bundle v2", () => {
 		});
 	});
 
-	test.each([
-		"latest",
-		"1",
-		true,
-		0,
-		-1,
-		1.5,
-		null,
-	])("rejects invalid hosted Skill version %p", (version) => {
-		const raw = z
-			.record(z.string(), z.unknown())
-			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
-		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
-		expect(() =>
-			normalizeHostedRuntimeBundleV2({
-				...raw,
-				manifest: {
-					...manifest,
-					skills: { entries: { clawdi: { enabled: true, version } } },
-				},
-			}),
-		).toThrow();
-	});
-
-	test.each([
-		"source",
-		"variant",
-		"path",
-		"content",
-		"packageSpec",
-	])("rejects hosted Skill entry field %s", (field) => {
-		const raw = z
-			.record(z.string(), z.unknown())
-			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
-		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
-		expect(() =>
-			normalizeHostedRuntimeBundleV2({
-				...raw,
-				manifest: {
-					...manifest,
-					skills: {
-						entries: { clawdi: { enabled: true, version: 1, [field]: "forbidden" } },
+	test.each(["latest", "1", true, 0, -1, 1.5, null])(
+		"rejects invalid hosted Skill version %p",
+		(version) => {
+			const raw = z
+				.record(z.string(), z.unknown())
+				.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+			const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
+			expect(() =>
+				normalizeHostedRuntimeBundleV2({
+					...raw,
+					manifest: {
+						...manifest,
+						skills: { entries: { clawdi: { enabled: true, version } } },
 					},
-				},
-			}),
-		).toThrow();
-	});
+				}),
+			).toThrow();
+		},
+	);
+
+	test.each(["source", "variant", "path", "content", "packageSpec"])(
+		"rejects hosted Skill entry field %s",
+		(field) => {
+			const raw = z
+				.record(z.string(), z.unknown())
+				.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+			const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
+			expect(() =>
+				normalizeHostedRuntimeBundleV2({
+					...raw,
+					manifest: {
+						...manifest,
+						skills: {
+							entries: { clawdi: { enabled: true, version: 1, [field]: "forbidden" } },
+						},
+					},
+				}),
+			).toThrow();
+		},
+	);
 
 	test("uses distinct public placeholders for each remote MCP server and header", () => {
 		const profiles = hostedManifestEgressProfiles({
