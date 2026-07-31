@@ -122,7 +122,7 @@ export function PlanComparison({
 				<Card size="sm">
 					<CardHeader className="gap-2">
 						<CardTitle className="flex items-center gap-2">
-							<Cpu className="size-5 text-muted-foreground" aria-hidden /> Basic
+							<Cpu className="size-5 text-muted-foreground" aria-hidden /> Compute Basic
 						</CardTitle>
 						<CardDescription>First active Basic agent included at no charge.</CardDescription>
 						<div className="pt-1">
@@ -161,11 +161,11 @@ export function PlanComparison({
 								className="w-full"
 								variant="outline"
 							>
-								<Rocket /> Deploy Basic
+								<Rocket /> Deploy Compute Basic
 							</Button>
 						) : (
 							<Button className="w-full" variant="outline" disabled>
-								<Rocket /> Deploy Basic
+								<Rocket /> Deploy Compute Basic
 							</Button>
 						)}
 					</CardFooter>
@@ -175,9 +175,8 @@ export function PlanComparison({
 				<Card size="sm" className="border-primary/30">
 					<CardHeader className="gap-2">
 						<CardTitle className="flex items-center gap-2">
-							<Zap className="size-5 text-primary" aria-hidden /> Performance
+							<Zap className="size-5 text-primary" aria-hidden /> Compute Performance
 						</CardTitle>
-						<CardDescription>Higher compute resources with public ports.</CardDescription>
 						<div className="pt-1">
 							<p className="text-xs text-muted-foreground">Each Performance agent</p>
 							{performancePrice ? (
@@ -196,14 +195,16 @@ export function PlanComparison({
 					</CardHeader>
 					<CardContent className="flex-1">
 						<ul className="space-y-2">
-							<FeatureRow>Everything in Basic, with higher resources</FeatureRow>
 							{performance ? (
 								<FeatureRow>
 									{performance.vcpu} vCPU · {performance.ram_gb} GB RAM · {performance.disk_size} GB
 									disk
 								</FeatureRow>
 							) : null}
+							<FeatureRow>Managed confidential compute</FeatureRow>
+							<FeatureRow>One runtime: OpenClaw or Hermes</FeatureRow>
 							<FeatureRow>Public ports for agent services</FeatureRow>
+							<FeatureRow>Bring your own AI keys (BYOK)</FeatureRow>
 						</ul>
 					</CardContent>
 					<CardFooter>
@@ -214,11 +215,11 @@ export function PlanComparison({
 								className="w-full"
 								disabled={!performance}
 							>
-								Deploy Performance
+								Deploy Compute Performance
 							</Button>
 						) : (
 							<Button className="w-full" disabled>
-								Deploy Performance
+								Deploy Compute Performance
 							</Button>
 						)}
 					</CardFooter>
@@ -230,21 +231,15 @@ export function PlanComparison({
 						<CardTitle className="flex items-center gap-2">
 							<WalletCards className="size-5 text-muted-foreground" aria-hidden /> Clawdi AI
 						</CardTitle>
-						<CardDescription>Use Wallet funds or bring your own AI keys.</CardDescription>
 						<div className="pt-1">
 							<p className="text-3xl font-semibold tracking-tight">Pay as you go</p>
-							<p className="text-xs text-muted-foreground">Not affected by compute billing term</p>
 						</div>
 					</CardHeader>
 					<CardContent className="flex-1">
 						<ul className="space-y-2">
 							<FeatureRow>
-								<span>
-									30% below direct API pricing on supported models
-									<span className="mt-0.5 block text-xs text-muted-foreground">
-										Eligible models only; actual savings vary by model.
-									</span>
-								</span>
+								30% cheaper than direct API pricing on supported models. Actual savings vary by
+								model.
 							</FeatureRow>
 							<FeatureRow>Pay from your Wallet</FeatureRow>
 							<FeatureRow>Use your own AI keys (BYOK)</FeatureRow>

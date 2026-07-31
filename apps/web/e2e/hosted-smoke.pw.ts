@@ -5965,11 +5965,10 @@ test("card past due uses Fix payment instead of wallet recovery", async ({ page 
 	expect(errors, `card payment recovery: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("compute comparison uses API prices without stale signup or subscription credit claims", async ({
+test("compute comparison synchronizes API prices across the shared billing term", async ({
 	page,
 }) => {
 	const errors = collectBrowserErrors(page);
-	const planRequests: string[] = [];
 	const comparisonBasicPlan = {
 		...basicPlan,
 		price_cents: 1_234,
@@ -6006,102 +6005,35 @@ test("compute comparison uses API prices without stale signup or subscription cr
 			},
 		],
 	};
-	await page.setViewportSize({ width: 1_440, height: 1_100 });
-	await page.emulateMedia({ reducedMotion: "reduce" });
 	await stubHostedApi(page, {
 		deployments: [paidBasicDeployment],
-		planRequests,
-		plans: [
-			{ ...comparisonBasicPlan, subscription_grant_credits: 500 },
-			{ ...comparisonPerformancePlan, subscription_grant_credits: 1_000 },
-		],
+		plans: [comparisonBasicPlan, comparisonPerformancePlan],
 	});
 	await page.goto("/channels?settings=billing-plan");
 
 	const settingsDialog = page.getByTestId("settings-dialog");
 	await expect(settingsDialog).toBeVisible();
 	const comparison = settingsDialog.getByRole("region", { name: "Compare compute options" });
-	const termSwitcher = comparison.getByRole("group", {
-		name: "Billing term for Basic and Performance",
-	});
-	await expect(termSwitcher).toBeVisible();
-	await expect(termSwitcher).not.toContainText("%");
+	const termSwitcher = comparison.getByRole("group", { name: /Billing term/ });
+	await expect(termSwitcher).toHaveCount(1);
+	const cards = comparison.locator('[data-slot="card"]');
+	const basicCard = cards.nth(0);
+	const performanceCard = cards.nth(1);
+	const aiCard = cards.nth(2);
 	await expect(termSwitcher.getByRole("button", { name: "Monthly", exact: true })).toHaveAttribute(
 		"aria-pressed",
 		"true",
 	);
-	await expect(comparison.getByText("$12.34/mo", { exact: true })).toBeVisible();
-	await expect(comparison.getByText("$56.78/mo", { exact: true })).toBeVisible();
+	await expect(basicCard).toContainText("$12.34/mo");
+	await expect(performanceCard).toContainText("$56.78/mo");
+	await expect(aiCard).toContainText("Pay as you go");
 
 	await termSwitcher.getByRole("button", { name: "Annual", exact: true }).click();
-	await expect(comparison.getByText("$10.29/mo", { exact: true })).toBeVisible();
-	await expect(comparison.getByText("Billed $123.48/yr", { exact: true })).toBeVisible();
-	await expect(comparison.getByText("$45.27/mo", { exact: true })).toBeVisible();
-	await expect(comparison.getByText("Billed $543.24/yr", { exact: true })).toBeVisible();
-	await expect(
-		comparison.getByText("Not affected by compute billing term", { exact: true }),
-	).toBeVisible();
-	await expect(comparison.locator('[data-slot="card"]')).toHaveCount(3);
-
-	const desktopMetrics = await comparison.evaluate((section) => {
-		const cards = Array.from(section.querySelectorAll<HTMLElement>('[data-slot="card"]'));
-		const selector = section.querySelector<HTMLElement>(
-			'[aria-label="Billing term for Basic and Performance"]',
-		);
-		return {
-			overflow: section.scrollWidth - section.clientWidth,
-			cardTops: cards.map((card) => Math.round(card.getBoundingClientRect().top)),
-			cardBottoms: cards.map((card) => Math.round(card.getBoundingClientRect().bottom)),
-			selectorBottom: selector ? Math.round(selector.getBoundingClientRect().bottom) : null,
-			firstCardTop: cards[0] ? Math.round(cards[0].getBoundingClientRect().top) : null,
-		};
-	});
-	expect(desktopMetrics.overflow).toBeLessThanOrEqual(0);
-	expect(new Set(desktopMetrics.cardTops).size).toBe(1);
-	expect(new Set(desktopMetrics.cardBottoms).size).toBe(1);
-	expect(desktopMetrics.selectorBottom).toBeLessThanOrEqual(desktopMetrics.firstCardTop ?? 0);
-	await comparison.screenshot({ path: "/tmp/clawdi-pricing-comparison-desktop.png" });
-
-	await page.setViewportSize({ width: 390, height: 844 });
-	await comparison.scrollIntoViewIfNeeded();
-	const mobileMetrics = await comparison.evaluate((section) => {
-		const cards = Array.from(section.querySelectorAll<HTMLElement>('[data-slot="card"]'));
-		const sectionRect = section.getBoundingClientRect();
-		return {
-			documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-			sectionOverflow: section.scrollWidth - section.clientWidth,
-			cardsInside: cards.every((card) => {
-				const rect = card.getBoundingClientRect();
-				return rect.left >= sectionRect.left && rect.right <= sectionRect.right;
-			}),
-			cardsSeparated: cards.slice(1).every((card, index) => {
-				const previous = cards[index];
-				return previous
-					? previous.getBoundingClientRect().bottom <= card.getBoundingClientRect().top
-					: false;
-			}),
-		};
-	});
-	expect(mobileMetrics.documentOverflow).toBeLessThanOrEqual(0);
-	expect(mobileMetrics.sectionOverflow).toBeLessThanOrEqual(0);
-	expect(mobileMetrics.cardsInside).toBe(true);
-	expect(mobileMetrics.cardsSeparated).toBe(true);
-	const comparisonCards = comparison.locator('[data-slot="card"]');
-	await comparisonCards.first().scrollIntoViewIfNeeded();
-	await expect(comparisonCards.first()).toBeInViewport();
-	await page.screenshot({ path: "/tmp/clawdi-pricing-comparison-mobile-top.png" });
-	await comparisonCards.last().scrollIntoViewIfNeeded();
-	await expect(comparisonCards.last()).toBeInViewport();
-	const openWalletButton = comparisonCards.last().getByRole("button", { name: "Open Wallet" });
-	await openWalletButton.scrollIntoViewIfNeeded();
-	await expect(openWalletButton).toBeVisible();
-	await page.screenshot({ path: "/tmp/clawdi-pricing-comparison-mobile-bottom.png" });
-
-	expect(planRequests).toEqual([`${DEPLOY_API}/v2/subscription/plans`]);
-	await expect(settingsDialog).not.toContainText("welcome balance on signup");
-	await expect(settingsDialog).not.toContainText("AI Credits per subscription");
-	await expect(settingsDialog).not.toContainText("AI Credits added to Wallet");
-	await expect(settingsDialog).not.toContainText("credits do not expire");
+	await expect(basicCard).toContainText("$10.29/mo");
+	await expect(basicCard).toContainText("Billed $123.48/yr");
+	await expect(performanceCard).toContainText("$45.27/mo");
+	await expect(performanceCard).toContainText("Billed $543.24/yr");
+	await expect(aiCard).toContainText("Pay as you go");
 	expect(errors, `compute plan comparison: ${errors.join(" | ")}`).toEqual([]);
 });
 

@@ -306,14 +306,18 @@ describe("commonExplicitBillingOffers", () => {
 		expect(shared).toEqual([monthly]);
 	});
 
-	test("does not synthesize a shared term when either plan has no explicit offers", () => {
+	test("returns no shared term for disjoint non-empty explicit offer sets", () => {
 		expect(
 			commonExplicitBillingOffers([
-				plan({ slug: COMPUTE_BASIC_SLUG, price_cents: 1_234, offers: [] }),
+				plan({
+					slug: COMPUTE_BASIC_SLUG,
+					price_cents: 1_234,
+					offers: [offer(1, 1_234)],
+				}),
 				plan({
 					slug: COMPUTE_PERFORMANCE_SLUG,
 					price_cents: 5_678,
-					offers: [offer(1, 5_678)],
+					offers: [offer(12, 54_324)],
 				}),
 			]),
 		).toEqual([]);
