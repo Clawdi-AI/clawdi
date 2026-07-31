@@ -9648,6 +9648,24 @@ async def test_telegram_channel_direct_message_pairing_replies_stay_in_originati
             "text": "reply through virtual topic transport",
         },
     )
+    edit_own_message = await client.post(
+        _telegram_bot_path(created, "editMessageText"),
+        headers=_telegram_agent_headers(created),
+        json={
+            "chat_id": -100987654326,
+            "message_id": 104,
+            "text": "edit an owned streamed message",
+        },
+    )
+    edit_other_topic_message = await client.post(
+        _telegram_bot_path(created, "editMessageText"),
+        headers=_telegram_agent_headers(created),
+        json={
+            "chat_id": -100987654326,
+            "message_id": 105,
+            "text": "must not edit another topic",
+        },
+    )
     query_reply = await client.get(
         _telegram_bot_path(created, "sendMessage"),
         headers=_telegram_agent_headers(created),
@@ -9733,6 +9751,8 @@ async def test_telegram_channel_direct_message_pairing_replies_stay_in_originati
     assert updates.json()["result"][0]["message"]["message_thread_id"] == 4242
     assert updates.json()["result"][0]["message"]["direct_messages_topic"] == {"topic_id": 4242}
     assert agent_reply.status_code == 200
+    assert edit_own_message.status_code == 200
+    assert edit_other_topic_message.status_code == 403
     assert query_reply.status_code == 200
     assert form_reply.status_code == 200
     assert multipart_reply.status_code == 200

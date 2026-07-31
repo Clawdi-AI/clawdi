@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import json
 import logging
 import re
 import secrets
@@ -125,6 +126,7 @@ WHATSAPP_COMING_SOON_DETAIL = (
 TELEGRAM_REF_CALLBACK_QUERY_ID = "telegram_callback_query_id"
 TELEGRAM_REF_FILE_ID = "telegram_file_id"
 TELEGRAM_REF_FILE_PATH = "telegram_file_path"
+TELEGRAM_REF_MESSAGE_ID = "telegram_message_id"
 DISCORD_REF_INTERACTION_ID_TOKEN = "discord_interaction_id_token"
 DISCORD_REF_INTERACTION_TOKEN = "discord_interaction_token"
 
@@ -2392,6 +2394,18 @@ async def record_telegram_update_references(
 ) -> None:
     if account.provider != CHANNEL_PROVIDER_TELEGRAM or binding is None:
         return
+    if message.provider_message_id is not None:
+        await record_channel_agent_reference(
+            db,
+            account=account,
+            binding=binding,
+            message=message,
+            ref_kind=TELEGRAM_REF_MESSAGE_ID,
+            ref_value=telegram_message_reference_value(
+                message.external_chat_id,
+                message.provider_message_id,
+            ),
+        )
     for ref_kind, ref_value in _telegram_update_references(payload):
         await record_channel_agent_reference(
             db,
@@ -2401,6 +2415,10 @@ async def record_telegram_update_references(
             ref_kind=ref_kind,
             ref_value=ref_value,
         )
+
+
+def telegram_message_reference_value(chat_id: str, message_id: str | int) -> str:
+    return json.dumps([str(chat_id), str(message_id)], separators=(",", ":"))
 
 
 def _telegram_update_references(payload: dict[str, Any]) -> set[tuple[str, str]]:
