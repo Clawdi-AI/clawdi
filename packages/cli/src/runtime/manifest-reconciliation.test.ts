@@ -48,7 +48,11 @@ import {
 	OFFICIAL_INSTALL_ARGS,
 	OFFICIAL_INSTALL_URLS,
 } from "./manifest-contract";
-import { hostedManifestToRuntimeManifest, type RuntimeManifestLoad } from "./manifest-source";
+import {
+	hostedManifestToRuntimeManifest,
+	loadCommittedRuntimeManifest,
+	type RuntimeManifestLoad,
+} from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
@@ -3313,6 +3317,155 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBe(revisionB);
 		expect(convergeLegacy().installErrors).toEqual([]);
 		expect(legacySignals).toEqual([true, false]);
+	});
+
+	test("replaces an unverifiable legacy secret cache after a successful online upgrade", () => {
+		const paths = tempRuntimePaths();
+		const engine = installCachedTestEgressEngine(paths, "12.2.3");
+		const canonicalSecretRef = "secret://tool.codex.apiKey";
+		const base = egressRuntimeManifest(paths, {
+			generation: 19,
+			engine,
+			profile: "enabled",
+		});
+		const profile = base.egressProfiles?.profiles[0];
+		if (!profile) throw new Error("expected enabled egress profile fixture");
+		const currentManifest = manifestSchema.parse({
+			...base,
+			issuedAt: "2026-07-01T00:19:00.000Z",
+			egressProfiles: {
+				profiles: [
+					{
+						...profile,
+						rewrite: {
+							...profile.rewrite,
+							setHeaders: {
+								authorization: {
+									type: "secretRef",
+									secretRef: canonicalSecretRef,
+									prefix: "Bearer ",
+								},
+							},
+						},
+					},
+				],
+			},
+		});
+		const retainedManifest = {
+			...currentManifest,
+			generation: 15,
+			issuedAt: "2026-07-01T00:15:00.000Z",
+			egressProfiles: {
+				profiles: [
+					profile,
+					{
+						...profile,
+						id: "legacy-env-ref",
+						rewrite: {
+							...profile.rewrite,
+							setHeaders: {
+								authorization: {
+									type: "secretRef",
+									secretRef: "env://REDACTED_LEGACY_NAME",
+									prefix: "Bearer ",
+								},
+							},
+						},
+					},
+				],
+			},
+		};
+		const retainedSecretValues = {
+			...TEST_HOSTED_SECRET_VALUES,
+			"clawdi/auth-token": TEST_HOSTED_SECRET_VALUES["secret://clawdi/auth-token"],
+			"runtime/openclaw/gateway-token":
+				TEST_HOSTED_SECRET_VALUES["secret://runtime/openclaw/gateway-token"],
+			"tool.codex.apiKey": TEST_HOSTED_SECRET_VALUES[canonicalSecretRef],
+		};
+		const currentSecretValues = {
+			"secret://clawdi/auth-token": "generation-19-auth-token",
+			"secret://runtime/openclaw/gateway-token": "canonical-generation-19-gateway",
+			[canonicalSecretRef]: "generation-19-egress-token",
+		};
+		const currentLoad = manifestLoad(
+			currentManifest,
+			"inline-generation-19-online-upgrade",
+			currentSecretValues,
+		);
+		if (!currentLoad.applyContext) throw new Error("expected apply context fixture");
+
+		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
+		writeFileSync(paths.manifestLastGood, `${JSON.stringify(retainedManifest, null, 2)}\n`);
+		writeFileSync(
+			paths.managedSecretCacheFile,
+			`${JSON.stringify(retainedSecretValues, null, 2)}\n`,
+		);
+		writeRuntimeAppliedState(
+			{
+				schemaVersion: "clawdi.runtimeAppliedState.v2",
+				appliedAt: "2026-07-01T00:15:00.000Z",
+				instanceId: currentManifest.instanceId,
+				etag: '"generation-15"',
+				sourceRevision: runtimeContentSha256({ generation: 15 }),
+				generation: 15,
+				contentIdentity: {
+					sourcePath: "retained-generation-15",
+					sha256: runtimeContentSha256({
+						manifest: retainedManifest,
+						secretValues: retainedSecretValues,
+					}),
+				},
+				providerIds: [],
+				projectedProviderIds: {},
+			},
+			paths,
+		);
+		expect(loadCommittedRuntimeManifest(paths, currentLoad.applyContext)).toHaveProperty("errors");
+
+		let activations = 0;
+		let rollbacks = 0;
+		const convergence = convergeRuntimeManifest(currentLoad, paths, {
+			cacheLastGood: false,
+			commitAuthority: (committedConvergence, authority) =>
+				commitTestRuntimeAuthority(currentLoad, paths, committedConvergence, authority),
+			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
+				activate: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					expect(
+						readFileSync(join(paths.managedSecretRoot, "egress-secrets.json"), "utf-8"),
+					).toContain("generation-19-egress-token");
+					activations++;
+					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+				},
+				rollback: () => {
+					rollbacks++;
+				},
+			},
+		});
+
+		expect(convergence.installErrors).toEqual([]);
+		expect(activations).toBe(1);
+		expect(rollbacks).toBe(0);
+		expect(JSON.parse(readFileSync(paths.manifestLastGood, "utf-8"))).toEqual(currentManifest);
+		expect(JSON.parse(readFileSync(paths.managedSecretCacheFile, "utf-8"))).toEqual({
+			"secret://runtime/openclaw/gateway-token": "canonical-generation-19-gateway",
+			[canonicalSecretRef]: "generation-19-egress-token",
+		});
+		expect(readRuntimeAppliedState(paths)).toMatchObject({
+			generation: 19,
+			egressSidecarSecretRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
+		});
+		const committedSecretCache = readFileSync(paths.managedSecretCacheFile, "utf-8");
+		const committedCache = [
+			readFileSync(paths.manifestLastGood, "utf-8"),
+			committedSecretCache,
+		].join("\n");
+		expect(committedCache).not.toContain("env://");
+		expect(committedCache).not.toContain("legacy-env-ref");
+		expect(committedSecretCache).not.toContain(': "test-auth-token"');
+		expect(committedSecretCache).not.toContain(': "gateway-token"');
+		expect(committedSecretCache).not.toContain(': "test-codex-provider-key"');
 	});
 
 	test("advances last-good manifest only after a clean converge", () => {
