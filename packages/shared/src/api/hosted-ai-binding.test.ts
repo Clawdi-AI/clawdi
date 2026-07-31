@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import {
 	CLAWDI_MANAGED_PROVIDER_ID,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
@@ -104,34 +103,6 @@ const noncanonicalManagedProviders: HostedSavedAiProvider[] = [
 ];
 
 describe("shared Hosted AI provider binding", () => {
-	test("matches the drift-checked Hosted v2 binding contract fixture", () => {
-		const fixture = JSON.parse(
-			readFileSync(new URL("./fixtures/hosted-ai-binding-v2.json", import.meta.url), "utf8"),
-		) as Record<string, unknown>;
-		expect(fixture).toEqual({
-			managed_primary_saved_secondary: buildHostedAiBindingFields({
-				managedModels,
-				mode: "create",
-				providers: [apiKeyProvider],
-				selection: {
-					mode: "managed",
-					model: "gpt-managed",
-					providerIds: [CLAWDI_MANAGED_PROVIDER_ID, apiKeyProvider.provider_id],
-				},
-			}),
-			mixed_external_oauth_primary: buildHostedAiBindingFields({
-				managedModels,
-				mode: "create",
-				providers: [codexProvider, apiKeyProvider],
-				selection: {
-					mode: "saved",
-					model: "gpt-codex",
-					primaryProviderId: codexProvider.provider_id,
-					providerIds: [codexProvider.provider_id, apiKeyProvider.provider_id],
-				},
-			}),
-		});
-	});
 	test("builds the same managed and unmanaged deployment fields for every adapter", () => {
 		expect(
 			buildHostedAiBindingFields({
@@ -156,26 +127,6 @@ describe("shared Hosted AI provider binding", () => {
 		).toEqual({ ai_provider_auth_kind: "unmanaged" });
 	});
 
-	test.each([
-		{ name: "duplicate", providerIds: ["openai-main", "openai-main"], error: "duplicate" },
-		{ name: "blank", providerIds: ["openai-main", "   "], error: "invalid provider_id" },
-		{ name: "missing primary", providerIds: ["openai-secondary"], error: "must belong" },
-	])("rejects $name ordered provider selection before catalog lookup", ({ providerIds, error }) => {
-		expect(() =>
-			buildHostedAiBindingFields({
-				managedModels,
-				mode: "create",
-				providers: [apiKeyProvider, secondaryProvider],
-				selection: {
-					mode: "saved",
-					model: "gpt-catalog",
-					primaryProviderId: apiKeyProvider.provider_id,
-					providerIds,
-				},
-			}),
-		).toThrow(error);
-	});
-
 	test("binds a saved API-key provider with catalog and custom models", () => {
 		for (const model of ["gpt-catalog", "org/private-custom-model"]) {
 			const fields = buildHostedAiBindingFields({
@@ -195,13 +146,8 @@ describe("shared Hosted AI provider binding", () => {
 				provider_ids: ["openai-main"],
 				primary_model: { provider_id: "openai-main", model },
 				ai_provider_bootstrap: {
-					bindings: [
-						{
-							provider_id: "openai-main",
-							auth_kind: "api_key",
-							secret_reference: { store: "external", name: "openai-main" },
-						},
-					],
+					selected_provider_id: "openai-main",
+					auth_kind: "api_key",
 				},
 			});
 			expect(fields.ai_provider_bootstrap?.catalog.providers[0]?.auth).toEqual({
@@ -225,13 +171,7 @@ describe("shared Hosted AI provider binding", () => {
 			},
 		});
 		expect(fields.ai_provider_auth_kind).toBe("codex_oauth");
-		expect(fields.ai_provider_bootstrap?.bindings).toEqual([
-			{
-				provider_id: "codex-main",
-				auth_kind: "codex_oauth",
-				secret_reference: { store: "external", name: "codex-main" },
-			},
-		]);
+		expect(fields.ai_provider_bootstrap?.auth_kind).toBe("codex_oauth");
 		expect(fields.ai_provider_bootstrap?.catalog.providers[0]?.auth).toEqual({
 			type: "agent_profile",
 			tool: "codex",
@@ -264,14 +204,8 @@ describe("shared Hosted AI provider binding", () => {
 				},
 				ai_provider_bootstrap: {
 					schema_version: 1,
-					bindings: [
-						{ provider_id: CLAWDI_MANAGED_PROVIDER_ID, auth_kind: "managed" },
-						{
-							provider_id: "openai-main",
-							auth_kind: "api_key",
-							secret_reference: { store: "external", name: "openai-main" },
-						},
-					],
+					selected_provider_id: "openai-main",
+					auth_kind: "api_key",
 					catalog: {
 						schema_version: 1,
 						providers: [
@@ -358,19 +292,8 @@ describe("shared Hosted AI provider binding", () => {
 				});
 				expect(fields.ai_provider_id).toBe("codex-main");
 				expect(fields.ai_provider_auth_kind).toBe("codex_oauth");
-				expect(fields.ai_provider_bootstrap?.bindings).toEqual([
-					{
-						provider_id: "codex-main",
-						auth_kind: "codex_oauth",
-						secret_reference: { store: "external", name: "codex-main" },
-					},
-					{ provider_id: CLAWDI_MANAGED_PROVIDER_ID, auth_kind: "managed" },
-					{
-						provider_id: "openai-secondary",
-						auth_kind: "api_key",
-						secret_reference: { store: "external", name: "openai-secondary" },
-					},
-				]);
+				expect(fields.ai_provider_bootstrap?.selected_provider_id).toBe("codex-main");
+				expect(fields.ai_provider_bootstrap?.auth_kind).toBe("codex_oauth");
 				expect(
 					fields.ai_provider_bootstrap?.catalog.providers.map((provider) => provider.id),
 				).toEqual(["codex-main", "openai-secondary"]);
@@ -483,14 +406,8 @@ describe("shared Hosted AI provider binding", () => {
 						auth: { type: "none" },
 					},
 				],
-				[
-					{
-						provider_id: "public-no-auth",
-						auth_kind: "api_key",
-						secret_reference: { store: "external", name: "public-no-auth" },
-					},
-				],
 				"public-no-auth",
+				"api_key",
 			),
 		).toThrow("uses no auth on a public URL");
 	});
@@ -532,17 +449,8 @@ describe("shared Hosted AI provider binding", () => {
 		expect(() =>
 			buildHostedAiProviderPoolBootstrap(
 				[malformedProvider],
-				[
-					{
-						provider_id: malformedProvider.provider_id,
-						auth_kind: "api_key",
-						secret_reference: {
-							store: "external",
-							name: malformedProvider.provider_id,
-						},
-					},
-				],
 				malformedProvider.provider_id,
+				"api_key",
 			),
 		).toThrow("Invalid AI provider auth source.");
 	});

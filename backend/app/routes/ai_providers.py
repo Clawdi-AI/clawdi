@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import secrets
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 from urllib.parse import urlencode, urlparse
@@ -276,11 +277,11 @@ async def poll_ai_provider_oauth_device(
 ) -> AiProviderOAuthDevicePollResponse:
     await _get_provider_or_404(request_db, auth, provider_id)
     async with async_session_factory() as db:
-        attempt = await _oauth_attempt_for_state(
+        attempt = await _load_oauth_attempt(
             db,
+            state_identity=_oauth_attempt_state_identity(body.state),
             owner_user_id=auth.user_id,
             provider_id=provider_id,
-            state=body.state,
             flow_kind="device_code",
         )
         replay = _oauth_attempt_replay(attempt)
@@ -915,7 +916,7 @@ async def _build_codex_device_authorization(
         ) from exc
     profile = "default"
     expires_at = datetime.now(UTC) + timedelta(seconds=OAUTH_DEVICE_STATE_TTL_SECONDS)
-    attempt, state_value = await _persist_oauth_attempt(
+    state_value = await _persist_oauth_attempt(
         db,
         owner_user_id=auth.user_id,
         provider=provider,
@@ -930,7 +931,6 @@ async def _build_codex_device_authorization(
         },
     )
     return AiProviderOAuthDeviceStartResponse(
-        flow_id=attempt.flow_id,
         provider_id=runtime_managed_provider_id(provider.provider_id),
         oauth_provider=oauth_provider,
         profile=profile,
@@ -992,7 +992,7 @@ async def start_ai_provider_oauth(
     code_verifier = secrets.token_urlsafe(48)
     code_challenge = _code_challenge(code_verifier)
     expires_at = datetime.now(UTC) + timedelta(seconds=OAUTH_STATE_TTL_SECONDS)
-    attempt, state = await _persist_oauth_attempt(
+    state = await _persist_oauth_attempt(
         db,
         owner_user_id=auth.user_id,
         provider=provider,
@@ -1033,7 +1033,6 @@ async def start_ai_provider_oauth(
     separator = "&" if "?" in authorization_url else "?"
     auth_url = f"{authorization_url}{separator}{urlencode(params)}"
     response = AiProviderOAuthStartResponse(
-        flow_id=attempt.flow_id,
         provider_id=runtime_managed_provider_id(provider.provider_id),
         oauth_provider=oauth_provider,
         profile=profile,
@@ -1083,7 +1082,7 @@ async def _persist_oauth_attempt(
     flow_kind: Literal["authorization_code", "device_code"],
     expires_at: datetime,
     flow_payload: dict,
-) -> tuple[AiProviderOAuthAttempt, str]:
+) -> str:
     locked_provider = (
         await db.execute(
             select(AiProvider)
@@ -1149,18 +1148,22 @@ async def _persist_oauth_attempt(
     )
     db.add(attempt)
     await db.flush()
-    return attempt, state
+    return state
 
 
-async def _oauth_attempt_for_state(
-    db: AsyncSession,
-    *,
-    owner_user_id: UUID,
-    provider_id: str,
-    state: str,
-    flow_kind: Literal["authorization_code", "device_code"],
-    for_update: bool = False,
-) -> AiProviderOAuthAttempt:
+# Transaction and lock boundary for the durable attempt state machine:
+# - the request transaction creates `pending` while holding provider -> credential locks;
+# - begin uses one short provider -> attempt transaction to commit `exchanging`;
+# - token exchange runs without an open database transaction;
+# - commit uses the same provider -> attempt lock order for `committed`;
+# - stale or failed exchanges use a separate best-effort transition to `failed`.
+@dataclass(frozen=True, slots=True)
+class _OAuthAttemptStateIdentity:
+    flow_id: UUID
+    state_sha256: str
+
+
+def _oauth_attempt_state_identity(state: str) -> _OAuthAttemptStateIdentity:
     decoded = _decode_oauth_state(state)
     try:
         flow_id = UUID(str(decoded.get("flow_id") or ""))
@@ -1168,12 +1171,27 @@ async def _oauth_attempt_for_state(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state") from exc
     if not isinstance(decoded.get("fence"), str):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state")
+    return _OAuthAttemptStateIdentity(
+        flow_id=flow_id,
+        state_sha256=hashlib.sha256(state.encode()).hexdigest(),
+    )
+
+
+async def _load_oauth_attempt(
+    db: AsyncSession,
+    *,
+    state_identity: _OAuthAttemptStateIdentity,
+    owner_user_id: UUID,
+    provider_id: str,
+    flow_kind: Literal["authorization_code", "device_code"],
+    for_update: bool = False,
+) -> AiProviderOAuthAttempt:
     statement = select(AiProviderOAuthAttempt).where(
-        AiProviderOAuthAttempt.flow_id == flow_id,
+        AiProviderOAuthAttempt.flow_id == state_identity.flow_id,
         AiProviderOAuthAttempt.owner_user_id == owner_user_id,
         AiProviderOAuthAttempt.provider_id == provider_id,
         AiProviderOAuthAttempt.flow_kind == flow_kind,
-        AiProviderOAuthAttempt.state_sha256 == hashlib.sha256(state.encode()).hexdigest(),
+        AiProviderOAuthAttempt.state_sha256 == state_identity.state_sha256,
     )
     if for_update:
         statement = statement.with_for_update().execution_options(populate_existing=True)
@@ -1214,12 +1232,13 @@ async def _begin_oauth_attempt_exchange(
     flow_kind: Literal["authorization_code", "device_code"],
     payload_updates: dict,
 ) -> tuple[UUID, AiProviderResponse | None]:
+    state_identity = _oauth_attempt_state_identity(state)
     async with async_session_factory() as db:
-        identity = await _oauth_attempt_for_state(
+        identity = await _load_oauth_attempt(
             db,
+            state_identity=state_identity,
             owner_user_id=owner_user_id,
             provider_id=provider_id,
-            state=state,
             flow_kind=flow_kind,
         )
         replay = _oauth_attempt_replay(identity)
@@ -1241,11 +1260,11 @@ async def _begin_oauth_attempt_exchange(
                 .with_for_update()
             )
         ).scalar_one_or_none()
-        attempt = await _oauth_attempt_for_state(
+        attempt = await _load_oauth_attempt(
             db,
+            state_identity=state_identity,
             owner_user_id=owner_user_id,
             provider_id=provider_id,
-            state=state,
             flow_kind=flow_kind,
             for_update=True,
         )

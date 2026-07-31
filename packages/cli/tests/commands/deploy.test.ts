@@ -611,13 +611,8 @@ describe("deploy orchestration", () => {
 			provider_ids: ["openai-team"],
 			primary_model: { provider_id: "openai-team", model: "gpt-saved" },
 			ai_provider_bootstrap: {
-				bindings: [
-					{
-						provider_id: "openai-team",
-						auth_kind: "api_key",
-						secret_reference: { store: "external", name: "openai-team" },
-					},
-				],
+				selected_provider_id: "openai-team",
+				auth_kind: "api_key",
 			},
 		});
 		expect(apiKeyResult).toMatchObject({
@@ -645,15 +640,7 @@ describe("deploy orchestration", () => {
 		expect(codexClient.created?.body).toMatchObject({
 			ai_provider_auth_kind: "codex_oauth",
 			primary_model: { provider_id: "codex-work", model: "gpt-custom" },
-			ai_provider_bootstrap: {
-				bindings: [
-					{
-						provider_id: "codex-work",
-						auth_kind: "codex_oauth",
-						secret_reference: { store: "external", name: "codex-work" },
-					},
-				],
-			},
+			ai_provider_bootstrap: { auth_kind: "codex_oauth" },
 		});
 		expect(JSON.stringify(codexClient.created?.body)).not.toContain("access_token");
 	});

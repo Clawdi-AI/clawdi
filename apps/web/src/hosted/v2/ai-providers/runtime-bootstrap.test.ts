@@ -27,20 +27,10 @@ const provider: AiProvider = {
 
 describe("AI provider runtime bootstrap", () => {
 	test("uses stable provider_id instead of the response row id", () => {
-		const bootstrap = buildAiProviderPoolBootstrap(
-			[provider],
-			[
-				{
-					provider_id: provider.provider_id,
-					auth_kind: "codex_oauth",
-					secret_reference: { store: "external", name: provider.provider_id },
-				},
-			],
-			provider.provider_id,
-		);
+		const bootstrap = buildAiProviderPoolBootstrap([provider], provider.provider_id, "codex_oauth");
 
 		expect(aiProviderRuntimeId(provider)).toBe("openai-codex");
-		expect(bootstrap.bindings[0]?.provider_id).toBe("openai-codex");
+		expect(bootstrap.selected_provider_id).toBe("openai-codex");
 		expect(bootstrap.catalog.defaults?.chat_provider_id).toBe("openai-codex");
 		expect(bootstrap.catalog.providers[0]?.id).toBe("openai-codex");
 		expect(bootstrap.catalog.providers[0]?.id).not.toBe("db-record-uuid");
@@ -99,25 +89,11 @@ describe("AI provider runtime bootstrap", () => {
 
 		const bootstrap = buildAiProviderPoolBootstrap(
 			[provider, secondary],
-			[
-				{
-					provider_id: provider.provider_id,
-					auth_kind: "codex_oauth",
-					secret_reference: { store: "external", name: provider.provider_id },
-				},
-				{
-					provider_id: secondary.provider_id,
-					auth_kind: "api_key",
-					secret_reference: { store: "external", name: secondary.provider_id },
-				},
-			],
 			"anthropic-prod",
+			"api_key",
 		);
 
-		expect(bootstrap.bindings.map((binding) => binding.provider_id)).toEqual([
-			"openai-codex",
-			"anthropic-prod",
-		]);
+		expect(bootstrap.selected_provider_id).toBe("anthropic-prod");
 		expect(bootstrap.catalog.defaults?.chat_provider_id).toBe("anthropic-prod");
 		expect(bootstrap.catalog.providers.map((item) => item.id)).toEqual([
 			"openai-codex",
@@ -134,20 +110,7 @@ describe("AI provider runtime bootstrap", () => {
 		);
 
 		expect(() =>
-			buildAiProviderPoolBootstrap(
-				[malformedProvider],
-				[
-					{
-						provider_id: malformedProvider.provider_id,
-						auth_kind: "api_key",
-						secret_reference: {
-							store: "external",
-							name: malformedProvider.provider_id,
-						},
-					},
-				],
-				malformedProvider.provider_id,
-			),
+			buildAiProviderPoolBootstrap([malformedProvider], malformedProvider.provider_id, "api_key"),
 		).toThrow("Invalid AI provider auth source.");
 	});
 
@@ -177,14 +140,8 @@ describe("AI provider runtime bootstrap", () => {
 						auth: { type: "none" },
 					},
 				],
-				[
-					{
-						provider_id: "public-no-auth",
-						auth_kind: "api_key",
-						secret_reference: { store: "external", name: "public-no-auth" },
-					},
-				],
 				"public-no-auth",
+				"api_key",
 			),
 		).toThrow("uses no auth on a public URL");
 	});
@@ -200,17 +157,11 @@ describe("AI provider runtime bootstrap", () => {
 		};
 		const bootstrap = buildAiProviderPoolBootstrap(
 			[localProvider],
-			[
-				{
-					provider_id: localProvider.provider_id,
-					auth_kind: "api_key",
-					secret_reference: { store: "external", name: localProvider.provider_id },
-				},
-			],
 			localProvider.provider_id,
+			"api_key",
 		);
 
-		expect(bootstrap.bindings[0]?.provider_id).toBe("local-no-auth");
+		expect(bootstrap.selected_provider_id).toBe("local-no-auth");
 	});
 
 	test("passes through the derived catalog and runtime env for known providers", () => {
@@ -225,14 +176,8 @@ describe("AI provider runtime bootstrap", () => {
 		};
 		const bootstrap = buildAiProviderPoolBootstrap(
 			[openAiProvider],
-			[
-				{
-					provider_id: openAiProvider.provider_id,
-					auth_kind: "api_key",
-					secret_reference: { store: "external", name: openAiProvider.provider_id },
-				},
-			],
 			openAiProvider.provider_id,
+			"api_key",
 		);
 
 		expect(bootstrap.catalog.providers[0]).toMatchObject({
