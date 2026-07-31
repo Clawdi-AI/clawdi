@@ -22,12 +22,14 @@ from app.models.channel import (
     ChannelAccount,
     ChannelAgentCredential,
     ChannelBinding,
+    ChannelBotAgentLink,
     ChannelDebugEvent,
     ChannelDelivery,
     ChannelMessage,
 )
 from app.routes.channel_routers.whatsapp import whatsapp_baileys_agent_websocket
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
+from app.services.channels import generate_agent_token, store_agent_link_token
 from app.services.whatsapp_baileys import (
     SignalSender,
     WhatsAppAuthCert,
@@ -72,6 +74,50 @@ from app.services.whatsapp_shared_runtime import (
 )
 
 pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
+
+
+@pytest.fixture(autouse=True)
+def _exercise_whatsapp_protocol_behind_hosted_gate(monkeypatch):
+    """These tests cover the protocol behind the current hosted coming-soon gate."""
+
+    async def allow_existing_link(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "app.routes.channel_routers.whatsapp.ensure_hosted_agent_provider_link_available",
+        allow_existing_link,
+    )
+
+
+async def _create_whatsapp_channel_with_existing_link(
+    client,
+    db_session,
+    channel_agent,
+    *,
+    name: str,
+    provider_token: str | None = None,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"provider": "whatsapp", "name": name}
+    if provider_token is not None:
+        payload["provider_token"] = provider_token
+    if config is not None:
+        payload["config"] = config
+    response = await client.post("/v1/channels", json=payload)
+    assert response.status_code == 201, response.text
+    created = response.json()
+    link = ChannelBotAgentLink(
+        account_id=UUID(created["id"]),
+        user_id=channel_agent.user_id,
+        agent_id=channel_agent.id,
+    )
+    store_agent_link_token(link, generate_agent_token("whatsapp"))
+    db_session.add(link)
+    await db_session.commit()
+    await db_session.refresh(link)
+    created["agent_id"] = str(link.agent_id)
+    created["agent_link_id"] = str(link.id)
+    return created
 
 
 class _FakeWhatsAppMediaUploadResponse:
@@ -1029,13 +1075,11 @@ async def test_whatsapp_baileys_websocket_closes_and_records_malformed_noise(
 async def test_whatsapp_shared_runtime_queues_cloud_sendable_proto_and_records_native_gap(
     client,
     db_session,
+    channel_agent,
 ):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-shared-runtime"},
-        )
-    ).json()
+    created = await _create_whatsapp_channel_with_existing_link(
+        client, db_session, channel_agent, name="wa-shared-runtime"
+    )
     await db_session.rollback()
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
@@ -1495,6 +1539,7 @@ async def test_whatsapp_noise_session_surfaces_raw_transport_nodes_for_shared_ru
 async def test_whatsapp_shared_runtime_relays_raw_nodes_and_forwards_iq(
     client,
     db_session,
+    channel_agent,
 ):
     class FakeSharedBotTransport:
         def __init__(self):
@@ -1512,12 +1557,9 @@ async def test_whatsapp_shared_runtime_relays_raw_nodes_and_forwards_iq(
                 "content": [{"tag": "props", "attrs": {"hash": "abc"}}],
             }
 
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-shared-runtime-raw"},
-        )
-    ).json()
+    created = await _create_whatsapp_channel_with_existing_link(
+        client, db_session, channel_agent, name="wa-shared-runtime-raw"
+    )
     await db_session.rollback()
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
@@ -1600,6 +1642,7 @@ async def test_whatsapp_shared_runtime_relays_read_receipt_via_cloud_api_without
     client,
     db_session,
     monkeypatch,
+    channel_agent,
 ):
     class FakeCloudResponse:
         status_code = 200
@@ -1621,17 +1664,14 @@ async def test_whatsapp_shared_runtime_relays_read_receipt_via_cloud_api_without
             return FakeCloudResponse()
 
     monkeypatch.setattr("app.services.whatsapp_shared_runtime.httpx.AsyncClient", FakeCloudClient)
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={
-                "provider": "whatsapp",
-                "name": "wa-cloud-read-relay",
-                "provider_token": "wa-access-token",
-                "config": {"phone_number_id": "phone-cloud"},
-            },
-        )
-    ).json()
+    created = await _create_whatsapp_channel_with_existing_link(
+        client,
+        db_session,
+        channel_agent,
+        name="wa-cloud-read-relay",
+        provider_token="wa-access-token",
+        config={"phone_number_id": "phone-cloud"},
+    )
     await db_session.rollback()
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
@@ -1705,6 +1745,7 @@ async def test_whatsapp_shared_runtime_relays_typing_indicator_via_cloud_api(
     client,
     db_session,
     monkeypatch,
+    channel_agent,
 ):
     class FakeCloudResponse:
         status_code = 200
@@ -1726,17 +1767,14 @@ async def test_whatsapp_shared_runtime_relays_typing_indicator_via_cloud_api(
             return FakeCloudResponse()
 
     monkeypatch.setattr("app.services.whatsapp_shared_runtime.httpx.AsyncClient", FakeCloudClient)
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={
-                "provider": "whatsapp",
-                "name": "wa-cloud-typing-relay",
-                "provider_token": "wa-access-token",
-                "config": {"phone_number_id": "phone-cloud"},
-            },
-        )
-    ).json()
+    created = await _create_whatsapp_channel_with_existing_link(
+        client,
+        db_session,
+        channel_agent,
+        name="wa-cloud-typing-relay",
+        provider_token="wa-access-token",
+        config={"phone_number_id": "phone-cloud"},
+    )
     await db_session.rollback()
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
@@ -1848,13 +1886,11 @@ async def test_whatsapp_shared_runtime_forward_iq_caps_inflight_queries(db_sessi
 async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     client,
     db_session,
+    channel_agent,
 ):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-runtime-debug"},
-        )
-    ).json()
+    created = await _create_whatsapp_channel_with_existing_link(
+        client, db_session, channel_agent, name="wa-runtime-debug"
+    )
     minted = (
         await client.post(
             f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
@@ -2033,6 +2069,7 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
 async def test_whatsapp_baileys_websocket_uses_registered_native_transport_for_relay_attrs(
     client,
     db_session,
+    channel_agent,
 ):
     class FakeNativeTransport:
         def __init__(self):
@@ -2047,12 +2084,9 @@ async def test_whatsapp_baileys_websocket_uses_registered_native_transport_for_r
         async def query_iq(self, node, timeout_ms):
             raise AssertionError("iq forwarding should not be used")
 
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-route-native-registry"},
-        )
-    ).json()
+    created = await _create_whatsapp_channel_with_existing_link(
+        client, db_session, channel_agent, name="wa-route-native-registry"
+    )
     minted = (
         await client.post(
             f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
