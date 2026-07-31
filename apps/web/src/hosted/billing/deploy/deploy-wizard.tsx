@@ -263,17 +263,12 @@ function ComputePriceBlock({
 }) {
 	return (
 		<div data-testid={testId} className="flex min-w-0 flex-col items-end text-right tabular-nums">
-			<div className="flex flex-wrap items-baseline justify-end gap-x-1.5">
-				<span className="whitespace-nowrap text-base font-semibold text-foreground">
+			<div className="flex items-baseline justify-end leading-5">
+				<span className="whitespace-nowrap text-sm font-semibold text-foreground">
 					{presentation.primary}
 				</span>
-				{presentation.comparison ? (
-					<span className="whitespace-nowrap text-xs text-muted-foreground line-through">
-						{presentation.comparison}
-					</span>
-				) : null}
 			</div>
-			<span className="whitespace-nowrap text-xs font-normal text-muted-foreground">
+			<span className="text-xs leading-4 font-normal text-muted-foreground">
 				{presentation.secondary}
 			</span>
 		</div>
@@ -1180,25 +1175,27 @@ export function DeployWizard() {
 										: undefined
 								}
 								icon={
-									<IconChip tint="bg-identity-3-bg text-identity-3-fg">
+									<IconChip size="sm" tint="bg-identity-3-bg text-identity-3-fg">
 										<Cpu />
 									</IconChip>
 								}
 								title="Basic"
 								description={
-									!deployments.isSuccess
-										? deployments.error
-											? "Basic availability couldn't be checked"
-											: "Checking free Basic slot availability"
-										: `${basicPlan?.vcpu ?? 2} vCPU / ${basicPlan?.ram_gb ?? 4} GB`
+									<span className="text-xs">
+										{!deployments.isSuccess
+											? deployments.error
+												? "Basic availability couldn't be checked"
+												: "Checking free Basic slot availability"
+											: `${basicPlan?.vcpu ?? 2} vCPU · ${basicPlan?.ram_gb ?? 4} GB RAM`}
+									</span>
 								}
+								detailsPlacement="trailing"
 								details={
 									deployments.isSuccess && basicSelection.mode === "included" ? (
 										<ComputePriceBlock
 											testId="basic-compute-price"
 											presentation={{
 												primary: "Free",
-												comparison: null,
 												secondary: "First Basic agent",
 											}}
 										/>
@@ -1219,6 +1216,7 @@ export function DeployWizard() {
 									) : null
 								}
 								disabled={!deployments.isSuccess || basicUnavailable}
+								className="items-center p-3"
 							/>
 							<EntityChoiceCard
 								selected={compute === "performance"}
@@ -1228,16 +1226,19 @@ export function DeployWizard() {
 										: undefined
 								}
 								icon={
-									<IconChip tint="bg-identity-8-bg text-identity-8-fg">
+									<IconChip size="sm" tint="bg-identity-8-bg text-identity-8-fg">
 										<Zap />
 									</IconChip>
 								}
 								title="Performance"
 								description={
-									perfPlan
-										? `${perfPlan.vcpu} vCPU / ${perfPlan.ram_gb} GB`
-										: "Performance plan unavailable"
+									<span className="text-xs">
+										{perfPlan
+											? `${perfPlan.vcpu} vCPU · ${perfPlan.ram_gb} GB RAM`
+											: "Performance plan unavailable"}
+									</span>
 								}
+								detailsPlacement="trailing"
 								details={
 									perfPricePresentation ? (
 										<ComputePriceBlock
@@ -1248,6 +1249,7 @@ export function DeployWizard() {
 								}
 								badge={perfPricePresentation ? null : <Badge>Unavailable</Badge>}
 								disabled={!deployments.isSuccess || !perfPlan || !perfOfferSelection}
+								className="items-center p-3"
 							/>
 						</div>
 						{paidSelection ? (

@@ -97,6 +97,12 @@ describe("deploy wizard responsive layout", () => {
 		expect(deployPageSource).toContain('className="grid gap-2 @2xl/main:grid-cols-2"');
 	});
 
+	test("keeps compute identity, resources, and recurring price in one compact hierarchy", () => {
+		expect(wizardSource.match(/detailsPlacement="trailing"/g)).toHaveLength(2);
+		expect(wizardSource.match(/className="items-center p-3"/g)).toHaveLength(2);
+		expect(wizardSource.match(/vCPU · .* GB RAM/g)).toHaveLength(2);
+	});
+
 	test("keeps the action bar sticky across the full form and adapts it to the main pane", () => {
 		const formIndex = wizardSource.indexOf("<form");
 		const agentSoftwareIndex = wizardSource.indexOf('title="Agent software"');
