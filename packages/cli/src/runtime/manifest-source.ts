@@ -449,13 +449,18 @@ async function fetchRuntimeManifestPayload(
 	}
 }
 
-export async function loadRemoteRuntimeManifest(
+type RemoteRuntimeManifestResult =
+	| RuntimeManifestLoad
+	| RuntimeManifestFailure
+	| RuntimeManifestNotModified;
+
+async function loadRemoteRuntimeManifestPipeline(
 	paths: RuntimePaths,
-	opts: { ifNoneMatch?: string } = {},
-): Promise<RuntimeManifestLoad | RuntimeManifestFailure | RuntimeManifestNotModified> {
+	opts: { ifNoneMatch?: string; applyContext?: RuntimeApplyContext } = {},
+): Promise<RemoteRuntimeManifestResult> {
 	let applyContext: RuntimeApplyContext;
 	try {
-		applyContext = readRuntimeApplyContext();
+		applyContext = opts.applyContext ?? readRuntimeApplyContext();
 	} catch (error) {
 		return runtimeApplyContextFailure(error);
 	}
@@ -504,14 +509,19 @@ export async function loadRemoteRuntimeManifest(
 		};
 	}
 	const loaded = validateLoadedManifest(normalized, paths, "remote-datasource", fetched.url);
-	if ("manifest" in loaded) {
-		return {
-			...loaded,
-			etag: fetched.etag,
-			...runtimeApplyContextLoadFields(applyContext),
-		};
-	}
-	return loaded;
+	if (!("manifest" in loaded)) return loaded;
+	return {
+		...loaded,
+		etag: fetched.etag,
+		...runtimeApplyContextLoadFields(applyContext),
+	};
+}
+
+export async function loadRemoteRuntimeManifest(
+	paths: RuntimePaths,
+	opts: { ifNoneMatch?: string } = {},
+): Promise<RemoteRuntimeManifestResult> {
+	return loadRemoteRuntimeManifestPipeline(paths, opts);
 }
 
 function runtimeApplyContextFailure(error: unknown): RuntimeManifestFailure {
@@ -873,56 +883,27 @@ export async function loadRuntimeManifest(
 		};
 	}
 	if (!manifestPath) {
-		let fetched: { url: string; raw: unknown; etag?: string };
-		try {
-			const result = await fetchRuntimeManifestPayload(paths, applyContext);
-			if ("notModified" in result) {
-				throw new Error("runtime manifest datasource returned 304 without If-None-Match");
-			}
-			fetched = result;
-		} catch (error) {
+		const remote = await loadRemoteRuntimeManifestPipeline(paths, { applyContext });
+		const fetchFailed =
+			"errors" in remote &&
+			remote.mode === "repair" &&
+			(remote.stage === "network" || remote.stage === "auth");
+		if (fetchFailed || "notModified" in remote) {
 			const cached = loadLastGoodManifest(paths, offlineLastGoodManifestLoadOptions, applyContext);
 			if ("manifest" in cached) return cached;
+			const fetchErrors =
+				"errors" in remote
+					? remote.errors
+					: [
+							"could not fetch runtime manifest: runtime manifest datasource returned 304 without If-None-Match",
+						];
 			return {
 				mode: "repair",
 				stage: "network",
-				errors: [
-					`could not fetch runtime manifest: ${
-						error instanceof Error ? error.message : String(error)
-					}`,
-					...cached.errors,
-				],
+				errors: [...fetchErrors, ...cached.errors],
 			};
 		}
-
-		let normalized: {
-			manifest: RuntimeManifest;
-			secretValues?: Record<string, string>;
-			sourceRevision?: string;
-		};
-		try {
-			normalized = normalizeRemoteManifestPayload(fetched.raw, paths);
-			assertRemoteBundleAuthority(normalized.sourceRevision, fetched.etag);
-			assertRuntimeApplyContextMatchesManifest(normalized.manifest, applyContext);
-			normalized = bindRuntimeApplyContext(normalized, applyContext);
-		} catch (error) {
-			return {
-				mode: "manifest-rejected",
-				stage: "network",
-				errors: error instanceof z.ZodError ? zodErrors(error) : [String(error)],
-				rejectedGeneration: rawGeneration(fetched.raw),
-				activeGeneration: loadExistingState(paths).generation ?? null,
-			};
-		}
-		const loaded = validateLoadedManifest(normalized, paths, "remote-datasource", fetched.url);
-		if ("manifest" in loaded) {
-			return {
-				...loaded,
-				etag: fetched.etag,
-				...runtimeApplyContextLoadFields(applyContext),
-			};
-		}
-		return loaded;
+		return remote;
 	}
 
 	if (!isAbsolute(manifestPath)) {
