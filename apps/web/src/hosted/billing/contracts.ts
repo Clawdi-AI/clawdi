@@ -10,7 +10,6 @@ export type AiProviderAuthKind = NonNullable<
 >;
 export type BillingOffer = Schemas["V2BillingOfferResponse"];
 export type CheckoutRequest = Schemas["V2ComputeCheckoutRequest"];
-export type CheckoutResult = Schemas["V2CheckoutResponse"];
 export type ComputePlanSlug = Schemas["V2HostedDeployRequest"]["compute_plan_slug"];
 export type ComputeSubscriptionActionResult = Schemas["V2ComputeSubscriptionActionResponse"];
 export type ComputeSubscriptionCancelRequest = Schemas["V2ComputeSubscriptionCancelRequest"];

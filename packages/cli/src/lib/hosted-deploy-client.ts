@@ -4,7 +4,6 @@ import {
 	type DeployPaths,
 	extractApiDetail,
 	type HostedDeployCheckoutRequest,
-	type HostedDeployCheckoutResult,
 	type HostedDeployDeployment,
 	type HostedDeployOperation,
 	type HostedDeployPlan,
@@ -193,10 +192,7 @@ export class HostedDeployClient {
 		);
 	}
 
-	async checkout(
-		body: HostedDeployCheckoutRequest,
-		idempotencyKey: string,
-	): Promise<HostedDeployCheckoutResult> {
+	async checkout(body: HostedDeployCheckoutRequest, idempotencyKey: string) {
 		return unwrapHosted(
 			await this.client.POST("/v2/subscription/checkout", {
 				body,
@@ -224,3 +220,7 @@ export class HostedDeployClient {
 		);
 	}
 }
+
+export type HostedDeployCheckoutOperationResult = Awaited<
+	ReturnType<HostedDeployClient["checkout"]>
+>;

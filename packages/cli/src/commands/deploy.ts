@@ -11,7 +11,6 @@ import {
 	DEFAULT_HOSTED_DEPLOY_RUNTIME,
 	HOSTED_DEPLOY_LANGUAGE_OPTIONS,
 	type HostedDeployCheckoutRequest,
-	type HostedDeployCheckoutResult,
 	type HostedDeployComputePlanSlug,
 	type HostedDeployDeployment,
 	type HostedDeployOperation,
@@ -38,7 +37,11 @@ import chalk from "chalk";
 import { openInBrowser } from "../lib/browser";
 import { ClerkOAuthError } from "../lib/clerk-oauth";
 import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
-import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-client";
+import {
+	HostedDeployApiError,
+	type HostedDeployCheckoutOperationResult,
+	HostedDeployClient,
+} from "../lib/hosted-deploy-client";
 import { isInteractive } from "../lib/tty";
 
 export type DeployCommandOptions = {
@@ -225,7 +228,7 @@ export interface HostedDeployGateway {
 	checkout(
 		body: HostedDeployCheckoutRequest,
 		idempotencyKey: string,
-	): Promise<HostedDeployCheckoutResult>;
+	): Promise<HostedDeployCheckoutOperationResult>;
 	getOperation(operationName: string): Promise<HostedDeployOperation>;
 	getDeploymentRequest(requestId: string): Promise<HostedDeployRequestStatus>;
 }
@@ -433,7 +436,12 @@ function terminalRequestFailure(
 	return new PublicDeployFailure("deployment_failed", "Hosted could not complete this deployment.");
 }
 
-export function hostedCheckoutUrl(result: HostedDeployCheckoutResult): string {
+type HostedDeployCheckoutSessionResult = Extract<
+	HostedDeployCheckoutOperationResult,
+	{ flow_type: "checkout_session" }
+>;
+
+export function hostedCheckoutUrl(result: HostedDeployCheckoutSessionResult): string {
 	const raw = result.action_url?.trim() || result.checkout_url.trim();
 	let url: URL;
 	try {
@@ -1139,41 +1147,21 @@ export async function runDeployFlow(
 			}),
 			requestId,
 		);
-		if (checkout.client_secret?.trim()) {
-			throw new PublicDeployFailure(
-				"invalid_checkout_response",
-				"Hosted returned a browser-only checkout secret that the CLI will not handle.",
-			);
-		}
 		if (checkout.funding_source !== fundingSource) {
 			throw new PublicDeployFailure(
 				"checkout_mismatch",
 				"Hosted checkout did not match the selected payment method.",
 			);
 		}
-		const returnedRequestId = checkout.deploy_request_id?.trim() || null;
-		if (returnedRequestId && returnedRequestId !== requestId) {
-			throw new PublicDeployFailure(
-				"checkout_mismatch",
-				"Hosted checkout did not match the requested deployment intent.",
-			);
-		}
 		deployRequestId = requestId;
-		deploymentId = checkout.deployment_id?.trim() || null;
-		if (payment === "wallet" && checkout.flow_type !== "subscription_activation") {
-			throw new PublicDeployFailure(
-				"wallet_activation_incomplete",
-				"Wallet checkout did not confirm subscription activation. No additional payment was sent.",
-			);
-		}
-		if (checkout.flow_type === "subscription_activation" && !deploymentId) {
-			throw new PublicDeployFailure(
-				"invalid_deployment_result",
-				"Hosted accepted payment without returning the agent identifier. Do not start another payment; check Agents in the dashboard.",
-			);
-		}
 
 		if (checkout.flow_type === "checkout_session") {
+			if (checkout.client_secret?.trim()) {
+				throw new PublicDeployFailure(
+					"invalid_checkout_response",
+					"Hosted returned a browser-only checkout secret that the CLI will not handle.",
+				);
+			}
 			if (payment !== "card") {
 				throw new PublicDeployFailure(
 					"wallet_activation_incomplete",
@@ -1191,6 +1179,20 @@ export async function runDeployFlow(
 				if (parsed.open) openUrl(checkoutUrl);
 			}
 		} else {
+			const returnedRequestId = checkout.deploy_request_id?.trim() || null;
+			if (returnedRequestId && returnedRequestId !== requestId) {
+				throw new PublicDeployFailure(
+					"checkout_mismatch",
+					"Hosted checkout did not match the requested deployment intent.",
+				);
+			}
+			deploymentId = checkout.deployment_id?.trim() || null;
+			if (!deploymentId) {
+				throw new PublicDeployFailure(
+					"invalid_deployment_result",
+					"Hosted accepted payment without returning the agent identifier. Do not start another payment; check Agents in the dashboard.",
+				);
+			}
 			onEvent({
 				stage: "accepted",
 				message:

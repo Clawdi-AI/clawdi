@@ -11,6 +11,10 @@ import { formatCents } from "@/hosted/billing/format";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import { useSensitiveWalletSnapshot } from "@/hosted/billing/sensitive-actions";
 import {
+	type PaymentIntentClientSecret,
+	walletAutoReloadPaymentIntentClientSecret,
+} from "@/hosted/billing/stripe-client-secret";
+import {
 	type PaymentOutcome,
 	StripePaymentForm,
 } from "@/hosted/billing/wallet/stripe-payment-form";
@@ -35,14 +39,14 @@ export function AutoReloadActionConfirm({
 }: {
 	wallet: WalletCacheSnapshot;
 	onTopUp?: () => void;
-	initialClientSecret?: string | null;
+	initialClientSecret?: PaymentIntentClientSecret | null;
 	onDiscardClientSecret?: () => void;
 }) {
 	const qc = useQueryClient();
 	const walletSnapshot = useSensitiveWalletSnapshot();
 	const [confirming, setConfirming] = useState(false);
 	const [paymentSubmitting, setPaymentSubmitting] = useState(false);
-	const [clientSecret, setClientSecret] = useState<string | null>(
+	const [clientSecret, setClientSecret] = useState<PaymentIntentClientSecret | null>(
 		() => initialClientSecret ?? null,
 	);
 	const [secretUnavailable, setSecretUnavailable] = useState(false);
@@ -109,7 +113,9 @@ export function AutoReloadActionConfirm({
 			const latest = await walletSnapshot.execute();
 			const latestAction = latest.auto_reload_action;
 			const secret =
-				latestAction?.attempt_id === actionAttemptId ? latestAction.client_secret : null;
+				latestAction?.attempt_id === actionAttemptId
+					? walletAutoReloadPaymentIntentClientSecret(latestAction)
+					: null;
 			if (!secret) {
 				setSecretUnavailable(true);
 				toast.error("Payment confirmation unavailable", {

@@ -1,3 +1,7 @@
+import {
+	type PaymentIntentClientSecret,
+	stripeReturnPaymentIntentClientSecret,
+} from "@/hosted/billing/stripe-client-secret";
 import { SETTINGS_QUERY_KEY } from "@/lib/settings-routes";
 
 export const WALLET_TOPUP_RETURN_PARAM = "topup_return";
@@ -8,7 +12,7 @@ export const STRIPE_REDIRECT_STATUS_PARAM = "redirect_status";
 export type WalletTopupReturnToastKind = "info" | "error";
 
 export interface WalletTopupReturnState {
-	clientSecret: string;
+	clientSecret: PaymentIntentClientSecret;
 }
 
 export interface WalletTopupReturnToast {
@@ -32,7 +36,9 @@ export function buildWalletTopupReturnUrl(currentHref: string): string {
 export function readWalletTopupReturn(search: string): WalletTopupReturnState | null {
 	const params = new URLSearchParams(search);
 	if (params.get(WALLET_TOPUP_RETURN_PARAM) !== "1") return null;
-	const clientSecret = params.get(STRIPE_PAYMENT_INTENT_CLIENT_SECRET_PARAM);
+	const clientSecret = stripeReturnPaymentIntentClientSecret(
+		params.get(STRIPE_PAYMENT_INTENT_CLIENT_SECRET_PARAM),
+	);
 	if (!clientSecret) return null;
 	return { clientSecret };
 }
