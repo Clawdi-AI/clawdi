@@ -1130,42 +1130,44 @@ describe("runtime manifest services", () => {
 		}
 	});
 
-	test.each(
-		installGateHarnesses,
-	)("gates %s installs on a verified no-op and fails closed on drift", (_name, createHarness) => {
-		const harness = createHarness();
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(1);
-		expect(harness.receipt()).toBeDefined();
+	test.each(installGateHarnesses)(
+		"gates %s installs on a verified no-op and fails closed on drift",
+		(_name, createHarness) => {
+			const harness = createHarness();
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(1);
+			expect(harness.receipt()).toBeDefined();
 
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(1);
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(1);
 
-		harness.drift();
-		const receiptBeforeFailure = harness.receipt();
-		harness.failNextInstall();
-		expect(harness.converge().installErrors.join("\n")).toContain("install failed");
-		expect(harness.installCount()).toBe(2);
-		expect(harness.receipt()).toEqual(receiptBeforeFailure);
+			harness.drift();
+			const receiptBeforeFailure = harness.receipt();
+			harness.failNextInstall();
+			expect(harness.converge().installErrors.join("\n")).toContain("install failed");
+			expect(harness.installCount()).toBe(2);
+			expect(harness.receipt()).toEqual(receiptBeforeFailure);
 
-		harness.restoreInstaller();
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(3);
-	});
+			harness.restoreInstaller();
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(3);
+		},
+	);
 
-	test.each(
-		installGateHarnesses,
-	)("does not bless post-install %s drift during authority commit", (_name, createHarness) => {
-		const harness = createHarness();
-		expect(harness.converge(harness.drift).installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(1);
-		expect(harness.receipt()).toBeUndefined();
+	test.each(installGateHarnesses)(
+		"does not bless post-install %s drift during authority commit",
+		(_name, createHarness) => {
+			const harness = createHarness();
+			expect(harness.converge(harness.drift).installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(1);
+			expect(harness.receipt()).toBeUndefined();
 
-		expect(harness.converge().installErrors).toEqual([]);
-		expect(harness.installCount()).toBe(2);
-		expect(harness.receipt()).toBeDefined();
-	});
+			expect(harness.converge().installErrors).toEqual([]);
+			expect(harness.installCount()).toBe(2);
+			expect(harness.receipt()).toBeDefined();
+		},
+	);
 
 	test("uninstalls stale official gateway services when manifest disables them", () => {
 		const paths = tempRuntimePaths();

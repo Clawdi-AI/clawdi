@@ -7,17 +7,17 @@
 		"packages/*"
 	],
 	"catalog": {
-		"react": "19.2.7",
-		"react-dom": "19.2.7",
-		"@types/react": "^19.2.17",
-		"@types/react-dom": "^19.2.3",
+		"react": "19.2.8",
+		"react-dom": "19.2.8",
+		"@types/react": "^19.2.18",
+		"@types/react-dom": "^19.2.4",
 		"typescript": "^7.0.2",
 		"zod": "^4.4.3",
-		"tailwindcss": "^4.3.2",
-		"@tailwindcss/postcss": "^4.3.2",
-		"@tailwindcss/vite": "^4.3.2",
+		"tailwindcss": "^4.3.3",
+		"@tailwindcss/postcss": "^4.3.3",
+		"@tailwindcss/vite": "^4.3.3",
 		"@tanstack/react-query": "^5.101.4",
-		"lucide-react": "^1.23.0",
+		"lucide-react": "^1.28.0",
 		"tailwind-merge": "^3.6.0",
 		"clsx": "^2.1.1"
 	},
@@ -36,9 +36,9 @@
 		"prepare": "node scripts/install-git-hooks.mjs"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.5.2",
-		"lefthook": "^2.1.9",
-		"turbo": "^2.10.3",
+		"@biomejs/biome": "^2.5.6",
+		"lefthook": "^2.1.10",
+		"turbo": "^2.10.8",
 		"typescript": "catalog:"
 	},
 	"engines": {
