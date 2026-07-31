@@ -3,7 +3,7 @@
 import { Check, CircleAlert, Copy, ExternalLink } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 
 export type OAuthIssue = "expired" | "failed";
@@ -56,13 +56,14 @@ export function ProviderOAuthFlow({
 				</div>
 			</div>
 
-			<Button
-				render={<a href={verificationUrl} target="_blank" rel="noreferrer" />}
-				nativeButton={false}
-				className="w-full"
+			<a
+				href={verificationUrl}
+				target="_blank"
+				rel="noopener noreferrer"
+				className={buttonVariants({ className: "w-full" })}
 			>
 				Open ChatGPT and enter code <ExternalLink />
-			</Button>
+			</a>
 
 			<div aria-live="polite">
 				{issue === "expired" ? (

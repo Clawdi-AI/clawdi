@@ -376,6 +376,7 @@ export function EntityChoiceCard({
 	selected,
 	onClick,
 	disabled,
+	variant = "card",
 	className,
 }: {
 	icon: ReactNode;
@@ -390,11 +391,15 @@ export function EntityChoiceCard({
 	selected?: boolean;
 	onClick?: () => void;
 	disabled?: boolean;
+	/** Compact, low-chrome treatment for dense chooser grids. */
+	variant?: "card" | "compact";
 	className?: string;
 }) {
 	const content = (
 		<>
-			{icon}
+			<span aria-hidden="true" className="flex shrink-0">
+				{icon}
+			</span>
 			<div
 				className={cn(
 					"min-w-0 flex-1",
@@ -407,7 +412,14 @@ export function EntityChoiceCard({
 						{badge ? <span className="shrink-0">{badge}</span> : null}
 					</div>
 					{description ? (
-						<p className="mt-0.5 break-words text-sm text-muted-foreground">{description}</p>
+						<p
+							className={cn(
+								"mt-0.5 text-muted-foreground",
+								variant === "compact" ? "truncate text-xs leading-4" : "break-words text-sm",
+							)}
+						>
+							{description}
+						</p>
 					) : null}
 				</div>
 				{details ? (
@@ -429,12 +441,15 @@ export function EntityChoiceCard({
 		</>
 	);
 	const cardClass = cn(
-		ENTITY_CARD_BASE,
-		"flex w-full items-start gap-3 text-left transition-colors",
+		variant === "compact"
+			? "min-w-0 rounded-md border border-transparent bg-muted/30 p-2.5"
+			: ENTITY_CARD_BASE,
+		"flex w-full text-left transition-colors",
+		variant === "compact" ? "items-center gap-2.5" : "items-start gap-3",
 		onClick && ENTITY_CARD_BUTTON_FOCUS_CLASS,
 		selected
 			? "border-primary bg-primary/5 ring-1 ring-primary/30"
-			: onClick && "hover:bg-muted/50",
+			: onClick && (variant === "compact" ? "hover:bg-muted/60" : "hover:bg-muted/50"),
 		disabled && "pointer-events-none opacity-60",
 		className,
 	);

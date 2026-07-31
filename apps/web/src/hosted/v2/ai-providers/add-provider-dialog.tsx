@@ -34,6 +34,7 @@ import {
 } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { codexProviderBody } from "@/hosted/v2/ai-providers/codex-oauth";
 import { type ProviderChoice, ProviderChooser } from "@/hosted/v2/ai-providers/provider-chooser";
+import { providerConnectionIssueMessage } from "@/hosted/v2/ai-providers/provider-connection-feedback";
 import { ProviderFieldsForm } from "@/hosted/v2/ai-providers/provider-fields-form";
 import { ProviderOAuthFlow } from "@/hosted/v2/ai-providers/provider-oauth-flow";
 import {
@@ -447,7 +448,7 @@ export function AddProviderDialog({
 				data-v2="true"
 				className="flex max-h-[min(92vh,calc(100dvh-1rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl"
 			>
-				<DialogHeader className="shrink-0 px-5 pt-5 sm:px-6 sm:pt-6">
+				<DialogHeader className="shrink-0 px-5 pt-5 pr-14 sm:px-6 sm:pt-6 sm:pr-14">
 					<DialogTitle>
 						{oauth
 							? "Sign in with ChatGPT"
@@ -477,7 +478,10 @@ export function AddProviderDialog({
 					</DialogDescription>
 				</DialogHeader>
 
-				<div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6">
+				<div
+					data-testid="provider-dialog-body"
+					className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6"
+				>
 					{oauth ? (
 						<ProviderOAuthFlow
 							issue={oauthIssue}
@@ -533,66 +537,64 @@ export function AddProviderDialog({
 								>
 									{draftTestResult.ok
 										? "Connection verified. The provider accepted the test request."
-										: (draftTestResult.error?.message ?? "Connection test failed.")}
+										: providerConnectionIssueMessage(draftTestResult.error)}
 								</div>
 							) : null}
 						</div>
 					)}
 				</div>
 
-				<DialogFooter className="shrink-0 border-t bg-background px-5 py-3 sm:px-6 sm:py-4">
-					{oauth ? (
-						<Button variant="outline" onClick={() => requestClose(false)} disabled={busy}>
-							Cancel
-						</Button>
-					) : step === "choose" && !isEdit ? (
-						<Button variant="outline" onClick={() => requestClose(false)}>
-							Cancel
-						</Button>
-					) : isOAuthEdit ? (
-						<Button variant="outline" onClick={() => requestClose(false)} disabled={busy}>
-							Close
-						</Button>
-					) : (
-						<>
-							<Button
-								variant="outline"
-								onClick={() => {
-									if (isEdit) requestClose(false);
-									else setStep("choose");
-								}}
-								disabled={busy}
-							>
-								{isEdit ? null : <ArrowLeft />}
-								{isEdit ? "Cancel" : "Back"}
+				{step === "choose" && !isEdit && !oauth ? null : (
+					<DialogFooter className="shrink-0 border-t bg-popover px-5 py-3 sm:px-6 sm:py-4">
+						{oauth ? (
+							<Button variant="outline" onClick={() => requestClose(false)} disabled={busy}>
+								Cancel
 							</Button>
-							{form.authMethod === "api_key" ? (
+						) : isOAuthEdit ? (
+							<Button variant="outline" onClick={() => requestClose(false)} disabled={busy}>
+								Close
+							</Button>
+						) : (
+							<>
 								<Button
 									variant="outline"
-									onClick={() => void runAction(testDraftConnection)}
-									disabled={!form.apiKey.trim() || busy}
+									onClick={() => {
+										if (isEdit) requestClose(false);
+										else setStep("choose");
+									}}
+									disabled={busy}
 								>
-									{testDraft.isPending ? <Spinner data-icon="inline-start" /> : null}
-									Test connection
+									{isEdit ? null : <ArrowLeft />}
+									{isEdit ? "Cancel" : "Back"}
 								</Button>
-							) : null}
-							<Button onClick={() => void runAction(submit)} disabled={!canSubmit || busy}>
-								{busy ? <Spinner data-icon="inline-start" /> : null}
-								{form.authMethod === "oauth" && !isEdit
-									? busy
-										? "Opening sign-in…"
-										: "Continue to ChatGPT"
-									: isEdit
+								{form.authMethod === "api_key" ? (
+									<Button
+										variant="outline"
+										onClick={() => void runAction(testDraftConnection)}
+										disabled={!form.apiKey.trim() || busy}
+									>
+										{testDraft.isPending ? <Spinner data-icon="inline-start" /> : null}
+										Test connection
+									</Button>
+								) : null}
+								<Button onClick={() => void runAction(submit)} disabled={!canSubmit || busy}>
+									{busy ? <Spinner data-icon="inline-start" /> : null}
+									{form.authMethod === "oauth" && !isEdit
 										? busy
-											? "Saving settings…"
-											: "Save settings"
-										: busy
-											? "Adding provider…"
-											: "Add provider"}
-							</Button>
-						</>
-					)}
-				</DialogFooter>
+											? "Opening sign-in…"
+											: "Continue to ChatGPT"
+										: isEdit
+											? busy
+												? "Saving settings…"
+												: "Save settings"
+											: busy
+												? "Adding provider…"
+												: "Add provider"}
+								</Button>
+							</>
+						)}
+					</DialogFooter>
+				)}
 			</DialogContent>
 		</Dialog>
 	);
