@@ -7,6 +7,8 @@ function source(relativePath: string): string {
 
 const detail = source("./channel-detail-page.tsx");
 const pairDialog = source("./telegram-pair-dialog.tsx");
+const discordPairDialog = source("./discord-pair-dialog.tsx");
+const channelLinkingLogic = source("./channel-linking.logic.ts");
 const hooks = source("./channels-hooks.ts");
 const connectDialog = source("./connect-bot-dialog.tsx");
 const agentDetail = source("../../agents/hosted-agent-detail.tsx");
@@ -39,7 +41,8 @@ describe("channel IA boundary", () => {
 		expect(agentDetail).not.toContain("data-agent-paired-chats");
 		expect(agentDetail).toContain("data-agent-add-channel");
 		expect(agentDetail).toContain("Pair Telegram");
-		expect(agentDetail).toContain("Pair chat");
+		expect(agentDetail).toContain("pairingActionLabel(provider)");
+		expect(channelLinkingLogic).toContain('provider === "discord" ? "Pair Discord" : "Pair chat"');
 		expect(agentDetail).toContain('confirmLabel="Unlink"');
 		expect(agentDetail).toContain("<PairedChatRow");
 		expect(pairedChatRow).toContain("Unpair");
@@ -47,8 +50,35 @@ describe("channel IA boundary", () => {
 		expect(agentDetail).toContain("agentProviderHasSingleLinkLimit");
 		expect(agentDetail).toContain("linkedProviders={linkedProviders}");
 		expect(connectDialog).toContain("Already linked");
-		expect(connectDialog).toContain("agentProviderLinkLimitDescription");
+		expect(connectDialog).toContain("availableBotProvidersForAgent");
+		expect(connectDialog).toContain("This Agent already has a Telegram and Discord bot.");
 		expect(agentDetail).toContain('<details className="group border-t pt-4">');
+	});
+
+	test("provides a novice Discord connect, sync, and pair path in one compact dialog", () => {
+		expect(connectDialog).toContain("agent_id: agentId ?? null");
+		expect(agentDetail).toContain("body: { agent_id: environmentId }");
+		expect(agentDetail).toContain("setDiscordPairOpen(true)");
+		expect(agentDetail).toContain("setDiscordPair({ accountId: bot.id");
+		expect(agentDetail).toContain("<DiscordPairDialog");
+		expect(discordPairDialog).toContain("useCreatePairCode(accountId)");
+		expect(discordPairDialog).toContain("await pair.execute");
+		expect(discordPairDialog).toContain("run <code>/bot_pair</code>");
+		expect(discordPairDialog).toContain('data-discord-pair-path="server"');
+		expect(discordPairDialog).toContain('data-discord-pair-path="dm"');
+		expect(discordPairDialog).toContain("Manage");
+		expect(discordPairDialog).toContain("Add to server");
+		expect(discordPairDialog).toContain('label="pair code"');
+		expect(discordPairDialog).toContain("pairCodeExpiryLabel");
+		expect(discordPairDialog).toContain("Couldn't prepare Discord pairing");
+		expect(agentDetail).not.toContain("Commands synced. In Discord");
+		expect(agentDetail).not.toContain("Paired servers and direct messages");
+	});
+
+	test("keeps Discord preparation server-owned for private and shared bots", () => {
+		expect(agentDetail).toContain("visibility: bot.visibility");
+		expect(discordPairDialog).not.toContain("useSyncCommands");
+		expect(discordPairDialog).toContain("Preparing Discord and creating a pair code…");
 	});
 
 	test("opens the shared fixed-TTL Telegram flow immediately after a new link", () => {
@@ -93,7 +123,9 @@ describe("channel IA boundary", () => {
 		expect(pairedChatRow).toContain("<IconChip");
 		expect(pairedChatRow).toContain("<MessageCircle");
 		expect(pairedChatRow).toContain("<MessagesSquare");
-		expect(pairedChatRow).toContain("pairedChatTitle(binding)");
+		expect(pairedChatRow).toContain("pairedChatTitle(binding, provider)");
+		expect(pairedChatRow).toContain("pairedChatScopeLabel(provider, binding)");
+		expect(pairedChatRow).toContain("Run /bot_unpair in this");
 		expect(pairedChatRowLogic).toContain("external_chat_name?.trim()");
 		expect(pairedChatRowLogic).toContain("binding.external_chat_id");
 		expect(pairedChatRow).not.toContain("<ProviderChip");

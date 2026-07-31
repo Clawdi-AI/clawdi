@@ -1,9 +1,38 @@
 import { describe, expect, test } from "bun:test";
+import type { ChannelBotPoolItem } from "./channel-types";
 import {
 	orderedChannelsForFilter,
 	providerCounts,
-	providersWithOwnedBots,
+	providersWithBots,
+	sharedBotsFromPool,
 } from "./channels-page.logic";
+
+function poolBot(
+	id: string,
+	provider: string,
+	access: ChannelBotPoolItem["access"],
+): ChannelBotPoolItem {
+	return {
+		id,
+		provider,
+		name: id,
+		status: "active",
+		visibility: access === "public" ? "public" : "private",
+		has_provider_token: true,
+		webhook_url: `https://example.test/${id}`,
+		created_at: "2026-07-31T00:00:00Z",
+		access,
+		capabilities: {
+			link_agent: access === "public",
+			pair_chat: false,
+			send_message: false,
+			manage_account: access === "owner",
+			sync_commands: false,
+		},
+		link_count: 0,
+		available: true,
+	};
+}
 
 describe("owned bot inventory", () => {
 	test("keeps canonical provider order and stable order within each provider", () => {
@@ -39,10 +68,22 @@ describe("owned bot inventory", () => {
 		]);
 
 		expect(counts).toEqual({ telegram: 2, discord: 1, whatsapp: 0 });
-		expect(providersWithOwnedBots(counts)).toEqual(["telegram", "discord"]);
+		expect(providersWithBots(counts)).toEqual(["telegram", "discord"]);
 	});
 
 	test("keeps an existing WhatsApp asset discoverable without showing empty providers", () => {
-		expect(providersWithOwnedBots({ telegram: 0, discord: 0, whatsapp: 1 })).toEqual(["whatsapp"]);
+		expect(providersWithBots({ telegram: 0, discord: 0, whatsapp: 1 })).toEqual(["whatsapp"]);
+	});
+
+	test("keeps public shared bots visible independently from owned inventory", () => {
+		const sharedDiscord = poolBot("shared-discord", "discord", "public");
+		const privateDiscord = poolBot("private-discord", "discord", "owner");
+		const sharedTelegram = poolBot("shared-telegram", "telegram", "public");
+		expect(
+			sharedBotsFromPool({
+				discord: [sharedDiscord, privateDiscord],
+				telegram: [sharedTelegram],
+			}),
+		).toEqual([sharedTelegram, sharedDiscord]);
 	});
 });

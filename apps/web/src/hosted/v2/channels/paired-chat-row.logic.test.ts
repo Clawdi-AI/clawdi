@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { pairedChatTitle } from "@/hosted/v2/channels/paired-chat-row.logic";
+import { pairedChatScopeLabel, pairedChatTitle } from "@/hosted/v2/channels/paired-chat-row.logic";
 
 describe("pairedChatTitle", () => {
 	test("uses only the chat name when one is available", () => {
@@ -37,5 +37,23 @@ describe("pairedChatTitle", () => {
 				external_chat_type: null,
 			}),
 		).toBe("Chat · thread-abc");
+	});
+
+	test("distinguishes Discord server and direct-message bindings", () => {
+		const server = {
+			external_chat_id: "guild-123",
+			external_chat_name: "guild-123",
+			external_chat_type: "guild_text",
+		};
+		const directMessage = {
+			external_chat_id: "dm-456",
+			external_chat_name: null,
+			external_chat_type: "dm",
+		};
+
+		expect(pairedChatScopeLabel("discord", server)).toBe("server");
+		expect(pairedChatTitle(server, "discord")).toBe("Server · guild-123");
+		expect(pairedChatScopeLabel("discord", directMessage)).toBe("direct message");
+		expect(pairedChatTitle(directMessage, "discord")).toBe("Direct message · dm-456");
 	});
 });

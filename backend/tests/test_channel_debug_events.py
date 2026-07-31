@@ -90,7 +90,15 @@ async def test_channel_debug_health_reports_pending_inbox_and_last_error(
     created = (
         await client.post(
             "/v1/channels",
-            json={"provider": "discord", "name": "debug-discord"},
+            json={
+                "provider": "discord",
+                "name": "debug-discord",
+                "provider_token": "discord-debug-token",
+                "config": {
+                    "application_id": "123456789012345678",
+                    "public_key": "ab" * 32,
+                },
+            },
         )
     ).json()
     account = await db_session.get(ChannelAccount, UUID(created["id"]))

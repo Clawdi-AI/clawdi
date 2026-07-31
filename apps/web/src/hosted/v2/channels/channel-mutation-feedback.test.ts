@@ -16,13 +16,18 @@ describe("channel mutation feedback", () => {
 	test("acknowledges bot connection before starting its request", () => {
 		const connect = source("./connect-bot-dialog.tsx");
 
-		expectFeedbackBeforeRequest(connect, "setSubmitting(true)", "await create.execute(body)");
+		expectFeedbackBeforeRequest(
+			connect,
+			"setSubmitting(true)",
+			"await create.execute(buildBody())",
+		);
 		expect(connect).toContain('{isSubmitting ? "Close" : "Cancel"}');
 		expect(connect).not.toContain("channelDialogOpenChangeAllowed");
 	});
 
 	test("keeps agent-page link, unlink, and pair-code feedback scoped to the acting control", () => {
 		const detail = source("../../agents/hosted-agent-detail.tsx");
+		const discordPairDialog = source("./discord-pair-dialog.tsx");
 		const pairDialog = source("./telegram-pair-dialog.tsx");
 		const pairedChatRow = source("./paired-chat-row.tsx");
 
@@ -43,11 +48,13 @@ describe("channel mutation feedback", () => {
 		expect(detail).toContain('creatingPairCode ? <Spinner className="size-3.5" />');
 		expect(detail).toContain('"Generating…"');
 		expect(detail).toContain('"Pair Telegram"');
-		expect(detail).toContain('"Pair chat"');
+		expect(detail).toContain("pairingActionLabel(provider)");
 		expect(pairDialog).toContain("Creating a secure Telegram link…");
+		expectFeedbackBeforeRequest(discordPairDialog, "setPreparing(true)", "await pair.execute");
+		expect(discordPairDialog).toContain("Preparing Discord and creating a pair code…");
 		expect(pairedChatRow).toContain("disabled={unpair.isPending}");
-		expect(pairedChatRow).toContain('unpair.isPending ? "Unpairing…"');
-		expect(pairedChatRow).toContain('unpair.error ? "Retry unpair"');
+		expect(pairedChatRow).toContain('"Unpairing…"');
+		expect(pairedChatRow).toContain('"Retry unpair"');
 	});
 
 	test("uses per-action feedback for bot-owned detail mutations", () => {

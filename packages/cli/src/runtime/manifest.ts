@@ -3265,6 +3265,8 @@ function hermesManagedChannelsPatch(
 ): Record<string, unknown> {
 	const baseUrl = stripTrailingSlash(cloudApiUrl);
 	const telegramEnabled = channelHasAccounts(channels.telegram);
+	const discordEnabled = channelHasAccounts(channels.discord);
+	const sharedChannelSessionsEnabled = telegramEnabled || discordEnabled;
 	const whatsapp = hermesWhatsAppProjection(channels, channelCredentials, baseUrl);
 	return {
 		telegram: telegramEnabled
@@ -3282,7 +3284,7 @@ function hermesManagedChannelsPatch(
 					},
 				}
 			: { enabled: false },
-		discord: channelHasAccounts(channels.discord)
+		discord: discordEnabled
 			? {
 					enabled: true,
 					dm_policy: "open",
@@ -3304,8 +3306,8 @@ function hermesManagedChannelsPatch(
 					require_mention: false,
 				}
 			: { enabled: false },
-		group_sessions_per_user: telegramEnabled ? false : null,
-		thread_sessions_per_user: telegramEnabled ? false : null,
+		group_sessions_per_user: sharedChannelSessionsEnabled ? false : null,
+		thread_sessions_per_user: sharedChannelSessionsEnabled ? false : null,
 		platforms: {
 			telegram: {
 				extra: {

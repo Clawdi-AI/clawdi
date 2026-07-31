@@ -6,15 +6,16 @@ function source(relativePath: string): string {
 }
 
 describe("global Channels inventory", () => {
-	test("shows only owned bot assets and never exposes the ready-bot linking flow", () => {
+	test("separates owned and shared bot inventory without relationship actions", () => {
 		const channelsPage = source("./channels-page.tsx");
 
 		expect(channelsPage).toContain("<OwnedBotsSection");
 		expect(channelsPage).toContain("data-owned-bots-section");
-		expect(channelsPage).toContain("Manage the bots you own");
+		expect(channelsPage).toContain("<SharedBotsSection");
+		expect(channelsPage).toContain("data-shared-bots-section");
 		expect(channelsPage).toContain("Connect bot");
 		expect(channelsPage).toContain("orderedChannelsForFilter");
-		expect(channelsPage).not.toContain("useBotPool");
+		expect(channelsPage).toContain("useBotPool");
 		expect(channelsPage).not.toContain("ReadyBotsSection");
 		expect(channelsPage).not.toContain("Ready-to-go bots");
 		expect(channelsPage).not.toContain("data-ready-bots-section");
@@ -22,7 +23,8 @@ describe("global Channels inventory", () => {
 		expect(channelsPage).not.toContain("LinkAgentDialog");
 		expect(channelsPage).not.toContain("Link an agent");
 		expect(channelsPage).not.toContain("At capacity");
-		expect(channelsPage).toContain("providersWithOwnedBots(counts)");
+		expect(channelsPage).toContain("providersWithBots(counts)");
+		expect(channelsPage).not.toContain("· Shared");
 	});
 
 	test("uses the shared channel-linking module without dead global relationship hooks", () => {
@@ -46,20 +48,22 @@ describe("global Channels inventory", () => {
 		const connectDialog = source("./connect-bot-dialog.tsx");
 		const agentDetail = source("../../agents/hosted-agent-detail.tsx");
 
-		expect(connectDialog).toContain("const linkTarget = { agent_id: agentId ?? null }");
+		expect(connectDialog).toContain("agent_id: agentId ?? null");
 		expect(agentDetail).toContain("agentId={environmentId}");
 		expect(agentDetail).toContain("onAgentConnected={(bot)");
 		expect(agentDetail).toContain("setTelegramPair({");
 	});
 
-	test("renders actionable provider steps and real external links in the connect dialog", () => {
+	test("renders a compact credential form with official external links", () => {
 		const connectDialog = source("./connect-bot-dialog.tsx");
 
-		expect(connectDialog).toContain("meta.setupSteps.map");
 		expect(connectDialog).toContain("href={meta.setupUrl}");
 		expect(connectDialog).toContain('target="_blank"');
-		expect(connectDialog).toContain("This is the name shown in Clawdi");
-		expect(connectDialog).toContain("Server ID");
+		expect(connectDialog).toContain("Application ID");
+		expect(connectDialog).toContain("Public key");
+		expect(connectDialog).not.toContain("setupSteps");
+		expect(connectDialog).not.toContain("WhatsApp");
+		expect(connectDialog).not.toContain("Server ID");
 		expect(connectDialog).not.toContain("Guild ID");
 	});
 

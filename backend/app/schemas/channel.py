@@ -143,6 +143,7 @@ class ChannelPairCodeResponse(BaseModel):
     bot_username: str | None = None
     deep_link: str | None = None
     qr_payload: str | None = None
+    discord_install_url: str | None = None
 
 
 class ChannelCommandSpec(BaseModel):

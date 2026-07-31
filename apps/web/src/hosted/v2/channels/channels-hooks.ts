@@ -15,7 +15,7 @@ import {
 	channelKeys as keys,
 	removeDeletedChannelQueries,
 } from "@/hosted/v2/channels/channel-query-cache";
-import type { ChannelCreate } from "@/hosted/v2/channels/channel-types";
+import type { ChannelCreate, ChannelCreated } from "@/hosted/v2/channels/channel-types";
 import { whatsappCredentialMetadataForCache } from "@/hosted/v2/channels/whatsapp-credential-cache";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
@@ -162,9 +162,13 @@ export function useCreateChannel() {
 				id: result.id,
 				name: result.name,
 				provider: result.provider,
-				agentLinkId: result.agent_link_id ?? null,
-				agentId: result.agent_id ?? null,
-			};
+				webhook_url: result.webhook_url,
+				agent_link_id: result.agent_link_id ?? null,
+				agent_id: result.agent_id ?? null,
+			} satisfies Pick<
+				ChannelCreated,
+				"id" | "name" | "provider" | "webhook_url" | "agent_link_id" | "agent_id"
+			>;
 		} catch (error) {
 			toastApiError("Couldn't connect channel")(error);
 			throw error;
@@ -212,6 +216,7 @@ export function useCreatePairCode(accountId: string) {
 				bot_username: result.bot_username,
 				deep_link: result.deep_link,
 				qr_payload: result.qr_payload,
+				discord_install_url: result.discord_install_url,
 			};
 		} catch (error) {
 			toastApiError("Couldn't create pairing code")(error);
