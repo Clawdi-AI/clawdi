@@ -53,7 +53,6 @@ function applyRuntimeBundleChannelsToManifestLoad(load: RuntimeManifestLoad): Ru
 				applyReceiptId: "test-apply-receipt",
 				bootNonce: "test-boot-nonce",
 			},
-			sourcePath: "/test/runtime-apply-identity.json",
 			runtimeEnvironment: projectedRuntimeEnvironment(
 				Object.fromEntries(
 					Object.entries(process.env).filter(

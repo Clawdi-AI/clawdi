@@ -1,10 +1,8 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-	accessSync,
 	chmodSync,
 	chownSync,
-	constants,
 	existsSync,
 	lchownSync,
 	lstatSync,
@@ -43,7 +41,7 @@ import {
 } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { readRuntimeAppliedState, runtimeContentSha256 } from "./applied-state";
-import { type RuntimeApplyContext, runtimeApplyContextServiceEnvironment } from "./apply-identity";
+import type { RuntimeApplyContext } from "./apply-identity";
 import {
 	ensureRuntimeAuthTokenFile,
 	RUNTIME_AUTH_TOKEN_SECRET_REF,
@@ -57,8 +55,6 @@ import {
 	reconcileHostedBundledSkill,
 	resolveHostedBundledSkill,
 } from "./hosted-bundled-skill";
-
-export { withRuntimeConvergeLock, withRuntimeConvergeLockAsync } from "./converge-lock";
 
 import { managedMcpHeaderPlaceholder, normalizeSecretRef } from "./hosted-egress-profiles";
 import {
@@ -107,12 +103,7 @@ export {
 	runtimeManifestFixturePath,
 } from "./manifest-source";
 
-import { withEffectiveFilesystemIdentity } from "./effective-identity";
-import {
-	applyEgressTransparentRuntimeEnv,
-	MANAGED_EGRESS_PLACEHOLDER_VALUE,
-	SYSTEM_CA_BUNDLE,
-} from "./egress-env";
+import { MANAGED_EGRESS_PLACEHOLDER_VALUE, SYSTEM_CA_BUNDLE } from "./egress-env";
 import {
 	buildEgressProfileBundle,
 	egressProfileSecretRefs,
@@ -143,16 +134,36 @@ import {
 	runtimeNameSchema,
 	runtimeRunConfigId,
 	runtimeServiceNameSchema,
-	withoutPathEntry,
 	writeRuntimeRunConfig,
 } from "./run-config";
+import { runtimeProgramRevision } from "./runtime-impact-revision";
 import { createRuntimeSecretResolver, type RuntimeSecretResolver } from "./runtime-secret-resolver";
 import {
-	GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
-	isGeneratedRuntimeSystemdFile,
-} from "./systemd-user";
+	buildRuntimeSystemdUserProgram,
+	installOfficialRuntimeService,
+	planOfficialRuntimeServices,
+	type RuntimeEgressSystemdProgram,
+	type RuntimeSystemdUserProgram,
+	removeStaleOfficialRuntimeServices,
+	resolveRuntimeSystemdIdentity,
+	runtimeSystemdCommonEnvironment,
+	validateRuntimeSystemdPlan,
+	writeRuntimeSystemdState,
+} from "./runtime-systemd-reconciliation";
 import {
-	parsePositiveLinuxId,
+	commandExists,
+	commandResolvable,
+	executableExists,
+	makeRuntimeUserOwned,
+	runningAsRoot,
+	runRuntimeUserCommand,
+	runtimeEgressGid,
+	runtimeEgressUid,
+	spawnRuntimeUserCommand,
+	withRuntimeUserFileAccess,
+} from "./runtime-user-command";
+
+import {
 	TRANSPARENT_EGRESS_TABLE,
 	TRANSPARENT_EGRESS_TRANSPORT_VERSION,
 } from "./transparent-egress";
@@ -935,32 +946,11 @@ function stringValue(value: unknown): string | null {
 	return typeof value === "string" ? value : null;
 }
 
-function makeRuntimeUserOwned(path: string): void {
-	makeSystemUserOwned(path, process.env.CLAWDI_RUNTIME_USER?.trim() ?? "");
-}
-
 function makeEgressIdentityOwned(path: string): void {
 	if (!runningAsRoot()) return;
 	const uid = runtimeEgressUid();
 	const gid = runtimeEgressGid();
 	chownSync(path, uid, gid);
-}
-
-function makeSystemUserOwned(path: string, user: string): void {
-	if (!runningAsRoot()) return;
-	if (!user || user === "root") return;
-	const result = spawnSync("id", ["-u", user], { encoding: "utf8" });
-	const group = spawnSync("id", ["-g", user], { encoding: "utf8" });
-	if (result.status !== 0 || group.status !== 0) return;
-	const uid = Number.parseInt(result.stdout.trim(), 10);
-	const gid = Number.parseInt(group.stdout.trim(), 10);
-	if (!Number.isFinite(uid) || !Number.isFinite(gid)) return;
-	try {
-		chownSync(path, uid, gid);
-	} catch {
-		// Best effort: hosted demos without a system user still exercise the
-		// manifest path, but production images provide CLAWDI_RUNTIME_USER.
-	}
 }
 
 function makeRootOwned(path: string): void {
@@ -1066,49 +1056,6 @@ const liveSyncEnvironmentIndexSchema = z
 		agentTypes: z.array(runtimeNameSchema).default([]),
 	})
 	.strict();
-
-function executableExists(path: string): boolean {
-	try {
-		accessSync(path, constants.X_OK);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function commandExists(name: string): boolean {
-	const path = process.env.PATH ?? "";
-	for (const dir of path.split(":")) {
-		if (!dir) continue;
-		if (executableExists(join(dir, name))) return true;
-	}
-	return false;
-}
-
-function runningAsRoot(): boolean {
-	return typeof process.geteuid === "function" && process.geteuid() === 0;
-}
-
-function withRuntimeUserFileAccess<T>(
-	operation: () => T & (T extends PromiseLike<unknown> ? never : unknown),
-): T {
-	// This scope is only for synchronous filesystem operations. Runtime commands
-	// must use gosu/runuser so child processes cannot retain a saved root identity.
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	if (!runningAsRoot() || !runtimeUser || runtimeUser === "root") return operation();
-	const uid = runtimeUserUid(runtimeUser);
-	const gid = runtimeUserGid(runtimeUser);
-	if ((uid === 0 || gid === 0) && runtimeUser !== "0") {
-		throw new Error(`runtime user ${runtimeUser} resolved to a root filesystem identity`);
-	}
-	return withEffectiveFilesystemIdentity(
-		{
-			uid,
-			gid,
-		},
-		operation,
-	);
-}
 
 function runtimeInstallerExecution(
 	name: string,
@@ -3415,158 +3362,6 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function runtimeUserCommandEnv(
-	home: string,
-	options: { egressSystemCaFile?: string } = {},
-): NodeJS.ProcessEnv {
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	const effectiveUid = typeof process.geteuid === "function" ? process.geteuid() : null;
-	const uid =
-		runtimeUser && runtimeUser !== "root" && (runningAsRoot() || effectiveUid !== null)
-			? String(runningAsRoot() ? runtimeUserUid(runtimeUser) : effectiveUid)
-			: null;
-	const runtimeDir = uid ? `/run/user/${uid}` : null;
-	const env = {
-		...process.env,
-		HOME: home,
-		PATH: [join(home, ".local", "bin"), join(home, ".openclaw", "bin"), process.env.PATH]
-			.filter(Boolean)
-			.join(":"),
-		...(runtimeDir
-			? {
-					XDG_RUNTIME_DIR: runtimeDir,
-					DBUS_SESSION_BUS_ADDRESS: `unix:path=${runtimeDir}/bus`,
-				}
-			: {}),
-	};
-	if (options.egressSystemCaFile) {
-		applyEgressTransparentRuntimeEnv(env, { caFile: options.egressSystemCaFile });
-	}
-	return env;
-}
-
-function runtimeUserGid(runtimeUser: string): number {
-	const explicit = Number.parseInt(process.env.CLAWDI_RUNTIME_GID?.trim() ?? "", 10);
-	if (Number.isInteger(explicit) && explicit >= 0 && explicit <= 4_294_967_295) {
-		return explicit;
-	}
-	const resolved = spawnSync("id", ["-g", runtimeUser], { encoding: "utf8" });
-	if (resolved.status === 0) {
-		const gid = Number.parseInt(resolved.stdout.trim(), 10);
-		if (Number.isInteger(gid) && gid >= 0 && gid <= 4_294_967_295) return gid;
-	}
-	if (runtimeUser === "clawdi") return 10_001;
-	throw new Error(`could not resolve runtime gid for ${runtimeUser}`);
-}
-
-function userManagerControlSocketExists(runtimeDir: string): boolean {
-	return existsSync(join(runtimeDir, "bus")) || existsSync(join(runtimeDir, "systemd", "private"));
-}
-
-function waitForUserManagerControlSocket(runtimeDir: string): boolean {
-	const waitUntil = Date.now() + 120_000;
-	const waitBuffer = new SharedArrayBuffer(4);
-	const waitView = new Int32Array(waitBuffer);
-	while (Date.now() < waitUntil) {
-		if (userManagerControlSocketExists(runtimeDir)) return true;
-		Atomics.wait(waitView, 0, 0, 200);
-	}
-	return userManagerControlSocketExists(runtimeDir);
-}
-
-function ensureRuntimeUserManagerReady(runtimeUser: string): void {
-	if (!runningAsRoot() || runtimeUser === "root" || !commandExists("systemctl")) return;
-	const uid = runtimeUserUid(runtimeUser);
-	const gid = runtimeUserGid(runtimeUser);
-	const runtimeDir = `/run/user/${uid}`;
-	execFileSync("install", ["-d", "-m", "0755", "-o", "root", "-g", "root", "/run/user"]);
-	execFileSync("install", ["-d", "-m", "0700", "-o", String(uid), "-g", String(gid), runtimeDir]);
-	if (userManagerControlSocketExists(runtimeDir)) return;
-	const unit = `user@${uid}.service`;
-	let result = spawnSync("systemctl", ["restart", unit], { stdio: "ignore" });
-	if (result.status !== 0) {
-		result = spawnSync("systemctl", ["start", unit], { stdio: "ignore" });
-	}
-	if (result.status !== 0 || !waitForUserManagerControlSocket(runtimeDir)) {
-		throw new Error(
-			`runtime user systemd manager did not publish a control socket under ${runtimeDir}`,
-		);
-	}
-}
-
-// Only official service installers may invoke systemctl --user. Config,
-// projection, plugin, and installer commands need privilege drop but not a manager.
-function ensureConfiguredRuntimeUserManagerReady(): void {
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	if (runtimeUser) ensureRuntimeUserManagerReady(runtimeUser);
-}
-
-function spawnRuntimeUserCommand(
-	command: string,
-	args: string[],
-	home: string,
-	cwd: string,
-	options: { egressSystemCaFile?: string } = {},
-): ReturnType<typeof spawnSync> {
-	const env = runtimeUserCommandEnv(home, options);
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
-		if (commandExists("gosu")) {
-			return spawnSync("gosu", [runtimeUser, command, ...args], {
-				env: { ...env, USER: runtimeUser, LOGNAME: runtimeUser },
-				cwd,
-				encoding: "utf8",
-			});
-		}
-		if (commandExists("runuser")) {
-			return spawnSync(
-				"runuser",
-				["-u", runtimeUser, "--", "env", `HOME=${home}`, `PATH=${env.PATH}`, command, ...args],
-				{ env, cwd, encoding: "utf8" },
-			);
-		}
-		throw new Error(
-			`runtime init is running as root but cannot drop to CLAWDI_RUNTIME_USER=${runtimeUser}; install gosu or runuser`,
-		);
-	}
-	return spawnSync(command, args, { env, cwd, encoding: "utf8" });
-}
-
-function runRuntimeUserCommand(
-	command: string,
-	args: string[],
-	stdin: string,
-	home: string,
-	cwd: string,
-	options: { egressSystemCaFile?: string } = {},
-): void {
-	const env = runtimeUserCommandEnv(home, options);
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	if (runningAsRoot() && runtimeUser && runtimeUser !== "root") {
-		if (commandExists("gosu")) {
-			execFileSync("gosu", [runtimeUser, command, ...args], {
-				input: stdin,
-				env: { ...env, USER: runtimeUser, LOGNAME: runtimeUser },
-				cwd,
-				stdio: "pipe",
-			});
-			return;
-		}
-		if (commandExists("runuser")) {
-			execFileSync(
-				"runuser",
-				["-u", runtimeUser, "--", "env", `HOME=${home}`, `PATH=${env.PATH}`, command, ...args],
-				{ input: stdin, env, cwd, stdio: "pipe" },
-			);
-			return;
-		}
-		throw new Error(
-			`runtime init is running as root but cannot drop to CLAWDI_RUNTIME_USER=${runtimeUser}; install gosu or runuser`,
-		);
-	}
-	execFileSync(command, args, { input: stdin, env, cwd, stdio: "pipe" });
-}
-
 function runtimeFileCurrentRevision(path: string): string | null {
 	if (!isAbsolute(path)) return null;
 	try {
@@ -3612,48 +3407,6 @@ function runtimeCommandCurrentRevision(command: string, home: string, cwd: strin
 	} catch {
 		return null;
 	}
-}
-
-function officialServiceCurrentRevision(
-	program: RuntimeSystemdUserProgram,
-	paths: RuntimePaths,
-): string | null {
-	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
-	if (!descriptor) return null;
-	const unitName = systemdUnitFileName(descriptor.programName);
-	const unitPath = join(paths.systemdUserRoot, unitName);
-	try {
-		const contents = readFileSync(unitPath);
-		if (isGeneratedRuntimeSystemdFile(contents.toString("utf8"))) return null;
-		const stat = lstatSync(unitPath);
-		if (!stat.isFile()) return null;
-		const command = officialRuntimeServiceCommand(descriptor, paths);
-		const commandRevision = runtimeCommandCurrentRevision(command, paths.userHome, paths.userHome);
-		if (!commandRevision) return null;
-		return runtimeContentSha256({
-			commandRevision,
-			programName: descriptor.programName,
-			unitName,
-			unitSha256: createHash("sha256").update(contents).digest("hex"),
-			unitMode: stat.mode & 0o7777,
-			unitUid: stat.uid,
-			unitGid: stat.gid,
-		});
-	} catch {
-		return null;
-	}
-}
-
-function officialServiceDesiredRevision(input: { program: RuntimeSystemdUserProgram }): string {
-	const descriptor = officialRuntimeServiceDescriptorForProgram(input.program);
-	if (!descriptor) throw new Error("official service receipt requires an official service program");
-	return runtimeContentSha256({
-		runtime: descriptor.runtime,
-		programName: descriptor.programName,
-		serviceIdentity: descriptor.service,
-		installerCommand: descriptor.command,
-		installArgs: descriptor.installArgs,
-	});
 }
 
 function channelPluginDesiredRevision(input: {
@@ -3873,7 +3626,7 @@ function writeTransparentEgressEnvFile(input: {
 	};
 	const lines = Object.entries(env)
 		.sort(([a], [b]) => a.localeCompare(b))
-		.map(([key, value]) => `${key}=${systemdEnvironmentFileQuote(value)}`);
+		.map(([key, value]) => `${key}=${runtimeEnvironmentFileQuote(value)}`);
 	writePrivateFileAtomic(input.paths.egressTransparentEnv, `${lines.join("\n")}\n`, {
 		mode: 0o644,
 		dirMode: 0o755,
@@ -3881,6 +3634,13 @@ function writeTransparentEgressEnvFile(input: {
 	makeRootOwned(dirname(input.paths.egressTransparentEnv));
 	makeRootOwned(input.paths.egressTransparentEnv);
 	return input.paths.egressTransparentEnv;
+}
+
+function runtimeEnvironmentFileQuote(value: string): string {
+	if (/[\r\n]/.test(value)) {
+		throw new Error("runtime environment files only support single-line values");
+	}
+	return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 function sha256String(value: string): string {
@@ -4050,7 +3810,7 @@ function revisionHash(value: unknown): string {
 		.slice(0, 32);
 }
 
-export function runtimeProgramRevision(
+function runtimeProgramRevisionForManifest(
 	manifest: RuntimeManifest,
 	runtime: string,
 	secretValues: Record<string, string> | undefined,
@@ -4058,9 +3818,6 @@ export function runtimeProgramRevision(
 	providerProjectionRevision: string | null = null,
 ): string {
 	const desiredRuntime = manifest.runtimes[runtime];
-	const desiredProgram = desiredRuntime
-		? Object.fromEntries(Object.entries(desiredRuntime).filter(([field]) => field !== "services"))
-		: null;
 	const runtimeSecretRefs = desiredRuntime
 		? Object.values(
 				mergeRuntimeSecretEnv(
@@ -4083,7 +3840,7 @@ export function runtimeProgramRevision(
 					)
 				: null
 		: null;
-	return revisionHash({
+	return runtimeProgramRevision({
 		renderedProjection: {
 			channels: channelProjection,
 			gateway:
@@ -4098,999 +3855,9 @@ export function runtimeProgramRevision(
 			provider: providerProjectionRevision,
 			skills: hostedBundledSkillProjection(manifest, runtime),
 		},
-		runtime: desiredProgram,
+		desiredRuntime,
 		secretValues: scopedSecretValues(secretValues, runtimeSecretRefs),
 	});
-}
-
-function runtimeServiceProgramRevision(program: RuntimeSystemdUserProgram): string {
-	return revisionHash({
-		runtime: program.runtime,
-		service: program.service,
-		command: program.command,
-		args: program.args,
-		cwd: program.cwd,
-		env: program.env,
-	});
-}
-
-export function daemonProgramRevision(manifest: RuntimeManifest): string {
-	return revisionHash({
-		clawdiCli: manifest.clawdiCli ?? null,
-		controlPlane: manifest.controlPlane,
-		liveSync: manifest.liveSync ?? null,
-	});
-}
-
-interface RuntimeSystemdUserProgram {
-	runtime: RuntimeName;
-	service: RuntimeServiceName | null;
-	command: string;
-	args: string[];
-	cwd: string;
-	env: Record<string, string>;
-	resolvedSecretEnv: Record<string, string>;
-}
-
-interface RuntimeEgressSystemdProgram {
-	profileBundlePath: string;
-	envFilePath: string;
-	transparentPort: number;
-	addonPath: string;
-	addonSha256: string;
-	engine: Extract<RuntimeMitmproxyEnsureResult, { status: "ready" }>;
-	systemCaBundle: string;
-	secretFilePath: string | null;
-}
-
-interface RuntimeEgressIdentity {
-	runtimeUid: number;
-	runtimeGid: number;
-	egressUid: number;
-	egressGid: number;
-}
-
-function runtimeEgressSystemdProgram(
-	manifest: RuntimeManifest,
-	paths: RuntimePaths,
-	profileBundlePath: string | null,
-	secretFilePath: string | null,
-	engine: RuntimeMitmproxyEnsureResult | null,
-	addon: { path: string; sha256: string } | null,
-): RuntimeEgressSystemdProgram | null {
-	if (!profileBundlePath) return null;
-	if (engine?.status !== "ready") return null;
-	if (!addon) return null;
-	const port = 18_080 + (hashToUInt16(`${manifest.instanceId}:${paths.serviceStateRoot}`) % 20_000);
-	return {
-		profileBundlePath,
-		envFilePath: paths.egressTransparentEnv,
-		transparentPort: port,
-		addonPath: addon.path,
-		addonSha256: addon.sha256,
-		engine,
-		systemCaBundle: paths.egressSystemCaFile,
-		secretFilePath,
-	};
-}
-
-function buildRuntimeSystemdUserProgram(input: {
-	config: RuntimeRunConfig;
-	paths: RuntimePaths;
-	secretValues: Record<string, string> | undefined;
-	runtimeEnvironment: RuntimeEnvironmentAuthority;
-	egress: RuntimeEgressSystemdProgram | null;
-}): RuntimeSystemdUserProgram | null {
-	if (!input.config.enabled) return null;
-
-	const currentPath = withoutPathEntry(
-		withoutPathEntry(runtimeSystemdPath(input.paths), runtimeManagedBinDir(input.paths)),
-		dirname(input.paths.cliManagedBin),
-	);
-	const pathPrefix = input.config.prependPath.join(":");
-	const env: Record<string, string> = {
-		...input.config.env,
-		PATH: pathPrefix ? [pathPrefix, currentPath].filter(Boolean).join(":") : currentPath,
-	};
-	const resolvedSecretEnv: Record<string, string> = {};
-	for (const [envName, ref] of Object.entries(input.config.secretEnv)) {
-		const value = runtimeSecretValue(input.secretValues ?? {}, ref, input.runtimeEnvironment);
-		if (!value) {
-			throw new Error(`Runtime secret ${ref} for ${envName} is unavailable.`);
-		}
-		env[envName] = value;
-		resolvedSecretEnv[envName] = value;
-	}
-	if (input.egress) {
-		applyEgressTransparentRuntimeEnv(env, { caFile: input.egress.systemCaBundle });
-	}
-
-	const command =
-		input.config.commandPath && existsSync(input.config.commandPath)
-			? input.config.commandPath
-			: input.config.command;
-
-	return {
-		runtime: input.config.runtime,
-		service: input.config.service,
-		command,
-		args: input.config.defaultArgs,
-		cwd: input.config.cwd ?? input.paths.workspaceRoot,
-		env,
-		resolvedSecretEnv,
-	};
-}
-
-function hashToUInt16(input: string): number {
-	return createHash("sha256").update(input).digest().readUInt16BE(0);
-}
-
-export function runtimeSidecarProgramRevision(
-	manifest: RuntimeManifest,
-	egressProgram: RuntimeEgressSystemdProgram | null = null,
-	egressIdentity: RuntimeEgressIdentity | null = null,
-): string {
-	if (egressProgram && !egressIdentity) {
-		throw new Error("runtime sidecar egress revision requires the configured numeric identity");
-	}
-	return revisionHash({
-		runtimeSidecar: "hosted-runtime-sidecar-v4",
-		instanceId: manifest.instanceId,
-		egressProfiles: manifest.egressProfiles ?? null,
-		egress: egressProgram
-			? {
-					transparentPort: egressProgram.transparentPort,
-					profileBundlePath: egressProgram.profileBundlePath,
-					secretFilePath: egressProgram.secretFilePath,
-					engine: egressProgram.engine,
-					addonSha256: egressProgram.addonSha256,
-					transport: TRANSPARENT_EGRESS_TRANSPORT_VERSION,
-					identity: egressIdentity,
-				}
-			: null,
-	});
-}
-
-function runtimeUserUid(runtimeUser: string): number {
-	const explicit = Number.parseInt(process.env.CLAWDI_RUNTIME_UID?.trim() ?? "", 10);
-	if (Number.isInteger(explicit) && explicit >= 0 && explicit <= 4_294_967_295) {
-		return explicit;
-	}
-	return systemUserUid(runtimeUser, runtimeUser === "clawdi" ? 10_001 : null);
-}
-
-function runtimeEgressUid(): number {
-	return positiveLinuxIdEnv("CLAWDI_EGRESS_UID", 10_002);
-}
-
-function runtimeEgressGid(): number {
-	return positiveLinuxIdEnv("CLAWDI_EGRESS_GID", 10_002);
-}
-
-function positiveLinuxIdEnv(key: string, fallback: number): number {
-	const raw = process.env[key]?.trim();
-	if (!raw) return fallback;
-	return parsePositiveLinuxId(raw, key);
-}
-
-function systemUserUid(user: string, fallback: number | null): number {
-	const resolved = spawnSync("id", ["-u", user], { encoding: "utf8" });
-	if (resolved.status === 0) {
-		const uid = Number.parseInt(resolved.stdout.trim(), 10);
-		if (Number.isInteger(uid) && uid >= 0 && uid <= 4_294_967_295) return uid;
-	}
-	if (fallback !== null) return fallback;
-	throw new Error(`could not resolve uid for ${user}`);
-}
-
-function runtimeSystemdProgramName(program: RuntimeSystemdUserProgram): string {
-	const officialName = officialRuntimeSystemdProgramName(program);
-	if (officialName) return officialName;
-	if (!program.service) return `clawdi-${systemdUnitNameSegment(program.runtime)}`;
-	return runtimeServiceProgramName(program.runtime, program.service);
-}
-
-function officialRuntimeSystemdProgramName(program: RuntimeSystemdUserProgram): string | null {
-	return officialRuntimeServiceDescriptorForProgram(program)?.programName ?? null;
-}
-
-function runtimeSystemdProgramRevision(
-	manifest: RuntimeManifest,
-	program: RuntimeSystemdUserProgram,
-	secretValues: Record<string, string> | undefined,
-	runtimeEnvironment: RuntimeEnvironmentAuthority,
-	providerProjectionRevisions: Partial<Record<string, string | null>> = {},
-): string {
-	if (program.service) return runtimeServiceProgramRevision(program);
-	return runtimeProgramRevision(
-		manifest,
-		program.runtime,
-		secretValues,
-		runtimeEnvironment,
-		providerProjectionRevisions[program.runtime] ?? null,
-	);
-}
-
-function shouldRunRuntime(runtime: string, manifest: RuntimeManifest): boolean {
-	const desired = manifest.runtimes[runtime];
-	if (!desired?.enabled) return false;
-	return isSupportedRuntimeName(runtime) || Boolean(desired.run?.command?.trim());
-}
-
-function runtimeServiceProgramName(runtime: string, service: string): string {
-	const official = OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS.find(
-		(descriptor) => descriptor.runtime === runtime && descriptor.service === service,
-	);
-	if (official) return official.programName;
-	if (runtime === "hermes" && service === "dashboard") return "clawdi-hermes-dashboard";
-	return `clawdi-${systemdUnitNameSegment(runtime)}-${systemdUnitNameSegment(service)}`;
-}
-
-function systemdUnitNameSegment(value: string): string {
-	return value.replace(/[^A-Za-z0-9_-]+/g, "-");
-}
-
-function runtimeSystemdPath(paths: RuntimePaths): string {
-	return [
-		join(paths.serviceStateRoot, "bin"),
-		join(paths.userHome, ".local", "bin"),
-		join(paths.userHome, ".openclaw", "bin"),
-		process.env.PATH || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-	].join(":");
-}
-
-function systemdUnitFileName(name: string): string {
-	return `${systemdUnitNameSegment(name)}.service`;
-}
-
-function systemdDropInFilePath(paths: RuntimePaths, unitName: string): string {
-	return join(paths.systemdUserRoot, `${systemdUnitFileName(unitName)}.d`, "10-clawdi-hosted.conf");
-}
-
-function systemdQuote(value: string): string {
-	if (/[\r\n]/.test(value)) {
-		throw new Error("systemd unit values must be single-line strings");
-	}
-	return `"${value
-		.replace(/\\/g, "\\\\")
-		.replace(/"/g, '\\"')
-		.replace(/%/g, "%%")
-		.replace(/\$/g, "$$")}"`;
-}
-
-function systemdExec(command: string, args: string[]): string {
-	return [command, ...args].map(systemdQuote).join(" ");
-}
-
-function systemdPath(value: string): string {
-	if (!isAbsolute(value)) {
-		throw new Error(`systemd unit paths must be absolute: ${value}`);
-	}
-	if (/[\r\n]/.test(value)) {
-		throw new Error("systemd unit paths must be single-line strings");
-	}
-	return value
-		.replace(/\\/g, "\\\\")
-		.replace(/%/g, "%%")
-		.replace(/ /g, "\\x20")
-		.replace(/\t/g, "\\x09");
-}
-
-function systemdUnitEnvironmentLines(values: Record<string, string>): string[] {
-	return Object.entries(values).map(
-		([key, value]) => `Environment=${systemdQuote(`${key}=${value}`)}`,
-	);
-}
-
-function systemdEnvironmentFilePath(paths: RuntimePaths, unitName: string): string {
-	return join(paths.systemdEnvRoot, `${systemdUnitFileName(unitName)}.env`);
-}
-
-function systemdEnvironmentFileQuote(value: string): string {
-	if (/[\r\n]/.test(value)) {
-		throw new Error("systemd environment files only support single-line values");
-	}
-	return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-}
-
-type OfficialRuntimeServiceDescriptor = {
-	runtime: RuntimeName;
-	programName: string;
-	command: string;
-	installArgs: string[];
-	uninstallArgs: string[];
-	// Manifest `services` key the official unit corresponds to; used for
-	// program naming even when such an entry is not official for the runtime.
-	service: string;
-	// Extra env projected into the unit's environment file.
-	unitEnv?: (unitName: string) => Record<string, string>;
-	// Which desired programs the official unit covers. Deliberately
-	// asymmetric: openclaw's default program is its gateway, while hermes may
-	// express the gateway as the default program or an explicit
-	// `services.gateway` entry.
-	matchesProgram: (program: RuntimeSystemdUserProgram) => boolean;
-};
-
-const OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS: OfficialRuntimeServiceDescriptor[] = [
-	{
-		runtime: "openclaw",
-		programName: "openclaw-gateway",
-		command: "openclaw",
-		installArgs: ["gateway", "install", "--force", "--json"],
-		uninstallArgs: ["gateway", "uninstall"],
-		service: "gateway",
-		unitEnv: (unitName) => ({ OPENCLAW_SYSTEMD_UNIT: unitName }),
-		matchesProgram: (program) => !program.service,
-	},
-	{
-		runtime: "hermes",
-		programName: "hermes-gateway",
-		command: "hermes",
-		installArgs: ["gateway", "install", "--force"],
-		uninstallArgs: ["gateway", "uninstall"],
-		service: "gateway",
-		matchesProgram: (program) => (program.service ?? program.args[0] ?? "") === "gateway",
-	},
-];
-
-function officialRuntimeServiceDescriptorForProgram(
-	program: RuntimeSystemdUserProgram,
-): OfficialRuntimeServiceDescriptor | null {
-	return (
-		OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS.find(
-			(descriptor) => descriptor.runtime === program.runtime && descriptor.matchesProgram(program),
-		) ?? null
-	);
-}
-
-function officialRuntimeServiceDescriptorForUnit(
-	unitName: string,
-): OfficialRuntimeServiceDescriptor | null {
-	return (
-		OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS.find(
-			(descriptor) => systemdUnitFileName(descriptor.programName) === unitName,
-		) ?? null
-	);
-}
-
-function officialRuntimeServiceCommand(
-	descriptor: OfficialRuntimeServiceDescriptor,
-	paths: RuntimePaths,
-): string {
-	const commandPath = runtimeCommandPath(descriptor.runtime, paths.userHome);
-	return commandPath && executableExists(commandPath) ? commandPath : descriptor.command;
-}
-
-function writeSystemdEnvironmentFile(input: {
-	paths: RuntimePaths;
-	name: string;
-	owner: "root" | "runtime-user";
-	env: Record<string, string>;
-}): string {
-	makeRootReadableDir(dirname(input.paths.systemdEnvRoot));
-	makeRootReadableDir(input.paths.systemdEnvRoot);
-	const path = systemdEnvironmentFilePath(input.paths, input.name);
-	const lines = Object.entries(input.env)
-		.sort(([a], [b]) => a.localeCompare(b))
-		.map(([key, value]) => {
-			if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-				throw new Error(`invalid systemd environment key: ${key}`);
-			}
-			return `${key}=${systemdEnvironmentFileQuote(value)}`;
-		});
-	writePrivateFileAtomic(path, `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n${lines.join("\n")}\n`, {
-		mode: 0o600,
-		dirMode: 0o755,
-	});
-	if (input.owner === "runtime-user") makeRuntimeUserOwned(path);
-	else makeRootOwned(path);
-	return path;
-}
-
-function writeSystemdProgramEnvironment(input: {
-	paths: RuntimePaths;
-	name: string;
-	owner: "root" | "runtime-user";
-	env: Record<string, string>;
-	revisionEnv?: Record<string, string>;
-}): { envFile: string; envRevision: string } {
-	return {
-		envFile: writeSystemdEnvironmentFile(input),
-		envRevision: revisionHash({
-			systemdEnvironmentFile: "v1",
-			env: input.revisionEnv ?? input.env,
-		}),
-	};
-}
-
-function writeSystemdUnit(input: {
-	root: string;
-	owner: "root" | "runtime-user";
-	paths: RuntimePaths;
-	name: string;
-	description: string;
-	command: string;
-	args: string[];
-	cwd: string;
-	env: Record<string, string>;
-	revisionEnv?: Record<string, string>;
-	unitEnv?: Record<string, string>;
-	serviceType?: "simple" | "oneshot" | "notify";
-	restart?: boolean;
-	extraUnitLines?: string[];
-	extraServiceLines?: string[];
-	wantedBy: "multi-user.target" | "default.target";
-}): string {
-	const path = join(input.root, systemdUnitFileName(input.name));
-	const { envFile, envRevision } = writeSystemdProgramEnvironment({
-		paths: input.paths,
-		name: input.name,
-		owner: input.owner,
-		env: input.env,
-		revisionEnv: input.revisionEnv,
-	});
-	const lines = [
-		GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
-		"[Unit]",
-		`Description=${input.description}`,
-		...(input.owner === "runtime-user"
-			? [
-					"# The environment file is regenerated by convergence each boot; this unit must not start before it exists.",
-					`ConditionPathExists=${systemdPath(envFile)}`,
-				]
-			: []),
-		...(input.extraUnitLines ?? []),
-		"",
-		"[Service]",
-		`# ClawdiEnvironmentRevision=${envRevision}`,
-		`Type=${input.serviceType ?? "simple"}`,
-		`WorkingDirectory=${systemdPath(input.cwd)}`,
-		...(input.unitEnv ? systemdUnitEnvironmentLines(input.unitEnv) : []),
-		...(input.extraServiceLines ?? []),
-		`EnvironmentFile=${systemdPath(envFile)}`,
-		`ExecStart=${systemdExec(input.command, input.args)}`,
-		...(input.restart === false
-			? []
-			: ["Restart=always", "RestartSec=2", "KillMode=mixed", "TimeoutStopSec=30"]),
-		"",
-		"[Install]",
-		`WantedBy=${input.wantedBy}`,
-		"",
-	];
-	const writeUnitFile = (): string => {
-		mkdirSync(input.root, { recursive: true });
-		if (input.owner === "runtime-user") makeRuntimeUserOwned(input.root);
-		writePrivateFileAtomic(path, `${lines.join("\n")}`, { mode: 0o644, dirMode: 0o755 });
-		if (input.owner === "runtime-user") makeRuntimeUserOwned(path);
-		else makeRootOwned(path);
-		return path;
-	};
-	return input.owner === "runtime-user"
-		? withRuntimeUserFileAccess(writeUnitFile)
-		: writeUnitFile();
-}
-
-function writeSystemdSystemUnit(
-	input: Omit<Parameters<typeof writeSystemdUnit>[0], "root" | "owner" | "wantedBy">,
-): string {
-	return writeSystemdUnit({
-		...input,
-		root: input.paths.systemdSystemRoot,
-		owner: "root",
-		wantedBy: "multi-user.target",
-	});
-}
-
-function writeSystemdUserUnit(
-	input: Omit<Parameters<typeof writeSystemdUnit>[0], "root" | "owner" | "wantedBy">,
-): string {
-	return writeSystemdUnit({
-		...input,
-		root: input.paths.systemdUserRoot,
-		owner: "runtime-user",
-		extraServiceLines: [
-			'Environment="XDG_RUNTIME_DIR=%t"',
-			'Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus"',
-			...(input.extraServiceLines ?? []),
-		],
-		wantedBy: "default.target",
-	});
-}
-
-function writeSystemdUserDropIn(input: {
-	paths: RuntimePaths;
-	name: string;
-	command: string;
-	args: string[];
-	cwd: string;
-	env: Record<string, string>;
-}): string {
-	const unitName = systemdUnitFileName(input.name);
-	const { envFile, envRevision } = writeSystemdProgramEnvironment({
-		paths: input.paths,
-		name: input.name,
-		owner: "runtime-user",
-		env: input.env,
-	});
-	const path = systemdDropInFilePath(input.paths, input.name);
-	const lines = [
-		GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
-		"# ClawdiHostedRuntimeDropIn=v1",
-		"# The base unit is generated by the runtime's official service installer.",
-		"[Unit]",
-		"# The environment file is regenerated by convergence each boot; this unit must not start before it exists.",
-		`ConditionPathExists=${systemdPath(envFile)}`,
-		"",
-		"[Service]",
-		`# ClawdiEnvironmentRevision=${envRevision}`,
-		`WorkingDirectory=${systemdPath(input.cwd)}`,
-		'Environment="XDG_RUNTIME_DIR=%t"',
-		'Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus"',
-		`EnvironmentFile=${systemdPath(envFile)}`,
-		"ExecStart=",
-		`ExecStart=${systemdExec(input.command, input.args)}`,
-		"",
-	];
-	return withRuntimeUserFileAccess(() => {
-		removeGeneratedRuntimeBaseUnit(input.paths, unitName);
-		mkdirSync(dirname(path), { recursive: true });
-		makeRuntimeUserOwned(dirname(path));
-		writePrivateFileAtomic(path, `${lines.join("\n")}`, { mode: 0o644, dirMode: 0o755 });
-		makeRuntimeUserOwned(path);
-		return join(input.paths.systemdUserRoot, unitName);
-	});
-}
-
-function removeGeneratedRuntimeBaseUnit(paths: RuntimePaths, unitName: string): void {
-	const path = join(paths.systemdUserRoot, unitName);
-	if (!isGeneratedSystemdFile(path)) return;
-	rmSync(path, { force: true });
-}
-
-function officialRuntimeServiceInstallArgs(program: RuntimeSystemdUserProgram): string[] | null {
-	return officialRuntimeServiceDescriptorForProgram(program)?.installArgs ?? null;
-}
-
-function shouldInstallOfficialRuntimeServices(): boolean {
-	// Official gateway installers need a live systemd user bus to converge.
-	// When the systemd apply phase is explicitly disabled (headless CI and
-	// smoke containers without systemd), fall back to writing complete
-	// clawdi-* units instead of failing the whole convergence; the next
-	// convergence under real systemd retries the official install.
-	const applyOverride = process.env.CLAWDI_SYSTEMD_APPLY?.trim().toLowerCase();
-	if (applyOverride === "0" || applyOverride === "false") return false;
-	const override = process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES?.trim().toLowerCase();
-	if (override === "1" || override === "true") return true;
-	if (override === "0" || override === "false") return false;
-	return runningAsRoot();
-}
-
-function commandResolvable(command: string): boolean {
-	return isAbsolute(command) ? executableExists(command) : commandExists(command);
-}
-
-function installOfficialRuntimeUserService(
-	program: RuntimeSystemdUserProgram,
-	paths: RuntimePaths,
-): string | null {
-	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
-	if (!descriptor || !shouldInstallOfficialRuntimeServices()) return null;
-	const args = descriptor.installArgs;
-	if (!commandResolvable(program.command)) {
-		return `official ${runtimeSystemdProgramName(program)} service installer command is unavailable: ${program.command}`;
-	}
-	try {
-		ensureConfiguredRuntimeUserManagerReady();
-		resetFailedRuntimeUserService(runtimeSystemdProgramName(program), paths, program.cwd);
-		runRuntimeUserCommand(program.command, args, "", paths.userHome, program.cwd);
-		return null;
-	} catch (error) {
-		return `official ${runtimeSystemdProgramName(program)} service install failed: ${
-			error instanceof Error ? error.message : String(error)
-		}`;
-	}
-}
-
-function resetFailedRuntimeUserService(name: string, paths: RuntimePaths, cwd: string): void {
-	try {
-		runRuntimeUserCommand(
-			process.env.CLAWDI_SYSTEMCTL_PATH?.trim() || "systemctl",
-			["--user", "reset-failed", systemdUnitFileName(name)],
-			"",
-			paths.userHome,
-			cwd,
-		);
-	} catch {
-		// The unit may not exist yet; reset-failed must never block convergence.
-	}
-}
-
-function reloadRuntimeUserManager(paths: RuntimePaths, cwd: string): void {
-	try {
-		ensureConfiguredRuntimeUserManagerReady();
-		runRuntimeUserCommand(
-			process.env.CLAWDI_SYSTEMCTL_PATH?.trim() || "systemctl",
-			["--user", "daemon-reload"],
-			"",
-			paths.userHome,
-			cwd,
-		);
-	} catch {
-		// Best-effort: environments without a reachable user manager (unit tests,
-		// non-hosted hosts) must not fail convergence, and official installers
-		// perform their own daemon-reload after writing the base unit.
-	}
-}
-
-function uninstallOfficialRuntimeUserService(input: {
-	unitName: string;
-	paths: RuntimePaths;
-	workspaceRoot: string;
-}): string | null {
-	const descriptor = officialRuntimeServiceDescriptorForUnit(input.unitName);
-	if (!descriptor || !shouldInstallOfficialRuntimeServices()) return null;
-	const command = officialRuntimeServiceCommand(descriptor, input.paths);
-	if (!commandResolvable(command)) {
-		return `official ${input.unitName} uninstaller command is unavailable: ${command}`;
-	}
-	try {
-		ensureConfiguredRuntimeUserManagerReady();
-		runRuntimeUserCommand(
-			command,
-			descriptor.uninstallArgs,
-			"",
-			input.paths.userHome,
-			input.workspaceRoot,
-		);
-		return null;
-	} catch (error) {
-		return `official ${input.unitName} uninstall failed: ${
-			error instanceof Error ? error.message : String(error)
-		}`;
-	}
-}
-
-function systemdUnitNameFromPath(unitPath: string): string {
-	return unitPath.split("/").at(-1) ?? "";
-}
-
-function staleOfficialRuntimeUserServices(paths: RuntimePaths, writtenUnits: string[]): string[] {
-	if (!existsSync(paths.systemdUserRoot)) return [];
-	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
-	const stale: string[] = [];
-	for (const entry of readdirSync(paths.systemdUserRoot)) {
-		if (!entry.endsWith(".service.d")) continue;
-		const unitName = entry.slice(0, -".d".length);
-		if (writtenNames.has(unitName)) continue;
-		if (!officialRuntimeServiceDescriptorForUnit(unitName)) continue;
-		const dropInPath = join(paths.systemdUserRoot, entry, "10-clawdi-hosted.conf");
-		if (!isGeneratedSystemdFile(dropInPath)) continue;
-		const baseUnitPath = join(paths.systemdUserRoot, unitName);
-		if (!existsSync(baseUnitPath) || isGeneratedSystemdFile(baseUnitPath)) continue;
-		stale.push(unitName);
-	}
-	return stale.sort();
-}
-
-function removeStaleSystemdUserUnits(paths: RuntimePaths, writtenUnits: string[]): void {
-	withRuntimeUserFileAccess(() => {
-		if (!existsSync(paths.systemdUserRoot)) return;
-		const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
-		for (const entry of readdirSync(paths.systemdUserRoot)) {
-			if (!entry.endsWith(".service")) continue;
-			const path = join(paths.systemdUserRoot, entry);
-			if (!entry.startsWith("clawdi-") && !isGeneratedSystemdFile(path)) continue;
-			if (writtenNames.has(entry)) continue;
-			rmSync(path, { force: true });
-		}
-		const wantsDir = join(paths.systemdUserRoot, "default.target.wants");
-		if (existsSync(wantsDir)) {
-			for (const entry of readdirSync(wantsDir)) {
-				if (!entry.endsWith(".service")) continue;
-				const unitPath = join(paths.systemdUserRoot, entry);
-				if (!entry.startsWith("clawdi-") && !isGeneratedSystemdFile(unitPath)) continue;
-				if (writtenNames.has(entry)) continue;
-				rmSync(join(wantsDir, entry), { force: true });
-			}
-		}
-		for (const entry of readdirSync(paths.systemdUserRoot)) {
-			if (!entry.endsWith(".service.d")) continue;
-			const unitName = entry.slice(0, -".d".length);
-			const dropInPath = join(paths.systemdUserRoot, entry, "10-clawdi-hosted.conf");
-			if (!isGeneratedSystemdFile(dropInPath)) continue;
-			if (writtenNames.has(unitName)) continue;
-			rmSync(dropInPath, { force: true });
-			try {
-				if (readdirSync(dirname(dropInPath)).length === 0)
-					rmSync(dirname(dropInPath), { force: true });
-			} catch {
-				// Best effort cleanup only.
-			}
-		}
-	});
-}
-
-function isGeneratedSystemdFile(path: string): boolean {
-	try {
-		return isGeneratedRuntimeSystemdFile(readFileSync(path, "utf-8"));
-	} catch {
-		return false;
-	}
-}
-
-function removeStaleSystemdSystemUnits(paths: RuntimePaths, writtenUnits: string[]): void {
-	if (!existsSync(paths.systemdSystemRoot)) return;
-	const managed = new Set([
-		"clawdi-runtime-watch.service",
-		"clawdi-daemon.service",
-		"clawdi-runtime-sidecar.service",
-	]);
-	const writtenNames = new Set(writtenUnits.map(systemdUnitNameFromPath));
-	for (const entry of readdirSync(paths.systemdSystemRoot)) {
-		if (!managed.has(entry) || writtenNames.has(entry)) continue;
-		rmSync(join(paths.systemdSystemRoot, entry), { force: true });
-	}
-}
-
-function removeStaleSystemdEnvironmentFiles(paths: RuntimePaths, writtenUnits: string[]): void {
-	if (!existsSync(paths.systemdEnvRoot)) return;
-	const writtenNames = new Set(writtenUnits.map((unit) => `${systemdUnitNameFromPath(unit)}.env`));
-	for (const entry of readdirSync(paths.systemdEnvRoot)) {
-		if (!entry.endsWith(".service.env")) continue;
-		const path = join(paths.systemdEnvRoot, entry);
-		if (!entry.startsWith("clawdi-") && !isGeneratedSystemdFile(path)) continue;
-		if (writtenNames.has(entry)) continue;
-		rmSync(path, { force: true });
-	}
-}
-
-function runtimeManifestUrlEnv(
-	sourcePath: string,
-	secretValues: Record<string, string> | undefined,
-	runtimeEnvironment: RuntimeEnvironmentAuthority,
-): string {
-	if (/^https?:\/\//i.test(sourcePath)) return sourcePath;
-	return (
-		runtimeSecretValue(
-			secretValues ?? {},
-			"env://CLAWDI_RUNTIME_MANIFEST_URL",
-			runtimeEnvironment,
-		) ?? ""
-	);
-}
-
-function runtimeSystemdCommonEnvironment(
-	sourcePath: string,
-	paths: RuntimePaths,
-	secretValues: Record<string, string> | undefined,
-	runtimeEnvironment: RuntimeEnvironmentAuthority,
-): Record<string, string> {
-	const runtimeUser =
-		runtimeSecretValue(secretValues ?? {}, "env://CLAWDI_RUNTIME_USER", runtimeEnvironment) ??
-		"clawdi";
-	const environment: Record<string, string> = {
-		HOME: paths.userHome,
-		CLAWDI_RUNTIME_MODE:
-			runtimeSecretValue(secretValues ?? {}, "env://CLAWDI_RUNTIME_MODE", runtimeEnvironment) ??
-			"hosted",
-		CLAWDI_RUNTIME_AUTH_ENV:
-			runtimeSecretValue(secretValues ?? {}, "env://CLAWDI_RUNTIME_AUTH_ENV", runtimeEnvironment) ??
-			"",
-		CLAWDI_RUNTIME_USER: runtimeUser,
-		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
-		CLAWDI_RUN_DIR: paths.runRoot,
-		CLAWDI_RUNTIME_MANIFEST_URL: runtimeManifestUrlEnv(
-			sourcePath,
-			secretValues,
-			runtimeEnvironment,
-		),
-		PATH: runtimeSystemdPath(paths),
-	};
-	return environment;
-}
-
-function runtimeWatchSecretEnvironment(
-	programs: RuntimeSystemdUserProgram[],
-): Record<string, string> {
-	const retained = new Map<string, { value: string; program: string }>();
-	for (const program of [...programs].sort((a, b) =>
-		runtimeSystemdProgramName(a).localeCompare(runtimeSystemdProgramName(b)),
-	)) {
-		const programName = runtimeSystemdProgramName(program);
-		for (const [envName, value] of Object.entries(program.resolvedSecretEnv).sort(([a], [b]) =>
-			a.localeCompare(b),
-		)) {
-			const existing = retained.get(envName);
-			if (existing && existing.value !== value) {
-				throw new Error(
-					`Runtime watch secret environment ${envName} conflicts between ${existing.program} and ${programName}.`,
-				);
-			}
-			retained.set(envName, { value, program: existing?.program ?? programName });
-		}
-	}
-	return Object.fromEntries([...retained].map(([envName, entry]) => [envName, entry.value]));
-}
-
-function writeRuntimeSystemdUserProgram(input: {
-	program: RuntimeSystemdUserProgram;
-	commonEnvironment: Record<string, string>;
-	manifest: RuntimeManifest;
-	paths: RuntimePaths;
-	secretValues: Record<string, string> | undefined;
-	runtimeEnvironment: RuntimeEnvironmentAuthority;
-	providerProjectionRevisions: Partial<Record<string, string | null>>;
-}): string {
-	const { program } = input;
-	const name = runtimeSystemdProgramName(program);
-	const unitName = systemdUnitFileName(name);
-	const env = {
-		...input.commonEnvironment,
-		...program.env,
-		...(input.manifest.locale ? { TZ: input.manifest.locale.timezone } : {}),
-		CLAWDI_AUTH_TOKEN: "",
-		CLAWDI_RUNTIME_REV: runtimeSystemdProgramRevision(
-			input.manifest,
-			program,
-			input.secretValues,
-			input.runtimeEnvironment,
-			input.providerProjectionRevisions,
-		),
-		...(officialRuntimeServiceDescriptorForProgram(program)?.unitEnv?.(unitName) ?? {}),
-	};
-	if (officialRuntimeServiceInstallArgs(program)) {
-		return writeSystemdUserDropIn({
-			paths: input.paths,
-			name,
-			command: program.command,
-			args: program.args,
-			cwd: program.cwd,
-			env,
-		});
-	}
-	return writeSystemdUserUnit({
-		paths: input.paths,
-		name,
-		description: `Clawdi hosted ${program.runtime}${program.service ? ` ${program.service}` : ""}`,
-		command: program.command,
-		args: program.args,
-		cwd: program.cwd,
-		env,
-	});
-}
-
-function officialRuntimeSystemdPrograms(
-	programs: RuntimeSystemdUserProgram[],
-): RuntimeSystemdUserProgram[] {
-	const byServiceName = new Map<string, RuntimeSystemdUserProgram>();
-	for (const program of programs) {
-		const serviceName = officialRuntimeSystemdProgramName(program);
-		if (serviceName) byServiceName.set(serviceName, program);
-	}
-	return [...byServiceName.entries()]
-		.sort(([left], [right]) => left.localeCompare(right))
-		.map(([, program]) => program);
-}
-
-function writeSystemdUnits(
-	runtimePrograms: RuntimeSystemdUserProgram[],
-	egressProgram: RuntimeEgressSystemdProgram | null,
-	egressIdentity: RuntimeEgressIdentity | null,
-	manifest: RuntimeManifest,
-	paths: RuntimePaths,
-	workspaceRoot: string,
-	daemonAuthTokenFile: string | null,
-	secretValues: Record<string, string> | undefined,
-	runtimeEnvironment: RuntimeEnvironmentAuthority,
-	providerProjectionRevisions: Partial<Record<string, string | null>>,
-	commonEnvironment: Record<string, string>,
-	applyContext: RuntimeApplyContext,
-): { systemUnits: string[]; userUnits: string[]; egressSidecarActive: boolean } {
-	const runtimeUser = commonEnvironment.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
-	const systemUnits: string[] = [];
-	const shouldRunEgress = egressProgram !== null && runtimePrograms.length > 0;
-	const activeEgressProgram = shouldRunEgress ? egressProgram : null;
-	const activeEgressIdentity = shouldRunEgress ? egressIdentity : null;
-	const userUnits: string[] = [];
-	const runtimeUid = shouldRunEgress ? runtimeUserUid(runtimeUser) : null;
-	const applyIdentityEnvironment = runtimeApplyContextServiceEnvironment(applyContext);
-	if (daemonAuthTokenFile) {
-		const watchSecretEnvironment = runtimeWatchSecretEnvironment(runtimePrograms);
-		systemUnits.push(
-			writeSystemdSystemUnit({
-				paths,
-				name: "clawdi-runtime-watch",
-				description: "Clawdi hosted runtime desired-state watcher",
-				command: paths.cliManagedBin,
-				args: ["runtime", "watch"],
-				cwd: workspaceRoot,
-				env: {
-					...commonEnvironment,
-					...applyIdentityEnvironment,
-					...watchSecretEnvironment,
-					CLAWDI_AUTH_TOKEN: "",
-				},
-				// Unit files are 0644. Hash only secret destination names into their
-				// revision so the unit cannot become an offline verifier for values.
-				// The watcher resolves values from the atomic apply-context file on
-				// each tick; keep secret bytes out of its public revision material.
-				revisionEnv: {
-					...commonEnvironment,
-					...applyIdentityEnvironment,
-					...Object.fromEntries(Object.keys(watchSecretEnvironment).map((name) => [name, ""])),
-					CLAWDI_AUTH_TOKEN: "",
-				},
-			}),
-		);
-	}
-
-	if (daemonAuthTokenFile) {
-		systemUnits.push(
-			writeSystemdSystemUnit({
-				paths,
-				name: "clawdi-daemon",
-				description: "Clawdi hosted runtime daemon",
-				command: paths.cliManagedBin,
-				args: ["daemon", "run", "--auth-token-file", daemonAuthTokenFile],
-				cwd: workspaceRoot,
-				env: {
-					...commonEnvironment,
-					...applyIdentityEnvironment,
-					CLAWDI_ENVIRONMENT_ID: manifest.environmentId,
-					CLAWDI_SERVE_MODE: "container",
-					CLAWDI_API_URL: manifest.controlPlane.apiUrl,
-					CLAWDI_NO_AUTO_UPDATE: "1",
-					CLAWDI_NO_UPDATE_CHECK: "1",
-					CLAWDI_RUNTIME_REV: daemonProgramRevision(manifest),
-				},
-			}),
-		);
-	}
-
-	if (activeEgressProgram) {
-		systemUnits.push(
-			writeSystemdSystemUnit({
-				paths,
-				name: "clawdi-runtime-sidecar",
-				description: "Clawdi hosted runtime sidecar",
-				command: paths.cliManagedBin,
-				args: ["runtime", "sidecar"],
-				cwd: workspaceRoot,
-				env: {
-					...commonEnvironment,
-					CLAWDI_AUTH_TOKEN: "",
-					CLAWDI_EGRESS_ENV_FILE: activeEgressProgram.envFilePath,
-					CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(
-						manifest,
-						activeEgressProgram,
-						activeEgressIdentity,
-					),
-				},
-				serviceType: "notify",
-				extraUnitLines: runtimeUid === null ? undefined : [`Before=user@${runtimeUid}.service`],
-				extraServiceLines: ["NotifyAccess=main"],
-			}),
-		);
-	}
-
-	for (const program of runtimePrograms) {
-		userUnits.push(
-			writeRuntimeSystemdUserProgram({
-				program,
-				commonEnvironment,
-				manifest,
-				paths,
-				secretValues,
-				runtimeEnvironment,
-				providerProjectionRevisions,
-			}),
-		);
-	}
-
-	removeStaleSystemdSystemUnits(paths, systemUnits);
-	removeStaleSystemdUserUnits(paths, userUnits);
-	removeStaleSystemdEnvironmentFiles(paths, [...systemUnits, ...userUnits]);
-	return { systemUnits, userUnits, egressSidecarActive: shouldRunEgress };
 }
 
 function runtimeWorkspaceRoot(manifest: RuntimeManifest, paths: RuntimePaths): string {
@@ -5169,7 +3936,10 @@ function planRuntimeSystemdUserPrograms(input: {
 			secretValues: input.secretValues,
 			egressProfileBundlePath: input.egressProfileBundlePath,
 		});
-		if (runtime.enabled && shouldRunRuntime(name, input.manifest)) {
+		if (
+			runtime.enabled &&
+			(isSupportedRuntimeName(name) || Boolean(runtime.run?.command?.trim()))
+		) {
 			const program = buildRuntimeSystemdUserProgram({
 				config: resolved.runtime,
 				paths: input.paths,
@@ -5300,20 +4070,6 @@ function resolveRuntimeRunConfigs(input: {
 			});
 		});
 	return { runtime, services, secretEnv, secretFilePath };
-}
-
-function validateRuntimeSystemdProgramsPlan(programs: RuntimeSystemdUserProgram[]): void {
-	for (const program of programs) {
-		systemdUnitFileName(runtimeSystemdProgramName(program));
-		systemdPath(program.cwd);
-		systemdExec(program.command, program.args);
-		for (const [key, value] of Object.entries(program.env)) {
-			if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-				throw new Error(`invalid systemd environment key: ${key}`);
-			}
-			systemdEnvironmentFileQuote(value);
-		}
-	}
 }
 
 function runtimeConvergenceWithoutApply(input: {
@@ -5598,7 +4354,7 @@ export function convergeRuntimeManifest(
 		egressProfileBundlePath: plannedEgressProfileBundlePath,
 		egress: null,
 	});
-	validateRuntimeSystemdProgramsPlan(plannedRuntimePrograms);
+	validateRuntimeSystemdPlan(plannedRuntimePrograms);
 	observations.clear();
 	for (const [name, runtime] of runtimeEntries) {
 		const observation = observeRuntimeInstall(name, runtime, projectionHome);
@@ -5705,12 +4461,13 @@ export function convergeRuntimeManifest(
 	let rollbackEgressSecretRevision: string | undefined;
 	let egressRollbackAuthorityVerified = true;
 	try {
-		const plannedUserUnits = plannedRuntimePrograms.map((program) =>
-			join(paths.systemdUserRoot, systemdUnitFileName(runtimeSystemdProgramName(program))),
-		);
-		for (const unitName of staleOfficialRuntimeUserServices(paths, plannedUserUnits)) {
-			const error = uninstallOfficialRuntimeUserService({ unitName, paths, workspaceRoot });
-			if (error) throw new Error(error);
+		const staleOfficialServiceErrors = removeStaleOfficialRuntimeServices({
+			paths,
+			programs: plannedRuntimePrograms,
+			workspaceRoot,
+		});
+		if (staleOfficialServiceErrors.length > 0) {
+			throw new Error(staleOfficialServiceErrors.join("; "));
 		}
 
 		ensureRuntimeUserHome(paths.userHome);
@@ -5833,21 +4590,21 @@ export function convergeRuntimeManifest(
 		);
 		const egressSecretFile = egressSecretWrite.path;
 		const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
-		const egressSystemdProgram = runtimeEgressSystemdProgram(
+		const resolvedSystemdIdentity = resolveRuntimeSystemdIdentity({
 			manifest,
 			paths,
-			egressProfileBundlePath,
-			egressSecretFile,
-			egressEngine,
-			egressAddon,
-		);
-		const runtimeUid = egressSystemdProgram ? runtimeUserUid(runtimeUser) : 0;
-		const runtimeGid = egressSystemdProgram ? runtimeUserGid(runtimeUser) : 0;
-		const egressUid = egressSystemdProgram ? runtimeEgressUid() : 0;
-		const egressGid = egressSystemdProgram ? runtimeEgressGid() : 0;
-		const egressIdentity = egressSystemdProgram
-			? { runtimeUid, runtimeGid, egressUid, egressGid }
-			: null;
+			profileBundlePath: egressProfileBundlePath,
+			secretFilePath: egressSecretFile,
+			engine: egressEngine,
+			addon: egressAddon,
+			runtimeUser,
+		});
+		const egressSystemdProgram = resolvedSystemdIdentity.egressProgram;
+		const egressIdentity = resolvedSystemdIdentity.identity;
+		const runtimeUid = egressIdentity?.runtimeUid ?? 0;
+		const runtimeGid = egressIdentity?.runtimeGid ?? 0;
+		const egressUid = egressIdentity?.egressUid ?? 0;
+		const egressGid = egressIdentity?.egressGid ?? 0;
 		const egressTransparentEnv = writeTransparentEgressEnvFile({
 			program: egressSystemdProgram,
 			paths,
@@ -6053,7 +4810,7 @@ export function convergeRuntimeManifest(
 		} else {
 			rmSync(mcpProjection, { force: true });
 		}
-		const systemdUnits = writeSystemdUnits(
+		const systemdUnits = writeRuntimeSystemdState(
 			runtimeSystemdUserPrograms,
 			egressSystemdProgram,
 			egressIdentity,
@@ -6064,8 +4821,8 @@ export function convergeRuntimeManifest(
 			secretValues,
 			runtimeEnvironment,
 			providerProjectionRevisions,
+			runtimeProgramRevisionForManifest,
 			commonSystemdEnvironment,
-			applyContext,
 		);
 		const committedEgressSidecarSecretRevision = appliedState?.egressSidecarSecretRevision;
 		if (systemdUnits.egressSidecarActive) {
@@ -6098,34 +4855,14 @@ export function convergeRuntimeManifest(
 				}
 			}
 		}
-		const pendingOfficialServiceInstalls: Array<{
-			program: RuntimeSystemdUserProgram;
-			target: RuntimeInstallReceiptTarget;
-		}> = [];
-		if (shouldInstallOfficialRuntimeServices()) {
-			for (const program of officialRuntimeSystemdPrograms(runtimeSystemdUserPrograms)) {
-				const serviceName = runtimeSystemdProgramName(program);
-				const key = systemdUnitFileName(serviceName);
-				const desiredRevision = officialServiceDesiredRevision({ program });
-				const currentRevision = () => officialServiceCurrentRevision(program, paths);
-				const verifiedCurrentRevision = verifiedReceiptCurrentRevision(
-					previousInstallReceipts?.officialServices[key],
-					desiredRevision,
-					currentRevision,
-				);
-				const target: RuntimeInstallReceiptTarget = {
-					desiredRevision,
-					currentRevision,
-					expectedCurrentRevision: verifiedCurrentRevision,
-				};
-				installReceiptTargets.officialServices.set(key, target);
-				if (verifiedCurrentRevision === null) {
-					pendingOfficialServiceInstalls.push({ program, target });
-				}
-			}
-		}
+		const officialServicePlan = planOfficialRuntimeServices(
+			runtimeSystemdUserPrograms,
+			paths,
+			previousInstallReceipts,
+		);
+		installReceiptTargets.officialServices = officialServicePlan.targets;
 		if (
-			pendingOfficialServiceInstalls.length > 0 &&
+			officialServicePlan.pending.length > 0 &&
 			systemdUnits.egressSidecarActive &&
 			opts.systemdApply
 		) {
@@ -6139,11 +4876,9 @@ export function convergeRuntimeManifest(
 			}
 		}
 
-		for (const { program, target } of pendingOfficialServiceInstalls) {
-			reloadRuntimeUserManager(paths, paths.userHome);
-			const error = installOfficialRuntimeUserService({ ...program, cwd: paths.userHome }, paths);
+		for (const item of officialServicePlan.pending) {
+			const error = installOfficialRuntimeService(item, paths);
 			if (error) throw new Error(error);
-			target.expectedCurrentRevision = target.currentRevision();
 		}
 
 		const bootFinished = join(instanceRoot, "boot-finished");

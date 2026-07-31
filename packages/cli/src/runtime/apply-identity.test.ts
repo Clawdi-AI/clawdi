@@ -6,7 +6,6 @@ import {
 	readRuntimeApplyContext,
 	readRuntimeApplyIdentity,
 	resolveRuntimeApplyGeneration,
-	runtimeApplyContextServiceEnvironment,
 	runtimeApplyIdentitiesEqual,
 } from "./apply-identity";
 
@@ -72,7 +71,6 @@ describe("runtime apply identity", () => {
 				applyReceiptId: "apply-receipt-0008",
 				bootNonce: "boot-nonce-000008",
 			},
-			sourcePath: path,
 			runtimeEnvironment: {
 				kind: "projected-environment",
 				values: {
@@ -85,16 +83,13 @@ describe("runtime apply identity", () => {
 		expect(readRuntimeApplyIdentity({ CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: path })).toEqual(
 			context.identity,
 		);
-		expect(runtimeApplyContextServiceEnvironment(context)).toEqual({
-			CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: path,
-		});
 	});
 
 	test("discovers a supplied canonical mount path", () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-discovered-apply-identity-"));
 		roots.push(root);
 		const path = identityFile(root);
-		expect(readRuntimeApplyContext({}, path).sourcePath).toBe(path);
+		expect(readRuntimeApplyContext({}, path).identity.generation).toBe(8);
 	});
 
 	test("fails closed for missing, malformed, or non-canonical files", () => {

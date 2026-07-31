@@ -44,6 +44,7 @@ import {
 	reconcilePendingRuntimeCliUpgrade,
 	rollbackPendingRuntimeCliUpgrade,
 } from "../src/runtime/cli-update";
+import { withRuntimeConvergeLock } from "../src/runtime/converge-lock";
 import {
 	deniedCommandReason,
 	evaluateHostPolicyForCommand,
@@ -61,7 +62,6 @@ import {
 	loadRuntimeManifest,
 	type RuntimeConvergenceResult,
 	type RuntimeManifest,
-	withRuntimeConvergeLock,
 } from "../src/runtime/manifest";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
@@ -94,7 +94,6 @@ function explicitTestApplyContext(
 			applyReceiptId: "test-apply-receipt",
 			bootNonce: "test-boot-nonce-0001",
 		},
-		sourcePath: "/test/runtime-apply-identity.json",
 		runtimeEnvironment: projectedRuntimeEnvironment(
 			Object.fromEntries(
 				Object.entries(process.env).filter(
@@ -6811,7 +6810,7 @@ fi
 			);
 			expect(patchText).not.toContain("telegram-agent-token-watch");
 			for (const unitEnv of [watchEnv, daemonEnv]) {
-				expect(unitEnv).toContain(`CLAWDI_RUNTIME_APPLY_IDENTITY_FILE="${applyIdentityPath}"`);
+				expect(unitEnv).not.toContain("CLAWDI_RUNTIME_APPLY_IDENTITY_FILE");
 				expect(unitEnv).not.toContain("CLAWDI_RUNTIME_GENERATION");
 				expect(unitEnv).not.toContain("CLAWDI_RUNTIME_APPLY_RECEIPT_ID");
 			}

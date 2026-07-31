@@ -49,7 +49,6 @@ function convergeRuntimeManifest(
 					applyReceiptId: "test-apply-receipt",
 					bootNonce: "test-boot-nonce",
 				},
-				sourcePath: "/test/runtime-apply-identity.json",
 				runtimeEnvironment,
 			},
 		},
@@ -514,7 +513,6 @@ describe("runtime manifest services", () => {
 
 	test("renders the Hermes password dashboard directly", () => {
 		const paths = tempRuntimePaths();
-		const applyIdentityPath = join(paths.runRoot, "runtime-apply-identity.json");
 		process.env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = "stale-dashboard-password";
 		process.env.HERMES_DASHBOARD_BASIC_AUTH_SECRET = "stale-dashboard-session-secret";
 		process.env.RUNTIME_SOURCE_TOKEN = "stale-runtime-source-token";
@@ -586,7 +584,6 @@ describe("runtime manifest services", () => {
 				applyReceiptId: "apply-receipt-0001",
 				bootNonce: "boot-nonce-000001",
 			},
-			sourcePath: applyIdentityPath,
 			runtimeEnvironment: projectedRuntimeEnvironment(projectedValues),
 		};
 		const load: RuntimeManifestLoad = {

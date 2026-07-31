@@ -68,7 +68,6 @@ type RuntimeApplyIdentityFile = z.infer<typeof runtimeApplyIdentityFileSchema>;
 export interface RuntimeApplyContext {
 	kind: "identity-file";
 	identity: RuntimeApplyIdentity;
-	sourcePath: string;
 	runtimeEnvironment: ProjectedRuntimeEnvironment;
 }
 
@@ -89,7 +88,6 @@ export function readRuntimeApplyContext(
 	return {
 		kind: "identity-file",
 		identity,
-		sourcePath: configuredPath,
 		runtimeEnvironment: projectedRuntimeEnvironment(runtimeEnv),
 	};
 }
@@ -114,12 +112,6 @@ function readRuntimeApplyIdentityFile(configuredPath: string): RuntimeApplyIdent
 		);
 	}
 	return parsed.data;
-}
-
-export function runtimeApplyContextServiceEnvironment(
-	context: RuntimeApplyContext,
-): Record<string, string> {
-	return { [RUNTIME_APPLY_IDENTITY_FILE_ENV]: context.sourcePath };
 }
 
 function configuredRuntimeApplyIdentityPath(

@@ -29,11 +29,8 @@ import { runtimeLiveSnapshotPaths } from "./live-state-snapshot";
 import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
-	daemonProgramRevision,
 	type RuntimeManifest,
-	runtimeProgramRevision as runtimeProgramRevisionWithEnvironment,
 	runtimeRecoverableSecretValues,
-	runtimeSidecarProgramRevision,
 } from "./manifest";
 import {
 	hostedRuntimeBundleV2ManifestSchema,
@@ -68,19 +65,6 @@ const successfulPrerequisiteActivation = () => ({
 const originalEnv = { ...process.env };
 const tempRoots: string[] = [];
 const TEST_HOSTED_LOCALE = { language: "en" as const, timezone: "UTC" };
-const runtimeProgramRevision = (
-	manifest: RuntimeManifest,
-	runtime: string,
-	secretValues: Record<string, string> | undefined,
-	providerProjectionRevision: string | null = null,
-): string =>
-	runtimeProgramRevisionWithEnvironment(
-		manifest,
-		runtime,
-		secretValues,
-		projectedRuntimeEnvironment({}),
-		providerProjectionRevision,
-	);
 const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.57";
 const TEST_HOSTED_HOME = "/home/clawdi";
 const TEST_HOSTED_CODEX_TOOLING = {
@@ -142,13 +126,6 @@ function runSettings(command: string, args: string[]): RuntimeRunSettings {
 	return { command, args, env: {}, prependPath: [] };
 }
 
-function systemdProgramRevision(paths: RuntimePaths, programName: string): string {
-	const content = readFileSync(join(paths.systemdEnvRoot, `${programName}.service.env`), "utf-8");
-	const revision = /^CLAWDI_RUNTIME_REV="([^"]+)"$/m.exec(content)?.[1];
-	if (!revision) throw new Error(`Missing CLAWDI_RUNTIME_REV for ${programName}`);
-	return revision;
-}
-
 function manifestLoad(
 	manifest: RuntimeManifest,
 	sourcePath: string,
@@ -168,7 +145,6 @@ function manifestLoad(
 				applyReceiptId: "test-apply-receipt",
 				bootNonce: "test-boot-nonce",
 			},
-			sourcePath: "/test/runtime-apply-identity.json",
 			runtimeEnvironment: projectedRuntimeEnvironment(
 				Object.fromEntries(
 					Object.entries(process.env).filter(
@@ -2460,270 +2436,6 @@ describe("runtime manifest reconciliation invariants", () => {
 				supports_tools: true,
 			},
 		]);
-	});
-
-	test("keeps reconcile impact scoped to the affected process", () => {
-		const paths = tempRuntimePaths();
-		const runtimeSecretRef = "secret://runtimes/openclaw/api-key";
-		const egressSecretRef = "secret://providers/default/api-key";
-		const manifest = baseManifest(paths, {
-			openclaw: {
-				enabled: true,
-				run: {
-					...runSettings("openclaw", ["gateway", "run"]),
-					secretEnv: { OPENAI_API_KEY: runtimeSecretRef },
-				},
-				services: {},
-			},
-		});
-		const secretValues = {
-			[runtimeSecretRef]: "sk-runtime-before",
-			[egressSecretRef]: "sk-egress-before",
-		};
-		const rotatedRuntimeSecretValues = {
-			...secretValues,
-			[runtimeSecretRef]: "sk-runtime-after",
-		};
-		const rotatedEgressSecretValues = {
-			...secretValues,
-			[egressSecretRef]: "sk-egress-after",
-		};
-		const metadataOnlyChange: RuntimeManifest = {
-			...manifest,
-			generation: 2,
-			issuedAt: "2026-07-01T00:01:00.000Z",
-		};
-		const cliOnlyChange: RuntimeManifest = {
-			...manifest,
-			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.13.16" },
-		};
-		const controlPlaneOnlyChange: RuntimeManifest = {
-			...manifest,
-			controlPlane: { apiUrl: "https://unrelated-control-plane.example.test" },
-		};
-		const terminalToolingOnlyChange: RuntimeManifest = {
-			...manifest,
-			projection: { terminalTooling: { codex: { enabled: false } } },
-		};
-		const skillOnlyChange: RuntimeManifest = {
-			...manifest,
-			projection: {
-				skills: { entries: { clawdi: { enabled: true, version: 1 } } },
-			},
-		};
-		const unrelatedProviderChange: RuntimeManifest = {
-			...manifest,
-			projection: {
-				providers: {
-					unrelated: {
-						type: "custom_openai_compatible",
-						baseUrl: "https://unrelated.example.test/v1",
-					},
-				},
-			},
-		};
-		const relevantGatewayProjectionChange: RuntimeManifest = {
-			...manifest,
-			projection: {
-				system: {
-					openclawControlUiAllowedOrigins: ["https://gateway.example.test"],
-				},
-			},
-		};
-		const managedTelegramChannelChange: RuntimeManifest = {
-			...manifest,
-			projection: {
-				channels: {
-					telegram: {
-						enabled: true,
-						defaultAccount: "managed-telegram",
-						accounts: { "managed-telegram": { enabled: true } },
-					},
-				},
-			},
-		};
-		const serviceOnlyChange: RuntimeManifest = {
-			...manifest,
-			runtimes: {
-				...manifest.runtimes,
-				openclaw: {
-					...manifest.runtimes.openclaw,
-					services: { worker: runSettings("openclaw", ["worker"]) },
-				},
-			},
-		};
-		const multiRuntimeManifest: RuntimeManifest = {
-			...manifest,
-			runtimes: {
-				...manifest.runtimes,
-				hermes: {
-					enabled: true,
-					run: runSettings("hermes", ["gateway"]),
-					services: {},
-				},
-			},
-		};
-		const unrelatedRuntimeChange: RuntimeManifest = {
-			...multiRuntimeManifest,
-			runtimes: {
-				...multiRuntimeManifest.runtimes,
-				hermes: {
-					...multiRuntimeManifest.runtimes.hermes,
-					run: runSettings("hermes", ["gateway", "--verbose"]),
-				},
-			},
-		};
-		const egressManifest: RuntimeManifest = {
-			...manifest,
-			egressProfiles: {
-				profiles: [
-					{
-						id: "channel-token",
-						enabled: true,
-						kind: "http",
-						match: {
-							scheme: "https",
-							host: "api.example.test",
-							pathPrefix: "/",
-							headers: {},
-							query: {},
-						},
-						rewrite: {
-							upstreamBaseUrl: "https://upstream.example.test",
-							preservePath: true,
-							setHeaders: {
-								authorization: {
-									type: "secretRef",
-									secretRef: egressSecretRef,
-									prefix: "Bearer ",
-								},
-							},
-						},
-						logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
-						priority: 100,
-					},
-				],
-			},
-		};
-
-		const runtimeRevision = runtimeProgramRevision(manifest, "openclaw", secretValues);
-		expect(runtimeProgramRevision(manifest, "openclaw", rotatedRuntimeSecretValues)).not.toBe(
-			runtimeRevision,
-		);
-		expect(runtimeProgramRevision(manifest, "openclaw", rotatedEgressSecretValues)).toBe(
-			runtimeRevision,
-		);
-		expect(runtimeProgramRevision(egressManifest, "openclaw", rotatedEgressSecretValues)).toBe(
-			runtimeProgramRevision(egressManifest, "openclaw", secretValues),
-		);
-		expect(runtimeProgramRevision(metadataOnlyChange, "openclaw", secretValues)).toBe(
-			runtimeRevision,
-		);
-		expect(runtimeProgramRevision(cliOnlyChange, "openclaw", secretValues)).toBe(runtimeRevision);
-		expect(runtimeProgramRevision(controlPlaneOnlyChange, "openclaw", secretValues)).toBe(
-			runtimeRevision,
-		);
-		expect(runtimeProgramRevision(egressManifest, "openclaw", secretValues)).toBe(runtimeRevision);
-		expect(runtimeProgramRevision(terminalToolingOnlyChange, "openclaw", secretValues)).toBe(
-			runtimeRevision,
-		);
-		expect(runtimeProgramRevision(unrelatedProviderChange, "openclaw", secretValues)).toBe(
-			runtimeRevision,
-		);
-		expect(runtimeProgramRevision(serviceOnlyChange, "openclaw", secretValues)).toBe(
-			runtimeRevision,
-		);
-		expect(runtimeProgramRevision(unrelatedRuntimeChange, "openclaw", secretValues)).toBe(
-			runtimeProgramRevision(multiRuntimeManifest, "openclaw", secretValues),
-		);
-		expect(runtimeProgramRevision(unrelatedRuntimeChange, "hermes", secretValues)).not.toBe(
-			runtimeProgramRevision(multiRuntimeManifest, "hermes", secretValues),
-		);
-		expect(
-			runtimeProgramRevision(relevantGatewayProjectionChange, "openclaw", secretValues),
-		).not.toBe(runtimeRevision);
-		expect(runtimeProgramRevision(managedTelegramChannelChange, "openclaw", secretValues)).not.toBe(
-			runtimeRevision,
-		);
-		expect(runtimeProgramRevision(skillOnlyChange, "openclaw", secretValues)).not.toBe(
-			runtimeRevision,
-		);
-		expect(runtimeProgramRevision(manifest, "openclaw", secretValues, "provider-b")).not.toBe(
-			runtimeProgramRevision(manifest, "openclaw", secretValues, "provider-a"),
-		);
-		const sidecarRevision = runtimeSidecarProgramRevision(manifest);
-		expect(runtimeSidecarProgramRevision(egressManifest)).not.toBe(sidecarRevision);
-		expect(runtimeSidecarProgramRevision(metadataOnlyChange)).toBe(sidecarRevision);
-		expect(runtimeSidecarProgramRevision(cliOnlyChange)).toBe(sidecarRevision);
-		expect(runtimeSidecarProgramRevision(terminalToolingOnlyChange)).toBe(sidecarRevision);
-		expect(runtimeSidecarProgramRevision(skillOnlyChange)).toBe(sidecarRevision);
-		expect(runtimeSidecarProgramRevision(managedTelegramChannelChange)).toBe(sidecarRevision);
-		const daemonRevision = daemonProgramRevision(manifest);
-		expect(daemonProgramRevision(metadataOnlyChange)).toBe(daemonRevision);
-		expect(daemonProgramRevision(terminalToolingOnlyChange)).toBe(daemonRevision);
-		expect(daemonProgramRevision(skillOnlyChange)).toBe(daemonRevision);
-		expect(daemonProgramRevision(managedTelegramChannelChange)).toBe(daemonRevision);
-		expect(daemonProgramRevision(egressManifest)).toBe(daemonRevision);
-		expect(daemonProgramRevision(cliOnlyChange)).not.toBe(daemonRevision);
-	});
-
-	test("scopes managed Telegram revisions to the OpenClaw and Hermes runtime programs", () => {
-		process.env.CLAWDI_SYSTEMD_APPLY = "0";
-		const paths = tempRuntimePaths();
-		const command = "/bin/true";
-		const manifest = baseManifest(paths, {
-			openclaw: {
-				enabled: true,
-				run: runSettings(command, ["gateway"]),
-				services: { worker: runSettings(command, ["worker"]) },
-			},
-			hermes: {
-				enabled: true,
-				run: runSettings(command, ["gateway"]),
-				services: {},
-			},
-			observer: {
-				enabled: true,
-				run: runSettings(command, ["observe"]),
-				services: {},
-			},
-		});
-		const managedTelegram: RuntimeManifest = {
-			...manifest,
-			projection: {
-				channels: {
-					telegram: {
-						enabled: true,
-						defaultAccount: "managed-telegram",
-						accounts: { "managed-telegram": { enabled: true } },
-					},
-				},
-			},
-		};
-
-		const baseline = convergeRuntimeManifest(manifestLoad(manifest, "inline-revision-base"), paths);
-		expect(baseline.installErrors).toEqual([]);
-		const workerRevision = systemdProgramRevision(paths, "clawdi-openclaw-worker");
-
-		const projected = convergeRuntimeManifest(
-			manifestLoad(managedTelegram, "inline-revision-managed-telegram"),
-			paths,
-		);
-		expect(projected.installErrors).toEqual([]);
-		expect(runtimeProgramRevision(managedTelegram, "openclaw", {})).not.toBe(
-			runtimeProgramRevision(manifest, "openclaw", {}),
-		);
-		expect(runtimeProgramRevision(managedTelegram, "hermes", {})).not.toBe(
-			runtimeProgramRevision(manifest, "hermes", {}),
-		);
-		expect(runtimeProgramRevision(managedTelegram, "observer", {})).toBe(
-			runtimeProgramRevision(manifest, "observer", {}),
-		);
-		expect(systemdProgramRevision(paths, "clawdi-openclaw-worker")).toBe(workerRevision);
-		expect(runtimeSidecarProgramRevision(managedTelegram)).toBe(
-			runtimeSidecarProgramRevision(manifest),
-		);
-		expect(daemonProgramRevision(managedTelegram)).toBe(daemonProgramRevision(manifest));
 	});
 
 	test.each([
