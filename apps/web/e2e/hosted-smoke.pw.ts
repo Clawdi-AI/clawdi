@@ -2441,6 +2441,18 @@ test("AI Providers preserves provider identity and keeps technical details progr
 	const choiceButtons = choiceGrid.locator(":scope > button");
 	await expect(choiceButtons).toHaveCount(17);
 	await expect(choiceButtons.locator("button, a, input, select, textarea")).toHaveCount(0);
+	await expect(
+		chooserDialog.getByRole("button", {
+			name: "OpenAI API key or ChatGPT sign-in",
+			exact: true,
+		}),
+	).toBeVisible();
+	await expect(
+		chooserDialog.getByRole("button", {
+			name: "Anthropic Claude model access",
+			exact: true,
+		}),
+	).toBeVisible();
 	await expect(chooserDialog.getByRole("button", { name: /^Custom endpoint/ })).toBeVisible();
 	const providerSearch = chooserDialog.getByRole("textbox", { name: "Search providers" });
 	const mobileOpenAiBox = await chooserDialog
@@ -2677,8 +2689,14 @@ test("AI Provider OAuth and destructive confirmations keep dialog semantics on m
 	await chooserDialog.getByRole("button", { name: /^OpenAI/ }).click();
 	const configureDialog = page.getByRole("dialog");
 	await expect(configureDialog).toHaveAccessibleName("Set up OpenAI");
-	const apiKeyAuth = configureDialog.getByRole("button", { name: /^Sign in with an API key/ });
-	const chatGptAuth = configureDialog.getByRole("button", { name: /^Sign in with ChatGPT/ });
+	const apiKeyAuth = configureDialog.getByRole("button", {
+		name: "Sign in with an API key For usage-based access",
+		exact: true,
+	});
+	const chatGptAuth = configureDialog.getByRole("button", {
+		name: "Sign in with ChatGPT For subscription access",
+		exact: true,
+	});
 	await expect(apiKeyAuth).toHaveAttribute("aria-pressed", "true");
 	await expect(chatGptAuth).toHaveAttribute("aria-pressed", "false");
 	const openAiApiKey = configureDialog.getByRole("textbox", { name: "API key", exact: true });
@@ -2735,6 +2753,125 @@ test("AI Provider OAuth and destructive confirmations keep dialog semantics on m
 	await expect(removeProvider).toBeEnabled();
 	await removeDialog.getByRole("button", { name: "Cancel", exact: true }).click();
 
+	const documentWidth = await page.evaluate(() => ({
+		clientWidth: document.documentElement.clientWidth,
+		scrollWidth: document.documentElement.scrollWidth,
+	}));
+	expect(documentWidth.scrollWidth).toBe(documentWidth.clientWidth);
+});
+
+test("AI provider chooser and auth dialogs preserve hierarchy in dark mode", async ({
+	page,
+}, testInfo) => {
+	const providerAcceptRequests: string[] = [];
+	const pendingOpenAiProvider = {
+		...deepSeekProvider,
+		id: "row-dark-openai",
+		provider_id: "openai-dark",
+		type: "openai",
+		label: "OpenAI",
+		base_url: "https://api.openai.com/v1",
+		models: [{ id: "gpt-5.5", label: "GPT-5.5" }],
+		api_mode: "openai_responses",
+		auth: { type: "agent_profile", tool: "codex", profile: "default" },
+		runtime_env_name: null,
+	};
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.addInitScript(() => window.localStorage.setItem("clawdi-theme", "dark"));
+	await stubHostedApi(page, {
+		aiProviders: [],
+		deployments: [],
+		providerAcceptRequests,
+		providerAcceptResponses: [
+			{
+				status: 200,
+				body: {
+					status: "pending",
+					provider: pendingOpenAiProvider,
+					authorization: {
+						flow: "device_code",
+						state: "dark-mode-state",
+						verification_url: "https://auth.openai.com/codex/device",
+						user_code: "DARK-CODE",
+						expires_at: "2099-01-01T00:00:00Z",
+						poll_interval_seconds: 60,
+					},
+				},
+			},
+		],
+	});
+	await page.goto("/ai-providers");
+	await expect(page.locator("html")).toHaveClass(/dark/);
+
+	const main = page.locator("main");
+	await main.getByRole("button", { name: "Add provider", exact: true }).first().click();
+	const chooserDialog = page.getByRole("dialog", { name: "Add a provider" });
+	const providerSearch = chooserDialog.getByRole("textbox", { name: "Search providers" });
+	await expect(providerSearch).toBeFocused();
+	const openAiChoice = chooserDialog.getByRole("button", {
+		name: "OpenAI API key or ChatGPT sign-in",
+		exact: true,
+	});
+	const anthropicChoice = chooserDialog.getByRole("button", {
+		name: "Anthropic Claude model access",
+		exact: true,
+	});
+	await expect(openAiChoice).toBeVisible();
+	await expect(anthropicChoice).toBeVisible();
+	await expect(openAiChoice.locator(':scope > [aria-hidden="true"]')).toHaveCount(1);
+	const anthropicIcon = anthropicChoice.locator(':scope > [aria-hidden="true"]');
+	await expect(anthropicIcon).toHaveCount(1);
+	await expect(anthropicIcon.locator("img")).toHaveAttribute("alt", "Anthropic");
+	const chooserBody = chooserDialog.getByTestId("provider-dialog-body");
+	const mobileScroll = await chooserBody.evaluate((element) => ({
+		clientHeight: element.clientHeight,
+		scrollHeight: element.scrollHeight,
+	}));
+	expect(mobileScroll.scrollHeight).toBeGreaterThan(mobileScroll.clientHeight);
+	await chooserDialog.screenshot({ path: testInfo.outputPath("provider-dark-chooser-mobile.png") });
+
+	await page.setViewportSize({ width: 1000, height: 800 });
+	const openAiBox = await openAiChoice.boundingBox();
+	const anthropicBox = await anthropicChoice.boundingBox();
+	expect(Math.abs((openAiBox?.y ?? 0) - (anthropicBox?.y ?? 0))).toBeLessThanOrEqual(1);
+	expect(anthropicBox?.x ?? 0).toBeGreaterThan(openAiBox?.x ?? 0);
+	await chooserDialog.screenshot({
+		path: testInfo.outputPath("provider-dark-chooser-desktop.png"),
+	});
+
+	await openAiChoice.click();
+	const configureDialog = page.getByRole("dialog", { name: "Set up OpenAI" });
+	const apiKeyAuth = configureDialog.getByRole("button", {
+		name: "Sign in with an API key For usage-based access",
+		exact: true,
+	});
+	const chatGptAuth = configureDialog.getByRole("button", {
+		name: "Sign in with ChatGPT For subscription access",
+		exact: true,
+	});
+	await expect(apiKeyAuth).toHaveAttribute("aria-pressed", "true");
+	await expect(chatGptAuth).toHaveAttribute("aria-pressed", "false");
+	await expect(configureDialog.locator('[data-slot="dialog-footer"]')).toBeVisible();
+	await configureDialog.screenshot({
+		path: testInfo.outputPath("provider-dark-api-key-desktop.png"),
+	});
+
+	await page.setViewportSize({ width: 390, height: 844 });
+	await configureDialog.screenshot({
+		path: testInfo.outputPath("provider-dark-api-key-mobile.png"),
+	});
+	await chatGptAuth.click();
+	const oauthConfigureDialog = page.getByRole("dialog", { name: "Set up ChatGPT (Codex)" });
+	await oauthConfigureDialog
+		.getByRole("button", { name: "Continue to ChatGPT", exact: true })
+		.click();
+	await expect.poll(() => providerAcceptRequests.length).toBe(1);
+	const oauthDialog = page.getByRole("dialog", { name: "Sign in with ChatGPT" });
+	await expect(oauthDialog.getByText("DARK-CODE", { exact: true })).toBeVisible();
+	await oauthDialog.screenshot({ path: testInfo.outputPath("provider-dark-oauth-mobile.png") });
+
+	await page.setViewportSize({ width: 1000, height: 800 });
+	await oauthDialog.screenshot({ path: testInfo.outputPath("provider-dark-oauth-desktop.png") });
 	const documentWidth = await page.evaluate(() => ({
 		clientWidth: document.documentElement.clientWidth,
 		scrollWidth: document.documentElement.scrollWidth,

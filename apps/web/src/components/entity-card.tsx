@@ -397,7 +397,9 @@ export function EntityChoiceCard({
 }) {
 	const content = (
 		<>
-			{icon}
+			<span aria-hidden="true" className="flex shrink-0">
+				{icon}
+			</span>
 			<div
 				className={cn(
 					"min-w-0 flex-1",
