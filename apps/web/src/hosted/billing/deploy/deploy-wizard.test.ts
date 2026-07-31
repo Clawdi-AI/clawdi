@@ -271,7 +271,8 @@ describe("deploy acceptance", () => {
 		);
 		expect(wizardSource).not.toContain("await subscriptionCreateQuote.refetch()");
 		expect(wizardSource).not.toContain("subscription-checkout-hosted-fallback");
-		expect(wizardSource).toContain("fallbackUrl: checkoutRedirectUrl(result)");
+		expect(wizardSource).toContain("checkoutSessionId: result.checkout_session_id");
+		expect(wizardSource).toContain("subscriptionHostedFallbackRequest(");
 		const onDeployStart = wizardSource.indexOf("async function onDeploy()");
 		const walletBranch = wizardSource.slice(
 			wizardSource.indexOf('if (paymentMethod === "wallet")', onDeployStart),

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	CHECKOUT_ELEMENTS_UI_MODE,
 	checkoutRedirectUrl,
+	checkoutUiModeForPublishableKey,
 	findNewDeploymentId,
 	hasCheckoutClientSecret,
 } from "@/hosted/billing/components/stripe-checkout.logic";
@@ -35,6 +36,11 @@ describe("stripe checkout logic", () => {
 
 	test("documents the checkout elements ui mode for the installed Stripe SDK", () => {
 		expect(CHECKOUT_ELEMENTS_UI_MODE).toBe("custom");
+	});
+
+	test("starts with hosted Checkout when Stripe.js cannot be configured", () => {
+		expect(checkoutUiModeForPublishableKey(undefined)).toBe("hosted");
+		expect(checkoutUiModeForPublishableKey("pk_test_browser")).toBe("custom");
 	});
 
 	test("finds a deployment created after checkout completes", () => {

@@ -310,6 +310,22 @@ describe("hosted deploy compute and payment contract", () => {
 			quote,
 			deploy_config: { deploy_request_id: "request-stable" },
 		});
+
+		expect(
+			buildHostedDeployCheckoutRequest({
+				selection: { ...selection, fundingSource: "stripe" },
+				target: { kind: "new_deployment", deployRequest },
+				idempotencyKey: "request-stable",
+				quote: null,
+				uiMode: "hosted",
+				fallbackFromCheckoutSessionId: "cs_test_custom",
+			}),
+		).toMatchObject({
+			funding_source: "stripe",
+			ui_mode: "hosted",
+			fallback_from_checkout_session_id: "cs_test_custom",
+			deploy_config: { deploy_request_id: "request-stable" },
+		});
 	});
 });
 

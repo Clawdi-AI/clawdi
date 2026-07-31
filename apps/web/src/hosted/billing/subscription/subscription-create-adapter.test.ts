@@ -10,6 +10,7 @@ import {
 	subscriptionCreateQuoteRequest,
 	subscriptionCreateQuoteView,
 	subscriptionCreateRequest,
+	subscriptionHostedFallbackRequest,
 } from "./subscription-create-adapter";
 
 const deployConfig: DeployRequest = {
@@ -110,6 +111,36 @@ describe("subscription creation adapter", () => {
 				upgrade_deployment_id: "hdep_fallback",
 			},
 		});
+	});
+
+	test("replaces a custom Session through the same deploy intent", () => {
+		const original = createRequest({
+			selection: {
+				planSlug: "compute_performance",
+				billingTermMonths: 12,
+				fundingSource: "stripe",
+			},
+			quote: null,
+		});
+		const fallback = subscriptionHostedFallbackRequest(original, "cs_test_custom");
+
+		expect(subscriptionCreateRequest(fallback)).toEqual({
+			idempotencyKey: "subscription-create-test",
+			body: {
+				plan_slug: "compute_performance",
+				billing_term_months: 12,
+				funding_source: "stripe",
+				ui_mode: "hosted",
+				fallback_from_checkout_session_id: "cs_test_custom",
+				deploy_config: {
+					...deployConfig,
+					deploy_request_id: "subscription-create-test",
+				},
+			},
+		});
+		expect(() => subscriptionHostedFallbackRequest(original, " ")).toThrow(
+			"Secure checkout fallback is unavailable.",
+		);
 	});
 
 	test("projects activation identity and entitlement fields consumed by the UI", () => {

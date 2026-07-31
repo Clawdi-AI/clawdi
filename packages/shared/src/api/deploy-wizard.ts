@@ -375,18 +375,23 @@ export function buildHostedDeployCheckoutRequest({
 	idempotencyKey,
 	quote,
 	uiMode,
+	fallbackFromCheckoutSessionId,
 }: {
 	selection: HostedDeploySubscriptionSelection;
 	target: HostedDeployCheckoutTarget;
 	idempotencyKey: string;
 	quote: HostedDeploySubscriptionQuote | null;
 	uiMode: HostedDeployCheckoutUiMode;
+	fallbackFromCheckoutSessionId?: string | null;
 }): HostedDeployCheckoutRequest {
 	return {
 		plan_slug: selection.planSlug,
 		billing_term_months: selection.billingTermMonths,
 		funding_source: selection.fundingSource,
 		ui_mode: uiMode,
+		...(fallbackFromCheckoutSessionId
+			? { fallback_from_checkout_session_id: fallbackFromCheckoutSessionId }
+			: {}),
 		...(target.kind === "new_deployment"
 			? {
 					deploy_config: {
