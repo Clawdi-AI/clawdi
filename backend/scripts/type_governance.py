@@ -17,7 +17,11 @@ CONFIG = BACKEND_ROOT / "pyproject.toml"
 EXPECTED_CONFIG = {
     "typeCheckingMode": "standard",
     "pythonVersion": "3.12",
-    "include": ["app/core/query_utils.py", "app/core/skill_key.py"],
+    "include": [
+        "app/core/query_utils.py",
+        "app/core/skill_key.py",
+        "app/services/composio.py",
+    ],
 }
 EXPECTED_VERSION = "1.39.9"
 INVENTORY_AREAS = ("app", "tests", "scripts", "alembic")
