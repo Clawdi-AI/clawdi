@@ -533,16 +533,22 @@ describe("known AI provider defaults", () => {
 			"gpt-5.6-sol",
 			"gpt-5.6-terra",
 			"gpt-5.6-luna",
+			"gpt-5.5",
+			"gpt-5.4",
+			"gpt-5.4-mini",
 		]);
 		expect(defaultAiProviderModels("anthropic").map((model) => model.id)).toEqual([
 			"claude-sonnet-5",
 			"claude-opus-5",
+			"claude-opus-4-6",
 			"claude-haiku-4-5",
 		]);
 		expect(defaultAiProviderModels("openrouter").map((model) => model.id)).toEqual([
 			"openrouter/auto-beta",
 			"~openai/gpt-latest",
 			"anthropic/claude-sonnet-5",
+			"anthropic/claude-opus-4.6",
+			"openai/gpt-5.5",
 		]);
 		expect(defaultAiProviderModels("gemini").map((model) => model.id)).toEqual([
 			"gemini-3.6-flash",
@@ -553,25 +559,42 @@ describe("known AI provider defaults", () => {
 			"mistral-medium-latest",
 			"mistral-small-latest",
 			"mistral-large-latest",
+			"codestral-latest",
 		]);
 		expect(defaultAiProviderModels("custom_openai_compatible")).toEqual([]);
 		expect(CODEX_OAUTH_MODEL_CATALOG.map((model) => model.id)).toEqual([
 			"gpt-5.6-sol",
 			"gpt-5.6-terra",
 			"gpt-5.6-luna",
+			"gpt-5.5",
 		]);
 	});
 
-	test("keeps exact documented context windows on curated built-in models", () => {
+	test("keeps context metadata only when an exact durable value is documented", () => {
 		expect(defaultAiProviderModels("openai").map((model) => model.context_window)).toEqual([
-			1_050_000, 1_050_000, 1_050_000,
+			1_050_000,
+			1_050_000,
+			1_050_000,
+			undefined,
+			undefined,
+			undefined,
 		]);
-		expect(defaultAiProviderModels("anthropic").map((model) => model.context_window)).toEqual([
-			1_000_000, 1_000_000, 200_000,
+		expect(
+			defaultAiProviderModels("anthropic").every((model) => model.context_window === undefined),
+		).toBe(true);
+		expect(defaultAiProviderModels("openrouter").map((model) => model.context_window)).toEqual([
+			undefined,
+			undefined,
+			1_000_000,
+			undefined,
+			undefined,
 		]);
 		expect(defaultAiProviderModels("gemini").map((model) => model.context_window)).toEqual([
 			1_048_576, 1_048_576, 1_048_576,
 		]);
+		expect(
+			defaultAiProviderModels("mistral").every((model) => model.context_window === undefined),
+		).toBe(true);
 		expect(CODEX_OAUTH_MODEL_CATALOG.every((model) => model.context_window === undefined)).toBe(
 			true,
 		);

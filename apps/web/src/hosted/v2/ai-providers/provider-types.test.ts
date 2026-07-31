@@ -38,6 +38,9 @@ describe("AI provider type metadata", () => {
 			"gpt-5.6-sol",
 			"gpt-5.6-terra",
 			"gpt-5.6-luna",
+			"gpt-5.5",
+			"gpt-5.4",
+			"gpt-5.4-mini",
 		]);
 		expect(PROVIDER_TYPE_META.custom_openai_compatible.defaultModels).toEqual([]);
 	});

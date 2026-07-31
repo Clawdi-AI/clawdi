@@ -40,8 +40,8 @@ export const PROVIDER_PRESETS = [
 		base_url: "https://api.deepseek.com/v1",
 		api_mode: "openai_chat",
 		catalog: [
-			{ id: "deepseek-v4-flash", context_window: 1_000_000, alias: "DeepSeek V4 Flash" },
-			{ id: "deepseek-v4-pro", context_window: 1_000_000, alias: "DeepSeek V4 Pro" },
+			{ id: "deepseek-v4-flash", alias: "DeepSeek V4 Flash" },
+			{ id: "deepseek-v4-pro", alias: "DeepSeek V4 Pro" },
 		],
 		api_key_url: "https://platform.deepseek.com/api_keys",
 	},
@@ -51,9 +51,9 @@ export const PROVIDER_PRESETS = [
 		base_url: "https://api.kimi.com/coding",
 		api_mode: "anthropic_messages",
 		catalog: [
+			{ id: "kimi-for-coding", alias: "Kimi Code" },
 			{ id: "k3-256k", context_window: 262_144, alias: "Kimi K3 (256K)" },
 			{ id: "k3", alias: "Kimi K3" },
-			{ id: "kimi-for-coding", context_window: 262_144, alias: "Kimi K2.7 Code" },
 		],
 		api_key_url: "https://www.kimi.com/code/console",
 		provider_type: "anthropic",
@@ -63,7 +63,7 @@ export const PROVIDER_PRESETS = [
 		label: "Kimi API",
 		base_url: "https://api.moonshot.cn/v1",
 		api_mode: "openai_chat",
-		catalog: [{ id: "kimi-k3", context_window: 1_000_000, alias: "Kimi K3" }],
+		catalog: [{ id: "kimi-k3", context_window: 1_048_576, alias: "Kimi K3" }],
 		api_key_url: "https://platform.kimi.com/console/api-keys",
 		region_variants: [
 			{
@@ -82,13 +82,12 @@ export const PROVIDER_PRESETS = [
 	},
 	{
 		id: "qwen-dashscope",
-		label: "Qwen (Alibaba Cloud Model Studio)",
+		label: "Qwen (Model Studio)",
 		base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
 		api_mode: "openai_chat",
 		catalog: [
 			{ id: "qwen3.7-plus", context_window: 1_000_000, alias: "Qwen3.7 Plus" },
 			{ id: "qwen3.7-max", context_window: 1_000_000, alias: "Qwen3.7 Max" },
-			{ id: "qwen3-coder-next", context_window: 262_144, alias: "Qwen3 Coder Next" },
 		],
 		api_key_url: "https://bailian.console.aliyun.com/cn-beijing?tab=model#/api-key",
 		region_variants: [
@@ -102,8 +101,7 @@ export const PROVIDER_PRESETS = [
 				id: "global",
 				label: "Singapore",
 				base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-				api_key_url:
-					"https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=model#/api-key",
+				api_key_url: "https://bailian.console.alibabacloud.com/?apiKey=1#/api-key",
 			},
 		],
 	},
@@ -113,9 +111,9 @@ export const PROVIDER_PRESETS = [
 		base_url: "https://open.bigmodel.cn/api/paas/v4",
 		api_mode: "openai_chat",
 		catalog: [
-			{ id: "glm-5.2", context_window: 1_000_000, alias: "GLM-5.2" },
-			{ id: "glm-5.1", context_window: 200_000, alias: "GLM-5.1" },
-			{ id: "glm-4.7", context_window: 200_000, alias: "GLM-4.7" },
+			{ id: "glm-5.2", alias: "GLM-5.2" },
+			{ id: "glm-5.1", alias: "GLM-5.1" },
+			{ id: "glm-4.7", alias: "GLM-4.7" },
 		],
 		api_key_url: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
 		region_variants: [
@@ -138,7 +136,7 @@ export const PROVIDER_PRESETS = [
 		label: "StepFun",
 		base_url: "https://api.stepfun.ai/v1",
 		api_mode: "openai_chat",
-		catalog: [{ id: "step-3.7-flash", context_window: 262_144, alias: "Step 3.7 Flash" }],
+		catalog: [{ id: "step-3.7-flash", alias: "Step 3.7 Flash" }],
 		api_key_url: "https://platform.stepfun.ai/interface-key",
 		region_variants: [
 			{
@@ -163,8 +161,23 @@ export const PROVIDER_PRESETS = [
 		catalog: [
 			{ id: "MiniMax-M3", context_window: 1_000_000, alias: "MiniMax M3" },
 			{ id: "MiniMax-M2.7", context_window: 204_800, alias: "MiniMax M2.7" },
+			{ id: "MiniMax-M2", context_window: 204_800, alias: "MiniMax M2" },
 		],
 		api_key_url: "https://platform.minimax.io/user-center/basic-information/interface-key",
+		region_variants: [
+			{
+				id: "global",
+				label: "Global",
+				base_url: "https://api.minimax.io/v1",
+				api_key_url: "https://platform.minimax.io/user-center/basic-information/interface-key",
+			},
+			{
+				id: "cn",
+				label: "China",
+				base_url: "https://api.minimaxi.com/v1",
+				api_key_url: "https://platform.minimaxi.com/user-center/basic-information/interface-key",
+			},
+		],
 	},
 	{
 		id: "openrouter",
@@ -172,13 +185,15 @@ export const PROVIDER_PRESETS = [
 		base_url: "https://openrouter.ai/api/v1",
 		api_mode: "openai_chat",
 		catalog: [
-			{ id: "openrouter/auto-beta", context_window: 2_000_000, alias: "Auto Router (Beta)" },
-			{ id: "~openai/gpt-latest", context_window: 1_050_000, alias: "OpenAI GPT Latest" },
+			{ id: "openrouter/auto-beta", alias: "Auto Router" },
+			{ id: "~openai/gpt-latest", alias: "OpenAI GPT Latest" },
 			{
 				id: "anthropic/claude-sonnet-5",
 				context_window: 1_000_000,
 				alias: "Claude Sonnet 5",
 			},
+			{ id: "anthropic/claude-opus-4.6", alias: "Claude Opus 4.6" },
+			{ id: "openai/gpt-5.5", alias: "OpenAI GPT-5.5" },
 		],
 		api_key_url: "https://openrouter.ai/keys",
 		provider_type: "openrouter",
@@ -208,9 +223,10 @@ export const PROVIDER_PRESETS = [
 		base_url: "https://api.mistral.ai/v1",
 		api_mode: "openai_chat",
 		catalog: [
-			{ id: "mistral-medium-latest", context_window: 256_000, alias: "Mistral Medium 3.5" },
-			{ id: "mistral-small-latest", context_window: 256_000, alias: "Mistral Small 4" },
-			{ id: "mistral-large-latest", context_window: 256_000, alias: "Mistral Large 3" },
+			{ id: "mistral-medium-latest", alias: "Mistral Medium" },
+			{ id: "mistral-small-latest", alias: "Mistral Small" },
+			{ id: "mistral-large-latest", alias: "Mistral Large" },
+			{ id: "codestral-latest", alias: "Codestral" },
 		],
 		api_key_url: "https://console.mistral.ai/api-keys",
 		provider_type: "mistral",
@@ -225,7 +241,7 @@ export const PROVIDER_PRESETS = [
 	},
 	{
 		id: "google-gemini-openai",
-		label: "Google Gemini (OpenAI-compatible)",
+		label: "Gemini (OpenAI-compatible)",
 		base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
 		api_mode: "openai_chat",
 		catalog: [
