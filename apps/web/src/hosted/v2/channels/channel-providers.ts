@@ -2,7 +2,7 @@
  * Native channel providers that can be created from the v2 channels UI. Each
  * takes different real connect inputs:
  *   - telegram:  bot token (BotFather)                → provider_token
- *   - discord:   bot token + application_id + public_key (+ optional guild_id)
+ *   - discord:   bot token + application_id + interactions public_key
  *                                                       → provider_token + config
  *   - whatsapp:  no token; agent/device linking is gated during the beta
  * Tints reuse the app identity palette so channel chips match the chrome.
@@ -18,13 +18,8 @@ export interface ChannelProviderMeta {
 	label: string;
 	tint: string;
 	connect?: ChannelConnectMode;
-	/** Label/placeholder for the single credential field (token / password). */
-	tokenLabel?: string;
 	tokenPlaceholder?: string;
-	hint: string;
 	setupUrl?: string;
-	setupLinkLabel?: string;
-	setupSteps?: readonly string[];
 	unavailable?: boolean;
 }
 
@@ -40,39 +35,22 @@ export const PROVIDER_META: Record<ChannelProviderId, SupportedChannelProviderMe
 		label: "Telegram",
 		tint: "bg-identity-3-bg text-identity-3-fg",
 		connect: "token",
-		tokenLabel: "Bot token",
 		tokenPlaceholder: "123456:ABC-DEF…",
-		hint: "Telegram's official @BotFather creates the bot and gives you its token.",
 		setupUrl: "https://t.me/BotFather",
-		setupLinkLabel: "Open @BotFather in Telegram",
-		setupSteps: [
-			"Send /newbot to @BotFather and follow the prompts to choose a name and username.",
-			"Copy the HTTP API token from @BotFather.",
-			"Give the connection a friendly name below, then paste the token.",
-		],
 	},
 	discord: {
 		id: "discord",
 		label: "Discord",
 		tint: "bg-identity-5-bg text-identity-5-fg",
 		connect: "discord",
-		tokenLabel: "Bot token",
 		tokenPlaceholder: "Bot token",
-		hint: "Create a Discord application, add its bot to your server, then copy the credentials below.",
 		setupUrl: "https://discord.com/developers/applications",
-		setupLinkLabel: "Open the Discord Developer Portal",
-		setupSteps: [
-			"Create an application, open its Bot page, and copy or reset the bot token.",
-			"On General Information, copy the application ID and, if you use interactions, the public key.",
-			"Use the Installation page to add the bot to the Discord server where it should answer.",
-		],
 	},
 	whatsapp: {
 		id: "whatsapp",
 		label: "WhatsApp",
 		tint: "bg-identity-2-bg text-identity-2-fg",
 		connect: "whatsapp",
-		hint: "No bot token. WhatsApp agent linking is coming soon for hosted agents.",
 	},
 };
 
@@ -81,7 +59,6 @@ const LEGACY_PROVIDER_META: Record<string, ChannelProviderMeta> = {
 		id: "imessage",
 		label: "iMessage (unavailable)",
 		tint: "bg-muted text-muted-foreground",
-		hint: "iMessage native channels are no longer available in this surface.",
 		unavailable: true,
 	},
 };
@@ -91,7 +68,6 @@ function unknownProviderMeta(id: string): ChannelProviderMeta {
 		id,
 		label: id || "Channel",
 		tint: "bg-muted text-muted-foreground",
-		hint: "This channel provider is no longer available in this surface.",
 		unavailable: true,
 	};
 }

@@ -31,11 +31,7 @@ export function PairedChatRow({
 	const scope = pairedChatScopeLabel(provider, binding);
 	const privateChat = chatType === "private" || scope === "direct message";
 	const chatName = pairedChatTitle(binding, provider);
-	const discordDescription =
-		scope === "server"
-			? "This entire Discord server will be disconnected. Its channels and threads are not paired separately."
-			: "Only this Discord direct message will be disconnected. Paired servers stay active.";
-	const confirmLabel = provider === "discord" ? `Unpair ${scope}` : "Unpair chat";
+	const discordUnpairInstruction = `Run /bot_unpair in this ${scope}.`;
 
 	return (
 		<div
@@ -55,7 +51,7 @@ export function PairedChatRow({
 					...(isNormalChannelStatus(binding.status)
 						? []
 						: [<ChannelStatusBadge key="status" status={binding.status} />]),
-					...(unpair.error
+					...(provider !== "discord" && unpair.error
 						? [
 								<span key="error" className="font-medium text-destructive">
 									Couldn&apos;t unpair · Try again
@@ -65,32 +61,26 @@ export function PairedChatRow({
 				]}
 			/>
 			<div className="flex min-w-0 justify-end sm:shrink-0">
-				<ConfirmAction
-					title={`Unpair ${chatName}?`}
-					description={
-						provider === "discord"
-							? discordDescription
-							: "Only this chat will be disconnected. Other chats and the connected channel stay active."
-					}
-					confirmLabel={confirmLabel}
-					destructive
-					onConfirm={() => unpair.mutateAsync(binding.id)}
-				>
-					<Button variant="outline" size="sm" disabled={unpair.isPending}>
-						{unpair.isPending ? (
-							<Spinner className="size-3.5" />
-						) : (
-							<Link2Off className="size-3.5" />
-						)}
-						{unpair.isPending
-							? "Unpairing…"
-							: unpair.error
-								? "Retry unpair"
-								: provider === "discord"
-									? confirmLabel
-									: "Unpair"}
-					</Button>
-				</ConfirmAction>
+				{provider === "discord" ? (
+					<p className="text-right text-xs text-muted-foreground">{discordUnpairInstruction}</p>
+				) : (
+					<ConfirmAction
+						title={`Unpair ${chatName}?`}
+						description="Only this chat will be disconnected. Other chats and the connected channel stay active."
+						confirmLabel="Unpair chat"
+						destructive
+						onConfirm={() => unpair.mutateAsync(binding.id)}
+					>
+						<Button variant="outline" size="sm" disabled={unpair.isPending}>
+							{unpair.isPending ? (
+								<Spinner className="size-3.5" />
+							) : (
+								<Link2Off className="size-3.5" />
+							)}
+							{unpair.isPending ? "Unpairing…" : unpair.error ? "Retry unpair" : "Unpair"}
+						</Button>
+					</ConfirmAction>
+				)}
 			</div>
 		</div>
 	);

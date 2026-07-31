@@ -1,14 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
 	agentProviderHasSingleLinkLimit,
-	agentProviderLinkLimitDescription,
+	availableBotProvidersForAgent,
 	channelActivityAfterLink,
 	channelProviderLinkingReady,
-	discordPairingShouldSyncCommands,
 	pairCodeExpired,
 	pairingActionLabel,
 	pairingCommand,
-	prepareProviderPairing,
 } from "./channel-linking.logic";
 
 describe("hosted channel instructions and gates", () => {
@@ -21,66 +19,20 @@ describe("hosted channel instructions and gates", () => {
 		expect(pairingActionLabel("imessage")).toBe("Pair chat");
 	});
 
-	test("syncs commands only for user-owned private Discord bots", () => {
-		expect(discordPairingShouldSyncCommands("private")).toBe(true);
-		expect(discordPairingShouldSyncCommands("public")).toBe(false);
-		expect(discordPairingShouldSyncCommands(undefined)).toBe(false);
-	});
-
-	test("syncs Discord commands before creating a pair code and stops on sync failure", async () => {
-		const events: string[] = [];
-		const result = await prepareProviderPairing({
-			provider: "discord",
-			syncCommands: async () => {
-				events.push("sync commands");
-			},
-			createPairCode: async () => {
-				events.push("create pair code");
-				return "PAIRABC123";
-			},
-		});
-		expect(result).toBe("PAIRABC123");
-		expect(events).toEqual(["sync commands", "create pair code"]);
-
-		let pairCodeCreated = false;
-		await expect(
-			prepareProviderPairing({
-				provider: "discord",
-				syncCommands: async () => {
-					throw new Error("sync failed");
-				},
-				createPairCode: async () => {
-					pairCodeCreated = true;
-				},
-			}),
-		).rejects.toThrow("sync failed");
-		expect(pairCodeCreated).toBe(false);
-	});
-
-	test("lets public Discord bots use centrally managed commands without owner-only sync", async () => {
-		const events: string[] = [];
-		const result = await prepareProviderPairing({
-			provider: "discord",
-			createPairCode: async () => {
-				events.push("create pair code");
-				return "PUBLICPAIR123";
-			},
-		});
-
-		expect(result).toBe("PUBLICPAIR123");
-		expect(events).toEqual(["create pair code"]);
-	});
-
-	test("does not alter non-Discord pairing with command sync", async () => {
-		let syncCalled = false;
-		await prepareProviderPairing({
-			provider: "telegram",
-			syncCommands: async () => {
-				syncCalled = true;
-			},
-			createPairCode: async () => "telegram-code",
-		});
-		expect(syncCalled).toBe(false);
+	test("selects the first unlinked provider and exposes no form when both are linked", () => {
+		expect(availableBotProvidersForAgent("agent-1", "openclaw", new Set())).toEqual([
+			"telegram",
+			"discord",
+		]);
+		expect(availableBotProvidersForAgent("agent-1", "openclaw", new Set(["telegram"]))).toEqual([
+			"discord",
+		]);
+		expect(
+			availableBotProvidersForAgent("agent-1", "openclaw", new Set(["telegram", "discord"])),
+		).toEqual([]);
+		expect(
+			availableBotProvidersForAgent(undefined, undefined, new Set(["telegram", "discord"])),
+		).toEqual(["telegram", "discord"]);
 	});
 
 	test("expires pairing actions exactly at the server deadline", () => {
@@ -104,12 +56,6 @@ describe("hosted channel instructions and gates", () => {
 		}
 		expect(agentProviderHasSingleLinkLimit("openclaw", "whatsapp")).toBe(false);
 		expect(agentProviderHasSingleLinkLimit("codex", "telegram")).toBe(false);
-		expect(agentProviderLinkLimitDescription("telegram")).toBe(
-			"This Agent already has a Telegram bot. Unlink it before connecting another.",
-		);
-		expect(agentProviderLinkLimitDescription("discord")).toBe(
-			"This Agent already has a Discord bot. Unlink it before connecting another.",
-		);
 	});
 
 	test("only treats real account activity after linking as new channel activity", () => {

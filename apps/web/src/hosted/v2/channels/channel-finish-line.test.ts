@@ -43,7 +43,7 @@ describe("hosted-agent channel finish line", () => {
 	test("nests paired chats under their channel before channel addition", () => {
 		const connectedIndex = channelsTab.indexOf("<section data-agent-connected-channels");
 		const addIndex = channelsTab.indexOf("<section data-agent-add-channel");
-		const readyBotIndex = channelsTab.indexOf('kind="Ready to use"');
+		const readyBotIndex = channelsTab.indexOf('kind="Shared bot"');
 		const advancedIndex = channelsTab.indexOf("Use your own bot");
 		expect(connectedIndex).toBeGreaterThanOrEqual(0);
 		expect(addIndex).toBeGreaterThan(connectedIndex);

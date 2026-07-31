@@ -16,7 +16,11 @@ describe("channel mutation feedback", () => {
 	test("acknowledges bot connection before starting its request", () => {
 		const connect = source("./connect-bot-dialog.tsx");
 
-		expectFeedbackBeforeRequest(connect, "setSubmitting(true)", "await create.execute(body)");
+		expectFeedbackBeforeRequest(
+			connect,
+			"setSubmitting(true)",
+			"await create.execute(buildBody())",
+		);
 		expect(connect).toContain('{isSubmitting ? "Close" : "Cancel"}');
 		expect(connect).not.toContain("channelDialogOpenChangeAllowed");
 	});
@@ -46,12 +50,8 @@ describe("channel mutation feedback", () => {
 		expect(detail).toContain('"Pair Telegram"');
 		expect(detail).toContain("pairingActionLabel(provider)");
 		expect(pairDialog).toContain("Creating a secure Telegram link…");
-		expectFeedbackBeforeRequest(
-			discordPairDialog,
-			"setPreparing(true)",
-			"await prepareProviderPairing",
-		);
-		expect(discordPairDialog).toContain("Syncing commands and creating a pair code…");
+		expectFeedbackBeforeRequest(discordPairDialog, "setPreparing(true)", "await pair.execute");
+		expect(discordPairDialog).toContain("Preparing Discord and creating a pair code…");
 		expect(pairedChatRow).toContain("disabled={unpair.isPending}");
 		expect(pairedChatRow).toContain('"Unpairing…"');
 		expect(pairedChatRow).toContain('"Retry unpair"');

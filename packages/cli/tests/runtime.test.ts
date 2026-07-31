@@ -12492,6 +12492,30 @@ exit 64
 		expect(profileBundle).toContain("/v1/channels/telegram");
 		expect(profileBundle).toContain("/v1/channels/discord");
 
+		const discordOnly = convergeRuntimeManifest(
+			applyRuntimeChannelsToManifestLoad(
+				load,
+				{
+					channels: [channels.channels[1]],
+					source: "remote-datasource",
+					sourcePath: "https://runtime.test/v1/channels",
+					etag: testBundleEtag("discord-only-hermes-channels"),
+				},
+				paths,
+			),
+			paths,
+		);
+		expect(discordOnly.installErrors).toEqual([]);
+		const discordOnlyHermesConfig = readHermesConfigYaml(home);
+		expect(discordOnlyHermesConfig.group_sessions_per_user).toBe(false);
+		expect(discordOnlyHermesConfig.thread_sessions_per_user).toBe(false);
+		expect(discordOnlyHermesConfig).not.toHaveProperty(
+			"platforms.telegram.extra.group_sessions_per_user",
+		);
+		expect(discordOnlyHermesConfig).not.toHaveProperty(
+			"platforms.telegram.extra.thread_sessions_per_user",
+		);
+
 		const removed = convergeRuntimeManifest(
 			applyRuntimeChannelsToManifestLoad(
 				load,

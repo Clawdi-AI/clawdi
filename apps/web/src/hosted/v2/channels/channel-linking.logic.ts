@@ -1,5 +1,8 @@
 export const WHATSAPP_LINKING_READY = false;
 
+export const CONNECTABLE_BOT_PROVIDERS = ["telegram", "discord"] as const;
+export type ConnectableBotProvider = (typeof CONNECTABLE_BOT_PROVIDERS)[number];
+
 const SINGLE_LINK_PROVIDERS_BY_AGENT_TYPE: Readonly<Record<string, ReadonlySet<string>>> = {
 	hermes: new Set(["telegram", "discord"]),
 	openclaw: new Set(["telegram", "discord"]),
@@ -16,10 +19,17 @@ export function agentProviderHasSingleLinkLimit(
 	return Boolean(agentType && SINGLE_LINK_PROVIDERS_BY_AGENT_TYPE[agentType]?.has(provider));
 }
 
-export function agentProviderLinkLimitDescription(provider: string): string {
-	const label =
-		provider === "telegram" ? "Telegram" : provider === "discord" ? "Discord" : provider;
-	return `This Agent already has a ${label} bot. Unlink it before connecting another.`;
+export function availableBotProvidersForAgent(
+	agentId: string | null | undefined,
+	agentType: string | null | undefined,
+	linkedProviders: ReadonlySet<string> | null | undefined,
+): ConnectableBotProvider[] {
+	return CONNECTABLE_BOT_PROVIDERS.filter(
+		(provider) =>
+			!agentId ||
+			!agentProviderHasSingleLinkLimit(agentType, provider) ||
+			!linkedProviders?.has(provider),
+	);
 }
 
 export function pairingCommand(code: string): string {
@@ -28,25 +38,6 @@ export function pairingCommand(code: string): string {
 
 export function pairingActionLabel(provider: string): string {
 	return provider === "discord" ? "Pair Discord" : "Pair chat";
-}
-
-export function discordPairingShouldSyncCommands(
-	visibility: "private" | "public" | undefined,
-): boolean {
-	return visibility === "private";
-}
-
-export async function prepareProviderPairing<T>({
-	provider,
-	syncCommands,
-	createPairCode,
-}: {
-	provider: string;
-	syncCommands?: () => Promise<unknown>;
-	createPairCode: () => Promise<T>;
-}): Promise<T> {
-	if (provider === "discord" && syncCommands) await syncCommands();
-	return createPairCode();
 }
 
 export function pairCodeExpired(expiresAt: string, nowMs: number): boolean {

@@ -1,6 +1,6 @@
 "use client";
 
-import { RefreshCw } from "lucide-react";
+import { ExternalLink, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";
@@ -14,34 +14,26 @@ import {
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
-import {
-	pairCodeExpired,
-	prepareProviderPairing,
-} from "@/hosted/v2/channels/channel-linking.logic";
+import { pairCodeExpired } from "@/hosted/v2/channels/channel-linking.logic";
+import type { ChannelPairCode } from "@/hosted/v2/channels/channel-types";
 import { CopyInline } from "@/hosted/v2/channels/channel-ui";
-import { useCreatePairCode, useSyncCommands } from "@/hosted/v2/channels/channels-hooks";
+import { useCreatePairCode } from "@/hosted/v2/channels/channels-hooks";
 
 const DISCORD_PAIR_TTL_SECONDS = 900;
 
-type DiscordPairResult = {
-	code: string;
-	expires_at: string;
-};
+type DiscordPairResult = Pick<ChannelPairCode, "code" | "expires_at" | "discord_install_url">;
 
 export function DiscordPairDialog({
 	open,
 	onOpenChange,
 	accountId,
 	agentLinkId,
-	syncCommandsBeforePairing,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	accountId: string;
 	agentLinkId: string;
-	syncCommandsBeforePairing: boolean;
 }) {
-	const syncCommands = useSyncCommands(accountId);
 	const pair = useCreatePairCode(accountId);
 	const [result, setResult] = useState<DiscordPairResult | null>(null);
 	const [requestError, setRequestError] = useState<unknown>(null);
@@ -59,18 +51,18 @@ export function DiscordPairDialog({
 			setRequestError(null);
 			setResult(null);
 			try {
-				const data = await prepareProviderPairing({
-					provider: "discord",
-					syncCommands: syncCommandsBeforePairing ? () => syncCommands.mutateAsync() : undefined,
-					createPairCode: () =>
-						pair.execute({
-							agent_link_id: agentLinkId,
-							ttl_seconds: DISCORD_PAIR_TTL_SECONDS,
-						}),
+				if (sessionRef.current !== session) return;
+				const data = await pair.execute({
+					agent_link_id: agentLinkId,
+					ttl_seconds: DISCORD_PAIR_TTL_SECONDS,
 				});
 				if (sessionRef.current !== session) return;
 				setNowMs(Date.now());
-				setResult({ code: data.code, expires_at: data.expires_at });
+				setResult({
+					code: data.code,
+					expires_at: data.expires_at,
+					discord_install_url: data.discord_install_url,
+				});
 			} catch (error) {
 				if (sessionRef.current === session) setRequestError(error);
 			} finally {
@@ -78,7 +70,7 @@ export function DiscordPairDialog({
 				if (sessionRef.current === session) setPreparing(false);
 			}
 		},
-		[agentLinkId, pair.execute, syncCommands.mutateAsync, syncCommandsBeforePairing],
+		[agentLinkId, pair.execute],
 	);
 
 	useEffect(() => {
@@ -121,11 +113,7 @@ export function DiscordPairDialog({
 					{preparing ? (
 						<div className="flex min-h-36 flex-col items-center justify-center gap-3 text-muted-foreground">
 							<Spinner className="size-5" />
-							<p>
-								{syncCommandsBeforePairing
-									? "Syncing commands and creating a pair code…"
-									: "Creating a Discord pair code…"}
-							</p>
+							<p>Preparing Discord and creating a pair code…</p>
 						</div>
 					) : requestError ? (
 						<ApiErrorPanel
@@ -135,11 +123,34 @@ export function DiscordPairDialog({
 						/>
 					) : result ? (
 						<div className="space-y-4">
-							<p className="text-sm text-muted-foreground">
-								{syncCommandsBeforePairing ? "Commands synced. " : null}
-								In Discord, run <code>/bot_pair</code> and enter this code in the server or direct
-								message you want to connect. Pairing a server requires Manage Server.
-							</p>
+							<div data-discord-pair-path="server" className="space-y-1">
+								<p className="text-sm font-medium">Server</p>
+								<p className="text-sm text-muted-foreground">
+									Add the bot, then run <code>/bot_pair</code> in that server. You need Manage
+									Server.
+								</p>
+								{result.discord_install_url ? (
+									<Button
+										variant="outline"
+										size="sm"
+										render={
+											<a href={result.discord_install_url} target="_blank" rel="noreferrer" />
+										}
+										nativeButton={false}
+									>
+										Add to server
+										<ExternalLink className="size-3.5" />
+									</Button>
+								) : null}
+							</div>
+							<div data-discord-pair-path="dm" className="space-y-1 border-t pt-3">
+								<p className="text-sm font-medium">Direct message</p>
+								<p className="text-sm text-muted-foreground">
+									If you share a server with the bot or can already open its DM, message it and run{" "}
+									<code>/bot_pair</code>. No server permission is required.
+								</p>
+							</div>
+							<p className="text-sm text-muted-foreground">Enter this code when prompted:</p>
 							{expired ? null : <CopyInline value={result.code} label="pair code" />}
 							<p
 								role="status"

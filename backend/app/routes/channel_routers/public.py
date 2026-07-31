@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     HTTPException,
     Query,
@@ -50,6 +51,7 @@ from app.models.session import AgentEnvironment
 from app.routes.channel_routers.shared import (
     _account_response,
     _binding_response,
+    _discord_binding_guild_id,
     _message_response,
 )
 from app.schemas.channel import (
@@ -81,16 +83,23 @@ from app.schemas.channel import (
 )
 from app.services.agent_bindings import get_owned_agent_or_404
 from app.services.audit import record_control_plane_audit
-from app.services.channel_config import validate_channel_account_config_urls
+from app.services.channel_config import (
+    discord_interactions_config_error,
+    discord_public_account_is_eligible,
+    validate_channel_account_config_urls,
+    validate_required_discord_interactions_config,
+)
 from app.services.channels import (
     archive_bot_agent_link,
     archive_channel_account,
     bot_agent_link_has_strict_v2_authority,
     channel_bot_link_limit,
     channel_webhook_url,
+    configure_discord_application,
     configure_telegram_provider_webhook,
     create_pair_code,
     decrypt_agent_link_token,
+    discord_bot_install_url,
     encrypt_optional_token,
     enqueue_channel_outbound_message,
     ensure_bot_agent_link_provider_cardinality_or_409,
@@ -528,6 +537,15 @@ async def list_channel_bot_pool(
         account_ids=[account.id for account in accounts],
     )
     for account in accounts:
+        if (
+            account.provider == CHANNEL_PROVIDER_DISCORD
+            and account.visibility == CHANNEL_VISIBILITY_PUBLIC
+            and not discord_public_account_is_eligible(account)
+        ):
+            # Historical/incomplete shared Discord accounts remain manageable
+            # through admin APIs but are never offered as usable bot-pool
+            # infrastructure.
+            continue
         providers.setdefault(account.provider, []).append(
             _bot_pool_item(
                 account,
@@ -563,6 +581,13 @@ async def create_channel(
     if body.provider not in CHANNEL_PROVIDERS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported provider")
     await validate_channel_account_config_urls(provider=body.provider, config=body.config)
+    if body.provider == CHANNEL_PROVIDER_DISCORD:
+        if body.provider_token is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Discord channels require a bot token.",
+            )
+        validate_required_discord_interactions_config(body.config)
     initial_agent_id = (
         None
         if "agent_id" in body.model_fields_set and body.agent_id is None
@@ -786,6 +811,25 @@ async def create_channel_pair_code(
     db: AsyncSession = Depends(get_session),
 ) -> ChannelPairCodeResponse:
     account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    if account.provider == CHANNEL_PROVIDER_DISCORD:
+        config_error = discord_interactions_config_error(account.config)
+        if config_error is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Discord pairing is unavailable: {config_error}",
+            )
+        config = dict(account.config) if isinstance(account.config, dict) else {}
+        if config.get("discord_interactions_configured") is not True:
+            await configure_discord_application(account)
+            # Reserved control-plane commands are true account-global
+            # commands so they remain available before any Guild or DM is
+            # paired. Agent runtime commands are virtualized per Link.
+            await sync_channel_commands(
+                account=account,
+                use_configured_discord_guild=False,
+            )
+            config["discord_interactions_configured"] = True
+            account.config = config
     link, agent_token = await _resolve_pair_code_link(db, auth=auth, account=account, body=body)
     created = await create_pair_code(
         db,
@@ -833,6 +877,7 @@ async def create_channel_pair_code(
         bot_username=bot_username,
         deep_link=deep_link,
         qr_payload=deep_link,
+        discord_install_url=discord_bot_install_url(account),
     )
 
 
@@ -930,6 +975,7 @@ async def rotate_channel_agent_link_token(
 async def delete_channel_agent_link(
     account_id: UUID,
     link_id: UUID,
+    background_tasks: BackgroundTasks,
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> None:
@@ -958,6 +1004,15 @@ async def delete_channel_agent_link(
             )
         ).scalars()
     )
+    discord_guild_ids = (
+        {
+            guild_id
+            for binding in bindings
+            if (guild_id := _discord_binding_guild_id(binding)) is not None
+        }
+        if account.provider == CHANNEL_PROVIDER_DISCORD
+        else set()
+    )
     for binding in sorted(bindings, key=lambda item: item.external_chat_id):
         await lock_channel_binding_identity(
             db,
@@ -980,7 +1035,18 @@ async def delete_channel_agent_link(
         details={"provider": account.provider, "agent_id": str(link.agent_id)},
     )
     await db.commit()
-    if account.provider == CHANNEL_PROVIDER_TELEGRAM and bindings:
+    if discord_guild_ids:
+        from app.routes.channel_routers.discord import (
+            _cleanup_discord_guild_commands_after_authority_revoked,
+        )
+
+        background_tasks.add_task(
+            _cleanup_discord_guild_commands_after_authority_revoked,
+            account_id=account.id,
+            bot_agent_link_id=link.id,
+            guild_ids=discord_guild_ids,
+        )
+    elif account.provider == CHANNEL_PROVIDER_TELEGRAM and bindings:
         from app.routes.channel_routers.telegram import reconcile_telegram_link_unlink
 
         cleaned = await reconcile_telegram_link_unlink(
@@ -1056,6 +1122,14 @@ async def delete_channel_binding(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="binding not found")
     binding, link = row
+    if account.provider == CHANNEL_PROVIDER_DISCORD:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Run /bot_unpair in the paired Discord server or direct message. "
+                "Discord pairing authority cannot be verified from this API."
+            ),
+        )
     await lock_channel_binding_identity(
         db,
         account_id=account.id,

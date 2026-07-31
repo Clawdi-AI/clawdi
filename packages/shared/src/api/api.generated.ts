@@ -4343,6 +4343,8 @@ export interface components {
             deep_link?: string | null;
             /** Qr Payload */
             qr_payload?: string | null;
+            /** Discord Install Url */
+            discord_install_url?: string | null;
         };
         /** ChannelRuntimeAccountResponse */
         ChannelRuntimeAccountResponse: {

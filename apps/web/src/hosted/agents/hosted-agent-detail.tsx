@@ -231,9 +231,9 @@ import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.lo
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
 import {
 	agentProviderHasSingleLinkLimit,
+	availableBotProvidersForAgent,
 	channelActivityAfterLink,
 	channelProviderLinkingReady,
-	discordPairingShouldSyncCommands,
 	pairingActionLabel,
 } from "@/hosted/v2/channels/channel-linking.logic";
 import {
@@ -2334,6 +2334,10 @@ function ChannelsTab({
 		agentLinkId: string;
 		channelName: string;
 	} | null>(null);
+	const [discordPair, setDiscordPair] = useState<{
+		accountId: string;
+		agentLinkId: string;
+	} | null>(null);
 	const [connectOpen, setConnectOpen] = useState(false);
 	const [linkingAccountId, setLinkingAccountId] = useState<string | null>(null);
 	const linkInFlightRef = useRef(false);
@@ -2608,7 +2612,7 @@ function ChannelsTab({
 							<AddChannelRow
 								key={bot.id}
 								channel={bot}
-								kind="Ready to use"
+								kind="Shared bot"
 								linking={linkingAccountId === bot.id}
 								disabled={linkingAccountId !== null}
 								onLink={() => void submitLink(bot.id)}
@@ -2617,52 +2621,54 @@ function ChannelsTab({
 					</div>
 				) : null}
 
-				<details className="group border-t pt-4">
-					<summary className="cursor-pointer text-sm font-medium">Use your own bot</summary>
-					<div className="mt-3 space-y-3">
-						{channels.isLoading ? (
-							<Skeleton className="h-16 w-full rounded-lg" />
-						) : channels.error ? (
-							<ApiErrorPanel
-								error={channels.error}
-								onRetry={() => channels.refetch()}
-								title="Couldn't load your bots"
-							/>
-						) : ownedChannels.length > 0 ? (
-							<div className={AGENT_CHANNEL_LIST_CLASS}>
-								{ownedChannels.map((channel) => (
-									<AddChannelRow
-										key={channel.id}
-										channel={channel}
-										kind="Your bot"
-										linking={linkingAccountId === channel.id}
-										disabled={linkingAccountId !== null}
-										onLink={() => void submitLink(channel.id)}
-										secondary
-									/>
-								))}
-							</div>
-						) : (
-							<Button size="sm" onClick={() => setConnectOpen(true)}>
-								<Plus className="size-3.5" />
-								Connect a bot
-							</Button>
-						)}
-						{ownedChannels.length > 0 ? (
-							<div className="flex flex-wrap gap-2">
-								<Button
-									type="button"
-									variant="outline"
-									size="sm"
-									onClick={() => setConnectOpen(true)}
-								>
+				{availableBotProvidersForAgent(environmentId, agentType, linkedProviders).length > 0 ? (
+					<details className="group border-t pt-4">
+						<summary className="cursor-pointer text-sm font-medium">Use your own bot</summary>
+						<div className="mt-3 space-y-3">
+							{channels.isLoading ? (
+								<Skeleton className="h-16 w-full rounded-lg" />
+							) : channels.error ? (
+								<ApiErrorPanel
+									error={channels.error}
+									onRetry={() => channels.refetch()}
+									title="Couldn't load your bots"
+								/>
+							) : ownedChannels.length > 0 ? (
+								<div className={AGENT_CHANNEL_LIST_CLASS}>
+									{ownedChannels.map((channel) => (
+										<AddChannelRow
+											key={channel.id}
+											channel={channel}
+											kind={undefined}
+											linking={linkingAccountId === channel.id}
+											disabled={linkingAccountId !== null}
+											onLink={() => void submitLink(channel.id)}
+											secondary
+										/>
+									))}
+								</div>
+							) : (
+								<Button size="sm" onClick={() => setConnectOpen(true)}>
 									<Plus className="size-3.5" />
 									Connect a bot
 								</Button>
-							</div>
-						) : null}
-					</div>
-				</details>
+							)}
+							{ownedChannels.length > 0 ? (
+								<div className="flex flex-wrap gap-2">
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										onClick={() => setConnectOpen(true)}
+									>
+										<Plus className="size-3.5" />
+										Connect a bot
+									</Button>
+								</div>
+							) : null}
+						</div>
+					</details>
+				) : null}
 			</section>
 
 			<ConnectBotDialog
@@ -2680,12 +2686,9 @@ function ChannelsTab({
 						});
 						return;
 					}
-					toast.success("Channel connected", {
-						description:
-							bot.provider === "discord"
-								? "Use Pair Discord from the connected Discord Bot row."
-								: "Pair a chat from the connected channel row.",
-					});
+					if (bot.provider === "discord") {
+						setDiscordPair({ accountId: bot.id, agentLinkId: bot.agentLinkId });
+					}
 				}}
 			/>
 			{telegramPair ? (
@@ -2698,6 +2701,16 @@ function ChannelsTab({
 					agentLinkId={telegramPair.agentLinkId}
 					agentName={agentName}
 					channelName={telegramPair.channelName}
+				/>
+			) : null}
+			{discordPair ? (
+				<DiscordPairDialog
+					open
+					onOpenChange={(open) => {
+						if (!open) setDiscordPair(null);
+					}}
+					accountId={discordPair.accountId}
+					agentLinkId={discordPair.agentLinkId}
 				/>
 			) : null}
 		</div>
@@ -2794,7 +2807,7 @@ function AddChannelRow({
 	secondary = false,
 }: {
 	channel: LinkableChannel;
-	kind: string;
+	kind?: string;
 	linking: boolean;
 	disabled: boolean;
 	onLink: () => void;
@@ -2805,7 +2818,7 @@ function AddChannelRow({
 			<ProviderChip provider={channel.provider} size="sm" />
 			<div className="min-w-0">
 				<p className="truncate text-sm font-medium">{channel.name}</p>
-				<p className="truncate text-xs text-muted-foreground">{kind}</p>
+				{kind ? <p className="truncate text-xs text-muted-foreground">{kind}</p> : null}
 			</div>
 			<div className={AGENT_CHANNEL_ACTIONS_CLASS}>
 				<Button
@@ -2861,7 +2874,6 @@ function LinkedChannelRow({
 	const account = link.account ?? fallbackAccount ?? null;
 	const provider = account?.provider ?? "";
 	const isDiscord = provider === "discord";
-	const syncDiscordCommands = discordPairingShouldSyncCommands(account?.visibility);
 	const name = account?.name ?? "Unnamed channel";
 	const hasActivity = channelActivityAfterLink(health?.last_message_at, link.created_at);
 	useEffect(() => {
@@ -2983,7 +2995,6 @@ function LinkedChannelRow({
 					onOpenChange={setDiscordPairOpen}
 					accountId={link.account_id}
 					agentLinkId={link.id}
-					syncCommandsBeforePairing={syncDiscordCommands}
 				/>
 			) : null}
 		</div>

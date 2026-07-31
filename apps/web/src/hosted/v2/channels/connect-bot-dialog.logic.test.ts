@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
 	discordApplicationIdError,
 	discordBotTokenError,
-	discordGuildIdError,
 	discordPublicKeyError,
 } from "./connect-bot-dialog.logic";
 
@@ -35,12 +34,6 @@ describe("Discord snowflake fields", () => {
 		expect(discordApplicationIdError("99999999999999999999")).toBe(
 			"Enter a valid numeric application ID.",
 		);
-	});
-
-	test("allows an empty optional server ID but validates supplied values", () => {
-		expect(discordGuildIdError("   ")).toBeNull();
-		expect(discordGuildIdError("1234567890123456789")).toBeNull();
-		expect(discordGuildIdError("1234567890123456")).toBe("Enter a valid numeric server ID.");
 	});
 });
 

@@ -1,10 +1,9 @@
 "use client";
 
 import { Link } from "@tanstack/react-router";
-import { ExternalLink } from "lucide-react";
+import { Check, ExternalLink } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { EntityChoiceCard } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,31 +17,19 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-	agentProviderHasSingleLinkLimit,
-	agentProviderLinkLimitDescription,
-	WHATSAPP_LINKING_READY,
+	availableBotProvidersForAgent,
+	CONNECTABLE_BOT_PROVIDERS,
+	type ConnectableBotProvider,
 } from "@/hosted/v2/channels/channel-linking.logic";
-import {
-	CHANNEL_PROVIDERS,
-	type ChannelProviderId,
-	PROVIDER_META,
-} from "@/hosted/v2/channels/channel-providers";
-import type { ChannelCreate } from "@/hosted/v2/channels/channel-types";
-import { ProviderChip } from "@/hosted/v2/channels/channel-ui";
+import { PROVIDER_META } from "@/hosted/v2/channels/channel-providers";
+import type { ChannelCreate, ChannelCreated } from "@/hosted/v2/channels/channel-types";
 import { useCreateChannel } from "@/hosted/v2/channels/channels-hooks";
 import {
 	discordApplicationIdError,
 	discordBotTokenError,
-	discordGuildIdError,
 	discordPublicKeyError,
 } from "@/hosted/v2/channels/connect-bot-dialog.logic";
 
-/**
- * Connect a channel. Each provider takes its OWN real inputs (grounded in
- * cloud-api): Telegram = bot token; Discord = bot token + application_id +
- * public_key (+ guild_id); WhatsApp = no token (agent/device linking is
- * gated during the beta). Runtime credentials reconcile automatically.
- */
 export function ConnectBotDialog({
 	open,
 	onOpenChange,
@@ -64,118 +51,108 @@ export function ConnectBotDialog({
 	}) => void;
 }) {
 	const create = useCreateChannel();
-	const [provider, setProvider] = useState<ChannelProviderId>("telegram");
+	const [provider, setProvider] = useState<ConnectableBotProvider>("telegram");
 	const [name, setName] = useState("");
-	const [token, setToken] = useState(""); // Telegram / Discord bot token
-	// Discord
+	const [token, setToken] = useState("");
 	const [applicationId, setApplicationId] = useState("");
 	const [publicKey, setPublicKey] = useState("");
-	const [guildId, setGuildId] = useState("");
-	const [created, setCreated] = useState<{
-		id: string;
-		name: string;
-		provider: string;
-	} | null>(null);
+	const [created, setCreated] = useState<Pick<
+		ChannelCreated,
+		"id" | "name" | "provider" | "agent_link_id" | "agent_id"
+	> | null>(null);
 	const [submitting, setSubmitting] = useState(false);
 	const submitLocked = useRef(false);
 	const openRef = useRef(open);
 	const dialogSessionRef = useRef(0);
 	openRef.current = open;
 
+	const availableProviders = availableBotProvidersForAgent(agentId, agentType, linkedProviders);
+	const unavailableProviders = CONNECTABLE_BOT_PROVIDERS.filter(
+		(item) => !availableProviders.includes(item),
+	);
+
 	useEffect(() => {
 		if (!open) return;
-		setProvider("telegram");
+		setProvider(availableProviders[0] ?? "telegram");
 		setName("");
 		setToken("");
 		setApplicationId("");
 		setPublicKey("");
-		setGuildId("");
 		setCreated(null);
-	}, [open]);
+	}, [open, availableProviders[0]]);
 
 	const meta = PROVIDER_META[provider];
-	const providerAlreadyLinked = Boolean(
-		agentId &&
-			agentProviderHasSingleLinkLimit(agentType, provider) &&
-			linkedProviders?.has(provider),
-	);
-	const discordSelected = meta.connect === "discord";
+	const providerAlreadyLinked = !availableProviders.includes(provider);
+	const discordSelected = provider === "discord";
 	const tokenError = discordSelected ? discordBotTokenError(token) : null;
 	const applicationIdError = discordSelected ? discordApplicationIdError(applicationId) : null;
 	const publicKeyError = discordSelected ? discordPublicKeyError(publicKey) : null;
-	const guildIdError = discordSelected ? discordGuildIdError(guildId) : null;
 	const isSubmitting = submitting || create.isPending;
 
-	function changeProvider(next: ChannelProviderId) {
-		if (next === "whatsapp" && !WHATSAPP_LINKING_READY) return;
+	function changeProvider(next: ConnectableBotProvider) {
+		if (!availableProviders.includes(next)) return;
 		setProvider(next);
+		setName("");
 		setToken("");
 		setApplicationId("");
 		setPublicKey("");
-		setGuildId("");
 	}
 
 	const canSubmit =
 		!providerAlreadyLinked &&
 		name.trim().length > 0 &&
-		(meta.connect === "whatsapp"
-			? WHATSAPP_LINKING_READY
-			: meta.connect === "token"
-				? token.trim().length > 0
-				: meta.connect === "discord"
-					? token.trim().length > 0 &&
-						applicationId.trim().length > 0 &&
-						!tokenError &&
-						!applicationIdError &&
-						!publicKeyError &&
-						!guildIdError
-					: false);
+		token.trim().length > 0 &&
+		(!discordSelected ||
+			(applicationId.trim().length > 0 &&
+				publicKey.trim().length > 0 &&
+				!tokenError &&
+				!applicationIdError &&
+				!publicKeyError));
 
-	function buildBody(): ChannelCreate | null {
-		const trimmedName = name.trim();
-		const linkTarget = { agent_id: agentId ?? null };
-		if (meta.connect === "discord") {
-			const config: Record<string, unknown> = { application_id: applicationId.trim() };
-			if (publicKey.trim()) config.public_key = publicKey.trim();
-			if (guildId.trim()) config.guild_id = guildId.trim();
-			return { provider, name: trimmedName, provider_token: token.trim(), config, ...linkTarget };
-		}
-		if (meta.connect === "token") {
-			return { provider, name: trimmedName, provider_token: token.trim(), ...linkTarget };
-		}
-		if (!WHATSAPP_LINKING_READY) return null;
-		return { provider, name: trimmedName, ...linkTarget };
+	function buildBody(): ChannelCreate {
+		const base = {
+			provider,
+			name: name.trim(),
+			provider_token: token.trim(),
+			agent_id: agentId ?? null,
+		};
+		if (!discordSelected) return base;
+		return {
+			...base,
+			config: {
+				application_id: applicationId.trim(),
+				public_key: publicKey.trim(),
+			},
+		};
 	}
 
 	async function submit() {
 		if (!canSubmit || submitLocked.current) return;
-		const body = buildBody();
-		if (!body) return;
 		submitLocked.current = true;
 		setSubmitting(true);
 		const dialogSession = dialogSessionRef.current;
 		try {
-			const data = await create.execute(body);
+			const data = await create.execute(buildBody());
 			setToken("");
 			if (openRef.current && dialogSessionRef.current === dialogSession) {
-				if (agentId && data.agentLinkId && onAgentConnected) {
+				if (agentId && data.agent_link_id && onAgentConnected) {
 					handleOpenChange(false);
 					onAgentConnected({
 						id: data.id,
 						name: data.name,
 						provider: data.provider,
-						agentLinkId: data.agentLinkId,
+						agentLinkId: data.agent_link_id,
 					});
 					return;
 				}
-				setCreated({ id: data.id, name: data.name, provider: data.provider });
+				setCreated(data);
 			} else {
 				toast.success("Channel connected", {
 					description: `${data.name} is ready on the Channels page.`,
 				});
 			}
 		} catch {
-			// useCreateChannel already surfaces the API error; retain the token for retry.
+			// useCreateChannel surfaces the API error; retain inputs for retry.
 		} finally {
 			submitLocked.current = false;
 			setSubmitting(false);
@@ -184,6 +161,14 @@ export function ConnectBotDialog({
 
 	function handleOpenChange(nextOpen: boolean) {
 		if (!nextOpen) {
+			if (created?.agent_link_id && onAgentConnected) {
+				onAgentConnected({
+					id: created.id,
+					name: created.name,
+					provider: created.provider,
+					agentLinkId: created.agent_link_id,
+				});
+			}
 			dialogSessionRef.current += 1;
 			setToken("");
 			setCreated(null);
@@ -191,268 +176,189 @@ export function ConnectBotDialog({
 		onOpenChange(nextOpen);
 	}
 
-	const discordVerificationPending = created?.provider === "discord";
-
 	return (
 		<Dialog open={open} onOpenChange={handleOpenChange}>
-			<DialogContent data-hosted="true" data-v2="true" className="sm:max-w-md">
+			<DialogContent
+				data-hosted="true"
+				data-v2="true"
+				className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"
+			>
 				{created ? (
 					<>
 						<DialogHeader>
-							<DialogTitle>
-								{discordVerificationPending
-									? "Discord setup saved — verification pending"
-									: "Channel connected"}
-							</DialogTitle>
+							<DialogTitle>Bot connected</DialogTitle>
 							<DialogDescription>
-								{discordVerificationPending ? (
-									<>
-										Credentials for <span className="font-medium">{created.name}</span> were saved,
-										but Clawdi does not verify them with Discord during setup.
-									</>
-								) : (
-									<>
-										<span className="font-medium">{created.name}</span> is connected. Clawdi handles
-										message delivery automatically.
-									</>
-								)}
+								<span className="font-medium">{created.name}</span> is ready to use.
 							</DialogDescription>
 						</DialogHeader>
-						{discordVerificationPending ? (
-							<div
-								role="status"
-								className="rounded-lg border border-warning/30 bg-warning-muted p-3 text-sm text-warning-muted-foreground"
-							>
-								<p className="font-medium">Verification pending</p>
-								<p className="mt-1 text-xs">
-									Send a test message to the bot, then review channel activity and health before
-									relying on it.
-								</p>
-							</div>
-						) : null}
 						<DialogFooter>
 							<Button variant="outline" onClick={() => handleOpenChange(false)}>
-								Close
+								Done
 							</Button>
 							<Button
 								render={<Link to="/channels/$id" params={{ id: created.id }} />}
 								nativeButton={false}
 							>
-								{discordVerificationPending ? "Open channel to verify" : "Open channel"}
+								View bot
 							</Button>
 						</DialogFooter>
 					</>
 				) : (
 					<>
 						<DialogHeader>
-							<DialogTitle>Connect a channel</DialogTitle>
-							<DialogDescription>
-								Each provider needs its own setup — pick one to see what it requires.
-							</DialogDescription>
+							<DialogTitle>Connect a bot</DialogTitle>
+							<DialogDescription>Use your own bot.</DialogDescription>
 						</DialogHeader>
 
-						<div className="flex flex-col gap-4">
-							<div className="flex flex-col gap-1.5">
-								<Label>Provider</Label>
-								<div className="grid grid-cols-2 gap-2">
-									{CHANNEL_PROVIDERS.map((p) => {
-										const comingSoon = p === "whatsapp" && !WHATSAPP_LINKING_READY;
-										const alreadyLinked = Boolean(
-											agentId &&
-												agentProviderHasSingleLinkLimit(agentType, p) &&
-												linkedProviders?.has(p),
-										);
-										return (
-											<EntityChoiceCard
-												key={p}
-												selected={provider === p}
-												onClick={() => changeProvider(p)}
-												disabled={comingSoon || alreadyLinked}
-												badge={
-													alreadyLinked ? (
-														<span className="text-xs text-muted-foreground">Already linked</span>
-													) : comingSoon ? (
-														<span className="text-xs text-muted-foreground">Coming soon</span>
-													) : undefined
-												}
-												icon={
+						{availableProviders.length === 0 ? (
+							<>
+								<p role="status" className="py-2 text-sm text-muted-foreground">
+									This Agent already has a Telegram and Discord bot.
+								</p>
+								<DialogFooter>
+									<Button onClick={() => handleOpenChange(false)}>Done</Button>
+								</DialogFooter>
+							</>
+						) : (
+							<>
+								<div className="flex flex-col gap-3">
+									<fieldset className="grid grid-cols-2 gap-2 border-0 p-0" aria-label="Provider">
+										{CONNECTABLE_BOT_PROVIDERS.map((item) => {
+											const alreadyLinked = !availableProviders.includes(item);
+											return (
+												<Button
+													key={item}
+													type="button"
+													variant={provider === item ? "secondary" : "outline"}
+													className="h-12 min-w-0 justify-start gap-2 px-2.5"
+													disabled={alreadyLinked}
+													aria-pressed={provider === item}
+													onClick={() => changeProvider(item)}
+												>
 													<EntityIcon
 														kind="channel"
-														id={p}
-														label={PROVIDER_META[p].label}
+														id={item}
+														label={PROVIDER_META[item].label}
 														size="sm"
 													/>
-												}
-												title={PROVIDER_META[p].label}
-												description={
-													alreadyLinked
-														? agentProviderLinkLimitDescription(p)
-														: comingSoon
-															? "Hosted agent linking is not ready yet."
-															: undefined
-												}
-											/>
-										);
-									})}
-								</div>
-							</div>
-
-							<div className="flex items-start gap-3 rounded-lg border bg-muted/30 p-3">
-								<ProviderChip provider={provider} />
-								<div className="space-y-2 text-xs text-muted-foreground">
-									<p>{meta.hint}</p>
-									{meta.setupSteps ? (
-										<ol className="list-decimal space-y-1 pl-4">
-											{meta.setupSteps.map((step) => (
-												<li key={step}>{step}</li>
-											))}
-										</ol>
+													<span className="min-w-0 text-left leading-tight">
+														<span className="block">{PROVIDER_META[item].label}</span>
+														{alreadyLinked ? (
+															<span className="flex items-center gap-1 whitespace-nowrap text-[10px] font-normal text-muted-foreground">
+																<Check className="size-3" /> Already linked
+															</span>
+														) : null}
+													</span>
+												</Button>
+											);
+										})}
+									</fieldset>
+									{unavailableProviders.length === 1 ? (
+										<p className="whitespace-normal text-xs text-muted-foreground">
+											Unlink {PROVIDER_META[unavailableProviders[0]].label} from this Agent first.
+										</p>
 									) : null}
-									{meta.setupUrl && meta.setupLinkLabel ? (
+									<p className="text-xs text-muted-foreground">
+										{provider === "telegram" ? "Need a bot token? " : "Need app credentials? "}
 										<a
 											href={meta.setupUrl}
 											target="_blank"
 											rel="noreferrer"
 											className="inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-4"
 										>
-											{meta.setupLinkLabel}
+											{provider === "telegram"
+												? "Create a bot with @BotFather"
+												: "Open Discord Developer Portal"}
 											<ExternalLink className="size-3" />
 										</a>
-									) : null}
-								</div>
-							</div>
+									</p>
 
-							<div className="flex flex-col gap-1.5">
-								<Label htmlFor="connect-name">Name</Label>
-								<Input
-									id="connect-name"
-									value={name}
-									onChange={(e) => setName(e.target.value)}
-									placeholder="Support Bot"
-									autoComplete="off"
-								/>
-								<p className="text-xs text-muted-foreground">
-									This is the name shown in Clawdi; it does not rename the bot.
-								</p>
-							</div>
-
-							{/* Telegram / Discord bot token. */}
-							{meta.connect !== "whatsapp" ? (
-								<div className="flex flex-col gap-1.5">
-									<Label htmlFor="connect-token">{meta.tokenLabel}</Label>
-									<Input
-										id="connect-token"
-										type="password"
-										value={token}
-										onChange={(e) => setToken(e.target.value)}
-										placeholder={meta.tokenPlaceholder}
-										autoComplete="off"
-										spellCheck={false}
-										required
-										aria-invalid={Boolean(tokenError)}
-										aria-describedby={tokenError ? "connect-token-err" : undefined}
-									/>
-									{tokenError ? (
-										<p id="connect-token-err" className="text-xs text-destructive">
-											{tokenError}
-										</p>
-									) : null}
-								</div>
-							) : null}
-
-							{/* Discord: application_id (+ public_key, guild_id). */}
-							{meta.connect === "discord" ? (
-								<>
 									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="connect-app-id">Application ID</Label>
+										<Label htmlFor="connect-name">Name</Label>
 										<Input
-											id="connect-app-id"
-											value={applicationId}
-											onChange={(e) => setApplicationId(e.target.value)}
-											placeholder="Application (client) ID"
+											id="connect-name"
+											value={name}
+											onChange={(event) => setName(event.target.value)}
+											placeholder="Support Bot"
+											autoComplete="off"
+										/>
+									</div>
+
+									<div className="flex flex-col gap-1.5">
+										<Label htmlFor="connect-token">Bot token</Label>
+										<Input
+											id="connect-token"
+											type="password"
+											value={token}
+											onChange={(event) => setToken(event.target.value)}
+											placeholder={meta.tokenPlaceholder}
 											autoComplete="off"
 											spellCheck={false}
 											required
-											aria-invalid={Boolean(applicationIdError)}
-											aria-describedby={
-												applicationIdError ? "connect-app-id-err" : "connect-app-id-help"
-											}
+											aria-invalid={Boolean(tokenError)}
+											aria-describedby={tokenError ? "connect-token-error" : undefined}
 										/>
-										{applicationIdError ? (
-											<p id="connect-app-id-err" className="text-xs text-destructive">
-												{applicationIdError}
+										{tokenError ? (
+											<p id="connect-token-error" className="text-xs text-destructive">
+												{tokenError}
 											</p>
-										) : (
-											<p id="connect-app-id-help" className="text-xs text-muted-foreground">
-												Find this on General Information in the Discord Developer Portal.
-											</p>
-										)}
+										) : null}
 									</div>
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="connect-public-key">
-											Public key <span className="text-muted-foreground">· recommended</span>
-										</Label>
-										<Input
-											id="connect-public-key"
-											value={publicKey}
-											onChange={(e) => setPublicKey(e.target.value)}
-											placeholder="Ed25519 public key (hex)"
-											autoComplete="off"
-											spellCheck={false}
-											aria-invalid={Boolean(publicKeyError)}
-											aria-describedby={
-												publicKeyError ? "connect-public-key-err" : "connect-public-key-help"
-											}
-										/>
-										{publicKeyError ? (
-											<p id="connect-public-key-err" className="text-xs text-destructive">
-												{publicKeyError}
-											</p>
-										) : (
-											<p id="connect-public-key-help" className="text-xs text-muted-foreground">
-												Find this on General Information. Leave it blank if you do not use Discord
-												interactions.
-											</p>
-										)}
-									</div>
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="connect-guild-id">
-											Server ID <span className="text-muted-foreground">· optional</span>
-										</Label>
-										<Input
-											id="connect-guild-id"
-											value={guildId}
-											onChange={(e) => setGuildId(e.target.value)}
-											placeholder="Discord server ID"
-											autoComplete="off"
-											spellCheck={false}
-											aria-invalid={Boolean(guildIdError)}
-											aria-describedby={
-												guildIdError ? "connect-guild-id-err" : "connect-server-id-help"
-											}
-										/>
-										{guildIdError ? (
-											<p id="connect-guild-id-err" className="text-xs text-destructive">
-												{guildIdError}
-											</p>
-										) : (
-											<p id="connect-server-id-help" className="text-xs text-muted-foreground">
-												Leave blank unless commands should be limited to one Discord server.
-											</p>
-										)}
-									</div>
-								</>
-							) : null}
-						</div>
 
-						<DialogFooter>
-							<Button variant="outline" onClick={() => handleOpenChange(false)}>
-								{isSubmitting ? "Close" : "Cancel"}
-							</Button>
-							<Button onClick={() => void submit()} disabled={!canSubmit || isSubmitting}>
-								{isSubmitting ? "Connecting…" : "Connect"}
-							</Button>
-						</DialogFooter>
+									{discordSelected ? (
+										<>
+											<div className="flex flex-col gap-1.5">
+												<Label htmlFor="connect-app-id">Application ID</Label>
+												<Input
+													id="connect-app-id"
+													value={applicationId}
+													onChange={(event) => setApplicationId(event.target.value)}
+													placeholder="Application ID"
+													autoComplete="off"
+													spellCheck={false}
+													required
+													aria-invalid={Boolean(applicationIdError)}
+													aria-describedby={applicationIdError ? "connect-app-id-error" : undefined}
+												/>
+												{applicationIdError ? (
+													<p id="connect-app-id-error" className="text-xs text-destructive">
+														{applicationIdError}
+													</p>
+												) : null}
+											</div>
+											<div className="flex flex-col gap-1.5">
+												<Label htmlFor="connect-public-key">Public key</Label>
+												<Input
+													id="connect-public-key"
+													value={publicKey}
+													onChange={(event) => setPublicKey(event.target.value)}
+													placeholder="64-character hex public key"
+													autoComplete="off"
+													spellCheck={false}
+													required
+													aria-invalid={Boolean(publicKeyError)}
+													aria-describedby={publicKeyError ? "connect-public-key-error" : undefined}
+												/>
+												{publicKeyError ? (
+													<p id="connect-public-key-error" className="text-xs text-destructive">
+														{publicKeyError}
+													</p>
+												) : null}
+											</div>
+										</>
+									) : null}
+								</div>
+
+								<DialogFooter>
+									<Button variant="outline" onClick={() => handleOpenChange(false)}>
+										{isSubmitting ? "Close" : "Cancel"}
+									</Button>
+									<Button onClick={() => void submit()} disabled={!canSubmit || isSubmitting}>
+										{isSubmitting ? "Connecting…" : "Connect"}
+									</Button>
+								</DialogFooter>
+							</>
+						)}
 					</>
 				)}
 			</DialogContent>
