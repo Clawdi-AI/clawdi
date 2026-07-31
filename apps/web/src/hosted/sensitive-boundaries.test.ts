@@ -217,7 +217,7 @@ describe("structural secret boundaries without the denylist", () => {
 		).toHaveLength(5);
 		expect(
 			source("hosted/v2/ai-providers/ai-providers-hooks.ts").split("return useSensitiveAction"),
-		).toHaveLength(4);
+		).toHaveLength(5);
 		expect(
 			source("hosted/billing/sensitive-actions.ts").split("return useSensitiveAction"),
 		).toHaveLength(7);

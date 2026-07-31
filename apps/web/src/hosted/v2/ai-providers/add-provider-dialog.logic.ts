@@ -13,25 +13,11 @@ import {
 } from "@/hosted/v2/ai-providers/provider-types";
 import type {
 	AiProvider,
-	AiProviderAuth,
-	AiProviderPatch,
 	AiProviderUpsert,
 	AiProviderUpsertAuth,
 } from "@/hosted/v2/ai-providers/types";
 
-export type AuthMethod = "api_key" | "oauth" | "none";
-
-export type ApiKeyKeepKind = "managed" | "env" | "vault" | "legacy_secret_ref";
-
-export interface ApiKeyEditState {
-	canKeepManagedApiKey: boolean;
-	canKeepLegacySecretRef: boolean;
-	canKeepExternalApiKeyRef: boolean;
-	canKeepExistingKey: boolean;
-	keyRequired: boolean;
-	labelSuffix: string;
-	helpText: string;
-}
+export type AuthMethod = "api_key" | "oauth";
 
 export interface ProviderFormIdentity {
 	providerId: string;
@@ -46,86 +32,9 @@ export interface DerivedProviderFields {
 	suggestedPrimaryModel?: string;
 }
 
-export function isAuthMethod(value: string | null): value is AuthMethod {
-	return value === "api_key" || value === "oauth" || value === "none";
-}
-
 export function authFor(method: AuthMethod): AiProviderUpsertAuth {
 	if (method === "api_key") return { type: "api_key", source: "managed" };
-	if (method === "oauth") return { type: "agent_profile", tool: "codex", profile: "default" };
-	return { type: "none" };
-}
-
-export function apiKeyEditState(
-	authMethod: AuthMethod,
-	editingAuth: AiProviderAuth | null | undefined,
-	credentialUsable = true,
-): ApiKeyEditState {
-	const keepable = credentialUsable ? keepableExistingApiKeyAuth(editingAuth) : null;
-	const keepKind = authMethod === "api_key" ? keepable?.kind : undefined;
-	const canKeepExistingKey = keepKind !== undefined;
-	return {
-		canKeepManagedApiKey: keepKind === "managed",
-		canKeepLegacySecretRef: keepKind === "legacy_secret_ref",
-		canKeepExternalApiKeyRef: keepKind === "env" || keepKind === "vault",
-		canKeepExistingKey,
-		keyRequired: authMethod === "api_key" && !canKeepExistingKey,
-		labelSuffix: apiKeyLabelSuffix(keepKind),
-		helpText: apiKeyHelpText(keepKind),
-	};
-}
-
-export function providerAuthForSubmit({
-	authMethod,
-	editingAuth,
-	hasNewManagedKey,
-}: {
-	authMethod: AuthMethod;
-	editingAuth: AiProviderAuth | null | undefined;
-	hasNewManagedKey: boolean;
-}): AiProviderUpsertAuth {
-	if (authMethod !== "api_key") return authFor(authMethod);
-	if (!hasNewManagedKey) {
-		const keepable = keepableExistingApiKeyAuth(editingAuth);
-		if (keepable) return keepable.auth;
-	}
-	return authFor("api_key");
-}
-
-export function providerPatchForSubmit(
-	body: AiProviderUpsert,
-	options: { preserveExistingAuth: boolean },
-): AiProviderPatch {
-	const patch: AiProviderPatch = {
-		type: body.type,
-		label: body.label,
-		base_url: body.base_url,
-		api_mode: body.api_mode,
-		managed_by: body.managed_by,
-		runtime_env_name: body.runtime_env_name,
-		capabilities: body.capabilities,
-		models: body.models,
-	};
-	if (!options.preserveExistingAuth) patch.auth = body.auth;
-	return patch;
-}
-
-/** Restore every editable field exposed by the provider response. */
-export function providerRollbackPatch(provider: AiProvider): AiProviderPatch {
-	const patch: AiProviderPatch = {
-		type: provider.type,
-		label: provider.label,
-		base_url: provider.base_url,
-		api_mode: provider.api_mode,
-		managed_by: provider.managed_by,
-		runtime_env_name: provider.runtime_env_name,
-		capabilities: provider.capabilities,
-		models: provider.models,
-	};
-	// oauth_profile is a response-only legacy auth shape. For every editable
-	// auth shape, restore the prior source as well as the provider fields.
-	if (provider.auth.type !== "oauth_profile") patch.auth = provider.auth;
-	return patch;
+	return { type: "agent_profile", tool: "codex", profile: "default" };
 }
 
 export function providerListAllowsSubmit(isEdit: boolean, listLoaded: boolean): boolean {
@@ -250,39 +159,6 @@ export function providerFormIdentity({
 		providerId: `${baseId}-${suffix}`,
 		label: `${baseLabel} ${suffix}`,
 	};
-}
-
-function keepableExistingApiKeyAuth(
-	auth: AiProviderAuth | null | undefined,
-): { kind: ApiKeyKeepKind; auth: AiProviderUpsertAuth } | null {
-	if (!auth) return null;
-	if (auth.type === "secret_ref" && auth.ref) return { kind: "legacy_secret_ref", auth };
-	if (auth.type !== "api_key") return null;
-	if (auth.source === "managed") return { kind: "managed", auth };
-	if ((auth.source === "env" || auth.source === "vault") && auth.ref) {
-		return { kind: auth.source, auth };
-	}
-	return null;
-}
-
-function apiKeyLabelSuffix(kind: ApiKeyKeepKind | undefined): string {
-	if (!kind) return "";
-	if (kind === "managed") return " (leave blank to keep)";
-	if (kind === "legacy_secret_ref") return " (leave blank to keep legacy reference)";
-	return ` (leave blank to keep current ${kind} reference)`;
-}
-
-function apiKeyHelpText(kind: ApiKeyKeepKind | undefined): string {
-	if (kind === "legacy_secret_ref") {
-		return "Leave blank to preserve this provider's existing legacy secret reference. Enter a key to switch it to managed API-key auth.";
-	}
-	if (kind === "env" || kind === "vault") {
-		return `Leave blank to keep the current ${kind} reference. Enter a key to switch it to managed API-key auth.`;
-	}
-	if (kind === "managed") {
-		return "Leave blank to keep the current managed key. Enter a key to replace it.";
-	}
-	return "Clawdi stores this key encrypted and securely gives it to your agent. The dashboard will not show it again.";
 }
 
 function normalizeLabel(value: string | null | undefined): string | null {

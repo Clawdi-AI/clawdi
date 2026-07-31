@@ -4,8 +4,11 @@ import { projectUserSelectableAiProviders } from "@clawdi/shared";
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type {
+	AiProviderAcceptRequest,
+	AiProviderAcceptResponse,
 	AiProviderList,
 	AiProviderPatch,
+	AiProviderReadyAcceptResponse,
 	AiProviderUpsert,
 } from "@/hosted/v2/ai-providers/types";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
@@ -48,6 +51,28 @@ export function useCreateProvider() {
 	});
 }
 
+export function useAcceptProvider() {
+	const api = useApi();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: async ({
+			body,
+			idempotencyKey,
+		}: {
+			body: AiProviderAcceptRequest;
+			idempotencyKey: string;
+		}): Promise<AiProviderAcceptResponse> =>
+			unwrap(
+				await api.POST("/v1/ai-providers/accept", {
+					params: { header: { "Idempotency-Key": idempotencyKey } },
+					body,
+				}),
+			),
+		onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
+		onError: toastApiError("Couldn't add provider"),
+	});
+}
+
 export function usePatchProvider() {
 	const api = useApi();
 	const qc = useQueryClient();
@@ -61,22 +86,6 @@ export function usePatchProvider() {
 			),
 		onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
 		onError: toastApiError("Couldn't update provider"),
-	});
-}
-
-/** Silent patch used only to restore a snapshot after a multi-step edit fails. */
-export function usePatchProviderQuiet() {
-	const api = useApi();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (vars: { providerId: string; body: AiProviderPatch }) =>
-			unwrap(
-				await api.PATCH("/v1/ai-providers/{provider_id}", {
-					params: { path: { provider_id: vars.providerId } },
-					body: vars.body,
-				}),
-			),
-		onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
 	});
 }
 
@@ -151,17 +160,17 @@ export function useSetApiKey() {
 	);
 }
 
-/** Static saved-field check; this endpoint does not probe credentials or connectivity. */
-export function useCheckProviderFields() {
+export function useTestProviderConnection() {
 	const api = useApi();
 	return useMutation({
-		mutationFn: async (providerId: string) =>
+		mutationFn: async ({ providerId, model }: { providerId: string; model?: string }) =>
 			unwrap(
-				await api.POST("/v1/ai-providers/{provider_id}/validate", {
+				await api.POST("/v1/ai-providers/{provider_id}/test-connection", {
 					params: { path: { provider_id: providerId } },
+					body: model ? { model } : {},
 				}),
 			),
-		onError: toastApiError("Couldn't check fields"),
+		onError: toastApiError("Couldn't test connection"),
 	});
 }
 
@@ -197,6 +206,41 @@ export function useOAuthComplete() {
 					}),
 				);
 				qc.invalidateQueries({ queryKey: KEY });
+				return result;
+			} catch (error) {
+				toastApiError("Couldn't finish sign-in")(error);
+				throw error;
+			}
+		},
+	);
+}
+
+export function useCompleteProviderAccept() {
+	const api = useApi();
+	const qc = useQueryClient();
+	return useSensitiveAction(
+		async (vars: {
+			providerId: string;
+			state: string;
+			code: string;
+			redirect_uri?: string;
+			idempotencyKey: string;
+		}): Promise<AiProviderReadyAcceptResponse> => {
+			try {
+				const result = unwrap(
+					await api.POST("/v1/ai-providers/{provider_id}/accept", {
+						params: {
+							path: { provider_id: vars.providerId },
+							header: { "Idempotency-Key": vars.idempotencyKey },
+						},
+						body: {
+							state: vars.state,
+							code: vars.code,
+							redirect_uri: vars.redirect_uri,
+						},
+					}),
+				);
+				void qc.invalidateQueries({ queryKey: KEY });
 				return result;
 			} catch (error) {
 				toastApiError("Couldn't finish sign-in")(error);

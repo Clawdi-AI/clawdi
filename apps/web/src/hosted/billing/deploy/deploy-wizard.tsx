@@ -158,6 +158,7 @@ import {
 	modelOptionsForProvider,
 	providerCatalogDescription,
 	providerDisplayLabel,
+	providerRuntimeIncompatibility,
 	usableProviders,
 } from "@/hosted/v2/ai-providers/model-binding";
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
@@ -481,7 +482,8 @@ export function DeployWizard() {
 				: "loading";
 	const basicUnavailable = basicSelection.mode === "unavailable";
 
-	const providerList = usableProviders(aiProviders.data ?? []);
+	const savedProviderList = usableProviders(aiProviders.data ?? []);
+	const providerList = usableProviders(savedProviderList, runtime);
 	const managedModels = managedModelCatalog.data?.models ?? [];
 	const {
 		draft: aiBindingDraft,
@@ -1096,25 +1098,33 @@ export function DeployWizard() {
 									/>
 								</div>
 							) : null}
-							{providerList.map((provider) => (
-								<EntityChoiceCard
-									key={provider.provider_id}
-									selected={
-										aiAccessMode === "configured" && primaryProviderChoice === provider.provider_id
-									}
-									onClick={() => selectAiProviderChoice(provider.provider_id)}
-									icon={<ProviderTypeChip type={provider.type} />}
-									title={providerDisplayLabel(provider)}
-									description={providerCatalogDescription(provider)}
-									badge={
-										primaryProviderChoice === provider.provider_id ? (
-											<Badge variant="secondary">Selected</Badge>
-										) : (
-											<AuthBadge auth={provider.auth} />
-										)
-									}
-								/>
-							))}
+							{savedProviderList.map((provider) => {
+								const incompatibility = providerRuntimeIncompatibility(provider, runtime);
+								return (
+									<EntityChoiceCard
+										key={provider.provider_id}
+										selected={
+											!incompatibility &&
+											aiAccessMode === "configured" &&
+											primaryProviderChoice === provider.provider_id
+										}
+										onClick={() => selectAiProviderChoice(provider.provider_id)}
+										disabled={Boolean(incompatibility)}
+										icon={<ProviderTypeChip type={provider.type} />}
+										title={providerDisplayLabel(provider)}
+										description={incompatibility ?? providerCatalogDescription(provider)}
+										badge={
+											incompatibility ? (
+												<Badge variant="secondary">Not for {runtimeDisplayName(runtime)}</Badge>
+											) : primaryProviderChoice === provider.provider_id ? (
+												<Badge variant="secondary">Selected</Badge>
+											) : (
+												<AuthBadge auth={provider.auth} />
+											)
+										}
+									/>
+								);
+							})}
 							<AddTile
 								title="Add a provider"
 								description="Connect OpenAI, Anthropic, or another endpoint."

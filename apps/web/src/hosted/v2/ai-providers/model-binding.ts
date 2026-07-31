@@ -4,6 +4,7 @@ import {
 	isFirstPartyManagedAiProvider,
 } from "@clawdi/shared";
 import type { AiProviderAuthKind, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
+import type { HostedRuntime } from "@/hosted/runtimes";
 import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { formatModelLabel } from "@/lib/format";
@@ -75,8 +76,26 @@ export function isManagedProviderId(providerId: string | null | undefined): bool
 	return typeof providerId === "string" && isClawdiManagedProviderId(providerId);
 }
 
-export function usableProviders(providers: readonly AiProvider[]): AiProvider[] {
-	return providers.filter((provider) => provider.usable);
+export function providerRuntimeIncompatibility(
+	provider: AiProvider,
+	runtime: HostedRuntime,
+): string | null {
+	if (runtime === "hermes" && provider.api_mode === "google_generate_content") {
+		return "Hermes cannot use Gemini GenerateContent yet. Choose OpenClaw, or use an OpenAI- or Anthropic-compatible provider.";
+	}
+	return null;
+}
+
+export function usableProviders(
+	providers: readonly AiProvider[],
+	runtime?: HostedRuntime,
+): AiProvider[] {
+	return providers.filter(
+		(provider) =>
+			provider.usable &&
+			provider.auth.type !== "none" &&
+			(!runtime || providerRuntimeIncompatibility(provider, runtime) === null),
+	);
 }
 
 export function providerDisplayLabel(

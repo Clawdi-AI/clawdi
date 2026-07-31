@@ -1,10 +1,8 @@
 "use client";
 
-import { CircleAlert, ExternalLink } from "lucide-react";
+import { ArrowLeft, CircleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { EntityChoiceCard } from "@/components/entity-card";
-import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -14,45 +12,27 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { Textarea } from "@/components/ui/textarea";
+import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
 	type AuthMethod,
-	apiKeyEditState,
+	authFor,
 	derivedProviderFields,
-	isAuthMethod,
 	modelsFromText,
 	modelsToText,
-	parseModelIds,
-	providerAuthForSubmit,
 	providerFormIdentity,
 	providerListAllowsSubmit,
-	providerPatchForSubmit,
-	providerRollbackPatch,
-	shouldUseCatalogModels,
 } from "@/hosted/v2/ai-providers/add-provider-dialog.logic";
 import {
+	useAcceptProvider,
 	useAiProviders,
-	useCreateProvider,
-	useCreateProviderQuiet,
-	useDeleteProviderQuiet,
+	useCompleteProviderAccept,
 	useOAuthComplete,
 	useOAuthStart,
 	usePatchProvider,
-	usePatchProviderQuiet,
 	useSetApiKey,
 } from "@/hosted/v2/ai-providers/ai-providers-hooks";
-import { ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import {
 	CLAWDI_CODEX_OAUTH_PROVIDER_ID,
 	CODEX_OAUTH_CHANNEL,
@@ -62,58 +42,53 @@ import {
 	codexRedirectUri,
 	parseCodexCallback,
 } from "@/hosted/v2/ai-providers/codex-oauth";
+import { type ProviderChoice, ProviderChooser } from "@/hosted/v2/ai-providers/provider-chooser";
+import { ProviderFieldsForm } from "@/hosted/v2/ai-providers/provider-fields-form";
+import { type OAuthIssue, ProviderOAuthFlow } from "@/hosted/v2/ai-providers/provider-oauth-flow";
 import {
-	PROVIDER_PRESET_CATEGORIES,
-	PROVIDER_PRESET_CATEGORY_LABEL,
-	PROVIDER_PRESETS,
-	type ProviderPreset,
 	presetCatalogToProviderModels,
 	providerPresetById,
+	providerPresetForSavedProvider,
+	providerPresetRegion,
 	providerTypeForPreset,
 } from "@/hosted/v2/ai-providers/provider-presets";
-import {
-	API_MODE_LABEL,
-	type ApiMode,
-	PROVIDER_TYPES,
-	type ProviderTypeId,
-	providerTypeMeta,
-} from "@/hosted/v2/ai-providers/provider-types";
-import type { AiProvider, AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
-import { normalizeApiError } from "@/lib/api-errors";
+import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
+import type {
+	AiProvider,
+	AiProviderAcceptRequest,
+	AiProviderPatch,
+	AiProviderUpsert,
+} from "@/hosted/v2/ai-providers/types";
+import { useProviderForm } from "@/hosted/v2/ai-providers/use-provider-form";
 
-function isApiMode(value: string | null): value is ApiMode {
-	return (
-		value === "openai_chat" ||
-		value === "openai_responses" ||
-		value === "anthropic_messages" ||
-		value === "google_generate_content"
-	);
+type DialogStep = "choose" | "configure";
+type OAuthMode = "accept" | "legacy";
+
+interface OAuthSession {
+	mode: OAuthMode;
+	providerId: string;
+	state: string;
+	authUrl: string;
+	redirectUri: string;
+	expiresAt: string;
 }
 
-// Backend rule (_validate_base_url): `none` auth is only allowed for a loopback
-// or RFC-1918 private base_url. Mirror it so the form blocks early with a hint
-// instead of a generic 422.
-function isLoopbackOrPrivateUrl(raw: string): boolean {
-	let host: string;
-	try {
-		host = new URL(raw).hostname;
-	} catch {
-		return false;
-	}
-	if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0")
-		return true;
-	if (/^10\./.test(host) || /^192\.168\./.test(host)) return true;
-	if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
-	return false;
+interface AcceptAttempt {
+	fingerprint: string;
+	secret: string;
+	key: string;
 }
 
-function providerTypeDescription(type: ProviderTypeId): string {
-	if (type === "openai") return "OpenAI APIs";
-	if (type === "anthropic") return "Claude models";
-	if (type === "openrouter") return "Router models";
-	if (type === "gemini") return "Google models";
-	if (type === "mistral") return "Mistral APIs";
-	return "Custom endpoint";
+function readOAuthResult(value: unknown): CodexOAuthResult | null {
+	if (!value || typeof value !== "object") return null;
+	const result = value as Record<string, unknown>;
+	if (typeof result.code !== "string" || typeof result.state !== "string") return null;
+	if (result.error !== undefined && typeof result.error !== "string") return null;
+	return {
+		code: result.code,
+		state: result.state,
+		...(typeof result.error === "string" ? { error: result.error } : {}),
+	};
 }
 
 export function AddProviderDialog({
@@ -128,499 +103,488 @@ export function AddProviderDialog({
 	onCreated?: (providerId: string) => void;
 }) {
 	const providers = useAiProviders();
-	const createProvider = useCreateProvider();
-	const createProviderQuiet = useCreateProviderQuiet();
+	const acceptProvider = useAcceptProvider();
 	const patchProvider = usePatchProvider();
-	const patchProviderQuiet = usePatchProviderQuiet();
-	const deleteProviderQuiet = useDeleteProviderQuiet();
 	const setKey = useSetApiKey();
 	const oauthStart = useOAuthStart();
 	const oauthComplete = useOAuthComplete();
+	const completeAccept = useCompleteProviderAccept();
 	const runAction = useActionLock();
-
+	const { state: form, reset: resetForm, update: updateForm } = useProviderForm();
 	const isEdit = Boolean(editing);
-	const [type, setType] = useState<ProviderTypeId>("openai");
-	const [label, setLabel] = useState("");
-	const [baseUrl, setBaseUrl] = useState("");
-	const [modelsText, setModelsText] = useState("");
-	const [apiMode, setApiMode] = useState<ApiMode>("openai_chat");
-	const [runtimeEnv, setRuntimeEnv] = useState("");
-	const [authMethod, setAuthMethod] = useState<AuthMethod>("api_key");
-	const [apiKey, setApiKey] = useState("");
-	const [presetId, setPresetId] = useState<string | null>(null);
-
-	// OAuth sub-flow
-	const [oauth, setOauth] = useState<{
-		providerId: string;
-		state: string;
-		authUrl: string;
-		redirectUri: string;
-		expiresAt: string;
-	} | null>(null);
+	const [step, setStep] = useState<DialogStep>(editing ? "configure" : "choose");
+	const [oauth, setOauth] = useState<OAuthSession | null>(null);
 	const [oauthCode, setOauthCode] = useState("");
-	// "closed" = the popup was closed before completing; "expired" = the start
-	// session timed out; "blocked" = the browser blocked the pop-up. All three
-	// stop the spinner and surface a recover-from-here CTA — recovery always
-	// re-runs `oauth/start` for a FRESH link (a stale/expired/consumed start
-	// can't be reopened), never reuses `oauth.authUrl`.
-	const [oauthIssue, setOauthIssue] = useState<"closed" | "expired" | "blocked" | null>(null);
-	// Guards a single completion across the three callback channels; finishRef
-	// holds the latest completion closure for the listener effect.
-	const completedRef = useRef(false);
-	const abandonedRef = useRef(false);
-	const finishRef = useRef<(r: CodexOAuthResult) => void>(() => {});
-	// The sign-in popup handle (to poll `closed`) and whether THIS flow created
-	// the canonical openai-codex provider (so an abandon cleans up only our own
-	// orphan, never a pre-existing connected provider).
+	const [oauthIssue, setOauthIssue] = useState<OAuthIssue | null>(null);
 	const popupRef = useRef<Window | null>(null);
-	const createdFreshRef = useRef(false);
+	const completedRef = useRef(false);
+	const finishRef = useRef<(result: CodexOAuthResult) => void>(() => {});
+	const acceptAttemptRef = useRef<AcceptAttempt | null>(null);
+	const completionAttemptRef = useRef<AcceptAttempt | null>(null);
 
-	const meta = providerTypeMeta(type);
-	const selectedPreset = isEdit ? null : providerPresetById(presetId);
-	const presetLocked = selectedPreset !== null;
-	const existingProviderIds =
-		providers.data?.providers.map((provider) => provider.provider_id) ?? [];
-	const catalogManaged = shouldUseCatalogModels(type, authMethod, selectedPreset);
-	const presetCatalogModels = selectedPreset ? presetCatalogToProviderModels(selectedPreset) : [];
+	const selectedPreset = providerPresetById(form.presetId);
+	const selectedRegion = selectedPreset
+		? providerPresetRegion(selectedPreset, form.regionId)
+		: null;
+	const meta = providerTypeMeta(form.type);
+	const existingProviderIds = providers.data?.providers.map((item) => item.provider_id) ?? [];
 	const identity = providerFormIdentity({
-		type,
-		authMethod,
-		labelInput: label,
+		type: form.type,
+		authMethod: form.authMethod,
+		labelInput: form.label,
 		existingProviderIds,
 		editing,
 		preset: selectedPreset,
 	});
 	const providerId = identity.providerId;
 	const providerLabel = identity.label ?? (providerId || meta.label);
-	const runtimeEnvForSubmit = runtimeEnv.trim() || meta.defaultRuntimeEnv;
-	const authMethodItems = [
-		{ value: "api_key", label: "API key" },
-		...(meta.oauth ? [{ value: "oauth", label: "Sign in with ChatGPT (Codex)" }] : []),
-		...(meta.custom ? [{ value: "none", label: "No auth (local)" }] : []),
-	];
-	const showAuthMethodField = authMethodItems.length > 1 && !presetLocked;
-	const showNameField = meta.custom === true && !presetLocked;
-	const showAdvancedFields = meta.custom === true && !presetLocked;
-	const showRuntimeEnvField = authMethod === "api_key" && showAdvancedFields;
-	const apiModeItems = meta.apiModes.map((mode) => ({
-		value: mode,
-		label: API_MODE_LABEL[mode],
-	}));
-	const catalogModelIds = parseModelIds(modelsText);
-	const catalogSummary =
-		catalogModelIds.length > 3
-			? `${catalogModelIds.slice(0, 3).join(", ")} +${catalogModelIds.length - 3} more`
-			: catalogModelIds.join(", ");
+	const runtimeEnv = form.runtimeEnv.trim() || meta.defaultRuntimeEnv;
+	const presetCatalog = selectedPreset ? presetCatalogToProviderModels(selectedPreset) : [];
+	const providerListReady = providerListAllowsSubmit(isEdit, providers.isSuccess);
+	const oauthAlreadyConnected =
+		!isEdit &&
+		form.authMethod === "oauth" &&
+		providers.data?.providers.some(
+			(item) => item.provider_id === CLAWDI_CODEX_OAUTH_PROVIDER_ID && item.usable,
+		) === true;
+	const canSubmit =
+		providerListReady &&
+		Boolean(providerId) &&
+		Boolean(form.baseUrl.trim()) &&
+		(isEdit || form.authMethod === "oauth" || Boolean(form.apiKey.trim())) &&
+		!oauthAlreadyConnected;
 
-	// Initialize when (re)opened.
 	useEffect(() => {
 		if (!open) return;
 		setOauth(null);
 		setOauthCode("");
 		setOauthIssue(null);
-		setApiKey("");
-		completedRef.current = false;
-		abandonedRef.current = false;
-		createdFreshRef.current = false;
 		popupRef.current = null;
-		setPresetId(null);
+		completedRef.current = false;
+		acceptAttemptRef.current = null;
+		completionAttemptRef.current = null;
+
 		if (editing) {
-			const nextType = editing.type as ProviderTypeId;
-			const nextAuthMethod =
-				editing.auth.type === "none"
-					? "none"
-					: editing.auth.type === "api_key" || editing.auth.type === "secret_ref"
-						? "api_key"
-						: "oauth";
-			const defaults = derivedProviderFields(nextType, nextAuthMethod);
-			const existingModels = editing.models ?? [];
-			setType(nextType);
-			setLabel(editing.label ?? "");
-			setBaseUrl(editing.base_url || defaults.baseUrl);
-			setModelsText(
-				existingModels.length > 0 || !shouldUseCatalogModels(nextType, nextAuthMethod)
-					? modelsToText(existingModels)
-					: defaults.modelsText,
+			const type = editing.type;
+			const authMethod: AuthMethod =
+				editing.auth.type === "agent_profile" || editing.auth.type === "oauth_profile"
+					? "oauth"
+					: "api_key";
+			const preset = providerPresetForSavedProvider({
+				providerId: editing.provider_id,
+				baseUrl: editing.base_url,
+			});
+			const defaults = derivedProviderFields(type, authMethod, preset);
+			const region = preset?.region_variants?.find(
+				(item) => item.base_url.replace(/\/+$/, "") === editing.base_url.replace(/\/+$/, ""),
 			);
-			setApiMode(editing.api_mode ?? defaults.apiMode);
-			setRuntimeEnv(editing.runtime_env_name ?? defaults.runtimeEnv);
-			setAuthMethod(nextAuthMethod);
-		} else {
-			const defaults = derivedProviderFields("openai", "api_key");
-			setType("openai");
-			setLabel("");
-			setBaseUrl(defaults.baseUrl);
-			setModelsText(defaults.modelsText);
-			setApiMode(defaults.apiMode);
-			setRuntimeEnv(defaults.runtimeEnv);
-			setAuthMethod("api_key");
+			resetForm({
+				type,
+				label: editing.label ?? "",
+				baseUrl: editing.base_url || defaults.baseUrl,
+				modelsText:
+					(editing.models?.length ?? 0) > 0 ? modelsToText(editing.models) : defaults.modelsText,
+				apiMode: editing.api_mode ?? defaults.apiMode,
+				runtimeEnv: editing.runtime_env_name ?? defaults.runtimeEnv,
+				authMethod,
+				apiKey: "",
+				presetId: preset?.id ?? null,
+				regionId: region?.id ?? preset?.region_variants?.[0]?.id ?? null,
+			});
+			setStep("configure");
+			return;
 		}
-	}, [open, editing]);
 
-	// Prefill when the type changes (add mode only).
-	function changeType(next: ProviderTypeId) {
-		const m = providerTypeMeta(next);
-		let nextAuthMethod = authMethod;
-		if (!m.oauth && nextAuthMethod === "oauth") nextAuthMethod = "api_key";
-		if (!m.custom && nextAuthMethod === "none") nextAuthMethod = "api_key";
-		const defaults = derivedProviderFields(next, nextAuthMethod);
-		setPresetId(null);
-		setType(next);
-		setBaseUrl(defaults.baseUrl);
-		setModelsText(defaults.modelsText);
-		setApiMode(defaults.apiMode);
-		setRuntimeEnv(defaults.runtimeEnv);
-		setAuthMethod(nextAuthMethod);
-		setApiKey("");
-		if (next === "custom_openai_compatible") setLabel("");
+		const defaults = derivedProviderFields("openai", "api_key");
+		resetForm({
+			type: "openai",
+			label: "",
+			baseUrl: defaults.baseUrl,
+			modelsText: defaults.modelsText,
+			apiMode: defaults.apiMode,
+			runtimeEnv: defaults.runtimeEnv,
+			authMethod: "api_key",
+			apiKey: "",
+			presetId: null,
+			regionId: null,
+		});
+		setStep("choose");
+	}, [open, editing, resetForm]);
+
+	function selectProvider(choice: ProviderChoice) {
+		acceptAttemptRef.current = null;
+		if (choice.kind === "preset") {
+			const type = providerTypeForPreset(choice.preset);
+			const defaults = derivedProviderFields(type, "api_key", choice.preset);
+			const region = providerPresetRegion(choice.preset, null);
+			resetForm({
+				type,
+				label: "",
+				baseUrl: region?.base_url ?? defaults.baseUrl,
+				modelsText: defaults.modelsText,
+				apiMode: defaults.apiMode,
+				runtimeEnv: defaults.runtimeEnv,
+				authMethod: "api_key",
+				apiKey: "",
+				presetId: choice.preset.id,
+				regionId: region?.id ?? null,
+			});
+		} else {
+			const defaults = derivedProviderFields(choice.type, "api_key");
+			resetForm({
+				type: choice.type,
+				label: "",
+				baseUrl: defaults.baseUrl,
+				modelsText: defaults.modelsText,
+				apiMode: defaults.apiMode,
+				runtimeEnv: defaults.runtimeEnv,
+				authMethod: "api_key",
+				apiKey: "",
+				presetId: null,
+				regionId: null,
+			});
+		}
+		setStep("configure");
 	}
 
-	function changePreset(next: ProviderPreset) {
-		const nextType = providerTypeForPreset(next);
-		const defaults = derivedProviderFields(nextType, "api_key", next);
-		setPresetId(next.id);
-		setType(nextType);
-		setLabel("");
-		setBaseUrl(defaults.baseUrl);
-		setModelsText(defaults.modelsText);
-		setApiMode(defaults.apiMode);
-		setRuntimeEnv(defaults.runtimeEnv);
-		setAuthMethod("api_key");
-		setApiKey("");
+	function changeAuthMethod(authMethod: AuthMethod) {
+		const defaults = derivedProviderFields(form.type, authMethod, selectedPreset);
+		acceptAttemptRef.current = null;
+		updateForm({
+			authMethod,
+			apiKey: "",
+			baseUrl: defaults.baseUrl,
+			modelsText: defaults.modelsText,
+			apiMode: defaults.apiMode,
+			runtimeEnv: defaults.runtimeEnv,
+		});
 	}
 
-	function changeAuthMethod(next: AuthMethod) {
-		setAuthMethod(next);
-		setApiKey("");
-		if (meta.custom) return;
-		const defaults = derivedProviderFields(type, next);
-		setBaseUrl(defaults.baseUrl);
-		setModelsText(defaults.modelsText);
-		setApiMode(defaults.apiMode);
-		setRuntimeEnv(defaults.runtimeEnv);
+	function changeRegion(regionId: string) {
+		if (!selectedPreset) return;
+		const region = providerPresetRegion(selectedPreset, regionId);
+		if (!region) return;
+		acceptAttemptRef.current = null;
+		updateForm({ regionId: region.id, baseUrl: region.base_url });
 	}
 
-	// `none` auth only works with a loopback/private base_url (backend rule).
-	const noneAuthOk = authMethod !== "none" || isLoopbackOrPrivateUrl(baseUrl.trim());
-	const apiKeyState = isEdit
-		? apiKeyEditState(authMethod, editing?.auth, editing?.usable)
-		: apiKeyEditState(authMethod, null);
-	const { keyRequired, labelSuffix: apiKeyLabelSuffix, helpText: apiKeyHelpText } = apiKeyState;
-	const providerListReady = providerListAllowsSubmit(isEdit, providers.isSuccess);
-	const canSubmit =
-		providerListReady &&
-		Boolean(providerId) &&
-		Boolean(baseUrl.trim()) &&
-		noneAuthOk &&
-		(!keyRequired || apiKey.trim().length > 0);
+	function providerBody(): AiProviderUpsert {
+		return {
+			provider_id: providerId,
+			type: form.type,
+			label: identity.label,
+			base_url: form.baseUrl.trim(),
+			models: modelsFromText(form.modelsText, editing?.models, presetCatalog),
+			api_mode: form.apiMode,
+			auth: authFor(form.authMethod),
+			managed_by: "user",
+			runtime_env_name: form.authMethod === "api_key" ? runtimeEnv : null,
+		};
+	}
+
+	function acceptKey(body: AiProviderAcceptRequest, secret: string, fresh = false): string {
+		const fingerprint = JSON.stringify({
+			provider: body.provider,
+			credential: body.credential.type,
+		});
+		const current = acceptAttemptRef.current;
+		if (!fresh && current?.fingerprint === fingerprint && current.secret === secret)
+			return current.key;
+		const attempt = {
+			fingerprint,
+			secret,
+			key: newIdempotencyKey("ai-provider-accept"),
+		};
+		acceptAttemptRef.current = attempt;
+		return attempt.key;
+	}
+
+	function preparePopup(): Window | null {
+		setOauthIssue(null);
+		const popup = window.open("about:blank", "codex-oauth", "popup,width=520,height=720");
+		popupRef.current = popup;
+		if (!popup) {
+			setOauthIssue("blocked");
+			return null;
+		}
+		try {
+			popup.document.title = "Opening ChatGPT";
+			popup.document.body.textContent = "Opening ChatGPT sign-in…";
+			popup.document.body.style.cssText =
+				"font-family:system-ui,sans-serif;padding:24px;color:#555";
+		} catch {
+			// A browser may deny access even before navigation. The handle is still usable.
+		}
+		return popup;
+	}
+
+	function navigatePopup(popup: Window, url: string): boolean {
+		try {
+			if (popup.closed) {
+				setOauthIssue("closed");
+				return false;
+			}
+			popup.location.replace(url);
+			popup.focus();
+			return true;
+		} catch {
+			setOauthIssue("closed");
+			return false;
+		}
+	}
+
+	async function beginAcceptedOAuth({ fresh = false }: { fresh?: boolean } = {}) {
+		const popup = preparePopup();
+		if (!popup) return;
+		const redirectUri = codexRedirectUri();
+		const body = {
+			provider: codexProviderBody(),
+			credential: { type: "oauth", provider: "codex", redirect_uri: redirectUri },
+		} satisfies AiProviderAcceptRequest;
+		const result = await acceptProvider
+			.mutateAsync({
+				body,
+				idempotencyKey: acceptKey(body, "oauth", fresh),
+			})
+			.catch(() => null);
+		if (!result) {
+			popup.close();
+			return;
+		}
+		if (result.status !== "pending") {
+			popup.close();
+			toast.error("ChatGPT sign-in was already completed");
+			return;
+		}
+		completedRef.current = false;
+		setOauthIssue(null);
+		setOauthCode("");
+		setOauth({
+			mode: "accept",
+			providerId: result.provider.provider_id,
+			state: result.authorization.state,
+			authUrl: result.authorization.auth_url,
+			redirectUri: result.authorization.redirect_uri,
+			expiresAt: result.authorization.expires_at,
+		});
+		navigatePopup(popup, result.authorization.auth_url);
+	}
+
+	async function beginLegacyOAuth() {
+		if (!editing) return;
+		const popup = preparePopup();
+		if (!popup) return;
+		const redirectUri = codexRedirectUri();
+		const result = await oauthStart
+			.execute({ providerId: editing.provider_id, provider: "codex", redirect_uri: redirectUri })
+			.catch(() => null);
+		if (!result) {
+			popup.close();
+			return;
+		}
+		completedRef.current = false;
+		setOauthIssue(null);
+		setOauthCode("");
+		setOauth({
+			mode: "legacy",
+			providerId: editing.provider_id,
+			state: result.state,
+			authUrl: result.auth_url,
+			redirectUri,
+			expiresAt: result.expires_at,
+		});
+		navigatePopup(popup, result.auth_url);
+	}
 
 	async function submit() {
-		if (!providerListReady) {
-			toast.error("Provider list not ready", {
-				description: providers.isLoading
-					? "Wait for providers to finish loading, then try again."
-					: "Refresh providers, then try again.",
-			});
-			return;
-		}
 		if (!canSubmit) return;
-
-		// Codex "Sign in with ChatGPT": create the canonical openai-codex provider
-		// with the app callback redirect, then open ChatGPT. The callback route
-		// hands code+state back and we complete automatically (paste path in
-		// the sub-screen). redirect_uri stays identical across start/complete.
-		if (authMethod === "oauth") {
-			const redirectUri = codexRedirectUri();
-			// The canonical openai-codex provider must exist before `start`, but it
-			// isn't connected until `complete`. Only create it (quietly, without
-			// invalidating the list) if it doesn't already exist — so we never
-			// clobber a previously-connected provider, and an abandon cleans up
-			// only the record we ourselves created.
-			const existingCodex =
-				providers.data?.providers.some((p) => p.provider_id === CLAWDI_CODEX_OAUTH_PROVIDER_ID) ??
-				false;
-			if (!existingCodex) {
-				const codexCreated = await createProviderQuiet
-					.mutateAsync(codexProviderBody())
-					.catch(() => null);
-				if (!codexCreated) return; // createProviderQuiet.onError already toasts
-				createdFreshRef.current = true;
-			} else {
-				createdFreshRef.current = false;
-			}
-			const started = await oauthStart
-				.execute({
-					providerId: CLAWDI_CODEX_OAUTH_PROVIDER_ID,
-					provider: "codex",
-					redirect_uri: redirectUri,
-				})
+		if (editing) {
+			const patch = {
+				type: form.type,
+				label: identity.label,
+				base_url: form.baseUrl.trim(),
+				api_mode: form.apiMode,
+				managed_by: "user",
+				runtime_env_name:
+					editing.auth.type === "agent_profile" || editing.auth.type === "oauth_profile"
+						? editing.runtime_env_name
+						: runtimeEnv,
+				models: modelsFromText(form.modelsText, editing.models, presetCatalog),
+			} satisfies AiProviderPatch;
+			const saved = await patchProvider
+				.mutateAsync({ providerId: editing.provider_id, body: patch })
 				.catch(() => null);
-			if (!started) {
-				// Couldn't start — don't leave our just-created placeholder behind.
-				if (createdFreshRef.current) {
-					deleteProviderQuiet.mutate(CLAWDI_CODEX_OAUTH_PROVIDER_ID);
-					createdFreshRef.current = false;
-				}
-				return; // oauthStart.onError already toasts
-			}
-			completedRef.current = false;
-			abandonedRef.current = false;
-			setOauthIssue(null);
-			setOauth({
-				providerId: CLAWDI_CODEX_OAUTH_PROVIDER_ID,
-				state: started.state,
-				authUrl: started.auth_url,
-				redirectUri,
-				expiresAt: started.expires_at,
-			});
-			openSignIn(started.auth_url);
+			if (!saved) return;
+			toast.success("Provider settings updated");
+			onOpenChange(false);
 			return;
 		}
 
-		const isApiKeySubmit = authMethod === "api_key";
-		const hasNewManagedKey = isApiKeySubmit && Boolean(apiKey.trim());
-		const auth = providerAuthForSubmit({
-			authMethod,
-			editingAuth: editing?.auth,
-			hasNewManagedKey,
-		});
-
-		const keyBacked = auth.type === "api_key" || auth.type === "secret_ref";
-		const body = {
-			provider_id: providerId,
-			type,
-			label: identity.label,
-			base_url: baseUrl.trim(),
-			models: modelsFromText(modelsText, editing?.models, presetCatalogModels),
-			api_mode: apiMode,
-			auth,
-			managed_by: "user" as const,
-			runtime_env_name: keyBacked ? runtimeEnvForSubmit : null,
-		} satisfies AiProviderUpsert;
-		let saved: AiProvider | null;
-		if (editing && hasNewManagedKey) {
-			// Store the payload and switch auth in the backend's single transaction
-			// before changing provider fields. A key-storage failure therefore
-			// leaves the entire existing provider untouched.
-			const keyStored = await setKey
-				.execute({
-					providerId,
-					value: apiKey.trim(),
-					runtime_env_name: runtimeEnvForSubmit,
-				})
-				.catch(() => null);
-			if (!keyStored) return; // setKey.onError already toasts
-
-			saved = await patchProvider
-				.mutateAsync({
-					providerId,
-					body: providerPatchForSubmit(body, { preserveExistingAuth: true }),
-				})
-				.catch(() => null);
-			if (!saved) {
-				await restoreEditedProvider(providerId, editing);
-				return;
-			}
-		} else {
-			saved = editing
-				? await patchProvider
-						.mutateAsync({
-							providerId,
-							body: providerPatchForSubmit(body, { preserveExistingAuth: false }),
-						})
-						.catch(() => null)
-				: await createProvider.mutateAsync(body).catch(() => null);
-			if (!saved) return;
-
-			if (hasNewManagedKey) {
-				// Create has no prior auth to preserve. Remove the new provider if
-				// key storage fails so no unusable record remains.
-				const keyStored = await setKey
-					.execute({
-						providerId,
-						value: apiKey.trim(),
-						runtime_env_name: runtimeEnvForSubmit,
-					})
-					.catch(() => null);
-				if (!keyStored) {
-					await deleteProviderQuiet.mutateAsync(providerId).catch(() => null);
-					return;
-				}
-			}
+		if (form.authMethod === "oauth") {
+			await beginAcceptedOAuth();
+			return;
 		}
 
-		toast.success(isEdit ? "Provider updated" : "Provider added");
-		setApiKey("");
-		if (!isEdit) onCreated?.(saved.provider_id);
+		const body = {
+			provider: providerBody(),
+			credential: { type: "api_key", value: form.apiKey.trim() },
+		} satisfies AiProviderAcceptRequest;
+		const result = await acceptProvider
+			.mutateAsync({
+				body,
+				idempotencyKey: acceptKey(body, form.apiKey.trim()),
+			})
+			.catch(() => null);
+		if (result?.status !== "ready") return;
+		toast.success("Provider added");
+		updateForm({ apiKey: "" });
+		onCreated?.(result.provider.provider_id);
 		onOpenChange(false);
 	}
 
-	async function restoreEditedProvider(providerId: string, previous: AiProvider) {
-		await patchProviderQuiet
-			.mutateAsync({ providerId, body: providerRollbackPatch(previous) })
-			.catch((error: unknown) => {
-				toast.error("Couldn't restore previous provider settings", {
-					description: normalizeApiError(error),
-				});
-			});
-	}
-
-	function openSignIn(url: string) {
-		setOauthIssue(null);
-		// window.open returns null (no throw) when the popup is blocked.
-		const win = window.open(url, "codex-oauth", "width=520,height=720");
-		popupRef.current = win;
-		if (!win) {
-			// Persist a recoverable state (not just a toast) so the dialog swaps the
-			// "waiting…" spinner for a click-to-retry affordance.
-			setOauthIssue("blocked");
-			toast.error("Pop-up blocked", {
-				description: "Allow pop-ups for this site, then use “Restart ChatGPT sign-in” below.",
-			});
-		}
-	}
-
-	/**
-	 * Re-run `oauth/start` to mint a FRESH auth_url (+state +expires_at), then
-	 * open it. An expired, consumed, or otherwise stale start session can't be
-	 * reopened — reusing `oauth.authUrl` just dead-ends — so every in-dialog
-	 * recovery (expired / closed / pop-up blocked) restarts rather than reopening.
-	 */
-	async function restartSignIn() {
-		if (!oauth || oauthStart.isPending) return;
-		const started = await oauthStart
+	async function replaceApiKey() {
+		if (!editing || !form.apiKey.trim() || setKey.isPending) return;
+		const result = await setKey
 			.execute({
-				providerId: oauth.providerId,
-				provider: "codex",
-				redirect_uri: oauth.redirectUri,
+				providerId: editing.provider_id,
+				value: form.apiKey.trim(),
+				runtime_env_name: runtimeEnv,
 			})
 			.catch(() => null);
-		if (!started) return; // oauthStart.onError already toasts
-		completedRef.current = false;
-		abandonedRef.current = false;
-		// Fresh session resets the expiry/poll effect (keyed on `oauth`).
-		setOauth({
-			providerId: oauth.providerId,
-			state: started.state,
-			authUrl: started.auth_url,
-			redirectUri: oauth.redirectUri,
-			expiresAt: started.expires_at,
-		});
-		openSignIn(started.auth_url);
+		if (!result) return;
+		updateForm({ apiKey: "" });
+		toast.success(
+			editing.usable && editing.auth.type !== "none" ? "API key replaced" : "API key saved",
+		);
 	}
 
-	function closeOAuthPopup() {
-		const popup = popupRef.current;
+	function closePopup() {
 		try {
-			if (popup && !popup.closed) popup.close();
-		} catch {}
-		popupRef.current = null;
-	}
-
-	/** Remove the placeholder created by this dialog when its sign-in is abandoned. */
-	function abandonCodexIfIncomplete() {
-		if (!oauth) return;
-		if (!completedRef.current && createdFreshRef.current) {
-			deleteProviderQuiet.mutate(oauth.providerId);
-			createdFreshRef.current = false;
+			if (popupRef.current && !popupRef.current.closed) popupRef.current.close();
+		} catch {
+			// Ignore a cross-origin close failure.
 		}
-		abandonedRef.current = true;
-		completedRef.current = true;
-		closeOAuthPopup();
-		setOauth(null);
-		setOauthCode("");
-		setOauthIssue(null);
+		popupRef.current = null;
 	}
 
 	function requestClose(next: boolean) {
 		if (!next) {
-			abandonCodexIfIncomplete();
-			setApiKey("");
+			completedRef.current = true;
+			closePopup();
+			setOauth(null);
 			setOauthCode("");
+			updateForm({ apiKey: "" });
 		}
 		onOpenChange(next);
+	}
+
+	async function restartOAuth() {
+		if (!oauth) return;
+		if (oauth.mode === "accept") await beginAcceptedOAuth({ fresh: true });
+		else await beginLegacyOAuth();
 	}
 
 	function submitPastedCallback() {
 		const parsed = parseCodexCallback(oauthCode);
 		if (!parsed) {
-			toast.error("Couldn't read that", {
-				description: "Paste the full address from the OpenAI page after signing in.",
-			});
+			toast.error("Couldn't read that callback address");
 			return;
 		}
 		finishRef.current(parsed);
 	}
 
-	// Keep the latest completion handler in a ref so the cross-window listener
-	// (set up once per oauth session) always calls the current closure.
 	finishRef.current = async (result: CodexOAuthResult) => {
-		if (!oauth || completedRef.current || abandonedRef.current) return;
+		if (!oauth || completedRef.current) return;
 		if (result.error || !result.code) {
-			if (result.error) toast.error("ChatGPT sign-in failed", { description: result.error });
+			toast.error("ChatGPT sign-in failed", {
+				description: "Restart sign-in and try again.",
+			});
 			return;
 		}
 		if (!codexOAuthStateMatches(oauth.state, result)) {
 			toast.error("ChatGPT sign-in could not be verified", {
-				description: "The OAuth state did not match. Restart sign-in and try again.",
+				description: "The state did not match. Restart sign-in and try again.",
 			});
 			return;
 		}
 		completedRef.current = true;
-		const done = await oauthComplete
-			.execute({
-				providerId: oauth.providerId,
-				state: result.state,
-				code: result.code,
-				redirect_uri: oauth.redirectUri,
-			})
-			.catch(() => null);
-		if (abandonedRef.current) return;
-		if (done) {
-			toast.success("Signed in with ChatGPT");
-			createdFreshRef.current = false;
-			closeOAuthPopup();
-			setOauth(null);
-			setOauthCode("");
-			if (!isEdit) onCreated?.(oauth.providerId);
-			onOpenChange(false);
-		} else {
-			completedRef.current = false; // allow retry
+		const completionFingerprint = `${oauth.mode}:${oauth.providerId}:${result.state}:${result.code}`;
+		const currentCompletion = completionAttemptRef.current;
+		const completionKey =
+			currentCompletion?.fingerprint === completionFingerprint
+				? currentCompletion.key
+				: newIdempotencyKey("ai-provider-oauth-complete");
+		completionAttemptRef.current = {
+			fingerprint: completionFingerprint,
+			secret: result.code,
+			key: completionKey,
+		};
+		const done =
+			oauth.mode === "accept"
+				? await completeAccept
+						.execute({
+							providerId: oauth.providerId,
+							state: result.state,
+							code: result.code,
+							redirect_uri: oauth.redirectUri,
+							idempotencyKey: completionKey,
+						})
+						.catch(() => null)
+				: await oauthComplete
+						.execute({
+							providerId: oauth.providerId,
+							state: result.state,
+							code: result.code,
+							redirect_uri: oauth.redirectUri,
+						})
+						.catch(() => null);
+		if (!done) {
+			completedRef.current = false;
+			return;
 		}
+		toast.success("Signed in with ChatGPT");
+		closePopup();
+		setOauth(null);
+		setOauthCode("");
+		if (!isEdit) onCreated?.(oauth.providerId);
+		onOpenChange(false);
 	};
 
-	// While a Codex sign-in is in flight, listen for the callback route handing
-	// back code+state over the two in-memory cross-window channels and complete
-	// automatically. The manual paste field remains the no-channel fallback.
 	useEffect(() => {
 		if (!oauth) return;
-		const handle = (r: CodexOAuthResult | null) => {
-			if (r) finishRef.current(r);
+		const handle = (value: unknown) => {
+			const result = readOAuthResult(value);
+			if (result) finishRef.current(result);
 		};
-		let ch: BroadcastChannel | null = null;
+		let channel: BroadcastChannel | null = null;
 		try {
-			ch = new BroadcastChannel(CODEX_OAUTH_CHANNEL);
-			ch.onmessage = (e) => handle(e.data as CodexOAuthResult);
-		} catch {}
-		const onMessage = (e: MessageEvent) => {
-			if (e.origin === window.location.origin && e.data?.source === CODEX_OAUTH_CHANNEL) {
-				handle(e.data as CodexOAuthResult);
+			channel = new BroadcastChannel(CODEX_OAUTH_CHANNEL);
+			channel.onmessage = (event) => handle(event.data);
+		} catch {
+			// postMessage and manual paste remain available.
+		}
+		const onMessage = (event: MessageEvent) => {
+			if (
+				event.origin === window.location.origin &&
+				event.source === popupRef.current &&
+				(event.data as { source?: unknown } | null)?.source === CODEX_OAUTH_CHANNEL
+			) {
+				handle(event.data);
 			}
 		};
 		window.addEventListener("message", onMessage);
 		return () => {
-			ch?.close();
+			channel?.close();
 			window.removeEventListener("message", onMessage);
 		};
 	}, [oauth]);
 
-	// Don't spin forever: surface when the sign-in popup is closed before it
-	// completes, and when the start session expires (`expires_at`).
 	useEffect(() => {
 		if (!oauth) return;
 		const poll = setInterval(() => {
-			if (completedRef.current) return;
-			if (popupRef.current?.closed) setOauthIssue((cur) => cur ?? "closed");
+			if (!completedRef.current && popupRef.current?.closed) {
+				setOauthIssue((current) => current ?? "closed");
+			}
 		}, 800);
 		const remaining = new Date(oauth.expiresAt).getTime() - Date.now();
 		const expiry = Number.isFinite(remaining)
@@ -638,430 +602,140 @@ export function AddProviderDialog({
 	}, [oauth]);
 
 	const busy =
-		createProvider.isPending ||
-		createProviderQuiet.isPending ||
+		acceptProvider.isPending ||
 		patchProvider.isPending ||
-		patchProviderQuiet.isPending ||
-		deleteProviderQuiet.isPending ||
 		setKey.isPending ||
-		oauthStart.isPending;
+		oauthStart.isPending ||
+		oauthComplete.isPending ||
+		completeAccept.isPending;
 
 	return (
 		<Dialog open={open} onOpenChange={requestClose}>
 			<DialogContent
 				data-hosted="true"
 				data-v2="true"
-				className="flex max-h-[min(90vh,calc(100dvh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg"
+				className="flex max-h-[min(92vh,calc(100dvh-1rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl"
 			>
-				{oauth ? (
-					<>
-						<DialogHeader className="shrink-0 px-6 pt-6">
-							<DialogTitle>Sign in with ChatGPT</DialogTitle>
-							<DialogDescription>
-								Finish signing in in the ChatGPT window — we’ll connect Codex automatically when it
-								returns.
-							</DialogDescription>
-						</DialogHeader>
-						<div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-							<div className="flex flex-col gap-3">
-								<Button
-									variant="outline"
-									className="w-full"
-									onClick={() => {
-										// An issue means the prior link is stale — mint a fresh one. With no
-										// issue the popup just opened on a still-valid link; reopening is fine.
-										if (oauthIssue) void restartSignIn();
-										else openSignIn(oauth.authUrl);
-									}}
-									disabled={oauthStart.isPending}
-								>
-									{oauthIssue ? "Restart ChatGPT sign-in" : "Open ChatGPT sign-in"}
-									{oauthStart.isPending ? (
-										<Spinner className="size-3.5" />
-									) : (
-										<ExternalLink className="size-3.5" />
-									)}
-								</Button>
-								{oauthIssue === "expired" ? (
-									<p className="flex items-center gap-2 text-xs text-destructive">
-										<CircleAlert className="size-3.5" /> This sign-in link expired. Restart to get a
-										fresh one.
-									</p>
-								) : oauthIssue === "blocked" ? (
-									<p className="flex items-center gap-2 text-xs text-destructive">
-										<CircleAlert className="size-3.5" /> Pop-up blocked. Allow pop-ups, then restart
-										sign-in — or paste the address below.
-									</p>
-								) : oauthIssue === "closed" ? (
-									<p className="flex items-center gap-2 text-xs text-muted-foreground">
-										<CircleAlert className="size-3.5" /> The sign-in window closed before finishing.
-										Restart it, or paste the address below.
-									</p>
-								) : oauthComplete.isPending ? (
-									<p className="flex items-center gap-2 text-xs text-muted-foreground">
-										<Spinner className="size-3.5" /> Connecting Codex…
-									</p>
-								) : (
-									<p className="flex items-center gap-2 text-xs text-muted-foreground">
-										<Spinner className="size-3.5" /> Waiting for sign-in to finish…
-									</p>
-								)}
-								<details className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
-									<summary className="cursor-pointer font-medium text-foreground">
-										Didn’t return automatically?
-									</summary>
-									<div className="mt-2 flex flex-col gap-2">
-										<p>Paste the full address from the OpenAI page after signing in.</p>
-										<Label htmlFor="provider-oauth-callback" className="sr-only">
-											OAuth callback URL
-										</Label>
-										<Input
-											id="provider-oauth-callback"
-											name="provider-oauth-callback"
-											value={oauthCode}
-											onChange={(e) => setOauthCode(e.target.value)}
-											placeholder="https://…/callback?code=…&state=…"
-											autoComplete="off"
-											spellCheck={false}
-										/>
-										<Button
-											size="sm"
-											onClick={() => void runAction(submitPastedCallback)}
-											disabled={!oauthCode.trim() || oauthComplete.isPending}
-										>
-											{oauthComplete.isPending ? (
-												<>
-													<Spinner data-icon="inline-start" /> Finishing sign-in…
-												</>
-											) : (
-												"Finish sign-in"
-											)}
-										</Button>
-										<p>
-											If it never returns, an admin may need to register this app’s callback URL in
-											the Codex OAuth config.
-										</p>
-									</div>
-								</details>
-							</div>
-						</div>
-						<DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
-							<Button variant="outline" onClick={() => requestClose(false)}>
-								Cancel
-							</Button>
-						</DialogFooter>
-					</>
-				) : (
-					<>
-						<DialogHeader className="shrink-0 px-6 pt-6">
-							<DialogTitle>
-								{editing?.usable === false
-									? "Finish provider setup"
-									: isEdit
-										? "Edit provider"
-										: "Add a provider"}
-							</DialogTitle>
-							<DialogDescription>
-								{editing?.usable === false
-									? "Add the missing credential so agents can use this provider."
-									: "Route inference through your own account by API key, sign-in, or a custom endpoint."}
-							</DialogDescription>
-						</DialogHeader>
+				<DialogHeader className="shrink-0 px-5 pt-5 sm:px-6 sm:pt-6">
+					<DialogTitle>
+						{oauth
+							? "Sign in with ChatGPT"
+							: isEdit
+								? editing?.usable && editing.auth.type !== "none"
+									? "Edit provider"
+									: "Finish provider setup"
+								: step === "choose"
+									? "Add a provider"
+									: `Set up ${providerLabel}`}
+					</DialogTitle>
+					<DialogDescription>
+						{oauth
+							? "Finish in the ChatGPT window. This page will continue automatically."
+							: isEdit
+								? "Edit this provider directly. Credential replacement is saved separately."
+								: step === "choose"
+									? "Choose a common provider or bring a custom endpoint."
+									: "Only the credential is required. Provider details stay in Advanced."}
+					</DialogDescription>
+				</DialogHeader>
 
-						<div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-							<div className="flex flex-col gap-4">
-								{!providerListReady ? (
-									<div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
-										<CircleAlert className="mt-0.5 size-3.5 shrink-0" />
-										<p>
-											{providers.isLoading
-												? "Providers are still loading. Adding is disabled until the list is ready."
-												: "Providers couldn't be loaded. Retry the list before adding one."}
-										</p>
-									</div>
-								) : null}
-								{!isEdit ? (
-									<div className="flex flex-col gap-2">
-										<Label>Provider preset</Label>
-										<div className="flex flex-col gap-3">
-											{PROVIDER_PRESET_CATEGORIES.map((category) => {
-												const presets = PROVIDER_PRESETS.filter(
-													(preset) => preset.category === category,
-												);
-												return (
-													<div key={category} className="flex flex-col gap-1.5">
-														<p className="text-xs font-medium text-muted-foreground">
-															{PROVIDER_PRESET_CATEGORY_LABEL[category]}
-														</p>
-														<div className="grid gap-2 sm:grid-cols-2">
-															{presets.map((preset) => (
-																<EntityChoiceCard
-																	key={preset.id}
-																	selected={selectedPreset?.id === preset.id}
-																	onClick={() => changePreset(preset)}
-																	icon={
-																		<EntityIcon
-																			kind="provider"
-																			id={preset.id}
-																			label={preset.label}
-																			size="sm"
-																		/>
-																	}
-																	title={preset.label}
-																	description={`${API_MODE_LABEL[preset.api_mode]} · ${preset.catalog.length} models`}
-																/>
-															))}
-														</div>
-													</div>
-												);
-											})}
-										</div>
-									</div>
-								) : null}
-
-								<div className="flex flex-col gap-1.5">
-									<Label>Provider</Label>
-									<div className="grid gap-2 sm:grid-cols-2">
-										{PROVIDER_TYPES.map((t) => {
-											const option = providerTypeMeta(t);
-											return (
-												<EntityChoiceCard
-													key={t}
-													selected={!selectedPreset && type === t}
-													onClick={isEdit ? undefined : () => changeType(t)}
-													disabled={isEdit}
-													icon={
-														<EntityIcon kind="provider" id={t} label={option.label} size="sm" />
-													}
-													title={option.label}
-													description={providerTypeDescription(t)}
-												/>
-											);
-										})}
-									</div>
+				<div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6">
+					{oauth ? (
+						<ProviderOAuthFlow
+							issue={oauthIssue}
+							callbackUrl={oauthCode}
+							starting={acceptProvider.isPending || oauthStart.isPending}
+							completing={oauthComplete.isPending || completeAccept.isPending}
+							onCallbackUrlChange={setOauthCode}
+							onRestart={() => void runAction(restartOAuth)}
+							onFinish={() => void runAction(submitPastedCallback)}
+						/>
+					) : step === "choose" && !isEdit ? (
+						<ProviderChooser onSelect={selectProvider} />
+					) : (
+						<div className="flex flex-col gap-3">
+							{!providerListReady ? (
+								<div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+									<CircleAlert className="mt-0.5 size-3.5 shrink-0" />
+									{providers.isLoading
+										? "Providers are still loading."
+										: "Providers couldn't be loaded. Refresh and try again."}
 								</div>
-
-								<div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">
-									{selectedPreset ? (
-										<EntityIcon
-											kind="provider"
-											id={selectedPreset.id}
-											label={selectedPreset.label}
-											size="md"
-										/>
-									) : (
-										<ProviderTypeChip type={type} />
-									)}
-									<div className="min-w-0 flex-1">
-										<p className="text-sm font-medium text-foreground">{providerLabel}</p>
-										<p className="text-xs text-muted-foreground">
-											Saved as <code className="font-mono">{providerId || "—"}</code>
-										</p>
-										{catalogManaged ? (
-											<>
-												<p className="mt-1 text-xs text-muted-foreground">
-													{selectedPreset
-														? `Preset mapping · ${API_MODE_LABEL[apiMode]} · primary ${selectedPreset.suggested_primary_model}`
-														: authMethod === "oauth"
-															? `ChatGPT/Codex mapping · ${catalogSummary || "No catalog models"}`
-															: `Custom mapping · ${API_MODE_LABEL[apiMode]} · ${catalogSummary || "No catalog models"}`}
-												</p>
-												<p className="mt-1 break-all font-mono text-xs text-muted-foreground">
-													{baseUrl}
-													{authMethod === "api_key" && runtimeEnvForSubmit
-														? ` · ${runtimeEnvForSubmit}`
-														: ""}
-												</p>
-											</>
-										) : null}
-									</div>
+							) : null}
+							{oauthAlreadyConnected ? (
+								<div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-muted p-3 text-xs text-warning-muted-foreground">
+									<CircleAlert className="mt-0.5 size-3.5 shrink-0" /> ChatGPT is already connected.
+									Edit the existing provider to reconnect it.
 								</div>
-
-								{showNameField ? (
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="provider-label">Name</Label>
-										<Input
-											id="provider-label"
-											name="provider-label"
-											value={label}
-											onChange={(e) => setLabel(e.target.value)}
-											placeholder="Custom endpoint"
-											autoComplete="off"
-										/>
-										<p className="text-xs text-muted-foreground">
-											Optional. Used only to label this custom endpoint.
-										</p>
-									</div>
-								) : null}
-
-								{showAuthMethodField ? (
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="provider-auth">Authentication</Label>
-										<Select
-											items={authMethodItems}
-											value={authMethod}
-											onValueChange={(value) => {
-												if (isAuthMethod(value)) changeAuthMethod(value);
-											}}
-										>
-											<SelectTrigger id="provider-auth">
-												<SelectValue />
-											</SelectTrigger>
-											<SelectContent>
-												<SelectItem value="api_key">API key</SelectItem>
-												{meta.oauth ? (
-													<SelectItem value="oauth">Sign in with ChatGPT (Codex)</SelectItem>
-												) : null}
-												{meta.custom ? <SelectItem value="none">No auth (local)</SelectItem> : null}
-											</SelectContent>
-										</Select>
-									</div>
-								) : null}
-
-								{authMethod === "api_key" ? (
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="provider-key">API key{apiKeyLabelSuffix}</Label>
-										<Input
-											id="provider-key"
-											name="provider-key"
-											type="password"
-											value={apiKey}
-											onChange={(e) => setApiKey(e.target.value)}
-											placeholder="sk-…"
-											autoComplete="off"
-											spellCheck={false}
-										/>
-										<p className="text-xs text-muted-foreground">{apiKeyHelpText}</p>
-										{selectedPreset ? (
-											<a
-												href={selectedPreset.api_key_url}
-												target="_blank"
-												rel="noreferrer"
-												className="inline-flex w-fit items-center gap-1 text-xs font-medium text-primary hover:underline"
-											>
-												Get API key
-												<ExternalLink className="size-3" />
-											</a>
-										) : null}
-										{keyRequired && isEdit && !apiKey.trim() ? (
-											<p className="text-xs text-destructive">
-												{editing?.usable === false
-													? "Enter a key to finish provider setup."
-													: "Enter a key to switch this provider to managed API-key auth."}
-											</p>
-										) : null}
-									</div>
-								) : null}
-
-								{showAdvancedFields ? (
-									<div className="rounded-md border bg-muted/30 p-3">
-										<div className="text-sm font-medium text-foreground">Advanced</div>
-										<div className="mt-3 flex flex-col gap-3">
-											<div className="flex flex-col gap-1.5">
-												<Label htmlFor="provider-base">Base URL</Label>
-												<Input
-													id="provider-base"
-													name="provider-base"
-													value={baseUrl}
-													onChange={(e) => setBaseUrl(e.target.value)}
-													placeholder="https://api.example.com/v1"
-													autoComplete="off"
-													spellCheck={false}
-												/>
-												{authMethod === "none" && baseUrl.trim() && !noneAuthOk ? (
-													<p className="text-xs text-destructive">
-														No-auth providers must use a loopback or private-network URL (e.g.
-														http://127.0.0.1:11434/v1).
-													</p>
-												) : null}
-											</div>
-
-											<div className="grid gap-3 sm:grid-cols-2">
-												<div className="flex flex-col gap-1.5">
-													<Label htmlFor="provider-mode">API mode</Label>
-													<Select
-														items={apiModeItems}
-														value={apiMode}
-														onValueChange={(value) => {
-															if (isApiMode(value)) setApiMode(value);
-														}}
-													>
-														<SelectTrigger id="provider-mode">
-															<SelectValue />
-														</SelectTrigger>
-														<SelectContent>
-															{meta.apiModes.map((m) => (
-																<SelectItem key={m} value={m}>
-																	{API_MODE_LABEL[m]}
-																</SelectItem>
-															))}
-														</SelectContent>
-													</Select>
-												</div>
-
-												{showRuntimeEnvField ? (
-													<div className="flex flex-col gap-1.5">
-														<Label htmlFor="provider-env">Agent environment variable</Label>
-														<Input
-															id="provider-env"
-															name="provider-env"
-															value={runtimeEnv}
-															onChange={(e) => setRuntimeEnv(e.target.value.toUpperCase())}
-															placeholder="OPENAI_API_KEY"
-															autoComplete="off"
-															spellCheck={false}
-														/>
-													</div>
-												) : null}
-											</div>
-
-											<div className="flex flex-col gap-1.5">
-												<Label htmlFor="provider-models">Model catalog</Label>
-												<Textarea
-													id="provider-models"
-													name="provider-models"
-													value={modelsText}
-													onChange={(e) => setModelsText(e.target.value)}
-													placeholder={meta.modelPlaceholder}
-													autoComplete="off"
-													spellCheck={false}
-													className="min-h-24 resize-y"
-												/>
-												<p className="text-xs text-muted-foreground">
-													Optional. Enter one model id per line, or separate ids with commas.
-												</p>
-											</div>
-										</div>
-									</div>
-								) : null}
-							</div>
+							) : null}
+							{oauthIssue === "blocked" ? (
+								<div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+									<CircleAlert className="mt-0.5 size-3.5 shrink-0" /> Your browser blocked the
+									ChatGPT window. Allow pop-ups, then try again.
+								</div>
+							) : null}
+							<ProviderFieldsForm
+								form={form}
+								editing={editing ?? null}
+								preset={selectedPreset}
+								region={selectedRegion}
+								providerId={providerId}
+								providerLabel={providerLabel}
+								apiKeyUrl={selectedRegion?.api_key_url ?? selectedPreset?.api_key_url ?? null}
+								onUpdate={(value) => {
+									acceptAttemptRef.current = null;
+									updateForm(value);
+								}}
+								onAuthMethodChange={changeAuthMethod}
+								onRegionChange={changeRegion}
+								onReplaceApiKey={() => void runAction(replaceApiKey)}
+								onReconnectOAuth={() => void runAction(beginLegacyOAuth)}
+								replacingApiKey={setKey.isPending}
+								startingOAuth={oauthStart.isPending}
+							/>
 						</div>
+					)}
+				</div>
 
-						<DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
-							<Button variant="outline" onClick={() => requestClose(false)}>
-								Cancel
+				<DialogFooter className="shrink-0 border-t bg-background px-5 py-3 sm:px-6 sm:py-4">
+					{oauth ? (
+						<Button variant="outline" onClick={() => requestClose(false)} disabled={busy}>
+							Cancel
+						</Button>
+					) : step === "choose" && !isEdit ? (
+						<Button variant="outline" onClick={() => requestClose(false)}>
+							Cancel
+						</Button>
+					) : (
+						<>
+							<Button
+								variant="outline"
+								onClick={() => {
+									if (isEdit) requestClose(false);
+									else setStep("choose");
+								}}
+								disabled={busy}
+							>
+								{isEdit ? null : <ArrowLeft />}
+								{isEdit ? "Cancel" : "Back"}
 							</Button>
 							<Button onClick={() => void runAction(submit)} disabled={!canSubmit || busy}>
-								{busy ? (
-									<>
-										<Spinner data-icon="inline-start" />
-										{authMethod === "oauth"
-											? "Opening sign-in…"
-											: isEdit
-												? "Saving provider…"
-												: "Adding provider…"}
-									</>
-								) : authMethod === "oauth" ? (
-									"Continue to sign-in"
-								) : isEdit ? (
-									"Save changes"
-								) : (
-									"Add provider"
-								)}
+								{busy ? <Spinner data-icon="inline-start" /> : null}
+								{form.authMethod === "oauth" && !isEdit
+									? busy
+										? "Opening sign-in…"
+										: "Continue to ChatGPT"
+									: isEdit
+										? busy
+											? "Saving settings…"
+											: "Save settings"
+										: busy
+											? "Adding provider…"
+											: "Add provider"}
 							</Button>
-						</DialogFooter>
-					</>
-				)}
+						</>
+					)}
+				</DialogFooter>
 			</DialogContent>
 		</Dialog>
 	);

@@ -32,7 +32,7 @@ const AUTH_LABEL: Record<string, string> = {
 	agent_profile: "ChatGPT",
 	oauth_profile: "ChatGPT",
 	secret_ref: "Vault key",
-	none: "No auth",
+	none: "Legacy · no credential",
 };
 
 /** Auth-method pill for a provider. */

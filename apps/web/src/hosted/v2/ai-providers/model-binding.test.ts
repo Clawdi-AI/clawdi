@@ -12,9 +12,28 @@ import {
 	primaryProviderPickerItems,
 	providerChoiceFromRef,
 	providerDisplayLabel,
+	providerRuntimeIncompatibility,
 	usableProviders,
 } from "@/hosted/v2/ai-providers/model-binding";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
+
+const savedOpenAiProvider = {
+	id: "row-openai",
+	provider_id: "openai-main",
+	scope: "account_global",
+	type: "openai",
+	base_url: "https://api.openai.com/v1",
+	models: [{ id: "gpt-5.5", label: "GPT Latest" }, { id: "gpt-5.4" }],
+	api_mode: "openai_responses",
+	auth: { type: "api_key", source: "managed" },
+	usable: true,
+	managed_by: "user",
+	runtime_env_name: "OPENAI_API_KEY",
+	capabilities: null,
+	created_at: "2026-01-01T00:00:00Z",
+	updated_at: "2026-01-01T00:00:00Z",
+	label: "OpenAI",
+} satisfies AiProvider;
 
 describe("model binding", () => {
 	test("uses the canonical Clawdi AI product label", () => {
@@ -84,25 +103,7 @@ describe("model binding", () => {
 	});
 
 	test("uses the first catalog model for a selected provider", () => {
-		const providers = [
-			{
-				id: "row-openai",
-				provider_id: "openai-main",
-				scope: "account_global",
-				type: "openai",
-				base_url: "https://api.openai.com/v1",
-				models: [{ id: "gpt-5.5", label: "GPT Latest" }, { id: "gpt-5.4" }],
-				api_mode: "openai_responses",
-				auth: { type: "api_key", source: "managed" },
-				usable: true,
-				managed_by: "user",
-				runtime_env_name: "OPENAI_API_KEY",
-				capabilities: null,
-				created_at: "2026-01-01T00:00:00Z",
-				updated_at: "2026-01-01T00:00:00Z",
-				label: "OpenAI",
-			} satisfies AiProvider,
-		];
+		const providers = [savedOpenAiProvider];
 
 		expect(firstModelForProvider("openai-main", providers)).toBe("gpt-5.5");
 		expect(modelOptionsForProvider("openai-main", providers)).toEqual(providers[0].models);
@@ -132,6 +133,32 @@ describe("model binding", () => {
 
 		expect(selectable).toEqual([]);
 		expect(primaryProviderPickerItems([unfinishedProvider.provider_id], selectable)).toEqual([]);
+	});
+
+	test("does not offer legacy local-only providers to hosted agents", () => {
+		const localProvider = {
+			...savedOpenAiProvider,
+			provider_id: "local-no-auth",
+			base_url: "http://127.0.0.1:11434/v1",
+			auth: { type: "none" },
+			usable: true,
+		} satisfies AiProvider;
+
+		expect(usableProviders([localProvider])).toEqual([]);
+	});
+
+	test("disables Gemini GenerateContent for Hermes with actionable guidance", () => {
+		const geminiProvider = {
+			...savedOpenAiProvider,
+			provider_id: "gemini-main",
+			type: "gemini",
+			api_mode: "google_generate_content",
+			models: [{ id: "gemini-3.1-pro-preview" }],
+		} satisfies AiProvider;
+
+		expect(providerRuntimeIncompatibility(geminiProvider, "openclaw")).toBeNull();
+		expect(providerRuntimeIncompatibility(geminiProvider, "hermes")).toContain("Choose OpenClaw");
+		expect(usableProviders([geminiProvider], "hermes")).toEqual([]);
 	});
 
 	test("maps deployment-scoped managed provider ids to the friendly managed choice", () => {

@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { CLAWDI_MANAGED_V1_PROVIDER_ID } from "@clawdi/shared";
 import type { AiProvider, AiProviderList } from "@/hosted/v2/ai-providers/types";
 
@@ -50,5 +51,20 @@ describe("user AI provider query projection", () => {
 
 		expect(selectUserAiProviders(inventory)).toEqual([userProvider]);
 		expect(inventory.providers).toHaveLength(3);
+	});
+});
+
+describe("provider mutation contract", () => {
+	test("creates providers through atomic accept without frontend compensation", () => {
+		const hooksSource = readFileSync(new URL("./ai-providers-hooks.ts", import.meta.url), "utf8");
+		const dialogSource = readFileSync(
+			new URL("./add-provider-dialog.tsx", import.meta.url),
+			"utf8",
+		);
+
+		expect(hooksSource).toContain('api.POST("/v1/ai-providers/accept"');
+		expect(hooksSource).toContain('"Idempotency-Key": idempotencyKey');
+		expect(dialogSource).not.toContain("restoreEditedProvider");
+		expect(dialogSource).not.toContain("deleteProviderQuiet");
 	});
 });
