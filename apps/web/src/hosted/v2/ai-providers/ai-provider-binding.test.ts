@@ -168,10 +168,8 @@ describe("AI provider binding fields", () => {
 			});
 
 			expect(fields.provider_ids).toEqual([oauthProvider.provider_id, apiKeyProvider.provider_id]);
-			expect(fields.ai_provider_bootstrap?.bindings.map((binding) => binding.provider_id)).toEqual([
-				oauthProvider.provider_id,
-				apiKeyProvider.provider_id,
-			]);
+			expect(fields.ai_provider_bootstrap?.selected_provider_id).toBe(oauthProvider.provider_id);
+			expect(fields.ai_provider_bootstrap?.auth_kind).toBe("codex_oauth");
 			expect(
 				fields.ai_provider_bootstrap?.catalog.providers.map((provider) => provider.id),
 			).toEqual([oauthProvider.provider_id, apiKeyProvider.provider_id]);
@@ -199,10 +197,7 @@ describe("AI provider binding fields", () => {
 			});
 			expect(fields.ai_provider_auth_kind).toBe("managed");
 			expect(fields.ai_provider_id).toBeNull();
-			expect(fields.ai_provider_bootstrap?.bindings.map((binding) => binding.provider_id)).toEqual([
-				MANAGED_PROVIDER_ID,
-				apiKeyProvider.provider_id,
-			]);
+			expect(fields.ai_provider_bootstrap?.selected_provider_id).toBe(apiKeyProvider.provider_id);
 			expect(
 				fields.ai_provider_bootstrap?.catalog.providers.map((provider) => provider.id),
 			).toEqual([apiKeyProvider.provider_id]);

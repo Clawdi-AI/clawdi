@@ -3402,11 +3402,6 @@ export interface components {
              * @constant
              */
             flow: "device_code";
-            /**
-             * Flow Id
-             * Format: uuid
-             */
-            flow_id: string;
             /** Provider Id */
             provider_id: string;
             /** Oauth Provider */
@@ -3484,11 +3479,6 @@ export interface components {
              * @constant
              */
             flow: "authorization_code";
-            /**
-             * Flow Id
-             * Format: uuid
-             */
-            flow_id: string;
             /** Provider Id */
             provider_id: string;
             /** Oauth Provider */

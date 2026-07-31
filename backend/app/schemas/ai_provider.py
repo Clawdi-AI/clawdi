@@ -583,7 +583,6 @@ class AiProviderSavedConnectionTestRequest(BaseModel):
 
 class AiProviderOAuthStartResponse(BaseModel):
     flow: Literal["authorization_code"] = "authorization_code"
-    flow_id: UUID
     provider_id: str
     oauth_provider: str
     profile: str
@@ -601,7 +600,6 @@ class AiProviderOAuthDeviceStartRequest(BaseModel):
 
 class AiProviderOAuthDeviceStartResponse(BaseModel):
     flow: Literal["device_code"] = "device_code"
-    flow_id: UUID
     provider_id: str
     oauth_provider: str
     profile: str

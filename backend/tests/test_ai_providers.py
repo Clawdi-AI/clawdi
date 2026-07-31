@@ -3166,7 +3166,8 @@ async def test_same_token_delete_reconnect_cannot_adopt_revoke_tombstone(
     )
     attempt = await db_session.scalar(
         select(AiProviderOAuthAttempt).where(
-            AiProviderOAuthAttempt.flow_id == uuid.UUID(started.json()["flow_id"])
+            AiProviderOAuthAttempt.state_sha256
+            == hashlib.sha256(started.json()["state"].encode()).hexdigest()
         )
     )
     assert attempt is not None
@@ -3272,7 +3273,8 @@ async def test_oauth_reverse_completion_and_expired_committed_receipt_replay(
 
         attempt = await db_session.scalar(
             select(AiProviderOAuthAttempt).where(
-                AiProviderOAuthAttempt.flow_id == uuid.UUID(second.json()["flow_id"])
+                AiProviderOAuthAttempt.state_sha256
+                == hashlib.sha256(second.json()["state"].encode()).hexdigest()
             )
         )
         assert attempt is not None
@@ -3369,6 +3371,15 @@ async def test_stale_exchanging_oauth_attempt_is_fenced_without_reexchange(
             json={"provider": "codex"},
         )
         assert started.status_code == 200, started.text
+        decode_calls = 0
+        original_decode = ai_provider_routes._decode_oauth_state
+
+        def counting_decode(state: str):
+            nonlocal decode_calls
+            decode_calls += 1
+            return original_decode(state)
+
+        monkeypatch.setattr(ai_provider_routes, "_decode_oauth_state", counting_decode)
         attempt_id, replay = await ai_provider_routes._begin_oauth_attempt_exchange(
             owner_user_id=seed_user.id,
             provider_id=provider_id,
@@ -3380,6 +3391,7 @@ async def test_stale_exchanging_oauth_attempt_is_fenced_without_reexchange(
             },
         )
         assert replay is None
+        assert decode_calls == 1
         attempt = await db_session.get(AiProviderOAuthAttempt, attempt_id)
         assert attempt is not None
         attempt.exchange_started_at = datetime.now(UTC) - timedelta(
@@ -3499,7 +3511,15 @@ async def test_stale_exchange_revoke_claim_fences_original_commit(
             json={"provider": "codex"},
         )
         assert started.status_code == 200, started.text
-        flow_id = uuid.UUID(started.json()["flow_id"])
+        async with session_factory() as lookup:
+            started_attempt = await lookup.scalar(
+                select(AiProviderOAuthAttempt).where(
+                    AiProviderOAuthAttempt.state_sha256
+                    == hashlib.sha256(started.json()["state"].encode()).hexdigest()
+                )
+            )
+            assert started_attempt is not None
+            flow_id = started_attempt.flow_id
         completion_task = asyncio.create_task(
             client.post(
                 f"/v1/ai-providers/{provider_id}/auth/oauth/complete",
@@ -4044,7 +4064,6 @@ async def test_oauth_device_accept_polls_then_persists_tokens(
         authorization = accepted.json()["authorization"]
         assert authorization == {
             "flow": "device_code",
-            "flow_id": authorization["flow_id"],
             "provider_id": "openai-codex",
             "oauth_provider": "codex",
             "profile": "default",

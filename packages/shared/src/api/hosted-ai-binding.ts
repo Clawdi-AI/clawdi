@@ -8,11 +8,6 @@ import {
 	type AiProviderModelCost as RuntimeAiProviderModelCost,
 	validateAiProviderCatalog,
 } from "../ai-provider";
-import {
-	type AiProviderBinding,
-	normalizeAiProviderBindingPool,
-	normalizeAiProviderBindingProviderIds,
-} from "../ai-provider-binding";
 import type { components } from "./api.generated";
 import type { HostedDeployAiFields, HostedDeployManagedModel } from "./deploy-wizard";
 
@@ -24,7 +19,8 @@ export type HostedAiProviderAuthKind = "api_key" | "codex_oauth";
 
 export interface HostedAiProviderBootstrap extends Record<string, unknown> {
 	schema_version: 1;
-	bindings: AiProviderBinding[];
+	selected_provider_id: string;
+	auth_kind: HostedAiProviderAuthKind;
 	catalog: AiProviderCatalog;
 }
 
@@ -133,41 +129,21 @@ export function hostedAiProviderAuthKind(
 
 export function buildHostedAiProviderPoolBootstrap(
 	providers: readonly HostedSavedAiProvider[],
-	bindings: readonly AiProviderBinding[],
-	primaryProviderId: string,
+	selectedProviderId: string,
+	authKind: HostedAiProviderAuthKind,
 ): HostedAiProviderBootstrap {
 	const runtimeProviders = providers.map(toHostedRuntimeAiProvider);
-	const normalizedBindings = normalizeAiProviderBindingPool({
-		bindings,
-		primaryModel: { provider_id: primaryProviderId, model: "binding-contract" },
-	});
-	const runtimeProvidersById = new Map(runtimeProviders.map((provider) => [provider.id, provider]));
-	const externalBindings = normalizedBindings.filter((binding) => binding.auth_kind !== "managed");
-	if (
-		externalBindings.length !== runtimeProviders.length ||
-		externalBindings.some((binding, index) => runtimeProviders[index]?.id !== binding.provider_id)
-	) {
+	const selectedProvider = runtimeProviders.find((provider) => provider.id === selectedProviderId);
+	if (!selectedProvider) {
 		throw new HostedAiBindingError(
 			"provider_missing",
-			"Saved provider catalog order must match the external provider bindings.",
+			"Selected AI provider is not in the provider pool.",
 		);
 	}
-	for (const binding of externalBindings) {
-		const provider = providers.find((candidate) => candidate.provider_id === binding.provider_id);
-		if (!provider || hostedAiProviderAuthKind(provider) !== binding.auth_kind) {
-			throw new HostedAiBindingError(
-				"invalid_provider_metadata",
-				`AI provider binding auth does not match catalog auth for ${binding.provider_id}.`,
-			);
-		}
-	}
-	const defaultProvider = runtimeProvidersById.get(primaryProviderId) ?? runtimeProviders.at(0);
-	if (!defaultProvider)
-		throw new HostedAiBindingError("provider_missing", "Provider pool is empty.");
 	const catalog: AiProviderCatalog = {
 		schema_version: 1,
 		providers: runtimeProviders,
-		defaults: { chat_provider_id: defaultProvider.id },
+		defaults: { chat_provider_id: selectedProvider.id },
 	};
 	const validation = validateAiProviderCatalog(catalog);
 	if (!validation.valid) {
@@ -178,7 +154,8 @@ export function buildHostedAiProviderPoolBootstrap(
 	}
 	return {
 		schema_version: 1,
-		bindings: normalizedBindings,
+		selected_provider_id: selectedProvider.id,
+		auth_kind: authKind,
 		catalog,
 	};
 }
@@ -248,11 +225,6 @@ export function buildHostedAiBindingFields({
 			providerIds.filter((providerId) => providerId !== CLAWDI_MANAGED_PROVIDER_ID),
 			providers,
 		);
-		const bindings = providerBindings(providerIds, customProviders);
-		normalizeAiProviderBindingPool({
-			bindings,
-			primaryModel: { provider_id: CLAWDI_MANAGED_PROVIDER_ID, model },
-		});
 		const fields: ReturnType<typeof buildHostedAiBindingFields> = {
 			ai_provider_auth_kind: "managed",
 			ai_provider_id: null,
@@ -264,10 +236,11 @@ export function buildHostedAiBindingFields({
 			if (!bootstrapProvider) {
 				throw new HostedAiBindingError("provider_missing", "The provider pool is unavailable.");
 			}
+			const authKind = hostedAiProviderAuthKind(bootstrapProvider);
 			fields.ai_provider_bootstrap = buildHostedAiProviderPoolBootstrap(
 				customProviders,
-				bindings,
-				CLAWDI_MANAGED_PROVIDER_ID,
+				bootstrapProvider.provider_id,
+				authKind,
 			);
 		} else if (mode === "update") {
 			fields.ai_provider_bootstrap = null;
@@ -290,11 +263,6 @@ export function buildHostedAiBindingFields({
 		throw new HostedAiBindingError("provider_missing", "The primary AI provider is unavailable.");
 	}
 	const authKind = hostedAiProviderAuthKind(primaryProvider);
-	const bindings = providerBindings(providerIds, selectedProviders);
-	normalizeAiProviderBindingPool({
-		bindings,
-		primaryModel: { provider_id: primaryProvider.provider_id, model },
-	});
 	return {
 		ai_provider_auth_kind: authKind,
 		ai_provider_id: primaryProvider.provider_id,
@@ -302,38 +270,16 @@ export function buildHostedAiBindingFields({
 		primary_model: { provider_id: primaryProvider.provider_id, model },
 		ai_provider_bootstrap: buildHostedAiProviderPoolBootstrap(
 			selectedProviders,
-			bindings,
 			primaryProvider.provider_id,
+			authKind,
 		),
 	};
 }
 
-function providerBindings(
-	providerIds: readonly string[],
-	providers: readonly HostedSavedAiProvider[],
-): AiProviderBinding[] {
-	const providersById = new Map(providers.map((provider) => [provider.provider_id, provider]));
-	return providerIds.map((providerId) => {
-		if (providerId === CLAWDI_MANAGED_PROVIDER_ID) {
-			return { provider_id: providerId, auth_kind: "managed" };
-		}
-		const provider = providersById.get(providerId);
-		if (!provider) {
-			throw new HostedAiBindingError(
-				"provider_missing",
-				`Saved AI provider ${providerId} is unavailable.`,
-			);
-		}
-		return {
-			provider_id: providerId,
-			auth_kind: hostedAiProviderAuthKind(provider),
-			secret_reference: { store: "external", name: providerId },
-		};
-	});
-}
-
 function selectedProviderIds(providerIds: readonly string[], primaryProviderId: string): string[] {
-	return normalizeAiProviderBindingProviderIds(providerIds, primaryProviderId);
+	const selected = dedupeProviderIds(providerIds);
+	if (!selected.includes(primaryProviderId)) selected.unshift(primaryProviderId);
+	return selected;
 }
 
 function savedProvidersForIds(
@@ -377,6 +323,18 @@ function firstPartyManagedProviderError(providerId: string): HostedAiBindingErro
 		"first_party_managed_provider",
 		`AI provider ${providerId} is managed by Clawdi and cannot be used as a saved provider. Choose managed AI instead.`,
 	);
+}
+
+function dedupeProviderIds(providerIds: readonly string[]): string[] {
+	const seen = new Set<string>();
+	const result: string[] = [];
+	for (const value of providerIds) {
+		const providerId = value.trim();
+		if (!providerId || seen.has(providerId)) continue;
+		seen.add(providerId);
+		result.push(providerId);
+	}
+	return result;
 }
 
 function toRuntimeModels(models: HostedSavedAiProvider["models"]): RuntimeAiProviderModel[] {

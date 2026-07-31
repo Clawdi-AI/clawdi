@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from urllib.parse import urlparse
 
 from app.schemas.ai_provider import (
     AiProviderReadiness,
@@ -11,6 +10,7 @@ from app.schemas.ai_provider import (
     CredentialMaterialState,
     VerificationState,
 )
+from app.services.url_security import is_public_https_url
 
 _DEFAULT_API_MODES = {
     "openai": "openai_responses",
@@ -122,19 +122,9 @@ def provider_readiness(
 
 
 def is_hosted_deployable_endpoint(base_url: str) -> bool:
-    """Match Hosted's saved-provider URL admission without adding SSRF policy."""
+    """Return the shared deterministic Hosted URL admission result."""
 
-    try:
-        parsed = urlparse(base_url)
-        hostname = parsed.hostname
-    except ValueError:
-        return False
-    return (
-        parsed.scheme.lower() == "https"
-        and bool(hostname)
-        and parsed.username is None
-        and parsed.password is None
-    )
+    return is_public_https_url(base_url)
 
 
 __all__ = [
