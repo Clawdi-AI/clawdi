@@ -845,7 +845,6 @@ async def _build_codex_device_authorization(
     provider: AiProvider,
     oauth_provider: str,
 ) -> AiProviderOAuthDeviceStartResponse:
-    _validate_supported_oauth_provider(oauth_provider)
     _validate_codex_oauth_provider_shape(provider)
     config = _oauth_config_for(oauth_provider)
     client_id = _required_oauth_config(config, "client_id", oauth_provider)
@@ -909,11 +908,13 @@ async def start_ai_provider_oauth_device(
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderOAuthDeviceStartResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
+    oauth_provider = _normalize_profile(body.provider)
+    _validate_supported_oauth_provider(oauth_provider)
     response = await _build_codex_device_authorization(
         db=db,
         auth=auth,
         provider=provider,
-        oauth_provider=_normalize_profile(body.provider),
+        oauth_provider=oauth_provider,
     )
     await db.commit()
     return response
@@ -1086,7 +1087,7 @@ async def _accept_ai_provider(
     _raise_if_deployment_managed_provider_id(provider_body.provider_id)
     if provider_body.provider_id in V2_MANAGED_AI_PROVIDER_IDS:
         provider_body = provider_body.model_copy(update={"provider_id": V2_MANAGED_AI_PROVIDER_ID})
-    _validate_ai_provider_accept_contract(provider_body, body.credential)
+    oauth_provider = _validate_ai_provider_accept_contract(provider_body, body.credential)
     errors = _validate_provider(provider_body)
     if errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": errors})
@@ -1110,6 +1111,7 @@ async def _accept_ai_provider(
         can_resume = not existing_response.usable and _accept_can_resume(
             existing,
             body.credential,
+            oauth_provider=oauth_provider,
         )
         if not body.replace and not can_resume:
             raise HTTPException(status.HTTP_409_CONFLICT, "AI Provider already exists")
@@ -1179,8 +1181,8 @@ async def _accept_ai_provider(
             provider=provider_response,
         )
 
-    oauth_provider = _normalize_profile(body.credential.provider)
-    _validate_supported_oauth_provider(oauth_provider)
+    if oauth_provider is None:
+        raise RuntimeError("OAuth accept contract is missing its provider")
     authorization = await _build_codex_device_authorization(
         db=db,
         auth=auth,
@@ -1209,18 +1211,17 @@ async def _accept_ai_provider(
 def _validate_ai_provider_accept_contract(
     provider: AiProviderUpsert,
     credential: AiProviderApiKeyAcceptCredential | AiProviderOAuthAcceptCredential,
-) -> None:
+) -> str | None:
     if isinstance(credential, AiProviderApiKeyAcceptCredential):
         if provider.auth.type != "api_key" or provider.auth.source != "managed":
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "API-key accept requires managed api_key provider auth",
             )
-        return
+        return None
 
     oauth_provider = _normalize_profile(credential.provider)
     _validate_supported_oauth_provider(oauth_provider)
-    _validate_codex_oauth_provider_shape(provider)
     if (
         provider.auth.type != "agent_profile"
         or provider.auth.tool != oauth_provider
@@ -1230,18 +1231,21 @@ def _validate_ai_provider_accept_contract(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "OAuth accept requires the default Codex agent profile",
         )
+    return oauth_provider
 
 
 def _accept_can_resume(
     provider: AiProvider,
     credential: AiProviderApiKeyAcceptCredential | AiProviderOAuthAcceptCredential,
+    *,
+    oauth_provider: str | None,
 ) -> bool:
     metadata = provider.auth_metadata or {}
     if isinstance(credential, AiProviderApiKeyAcceptCredential):
         return provider.auth_type == "api_key" and metadata.get("source") == "managed"
-    return (
+    return oauth_provider is not None and (
         provider.auth_type == "agent_profile"
-        and metadata.get("tool") == _normalize_profile(credential.provider)
+        and metadata.get("tool") == oauth_provider
         and str(metadata.get("profile") or "default") == "default"
     )
 
