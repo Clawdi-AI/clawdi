@@ -2,17 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
 	nativeTransportSummary,
 	pairCodeExpiryLabel,
-	pairCodeRequiresExplicitAgent,
 	telegramPairDeepLink,
 } from "./channel-detail-page.logic";
-
-describe("pairCodeRequiresExplicitAgent", () => {
-	test("only permits the implicit linked-agent default for exactly one link", () => {
-		expect(pairCodeRequiresExplicitAgent(0)).toBe(true);
-		expect(pairCodeRequiresExplicitAgent(1)).toBe(false);
-		expect(pairCodeRequiresExplicitAgent(2)).toBe(true);
-	});
-});
 
 describe("telegramPairDeepLink", () => {
 	test("accepts only the server-provided bot start link for this code", () => {

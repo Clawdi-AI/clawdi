@@ -5028,7 +5028,7 @@ test("channel connect updates its auto-linked agent page without reload", async 
 	expect(errors, `channel connect convergence: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("Telegram pairing is a visible card flow with safe deep links and isolated Unpair", async ({
+test("Telegram pairing uses a compact Agent-row dialog with polled chats and isolated Unpair", async ({
 	page,
 }, testInfo) => {
 	await page.setViewportSize({ width: 1440, height: 1500 });
@@ -5038,6 +5038,7 @@ test("Telegram pairing is a visible card flow with safe deep links and isolated 
 	const agentId = "33333333-3333-4333-8333-333333333333";
 	const firstBindingId = "44444444-4444-4444-8444-444444444444";
 	const secondBindingId = "55555555-5555-4555-8555-555555555555";
+	const polledBindingId = "66666666-6666-4666-8666-666666666666";
 	const runtimeToken = "browser-agent-token-must-not-render";
 	const validExpiry = new Date(Date.now() + 15 * 60_000).toISOString();
 	const channelAccount = {
@@ -5111,6 +5112,22 @@ test("Telegram pairing is a visible card flow with safe deep links and isolated 
 					qr_payload: "https://t.me/Clawdi_Test_Bot?start=PAIRVALID123",
 				},
 			},
+			{ status: 503, body: { detail: "temporary Telegram pair error" } },
+			{
+				status: 201,
+				body: {
+					id: "pair-retry",
+					agent_link_id: linkId,
+					agent_id: agentId,
+					agent_token: runtimeToken,
+					code: "PAIRRETRY123",
+					expires_at: validExpiry,
+					pairing_command: "/bot_pair PAIRRETRY123",
+					bot_username: "Clawdi_Test_Bot",
+					deep_link: "https://t.me/Clawdi_Test_Bot?start=PAIRRETRY123",
+					qr_payload: "https://t.me/Clawdi_Test_Bot?start=PAIRRETRY123",
+				},
+			},
 			{
 				status: 201,
 				body: {
@@ -5160,8 +5177,10 @@ test("Telegram pairing is a visible card flow with safe deep links and isolated 
 
 	await page.goto(`/channels/${channelId}`);
 	const setupFlow = page.locator("[data-channel-setup-flow]");
-	await expect(setupFlow.getByRole("heading", { name: "Link Agent" })).toBeVisible();
-	await expect(setupFlow.getByRole("heading", { name: "Pair Telegram" })).toBeVisible();
+	await expect(setupFlow.getByText("Linked agents", { exact: true })).toBeVisible();
+	await expect(setupFlow.getByText("Paired chats", { exact: true })).toBeVisible();
+	await expect(page.locator("#pair-agent")).toHaveCount(0);
+	await expect(page.locator("#pair-ttl")).toHaveCount(0);
 	await expect(page.locator(`[data-channel-binding-id="${firstBindingId}"]`)).toContainText(
 		"Alice DM",
 	);
@@ -5171,50 +5190,96 @@ test("Telegram pairing is a visible card flow with safe deep links and isolated 
 	await expect(page.locator(`[data-channel-binding-id="${firstBindingId}"]`)).toContainText(
 		"Support Agent",
 	);
+	const agentRow = page.locator(`[data-channel-agent-link-id="${linkId}"]`);
+	await expect(agentRow).toContainText("Support Agent");
+	const pairButton = agentRow.getByRole("button", { name: "Pair Telegram", exact: true });
+	await expect(pairButton).toBeVisible();
+	await expect(page.getByRole("img", { name: "Telegram pairing QR code" })).toHaveCount(0);
+	await page.screenshot({
+		path:
+			process.env.CHANNEL_PAIRING_PAGE_SCREENSHOT_PATH ??
+			testInfo.outputPath("telegram-channel-pairing-compact-page.png"),
+		fullPage: true,
+	});
 
-	const generate = page.getByRole("button", { name: "Generate Telegram link", exact: true });
-	await generate.click();
+	await pairButton.click();
 	await expect.poll(() => pairCodeRequests.length).toBe(1);
 	expect(JSON.parse(pairCodeRequests[0] ?? "{}")).toEqual({
 		ttl_seconds: 900,
 		agent_link_id: linkId,
 	});
-	const pairResult = page.locator('[data-telegram-pair-result="true"]');
-	await expect(pairResult.getByRole("img")).toBeVisible();
-	await expect(pairResult.getByRole("button", { name: "Open @Clawdi_Test_Bot" })).toHaveAttribute(
+	let pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
+	await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toBeVisible();
+	await expect(pairDialog.getByText(/^Expires in /)).toBeVisible();
+	await expect(pairDialog.getByRole("button", { name: "Copy link", exact: true })).toBeVisible();
+	await expect(pairDialog.getByRole("button", { name: "Open @Clawdi_Test_Bot" })).toHaveAttribute(
 		"href",
 		"https://t.me/Clawdi_Test_Bot?start=PAIRVALID123",
 	);
-	await expect(pairResult.getByText(/^Expires in /)).toBeVisible();
-	await expect(pairResult.getByText("Manual command", { exact: true })).toBeVisible();
+	await expect(pairDialog.getByText("Pair a group manually", { exact: true })).toBeVisible();
 	await expect(page.locator("body")).not.toContainText(runtimeToken);
 	await expect(page.locator("body")).not.toContainText("Agent token");
-
 	await page.screenshot({
 		path:
-			process.env.CHANNEL_PAIRING_SCREENSHOT_PATH ??
-			testInfo.outputPath("telegram-channel-pairing.png"),
+			process.env.CHANNEL_PAIRING_DIALOG_SCREENSHOT_PATH ??
+			testInfo.outputPath("telegram-channel-pairing-dialog.png"),
 		fullPage: true,
 	});
 
-	await generate.click();
-	await expect.poll(() => pairCodeRequests.length).toBe(2);
-	await expect(pairResult.getByText("Telegram link unavailable", { exact: true })).toBeVisible();
-	await expect(pairResult.getByRole("img")).toHaveCount(0);
-	await expect(pairResult.getByRole("button", { name: /^Open/ })).toHaveCount(0);
-	await pairResult.getByText("Manual command", { exact: true }).click();
-	await expect(pairResult.getByText("/bot_pair PAIRMISSING123", { exact: true })).toBeVisible();
+	channelBindings.push({
+		id: polledBindingId,
+		account_id: channelId,
+		agent_link_id: linkId,
+		external_chat_id: "303",
+		external_chat_type: "private",
+		external_chat_name: "Newly Paired DM",
+		status: "active",
+		created_at: "2026-07-30T10:10:00Z",
+	});
+	await pairDialog.getByRole("button", { name: "Close", exact: true }).click();
+	await expect(page.locator(`[data-channel-binding-id="${polledBindingId}"]`)).toContainText(
+		"Newly Paired DM",
+		{ timeout: 5_000 },
+	);
 
-	await generate.click();
+	await pairButton.click();
+	await expect.poll(() => pairCodeRequests.length).toBe(2);
+	pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
+	await expect(
+		pairDialog.getByText("Couldn't create Telegram link", { exact: true }),
+	).toBeVisible();
+	await pairDialog.getByRole("button", { name: "Retry", exact: true }).click();
 	await expect.poll(() => pairCodeRequests.length).toBe(3);
+	await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toBeVisible();
+	await expect(pairDialog.getByRole("button", { name: "Open @Clawdi_Test_Bot" })).toHaveAttribute(
+		"href",
+		"https://t.me/Clawdi_Test_Bot?start=PAIRRETRY123",
+	);
+	await pairDialog.getByRole("button", { name: "Close", exact: true }).click();
+
+	await pairButton.click();
+	await expect.poll(() => pairCodeRequests.length).toBe(4);
+	pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
+	await expect(pairDialog.getByText("Telegram link unavailable", { exact: true })).toBeVisible();
+	await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toHaveCount(0);
+	await expect(pairDialog.getByRole("button", { name: /^Open/ })).toHaveCount(0);
+	await expect(pairDialog.getByRole("button", { name: "Copy link", exact: true })).toHaveCount(0);
+	await pairDialog.getByText("Pair a group manually", { exact: true }).click();
+	await expect(pairDialog.getByText("/bot_pair PAIRMISSING123", { exact: true })).toBeVisible();
+	await pairDialog.getByRole("button", { name: "Close", exact: true }).click();
+
+	await pairButton.click();
+	await expect.poll(() => pairCodeRequests.length).toBe(5);
+	pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
 	await expect(
-		pairResult.getByText("This Telegram link has expired", { exact: true }),
+		pairDialog.getByText("This Telegram link has expired", { exact: true }),
 	).toBeVisible();
 	await expect(
-		pairResult.getByText("Expired — generate a new link", { exact: true }),
+		pairDialog.getByText("Expired — generate a new link", { exact: true }),
 	).toBeVisible();
-	await expect(pairResult.getByRole("img")).toHaveCount(0);
-	await expect(pairResult.getByText("Manual command", { exact: true })).toHaveCount(0);
+	await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toHaveCount(0);
+	await expect(pairDialog.getByText("Pair a group manually", { exact: true })).toHaveCount(0);
+	await pairDialog.getByRole("button", { name: "Close", exact: true }).click();
 
 	const firstCard = page.locator(`[data-channel-binding-id="${firstBindingId}"]`);
 	await firstCard.getByRole("button", { name: "Unpair", exact: true }).click();
@@ -5235,7 +5300,11 @@ test("Telegram pairing is a visible card flow with safe deep links and isolated 
 	await expect(page.locator(`[data-channel-binding-id="${secondBindingId}"]`)).toBeVisible();
 
 	const unexpectedErrors = errors.filter(
-		(error) => !error.includes("temporary Telegram cleanup error") && !error.includes("502"),
+		(error) =>
+			!error.includes("temporary Telegram pair error") &&
+			!error.includes("temporary Telegram cleanup error") &&
+			!error.includes("503") &&
+			!error.includes("502"),
 	);
 	expect(unexpectedErrors, `Telegram pairing UX: ${unexpectedErrors.join(" | ")}`).toEqual([]);
 });

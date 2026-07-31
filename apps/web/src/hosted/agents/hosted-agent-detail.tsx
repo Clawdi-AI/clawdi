@@ -30,7 +30,6 @@ import {
 	X,
 	Zap,
 } from "lucide-react";
-import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -218,10 +217,7 @@ import {
 } from "@/hosted/v2/ai-providers/model-binding";
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
-import {
-	pairCodeExpiryLabel,
-	telegramPairDeepLink,
-} from "@/hosted/v2/channels/channel-detail-page.logic";
+import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import {
@@ -242,8 +238,8 @@ import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
 import {
 	channelActivityAfterLink,
 	channelProviderLinkingReady,
-	pairCodeExpired,
 } from "@/hosted/v2/channels/link-agent-dialog.logic";
+import { TelegramPairDialog } from "@/hosted/v2/channels/telegram-pair-dialog";
 import {
 	type AgentRouteSearch,
 	type AgentSectionId,
@@ -2670,9 +2666,6 @@ type AgentPairCodeResult = {
 	code: string;
 	expires_at: string;
 	pairing_command: string;
-	bot_username: string | null;
-	deep_link: string | null;
-	qr_payload: string | null;
 };
 
 function LinkedChannelRow({
@@ -2694,6 +2687,7 @@ function LinkedChannelRow({
 }) {
 	const pair = useCreatePairCode(link.account_id);
 	const [code, setCode] = useState<AgentPairCodeResult | null>(null);
+	const [telegramPairOpen, setTelegramPairOpen] = useState(false);
 	const [nowMs, setNowMs] = useState(() => Date.now());
 	const [creatingPairCode, setCreatingPairCode] = useState(false);
 	const pairInFlightRef = useRef(false);
@@ -2704,22 +2698,10 @@ function LinkedChannelRow({
 	const provider = account?.provider ?? "";
 	const name = account?.name ?? "Unnamed channel";
 	const hasActivity = channelActivityAfterLink(health?.last_message_at, link.created_at);
-	const resultExpired = code ? pairCodeExpired(code.expires_at, nowMs) : false;
-	const validTelegramLink =
-		code && provider === "telegram"
-			? telegramPairDeepLink({
-					deepLink: code.deep_link,
-					qrPayload: code.qr_payload,
-					botUsername: code.bot_username,
-					code: code.code,
-				})
-			: null;
 	const chatInstruction =
-		provider === "telegram"
-			? `Open Telegram and start a conversation with the bot you connected as “${name}”.`
-			: provider === "discord"
-				? `Open Discord and choose the server channel or direct message where “${name}” should answer.`
-				: `Open the conversation where you want “${name}” to answer.`;
+		provider === "discord"
+			? `Open Discord and choose the server channel or direct message where “${name}” should answer.`
+			: `Open the conversation where you want “${name}” to answer.`;
 	useEffect(() => {
 		if (!code) return;
 		setNowMs(Date.now());
@@ -2736,9 +2718,6 @@ function LinkedChannelRow({
 				code: data.code,
 				expires_at: data.expires_at,
 				pairing_command: data.pairing_command,
-				bot_username: data.bot_username ?? null,
-				deep_link: data.deep_link ?? null,
-				qr_payload: data.qr_payload ?? null,
 			});
 		} catch {
 			// useCreatePairCode already surfaces the API error.
@@ -2828,71 +2807,22 @@ function LinkedChannelRow({
 					<Button
 						variant="outline"
 						size="sm"
-						disabled={creatingPairCode}
-						onClick={() => void createPairCode()}
+						disabled={provider !== "telegram" && creatingPairCode}
+						onClick={() => {
+							if (provider === "telegram") setTelegramPairOpen(true);
+							else void createPairCode();
+						}}
 					>
 						{creatingPairCode ? <Spinner className="size-3.5" /> : <QrCode className="size-3.5" />}
 						{creatingPairCode
 							? "Generating…"
 							: provider === "telegram"
-								? "Generate Telegram link"
+								? "Pair Telegram"
 								: "Create pairing code"}
 					</Button>
 				</div>
 
-				{code && provider === "telegram" ? (
-					<div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
-						{validTelegramLink && !resultExpired ? (
-							<div className="flex flex-col items-center gap-3">
-								<div className="rounded-xl border bg-white p-3 shadow-sm">
-									<QRCodeSVG
-										value={validTelegramLink}
-										size={176}
-										role="img"
-										aria-label="Telegram pairing QR code"
-									/>
-								</div>
-								<Button
-									render={<a href={validTelegramLink} target="_blank" rel="noopener noreferrer" />}
-									nativeButton={false}
-								>
-									{code.bot_username
-										? `Open @${code.bot_username.replace(/^@/, "")}`
-										: "Open Telegram"}
-									<ExternalLink className="size-4" />
-								</Button>
-							</div>
-						) : (
-							<div role="alert" className="rounded-md border border-warning/40 bg-background p-3">
-								<p className="text-sm font-medium">
-									{resultExpired ? "This Telegram link has expired" : "Telegram link unavailable"}
-								</p>
-								<p className="mt-1 text-xs text-muted-foreground">
-									Generate a new link to restore the QR and Telegram action.
-								</p>
-							</div>
-						)}
-						<p
-							role="status"
-							className={cn(
-								"text-center text-xs font-medium",
-								resultExpired ? "text-destructive" : "text-muted-foreground",
-							)}
-						>
-							{pairCodeExpiryLabel(code.expires_at, nowMs)}
-						</p>
-						{!resultExpired ? (
-							<details className="rounded-md border bg-background/70 px-3 py-2">
-								<summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-									Pair a group manually
-								</summary>
-								<div className="mt-2">
-									<CopyInline value={code.pairing_command} label="pairing command" />
-								</div>
-							</details>
-						) : null}
-					</div>
-				) : code ? (
+				{code && provider !== "telegram" ? (
 					<div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm">
 						<p className="text-xs text-muted-foreground">{chatInstruction}</p>
 						<CopyInline value={code.pairing_command} label="pairing command" className="mt-2" />
@@ -2902,6 +2832,16 @@ function LinkedChannelRow({
 					</div>
 				) : null}
 			</div>
+
+			{provider === "telegram" ? (
+				<TelegramPairDialog
+					open={telegramPairOpen}
+					onOpenChange={setTelegramPairOpen}
+					accountId={link.account_id}
+					agentLinkId={link.id}
+					channelName={name}
+				/>
+			) : null}
 		</div>
 	);
 }

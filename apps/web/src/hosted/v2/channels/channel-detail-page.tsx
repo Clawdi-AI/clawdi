@@ -4,7 +4,7 @@ import { useRouter } from "@tanstack/react-router";
 import {
 	ArrowDownLeft,
 	ArrowUpRight,
-	ExternalLink,
+	Bot,
 	KeyRound,
 	Link2,
 	Link2Off,
@@ -17,8 +17,7 @@ import {
 	Trash2,
 	TriangleAlert,
 } from "lucide-react";
-import { QRCodeSVG } from "qrcode.react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
@@ -48,12 +47,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { isHostedRuntime } from "@/hosted/runtimes";
-import {
-	nativeTransportSummary,
-	pairCodeExpiryLabel,
-	pairCodeRequiresExplicitAgent,
-	telegramPairDeepLink,
-} from "@/hosted/v2/channels/channel-detail-page.logic";
+import { nativeTransportSummary } from "@/hosted/v2/channels/channel-detail-page.logic";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type {
 	ChannelActivityItem,
@@ -72,7 +66,6 @@ import {
 	useChannelAgentLinks,
 	useChannelBindings,
 	useChannelHealth,
-	useCreatePairCode,
 	useCreateWhatsappTenantCred,
 	useDeleteChannel,
 	useDeleteChannelBinding,
@@ -84,10 +77,10 @@ import {
 } from "@/hosted/v2/channels/channels-hooks";
 import { LinkAgentDialog } from "@/hosted/v2/channels/link-agent-dialog";
 import {
-	pairCodeExpired,
 	WHATSAPP_COMING_SOON_MESSAGE,
 	WHATSAPP_LINKING_READY,
 } from "@/hosted/v2/channels/link-agent-dialog.logic";
+import { TelegramPairDialog } from "@/hosted/v2/channels/telegram-pair-dialog";
 import {
 	type AgentOwnership,
 	agentOwnershipKindFromId,
@@ -98,6 +91,9 @@ import { cn, relativeTime } from "@/lib/utils";
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const LIST_TAB_CLASS = "mt-4 min-w-0";
 const FORM_TAB_CLASS = "mt-4 min-w-0 max-w-xl";
+const CHANNEL_RELATION_LIST_CLASS = "divide-y overflow-hidden rounded-lg border bg-card";
+const CHANNEL_RELATION_ROW_CLASS = "flex min-h-16 items-center gap-3 px-4 py-3";
+const CHANNEL_RELATION_ACTIONS_CLASS = "flex shrink-0 items-center justify-end gap-2";
 
 type EnvironmentList = ReturnType<typeof useEnvironments>["data"];
 type Environment = NonNullable<EnvironmentList>[number];
@@ -130,10 +126,29 @@ function envName(
 		: deploymentDisplayName(agentId);
 }
 
-function AgentName({ env, fallback }: { env: Environment | null; fallback: string }) {
+function AgentName({
+	env,
+	fallback,
+	meta,
+}: {
+	env: Environment | null;
+	fallback: string;
+	meta?: ReactNode[];
+}) {
 	const ownership = useAgentOwnership();
 	if (!env) {
-		return <span className="truncate text-sm font-medium">{deploymentDisplayName(fallback)}</span>;
+		return (
+			<EntityHeader
+				className="min-w-0 flex-1"
+				icon={
+					<IconChip size="sm">
+						<Bot />
+					</IconChip>
+				}
+				title={deploymentDisplayName(fallback)}
+				meta={meta}
+			/>
+		);
 	}
 	const ownershipKind = agentOwnershipKindFromId(env.id, ownership);
 	return (
@@ -148,7 +163,8 @@ function AgentName({ env, fallback }: { env: Environment | null; fallback: strin
 			titleAdornment={
 				<AgentSourceBadgeForEnvironment env={env} ownershipKind={ownershipKind} compact />
 			}
-			className="min-w-0"
+			className="min-w-0 flex-1"
+			meta={meta}
 		/>
 	);
 }
@@ -191,33 +207,6 @@ function SectionHeader({
 			<SectionLabel count={count}>{label}</SectionLabel>
 			{action ? <div className="shrink-0">{action}</div> : null}
 		</div>
-	);
-}
-
-function SetupStepCard({
-	step,
-	title,
-	description,
-	children,
-}: {
-	step: number;
-	title: string;
-	description: string;
-	children: ReactNode;
-}) {
-	return (
-		<section data-channel-setup-step={step} className="rounded-xl border bg-card p-4 sm:p-5">
-			<div className="mb-4 flex items-start gap-3">
-				<div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
-					{step}
-				</div>
-				<div className="min-w-0">
-					<h2 className="font-semibold">{title}</h2>
-					<p className="text-sm text-muted-foreground">{description}</p>
-				</div>
-			</div>
-			{children}
-		</section>
 	);
 }
 
@@ -351,45 +340,19 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				</InfoCard>
 			) : null}
 
-			<div data-channel-setup-flow className="flex max-w-3xl flex-col gap-4">
-				<SetupStepCard
-					step={1}
-					title="Link Agent"
-					description="Choose which Agent uses this bot. Credentials sync automatically."
-				>
+			<div data-channel-setup-flow className="flex flex-col gap-6">
+				<section className="flex flex-col gap-3">
 					<AgentsTab
 						accountId={id}
 						accountName={ch.name}
 						provider={ch.provider}
 						readOnly={providerUnavailable}
 					/>
-				</SetupStepCard>
-				{providerUnavailable ? (
-					<section className="rounded-xl border bg-card p-4 sm:p-5">
-						<SectionHeader label="Paired chats" />
-						<div className="mt-3">
-							<BindingsTab accountId={id} />
-						</div>
-					</section>
-				) : (
-					<SetupStepCard
-						step={2}
-						title={ch.provider === "telegram" ? "Pair Telegram" : `Pair ${meta.label}`}
-						description={
-							ch.provider === "telegram"
-								? "Open Telegram from the QR or link, with a short manual command for groups."
-								: "Use the short pairing command in the conversation you want."
-						}
-					>
-						<PairCodeTab accountId={id} provider={ch.provider} />
-						<div className="mt-5 border-t pt-5">
-							<SectionHeader label="Paired chats" />
-							<div className="mt-3">
-								<BindingsTab accountId={id} />
-							</div>
-						</div>
-					</SetupStepCard>
-				)}
+				</section>
+				<section className="flex flex-col gap-3 border-t pt-6">
+					<SectionHeader label="Paired chats" />
+					<BindingsTab accountId={id} />
+				</section>
 			</div>
 
 			<Tabs
@@ -442,7 +405,9 @@ function AgentsTab({
 	const links = useChannelAgentLinks(accountId);
 	const envs = useEnvironments();
 	const unlink = useUnlinkChannelAgent(accountId);
+	const ownership = useAgentOwnership();
 	const [linkOpen, setLinkOpen] = useState(false);
+	const [pairingLink, setPairingLink] = useState<ChannelAgentLink | null>(null);
 	const unlinkingLinksRef = useRef<Set<string>>(new Set());
 	const [unlinkingLinks, setUnlinkingLinks] = useState<ReadonlySet<string>>(() => new Set());
 	function unlinkAgent(linkId: string) {
@@ -510,45 +475,55 @@ function AgentsTab({
 					}
 				/>
 			) : (
-				<div className="flex flex-col gap-2">
+				<div className={CHANNEL_RELATION_LIST_CLASS}>
 					{items.map((link: ChannelAgentLink) => {
 						const isUnlinking = unlinkingLinks.has(link.id);
+						const env = findEnv(envs.data, link.agent_id);
 						return (
-							<div key={link.id} className={ENTITY_CARD_BASE}>
-								<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-									<div className="min-w-0">
-										<AgentName env={findEnv(envs.data, link.agent_id)} fallback={link.agent_id} />
-										<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-											<ChannelStatusBadge status={link.status} />
-											<span>Linked {relativeTime(link.created_at)}</span>
-										</div>
-									</div>
-									{readOnly ? null : (
-										<div className="flex shrink-0 flex-wrap items-center gap-1.5">
-											<ConfirmAction
-												title="Unlink this agent?"
-												description={<p>It stops sending and receiving on {accountName}.</p>}
-												confirmLabel="Unlink"
-												destructive
-												onConfirm={() => unlinkAgent(link.id)}
+							<div
+								key={link.id}
+								data-channel-agent-link-id={link.id}
+								className={CHANNEL_RELATION_ROW_CLASS}
+							>
+								<AgentName
+									env={env}
+									fallback={link.agent_id}
+									meta={[
+										<ChannelStatusBadge key="status" status={link.status} />,
+										<span key="linked">Linked {relativeTime(link.created_at)}</span>,
+									]}
+								/>
+								{readOnly ? null : (
+									<div className={CHANNEL_RELATION_ACTIONS_CLASS}>
+										{provider === "telegram" ? (
+											<Button size="sm" onClick={() => setPairingLink(link)}>
+												<QrCode className="size-3.5" />
+												Pair Telegram
+											</Button>
+										) : null}
+										<ConfirmAction
+											title="Unlink this agent?"
+											description={<p>It stops sending and receiving on {accountName}.</p>}
+											confirmLabel="Unlink"
+											destructive
+											onConfirm={() => unlinkAgent(link.id)}
+										>
+											<Button
+												variant="ghost"
+												size="icon-sm"
+												className="text-muted-foreground hover:text-destructive"
+												disabled={isUnlinking}
+												aria-label="Unlink agent"
 											>
-												<Button
-													variant="ghost"
-													size="icon-sm"
-													className="text-muted-foreground hover:text-destructive"
-													disabled={isUnlinking}
-													aria-label="Unlink agent"
-												>
-													{isUnlinking ? (
-														<Spinner className="size-4" />
-													) : (
-														<Link2Off className="size-4" />
-													)}
-												</Button>
-											</ConfirmAction>
-										</div>
-									)}
-								</div>
+												{isUnlinking ? (
+													<Spinner className="size-4" />
+												) : (
+													<Link2Off className="size-4" />
+												)}
+											</Button>
+										</ConfirmAction>
+									</div>
+								)}
 							</div>
 						);
 					})}
@@ -556,13 +531,27 @@ function AgentsTab({
 			)}
 
 			{readOnly ? null : (
-				<LinkAgentDialog
-					open={linkOpen}
-					onOpenChange={setLinkOpen}
-					accountId={accountId}
-					accountName={accountName}
-					provider={provider}
-				/>
+				<>
+					<LinkAgentDialog
+						open={linkOpen}
+						onOpenChange={setLinkOpen}
+						accountId={accountId}
+						accountName={accountName}
+						provider={provider}
+					/>
+					{pairingLink ? (
+						<TelegramPairDialog
+							open
+							onOpenChange={(nextOpen) => {
+								if (!nextOpen) setPairingLink(null);
+							}}
+							accountId={accountId}
+							agentLinkId={pairingLink.id}
+							agentName={envName(envs.data, pairingLink.agent_id, ownership, false)}
+							channelName={accountName}
+						/>
+					) : null}
+				</>
 			)}
 		</div>
 	);
@@ -772,283 +761,13 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 	);
 }
 
-// ── Pair code ────────────────────────────────────────────────────────────────
-
-const TTL_OPTIONS = [
-	{ value: "900", label: "15 minutes" },
-	{ value: "3600", label: "1 hour" },
-	{ value: "86400", label: "24 hours" },
-];
-
-type PairCodeResult = {
-	agent_link_id: string;
-	code: string;
-	expires_at: string;
-	pairing_command: string;
-	bot_username: string | null;
-	deep_link: string | null;
-	qr_payload: string | null;
-};
-
-function PairCodeTab({ accountId, provider }: { accountId: string; provider: string }) {
-	const envs = useEnvironments();
-	const links = useChannelAgentLinks(accountId);
-	const create = useCreatePairCode(accountId);
-	const ownership = useAgentOwnership();
-	const [agentLinkId, setAgentLinkId] = useState("");
-	const [ttl, setTtl] = useState("900");
-	const [result, setResult] = useState<PairCodeResult | null>(null);
-	const [nowMs, setNowMs] = useState(() => Date.now());
-	const [generating, setGenerating] = useState(false);
-	const linkedAgents = links.data ?? [];
-	const agentItems = linkedAgents.map((link) => ({
-		value: link.id,
-		label: envName(envs.data, link.agent_id, ownership),
-	}));
-	const generateLocked = useRef(false);
-	const isGenerating = generating || create.isPending;
-	const linkedAgentCount = links.data?.length ?? 0;
-	const requiresExplicitAgent = pairCodeRequiresExplicitAgent(linkedAgentCount);
-	const selectedLink =
-		linkedAgents.find((candidate) => candidate.id === agentLinkId) ??
-		(linkedAgentCount === 1 ? linkedAgents[0] : undefined);
-	const selectionMessage =
-		requiresExplicitAgent && !selectedLink && !links.isLoading && !links.error
-			? linkedAgentCount === 0
-				? "Link an Agent above before creating a pairing link."
-				: "This channel has multiple linked agents. Choose the agent for this pairing code."
-			: null;
-	const canGenerate = !isGenerating && !links.isLoading && !links.error && Boolean(selectedLink);
-	const resultExpired = result ? pairCodeExpired(result.expires_at, nowMs) : false;
-	const validTelegramLink =
-		result && provider === "telegram"
-			? telegramPairDeepLink({
-					deepLink: result.deep_link,
-					qrPayload: result.qr_payload,
-					botUsername: result.bot_username,
-					code: result.code,
-				})
-			: null;
-
-	useEffect(() => {
-		if (!result) return;
-		setNowMs(Date.now());
-		const interval = window.setInterval(() => setNowMs(Date.now()), 1000);
-		return () => window.clearInterval(interval);
-	}, [result]);
-
-	useEffect(() => {
-		if (!result || !links.data) return;
-		if (!links.data.some((link) => link.id === result.agent_link_id)) setResult(null);
-	}, [links.data, result]);
-
-	function generate() {
-		if (!canGenerate || generateLocked.current) return;
-		generateLocked.current = true;
-		setGenerating(true);
-		setResult(null);
-		void (async () => {
-			try {
-				if (!selectedLink) return;
-				const data = await create.execute({
-					agent_link_id: selectedLink.id,
-					ttl_seconds: Number(ttl),
-				});
-				setResult({
-					agent_link_id: data.agent_link_id,
-					code: data.code,
-					expires_at: data.expires_at,
-					pairing_command: data.pairing_command,
-					bot_username: data.bot_username ?? null,
-					deep_link: data.deep_link ?? null,
-					qr_payload: data.qr_payload ?? null,
-				});
-			} catch {
-				// useSensitiveAction already surfaces the API error.
-			} finally {
-				generateLocked.current = false;
-				setGenerating(false);
-			}
-		})();
-	}
-
-	if (provider === "whatsapp" && !WHATSAPP_LINKING_READY) {
-		return (
-			<InfoCard icon={TriangleAlert} title="WhatsApp is coming soon">
-				{WHATSAPP_COMING_SOON_MESSAGE}
-			</InfoCard>
-		);
-	}
-
-	return (
-		<div className="flex flex-col gap-4">
-			<div className="grid gap-3 sm:grid-cols-2">
-				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="pair-agent">Agent</Label>
-					{envs.isLoading || links.isLoading ? (
-						<Skeleton className="h-10 w-full rounded-md" />
-					) : (
-						<Select
-							items={agentItems}
-							value={agentLinkId}
-							onValueChange={(value) => {
-								if (value !== null) {
-									setAgentLinkId(value);
-									setResult(null);
-								}
-							}}
-							disabled={Boolean(links.error) || linkedAgentCount === 0 || isGenerating}
-						>
-							<SelectTrigger
-								id="pair-agent"
-								aria-describedby={selectionMessage ? "pair-agent-requirement" : undefined}
-							>
-								<SelectValue
-									placeholder={requiresExplicitAgent ? "Choose a linked Agent" : "Use linked Agent"}
-								/>
-							</SelectTrigger>
-							<SelectContent>
-								{linkedAgents.map((link) => (
-									<SelectItem
-										key={link.id}
-										value={link.id}
-										label={envName(envs.data, link.agent_id, ownership)}
-									>
-										<AgentName env={findEnv(envs.data, link.agent_id)} fallback={link.agent_id} />
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
-					)}
-					{selectionMessage ? (
-						<p id="pair-agent-requirement" className="text-xs text-warning-muted-foreground">
-							{selectionMessage}
-						</p>
-					) : null}
-				</div>
-				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="pair-ttl">Expires in</Label>
-					<Select
-						items={TTL_OPTIONS}
-						value={ttl}
-						onValueChange={(value) => {
-							if (value !== null) setTtl(value);
-						}}
-						disabled={isGenerating}
-					>
-						<SelectTrigger id="pair-ttl">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							{TTL_OPTIONS.map((o) => (
-								<SelectItem key={o.value} value={o.value}>
-									{o.label}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-				</div>
-			</div>
-
-			{envs.error ? (
-				<ApiErrorPanel
-					error={envs.error}
-					onRetry={() => envs.refetch()}
-					title="Couldn't load agents"
-				/>
-			) : null}
-			{links.error ? (
-				<ApiErrorPanel
-					error={links.error}
-					onRetry={() => links.refetch()}
-					title="Couldn't load linked agents"
-				/>
-			) : null}
-
-			<Button onClick={generate} disabled={!canGenerate}>
-				<QrCode className="size-4" />
-				{isGenerating
-					? "Generating…"
-					: provider === "telegram"
-						? "Generate Telegram link"
-						: "Generate pairing code"}
-			</Button>
-
-			{result ? (
-				<div
-					data-telegram-pair-result={provider === "telegram" ? "true" : undefined}
-					className="flex flex-col gap-4 rounded-lg border border-primary/30 bg-primary/5 p-4"
-				>
-					<div className="text-sm font-medium text-primary">
-						{provider === "telegram" ? "Telegram pairing link" : "Pairing code"}
-					</div>
-					{provider === "telegram" ? (
-						validTelegramLink && !resultExpired ? (
-							<div className="flex flex-col items-center gap-3">
-								<div className="rounded-xl border bg-white p-3 shadow-sm">
-									<QRCodeSVG
-										value={validTelegramLink}
-										size={192}
-										role="img"
-										aria-label="Telegram pairing QR code"
-									/>
-								</div>
-								<Button
-									render={<a href={validTelegramLink} target="_blank" rel="noopener noreferrer" />}
-									nativeButton={false}
-								>
-									{result.bot_username
-										? `Open @${result.bot_username.replace(/^@/, "")}`
-										: "Open Telegram"}
-									<ExternalLink className="size-4" />
-								</Button>
-								<CopyInline value={validTelegramLink} label="Telegram pairing link" />
-							</div>
-						) : (
-							<div role="alert" className="rounded-md border border-warning/40 bg-background p-3">
-								<p className="text-sm font-medium">
-									{resultExpired ? "This Telegram link has expired" : "Telegram link unavailable"}
-								</p>
-								<p className="mt-1 text-xs text-muted-foreground">
-									Generate a new pairing link. QR and Open Telegram stay disabled unless the server
-									returns a valid t.me start link.
-								</p>
-							</div>
-						)
-					) : (
-						<div className="font-mono text-3xl font-semibold tracking-[0.2em]">{result.code}</div>
-					)}
-					<p
-						role="status"
-						className={cn(
-							"text-center text-sm font-medium",
-							resultExpired ? "text-destructive" : "text-muted-foreground",
-						)}
-					>
-						{pairCodeExpiryLabel(result.expires_at, nowMs)}
-					</p>
-					{!resultExpired ? (
-						<details className="rounded-md border bg-background/70 px-3 py-2">
-							<summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-								Manual command
-							</summary>
-							<div className="mt-2">
-								<CopyInline value={result.pairing_command} label="pairing command" />
-							</div>
-						</details>
-					) : null}
-				</div>
-			) : null}
-		</div>
-	);
-}
-
 // ── Bindings (paired chats) ──────────────────────────────────────────────────
 
 function BindingsTab({ accountId }: { accountId: string }) {
 	const bindings = useChannelBindings(accountId);
 	const links = useChannelAgentLinks(accountId);
 	const envs = useEnvironments();
+	const ownership = useAgentOwnership();
 	const unpair = useDeleteChannelBinding(accountId);
 	const unpairingRef = useRef<Set<string>>(new Set());
 	const [unpairingIds, setUnpairingIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -1090,13 +809,13 @@ function BindingsTab({ accountId }: { accountId: string }) {
 			<EmptyState
 				icon={MessageSquareDashed}
 				title="No paired chats"
-				description="Generate a pairing code, then send it from a chat to link it here."
+				description="Choose Pair Telegram on a linked Agent to connect a chat."
 			/>
 		);
 	}
 
 	return (
-		<div className="flex flex-col gap-2">
+		<div className={CHANNEL_RELATION_LIST_CLASS}>
 			{items.map((binding: ChannelBinding) => {
 				const link = links.data?.find((candidate) => candidate.id === binding.agent_link_id);
 				const threadLabel = bindingThreadLabel(binding);
@@ -1105,10 +824,7 @@ function BindingsTab({ accountId }: { accountId: string }) {
 					<div
 						key={binding.id}
 						data-channel-binding-id={binding.id}
-						className={cn(
-							ENTITY_CARD_BASE,
-							"flex flex-col items-stretch gap-3 sm:flex-row sm:items-start",
-						)}
+						className={CHANNEL_RELATION_ROW_CLASS}
 					>
 						<EntityHeader
 							className="min-w-0 flex-1"
@@ -1123,19 +839,18 @@ function BindingsTab({ accountId }: { accountId: string }) {
 									{binding.external_chat_type ?? "chat"}
 								</span>,
 								<ChannelStatusBadge key="status" status={binding.status} />,
+								...(link
+									? [
+											<span key="agent">
+												Agent: {envName(envs.data, link.agent_id, ownership, false)}
+											</span>,
+										]
+									: []),
 								<CopyInline key="chat-id" value={binding.external_chat_id} label="chat ID" />,
 								...(threadLabel ? [<span key="thread">Thread: {threadLabel}</span>] : []),
 							]}
 						/>
-						<div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
-							{link ? (
-								<div className="min-w-0 max-w-52">
-									<div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-										Agent
-									</div>
-									<AgentName env={findEnv(envs.data, link.agent_id)} fallback={link.agent_id} />
-								</div>
-							) : null}
+						<div className={CHANNEL_RELATION_ACTIONS_CLASS}>
 							<ConfirmAction
 								title={`Unpair ${binding.external_chat_name ?? "this chat"}?`}
 								description="Only this chat will be disconnected. Other chats and the linked Agent stay active."

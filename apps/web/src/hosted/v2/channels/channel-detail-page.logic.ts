@@ -1,7 +1,3 @@
-export function pairCodeRequiresExplicitAgent(linkedAgentCount: number): boolean {
-	return linkedAgentCount !== 1;
-}
-
 export function telegramPairDeepLink({
 	deepLink,
 	qrPayload,
