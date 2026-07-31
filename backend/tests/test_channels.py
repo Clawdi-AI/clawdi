@@ -18,7 +18,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -7003,6 +7003,93 @@ async def test_telegram_native_attach_multipart_is_forwarded_byte_for_byte_and_r
 
 
 @pytest.mark.asyncio
+async def test_telegram_successful_send_survives_reference_recording_failure(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    provider_payload = {
+        "ok": True,
+        "result": {
+            "message_id": 71,
+            "chat": {"id": 42, "type": "private"},
+            "document": {"file_id": "telegram-file-before-recording-failure"},
+        },
+    }
+    provider_body = (
+        b'{  "ok" : true, "result" : { "message_id" : 71, '
+        b'"chat" : {"id":42,"type":"private"}, '
+        b'"document":{"file_id":"telegram-file-before-recording-failure"} } }\n'
+    )
+    provider_headers = {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": str(len(provider_body)),
+        "retry-after": "3",
+        "x-ratelimit-remaining": "9",
+        "x-request-id": "telegram-send-recording-request",
+        "x-correlation-id": "telegram-send-recording-correlation",
+    }
+    _reset_fake_provider_client(
+        provider_payload,
+        content=provider_body,
+        headers=provider_headers,
+    )
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-send-recording-failure",
+        chat_id="42",
+    )
+    recording_calls = 0
+
+    async def fail_second_reference_recording(db: AsyncSession, **kwargs):
+        nonlocal recording_calls
+        recording_calls += 1
+        if recording_calls == 2:
+            await db.execute(text("SELECT * FROM telegram_missing_reference_recording_table"))
+        return await channel_service.record_channel_agent_reference(db, **kwargs)
+
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.record_channel_agent_reference",
+        fail_second_reference_recording,
+    )
+
+    response = await client.post(
+        _telegram_bot_path(created, "sendDocument"),
+        headers=_telegram_agent_headers(created),
+        json={"chat_id": "42", "document": "https://example.test/report.pdf"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == provider_body
+    assert response.headers["content-type"] == provider_headers["content-type"]
+    assert response.headers["content-length"] == provider_headers["content-length"]
+    assert response.headers["retry-after"] == provider_headers["retry-after"]
+    assert response.headers["x-ratelimit-remaining"] == provider_headers["x-ratelimit-remaining"]
+    assert response.headers["x-telegram-request-id"] == provider_headers["x-request-id"]
+    assert response.headers["x-request-id"] != provider_headers["x-request-id"]
+    assert response.headers["x-correlation-id"] == provider_headers["x-correlation-id"]
+    assert recording_calls == 2
+    recorded_reference = (
+        await db_session.execute(
+            select(ChannelAgentReference.id).where(
+                ChannelAgentReference.account_id == UUID(created["id"]),
+                ChannelAgentReference.ref_value == "telegram-file-before-recording-failure",
+            )
+        )
+    ).scalar_one_or_none()
+    assert recorded_reference is None
+    assert (await db_session.execute(select(1))).scalar_one() == 1
+    assert "telegram_reference_recording_failed" in caplog.text
+    assert f"account_id={created['id']}" in caplog.text
+    assert "method=sendDocument" in caplog.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider_status", [200, 400])
 async def test_telegram_failed_outbound_response_does_not_grant_file_reference(
     client: httpx.AsyncClient,
@@ -7878,6 +7965,100 @@ async def test_telegram_get_file_records_path_and_download_is_scoped(
     )
     assert unowned_download.status_code == 403
     assert unowned_download.json()["description"] == "Forbidden: file_path is not bound to this bot"
+
+
+@pytest.mark.asyncio
+async def test_telegram_get_file_success_survives_path_recording_failure(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-get-file-recording-failure",
+        chat_id="42",
+    )
+    inbound = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 2,
+            "message": {
+                "message_id": 2,
+                "chat": {"id": 42, "type": "private"},
+                "document": {"file_id": "telegram-owned-file"},
+            },
+        },
+    )
+    assert inbound.status_code == 200
+    provider_payload = {
+        "ok": True,
+        "result": {
+            "file_id": "telegram-owned-file",
+            "file_path": "documents/provider-success.dat",
+        },
+    }
+    provider_body = (
+        b'{ "ok" : true, "result" : {"file_id":"telegram-owned-file", '
+        b'"file_path":"documents/provider-success.dat"} }\n'
+    )
+    provider_headers = {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": str(len(provider_body)),
+        "retry-after": "5",
+        "ratelimit-reset": "8",
+        "x-request-id": "telegram-get-file-recording-request",
+        "x-correlation-id": "telegram-get-file-recording-correlation",
+    }
+    _reset_fake_provider_client(
+        provider_payload,
+        content=provider_body,
+        headers=provider_headers,
+    )
+
+    async def fail_file_path_recording(db: AsyncSession, **_kwargs):
+        await db.execute(text("SELECT * FROM telegram_missing_file_path_recording_table"))
+
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.record_channel_agent_reference",
+        fail_file_path_recording,
+    )
+
+    response = await client.post(
+        _telegram_bot_path(created, "getFile"),
+        headers=_telegram_agent_headers(created),
+        json={"file_id": "telegram-owned-file"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == provider_body
+    assert response.headers["content-type"] == provider_headers["content-type"]
+    assert response.headers["content-length"] == provider_headers["content-length"]
+    assert response.headers["retry-after"] == provider_headers["retry-after"]
+    assert response.headers["ratelimit-reset"] == provider_headers["ratelimit-reset"]
+    assert response.headers["x-telegram-request-id"] == provider_headers["x-request-id"]
+    assert response.headers["x-request-id"] != provider_headers["x-request-id"]
+    assert response.headers["x-correlation-id"] == provider_headers["x-correlation-id"]
+    recorded_path = (
+        await db_session.execute(
+            select(ChannelAgentReference.id).where(
+                ChannelAgentReference.account_id == UUID(created["id"]),
+                ChannelAgentReference.ref_value == "documents/provider-success.dat",
+            )
+        )
+    ).scalar_one_or_none()
+    assert recorded_path is None
+    assert (await db_session.execute(select(1))).scalar_one() == 1
+    assert "telegram_reference_recording_failed" in caplog.text
+    assert f"account_id={created['id']}" in caplog.text
+    assert "method=getFile" in caplog.text
 
 
 @pytest.mark.asyncio

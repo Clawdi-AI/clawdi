@@ -1812,15 +1812,28 @@ async def _handle_telegram_get_file(
         and isinstance(file_path, str)
         and file_path
     ):
-        await record_channel_agent_reference(
-            db,
-            account=account,
-            ref_kind=TELEGRAM_REF_FILE_PATH,
-            ref_value=file_path,
-            bot_agent_link_id=bot_agent_link_id,
-            metadata={"file_id": file_id},
-        )
-        await db.commit()
+        try:
+            await record_channel_agent_reference(
+                db,
+                account=account,
+                ref_kind=TELEGRAM_REF_FILE_PATH,
+                ref_value=file_path,
+                bot_agent_link_id=bot_agent_link_id,
+                metadata={"file_id": file_id},
+            )
+            await db.commit()
+        except Exception:
+            log.exception(
+                "telegram_reference_recording_failed account_id=%s link_id=%s method=getFile",
+                account.id,
+                bot_agent_link_id,
+            )
+            await _rollback_telegram_reference_recording(
+                db,
+                account_id=account.id,
+                bot_agent_link_id=bot_agent_link_id,
+                method="getFile",
+            )
     return _telegram_proxy_response(response)
 
 
@@ -2139,29 +2152,61 @@ async def _proxy_telegram_bot_method(
             payload = None
         if isinstance(payload, dict) and payload.get("ok") is True:
             file_ids = telegram_file_ids(payload.get("result"))
-            for file_id in sorted(file_ids):
-                await record_channel_agent_reference(
-                    db,
-                    account=account,
-                    bot_agent_link_id=bot_agent_link_id,
-                    ref_kind=TELEGRAM_REF_FILE_ID,
-                    ref_value=file_id,
-                )
             message_references = _telegram_result_message_references(
                 payload.get("result"),
                 fallback_chat_id=chat_id,
             )
-            for ref_chat_id, message_id in sorted(message_references):
-                await record_channel_agent_reference(
-                    db,
-                    account=account,
-                    bot_agent_link_id=bot_agent_link_id,
-                    ref_kind=TELEGRAM_REF_MESSAGE_ID,
-                    ref_value=telegram_message_reference_value(ref_chat_id, message_id),
-                )
             if file_ids or message_references:
-                await db.commit()
+                try:
+                    for file_id in sorted(file_ids):
+                        await record_channel_agent_reference(
+                            db,
+                            account=account,
+                            bot_agent_link_id=bot_agent_link_id,
+                            ref_kind=TELEGRAM_REF_FILE_ID,
+                            ref_value=file_id,
+                        )
+                    for ref_chat_id, message_id in sorted(message_references):
+                        await record_channel_agent_reference(
+                            db,
+                            account=account,
+                            bot_agent_link_id=bot_agent_link_id,
+                            ref_kind=TELEGRAM_REF_MESSAGE_ID,
+                            ref_value=telegram_message_reference_value(ref_chat_id, message_id),
+                        )
+                    await db.commit()
+                except Exception:
+                    log.exception(
+                        "telegram_reference_recording_failed account_id=%s link_id=%s method=%s",
+                        account.id,
+                        bot_agent_link_id,
+                        method,
+                    )
+                    await _rollback_telegram_reference_recording(
+                        db,
+                        account_id=account.id,
+                        bot_agent_link_id=bot_agent_link_id,
+                        method=method,
+                    )
     return _telegram_proxy_response(response)
+
+
+async def _rollback_telegram_reference_recording(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    bot_agent_link_id: UUID,
+    method: str,
+) -> None:
+    try:
+        await db.rollback()
+    except Exception:
+        log.exception(
+            "telegram_reference_recording_rollback_failed account_id=%s link_id=%s method=%s",
+            account_id,
+            bot_agent_link_id,
+            method,
+        )
 
 
 def _telegram_result_message_references(
