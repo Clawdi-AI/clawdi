@@ -33,7 +33,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { isHostedRuntime } from "@/hosted/runtimes";
-import { TokenReveal } from "@/hosted/v2/channels/channel-ui";
+import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import {
 	useAgentChannelLinks,
 	useCreateWhatsappTenantCred,
@@ -54,9 +54,7 @@ import { agentDeploymentRouteQuery, agentSectionLink } from "@/lib/agent-routes"
 type Environment = components["schemas"]["AgentResponse"];
 
 /**
- * Link an agent to a channel — instant, no token paste. On success
- * the scoped agent token is revealed once (the handle the agent runtime uses
- * to send/receive on this channel).
+ * Link an agent to a channel. Hosted runtime credentials reconcile automatically.
  */
 export function LinkAgentDialog({
 	open,
@@ -80,8 +78,7 @@ export function LinkAgentDialog({
 	// (never flips undefined↔string, which warns), and reads as falsy so submit
 	// stays gated. Radix renders the placeholder for value="".
 	const [agentId, setAgentId] = useState("");
-	const [token, setToken] = useState<string | null>(null);
-	const [linkedNoToken, setLinkedNoToken] = useState(false);
+	const [linked, setLinked] = useState(false);
 	const [whatsappCredentialMinted, setWhatsappCredentialMinted] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
 	const submitLocked = useRef(false);
@@ -109,8 +106,7 @@ export function LinkAgentDialog({
 	useEffect(() => {
 		if (!open) return;
 		setAgentId("");
-		setToken(null);
-		setLinkedNoToken(false);
+		setLinked(false);
 		setWhatsappCredentialMinted(false);
 	}, [open]);
 
@@ -134,8 +130,7 @@ export function LinkAgentDialog({
 				return;
 			}
 			if (openRef.current && dialogSessionRef.current === dialogSession) {
-				if (data.agent_token) setToken(data.agent_token);
-				else setLinkedNoToken(true);
+				setLinked(true);
 			} else {
 				toast.success("Agent linked", {
 					description: `${accountName} is linked. Open the agent's Channels tab to pair a chat.`,
@@ -152,7 +147,7 @@ export function LinkAgentDialog({
 	function handleOpenChange(nextOpen: boolean) {
 		if (!nextOpen) {
 			dialogSessionRef.current += 1;
-			setToken(null);
+			setLinked(false);
 		}
 		onOpenChange(nextOpen);
 	}
@@ -168,7 +163,7 @@ export function LinkAgentDialog({
 			}),
 		[agents, ownership],
 	);
-	const linkComplete = Boolean(token || linkedNoToken || whatsappCredentialMinted);
+	const linkComplete = linked || whatsappCredentialMinted;
 
 	return (
 		<Dialog open={open} onOpenChange={handleOpenChange}>
@@ -189,32 +184,19 @@ export function LinkAgentDialog({
 					</DialogDescription>
 				</DialogHeader>
 
-				{token || linkedNoToken ? (
+				{linked ? (
 					<div className="space-y-3 rounded-lg border border-success/30 bg-success-muted p-3 text-sm">
 						<div className="flex items-start gap-2 text-success-muted-foreground">
 							<CircleCheck className="mt-0.5 size-4 shrink-0" />
 							<div>
-								<p className="font-medium">The bot is linked to this agent</p>
+								<p className="font-medium">Linked · syncing automatically</p>
 								<p className="mt-1 text-xs">
-									Next, create a pairing code and send it in the exact chat where the agent should
-									answer.
+									{provider === "telegram"
+										? "The bot is linked to this Agent. Next, create a Telegram pairing link for the exact chat where it should answer."
+										: `The bot is linked to this Agent. Next, create a ${providerMeta(provider).label} pairing code for the exact chat where it should answer.`}
 								</p>
 							</div>
 						</div>
-						{token ? (
-							<details className="rounded-md border bg-background p-3">
-								<summary className="cursor-pointer text-xs font-medium">
-									Agent token (advanced)
-								</summary>
-								<div className="mt-2">
-									<TokenReveal
-										label="Agent token"
-										value={token}
-										note="Clawdi agents configure this automatically. Only copy it for a self-managed agent that asks for it."
-									/>
-								</div>
-							</details>
-						) : null}
 					</div>
 				) : whatsappCredentialMinted ? (
 					<div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success-muted p-3 text-sm text-success-muted-foreground">
@@ -297,7 +279,7 @@ export function LinkAgentDialog({
 								}
 								nativeButton={false}
 							>
-								Finish channel setup
+								Open Agent Channels
 							</Button>
 						</>
 					) : (

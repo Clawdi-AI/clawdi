@@ -3,10 +3,10 @@ import { readFileSync } from "node:fs";
 
 const uiSource = readFileSync(new URL("./channel-ui.tsx", import.meta.url), "utf8");
 
-describe("TokenReveal", () => {
-	test("masks values by default while retaining reveal and copy controls", () => {
-		expect(uiSource).toContain('{revealed ? value : "••••••••••••"}');
-		expect(uiSource).toMatch(/aria-label=.*revealed.*Hide.*Show.*label/);
+describe("CopyInline", () => {
+	test("copies compact non-secret identifiers without a reveal state", () => {
+		expect(uiSource).toContain("export function CopyInline");
 		expect(uiSource).toContain("onClick={() => copy(value)}");
+		expect(uiSource).not.toContain("TokenReveal");
 	});
 });

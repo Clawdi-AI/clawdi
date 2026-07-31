@@ -94,22 +94,75 @@ export function renderHermesChannelConfig(
 ): string {
 	const document = parseHermesConfig(content, "Hermes config");
 	for (const [platform, config] of Object.entries(platforms)) {
-		if (platform === "platforms") {
+		if (platform === "platforms" || platform === "display") {
 			const root = document.toJS();
-			if (isPlainRecord(root) && root.platforms !== undefined && !isPlainRecord(root.platforms)) {
-				throw new Error("Hermes config field platforms must be a YAML object.");
+			if (isPlainRecord(root) && root[platform] !== undefined && !isPlainRecord(root[platform])) {
+				throw new Error(`Hermes config field ${platform} must be a YAML object.`);
 			}
-			if (!isPlainRecord(root) || !isPlainRecord(root.platforms)) {
-				document.set("platforms", document.createNode({}));
+			if (!isPlainRecord(root) || !isPlainRecord(root[platform])) {
+				document.set(platform, document.createNode({}));
 			}
-			for (const [nestedPlatform, nestedConfig] of Object.entries(config)) {
-				document.setIn(["platforms", nestedPlatform], document.createNode(nestedConfig));
+			if (platform === "display") {
+				applyHermesChannelNestedPatch(document, [platform], config);
+			} else {
+				for (const [nestedPlatform, nestedConfig] of Object.entries(config)) {
+					if (nestedPlatform === "telegram" && isPlainRecord(nestedConfig)) {
+						applyHermesChannelNestedPatch(document, [platform, nestedPlatform], nestedConfig);
+						const updated = valueAtPath(document.toJS(), [platform, nestedPlatform]);
+						if (isPlainRecord(updated) && Object.keys(updated).length === 0) {
+							document.deleteIn([platform, nestedPlatform]);
+						}
+					} else {
+						document.setIn([platform, nestedPlatform], document.createNode(nestedConfig));
+					}
+				}
+			}
+			const updated = valueAtPath(document.toJS(), [platform]);
+			if (isPlainRecord(updated) && Object.keys(updated).length === 0) {
+				document.delete(platform);
 			}
 			continue;
 		}
 		document.set(platform, document.createNode(config));
 	}
 	return String(document);
+}
+
+function applyHermesChannelNestedPatch(
+	document: ReturnType<typeof parseDocument>,
+	path: string[],
+	patch: Record<string, unknown>,
+): void {
+	for (const [key, value] of Object.entries(patch)) {
+		const nextPath = [...path, key];
+		if (value === null) {
+			document.deleteIn(nextPath);
+			continue;
+		}
+		if (!isPlainRecord(value)) {
+			document.setIn(nextPath, value);
+			continue;
+		}
+		const root = document.toJS();
+		const existing = valueAtPath(root, nextPath);
+		if (!isPlainRecord(existing)) {
+			document.setIn(nextPath, document.createNode({}));
+		}
+		applyHermesChannelNestedPatch(document, nextPath, value);
+		const updated = valueAtPath(document.toJS(), nextPath);
+		if (isPlainRecord(updated) && Object.keys(updated).length === 0) {
+			document.deleteIn(nextPath);
+		}
+	}
+}
+
+function valueAtPath(value: unknown, path: readonly string[]): unknown {
+	let current = value;
+	for (const key of path) {
+		if (!isPlainRecord(current)) return undefined;
+		current = current[key];
+	}
+	return current;
 }
 
 export function mergeHermesRuntimeLocale(configPath: string, timezone: string): void {

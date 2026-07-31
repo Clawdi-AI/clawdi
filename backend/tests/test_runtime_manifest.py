@@ -24,7 +24,12 @@ from app.main import app
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
 from app.models.audit import ControlPlaneAuditEvent
-from app.models.channel import ChannelAccount, ChannelBotAgentLink
+from app.models.channel import (
+    BINDING_STATUS_ACTIVE,
+    ChannelAccount,
+    ChannelBinding,
+    ChannelBotAgentLink,
+)
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.models.user import User
@@ -4010,6 +4015,132 @@ async def test_runtime_bundle_revision_tracks_projected_and_secret_changes_only(
     assert identity(key_rotated) != identity(projected)
     assert identity(channel_added) != identity(key_rotated)
     assert identity(channel_removed) == identity(key_rotated)
+
+
+@pytest.mark.asyncio
+async def test_agent_link_lifecycle_advances_polled_source_but_chat_binding_does_not(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env, _, _, account, link = await _create_bundle_runtime(
+        admin_client,
+        db_session,
+        seed_user,
+    )
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="link-reconcile")
+    unrelated_environment_id = uuid4()
+    target_queue = sync_events.subscribe(
+        seed_user.id,
+        frozenset(),
+        environment_id=env.id,
+    )
+    unrelated_queue = sync_events.subscribe(
+        seed_user.id,
+        frozenset(),
+        environment_id=unrelated_environment_id,
+    )
+
+    async def fetch(client: httpx.AsyncClient) -> httpx.Response:
+        response = await client.get("/v1/runtime/manifest")
+        assert response.status_code == 200, response.text
+        return response
+
+    try:
+        async with await _runtime_client(db_session, seed_user, api_key) as runtime_client:
+            initial = await fetch(runtime_client)
+
+            binding = ChannelBinding(
+                account_id=account.id,
+                bot_agent_link_id=link.id,
+                user_id=seed_user.id,
+                external_chat_id="runtime-source-chat-a",
+                external_chat_type="private",
+                external_chat_name="Runtime source chat A",
+                status=BINDING_STATUS_ACTIVE,
+            )
+            sibling_binding = ChannelBinding(
+                account_id=account.id,
+                bot_agent_link_id=link.id,
+                user_id=seed_user.id,
+                external_chat_id="runtime-source-chat-b",
+                external_chat_type="private",
+                external_chat_name="Runtime source chat B",
+                status=BINDING_STATUS_ACTIVE,
+            )
+            db_session.add_all([binding, sibling_binding])
+            await db_session.commit()
+            paired = await fetch(runtime_client)
+            assert target_queue.empty()
+
+            unpaired = await runtime_client.delete(
+                f"/v1/channels/{account.id}/bindings/{binding.id}"
+            )
+            assert unpaired.status_code == 200, unpaired.text
+            assert unpaired.json()["unpaired"] is True
+            binding_changed = await fetch(runtime_client)
+            sibling_after_unpair = await db_session.get(ChannelBinding, sibling_binding.id)
+            assert sibling_after_unpair is not None
+            assert sibling_after_unpair.status == BINDING_STATUS_ACTIVE
+            assert target_queue.empty()
+
+            rotated = await runtime_client.post(
+                f"/v1/channels/{account.id}/agent-links/{link.id}/token"
+            )
+            assert rotated.status_code == 200, rotated.text
+            credential_changed = await fetch(runtime_client)
+            assert target_queue.get_nowait() == {
+                "type": "runtime_manifest_changed",
+                "environment_id": str(env.id),
+            }
+
+            deleted = await runtime_client.delete(
+                f"/v1/channels/{account.id}/agent-links/{link.id}"
+            )
+            assert deleted.status_code == 204, deleted.text
+            link_removed = await fetch(runtime_client)
+            assert target_queue.get_nowait() == {
+                "type": "runtime_manifest_changed",
+                "environment_id": str(env.id),
+            }
+
+            restored = await runtime_client.post(
+                f"/v1/channels/{account.id}/agent-links",
+                json={"agent_id": str(env.id)},
+            )
+            assert restored.status_code == 201, restored.text
+            assert restored.json()["id"] != str(link.id)
+            link_restored = await fetch(runtime_client)
+            assert target_queue.get_nowait() == {
+                "type": "runtime_manifest_changed",
+                "environment_id": str(env.id),
+            }
+
+            ensured = await runtime_client.post(
+                f"/v1/channels/{account.id}/agent-links",
+                json={"agent_id": str(env.id)},
+            )
+            assert ensured.status_code == 201, ensured.text
+            assert ensured.json()["id"] == restored.json()["id"]
+            link_ensured = await fetch(runtime_client)
+            assert target_queue.empty()
+            assert unrelated_queue.empty()
+    finally:
+        app.dependency_overrides.clear()
+        sync_events.unsubscribe(seed_user.id, target_queue)
+        sync_events.unsubscribe(seed_user.id, unrelated_queue)
+
+    def revision(response: httpx.Response) -> str:
+        return response.json()["sourceRevision"]
+
+    assert revision(paired) == revision(initial)
+    assert revision(binding_changed) == revision(initial)
+    assert revision(credential_changed) != revision(initial)
+    assert revision(link_removed) != revision(credential_changed)
+    assert link_removed.json()["channelBindings"] == []
+    assert revision(link_restored) != revision(link_removed)
+    assert revision(link_ensured) == revision(link_restored)
+    assert len(link_restored.json()["channelBindings"]) == 1
 
 
 @pytest.mark.asyncio

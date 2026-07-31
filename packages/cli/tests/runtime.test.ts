@@ -5698,6 +5698,54 @@ exit 64
 		expect(projected.secretValues).toEqual({ "provider.default.apiKey": "sk-provider" });
 	});
 
+	it("projects multiple Telegram accounts into one hosted runtime", () => {
+		const firstAccount = "clawdi_00000000000000000000000000000001";
+		const secondAccount = "clawdi_00000000000000000000000000000002";
+		const agentRef = (account: string) => `secret://channels/telegram/${account}/agent-token`;
+		const placeholderRef = (account: string) =>
+			`secret://channels/telegram/${account}/placeholder-token`;
+		const bindings: RuntimeBundleChannelBinding[] = [firstAccount, secondAccount].map(
+			(accountKey) => ({
+				provider: "telegram",
+				accountKey,
+				agentTokenSecretRef: agentRef(accountKey),
+				placeholderTokenSecretRef: placeholderRef(accountKey),
+			}),
+		);
+		const loaded: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_multi_telegram",
+				environmentId: "env_multi_telegram",
+				instanceId: "iid_multi_telegram",
+				generation: 1,
+				issuedAt: "2026-07-30T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: { openclaw: { enabled: true } },
+			},
+			source: "remote-datasource",
+			sourcePath: "https://cloud-api.test/v1/runtime/manifest",
+			channelBindings: bindings,
+			secretValues: Object.fromEntries(
+				bindings.flatMap((binding, index) => [
+					[binding.agentTokenSecretRef, `agent-token-${index}`],
+					[binding.placeholderTokenSecretRef, `99999999${index}:${"a".repeat(32)}`],
+				]),
+			),
+		};
+
+		const projected = applyRuntimeBundleChannelsToManifestLoad(loaded);
+
+		expect(projected.manifest.projection?.channels).toMatchObject({
+			telegram: {
+				accounts: {
+					[firstAccount]: { enabled: true },
+					[secondAccount]: { enabled: true },
+				},
+			},
+		});
+	});
+
 	it("reconciles environment-scoped hosted bundle channel create, rotation, and removal", () => {
 		const accountKey = "clawdi_00000000000000000000000000000001";
 		const agentRef = `secret://channels/telegram/${accountKey}/agent-token`;
@@ -11276,6 +11324,23 @@ exit 64
 			expect(patchText).toContain('"default": {');
 			expect(patchText).toContain('"source": "env"');
 			expect(patchText).toContain('"plugins"');
+			expect(patchText).toContain('"dmScope": "per-account-channel-peer"');
+			expect(patchText).not.toContain('"streaming"');
+			const isolationPatch = patchText
+				.split("\n---\n")
+				.filter((entry) => entry.trim().length > 0)
+				.map((entry): unknown => JSON.parse(entry))
+				.map((entry) => expectRecord(entry, "OpenClaw config patch"))
+				.find((entry) => entry.session !== undefined);
+			if (!isolationPatch) throw new Error("OpenClaw session isolation patch was not rendered");
+			const sessionPatch = expectRecord(isolationPatch.session, "OpenClaw session patch");
+			expect(sessionPatch).toEqual({ dmScope: "per-account-channel-peer" });
+			for (const current of ["main", "per-peer", "per-channel-peer", "per-account-channel-peer"]) {
+				expect({ dmScope: current, resetTriggers: ["/new"], ...sessionPatch }).toEqual({
+					dmScope: "per-account-channel-peer",
+					resetTriggers: ["/new"],
+				});
+			}
 			expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe("@openclaw/discord\n");
 			const openclawRunConfig = JSON.parse(
 				readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),
@@ -11452,9 +11517,33 @@ exit 64
 		const workspace = join(home, "clawdi");
 		const hermesBin = join(home, ".local", "bin", "hermes");
 		mkdirSync(dirname(hermesBin), { recursive: true });
+		mkdirSync(join(home, ".hermes"), { recursive: true });
 		mkdirSync(dirname(ambientHermesConfig), { recursive: true });
 		mkdirSync(workspace, { recursive: true });
 		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
+		writeFileSync(
+			join(home, ".hermes", "config.yaml"),
+			[
+				"custom_root: keep",
+				"streaming:",
+				"  enabled: false",
+				"display:",
+				"  theme: user-theme",
+				"  platforms:",
+				"    discord:",
+				"      streaming: false",
+				"    telegram:",
+				"      compact: true",
+				"platforms:",
+				"  telegram:",
+				"    custom: keep-telegram",
+				"    extra:",
+				"      custom_extra: keep-extra",
+				"  discord:",
+				"    custom: keep-discord",
+				"",
+			].join("\n"),
+		);
 		writeFileSync(ambientHermesConfig, ambientSentinel);
 		chmodSync(hermesBin, 0o700);
 		process.env.HOME = ambientHome;
@@ -11561,6 +11650,29 @@ exit 64
 		expect(hermesConfig).toContain("thread_require_mention: false");
 		expect(hermesConfig).not.toContain("telegram-agent-token");
 		expect(hermesConfig).not.toContain("discord-agent-token");
+		const parsedHermesConfig = readHermesConfigYaml(home);
+		expect(parsedHermesConfig.streaming).toEqual({ enabled: false });
+		expect(parsedHermesConfig).not.toHaveProperty("streaming.transport");
+		expect(parsedHermesConfig).not.toHaveProperty(
+			"platforms.telegram.extra.thread_sessions_per_user",
+		);
+		expect(parsedHermesConfig).toMatchObject({
+			custom_root: "keep",
+			display: {
+				theme: "user-theme",
+				platforms: {
+					discord: { streaming: false },
+					telegram: { compact: true, streaming: true },
+				},
+			},
+			platforms: {
+				telegram: {
+					custom: "keep-telegram",
+					extra: { custom_extra: "keep-extra", group_sessions_per_user: false },
+				},
+				discord: { custom: "keep-discord" },
+			},
+		});
 
 		const runConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
@@ -11586,6 +11698,48 @@ exit 64
 		const profileBundle = readFileSync(join(state, "config", "egress", "profiles.json"), "utf-8");
 		expect(profileBundle).toContain("/v1/channels/telegram");
 		expect(profileBundle).toContain("/v1/channels/discord");
+
+		const removed = convergeRuntimeManifest(
+			applyRuntimeChannelsToManifestLoad(
+				load,
+				{
+					channels: [],
+					source: "remote-datasource",
+					sourcePath: "https://runtime.test/v1/channels",
+					etag: testBundleEtag("empty-hermes-channels"),
+				},
+				paths,
+			),
+			paths,
+		);
+		expect(removed.installErrors).toEqual([]);
+		const clearedHermesConfig = readHermesConfigYaml(home);
+		expect(clearedHermesConfig.streaming).toEqual({ enabled: false });
+		expect(clearedHermesConfig).not.toHaveProperty("streaming.transport");
+		expect(clearedHermesConfig).not.toHaveProperty(
+			"platforms.telegram.extra.thread_sessions_per_user",
+		);
+		expect(clearedHermesConfig).toMatchObject({
+			custom_root: "keep",
+			display: {
+				theme: "user-theme",
+				platforms: {
+					discord: { streaming: false },
+					telegram: { compact: true },
+				},
+			},
+			platforms: {
+				telegram: {
+					custom: "keep-telegram",
+					extra: { custom_extra: "keep-extra" },
+				},
+				discord: { custom: "keep-discord" },
+			},
+		});
+		expect(clearedHermesConfig).not.toHaveProperty(
+			"platforms.telegram.extra.group_sessions_per_user",
+		);
+		expect(clearedHermesConfig).not.toHaveProperty("display.platforms.telegram.streaming");
 	});
 
 	it("keeps Hermes native WhatsApp disabled until upstream websocket support is ready", () => {
@@ -11858,6 +12012,14 @@ exit 64
 		expect(hermesConfig).toContain("enabled: false");
 		expect(hermesConfig).not.toContain("stale: should-be-removed");
 		expect(hermesConfig).not.toContain("/stale/session");
+		const clearedChannelsConfig = readHermesConfigYaml(home);
+		expect(clearedChannelsConfig).not.toHaveProperty("display");
+		expect(clearedChannelsConfig).not.toHaveProperty("platforms.telegram");
+		expect(clearedChannelsConfig).not.toHaveProperty(
+			"platforms.telegram.extra.thread_sessions_per_user",
+		);
+		expect(clearedChannelsConfig).not.toHaveProperty("streaming.enabled");
+		expect(clearedChannelsConfig).not.toHaveProperty("streaming.transport");
 		const runConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
 		);
@@ -11951,6 +12113,7 @@ exit 0
 		expect(patchText).not.toContain("bluebubbles");
 		expect(patchText).not.toContain('"$patch"');
 		expect(patchText).not.toContain('"botToken"');
+		expect(patchText).toContain('"dmScope": null');
 	});
 
 	it("does not mutate live config when an OpenClaw channel plugin install fails", () => {
@@ -12405,11 +12568,16 @@ exit 64
 			offline: false,
 			secretValues: {},
 		});
+		const telegramChannel = {
+			enabled: true,
+			defaultAccount: "default",
+			accounts: { default: { enabled: true, botToken: "telegram-token" } },
+		};
 
 		const initial = convergeRuntimeManifest(
 			manifestWithChannels(
 				{
-					telegram: { enabled: true, botToken: "telegram-token" },
+					telegram: telegramChannel,
 					discord: { enabled: true, token: "discord-token" },
 				},
 				1,
@@ -12417,24 +12585,26 @@ exit 64
 			getRuntimePaths(),
 		);
 		const removed = convergeRuntimeManifest(
-			manifestWithChannels({ telegram: { enabled: true, botToken: "telegram-token" } }, 2),
+			manifestWithChannels({ telegram: telegramChannel }, 2),
 			getRuntimePaths(),
 		);
+		const unlinked = convergeRuntimeManifest(manifestWithChannels({}, 3), getRuntimePaths());
 
 		expect(initial.installErrors).toEqual([]);
 		expect(removed.installErrors).toEqual([]);
+		expect(unlinked.installErrors).toEqual([]);
 		const patches = readFileSync(openclawPatch, "utf-8")
 			.split("\n---\n")
 			.filter((entry) => entry.trim().length > 0)
 			.map((entry) => JSON.parse(entry));
-		expect(patches).toHaveLength(2);
+		expect(patches).toHaveLength(3);
 		expect(patches[0].channels.discord).toEqual({ enabled: true, token: "discord-token" });
+		expect(patches[0].session).toEqual({ dmScope: "per-account-channel-peer" });
 		expect(patches[1].channels.discord).toBeNull();
 		expect(patches[1].plugins.entries.discord).toBeNull();
-		expect(patches[1].channels.telegram).toEqual({
-			enabled: true,
-			botToken: "telegram-token",
-		});
+		expect(patches[1].channels.telegram).toEqual(telegramChannel);
+		expect(patches[2].session).toEqual({ dmScope: null });
+		expect(patches[2].channels.telegram).toBeNull();
 		expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe("@openclaw/discord\n");
 	});
 

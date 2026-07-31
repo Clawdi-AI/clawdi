@@ -1,9 +1,7 @@
 "use client";
 
-import { Check, CircleAlert, CircleCheck, Copy, Eye, EyeOff, TriangleAlert } from "lucide-react";
-import { useState } from "react";
+import { Check, CircleAlert, CircleCheck, Copy, TriangleAlert } from "lucide-react";
 import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
-import { Button } from "@/components/ui/button";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
@@ -95,54 +93,6 @@ export function DeliveryBadge({ status }: { status: string }) {
 
 function useCopy() {
 	return useCopyToClipboard({ error: "Copy failed" });
-}
-
-/** Copyable secret box, masked until the user explicitly reveals it. */
-export function TokenReveal({
-	label,
-	value,
-	note,
-}: {
-	label: string;
-	value: string;
-	note?: string;
-}) {
-	const { copied, copy } = useCopy();
-	const [revealed, setRevealed] = useState(false);
-	return (
-		<div
-			data-hosted="true"
-			data-v2="true"
-			className="flex flex-col gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3"
-		>
-			<div className="text-xs font-medium text-primary">{label}</div>
-			<div className="flex items-center gap-2">
-				<code className="flex-1 break-all rounded bg-muted px-3 py-2 font-mono text-xs">
-					{revealed ? value : "••••••••••••"}
-				</code>
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					onClick={() => setRevealed((visible) => !visible)}
-					aria-label={`${revealed ? "Hide" : "Show"} ${label}`}
-					aria-pressed={revealed}
-				>
-					{revealed ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-				</Button>
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					onClick={() => copy(value)}
-					aria-label={`Copy ${label}`}
-				>
-					{copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-				</Button>
-			</div>
-			{note ? <p className="text-xs text-muted-foreground">{note}</p> : null}
-		</div>
-	);
 }
 
 /** Inline copyable monospace value (chat ids, ids, urls). */

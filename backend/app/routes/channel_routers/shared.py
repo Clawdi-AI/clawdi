@@ -416,18 +416,22 @@ def _telegram_error(description: str, error_code: int) -> dict[str, Any]:
     return {"ok": False, "error_code": error_code, "description": description}
 
 
-def _telegram_me(account: ChannelAccount, token: str) -> dict[str, Any]:
-    bot_id = token.split(":", 1)[0]
+def _telegram_me(account: ChannelAccount) -> dict[str, Any]:
+    # Synthetic identities are account-scoped so rotating an AgentLink token
+    # cannot impersonate a different physical bot. Without a provider getMe
+    # snapshot, topic capability must fail closed.
+    bot_id = (account.id.int % 999_999_999) + 1
     config = account.config if isinstance(account.config, dict) else {}
     username = _optional_str(config.get("bot_username")) or account.name.replace(" ", "_")
     return {
-        "id": int(bot_id) if bot_id.isdigit() else abs(hash(bot_id)) % 1_000_000_000,
+        "id": bot_id,
         "is_bot": True,
         "first_name": account.name,
         "username": username,
         "can_join_groups": True,
         "can_read_all_group_messages": False,
         "supports_inline_queries": False,
+        "has_topics_enabled": False,
     }
 
 

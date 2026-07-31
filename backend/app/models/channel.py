@@ -349,29 +349,12 @@ class ChannelMessage(Base, TimestampMixin):
             "inbox_sequence",
         ),
         Index(
-            "ux_channel_messages_inbound_provider_message_bound",
-            "account_id",
-            "external_chat_id",
-            "provider_event_id",
-            "bot_agent_link_id",
-            unique=True,
-            postgresql_where=sql_text(
-                "direction = 'inbound' "
-                "AND provider_event_id IS NOT NULL "
-                "AND bot_agent_link_id IS NOT NULL"
-            ),
-        ),
-        Index(
-            "ux_channel_messages_inbound_provider_message_unbound",
+            "ux_channel_messages_inbound_provider_event_account",
             "account_id",
             "external_chat_id",
             "provider_event_id",
             unique=True,
-            postgresql_where=sql_text(
-                "direction = 'inbound' "
-                "AND provider_event_id IS NOT NULL "
-                "AND bot_agent_link_id IS NULL"
-            ),
+            postgresql_where=sql_text("direction = 'inbound' AND provider_event_id IS NOT NULL"),
         ),
     )
 

@@ -346,6 +346,27 @@ The v2 strong ETag is `"sha256:<sourceRevision>"`; the immutable renderer and
 the revision's effective public and secret-source identity make it a strong
 validator without decrypting secrets in the health summary.
 
+### Channel reconcile boundary
+
+Telegram and Discord `ChannelBotAgentLink` rows are runtime desired state. A
+link create or re-link, link delete, account archive, or link credential
+rotation changes the rendered channel projection and therefore
+`sourceRevision`. Those mutation transactions also enqueue the existing
+signal-only `runtime_manifest_changed` event for the linked Agent. The event is
+delivered only after commit; the runtime refetches the manifest and converges at
+the normal ETag/sourceRevision boundary. ETag polling remains the missed-event
+fallback, so no separate restart or channel-specific reconcile state machine is
+required. Creating a pair code emits this signal only when that request also
+creates an AgentLink.
+
+`ChannelBinding` rows are provider routing state, not runtime identity. Pairing
+or unpairing a chat updates only the binding and provider-owned per-chat
+projection, including Telegram command scopes and menu state. It does not enter
+`sourceRevision`, emit a runtime-manifest signal, archive the AgentLink, or
+restart/reconfigure the Agent. Telegram bindings currently identify a chat by
+the stored external chat identity; runtime conversation/session threading is a
+separate concern.
+
 The bundle root optionally carries `applyGeneration`, the deployment Apply
 identity. The inner manifest `generation` remains checkpoint/content identity.
 `applyGeneration` is omitted while persisted runtime state is null, preserving

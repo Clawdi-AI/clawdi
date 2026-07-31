@@ -152,6 +152,7 @@ describe("agent routes", () => {
 	it("keeps labels and URL segments in one route table", () => {
 		expect(agentSectionLabel("projects")).toBe("Project Access");
 		expect(agentSectionLabel("console")).toBe("Agent Interface");
+		expect(agentSectionLabel("channels")).toBe("Channels");
 		expect(agentSectionLabelFromSegment("project-access")).toBe("Project Access");
 		expect(agentSectionLabelFromSegment("console")).toBe("Agent Interface");
 		expect(agentSectionLabelFromSegment("model-provider")).toBe("Model Provider");

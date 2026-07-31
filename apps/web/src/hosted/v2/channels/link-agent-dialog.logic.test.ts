@@ -75,7 +75,26 @@ describe("linkAgentBlockReason", () => {
 		);
 	});
 
-	test("allows the current existing link and non-Hermes multi-link behavior", () => {
+	test("blocks a second Telegram link for OpenClaw until group sessions are account-aware", () => {
+		expect(
+			linkAgentBlockReason({
+				provider: "telegram",
+				selectedAgent: { agent_type: "openclaw" },
+				existingAgentLinks: [
+					{
+						account_id: "tg-existing",
+						status: "active",
+						account: { provider: "telegram" },
+					},
+				],
+				accountId: "tg-current",
+			}),
+		).toBe(
+			"OpenClaw agents can use one active Telegram bot at a time. Unlink the current Telegram bot before linking another.",
+		);
+	});
+
+	test("allows the current link and providers without a single-link constraint", () => {
 		expect(
 			linkAgentBlockReason({
 				provider: "telegram",
@@ -92,16 +111,16 @@ describe("linkAgentBlockReason", () => {
 		).toBeNull();
 		expect(
 			linkAgentBlockReason({
-				provider: "telegram",
+				provider: "discord",
 				selectedAgent: { agent_type: "openclaw" },
 				existingAgentLinks: [
 					{
-						account_id: "tg-existing",
+						account_id: "discord-existing",
 						status: "active",
-						account: { provider: "telegram" },
+						account: { provider: "discord" },
 					},
 				],
-				accountId: "tg-current",
+				accountId: "discord-current",
 			}),
 		).toBeNull();
 	});

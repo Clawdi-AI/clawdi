@@ -34,13 +34,14 @@ describe("channel default path", () => {
 	test("moves a successful ready-bot link into the agent finish line", () => {
 		const linkDialog = source("./link-agent-dialog.tsx");
 
-		expect(linkDialog).toContain("The bot is linked to this agent");
-		expect(linkDialog).toContain("Next, create a pairing code");
+		expect(linkDialog).toContain("The bot is linked to this Agent");
+		expect(linkDialog).toContain("Next, create a Telegram pairing link");
 		expect(linkDialog).toContain("agentSectionLink(");
 		expect(linkDialog).toContain('"channels"');
 		expect(linkDialog).toContain("agentDeploymentRouteQuery(routeSearch)");
-		expect(linkDialog).toContain("Finish channel setup");
-		expect(linkDialog).toContain("Agent token (advanced)");
+		expect(linkDialog).toContain("Open Agent Channels");
+		expect(linkDialog).not.toContain("agent_token");
+		expect(linkDialog).not.toContain("Agent token");
 	});
 
 	test("uses customer-facing labels for public bot access", () => {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -74,6 +75,7 @@ from app.services.channels import (
     telegram_external_user_id_from_update,
     telegram_file_ids,
     telegram_message_id_from_update,
+    telegram_message_thread_id_from_update,
     telegram_text_from_update,
     verify_hashed_token,
     wait_for_telegram_updates,
@@ -88,6 +90,7 @@ from app.services.telegram_rate_limiter import telegram_rate_limiter
 from app.services.url_security import UnsafeOutboundUrlError, validate_channel_http_url
 
 router = APIRouter(prefix="/channels/telegram", tags=["channels"])
+log = logging.getLogger(__name__)
 
 
 # Keep this list explicit. Telegram ignores parameters it doesn't use, so the
@@ -213,6 +216,14 @@ _TELEGRAM_BROAD_COMMAND_SCOPE_TYPES = frozenset(
     }
 )
 _TELEGRAM_CHAT_COMMAND_SCOPE_TYPES = frozenset({"chat", "chat_administrators", "chat_member"})
+TELEGRAM_UI_UNPAIR_REPLY = "Unpaired. This chat is no longer connected to an agent."
+
+
+@dataclass(frozen=True)
+class TelegramBindingUnpairOutcome:
+    notification_sent: bool
+    commands_cleared: bool
+    menu_reset: bool
 
 
 @dataclass(frozen=True)
@@ -408,7 +419,7 @@ async def telegram_bot_api(
     authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    agent, agent_token = await _resolve_telegram_agent(
+    agent, _agent_token = await _resolve_telegram_agent(
         db,
         routing_id=routing_id,
         authorization=authorization,
@@ -435,7 +446,7 @@ async def telegram_bot_api(
                 request=request,
                 raw_body=raw_body,
             )
-        return _telegram_ok(_telegram_me(account, agent_token))
+        return _telegram_ok(_telegram_me(account))
     if method_key == "getupdates":
         if _telegram_link_webhook_url(agent.link):
             return _telegram_error_response(
@@ -822,6 +833,7 @@ async def telegram_webhook(
         db,
         account=account,
         external_chat_id=external_chat_id,
+        telegram_message_thread_id=telegram_message_thread_id_from_update(payload),
         command=command,
         binding_result=binding_result,
     )
@@ -1185,14 +1197,15 @@ async def _clear_telegram_commands_for_binding(
     account: ChannelAccount,
     link: ChannelBotAgentLink,
     binding: ChannelBinding,
-) -> None:
+) -> bool:
     if not account.encrypted_provider_token or not account.provider_token_nonce:
-        return
+        return True
     config = link.config if isinstance(link.config, dict) else {}
     shadow = config.get("telegram_agent_commands")
     if not isinstance(shadow, dict):
-        return
+        return True
     cleared: set[str] = set()
+    succeeded = True
     for key in shadow:
         if not isinstance(key, str):
             continue
@@ -1213,10 +1226,17 @@ async def _clear_telegram_commands_for_binding(
                 method="deleteMyCommands",
                 payload=payload,
             )
-        except HTTPException:
-            return
-        if response.status_code >= 400:
-            return
+        except Exception:
+            log.exception(
+                "telegram_binding_command_cleanup_failed account_id=%s binding_id=%s",
+                account.id,
+                binding.id,
+            )
+            succeeded = False
+            continue
+        if not _telegram_provider_call_succeeded(response):
+            succeeded = False
+    return succeeded
 
 
 async def _replay_telegram_commands_on_pair(
@@ -1265,13 +1285,13 @@ async def _reconcile_telegram_menu_button_after_binding_change(
     account: ChannelAccount,
     binding: ChannelBinding,
     paired: bool,
-) -> None:
+) -> bool:
     if (
         not _telegram_binding_supports_menu_button(binding)
         or not account.encrypted_provider_token
         or not account.provider_token_nonce
     ):
-        return
+        return True
     menu_button: dict[str, Any] = {"type": "default"}
     if paired:
         link = await db.get(ChannelBotAgentLink, binding.bot_agent_link_id)
@@ -1281,7 +1301,7 @@ async def _reconcile_telegram_menu_button_after_binding_change(
                 chat_id=binding.external_chat_id,
             )
     try:
-        await _post_telegram_bot_payload(
+        response = await _post_telegram_bot_payload(
             account=account,
             method="setChatMenuButton",
             payload={
@@ -1289,8 +1309,64 @@ async def _reconcile_telegram_menu_button_after_binding_change(
                 "menu_button": menu_button,
             },
         )
-    except HTTPException:
-        return
+    except Exception:
+        log.exception(
+            "telegram_binding_menu_reconcile_failed account_id=%s binding_id=%s",
+            account.id,
+            binding.id,
+        )
+        return False
+    return _telegram_provider_call_succeeded(response)
+
+
+async def reconcile_telegram_binding_unpair_from_ui(
+    *,
+    db: AsyncSession,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+    binding: ChannelBinding,
+) -> TelegramBindingUnpairOutcome:
+    """Best-effort provider cleanup after the binding archive is durable."""
+    commands_cleared = await _clear_telegram_commands_for_binding(
+        account=account,
+        link=link,
+        binding=binding,
+    )
+    menu_reset = await _reconcile_telegram_menu_button_after_binding_change(
+        db=db,
+        account=account,
+        binding=binding,
+        paired=False,
+    )
+    notification_sent = False
+    try:
+        response = await _post_telegram_bot_payload(
+            account=account,
+            method="sendMessage",
+            payload={
+                "chat_id": binding.external_chat_id,
+                "text": TELEGRAM_UI_UNPAIR_REPLY,
+            },
+        )
+        notification_sent = _telegram_provider_call_succeeded(response)
+    except Exception:
+        log.exception(
+            "telegram_binding_unpair_notification_failed account_id=%s binding_id=%s",
+            account.id,
+            binding.id,
+        )
+        notification_sent = False
+    return TelegramBindingUnpairOutcome(
+        notification_sent=notification_sent,
+        commands_cleared=commands_cleared,
+        menu_reset=menu_reset,
+    )
+
+
+def _telegram_provider_call_succeeded(response: httpx.Response) -> bool:
+    if response.status_code >= 400:
+        return False
+    return _telegram_response_json(response).get("ok") is not False
 
 
 def _telegram_command_shadow_parts(key: str) -> tuple[str, str]:

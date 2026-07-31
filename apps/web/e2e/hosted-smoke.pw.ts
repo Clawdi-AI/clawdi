@@ -872,9 +872,16 @@ type HostedApiStubOptions = {
 	channelAccount?: unknown;
 	channelAccounts?: unknown[];
 	channelAgentLinks?: readonly unknown[];
+	channelBindings?: unknown[];
+	channelBotPool?: unknown;
+	channelHealthItems?: unknown[];
 	createChannelRequests?: string[];
 	createChannelResponse?: unknown;
+	deleteBindingRequests?: string[];
+	deleteBindingResponses?: StubResponse[];
 	onCreateChannel?: (response: unknown) => void;
+	pairCodeRequests?: string[];
+	pairCodeResponses?: StubResponse[];
 	cloudAgentOverrides?: Record<string, unknown>;
 	cloudAgents?: readonly unknown[];
 	cloudAgentsResponse?: StubResponse;
@@ -910,8 +917,6 @@ type HostedApiStubOptions = {
 	planQuoteRequests?: string[];
 	planQuoteResponses?: unknown[];
 	restartRequests?: string[];
-	rotateAgentTokenRequests?: string[];
-	rotateAgentTokenResponses?: unknown[];
 	runtimeUiRedemptionRequests?: string[];
 	runtimeUiRedemptionResponses?: StubResponse[];
 	runtimeUiResetRequests?: Array<{ idempotencyKey: string | null; ifMatch: string | null }>;
@@ -1587,10 +1592,21 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			options.onCreateChannel?.(response);
 			return fulfillJson(r, response, 201);
 		}
-		if (p === "/v1/channels/bot-pool") return fulfillJson(r, { providers: {} });
-		if (p === "/v1/channels/health") return fulfillJson(r, { items: [] });
+		if (p === "/v1/channels/bot-pool") {
+			return fulfillJson(r, options.channelBotPool ?? { providers: {} });
+		}
+		if (p === "/v1/channels/health") {
+			return fulfillJson(r, { items: options.channelHealthItems ?? [] });
+		}
 		if (p === "/v1/channels/agent-links" && r.request().method() === "GET") {
-			return fulfillJson(r, options.channelAgentLinks ?? []);
+			const requestedAgentId = new URL(r.request().url()).searchParams.get("agent_id");
+			const links = options.channelAgentLinks ?? [];
+			return fulfillJson(
+				r,
+				requestedAgentId
+					? links.filter((link) => isRecord(link) && link.agent_id === requestedAgentId)
+					: links,
+			);
 		}
 		if (p.match(/^\/v1\/channels\/[^/]+$/) && r.request().method() === "GET") {
 			return fulfillJson(r, options.channelAccount ?? { detail: "Channel not found" }, 200);
@@ -1598,11 +1614,44 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p.endsWith("/agent-links") && r.request().method() === "GET") {
 			return fulfillJson(r, options.channelAgentLinks ?? []);
 		}
-		if (p.endsWith("/token") && r.request().method() === "POST") {
-			options.rotateAgentTokenRequests?.push(p);
-			return fulfillJson(r, options.rotateAgentTokenResponses?.shift() ?? { agent_token: null });
+		if (p.endsWith("/pair-codes") && r.request().method() === "POST") {
+			options.pairCodeRequests?.push(r.request().postData() ?? "");
+			const response = options.pairCodeResponses?.shift() ?? { body: {}, status: 201 };
+			return fulfillJson(r, response.body, response.status);
 		}
-		if (p.endsWith("/bindings") && r.request().method() === "GET") return fulfillJson(r, []);
+		if (p.match(/\/bindings\/[^/]+$/) && r.request().method() === "DELETE") {
+			options.deleteBindingRequests?.push(p);
+			const response = options.deleteBindingResponses?.shift() ?? {
+				body: {
+					binding_id: p.slice(p.lastIndexOf("/") + 1),
+					unpaired: true,
+					notification_status: "sent",
+					provider_cleanup_status: "succeeded",
+					warning: null,
+				},
+				status: 200,
+			};
+			if (response.status < 400) {
+				const bindingId = p.slice(p.lastIndexOf("/") + 1);
+				const index = options.channelBindings?.findIndex(
+					(binding) => isRecord(binding) && binding.id === bindingId,
+				);
+				if (index !== undefined && index >= 0) options.channelBindings?.splice(index, 1);
+			}
+			return fulfillJson(r, response.body, response.status);
+		}
+		if (p.endsWith("/bindings") && r.request().method() === "GET") {
+			const match = p.match(/^\/v1\/channels\/([^/]+)\/bindings$/);
+			const accountId = match?.[1] ? decodeURIComponent(match[1]) : null;
+			return fulfillJson(
+				r,
+				accountId
+					? (options.channelBindings ?? []).filter(
+							(binding) => isRecord(binding) && binding.account_id === accountId,
+						)
+					: [],
+			);
+		}
 		if (p.endsWith("/activity") && r.request().method() === "GET") {
 			return fulfillJson(r, { items: [] });
 		}
@@ -4977,8 +5026,8 @@ test("channel connect updates its auto-linked agent page without reload", async 
 		`/agents/${missingProjectionEnvironmentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
 	);
 
-	await expect(page.getByText("No channels linked", { exact: true })).toBeVisible();
-	const connect = page.getByRole("button", { name: "Connect my bot", exact: true });
+	await expect(page.getByText("No connected channels", { exact: true })).toBeVisible();
+	const connect = page.getByRole("button", { name: "Connect a bot", exact: true }).first();
 	await expect(connect).toBeVisible();
 	await connect.click();
 	const dialog = page.getByRole("dialog");
@@ -4988,9 +5037,10 @@ test("channel connect updates its auto-linked agent page without reload", async 
 
 	await expect.poll(() => createChannelRequests.length).toBe(1);
 	await expect(dialog.getByText("Channel connected", { exact: true })).toBeVisible();
-	await expect(dialog.getByText("An agent was auto-linked", { exact: false })).toBeVisible();
+	await expect(dialog.getByText("message delivery automatically", { exact: false })).toBeVisible();
+	await expect(dialog).not.toContainText("agent token");
 	await dialog.getByRole("button", { name: "Close", exact: true }).first().click();
-	await expect(page.getByText("No channels linked", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("No connected channels", { exact: true })).toHaveCount(0);
 	await expect(page.getByText("Browser Telegram", { exact: true }).first()).toBeVisible();
 	expect(JSON.parse(createChannelRequests[0] ?? "{}")).toEqual({
 		provider: "telegram",
@@ -5000,14 +5050,328 @@ test("channel connect updates its auto-linked agent page without reload", async 
 	expect(errors, `channel connect convergence: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("rotated channel token blocks silent loss and explains recovery", async ({
+test("Agent Channels uses compact task-ordered rows and the shared Telegram pair dialog", async ({
 	page,
-	context,
-}) => {
-	await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+}, testInfo) => {
+	await page.setViewportSize({ width: 1440, height: 1100 });
+	const errors = collectBrowserErrors(page);
+	const agentId = missingProjectionEnvironmentId;
+	const otherAgentId = "70000000-0000-4000-8000-000000000000";
+	const telegramId = "71111111-1111-4111-8111-111111111111";
+	const telegramLinkId = "72222222-2222-4222-8222-222222222222";
+	const otherTelegramLinkId = "72222222-2222-4222-8222-333333333333";
+	const discordId = "73333333-3333-4333-8333-333333333333";
+	const discordLinkId = "74444444-4444-4444-8444-444444444444";
+	const ownedId = "75555555-5555-4555-8555-555555555555";
+	const readyId = "76666666-6666-4666-8666-666666666666";
+	const currentBindingId = "77777777-7777-4777-8777-777777777777";
+	const otherAgentBindingId = "78888888-8888-4888-8888-888888888888";
+	const polledBindingId = "79999999-9999-4999-8999-999999999999";
+	const validExpiry = new Date(Date.now() + 15 * 60_000).toISOString();
+	const agentChannelsDeployment = {
+		...runningMissingProjectionDeployment,
+		openclaw_control_ui_url: "https://runtime.example/openclaw",
+		config_info: {
+			...runningMissingProjectionDeployment.config_info,
+			runtime: "openclaw",
+			clawdi_cloud_environments: { openclaw: agentId },
+		},
+	};
+	const telegramAccount = {
+		id: telegramId,
+		provider: "telegram",
+		name: "Support Telegram",
+		status: "active",
+		visibility: "private",
+		has_provider_token: true,
+		webhook_url: "https://cloud.example.test/channels/support-telegram",
+		created_at: "2026-07-27T12:00:00Z",
+	};
+	const discordAccount = {
+		id: discordId,
+		provider: "discord",
+		name: "Community Discord",
+		status: "active",
+		visibility: "private",
+		has_provider_token: true,
+		webhook_url: "https://cloud.example.test/channels/community-discord",
+		created_at: "2026-07-27T12:05:00Z",
+	};
+	const ownedAccount = {
+		id: ownedId,
+		provider: "telegram",
+		name: "My Telegram bot",
+		status: "active",
+		visibility: "private",
+		has_provider_token: true,
+		webhook_url: "https://cloud.example.test/channels/my-telegram",
+		created_at: "2026-07-27T12:10:00Z",
+	};
+	const pairCodeRequests: string[] = [];
+	const deleteBindingRequests: string[] = [];
+	const channelBindings: unknown[] = [
+		{
+			id: currentBindingId,
+			account_id: telegramId,
+			agent_link_id: telegramLinkId,
+			external_chat_id: "101",
+			external_chat_type: "private",
+			external_chat_name: "Current Agent DM",
+			status: "active",
+			created_at: "2026-07-30T10:00:00Z",
+		},
+		{
+			id: otherAgentBindingId,
+			account_id: telegramId,
+			agent_link_id: otherTelegramLinkId,
+			external_chat_id: "202",
+			external_chat_type: "private",
+			external_chat_name: "Other Agent DM",
+			status: "active",
+			created_at: "2026-07-30T10:05:00Z",
+		},
+	];
+	await stubHostedApi(page, {
+		deployments: [agentChannelsDeployment],
+		cloudAgents: [
+			{
+				...sharedLegacyCloudAgent,
+				id: agentId,
+				name: "support-agent",
+				default_name: "Support Agent",
+				machine_name: "support.local",
+				display_name: "Support Agent",
+				agent_type: "openclaw",
+			},
+		],
+		channelAccounts: [telegramAccount, discordAccount, ownedAccount],
+		channelBindings,
+		channelAgentLinks: [
+			{
+				id: telegramLinkId,
+				account_id: telegramId,
+				agent_id: agentId,
+				status: "active",
+				created_at: "2026-07-27T12:15:00Z",
+				account: telegramAccount,
+			},
+			{
+				id: otherTelegramLinkId,
+				account_id: telegramId,
+				agent_id: otherAgentId,
+				status: "active",
+				created_at: "2026-07-27T12:17:00Z",
+				account: telegramAccount,
+			},
+			{
+				id: discordLinkId,
+				account_id: discordId,
+				agent_id: agentId,
+				status: "active",
+				created_at: "2026-07-27T12:20:00Z",
+				account: discordAccount,
+			},
+		],
+		channelBotPool: {
+			providers: {
+				discord: [
+					{
+						id: readyId,
+						provider: "discord",
+						name: "Clawdi Ready Bot",
+						status: "active",
+						visibility: "public",
+						has_provider_token: true,
+						webhook_url: "https://cloud.example.test/channels/ready-telegram",
+						created_at: "2026-07-27T12:25:00Z",
+						access: "public",
+						capabilities: {
+							link_agent: true,
+							pair_chat: true,
+							send_message: true,
+							manage_account: false,
+							sync_commands: true,
+						},
+						link_count: 0,
+						max_links: null,
+						available: true,
+					},
+				],
+			},
+		},
+		channelHealthItems: [
+			{
+				account_id: telegramId,
+				provider: "telegram",
+				name: "Support Telegram",
+				visibility: "private",
+				channel_status: "active",
+				health_status: "ok",
+				pending_inbox: 0,
+				pending_deliveries: 0,
+				in_progress_deliveries: 0,
+				failed_deliveries: 0,
+				last_message_at: "2026-07-30T10:00:00Z",
+			},
+			{
+				account_id: discordId,
+				provider: "discord",
+				name: "Community Discord",
+				visibility: "private",
+				channel_status: "active",
+				health_status: "ok",
+				pending_inbox: 0,
+				pending_deliveries: 0,
+				in_progress_deliveries: 0,
+				failed_deliveries: 0,
+				last_message_at: "2026-07-30T09:55:00Z",
+			},
+		],
+		deleteBindingRequests,
+		pairCodeRequests,
+		pairCodeResponses: [
+			{
+				status: 201,
+				body: {
+					id: "agent-channel-pair-code",
+					agent_link_id: telegramLinkId,
+					agent_id: agentId,
+					agent_token: "agent-channel-token-must-not-render",
+					code: "AGENTPAIR123",
+					expires_at: validExpiry,
+					pairing_command: "/bot_pair AGENTPAIR123",
+					bot_username: "Clawdi_Ready_Bot",
+					deep_link: "https://t.me/Clawdi_Ready_Bot?start=AGENTPAIR123",
+					qr_payload: "https://t.me/Clawdi_Ready_Bot?start=AGENTPAIR123",
+				},
+			},
+		],
+	});
+
+	await page.goto(
+		`/agents/${agentId}/channel-links?source=on-clawdi&d=${agentChannelsDeployment.id}`,
+	);
+	const connectedSection = page.locator("[data-agent-connected-channels]");
+	const pairedSection = page.locator("[data-agent-paired-chats]");
+	const addSection = page.locator("[data-agent-add-channel]");
+	await expect(connectedSection.getByText("Connected channels", { exact: true })).toBeVisible();
+	await expect(pairedSection.getByText("Paired chats", { exact: true })).toBeVisible();
+	await expect(addSection.getByText("Add a channel", { exact: true })).toBeVisible();
+	const telegramRow = page.locator(`[data-agent-channel-link-id="${telegramLinkId}"]`);
+	const discordRow = page.locator(`[data-agent-channel-link-id="${discordLinkId}"]`);
+	await expect(telegramRow).toContainText("Support Telegram");
+	await expect(telegramRow).toContainText("Last activity");
+	await expect(discordRow).toContainText("Community Discord");
+	await expect(
+		telegramRow.getByRole("button", { name: "Pair Telegram", exact: true }),
+	).toBeVisible();
+	await expect(discordRow.getByRole("button", { name: "Pair chat", exact: true })).toBeVisible();
+	await expect(telegramRow.getByRole("button", { name: "Unlink", exact: true })).toBeVisible();
+	await expect(addSection.locator(`[data-add-channel-id="${readyId}"]`)).toContainText(
+		"Clawdi Ready Bot",
+	);
+	await expect(addSection.getByText("Use your own bot", { exact: true })).toBeVisible();
+	const currentBindingRow = page.locator(`[data-channel-binding-id="${currentBindingId}"]`);
+	await expect(currentBindingRow).toContainText("Current Agent DM");
+	await expect(currentBindingRow).toContainText("Support Telegram");
+	await expect(page.locator(`[data-channel-binding-id="${otherAgentBindingId}"]`)).toHaveCount(0);
+	await expect(page.getByText("Other Agent DM", { exact: true })).toHaveCount(0);
+	await expect(currentBindingRow).not.toContainText("101");
+	await expect(page.getByText("Waiting for channel activity", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Finish pairing", { exact: false })).toHaveCount(0);
+	const telegramBox = await telegramRow.boundingBox();
+	const discordBox = await discordRow.boundingBox();
+	expect(Math.abs((telegramBox?.height ?? 0) - (discordBox?.height ?? 0))).toBeLessThanOrEqual(1);
+	await page.screenshot({
+		path:
+			process.env.AGENT_CHANNELS_PAGE_SCREENSHOT_PATH ??
+			testInfo.outputPath("agent-channels-compact-page.png"),
+		fullPage: true,
+	});
+
+	await telegramRow.getByRole("button", { name: "Pair Telegram", exact: true }).click();
+	await expect.poll(() => pairCodeRequests.length).toBe(1);
+	expect(JSON.parse(pairCodeRequests[0] ?? "{}")).toEqual({
+		ttl_seconds: 900,
+		agent_link_id: telegramLinkId,
+	});
+	const pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
+	await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toBeVisible();
+	await expect(pairDialog.getByRole("button", { name: "Copy link", exact: true })).toBeVisible();
+	await expect(pairDialog.getByRole("button", { name: "Open @Clawdi_Ready_Bot" })).toHaveAttribute(
+		"href",
+		"https://t.me/Clawdi_Ready_Bot?start=AGENTPAIR123",
+	);
+	await expect(page.locator("body")).not.toContainText("agent-channel-token-must-not-render");
+	await page.screenshot({
+		path:
+			process.env.AGENT_CHANNELS_DIALOG_SCREENSHOT_PATH ??
+			testInfo.outputPath("agent-channels-pair-dialog.png"),
+		fullPage: true,
+	});
+
+	channelBindings.push({
+		id: polledBindingId,
+		account_id: telegramId,
+		agent_link_id: telegramLinkId,
+		external_chat_id: "303",
+		external_chat_type: "private",
+		external_chat_name: "Newly Paired DM",
+		status: "active",
+		created_at: "2026-07-30T10:10:00Z",
+	});
+	await pairDialog.getByRole("button", { name: "Close", exact: true }).click();
+	await expect(page.locator(`[data-channel-binding-id="${polledBindingId}"]`)).toContainText(
+		"Newly Paired DM",
+		{ timeout: 5_000 },
+	);
+
+	await currentBindingRow.getByRole("button", { name: "Unpair", exact: true }).click();
+	const unpairConfirmation = page.getByRole("alertdialog", { name: "Unpair Current Agent DM?" });
+	await unpairConfirmation.getByRole("button", { name: "Unpair chat", exact: true }).click();
+	await expect.poll(() => deleteBindingRequests.length).toBe(1);
+	expect(deleteBindingRequests).toEqual([
+		`/v1/channels/${telegramId}/bindings/${currentBindingId}`,
+	]);
+	await expect(currentBindingRow).toHaveCount(0);
+	await expect(page.locator(`[data-channel-binding-id="${polledBindingId}"]`)).toBeVisible();
+	await expect(page.locator(`[data-channel-binding-id="${otherAgentBindingId}"]`)).toHaveCount(0);
+	expect(
+		channelBindings.some((binding) => isRecord(binding) && binding.id === otherAgentBindingId),
+	).toBe(true);
+
+	await page.setViewportSize({ width: 390, height: 844 });
+	const mobileChatRow = page.locator(`[data-channel-binding-id="${polledBindingId}"]`);
+	const mobileChatTitle = mobileChatRow.getByText("Newly Paired DM", { exact: true });
+	const mobileUnpair = mobileChatRow.getByRole("button", { name: "Unpair", exact: true });
+	await expect(mobileChatTitle).toBeVisible();
+	await expect(mobileUnpair).toBeVisible();
+	const mobileTitleBox = await mobileChatTitle.boundingBox();
+	const mobileActionBox = await mobileUnpair.boundingBox();
+	expect(mobileTitleBox?.width ?? 0).toBeGreaterThan(100);
+	expect(mobileActionBox?.y ?? 0).toBeGreaterThan(mobileTitleBox?.y ?? 0);
+	const mobileChannelTitle = telegramRow.getByText("Support Telegram", { exact: true });
+	const mobilePairAction = telegramRow.getByRole("button", { name: "Pair Telegram", exact: true });
+	const mobileChannelTitleBox = await mobileChannelTitle.boundingBox();
+	const mobilePairActionBox = await mobilePairAction.boundingBox();
+	expect(mobileChannelTitleBox?.width ?? 0).toBeGreaterThan(100);
+	expect(mobilePairActionBox?.y ?? 0).toBeGreaterThan(mobileChannelTitleBox?.y ?? 0);
+	expect(errors, `Agent Channels browser errors: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("Telegram pairing uses a compact Agent-row dialog with polled chats and isolated Unpair", async ({
+	page,
+}, testInfo) => {
+	await page.setViewportSize({ width: 1440, height: 1500 });
+	const errors = collectBrowserErrors(page);
 	const channelId = "11111111-1111-4111-8111-111111111111";
 	const linkId = "22222222-2222-4222-8222-222222222222";
-	const token = "one-time-browser-token";
+	const agentId = "33333333-3333-4333-8333-333333333333";
+	const firstBindingId = "44444444-4444-4444-8444-444444444444";
+	const secondBindingId = "55555555-5555-4555-8555-555555555555";
+	const polledBindingId = "66666666-6666-4666-8666-666666666666";
+	const runtimeToken = "browser-agent-token-must-not-render";
+	const validExpiry = new Date(Date.now() + 15 * 60_000).toISOString();
 	const channelAccount = {
 		id: channelId,
 		provider: "telegram",
@@ -5021,68 +5385,257 @@ test("rotated channel token blocks silent loss and explains recovery", async ({
 	const channelLink = {
 		id: linkId,
 		account_id: channelId,
-		agent_id: "33333333-3333-4333-8333-333333333333",
+		agent_id: agentId,
 		status: "active",
 		created_at: "2026-07-25T12:00:00Z",
 	};
-	const rotateAgentTokenRequests: string[] = [];
+	const channelBindings: unknown[] = [
+		{
+			id: firstBindingId,
+			account_id: channelId,
+			agent_link_id: linkId,
+			external_chat_id: "101",
+			external_chat_type: "private",
+			external_chat_name: "Alice DM",
+			status: "active",
+			created_at: "2026-07-30T10:00:00Z",
+		},
+		{
+			id: secondBindingId,
+			account_id: channelId,
+			agent_link_id: linkId,
+			external_chat_id: "-100202",
+			external_chat_type: "supergroup",
+			external_chat_name: "Ops Group",
+			status: "active",
+			created_at: "2026-07-30T10:05:00Z",
+		},
+	];
+	const pairCodeRequests: string[] = [];
+	const deleteBindingRequests: string[] = [];
 	await stubHostedApi(page, {
 		channelAccount,
 		channelAgentLinks: [channelLink],
-		rotateAgentTokenRequests,
-		rotateAgentTokenResponses: [
-			{ ...channelLink, agent_token: token },
-			{ ...channelLink, agent_token: null },
+		channelBindings,
+		cloudAgents: [
+			{
+				id: agentId,
+				name: "Support Agent",
+				default_name: "Support Agent",
+				machine_name: "support.local",
+				agent_type: "openclaw",
+			},
+		],
+		pairCodeRequests,
+		pairCodeResponses: [
+			{
+				status: 201,
+				body: {
+					id: "pair-valid",
+					agent_link_id: linkId,
+					agent_id: agentId,
+					agent_token: runtimeToken,
+					code: "PAIRVALID123",
+					expires_at: validExpiry,
+					pairing_command: "/bot_pair PAIRVALID123",
+					bot_username: "Clawdi_Test_Bot",
+					deep_link: "https://t.me/Clawdi_Test_Bot?start=PAIRVALID123",
+					qr_payload: "https://t.me/Clawdi_Test_Bot?start=PAIRVALID123",
+				},
+			},
+			{ status: 503, body: { detail: "temporary Telegram pair error" } },
+			{
+				status: 201,
+				body: {
+					id: "pair-retry",
+					agent_link_id: linkId,
+					agent_id: agentId,
+					agent_token: runtimeToken,
+					code: "PAIRRETRY123",
+					expires_at: validExpiry,
+					pairing_command: "/bot_pair PAIRRETRY123",
+					bot_username: "Clawdi_Test_Bot",
+					deep_link: "https://t.me/Clawdi_Test_Bot?start=PAIRRETRY123",
+					qr_payload: "https://t.me/Clawdi_Test_Bot?start=PAIRRETRY123",
+				},
+			},
+			{
+				status: 201,
+				body: {
+					id: "pair-missing-link",
+					agent_link_id: linkId,
+					agent_id: agentId,
+					agent_token: runtimeToken,
+					code: "PAIRMISSING123",
+					expires_at: validExpiry,
+					pairing_command: "/bot_pair PAIRMISSING123",
+					bot_username: "Clawdi_Test_Bot",
+					deep_link: null,
+					qr_payload: null,
+				},
+			},
+			{
+				status: 201,
+				body: {
+					id: "pair-expired",
+					agent_link_id: linkId,
+					agent_id: agentId,
+					agent_token: runtimeToken,
+					code: "PAIREXPIRED123",
+					expires_at: "2000-01-01T00:00:00Z",
+					pairing_command: "/bot_pair PAIREXPIRED123",
+					bot_username: "Clawdi_Test_Bot",
+					deep_link: "https://t.me/Clawdi_Test_Bot?start=PAIREXPIRED123",
+					qr_payload: "https://t.me/Clawdi_Test_Bot?start=PAIREXPIRED123",
+				},
+			},
+		],
+		deleteBindingRequests,
+		deleteBindingResponses: [
+			{ status: 502, body: { detail: "temporary Telegram cleanup error" } },
+			{
+				status: 200,
+				body: {
+					binding_id: firstBindingId,
+					unpaired: true,
+					notification_status: "failed",
+					provider_cleanup_status: "succeeded",
+					warning: "Chat was unpaired, but the Telegram notification could not be sent.",
+				},
+			},
 		],
 	});
 
 	await page.goto(`/channels/${channelId}`);
-	await page.getByRole("button", { name: "Rotate token", exact: true }).click();
-	await expect.poll(() => rotateAgentTokenRequests.length).toBe(1);
-	await expect(
-		page.getByText(
-			"Shown only once. Copy it or confirm you saved it before leaving this page; it cannot be recovered later.",
-			{ exact: true },
-		),
-	).toBeVisible();
-
-	const serializedBrowserStorage = await page.evaluate(() =>
-		JSON.stringify({ localStorage: { ...localStorage }, sessionStorage: { ...sessionStorage } }),
+	const setupFlow = page.locator("[data-channel-setup-flow]");
+	await expect(setupFlow.getByText("Linked agents", { exact: true })).toBeVisible();
+	await expect(setupFlow.getByText("Paired chats", { exact: true })).toBeVisible();
+	await expect(page.locator("#pair-agent")).toHaveCount(0);
+	await expect(page.locator("#pair-ttl")).toHaveCount(0);
+	await expect(page.locator(`[data-channel-binding-id="${firstBindingId}"]`)).toContainText(
+		"Alice DM",
 	);
-	expect(serializedBrowserStorage).not.toContain(token);
-	await page.getByRole("tab", { name: "Activity", exact: true }).click();
-	await expect(page.getByText("New agent token", { exact: true })).toHaveCount(0);
-	await page.getByRole("tab", { name: "Agents", exact: true }).click();
-	await expect(page.getByText("New agent token", { exact: true })).toBeVisible();
-	await page.getByRole("button", { name: "Settings", exact: true }).click();
-	await expect(page.getByTestId("settings-dialog")).toBeVisible();
-	await page.keyboard.press("Escape");
-	await expect(page.getByTestId("settings-dialog")).toHaveCount(0);
-	await expect(page.getByText("New agent token", { exact: true })).toBeVisible();
-
-	const agentsLink = page.getByTestId("app-sidebar").locator('a[href="/agents"]').first();
-	await agentsLink.click();
-	const leaveDialog = page.getByRole("alertdialog");
-	await expect(leaveDialog).toContainText("Leave without saving the new token?");
-	await expect(leaveDialog).toContainText(
-		"This token was shown once and is not recoverable — rotate again to get a new one.",
+	await expect(page.locator(`[data-channel-binding-id="${secondBindingId}"]`)).toContainText(
+		"Ops Group",
 	);
-	await expect(page).toHaveURL(new RegExp(`/channels/${channelId}$`));
-	await leaveDialog.getByRole("button", { name: "Stay and copy token", exact: true }).click();
+	await expect(page.locator(`[data-channel-binding-id="${firstBindingId}"]`)).toContainText(
+		"Support Agent",
+	);
+	const agentRow = page.locator(`[data-channel-agent-link-id="${linkId}"]`);
+	await expect(agentRow).toContainText("Support Agent");
+	const pairButton = agentRow.getByRole("button", { name: "Pair Telegram", exact: true });
+	await expect(pairButton).toBeVisible();
+	await expect(page.getByRole("img", { name: "Telegram pairing QR code" })).toHaveCount(0);
+	await page.screenshot({
+		path:
+			process.env.CHANNEL_PAIRING_PAGE_SCREENSHOT_PATH ??
+			testInfo.outputPath("telegram-channel-pairing-compact-page.png"),
+		fullPage: true,
+	});
 
-	await page.getByRole("button", { name: "Copy New agent token", exact: true }).click();
-	await expect(page.getByText("Token copied to clipboard", { exact: true })).toBeVisible();
-	await agentsLink.click();
-	await expect(page).toHaveURL(/\/agents\/?$/);
+	await pairButton.click();
+	await expect.poll(() => pairCodeRequests.length).toBe(1);
+	expect(JSON.parse(pairCodeRequests[0] ?? "{}")).toEqual({
+		ttl_seconds: 900,
+		agent_link_id: linkId,
+	});
+	let pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
+	await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toBeVisible();
+	await expect(pairDialog.getByText(/^Expires in /)).toBeVisible();
+	await expect(pairDialog.getByRole("button", { name: "Copy link", exact: true })).toBeVisible();
+	await expect(pairDialog.getByRole("button", { name: "Open @Clawdi_Test_Bot" })).toHaveAttribute(
+		"href",
+		"https://t.me/Clawdi_Test_Bot?start=PAIRVALID123",
+	);
+	await expect(pairDialog.getByText("Pair a group manually", { exact: true })).toBeVisible();
+	await expect(page.locator("body")).not.toContainText(runtimeToken);
+	await expect(page.locator("body")).not.toContainText("Agent token");
+	await page.screenshot({
+		path:
+			process.env.CHANNEL_PAIRING_DIALOG_SCREENSHOT_PATH ??
+			testInfo.outputPath("telegram-channel-pairing-dialog.png"),
+		fullPage: true,
+	});
 
-	await page.goto(`/channels/${channelId}`);
-	await page.getByRole("button", { name: "Rotate token", exact: true }).click();
-	await expect.poll(() => rotateAgentTokenRequests.length).toBe(2);
+	channelBindings.push({
+		id: polledBindingId,
+		account_id: channelId,
+		agent_link_id: linkId,
+		external_chat_id: "303",
+		external_chat_type: "private",
+		external_chat_name: "Newly Paired DM",
+		status: "active",
+		created_at: "2026-07-30T10:10:00Z",
+	});
+	await pairDialog.getByRole("button", { name: "Close", exact: true }).click();
+	await expect(page.locator(`[data-channel-binding-id="${polledBindingId}"]`)).toContainText(
+		"Newly Paired DM",
+		{ timeout: 5_000 },
+	);
+
+	await pairButton.click();
+	await expect.poll(() => pairCodeRequests.length).toBe(2);
+	pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
 	await expect(
-		page.getByText(
-			"This token was shown once and is not recoverable — rotate again to get a new one.",
-			{ exact: true },
-		),
+		pairDialog.getByText("Couldn't create Telegram link", { exact: true }),
 	).toBeVisible();
-	await expect(page.getByRole("button", { name: "Copy New agent token" })).toHaveCount(0);
+	await pairDialog.getByRole("button", { name: "Retry", exact: true }).click();
+	await expect.poll(() => pairCodeRequests.length).toBe(3);
+	await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toBeVisible();
+	await expect(pairDialog.getByRole("button", { name: "Open @Clawdi_Test_Bot" })).toHaveAttribute(
+		"href",
+		"https://t.me/Clawdi_Test_Bot?start=PAIRRETRY123",
+	);
+	await pairDialog.getByRole("button", { name: "Close", exact: true }).click();
+
+	await pairButton.click();
+	await expect.poll(() => pairCodeRequests.length).toBe(4);
+	pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
+	await expect(pairDialog.getByText("Telegram link unavailable", { exact: true })).toBeVisible();
+	await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toHaveCount(0);
+	await expect(pairDialog.getByRole("button", { name: /^Open/ })).toHaveCount(0);
+	await expect(pairDialog.getByRole("button", { name: "Copy link", exact: true })).toHaveCount(0);
+	await pairDialog.getByText("Pair a group manually", { exact: true }).click();
+	await expect(pairDialog.getByText("/bot_pair PAIRMISSING123", { exact: true })).toBeVisible();
+	await pairDialog.getByRole("button", { name: "Close", exact: true }).click();
+
+	await pairButton.click();
+	await expect.poll(() => pairCodeRequests.length).toBe(5);
+	pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
+	await expect(
+		pairDialog.getByText("This Telegram link has expired", { exact: true }),
+	).toBeVisible();
+	await expect(
+		pairDialog.getByText("Expired — generate a new link", { exact: true }),
+	).toBeVisible();
+	await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toHaveCount(0);
+	await expect(pairDialog.getByText("Pair a group manually", { exact: true })).toHaveCount(0);
+	await pairDialog.getByRole("button", { name: "Close", exact: true }).click();
+
+	const firstCard = page.locator(`[data-channel-binding-id="${firstBindingId}"]`);
+	await firstCard.getByRole("button", { name: "Unpair", exact: true }).click();
+	const confirmation = page.getByRole("alertdialog");
+	await confirmation.getByRole("button", { name: "Unpair chat", exact: true }).click();
+	await expect.poll(() => deleteBindingRequests.length).toBe(1);
+	await expect(page.getByText("Couldn't unpair chat", { exact: true })).toBeVisible();
+	await expect(firstCard).toBeVisible();
+	await expect(firstCard).toContainText("Couldn't unpair · Try again");
+	await expect(confirmation).toBeVisible();
+
+	await confirmation.getByRole("button", { name: "Unpair chat", exact: true }).click();
+	await expect.poll(() => deleteBindingRequests.length).toBe(2);
+	await expect(firstCard).toHaveCount(0);
+	await expect(
+		page.getByText("Chat was unpaired, but the Telegram notification could not be sent."),
+	).toBeVisible();
+	await expect(page.locator(`[data-channel-binding-id="${secondBindingId}"]`)).toBeVisible();
+
+	const unexpectedErrors = errors.filter(
+		(error) =>
+			!error.includes("temporary Telegram pair error") &&
+			!error.includes("temporary Telegram cleanup error") &&
+			!error.includes("503") &&
+			!error.includes("502"),
+	);
+	expect(unexpectedErrors, `Telegram pairing UX: ${unexpectedErrors.join(" | ")}`).toEqual([]);
 });

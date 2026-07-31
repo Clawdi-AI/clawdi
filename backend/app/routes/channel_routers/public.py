@@ -25,6 +25,7 @@ from app.core.auth import (
 from app.core.database import get_session
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
+    BINDING_STATUS_ARCHIVED,
     BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_TELEGRAM,
@@ -60,6 +61,7 @@ from app.schemas.channel import (
     ChannelAgentLinkCreate,
     ChannelAgentLinkResponse,
     ChannelAgentLinkWithAccountResponse,
+    ChannelBindingDeleteResponse,
     ChannelBindingResponse,
     ChannelBotPoolAccess,
     ChannelBotPoolCapabilities,
@@ -106,6 +108,7 @@ from app.services.channels import (
     sync_channel_commands,
 )
 from app.services.http_cache import if_none_match_contains, strong_json_etag
+from app.services.sync_events import queue_environment_runtime_manifest_changed
 from app.services.vault_crypto import decrypt
 from app.services.whatsapp_baileys import (
     buffer_json,
@@ -135,6 +138,19 @@ SECRETISH_ACTIVITY_DETAIL_KEYS = (
     "credential",
     "cookie",
 )
+
+
+async def _queue_agent_link_runtime_changed(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+) -> None:
+    # The strict v2 runtime source currently projects Telegram and Discord
+    # AgentLinks. Bindings are deliberately absent from that source identity.
+    if account.provider not in (CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD):
+        return
+    await queue_environment_runtime_manifest_changed(db, link.user_id, link.agent_id)
 
 
 def _agent_link_response(
@@ -563,6 +579,7 @@ async def create_channel(
                 agent_token=link_agent_token,
             )
             link_agent_token = created_token or link_agent_token
+            await _queue_agent_link_runtime_changed(db, account=account, link=link)
         await store_channel_secrets(db, account=account, secrets_by_name=body.secrets)
         record_control_plane_audit(
             db,
@@ -686,7 +703,20 @@ async def delete_channel(
         account_id=account_id,
         user_id=auth.user_id,
     )
+    active_links = list(
+        (
+            await db.execute(
+                select(ChannelBotAgentLink).where(
+                    ChannelBotAgentLink.account_id == account.id,
+                    ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                    ChannelBotAgentLink.archived_at.is_(None),
+                )
+            )
+        ).scalars()
+    )
     await archive_channel_account(db, account=account)
+    for link in active_links:
+        await _queue_agent_link_runtime_changed(db, account=account, link=link)
     record_control_plane_audit(
         db,
         actor_type="user",
@@ -718,6 +748,8 @@ async def create_channel_pair_code(
         ttl_seconds=body.ttl_seconds,
         agent_token=agent_token,
     )
+    if agent_token is not None:
+        await _queue_agent_link_runtime_changed(db, account=account, link=created.link)
     record_control_plane_audit(
         db,
         actor_type="user",
@@ -792,6 +824,8 @@ async def create_channel_agent_link(
         agent_id=agent_id,
         user_id=auth.user_id,
     )
+    if agent_token is not None:
+        await _queue_agent_link_runtime_changed(db, account=account, link=link)
     record_control_plane_audit(
         db,
         actor_type="user",
@@ -826,6 +860,7 @@ async def rotate_channel_agent_link_token(
         db, account=account, link_id=link_id, user_id=auth.user_id
     )
     agent_token = await rotate_bot_agent_link_token(db, account=account, link=link)
+    await _queue_agent_link_runtime_changed(db, account=account, link=link)
     record_control_plane_audit(
         db,
         actor_type="user",
@@ -864,6 +899,7 @@ async def delete_channel_agent_link(
         return
 
     await archive_bot_agent_link(db, link=link)
+    await _queue_agent_link_runtime_changed(db, account=account, link=link)
     record_control_plane_audit(
         db,
         actor_type="user",
@@ -897,6 +933,121 @@ async def list_channel_bindings(
         .order_by(ChannelBinding.created_at.desc())
     )
     return [_binding_response(binding) for binding in result.scalars().all()]
+
+
+@router.delete("/{account_id}/bindings/{binding_id}")
+async def delete_channel_binding(
+    account_id: UUID,
+    binding_id: UUID,
+    auth: AuthContext = Depends(require_user_auth),
+    db: AsyncSession = Depends(get_session),
+) -> ChannelBindingDeleteResponse:
+    account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    row = (
+        await db.execute(
+            select(ChannelBinding, ChannelBotAgentLink)
+            .join(
+                ChannelBotAgentLink,
+                and_(
+                    ChannelBotAgentLink.id == ChannelBinding.bot_agent_link_id,
+                    ChannelBotAgentLink.account_id == ChannelBinding.account_id,
+                    ChannelBotAgentLink.user_id == ChannelBinding.user_id,
+                ),
+            )
+            .where(
+                ChannelBinding.id == binding_id,
+                ChannelBinding.account_id == account.id,
+                ChannelBinding.user_id == auth.user_id,
+                ChannelBotAgentLink.user_id == auth.user_id,
+                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                ChannelBotAgentLink.archived_at.is_(None),
+            )
+            .with_for_update(of=ChannelBinding)
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="binding not found")
+    binding, link = row
+    await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=link.agent_id)
+
+    if binding.status != BINDING_STATUS_ACTIVE:
+        return ChannelBindingDeleteResponse(
+            binding_id=binding.id,
+            unpaired=False,
+            notification_status="not_applicable",
+            provider_cleanup_status="not_applicable",
+        )
+
+    binding.status = BINDING_STATUS_ARCHIVED
+    record_control_plane_audit(
+        db,
+        actor_type="user",
+        actor_user_id=auth.user_id,
+        target_user_id=auth.user_id,
+        action="channel.binding.archive",
+        resource_type="channel_binding",
+        resource_id=str(binding.id),
+        environment_id=link.agent_id,
+        channel_account_id=account.id,
+        channel_agent_link_id=link.id,
+        source="api.channels",
+        details={
+            "provider": account.provider,
+            "external_chat_id": binding.external_chat_id,
+        },
+    )
+    # The archive commits before any provider I/O. A failed Telegram cleanup or
+    # notification can never roll back a completed unpair.
+    await db.commit()
+
+    notification_status = "not_applicable"
+    provider_cleanup_status = "not_applicable"
+    warning: str | None = None
+    if account.provider == CHANNEL_PROVIDER_TELEGRAM:
+        from app.routes.channel_routers.telegram import (
+            reconcile_telegram_binding_unpair_from_ui,
+        )
+
+        outcome = await reconcile_telegram_binding_unpair_from_ui(
+            db=db,
+            account=account,
+            link=link,
+            binding=binding,
+        )
+        notification_status = "sent" if outcome.notification_sent else "failed"
+        provider_cleanup_status = (
+            "succeeded" if outcome.commands_cleared and outcome.menu_reset else "failed"
+        )
+        if notification_status == "failed" or provider_cleanup_status == "failed":
+            warning = (
+                "Chat was unpaired, but Telegram notification or per-chat cleanup did not complete."
+            )
+        record_control_plane_audit(
+            db,
+            actor_type="user",
+            actor_user_id=auth.user_id,
+            target_user_id=auth.user_id,
+            action="channel.binding.telegram_cleanup",
+            resource_type="channel_binding",
+            resource_id=str(binding.id),
+            environment_id=link.agent_id,
+            channel_account_id=account.id,
+            channel_agent_link_id=link.id,
+            source="api.channels",
+            details={
+                "notification_status": notification_status,
+                "provider_cleanup_status": provider_cleanup_status,
+            },
+        )
+        await db.commit()
+
+    return ChannelBindingDeleteResponse(
+        binding_id=binding.id,
+        unpaired=True,
+        notification_status=notification_status,
+        provider_cleanup_status=provider_cleanup_status,
+        warning=warning,
+    )
 
 
 @router.post("/{account_id}/commands/sync")
