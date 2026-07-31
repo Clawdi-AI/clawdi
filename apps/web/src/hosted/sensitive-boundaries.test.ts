@@ -171,7 +171,6 @@ describe("structural secret boundaries without the denylist", () => {
 				"hosted/v2/channels/channels-hooks.ts",
 				[
 					"export function useCreateChannel()",
-					"export function useLinkAgent(accountId: string)",
 					"export function useCreatePairCode(accountId: string)",
 					"export function useCreateWhatsappTenantCred(accountId: string)",
 					"return useSensitiveAction",
@@ -220,7 +219,7 @@ describe("structural secret boundaries without the denylist", () => {
 		}
 		expect(
 			source("hosted/v2/channels/channels-hooks.ts").split("return useSensitiveAction"),
-		).toHaveLength(5);
+		).toHaveLength(4);
 		expect(
 			source("hosted/v2/ai-providers/ai-providers-hooks.ts").split("return useSensitiveAction"),
 		).toHaveLength(5);

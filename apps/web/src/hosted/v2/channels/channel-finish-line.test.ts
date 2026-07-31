@@ -7,7 +7,6 @@ const agentChannels = readFileSync(
 );
 const channelDetail = readFileSync(new URL("./channel-detail-page.tsx", import.meta.url), "utf8");
 const channelHooks = readFileSync(new URL("./channels-hooks.ts", import.meta.url), "utf8");
-const linkAgentDialog = readFileSync(new URL("./link-agent-dialog.tsx", import.meta.url), "utf8");
 const channelsTab = agentChannels.slice(
 	agentChannels.indexOf("function ChannelsTab"),
 	agentChannels.indexOf("// ── Settings / Compute"),
@@ -42,24 +41,28 @@ describe("hosted-agent channel finish line", () => {
 		expect(channelsTab).not.toContain("source revision");
 	});
 
-	test("orders the page by connected channels, paired chats, then channel addition", () => {
+	test("nests paired chats under their channel before channel addition", () => {
 		const connectedIndex = channelsTab.indexOf("<section data-agent-connected-channels");
-		const pairedIndex = channelsTab.indexOf("<AgentPairedChats");
 		const addIndex = channelsTab.indexOf("<section data-agent-add-channel");
 		const readyBotIndex = channelsTab.indexOf('kind="Ready to use"');
 		const advancedIndex = channelsTab.indexOf("Use your own bot");
 		expect(connectedIndex).toBeGreaterThanOrEqual(0);
-		expect(pairedIndex).toBeGreaterThan(connectedIndex);
-		expect(addIndex).toBeGreaterThan(pairedIndex);
+		expect(addIndex).toBeGreaterThan(connectedIndex);
 		expect(readyBotIndex).toBeGreaterThan(addIndex);
 		expect(advancedIndex).toBeGreaterThan(readyBotIndex);
 		expect(channelsTab).toContain("data-agent-connected-channels");
-		expect(channelsTab).toContain("data-agent-paired-chats");
-		expect(channelsTab).toContain("Paired chats");
+		expect(channelsTab).toContain("data-agent-channel-group-id={link.id}");
+		expect(channelsTab).toContain("data-agent-channel-chats-for={link.id}");
+		expect(channelsTab).not.toContain("data-agent-paired-chats");
+		expect(channelsTab).not.toContain(">Paired chats<");
+		expect(channelsTab).not.toContain("No chats paired");
 		expect(channelsTab).toContain("data-agent-add-channel");
 		expect(channelsTab).toContain("data-add-channel-id");
-		expect(channelsTab).toContain("No bot connected yet");
+		expect(channelsTab).not.toContain("No bot connected yet");
 		expect(channelsTab).toContain("Connect a bot");
+		expect(channelsTab).not.toContain("View all channels");
+		expect(channelsTab).not.toContain("setAdvancedOpen");
+		expect(channelsTab).toContain('<details className="group border-t pt-4">');
 		expect(channelsTab).not.toContain("Fastest: use a ready-to-go bot");
 		expect(channelsTab).not.toContain("Use your own bot (advanced)");
 	});
@@ -73,13 +76,11 @@ describe("hosted-agent channel finish line", () => {
 	});
 
 	test("describes channel setup without infrastructure vocabulary", () => {
-		const customerCopy = `${channelDetail}\n${channelHooks}\n${linkAgentDialog}`;
+		const customerCopy = `${channelDetail}\n${channelHooks}`;
 		expect(customerCopy).toContain("Open the agent’s Channels page");
 		expect(channelDetail).not.toContain("Mint a device credential");
 		expect(channelDetail).not.toContain("The agent runtime uses");
 		expect(channelDetail).not.toContain("The runtime returned");
 		expect(channelHooks).not.toContain('description: "Finish pairing from the agent runtime');
-		expect(linkAgentDialog).not.toContain("Finish device pairing from the agent runtime");
-		expect(linkAgentDialog).not.toContain("self-managed runtime that asks for it");
 	});
 });

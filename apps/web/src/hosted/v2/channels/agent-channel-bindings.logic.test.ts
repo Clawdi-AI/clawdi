@@ -64,8 +64,8 @@ describe("Agent paired chat selection", () => {
 		expect(items.map((item) => item.binding.id)).toEqual(["current"]);
 		expect(items[0]).toMatchObject({
 			accountId: sharedAccountId,
+			agentLinkId: currentLinkId,
 			provider: "telegram",
-			channelName: "Shared Telegram",
 		});
 	});
 

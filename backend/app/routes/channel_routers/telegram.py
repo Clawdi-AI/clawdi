@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import parse_qsl, urlencode
 from uuid import UUID
 
 import httpx
@@ -28,6 +29,7 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
+    BINDING_STATUS_ARCHIVED,
     BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_TELEGRAM,
     ChannelAccount,
@@ -52,7 +54,10 @@ from app.services.channels import (
     TELEGRAM_REF_CALLBACK_QUERY_ID,
     TELEGRAM_REF_FILE_ID,
     TELEGRAM_REF_FILE_PATH,
+    TELEGRAM_REF_MESSAGE_ID,
     ChannelAgentContext,
+    bot_agent_link_has_provider_cardinality_capability,
+    bot_agent_link_has_strict_v2_authority,
     channel_agent_reference_exists,
     channel_runtime_account_key,
     channel_runtime_placeholder_token,
@@ -61,6 +66,7 @@ from app.services.channels import (
     find_binding,
     find_existing_inbound_provider_event,
     get_active_channel_account,
+    lock_channel_binding_identity,
     parse_pair_command,
     pending_channel_inbox_count,
     record_channel_agent_reference,
@@ -71,10 +77,13 @@ from app.services.channels import (
     resolve_inbound_binding,
     send_pairing_command_reply,
     telegram_chat_from_update,
+    telegram_direct_messages_topic_id_from_update,
     telegram_event_id_from_update,
+    telegram_event_scope_from_update,
     telegram_external_user_id_from_update,
     telegram_file_ids,
     telegram_message_id_from_update,
+    telegram_message_reference_value,
     telegram_message_thread_id_from_update,
     telegram_text_from_update,
     verify_hashed_token,
@@ -95,6 +104,9 @@ log = logging.getLogger(__name__)
 
 # Keep this list explicit. Telegram ignores parameters it doesn't use, so the
 # presence of a bound chat_id must never authorize an unknown method.
+# Payment and paid-media sends are deliberately absent: their follow-up
+# updates have no chat identity, so a shared physical bot cannot attribute
+# them to one Agent Link.
 _TELEGRAM_CHAT_SCOPED_METHODS = frozenset(
     {
         "approvesuggestedpost",
@@ -161,13 +173,11 @@ _TELEGRAM_CHAT_SCOPED_METHODS = frozenset(
         "senddice",
         "senddocument",
         "sendgame",
-        "sendinvoice",
         "sendlivephoto",
         "sendlocation",
         "sendmediagroup",
         "sendmessage",
         "sendmessagedraft",
-        "sendpaidmedia",
         "sendphoto",
         "sendpoll",
         "sendrichmessage",
@@ -205,6 +215,10 @@ _TELEGRAM_REFERENCED_CHAT_PATHS = (
     ("sender_chat_id",),
     ("actor_chat_id",),
     ("reply_parameters", "chat_id"),
+)
+
+_TELEGRAM_SOURCE_MESSAGE_METHODS = frozenset(
+    {"copymessage", "copymessages", "forwardmessage", "forwardmessages"}
 )
 
 _TELEGRAM_BROAD_COMMAND_SCOPE_TYPES = frozenset(
@@ -306,11 +320,6 @@ _TELEGRAM_INPUT_MEDIA_FILE_FIELDS = {
     "voice_note": {"media": _TELEGRAM_REUSABLE_FILE},
 }
 
-_TELEGRAM_PAID_MEDIA_FILE_FIELDS = {
-    media_type: _TELEGRAM_INPUT_MEDIA_FILE_FIELDS[media_type]
-    for media_type in ("live_photo", "photo", "video")
-}
-
 _TELEGRAM_STANDARD_INPUT_MEDIA_TYPES = frozenset(
     {"animation", "audio", "document", "live_photo", "photo", "video"}
 )
@@ -356,13 +365,6 @@ _TELEGRAM_NESTED_MEDIA_POLICIES = {
             ("media",),
             _TELEGRAM_MEDIA_GROUP_TYPES,
             _TELEGRAM_INPUT_MEDIA_FILE_FIELDS,
-        ),
-    ),
-    "sendpaidmedia": (
-        _TelegramNestedMediaPolicy(
-            ("media",),
-            frozenset(_TELEGRAM_PAID_MEDIA_FILE_FIELDS),
-            _TELEGRAM_PAID_MEDIA_FILE_FIELDS,
         ),
     ),
     "sendpoll": (
@@ -493,7 +495,7 @@ async def telegram_bot_api(
         config = dict(agent.link.config) if isinstance(agent.link.config, dict) else {}
         config.pop("telegram_webhook", None)
         agent.link.config = config
-        if params.get("drop_pending_updates") is True:
+        if _telegram_boolean_param_is_true(params.get("drop_pending_updates")):
             await drop_pending_telegram_updates(
                 db,
                 account=account,
@@ -762,6 +764,7 @@ async def telegram_webhook(
     text = telegram_text_from_update(payload)
     command = parse_pair_command(text)
     provider_event_id = telegram_event_id_from_update(payload)
+    provider_event_scope = telegram_event_scope_from_update(payload)
     previous_link_id: UUID | None = None
     if command is not None and command.kind in {"pair", "unpair"}:
         previous_binding = (
@@ -786,6 +789,7 @@ async def telegram_webhook(
             account=account,
             external_chat_id=external_chat_id,
             provider_event_id=provider_event_id,
+            provider_event_scope=provider_event_scope,
         )
         if existing is not None:
             return TelegramWebhookResponse(ok=True, binding_id=existing.binding_id)
@@ -805,6 +809,7 @@ async def telegram_webhook(
             account=account,
             external_chat_id=external_chat_id,
             provider_event_id=provider_event_id,
+            provider_event_scope=provider_event_scope,
         )
         if existing is not None:
             return TelegramWebhookResponse(ok=True, binding_id=existing.binding_id)
@@ -816,9 +821,23 @@ async def telegram_webhook(
         external_chat_id=external_chat_id,
         provider_message_id=telegram_message_id_from_update(payload),
         provider_event_id=provider_event_id,
+        provider_event_scope=provider_event_scope,
         text=text,
         payload=payload,
+        suppress_duplicate_event=True,
     )
+    if not messages:
+        existing = await find_existing_inbound_provider_event(
+            db,
+            account=account,
+            external_chat_id=external_chat_id,
+            provider_event_id=provider_event_id,
+            provider_event_scope=provider_event_scope,
+        )
+        return TelegramWebhookResponse(
+            ok=True,
+            binding_id=existing.binding_id if existing is not None else None,
+        )
     message = messages[0][0]
     for routed_message, binding in messages:
         await record_telegram_update_references(
@@ -834,19 +853,22 @@ async def telegram_webhook(
         account=account,
         external_chat_id=external_chat_id,
         telegram_message_thread_id=telegram_message_thread_id_from_update(payload),
+        telegram_direct_messages_topic_id=telegram_direct_messages_topic_id_from_update(payload),
         command=command,
         binding_result=binding_result,
     )
     if reply is not None:
         await db.commit()
-    await _reconcile_telegram_link_state_after_binding_change(
-        db,
-        account=account,
-        binding=binding_result.binding,
-        previous_link_id=previous_link_id,
-        paired=binding_result.paired,
-        unpaired=binding_result.unpaired,
-    )
+    if binding_result.paired or binding_result.unpaired:
+        await _reconcile_telegram_link_state_after_binding_change(
+            db,
+            account=account,
+            binding=binding_result.binding,
+            previous_link_id=previous_link_id,
+            paired=binding_result.paired,
+            unpaired=binding_result.unpaired,
+        )
+        await db.commit()
     if messages and message.binding_id and not binding_result.command_handled:
         delivered_at = datetime.now(UTC)
         for routed_message, binding in messages:
@@ -891,6 +913,15 @@ async def _deliver_telegram_agent_webhook_for_binding(
             binding=binding,
             link=link,
         )
+        return False
+    if not await bot_agent_link_has_strict_v2_authority(
+        db,
+        link=link,
+    ) or not await bot_agent_link_has_provider_cardinality_capability(
+        db,
+        account=account,
+        link=link,
+    ):
         return False
     return await _deliver_telegram_agent_webhook(account, link, payload)
 
@@ -1049,6 +1080,8 @@ async def _validate_telegram_command_scope(
     chat_id = _optional_str(scope.get("chat_id"))
     if chat_id is None:
         return _telegram_error_response("Bad Request: invalid scope", 400)
+    if scope_type == "chat_member" and _optional_str(scope.get("user_id")) is None:
+        return _telegram_error_response("Bad Request: invalid scope", 400)
     if (
         await find_binding(
             db,
@@ -1172,6 +1205,16 @@ async def _reconcile_telegram_link_state_after_binding_change(
     unpaired: bool,
 ) -> None:
     if binding is None or not (paired or unpaired):
+        return
+    await lock_channel_binding_identity(
+        db,
+        account_id=account.id,
+        external_chat_id=binding.external_chat_id,
+    )
+    await db.refresh(binding)
+    if paired and binding.status != BINDING_STATUS_ACTIVE:
+        return
+    if unpaired and binding.status != BINDING_STATUS_ARCHIVED:
         return
     current_link_id = binding.bot_agent_link_id if paired else None
     if previous_link_id is not None and previous_link_id != current_link_id:
@@ -1327,6 +1370,18 @@ async def reconcile_telegram_binding_unpair_from_ui(
     binding: ChannelBinding,
 ) -> TelegramBindingUnpairOutcome:
     """Best-effort provider cleanup after the binding archive is durable."""
+    await lock_channel_binding_identity(
+        db,
+        account_id=account.id,
+        external_chat_id=binding.external_chat_id,
+    )
+    await db.refresh(binding)
+    if binding.status != BINDING_STATUS_ARCHIVED or binding.bot_agent_link_id != link.id:
+        return TelegramBindingUnpairOutcome(
+            notification_sent=True,
+            commands_cleared=True,
+            menu_reset=True,
+        )
     commands_cleared = await _clear_telegram_commands_for_binding(
         account=account,
         link=link,
@@ -1361,6 +1416,45 @@ async def reconcile_telegram_binding_unpair_from_ui(
         commands_cleared=commands_cleared,
         menu_reset=menu_reset,
     )
+
+
+async def reconcile_telegram_link_unlink(
+    *,
+    db: AsyncSession,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+    bindings: list[ChannelBinding],
+) -> bool:
+    """Clear per-chat physical Bot API state for a durably archived Link."""
+    succeeded = True
+    for binding in bindings:
+        await lock_channel_binding_identity(
+            db,
+            account_id=account.id,
+            external_chat_id=binding.external_chat_id,
+        )
+        await db.refresh(binding)
+        if binding.status != BINDING_STATUS_ARCHIVED or binding.bot_agent_link_id != link.id:
+            continue
+        commands_cleared = await _clear_telegram_commands_for_binding(
+            account=account,
+            link=link,
+            binding=binding,
+        )
+        menu_reset = await _reconcile_telegram_menu_button_after_binding_change(
+            db=db,
+            account=account,
+            binding=binding,
+            paired=False,
+        )
+        succeeded = succeeded and commands_cleared and menu_reset
+    if succeeded:
+        config = dict(link.config) if isinstance(link.config, dict) else {}
+        config.pop("telegram_agent_commands", None)
+        config.pop("telegram_bot_profile", None)
+        config.pop("telegram_webhook", None)
+        link.config = config
+    return succeeded
 
 
 def _telegram_provider_call_succeeded(response: httpx.Response) -> bool:
@@ -1613,23 +1707,26 @@ def _telegram_profile_set_value(
     params: dict[str, Any],
 ) -> tuple[str, Any] | None:
     if method_key == "setmyname":
-        value = _optional_str(params.get("name"))
-        return ("name", value) if value is not None else None
+        value = params.get("name")
+        return ("name", value) if isinstance(value, str) else None
     if method_key == "setmydescription":
-        value = _optional_str(params.get("description"))
-        return ("description", value) if value is not None else None
+        value = params.get("description")
+        return ("description", value) if isinstance(value, str) else None
     if method_key == "setmyshortdescription":
-        value = _optional_str(params.get("short_description"))
-        return ("short_description", value) if value is not None else None
+        value = params.get("short_description")
+        return ("short_description", value) if isinstance(value, str) else None
     if method_key == "setmydefaultadministratorrights":
         if "rights" not in params:
             return None
+        rights = _telegram_json_parameter(params.get("rights"))
+        if not isinstance(rights, dict):
+            return None
         field_key = (
             "default_admin_rights:channels"
-            if params.get("for_channels") is True
+            if _telegram_boolean_param_is_true(params.get("for_channels"))
             else "default_admin_rights:groups"
         )
-        return field_key, params.get("rights")
+        return field_key, rights
     return None
 
 
@@ -1671,7 +1768,7 @@ def _telegram_profile_get_value(
         "getmyshortdescription": "short_description",
         "getmydefaultadministratorrights": (
             "default_admin_rights:channels"
-            if params.get("for_channels") is True
+            if _telegram_boolean_param_is_true(params.get("for_channels"))
             else "default_admin_rights:groups"
         ),
     }[method_key]
@@ -1857,16 +1954,40 @@ async def _authorize_telegram_chat_method(
     chat_id = _optional_str(params.get("chat_id"))
     if chat_id is None:
         return _telegram_error_response("Forbidden: method requires a bound chat_id", 403)
-    if (
-        await find_binding(
-            db,
-            account=account,
-            external_chat_id=chat_id,
-            bot_agent_link_id=bot_agent_link_id,
-        )
-        is None
-    ):
+    binding = await find_binding(
+        db,
+        account=account,
+        external_chat_id=chat_id,
+        bot_agent_link_id=bot_agent_link_id,
+    )
+    if binding is None:
         return _telegram_error_response("Forbidden: bot was blocked by the user", 403)
+    if (
+        binding.external_chat_type == "direct_messages"
+        and "message_thread_id" in params
+        and "direct_messages_topic_id" in params
+    ):
+        return _telegram_error_response(
+            "Bad Request: direct message topic is specified more than once",
+            400,
+        )
+    if binding.external_chat_type == "direct_messages":
+        topic_value = params.get(
+            "message_thread_id",
+            params.get("direct_messages_topic_id"),
+        )
+        if topic_value is not None:
+            topic_id = _optional_int_param(topic_value)
+            if topic_id is None or topic_id <= 0:
+                return _telegram_error_response(
+                    "Bad Request: invalid direct message topic",
+                    400,
+                )
+            if binding.paired_external_user_id != str(topic_id):
+                return _telegram_error_response(
+                    "Forbidden: direct message topic is not bound to this bot",
+                    403,
+                )
 
     for ref_chat_id in _referenced_telegram_chat_ids(params):
         if (
@@ -1880,6 +2001,36 @@ async def _authorize_telegram_chat_method(
         ):
             return _telegram_error_response(
                 "Forbidden: referenced chat is not bound to this bot",
+                403,
+            )
+
+    message_references, message_reference_error = _telegram_message_references(
+        method_key,
+        params,
+        chat_id=chat_id,
+    )
+    if message_reference_error is not None:
+        return _telegram_error_response(f"Bad Request: {message_reference_error}", 400)
+    for ref_chat_id, message_id in message_references:
+        ref_binding = await find_binding(
+            db,
+            account=account,
+            external_chat_id=ref_chat_id,
+            bot_agent_link_id=bot_agent_link_id,
+        )
+        if (
+            ref_binding is not None
+            and ref_binding.external_chat_type == "direct_messages"
+            and not await channel_agent_reference_exists(
+                db,
+                account=account,
+                ref_kind=TELEGRAM_REF_MESSAGE_ID,
+                ref_value=telegram_message_reference_value(ref_chat_id, message_id),
+                bot_agent_link_id=bot_agent_link_id,
+            )
+        ):
+            return _telegram_error_response(
+                "Forbidden: message_id is not bound to this bot",
                 403,
             )
 
@@ -2026,6 +2177,44 @@ def _referenced_telegram_chat_ids(params: dict[str, Any]) -> set[str]:
     return chat_ids
 
 
+def _telegram_message_references(
+    method_key: str,
+    params: dict[str, Any],
+    *,
+    chat_id: str,
+) -> tuple[set[tuple[str, int]], str | None]:
+    source_chat_id = _optional_str(params.get("from_chat_id"))
+    primary_reference_chat_id = (
+        source_chat_id
+        if method_key in _TELEGRAM_SOURCE_MESSAGE_METHODS and source_chat_id is not None
+        else chat_id
+    )
+    references: set[tuple[str, int]] = set()
+    if "message_id" in params:
+        message_id = _optional_int_param(params.get("message_id"))
+        if message_id is None or message_id <= 0:
+            return references, "invalid message_id"
+        references.add((primary_reference_chat_id, message_id))
+    if "message_ids" in params:
+        message_ids = _telegram_json_parameter(params.get("message_ids"))
+        if not isinstance(message_ids, list) or not message_ids:
+            return references, "invalid message_ids"
+        for value in message_ids:
+            message_id = _optional_int_param(value)
+            if message_id is None or message_id <= 0:
+                return references, "invalid message_ids"
+            references.add((primary_reference_chat_id, message_id))
+
+    reply_parameters = _telegram_json_parameter(params.get("reply_parameters"))
+    if isinstance(reply_parameters, dict) and "message_id" in reply_parameters:
+        message_id = _optional_int_param(reply_parameters.get("message_id"))
+        reply_chat_id = _optional_str(reply_parameters.get("chat_id")) or chat_id
+        if message_id is None or message_id <= 0:
+            return references, "invalid reply_parameters"
+        references.add((reply_chat_id, message_id))
+    return references, None
+
+
 def _telegram_param_at_path(params: dict[str, Any], path: tuple[str, ...]) -> Any:
     value: Any = params
     for key in path:
@@ -2039,7 +2228,7 @@ def _telegram_param_at_path(params: dict[str, Any], path: tuple[str, ...]) -> An
 def _telegram_boolean_param_is_true(value: Any) -> bool:
     if value is True or value == 1:
         return True
-    return isinstance(value, str) and value.strip().lower() == "true"
+    return isinstance(value, str) and value.strip().lower() in {"1", "true", "yes"}
 
 
 async def _proxy_telegram_json_method(
@@ -2083,11 +2272,27 @@ async def _proxy_telegram_bot_method(
     request: Request,
     raw_body: bytes,
 ) -> Response:
+    request_params = await _request_params(request)
+    if request.method != "GET":
+        request_params = {**dict(request.query_params), **request_params}
+    chat_id = _optional_str(request_params.get("chat_id"))
+    direct_topic_transport = False
+    if chat_id is not None:
+        binding = await find_binding(
+            db,
+            account=account,
+            external_chat_id=chat_id,
+            bot_agent_link_id=bot_agent_link_id,
+        )
+        direct_topic_transport = (
+            binding is not None and binding.external_chat_type == "direct_messages"
+        )
     response = await _telegram_provider_response(
         account=account,
         method=method,
         request=request,
         raw_body=raw_body,
+        direct_topic_transport=direct_topic_transport,
     )
     if 200 <= response.status_code < 300:
         try:
@@ -2104,7 +2309,19 @@ async def _proxy_telegram_bot_method(
                     ref_kind=TELEGRAM_REF_FILE_ID,
                     ref_value=file_id,
                 )
-            if file_ids:
+            message_references = _telegram_result_message_references(
+                payload.get("result"),
+                fallback_chat_id=chat_id,
+            )
+            for ref_chat_id, message_id in sorted(message_references):
+                await record_channel_agent_reference(
+                    db,
+                    account=account,
+                    bot_agent_link_id=bot_agent_link_id,
+                    ref_kind=TELEGRAM_REF_MESSAGE_ID,
+                    ref_value=telegram_message_reference_value(ref_chat_id, message_id),
+                )
+            if file_ids or message_references:
                 await db.commit()
     return Response(
         content=response.content,
@@ -2114,12 +2331,38 @@ async def _proxy_telegram_bot_method(
     )
 
 
+def _telegram_result_message_references(
+    value: Any,
+    *,
+    fallback_chat_id: str | None,
+) -> set[tuple[str, int]]:
+    references: set[tuple[str, int]] = set()
+    stack = [value]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, list):
+            stack.extend(current)
+            continue
+        if not isinstance(current, dict):
+            continue
+        message_id = _optional_int_param(current.get("message_id"))
+        chat = current.get("chat")
+        result_chat_id = (
+            _optional_str(chat.get("id")) if isinstance(chat, dict) else fallback_chat_id
+        )
+        if message_id is not None and message_id > 0 and result_chat_id is not None:
+            references.add((result_chat_id, message_id))
+        stack.extend(current.values())
+    return references
+
+
 async def _telegram_provider_response(
     *,
     account: Any,
     method: str,
     request: Request,
     raw_body: bytes,
+    direct_topic_transport: bool = False,
 ) -> httpx.Response:
     provider_token = decrypt_provider_token(account)
     base_url = settings.channel_telegram_api_base_url.strip()
@@ -2129,6 +2372,10 @@ async def _telegram_provider_response(
     content_type = request.headers.get("content-type")
     if content_type:
         headers["content-type"] = content_type
+    query_params: list[tuple[str, str]] = list(request.query_params.multi_items())
+    if direct_topic_transport:
+        query_params = _telegram_direct_topic_query_params(query_params)
+        raw_body = _telegram_direct_topic_request_body(raw_body, content_type or "")
     forward_body = _resolve_telegram_attach_refs(raw_body, content_type or "")
     try:
         with track_proxy_latency("telegram", method):
@@ -2138,7 +2385,7 @@ async def _telegram_provider_response(
                     url,
                     content=forward_body if forward_body else None,
                     headers=headers,
-                    params=request.query_params,
+                    params=query_params,
                 )
     except httpx.HTTPError as exc:
         outbound_errors.labels(channel="telegram", method=method).inc()
@@ -2150,6 +2397,68 @@ async def _telegram_provider_response(
     if response.status_code >= 400:
         outbound_errors.labels(channel="telegram", method=method).inc()
     return response
+
+
+def _telegram_direct_topic_query_params(
+    values: list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    return [
+        ("direct_messages_topic_id" if key == "message_thread_id" else key, value)
+        for key, value in values
+    ]
+
+
+def _telegram_direct_topic_request_body(raw_body: bytes, content_type: str) -> bytes:
+    if not raw_body:
+        return raw_body
+    lowered = content_type.lower()
+    if "multipart/form-data" in lowered:
+        return _rename_telegram_multipart_field(
+            raw_body,
+            content_type,
+            old_name="message_thread_id",
+            new_name="direct_messages_topic_id",
+        )
+    if "application/x-www-form-urlencoded" in lowered:
+        values = parse_qsl(raw_body.decode("utf-8"), keep_blank_values=True)
+        return urlencode(_telegram_direct_topic_query_params(values)).encode()
+    if "application/json" in lowered or raw_body.lstrip().startswith(b"{"):
+        try:
+            value = json.loads(raw_body)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return raw_body
+        if not isinstance(value, dict) or "message_thread_id" not in value:
+            return raw_body
+        rewritten = dict(value)
+        rewritten["direct_messages_topic_id"] = rewritten.pop("message_thread_id")
+        return json.dumps(rewritten, separators=(",", ":"), ensure_ascii=False).encode()
+    return raw_body
+
+
+def _rename_telegram_multipart_field(
+    raw_body: bytes,
+    content_type: str,
+    *,
+    old_name: str,
+    new_name: str,
+) -> bytes:
+    boundary_match = re.search(r"boundary=([^;\s]+)", content_type)
+    if boundary_match is None:
+        return raw_body
+    boundary = boundary_match.group(1).strip('"')
+    separator = f"--{boundary}"
+    parts = raw_body.decode("latin-1").split(separator)
+    old_marker = f'name="{old_name}"'
+    new_marker = f'name="{new_name}"'
+    rewritten = [parts[0]]
+    for part in parts[1:]:
+        header_end = part.find("\r\n\r\n")
+        if header_end < 0:
+            rewritten.append(part)
+            continue
+        headers = part[:header_end].replace(old_marker, new_marker)
+        rewritten.append(headers + part[header_end:])
+    return separator.join(rewritten).encode("latin-1")
 
 
 def _resolve_telegram_attach_refs(raw_body: bytes, content_type: str) -> bytes:

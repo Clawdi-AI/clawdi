@@ -78,23 +78,20 @@ export function renderHermesMcpServer(
 	return String(document);
 }
 
-export function mergeHermesChannelConfig(
-	configPath: string,
-	platforms: Record<string, Record<string, unknown>>,
-): void {
+export function mergeHermesChannelConfig(configPath: string, patch: Record<string, unknown>): void {
 	writeHermesConfig(
 		configPath,
-		renderHermesChannelConfig(readHermesConfigContent(configPath), platforms),
+		renderHermesChannelConfig(readHermesConfigContent(configPath), patch),
 	);
 }
 
-export function renderHermesChannelConfig(
-	content: string,
-	platforms: Record<string, Record<string, unknown>>,
-): string {
+export function renderHermesChannelConfig(content: string, patch: Record<string, unknown>): string {
 	const document = parseHermesConfig(content, "Hermes config");
-	for (const [platform, config] of Object.entries(platforms)) {
+	for (const [platform, config] of Object.entries(patch)) {
 		if (platform === "platforms" || platform === "display") {
+			if (!isPlainRecord(config)) {
+				throw new Error(`Hermes channel patch field ${platform} must be a YAML object.`);
+			}
 			const root = document.toJS();
 			if (isPlainRecord(root) && root[platform] !== undefined && !isPlainRecord(root[platform])) {
 				throw new Error(`Hermes config field ${platform} must be a YAML object.`);
@@ -121,6 +118,10 @@ export function renderHermesChannelConfig(
 			if (isPlainRecord(updated) && Object.keys(updated).length === 0) {
 				document.delete(platform);
 			}
+			continue;
+		}
+		if (config === null) {
+			document.delete(platform);
 			continue;
 		}
 		document.set(platform, document.createNode(config));

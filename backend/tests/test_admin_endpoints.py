@@ -1675,9 +1675,18 @@ async def test_admin_channel_lifecycle_manages_public_bot(
     async def fake_configure_telegram_provider_webhook(**_kwargs):
         return "ClawdiPublicBot"
 
+    rotated_identity = {"username": "ClawdiPublicBot"}
+
+    async def fake_get_telegram_bot_username(_provider_token: str):
+        return rotated_identity["username"]
+
     monkeypatch.setattr(
         "app.routes.admin.configure_telegram_provider_webhook",
         fake_configure_telegram_provider_webhook,
+    )
+    monkeypatch.setattr(
+        "app.routes.admin.get_telegram_bot_username",
+        fake_get_telegram_bot_username,
     )
 
     created = await admin_client.post(
@@ -1731,6 +1740,38 @@ async def test_admin_channel_lifecycle_manages_public_bot(
     )
     assert listed.status_code == 200
     assert body["id"] in {item["id"] for item in listed.json()}
+
+    rotated_token = await admin_client.patch(
+        f"/v1/admin/channels/{body['id']}",
+        headers=_AUTH,
+        json={"provider_token": "123456:rotated-admin-token"},
+    )
+    assert rotated_token.status_code == 200, rotated_token.text
+    assert rotated_token.json()["config"]["bot_username"] == "ClawdiPublicBot"
+    await db_session.refresh(account)
+    assert decrypt_provider_token(account) == "123456:rotated-admin-token"
+
+    config_only = await admin_client.patch(
+        f"/v1/admin/channels/{body['id']}",
+        headers=_AUTH,
+        json={"config": {"commands": "updated-without-token"}},
+    )
+    assert config_only.status_code == 200, config_only.text
+    assert config_only.json()["config"] == {
+        "commands": "updated-without-token",
+        "bot_username": "ClawdiPublicBot",
+    }
+
+    rotated_identity["username"] = "DifferentPublicBot"
+    wrong_bot = await admin_client.patch(
+        f"/v1/admin/channels/{body['id']}",
+        headers=_AUTH,
+        json={"provider_token": "654321:different-bot-token"},
+    )
+    assert wrong_bot.status_code == 409
+    assert wrong_bot.json()["detail"] == "Telegram provider token belongs to a different bot."
+    await db_session.refresh(account)
+    assert decrypt_provider_token(account) == "123456:rotated-admin-token"
 
     patched = await admin_client.patch(
         f"/v1/admin/channels/{body['id']}",

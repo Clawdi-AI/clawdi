@@ -1,49 +1,48 @@
 import { describe, expect, test } from "bun:test";
-import type { ChannelBotPoolItem } from "./channel-types";
-import { dedupeBotPoolProviders, providerCounts } from "./channels-page.logic";
+import {
+	orderedChannelsForFilter,
+	providerCounts,
+	providersWithOwnedBots,
+} from "./channels-page.logic";
 
-function poolItem(id: string, provider: string): ChannelBotPoolItem {
-	return {
-		id,
-		provider,
-		name: id,
-		status: "active",
-		visibility: "private",
-		has_provider_token: true,
-		webhook_url: "https://example.test/webhook",
-		created_at: "2026-01-01T00:00:00Z",
-		access: "owner",
-		capabilities: {
-			link_agent: true,
-			pair_chat: true,
-			send_message: true,
-			manage_account: true,
-			sync_commands: true,
-		},
-		link_count: 0,
-		available: true,
-	};
-}
+describe("owned bot inventory", () => {
+	test("keeps canonical provider order and stable order within each provider", () => {
+		const channels = [
+			{ id: "discord-1", provider: "discord" },
+			{ id: "telegram-1", provider: "telegram" },
+			{ id: "discord-2", provider: "discord" },
+			{ id: "legacy-1", provider: "imessage" },
+			{ id: "telegram-2", provider: "telegram" },
+			{ id: "whatsapp-1", provider: "whatsapp" },
+		];
 
-describe("channel list deduplication", () => {
-	test("removes a pool bot already returned by the owned channel list", () => {
-		const channels = [{ id: "channel-1", provider: "telegram" }];
-		const providers = {
-			telegram: [
-				poolItem("channel-1", "telegram"),
-				poolItem("shared-2", "telegram"),
-				poolItem("shared-2", "telegram"),
-			],
-			discord: [poolItem("shared-3", "discord")],
-		};
+		expect(orderedChannelsForFilter(channels, "all").map((item) => item.id)).toEqual([
+			"telegram-1",
+			"telegram-2",
+			"discord-1",
+			"discord-2",
+			"whatsapp-1",
+			"legacy-1",
+		]);
+		expect(orderedChannelsForFilter(channels, "discord").map((item) => item.id)).toEqual([
+			"discord-1",
+			"discord-2",
+		]);
+	});
 
-		const deduped = dedupeBotPoolProviders(channels, providers);
+	test("counts only owned bots for global filters", () => {
+		const counts = providerCounts([
+			{ provider: "telegram" },
+			{ provider: "telegram" },
+			{ provider: "discord" },
+			{ provider: "imessage" },
+		]);
 
-		expect(deduped.telegram?.map((item) => item.id)).toEqual(["shared-2"]);
-		expect(providerCounts(channels, deduped)).toEqual({
-			telegram: 2,
-			discord: 1,
-			whatsapp: 0,
-		});
+		expect(counts).toEqual({ telegram: 2, discord: 1, whatsapp: 0 });
+		expect(providersWithOwnedBots(counts)).toEqual(["telegram", "discord"]);
+	});
+
+	test("keeps an existing WhatsApp asset discoverable without showing empty providers", () => {
+		expect(providersWithOwnedBots({ telegram: 0, discord: 0, whatsapp: 1 })).toEqual(["whatsapp"]);
 	});
 });

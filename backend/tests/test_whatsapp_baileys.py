@@ -16,12 +16,14 @@ from app.models.channel import (
     ChannelAgentCredential,
     ChannelBinding,
     ChannelBindingAlias,
+    ChannelBotAgentLink,
     ChannelMessage,
 )
 from app.routes.channel_routers.whatsapp import (
     _ack_whatsapp_websocket_inbox,
     _wait_whatsapp_websocket_inbox,
 )
+from app.services.channels import generate_agent_token, store_agent_link_token
 from app.services.vault_crypto import decrypt
 from app.services.whatsapp_baileys import (
     MAX_NODE_COUNT,
@@ -59,6 +61,52 @@ from app.services.whatsapp_baileys import (
 )
 
 pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
+
+
+@pytest.fixture(autouse=True)
+def _exercise_whatsapp_protocol_behind_hosted_gate(monkeypatch):
+    """These tests cover the protocol behind the current hosted coming-soon gate."""
+
+    async def allow_existing_link(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "app.routes.channel_routers.whatsapp.ensure_hosted_agent_provider_link_available",
+        allow_existing_link,
+    )
+
+
+async def _create_whatsapp_channel_with_existing_links(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    *,
+    name: str,
+    agents: tuple,
+) -> tuple[dict[str, Any], list[ChannelBotAgentLink]]:
+    """Seed pre-gate WhatsApp links while exercising current runtime routes."""
+    response = await client.post(
+        "/v1/channels",
+        json={"provider": "whatsapp", "name": name},
+    )
+    assert response.status_code == 201, response.text
+    created = response.json()
+    links: list[ChannelBotAgentLink] = []
+    for agent in agents:
+        link = ChannelBotAgentLink(
+            account_id=UUID(created["id"]),
+            user_id=agent.user_id,
+            agent_id=agent.id,
+        )
+        store_agent_link_token(link, generate_agent_token("whatsapp"))
+        db_session.add(link)
+        links.append(link)
+    await db_session.commit()
+    for link in links:
+        await db_session.refresh(link)
+    if links:
+        created["agent_id"] = str(links[0].agent_id)
+        created["agent_link_id"] = str(links[0].id)
+    return created, links
 
 
 class _FakeMediaResponse:
@@ -1399,13 +1447,14 @@ async def test_whatsapp_media_proxy_forwards_head_without_body(
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_tenant_creds_route_persists_auth_cert(client: httpx.AsyncClient):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-baileys"},
-        )
-    ).json()
+async def test_whatsapp_tenant_creds_route_persists_auth_cert(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+):
+    created, _links = await _create_whatsapp_channel_with_existing_links(
+        client, db_session, name="wa-baileys", agents=(channel_agent,)
+    )
 
     first = await client.post(f"/v1/channels/whatsapp/{created['id']}/tenant-creds", json={})
     second = await client.post(f"/v1/channels/whatsapp/{created['id']}/tenant-creds", json={})
@@ -1430,16 +1479,12 @@ async def test_whatsapp_tenant_creds_route_lists_metadata_and_resolves_identity(
     channel_agent,
     second_channel_agent,
 ):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={
-                "provider": "whatsapp",
-                "name": "wa-creds-metadata",
-                "agent_id": str(channel_agent.id),
-            },
-        )
-    ).json()
+    created, links = await _create_whatsapp_channel_with_existing_links(
+        client,
+        db_session,
+        name="wa-creds-metadata",
+        agents=(channel_agent, second_channel_agent),
+    )
     shared_self = {
         "id": "16693773518:2@s.whatsapp.net",
         "lid": "117901482786828:2@lid",
@@ -1448,7 +1493,7 @@ async def test_whatsapp_tenant_creds_route_lists_metadata_and_resolves_identity(
     minted_response = await client.post(
         f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
         json={
-            "agent_id": str(second_channel_agent.id),
+            "agent_link_id": str(links[1].id),
             "phone_user": "15550007777",
             "device": 2,
             "name": "Shared WA",
@@ -1505,13 +1550,11 @@ async def test_whatsapp_tenant_creds_route_lists_metadata_and_resolves_identity(
 async def test_whatsapp_tenant_creds_route_resolves_same_self_jid_by_noise_identity(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
+    channel_agent,
 ):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-shared-self-identity"},
-        )
-    ).json()
+    created, _links = await _create_whatsapp_channel_with_existing_links(
+        client, db_session, name="wa-shared-self-identity", agents=(channel_agent,)
+    )
     shared_self = {
         "id": "16693773518:2@s.whatsapp.net",
         "lid": "117901482786828:2@lid",
@@ -1558,13 +1601,11 @@ async def test_whatsapp_tenant_creds_route_resolves_same_self_jid_by_noise_ident
 async def test_whatsapp_tenant_creds_remint_replaces_same_link_name_and_target_only(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
+    channel_agent,
 ):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-remint-replacement-key"},
-        )
-    ).json()
+    created, _links = await _create_whatsapp_channel_with_existing_links(
+        client, db_session, name="wa-remint-replacement-key", agents=(channel_agent,)
+    )
     shared_self = {
         "id": "16693773518:2@s.whatsapp.net",
         "lid": "117901482786828:2@lid",
@@ -1635,13 +1676,11 @@ async def test_whatsapp_tenant_creds_remint_replaces_same_link_name_and_target_o
 async def test_whatsapp_tenant_creds_revoke_removes_identity_lookup_and_allows_remint(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
+    channel_agent,
 ):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-creds-revoke"},
-        )
-    ).json()
+    created, _links = await _create_whatsapp_channel_with_existing_links(
+        client, db_session, name="wa-creds-revoke", agents=(channel_agent,)
+    )
     first_response = await client.post(
         f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
         json={},
@@ -1685,13 +1724,11 @@ async def test_whatsapp_tenant_creds_revoke_removes_identity_lookup_and_allows_r
 async def test_channel_delete_revokes_whatsapp_tenant_credentials(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
+    channel_agent,
 ):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-creds-channel-delete"},
-        )
-    ).json()
+    created, _links = await _create_whatsapp_channel_with_existing_links(
+        client, db_session, name="wa-creds-channel-delete", agents=(channel_agent,)
+    )
     minted = (
         await client.post(
             f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
@@ -1718,13 +1755,11 @@ async def test_channel_delete_revokes_whatsapp_tenant_credentials(
 async def test_channel_agent_link_delete_revokes_whatsapp_tenant_credentials(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
+    channel_agent,
 ):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-creds-link-delete"},
-        )
-    ).json()
+    created, _links = await _create_whatsapp_channel_with_existing_links(
+        client, db_session, name="wa-creds-link-delete", agents=(channel_agent,)
+    )
     minted = (
         await client.post(
             f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
@@ -1756,26 +1791,22 @@ async def test_whatsapp_websocket_inbox_is_scoped_to_agent_link(
     channel_agent,
     second_channel_agent,
 ):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={
-                "provider": "whatsapp",
-                "name": "wa-link-scoped-inbox",
-                "agent_id": str(channel_agent.id),
-            },
-        )
-    ).json()
+    created, links = await _create_whatsapp_channel_with_existing_links(
+        client,
+        db_session,
+        name="wa-link-scoped-inbox",
+        agents=(channel_agent, second_channel_agent),
+    )
     default_credential = (
         await client.post(
             f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-            json={"name": "default"},
+            json={"agent_link_id": str(links[0].id), "name": "default"},
         )
     ).json()
     workspace_credential = (
         await client.post(
             f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-            json={"agent_id": str(second_channel_agent.id), "name": "workspace"},
+            json={"agent_link_id": str(links[1].id), "name": "workspace"},
         )
     ).json()
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
@@ -1856,13 +1887,11 @@ async def test_whatsapp_websocket_inbox_is_scoped_to_agent_link(
 async def test_whatsapp_lid_pairing_remembers_alias(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
+    channel_agent,
 ):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-lid-alias"},
-        )
-    ).json()
+    created, _links = await _create_whatsapp_channel_with_existing_links(
+        client, db_session, name="wa-lid-alias", agents=(channel_agent,)
+    )
     pair = (
         await client.post(
             f"/v1/channels/{created['id']}/pair-codes",
@@ -1920,13 +1949,11 @@ async def test_whatsapp_lid_pairing_remembers_alias(
 async def test_whatsapp_lid_alias_unpair_archives_phone_binding(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
+    channel_agent,
 ):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-lid-unpair"},
-        )
-    ).json()
+    created, _links = await _create_whatsapp_channel_with_existing_links(
+        client, db_session, name="wa-lid-unpair", agents=(channel_agent,)
+    )
     pair = (
         await client.post(
             f"/v1/channels/{created['id']}/pair-codes",
@@ -1991,22 +2018,12 @@ async def test_whatsapp_lid_phone_conflicts_across_agent_links_drop_inbound(
     channel_agent,
     second_channel_agent,
 ):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={
-                "provider": "whatsapp",
-                "name": "wa-lid-conflict",
-                "agent_id": str(channel_agent.id),
-            },
-        )
-    ).json()
-    second_link = (
-        await client.post(
-            f"/v1/channels/{created['id']}/agent-links",
-            json={"agent_id": str(second_channel_agent.id)},
-        )
-    ).json()
+    created, links = await _create_whatsapp_channel_with_existing_links(
+        client,
+        db_session,
+        name="wa-lid-conflict",
+        agents=(channel_agent, second_channel_agent),
+    )
     account = (
         await db_session.execute(
             select(ChannelAccount).where(ChannelAccount.id == UUID(created["id"]))
@@ -2026,7 +2043,7 @@ async def test_whatsapp_lid_phone_conflicts_across_agent_links_drop_inbound(
     db_session.add(
         ChannelBinding(
             account_id=account.id,
-            bot_agent_link_id=UUID(second_link["id"]),
+            bot_agent_link_id=links[1].id,
             user_id=account.user_id,
             external_chat_id=phone_jid,
             external_chat_type="dm",
