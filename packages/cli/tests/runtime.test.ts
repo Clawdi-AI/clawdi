@@ -58,6 +58,7 @@ import { hostedAiProviderCatalog } from "../src/runtime/hosted-provider-resoluti
 import { releaseManagedSkill, reserveManagedSkill } from "../src/runtime/managed-skill-reservation";
 import {
 	buildOpenClawHostedProviderPatch,
+	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
 	loadRuntimeManifest,
 	type RuntimeConvergenceResult,
@@ -7472,6 +7473,7 @@ exit 42
 				},
 			],
 			secretValues: {
+				...TEST_HOSTED_CODEX_SECRET_VALUES,
 				[providerSecretRef]: "sk-provider-watch",
 				[channelSecretRef]: "agent-token-watch",
 				[channelPlaceholderSecretRef]: "999999999:54db03c2296520629c70cfb6e3b15f8e",
@@ -7541,38 +7543,30 @@ exit 64
 			if (!("manifest" in manifestLoad) || "notModified" in manifestLoad) {
 				throw new Error("expected initial manifest load success");
 			}
-			const initialConvergence = convergeRuntimeManifest(
-				applyRuntimeBundleChannelsToManifestLoad(manifestLoad as RuntimeManifestLoad),
-				paths,
+			const committedLoad = applyRuntimeBundleChannelsToManifestLoad(
+				manifestLoad as RuntimeManifestLoad,
 			);
+			const committedAuthorityLoad: RuntimeManifestLoad = {
+				...committedLoad,
+				manifest: structuredClone(committedLoad.manifest),
+				secretValues: { ...committedLoad.secretValues },
+			};
+			const initialConvergence = convergeRuntimeManifest(committedLoad, paths);
 			expect(initialConvergence.installErrors).toEqual([]);
 			expectEgressProfileBundleUsesSecretRef(
 				initialConvergence.outputs.egressProfileBundle,
 				"secret://provider.default.apiKey",
 				"sk-provider-watch",
 			);
-			mkdirSync(dirname(paths.appliedState), { recursive: true });
-			writeFileSync(
-				paths.appliedState,
-				JSON.stringify({
-					schemaVersion: "clawdi.runtimeAppliedState.v2",
-					appliedAt: "2026-07-13T00:00:00.000Z",
-					instanceId: "iid_watch_secret",
-					etag: stableBundleEtag,
-					sourceRevision: "d".repeat(64),
-					generation: 22,
-					applyGeneration: 22,
-					manifestETag: stableBundleEtag,
-					applyReceiptId: "test-apply-receipt-0022",
-					bootNonce: "test-boot-nonce-000022",
-					contentIdentity: {
-						sourcePath: "https://runtime.test/v1/runtime/manifest",
-						sha256: "a".repeat(64),
-					},
-					providerIds: ["clawdi-managed-v2"],
-					projectedProviderIds: { openclaw: ["clawdi-managed-v2"] },
-				}),
-			);
+			if (!committedLoad.sourceRevision) throw new Error("expected runtime source revision");
+			commitRuntimeAppliedState({
+				load: committedAuthorityLoad,
+				paths,
+				etag: stableBundleEtag,
+				sourceRevision: committedLoad.sourceRevision,
+				convergence: initialConvergence,
+				applyIdentity: committedLoad.applyContext?.identity ?? null,
+			});
 		} finally {
 			initial.restore();
 		}
@@ -7638,6 +7632,128 @@ exit 64
 			expect(systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
 				baselineRevision,
 			);
+		} finally {
+			watchFetch.restore();
+			console.log = previousLog;
+			process.exitCode = previousExitCode;
+		}
+	});
+
+	it("runtime watch leaves a legacy CLI journal inert when committed cache content drifts", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const previousExitCode = process.exitCode;
+		const previousLog = console.log;
+		const logs: string[] = [];
+		const currentVersion = getCliVersion();
+		const packageSpec = `clawdi@${currentVersion}`;
+		const bundleEtag = testBundleEtag("committed-cli-authority-content-drift");
+		mkdirSync(join(run, "secrets"), { recursive: true });
+		seedOpenClawBinary(home);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+		seedCurrentCliInstall(state, packageSpec, currentVersion, "https://registry.npmjs.org");
+		const paths = getRuntimePaths();
+		const initial = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/runtime/manifest",
+				response: () =>
+					hostedRuntimeBundleResponse(hostedCliManifestResponse(home, packageSpec), {
+						etag: bundleEtag,
+					}),
+			},
+		]);
+		try {
+			const fresh = await loadRemoteRuntimeManifest(paths);
+			if (!("manifest" in fresh) || "notModified" in fresh) {
+				throw new Error("expected initial manifest load success");
+			}
+			const committedLoad = applyRuntimeBundleChannelsToManifestLoad(fresh);
+			const convergence = convergeRuntimeManifest(committedLoad, paths);
+			expect(convergence.installErrors).toEqual([]);
+			if (!committedLoad.etag || !committedLoad.sourceRevision) {
+				throw new Error("expected committed runtime bundle identity");
+			}
+			commitRuntimeAppliedState({
+				load: committedLoad,
+				paths,
+				etag: committedLoad.etag,
+				sourceRevision: committedLoad.sourceRevision,
+				convergence,
+				applyIdentity: committedLoad.applyContext?.identity ?? null,
+			});
+		} finally {
+			initial.restore();
+		}
+
+		const activeTarget = readlinkSync(paths.cliManagedBin);
+		const activeIdentity = {
+			packageSpec,
+			registry: "https://registry.npmjs.org",
+			npmPrefix: paths.cliNpmPrefix,
+			activeTarget,
+			version: currentVersion,
+		};
+		const executionMarker = join(root, "tampered-authority-legacy-journal-executed");
+		const previousIdentity = createVersionedCliFixture(paths, "0.13.21");
+		writeFileSync(
+			previousIdentity.activeTarget,
+			`#!/usr/bin/env bash
+touch '${executionMarker}'
+if [ "\${1:-}" = "--version" ]; then echo '${previousIdentity.version}'; exit 0; fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then echo '{"status":"ok"}'; exit 0; fi
+exit 64
+`,
+			{ mode: 0o700 },
+		);
+		writeCliTransactionFixture(paths, {
+			phase: "activated",
+			previousIdentity,
+			newIdentity: activeIdentity,
+			rollbackReason: "tampered committed authority must not execute legacy recovery",
+		});
+		const staleJournal = readFileSync(paths.cliUpgradeState, "utf-8");
+		rmSync(paths.cliBootstrapStatus);
+		const tamperedManifest = JSON.parse(
+			readFileSync(paths.manifestLastGood, "utf-8"),
+		) as RuntimeManifest;
+		expect(tamperedManifest.projection?.sourceBundleVersion).toBe(
+			"clawdi.hosted-runtime.bundle.v2",
+		);
+		if (!tamperedManifest.projection) throw new Error("expected strict-v2 projection marker");
+		delete tamperedManifest.projection.sourceBundleVersion;
+		writeFileSync(paths.manifestLastGood, JSON.stringify(tamperedManifest));
+
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+		};
+		const watchFetch = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/runtime/manifest",
+				response: () => new Response(null, { status: 304, headers: { etag: bundleEtag } }),
+			},
+		]);
+		try {
+			await runtimeWatch({ once: true, json: true });
+
+			expect(process.exitCode).toBe(1);
+			expect(watchFetch.captured).toHaveLength(1);
+			expect(watchFetch.captured[0].headers["if-none-match"]).toBe(bundleEtag);
+			const event = JSON.parse(logs[0]);
+			expect(event).toMatchObject({ status: "error", mode: "repair", stage: "local" });
+			expect(event.error).toContain(
+				"cached manifest does not match the durable strict-v2 apply identity",
+			);
+			expect(readFileSync(paths.cliUpgradeState, "utf-8")).toBe(staleJournal);
+			expect(readlinkSync(paths.cliManagedBin)).toBe(activeTarget);
+			expect(existsSync(executionMarker)).toBe(false);
 		} finally {
 			watchFetch.restore();
 			console.log = previousLog;
@@ -10435,12 +10551,24 @@ chmod +x "$prefix/bin/clawdi"
 			},
 			secretValues: {},
 		};
-		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
-		writeFileSync(
-			paths.manifestLastGood,
-			JSON.stringify(normalizeManifestPayload(manifestPayload).manifest),
-		);
 		const bundleEtag = `"sha256:${"a".repeat(64)}"`;
+		const normalizedManifest = normalizeManifestPayload(manifestPayload).manifest;
+		const committedLoad: RuntimeManifestLoad = {
+			manifest: {
+				...normalizedManifest,
+				projection: {
+					...normalizedManifest.projection,
+					sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+				},
+			},
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/v1/runtime/manifest",
+			offline: false,
+			secretValues: TEST_HOSTED_CODEX_SECRET_VALUES,
+			etag: bundleEtag,
+			sourceRevision: "a".repeat(64),
+		};
+		cacheRuntimeLastGoodManifest(committedLoad.manifest, paths, committedLoad.secretValues);
 		writeRuntimeAppliedState(
 			{
 				schemaVersion: "clawdi.runtimeAppliedState.v2",
@@ -10449,10 +10577,7 @@ chmod +x "$prefix/bin/clawdi"
 				etag: bundleEtag,
 				sourceRevision: "a".repeat(64),
 				generation: 30,
-				contentIdentity: {
-					sourcePath: "https://runtime.test/v1/runtime/manifest",
-					sha256: "b".repeat(64),
-				},
+				contentIdentity: runtimeAppliedContentIdentity(committedLoad),
 				providerIds: ["default"],
 				projectedProviderIds: {},
 			},

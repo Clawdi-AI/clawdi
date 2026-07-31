@@ -59,6 +59,7 @@ import {
 } from "../runtime/manifest";
 import { manifestSchema as runtimeDesiredStateSchema } from "../runtime/manifest-contract";
 import {
+	loadCommittedRuntimeManifest,
 	loadRemoteRuntimeManifest,
 	type RuntimeManifestFailure,
 	type RuntimeManifestLoad,
@@ -1300,36 +1301,6 @@ function cacheRuntimeSourceManifest(load: RuntimeManifestLoad, paths: RuntimePat
 	return cacheRuntimeLastGoodManifest(load.manifest, paths, load.secretValues);
 }
 
-function readCommittedRuntimeCliManifestAuthority(
-	paths: RuntimePaths,
-	appliedState: NonNullable<ReturnType<typeof readRuntimeAppliedState>>,
-): RuntimeManifestLoad["manifest"] {
-	if (!existsSync(paths.manifestLastGood)) {
-		throw new Error("committed runtime manifest authority is missing");
-	}
-	let raw: unknown;
-	try {
-		raw = JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")) as unknown;
-	} catch (error) {
-		throw new Error(
-			`committed runtime manifest authority is unreadable: ${error instanceof Error ? error.message : String(error)}`,
-		);
-	}
-	const parsed = runtimeDesiredStateSchema.safeParse(raw);
-	if (!parsed.success) {
-		throw new Error("committed runtime manifest authority is invalid");
-	}
-	const manifest = parsed.data;
-	if (
-		manifest.instanceId !== appliedState.instanceId ||
-		manifest.generation !== appliedState.generation ||
-		resolveRuntimeApplyGeneration(manifest) !== resolveRuntimeApplyGeneration(appliedState)
-	) {
-		throw new Error("committed runtime manifest authority does not match applied state");
-	}
-	return manifest;
-}
-
 export function runtimeAppliedContentIdentity(
 	load: RuntimeManifestLoad,
 ): RuntimeAppliedContentIdentity {
@@ -2544,6 +2515,7 @@ async function runtimeWatchTickWithManifestAuthority(
 	const responseManifestEtag = manifestLoad.etag ?? manifestEtag ?? null;
 	if (
 		"notModified" in manifestLoad &&
+		manifestLoad.applyContext !== undefined &&
 		activeAppliedState !== null &&
 		activeAppliedState.etag === responseManifestEtag &&
 		runtimeApplyIdentitiesEqual(
@@ -2551,11 +2523,27 @@ async function runtimeWatchTickWithManifestAuthority(
 			runtimeAppliedApplyIdentity(activeAppliedState),
 		)
 	) {
-		let committedManifest: RuntimeManifestLoad["manifest"];
-		try {
-			committedManifest = readCommittedRuntimeCliManifestAuthority(paths, activeAppliedState);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+		const committed = loadCommittedRuntimeManifest(paths, manifestLoad.applyContext);
+		if ("errors" in committed) {
+			return {
+				schemaVersion: "clawdi.runtimeWatchEvent.v1",
+				status: "error",
+				mode: committed.mode,
+				stage: committed.stage,
+				errors: committed.errors,
+				error: committed.errors[0],
+				activeGeneration: activeAppliedState.generation,
+				rejectedGeneration: null,
+			};
+		}
+		const committedManifest = committed.manifest;
+		if (
+			committedManifest.instanceId !== activeAppliedState.instanceId ||
+			committedManifest.generation !== activeAppliedState.generation ||
+			resolveRuntimeApplyGeneration(committedManifest) !==
+				resolveRuntimeApplyGeneration(activeAppliedState)
+		) {
+			const message = "committed runtime manifest authority does not match applied state";
 			return {
 				schemaVersion: "clawdi.runtimeWatchEvent.v1",
 				status: "error",
