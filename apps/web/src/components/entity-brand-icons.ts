@@ -1,24 +1,22 @@
-import {
-	Anthropic,
-	ClaudeCode,
-	Codex,
-	DeepSeek,
-	Gemini,
-	Grok,
-	Groq,
-	HermesAgent,
-	Kimi,
-	Minimax,
-	Mistral,
-	OpenAI,
-	OpenClaw,
-	OpenRouter,
-	Qwen,
-	Stepfun,
-	Together,
-	XAI,
-	Zhipu,
-} from "@lobehub/icons";
+import Anthropic from "@lobehub/icons/es/Anthropic/components/Mono.js";
+import ClaudeCode from "@lobehub/icons/es/ClaudeCode/components/Color.js";
+import Codex from "@lobehub/icons/es/Codex/components/Color.js";
+import DeepSeek from "@lobehub/icons/es/DeepSeek/components/Color.js";
+import Gemini from "@lobehub/icons/es/Gemini/components/Color.js";
+import Grok from "@lobehub/icons/es/Grok/components/Mono.js";
+import Groq from "@lobehub/icons/es/Groq/components/Mono.js";
+import HermesAgent from "@lobehub/icons/es/HermesAgent/components/Mono.js";
+import Kimi from "@lobehub/icons/es/Kimi/components/Color.js";
+import Minimax from "@lobehub/icons/es/Minimax/components/Color.js";
+import Mistral from "@lobehub/icons/es/Mistral/components/Color.js";
+import OpenAI from "@lobehub/icons/es/OpenAI/components/Mono.js";
+import OpenClaw from "@lobehub/icons/es/OpenClaw/components/Color.js";
+import OpenRouter from "@lobehub/icons/es/OpenRouter/components/Color.js";
+import Qwen from "@lobehub/icons/es/Qwen/components/Color.js";
+import Stepfun from "@lobehub/icons/es/Stepfun/components/Mono.js";
+import Together from "@lobehub/icons/es/Together/components/Color.js";
+import XAI from "@lobehub/icons/es/XAI/components/Mono.js";
+import Zhipu from "@lobehub/icons/es/Zhipu/components/Color.js";
 import type { BrandIconComponent } from "@/components/brand-icon-tile";
 
 export type BrandIconMetadata = {
@@ -27,29 +25,29 @@ export type BrandIconMetadata = {
 };
 
 const FRAMEWORK_BRAND_ICONS: Readonly<Record<string, BrandIconMetadata>> = {
-	openclaw: { icon: OpenClaw.Color, label: "OpenClaw" },
+	openclaw: { icon: OpenClaw, label: "OpenClaw" },
 	hermes: { icon: HermesAgent, label: "Hermes Agent" },
-	"claude-code": { icon: ClaudeCode.Color, label: "Claude Code" },
-	claude_code: { icon: ClaudeCode.Color, label: "Claude Code" },
-	codex: { icon: Codex.Color, label: "Codex" },
+	"claude-code": { icon: ClaudeCode, label: "Claude Code" },
+	claude_code: { icon: ClaudeCode, label: "Claude Code" },
+	codex: { icon: Codex, label: "Codex" },
 };
 
 const PROVIDER_BRAND_ICONS: Readonly<Record<string, BrandIconMetadata>> = {
 	anthropic: { icon: Anthropic, label: "Anthropic" },
-	deepseek: { icon: DeepSeek.Color, label: "DeepSeek" },
-	gemini: { icon: Gemini.Color, label: "Gemini" },
+	deepseek: { icon: DeepSeek, label: "DeepSeek" },
+	gemini: { icon: Gemini, label: "Gemini" },
 	grok: { icon: Grok, label: "Grok" },
 	groq: { icon: Groq, label: "Groq" },
-	kimi: { icon: Kimi.Color, label: "Kimi" },
-	minimax: { icon: Minimax.Color, label: "MiniMax" },
-	mistral: { icon: Mistral.Color, label: "Mistral AI" },
+	kimi: { icon: Kimi, label: "Kimi" },
+	minimax: { icon: Minimax, label: "MiniMax" },
+	mistral: { icon: Mistral, label: "Mistral AI" },
 	openai: { icon: OpenAI, label: "OpenAI" },
-	openrouter: { icon: OpenRouter.Color, label: "OpenRouter" },
-	qwen: { icon: Qwen.Color, label: "Qwen" },
+	openrouter: { icon: OpenRouter, label: "OpenRouter" },
+	qwen: { icon: Qwen, label: "Qwen" },
 	stepfun: { icon: Stepfun, label: "StepFun" },
-	together: { icon: Together.Color, label: "Together AI" },
+	together: { icon: Together, label: "Together AI" },
 	xai: { icon: XAI, label: "xAI" },
-	zhipu: { icon: Zhipu.Color, label: "Zhipu" },
+	zhipu: { icon: Zhipu, label: "Zhipu" },
 };
 
 const PROVIDER_ICON_ALIASES: Readonly<Record<string, string>> = {
