@@ -10,8 +10,6 @@ import {
 	EntityCardSkeleton,
 	EntityHeader,
 } from "@/components/entity-card";
-import { EntityIcon } from "@/components/entity-icon";
-import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
@@ -41,15 +39,11 @@ import {
 import {
 	AuthBadge,
 	ManagedProviderCard,
+	ProviderIcon,
 	ProviderReadinessBadge,
 } from "@/hosted/v2/ai-providers/ai-providers-ui";
-import { modelDisplayName, providerDisplayLabel } from "@/hosted/v2/ai-providers/model-binding";
+import { providerPresentation } from "@/hosted/v2/ai-providers/model-binding";
 import { ProviderConnectionTest } from "@/hosted/v2/ai-providers/provider-connection-test";
-import {
-	API_MODE_LABEL,
-	type ApiMode,
-	providerTypeMeta,
-} from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { cn } from "@/lib/utils";
 
@@ -67,9 +61,9 @@ export function AiProvidersPage() {
 
 	return (
 		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
-			<PageHeader title="Model Providers" description={DESCRIPTION} />
-
-			<ListToolbar
+			<PageHeader
+				title="AI Providers"
+				description={DESCRIPTION}
 				actions={
 					<Button
 						size="sm"
@@ -86,12 +80,14 @@ export function AiProvidersPage() {
 			/>
 
 			<div className="flex flex-col gap-2">
-				<SectionLabel>Clawdi AI</SectionLabel>
+				<SectionLabel>Clawdi</SectionLabel>
 				<ManagedProviderCard />
 			</div>
 
 			<div className="flex flex-col gap-2">
-				<SectionLabel>Your providers</SectionLabel>
+				<SectionLabel count={!providers.isLoading && !providers.error ? list.length : undefined}>
+					Your providers
+				</SectionLabel>
 				{providers.error ? (
 					<ApiErrorPanel
 						error={providers.error}
@@ -106,8 +102,20 @@ export function AiProvidersPage() {
 					</div>
 				) : list.length === 0 ? (
 					<EmptyState
-						title="No custom providers"
-						description="Add your own OpenAI, Anthropic, OpenRouter, Gemini, Mistral, or a custom OpenAI-compatible endpoint."
+						title="No providers added"
+						description="Connect a provider to use your own model access with agents."
+						action={
+							<Button
+								variant="outline"
+								onClick={() => {
+									setEditing(null);
+									setAddOpen(true);
+								}}
+							>
+								<Plus />
+								Add provider
+							</Button>
+						}
 					/>
 				) : (
 					<div className={PROVIDER_GRID_CLASS}>
@@ -140,9 +148,7 @@ function ProviderCard({
 	usage: ProviderUsage;
 	onEdit: () => void;
 }) {
-	const meta = providerTypeMeta(provider.type);
-	const providerLabel = providerDisplayLabel(provider);
-	const modelSummary = modelCatalogSummary(provider);
+	const presentation = providerPresentation(provider);
 	const deployable =
 		(provider.readiness?.deployable ?? provider.usable) && provider.auth.type !== "none";
 
@@ -150,8 +156,8 @@ function ProviderCard({
 		<div className={cn(ENTITY_CARD_BASE, "flex h-full flex-col")}>
 			<EntityHeader
 				align="start"
-				icon={<EntityIcon kind="provider" id={provider.type} label={providerLabel} />}
-				title={providerLabel}
+				icon={<ProviderIcon provider={provider} />}
+				title={presentation.label}
 				titleAdornment={
 					<span className="inline-flex items-center gap-1.5">
 						<AuthBadge auth={provider.auth} />
@@ -159,31 +165,23 @@ function ProviderCard({
 					</span>
 				}
 				meta={[
-					`${meta.label} · ${modelSummary}${
-						provider.api_mode
-							? ` · ${API_MODE_LABEL[provider.api_mode as ApiMode] ?? provider.api_mode}`
-							: ""
-					}`,
-					<span key="base" className="font-mono">
-						{provider.base_url}
-						{provider.runtime_env_name ? ` · ${provider.runtime_env_name}` : ""}
-					</span>,
+					presentation.summary,
 					provider.auth.type === "none"
-						? "Legacy provider without a credential. It is excluded from hosted deployment choices; add a hosted-reachable endpoint and API key."
+						? "Add a credential before assigning this provider to an agent."
 						: deployable
 							? null
 							: provider.usable
-								? "This provider is not compatible with a hosted runtime. Review its API mode and authentication."
-								: "Credential setup is incomplete. Finish setup before using this provider.",
+								? "This setup isn't available for hosted agents. Review Advanced settings."
+								: "Finish setup before assigning this provider to an agent.",
 				]}
 			/>
 			<div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
-				<ProviderConnectionTest provider={provider} providerLabel={providerLabel} />
+				<ProviderConnectionTest provider={provider} providerLabel={presentation.label} />
 				<Button
 					variant="outline"
 					size="sm"
 					onClick={onEdit}
-					aria-label={`${deployable ? "Edit" : "Finish setup for"} ${providerLabel}`}
+					aria-label={`${deployable ? "Edit" : "Finish setup for"} ${presentation.label}`}
 				>
 					{deployable ? <Pencil /> : <CircleAlert />}
 					{deployable ? "Edit" : "Finish setup"}
@@ -198,7 +196,7 @@ function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage
 	const del = useDeleteProvider();
 	const [open, setOpen] = useState(false);
 	const [acknowledged, setAcknowledged] = useState(false);
-	const providerLabel = providerDisplayLabel(provider);
+	const providerLabel = providerPresentation(provider).label;
 	const impact = providerRemovalImpact(usage);
 	const acknowledgementId = `remove-provider-ack-${provider.provider_id}`;
 
@@ -236,6 +234,7 @@ function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage
 				<AlertDialogHeader>
 					<AlertDialogTitle>Remove {providerLabel}?</AlertDialogTitle>
 					<AlertDialogDescription render={<div className="space-y-3" />}>
+						<p>This provider will be removed from your account and cannot be restored.</p>
 						<p>{impact.warning}</p>
 						{impact.acknowledgementRequired ? (
 							<div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
@@ -268,14 +267,4 @@ function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage
 			</AlertDialogContent>
 		</AlertDialog>
 	);
-}
-
-function modelCatalogSummary(provider: AiProvider): string {
-	const models = (provider.models ?? []).filter((model) => model.id);
-	if (models.length === 0) return "No catalog models";
-	const visible = models
-		.slice(0, 2)
-		.map((model) => modelDisplayName(model.id, [model]))
-		.join(", ");
-	return models.length > 2 ? `${visible} +${models.length - 2} more` : visible;
 }

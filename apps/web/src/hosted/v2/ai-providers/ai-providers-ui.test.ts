@@ -15,7 +15,7 @@ describe("ProviderReadinessBadge", () => {
 			createElement(ProviderReadinessBadge, { deployable: false }),
 		);
 
-		expect(markup).toContain("Needs setup");
+		expect(markup).toContain("Setup required");
 		expect(markup).not.toContain("Connected");
 		expect(markup).toContain('data-status="warning"');
 	});
@@ -32,7 +32,7 @@ describe("ProviderReadinessBadge", () => {
 	test("labels legacy no-credential records without offering No auth", () => {
 		const markup = renderToStaticMarkup(createElement(AuthBadge, { auth: { type: "none" } }));
 
-		expect(markup).toContain("Legacy · no credential");
+		expect(markup).toContain("No credential");
 		expect(markup).not.toContain("No auth");
 	});
 

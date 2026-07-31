@@ -152,10 +152,11 @@ export function providerFormIdentity({
 		(providerTypeMeta(type).custom === true
 			? (normalizeLabel(labelInput) ?? defaultProviderLabel(type))
 			: defaultProviderLabel(type));
+	const requestedPresetLabel = preset ? normalizeLabel(labelInput) : null;
 	const baseId = toProviderId(preset?.id ?? baseLabel);
 	if (!baseId) return { providerId: "", label: baseLabel };
 	if (!existingProviderIds.includes(baseId)) {
-		return { providerId: baseId, label: baseLabel };
+		return { providerId: baseId, label: requestedPresetLabel ?? baseLabel };
 	}
 	let suffix = 2;
 	while (existingProviderIds.includes(`${baseId}-${suffix}`)) {
@@ -163,7 +164,7 @@ export function providerFormIdentity({
 	}
 	return {
 		providerId: `${baseId}-${suffix}`,
-		label: `${baseLabel} ${suffix}`,
+		label: requestedPresetLabel ?? `${baseLabel} ${suffix}`,
 	};
 }
 

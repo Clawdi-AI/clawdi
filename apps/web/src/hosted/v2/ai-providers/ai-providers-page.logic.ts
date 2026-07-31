@@ -35,7 +35,7 @@ export function providerRemovalImpact(usage: ProviderUsage): ProviderRemovalImpa
 		return {
 			acknowledgementRequired: true,
 			warning:
-				"Removing this provider archives it. We couldn't check whether any agents use it. Any affected agent will lose model access until reconfigured; there is no automatic fallback to Clawdi AI.",
+				"We couldn't check whether any agents use this provider. Removing it may interrupt model access until affected agents are reconfigured; there is no automatic fallback to Clawdi AI.",
 		};
 	}
 	if (usage.agentCount > 0) {
@@ -45,12 +45,11 @@ export function providerRemovalImpact(usage: ProviderUsage): ProviderRemovalImpa
 				: `${usage.agentCount} agents currently use`;
 		return {
 			acknowledgementRequired: true,
-			warning: `Removing this provider archives it. ${agents} it and will lose model access until reconfigured; there is no automatic fallback to Clawdi AI.`,
+			warning: `${agents} this provider and will lose model access until reconfigured. There is no automatic fallback to Clawdi AI.`,
 		};
 	}
 	return {
 		acknowledgementRequired: false,
-		warning:
-			"Removing this provider archives it. No hosted agents currently use it, but this can't be undone.",
+		warning: "No hosted agents currently use this provider.",
 	};
 }

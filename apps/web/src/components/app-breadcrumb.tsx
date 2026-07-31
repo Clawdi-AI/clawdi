@@ -37,7 +37,7 @@ const SEGMENT_LABELS: Record<string, string> = {
 	channels: "Channels",
 	deploy: "Deploy an Agent",
 	agents: "Agents",
-	"ai-providers": "Model Providers",
+	"ai-providers": "AI Providers",
 };
 
 // Looks like a UUID? Truncate it for the loading state — full UUIDs in a

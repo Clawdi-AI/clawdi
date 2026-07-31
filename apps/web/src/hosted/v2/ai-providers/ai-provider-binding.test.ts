@@ -86,7 +86,7 @@ describe("AI provider binding fields", () => {
 		});
 	});
 
-	test("names a missing configured selection as the main model", () => {
+	test("names a missing configured selection as the primary model", () => {
 		let thrown: unknown;
 		try {
 			buildAiBindingFields(
@@ -104,7 +104,7 @@ describe("AI provider binding fields", () => {
 
 		expect(thrown).toBeInstanceOf(AiBindingBuildError);
 		if (!(thrown instanceof AiBindingBuildError)) throw thrown;
-		expect(thrown.title).toBe("Main model required");
+		expect(thrown.title).toBe("Primary model required");
 	});
 
 	test("create omits an empty bootstrap while update clears it", () => {

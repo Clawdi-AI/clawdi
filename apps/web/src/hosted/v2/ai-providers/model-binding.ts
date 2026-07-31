@@ -6,6 +6,10 @@ import {
 } from "@clawdi/shared";
 import type { AiProviderAuthKind, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
 import { type HostedRuntime, runtimeDisplayName } from "@/hosted/runtimes";
+import {
+	type ProviderPreset,
+	providerPresetForSavedProvider,
+} from "@/hosted/v2/ai-providers/provider-presets";
 import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { formatModelLabel } from "@/lib/format";
@@ -41,6 +45,14 @@ export type ProviderAvailabilityContext = {
 };
 
 export type ProviderAvailabilityIssue = ReturnType<typeof hostedAiProviderAvailabilityIssue>;
+
+export interface ProviderPresentation {
+	label: string;
+	brandLabel: string;
+	iconId: string;
+	summary: string;
+	managed: boolean;
+}
 
 export function isPrimaryModelRef(value: PrimaryModelInput): value is PrimaryModelRef {
 	return (
@@ -91,7 +103,7 @@ export function providerRuntimeIncompatibility(
 	const compatible = provider.readiness?.runtime_compatibility[runtime];
 	if (compatible === true) return null;
 	if (runtime === "hermes" && provider.api_mode === "google_generate_content") {
-		return "Hermes cannot use Gemini GenerateContent yet. Choose OpenClaw, or use an OpenAI- or Anthropic-compatible provider.";
+		return "Hermes cannot use this Gemini connection yet. Choose OpenClaw, or use an OpenAI- or Anthropic-compatible provider.";
 	}
 	if (compatible === false) {
 		return `${runtimeDisplayName(runtime)} cannot use this provider's authentication or API protocol.`;
@@ -103,7 +115,18 @@ export function providerAvailabilityIssue(
 	provider: AiProvider,
 	context: ProviderAvailabilityContext,
 ): ProviderAvailabilityIssue {
-	return hostedAiProviderAvailabilityIssue(provider, context);
+	const issue = hostedAiProviderAvailabilityIssue(provider, context);
+	if (
+		issue?.kind === "runtime" &&
+		context.runtime === "hermes" &&
+		provider.api_mode === "google_generate_content"
+	) {
+		return {
+			...issue,
+			message: "Hermes cannot use this Gemini connection yet. Choose OpenClaw or another provider.",
+		};
+	}
+	return issue;
 }
 
 export function usableProviders(
@@ -118,18 +141,46 @@ export function usableProviders(
 	);
 }
 
+export function providerPresentation(
+	provider: AiProvider | string,
+	providers: readonly AiProvider[] = [],
+): ProviderPresentation {
+	if (typeof provider === "string") {
+		if (isManagedProviderId(provider)) return managedProviderPresentation();
+		const match = providers.find((item) => item.id === provider || item.provider_id === provider);
+		return match
+			? providerPresentation(match)
+			: {
+					label: "Custom provider",
+					brandLabel: "Custom provider",
+					iconId: "custom_openai_compatible",
+					summary: "Saved connection details unavailable",
+					managed: false,
+				};
+	}
+	if (isFirstPartyManagedAiProvider(provider)) return managedProviderPresentation();
+
+	const preset = providerPresetForSavedProvider({
+		baseUrl: provider.base_url,
+	});
+	const typeMeta = providerTypeMeta(provider.type);
+	const brandLabel = preset?.label ?? typeMeta.label;
+	const label = provider.label?.trim() || brandLabel;
+	const catalogSummary = providerModelSummary(provider);
+	return {
+		label,
+		brandLabel,
+		iconId: preset?.id ?? provider.type,
+		summary: labelsMatch(label, brandLabel) ? catalogSummary : `${brandLabel} · ${catalogSummary}`,
+		managed: false,
+	};
+}
+
 export function providerDisplayLabel(
 	provider: AiProvider | string,
 	providers: readonly AiProvider[] = [],
 ): string {
-	if (typeof provider === "string") {
-		if (isManagedProviderId(provider)) return MANAGED_PROVIDER_LABEL;
-		const match = providers.find((item) => item.id === provider || item.provider_id === provider);
-		return match ? providerDisplayLabel(match) : "Custom provider";
-	}
-	return isFirstPartyManagedAiProvider(provider)
-		? MANAGED_PROVIDER_LABEL
-		: provider.label?.trim() || providerTypeMeta(provider.type).label;
+	return providerPresentation(provider, providers).label;
 }
 
 export function providerChoiceFromRef(
@@ -192,10 +243,38 @@ export function modelDisplayName(modelId: string, catalog: readonly ModelCatalog
 }
 
 export function providerCatalogDescription(provider: AiProvider): string {
-	const models = provider.models ?? [];
-	if (models.length === 0) return provider.base_url.replace(/^https?:\/\//, "");
-	if (models.length === 1 && models[0]) return modelDisplayName(models[0].id, models);
-	return `${models.length} catalog models`;
+	return providerPresentation(provider).summary;
+}
+
+export function providerPresetSummary(preset: ProviderPreset): string {
+	return modelCatalogSummary(preset.catalog);
+}
+
+function providerModelSummary(provider: AiProvider): string {
+	const models = modelOptionsForProvider(provider.provider_id, [provider]);
+	return modelCatalogSummary(models);
+}
+
+function modelCatalogSummary(models: readonly ModelCatalogItem[]): string {
+	const first = models[0];
+	if (!first) return "Custom model ID";
+	const label = modelDisplayName(first.id, [first]);
+	const remaining = models.length - 1;
+	return remaining > 0 ? `${label} +${remaining} more` : label;
+}
+
+function managedProviderPresentation(): ProviderPresentation {
+	return {
+		label: MANAGED_PROVIDER_LABEL,
+		brandLabel: MANAGED_PROVIDER_LABEL,
+		iconId: MANAGED_AI_CHOICE,
+		summary: "No setup required",
+		managed: true,
+	};
+}
+
+function labelsMatch(left: string, right: string): boolean {
+	return left.localeCompare(right, undefined, { sensitivity: "accent" }) === 0;
 }
 
 export function modelBindingDisplayName(

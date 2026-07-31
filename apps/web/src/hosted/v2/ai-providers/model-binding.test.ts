@@ -13,6 +13,7 @@ import {
 	providerAvailabilityIssue,
 	providerChoiceFromRef,
 	providerDisplayLabel,
+	providerPresentation,
 	providerRuntimeIncompatibility,
 	usableProviders,
 } from "@/hosted/v2/ai-providers/model-binding";
@@ -121,6 +122,39 @@ describe("model binding", () => {
 		expect(providerDisplayLabel({ ...providers[0], label: null })).toBe("OpenAI");
 	});
 
+	test("preserves preset brand identity for saved compatible providers", () => {
+		const deepSeek = {
+			...savedOpenAiProvider,
+			provider_id: "deepseek-2",
+			type: "custom_openai_compatible",
+			label: "Research DeepSeek",
+			base_url: "https://api.deepseek.com/v1",
+			models: [{ id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" }],
+			api_mode: "openai_chat",
+			runtime_env_name: "DEEPSEEK_API_KEY",
+		} satisfies AiProvider;
+
+		expect(providerPresentation(deepSeek)).toMatchObject({
+			label: "Research DeepSeek",
+			brandLabel: "DeepSeek",
+			iconId: "deepseek",
+			summary: "DeepSeek · DeepSeek V4 Flash",
+		});
+
+		const proxy = {
+			...deepSeek,
+			provider_id: "deepseek-team",
+			label: "DeepSeek proxy",
+			base_url: "https://proxy.example.com/v1",
+		} satisfies AiProvider;
+		expect(providerPresentation(proxy)).toMatchObject({
+			label: "DeepSeek proxy",
+			brandLabel: "Custom (OpenAI-compatible)",
+			iconId: "custom_openai_compatible",
+			summary: "Custom (OpenAI-compatible) · DeepSeek V4 Flash",
+		});
+	});
+
 	test("does not offer an unfinished provider as a deploy selection", () => {
 		const unfinishedProvider = {
 			id: "row-codex",
@@ -171,9 +205,29 @@ describe("model binding", () => {
 		} satisfies AiProvider;
 
 		expect(usableProviders([localProvider])).toEqual([]);
+		expect(
+			providerAvailabilityIssue(localProvider, {
+				runtime: "openclaw",
+				environmentId: null,
+			})?.message,
+		).toBe("This credential source is local-only and cannot be delivered to a Hosted agent.");
 	});
 
-	test("disables Gemini GenerateContent for Hermes with actionable guidance", () => {
+	test("preserves shared guidance when readiness metadata is missing", () => {
+		const provider = {
+			...savedOpenAiProvider,
+			readiness: undefined,
+		} satisfies AiProvider;
+
+		expect(
+			providerAvailabilityIssue(provider, {
+				runtime: "openclaw",
+				environmentId: null,
+			})?.message,
+		).toBe("Provider readiness metadata is unavailable. Refresh providers before selecting it.");
+	});
+
+	test("disables incompatible Gemini providers for Hermes with actionable guidance", () => {
 		const geminiProvider = {
 			...savedOpenAiProvider,
 			provider_id: "gemini-main",
@@ -188,12 +242,18 @@ describe("model binding", () => {
 
 		expect(providerRuntimeIncompatibility(geminiProvider, "openclaw")).toBeNull();
 		expect(providerRuntimeIncompatibility(geminiProvider, "hermes")).toContain("Choose OpenClaw");
+		const issue = providerAvailabilityIssue(geminiProvider, {
+			runtime: "hermes",
+			environmentId: null,
+		});
+		expect(issue?.message).toContain("this Gemini connection");
+		expect(issue?.message).not.toContain("GenerateContent");
 		expect(usableProviders([geminiProvider], { runtime: "hermes", environmentId: null })).toEqual(
 			[],
 		);
 	});
 
-	test("uses backend runtime compatibility for non-Gemini providers", () => {
+	test("preserves shared runtime compatibility guidance for non-Gemini providers", () => {
 		const provider = {
 			...savedOpenAiProvider,
 			readiness: {
@@ -207,6 +267,9 @@ describe("model binding", () => {
 
 		expect(providerRuntimeIncompatibility(provider, "openclaw")).toBeNull();
 		expect(providerRuntimeIncompatibility(provider, "hermes")).toContain("Hermes cannot use");
+		expect(
+			providerAvailabilityIssue(provider, { runtime: "hermes", environmentId: null })?.message,
+		).toBe("Hermes cannot use this provider's authentication or API protocol.");
 		expect(usableProviders([provider], { runtime: "hermes", environmentId: null })).toEqual([]);
 	});
 

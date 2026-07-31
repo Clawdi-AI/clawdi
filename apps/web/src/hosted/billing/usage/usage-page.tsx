@@ -15,6 +15,7 @@ import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { formatUsdExact } from "@/hosted/billing/format";
 import { useManagedModelCatalog, useUsage } from "@/hosted/billing/hooks";
 import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
+import { ProviderIcon } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import {
 	MANAGED_PROVIDER_ID,
 	modelDisplayName,
@@ -311,24 +312,30 @@ export function UsageSummaryView({
 							);
 							const providerName = providerDisplayLabel(providerId, providers);
 							return (
-								<div key={`${model.provider ?? "managed"}:${model.model}`} className="space-y-1">
-									<div className="flex items-baseline justify-between gap-2 text-sm">
-										<span className="truncate font-medium">{modelName}</span>
-										<span className="shrink-0 tabular-nums">
-											{formatUsdExact(model.amount_usd)}
-										</span>
-									</div>
-									<div className="h-2 overflow-hidden rounded-full bg-muted">
-										<div
-											className="h-2 rounded-full bg-primary"
-											style={{
-												width: `${maxModel > 0 ? (decimalUsdNumber(model.amount_usd) / maxModel) * 100 : 0}%`,
-											}}
-										/>
-									</div>
-									<div className="text-xs text-muted-foreground">
-										{providerName} · {model.requests.toLocaleString()} request
-										{model.requests === 1 ? "" : "s"}
+								<div
+									key={`${model.provider ?? "managed"}:${model.model}`}
+									className="flex min-w-0 items-start gap-2.5"
+								>
+									<ProviderIcon provider={providerId} providers={providers} size="sm" />
+									<div className="min-w-0 flex-1 space-y-1">
+										<div className="flex items-baseline justify-between gap-2 text-sm">
+											<span className="truncate font-medium">{modelName}</span>
+											<span className="shrink-0 tabular-nums">
+												{formatUsdExact(model.amount_usd)}
+											</span>
+										</div>
+										<div className="h-2 overflow-hidden rounded-full bg-muted">
+											<div
+												className="h-2 rounded-full bg-primary"
+												style={{
+													width: `${maxModel > 0 ? (decimalUsdNumber(model.amount_usd) / maxModel) * 100 : 0}%`,
+												}}
+											/>
+										</div>
+										<div className="text-xs text-muted-foreground">
+											{providerName} · {model.requests.toLocaleString()} request
+											{model.requests === 1 ? "" : "s"}
+										</div>
 									</div>
 								</div>
 							);
