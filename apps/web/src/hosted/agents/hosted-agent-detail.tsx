@@ -42,6 +42,7 @@ import { EmptyState } from "@/components/empty-state";
 import { EntityCardSkeleton } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { SectionLabel } from "@/components/section-label";
 import { SessionFeed } from "@/components/sessions/session-feed";
 import { SettingsSection } from "@/components/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -255,7 +256,7 @@ import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { settingsQueryHref } from "@/lib/settings-routes";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
-import { cn } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 
 type Runtime = HostedRuntime;
 type HostedAgentTab =
@@ -303,7 +304,7 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		icon: Zap,
 	},
 	channels: {
-		description: "Messaging links for this hosted agent.",
+		description: "Channels this Agent can use.",
 		icon: Link2,
 	},
 	settings: {
@@ -2313,12 +2314,10 @@ function ChannelsSyncState({
 
 type LinkableChannel = { id: string; provider: string; name: string };
 
-function channelSelectItems(channels: LinkableChannel[]) {
-	return channels.map((channel) => ({
-		value: channel.id,
-		label: `${providerMeta(channel.provider).label} · ${channel.name}`,
-	}));
-}
+const AGENT_CHANNEL_LIST_CLASS = "divide-y overflow-hidden rounded-lg border bg-card";
+const AGENT_CHANNEL_ROW_CLASS =
+	"grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3";
+const AGENT_CHANNEL_ACTIONS_CLASS = "flex shrink-0 items-center justify-end gap-2";
 
 function ChannelsTab({ environmentId }: { environmentId: string }) {
 	const api = useApi();
@@ -2328,8 +2327,6 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 	const health = useChannelHealth();
 	const linked = useAgentChannelLinks(environmentId, isCloudEnvId(environmentId));
 	const unlink = useUnlinkAgentChannel(environmentId);
-	const [readyBotId, setReadyBotId] = useState("");
-	const [ownedChannelId, setOwnedChannelId] = useState("");
 	const [recentLink, setRecentLink] = useState<AgentChannelLink | null>(null);
 	const [connectOpen, setConnectOpen] = useState(false);
 	const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -2379,10 +2376,6 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 				.map((bot) => ({ id: bot.id, provider: bot.provider, name: bot.name })),
 		[botPool.data, linkedIds],
 	);
-	const selectedReadyBotId = readyBotId || (readyBots.length === 1 ? readyBots[0]?.id : "");
-	const selectedOwnedChannelId =
-		ownedChannelId || (ownedChannels.length === 1 ? ownedChannels[0]?.id : "");
-
 	useEffect(() => {
 		if (!botPool.isLoading && !botPool.error && readyBots.length === 0) setAdvancedOpen(true);
 	}, [botPool.error, botPool.isLoading, readyBots.length]);
@@ -2422,7 +2415,7 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 			qc.invalidateQueries({ queryKey: ["channel-bot-pool"] });
 			qc.invalidateQueries({ queryKey: ["channels"] });
 			toast.success("Channel linked", {
-				description: "Create a pairing code in the linked channel card to connect a conversation.",
+				description: "Pair a chat from the connected channel row.",
 			});
 			return data;
 		} catch (error) {
@@ -2437,8 +2430,6 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 		setLinkingAccountId(channelId);
 		try {
 			await link.execute(channelId);
-			setReadyBotId("");
-			setOwnedChannelId("");
 		} catch {
 			// The action already surfaces the API error.
 		} finally {
@@ -2469,16 +2460,20 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 	}
 
 	return (
-		<div className="space-y-4">
-			<LiveNote>
-				Hosted agents apply channel credentials automatically — no restart or token copy.
-			</LiveNote>
-
-			{/* Linked channels */}
-			<div className="space-y-2">
-				<div className="text-sm font-medium">Linked channels</div>
+		<div className="flex flex-col gap-6">
+			<section data-agent-connected-channels className="flex flex-col gap-3">
+				<SectionLabel count={visibleLinks.length}>Connected channels</SectionLabel>
 				{linked.isLoading && visibleLinks.length === 0 ? (
-					<Skeleton className="h-16 w-full rounded-lg" />
+					<div className={AGENT_CHANNEL_LIST_CLASS}>
+						<div className={AGENT_CHANNEL_ROW_CLASS}>
+							<Skeleton className="size-8 shrink-0 rounded-md" />
+							<div className="min-w-0 flex-1 space-y-2">
+								<Skeleton className="h-4 w-40" />
+								<Skeleton className="h-3 w-64 max-w-full" />
+							</div>
+							<Skeleton className="h-8 w-28 rounded-md" />
+						</div>
+					</div>
 				) : linked.error && visibleLinks.length === 0 ? (
 					<ApiErrorPanel
 						error={linked.error}
@@ -2488,22 +2483,25 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 				) : visibleLinks.length === 0 ? (
 					<EmptyState
 						variant="inset"
-						title="No channels linked"
-						description="Link a channel below so this agent can send and receive messages."
+						title="No connected channels"
+						description="Add a channel below to get started."
 					/>
 				) : (
-					visibleLinks.map((l) => (
-						<LinkedChannelRow
-							key={l.id}
-							link={l}
-							fallbackAccount={accountSummaries.get(l.account_id)}
-							health={healthByAccount.get(l.account_id)}
-							healthLoading={health.isLoading}
-							healthError={Boolean(health.error)}
-							unlinking={unlinkingLinkIds.has(l.id)}
-							onUnlink={() => startUnlink(l.account_id, l.id)}
-						/>
-					))
+					<div className={AGENT_CHANNEL_LIST_CLASS}>
+						{visibleLinks.map((l) => (
+							<LinkedChannelRow
+								key={l.id}
+								link={l}
+								fallbackAccount={accountSummaries.get(l.account_id)}
+								health={healthByAccount.get(l.account_id)}
+								healthLoading={health.isLoading}
+								healthError={Boolean(health.error)}
+								onHealthRetry={() => void health.refetch()}
+								unlinking={unlinkingLinkIds.has(l.id)}
+								onUnlink={() => startUnlink(l.account_id, l.id)}
+							/>
+						))}
+					</div>
 				)}
 				{linked.error && visibleLinks.length > 0 ? (
 					<ApiErrorPanel
@@ -2512,22 +2510,23 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 						title="Couldn't refresh every linked channel"
 					/>
 				) : null}
-			</div>
+			</section>
 
-			<div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
-				<div className="flex items-start gap-3">
-					<div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-background text-primary ring-1 ring-primary/20">
-						<Bot className="size-4" />
-					</div>
-					<div>
-						<div className="text-sm font-medium">Fastest: use a ready-to-go bot</div>
-						<p className="mt-1 text-xs text-muted-foreground">
-							No bot account, credentials, or developer setup. Choose one and link it now.
-						</p>
-					</div>
+			<section data-agent-add-channel className="flex flex-col gap-3 border-t pt-6">
+				<div className="space-y-1">
+					<SectionLabel>Add a channel</SectionLabel>
+					<p className="px-0.5 text-sm text-muted-foreground">
+						Link a bot to this Agent, then pair the chats it should answer.
+					</p>
 				</div>
 				{botPool.isLoading ? (
-					<Skeleton className="h-9 w-full rounded-md" />
+					<div className={AGENT_CHANNEL_LIST_CLASS}>
+						<div className={AGENT_CHANNEL_ROW_CLASS}>
+							<Skeleton className="size-8 shrink-0 rounded-md" />
+							<Skeleton className="h-4 min-w-0 flex-1 max-w-48" />
+							<Skeleton className="h-8 w-16 rounded-md" />
+						</div>
+					</div>
 				) : botPool.error ? (
 					<ApiErrorPanel
 						error={botPool.error}
@@ -2535,129 +2534,133 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 						title="Couldn't load ready-to-go bots"
 					/>
 				) : readyBots.length > 0 ? (
-					<div className="flex flex-col gap-2 sm:flex-row">
-						<Select
-							items={channelSelectItems(readyBots)}
-							value={selectedReadyBotId}
-							onValueChange={(value) => {
-								if (value !== null) setReadyBotId(value);
-							}}
-						>
-							<SelectTrigger aria-label="Choose a ready-to-go bot" className="flex-1 bg-background">
-								<SelectValue placeholder="Choose a ready-to-go bot…" />
-							</SelectTrigger>
-							<SelectContent>
-								{readyBots.map((bot) => (
-									<SelectItem key={bot.id} value={bot.id}>
-										{providerMeta(bot.provider).label} · {bot.name}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
-						<Button
-							disabled={!selectedReadyBotId || linkingAccountId !== null}
-							onClick={() => void submitLink(selectedReadyBotId)}
-						>
-							{linkingAccountId === selectedReadyBotId ? (
-								<Spinner className="size-3.5" />
-							) : (
-								<Link2 className="size-3.5" />
-							)}
-							{linkingAccountId === selectedReadyBotId ? "Linking…" : "Link bot"}
-						</Button>
+					<div className={AGENT_CHANNEL_LIST_CLASS}>
+						{readyBots.map((bot) => (
+							<AddChannelRow
+								key={bot.id}
+								channel={bot}
+								kind="Ready to use"
+								linking={linkingAccountId === bot.id}
+								disabled={linkingAccountId !== null}
+								onLink={() => void submitLink(bot.id)}
+							/>
+						))}
 					</div>
 				) : (
-					<p className="text-sm text-muted-foreground">
-						No ready-to-go bots are available right now. You can use your own bot below.
+					<p className="px-0.5 text-sm text-muted-foreground">
+						No ready-to-go bots are available right now.
 					</p>
 				)}
-			</div>
 
-			<details
-				open={advancedOpen}
-				onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
-				className="group rounded-lg border p-4"
-			>
-				<summary className="cursor-pointer text-sm font-medium">
-					Use your own bot (advanced)
-				</summary>
-				<div className="mt-3 space-y-3">
-					<p className="text-xs text-muted-foreground">
-						Choose a Telegram or Discord bot you already connected, or connect a new one.
-					</p>
-					{channels.isLoading ? (
-						<Skeleton className="h-9 w-full rounded-md" />
-					) : channels.error ? (
-						<ApiErrorPanel
-							error={channels.error}
-							onRetry={() => channels.refetch()}
-							title="Couldn't load your bots"
-						/>
-					) : ownedChannels.length > 0 ? (
-						<div className="flex flex-col gap-2 sm:flex-row">
-							<Select
-								items={channelSelectItems(ownedChannels)}
-								value={selectedOwnedChannelId}
-								onValueChange={(value) => {
-									if (value !== null) setOwnedChannelId(value);
-								}}
-							>
-								<SelectTrigger aria-label="Choose your bot" className="flex-1">
-									<SelectValue placeholder="Choose your bot…" />
-								</SelectTrigger>
-								<SelectContent>
-									{ownedChannels.map((channel) => (
-										<SelectItem key={channel.id} value={channel.id}>
-											{providerMeta(channel.provider).label} · {channel.name}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
+				<details
+					open={advancedOpen}
+					onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
+					className="group border-t pt-4"
+				>
+					<summary className="cursor-pointer text-sm font-medium">Use your own bot</summary>
+					<div className="mt-3 space-y-3">
+						{channels.isLoading ? (
+							<Skeleton className="h-16 w-full rounded-lg" />
+						) : channels.error ? (
+							<ApiErrorPanel
+								error={channels.error}
+								onRetry={() => channels.refetch()}
+								title="Couldn't load your bots"
+							/>
+						) : ownedChannels.length > 0 ? (
+							<div className={AGENT_CHANNEL_LIST_CLASS}>
+								{ownedChannels.map((channel) => (
+									<AddChannelRow
+										key={channel.id}
+										channel={channel}
+										kind="Your bot"
+										linking={linkingAccountId === channel.id}
+										disabled={linkingAccountId !== null}
+										onLink={() => void submitLink(channel.id)}
+										secondary
+									/>
+								))}
+							</div>
+						) : (
+							<div className={AGENT_CHANNEL_LIST_CLASS}>
+								<div className={AGENT_CHANNEL_ROW_CLASS}>
+									<span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+										<Bot className="size-4" />
+									</span>
+									<div className="min-w-0 flex-1">
+										<p className="text-sm font-medium">No bot connected yet</p>
+									</div>
+									<Button size="sm" onClick={() => setConnectOpen(true)}>
+										<Plus className="size-3.5" />
+										Connect a bot
+									</Button>
+								</div>
+							</div>
+						)}
+						<div className="flex flex-wrap gap-2">
+							{ownedChannels.length > 0 ? (
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									onClick={() => setConnectOpen(true)}
+								>
+									<Plus className="size-3.5" />
+									Connect a bot
+								</Button>
+							) : null}
 							<Button
-								disabled={!selectedOwnedChannelId || linkingAccountId !== null}
-								onClick={() => void submitLink(selectedOwnedChannelId)}
+								render={<Link to="/channels" />}
+								nativeButton={false}
+								variant="ghost"
+								size="sm"
 							>
-								{linkingAccountId === selectedOwnedChannelId ? (
-									<Spinner className="size-3.5" />
-								) : (
-									<Link2 className="size-3.5" />
-								)}
-								{linkingAccountId === selectedOwnedChannelId ? "Linking…" : "Link my bot"}
+								View all channels
 							</Button>
 						</div>
-					) : (
-						<EmptyState
-							variant="inset"
-							title="No bot connected yet"
-							description="Connect a Telegram or Discord bot, then it will appear here automatically."
-							action={
-								<Button onClick={() => setConnectOpen(true)}>
-									<Plus className="size-3.5" />
-									Connect my bot
-								</Button>
-							}
-						/>
-					)}
-					<div className="flex flex-wrap gap-2">
-						{ownedChannels.length > 0 ? (
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								onClick={() => setConnectOpen(true)}
-							>
-								<Plus className="size-3.5" />
-								Connect another bot
-							</Button>
-						) : null}
-						<Button render={<Link to="/channels" />} nativeButton={false} variant="ghost" size="sm">
-							View all channel options
-						</Button>
 					</div>
-				</div>
-			</details>
+				</details>
+			</section>
 
 			<ConnectBotDialog open={connectOpen} onOpenChange={setConnectOpen} />
+		</div>
+	);
+}
+
+function AddChannelRow({
+	channel,
+	kind,
+	linking,
+	disabled,
+	onLink,
+	secondary = false,
+}: {
+	channel: LinkableChannel;
+	kind: string;
+	linking: boolean;
+	disabled: boolean;
+	onLink: () => void;
+	secondary?: boolean;
+}) {
+	return (
+		<div data-add-channel-id={channel.id} className={AGENT_CHANNEL_ROW_CLASS}>
+			<ProviderChip provider={channel.provider} size="sm" />
+			<div className="min-w-0">
+				<p className="truncate text-sm font-medium">{channel.name}</p>
+				<p className="truncate text-xs text-muted-foreground">
+					{providerMeta(channel.provider).label} · {kind}
+				</p>
+			</div>
+			<Button
+				type="button"
+				size="sm"
+				variant={secondary ? "outline" : "default"}
+				disabled={disabled}
+				onClick={onLink}
+			>
+				{linking ? <Spinner className="size-3.5" /> : <Link2 className="size-3.5" />}
+				{linking ? "Linking…" : "Link"}
+			</Button>
 		</div>
 	);
 }
@@ -2676,6 +2679,7 @@ function LinkedChannelRow({
 	health,
 	healthLoading,
 	healthError,
+	onHealthRetry,
 }: {
 	link: AgentChannelLink;
 	onUnlink: () => void;
@@ -2684,6 +2688,7 @@ function LinkedChannelRow({
 	health?: components["schemas"]["ChannelHealthItemResponse"];
 	healthLoading: boolean;
 	healthError: boolean;
+	onHealthRetry: () => void;
 }) {
 	const pair = useCreatePairCode(link.account_id);
 	const [code, setCode] = useState<AgentPairCodeResult | null>(null);
@@ -2698,10 +2703,6 @@ function LinkedChannelRow({
 	const provider = account?.provider ?? "";
 	const name = account?.name ?? "Unnamed channel";
 	const hasActivity = channelActivityAfterLink(health?.last_message_at, link.created_at);
-	const chatInstruction =
-		provider === "discord"
-			? `Open Discord and choose the server channel or direct message where “${name}” should answer.`
-			: `Open the conversation where you want “${name}” to answer.`;
 	useEffect(() => {
 		if (!code) return;
 		setNowMs(Date.now());
@@ -2727,110 +2728,81 @@ function LinkedChannelRow({
 		}
 	}
 	return (
-		<div className="rounded-lg border p-4">
-			<div className="flex items-center gap-3">
-				<ProviderChip provider={provider} />
-				<div className="min-w-0 flex-1">
-					<div className="truncate text-sm font-medium">{name}</div>
-					<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-						{provider ? <span>{providerMeta(provider).label}</span> : null}
-						<ChannelStatusBadge status={link.status} />
-						{health ? <HealthBadge status={health.health_status} /> : null}
-					</div>
+		<div data-agent-channel-link-id={link.id} className={AGENT_CHANNEL_ROW_CLASS}>
+			<ProviderChip provider={provider} size="sm" />
+			<div className="min-w-0">
+				<p className="truncate text-sm font-medium">{name}</p>
+				<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+					{provider ? <span>{providerMeta(provider).label}</span> : null}
+					<ChannelStatusBadge status={link.status} />
+					{health ? <HealthBadge status={health.health_status} /> : null}
+					{healthLoading ? (
+						<span className="inline-flex items-center gap-1">
+							<Spinner className="size-3" /> Checking activity…
+						</span>
+					) : healthError ? (
+						<button
+							type="button"
+							className="font-medium text-destructive underline-offset-2 hover:underline"
+							onClick={onHealthRetry}
+						>
+							Activity unavailable · Retry
+						</button>
+					) : hasActivity ? (
+						<span>Last activity {relativeTime(health?.last_message_at)}</span>
+					) : (
+						<span>No activity yet</span>
+					)}
 				</div>
+				{provider !== "telegram" && pair.error ? (
+					<p className="mt-1 text-xs font-medium text-destructive">Pair failed · Try again</p>
+				) : null}
+				{code && provider !== "telegram" ? (
+					<div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+						<CopyInline value={code.pairing_command} label="pairing command" />
+						<span className="text-muted-foreground">
+							{pairCodeExpiryLabel(code.expires_at, nowMs)}
+						</span>
+					</div>
+				) : null}
+			</div>
+			<div className={AGENT_CHANNEL_ACTIONS_CLASS}>
+				<Button
+					type="button"
+					variant={provider === "telegram" ? "default" : "outline"}
+					size="sm"
+					disabled={provider !== "telegram" && creatingPairCode}
+					onClick={() => {
+						if (provider === "telegram") setTelegramPairOpen(true);
+						else void createPairCode();
+					}}
+				>
+					{creatingPairCode ? <Spinner className="size-3.5" /> : <QrCode className="size-3.5" />}
+					{creatingPairCode
+						? "Generating…"
+						: provider === "telegram"
+							? "Pair Telegram"
+							: pair.error
+								? "Retry pairing"
+								: "Pair chat"}
+				</Button>
 				<ConfirmAction
 					title="Unlink this channel?"
-					description={<p>The agent stops sending and receiving on this channel.</p>}
+					description={<p>This Agent will stop answering through {name}.</p>}
 					confirmLabel="Unlink"
 					destructive
 					onConfirm={onUnlink}
 				>
 					<Button
 						variant="ghost"
-						size="icon-sm"
+						size="sm"
 						className="text-muted-foreground hover:text-destructive"
 						disabled={unlinking}
-						aria-label="Unlink channel"
 					>
-						{unlinking ? <Spinner className="size-4" /> : <Link2Off className="size-4" />}
+						{unlinking ? <Spinner className="size-3.5" /> : <Link2Off className="size-3.5" />}
+						{unlinking ? "Unlinking…" : "Unlink"}
 					</Button>
 				</ConfirmAction>
-			</div>
-
-			<div
-				role="status"
-				aria-live="polite"
-				className={cn(
-					"mt-3 rounded-lg border p-3",
-					hasActivity ? "border-success/30 bg-success-muted" : "bg-muted/30",
-				)}
-			>
-				<div className="flex items-center gap-2 text-sm font-medium">
-					{healthLoading ? (
-						<Spinner className="size-4" />
-					) : healthError ? (
-						<AlertCircle className="size-4 text-warning-muted-foreground" />
-					) : hasActivity ? (
-						<CircleCheck className="size-4 text-success-muted-foreground" />
-					) : (
-						<span className="size-2 animate-pulse rounded-full bg-info" aria-hidden />
-					)}
-					{healthLoading
-						? "Checking channel activity…"
-						: healthError
-							? "Channel activity is temporarily unavailable"
-							: hasActivity
-								? "Channel activity detected"
-								: "Waiting for channel activity"}
-				</div>
-				<p className="mt-1 text-xs text-muted-foreground">
-					{healthError
-						? "Automatic checks will continue. You can finish the steps below while Clawdi reconnects."
-						: hasActivity
-							? "Clawdi can see activity on this channel. This signal does not yet confirm that the agent received a normal message."
-							: "This page checks automatically every 20 seconds. No refresh needed."}
-				</p>
-			</div>
-
-			<div className="mt-3 space-y-3 border-t pt-3">
-				<div className="flex flex-wrap items-center justify-between gap-2">
-					<div>
-						<p className="text-sm font-medium">
-							{provider === "telegram" ? "Pair Telegram" : "Pair a conversation"}
-						</p>
-						<p className="mt-0.5 text-xs text-muted-foreground">
-							{hasActivity
-								? "Pair another chat, or send a normal message in an existing paired chat."
-								: "Choose the chat where this Agent should answer."}
-						</p>
-					</div>
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={provider !== "telegram" && creatingPairCode}
-						onClick={() => {
-							if (provider === "telegram") setTelegramPairOpen(true);
-							else void createPairCode();
-						}}
-					>
-						{creatingPairCode ? <Spinner className="size-3.5" /> : <QrCode className="size-3.5" />}
-						{creatingPairCode
-							? "Generating…"
-							: provider === "telegram"
-								? "Pair Telegram"
-								: "Create pairing code"}
-					</Button>
-				</div>
-
-				{code && provider !== "telegram" ? (
-					<div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm">
-						<p className="text-xs text-muted-foreground">{chatInstruction}</p>
-						<CopyInline value={code.pairing_command} label="pairing command" className="mt-2" />
-						<p className="mt-2 text-xs text-muted-foreground">
-							{pairCodeExpiryLabel(code.expires_at, nowMs)}
-						</p>
-					</div>
-				) : null}
 			</div>
 
 			{provider === "telegram" ? (

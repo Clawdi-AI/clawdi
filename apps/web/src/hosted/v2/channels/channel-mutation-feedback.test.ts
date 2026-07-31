@@ -42,11 +42,11 @@ describe("channel mutation feedback", () => {
 		expectFeedbackBeforeRequest(detail, "setCreatingPairCode(true)", "await pair.execute");
 		expectFeedbackBeforeRequest(pairDialog, "setGenerating(true)", "await pair.execute");
 		expect(detail).toContain("unlinking={unlinkingLinkIds.has(l.id)}");
-		expect(detail).toContain('linkingAccountId === selectedReadyBotId ? "Linking…" : "Link bot"');
+		expect(detail).toContain('linking ? "Linking…" : "Link"');
 		expect(detail).toContain('creatingPairCode ? <Spinner className="size-3.5" />');
 		expect(detail).toContain('"Generating…"');
 		expect(detail).toContain('"Pair Telegram"');
-		expect(detail).toContain('"Create pairing code"');
+		expect(detail).toContain('"Pair chat"');
 		expect(pairDialog).toContain("Creating a secure Telegram link…");
 	});
 

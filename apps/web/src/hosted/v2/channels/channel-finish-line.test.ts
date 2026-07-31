@@ -8,39 +8,56 @@ const agentChannels = readFileSync(
 const channelDetail = readFileSync(new URL("./channel-detail-page.tsx", import.meta.url), "utf8");
 const channelHooks = readFileSync(new URL("./channels-hooks.ts", import.meta.url), "utf8");
 const linkAgentDialog = readFileSync(new URL("./link-agent-dialog.tsx", import.meta.url), "utf8");
+const channelsTab = agentChannels.slice(
+	agentChannels.indexOf("function ChannelsTab"),
+	agentChannels.indexOf("// ── Settings / Compute"),
+);
 
 describe("hosted-agent channel finish line", () => {
-	test("assembles the existing live health query into an honest automatic activity state", () => {
-		expect(agentChannels).toContain("const health = useChannelHealth()");
-		expect(agentChannels).toContain("channelActivityAfterLink(");
-		expect(agentChannels).toContain("This page checks automatically every 20 seconds");
-		expect(agentChannels).toContain("Channel activity detected");
-		expect(agentChannels).toContain(
-			"This signal does not yet confirm that the agent received a normal message.",
+	test("keeps diagnosis compact inside a shared connected-channel row", () => {
+		expect(channelsTab).toContain("const health = useChannelHealth()");
+		expect(channelsTab).toContain("channelActivityAfterLink(");
+		expect(channelsTab).toContain("AGENT_CHANNEL_LIST_CLASS");
+		expect(channelsTab).toContain("AGENT_CHANNEL_ROW_CLASS");
+		expect(channelsTab).toContain("Last activity");
+		expect(channelsTab).toContain("No activity yet");
+		expect(channelsTab).toContain("Activity unavailable · Retry");
+		expect(channelsTab).toContain("<ChannelStatusBadge status={link.status} />");
+		expect(channelsTab).toContain("<HealthBadge");
+		expect(channelsTab).not.toContain("Waiting for channel activity");
+		expect(channelsTab).not.toContain("This page checks automatically every 20 seconds");
+	});
+
+	test("separates linking a channel from pairing a chat with one short instruction", () => {
+		expect(channelsTab).toContain(
+			"Link a bot to this Agent, then pair the chats it should answer.",
 		);
-		expect(agentChannels).toContain("<ChannelStatusBadge status={link.status} />");
-		expect(agentChannels).toContain("<HealthBadge");
+		expect(channelsTab).toContain("Pair Telegram");
+		expect(channelsTab).toContain("Pair chat");
+		expect(channelsTab).toContain("<TelegramPairDialog");
+		expect(channelsTab).toContain("agentLinkId={link.id}");
+		expect(channelsTab).toContain("pairing_command");
+		expect(channelsTab).not.toContain("Agent token");
+		expect(channelsTab).not.toContain("credential sync");
+		expect(channelsTab).not.toContain("source revision");
 	});
 
-	test("explains linking, pairing, the target conversation, and the hosted token boundary", () => {
-		expect(agentChannels).toContain("Choose the chat where this Agent should answer.");
-		expect(agentChannels).toContain("Pair Telegram");
-		expect(agentChannels).toContain("<TelegramPairDialog");
-		expect(agentChannels).toContain("agentLinkId={link.id}");
-		expect(agentChannels).toContain("Open Discord and choose the server channel");
-		expect(agentChannels).toContain("Create pairing code");
-		expect(agentChannels).toContain("Hosted agents apply channel credentials automatically");
-		expect(agentChannels).not.toContain("Agent token");
-	});
-
-	test("leads with the no-credential path and gives the empty advanced path a primary action", () => {
-		const readyBotIndex = agentChannels.indexOf("Fastest: use a ready-to-go bot");
-		const advancedIndex = agentChannels.indexOf("Use your own bot (advanced)");
-		expect(readyBotIndex).toBeGreaterThanOrEqual(0);
+	test("orders the page by connected channels, ready bots, then the own-bot fallback", () => {
+		const connectedIndex = channelsTab.indexOf("Connected channels");
+		const addIndex = channelsTab.indexOf("Add a channel");
+		const readyBotIndex = channelsTab.indexOf('kind="Ready to use"');
+		const advancedIndex = channelsTab.indexOf("Use your own bot");
+		expect(connectedIndex).toBeGreaterThanOrEqual(0);
+		expect(addIndex).toBeGreaterThan(connectedIndex);
+		expect(readyBotIndex).toBeGreaterThan(addIndex);
 		expect(advancedIndex).toBeGreaterThan(readyBotIndex);
-		expect(agentChannels).toContain("No bot account, credentials, or developer setup");
-		expect(agentChannels).toContain("No bot connected yet");
-		expect(agentChannels).toContain("Connect my bot");
+		expect(channelsTab).toContain("data-agent-connected-channels");
+		expect(channelsTab).toContain("data-agent-add-channel");
+		expect(channelsTab).toContain("data-add-channel-id");
+		expect(channelsTab).toContain("No bot connected yet");
+		expect(channelsTab).toContain("Connect a bot");
+		expect(channelsTab).not.toContain("Fastest: use a ready-to-go bot");
+		expect(channelsTab).not.toContain("Use your own bot (advanced)");
 	});
 
 	test("replaces setup jargon with a bounded automatic wait and exits", () => {

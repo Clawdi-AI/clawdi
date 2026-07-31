@@ -873,6 +873,8 @@ type HostedApiStubOptions = {
 	channelAccounts?: unknown[];
 	channelAgentLinks?: readonly unknown[];
 	channelBindings?: unknown[];
+	channelBotPool?: unknown;
+	channelHealthItems?: unknown[];
 	createChannelRequests?: string[];
 	createChannelResponse?: unknown;
 	deleteBindingRequests?: string[];
@@ -1590,8 +1592,12 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			options.onCreateChannel?.(response);
 			return fulfillJson(r, response, 201);
 		}
-		if (p === "/v1/channels/bot-pool") return fulfillJson(r, { providers: {} });
-		if (p === "/v1/channels/health") return fulfillJson(r, { items: [] });
+		if (p === "/v1/channels/bot-pool") {
+			return fulfillJson(r, options.channelBotPool ?? { providers: {} });
+		}
+		if (p === "/v1/channels/health") {
+			return fulfillJson(r, { items: options.channelHealthItems ?? [] });
+		}
 		if (p === "/v1/channels/agent-links" && r.request().method() === "GET") {
 			return fulfillJson(r, options.channelAgentLinks ?? []);
 		}
@@ -5004,8 +5010,8 @@ test("channel connect updates its auto-linked agent page without reload", async 
 		`/agents/${missingProjectionEnvironmentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
 	);
 
-	await expect(page.getByText("No channels linked", { exact: true })).toBeVisible();
-	const connect = page.getByRole("button", { name: "Connect my bot", exact: true });
+	await expect(page.getByText("No connected channels", { exact: true })).toBeVisible();
+	const connect = page.getByRole("button", { name: "Connect a bot", exact: true }).first();
 	await expect(connect).toBeVisible();
 	await connect.click();
 	const dialog = page.getByRole("dialog");
@@ -5018,7 +5024,7 @@ test("channel connect updates its auto-linked agent page without reload", async 
 	await expect(dialog.getByText("message delivery automatically", { exact: false })).toBeVisible();
 	await expect(dialog).not.toContainText("agent token");
 	await dialog.getByRole("button", { name: "Close", exact: true }).first().click();
-	await expect(page.getByText("No channels linked", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("No connected channels", { exact: true })).toHaveCount(0);
 	await expect(page.getByText("Browser Telegram", { exact: true }).first()).toBeVisible();
 	expect(JSON.parse(createChannelRequests[0] ?? "{}")).toEqual({
 		provider: "telegram",
@@ -5026,6 +5032,212 @@ test("channel connect updates its auto-linked agent page without reload", async 
 		provider_token: "123456:browser-test-token",
 	});
 	expect(errors, `channel connect convergence: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("Agent Channels uses compact task-ordered rows and the shared Telegram pair dialog", async ({
+	page,
+}, testInfo) => {
+	await page.setViewportSize({ width: 1440, height: 1100 });
+	const errors = collectBrowserErrors(page);
+	const agentId = missingProjectionEnvironmentId;
+	const telegramId = "71111111-1111-4111-8111-111111111111";
+	const telegramLinkId = "72222222-2222-4222-8222-222222222222";
+	const discordId = "73333333-3333-4333-8333-333333333333";
+	const discordLinkId = "74444444-4444-4444-8444-444444444444";
+	const ownedId = "75555555-5555-4555-8555-555555555555";
+	const readyId = "76666666-6666-4666-8666-666666666666";
+	const validExpiry = new Date(Date.now() + 15 * 60_000).toISOString();
+	const telegramAccount = {
+		id: telegramId,
+		provider: "telegram",
+		name: "Support Telegram",
+		status: "active",
+		visibility: "private",
+		has_provider_token: true,
+		webhook_url: "https://cloud.example.test/channels/support-telegram",
+		created_at: "2026-07-27T12:00:00Z",
+	};
+	const discordAccount = {
+		id: discordId,
+		provider: "discord",
+		name: "Community Discord",
+		status: "active",
+		visibility: "private",
+		has_provider_token: true,
+		webhook_url: "https://cloud.example.test/channels/community-discord",
+		created_at: "2026-07-27T12:05:00Z",
+	};
+	const ownedAccount = {
+		id: ownedId,
+		provider: "telegram",
+		name: "My Telegram bot",
+		status: "active",
+		visibility: "private",
+		has_provider_token: true,
+		webhook_url: "https://cloud.example.test/channels/my-telegram",
+		created_at: "2026-07-27T12:10:00Z",
+	};
+	const pairCodeRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [runningMissingProjectionDeployment],
+		cloudAgents: [
+			{
+				...sharedLegacyCloudAgent,
+				id: agentId,
+				name: "support-agent",
+				default_name: "Support Agent",
+				machine_name: "support.local",
+				display_name: "Support Agent",
+			},
+		],
+		channelAccounts: [telegramAccount, discordAccount, ownedAccount],
+		channelAgentLinks: [
+			{
+				id: telegramLinkId,
+				account_id: telegramId,
+				agent_id: agentId,
+				status: "active",
+				created_at: "2026-07-27T12:15:00Z",
+				account: telegramAccount,
+			},
+			{
+				id: discordLinkId,
+				account_id: discordId,
+				agent_id: agentId,
+				status: "active",
+				created_at: "2026-07-27T12:20:00Z",
+				account: discordAccount,
+			},
+		],
+		channelBotPool: {
+			providers: {
+				telegram: [
+					{
+						id: readyId,
+						provider: "telegram",
+						name: "Clawdi Ready Bot",
+						status: "active",
+						visibility: "public",
+						has_provider_token: true,
+						webhook_url: "https://cloud.example.test/channels/ready-telegram",
+						created_at: "2026-07-27T12:25:00Z",
+						access: "public",
+						capabilities: {
+							link_agent: true,
+							pair_chat: true,
+							send_message: true,
+							manage_account: false,
+							sync_commands: true,
+						},
+						link_count: 0,
+						max_links: null,
+						available: true,
+					},
+				],
+			},
+		},
+		channelHealthItems: [
+			{
+				account_id: telegramId,
+				provider: "telegram",
+				name: "Support Telegram",
+				visibility: "private",
+				channel_status: "active",
+				health_status: "ok",
+				pending_inbox: 0,
+				pending_deliveries: 0,
+				in_progress_deliveries: 0,
+				failed_deliveries: 0,
+				last_message_at: "2026-07-30T10:00:00Z",
+			},
+			{
+				account_id: discordId,
+				provider: "discord",
+				name: "Community Discord",
+				visibility: "private",
+				channel_status: "active",
+				health_status: "ok",
+				pending_inbox: 0,
+				pending_deliveries: 0,
+				in_progress_deliveries: 0,
+				failed_deliveries: 0,
+				last_message_at: "2026-07-30T09:55:00Z",
+			},
+		],
+		pairCodeRequests,
+		pairCodeResponses: [
+			{
+				status: 201,
+				body: {
+					id: "agent-channel-pair-code",
+					agent_link_id: telegramLinkId,
+					agent_id: agentId,
+					agent_token: "agent-channel-token-must-not-render",
+					code: "AGENTPAIR123",
+					expires_at: validExpiry,
+					pairing_command: "/bot_pair AGENTPAIR123",
+					bot_username: "Clawdi_Ready_Bot",
+					deep_link: "https://t.me/Clawdi_Ready_Bot?start=AGENTPAIR123",
+					qr_payload: "https://t.me/Clawdi_Ready_Bot?start=AGENTPAIR123",
+				},
+			},
+		],
+	});
+
+	await page.goto(
+		`/agents/${agentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+	);
+	const connectedSection = page.locator("[data-agent-connected-channels]");
+	const addSection = page.locator("[data-agent-add-channel]");
+	await expect(connectedSection.getByText("Connected channels", { exact: true })).toBeVisible();
+	await expect(addSection.getByText("Add a channel", { exact: true })).toBeVisible();
+	const telegramRow = page.locator(`[data-agent-channel-link-id="${telegramLinkId}"]`);
+	const discordRow = page.locator(`[data-agent-channel-link-id="${discordLinkId}"]`);
+	await expect(telegramRow).toContainText("Support Telegram");
+	await expect(telegramRow).toContainText("Last activity");
+	await expect(discordRow).toContainText("Community Discord");
+	await expect(
+		telegramRow.getByRole("button", { name: "Pair Telegram", exact: true }),
+	).toBeVisible();
+	await expect(discordRow.getByRole("button", { name: "Pair chat", exact: true })).toBeVisible();
+	await expect(telegramRow.getByRole("button", { name: "Unlink", exact: true })).toBeVisible();
+	await expect(addSection.locator(`[data-add-channel-id="${readyId}"]`)).toContainText(
+		"Clawdi Ready Bot",
+	);
+	await expect(addSection.getByText("Use your own bot", { exact: true })).toBeVisible();
+	await expect(page.getByText("Waiting for channel activity", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Finish pairing", { exact: false })).toHaveCount(0);
+	const telegramBox = await telegramRow.boundingBox();
+	const discordBox = await discordRow.boundingBox();
+	expect(Math.abs((telegramBox?.height ?? 0) - (discordBox?.height ?? 0))).toBeLessThanOrEqual(1);
+	await page.screenshot({
+		path:
+			process.env.AGENT_CHANNELS_PAGE_SCREENSHOT_PATH ??
+			testInfo.outputPath("agent-channels-compact-page.png"),
+		fullPage: true,
+	});
+
+	await telegramRow.getByRole("button", { name: "Pair Telegram", exact: true }).click();
+	await expect.poll(() => pairCodeRequests.length).toBe(1);
+	expect(JSON.parse(pairCodeRequests[0] ?? "{}")).toEqual({
+		ttl_seconds: 900,
+		agent_link_id: telegramLinkId,
+	});
+	const pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
+	await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toBeVisible();
+	await expect(pairDialog.getByRole("button", { name: "Copy link", exact: true })).toBeVisible();
+	await expect(pairDialog.getByRole("button", { name: "Open @Clawdi_Ready_Bot" })).toHaveAttribute(
+		"href",
+		"https://t.me/Clawdi_Ready_Bot?start=AGENTPAIR123",
+	);
+	await expect(page.locator("body")).not.toContainText("agent-channel-token-must-not-render");
+	await page.screenshot({
+		path:
+			process.env.AGENT_CHANNELS_DIALOG_SCREENSHOT_PATH ??
+			testInfo.outputPath("agent-channels-pair-dialog.png"),
+		fullPage: true,
+	});
+	expect(errors, `Agent Channels browser errors: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("Telegram pairing uses a compact Agent-row dialog with polled chats and isolated Unpair", async ({
