@@ -42,6 +42,14 @@ const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
 const roots: string[] = [];
 
+function testRuntimeEnvironmentValues(): Record<string, string> {
+	return Object.fromEntries(
+		Object.entries(process.env).filter(
+			(entry): entry is [string, string] => entry[1] !== undefined && entry[1].length > 0,
+		),
+	);
+}
+
 function applyRuntimeBundleChannelsToManifestLoad(load: RuntimeManifestLoad): RuntimeManifestLoad {
 	return applyRuntimeBundleChannelsToManifestLoadWithContext({
 		...load,
@@ -53,13 +61,7 @@ function applyRuntimeBundleChannelsToManifestLoad(load: RuntimeManifestLoad): Ru
 				applyReceiptId: "test-apply-receipt",
 				bootNonce: "test-boot-nonce",
 			},
-			runtimeEnvironment: projectedRuntimeEnvironment(
-				Object.fromEntries(
-					Object.entries(process.env).filter(
-						(entry): entry is [string, string] => entry[1] !== undefined,
-					),
-				),
-			),
+			runtimeEnvironment: projectedRuntimeEnvironment(testRuntimeEnvironmentValues()),
 		},
 	});
 }
@@ -86,11 +88,7 @@ function setRuntimeApplyIdentityFile(
 		JSON.stringify({
 			schemaVersion: "clawdi.runtimeApplyIdentity.v1",
 			...identity,
-			runtimeEnv: Object.fromEntries(
-				Object.entries(process.env).filter(
-					(entry): entry is [string, string] => entry[1] !== undefined,
-				),
-			),
+			runtimeEnv: testRuntimeEnvironmentValues(),
 		}),
 	);
 	process.env.CLAWDI_RUNTIME_APPLY_IDENTITY_FILE = path;
