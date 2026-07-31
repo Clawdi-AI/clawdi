@@ -26,7 +26,10 @@ import {
 	runtimePublicContentRevision,
 	runtimeWatch as runtimeWatchWithContext,
 } from "../src/commands/runtime";
-import { nativeOAuthProfileId } from "../src/lib/codex-oauth-native-store";
+import {
+	nativeOAuthProfileId,
+	oauthCredentialFingerprint,
+} from "../src/lib/codex-oauth-native-store";
 import { getCliVersion } from "../src/lib/version";
 import {
 	readRuntimeAppliedState,
@@ -4760,6 +4763,11 @@ exit 0
 				credentialRevision: "hermes-revision-1",
 				state: "intent",
 				operation: "seed",
+				targetCredentialFingerprint: oauthCredentialFingerprint(
+					"hermes-revision-1",
+					"hermes-seed-access",
+					"hermes-seed-refresh",
+				),
 			})}\n`,
 		);
 
@@ -4781,22 +4789,10 @@ exit 0
 		auth.credential_pool["openai-codex"][0].access_token = "hermes-runtime-rotated";
 		auth.credential_pool["openai-codex"][0].refresh_token = "hermes-runtime-rotated-refresh";
 		writeFileSync(authPath, `${JSON.stringify(auth, null, 2)}\n`);
-		writeFileSync(
-			ledgerPath,
-			`${JSON.stringify({
-				schemaVersion: "clawdi.oauthCredentialOwnership.v2",
-				runtime: "hermes",
-				providerId: "openai-codex",
-				nativeProfileId,
-				credentialRevision: "hermes-revision-1",
-				state: "intent",
-				operation: "seed",
-			})}\n`,
-		);
 		convergeRuntimeManifest(firstLoad, paths);
 		auth = JSON.parse(readFileSync(authPath, "utf8"));
 		expect(auth.credential_pool["openai-codex"][0].access_token).toBe("hermes-runtime-rotated");
-		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("adopted");
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("seeded");
 
 		auth.credential_pool["openai-codex"] = auth.credential_pool["openai-codex"].filter(
 			(entry: { id?: string }) => entry.id !== nativeProfileId,
@@ -4972,6 +4968,11 @@ exit 0
 				credentialRevision: "openclaw-revision-1",
 				state: "intent",
 				operation: "seed",
+				targetCredentialFingerprint: oauthCredentialFingerprint(
+					"openclaw-revision-1",
+					"openclaw-seed-access",
+					"openclaw-seed-refresh",
+				),
 			})}\n`,
 		);
 
@@ -4996,23 +4997,11 @@ exit 0
 		store.profiles[nativeProfileId].access = "openclaw-runtime-rotated";
 		store.profiles[nativeProfileId].refresh = "openclaw-runtime-rotated-refresh";
 		writeFileSync(storePath, `${JSON.stringify(store, null, 2)}\n`);
-		writeFileSync(
-			ledgerPath,
-			`${JSON.stringify({
-				schemaVersion: "clawdi.oauthCredentialOwnership.v2",
-				runtime: "openclaw",
-				providerId: "openai-codex",
-				nativeProfileId,
-				credentialRevision: "openclaw-revision-1",
-				state: "intent",
-				operation: "seed",
-			})}\n`,
-		);
 		convergeRuntimeManifest(firstLoad, paths);
 		expect(JSON.parse(readFileSync(storePath, "utf8")).profiles[nativeProfileId].access).toBe(
 			"openclaw-runtime-rotated",
 		);
-		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("adopted");
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("seeded");
 
 		store = JSON.parse(readFileSync(storePath, "utf8"));
 		delete store.profiles[nativeProfileId];

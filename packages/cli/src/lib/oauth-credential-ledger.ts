@@ -15,8 +15,16 @@ const oauthCredentialLedgerSchema = z
 		nativeProfileId: z.string().min(1),
 		credentialRevision: z.string().min(1).max(64),
 		state: z.enum(["intent", "seeded", "adopted", "revoked", "retired"]),
-		operation: z.enum(["seed", "remove"]).optional(),
+		operation: z.enum(["seed", "upsert", "remove"]).optional(),
 		credentialFingerprint: z
+			.string()
+			.regex(/^sha256:[a-f0-9]{64}$/)
+			.optional(),
+		beforeCredentialFingerprint: z
+			.string()
+			.regex(/^sha256:[a-f0-9]{64}$/)
+			.optional(),
+		targetCredentialFingerprint: z
 			.string()
 			.regex(/^sha256:[a-f0-9]{64}$/)
 			.optional(),
@@ -26,8 +34,34 @@ const oauthCredentialLedgerSchema = z
 		if (ledger.state === "intent" && !ledger.operation) {
 			context.addIssue({ code: "custom", message: "intent ledger requires an operation" });
 		}
+		if (
+			ledger.state === "intent" &&
+			(ledger.operation === "seed" || ledger.operation === "upsert") &&
+			!ledger.targetCredentialFingerprint
+		) {
+			context.addIssue({
+				code: "custom",
+				message: "credential write intent requires target evidence",
+			});
+		}
+		if (
+			ledger.state === "intent" &&
+			(ledger.operation === "upsert" || ledger.operation === "remove") &&
+			!ledger.beforeCredentialFingerprint
+		) {
+			context.addIssue({
+				code: "custom",
+				message: "credential mutation intent requires before evidence",
+			});
+		}
 		if (ledger.state !== "intent" && ledger.operation) {
 			context.addIssue({ code: "custom", message: "stable ledger cannot carry an operation" });
+		}
+		if (
+			ledger.state !== "intent" &&
+			(ledger.beforeCredentialFingerprint || ledger.targetCredentialFingerprint)
+		) {
+			context.addIssue({ code: "custom", message: "stable ledger cannot carry intent evidence" });
 		}
 	});
 
@@ -60,24 +94,34 @@ export function oauthCredentialLedgerPath(
 
 export function readOAuthCredentialLedger(
 	path: string,
-	options: { afterMigrate?: (path: string, parent: string) => void } = {},
+	options: {
+		migrateLegacy?: boolean;
+		afterMigrate?: (path: string, parent: string) => void;
+	} = {},
 ): OAuthCredentialLedger | null {
 	if (!existsSync(path)) return null;
 	const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
 	const canonical = oauthCredentialLedgerSchema.safeParse(raw);
 	if (canonical.success) return canonical.data;
 	const legacy = legacyOAuthCredentialReceiptSchema.parse(raw);
+	const migrated = oauthCredentialLedgerSchema.parse({
+		schemaVersion: OAUTH_CREDENTIAL_LEDGER_SCHEMA_VERSION,
+		runtime: legacy.runtime,
+		providerId: legacy.providerId,
+		nativeProfileId: legacy.nativeProfileId,
+		credentialRevision: legacy.credentialRevision,
+		state: legacy.state,
+		...(legacy.credentialFingerprint
+			? { credentialFingerprint: legacy.credentialFingerprint }
+			: {}),
+	});
+	if (!options.migrateLegacy) return migrated;
+	const migratedSnapshot = oauthCredentialLedgerSnapshot(migrated);
+	if (!migratedSnapshot) throw new Error("Migrated OAuth credential ledger snapshot is missing");
 	return writeOAuthCredentialLedger(
 		path,
-		{ runtime: legacy.runtime, providerId: legacy.providerId },
-		{
-			nativeProfileId: legacy.nativeProfileId,
-			credentialRevision: legacy.credentialRevision,
-			state: legacy.state,
-			...(legacy.credentialFingerprint
-				? { credentialFingerprint: legacy.credentialFingerprint }
-				: {}),
-		},
+		{ runtime: migrated.runtime, providerId: migrated.providerId },
+		migratedSnapshot,
 		{ afterWrite: options.afterMigrate },
 	);
 }
@@ -112,6 +156,12 @@ export function oauthCredentialLedgerSnapshot(
 		...(ledger.operation ? { operation: ledger.operation } : {}),
 		...(ledger.credentialFingerprint
 			? { credentialFingerprint: ledger.credentialFingerprint }
+			: {}),
+		...(ledger.beforeCredentialFingerprint
+			? { beforeCredentialFingerprint: ledger.beforeCredentialFingerprint }
+			: {}),
+		...(ledger.targetCredentialFingerprint
+			? { targetCredentialFingerprint: ledger.targetCredentialFingerprint }
 			: {}),
 	};
 }
