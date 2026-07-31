@@ -251,6 +251,32 @@ export function explicitPlanOffers(plan: Plan): BillingOffer[] {
 	return plan.offers ?? [];
 }
 
+/**
+ * Explicit offers from the first plan whose terms are also explicitly offered
+ * by every other plan. Prices remain plan-specific; callers use this list only
+ * to drive a synchronized billing-term control.
+ */
+export function commonExplicitBillingOffers(plans: readonly Plan[]): BillingOffer[] {
+	const [firstPlan, ...otherPlans] = plans;
+	if (!firstPlan || otherPlans.length === 0) return [];
+
+	const firstOffers = explicitPlanOffers(firstPlan);
+	const otherTermSets = otherPlans.map(
+		(plan) => new Set(explicitPlanOffers(plan).map((offer) => offer.billing_term_months)),
+	);
+	if (firstOffers.length === 0 || otherTermSets.some((terms) => terms.size === 0)) return [];
+
+	const seenTerms = new Set<number>();
+	return firstOffers
+		.filter((offer) => {
+			const term = offer.billing_term_months;
+			if (seenTerms.has(term) || !otherTermSets.every((terms) => terms.has(term))) return false;
+			seenTerms.add(term);
+			return true;
+		})
+		.sort((a, b) => a.billing_term_months - b.billing_term_months);
+}
+
 export function selectExplicitOfferForTerm(plan: Plan, term: number): ResolvedBillingOffer | null {
 	const offers = explicitPlanOffers(plan);
 	const offer = offers.find((candidate) => candidate.billing_term_months === term) ?? offers[0];

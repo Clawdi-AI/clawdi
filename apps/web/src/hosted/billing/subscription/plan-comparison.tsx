@@ -2,8 +2,7 @@
 
 import { Link, useLocation } from "@tanstack/react-router";
 import { Check, Cpu, Rocket, Sparkles, WalletCards, Zap } from "lucide-react";
-import { useMemo, useState } from "react";
-import { Badge } from "@/components/ui/badge";
+import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -13,18 +12,15 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type { Plan } from "@/hosted/billing/contracts";
-import { billingTermSuffix, formatCents } from "@/hosted/billing/format";
+import { computePricePresentation } from "@/hosted/billing/deploy/deploy-price-presentation";
 import { usePlans } from "@/hosted/billing/hooks";
 import {
+	commonExplicitBillingOffers,
 	explicitPlanOffers,
-	planOffers,
 	resolveBasicPlan,
 	resolvePerformancePlan,
-	selectExplicitOfferForTerm,
-	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { settingsQueryHref } from "@/lib/settings-routes";
 
@@ -47,113 +43,114 @@ function FeatureRow({ children }: { children: React.ReactNode }) {
 /**
  * The Basic / Performance / managed-AI comparison, folded into the Plan tab's
  * deploy flow (its own Pricing tab was redundant in Settings — Linear/Vercel
- * keep Plan + Usage). Self-contained; safe to drop below the current-plan card.
+ * keep Plan + Usage). Billing-term state is controlled by the page so the
+ * single selector updates both compute cards together.
  */
 export function PlanComparison({
-	term: termProp,
+	term,
 	onTermChange,
 	canCreateCloudAgents = false,
 }: {
-	/** When provided, the billing term is controlled by the parent so the
-	 * page's other TermSwitchers stay in sync (no two desynced toggles). */
-	term?: number;
-	onTermChange?: (term: number) => void;
+	term: number;
+	onTermChange: (term: number) => void;
 	canCreateCloudAgents?: boolean;
-} = {}) {
+}) {
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const searchParams = new URLSearchParams(searchStr);
 	const plansQuery = usePlans();
-	const [internalTerm, setInternalTerm] = useState(1);
-	const term = termProp ?? internalTerm;
-	const setTerm = onTermChange ?? setInternalTerm;
 
 	const { basic, performance } = useMemo(
 		() => partitionPlans(plansQuery.data ?? []),
 		[plansQuery.data],
 	);
 
-	const performanceOfferSelection = useMemo(
-		() => (performance ? selectOfferForTerm(performance, term) : null),
-		[performance, term],
-	);
-	const performanceOffer = performanceOfferSelection?.offer ?? null;
-	const performanceBillingTermMonths = performanceOfferSelection?.billingTermMonths ?? term;
-	const basicOfferSelection = useMemo(
-		() => (basic ? selectExplicitOfferForTerm(basic, term) : null),
-		[basic, term],
-	);
-	const basicOffer = basicOfferSelection?.offer ?? null;
-	const basicBillingTermMonths = basicOfferSelection?.billingTermMonths ?? term;
-
 	if (!plansQuery.data) return null;
 
 	const basicOffers = basic ? explicitPlanOffers(basic) : [];
-	const basicResources = basic;
-	const performanceOffers = performance ? planOffers(performance) : [];
-	const annualOffer = performanceOffers.find((o) => o.billing_term_months === 12);
+	const performanceOffers = performance ? explicitPlanOffers(performance) : [];
+	const commonOffers =
+		basic && performance ? commonExplicitBillingOffers([basic, performance]) : [];
+	const selectedTerm =
+		commonOffers.find((offer) => offer.billing_term_months === term)?.billing_term_months ??
+		commonOffers[0]?.billing_term_months ??
+		null;
+	const basicOffer =
+		selectedTerm === null
+			? null
+			: (basicOffers.find((offer) => offer.billing_term_months === selectedTerm) ?? null);
+	const performanceOffer =
+		selectedTerm === null
+			? null
+			: (performanceOffers.find((offer) => offer.billing_term_months === selectedTerm) ?? null);
+	const basicPrice = basicOffer ? computePricePresentation(basicOffer, basicOffers) : null;
+	const performancePrice = performanceOffer
+		? computePricePresentation(performanceOffer, performanceOffers)
+		: null;
+	const sharedPricingUnavailable =
+		basic !== undefined && performance !== undefined && !selectedTerm;
 
 	return (
-		<div data-hosted="true" className="space-y-3">
-			<div>
-				<h3 className="text-base font-semibold">Compare compute options</h3>
-				<p className="text-sm text-muted-foreground">
-					The first active Basic agent is free. Additional Basic and Performance agents are billed
-					separately.
-				</p>
+		<section data-hosted="true" className="space-y-4" aria-labelledby="plan-comparison-heading">
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+				<div>
+					<h3 id="plan-comparison-heading" className="text-base font-semibold">
+						Compare compute options
+					</h3>
+					{sharedPricingUnavailable ? (
+						<p className="mt-1 text-sm text-muted-foreground">
+							A shared Basic and Performance billing term is not currently available.
+						</p>
+					) : null}
+				</div>
+				{commonOffers.length > 1 && selectedTerm !== null ? (
+					<div className="w-full shrink-0 space-y-1.5 sm:w-64">
+						<p className="text-xs font-medium text-muted-foreground">
+							Billing term for Basic + Performance
+						</p>
+						<TermSwitcher
+							offers={commonOffers}
+							value={selectedTerm}
+							onChange={onTermChange}
+							showDiscount={false}
+							ariaLabel="Billing term for Basic and Performance"
+						/>
+					</div>
+				) : null}
 			</div>
-			<div className="grid items-start gap-4 lg:grid-cols-3">
+			<div className="grid gap-3 lg:grid-cols-3">
 				{/* Basic */}
-				<Card className="flex flex-col">
-					<CardHeader>
-						<div className="flex items-center justify-between">
-							<CardTitle className="flex items-center gap-2">
-								<Cpu className="size-5 text-muted-foreground" aria-hidden /> Compute Basic
-							</CardTitle>
+				<Card size="sm">
+					<CardHeader className="gap-2">
+						<CardTitle className="flex items-center gap-2">
+							<Cpu className="size-5 text-muted-foreground" aria-hidden /> Basic
+						</CardTitle>
+						<CardDescription>First active Basic agent included at no charge.</CardDescription>
+						<div className="pt-1">
+							<p className="text-xs text-muted-foreground">Each additional Basic agent</p>
+							{basicPrice ? (
+								<>
+									<p className="text-3xl font-semibold tracking-tight tabular-nums">
+										{basicPrice.primary}
+									</p>
+									{basicOffer?.billing_term_months !== 1 ? (
+										<p className="text-xs text-muted-foreground">{basicPrice.secondary}</p>
+									) : null}
+								</>
+							) : (
+								<p className="text-sm font-medium">Pricing unavailable</p>
+							)}
 						</div>
-						<div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-							<span className="text-2xl font-semibold tracking-tight">First agent free</span>
-							<span className="text-sm text-muted-foreground">
-								{basicOffer
-									? `then ${formatCents(basicOffer.effective_monthly_price_cents)}/mo`
-									: "additional pricing unavailable"}
-							</span>
-						</div>
-						<CardDescription className="mt-2">
-							Your first active Basic agent is free. Each additional Basic agent uses its own
-							subscription.
-						</CardDescription>
-						{basicOffer && basicOffer.billing_term_months !== 1 ? (
-							<p className="text-xs text-muted-foreground">
-								Additional agents billed {formatCents(basicOffer.price_cents)}
-								{billingTermSuffix(basicOffer.billing_term_months)}
-							</p>
-						) : null}
-						{basicOffers.length > 1 ? (
-							<div className="mt-3">
-								<TermSwitcher
-									offers={basicOffers}
-									value={basicBillingTermMonths}
-									onChange={setTerm}
-								/>
-							</div>
-						) : null}
 					</CardHeader>
 					<CardContent className="flex-1">
 						<ul className="space-y-2">
-							<FeatureRow>Managed confidential-compute infrastructure</FeatureRow>
-							<FeatureRow>
-								Burstable compute
-								{basicResources
-									? ` (${basicResources.vcpu} vCPU / ${basicResources.ram_gb} GB)`
-									: ""}
-							</FeatureRow>
-							<FeatureRow>
-								Disk{basicResources ? ` (${basicResources.disk_size} GB)` : ""}
-							</FeatureRow>
-							<FeatureRow>One free active Basic agent per user</FeatureRow>
-							<FeatureRow>Paid additional Basic agents</FeatureRow>
-							<FeatureRow>Single agent engine (OpenClaw or Hermes)</FeatureRow>
-							<FeatureRow>BYOK avoids Clawdi AI usage charges</FeatureRow>
+							<FeatureRow>Managed confidential compute</FeatureRow>
+							{basic ? (
+								<FeatureRow>
+									{basic.vcpu} vCPU · {basic.ram_gb} GB RAM · {basic.disk_size} GB disk
+								</FeatureRow>
+							) : null}
+							<FeatureRow>One runtime: OpenClaw or Hermes</FeatureRow>
+							<FeatureRow>Bring your own AI keys (BYOK)</FeatureRow>
 						</ul>
 					</CardContent>
 					<CardFooter>
@@ -164,69 +161,49 @@ export function PlanComparison({
 								className="w-full"
 								variant="outline"
 							>
-								<Rocket /> Deploy Compute Basic
+								<Rocket /> Deploy Basic
 							</Button>
 						) : (
 							<Button className="w-full" variant="outline" disabled>
-								<Rocket /> Deploy Compute Basic
+								<Rocket /> Deploy Basic
 							</Button>
 						)}
 					</CardFooter>
 				</Card>
 
 				{/* Performance */}
-				<Card className="relative flex flex-col border-primary/50 shadow-sm ring-1 ring-primary/20">
-					<Badge className="-top-2.5 absolute left-1/2 -translate-x-1/2 shadow-sm">Per agent</Badge>
-					<CardHeader>
-						<div className="flex items-center justify-between">
-							<CardTitle className="flex items-center gap-2">
-								<Zap className="size-5 text-primary" aria-hidden /> Compute Performance
-							</CardTitle>
+				<Card size="sm" className="border-primary/30">
+					<CardHeader className="gap-2">
+						<CardTitle className="flex items-center gap-2">
+							<Zap className="size-5 text-primary" aria-hidden /> Performance
+						</CardTitle>
+						<CardDescription>Higher compute resources with public ports.</CardDescription>
+						<div className="pt-1">
+							<p className="text-xs text-muted-foreground">Each Performance agent</p>
+							{performancePrice ? (
+								<>
+									<p className="text-3xl font-semibold tracking-tight tabular-nums">
+										{performancePrice.primary}
+									</p>
+									{performanceOffer?.billing_term_months !== 1 ? (
+										<p className="text-xs text-muted-foreground">{performancePrice.secondary}</p>
+									) : null}
+								</>
+							) : (
+								<p className="text-sm font-medium">Pricing unavailable</p>
+							)}
 						</div>
-						<div className="mt-2 flex items-baseline gap-1">
-							<span className="text-3xl font-semibold tracking-tight tabular-nums">
-								{performanceOffer
-									? formatCents(performanceOffer.effective_monthly_price_cents)
-									: performance
-										? formatCents(performance.price_cents)
-										: "—"}
-							</span>
-							<span className="text-sm text-muted-foreground">/mo</span>
-							{performanceOffer && performanceOffer.billing_term_months !== 1 ? (
-								<span className="ml-1 text-xs text-muted-foreground">
-									billed {formatCents(performanceOffer.price_cents)}
-									{billingTermSuffix(performanceOffer.billing_term_months)}
-								</span>
-							) : null}
-						</div>
-						<CardDescription className="mt-2">
-							More compute, larger disk, and public-port entitlement for demanding agents.
-							{annualOffer && annualOffer.discount_percent > 0
-								? ` Save ${annualOffer.discount_percent}% on annual.`
-								: ""}
-						</CardDescription>
-						{performanceOffers.length > 1 ? (
-							<div className="mt-3">
-								<TermSwitcher
-									offers={performanceOffers}
-									value={performanceBillingTermMonths}
-									onChange={setTerm}
-								/>
-							</div>
-						) : null}
 					</CardHeader>
 					<CardContent className="flex-1">
 						<ul className="space-y-2">
-							<FeatureRow>Everything in Compute Basic, plus:</FeatureRow>
-							<FeatureRow>
-								Higher burst
-								{performance ? ` (${performance.vcpu} vCPU / ${performance.ram_gb} GB)` : ""}
-							</FeatureRow>
-							<FeatureRow>One subscription per Performance agent</FeatureRow>
+							<FeatureRow>Everything in Basic, with higher resources</FeatureRow>
+							{performance ? (
+								<FeatureRow>
+									{performance.vcpu} vCPU · {performance.ram_gb} GB RAM · {performance.disk_size} GB
+									disk
+								</FeatureRow>
+							) : null}
 							<FeatureRow>Public ports for agent services</FeatureRow>
-							<FeatureRow>
-								Larger disk{performance ? ` (${performance.disk_size} GB)` : ""}
-							</FeatureRow>
 						</ul>
 					</CardContent>
 					<CardFooter>
@@ -237,47 +214,41 @@ export function PlanComparison({
 								className="w-full"
 								disabled={!performance}
 							>
-								Deploy Compute Performance
+								Deploy Performance
 							</Button>
 						) : (
 							<Button className="w-full" disabled>
-								Deploy Compute Performance
+								Deploy Performance
 							</Button>
 						)}
 					</CardFooter>
 				</Card>
 
 				{/* Clawdi AI */}
-				<Card className="flex flex-col bg-muted/30">
-					<CardHeader>
+				<Card size="sm" className="bg-muted/20">
+					<CardHeader className="gap-2">
 						<CardTitle className="flex items-center gap-2">
 							<WalletCards className="size-5 text-muted-foreground" aria-hidden /> Clawdi AI
 						</CardTitle>
-						<div className="mt-2 flex items-baseline gap-1">
-							<span className="text-3xl font-semibold tracking-tight">Pay as you go</span>
-						</div>
-						<CardDescription className="mt-2">
-							Top up your Wallet and pay only for the AI usage your agents consume.
-						</CardDescription>
-						<div className="mt-3 rounded-lg border bg-background/70 px-3 py-2">
-							<p className="text-sm font-medium">
-								30% cheaper than direct API pricing on supported models
-							</p>
-							<p className="mt-0.5 text-xs text-muted-foreground">Actual savings vary by model.</p>
+						<CardDescription>Use Wallet funds or bring your own AI keys.</CardDescription>
+						<div className="pt-1">
+							<p className="text-3xl font-semibold tracking-tight">Pay as you go</p>
+							<p className="text-xs text-muted-foreground">Not affected by compute billing term</p>
 						</div>
 					</CardHeader>
 					<CardContent className="flex-1">
 						<ul className="space-y-2">
-							<FeatureRow>Usage billed directly in USD</FeatureRow>
-							<FeatureRow>Whole-dollar wallet top-ups</FeatureRow>
-							<FeatureRow>Optional auto-reload</FeatureRow>
-							<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
+							<FeatureRow>
+								<span>
+									30% below direct API pricing on supported models
+									<span className="mt-0.5 block text-xs text-muted-foreground">
+										Eligible models only; actual savings vary by model.
+									</span>
+								</span>
+							</FeatureRow>
+							<FeatureRow>Pay from your Wallet</FeatureRow>
+							<FeatureRow>Use your own AI keys (BYOK)</FeatureRow>
 						</ul>
-						<Separator className="my-4" />
-						<p className="text-xs text-muted-foreground">
-							Works with both Basic and Performance compute. Manage balance and auto-reload from the
-							Wallet.
-						</p>
 					</CardContent>
 					<CardFooter>
 						<Button
@@ -291,6 +262,6 @@ export function PlanComparison({
 					</CardFooter>
 				</Card>
 			</div>
-		</div>
+		</section>
 	);
 }

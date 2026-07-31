@@ -5970,21 +5970,133 @@ test("compute comparison uses API prices without stale signup or subscription cr
 }) => {
 	const errors = collectBrowserErrors(page);
 	const planRequests: string[] = [];
+	const comparisonBasicPlan = {
+		...basicPlan,
+		price_cents: 1_234,
+		offers: [
+			{
+				billing_term_months: 1,
+				price_cents: 1_234,
+				effective_monthly_price_cents: 1_234,
+				discount_percent: 0,
+			},
+			{
+				billing_term_months: 12,
+				price_cents: 12_348,
+				effective_monthly_price_cents: 1_029,
+				discount_percent: 17,
+			},
+		],
+	};
+	const comparisonPerformancePlan = {
+		...performancePlan,
+		price_cents: 5_678,
+		offers: [
+			{
+				billing_term_months: 1,
+				price_cents: 5_678,
+				effective_monthly_price_cents: 5_678,
+				discount_percent: 0,
+			},
+			{
+				billing_term_months: 12,
+				price_cents: 54_324,
+				effective_monthly_price_cents: 4_527,
+				discount_percent: 20,
+			},
+		],
+	};
+	await page.setViewportSize({ width: 1_440, height: 1_100 });
+	await page.emulateMedia({ reducedMotion: "reduce" });
 	await stubHostedApi(page, {
 		deployments: [paidBasicDeployment],
 		planRequests,
 		plans: [
-			{ ...basicPlan, subscription_grant_credits: 500 },
-			{ ...performancePlan, subscription_grant_credits: 1_000 },
+			{ ...comparisonBasicPlan, subscription_grant_credits: 500 },
+			{ ...comparisonPerformancePlan, subscription_grant_credits: 1_000 },
 		],
 	});
 	await page.goto("/channels?settings=billing-plan");
 
 	const settingsDialog = page.getByTestId("settings-dialog");
 	await expect(settingsDialog).toBeVisible();
-	await expect(settingsDialog.getByText("then $10.00/mo", { exact: true })).toBeVisible();
-	await expect(settingsDialog.getByText("$20.00", { exact: true })).toBeVisible();
-	await expect(settingsDialog).toContainText("Whole-dollar wallet top-ups");
+	const comparison = settingsDialog.getByRole("region", { name: "Compare compute options" });
+	const termSwitcher = comparison.getByRole("group", {
+		name: "Billing term for Basic and Performance",
+	});
+	await expect(termSwitcher).toBeVisible();
+	await expect(termSwitcher).not.toContainText("%");
+	await expect(termSwitcher.getByRole("button", { name: "Monthly", exact: true })).toHaveAttribute(
+		"aria-pressed",
+		"true",
+	);
+	await expect(comparison.getByText("$12.34/mo", { exact: true })).toBeVisible();
+	await expect(comparison.getByText("$56.78/mo", { exact: true })).toBeVisible();
+
+	await termSwitcher.getByRole("button", { name: "Annual", exact: true }).click();
+	await expect(comparison.getByText("$10.29/mo", { exact: true })).toBeVisible();
+	await expect(comparison.getByText("Billed $123.48/yr", { exact: true })).toBeVisible();
+	await expect(comparison.getByText("$45.27/mo", { exact: true })).toBeVisible();
+	await expect(comparison.getByText("Billed $543.24/yr", { exact: true })).toBeVisible();
+	await expect(
+		comparison.getByText("Not affected by compute billing term", { exact: true }),
+	).toBeVisible();
+	await expect(comparison.locator('[data-slot="card"]')).toHaveCount(3);
+
+	const desktopMetrics = await comparison.evaluate((section) => {
+		const cards = Array.from(section.querySelectorAll<HTMLElement>('[data-slot="card"]'));
+		const selector = section.querySelector<HTMLElement>(
+			'[aria-label="Billing term for Basic and Performance"]',
+		);
+		return {
+			overflow: section.scrollWidth - section.clientWidth,
+			cardTops: cards.map((card) => Math.round(card.getBoundingClientRect().top)),
+			cardBottoms: cards.map((card) => Math.round(card.getBoundingClientRect().bottom)),
+			selectorBottom: selector ? Math.round(selector.getBoundingClientRect().bottom) : null,
+			firstCardTop: cards[0] ? Math.round(cards[0].getBoundingClientRect().top) : null,
+		};
+	});
+	expect(desktopMetrics.overflow).toBeLessThanOrEqual(0);
+	expect(new Set(desktopMetrics.cardTops).size).toBe(1);
+	expect(new Set(desktopMetrics.cardBottoms).size).toBe(1);
+	expect(desktopMetrics.selectorBottom).toBeLessThanOrEqual(desktopMetrics.firstCardTop ?? 0);
+	await comparison.screenshot({ path: "/tmp/clawdi-pricing-comparison-desktop.png" });
+
+	await page.setViewportSize({ width: 390, height: 844 });
+	await comparison.scrollIntoViewIfNeeded();
+	const mobileMetrics = await comparison.evaluate((section) => {
+		const cards = Array.from(section.querySelectorAll<HTMLElement>('[data-slot="card"]'));
+		const sectionRect = section.getBoundingClientRect();
+		return {
+			documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+			sectionOverflow: section.scrollWidth - section.clientWidth,
+			cardsInside: cards.every((card) => {
+				const rect = card.getBoundingClientRect();
+				return rect.left >= sectionRect.left && rect.right <= sectionRect.right;
+			}),
+			cardsSeparated: cards.slice(1).every((card, index) => {
+				const previous = cards[index];
+				return previous
+					? previous.getBoundingClientRect().bottom <= card.getBoundingClientRect().top
+					: false;
+			}),
+		};
+	});
+	expect(mobileMetrics.documentOverflow).toBeLessThanOrEqual(0);
+	expect(mobileMetrics.sectionOverflow).toBeLessThanOrEqual(0);
+	expect(mobileMetrics.cardsInside).toBe(true);
+	expect(mobileMetrics.cardsSeparated).toBe(true);
+	const comparisonCards = comparison.locator('[data-slot="card"]');
+	await comparisonCards.first().scrollIntoViewIfNeeded();
+	await expect(comparisonCards.first()).toBeInViewport();
+	await page.screenshot({ path: "/tmp/clawdi-pricing-comparison-mobile-top.png" });
+	await comparisonCards.last().scrollIntoViewIfNeeded();
+	await expect(comparisonCards.last()).toBeInViewport();
+	const openWalletButton = comparisonCards.last().getByRole("button", { name: "Open Wallet" });
+	await openWalletButton.scrollIntoViewIfNeeded();
+	await expect(openWalletButton).toBeVisible();
+	await page.screenshot({ path: "/tmp/clawdi-pricing-comparison-mobile-bottom.png" });
+
 	expect(planRequests).toEqual([`${DEPLOY_API}/v2/subscription/plans`]);
 	await expect(settingsDialog).not.toContainText("welcome balance on signup");
 	await expect(settingsDialog).not.toContainText("AI Credits per subscription");

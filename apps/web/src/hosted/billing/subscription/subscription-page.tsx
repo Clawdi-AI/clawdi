@@ -82,10 +82,7 @@ export function SubscriptionPage() {
 			<Card data-hosted="true">
 				<CardHeader>
 					<CardTitle>Compute is managed per agent</CardTitle>
-					<CardDescription>
-						Basic includes one free active hosted-agent slot. Additional Basic and Performance
-						agents each use a separate subscription.
-					</CardDescription>
+					<CardDescription>Deploy new hosted agents from here.</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">
 					<p className="text-sm text-muted-foreground">
