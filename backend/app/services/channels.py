@@ -966,7 +966,7 @@ async def list_owned_active_bot_agent_links_for_agent(
             ChannelBotAgentLink.created_at,
         )
     )
-    return list(result.all())
+    return [(link, account) for link, account in result.all()]
 
 
 async def rotate_bot_agent_link_token(
@@ -3585,6 +3585,33 @@ async def send_discord_message(
     )
 
 
+async def record_discord_outbound_message(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    binding: ChannelBinding,
+    external_chat_id: str,
+    provider_response: dict[str, Any],
+) -> ChannelMessage:
+    _require_channel_provider(account, CHANNEL_PROVIDER_DISCORD)
+    if binding.account_id != account.id:
+        raise ValueError("channel binding does not belong to channel account")
+    provider_message_id = _read_optional_str(provider_response.get("id"))
+    if provider_message_id is None:
+        raise ValueError("discord message response has no id")
+    if _read_optional_str(provider_response.get("channel_id")) != external_chat_id:
+        raise ValueError("discord message response channel does not match target")
+    return await _record_outbound_channel_message(
+        db,
+        account=account,
+        binding=binding,
+        external_chat_id=external_chat_id,
+        provider_message_id=provider_message_id,
+        text=_read_optional_str(provider_response.get("content")) or "",
+        payload=None,
+    )
+
+
 async def _send_discord_provider_payload(
     *,
     account: ChannelAccount,
@@ -3631,8 +3658,7 @@ async def _send_discord_provider_payload(
                     headers={"Authorization": f"Bot {token}"},
                     json=payload,
                 )
-                response_headers = getattr(response, "headers", {})
-                discord_rate_limiter.observe("POST", path, response_headers, response.status_code)
+                discord_rate_limiter.observe("POST", path, response.headers, response.status_code)
     except httpx.HTTPError as exc:
         outbound_errors.labels(channel=CHANNEL_PROVIDER_DISCORD, method="POST").inc()
         raise HTTPException(
@@ -3874,7 +3900,15 @@ def _whatsapp_cloud_media_payload(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"whatsapp {media_type} payload requires exactly one of id or link",
         )
-    media: dict[str, str] = {"id": media_id} if media_id is not None else {"link": media_link}
+    if media_id is not None:
+        media: dict[str, str] = {"id": media_id}
+    elif media_link is not None:
+        media = {"link": media_link}
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"whatsapp {media_type} payload requires exactly one of id or link",
+        )
     caption = _read_optional_str(media_payload.get("caption"))
     if media_type == "image" and caption is not None:
         media["caption"] = caption
@@ -4274,13 +4308,19 @@ async def record_discord_dispatch(
 ) -> bool:
     key = extract_discord_routing_key(frame)
     chat = discord_chat_from_payload(frame)
-    if key is None and chat is None:
+    if key is not None:
+        external_chat_id = key.chat_id
+        external_chat_type = key.chat_type
+        external_chat_name = chat[2] if chat is not None else key.scope_id
+        guild_id = key.scope_id
+    elif chat is not None:
+        external_chat_id = chat[0]
+        external_chat_type = chat[1]
+        external_chat_name = chat[2]
+        guild_id = discord_channel_scope_from_payload(frame)[1]
+    else:
         return False
-    external_chat_id = key.chat_id if key is not None else chat[0]
-    external_chat_type = key.chat_type if key is not None else chat[1]
-    external_chat_name = chat[2] if chat is not None else key.scope_id
     command = discord_pair_command_from_payload(frame)
-    guild_id = key.scope_id if key is not None else discord_channel_scope_from_payload(frame)[1]
     binding_result = await resolve_inbound_binding(
         db,
         account=account,
@@ -4538,6 +4578,8 @@ def _discord_event_data(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _discord_channel_type_name(value: int | None, fallback: str) -> str:
+    if value is None:
+        return fallback
     return {
         0: "guild_text",
         1: "dm",
