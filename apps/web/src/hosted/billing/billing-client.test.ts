@@ -145,7 +145,7 @@ describe("managed model catalog", () => {
 						provider_id: "openai-codex",
 						is_default: true,
 						is_featured: true,
-						description: "Fast and affordable.",
+						description: "Low cost for routine work.",
 						capabilities: {
 							context_window: 272_000,
 							max_context_window: null,
@@ -169,7 +169,7 @@ describe("managed model catalog", () => {
 					provider_id: "openai-codex",
 					is_default: true,
 					is_featured: true,
-					description: "Fast and affordable.",
+					description: "Low cost for routine work.",
 					capabilities: {
 						context_window: 272_000,
 						max_context_window: null,

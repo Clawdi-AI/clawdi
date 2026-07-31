@@ -116,7 +116,7 @@ describe("model binding", () => {
 		const managedModels = [
 			{
 				...managedMetadata,
-				description: "Best for complex work.",
+				description: "Higher cost for complex work.",
 				id: "gpt-5.6-sol",
 				display_name: "GPT-5.6-Sol",
 				is_default: false,
@@ -124,7 +124,7 @@ describe("model binding", () => {
 			},
 			{
 				...managedMetadata,
-				description: "Best for long, detailed work.",
+				description: "Variable cost for long, detailed work.",
 				id: "k3",
 				display_name: "Kimi K3",
 				provider_id: "kimi-coding",
@@ -140,7 +140,7 @@ describe("model binding", () => {
 			},
 			{
 				...managedMetadata,
-				description: "Fast and affordable.",
+				description: "Low cost for routine work.",
 				id: "gpt-5.6-luna",
 				display_name: "GPT-5.6-Luna",
 				is_default: true,
@@ -148,7 +148,7 @@ describe("model binding", () => {
 			},
 			{
 				...managedMetadata,
-				description: "Balanced for everyday work.",
+				description: "Balanced cost for everyday work.",
 				id: "gpt-5.6-terra",
 				display_name: "GPT-5.6-Terra",
 				is_default: false,
@@ -162,13 +162,13 @@ describe("model binding", () => {
 					value: "gpt-5.6-sol",
 					label: "GPT-5.6-Sol",
 					providerId: "openai-codex",
-					description: "Best for complex work.",
+					description: "Higher cost for complex work.",
 				},
 				{
 					value: "k3",
 					label: "Kimi K3",
 					providerId: "kimi-coding",
-					description: "Best for long, detailed work.",
+					description: "Variable cost for long, detailed work.",
 				},
 			],
 			overflow: [
@@ -177,13 +177,13 @@ describe("model binding", () => {
 					value: "gpt-5.6-luna",
 					label: "GPT-5.6-Luna",
 					providerId: "openai-codex",
-					description: "Fast and affordable.",
+					description: "Low cost for routine work.",
 				},
 				{
 					value: "gpt-5.6-terra",
 					label: "GPT-5.6-Terra",
 					providerId: "openai-codex",
-					description: "Balanced for everyday work.",
+					description: "Balanced cost for everyday work.",
 				},
 			],
 		});

@@ -53,7 +53,7 @@ const aiProviderHooksSource = readFileSync(
 describe("deploy wizard personalization", () => {
 	test("keeps deploy-specific controls proportionate to their content", () => {
 		expect(wizardSource).toContain(
-			'className="w-full max-w-xl rounded-none border-0 bg-transparent p-0"',
+			'className="w-full max-w-4xl rounded-none border-0 bg-transparent p-0"',
 		);
 		expect(wizardSource).toContain('<div className="flex max-w-2xl flex-col gap-4">');
 		expect(wizardSource).toContain('className="flex w-full max-w-md flex-col gap-1.5"');

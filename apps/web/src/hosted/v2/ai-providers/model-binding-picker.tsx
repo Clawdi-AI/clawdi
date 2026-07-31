@@ -122,7 +122,7 @@ export function ModelBindingPicker({
 					title="Couldn't load Clawdi AI models"
 				/>
 			) : isManaged && hasCatalogModels ? (
-				<div className="flex min-w-0 max-w-xl flex-col gap-2">
+				<div className="flex min-w-0 max-w-4xl flex-col gap-2">
 					<Label id={`${catalogInputId}-label`}>Main model</Label>
 					<div
 						className="flex min-w-0 max-w-full flex-wrap items-start gap-2"
@@ -135,7 +135,7 @@ export function ModelBindingPicker({
 								onValueChange={(value) => {
 									if (typeof value === "string") onPrimaryModelChange(value);
 								}}
-								className="grid w-full min-w-0 grid-cols-2 gap-2"
+								className="grid w-full min-w-0 grid-cols-2 gap-2 @4xl/main:grid-cols-4"
 								aria-labelledby={`${catalogInputId}-label`}
 								data-testid="managed-model-choices"
 							>

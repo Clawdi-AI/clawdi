@@ -1131,7 +1131,7 @@ export function DeployWizard() {
 						{aiAccessMode !== "unmanaged" ? (
 							<ModelBindingPicker
 								idPrefix="deploy"
-								className="w-full max-w-xl rounded-none border-0 bg-transparent p-0"
+								className="w-full max-w-4xl rounded-none border-0 bg-transparent p-0"
 								providers={providerList}
 								managedModels={managedModels}
 								managedModelsLoading={managedModels.length === 0 && managedModelCatalog.isFetching}

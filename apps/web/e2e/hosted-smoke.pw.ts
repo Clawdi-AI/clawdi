@@ -64,7 +64,7 @@ const managedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 			provider_id: "openai-codex",
 			is_default: true,
 			is_featured: true,
-			description: "Fast and affordable.",
+			description: "Low cost for routine work.",
 			capabilities: textModelCapabilities,
 		},
 		{
@@ -73,7 +73,7 @@ const managedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: false,
-			description: "Best for complex work.",
+			description: "Higher cost for complex work.",
 			capabilities: textModelCapabilities,
 		},
 		{
@@ -82,7 +82,7 @@ const managedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: false,
-			description: "Balanced for everyday work.",
+			description: "Balanced cost for everyday work.",
 			capabilities: textModelCapabilities,
 		},
 	],
@@ -91,12 +91,30 @@ const managedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 	models: [
 		{
+			id: "gpt-5.6-terra",
+			display_name: "GPT-5.6-Terra",
+			provider_id: "openai-codex",
+			is_default: true,
+			is_featured: true,
+			description: "Balanced cost for everyday work.",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "gpt-5.6-luna",
+			display_name: "GPT-5.6-Luna",
+			provider_id: "openai-codex",
+			is_default: false,
+			is_featured: true,
+			description: "Low cost for routine work.",
+			capabilities: textModelCapabilities,
+		},
+		{
 			id: "gpt-5.6-sol",
 			display_name: "GPT-5.6-Sol",
 			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: true,
-			description: "Best for complex work.",
+			description: "Higher cost for complex work.",
 			capabilities: textModelCapabilities,
 		},
 		{
@@ -105,7 +123,7 @@ const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 			provider_id: "kimi-coding",
 			is_default: false,
 			is_featured: true,
-			description: "Best for long, detailed work.",
+			description: "Variable cost for long, detailed work.",
 			capabilities: {
 				...textModelCapabilities,
 				context_window: 262_144,
@@ -116,35 +134,57 @@ const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 			},
 		},
 		{
-			id: "future-model",
-			display_name: "Future model",
+			id: "gpt-5.5",
+			display_name: "GPT-5.5",
 			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: false,
-			description: null,
-			capabilities: {
-				...textModelCapabilities,
-				max_context_window: 272_000,
-				supports_reasoning: null,
-				supports_tools: null,
-			},
-		},
-		{
-			id: "gpt-5.6-luna",
-			display_name: "GPT-5.6-Luna",
-			provider_id: "openai-codex",
-			is_default: true,
-			is_featured: false,
-			description: "Fast and affordable.",
+			description: "Higher cost for demanding work.",
 			capabilities: textModelCapabilities,
 		},
 		{
-			id: "gpt-5.6-terra",
-			display_name: "GPT-5.6-Terra",
+			id: "gpt-5.4",
+			display_name: "GPT-5.4",
 			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: false,
-			description: "Balanced for everyday work.",
+			description: "Balanced cost for coding and tools.",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "gpt-5.4-mini",
+			display_name: "GPT-5.4-Mini",
+			provider_id: "openai-codex",
+			is_default: false,
+			is_featured: false,
+			description: "Low cost for lighter coding work.",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "gpt-5.2",
+			display_name: "GPT-5.2",
+			provider_id: "openai-codex",
+			is_default: false,
+			is_featured: false,
+			description: "Variable cost for general work.",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "kimi-for-coding-highspeed",
+			display_name: "K2.7 Code HighSpeed",
+			provider_id: "kimi-coding",
+			is_default: false,
+			is_featured: false,
+			description: "Variable cost for faster coding work.",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "kimi-for-coding",
+			display_name: "Kimi K2.7 Code",
+			provider_id: "kimi-coding",
+			is_default: false,
+			is_featured: false,
+			description: "Variable cost for coding work.",
 			capabilities: textModelCapabilities,
 		},
 	],
@@ -3842,13 +3882,15 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	await expect(managedModels).toHaveAccessibleName("Main model");
 	const featuredModels = managedModels.getByRole("radio");
 	const featuredCards = managedModels.locator(":scope > label");
-	await expect(featuredModels).toHaveCount(2);
-	await expect(featuredCards).toHaveCount(2);
-	await expect(featuredModels.nth(0)).toHaveAccessibleName("GPT-5.6-Sol");
-	await expect(featuredModels.nth(1)).toHaveAccessibleName("Kimi K3");
+	await expect(featuredModels).toHaveCount(4);
+	await expect(featuredCards).toHaveCount(4);
+	await expect(featuredModels.nth(0)).toHaveAccessibleName("GPT-5.6-Terra");
+	await expect(featuredModels.nth(1)).toHaveAccessibleName("GPT-5.6-Luna");
+	await expect(featuredModels.nth(2)).toHaveAccessibleName("GPT-5.6-Sol");
+	await expect(featuredModels.nth(3)).toHaveAccessibleName("Kimi K3");
 	await expect(featuredCards.nth(0).getByText("O", { exact: true })).toBeVisible();
 	await expect(featuredCards.nth(0).getByText("S", { exact: true })).toHaveCount(0);
-	await expect(featuredCards.nth(1).getByRole("img", { name: /kimi-coding/i })).toBeVisible();
+	await expect(featuredCards.nth(3).getByRole("img", { name: /kimi-coding/i })).toBeVisible();
 	for (const radio of await featuredModels.all()) {
 		const visualControl = await radio.evaluate((element) => {
 			const style = getComputedStyle(element);
@@ -3864,12 +3906,14 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	}
 	const overflowModels = page.getByTestId("managed-model-overflow");
 	await expect(overflowModels).toHaveAccessibleName("More managed models");
-	await expect(overflowModels).toContainText("GPT-5.6-Luna");
-	await expect(featuredModels.nth(0)).not.toBeChecked();
+	await expect(overflowModels).toContainText("More models");
+	await expect(featuredModels.nth(0)).toBeChecked();
 	await expect(featuredModels.nth(1)).not.toBeChecked();
+	await expect(featuredModels.nth(2)).not.toBeChecked();
+	await expect(featuredModels.nth(3)).not.toBeChecked();
 	await expect(page.locator("#deploy-primary-model")).toHaveCount(0);
-	await expect(managedModels).toContainText("Best for complex work.");
-	await expect(managedModels).toContainText("Best for long, detailed work.");
+	await expect(managedModels).toContainText("Higher cost for complex work.");
+	await expect(managedModels).toContainText("Variable cost for long, detailed work.");
 	await expect(managedModels).not.toContainText(/272K|256K|1M|Codex|context|eligible plans/i);
 	await expect(page.getByTestId("managed-model-details")).toHaveCount(0);
 	const cardBoxesBefore = await featuredCards.evaluateAll((cards) =>
@@ -3878,14 +3922,14 @@ test("deploy managed model picker preserves featured and overflow order and subm
 			return { height: box.height, width: box.width };
 		}),
 	);
-	await featuredCards.nth(0).click({ position: { x: 3, y: 3 } });
-	await expect(featuredModels.nth(0)).toBeChecked();
-	await expect(featuredCards.nth(0).locator("svg.lucide-check")).toHaveCSS("opacity", "1");
-	await featuredCards.nth(1).click({ position: { x: 3, y: 3 } });
-	await expect(featuredModels.nth(1)).toBeChecked();
+	await featuredCards.nth(2).click({ position: { x: 3, y: 3 } });
+	await expect(featuredModels.nth(2)).toBeChecked();
 	await expect(featuredModels.nth(0)).not.toBeChecked();
 	await expect(featuredCards.nth(0).locator("svg.lucide-check")).toHaveCSS("opacity", "0");
-	await expect(featuredCards.nth(1).locator("svg.lucide-check")).toHaveCSS("opacity", "1");
+	await expect(featuredCards.nth(2).locator("svg.lucide-check")).toHaveCSS("opacity", "1");
+	await featuredCards.nth(3).click({ position: { x: 3, y: 3 } });
+	await expect(featuredModels.nth(3)).toBeChecked();
+	await expect(featuredModels.nth(2)).not.toBeChecked();
 	expect(
 		await featuredCards.evaluateAll((cards) =>
 			cards.map((card) => {
@@ -3932,25 +3976,25 @@ test("deploy managed model picker preserves featured and overflow order and subm
 
 	await expect(overflowModels).toContainText("More models");
 	await overflowModels.click();
-	await expect(page.getByRole("option")).toHaveCount(3);
-	await expect(page.getByRole("option").nth(0)).toContainText("Future model");
+	await expect(page.getByRole("option")).toHaveCount(6);
+	await expect(page.getByRole("option").nth(0)).toContainText("GPT-5.5");
 	await expect(page.getByRole("option").nth(0).getByText("O", { exact: true })).toBeVisible();
-	await expect(page.getByRole("option").nth(1)).toContainText("GPT-5.6-Luna");
+	await expect(page.getByRole("option").nth(1)).toContainText("GPT-5.4");
 	await expect(page.getByRole("option").nth(1).getByText("O", { exact: true })).toBeVisible();
-	await expect(page.getByRole("option").nth(1)).toContainText("Fast and affordable.");
-	await expect(page.getByRole("option").nth(2)).toContainText("GPT-5.6-Terra");
-	await expect(page.getByRole("option").nth(2)).toContainText("Balanced for everyday work.");
-	await page.getByRole("option", { name: "Future model" }).click();
-	await overflowModels.click();
-	await page.getByRole("option", { name: /GPT-5.6-Terra/ }).click();
-	await expect(overflowModels.locator('[data-slot="select-value"]')).toHaveText("GPT-5.6-Terra");
+	await expect(page.getByRole("option").nth(1)).toContainText(
+		"Balanced cost for coding and tools.",
+	);
+	await expect(page.getByRole("option").nth(2)).toContainText("GPT-5.4-Mini");
+	await expect(page.getByRole("option").nth(2)).toContainText("Low cost for lighter coding work.");
+	await page.getByRole("option").nth(1).click();
+	await expect(overflowModels.locator('[data-slot="select-value"]')).toHaveText("GPT-5.4");
 	await expect(featuredModels.nth(0)).not.toBeChecked();
 	await page.getByRole("button", { name: "Deploy", exact: true }).click();
 	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
 
 	expect(JSON.parse(createDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
 		primary_model: {
-			model: "gpt-5.6-terra",
+			model: "gpt-5.4",
 		},
 	});
 });
@@ -4130,7 +4174,7 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 	await expect(agentModels).toHaveAccessibleName("Main model");
 	const agentModelChoice = agentModels.getByRole("radio", { name: "GPT-5.6-Luna" });
 	await expect(agentModelChoice).toBeChecked();
-	await expect(agentModels).toContainText("Fast and affordable.");
+	await expect(agentModels).toContainText("Low cost for routine work.");
 	await expect(page.locator("#agent-primary-model")).toHaveCount(0);
 	const agentModelFrame = await agentModels.evaluate((element) => {
 		const frame = element.closest('div[data-hosted="true"][data-v2="true"]');
