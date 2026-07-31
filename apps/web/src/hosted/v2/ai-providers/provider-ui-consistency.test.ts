@@ -2,26 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { PROVIDER_BRAND_ICON_IDS } from "@/components/entity-brand-icon-ids";
 import { providerBrandIcon } from "@/components/entity-brand-icons";
 import { EntityIcon } from "@/components/entity-icon";
-
-const BRANDED_PROVIDER_IDS = [
-	"anthropic",
-	"deepseek",
-	"gemini",
-	"grok",
-	"groq",
-	"kimi",
-	"minimax",
-	"mistral",
-	"openai",
-	"openrouter",
-	"qwen",
-	"stepfun",
-	"together",
-	"xai",
-	"zhipu",
-] as const;
 
 describe("AI provider icon coverage", () => {
 	test("imports official leaf components without the compounded root or broad SSR transform", () => {
@@ -39,15 +22,15 @@ describe("AI provider icon coverage", () => {
 	});
 
 	test("renders every current branded provider through the official LobeHub React API", () => {
-		for (const id of BRANDED_PROVIDER_IDS) {
+		for (const id of PROVIDER_BRAND_ICON_IDS) {
 			const brand = providerBrandIcon(id);
 			expect(brand).toBeDefined();
 			const markup = renderToStaticMarkup(createElement(EntityIcon, { kind: "provider", id }));
 			expect(markup).toContain("<svg");
 			expect(markup).toContain('data-icon-source="lobehub"');
 			expect(markup).toContain(`aria-label="${brand?.label}"`);
-			expect(markup).toContain('width="72%"');
-			expect(markup).toContain('height="72%"');
+			expect(markup).toContain('width="84%"');
+			expect(markup).toContain('height="84%"');
 			expect(markup).not.toContain("<img");
 		}
 	});
