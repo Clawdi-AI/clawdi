@@ -964,6 +964,14 @@ type HostedApiStubOptions = {
 	planChangeResponses?: unknown[];
 	planQuoteRequests?: string[];
 	planQuoteResponses?: unknown[];
+	providerAcceptRequests?: string[];
+	providerAcceptResponses?: StubResponse[];
+	providerDraftTestRequests?: string[];
+	providerDraftTestResponses?: StubResponse[];
+	providerOAuthStartRequests?: string[];
+	providerOAuthStartResponses?: StubResponse[];
+	providerPatchRequests?: string[];
+	providerPatchResponses?: StubResponse[];
 	providerTestRequests?: string[];
 	restartRequests?: string[];
 	runtimeUiRedemptionRequests?: string[];
@@ -1634,6 +1642,42 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p === "/v1/ai-providers") {
 			return fulfillJson(r, { providers: options.aiProviders ?? [] });
 		}
+		if (p === "/v1/ai-providers/accept" && r.request().method() === "POST") {
+			options.providerAcceptRequests?.push(r.request().postData() ?? "");
+			const response = options.providerAcceptResponses?.shift() ?? {
+				status: 500,
+				body: { detail: "No provider accept response configured" },
+			};
+			return fulfillJson(r, response.body, response.status);
+		}
+		if (p.match(/^\/v1\/ai-providers\/[^/]+$/) && r.request().method() === "PATCH") {
+			options.providerPatchRequests?.push(r.request().postData() ?? "");
+			const response = options.providerPatchResponses?.shift() ?? {
+				status: 200,
+				body: deepSeekProvider,
+			};
+			return fulfillJson(r, response.body, response.status);
+		}
+		if (p === "/v1/ai-providers/test" && r.request().method() === "POST") {
+			options.providerDraftTestRequests?.push(r.request().postData() ?? "");
+			const response = options.providerDraftTestResponses?.shift() ?? {
+				status: 200,
+				body: { ok: true, readiness: deepSeekProvider.readiness, error: null },
+			};
+			if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+			return fulfillJson(r, response.body, response.status);
+		}
+		if (
+			p.match(/^\/v1\/ai-providers\/[^/]+\/auth\/oauth\/device\/start$/) &&
+			r.request().method() === "POST"
+		) {
+			options.providerOAuthStartRequests?.push(r.request().postData() ?? "");
+			const response = options.providerOAuthStartResponses?.shift() ?? {
+				status: 500,
+				body: { detail: "No provider OAuth response configured" },
+			};
+			return fulfillJson(r, response.body, response.status);
+		}
 		if (p.match(/^\/v1\/ai-providers\/[^/]+\/test$/) && r.request().method() === "POST") {
 			options.providerTestRequests?.push(r.request().url());
 			return fulfillJson(r, {
@@ -2235,16 +2279,54 @@ test("deploy keeps AI providers expanded and provider selection exclusive", asyn
 });
 
 test("AI Providers preserves provider identity and keeps technical details progressive", async ({
+	context,
 	page,
-}) => {
+}, testInfo) => {
+	const providerAcceptRequests: string[] = [];
 	const providerTestRequests: string[] = [];
+	const providerDraftTestRequests: string[] = [];
+	const providerPatchRequests: string[] = [];
 	await page.setViewportSize({ width: 390, height: 844 });
 	await stubHostedApi(page, {
 		aiProviders: [deepSeekProvider, deepSeekProxyProvider],
 		deployments: [],
+		providerAcceptRequests,
+		providerAcceptResponses: [
+			{
+				status: 503,
+				body: { detail: "upstream tenant=internal replacement_key=must-not-render" },
+			},
+			{
+				status: 200,
+				body: { status: "ready", provider: deepSeekProvider },
+			},
+		],
+		providerDraftTestRequests,
+		providerDraftTestResponses: [
+			{
+				status: 200,
+				delayMs: 1_000,
+				body: {
+					ok: false,
+					readiness: deepSeekProvider.readiness,
+					error: {
+						category: "authentication",
+						code: "invalid_api_key",
+						message: "upstream tenant=internal api_key=must-not-render",
+						retryable: false,
+					},
+				},
+			},
+			{
+				status: 200,
+				body: { ok: true, readiness: deepSeekProvider.readiness, error: null },
+			},
+		],
+		providerPatchRequests,
 		providerTestRequests,
 	});
 	await page.goto("/ai-providers");
+	await context.grantPermissions(["clipboard-read", "clipboard-write"]);
 
 	const main = page.locator("main");
 	await expect(main.getByRole("heading", { name: "AI Providers", level: 1 })).toBeVisible();
@@ -2289,6 +2371,17 @@ test("AI Providers preserves provider identity and keeps technical details progr
 
 	await main.getByRole("button", { name: "Edit Research DeepSeek" }).click();
 	const editDialog = page.getByRole("dialog", { name: "Edit provider" });
+	const savedApiKey = editDialog.getByRole("textbox", { name: "API key", exact: true });
+	await expect(savedApiKey).toHaveAttribute("type", "password");
+	await expect(savedApiKey).toHaveValue("");
+	await expect(savedApiKey).toHaveAttribute("placeholder", "Leave blank to keep current key");
+	await expect(
+		editDialog.getByText("Leave blank to keep the current key.", { exact: true }),
+	).toBeVisible();
+	await editDialog.getByRole("button", { name: "Show API key" }).click();
+	await expect(savedApiKey).toHaveAttribute("type", "text");
+	await editDialog.getByRole("button", { name: "Hide API key" }).click();
+	await expect(savedApiKey).toHaveAttribute("type", "password");
 	const advanced = editDialog.locator("details");
 	await expect(advanced).not.toHaveAttribute("open", "");
 	await expect(editDialog.getByLabel("Base URL")).not.toBeVisible();
@@ -2296,7 +2389,38 @@ test("AI Providers preserves provider identity and keeps technical details progr
 	await expect(editDialog.getByLabel("Name")).toHaveValue("Research DeepSeek");
 	await expect(editDialog.getByLabel("Base URL")).toHaveValue("https://api.deepseek.com/v1");
 	await expect(editDialog.getByText("deepseek-primary", { exact: true })).toBeVisible();
-	await editDialog.getByRole("button", { name: "Cancel" }).click();
+	await editDialog.getByRole("button", { name: "Save settings", exact: true }).click();
+	await expect.poll(() => providerPatchRequests.length).toBe(1);
+	const preservedCredentialPatch = JSON.parse(providerPatchRequests[0] ?? "{}");
+	expect(preservedCredentialPatch).not.toHaveProperty("credential");
+	expect(preservedCredentialPatch).not.toHaveProperty("api_key");
+	await expect(editDialog).toHaveCount(0);
+
+	await main.getByRole("button", { name: "Edit Research DeepSeek" }).click();
+	const replacementDialog = page.getByRole("dialog", { name: "Edit provider" });
+	const replacementApiKey = replacementDialog.getByRole("textbox", {
+		name: "API key",
+		exact: true,
+	});
+	await replacementApiKey.fill("  replacement-key  ");
+	await replacementDialog.getByRole("button", { name: "Save settings", exact: true }).click();
+	await expect.poll(() => providerAcceptRequests.length).toBe(1);
+	const failedReplacement = page.locator("[data-sonner-toast]").filter({
+		hasText: "Couldn't save provider",
+	});
+	await expect(failedReplacement).toContainText("The service is having trouble right now.");
+	await expect(failedReplacement).not.toContainText("tenant=internal");
+	await expect(replacementDialog).toBeVisible();
+	await replacementDialog.getByRole("button", { name: "Save settings", exact: true }).click();
+	await expect.poll(() => providerAcceptRequests.length).toBe(2);
+	for (const request of providerAcceptRequests) {
+		expect(JSON.parse(request)).toMatchObject({
+			credential: { type: "api_key", value: "replacement-key" },
+			replace: true,
+		});
+	}
+	await expect(replacementDialog).toHaveCount(0);
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 7_000 });
 
 	await main.getByRole("button", { name: "Edit DeepSeek proxy" }).click();
 	const proxyEditDialog = page.getByRole("dialog", { name: "Edit provider" });
@@ -2309,14 +2433,75 @@ test("AI Providers preserves provider identity and keeps technical details progr
 	const chooserDialog = page.getByRole("dialog", { name: "Add a provider" });
 	await expect(chooserDialog.getByText("Providers", { exact: true })).toBeVisible();
 	await expect(chooserDialog.getByText("Popular", { exact: true })).toHaveCount(0);
-	await expect(chooserDialog.getByText("More providers", { exact: true })).toBeVisible();
+	await expect(chooserDialog.getByText("More providers", { exact: true })).toHaveCount(0);
+	await expect(chooserDialog.locator("details")).toHaveCount(0);
+	await expect(chooserDialog.locator('[data-slot="dialog-footer"]')).toHaveCount(0);
+	await expect(chooserDialog.getByRole("button", { name: "Close" })).toBeVisible();
+	const choiceGrid = chooserDialog.getByTestId("provider-choice-grid");
+	const choiceButtons = choiceGrid.locator(":scope > button");
+	await expect(choiceButtons).toHaveCount(17);
+	await expect(choiceButtons.locator("button, a, input, select, textarea")).toHaveCount(0);
+	await expect(chooserDialog.getByRole("button", { name: /^Custom endpoint/ })).toBeVisible();
 	const providerSearch = chooserDialog.getByRole("textbox", { name: "Search providers" });
+	const mobileOpenAiBox = await chooserDialog
+		.getByRole("button", { name: /^OpenAI/ })
+		.boundingBox();
+	const mobileAnthropicBox = await chooserDialog
+		.getByRole("button", { name: /^Anthropic/ })
+		.boundingBox();
+	expect(Math.abs((mobileOpenAiBox?.x ?? 0) - (mobileAnthropicBox?.x ?? 0))).toBeLessThanOrEqual(1);
+	expect(mobileAnthropicBox?.y ?? 0).toBeGreaterThan(mobileOpenAiBox?.y ?? 0);
+	const mobileScroll = await chooserDialog
+		.getByTestId("provider-dialog-body")
+		.evaluate((element) => ({
+			clientHeight: element.clientHeight,
+			scrollHeight: element.scrollHeight,
+		}));
+	expect(mobileScroll.scrollHeight).toBeGreaterThan(mobileScroll.clientHeight);
+	await chooserDialog.screenshot({
+		path:
+			process.env.PROVIDER_CHOOSER_MOBILE_SCREENSHOT_PATH ??
+			testInfo.outputPath("provider-chooser-mobile.png"),
+	});
+
+	await page.setViewportSize({ width: 1000, height: 800 });
+	const desktopOpenAiBox = await chooserDialog
+		.getByRole("button", { name: /^OpenAI/ })
+		.boundingBox();
+	const desktopAnthropicBox = await chooserDialog
+		.getByRole("button", { name: /^Anthropic/ })
+		.boundingBox();
+	expect(Math.abs((desktopOpenAiBox?.y ?? 0) - (desktopAnthropicBox?.y ?? 0))).toBeLessThanOrEqual(
+		1,
+	);
+	expect(desktopAnthropicBox?.x ?? 0).toBeGreaterThan(desktopOpenAiBox?.x ?? 0);
+	await chooserDialog.screenshot({
+		path:
+			process.env.PROVIDER_CHOOSER_DESKTOP_SCREENSHOT_PATH ??
+			testInfo.outputPath("provider-chooser-desktop.png"),
+	});
+	await page.setViewportSize({ width: 390, height: 844 });
+
+	await providerSearch.focus();
+	await page.keyboard.press("Tab");
+	await expect(chooserDialog.getByRole("button", { name: /^OpenAI/ })).toBeFocused();
+	await providerSearch.focus();
 	await providerSearch.fill("Moonshot");
 	await expect(chooserDialog.getByRole("button", { name: /^Kimi API/ })).toBeVisible();
-	await providerSearch.fill("");
+	await chooserDialog.getByRole("button", { name: "Clear search" }).click();
+	await expect(choiceGrid.locator(":scope > button")).toHaveCount(17);
+	await providerSearch.fill("not-a-listed-provider");
+	const noMatchGrid = chooserDialog.getByTestId("provider-choice-grid");
+	await expect(noMatchGrid.locator(":scope > button")).toHaveCount(1);
+	await expect(noMatchGrid.getByRole("button", { name: /^Use a custom endpoint/ })).toBeVisible();
+	await chooserDialog.getByRole("button", { name: "Clear search" }).click();
 	await chooserDialog.getByRole("button", { name: /^DeepSeek/ }).click();
 	const presetDialog = page.getByRole("dialog");
 	await expect(presetDialog).toHaveAccessibleName("Set up DeepSeek");
+	await expect(presetDialog.getByRole("link", { name: /Get API key/ })).toHaveAttribute(
+		"href",
+		"https://platform.deepseek.com/api_keys",
+	);
 	const presetAdvanced = presetDialog.locator("details");
 	await expect(presetAdvanced).not.toHaveAttribute("open", "");
 	await expect(presetDialog.getByLabel("Name")).not.toBeVisible();
@@ -2324,6 +2509,42 @@ test("AI Providers preserves provider identity and keeps technical details progr
 	await presetDialog.getByLabel("Name").fill("Research DeepSeek East");
 	await expect(presetDialog).toHaveAccessibleName("Set up Research DeepSeek East");
 	await expect(presetDialog.getByText("deepseek", { exact: true })).toBeVisible();
+	const presetApiKey = presetDialog.getByRole("textbox", { name: "API key", exact: true });
+	await expect(presetApiKey).toHaveAttribute("type", "password");
+	await page.evaluate(() => navigator.clipboard.writeText("  pasted-key-with-whitespace  "));
+	await presetApiKey.focus();
+	await page.keyboard.press("Control+V");
+	await presetDialog.getByRole("button", { name: "Show API key" }).click();
+	await expect(presetApiKey).toHaveAttribute("type", "text");
+	await expect(presetApiKey).toHaveValue("  pasted-key-with-whitespace  ");
+	await presetDialog.getByRole("button", { name: "Hide API key" }).click();
+	await expect(presetApiKey).toHaveAttribute("type", "password");
+	await expect(presetDialog).not.toContainText("pasted-key-with-whitespace");
+	await expect(
+		presetDialog.getByRole("button", { name: "Add provider", exact: true }),
+	).toBeEnabled();
+	const draftTestButton = presetDialog.getByRole("button", {
+		name: "Test connection",
+		exact: true,
+	});
+	await draftTestButton.click();
+	await expect.poll(() => providerDraftTestRequests.length).toBe(1);
+	expect(JSON.parse(providerDraftTestRequests[0] ?? "{}")).toMatchObject({
+		credential: { type: "api_key", value: "pasted-key-with-whitespace" },
+	});
+	await expect(
+		presetDialog.getByText("The provider rejected the API key. Check it and try again.", {
+			exact: true,
+		}),
+	).toBeVisible();
+	await expect(presetDialog).not.toContainText("tenant=internal");
+	await draftTestButton.click();
+	await expect.poll(() => providerDraftTestRequests.length).toBe(2);
+	await expect(
+		presetDialog.getByText("Connection verified. The provider accepted the test request.", {
+			exact: true,
+		}),
+	).toBeVisible();
 	await presetDialog.getByRole("button", { name: "Back" }).click();
 	await expect(chooserDialog).toBeVisible();
 	await chooserDialog.getByRole("button", { name: /^Custom endpoint/ }).click();
@@ -2338,7 +2559,7 @@ test("AI Providers preserves provider identity and keeps technical details progr
 	await expect(customDialog.locator("details")).toHaveAttribute("open", "");
 	const customName = customDialog.getByLabel("Name");
 	await expect(customName).toHaveAttribute("required", "");
-	await customDialog.getByLabel("API key").fill("test-api-key");
+	await customDialog.getByRole("textbox", { name: "API key", exact: true }).fill("test-api-key");
 	await customDialog.getByLabel("Base URL").fill("https://proxy.example.com/v1");
 	await expect(
 		customDialog.getByRole("button", { name: "Add provider", exact: true }),
@@ -2348,6 +2569,171 @@ test("AI Providers preserves provider identity and keeps technical details progr
 	await expect(
 		customDialog.getByRole("button", { name: "Add provider", exact: true }),
 	).toBeEnabled();
+
+	const documentWidth = await page.evaluate(() => ({
+		clientWidth: document.documentElement.clientWidth,
+		scrollWidth: document.documentElement.scrollWidth,
+	}));
+	expect(documentWidth.scrollWidth).toBe(documentWidth.clientWidth);
+});
+
+test("AI Provider OAuth and destructive confirmations keep dialog semantics on mobile and desktop", async ({
+	page,
+}, testInfo) => {
+	const oauthProvider = {
+		...deepSeekProvider,
+		id: "row-openai-codex",
+		provider_id: "openai-codex",
+		type: "openai",
+		label: "ChatGPT (Codex)",
+		base_url: "https://api.openai.com/v1",
+		models: [{ id: "gpt-5.5", label: "GPT-5.5" }],
+		api_mode: "openai_responses",
+		auth: { type: "agent_profile", tool: "codex", profile: "default" },
+		runtime_env_name: null,
+	};
+	const providerAcceptRequests: string[] = [];
+	const providerOAuthStartRequests: string[] = [];
+	await page.setViewportSize({ width: 390, height: 844 });
+	await stubHostedApi(page, {
+		aiProviders: [oauthProvider],
+		deploymentsResponse: {
+			status: 403,
+			body: { detail: "internal deployment tenant=must-not-render" },
+		},
+		providerAcceptRequests,
+		providerAcceptResponses: [
+			{
+				status: 200,
+				body: {
+					status: "pending",
+					provider: oauthProvider,
+					authorization: {
+						flow: "device_code",
+						state: "expired-state",
+						verification_url: "https://auth.openai.com/codex/device",
+						user_code: "OLD-CODE",
+						expires_at: "2000-01-01T00:00:00Z",
+						poll_interval_seconds: 60,
+					},
+				},
+			},
+			{
+				status: 200,
+				body: {
+					status: "pending",
+					provider: oauthProvider,
+					authorization: {
+						flow: "device_code",
+						state: "replacement-state",
+						verification_url: "https://auth.openai.com/codex/device",
+						user_code: "NEW-CODE",
+						expires_at: "2099-01-01T00:00:00Z",
+						poll_interval_seconds: 60,
+					},
+				},
+			},
+		],
+		providerOAuthStartRequests,
+		providerOAuthStartResponses: [
+			{
+				status: 200,
+				body: {
+					state: "reconnect-state",
+					verification_url: "https://auth.openai.com/codex/device",
+					user_code: "RECONNECT",
+					expires_at: "2099-01-01T00:00:00Z",
+					poll_interval_seconds: 60,
+				},
+			},
+		],
+	});
+	await page.goto("/ai-providers");
+
+	const main = page.locator("main");
+	await main.getByRole("button", { name: "Edit ChatGPT (Codex)", exact: true }).click();
+	const editDialog = page.getByRole("dialog", { name: "Edit provider" });
+	await expect(editDialog.getByText("ChatGPT sign-in", { exact: true })).toBeVisible();
+	await expect(editDialog.locator('[data-slot="dialog-footer"]')).toBeVisible();
+	await editDialog.getByRole("button", { name: "Reconnect", exact: true }).click();
+	await expect.poll(() => providerOAuthStartRequests.length).toBe(1);
+	const reconnectDialog = page.getByRole("dialog", { name: "Sign in with ChatGPT" });
+	await expect(reconnectDialog.getByText("RECONNECT", { exact: true })).toBeVisible();
+	await expect(
+		reconnectDialog.getByRole("link", { name: /Open ChatGPT and enter code/ }),
+	).toHaveAttribute("href", "https://auth.openai.com/codex/device");
+	await expect(
+		reconnectDialog.getByText("Waiting for ChatGPT authorization…", { exact: true }),
+	).toBeVisible();
+	await reconnectDialog.screenshot({
+		path:
+			process.env.PROVIDER_OAUTH_MOBILE_SCREENSHOT_PATH ??
+			testInfo.outputPath("provider-oauth-mobile.png"),
+	});
+	await reconnectDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+
+	await main.getByRole("button", { name: "Add provider", exact: true }).click();
+	const chooserDialog = page.getByRole("dialog", { name: "Add a provider" });
+	await chooserDialog.getByRole("button", { name: /^OpenAI/ }).click();
+	const configureDialog = page.getByRole("dialog");
+	await expect(configureDialog).toHaveAccessibleName("Set up OpenAI");
+	const apiKeyAuth = configureDialog.getByRole("button", { name: /^Sign in with an API key/ });
+	const chatGptAuth = configureDialog.getByRole("button", { name: /^Sign in with ChatGPT/ });
+	await expect(apiKeyAuth).toHaveAttribute("aria-pressed", "true");
+	await expect(chatGptAuth).toHaveAttribute("aria-pressed", "false");
+	const openAiApiKey = configureDialog.getByRole("textbox", { name: "API key", exact: true });
+	await configureDialog.getByRole("button", { name: "Show API key" }).click();
+	await expect(openAiApiKey).toHaveAttribute("type", "text");
+	await chatGptAuth.click();
+	await expect(chatGptAuth).toHaveAttribute("aria-pressed", "true");
+	await expect(apiKeyAuth).toHaveAttribute("aria-pressed", "false");
+	await apiKeyAuth.click();
+	await expect(openAiApiKey).toHaveAttribute("type", "password");
+	await chatGptAuth.click();
+	await configureDialog.getByRole("button", { name: "Continue to ChatGPT", exact: true }).click();
+	await expect.poll(() => providerAcceptRequests.length).toBe(1);
+	expect(JSON.parse(providerAcceptRequests[0] ?? "{}")).toMatchObject({
+		credential: { type: "oauth", provider: "codex", flow: "device_code" },
+		replace: false,
+	});
+
+	const oauthDialog = page.getByRole("dialog", { name: "Sign in with ChatGPT" });
+	await expect(
+		oauthDialog.getByText("This code expired. Start again for a new code.", { exact: true }),
+	).toBeVisible();
+	await oauthDialog.getByRole("button", { name: "Get a new code", exact: true }).click();
+	await expect.poll(() => providerAcceptRequests.length).toBe(2);
+	await expect(oauthDialog.getByText("NEW-CODE", { exact: true })).toBeVisible();
+	await expect(
+		oauthDialog.getByText("Waiting for ChatGPT authorization…", { exact: true }),
+	).toBeVisible();
+	await page.setViewportSize({ width: 1000, height: 800 });
+	await oauthDialog.screenshot({
+		path:
+			process.env.PROVIDER_OAUTH_DESKTOP_SCREENSHOT_PATH ??
+			testInfo.outputPath("provider-oauth-desktop.png"),
+	});
+	await page.keyboard.press("Escape");
+	await expect(oauthDialog).toHaveCount(0);
+
+	await page.setViewportSize({ width: 390, height: 844 });
+	await main.getByRole("button", { name: "Remove ChatGPT (Codex)", exact: true }).click();
+	const removeDialog = page.getByRole("alertdialog", { name: "Remove ChatGPT (Codex)?" });
+	await expect(removeDialog).not.toContainText("tenant=must-not-render");
+	await expect(
+		removeDialog.getByText(/couldn't check whether any agents use this provider/i),
+	).toBeVisible();
+	const acknowledgement = removeDialog.getByRole("checkbox", {
+		name: /affected agents will lose model access/i,
+	});
+	const removeProvider = removeDialog.getByRole("button", {
+		name: "Remove provider",
+		exact: true,
+	});
+	await expect(removeProvider).toBeDisabled();
+	await acknowledgement.check();
+	await expect(removeProvider).toBeEnabled();
+	await removeDialog.getByRole("button", { name: "Cancel", exact: true }).click();
 
 	const documentWidth = await page.evaluate(() => ({
 		clientWidth: document.documentElement.clientWidth,
