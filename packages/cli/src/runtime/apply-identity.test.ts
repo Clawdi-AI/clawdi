@@ -1,25 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-	HOSTED_RUNTIME_APPLY_IDENTITY_FILE,
 	readRuntimeApplyContext,
 	readRuntimeApplyIdentity,
-	readRuntimeApplyIdentityFromEnv,
 	resolveRuntimeApplyGeneration,
+	runtimeApplyContextServiceEnvironment,
 	runtimeApplyIdentitiesEqual,
-	runtimeApplyIdentityEnvironment,
-	runtimeApplyIdentityServiceEnvironment,
 } from "./apply-identity";
-import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
-
-const completeEnvironment = {
-	CLAWDI_RUNTIME_GENERATION: "7",
-	CLAWDI_RUNTIME_MANIFEST_ETAG: '"manifest-7"',
-	CLAWDI_RUNTIME_APPLY_RECEIPT_ID: "apply-receipt-0007",
-	CLAWDI_RUNTIME_BOOT_NONCE: "boot-nonce-000007",
-};
 
 const roots: string[] = [];
 
@@ -27,286 +16,116 @@ afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("runtime apply identity environment", () => {
-	test("resolves explicit apply identity with one named legacy checkpoint fallback", () => {
-		expect(resolveRuntimeApplyGeneration({ generation: 2, applyGeneration: 1 })).toBe(1);
-		expect(resolveRuntimeApplyGeneration({ generation: 2, applyGeneration: 3 })).toBe(3);
-		expect(resolveRuntimeApplyGeneration({ generation: 2 })).toBe(2);
-	});
-
-	test("projects apply identity independently of checkpoint generation", () => {
-		const generation = resolveRuntimeApplyGeneration({ generation: 2, applyGeneration: 3 });
-		expect(
-			runtimeApplyIdentityEnvironment({
-				generation,
-				manifestETag: '"manifest-3"',
-				applyReceiptId: "apply-receipt-0003",
-				bootNonce: "boot-nonce-000003",
-			}),
-		).toEqual({
-			CLAWDI_RUNTIME_GENERATION: "3",
-			CLAWDI_RUNTIME_MANIFEST_ETAG: '"manifest-3"',
-			CLAWDI_RUNTIME_APPLY_RECEIPT_ID: "apply-receipt-0003",
-			CLAWDI_RUNTIME_BOOT_NONCE: "boot-nonce-000003",
-		});
-	});
-
-	test("compares the complete four-field identity tuple", () => {
-		const identity = readRuntimeApplyIdentityFromEnv(completeEnvironment);
-		if (!identity) throw new Error("expected complete apply identity");
-		expect(runtimeApplyIdentitiesEqual(identity, { ...identity })).toBe(true);
-		for (const different of [
-			{ ...identity, generation: identity.generation + 1 },
-			{ ...identity, manifestETag: '"manifest-8"' },
-			{ ...identity, applyReceiptId: "apply-receipt-0008" },
-			{ ...identity, bootNonce: "boot-nonce-000008" },
-		]) {
-			expect(runtimeApplyIdentitiesEqual(identity, different)).toBe(false);
-		}
-		expect(runtimeApplyIdentitiesEqual(identity, null)).toBe(false);
-		expect(runtimeApplyIdentitiesEqual(null, identity)).toBe(false);
-		expect(runtimeApplyIdentitiesEqual(null, null)).toBe(true);
-	});
-
-	test("returns null when the entire tuple is absent", () => {
-		expect(readRuntimeApplyIdentityFromEnv({})).toBeNull();
-	});
-
-	test("reads only the complete canonical four-variable tuple", () => {
-		const identity = readRuntimeApplyIdentityFromEnv(completeEnvironment);
-		expect(identity).toEqual({
-			generation: 7,
-			manifestETag: '"manifest-7"',
-			applyReceiptId: "apply-receipt-0007",
-			bootNonce: "boot-nonce-000007",
-		});
-		expect(runtimeApplyIdentityEnvironment(identity)).toEqual(completeEnvironment);
-	});
-
-	test("rejects partial, non-canonical, and unsafe tuples", () => {
-		expect(() =>
-			readRuntimeApplyIdentityFromEnv({
-				CLAWDI_RUNTIME_GENERATION: "7",
-			}),
-		).toThrow(/incomplete runtime apply identity environment/);
-		expect(() =>
-			readRuntimeApplyIdentityFromEnv({
-				...completeEnvironment,
-				CLAWDI_RUNTIME_GENERATION: "07",
-			}),
-		).toThrow(/canonical positive integer/);
-		expect(() =>
-			readRuntimeApplyIdentityFromEnv({
-				...completeEnvironment,
-				CLAWDI_RUNTIME_MANIFEST_ETAG: ' "manifest-7"',
-			}),
-		).toThrow(/surrounding whitespace/);
-		expect(() =>
-			readRuntimeApplyIdentityFromEnv({
-				...completeEnvironment,
-				CLAWDI_RUNTIME_GENERATION: String(Number.MAX_SAFE_INTEGER + 1),
-			}),
-		).toThrow(/invalid runtime apply identity environment/);
-	});
-});
-
-describe("runtime apply identity file", () => {
-	test("uses the hosted filesystem ABI by default", () => {
-		expect(HOSTED_RUNTIME_APPLY_IDENTITY_FILE).toBe(
-			"/etc/clawdi/runtime-identity/runtime-apply-identity.json",
-		);
-	});
-
-	test("reads the complete canonical tuple from the configured file", () => {
-		const root = mkdtempSync(join(tmpdir(), "clawdi-apply-identity-"));
-		roots.push(root);
-		const path = join(root, "runtime-apply-identity.json");
-		writeFileSync(
-			path,
-			JSON.stringify({
-				schemaVersion: "clawdi.runtimeApplyIdentity.v1",
-				generation: 8,
-				manifestETag: '"manifest-8"',
-				applyReceiptId: "apply-receipt-0008",
-				bootNonce: "boot-nonce-000007",
-				runtimeEnv: {
-					CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
-					CLAWDI_RUNTIME_MANIFEST_URL: "https://runtime.test/v1/runtime/manifest",
-					CLAWDI_AUTH_TOKEN: "runtime-auth-token-0008",
-					OPENCLAW_GATEWAY_TOKEN: "gateway-token-0008",
-				},
-			}),
-		);
-
-		expect(
-			readRuntimeApplyIdentity({
-				CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: path,
-				...completeEnvironment,
-			}),
-		).toEqual({
+function identityFile(root: string): string {
+	const path = join(root, "runtime-apply-identity.json");
+	writeFileSync(
+		path,
+		JSON.stringify({
+			schemaVersion: "clawdi.runtimeApplyIdentity.v1",
 			generation: 8,
 			manifestETag: '"manifest-8"',
 			applyReceiptId: "apply-receipt-0008",
-			bootNonce: "boot-nonce-000007",
-		});
-		expect(
-			readRuntimeApplyContext({
-				CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: path,
-				...completeEnvironment,
-			}),
-		).toEqual({
-			kind: "identity-file",
-			identity: {
-				generation: 8,
-				manifestETag: '"manifest-8"',
-				applyReceiptId: "apply-receipt-0008",
-				bootNonce: "boot-nonce-000007",
+			bootNonce: "boot-nonce-000008",
+			runtimeEnv: {
+				CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
+				CLAWDI_AUTH_TOKEN: "runtime-auth-token-0008",
+				OPENCLAW_GATEWAY_TOKEN: "gateway-token-0008",
 			},
-			runtimeEnvironment: {
-				kind: "projected-environment",
-				values: {
-					CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
-					CLAWDI_RUNTIME_MANIFEST_URL: "https://runtime.test/v1/runtime/manifest",
-					CLAWDI_AUTH_TOKEN: "runtime-auth-token-0008",
-					OPENCLAW_GATEWAY_TOKEN: "gateway-token-0008",
-				},
-			},
-			sourcePath: path,
-		});
-		expect(
-			runtimeApplyIdentityServiceEnvironment({
-				CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: path,
-				...completeEnvironment,
-			}),
-		).toEqual({ CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: path });
+		}),
+	);
+	return path;
+}
+
+describe("runtime apply identity", () => {
+	test("resolves the manifest apply generation and compares the complete tuple", () => {
+		expect(resolveRuntimeApplyGeneration({ generation: 2, applyGeneration: 1 })).toBe(1);
+		expect(resolveRuntimeApplyGeneration({ generation: 2 })).toBe(2);
+		const identity = {
+			generation: 8,
+			manifestETag: '"manifest-8"',
+			applyReceiptId: "apply-receipt-0008",
+			bootNonce: "boot-nonce-000008",
+		};
+		expect(runtimeApplyIdentitiesEqual(identity, { ...identity })).toBe(true);
+		for (const different of [
+			{ ...identity, generation: 9 },
+			{ ...identity, manifestETag: '"manifest-9"' },
+			{ ...identity, applyReceiptId: "apply-receipt-0009" },
+			{ ...identity, bootNonce: "boot-nonce-000009" },
+		]) {
+			expect(runtimeApplyIdentitiesEqual(identity, different)).toBe(false);
+		}
+		expect(runtimeApplyIdentitiesEqual(null, null)).toBe(true);
+		expect(runtimeApplyIdentitiesEqual(identity, null)).toBe(false);
 	});
 
-	test("fails closed instead of falling back when the configured file is unavailable or invalid", () => {
-		const root = mkdtempSync(join(tmpdir(), "clawdi-apply-identity-invalid-"));
+	test("reads identity and projected environment from an explicit file", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-apply-identity-"));
 		roots.push(root);
-		const missing = join(root, "missing.json");
-		expect(() =>
-			readRuntimeApplyIdentity({
-				CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: missing,
-				...completeEnvironment,
-			}),
-		).toThrow(/could not read runtime apply identity file/);
-
-		const invalid = join(root, "invalid.json");
-		writeFileSync(invalid, JSON.stringify({ generation: 8 }));
-		expect(() =>
-			readRuntimeApplyIdentity({
-				CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: invalid,
-				...completeEnvironment,
-			}),
-		).toThrow(/invalid runtime apply identity file/);
-
-		writeFileSync(
-			invalid,
-			JSON.stringify({
-				schemaVersion: "clawdi.runtimeApplyIdentity.v1",
+		const path = identityFile(root);
+		const context = readRuntimeApplyContext({ CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: path });
+		expect(context).toEqual({
+			kind: "identity-file",
+			identity: {
 				generation: 8,
 				manifestETag: '"manifest-8"',
 				applyReceiptId: "apply-receipt-0008",
 				bootNonce: "boot-nonce-000008",
-				runtimeEnv: { "INVALID-NAME": " secret" },
-			}),
-		);
-		expect(() =>
-			readRuntimeApplyIdentity({
-				CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: invalid,
-				...completeEnvironment,
-			}),
-		).toThrow(/invalid runtime apply identity file/);
-		expect(() =>
-			readRuntimeApplyIdentity({
-				CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: "relative.json",
-				...completeEnvironment,
-			}),
-		).toThrow(/canonical absolute path/);
-	});
-
-	test("uses the legacy environment only when no file path is configured", () => {
-		const missingDiscoveryPath = join(tmpdir(), "clawdi-missing-runtime-apply-identity.json");
-		expect(readRuntimeApplyIdentity(completeEnvironment, missingDiscoveryPath)).toEqual(
-			readRuntimeApplyIdentityFromEnv(completeEnvironment),
-		);
-		expect(readRuntimeApplyContext(completeEnvironment, missingDiscoveryPath)).toMatchObject({
-			kind: "legacy-hosted-bootstrap-bridge",
-			runtimeEnvironment: {
-				kind: "process-environment",
-				values: completeEnvironment,
 			},
-		});
-	});
-
-	test("discovers the canonical mount before consulting the legacy environment", () => {
-		const root = mkdtempSync(join(tmpdir(), "clawdi-discovered-apply-identity-"));
-		roots.push(root);
-		const discovered = join(root, "runtime-apply-identity.json");
-		writeFileSync(
-			discovered,
-			JSON.stringify({
-				schemaVersion: "clawdi.runtimeApplyIdentity.v1",
-				generation: 9,
-				manifestETag: '"manifest-9"',
-				applyReceiptId: "apply-receipt-0009",
-				bootNonce: "boot-nonce-000009",
-				runtimeEnv: {
-					CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
-					CLAWDI_AUTH_TOKEN: "discovered-token",
-					OPENCLAW_GATEWAY_TOKEN: "discovered-gateway-token",
-				},
-			}),
-		);
-
-		const context = readRuntimeApplyContext(
-			{ ...completeEnvironment, STALE_ONLY_PROCESS_TOKEN: "stale-process-token" },
-			discovered,
-		);
-		expect(context).toEqual({
-			kind: "identity-file",
-			identity: {
-				generation: 9,
-				manifestETag: '"manifest-9"',
-				applyReceiptId: "apply-receipt-0009",
-				bootNonce: "boot-nonce-000009",
-			},
+			sourcePath: path,
 			runtimeEnvironment: {
 				kind: "projected-environment",
 				values: {
 					CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
-					CLAWDI_AUTH_TOKEN: "discovered-token",
-					OPENCLAW_GATEWAY_TOKEN: "discovered-gateway-token",
+					CLAWDI_AUTH_TOKEN: "runtime-auth-token-0008",
+					OPENCLAW_GATEWAY_TOKEN: "gateway-token-0008",
 				},
 			},
-			sourcePath: discovered,
 		});
-		const clonedSecrets = {
-			...Object.fromEntries(
-				Object.entries(
-					normalizeSecretValues({
-						"env://OPENCLAW_GATEWAY_TOKEN": "discovered-gateway-token",
-					}),
-				),
-			),
-		};
-		expect(
-			runtimeSecretValue(clonedSecrets, "env://OPENCLAW_GATEWAY_TOKEN", context.runtimeEnvironment),
-		).toBe("discovered-gateway-token");
-		expect(
-			runtimeSecretValue(
-				clonedSecrets,
-				"env://STALE_ONLY_PROCESS_TOKEN",
-				context.runtimeEnvironment,
-			),
-		).toBeNull();
-		expect(runtimeApplyIdentityServiceEnvironment(completeEnvironment, discovered)).toEqual({
-			CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: discovered,
+		expect(readRuntimeApplyIdentity({ CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: path })).toEqual(
+			context.identity,
+		);
+		expect(runtimeApplyContextServiceEnvironment(context)).toEqual({
+			CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: path,
 		});
+	});
 
-		writeFileSync(discovered, JSON.stringify({ generation: 9 }));
-		expect(() => readRuntimeApplyContext(completeEnvironment, discovered)).toThrow(
+	test("discovers a supplied canonical mount path", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-discovered-apply-identity-"));
+		roots.push(root);
+		const path = identityFile(root);
+		expect(readRuntimeApplyContext({}, path).sourcePath).toBe(path);
+	});
+
+	test("fails closed for missing, malformed, or non-canonical files", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-invalid-apply-identity-"));
+		roots.push(root);
+		const missing = join(root, "missing.json");
+		expect(() => readRuntimeApplyContext({}, missing)).toThrow(
+			/missing runtime apply identity file/,
+		);
+		expect(() => readRuntimeApplyContext({ CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: missing })).toThrow(
+			/could not read runtime apply identity file/,
+		);
+
+		const invalid = join(root, "invalid.json");
+		writeFileSync(invalid, JSON.stringify({ generation: 8 }));
+		expect(() => readRuntimeApplyContext({ CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: invalid })).toThrow(
+			/invalid runtime apply identity file/,
+		);
+		expect(() =>
+			readRuntimeApplyContext({ CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: "relative.json" }),
+		).toThrow(/canonical absolute path/);
+	});
+
+	test("rejects invalid projected runtime environment values", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-invalid-runtime-env-"));
+		roots.push(root);
+		const path = identityFile(root);
+		const parsed = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+		parsed.runtimeEnv = { "INVALID-NAME": " secret" };
+		writeFileSync(path, JSON.stringify(parsed));
+		expect(() => readRuntimeApplyContext({ CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: path })).toThrow(
 			/invalid runtime apply identity file/,
 		);
 	});

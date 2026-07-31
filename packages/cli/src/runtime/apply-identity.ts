@@ -1,12 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import {
-	type ProcessRuntimeEnvironment,
-	type ProjectedRuntimeEnvironment,
-	processRuntimeEnvironment,
-	projectedRuntimeEnvironment,
-} from "./secret-values";
+import { type ProjectedRuntimeEnvironment, projectedRuntimeEnvironment } from "./secret-values";
 
 export const runtimeApplyIdentitySchema = z
 	.object({
@@ -19,7 +14,7 @@ export const runtimeApplyIdentitySchema = z
 
 export type RuntimeApplyIdentity = z.infer<typeof runtimeApplyIdentitySchema>;
 
-export interface RuntimeGenerationIdentity {
+interface RuntimeGenerationIdentity {
 	generation: number;
 	applyGeneration?: number;
 }
@@ -41,8 +36,8 @@ export function runtimeApplyIdentitiesEqual(
 	);
 }
 
-export const RUNTIME_APPLY_IDENTITY_FILE_ENV = "CLAWDI_RUNTIME_APPLY_IDENTITY_FILE";
-export const HOSTED_RUNTIME_APPLY_IDENTITY_FILE =
+const RUNTIME_APPLY_IDENTITY_FILE_ENV = "CLAWDI_RUNTIME_APPLY_IDENTITY_FILE";
+const HOSTED_RUNTIME_APPLY_IDENTITY_FILE =
 	"/etc/clawdi/runtime-identity/runtime-apply-identity.json";
 
 const runtimeProjectedEnvironmentSchema = z.record(
@@ -70,67 +65,17 @@ const runtimeApplyIdentityFileSchema = runtimeApplyIdentitySchema
 
 type RuntimeApplyIdentityFile = z.infer<typeof runtimeApplyIdentityFileSchema>;
 
-export type RuntimeApplyContext =
-	| {
-			kind: "legacy-hosted-bootstrap-bridge";
-			identity: RuntimeApplyIdentity | null;
-			runtimeEnvironment: ProcessRuntimeEnvironment;
-	  }
-	| {
-			kind: "identity-file";
-			identity: RuntimeApplyIdentity;
-			sourcePath: string;
-			runtimeEnvironment: ProjectedRuntimeEnvironment;
-	  };
-
-export const RUNTIME_APPLY_IDENTITY_ENV = {
-	generation: "CLAWDI_RUNTIME_GENERATION",
-	manifestETag: "CLAWDI_RUNTIME_MANIFEST_ETAG",
-	applyReceiptId: "CLAWDI_RUNTIME_APPLY_RECEIPT_ID",
-	bootNonce: "CLAWDI_RUNTIME_BOOT_NONCE",
-} as const;
-
-export function readRuntimeApplyIdentityFromEnv(
-	env: Readonly<Record<string, string | undefined>> = process.env,
-): RuntimeApplyIdentity | null {
-	const entries = Object.entries(RUNTIME_APPLY_IDENTITY_ENV) as Array<
-		[keyof RuntimeApplyIdentity, string]
-	>;
-	const present = entries.filter(([, name]) => env[name] !== undefined);
-	if (present.length === 0) return null;
-	if (present.length !== entries.length) {
-		const missing = entries.filter(([, name]) => env[name] === undefined).map(([, name]) => name);
-		throw new Error(
-			`incomplete runtime apply identity environment; missing: ${missing.join(", ")}`,
-		);
-	}
-
-	const generation = env[RUNTIME_APPLY_IDENTITY_ENV.generation];
-	if (!generation || !/^[1-9]\d*$/.test(generation)) {
-		throw new Error(
-			`${RUNTIME_APPLY_IDENTITY_ENV.generation} must be a canonical positive integer`,
-		);
-	}
-	const parsed = runtimeApplyIdentitySchema.safeParse({
-		generation: Number(generation),
-		manifestETag: env[RUNTIME_APPLY_IDENTITY_ENV.manifestETag],
-		applyReceiptId: env[RUNTIME_APPLY_IDENTITY_ENV.applyReceiptId],
-		bootNonce: env[RUNTIME_APPLY_IDENTITY_ENV.bootNonce],
-	});
-	if (!parsed.success) {
-		throw new Error(
-			`invalid runtime apply identity environment: ${parsed.error.issues
-				.map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-				.join("; ")}`,
-		);
-	}
-	return parsed.data;
+export interface RuntimeApplyContext {
+	kind: "identity-file";
+	identity: RuntimeApplyIdentity;
+	sourcePath: string;
+	runtimeEnvironment: ProjectedRuntimeEnvironment;
 }
 
 export function readRuntimeApplyIdentity(
 	env: Readonly<Record<string, string | undefined>> = process.env,
 	discoveryPath: string = HOSTED_RUNTIME_APPLY_IDENTITY_FILE,
-): RuntimeApplyIdentity | null {
+): RuntimeApplyIdentity {
 	return readRuntimeApplyContext(env, discoveryPath).identity;
 }
 
@@ -139,13 +84,6 @@ export function readRuntimeApplyContext(
 	discoveryPath: string = HOSTED_RUNTIME_APPLY_IDENTITY_FILE,
 ): RuntimeApplyContext {
 	const configuredPath = configuredRuntimeApplyIdentityPath(env, discoveryPath);
-	if (configuredPath === null) {
-		return {
-			kind: "legacy-hosted-bootstrap-bridge",
-			identity: readRuntimeApplyIdentityFromEnv(env),
-			runtimeEnvironment: processRuntimeEnvironment(env),
-		};
-	}
 	const parsed = readRuntimeApplyIdentityFile(configuredPath);
 	const { schemaVersion: _schemaVersion, runtimeEnv, ...identity } = parsed;
 	return {
@@ -178,42 +116,22 @@ function readRuntimeApplyIdentityFile(configuredPath: string): RuntimeApplyIdent
 	return parsed.data;
 }
 
-export function runtimeApplyIdentityEnvironment(
-	identity: RuntimeApplyIdentity | null,
-): Record<string, string> {
-	if (!identity) return {};
-	return {
-		[RUNTIME_APPLY_IDENTITY_ENV.generation]: String(identity.generation),
-		[RUNTIME_APPLY_IDENTITY_ENV.manifestETag]: identity.manifestETag,
-		[RUNTIME_APPLY_IDENTITY_ENV.applyReceiptId]: identity.applyReceiptId,
-		[RUNTIME_APPLY_IDENTITY_ENV.bootNonce]: identity.bootNonce,
-	};
-}
-
-export function runtimeApplyIdentityServiceEnvironment(
-	env: Readonly<Record<string, string | undefined>> = process.env,
-	discoveryPath: string = HOSTED_RUNTIME_APPLY_IDENTITY_FILE,
-): Record<string, string> {
-	return runtimeApplyContextServiceEnvironment(readRuntimeApplyContext(env, discoveryPath));
-}
-
 export function runtimeApplyContextServiceEnvironment(
 	context: RuntimeApplyContext,
 ): Record<string, string> {
-	if (context.kind === "identity-file") {
-		return { [RUNTIME_APPLY_IDENTITY_FILE_ENV]: context.sourcePath };
-	}
-	return runtimeApplyIdentityEnvironment(context.identity);
+	return { [RUNTIME_APPLY_IDENTITY_FILE_ENV]: context.sourcePath };
 }
 
 function configuredRuntimeApplyIdentityPath(
 	env: Readonly<Record<string, string | undefined>>,
 	discoveryPath: string,
-): string | null {
+): string {
 	const explicitPath = env[RUNTIME_APPLY_IDENTITY_FILE_ENV];
 	const configuredPath =
 		explicitPath !== undefined ? explicitPath : existsSync(discoveryPath) ? discoveryPath : null;
-	if (configuredPath === null) return null;
+	if (configuredPath === null) {
+		throw new Error(`missing runtime apply identity file ${discoveryPath}`);
+	}
 	if (!configuredPath || configuredPath !== configuredPath.trim() || !isAbsolute(configuredPath)) {
 		throw new Error(`${RUNTIME_APPLY_IDENTITY_FILE_ENV} must be a canonical absolute path`);
 	}

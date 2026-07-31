@@ -32,7 +32,7 @@ import {
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
 } from "../src/runtime/applied-state";
-import { readRuntimeApplyIdentityFromEnv } from "../src/runtime/apply-identity";
+import { readRuntimeApplyContext } from "../src/runtime/apply-identity";
 import { runtimeAuthEnvName } from "../src/runtime/auth-token";
 import {
 	applyRuntimeBundleChannelsToManifestLoad as applyRuntimeBundleChannelsToManifestLoadWithContext,
@@ -53,11 +53,11 @@ import {
 	hostedManifestEgressProfiles,
 	managedMcpHeaderPlaceholder,
 } from "../src/runtime/hosted-egress-profiles";
+import { hostedAiProviderCatalog } from "../src/runtime/hosted-provider-resolution";
 import { releaseManagedSkill, reserveManagedSkill } from "../src/runtime/managed-skill-reservation";
 import {
 	buildOpenClawHostedProviderPatch,
 	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
-	hostedAiProviderCatalog,
 	loadRuntimeManifest,
 	type RuntimeConvergenceResult,
 	type RuntimeManifest,
@@ -74,7 +74,7 @@ import {
 import { readHostedRuntimeObserved } from "../src/runtime/observed";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../src/runtime/paths";
 import { buildRuntimeRunConfig } from "../src/runtime/run-config";
-import { normalizeSecretValues, processRuntimeEnvironment } from "../src/runtime/secret-values";
+import { normalizeSecretValues, projectedRuntimeEnvironment } from "../src/runtime/secret-values";
 import {
 	buildRuntimeBootStatus,
 	writeRuntimeBootStatus,
@@ -83,11 +83,25 @@ import {
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "../src/runtime/systemd-user";
 import { mockFetch } from "./commands/helpers";
 
-function explicitTestApplyContext() {
+function explicitTestApplyContext(
+	manifest: Pick<RuntimeManifest, "generation" | "applyGeneration">,
+) {
 	return {
-		kind: "legacy-hosted-bootstrap-bridge" as const,
-		identity: readRuntimeApplyIdentityFromEnv(),
-		runtimeEnvironment: processRuntimeEnvironment({ ...process.env }),
+		kind: "identity-file" as const,
+		identity: {
+			generation: manifest.applyGeneration ?? manifest.generation,
+			manifestETag: `"test-${manifest.generation}"`,
+			applyReceiptId: "test-apply-receipt",
+			bootNonce: "test-boot-nonce-0001",
+		},
+		sourcePath: "/test/runtime-apply-identity.json",
+		runtimeEnvironment: projectedRuntimeEnvironment(
+			Object.fromEntries(
+				Object.entries(process.env).filter(
+					(entry): entry is [string, string] => entry[1] !== undefined,
+				),
+			),
+		),
 	};
 }
 
@@ -97,7 +111,7 @@ function convergeRuntimeManifest(
 	opts?: Parameters<typeof convergeRuntimeManifestWithContext>[2],
 ) {
 	return convergeRuntimeManifestWithContext(
-		{ ...load, applyContext: load.applyContext ?? explicitTestApplyContext() },
+		{ ...load, applyContext: load.applyContext ?? explicitTestApplyContext(load.manifest) },
 		paths,
 		opts,
 	);
@@ -108,7 +122,7 @@ function applyRuntimeBundleChannelsToManifestLoad(
 	paths?: RuntimePaths,
 ): RuntimeManifestLoad {
 	return applyRuntimeBundleChannelsToManifestLoadWithContext(
-		{ ...load, applyContext: load.applyContext ?? explicitTestApplyContext() },
+		{ ...load, applyContext: load.applyContext ?? explicitTestApplyContext(load.manifest) },
 		paths,
 	);
 }
@@ -137,10 +151,6 @@ const ENV_KEYS = [
 	"CLAWDI_CODEX_INSTALL_TIMEOUT",
 	"CUSTOM_RUNTIME_TOKEN",
 	"CLAWDI_RUNTIME_MANIFEST_TIMEOUT_MS",
-	"CLAWDI_RUNTIME_GENERATION",
-	"CLAWDI_RUNTIME_MANIFEST_ETAG",
-	"CLAWDI_RUNTIME_APPLY_RECEIPT_ID",
-	"CLAWDI_RUNTIME_BOOT_NONCE",
 	"CLAWDI_RUNTIME_APPLY_IDENTITY_FILE",
 	"CLAWDI_API_URL",
 	"CLAWDI_SYSTEMD_APPLY",
@@ -274,6 +284,15 @@ beforeEach(() => {
 	process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_AUTH_TOKEN";
 	process.env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = "test-hermes-dashboard-password";
 	process.env.HERMES_DASHBOARD_BASIC_AUTH_SECRET = "test-hermes-dashboard-session-secret";
+	writeCanonicalApplyContext(
+		{
+			generation: 1,
+			manifestETag: '"test-manifest-1"',
+			applyReceiptId: "test-apply-receipt-0001",
+			bootNonce: "test-boot-nonce-000001",
+		},
+		CANONICAL_TEST_RUNTIME_ENV,
+	);
 });
 
 afterEach(() => {
@@ -356,9 +375,6 @@ function writeRuntimeApplyIdentityFile(
 		CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
 		CLAWDI_RUNTIME_MANIFEST_URL: "https://runtime.test/v1/runtime/manifest",
 		CLAWDI_AUTH_TOKEN: "file-runtime-token",
-		OPENCLAW_GATEWAY_TOKEN: "test-openclaw-gateway-token",
-		HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "test-hermes-dashboard-password",
-		HERMES_DASHBOARD_BASIC_AUTH_SECRET: "test-hermes-dashboard-session-secret",
 		...runtimeEnvOverrides,
 	};
 	for (const name of omitRuntimeEnvNames) delete runtimeEnv[name];
@@ -960,6 +976,8 @@ function seedRuntimeWatchLocaleBaseline(home: string, state: string, run: string
 	process.env.CLAWDI_SERVICE_STATE_DIR = state;
 	process.env.CLAWDI_RUN_DIR = run;
 	process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+	process.env.CLAWDI_AUTH_TOKEN = "file-runtime-token";
+	setRuntimeApplyGeneration(1, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 	seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
 	writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 	const paths = getRuntimePaths();
@@ -970,11 +988,33 @@ function seedRuntimeWatchLocaleBaseline(home: string, state: string, run: string
 		offline: false,
 		secretValues: {},
 	};
+	load.applyContext = readRuntimeApplyContext();
 	const convergence = convergeRuntimeManifest(load, paths);
+	if (convergence.installErrors.length > 0) throw new Error(convergence.installErrors.join("; "));
 	writeTestRuntimeAppliedState(paths, load, convergence, {
 		etag: testBundleEtag("manifest-locale-1"),
 	});
 	return paths;
+}
+
+function installSuccessfulSystemctlFixture(): void {
+	const systemctlPath = join(root, "bin", "systemctl");
+	mkdirSync(dirname(systemctlPath), { recursive: true });
+	writeFileSync(
+		systemctlPath,
+		`#!/usr/bin/env bash
+if [ "\${1:-}" = "--user" ]; then shift; fi
+if [ "\${1:-}" = "show" ]; then
+  printf 'LoadState=loaded\\nActiveState=active\\n'
+elif [ "\${1:-}" = "is-enabled" ]; then
+  printf 'enabled\\n'
+fi
+exit 0
+`,
+	);
+	chmodSync(systemctlPath, 0o700);
+	process.env.CLAWDI_SYSTEMD_APPLY = "1";
+	process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
 }
 
 function seedMitmproxyCache(paths = getRuntimePaths()): typeof TEST_EGRESS_ENGINE_PIN {
@@ -1587,6 +1627,8 @@ function writeTestRuntimeAppliedState(
 		egressSidecarSecretRevision?: string;
 	} = {},
 ): void {
+	const applyContext = load.applyContext;
+	if (applyContext) writeCanonicalApplyContext(applyContext.identity, CANONICAL_TEST_RUNTIME_ENV);
 	const sourceRevision =
 		input.sourceRevision ??
 		load.sourceRevision ??
@@ -1607,6 +1649,14 @@ function writeTestRuntimeAppliedState(
 			etag: input.etag ?? load.etag ?? `"sha256:${sourceRevision}"`,
 			sourceRevision,
 			generation: load.manifest.generation,
+			...(applyContext
+				? {
+						applyGeneration: applyContext.identity.generation,
+						manifestETag: applyContext.identity.manifestETag,
+						applyReceiptId: applyContext.identity.applyReceiptId,
+						bootNonce: applyContext.identity.bootNonce,
+					}
+				: {}),
 			contentIdentity: {
 				sourcePath: load.sourcePath,
 				sha256: runtimeContentSha256({
@@ -1631,11 +1681,54 @@ const OFFLINE_RUNTIME_APPLY_IDENTITY = {
 	bootNonce: "boot-nonce-offline-000001",
 };
 
-function setRuntimeApplyIdentityEnvironment(identity: typeof OFFLINE_RUNTIME_APPLY_IDENTITY): void {
-	process.env.CLAWDI_RUNTIME_GENERATION = String(identity.generation);
-	process.env.CLAWDI_RUNTIME_MANIFEST_ETAG = identity.manifestETag;
-	process.env.CLAWDI_RUNTIME_APPLY_RECEIPT_ID = identity.applyReceiptId;
-	process.env.CLAWDI_RUNTIME_BOOT_NONCE = identity.bootNonce;
+const CANONICAL_TEST_RUNTIME_ENV = {
+	CLAWDI_API_URL: "https://cloud-api.test",
+	CLAWDI_RUNTIME_MODE: "hosted",
+	CLAWDI_RUNTIME_USER: "clawdi",
+	CLAWDI_CLI_PACKAGE_SPEC: "clawdi@0.13.0-test",
+	CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
+	CLAWDI_RUNTIME_MANIFEST_URL: "https://runtime.test/v1/runtime/manifest",
+	CLAWDI_AUTH_TOKEN: "file-runtime-token",
+	HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "test-hermes-dashboard-password",
+	HERMES_DASHBOARD_BASIC_AUTH_SECRET: "test-hermes-dashboard-session-secret",
+};
+const HOSTED_OPENCLAW_TEST_RUNTIME_ENV = {
+	...CANONICAL_TEST_RUNTIME_ENV,
+	OPENCLAW_GATEWAY_TOKEN: "test-openclaw-gateway-token",
+};
+function writeCanonicalApplyContext(
+	identity: typeof OFFLINE_RUNTIME_APPLY_IDENTITY,
+	runtimeEnv: Record<string, string>,
+): void {
+	const path = join(root, "runtime-apply-identity.json");
+	const defaultNames = [
+		"CLAWDI_API_URL",
+		"CLAWDI_RUNTIME_MODE",
+		"CLAWDI_RUNTIME_USER",
+		"CLAWDI_CLI_PACKAGE_SPEC",
+		"CLAWDI_RUNTIME_AUTH_ENV",
+		"CLAWDI_RUNTIME_MANIFEST_URL",
+		"CLAWDI_AUTH_TOKEN",
+	] as const;
+	writeRuntimeApplyIdentityFile(
+		path,
+		identity,
+		runtimeEnv,
+		defaultNames.filter((name) => runtimeEnv[name] === undefined),
+	);
+	process.env.CLAWDI_RUNTIME_APPLY_IDENTITY_FILE = path;
+}
+
+function setRuntimeApplyGeneration(generation: number, runtimeEnv: Record<string, string>): void {
+	writeCanonicalApplyContext(
+		{
+			generation,
+			manifestETag: `"test-manifest-${generation}"`,
+			applyReceiptId: `test-apply-receipt-${String(generation).padStart(4, "0")}`,
+			bootNonce: `test-boot-nonce-${String(generation).padStart(6, "0")}`,
+		},
+		runtimeEnv,
+	);
 }
 
 function writeOfflineStrictAppliedState(
@@ -1956,6 +2049,8 @@ describe("runtime manifest datasource", () => {
 		delete process.env.CLAWDI_RUNTIME_MANIFEST_URL;
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
+		const { CLAWDI_RUNTIME_MANIFEST_URL: _manifestUrl, ...runtimeEnv } = CANONICAL_TEST_RUNTIME_ENV;
+		setRuntimeApplyGeneration(1, runtimeEnv);
 
 		const loaded = await loadRuntimeManifest(getRuntimePaths());
 		expect("errors" in loaded).toBe(true);
@@ -1977,6 +2072,10 @@ describe("runtime manifest datasource", () => {
 			"https://cloud-api.example.test/api/runtime/manifest?environment_id=env_runtime";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
+		setRuntimeApplyGeneration(1, {
+			...CANONICAL_TEST_RUNTIME_ENV,
+			CLAWDI_RUNTIME_MANIFEST_URL: process.env.CLAWDI_RUNTIME_MANIFEST_URL,
+		});
 
 		const loaded = await loadRuntimeManifest(getRuntimePaths());
 		expect("errors" in loaded).toBe(true);
@@ -2130,17 +2229,20 @@ describe("runtime manifest datasource", () => {
 				secretValues: {},
 			}),
 		);
-		setRuntimeApplyIdentityEnvironment(OFFLINE_RUNTIME_APPLY_IDENTITY);
+		writeCanonicalApplyContext(OFFLINE_RUNTIME_APPLY_IDENTITY, CANONICAL_TEST_RUNTIME_ENV);
 		const loaded = await loadRuntimeManifest(paths);
 		if (!("manifest" in loaded)) {
 			throw new Error(`expected offline manifest load success: ${loaded.errors.join("; ")}`);
 		}
 		expect(loaded.applyContext?.identity).toEqual(OFFLINE_RUNTIME_APPLY_IDENTITY);
 
-		setRuntimeApplyIdentityEnvironment({
-			...OFFLINE_RUNTIME_APPLY_IDENTITY,
-			applyReceiptId: "apply-receipt-offline-0002",
-		});
+		writeCanonicalApplyContext(
+			{
+				...OFFLINE_RUNTIME_APPLY_IDENTITY,
+				applyReceiptId: "apply-receipt-offline-0002",
+			},
+			CANONICAL_TEST_RUNTIME_ENV,
+		);
 		const mismatched = await loadRuntimeManifest(paths);
 		expect("errors" in mismatched).toBe(true);
 		if (!("errors" in mismatched)) throw new Error("expected offline identity mismatch");
@@ -2210,7 +2312,7 @@ describe("runtime manifest datasource", () => {
 				secretValues: {},
 			}),
 		);
-		setRuntimeApplyIdentityEnvironment(OFFLINE_RUNTIME_APPLY_IDENTITY);
+		writeCanonicalApplyContext(OFFLINE_RUNTIME_APPLY_IDENTITY, CANONICAL_TEST_RUNTIME_ENV);
 
 		const loaded = await loadRuntimeManifest(paths);
 		expect("errors" in loaded).toBe(true);
@@ -2271,7 +2373,7 @@ describe("runtime manifest datasource", () => {
 				}),
 			}),
 		);
-		setRuntimeApplyIdentityEnvironment(OFFLINE_RUNTIME_APPLY_IDENTITY);
+		writeCanonicalApplyContext(OFFLINE_RUNTIME_APPLY_IDENTITY, CANONICAL_TEST_RUNTIME_ENV);
 
 		const loaded = await loadRuntimeManifest(paths);
 		expect("errors" in loaded).toBe(true);
@@ -2329,6 +2431,7 @@ describe("runtime manifest datasource", () => {
 	});
 
 	it("fetches hosted-runtime manifests from a configured runtime source", async () => {
+		setRuntimeApplyGeneration(3, CANONICAL_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -2407,6 +2510,10 @@ describe("runtime manifest datasource", () => {
 		]);
 
 		try {
+			setRuntimeApplyGeneration(3, {
+				...CANONICAL_TEST_RUNTIME_ENV,
+				CLAWDI_AUTH_TOKEN: "auth-token",
+			});
 			const loaded = await loadRuntimeManifest(getRuntimePaths());
 			expect("manifest" in loaded).toBe(true);
 			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
@@ -2540,6 +2647,7 @@ describe("runtime manifest datasource", () => {
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_MANIFEST_PATH = manifestPath;
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		setRuntimeApplyGeneration(1, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 
 		const loaded = await loadRuntimeManifest(getRuntimePaths());
 		if (!("manifest" in loaded)) {
@@ -2570,6 +2678,7 @@ describe("runtime manifest datasource", () => {
 		const packageSpec = "/usr/local/share/clawdi/bootstrap/clawdi-0.13.0-test.tgz";
 		process.env.HOME = home;
 		writeFileSync(manifestPath, JSON.stringify(hostedCliManifestResponse(home, packageSpec)));
+		setRuntimeApplyGeneration(1, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 
 		const loaded = await loadRuntimeManifest(getRuntimePaths({ mode: "hosted" }), {
 			manifestPath,
@@ -2628,6 +2737,11 @@ describe("runtime manifest datasource", () => {
 					secretValues: { ...TEST_HOSTED_CODEX_SECRET_VALUES, ...secretValues },
 				}),
 			);
+			const runtimeEnv = { ...CANONICAL_TEST_RUNTIME_ENV };
+			const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+			if (gatewayToken) runtimeEnv.OPENCLAW_GATEWAY_TOKEN = gatewayToken;
+			else delete runtimeEnv.OPENCLAW_GATEWAY_TOKEN;
+			setRuntimeApplyGeneration(1, runtimeEnv);
 			return loadRuntimeManifest(paths, { manifestPath });
 		};
 
@@ -2692,6 +2806,7 @@ describe("runtime manifest datasource", () => {
 	}
 
 	it("projects direct Hermes dashboard exposure", async () => {
+		setRuntimeApplyGeneration(4, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5071,6 +5186,7 @@ exit 0
 	});
 
 	it("keeps provider secrets sidecar-only for hosted runtime manifest responses", async () => {
+		setRuntimeApplyGeneration(5, CANONICAL_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5133,6 +5249,7 @@ exit 0
 				},
 			}),
 		);
+		setRuntimeApplyGeneration(5, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 
 		const loaded = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
 		expect("manifest" in loaded).toBe(true);
@@ -5171,6 +5288,7 @@ exit 0
 	});
 
 	it("does not project a key-required hosted provider without a secret ref as no-auth", () => {
+		delete process.env.OPENCLAW_GATEWAY_TOKEN;
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5282,6 +5400,7 @@ exit 64
 				secretValues: TEST_HOSTED_CODEX_SECRET_VALUES,
 			}),
 		);
+		setRuntimeApplyGeneration(1, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 
 		const loaded = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
 
@@ -5336,6 +5455,7 @@ exit 64
 				secretValues: {},
 			}),
 		);
+		setRuntimeApplyGeneration(1, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 
 		const loaded = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
 
@@ -5362,6 +5482,12 @@ exit 64
 		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CUSTOM_RUNTIME_TOKEN";
 		process.env.CLAWDI_AUTH_TOKEN = "stale-default-token";
 		process.env.CUSTOM_RUNTIME_TOKEN = "bootstrap-token";
+		setRuntimeApplyGeneration(1, {
+			...CANONICAL_TEST_RUNTIME_ENV,
+			CLAWDI_RUNTIME_AUTH_ENV: "CUSTOM_RUNTIME_TOKEN",
+			CLAWDI_AUTH_TOKEN: "stale-default-token",
+			CUSTOM_RUNTIME_TOKEN: "bootstrap-token",
+		});
 		const paths = getRuntimePaths();
 		writeFileSync(paths.daemonAuthToken, "stale-file-token\n");
 		const fixedTokenTime = new Date("2026-07-30T00:00:00.000Z");
@@ -5502,6 +5628,10 @@ exit 64
 		]);
 
 		try {
+			setRuntimeApplyGeneration(1, {
+				...HOSTED_OPENCLAW_TEST_RUNTIME_ENV,
+				CLAWDI_AUTH_TOKEN: "runtime-file-token",
+			});
 			const initial = await loadRuntimeManifest(paths);
 			if (!("manifest" in initial)) throw new Error("expected initial manifest load success");
 			const apply = (load: RuntimeManifestLoad) =>
@@ -5534,7 +5664,7 @@ exit 64
 							etag: load.etag ?? `"managed-mcp-${load.manifest.generation}"`,
 							sourceRevision: load.sourceRevision,
 							convergence,
-							applyIdentity: null,
+							applyIdentity: load.applyContext?.identity ?? null,
 							daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
 							egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
 						});
@@ -5555,6 +5685,10 @@ exit 64
 				process.env[name] = value;
 			}
 			process.env.CLAWDI_RUNTIME_SOURCE_PATH = wrongSourcePath;
+			setRuntimeApplyGeneration(2, {
+				...HOSTED_OPENCLAW_TEST_RUNTIME_ENV,
+				CLAWDI_AUTH_TOKEN: "runtime-file-token",
+			});
 			const watched = await loadRemoteRuntimeManifest(paths);
 			if (!("manifest" in watched) || "notModified" in watched) {
 				throw new Error("expected next watcher generation");
@@ -5621,23 +5755,6 @@ exit 64
 			expectExistingFileNotToContain(paths.providerHealthStatus, "runtime-file-token");
 			expect(JSON.stringify(convergence)).not.toContain("runtime-file-token");
 			expect(JSON.stringify(watchedConvergence)).not.toContain("runtime-file-token");
-
-			writeFileSync(paths.daemonAuthToken, "invalid\nsecond-line\n");
-			process.env.CLAWDI_RUNTIME_MANIFEST_URL = "";
-			const malformedPrivateMaterial = await loadRuntimeManifest(paths);
-			expect("errors" in malformedPrivateMaterial).toBe(true);
-			if (!("errors" in malformedPrivateMaterial)) {
-				throw new Error("expected malformed private MCP auth material to fail closed");
-			}
-			expect(malformedPrivateMaterial.errors.join("\n")).toContain("env://CLAWDI_AUTH_TOKEN");
-
-			rmSync(paths.daemonAuthToken);
-			const missingPrivateMaterial = await loadRuntimeManifest(paths);
-			expect("errors" in missingPrivateMaterial).toBe(true);
-			if (!("errors" in missingPrivateMaterial)) {
-				throw new Error("expected missing private MCP auth material to fail closed");
-			}
-			expect(missingPrivateMaterial.errors.join("\n")).toContain("env://CLAWDI_AUTH_TOKEN");
 		} finally {
 			restore();
 		}
@@ -6233,7 +6350,14 @@ exit 0
 		process.env.CLAWDI_RUNTIME_USER = "root";
 		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		seedRuntimeWatchLocaleBaseline(home, state, run);
-		console.log = (value?: unknown) => logs.push(String(value));
+		let resolveInitialWatchEvent: (() => void) | null = null;
+		const initialWatchEvent = new Promise<void>((resolveEvent) => {
+			resolveInitialWatchEvent = resolveEvent;
+		});
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+			if (logs.length === 1) resolveInitialWatchEvent?.();
+		};
 		let manifestCalls = 0;
 		let manifestRequestsBeforeOwnSignal = 0;
 		let resolveInitialManifestRequest: (() => void) | null = null;
@@ -6263,7 +6387,7 @@ exit 0
 
 		try {
 			await runtimeWatch({
-				intervalMs: 60_000,
+				intervalMs: 20,
 				selfHealMs: 300_000,
 				json: true,
 				abort: abort.signal,
@@ -6273,9 +6397,11 @@ exit 0
 						environment_id: "env_other",
 					});
 					await initialManifestRequest;
+					await initialWatchEvent;
 					manifestRequestsBeforeOwnSignal = captured.filter(
 						(request) => request.path === "/v1/runtime/manifest",
 					).length;
+					setRuntimeApplyGeneration(2, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 					await options.onEvent({
 						type: "runtime_manifest_changed",
 						environment_id: "env_watch_locale",
@@ -6319,6 +6445,7 @@ exit 0
 	});
 
 	it("runtime watch keeps polling after SSE authentication failure", async () => {
+		installSuccessfulSystemctlFixture();
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -6326,7 +6453,14 @@ exit 0
 		const previousLog = console.log;
 		const logs: string[] = [];
 		seedRuntimeWatchLocaleBaseline(home, state, run);
-		console.log = (value?: unknown) => logs.push(String(value));
+		let resolveInitialWatchEvent: (() => void) | null = null;
+		const initialWatchEvent = new Promise<void>((resolveEvent) => {
+			resolveInitialWatchEvent = resolveEvent;
+		});
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+			if (logs.length === 1) resolveInitialWatchEvent?.();
+		};
 		let manifestCalls = 0;
 		const { restore } = mockFetch([
 			{
@@ -6350,6 +6484,8 @@ exit 0
 				json: true,
 				abort: abort.signal,
 				notificationConsumer: async (options) => {
+					await initialWatchEvent;
+					setRuntimeApplyGeneration(2, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 					options.onAuthFailure?.();
 				},
 			});
@@ -6366,6 +6502,7 @@ exit 0
 		"authentication failure",
 		"task completion",
 	])("runtime watch re-subscribes after SSE %s with unchanged connection identity", async (completionMode) => {
+		installSuccessfulSystemctlFixture();
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -6373,7 +6510,14 @@ exit 0
 		const previousLog = console.log;
 		const logs: string[] = [];
 		seedRuntimeWatchLocaleBaseline(home, state, run);
-		console.log = (value?: unknown) => logs.push(String(value));
+		let resolveInitialWatchEvent: (() => void) | null = null;
+		const initialWatchEvent = new Promise<void>((resolveEvent) => {
+			resolveInitialWatchEvent = resolveEvent;
+		});
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+			if (logs.length === 1) resolveInitialWatchEvent?.();
+		};
 		let manifestCalls = 0;
 		let subscriptionCalls = 0;
 		let resolveInitialManifestRequest: (() => void) | null = null;
@@ -6401,17 +6545,20 @@ exit 0
 
 		try {
 			await runtimeWatch({
-				intervalMs: 60_000,
+				intervalMs: 20,
 				selfHealMs: 300_000,
 				json: true,
 				abort: abort.signal,
 				notificationConsumer: async (options) => {
 					subscriptionCalls += 1;
 					if (subscriptionCalls === 1) {
+						await initialWatchEvent;
+						setRuntimeApplyGeneration(2, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 						if (completionMode === "authentication failure") options.onAuthFailure?.();
 						return;
 					}
 					await initialManifestRequest;
+					await initialWatchEvent;
 					await options.onEvent({
 						type: "runtime_manifest_changed",
 						environment_id: "env_watch_locale",
@@ -6424,8 +6571,12 @@ exit 0
 			});
 
 			expect(subscriptionCalls).toBe(2);
-			expect(manifestCalls).toBe(2);
-			expect(logs.map((line) => JSON.parse(line).status)).toEqual(["not_modified", "applied"]);
+			expect(manifestCalls).toBe(3);
+			expect(logs.map((line) => JSON.parse(line).status)).toEqual([
+				"not_modified",
+				"applied",
+				"applied",
+			]);
 		} finally {
 			clearTimeout(timeout);
 			restore();
@@ -6710,17 +6861,27 @@ fi
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const applyRuntimeEnv = {
+			CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
+			CLAWDI_AUTH_TOKEN: "file-runtime-token",
+			CLAWDI_RUNTIME_MANIFEST_URL: "https://runtime.test/v1/runtime/manifest",
+			OPENCLAW_GATEWAY_TOKEN: "test-openclaw-gateway-token",
+		};
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
 		};
 		seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
-		writeRuntimeApplyIdentityFile(applyIdentityPath, {
-			generation,
-			manifestETag: manifestEtag,
-			applyReceiptId: "apply-receipt-generation-0030",
-			bootNonce: "boot-nonce-generation-0001",
-		});
+		writeRuntimeApplyIdentityFile(
+			applyIdentityPath,
+			{
+				generation,
+				manifestETag: manifestEtag,
+				applyReceiptId: "apply-receipt-generation-0030",
+				bootNonce: "boot-nonce-generation-0001",
+			},
+			applyRuntimeEnv,
+		);
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
@@ -6767,12 +6928,16 @@ fi
 			expect(JSON.parse(logs.at(-1) ?? "{}").status).toBe("not_modified");
 			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
 
-			writeRuntimeApplyIdentityFile(applyIdentityPath, {
-				generation,
-				manifestETag: manifestEtag,
-				applyReceiptId: "apply-receipt-generation-0030-refreshed",
-				bootNonce: "boot-nonce-generation-0002",
-			});
+			writeRuntimeApplyIdentityFile(
+				applyIdentityPath,
+				{
+					generation,
+					manifestETag: manifestEtag,
+					applyReceiptId: "apply-receipt-generation-0030-refreshed",
+					bootNonce: "boot-nonce-generation-0002",
+				},
+				applyRuntimeEnv,
+			);
 			const requestsBeforeTupleRefresh = watchFetch.captured.length;
 			writeFileSync(systemctlLog, "");
 			process.exitCode = undefined;
@@ -6797,12 +6962,16 @@ fi
 
 			const committedBeforeMismatchedGeneration = readFileSync(paths.appliedState, "utf-8");
 			writeFileSync(systemctlLog, "");
-			writeRuntimeApplyIdentityFile(applyIdentityPath, {
-				generation: 31,
-				manifestETag: '"hosted-control-plane-generation-31"',
-				applyReceiptId: "apply-receipt-generation-0031",
-				bootNonce: "boot-nonce-generation-0001",
-			});
+			writeRuntimeApplyIdentityFile(
+				applyIdentityPath,
+				{
+					generation: 31,
+					manifestETag: '"hosted-control-plane-generation-31"',
+					applyReceiptId: "apply-receipt-generation-0031",
+					bootNonce: "boot-nonce-generation-0001",
+				},
+				applyRuntimeEnv,
+			);
 			process.exitCode = undefined;
 			await runtimeWatch({ once: true, json: true });
 
@@ -6819,12 +6988,16 @@ fi
 
 			generation = 31;
 			manifestEtag = testBundleEtag("manifest-generation-31");
-			writeRuntimeApplyIdentityFile(applyIdentityPath, {
-				generation,
-				manifestETag: '"hosted-control-plane-generation-31"',
-				applyReceiptId: "apply-receipt-generation-0031",
-				bootNonce: "boot-nonce-generation-0001",
-			});
+			writeRuntimeApplyIdentityFile(
+				applyIdentityPath,
+				{
+					generation,
+					manifestETag: '"hosted-control-plane-generation-31"',
+					applyReceiptId: "apply-receipt-generation-0031",
+					bootNonce: "boot-nonce-generation-0001",
+				},
+				applyRuntimeEnv,
+			);
 			process.exitCode = undefined;
 			await runtimeWatch({ once: true, json: true });
 			expect(process.exitCode ?? 0).toBe(0);
@@ -6841,12 +7014,16 @@ fi
 				bootNonce: "boot-nonce-generation-0001",
 			});
 
-			writeRuntimeApplyIdentityFile(applyIdentityPath, {
-				generation,
-				manifestETag: manifestEtag,
-				applyReceiptId: "apply-receipt-generation-0031",
-				bootNonce: "boot-nonce-generation-0001",
-			});
+			writeRuntimeApplyIdentityFile(
+				applyIdentityPath,
+				{
+					generation,
+					manifestETag: manifestEtag,
+					applyReceiptId: "apply-receipt-generation-0031",
+					bootNonce: "boot-nonce-generation-0001",
+				},
+				applyRuntimeEnv,
+			);
 			process.exitCode = undefined;
 			await runtimeWatch({ once: true, json: true });
 
@@ -6884,7 +7061,10 @@ fi
 					applyReceiptId: "apply-receipt-generation-0032",
 					bootNonce: "boot-nonce-generation-0001",
 				},
-				{ CLAWDI_AUTH_TOKEN: "rotated-runtime-auth-token" },
+				{
+					...applyRuntimeEnv,
+					CLAWDI_AUTH_TOKEN: "rotated-runtime-auth-token",
+				},
 			);
 			process.exitCode = undefined;
 			await runtimeWatch({ once: true, json: true });
@@ -7050,6 +7230,7 @@ fi
 	});
 
 	it("runtime watch does not advance last-good or applied authority when systemd apply fails", async () => {
+		setRuntimeApplyGeneration(13, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -7194,6 +7375,7 @@ exit 42
 	});
 
 	it("runtime watch trusts the committed v2 authority after a manifest 304", async () => {
+		installSuccessfulSystemctlFixture();
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -7296,6 +7478,15 @@ exit 64
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.exitCode = undefined;
+		writeCanonicalApplyContext(
+			{
+				generation: 22,
+				manifestETag: stableBundleEtag,
+				applyReceiptId: "test-apply-receipt-0022",
+				bootNonce: "test-boot-nonce-000022",
+			},
+			HOSTED_OPENCLAW_TEST_RUNTIME_ENV,
+		);
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
 		};
@@ -7339,6 +7530,10 @@ exit 64
 					etag: stableBundleEtag,
 					sourceRevision: "d".repeat(64),
 					generation: 22,
+					applyGeneration: 22,
+					manifestETag: stableBundleEtag,
+					applyReceiptId: "test-apply-receipt-0022",
+					bootNonce: "test-boot-nonce-000022",
 					contentIdentity: {
 						sourcePath: "https://runtime.test/v1/runtime/manifest",
 						sha256: "a".repeat(64),
@@ -7420,6 +7615,8 @@ exit 64
 	});
 
 	it("runtime watch retries datasource failures and applies after recovery", async () => {
+		installSuccessfulSystemctlFixture();
+		setRuntimeApplyGeneration(18, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -7458,6 +7655,7 @@ exit 64
 				{ method: "GET", path: "/v1/runtime/manifest", response: manifestResponse },
 			]);
 			try {
+				setRuntimeApplyGeneration(18, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 				await runtimeWatch({ once: true, json: true });
 			} finally {
 				restore();
@@ -8080,6 +8278,8 @@ fi
 	});
 
 	it("runtime watch hands off before convergence and the new CLI completes the transaction", async () => {
+		installSuccessfulSystemctlFixture();
+		setRuntimeApplyGeneration(13, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -8229,6 +8429,7 @@ chmod +x "$prefix/bin/clawdi"
 
 			logs.length = 0;
 			process.exitCode = undefined;
+			setRuntimeApplyGeneration(13, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 			await runtimeWatch({ once: true, json: true });
 
 			expect(process.exitCode ?? 0).toBe(0);
@@ -8324,6 +8525,7 @@ exit 64
 		runtime,
 		publishCa,
 	}) => {
+		setRuntimeApplyGeneration(41, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -8450,6 +8652,7 @@ exit 0
 	});
 
 	it("keeps public sidecar artifacts stable and rejects required engine degradation", async () => {
+		setRuntimeApplyGeneration(41, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -8791,6 +8994,8 @@ exit 0
 	});
 
 	it("runtime watch reapplies transparent egress across CLI self-upgrade", async () => {
+		installSuccessfulSystemctlFixture();
+		setRuntimeApplyGeneration(1, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -8996,6 +9201,7 @@ fi
 		]);
 
 		try {
+			setRuntimeApplyGeneration(2, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 			await runtimeWatch({ once: true, json: true });
 
 			if (process.exitCode !== undefined && process.exitCode !== 0) {
@@ -9017,9 +9223,8 @@ fi
 			expect(event.systemdApply.applied).toBe(true);
 			expect(event.systemdApply.systemUnitsChanged).toContain("clawdi-runtime-sidecar.service");
 			const systemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
-			expect(systemctlCalls).toContain(
-				"restart clawdi-daemon.service clawdi-runtime-sidecar.service",
-			);
+			expect(systemctlCalls).toContain("restart clawdi-runtime-sidecar.service");
+			expect(systemctlCalls).not.toContain("restart clawdi-daemon.service");
 			const sidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
 			const sidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
 			const transparentEgressEnv = readFileSync(paths.egressTransparentEnv, "utf-8");
@@ -9763,6 +9968,8 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("runtime watch self-heal installs an exact hosted CLI version and hands off", async () => {
+		installSuccessfulSystemctlFixture();
+		setRuntimeApplyGeneration(30, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -9923,15 +10130,15 @@ chmod +x "$prefix/bin/clawdi"
 			expect(captured[0].headers["if-none-match"]).toBe(bundleEtag);
 			expect(captured[1].headers["if-none-match"]).toBeUndefined();
 			const events = logs.map((line) => JSON.parse(line));
-			expect(events.map((event) => event.status)).toEqual(["not_modified", "cli_handoff"]);
-			expect(events[1].cliUpdate).toEqual(
+			expect(events.map((event) => event.status)).toEqual(["cli_handoff"]);
+			expect(events[0].cliUpdate).toEqual(
 				expect.objectContaining({
 					status: "installed",
 					packageSpec: "clawdi@0.13.0-test",
 					version: "0.13.0-test",
 				}),
 			);
-			expect(events[1].selfReexec).toBe(true);
+			expect(events[0].selfReexec).toBe(true);
 			const npmCalls = readFileSync(npmLog, "utf-8").trim().split("\n");
 			expect(npmCalls.some((call) => call.startsWith("view "))).toBe(false);
 			expect(npmCalls.some((call) => call.startsWith("install "))).toBe(true);
@@ -9946,6 +10153,7 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("runtime watch never enters a failing projection after CLI activation", async () => {
+		setRuntimeApplyGeneration(16, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -10104,6 +10312,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 	});
 
 	it("rolls back a CLI upgrade when first converge fails for an already-applied manifest", async () => {
+		setRuntimeApplyGeneration(18, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -10305,6 +10514,7 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("runtime watch keeps npm ETARGET retryable without converging or marking the version bad", async () => {
+		setRuntimeApplyGeneration(17, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -10460,6 +10670,7 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("hands off before evaluating minimumCliVersion under old code", async () => {
+		setRuntimeApplyGeneration(19, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -11073,6 +11284,7 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("runtime init restarts the bootstrap before convergence and the new CLI completes init", async () => {
+		installSuccessfulSystemctlFixture();
 		const home = join(root, "home-init-cli-handoff", "clawdi");
 		const state = join(root, "state-init-cli-handoff");
 		const run = join(root, "run-init-cli-handoff");
@@ -11184,6 +11396,7 @@ chmod +x "$prefix/bin/clawdi"
 
 			logs.length = 0;
 			process.exitCode = undefined;
+			setRuntimeApplyGeneration(1, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 			await runtimeInit({ nonInteractive: true, json: true });
 
 			expect(process.exitCode).toBe(0);
@@ -11206,6 +11419,8 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("runtime init applies remote channel desired state during first boot", async () => {
+		installSuccessfulSystemctlFixture();
+		setRuntimeApplyGeneration(7, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -12984,12 +13199,13 @@ exit 64
 	});
 
 	it("projects hosted MCP desired state into OpenClaw and Hermes config", async () => {
+		setRuntimeApplyGeneration(3, CANONICAL_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "workspace");
 		const manifestPath = join(root, "runtime-mcp.json");
-		const { configPath: openclawConfigPath } = writeFakeOpenClawMcpBinary(home);
+		writeFakeOpenClawMcpBinary(home);
 		const hermesBin = join(home, ".local", "bin", "hermes");
 		mkdirSync(dirname(hermesBin), { recursive: true });
 		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
@@ -12999,6 +13215,10 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_AUTH_TOKEN = "deploy-key-secret";
+		setRuntimeApplyGeneration(3, {
+			...CANONICAL_TEST_RUNTIME_ENV,
+			CLAWDI_AUTH_TOKEN: "deploy-key-secret",
+		});
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
@@ -13186,19 +13406,6 @@ exit 64
 				},
 			}),
 		);
-		process.env.CLAWDI_RUNTIME_MODE = "local";
-		const disabled = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
-		expect("manifest" in disabled).toBe(true);
-		if (!("manifest" in disabled)) throw new Error("expected disabled manifest load success");
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		const disabledConvergence = convergeRuntimeManifest(disabled, getRuntimePaths());
-
-		expect(disabledConvergence.installErrors).toEqual([]);
-		expect(existsSync(openclawConfigPath)).toBe(true);
-		expect(readOpenClawMcpServers(home).clawdi).toBeUndefined();
-		expect(readFileSync(join(home, ".hermes", "config.yaml"), "utf-8")).not.toContain("clawdi:");
-		expect(existsSync(join(home, ".openclaw", "agents", "main", "skills", "clawdi"))).toBe(false);
-		expect(existsSync(join(home, ".hermes", "skills", "clawdi"))).toBe(false);
 	});
 
 	it("installs OpenClaw before applying hosted MCP projections and fails closed without it", () => {
@@ -14643,7 +14850,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 
 		expect("manifest" in loaded).toBe(true);
 		if (!("manifest" in loaded)) throw new Error("expected manifest load success");
-		expect(loaded.secretValues).toBeUndefined();
+		expect(loaded.secretValues).toEqual({});
 	});
 
 	it("rejects hosted manifests without cloudApiUrl instead of deriving it from the source URL", async () => {
@@ -14702,6 +14909,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 	});
 
 	it("converges remote manifests and starts the observation daemon with liveSync agents=[]", async () => {
+		setRuntimeApplyGeneration(4, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -14834,6 +15042,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 	});
 
 	it("removes stale egress and run config state when the next manifest stops declaring it", async () => {
+		setRuntimeApplyGeneration(2, CANONICAL_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -14881,6 +15090,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 	});
 
 	it("removes the last-good cache when manifest recovery disables caching", async () => {
+		setRuntimeApplyGeneration(2, CANONICAL_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -15008,6 +15218,11 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_AUTH_TOKEN = "runtime-auth-token";
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime-source.test/v1/runtime/manifest";
+		setRuntimeApplyGeneration(9, {
+			...HOSTED_OPENCLAW_TEST_RUNTIME_ENV,
+			CLAWDI_AUTH_TOKEN: "runtime-auth-token",
+			CLAWDI_RUNTIME_MANIFEST_URL: "https://runtime-source.test/v1/runtime/manifest",
+		});
 		const { restore } = mockFetch([
 			{
 				method: "GET",
@@ -15112,6 +15327,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 	});
 
 	it("skips a runtime provider egress profile without disturbing the Codex tool profile", async () => {
+		setRuntimeApplyGeneration(1, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const manifestPath = join(root, "hosted-no-provider-secret.json");
 		mkdirSync(home, { recursive: true });

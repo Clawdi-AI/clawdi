@@ -32,7 +32,7 @@ import {
 	type RuntimeManifestLoad,
 } from "./manifest-source";
 import { getRuntimePaths } from "./paths";
-import { processRuntimeEnvironment, projectedRuntimeEnvironment } from "./secret-values";
+import { projectedRuntimeEnvironment } from "./secret-values";
 
 const goldenPath = resolve(
 	import.meta.dir,
@@ -75,6 +75,27 @@ function readFileTree(root: string): string {
 		.sort()
 		.map((entry) => readFileTree(join(root, entry)))
 		.join("\n");
+}
+
+function setRuntimeApplyIdentityFile(
+	root: string,
+	identity: { generation: number; manifestETag: string; applyReceiptId: string; bootNonce: string },
+): string {
+	const path = join(root, "runtime-apply-identity.json");
+	writeFileSync(
+		path,
+		JSON.stringify({
+			schemaVersion: "clawdi.runtimeApplyIdentity.v1",
+			...identity,
+			runtimeEnv: Object.fromEntries(
+				Object.entries(process.env).filter(
+					(entry): entry is [string, string] => entry[1] !== undefined,
+				),
+			),
+		}),
+	);
+	process.env.CLAWDI_RUNTIME_APPLY_IDENTITY_FILE = path;
+	return path;
 }
 
 function validateGeneratedEgressConfig(addonPath: string, envFilePath: string): void {
@@ -557,13 +578,16 @@ describe("hosted runtime bundle v2", () => {
 		expect(initialSidecarRevision).toBeTruthy();
 		writeFileSync(paths.daemonAuthToken, "deployment-auth-token-rotated\n", { mode: 0o600 });
 		delete process.env.CLAWDI_BOOTSTRAP_AUTH_TOKEN;
+		if (!load.applyContext) throw new Error("expected runtime apply context");
 		const watched = convergeRuntimeManifest(
 			{
 				...load,
 				applyContext: {
-					kind: "legacy-hosted-bootstrap-bridge",
-					identity: null,
-					runtimeEnvironment: processRuntimeEnvironment({ ...process.env }),
+					...load.applyContext,
+					runtimeEnvironment: projectedRuntimeEnvironment({
+						...load.applyContext.runtimeEnvironment.values,
+						CLAWDI_BOOTSTRAP_AUTH_TOKEN: "deployment-auth-token-rotated",
+					}),
 				},
 			},
 			paths,
@@ -895,10 +919,12 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_TEST_TOKEN";
 		process.env.CLAWDI_TEST_TOKEN = "clawdi_test";
-		process.env.CLAWDI_RUNTIME_GENERATION = "7";
-		process.env.CLAWDI_RUNTIME_MANIFEST_ETAG = '"manifest-7"';
-		process.env.CLAWDI_RUNTIME_APPLY_RECEIPT_ID = "apply-receipt-0007";
-		process.env.CLAWDI_RUNTIME_BOOT_NONCE = "boot-nonce-000007";
+		setRuntimeApplyIdentityFile(root, {
+			generation: 7,
+			manifestETag: '"manifest-7"',
+			applyReceiptId: "apply-receipt-0007",
+			bootNonce: "boot-nonce-000007",
+		});
 		const paths = getRuntimePaths({ mode: "hosted" });
 		let requests = 0;
 		globalThis.fetch = Object.assign(
@@ -930,6 +956,12 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_TEST_TOKEN";
 		process.env.CLAWDI_TEST_TOKEN = "clawdi_test";
+		setRuntimeApplyIdentityFile(root, {
+			generation: 1,
+			manifestETag: '"bundle-golden"',
+			applyReceiptId: "apply-receipt-golden-0001",
+			bootNonce: "boot-nonce-golden-000001",
+		});
 		const paths = getRuntimePaths({ mode: "hosted" });
 		globalThis.fetch = Object.assign(
 			async () =>
@@ -956,6 +988,12 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_TEST_TOKEN";
 		process.env.CLAWDI_TEST_TOKEN = "clawdi_test";
+		setRuntimeApplyIdentityFile(root, {
+			generation: 1,
+			manifestETag: '"bundle-golden"',
+			applyReceiptId: "apply-receipt-golden-0001",
+			bootNonce: "boot-nonce-golden-000001",
+		});
 		const paths = getRuntimePaths({ mode: "hosted" });
 		const sourceRevision = "da635b29601dbb9543e936faacd7864b6ff300651b452bd861181f06419edbd1";
 		globalThis.fetch = Object.assign(
@@ -986,6 +1024,12 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_TEST_TOKEN";
 		process.env.CLAWDI_TEST_TOKEN = "clawdi_test";
+		setRuntimeApplyIdentityFile(root, {
+			generation: 1,
+			manifestETag: '"bundle-golden"',
+			applyReceiptId: "apply-receipt-golden-0001",
+			bootNonce: "boot-nonce-golden-000001",
+		});
 		globalThis.fetch = Object.assign(
 			async () =>
 				new Response(readFileSync(goldenPath, "utf-8"), {
@@ -1053,6 +1097,12 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_EGRESS_UID = "10002";
 		process.env.CLAWDI_EGRESS_GID = "10002";
 		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
+		setRuntimeApplyIdentityFile(root, {
+			generation: 1,
+			manifestETag: '"bundle-golden"',
+			applyReceiptId: "apply-receipt-golden-0001",
+			bootNonce: "boot-nonce-golden-000001",
+		});
 		const paths = getRuntimePaths({ mode: "hosted" });
 		const goldenRaw = JSON.parse(readFileSync(goldenPath, "utf-8")) as {
 			sourceRevision: string;
@@ -1202,10 +1252,12 @@ describe("hosted runtime bundle v2", () => {
 		rmSync(egressSecretFile);
 		expect(existsSync(egressSecretFile)).toBe(false);
 		networkAvailable = false;
-		process.env.CLAWDI_RUNTIME_GENERATION = "1";
-		process.env.CLAWDI_RUNTIME_MANIFEST_ETAG = '"bundle-golden"';
-		process.env.CLAWDI_RUNTIME_APPLY_RECEIPT_ID = "apply-receipt-golden-0001";
-		process.env.CLAWDI_RUNTIME_BOOT_NONCE = "boot-nonce-golden-000001";
+		setRuntimeApplyIdentityFile(root, {
+			generation: 1,
+			manifestETag: '"bundle-golden"',
+			applyReceiptId: "apply-receipt-golden-0001",
+			bootNonce: "boot-nonce-golden-000001",
+		});
 		const offlineLoad = await loadRuntimeManifest(paths);
 		if (!("manifest" in offlineLoad)) throw new Error(JSON.stringify(offlineLoad));
 		expect(offlineLoad.source).toBe("last-good-cache");
@@ -1224,14 +1276,6 @@ describe("hosted runtime bundle v2", () => {
 			expect(offlineEgressSecretStat.gid).toBe(10002);
 		}
 
-		for (const name of [
-			"CLAWDI_RUNTIME_GENERATION",
-			"CLAWDI_RUNTIME_MANIFEST_ETAG",
-			"CLAWDI_RUNTIME_APPLY_RECEIPT_ID",
-			"CLAWDI_RUNTIME_BOOT_NONCE",
-		]) {
-			delete process.env[name];
-		}
 		rmSync(paths.appliedState);
 		const uncommittedCacheLoad = await loadRuntimeManifest(paths);
 		expect("errors" in uncommittedCacheLoad).toBe(true);
@@ -1239,13 +1283,15 @@ describe("hosted runtime bundle v2", () => {
 			throw new Error("expected uncommitted strict-v2 cache failure");
 		}
 		expect(uncommittedCacheLoad.errors.join("\n")).toContain(
-			"cached strict-v2 manifest has no durable applied authority",
+			"cached strict-v2 apply identity does not match the current runtime apply identity",
 		);
 		writeFileSync(paths.appliedState, appliedStateText);
-		process.env.CLAWDI_RUNTIME_GENERATION = "1";
-		process.env.CLAWDI_RUNTIME_MANIFEST_ETAG = '"bundle-golden"';
-		process.env.CLAWDI_RUNTIME_APPLY_RECEIPT_ID = "apply-receipt-golden-0001";
-		process.env.CLAWDI_RUNTIME_BOOT_NONCE = "boot-nonce-golden-000001";
+		setRuntimeApplyIdentityFile(root, {
+			generation: 1,
+			manifestETag: '"bundle-golden"',
+			applyReceiptId: "apply-receipt-golden-0001",
+			bootNonce: "boot-nonce-golden-000001",
+		});
 
 		const committedManifest = z
 			.record(z.string(), z.unknown())

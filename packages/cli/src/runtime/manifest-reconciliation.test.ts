@@ -24,16 +24,15 @@ import {
 	writeRuntimeAppliedState,
 } from "./applied-state";
 import { loadHostedBundledSkill } from "./hosted-bundled-skill";
+import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import { runtimeLiveSnapshotPaths } from "./live-state-snapshot";
 import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
 	daemonProgramRevision,
-	hostedAiProviderCatalog,
 	type RuntimeManifest,
-	runtimeProgramRevision,
+	runtimeProgramRevision as runtimeProgramRevisionWithEnvironment,
 	runtimeRecoverableSecretValues,
-	runtimeSecretValue,
 	runtimeSidecarProgramRevision,
 } from "./manifest";
 import {
@@ -56,6 +55,7 @@ import {
 	normalizeSecretValues,
 	processRuntimeEnvironment,
 	projectedRuntimeEnvironment,
+	runtimeSecretValue,
 } from "./secret-values";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
@@ -68,6 +68,19 @@ const successfulPrerequisiteActivation = () => ({
 const originalEnv = { ...process.env };
 const tempRoots: string[] = [];
 const TEST_HOSTED_LOCALE = { language: "en" as const, timezone: "UTC" };
+const runtimeProgramRevision = (
+	manifest: RuntimeManifest,
+	runtime: string,
+	secretValues: Record<string, string> | undefined,
+	providerProjectionRevision: string | null = null,
+): string =>
+	runtimeProgramRevisionWithEnvironment(
+		manifest,
+		runtime,
+		secretValues,
+		projectedRuntimeEnvironment({}),
+		providerProjectionRevision,
+	);
 const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.57";
 const TEST_HOSTED_HOME = "/home/clawdi";
 const TEST_HOSTED_CODEX_TOOLING = {

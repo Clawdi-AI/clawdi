@@ -862,11 +862,11 @@ export function runtimeManifestFixturePath(): string | undefined {
 
 export async function loadRuntimeManifest(
 	paths: RuntimePaths,
-	opts: { manifestPath?: string } = {},
+	opts: { manifestPath?: string; applyContext?: RuntimeApplyContext } = {},
 ): Promise<RuntimeManifestLoad | RuntimeManifestFailure> {
 	let applyContext: RuntimeApplyContext;
 	try {
-		applyContext = readRuntimeApplyContext();
+		applyContext = opts.applyContext ?? readRuntimeApplyContext();
 	} catch (error) {
 		return runtimeApplyContextFailure(error);
 	}
@@ -989,8 +989,8 @@ const offlineLastGoodManifestLoadOptions: LastGoodManifestLoadOptions = {
 
 function loadLastGoodManifest(
 	paths: RuntimePaths,
-	opts: LastGoodManifestLoadOptions = offlineLastGoodManifestLoadOptions,
-	applyContext: RuntimeApplyContext = readRuntimeApplyContext(),
+	opts: LastGoodManifestLoadOptions,
+	applyContext: RuntimeApplyContext,
 ): RuntimeManifestLoad | RuntimeManifestFailure {
 	if (!existsSync(paths.manifestLastGood)) {
 		return {
@@ -1130,12 +1130,17 @@ function loadLastGoodManifest(
 // the previously committed secret material needed to roll back the sidecar.
 export function loadCommittedRuntimeManifest(
 	paths: RuntimePaths,
+	applyContext: RuntimeApplyContext,
 ): RuntimeManifestLoad | RuntimeManifestFailure {
-	return loadLastGoodManifest(paths, {
-		requireOfflineBoot: false,
-		requireAppliedAuthority: true,
-		requireSemanticValidity: false,
-	});
+	return loadLastGoodManifest(
+		paths,
+		{
+			requireOfflineBoot: false,
+			requireAppliedAuthority: true,
+			requireSemanticValidity: false,
+		},
+		applyContext,
+	);
 }
 
 function loadCachedSecretValues(
