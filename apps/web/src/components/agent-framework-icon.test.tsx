@@ -22,6 +22,8 @@ describe("AgentFrameworkIcon", () => {
 			expect(markup).toContain(`aria-label="${label}"`);
 			expect(markup).toContain(`<title>${label}</title>`);
 			expect(markup).toContain('data-icon-source="lobehub"');
+			expect(markup).toContain('width="72%"');
+			expect(markup).toContain('height="72%"');
 			expect(markup).not.toContain("<img");
 		}
 	});

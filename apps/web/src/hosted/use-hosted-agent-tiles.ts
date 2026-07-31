@@ -1,7 +1,7 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { createElement, useMemo } from "react";
+import { useMemo } from "react";
 import type { AgentCardStatusProjection, AgentTile } from "@/components/dashboard/agents-card";
 import { type DaemonStatusVisual, daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { statusDotVariants, statusTextVariants } from "@/components/ui/status-badge";
@@ -27,7 +27,6 @@ import {
 	claimedEnvIdsFromDeployments,
 	isHostedDeploymentVisible,
 } from "@/hosted/hosted-agent-resolution";
-import { HostedDeploymentTileAction } from "@/hosted/hosted-deployment-tile-action";
 import { deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 import { AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY, agentSectionHref } from "@/lib/agent-routes";
@@ -144,17 +143,8 @@ export function useHostedAgentTiles({
 	// TanStack Query gives the same `data` reference back on no-op
 	// refetches, so the memo deps stay stable.
 	const tiles = useMemo<AgentTile[]>(() => {
-		return includeDeployments
-			? deployments.flatMap((d) =>
-					deploymentToTiles(d, envById, {
-						isRetrying: inventory.isFetching,
-						onRetry: () => {
-							void inventory.refetch();
-						},
-					}),
-				)
-			: [];
-	}, [deployments, includeDeployments, envById, inventory.isFetching, inventory.refetch]);
+		return includeDeployments ? deployments.flatMap((d) => deploymentToTiles(d, envById)) : [];
+	}, [deployments, includeDeployments, envById]);
 
 	// Env ids that are owned by a hosted deployment. The dashboard
 	// excludes these from its self-managed grid so a hosted deployment's env
@@ -192,14 +182,10 @@ export function useHostedAgentTiles({
 
 /**
  * One deployment renders as one hosted agent tile. The selected runtime's stored
- * environment id owns the detail route. Deployment state stays on the detail page;
- * the tile projects only the agent identity and available actions.
+ * environment id owns the detail route. Lifecycle and recovery controls stay on
+ * the detail/settings surfaces; the tile projects only identity and status.
  */
-export function deploymentToTiles(
-	d: HostedDeployment,
-	envById: Map<string, Env>,
-	statusRetry?: { isRetrying: boolean; onRetry: () => void },
-): AgentTile[] {
+export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
 	if (!isHostedDeploymentVisible(d)) return [];
 	const runtime = deploymentRuntime(d);
 	const name = deploymentDisplayName(d.resource.spec.name, runtime);
@@ -212,9 +198,6 @@ export function deploymentToTiles(
 		[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: d.resource.id,
 	};
 	const detailHref = envId ? agentSectionHref(envId, "overview", routeQuery) : null;
-	const settingsHref = envId ? agentSectionHref(envId, "settings", routeQuery) : undefined;
-	const providerSettingsHref = envId ? agentSectionHref(envId, "ai", routeQuery) : undefined;
-	const deploymentStatus = deploymentStatusFromResource(d.resource.status);
 	const failure = deploymentFailurePresentation(d);
 	const runtimeStatus = hostedRuntimeStatusView(d.resource.status, matchedEnv ?? null, failure);
 	const cardStatus: AgentCardStatusProjection = {
@@ -228,12 +211,6 @@ export function deploymentToTiles(
 			...(runtimeStatus.secondary ? [runtimeStatus.secondary.label] : []),
 		],
 	};
-	const showTileActions =
-		Boolean(failure) ||
-		deploymentStatus.kind === "stopped" ||
-		deploymentStatus.kind === "failed" ||
-		deploymentStatus.kind === "unknown" ||
-		!envId;
 	return [
 		{
 			id: d.resource.id,
@@ -244,19 +221,6 @@ export function deploymentToTiles(
 			agentType: runtime,
 			href: detailHref,
 			external: false,
-			action: showTileActions
-				? createElement(HostedDeploymentTileAction, {
-						deployment: d,
-						remediationHref:
-							failure?.remediation.kind === "review_provider"
-								? providerSettingsHref
-								: settingsHref
-									? `${settingsHref}#compute-plan-controls`
-									: undefined,
-						isRetrying: statusRetry?.isRetrying,
-						onRetry: statusRetry?.onRetry,
-					})
-				: undefined,
 			cardStatus,
 			env: matchedEnv ?? null,
 		},
