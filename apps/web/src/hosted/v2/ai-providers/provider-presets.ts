@@ -25,6 +25,7 @@ export interface ProviderPreset {
 	label: string;
 	base_url: string;
 	api_mode: ApiMode;
+	/** Must be catalog[0]: saved catalog order is the runtime model-default authority. */
 	suggested_primary_model: string;
 	catalog: readonly ProviderPresetCatalogEntry[];
 	api_key_url: string;

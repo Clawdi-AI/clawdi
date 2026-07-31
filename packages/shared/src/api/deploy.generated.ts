@@ -1787,9 +1787,15 @@ export interface components {
         };
         /** V2ManagedModelCapabilities */
         V2ManagedModelCapabilities: {
-            /** Context Window */
+            /**
+             * Context Window
+             * @description Baseline context window available on the managed surface.
+             */
             context_window: number;
-            /** Max Context Window */
+            /**
+             * Max Context Window
+             * @description Optional conditional upper bound. Clients must qualify this value instead of presenting it as guaranteed capacity.
+             */
             max_context_window: number | null;
             /** Max Input Tokens */
             max_input_tokens: number;
@@ -1818,15 +1824,10 @@ export interface components {
             /** Is Featured */
             is_featured: boolean;
             /**
-             * Summary
-             * @description Concise operator-authored capability or use-case guidance.
+             * Description
+             * @description Authoritative single-sentence choice guidance from the atomic Hosted setting.
              */
-            summary: string | null;
-            /**
-             * Cost Hint
-             * @description Concise operator-authored relative-cost guidance.
-             */
-            cost_hint: string | null;
+            description: string | null;
             /** @description Factual metadata from the bundled Hosted model catalog. */
             capabilities: components["schemas"]["V2ManagedModelCapabilities"];
         };

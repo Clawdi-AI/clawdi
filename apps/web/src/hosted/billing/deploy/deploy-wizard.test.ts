@@ -262,27 +262,25 @@ describe("managed model picker", () => {
 			expect(source).not.toContain("Hosted default (Luna)");
 		}
 		expect(modelBindingPickerSource).toContain("modelPickerItems(");
-		expect(modelBindingPickerSource).toContain("compactManagedModelChoices = false");
-		expect(modelBindingPickerSource).toContain(
-			"isManaged && compactManagedModelChoices && hasCatalogModels",
-		);
-		expect(wizardSource).toContain("compactManagedModelChoices");
+		expect(modelBindingPickerSource).toContain("isManaged && hasCatalogModels");
+		expect(wizardSource).not.toContain("compactManagedModelChoices");
 		expect(agentDetailSource).not.toContain("compactManagedModelChoices");
-		expect(modelBindingPickerSource).toContain("compactManagedItems.featured.map((item) =>");
+		expect(modelBindingPickerSource).toContain("compactManagedItems.featured.map((item, index) =>");
 		expect(modelBindingPickerSource).toContain("compactManagedItems.overflow.map((item) =>");
 		expect(modelBindingPickerSource).toContain("<RadioGroup");
 		expect(modelBindingPickerSource).toContain('data-testid="managed-model-overflow"');
 		expect(modelBindingPickerSource).toContain('placeholder="More models"');
 		expect(modelBindingPickerSource).toContain("aria-labelledby=");
 		expect(modelBindingPickerSource).toContain("<Label id=");
-		expect(modelBindingPickerSource).toContain(">Primary model</Label>");
-		expect(modelBindingPickerSource).toContain(
-			"<Label htmlFor={catalogInputId}>Primary model</Label>",
-		);
-		expect(modelBindingPickerSource).toContain(
-			'{hasCatalogModels ? "Custom model" : "Primary model"}',
-		);
-		expect(modelBindingPickerSource).not.toContain("Main model");
+		expect(modelBindingPickerSource).toContain(">Main model</Label>");
+		expect(modelBindingPickerSource).toContain("<Label htmlFor={modelInputId}>Main model</Label>");
+		expect(modelBindingPickerSource).toContain("list={hasCatalogModels ? modelListId : undefined}");
+		expect(modelBindingPickerSource).toContain("<datalist id={modelListId}>");
+		expect(modelBindingPickerSource).toContain("{item.description}");
+		expect(modelBindingPickerSource).not.toContain("ManagedModelDetails");
+		expect(modelBindingPickerSource).not.toContain("managed-model-capabilities");
+		expect(modelBindingPickerSource).not.toContain("managed-model-cost-hint");
+		expect(modelBindingPickerSource).not.toContain("Primary model");
 		expect(modelBindingPickerSource).not.toContain("Catalog model");
 		expect(modelBindingPickerSource).toContain(
 			'"flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3"',

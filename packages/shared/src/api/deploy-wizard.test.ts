@@ -30,8 +30,7 @@ const unsupportedCheckoutMode: HostedDeployCheckoutUiMode = "elements";
 void unsupportedCheckoutMode;
 
 const managedModelMetadata = {
-	summary: null,
-	cost_hint: null,
+	description: null,
 	capabilities: {
 		context_window: 128_000,
 		max_context_window: null,

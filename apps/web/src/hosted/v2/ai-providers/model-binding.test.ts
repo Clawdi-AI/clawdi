@@ -17,11 +17,14 @@ import {
 	providerRuntimeIncompatibility,
 	usableProviders,
 } from "@/hosted/v2/ai-providers/model-binding";
+import {
+	presetCatalogToProviderModels,
+	providerPresetById,
+} from "@/hosted/v2/ai-providers/provider-presets";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 const managedMetadata = {
-	summary: null,
-	cost_hint: null,
+	description: null,
 	capabilities: {
 		context_window: 128_000,
 		max_context_window: null,
@@ -112,6 +115,8 @@ describe("model binding", () => {
 		const managedModels = [
 			{
 				...managedMetadata,
+				description:
+					"Higher-cost, most capable Codex choice for complex work, with a 272K context window.",
 				id: "gpt-5.6-sol",
 				display_name: "GPT-5.6-Sol",
 				is_default: false,
@@ -119,6 +124,8 @@ describe("model binding", () => {
 			},
 			{
 				...managedMetadata,
+				description:
+					"Pricing varies; K3 targets long-context work with a 256K baseline and up to 1M only on eligible plans.",
 				id: "k3",
 				display_name: "Kimi K3",
 				is_default: false,
@@ -133,6 +140,8 @@ describe("model binding", () => {
 			},
 			{
 				...managedMetadata,
+				description:
+					"Lowest-cost Codex choice for fast, high-volume work, with a 272K context window.",
 				id: "gpt-5.6-luna",
 				display_name: "GPT-5.6-Luna",
 				is_default: true,
@@ -140,6 +149,8 @@ describe("model binding", () => {
 			},
 			{
 				...managedMetadata,
+				description:
+					"Balanced-cost Codex choice for capable everyday work, with a 272K context window.",
 				id: "gpt-5.6-terra",
 				display_name: "GPT-5.6-Terra",
 				is_default: false,
@@ -149,13 +160,33 @@ describe("model binding", () => {
 
 		expect(managedModelPickerItems(managedModels)).toEqual({
 			featured: [
-				{ value: "gpt-5.6-sol", label: "GPT-5.6-Sol" },
-				{ value: "k3", label: "Kimi K3" },
+				{
+					value: "gpt-5.6-sol",
+					label: "GPT-5.6-Sol",
+					description:
+						"Higher-cost, most capable Codex choice for complex work, with a 272K context window.",
+				},
+				{
+					value: "k3",
+					label: "Kimi K3",
+					description:
+						"Pricing varies; K3 targets long-context work with a 256K baseline and up to 1M only on eligible plans.",
+				},
 			],
 			overflow: [
 				{ value: "future-model", label: "Future model" },
-				{ value: "gpt-5.6-luna", label: "GPT-5.6-Luna" },
-				{ value: "gpt-5.6-terra", label: "GPT-5.6-Terra" },
+				{
+					value: "gpt-5.6-luna",
+					label: "GPT-5.6-Luna",
+					description:
+						"Lowest-cost Codex choice for fast, high-volume work, with a 272K context window.",
+				},
+				{
+					value: "gpt-5.6-terra",
+					label: "GPT-5.6-Terra",
+					description:
+						"Balanced-cost Codex choice for capable everyday work, with a 272K context window.",
+				},
 			],
 		});
 	});
@@ -248,6 +279,48 @@ describe("model binding", () => {
 			iconId: "custom_openai_compatible",
 			summary: "Custom (OpenAI-compatible) · DeepSeek V4 Flash",
 		});
+	});
+
+	test("uses persisted preset catalog order without a component model default", () => {
+		const preset = providerPresetById("deepseek");
+		if (!preset) throw new Error("Expected the DeepSeek preset fixture.");
+		const provider = {
+			...savedOpenAiProvider,
+			provider_id: preset.id,
+			type: "custom_openai_compatible",
+			base_url: preset.base_url,
+			models: presetCatalogToProviderModels(preset),
+		} satisfies AiProvider;
+
+		expect(provider.models?.[0]?.id).toBe(preset.suggested_primary_model);
+		expect(firstModelForProvider(provider.provider_id, [provider])).toBe(
+			preset.suggested_primary_model,
+		);
+		expect(modelPickerItems(provider.provider_id, [provider], [])).toEqual(
+			provider.models?.map((model) => ({
+				value: model.id,
+				label: model.label ?? model.id,
+			})),
+		);
+	});
+
+	test("uses a custom provider catalog when present and no fallback when absent", () => {
+		const withCatalog = {
+			...savedOpenAiProvider,
+			provider_id: "custom-with-catalog",
+			type: "custom_openai_compatible",
+			models: [{ id: "owner-default" }, { id: "owner-alternate" }],
+		} satisfies AiProvider;
+		const withoutCatalog = {
+			...withCatalog,
+			provider_id: "custom-without-catalog",
+			models: null,
+		} satisfies AiProvider;
+
+		expect(firstModelForProvider(withCatalog.provider_id, [withCatalog])).toBe("owner-default");
+		expect(modelPickerItems(withCatalog.provider_id, [withCatalog], [])).toHaveLength(2);
+		expect(firstModelForProvider(withoutCatalog.provider_id, [withoutCatalog])).toBe("");
+		expect(modelPickerItems(withoutCatalog.provider_id, [withoutCatalog], [])).toEqual([]);
 	});
 
 	test("does not offer an unfinished provider as a deploy selection", () => {

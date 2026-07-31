@@ -144,8 +144,8 @@ describe("managed model catalog", () => {
 						display_name: "GPT-5.6-Luna",
 						is_default: true,
 						is_featured: true,
-						summary: "High-volume Codex work",
-						cost_hint: "Low cost",
+						description:
+							"Lowest-cost Codex choice for fast, high-volume work, with a 272K context window.",
 						capabilities: {
 							context_window: 272_000,
 							max_context_window: null,
@@ -168,8 +168,8 @@ describe("managed model catalog", () => {
 					display_name: "GPT-5.6-Luna",
 					is_default: true,
 					is_featured: true,
-					summary: "High-volume Codex work",
-					cost_hint: "Low cost",
+					description:
+						"Lowest-cost Codex choice for fast, high-volume work, with a 272K context window.",
 					capabilities: {
 						context_window: 272_000,
 						max_context_window: null,

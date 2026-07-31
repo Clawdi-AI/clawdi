@@ -20,8 +20,7 @@ const managedModels = [
 		display_name: "Managed",
 		is_default: true,
 		is_featured: true,
-		summary: null,
-		cost_hint: null,
+		description: null,
 		capabilities: {
 			context_window: 128_000,
 			max_context_window: null,

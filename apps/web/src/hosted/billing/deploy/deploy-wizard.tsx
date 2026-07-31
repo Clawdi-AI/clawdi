@@ -1140,7 +1140,6 @@ export function DeployWizard() {
 								onManagedModelsRetry={() => void managedModelCatalog.refetch()}
 								customProviders={providerList}
 								showProviderSelect={false}
-								compactManagedModelChoices
 								selectedProviderChoices={selectedProviderChoices}
 								primaryProviderChoice={primaryProviderChoice}
 								primaryModel={primaryModel}

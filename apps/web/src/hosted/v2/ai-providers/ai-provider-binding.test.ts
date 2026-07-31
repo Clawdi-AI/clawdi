@@ -20,8 +20,7 @@ const managedModels = [
 		display_name: "Managed",
 		is_default: true,
 		is_featured: true,
-		summary: null,
-		cost_hint: null,
+		description: null,
 		capabilities: {
 			context_window: 128_000,
 			max_context_window: null,
@@ -335,7 +334,7 @@ describe("AI provider binding draft transitions", () => {
 		);
 	});
 
-	test("preserves the create and update model-fallback difference", () => {
+	test("clears a stale catalog model when the next provider has no default", () => {
 		const draft = {
 			bindingMode: "configured" as const,
 			providerChoices: [MANAGED_AI_CHOICE],
@@ -356,7 +355,51 @@ describe("AI provider binding draft transitions", () => {
 				operationMode: "update",
 				providers: [],
 			}).primaryModel,
-		).toBe("   ");
+		).toBe("");
+	});
+
+	test("preserves an existing custom model across provider switches", () => {
+		const selected = changeAiBindingPrimaryProvider(
+			{
+				bindingMode: "configured",
+				providerChoices: [apiKeyProvider.provider_id],
+				primaryProviderChoice: apiKeyProvider.provider_id,
+				primaryModel: "owner/custom-model",
+			},
+			oauthProvider.provider_id,
+			{
+				managedModels,
+				operationMode: "update",
+				providers: [apiKeyProvider, oauthProvider],
+			},
+		);
+
+		expect(selected.primaryModel).toBe("owner/custom-model");
+	});
+
+	test("resets a previous catalog model to the next provider catalog default", () => {
+		const nextProvider = {
+			...apiKeyProvider,
+			provider_id: "anthropic-main",
+			type: "anthropic",
+			models: [{ id: "claude-owner-default" }, { id: "claude-owner-alternate" }],
+		} satisfies AiProvider;
+		const selected = changeAiBindingPrimaryProvider(
+			{
+				bindingMode: "configured",
+				providerChoices: [apiKeyProvider.provider_id],
+				primaryProviderChoice: apiKeyProvider.provider_id,
+				primaryModel: "gpt-custom",
+			},
+			nextProvider.provider_id,
+			{
+				managedModels,
+				operationMode: "create",
+				providers: [apiKeyProvider, nextProvider],
+			},
+		);
+
+		expect(selected.primaryModel).toBe("claude-owner-default");
 	});
 
 	test("keeps unresolved providers visible until the user replaces them", () => {
