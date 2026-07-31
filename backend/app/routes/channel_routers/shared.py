@@ -35,6 +35,7 @@ from app.schemas.channel import (
     ChannelAccountResponse,
     ChannelBindingResponse,
     ChannelMessageResponse,
+    ChannelVisibility,
 )
 from app.services.bluebubbles_compat import (
     bluebubbles_message_client_payload,
@@ -66,14 +67,42 @@ from app.services.metrics import (
 )
 from app.services.url_security import UnsafeOutboundUrlError, validate_channel_http_url
 
+# Discord API docs baseline b2f8adafc037242291b8f875d4cdf3adc4d48bb7.
+# Keep both directions explicit: runtime credentials and hop-by-hop headers
+# never cross into Discord, while documented rate-limit state remains usable.
+_DISCORD_REQUEST_HEADER_ALLOWLIST = ("x-audit-log-reason",)
+_DISCORD_RESPONSE_HEADER_ALLOWLIST = (
+    "cache-control",
+    "cf-ray",
+    "etag",
+    "last-modified",
+    "retry-after",
+    "x-correlation-id",
+    "x-ratelimit-bucket",
+    "x-ratelimit-global",
+    "x-ratelimit-limit",
+    "x-ratelimit-remaining",
+    "x-ratelimit-reset",
+    "x-ratelimit-reset-after",
+    "x-ratelimit-scope",
+    "x-request-id",
+)
+
 
 def _account_response(account: ChannelAccount) -> ChannelAccountResponse:
+    visibility: ChannelVisibility
+    if account.visibility == "private":
+        visibility = "private"
+    elif account.visibility == "public":
+        visibility = "public"
+    else:
+        raise ValueError("invalid channel account visibility")
     return ChannelAccountResponse(
         id=account.id,
         provider=account.provider,
         name=account.name,
         status=account.status,
-        visibility=account.visibility,
+        visibility=visibility,
         has_provider_token=bool(account.encrypted_provider_token and account.provider_token_nonce),
         webhook_url=channel_webhook_url(account.id, account.provider),
         created_at=account.created_at,
@@ -569,7 +598,7 @@ async def _handle_discord_application_commands(
         command_id = segments[5]
     else:
         return None
-    if application_id != _discord_application_id(account):
+    if application_id is None or application_id != _discord_application_id(account):
         return _discord_command_error("Missing Access", 50001, 403)
     if guild_id is not None and not await _discord_guild_owned_by_link(
         db,
@@ -743,7 +772,12 @@ def _discord_command_list_shape(
 
 
 def _discord_command_shape(command: Any, *, application_id: str) -> dict[str, Any]:
-    source = command if isinstance(command, dict) else {}
+    if not isinstance(command, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="application command object required",
+        )
+    source = command
     name = _optional_str(source.get("name"))
     if name is None:
         raise HTTPException(
@@ -755,42 +789,50 @@ def _discord_command_shape(command: Any, *, application_id: str) -> dict[str, An
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='command names starting with "bot_" are reserved',
         )
-    command_type = source.get("type") if isinstance(source.get("type"), int) else 1
-    description = _optional_str(source.get("description"))
-    if command_type == 1 and description is None:
+    raw_command_type = source.get("type")
+    if isinstance(raw_command_type, bool):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="command type is invalid",
+        )
+    command_type = raw_command_type if isinstance(raw_command_type, int) else 1
+    description = source.get("description")
+    if command_type == 1 and (not isinstance(description, str) or not description.strip()):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="command description is required",
         )
-    shaped = {
-        "id": _optional_str(source.get("id"))
-        or str(
-            abs(
-                hash(
-                    json.dumps(
-                        {
-                            "application_id": application_id,
-                            "name": name,
-                            "type": command_type,
-                        },
-                        sort_keys=True,
+    shaped = dict(source)
+    shaped.update(
+        {
+            "id": _optional_str(source.get("id"))
+            or str(
+                abs(
+                    hash(
+                        json.dumps(
+                            {
+                                "application_id": application_id,
+                                "name": name,
+                                "type": command_type,
+                            },
+                            sort_keys=True,
+                        )
                     )
                 )
-            )
-        ),
-        "application_id": application_id,
-        "name": name,
-        "description": description or "",
-        "type": command_type,
-    }
-    options = source.get("options")
-    if isinstance(options, list):
-        shaped["options"] = [option for option in options if isinstance(option, dict)]
+            ),
+            "application_id": application_id,
+            "name": name,
+            "type": command_type,
+        }
+    )
     return shaped
 
 
 def _discord_command_key(command: dict[str, Any]) -> tuple[int, str]:
-    command_type = command.get("type") if isinstance(command.get("type"), int) else 1
+    raw_command_type = command.get("type")
+    command_type = 1
+    if isinstance(raw_command_type, int) and not isinstance(raw_command_type, bool):
+        command_type = raw_command_type
     return command_type, _optional_str(command.get("name")) or ""
 
 
@@ -829,7 +871,11 @@ async def _discord_guild_owned_by_link(
     bot_agent_link_id: UUID,
     guild_id: str,
 ) -> bool:
-    owners = await _discord_guild_owner_principals(db, guild_id=guild_id)
+    owners = await _discord_guild_owner_principals(
+        db,
+        account_id=account.id,
+        guild_id=guild_id,
+    )
     return owners == {(account.id, bot_agent_link_id)}
 
 
@@ -845,6 +891,7 @@ async def _discord_uncontested_guilds_for_link(
         .join(ChannelBotAgentLink, ChannelBotAgentLink.id == ChannelBinding.bot_agent_link_id)
         .where(
             ChannelAccount.provider == CHANNEL_PROVIDER_DISCORD,
+            ChannelBinding.account_id == account.id,
             ChannelBinding.status == BINDING_STATUS_ACTIVE,
             ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
             ChannelBotAgentLink.archived_at.is_(None),
@@ -866,14 +913,17 @@ async def _discord_uncontested_guilds_for_link(
 async def _discord_guild_owner_principals(
     db: AsyncSession,
     *,
+    account_id: UUID,
     guild_id: str,
 ) -> set[tuple[UUID, UUID]]:
+    """Return active Link owners within one physical Discord account namespace."""
     result = await db.execute(
         select(ChannelBinding, ChannelAccount, ChannelBotAgentLink)
         .join(ChannelAccount, ChannelAccount.id == ChannelBinding.account_id)
         .join(ChannelBotAgentLink, ChannelBotAgentLink.id == ChannelBinding.bot_agent_link_id)
         .where(
             ChannelAccount.provider == CHANNEL_PROVIDER_DISCORD,
+            ChannelBinding.account_id == account_id,
             ChannelBinding.status == BINDING_STATUS_ACTIVE,
             ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
             ChannelBotAgentLink.archived_at.is_(None),
@@ -916,7 +966,9 @@ async def _fan_out_discord_global_commands(
     ]
     if not target_guild_ids:
         return
-    body = json.dumps(commands).encode("utf-8")
+    body = json.dumps(
+        [_discord_guild_command_provider_payload(command) for command in commands]
+    ).encode("utf-8")
     for guild_id in target_guild_ids:
         result = await _request_discord_provider(
             account=account,
@@ -940,10 +992,10 @@ async def _materialize_discord_command_scope(
     guild_id: str | None,
     commands: list[dict[str, Any]],
 ) -> None:
-    # Agent-facing global commands are virtualized per Link because a shared
-    # physical Discord application has only one true global command set.
-    # Materialize them only into that Link's active Guild bindings. Explicit
-    # guild-scoped requests use the same ownership-checked provider path.
+    # Agent-defined commands are Link shadows. Never write them to the shared
+    # physical global command set or DMs; only materialize them into this
+    # Link's Guild bindings. Built-in reserved commands use the separate
+    # account-level sync path and remain physical global commands.
     await _fan_out_discord_global_commands(
         db,
         account=account,
@@ -952,6 +1004,24 @@ async def _materialize_discord_command_scope(
         commands=commands,
         guild_ids={guild_id} if guild_id is not None else None,
     )
+
+
+def _discord_guild_command_provider_payload(command: dict[str, Any]) -> dict[str, Any]:
+    """Project a virtual response object onto Discord's guild write contract."""
+    payload = dict(command)
+    for field in (
+        "id",
+        "application_id",
+        "guild_id",
+        "version",
+        "name_localized",
+        "description_localized",
+        "contexts",
+        "integration_types",
+        "dm_permission",
+    ):
+        payload.pop(field, None)
+    return payload
 
 
 def _discord_gateway_dispatch(message: Any) -> dict[str, Any]:
@@ -1003,6 +1073,7 @@ async def _request_discord_provider(
     body: bytes | None = None,
     content_type: str = "application/json",
     query_params: Any = None,
+    request_headers: Any = None,
 ) -> _DiscordProviderResult:
     token = decrypt_provider_token(account)
     normalized_path = f"/{path.lstrip('/')}"
@@ -1013,6 +1084,7 @@ async def _request_discord_provider(
         "Authorization": f"Bot {token}",
         "Content-Type": content_type,
     }
+    headers.update(_discord_request_headers(request_headers))
     decision = discord_rate_limiter.check(method, normalized_path)
     if not decision.allowed:
         rate_limit_rejects.labels(
@@ -1038,7 +1110,7 @@ async def _request_discord_provider(
                 response = await client.request(
                     method,
                     url,
-                    content=body if body else None,
+                    content=body,
                     headers=headers,
                     params=query_params,
                 )
@@ -1061,6 +1133,7 @@ async def _request_discord_provider(
         content=response.content,
         status_code=response.status_code,
         media_type=response.headers.get("content-type", "application/json"),
+        headers=_discord_response_headers(response.headers),
     )
 
 
@@ -1077,8 +1150,25 @@ async def _proxy_discord_request(
         body=await request.body(),
         content_type=request.headers.get("content-type", "application/json"),
         query_params=request.query_params,
+        request_headers=request.headers,
     )
     return result.as_response()
+
+
+def _discord_request_headers(headers: Any) -> dict[str, str]:
+    if headers is None:
+        return {}
+    return {
+        name: value for name in _DISCORD_REQUEST_HEADER_ALLOWLIST if (value := headers.get(name))
+    }
+
+
+def _discord_response_headers(headers: Any) -> dict[str, str]:
+    if headers is None:
+        return {}
+    return {
+        name: value for name in _DISCORD_RESPONSE_HEADER_ALLOWLIST if (value := headers.get(name))
+    }
 
 
 async def _validate_discord_provider_base_url(base_url: str) -> None:

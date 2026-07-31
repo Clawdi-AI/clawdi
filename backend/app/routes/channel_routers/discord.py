@@ -6,6 +6,9 @@ import logging
 import secrets
 import zlib
 from dataclasses import dataclass
+from email import policy
+from email.message import Message
+from email.parser import BytesParser
 from typing import Any
 from urllib.parse import quote
 from uuid import UUID
@@ -47,7 +50,6 @@ from app.routes.channel_routers.shared import (
     _discord_gateway_dispatch,
     _discord_guild_owner_principals,
     _discord_interaction_content,
-    _discord_message_result,
     _DiscordProviderResult,
     _fan_out_discord_global_commands,
     _handle_discord_application_commands,
@@ -80,12 +82,12 @@ from app.services.channels import (
     get_active_channel_account,
     get_channel_agent_reference,
     record_discord_interaction_references,
+    record_discord_outbound_message,
     record_inactive_bot_agent_link_event,
     record_inbound_messages_for_bindings,
     resolve_channel_agent_by_identity,
     resolve_channel_agent_by_token,
     resolve_inbound_binding,
-    send_channel_outbound_message,
     send_pairing_command_reply,
     upsert_binding_alias,
     verify_discord_signature,
@@ -106,6 +108,26 @@ class _DiscordGatewayCapability:
     account_id: UUID
     link_id: UUID
     agent_token_hash: str
+
+
+@dataclass(frozen=True)
+class _DiscordChannelAuthorization:
+    binding: ChannelBinding
+    preflight: _DiscordProviderResult | None = None
+
+
+@dataclass(frozen=True)
+class _DiscordMessageReferenceIdentity:
+    guild_id: str | None
+    channel_id: str | None
+
+
+class _DiscordCreateMessageParseError(ValueError):
+    pass
+
+
+class _DiscordJsonObject(list[tuple[str, Any]]):
+    pass
 
 
 def _discord_gateway_capability(agent: ChannelAgentContext) -> str:
@@ -180,6 +202,8 @@ async def discord_agent_rest(
 ) -> Any:
     agent = await _resolve_discord_agent_context(db, authorization)
     account = agent.account
+    account_id = account.id
+    link_id = agent.link.id
     segments = [segment for segment in discord_path.strip("/").split("/") if segment]
     if segments in (["gateway"], ["gateway", "bot"]):
         return {
@@ -250,8 +274,20 @@ async def discord_agent_rest(
         and request.method == "POST"
     ):
         channel_id = segments[1]
+        raw_body = await request.body()
+        content_types = request.headers.getlist("content-type")
+        if len(content_types) > 1:
+            return _discord_rest_error("Invalid Form Body", 50035, 400)
+        content_type = content_types[0] if content_types else "application/json"
         try:
-            await _authorize_discord_channel_request(
+            reference = _discord_create_message_reference(
+                raw_body,
+                content_type=content_type,
+            )
+        except _DiscordCreateMessageParseError:
+            return _discord_rest_error("Invalid Form Body", 50035, 400)
+        try:
+            channel_authorization = await _authorize_discord_channel_request(
                 db,
                 agent=agent,
                 channel_id=channel_id,
@@ -262,21 +298,73 @@ async def discord_agent_rest(
             if exc.status_code == status.HTTP_403_FORBIDDEN:
                 return _discord_rest_error("Missing Access", 50001, 403)
             raise
-        params = await _request_params(request)
-        text = _optional_str(params.get("content")) or ""
-        message = await send_channel_outbound_message(
+        if not await _discord_message_reference_is_authorized(
             db,
+            agent=agent,
+            binding=channel_authorization.binding,
+            reference=reference,
+            request=request,
+        ):
+            return _discord_rest_error("Unknown Message", 10008, 404)
+        provider_result = await _request_discord_provider(
             account=account,
-            external_chat_id=channel_id,
-            text=text,
-            bot_agent_link_id=agent.link.id,
+            method=request.method,
+            path=discord_path,
+            body=raw_body,
+            content_type=content_type,
+            query_params=request.query_params,
+            request_headers=request.headers,
         )
-        await db.commit()
-        return _discord_message_result(message, channel_id=channel_id, content=text)
+        if 200 <= provider_result.status_code < 300:
+            provider_payload = provider_result.json_object()
+            if provider_payload is None:
+                log.warning(
+                    "discord_outbound_record_skipped_invalid_response account_id=%s "
+                    "link_id=%s channel_id=%s",
+                    account_id,
+                    link_id,
+                    channel_id,
+                )
+            else:
+                try:
+                    await record_discord_outbound_message(
+                        db,
+                        account=account,
+                        binding=channel_authorization.binding,
+                        external_chat_id=channel_id,
+                        provider_response=provider_payload,
+                    )
+                    await db.commit()
+                except ValueError:
+                    log.warning(
+                        "discord_outbound_record_skipped_invalid_metadata account_id=%s "
+                        "link_id=%s channel_id=%s",
+                        account_id,
+                        link_id,
+                        channel_id,
+                    )
+                except Exception:
+                    log.exception(
+                        "discord_outbound_record_failed account_id=%s link_id=%s channel_id=%s",
+                        account_id,
+                        link_id,
+                        channel_id,
+                    )
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        log.exception(
+                            "discord_outbound_record_rollback_failed account_id=%s "
+                            "link_id=%s channel_id=%s",
+                            account_id,
+                            link_id,
+                            channel_id,
+                        )
+        return provider_result.as_response()
     if segments and segments[0] == "channels" and len(segments) >= 2:
         original_is_channel_get = len(segments) == 2 and request.method == "GET"
         try:
-            preflight = await _authorize_discord_channel_request(
+            channel_authorization = await _authorize_discord_channel_request(
                 db,
                 agent=agent,
                 channel_id=segments[1],
@@ -287,8 +375,8 @@ async def discord_agent_rest(
             if exc.status_code == status.HTTP_403_FORBIDDEN:
                 return _discord_rest_error("Missing Access", 50001, 403)
             raise
-        if original_is_channel_get and preflight is not None:
-            return preflight.as_response()
+        if original_is_channel_get and channel_authorization.preflight is not None:
+            return channel_authorization.preflight.as_response()
         return await _proxy_discord_request(account=account, request=request, path=discord_path)
     if segments and segments[0] == "guilds" and len(segments) >= 2:
         if not await _discord_guild_is_bound(
@@ -309,7 +397,7 @@ async def _authorize_discord_channel_request(
     channel_id: str,
     request: Request,
     original_is_channel_get: bool,
-) -> _DiscordProviderResult | None:
+) -> _DiscordChannelAuthorization:
     """Resolve a physical Discord channel without making it a Binding.
 
     Known channel aliases stay local. For an unobserved ID, Discord's own
@@ -318,13 +406,13 @@ async def _authorize_discord_channel_request(
     A Channel without ``guild_id`` can only use a direct DM Binding.
     """
     try:
-        await _require_bound_chat(
+        binding = await _require_bound_chat(
             db,
             account=agent.account,
             external_chat_id=channel_id,
             bot_agent_link_id=agent.link.id,
         )
-        return None
+        return _DiscordChannelAuthorization(binding=binding)
     except HTTPException as exc:
         if exc.status_code != status.HTTP_403_FORBIDDEN:
             raise
@@ -357,7 +445,165 @@ async def _authorize_discord_channel_request(
             require_same_binding=True,
         )
         await db.commit()
-    return preflight
+    return _DiscordChannelAuthorization(binding=binding, preflight=preflight)
+
+
+def _discord_create_message_reference(
+    body: bytes,
+    *,
+    content_type: str,
+) -> _DiscordMessageReferenceIdentity | None:
+    """Extract only Create Message identities while preserving ``body`` unchanged."""
+    media_type = _discord_media_type(content_type)
+    if media_type == "application/json":
+        payload = _discord_json_object(body)
+    elif media_type == "multipart/form-data":
+        payload = _discord_multipart_payload_json(body, content_type=content_type)
+    else:
+        raise _DiscordCreateMessageParseError
+    reference = _discord_unique_json_member(payload, "message_reference")
+    if reference is None:
+        return None
+    if not isinstance(reference, _DiscordJsonObject):
+        raise _DiscordCreateMessageParseError
+    return _DiscordMessageReferenceIdentity(
+        guild_id=_discord_reference_identity(reference, "guild_id"),
+        channel_id=_discord_reference_identity(reference, "channel_id"),
+    )
+
+
+def _discord_media_type(content_type: str) -> str:
+    if "\r" in content_type or "\n" in content_type:
+        raise _DiscordCreateMessageParseError
+    message = Message()
+    message["content-type"] = content_type
+    return message.get_content_type().lower()
+
+
+def _discord_json_object(body: bytes) -> _DiscordJsonObject:
+    def reject_nonstandard_constant(_value: str) -> None:
+        raise ValueError
+
+    try:
+        payload = json.loads(
+            body.decode("utf-8"),
+            object_pairs_hook=_DiscordJsonObject,
+            parse_constant=reject_nonstandard_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise _DiscordCreateMessageParseError from exc
+    if not isinstance(payload, _DiscordJsonObject):
+        raise _DiscordCreateMessageParseError
+    return payload
+
+
+def _discord_unique_json_member(payload: _DiscordJsonObject, name: str) -> Any:
+    values = [value for key, value in payload if key == name]
+    if len(values) > 1:
+        raise _DiscordCreateMessageParseError
+    return values[0] if values else None
+
+
+def _discord_reference_identity(reference: _DiscordJsonObject, name: str) -> str | None:
+    value = _discord_unique_json_member(reference, name)
+    if value is None:
+        return None
+    identity = _optional_str(value) if not isinstance(value, bool) else None
+    if identity is None:
+        raise _DiscordCreateMessageParseError
+    return identity
+
+
+def _discord_multipart_payload_json(
+    body: bytes,
+    *,
+    content_type: str,
+) -> _DiscordJsonObject:
+    content_type_message = Message()
+    content_type_message["content-type"] = content_type
+    content_type_params = (
+        content_type_message.get_params(
+            header="content-type",
+            unquote=True,
+        )
+        or []
+    )
+    boundary_params = [
+        value for name, value in content_type_params[1:] if name.lower() == "boundary"
+    ]
+    if len(boundary_params) != 1 or not boundary_params[0]:
+        raise _DiscordCreateMessageParseError
+    try:
+        message = BytesParser(policy=policy.default).parsebytes(
+            b"Content-Type: "
+            + content_type.encode("ascii")
+            + b"\r\nMIME-Version: 1.0\r\n\r\n"
+            + body
+        )
+    except (UnicodeEncodeError, ValueError) as exc:
+        raise _DiscordCreateMessageParseError from exc
+    if not message.is_multipart() or any(part.defects for part in message.walk()):
+        raise _DiscordCreateMessageParseError
+
+    payload_parts: list[Message] = []
+    for part in message.iter_parts():
+        dispositions = part.get_all("content-disposition", [])
+        if len(dispositions) != 1 or part.get_content_disposition() != "form-data":
+            raise _DiscordCreateMessageParseError
+        disposition_params = (
+            part.get_params(
+                header="content-disposition",
+                unquote=True,
+            )
+            or []
+        )
+        names = [value for name, value in disposition_params[1:] if name.lower() == "name"]
+        if len(names) != 1 or not names[0]:
+            raise _DiscordCreateMessageParseError
+        if names[0] == "payload_json":
+            payload_parts.append(part)
+    if len(payload_parts) > 1:
+        raise _DiscordCreateMessageParseError
+    if not payload_parts:
+        return _DiscordJsonObject()
+    payload_part = payload_parts[0]
+    if payload_part.is_multipart() or payload_part.get("content-transfer-encoding") is not None:
+        raise _DiscordCreateMessageParseError
+    payload_body = payload_part.get_payload(decode=True)
+    if not isinstance(payload_body, bytes):
+        raise _DiscordCreateMessageParseError
+    return _discord_json_object(payload_body)
+
+
+async def _discord_message_reference_is_authorized(
+    db: AsyncSession,
+    *,
+    agent: ChannelAgentContext,
+    binding: ChannelBinding,
+    reference: _DiscordMessageReferenceIdentity | None,
+    request: Request,
+) -> bool:
+    if reference is None:
+        return True
+    binding_guild_id = _discord_binding_guild_id(binding)
+    if reference.guild_id is not None and reference.guild_id != binding_guild_id:
+        return False
+    if reference.channel_id is not None:
+        try:
+            reference_authorization = await _authorize_discord_channel_request(
+                db,
+                agent=agent,
+                channel_id=reference.channel_id,
+                request=request,
+                original_is_channel_get=False,
+            )
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_403_FORBIDDEN:
+                return False
+            raise
+        if reference_authorization.binding.id != binding.id:
+            return False
+    return True
 
 
 async def _discord_revalidated_channel_binding(
@@ -570,13 +816,12 @@ async def discord_agent_gateway(
                 )
             if op == 6:
                 resume_session_id = _optional_str(data.get("session_id"))
-                resume_state = (
-                    _DISCORD_GATEWAY_SESSIONS.get(resume_session_id)
-                    if resume_session_id is not None
-                    else None
-                )
+                if resume_session_id is None:
+                    await send_gateway_frame({"op": 9, "d": False}, record=False)
+                    continue
+                resume_state = _DISCORD_GATEWAY_SESSIONS.get(resume_session_id)
                 if resume_state is None:
-                    if resume_session_id is None or _DISCORD_GATEWAY_SESSIONS:
+                    if _DISCORD_GATEWAY_SESSIONS:
                         await send_gateway_frame({"op": 9, "d": False}, record=False)
                         continue
                     resume_state = {
@@ -798,7 +1043,7 @@ async def discord_webhook(
     message = messages[0][0]
     reply_text = discord_pairing_reply_for_command(command, binding_result, guild_id=guild_id)
     if payload.get("type") == 2:
-        if binding_result.paired and guild_id is not None:
+        if binding_result.paired and binding_result.binding is not None and guild_id is not None:
             # Discord interactions have a short acknowledgement deadline. The
             # binding commit is authoritative; replay the already-shadowed
             # Agent commands once after the interaction response is available.
@@ -946,7 +1191,11 @@ async def _cleanup_discord_guild_commands_after_authority_revoked(
             for guild_id in sorted(guild_ids):
                 # A new pairing can win after the revocation commit. Never erase its
                 # newly materialized commands.
-                if await _discord_guild_owner_principals(db, guild_id=guild_id):
+                if await _discord_guild_owner_principals(
+                    db,
+                    account_id=account.id,
+                    guild_id=guild_id,
+                ):
                     log.info(
                         "discord_command_cleanup_skipped_active_owner "
                         "account_id=%s link_id=%s guild_id=%s",
