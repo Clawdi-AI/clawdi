@@ -141,7 +141,7 @@ describe("managed model catalog", () => {
 				models: [
 					{
 						id: "gpt-5.6-luna",
-						display_name: "GPT-5.6-Luna",
+						display_name: "GPT-5.6 Luna",
 						provider_id: "openai-codex",
 						is_default: true,
 						is_featured: true,
@@ -165,7 +165,7 @@ describe("managed model catalog", () => {
 			models: [
 				{
 					id: "gpt-5.6-luna",
-					display_name: "GPT-5.6-Luna",
+					display_name: "GPT-5.6 Luna",
 					provider_id: "openai-codex",
 					is_default: true,
 					is_featured: true,

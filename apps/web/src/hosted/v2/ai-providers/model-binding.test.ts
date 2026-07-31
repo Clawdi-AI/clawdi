@@ -79,21 +79,21 @@ describe("model binding", () => {
 			{
 				...managedMetadata,
 				id: "gpt-5.6-sol",
-				display_name: "GPT-5.6-Sol",
+				display_name: "GPT-5.6 Sol",
 				is_default: false,
 				is_featured: true,
 			},
 			{
 				...managedMetadata,
 				id: "gpt-5.6-luna",
-				display_name: "GPT-5.6-Luna",
+				display_name: "GPT-5.6 Luna",
 				is_default: true,
 				is_featured: true,
 			},
 			{
 				...managedMetadata,
 				id: "gpt-5.6-terra",
-				display_name: "GPT-5.6-Terra",
+				display_name: "GPT-5.6 Terra",
 				is_default: false,
 				is_featured: false,
 			},
@@ -105,11 +105,11 @@ describe("model binding", () => {
 		expect(firstModelForProvider(MANAGED_AI_CHOICE, [], managedModels)).toBe("gpt-5.6-luna");
 		expect(modelOptionsForProvider(MANAGED_AI_CHOICE, [], managedModels)).toEqual(managedModels);
 		expect(modelPickerItems(MANAGED_AI_CHOICE, [], managedModels)).toEqual([
-			{ value: "gpt-5.6-sol", label: "GPT-5.6-Sol" },
-			{ value: "gpt-5.6-luna", label: "GPT-5.6-Luna" },
-			{ value: "gpt-5.6-terra", label: "GPT-5.6-Terra" },
+			{ value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+			{ value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+			{ value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
 		]);
-		expect(modelDisplayName("gpt-5.6-sol", managedModels)).toBe("GPT-5.6-Sol");
+		expect(modelDisplayName("gpt-5.6-sol", managedModels)).toBe("GPT-5.6 Sol");
 	});
 
 	test("splits featured and overflow models without changing backend order", () => {
@@ -118,7 +118,7 @@ describe("model binding", () => {
 				...managedMetadata,
 				description: "Higher cost for complex work.",
 				id: "gpt-5.6-sol",
-				display_name: "GPT-5.6-Sol",
+				display_name: "GPT-5.6 Sol",
 				is_default: false,
 				is_featured: true,
 			},
@@ -142,7 +142,7 @@ describe("model binding", () => {
 				...managedMetadata,
 				description: "Low cost for routine work.",
 				id: "gpt-5.6-luna",
-				display_name: "GPT-5.6-Luna",
+				display_name: "GPT-5.6 Luna",
 				is_default: true,
 				is_featured: false,
 			},
@@ -150,7 +150,7 @@ describe("model binding", () => {
 				...managedMetadata,
 				description: "Balanced cost for everyday work.",
 				id: "gpt-5.6-terra",
-				display_name: "GPT-5.6-Terra",
+				display_name: "GPT-5.6 Terra",
 				is_default: false,
 				is_featured: false,
 			},
@@ -160,7 +160,7 @@ describe("model binding", () => {
 			featured: [
 				{
 					value: "gpt-5.6-sol",
-					label: "GPT-5.6-Sol",
+					label: "GPT-5.6 Sol",
 					providerId: "openai-codex",
 					description: "Higher cost for complex work.",
 				},
@@ -175,13 +175,13 @@ describe("model binding", () => {
 				{ value: "future-model", label: "Future model", providerId: "openai-codex" },
 				{
 					value: "gpt-5.6-luna",
-					label: "GPT-5.6-Luna",
+					label: "GPT-5.6 Luna",
 					providerId: "openai-codex",
 					description: "Low cost for routine work.",
 				},
 				{
 					value: "gpt-5.6-terra",
-					label: "GPT-5.6-Terra",
+					label: "GPT-5.6 Terra",
 					providerId: "openai-codex",
 					description: "Balanced cost for everyday work.",
 				},

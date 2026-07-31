@@ -60,7 +60,7 @@ const managedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 	models: [
 		{
 			id: "gpt-5.6-luna",
-			display_name: "GPT-5.6-Luna",
+			display_name: "GPT-5.6 Luna",
 			provider_id: "openai-codex",
 			is_default: true,
 			is_featured: true,
@@ -69,7 +69,7 @@ const managedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 		},
 		{
 			id: "gpt-5.6-sol",
-			display_name: "GPT-5.6-Sol",
+			display_name: "GPT-5.6 Sol",
 			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: false,
@@ -78,7 +78,7 @@ const managedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 		},
 		{
 			id: "gpt-5.6-terra",
-			display_name: "GPT-5.6-Terra",
+			display_name: "GPT-5.6 Terra",
 			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: false,
@@ -92,7 +92,7 @@ const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 	models: [
 		{
 			id: "gpt-5.6-terra",
-			display_name: "GPT-5.6-Terra",
+			display_name: "GPT-5.6 Terra",
 			provider_id: "openai-codex",
 			is_default: true,
 			is_featured: true,
@@ -101,7 +101,7 @@ const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 		},
 		{
 			id: "gpt-5.6-luna",
-			display_name: "GPT-5.6-Luna",
+			display_name: "GPT-5.6 Luna",
 			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: true,
@@ -110,7 +110,7 @@ const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 		},
 		{
 			id: "gpt-5.6-sol",
-			display_name: "GPT-5.6-Sol",
+			display_name: "GPT-5.6 Sol",
 			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: true,
@@ -153,7 +153,7 @@ const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 		},
 		{
 			id: "gpt-5.4-mini",
-			display_name: "GPT-5.4-Mini",
+			display_name: "GPT-5.4 mini",
 			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: false,
@@ -171,7 +171,7 @@ const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 		},
 		{
 			id: "kimi-for-coding-highspeed",
-			display_name: "K2.7 Code HighSpeed",
+			display_name: "Kimi For Coding HighSpeed",
 			provider_id: "kimi-coding",
 			is_default: false,
 			is_featured: false,
@@ -3439,7 +3439,7 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 		});
 		expect(metrics.managedModelChoices, `${viewport.name} managed model choices`).not.toBeNull();
 		expect(metrics.managedModelChoices?.labels, `${viewport.name} featured model order`).toEqual([
-			"GPT-5.6-Sol",
+			"GPT-5.6 Sol",
 			"Kimi K3",
 		]);
 		expect(
@@ -3884,9 +3884,9 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	const featuredCards = managedModels.locator(":scope > label");
 	await expect(featuredModels).toHaveCount(4);
 	await expect(featuredCards).toHaveCount(4);
-	await expect(featuredModels.nth(0)).toHaveAccessibleName("GPT-5.6-Terra");
-	await expect(featuredModels.nth(1)).toHaveAccessibleName("GPT-5.6-Luna");
-	await expect(featuredModels.nth(2)).toHaveAccessibleName("GPT-5.6-Sol");
+	await expect(featuredModels.nth(0)).toHaveAccessibleName("GPT-5.6 Terra");
+	await expect(featuredModels.nth(1)).toHaveAccessibleName("GPT-5.6 Luna");
+	await expect(featuredModels.nth(2)).toHaveAccessibleName("GPT-5.6 Sol");
 	await expect(featuredModels.nth(3)).toHaveAccessibleName("Kimi K3");
 	const openAiIcon = featuredCards.nth(0).getByRole("img", { name: "OpenAI" });
 	const kimiIcon = featuredCards.nth(3).getByRole("img", { name: "Kimi" });
@@ -4003,7 +4003,7 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	await expect(page.getByRole("option").nth(1)).toContainText(
 		"Balanced cost for coding and tools.",
 	);
-	await expect(page.getByRole("option").nth(2)).toContainText("GPT-5.4-Mini");
+	await expect(page.getByRole("option").nth(2)).toContainText("GPT-5.4 mini");
 	await expect(page.getByRole("option").nth(2)).toContainText("Low cost for lighter coding work.");
 	await page.getByRole("option").nth(1).click();
 	await expect(overflowModels.locator('[data-slot="select-value"]')).toHaveText("GPT-5.4");
@@ -4191,7 +4191,7 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 	await page.getByRole("button", { name: /Clawdi AI/ }).click();
 	const agentModels = page.getByTestId("managed-model-choices");
 	await expect(agentModels).toHaveAccessibleName("Main model");
-	const agentModelChoice = agentModels.getByRole("radio", { name: "GPT-5.6-Luna" });
+	const agentModelChoice = agentModels.getByRole("radio", { name: "GPT-5.6 Luna" });
 	await expect(agentModelChoice).toBeChecked();
 	await expect(agentModels).toContainText("Low cost for routine work.");
 	await expect(page.locator("#agent-primary-model")).toHaveCount(0);
