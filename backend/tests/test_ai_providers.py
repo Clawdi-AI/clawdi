@@ -356,29 +356,60 @@ def _test_jwt(account_id: str = "account-123") -> str:
 
 
 def _codex_oauth_envelope(access_token: str, refresh_token: str) -> str:
+    content = json.dumps(
+        {
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": _test_jwt(),
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "account_id": "account-123",
+            },
+        }
+    )
     return json.dumps(
         {
+            "schemaVersion": 1,
             "kind": "local_agent_profile",
             "tool": "codex",
             "profile": "default",
             "files": [
                 {
                     "logicalName": "auth.json",
-                    "content": json.dumps(
-                        {
-                            "auth_mode": "chatgpt",
-                            "tokens": {
-                                "id_token": _test_jwt(),
-                                "access_token": access_token,
-                                "refresh_token": refresh_token,
-                                "account_id": "account-123",
-                            },
-                        }
-                    ),
+                    "sourcePath": "codex-oauth",
+                    "targetStrategy": "adapter_default",
+                    "content": content,
+                    "mode": 0o600,
+                    "size": len(content.encode()),
                 }
             ],
         }
     )
+
+
+async def _pending_oauth_attempt(
+    db_session,
+    *,
+    owner_user_id,
+    provider: AiProvider,
+) -> AiProviderOAuthAttempt:
+    encrypted_flow_payload, flow_payload_nonce = encrypt("{}")
+    attempt = AiProviderOAuthAttempt(
+        owner_user_id=owner_user_id,
+        provider_row_id=provider.id,
+        provider_id=provider.provider_id,
+        oauth_provider="codex",
+        auth_profile="default",
+        flow_kind="authorization_code",
+        status="pending",
+        state_sha256=uuid.uuid4().hex + uuid.uuid4().hex,
+        encrypted_flow_payload=encrypted_flow_payload,
+        flow_payload_nonce=flow_payload_nonce,
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    db_session.add(attempt)
+    await db_session.flush()
+    return attempt
 
 
 def _api_key_accept_body(value: str = "sk-atomic-secret") -> dict:
@@ -2419,7 +2450,11 @@ async def test_ai_provider_reimport_same_oauth_envelope_does_not_revoke_active_t
     assert "same-refresh" not in first.text
     assert "same-refresh" not in second.text
     assert (
-        await db_session.scalar(select(func.count()).select_from(AiProviderOAuthRevokeTombstone))
+        await db_session.scalar(
+            select(func.count())
+            .select_from(AiProviderOAuthRevokeTombstone)
+            .where(AiProviderOAuthRevokeTombstone.provider_id == "openai-codex-reimport")
+        )
         == 0
     )
 
@@ -2875,6 +2910,184 @@ async def test_ai_provider_oauth_start_requires_clean_redirect_and_params(
 
 
 @pytest.mark.asyncio
+async def test_corrupt_active_oauth_payload_blocks_transition_before_mutation(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+):
+    provider_id = "openai-codex-corrupt-active"
+    created = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": provider_id,
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_mode": "openai_responses",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    imported = await client.post(
+        f"/v1/ai-providers/{provider_id}/auth/import",
+        json={
+            "type": "agent_profile",
+            "tool": "codex",
+            "profile": "default",
+            "payload": _codex_oauth_envelope("corrupt-access", "corrupt-refresh"),
+        },
+    )
+    assert imported.status_code == 200, imported.text
+    provider = await db_session.scalar(
+        select(AiProvider).where(
+            AiProvider.owner_user_id == seed_user.id,
+            AiProvider.provider_id == provider_id,
+        )
+    )
+    payload = await db_session.scalar(
+        select(AiProviderAuthPayload).where(
+            AiProviderAuthPayload.owner_user_id == seed_user.id,
+            AiProviderAuthPayload.provider_id == provider_id,
+        )
+    )
+    assert provider is not None
+    assert payload is not None
+    attempt = await _pending_oauth_attempt(
+        db_session,
+        owner_user_id=seed_user.id,
+        provider=provider,
+    )
+    attempt_id = attempt.id
+    owner_user_id = seed_user.id
+    provider_row_id = provider.id
+    payload_id = payload.id
+    payload.encrypted_payload = b"corrupt-ciphertext"
+    await db_session.commit()
+
+    deleted = await client.delete(f"/v1/ai-providers/{provider_id}")
+
+    assert deleted.status_code == 409, deleted.text
+    assert deleted.json() == {"detail": "OAuth credential payload is corrupt"}
+    await db_session.rollback()
+    db_session.expire_all()
+    provider = await db_session.get(AiProvider, provider_row_id)
+    payload = await db_session.get(AiProviderAuthPayload, payload_id)
+    attempt = await db_session.get(AiProviderOAuthAttempt, attempt_id)
+    assert provider is not None
+    assert provider.archived_at is None
+    assert provider.auth_type == "agent_profile"
+    assert payload is not None
+    assert payload.archived_at is None
+    assert attempt is not None
+    assert attempt.status == "pending"
+    assert attempt.encrypted_flow_payload is not None
+    assert attempt.flow_payload_nonce is not None
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(AiProviderOAuthRevokeTombstone)
+            .where(AiProviderOAuthRevokeTombstone.owner_user_id == owner_user_id)
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_corrupt_incoming_oauth_payload_blocks_transition_before_mutation(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+):
+    provider_id = "openai-codex-corrupt-incoming"
+    created = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": provider_id,
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_mode": "openai_responses",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    provider = await db_session.scalar(
+        select(AiProvider).where(
+            AiProvider.owner_user_id == seed_user.id,
+            AiProvider.provider_id == provider_id,
+        )
+    )
+    assert provider is not None
+    attempt = await _pending_oauth_attempt(
+        db_session,
+        owner_user_id=seed_user.id,
+        provider=provider,
+    )
+    attempt_id = attempt.id
+    owner_user_id = seed_user.id
+    provider_row_id = provider.id
+    await db_session.commit()
+
+    imported = await client.post(
+        f"/v1/ai-providers/{provider_id}/auth/import",
+        json={
+            "type": "agent_profile",
+            "tool": "codex",
+            "profile": "default",
+            "payload": json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "kind": "local_agent_profile",
+                    "tool": "codex",
+                    "profile": "default",
+                    "files": [
+                        {
+                            "logicalName": "auth.json",
+                            "sourcePath": "codex-oauth",
+                            "targetStrategy": "adapter_default",
+                            "content": json.dumps({"auth_mode": "chatgpt", "tokens": {}}),
+                            "mode": 0o600,
+                            "size": 0,
+                        }
+                    ],
+                }
+            ),
+        },
+    )
+
+    assert imported.status_code == 409, imported.text
+    assert imported.json() == {"detail": "OAuth credential payload is corrupt"}
+    await db_session.rollback()
+    db_session.expire_all()
+    provider = await db_session.get(AiProvider, provider_row_id)
+    attempt = await db_session.get(AiProviderOAuthAttempt, attempt_id)
+    assert provider is not None
+    assert provider.auth_type == "secret_ref"
+    assert provider.auth_ref == "env:OPENAI_API_KEY"
+    assert attempt is not None
+    assert attempt.status == "pending"
+    assert attempt.encrypted_flow_payload is not None
+    assert attempt.flow_payload_nonce is not None
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(AiProviderAuthPayload)
+            .where(
+                AiProviderAuthPayload.owner_user_id == owner_user_id,
+                AiProviderAuthPayload.provider_id == provider_id,
+            )
+        )
+        == 0
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(AiProviderOAuthRevokeTombstone)
+            .where(AiProviderOAuthRevokeTombstone.owner_user_id == owner_user_id)
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
 async def test_oauth_reconnect_start_keeps_current_credential_active(
     client: httpx.AsyncClient,
     db_session,
@@ -3279,6 +3492,8 @@ async def test_oauth_reverse_completion_and_expired_committed_receipt_replay(
         )
         assert attempt is not None
         assert attempt.status == "committed"
+        assert attempt.encrypted_flow_payload is None
+        assert attempt.flow_payload_nonce is None
         assert "reverse-access" not in json.dumps(attempt.receipt)
         assert "reverse-refresh" not in json.dumps(attempt.receipt)
         attempt.expires_at = datetime.now(UTC) - timedelta(seconds=1)
@@ -3417,6 +3632,8 @@ async def test_stale_exchanging_oauth_attempt_is_fenced_without_reexchange(
     attempt = await db_session.get(AiProviderOAuthAttempt, attempt_id)
     assert attempt is not None
     assert attempt.status == "failed"
+    assert attempt.encrypted_flow_payload is None
+    assert attempt.flow_payload_nonce is None
 
 
 @pytest.mark.asyncio
@@ -3576,6 +3793,8 @@ async def test_stale_exchange_revoke_claim_fences_original_commit(
             )
         assert attempt is not None
         assert attempt.status == "failed"
+        assert attempt.encrypted_flow_payload is None
+        assert attempt.flow_payload_nonce is None
         assert active_payload_count == 0
         assert len(tombstones) == 1
         assert tombstones[0].status == "processing"
@@ -3828,6 +4047,8 @@ async def test_post_exchange_commit_failure_leaves_durable_compensation(
     attempt = await db_session.get(AiProviderOAuthAttempt, attempt_id)
     assert attempt is not None
     assert attempt.status == "failed"
+    assert attempt.encrypted_flow_payload is None
+    assert attempt.flow_payload_nonce is None
     tombstone = await db_session.scalar(
         select(AiProviderOAuthRevokeTombstone).where(
             AiProviderOAuthRevokeTombstone.oauth_attempt_id == attempt_id
@@ -4827,7 +5048,24 @@ async def test_oauth_import_rejects_multiple_hosted_runtime_bindings(
             "type": "agent_profile",
             "tool": "codex",
             "profile": "default",
-            "payload": '{"kind":"local_agent_profile","files":[]}',
+            "payload": json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "kind": "local_agent_profile",
+                    "tool": "codex",
+                    "profile": "default",
+                    "files": [
+                        {
+                            "logicalName": "auth.json",
+                            "sourcePath": "codex-import",
+                            "targetStrategy": "adapter_default",
+                            "content": json.dumps({"auth_mode": "apikey"}),
+                            "mode": 0o600,
+                            "size": 0,
+                        }
+                    ],
+                }
+            ),
         },
     )
 

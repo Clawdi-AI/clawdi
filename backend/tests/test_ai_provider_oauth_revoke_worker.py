@@ -18,7 +18,12 @@ from app.models.user import User
 from app.services.ai_provider_auth_transition import (
     cancel_oauth_revoke_tombstone,
     enqueue_oauth_revoke_tombstone,
-    revocable_oauth_token_from_envelope,
+    extract_oauth_token_from_envelope,
+)
+from app.services.ai_provider_oauth_lifecycle import (
+    OAUTH_TERMINAL_RETENTION,
+    purge_expired_oauth_records,
+    terminal_oauth_attempt,
 )
 from app.services.ai_provider_oauth_revoke_worker import (
     AiProviderOAuthRevokeWorker,
@@ -32,11 +37,33 @@ from app.services.codex_oauth import CODEX_OAUTH_CLIENT_ID
 from app.services.vault_crypto import encrypt
 
 
+def _credential_envelope(*, logical_name: str, content: str) -> str:
+    return json.dumps(
+        {
+            "schemaVersion": 1,
+            "kind": "local_agent_profile",
+            "tool": "codex",
+            "profile": "default",
+            "files": [
+                {
+                    "logicalName": logical_name,
+                    "sourcePath": f"/source/.codex/{logical_name}",
+                    "targetStrategy": "adapter_default",
+                    "content": content,
+                    "mode": 0o600,
+                    "size": len(content.encode()),
+                }
+            ],
+        }
+    )
+
+
 @pytest.mark.parametrize(
-    ("auth_json", "expected"),
+    ("auth_json", "expected_state", "expected_revocable"),
     [
         pytest.param(
             {"tokens": {"access_token": "access", "refresh_token": "refresh"}},
+            "revocable",
             ("refresh", "refresh_token"),
             id="legacy-chatgpt-mode",
         ),
@@ -45,6 +72,7 @@ from app.services.vault_crypto import encrypt
                 "OPENAI_API_KEY": "sk-api-key",
                 "tokens": {"access_token": "access", "refresh_token": "refresh"},
             },
+            "not_revocable",
             None,
             id="legacy-api-key-mode",
         ),
@@ -53,24 +81,78 @@ from app.services.vault_crypto import encrypt
                 "auth_mode": "apikey",
                 "tokens": {"access_token": "access", "refresh_token": "refresh"},
             },
+            "not_revocable",
             None,
             id="explicit-api-key-mode",
         ),
+        pytest.param(
+            {"auth_mode": "chatgpt", "tokens": {}},
+            "corrupt",
+            None,
+            id="chatgpt-missing-required-token",
+        ),
     ],
 )
-def test_revoke_parser_matches_codex_resolved_auth_mode(auth_json: dict, expected) -> None:
-    envelope = json.dumps(
-        {
-            "files": [
-                {
-                    "logicalName": "auth.json",
-                    "content": json.dumps(auth_json),
-                }
-            ]
-        }
+def test_revoke_parser_matches_codex_resolved_auth_mode(
+    auth_json: dict,
+    expected_state: str,
+    expected_revocable: tuple[str, str] | None,
+) -> None:
+    envelope = _credential_envelope(
+        logical_name="auth.json",
+        content=json.dumps(auth_json),
     )
 
-    assert revocable_oauth_token_from_envelope(envelope) == expected
+    extraction = extract_oauth_token_from_envelope(envelope)
+
+    assert extraction.state == expected_state
+    assert extraction.revocable == expected_revocable
+
+
+def test_revoke_parser_reserves_not_revocable_for_valid_non_chatgpt_envelope() -> None:
+    extraction = extract_oauth_token_from_envelope(
+        _credential_envelope(
+            logical_name="config.toml",
+            content='model = "gpt-5"',
+        )
+    )
+
+    assert extraction.state == "not_revocable"
+    assert extraction.revocable is None
+
+
+@pytest.mark.parametrize(
+    "envelope",
+    [
+        "not-json",
+        json.dumps({"files": []}),
+        _credential_envelope(
+            logical_name="auth.json",
+            content="not-json",
+        ),
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "kind": "local_agent_profile",
+                "tool": "codex",
+                "profile": "default",
+                "files": [
+                    {
+                        "logicalName": "auth.json",
+                        "content": json.dumps(
+                            {
+                                "auth_mode": "chatgpt",
+                                "tokens": {"refresh_token": "refresh"},
+                            }
+                        ),
+                    }
+                ],
+            }
+        ),
+    ],
+)
+def test_revoke_parser_classifies_malformed_envelopes_as_corrupt(envelope: str) -> None:
+    assert extract_oauth_token_from_envelope(envelope).state == "corrupt"
 
 
 @pytest.mark.asyncio
@@ -258,6 +340,55 @@ async def test_revoke_worker_failure_is_durable_and_token_free(
 
 
 @pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_revoke_worker_quarantines_poison_then_processes_next_candidate(
+    db_session,
+    engine,
+    seed_user,
+):
+    poison = await _enqueue(
+        db_session,
+        owner_user_id=seed_user.id,
+        provider_id="oauth-revoke-poison-first",
+        token="poison-token",
+    )
+    valid = await _enqueue(
+        db_session,
+        owner_user_id=seed_user.id,
+        provider_id="oauth-revoke-valid-second",
+        token="valid-token",
+    )
+    poison_row = await db_session.get(AiProviderOAuthRevokeTombstone, poison.id)
+    assert poison_row is not None
+    poison_row.encrypted_token = b"corrupt-ciphertext"
+    await db_session.commit()
+
+    revoked_tokens: list[str] = []
+
+    async def revoke(claim):
+        revoked_tokens.append(claim.token)
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=True)
+    worker = AiProviderOAuthRevokeWorker(session_factory, revoke=revoke)
+
+    assert await worker.run_once() == valid.id
+    assert revoked_tokens == ["valid-token"]
+
+    async with session_factory() as verification:
+        quarantined = await verification.get(AiProviderOAuthRevokeTombstone, poison.id)
+        revoked = await verification.get(AiProviderOAuthRevokeTombstone, valid.id)
+        assert quarantined is not None
+        assert quarantined.status == "quarantined"
+        assert quarantined.encrypted_token is None
+        assert quarantined.token_nonce is None
+        assert quarantined.last_error == "revoke_material_corrupt"
+        assert revoked is not None
+        assert revoked.status == "revoked"
+        assert revoked.encrypted_token is None
+        assert revoked.token_nonce is None
+
+
+@pytest.mark.asyncio
 async def test_stale_processing_claim_recovers_and_old_result_loses_cas(db_session, seed_user):
     tombstone = await _enqueue(
         db_session,
@@ -347,8 +478,10 @@ async def test_compensation_waits_for_attempt_failure_not_elapsed_grace(db_sessi
 
     attempt = await db_session.get(AiProviderOAuthAttempt, attempt_id)
     assert attempt is not None
-    attempt.status = "failed"
-    attempt.completed_at = started_at + timedelta(minutes=6)
+    terminal_oauth_attempt(
+        "failed",
+        completed_at=started_at + timedelta(minutes=6),
+    ).apply(attempt)
     await db_session.commit()
     claim = await claim_oauth_revoke_tombstone(
         db_session,
@@ -396,6 +529,8 @@ async def test_compensation_for_stale_exchanging_attempt_becomes_eligible(db_ses
     await db_session.refresh(attempt)
     assert attempt.status == "failed"
     assert attempt.completed_at == now + timedelta(seconds=1)
+    assert attempt.encrypted_flow_payload is None
+    assert attempt.flow_payload_nonce is None
 
 
 @pytest.mark.asyncio
@@ -433,17 +568,21 @@ async def test_revoke_tombstone_provider_and_owner_fk_contract(db_session, seed_
     owner = User(clerk_id=f"oauth-revoke-owner-{uuid.uuid4().hex}")
     db_session.add(owner)
     await db_session.flush()
+    owner_id = owner.id
     owner_tombstone = await _enqueue(
         db_session,
-        owner_user_id=owner.id,
+        owner_user_id=owner_id,
         provider_id="oauth-revoke-owner-delete",
         token="refresh-owner-delete",
     )
     await db_session.delete(owner)
     await db_session.commit()
-    # Owner deletion is the intentional lifecycle boundary for encrypted
-    # compensation material; provider archive/physical deletion is not.
-    assert await db_session.get(AiProviderOAuthRevokeTombstone, owner_tombstone.id) is None
+    surviving_tombstone = await db_session.get(
+        AiProviderOAuthRevokeTombstone,
+        owner_tombstone.id,
+    )
+    assert surviving_tombstone is not None
+    assert surviving_tombstone.owner_user_id == owner_id
 
 
 @pytest.mark.asyncio
@@ -591,3 +730,110 @@ async def test_same_token_delete_tombstone_cannot_be_adopted_by_reconnect(
         row.id,
         oauth_attempt_id=attempt_id,
     )
+
+
+@pytest.mark.asyncio
+async def test_oauth_terminal_retention_is_bounded_and_keeps_recent_or_active_rows(
+    db_session,
+    seed_user,
+):
+    provider = AiProvider(
+        owner_user_id=seed_user.id,
+        provider_id="oauth-retention",
+        type="openai",
+        base_url="https://api.openai.com/v1",
+        auth_type="none",
+        managed_by="user",
+    )
+    db_session.add(provider)
+    await db_session.flush()
+    now = datetime.now(UTC)
+    expired_at = now - OAUTH_TERMINAL_RETENTION - timedelta(seconds=1)
+    recent_at = now - OAUTH_TERMINAL_RETENTION + timedelta(seconds=1)
+
+    def terminal_attempt(status: str, completed_at: datetime) -> AiProviderOAuthAttempt:
+        return AiProviderOAuthAttempt(
+            owner_user_id=seed_user.id,
+            provider_row_id=provider.id,
+            provider_id=provider.provider_id,
+            oauth_provider="codex",
+            auth_profile="default",
+            flow_kind="authorization_code",
+            status=status,
+            state_sha256=uuid.uuid4().hex + uuid.uuid4().hex,
+            encrypted_flow_payload=None,
+            flow_payload_nonce=None,
+            receipt={} if status == "committed" else None,
+            expires_at=now,
+            completed_at=completed_at,
+        )
+
+    expired_attempts = [
+        terminal_attempt("committed", expired_at),
+        terminal_attempt("failed", expired_at),
+    ]
+    recent_attempt = terminal_attempt("failed", recent_at)
+    db_session.add_all([*expired_attempts, recent_attempt])
+
+    expired_tombstones = [
+        AiProviderOAuthRevokeTombstone(
+            owner_user_id=seed_user.id,
+            provider_id=f"oauth-retention-{status}",
+            oauth_provider="codex",
+            token_type="refresh_token",
+            token_sha256=uuid.uuid4().hex + uuid.uuid4().hex,
+            encrypted_token=None,
+            token_nonce=None,
+            status=status,
+            last_error="revoke_material_corrupt" if status == "quarantined" else None,
+            created_at=expired_at,
+            updated_at=expired_at,
+        )
+        for status in ("cancelled", "revoked", "quarantined")
+    ]
+    recent_tombstone = AiProviderOAuthRevokeTombstone(
+        owner_user_id=seed_user.id,
+        provider_id="oauth-retention-recent",
+        oauth_provider="codex",
+        token_type="refresh_token",
+        token_sha256=uuid.uuid4().hex + uuid.uuid4().hex,
+        encrypted_token=None,
+        token_nonce=None,
+        status="cancelled",
+        created_at=recent_at,
+        updated_at=recent_at,
+    )
+    active_ciphertext, active_nonce = encrypt("active-token")
+    active_tombstone = AiProviderOAuthRevokeTombstone(
+        owner_user_id=seed_user.id,
+        provider_id="oauth-retention-active",
+        oauth_provider="codex",
+        token_type="refresh_token",
+        token_sha256=uuid.uuid4().hex + uuid.uuid4().hex,
+        encrypted_token=active_ciphertext,
+        token_nonce=active_nonce,
+        status="pending",
+        next_attempt_at=expired_at,
+        created_at=expired_at,
+        updated_at=expired_at,
+    )
+    db_session.add_all([*expired_tombstones, recent_tombstone, active_tombstone])
+    await db_session.flush()
+    expired_attempt_ids = {attempt.id for attempt in expired_attempts}
+    expired_tombstone_ids = {tombstone.id for tombstone in expired_tombstones}
+
+    first = await purge_expired_oauth_records(db_session, now=now, limit=1)
+    second = await purge_expired_oauth_records(db_session, now=now, limit=100)
+    await db_session.flush()
+
+    assert first.attempts == 1
+    assert first.tombstones == 1
+    assert second.attempts == 1
+    assert second.tombstones == 2
+    for attempt_id in expired_attempt_ids:
+        assert await db_session.get(AiProviderOAuthAttempt, attempt_id) is None
+    for tombstone_id in expired_tombstone_ids:
+        assert await db_session.get(AiProviderOAuthRevokeTombstone, tombstone_id) is None
+    assert await db_session.get(AiProviderOAuthAttempt, recent_attempt.id) is not None
+    assert await db_session.get(AiProviderOAuthRevokeTombstone, recent_tombstone.id) is not None
+    assert await db_session.get(AiProviderOAuthRevokeTombstone, active_tombstone.id) is not None

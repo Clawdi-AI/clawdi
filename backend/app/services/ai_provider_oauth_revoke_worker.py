@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import httpx
+from cryptography.exceptions import InvalidTag
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -16,6 +17,10 @@ from app.models.ai_provider import (
     AiProvider,
     AiProviderOAuthAttempt,
     AiProviderOAuthRevokeTombstone,
+)
+from app.services.ai_provider_oauth_lifecycle import (
+    purge_expired_oauth_records,
+    terminal_oauth_attempt,
 )
 from app.services.codex_oauth import CODEX_OAUTH_CLIENT_ID
 from app.services.vault_crypto import decrypt
@@ -26,6 +31,7 @@ CODEX_OAUTH_REVOKE_URL = "https://auth.openai.com/oauth/revoke"
 OAUTH_REVOKE_CLAIM_LEASE_SECONDS = 60
 OAUTH_REVOKE_BACKOFF_CAP_SECONDS = 15 * 60
 OAUTH_REVOKE_ATTEMPT_STALE_SECONDS = 30 * 60
+OAUTH_RETENTION_INTERVAL_SECONDS = 60 * 60
 
 
 class OAuthRevokeAdapterError(RuntimeError):
@@ -163,8 +169,7 @@ async def _claim_oauth_revoke_candidate(
 
     if attempt is not None:
         if processing_stale and attempt.status == "exchanging":
-            attempt.status = "failed"
-            attempt.completed_at = claimed_at
+            terminal_oauth_attempt("failed", completed_at=claimed_at).apply(attempt)
         elif pending_due:
             if attempt.status == "exchanging":
                 if (
@@ -174,13 +179,20 @@ async def _claim_oauth_revoke_candidate(
                     return None
                 # Fence the stale exchange in the same transaction as the revoke claim.
                 # The original completion must observe failed before it can commit.
-                attempt.status = "failed"
-                attempt.completed_at = claimed_at
+                terminal_oauth_attempt("failed", completed_at=claimed_at).apply(attempt)
             elif attempt.status != "failed":
                 return None
     if tombstone.encrypted_token is None or tombstone.token_nonce is None:
-        raise RuntimeError("pending OAuth revoke tombstone is missing encrypted material")
-    token = decrypt(tombstone.encrypted_token, tombstone.token_nonce)
+        _quarantine_oauth_revoke_tombstone(tombstone, "revoke_material_missing")
+        return None
+    try:
+        token = decrypt(tombstone.encrypted_token, tombstone.token_nonce)
+    except (InvalidTag, TypeError, UnicodeError, ValueError):
+        _quarantine_oauth_revoke_tombstone(tombstone, "revoke_material_corrupt")
+        return None
+    if not token:
+        _quarantine_oauth_revoke_tombstone(tombstone, "revoke_material_corrupt")
+        return None
     claim_id = secrets.token_hex(16)
     tombstone.status = "processing"
     tombstone.claim_id = claim_id
@@ -195,6 +207,19 @@ async def _claim_oauth_revoke_candidate(
         token=token,
         attempt_count=tombstone.attempt_count,
     )
+
+
+def _quarantine_oauth_revoke_tombstone(
+    tombstone: AiProviderOAuthRevokeTombstone,
+    error_code: str,
+) -> None:
+    tombstone.status = "quarantined"
+    tombstone.encrypted_token = None
+    tombstone.token_nonce = None
+    tombstone.next_attempt_at = None
+    tombstone.claimed_at = None
+    tombstone.claim_id = None
+    tombstone.last_error = error_code[:500]
 
 
 async def record_oauth_revoke_result(
@@ -228,7 +253,7 @@ async def record_oauth_revoke_result(
             "claim_id": None,
             "last_error": (error_code or "revoke_failed")[:500],
         }
-    result = await db.execute(
+    updated_id = await db.scalar(
         update(AiProviderOAuthRevokeTombstone)
         .where(
             AiProviderOAuthRevokeTombstone.id == claim.tombstone_id,
@@ -236,8 +261,9 @@ async def record_oauth_revoke_result(
             AiProviderOAuthRevokeTombstone.claim_id == claim.claim_id,
         )
         .values(**values)
+        .returning(AiProviderOAuthRevokeTombstone.id)
     )
-    return result.rowcount == 1
+    return updated_id is not None
 
 
 async def revoke_oauth_token(claim: ClaimedOAuthRevoke) -> None:
@@ -264,19 +290,43 @@ class AiProviderOAuthRevokeWorker:
         sessionmaker: async_sessionmaker[AsyncSession],
         *,
         poll_interval_seconds: float = 1.0,
+        retention_interval_seconds: float = OAUTH_RETENTION_INTERVAL_SECONDS,
         revoke: Callable[[ClaimedOAuthRevoke], Awaitable[None]] = revoke_oauth_token,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._poll_interval_seconds = poll_interval_seconds
+        self._retention_interval = timedelta(seconds=max(0.0, retention_interval_seconds))
+        self._next_retention_at: datetime | None = None
         self._revoke = revoke
 
     async def run_once(self) -> UUID | None:
+        now = datetime.now(UTC)
+        retention_due = self._next_retention_at is None or now >= self._next_retention_at
         async with self._sessionmaker() as db:
+            purge_result = None
+            if retention_due:
+                purge_result = await purge_expired_oauth_records(db, now=now)
             claim = await claim_oauth_revoke_tombstone(db)
             if claim is None:
-                await db.rollback()
+                await db.commit()
+                if retention_due:
+                    self._next_retention_at = now + self._retention_interval
+                if purge_result is not None and (purge_result.attempts or purge_result.tombstones):
+                    log.info(
+                        "purged expired OAuth records attempts=%s tombstones=%s",
+                        purge_result.attempts,
+                        purge_result.tombstones,
+                    )
                 return None
             await db.commit()
+        if retention_due:
+            self._next_retention_at = now + self._retention_interval
+        if purge_result is not None and (purge_result.attempts or purge_result.tombstones):
+            log.info(
+                "purged expired OAuth records attempts=%s tombstones=%s",
+                purge_result.attempts,
+                purge_result.tombstones,
+            )
 
         revoked = False
         error_code = None

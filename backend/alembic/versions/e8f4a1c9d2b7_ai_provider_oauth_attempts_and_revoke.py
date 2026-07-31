@@ -32,8 +32,8 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=32), server_default="pending", nullable=False),
         sa.Column("base_credential_revision", sa.String(length=64), nullable=True),
         sa.Column("state_sha256", sa.String(length=64), nullable=False),
-        sa.Column("encrypted_flow_payload", sa.LargeBinary(), nullable=False),
-        sa.Column("flow_payload_nonce", sa.LargeBinary(), nullable=False),
+        sa.Column("encrypted_flow_payload", sa.LargeBinary(), nullable=True),
+        sa.Column("flow_payload_nonce", sa.LargeBinary(), nullable=True),
         sa.Column("receipt", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("exchange_started_at", sa.DateTime(timezone=True), nullable=True),
@@ -47,6 +47,12 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "status IN ('pending', 'exchanging', 'committed', 'failed')",
             name="ck_ai_provider_oauth_attempts_status",
+        ),
+        sa.CheckConstraint(
+            "((status IN ('pending', 'exchanging')) AND encrypted_flow_payload IS NOT NULL AND "
+            "flow_payload_nonce IS NOT NULL) OR ((status IN ('committed', 'failed')) AND "
+            "encrypted_flow_payload IS NULL AND flow_payload_nonce IS NULL)",
+            name="ck_ai_provider_oauth_attempts_material",
         ),
         sa.ForeignKeyConstraint(["owner_user_id"], ["users.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["provider_row_id"], ["ai_providers.id"], ondelete="CASCADE"),
@@ -64,9 +70,16 @@ def upgrade() -> None:
         "ai_provider_oauth_attempts",
         ["provider_row_id"],
     )
+    op.create_index(
+        "ix_ai_provider_oauth_attempts_terminal_completed_at",
+        "ai_provider_oauth_attempts",
+        ["completed_at"],
+        postgresql_where=sa.text("status IN ('committed', 'failed')"),
+    )
     op.create_table(
         "ai_provider_oauth_revoke_tombstones",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        # Audit identity only: revocation obligations survive User deletion.
         sa.Column("owner_user_id", postgresql.UUID(as_uuid=True), nullable=False),
         # No FK by design: compensation survives provider/attempt cascade deletion.
         sa.Column("oauth_attempt_id", postgresql.UUID(as_uuid=True), nullable=True),
@@ -85,7 +98,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
         sa.CheckConstraint(
-            "status IN ('pending', 'processing', 'revoked', 'cancelled')",
+            "status IN ('pending', 'processing', 'revoked', 'cancelled', 'quarantined')",
             name="ck_ai_provider_oauth_revoke_status",
         ),
         sa.CheckConstraint(
@@ -94,11 +107,10 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "((status IN ('pending', 'processing')) AND encrypted_token IS NOT NULL AND "
-            "token_nonce IS NOT NULL) OR ((status IN ('revoked', 'cancelled')) AND "
+            "token_nonce IS NOT NULL) OR ((status IN ('revoked', 'cancelled', 'quarantined')) AND "
             "encrypted_token IS NULL AND token_nonce IS NULL)",
             name="ck_ai_provider_oauth_revoke_material",
         ),
-        sa.ForeignKeyConstraint(["owner_user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
             "owner_user_id",
@@ -123,13 +135,21 @@ def upgrade() -> None:
         "ai_provider_oauth_revoke_tombstones",
         ["next_attempt_at"],
     )
+    op.create_index(
+        "ix_ai_provider_oauth_revoke_tombstones_terminal_updated_at",
+        "ai_provider_oauth_revoke_tombstones",
+        ["updated_at"],
+        postgresql_where=sa.text("status IN ('cancelled', 'revoked', 'quarantined')"),
+    )
 
 
 def downgrade() -> None:
+    op.drop_index("ix_ai_provider_oauth_revoke_tombstones_terminal_updated_at")
     op.drop_index("ix_ai_provider_oauth_revoke_tombstones_next_attempt_at")
     op.drop_index("ix_ai_provider_oauth_revoke_tombstones_owner_user_id")
     op.drop_index("ix_ai_provider_oauth_revoke_tombstones_oauth_attempt_id")
     op.drop_table("ai_provider_oauth_revoke_tombstones")
+    op.drop_index("ix_ai_provider_oauth_attempts_terminal_completed_at")
     op.drop_index("ix_ai_provider_oauth_attempts_provider_row_id")
     op.drop_index("ix_ai_provider_oauth_attempts_owner_user_id")
     op.drop_table("ai_provider_oauth_attempts")
