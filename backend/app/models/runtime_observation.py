@@ -94,7 +94,7 @@ class V2RuntimeEnvironmentFence(Base, TimestampMixin):
         nullable=False,
     )
     replay_floor_advanced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    replay_floor_session_high_waters: Mapped[JsonValue] = mapped_column(
+    replay_floor_session_high_waters: Mapped[dict[str, int]] = mapped_column(
         JSONB(none_as_null=True),
         default=dict,
         server_default="{}",
@@ -106,7 +106,9 @@ class V2RuntimeEnvironmentFence(Base, TimestampMixin):
     retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     final_cursor: Mapped[str | None] = mapped_column(String(2000))
     final_stream_position: Mapped[int | None] = mapped_column(BigInteger)
-    final_session_high_waters: Mapped[JsonValue | None] = mapped_column(JSONB(none_as_null=True))
+    final_session_high_waters: Mapped[dict[str, int] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
 
 
 class V2RuntimeObservationInbox(Base):
@@ -340,6 +342,8 @@ class V2RuntimeObservationConsumerCursor(Base, TimestampMixin):
     expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expiry_boundary_stream_position: Mapped[int | None] = mapped_column(BigInteger)
     expiry_boundary_cursor: Mapped[str | None] = mapped_column(String(2000))
-    expiry_session_high_waters: Mapped[JsonValue | None] = mapped_column(JSONB(none_as_null=True))
+    expiry_session_high_waters: Mapped[dict[str, int] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
     reset_barrier_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
