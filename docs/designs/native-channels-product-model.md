@@ -394,9 +394,6 @@ User-facing control plane:
 | `POST /v1/channels/{id}/messages` | Sends only through the caller's active binding on an active accessible bot. |
 | `DELETE /v1/channels/{id}` | Archives only caller-owned private bots. Public bots must use admin API. |
 | `POST /v1/channels/{id}/commands/sync` | Syncs commands only for caller-owned private bots. Public bots must use admin API. |
-| `POST /v1/channels/whatsapp/{id}/tenant-creds` | Creates or reuses caller-owned WhatsApp runtime credentials for an accessible WhatsApp bot. |
-| `GET /v1/channels/whatsapp/{id}/tenant-creds` | Lists only caller-owned WhatsApp runtime credentials. |
-| `GET /v1/channels/whatsapp/{id}/auth-cert` | Returns WhatsApp account public auth material for an active accessible WhatsApp bot. |
 
 CLI control plane:
 
@@ -437,11 +434,10 @@ Provider ingress:
 
 - `/v1/channels/telegram/{id}/webhook`
 - `/v1/channels/discord/{id}/webhook`
-- `/v1/channels/whatsapp/{id}/webhook`
+- Account-authenticated WhatsApp sidecar callbacks; this is not a public
+  provider webhook or a Cloud payload compatibility route.
 - `/v1/channels/imessage/{id}/webhook`
 - `/v1/channels/discord/gateway` for agent-facing replay
-- `/v1/channels/whatsapp/{id}/baileys` for Baileys-compatible WhatsApp Web
-  runtime ingress
 
 Agent SDK emulation:
 
@@ -450,7 +446,8 @@ Agent SDK emulation:
   `<9-digit bot id>:<secret>` shape so SDKs and OpenClaw-compatible clients
   that validate token syntax continue to work.
 - Discord REST and Gateway-compatible routes under `/v1/channels/discord`.
-- WhatsApp Graph and Baileys-compatible routes under `/v1/channels/whatsapp`.
+- A normalized, link-authenticated WhatsApp application relay used only by the
+  managed adapters. It never emulates provider payloads or a provider socket.
 - BlueBubbles-compatible REST and Socket.IO routes under
   `/v1/channels/imessage`.
 
