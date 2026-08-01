@@ -143,7 +143,7 @@ export function DiscordPairDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={handlePairingOpenChange}>
-			<PairingDialogContent>
+			<PairingDialogContent data-hosted="true" data-v2="true">
 				<PairingDialogHeader
 					title="Pair Discord"
 					identity={botIdentity}

@@ -14,13 +14,21 @@ import { Spinner } from "@/components/ui/spinner";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { cn } from "@/lib/utils";
 
-export function PairingDialogContent({ children }: { children: ReactNode }) {
+export function PairingDialogContent({
+	children,
+	className,
+	...props
+}: ComponentProps<typeof DialogContent>) {
 	return (
 		<DialogContent
 			data-hosted="true"
 			data-v2="true"
 			data-pairing-dialog
-			className="h-[min(40rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-4 overflow-hidden sm:h-auto sm:max-w-md"
+			className={cn(
+				"h-[min(40rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-4 overflow-hidden sm:h-auto sm:max-w-md",
+				className,
+			)}
+			{...props}
 		>
 			{children}
 		</DialogContent>

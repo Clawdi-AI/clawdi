@@ -148,7 +148,7 @@ export function TelegramPairDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={handlePairingOpenChange}>
-			<PairingDialogContent>
+			<PairingDialogContent data-hosted="true" data-v2="true">
 				<PairingDialogHeader
 					title="Pair Telegram"
 					identity={botIdentity}

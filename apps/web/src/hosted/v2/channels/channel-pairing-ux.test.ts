@@ -185,7 +185,7 @@ describe("channel IA boundary", () => {
 
 	test("shares responsive dialog structure and accessible copy controls", () => {
 		for (const dialog of [pairDialog, discordPairDialog]) {
-			expect(dialog).toContain("<PairingDialogContent>");
+			expect(dialog).toContain('<PairingDialogContent data-hosted="true" data-v2="true">');
 			expect(dialog).toContain("<PairingDialogHeader");
 			expect(dialog).toContain("<PairingDialogBody");
 			expect(dialog).toContain("<PairingQrCode");
