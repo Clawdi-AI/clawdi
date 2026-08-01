@@ -1,7 +1,8 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-
+import { CLAWDI_MANAGED_PROVIDER_ID } from "../packages/shared/src/ai-provider";
 import {
 	buildHostedAiBindingFields,
 	type HostedSavedAiProvider,
@@ -48,12 +49,12 @@ export const PUBLIC_HTTPS_URL_CASES = [
 	{ url: "https://provider.example:invalid/v1", valid: false },
 ] as const;
 
-const primaryProvider = {
-	id: "row-openai-primary",
-	provider_id: "openai-primary",
+const apiKeyProvider = {
+	id: "row-api-key",
+	provider_id: "external-api-key",
 	scope: "user",
 	type: "openai",
-	label: "OpenAI Primary",
+	label: "External API key",
 	base_url: "https://api.openai.com/v1",
 	api_mode: "openai_responses",
 	managed_by: "user",
@@ -74,28 +75,99 @@ const primaryProvider = {
 } satisfies HostedSavedAiProvider;
 
 const oauthProvider = {
-	...primaryProvider,
-	id: "row-codex-secondary",
-	provider_id: "codex-secondary",
-	label: "Codex Secondary",
+	...apiKeyProvider,
+	id: "row-oauth",
+	provider_id: "external-oauth",
+	label: "External OAuth",
 	runtime_env_name: null,
 	models: [{ id: "gpt-codex-contract" }],
 	auth: { type: "agent_profile", tool: "codex", profile: "default" },
 } satisfies HostedSavedAiProvider;
 
+const managedModels = [
+	{
+		id: "gpt-managed-contract",
+		display_name: "Managed contract model",
+		provider_id: "openai-codex",
+		is_default: true,
+		is_featured: true,
+		description: null,
+		capabilities: {
+			context_window: 128_000,
+			max_context_window: null,
+			max_input_tokens: 128_000,
+			max_output_tokens: null,
+			input_modalities: ["text" as const],
+			supports_vision: false,
+			supports_reasoning: null,
+			supports_tools: null,
+		},
+	},
+];
+
+function buildBindingFieldCases(): Array<Record<string, unknown>> {
+	return [
+		{
+			case_id: "managed-primary-api-key-secondary",
+			fields: buildHostedAiBindingFields({
+				managedModels,
+				mode: "create",
+				providers: [apiKeyProvider],
+				selection: {
+					mode: "managed",
+					model: "gpt-managed-contract",
+					providerIds: [CLAWDI_MANAGED_PROVIDER_ID, apiKeyProvider.provider_id],
+				},
+			}),
+		},
+		{
+			case_id: "api-key-primary-managed-secondary",
+			fields: buildHostedAiBindingFields({
+				managedModels,
+				mode: "create",
+				providers: [apiKeyProvider],
+				selection: {
+					mode: "saved",
+					model: "gpt-contract",
+					primaryProviderId: apiKeyProvider.provider_id,
+					providerIds: [apiKeyProvider.provider_id, CLAWDI_MANAGED_PROVIDER_ID],
+				},
+			}),
+		},
+		{
+			case_id: "oauth-primary-api-key-secondary",
+			fields: buildHostedAiBindingFields({
+				managedModels,
+				mode: "create",
+				providers: [oauthProvider, apiKeyProvider],
+				selection: {
+					mode: "saved",
+					model: "gpt-codex-contract",
+					primaryProviderId: oauthProvider.provider_id,
+					providerIds: [oauthProvider.provider_id, apiKeyProvider.provider_id],
+				},
+			}),
+		},
+		{
+			case_id: "api-key-primary-oauth-secondary",
+			fields: buildHostedAiBindingFields({
+				managedModels,
+				mode: "create",
+				providers: [apiKeyProvider, oauthProvider],
+				selection: {
+					mode: "saved",
+					model: "gpt-contract",
+					primaryProviderId: apiKeyProvider.provider_id,
+					providerIds: [apiKeyProvider.provider_id, oauthProvider.provider_id],
+				},
+			}),
+		},
+	];
+}
+
 export function hostedAiProviderContractPayload(): Record<string, unknown> {
 	return {
-		binding_fields: buildHostedAiBindingFields({
-			managedModels: [],
-			mode: "create",
-			providers: [primaryProvider, oauthProvider],
-			selection: {
-				mode: "saved",
-				model: "gpt-contract",
-				primaryProviderId: primaryProvider.provider_id,
-				providerIds: [primaryProvider.provider_id, oauthProvider.provider_id],
-			},
-		}),
+		binding_field_cases: buildBindingFieldCases(),
 		public_https_url_cases: PUBLIC_HTTPS_URL_CASES,
 	};
 }
@@ -141,6 +213,12 @@ if (import.meta.main) {
 		throw new Error(
 			"Usage: bun run scripts/generate-hosted-ai-provider-contract.ts <core-commit> [output]",
 		);
+	}
+	const commitCheck = spawnSync("git", ["cat-file", "-e", `${coreCommit}^{commit}`], {
+		stdio: "ignore",
+	});
+	if (commitCheck.status !== 0) {
+		throw new Error(`Core provenance commit does not exist: ${coreCommit}`);
 	}
 	const outputPath = resolve(process.argv[3] ?? "test-fixtures/hosted-ai-provider-contract.json");
 	writeFileSync(outputPath, renderHostedAiProviderContractFixture(coreCommit), { mode: 0o644 });
