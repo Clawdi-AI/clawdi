@@ -180,7 +180,7 @@ export type BaileysRuntime = {
 	startCodePairing(phoneNumber: string): Promise<PairingStatus>;
 	cancelPairing(): Promise<PairingStatus>;
 	logout(): Promise<PairingStatus>;
-	recover(acceptVersionChange: boolean): Promise<void>;
+	recover(acceptVersionChange: boolean, resetLoggedOut?: boolean): Promise<void>;
 	performOperation(operation: SidecarOperation, requestHash: string): Promise<OperationResult>;
 	downloadMedia(mediaId: string): Promise<MediaDownload>;
 };
@@ -233,5 +233,26 @@ export class VersionRecoveryRequiredError extends Error {
 			"persisted Baileys release differs from this sidecar release; explicit recovery acceptance is required",
 		);
 		this.name = "VersionRecoveryRequiredError";
+	}
+}
+
+export class LoggedOutResetRequiredError extends Error {
+	constructor() {
+		super("logged-out auth requires an explicit reset before pairing again");
+		this.name = "LoggedOutResetRequiredError";
+	}
+}
+
+export class LoggedOutResetNotAllowedError extends Error {
+	constructor(message = "logged-out auth reset is not allowed in the current runtime state") {
+		super(message);
+		this.name = "LoggedOutResetNotAllowedError";
+	}
+}
+
+export class AccountResetBlockedError extends Error {
+	constructor() {
+		super("account auth cannot reset while callback events are pending");
+		this.name = "AccountResetBlockedError";
 	}
 }

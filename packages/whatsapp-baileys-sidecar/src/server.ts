@@ -4,7 +4,10 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { ContractValidationError, canonicalRequestHash, parseOperation } from "./contract.js";
 import { isE164Digits } from "./jid.js";
 import {
+	AccountResetBlockedError,
 	type BaileysRuntime,
+	LoggedOutResetNotAllowedError,
+	LoggedOutResetRequiredError,
 	MediaNotFoundError,
 	MediaTooLargeError,
 	OperationConflictError,
@@ -71,7 +74,11 @@ export function createSidecarServer(runtime: BaileysRuntime, config: ServerConfi
 				) {
 					throw new HttpError(400, "acceptVersionChange_must_be_boolean");
 				}
-				await runtime.recover(body.acceptVersionChange === true);
+				if (body.resetLoggedOut !== undefined && typeof body.resetLoggedOut !== "boolean") {
+					throw new HttpError(400, "resetLoggedOut_must_be_boolean");
+				}
+				assertOnlyKeys(body, ["acceptVersionChange", "resetLoggedOut"]);
+				await runtime.recover(body.acceptVersionChange === true, body.resetLoggedOut === true);
 				writeJson(response, 200, { ok: true });
 				return;
 			}
@@ -157,6 +164,18 @@ function writeError(response: ServerResponse, error: unknown): void {
 		writeJson(response, 409, { error: "version_recovery_required" });
 		return;
 	}
+	if (error instanceof LoggedOutResetRequiredError) {
+		writeJson(response, 409, { error: "logged_out_reset_required" });
+		return;
+	}
+	if (error instanceof LoggedOutResetNotAllowedError) {
+		writeJson(response, 409, { error: "logged_out_reset_not_allowed" });
+		return;
+	}
+	if (error instanceof AccountResetBlockedError) {
+		writeJson(response, 409, { error: "account_reset_pending_callbacks" });
+		return;
+	}
 	if (error instanceof RuntimeNotConnectedError) {
 		writeJson(response, 503, { error: "baileys_not_connected" });
 		return;
@@ -186,6 +205,13 @@ function writeJson(response: ServerResponse, status: number, body: unknown): voi
 		"content-type": "application/json; charset=utf-8",
 	});
 	response.end(JSON.stringify(body));
+}
+
+function assertOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): void {
+	const accepted = new Set(allowed);
+	if (Object.keys(value).some((key) => !accepted.has(key))) {
+		throw new HttpError(400, "unsupported_recovery_field");
+	}
 }
 
 class HttpError extends Error {

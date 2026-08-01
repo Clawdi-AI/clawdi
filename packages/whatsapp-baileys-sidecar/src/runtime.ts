@@ -17,8 +17,11 @@ import { isE164Digits } from "./jid.js";
 import { normalizeInboundMessage } from "./normalize.js";
 import { SQLiteBaileysState } from "./sqlite-state.js";
 import {
+	AccountResetBlockedError,
 	type BaileysRuntime,
 	type JidAliasPair,
+	LoggedOutResetNotAllowedError,
+	LoggedOutResetRequiredError,
 	MediaNotFoundError,
 	MediaTooLargeError,
 	MessageNotFoundError,
@@ -220,6 +223,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 
 	async logout(): Promise<PairingStatus> {
 		const socket = this.requireSocket();
+		this.assertCallbacksDrainedForAccountReset();
 		this.clearReconnectTimer();
 		this.intentionalClose = true;
 		try {
@@ -232,7 +236,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		this.intentionalClose = false;
 		if (this.socket === socket) this.endCurrentSocket("logout_local_auth_reset");
 		try {
-			await this.state.resetLinkedAuth();
+			await this.state.resetAccountState();
 		} catch {
 			this.failPersistentState();
 		}
@@ -241,8 +245,23 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		return this.pairingStatus();
 	}
 
-	async recover(acceptVersionChange: boolean): Promise<void> {
+	async recover(acceptVersionChange: boolean, resetLoggedOut = false): Promise<void> {
 		if (this.closed) throw new Error("runtime has been stopped permanently");
+		if (this.fatalReason === "logged_out") {
+			if (!resetLoggedOut) throw new LoggedOutResetRequiredError();
+			this.assertCallbacksDrainedForAccountReset();
+			try {
+				await this.state.resetAccountState();
+			} catch {
+				this.failPersistentState();
+			}
+			this.pairing = undefined;
+			this.fatalReason = undefined;
+			this.lastDisconnectReason = undefined;
+			this.status = "stopped";
+			return;
+		}
+		if (resetLoggedOut) throw new LoggedOutResetNotAllowedError();
 		if (!this.state.isReleaseCompatible()) {
 			if (!acceptVersionChange) throw new VersionRecoveryRequiredError();
 			try {
@@ -632,6 +651,12 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	private assertPairable(): void {
 		if (this.status === "fatal") throw new RuntimeFatalError();
 		if (this.state.state.creds.registered) throw new Error("account_already_linked");
+	}
+
+	private assertCallbacksDrainedForAccountReset(): void {
+		if ((this.callback?.pendingCount() ?? 0) > 0 || this.state.pendingCallbackEvents().length > 0) {
+			throw new AccountResetBlockedError();
+		}
 	}
 
 	private requireSocket(requireConnected = true): SocketLike {

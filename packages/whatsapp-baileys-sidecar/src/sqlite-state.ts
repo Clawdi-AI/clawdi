@@ -129,15 +129,19 @@ export class SQLiteBaileysState {
 		secureStateFiles(this.sessionDir);
 	}
 
-	async resetLinkedAuth(): Promise<void> {
+	async resetAccountState(): Promise<void> {
 		const fresh = initAuthCreds();
 		this.db.transaction(() => {
+			this.db.run("DELETE FROM pending_callback_events");
+			this.db.run("DELETE FROM operations");
+			this.db.run("DELETE FROM stored_messages");
 			this.db.run("DELETE FROM signal_keys");
 			this.db
 				.query("INSERT OR REPLACE INTO auth_creds (singleton, value) VALUES (1, ?)")
 				.run(serializeJson(fresh));
 		})();
 		this.state.creds = fresh;
+		secureStateFiles(this.sessionDir);
 	}
 
 	async getMessage(key: WAMessageKey): Promise<proto.IMessage | undefined> {

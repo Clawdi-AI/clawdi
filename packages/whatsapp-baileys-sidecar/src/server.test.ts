@@ -10,9 +10,16 @@ import type {
 	PairingStatus,
 	SidecarOperation,
 } from "./types.js";
+import {
+	AccountResetBlockedError,
+	LoggedOutResetNotAllowedError,
+	LoggedOutResetRequiredError,
+} from "./types.js";
 
 class FakeRuntime implements BaileysRuntime {
 	operations: Array<{ operation: SidecarOperation; hash: string }> = [];
+	recoveries: Array<{ acceptVersionChange: boolean; resetLoggedOut: boolean }> = [];
+	recoverError: Error | undefined;
 	pairingSecret: string | undefined;
 
 	async start(): Promise<void> {}
@@ -61,7 +68,10 @@ class FakeRuntime implements BaileysRuntime {
 	async logout(): Promise<PairingStatus> {
 		return { status: "stopped", registered: false };
 	}
-	async recover(_acceptVersionChange: boolean): Promise<void> {}
+	async recover(acceptVersionChange: boolean, resetLoggedOut = false): Promise<void> {
+		this.recoveries.push({ acceptVersionChange, resetLoggedOut });
+		if (this.recoverError) throw this.recoverError;
+	}
 	async performOperation(operation: SidecarOperation, hash: string): Promise<OperationResult> {
 		this.operations.push({ operation, hash });
 		return { operationId: operation.operationId, status: "completed", messageId: "BACKEND-M1" };
@@ -109,6 +119,52 @@ describe("sidecar HTTP contract", () => {
 		expect(healthText).not.toContain("CODE-SECRET");
 		const capabilities = await authedFetch(`${url}/v1/capabilities`);
 		expect(await capabilities.json()).toMatchObject({ rawProviderAccess: false });
+	});
+
+	it("accepts only explicit logged-out recovery and maps recovery policy conflicts", async () => {
+		const runtime = new FakeRuntime();
+		const { url } = await startTestServer(runtime);
+		const accepted = await authedFetch(`${url}/v1/recover`, {
+			method: "POST",
+			body: JSON.stringify({ acceptVersionChange: false, resetLoggedOut: true }),
+		});
+		expect(accepted.status).toBe(200);
+		expect(runtime.recoveries).toEqual([{ acceptVersionChange: false, resetLoggedOut: true }]);
+
+		for (const body of [
+			{ resetLoggedOut: "yes" },
+			{ acceptVersionChange: false, resetLoggedOut: false, resetAllAuth: true },
+		]) {
+			const denied = await authedFetch(`${url}/v1/recover`, {
+				method: "POST",
+				body: JSON.stringify(body),
+			});
+			expect(denied.status).toBe(400);
+		}
+
+		runtime.recoverError = new LoggedOutResetRequiredError();
+		const required = await authedFetch(`${url}/v1/recover`, {
+			method: "POST",
+			body: JSON.stringify({}),
+		});
+		expect(required.status).toBe(409);
+		expect(await required.json()).toEqual({ error: "logged_out_reset_required" });
+		runtime.recoverError = new LoggedOutResetNotAllowedError();
+		const notAllowed = await authedFetch(`${url}/v1/recover`, {
+			method: "POST",
+			body: JSON.stringify({ resetLoggedOut: true }),
+		});
+		expect(notAllowed.status).toBe(409);
+		expect(await notAllowed.json()).toEqual({ error: "logged_out_reset_not_allowed" });
+		runtime.recoverError = new AccountResetBlockedError();
+		const pendingCallbacks = await authedFetch(`${url}/v1/recover`, {
+			method: "POST",
+			body: JSON.stringify({ resetLoggedOut: true }),
+		});
+		expect(pendingCallbacks.status).toBe(409);
+		expect(await pendingCallbacks.json()).toEqual({
+			error: "account_reset_pending_callbacks",
+		});
 	});
 
 	it("accepts only the typed operation contract and preserves the stable send message id", async () => {

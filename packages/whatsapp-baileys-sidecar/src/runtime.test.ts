@@ -281,6 +281,65 @@ describe("single-socket runtime", () => {
 		});
 	});
 
+	it("requires an explicit logged-out reset and clears account-scoped auth and retry state", async () => {
+		await withRuntime(async (config) => {
+			const sockets: FakeSocket[] = [];
+			let authState: UserFacingSocketConfig["auth"] | undefined;
+			const runtime = new BaileysSocketRuntime(config, {
+				makeSocket: (socketConfig) => {
+					authState = socketConfig.auth;
+					const socket = new FakeSocket();
+					sockets.push(socket);
+					return socket;
+				},
+			});
+			await runtime.start();
+			const socket = sockets[0];
+			if (!socket || !authState) throw new Error("logged-out fixture was not initialized");
+			authState.creds.registered = true;
+			await authState.keys.set({ session: { "old-account-session": Buffer.from([7, 8]) } });
+			socket.emitCreds();
+			await Bun.sleep(0);
+			socket.emitConnection({ connection: "open" });
+			expect(await runtime.performOperation(sendOperation(), "old-account-hash")).toMatchObject({
+				status: "completed",
+			});
+
+			socket.emitConnection({
+				connection: "close",
+				lastDisconnect: providerError(401),
+			});
+			expect(runtime.health()).toMatchObject({
+				status: "fatal",
+				fatalReason: "logged_out",
+				registered: true,
+			});
+			await expect(runtime.recover(false)).rejects.toThrow("explicit reset");
+			await runtime.recover(false, true);
+			expect(runtime.health()).toMatchObject({ status: "stopped", registered: false });
+			expect(sockets).toHaveLength(1);
+			await runtime.stop();
+
+			const reopened = new SQLiteBaileysState(
+				config.accountId,
+				config.sessionDir,
+				config.messageStore,
+			);
+			expect(
+				(await reopened.state.keys.get("session", ["old-account-session"]))["old-account-session"],
+			).toBeUndefined();
+			expect(
+				await reopened.getMessage({
+					remoteJid: sendOperation().chatJid,
+					id: sendOperation().messageId,
+					fromMe: true,
+				}),
+			).toBeUndefined();
+			expect(reopened.findOperation("op-1", "old-account-hash")).toBeUndefined();
+			reopened.close();
+		});
+	});
+
 	it("detaches a closed socket so its late credentials, messages, and close cannot affect the new owner", async () => {
 		await withRuntime(async (config) => {
 			const sockets: FakeSocket[] = [];
@@ -456,6 +515,11 @@ describe("single-socket runtime", () => {
 			socket.emitCreds();
 			await Bun.sleep(0);
 			socket.emitConnection({ connection: "open" });
+			expect(
+				await runtime.performOperation(sendOperation(), "logout-operation-hash"),
+			).toMatchObject({
+				status: "completed",
+			});
 			await runtime.logout();
 			expect(socket.logoutCount).toBe(1);
 			expect(runtime.health()).toMatchObject({ status: "stopped", registered: false });
@@ -470,7 +534,76 @@ describe("single-socket runtime", () => {
 			expect(
 				(await reopened.state.keys.get("session", ["fixture-session"]))["fixture-session"],
 			).toBeUndefined();
+			expect(
+				await reopened.getMessage({
+					remoteJid: sendOperation().chatJid,
+					id: sendOperation().messageId,
+					fromMe: true,
+				}),
+			).toBeUndefined();
+			expect(reopened.findOperation("op-1", "logout-operation-hash")).toBeUndefined();
 			reopened.close();
+		});
+	});
+
+	it("blocks logout and logged-out reset until durable callback delivery is drained", async () => {
+		await withRuntime(async (config) => {
+			const spoolDir = join(config.sessionDir, "callback-spool");
+			mkdirSync(spoolDir, { mode: 0o700 });
+			config.callback = {
+				url: "http://127.0.0.1/callback",
+				token: "callback-token",
+				spoolDir,
+				maxPendingEvents: 10,
+				maxPendingBytes: 1024 * 1024,
+				initialBackoffMs: 1,
+				maxBackoffMs: 1,
+				requestTimeoutMs: 60_000,
+			};
+			const socket = new FakeSocket();
+			const runtime = new BaileysSocketRuntime(config, {
+				makeSocket: (socketConfig) => {
+					socketConfig.auth.creds.registered = true;
+					return socket;
+				},
+				callback: {
+					fetch: (_input, init) => abortablePendingResponse(init.signal),
+					sleep: async (_milliseconds, signal) => abortablePendingResponse(signal).then(() => {}),
+					random: () => 0,
+				},
+			});
+			await runtime.start();
+			socket.emitCreds();
+			await Bun.sleep(0);
+			socket.emitConnection({ connection: "open" });
+			socket.emitMessages({
+				type: "notify",
+				messages: [
+					{
+						key: {
+							remoteJid: "15550001111@s.whatsapp.net",
+							id: "CALLBACK-1",
+							fromMe: false,
+						},
+						message: { conversation: "pending callback" },
+					},
+				],
+			});
+			expect(runtime.health().callback.pendingEvents).toBe(1);
+			await expect(runtime.logout()).rejects.toThrow("callback events are pending");
+			expect(socket.logoutCount).toBe(0);
+
+			socket.emitConnection({
+				connection: "close",
+				lastDisconnect: providerError(401),
+			});
+			await expect(runtime.recover(false, true)).rejects.toThrow("callback events are pending");
+			expect(runtime.health()).toMatchObject({
+				status: "fatal",
+				fatalReason: "logged_out",
+				registered: true,
+			});
+			await runtime.stop();
 		});
 	});
 
@@ -670,6 +803,16 @@ function providerError(statusCode: number): { error: Error } {
 
 async function* chunks(...values: Buffer[]): AsyncIterable<Uint8Array> {
 	for (const value of values) yield value;
+}
+
+function abortablePendingResponse(signal: AbortSignal | null | undefined): Promise<Response> {
+	return new Promise((_resolve, reject) => {
+		if (signal?.aborted) {
+			reject(signal.reason);
+			return;
+		}
+		signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+	});
 }
 
 async function withRuntime(run: (config: SidecarConfig) => Promise<void>): Promise<void> {
