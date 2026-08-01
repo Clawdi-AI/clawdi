@@ -11,7 +11,6 @@ const pairedChatsDialog = readFileSync(
 	new URL("./paired-chats-dialog.tsx", import.meta.url),
 	"utf8",
 );
-const addChannelDialog = readFileSync(new URL("./add-channel-dialog.tsx", import.meta.url), "utf8");
 const channelsTab = agentChannels.slice(
 	agentChannels.indexOf("function ChannelsTab"),
 	agentChannels.indexOf("// ── Settings / Compute"),
@@ -37,9 +36,9 @@ describe("hosted-agent channel finish line", () => {
 		expect(channelsTab).not.toContain("This page checks automatically every 20 seconds");
 	});
 
-	test("separates linking a channel from pairing a chat with one short instruction", () => {
-		expect(channelsTab).toContain("Add a channel, then pair where this Agent should answer.");
-		expect(addChannelDialog).toContain("Choose a bot for this Agent.");
+	test("separates linking a bot from pairing a chat on one stable card", () => {
+		expect(channelsTab).toContain('linking ? "Linking…" : "Link"');
+		expect(channelsTab).toContain("data-agent-channel-account-id={bot.id}");
 		expect(channelsTab).toContain("Pair Telegram");
 		expect(channelsTab).toContain("pairingActionLabel(provider)");
 		expect(channelsTab).toContain("<TelegramPairDialog");
@@ -51,26 +50,24 @@ describe("hosted-agent channel finish line", () => {
 		expect(channelsTab).not.toContain("source revision");
 	});
 
-	test("keeps Add persistent and opens paired chats without expanding their bot", () => {
-		const connectedIndex = channelsTab.indexOf("<section data-agent-connected-channels");
-		const addIndex = channelsTab.indexOf("data-agent-add-channel");
-		const availableIndex = channelsTab.indexOf("<section data-agent-available-channels");
-		expect(connectedIndex).toBeGreaterThanOrEqual(0);
-		expect(addIndex).toBeGreaterThan(connectedIndex);
-		expect(availableIndex).toBe(-1);
-		expect(channelsTab).toContain("data-agent-connected-channels");
+	test("renders direct Clawdi and Custom groups with the sole custom creation action", () => {
+		const clawdiIndex = channelsTab.indexOf('title="Clawdi bots"');
+		const customIndex = channelsTab.indexOf('title="Custom bots"');
+		const addCustomIndex = channelsTab.indexOf("data-agent-add-custom-bot");
+		expect(clawdiIndex).toBeGreaterThanOrEqual(0);
+		expect(customIndex).toBeGreaterThan(clawdiIndex);
+		expect(addCustomIndex).toBeGreaterThan(customIndex);
+		expect(channelsTab).toContain("data-agent-channels");
 		expect(channelsTab).toContain("data-agent-channel-group-id={link.id}");
 		expect(channelsTab).toContain("<PairedChatsDialog");
 		expect(pairedChatsDialog).toContain("data-agent-channel-chats-for={linkId}");
 		expect(channelsTab).not.toContain("data-agent-paired-chats");
 		expect(pairedChatsDialog).toContain("Paired chats");
 		expect(channelsTab).not.toContain("No chats paired");
-		expect(channelsTab).toContain("data-agent-add-channel");
-		expect(channelsTab).toContain("<AddChannelDialog");
-		expect(addChannelDialog).toContain("data-agent-add-channel-dialog");
-		expect(addChannelDialog).toContain("data-add-channel-id");
-		expect(addChannelDialog).toContain("Clawdi bots");
-		expect(addChannelDialog).toContain("Custom bots");
+		expect(channelsTab).toContain("data-agent-add-custom-bot");
+		expect(channelsTab).not.toContain("<AddChannelDialog");
+		expect(channelsTab).toContain("Clawdi bots");
+		expect(channelsTab).toContain("Custom bots");
 		expect(channelsTab).not.toContain("No bot connected yet");
 		expect(channelsTab).not.toContain("View all channels");
 		expect(channelsTab).not.toContain("setAdvancedOpen");
@@ -78,7 +75,7 @@ describe("hosted-agent channel finish line", () => {
 		expect(channelsTab).not.toContain("Fastest: use a ready-to-go bot");
 		expect(channelsTab).not.toContain("Use your own bot (advanced)");
 		expect(pairedChatsDialog).toContain("pairedChats.map");
-		expect(pairedChatsDialog).toContain("Paired chats ·");
+		expect(pairedChatsDialog).toContain("Manage paired chats ·");
 		expect(pairedChatsDialog).toContain("h-10 min-h-10 max-h-10");
 		expect(pairedChatsDialog).toContain("overflow-y-auto");
 		expect(pairedChatsDialog).toContain("<Dialog");

@@ -49,18 +49,18 @@ describe("global Channels inventory", () => {
 	test("reuses one Custom bot form for Console inventory and direct Agent setup", () => {
 		const connectDialog = source("./connect-bot-dialog.tsx");
 		const agentDetail = source("../../agents/hosted-agent-detail.tsx");
-		const addChannelDialog = source("./add-channel-dialog.tsx");
 
 		expect(connectDialog).toContain("agent_id: agentId ?? null");
 		expect(connectDialog).toContain("onAgentConnected");
 		expect(connectDialog).toContain("availableBotProvidersForAgent");
-		expect(agentDetail).toContain("<AddChannelDialog");
+		expect(agentDetail).not.toContain("<AddChannelDialog");
 		expect(agentDetail).toContain("<ConnectBotDialog");
-		expect(agentDetail).toContain('channelSetupDialog === "connect-custom"');
+		expect(agentDetail).toContain("open={customBotDialogOpen}");
 		expect(agentDetail).toContain("agentId={environmentId}");
 		expect(agentDetail).toContain("linkedProviders={linkedProviders}");
-		expect(addChannelDialog).toContain("Choose a bot for this Agent.");
-		expect(addChannelDialog).toContain("Connect custom bot");
+		expect(agentDetail).toContain("Add custom bot");
+		expect(agentDetail).toContain('title="Clawdi bots"');
+		expect(agentDetail).toContain('title="Custom bots"');
 		expect(agentDetail).toContain("body: { agent_id: environmentId }");
 		expect(agentDetail).toContain("setTelegramPair({");
 	});
