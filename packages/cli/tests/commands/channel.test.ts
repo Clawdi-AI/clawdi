@@ -329,6 +329,7 @@ describe("channel commands", () => {
 							agent_token: null,
 							code: "PAIR12345678",
 							expires_at: new Date().toISOString(),
+							pairing_command: "/bot_pair PAIR12345678",
 						},
 						201,
 					),
@@ -347,6 +348,39 @@ describe("channel commands", () => {
 		expect(JSON.parse(out)).toMatchObject({
 			pair_code: { code: "PAIR12345678", agent_link_id: "link-1" },
 		});
+	});
+
+	it("prints the provider-specific Discord pairing command", async () => {
+		const { restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/v1/channels/discord-channel/pair-codes",
+				response: () =>
+					jsonResponse(
+						{
+							id: "pair-discord",
+							agent_link_id: "link-discord",
+							agent_id: "agent-1",
+							agent_token: null,
+							code: "PAIRDISCORD123",
+							expires_at: new Date().toISOString(),
+							pairing_command: "/clawdi_pair PAIRDISCORD123",
+							discord_install_url:
+								"https://discord.com/oauth2/authorize?client_id=123456789012345678&permissions=274878024768&scope=bot%20applications.commands",
+							discord_user_install_url:
+								"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
+						},
+						201,
+					),
+			},
+		]);
+		const out = await captureStdout(() =>
+			channelPairCodeCommand("discord-channel", { link: "link-discord", ttl: "600" }),
+		);
+		restore();
+
+		expect(out).toContain("Send this in the external chat: /clawdi_pair PAIRDISCORD123");
+		expect(out).not.toContain("/bot_pair");
 	});
 
 	it("rejects pair-code requests that pass both agent and link", async () => {

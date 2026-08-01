@@ -36,6 +36,39 @@ export function pairingCommand(code: string): string {
 	return `/bot_pair ${code}`;
 }
 
+export function verifiedDiscordPairingCommand(pairingCommand: string, code: string): string | null {
+	const expected = `/clawdi_pair ${code}`;
+	return pairingCommand === expected ? pairingCommand : null;
+}
+
+export function verifiedDiscordUserInstallUrl(value: string | null | undefined): string | null {
+	if (!value) return null;
+	try {
+		const url = new URL(value);
+		const clientId = url.searchParams.get("client_id");
+		if (
+			url.origin !== "https://discord.com" ||
+			url.pathname !== "/oauth2/authorize" ||
+			url.username ||
+			url.password ||
+			url.hash ||
+			!clientId ||
+			!/^[0-9]{17,20}$/.test(clientId) ||
+			url.searchParams.getAll("client_id").length !== 1 ||
+			url.searchParams.get("integration_type") !== "1" ||
+			url.searchParams.getAll("integration_type").length !== 1 ||
+			url.searchParams.get("scope") !== "applications.commands" ||
+			url.searchParams.getAll("scope").length !== 1 ||
+			url.searchParams.has("permissions")
+		) {
+			return null;
+		}
+		return value;
+	} catch {
+		return null;
+	}
+}
+
 export function pairingActionLabel(provider: string): string {
 	return provider === "discord" ? "Pair Discord" : "Pair chat";
 }

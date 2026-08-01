@@ -186,7 +186,9 @@ Pair flow:
 
 1. A user chooses an accessible channel account and one of their agents.
 2. Clawdi creates or reuses a `channel_bot_agent_links` row.
-3. Clawdi returns a one-time `/bot_pair <code>` value.
+3. Clawdi returns a one-time provider command. Discord uses
+   `/clawdi_pair <code>`; Telegram, WhatsApp, and iMessage use
+   `/bot_pair <code>`.
 4. The user sends the code into the external chat.
 5. Provider ingress extracts:
    - external bot account from the webhook route,
@@ -213,7 +215,8 @@ also best-effort and must not roll back the binding.
 
 Unpair flow:
 
-1. The external actor sends `/bot_unpair`.
+1. The external actor sends the provider's unpair command. Discord uses
+   `/clawdi_unpair`; Telegram, WhatsApp, and iMessage use `/bot_unpair`.
 2. Provider ingress resolves the active binding for the chat.
 3. The backend verifies the command actor matches
    `ChannelBinding.paired_external_user_id`.
@@ -226,7 +229,7 @@ Pair codes are not consumed when actor authorization fails.
 
 Pairing control is actor-scoped, not just chat-scoped.
 
-The backend must prevent this attack:
+The backend must prevent this attack. For example, on Telegram:
 
 1. Alice pairs a public bot in a group chat to Alice's agent.
 2. Bob is another group participant.
@@ -238,16 +241,16 @@ Bob must not be able to unpair Alice's route or replace it with Bob's agent.
 Rules:
 
 - A successful pair stores the external actor that claimed the route.
-- Later `/bot_pair` and `/bot_unpair` commands for the same active route must
-  come from the same external actor.
+- Later provider pair/unpair commands for the same active route must come from
+  the same external actor.
 - Non-DM pair/unpair commands without an extractable actor are rejected.
 - DM payloads may fall back to the external chat id as actor id when the
   provider does not send a separate sender field.
 - Pair/unpair commands are system commands. They are persisted for audit and
   marked handled, including failed commands, so pair codes are not delivered to
   the current agent inbox.
-- Unknown `/bot_*` commands are also treated as system commands and acknowledged
-  by provider-specific reply logic.
+- Unknown provider-reserved commands are also treated as system commands and
+  acknowledged by provider-specific reply logic.
 
 Provider actor extraction:
 
@@ -367,7 +370,7 @@ Repository and service ownership:
 
 First-party hosted control planes must not duplicate channel bindings,
 pair-code claiming, provider webhook handlers, provider protocol state, or
-`/bot_pair` behavior.
+provider pair-command behavior.
 Those are product-state concerns owned by `clawdi` native Channels. Managed
 runtime code may pass a Clawdi auth token and selected channel intent into a
 runtime, or call user-facing channel APIs before launch, but canonical channel
@@ -402,7 +405,7 @@ CLI control plane:
 | `clawdi channel create <provider> <name>` | Creates a private bot, optionally with an initial `--agent` link. |
 | `clawdi channel links <channel-id>` | Lists only the caller's bot-agent links for that bot. |
 | `clawdi channel link <channel-id> --agent <agent-id>` | Creates a caller-owned link from an accessible bot to one of the caller's agents. |
-| `clawdi channel pair-code <channel-id> --agent <agent-id>` | Creates or reuses the caller's link and returns `/bot_pair <code>`. |
+| `clawdi channel pair-code <channel-id> --agent <agent-id>` | Creates or reuses the caller's link and returns the provider-specific pair command. |
 | `clawdi channel pair-code <channel-id> --link <link-id>` | Creates a pair code for an existing caller-owned link. |
 | `clawdi channel bindings <channel-id>` | Lists only the caller's active chat bindings. |
 

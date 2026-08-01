@@ -638,7 +638,7 @@ async function applyLink(
 			command_env: linkManifest.pair_code.command_env,
 		});
 		if (linkManifest.pair_code.command_env) {
-			ctx.env.set(linkManifest.pair_code.command_env, `/bot_pair ${pairCode.code}`);
+			ctx.env.set(linkManifest.pair_code.command_env, pairCode.pairing_command);
 		}
 		ctx.actions.push({
 			action: "create_pair_code",
@@ -1130,8 +1130,9 @@ function printHumanResult(value: unknown): void {
 		if (root.applied.pair_codes?.length) {
 			console.log(chalk.bold("Pair codes"));
 			for (const item of root.applied.pair_codes) {
-				const command = `/bot_pair ${item.pair_code.code}`;
-				console.log(`  ${item.link_ref}: ${command} (expires ${item.pair_code.expires_at})`);
+				console.log(
+					`  ${item.link_ref}: ${item.pair_code.pairing_command} (expires ${item.pair_code.expires_at})`,
+				);
 			}
 		}
 		if (root.applied.writes?.length) {

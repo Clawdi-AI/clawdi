@@ -4367,6 +4367,8 @@ export interface components {
             qr_payload?: string | null;
             /** Discord Install Url */
             discord_install_url?: string | null;
+            /** Discord User Install Url */
+            discord_user_install_url?: string | null;
         };
         /** ChannelRuntimeAccountResponse */
         ChannelRuntimeAccountResponse: {

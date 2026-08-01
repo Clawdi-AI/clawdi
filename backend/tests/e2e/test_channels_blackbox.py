@@ -312,8 +312,9 @@ async def _pair_discord(
                 "id": f"discord-pair-{run_id}",
                 "channel_id": channel_id,
                 "guild_id": guild_id,
-                "content": f"/bot_pair {pair['code']}",
+                "content": f"/clawdi_pair {pair['code']}",
                 "author": {"id": f"discord-user-{run_id}"},
+                "member": {"permissions": "32"},
             },
         },
     )

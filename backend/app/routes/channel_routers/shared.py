@@ -55,6 +55,7 @@ from app.services.channel_webhooks import (
     validate_agent_webhook_url,
 )
 from app.services.channels import (
+    DISCORD_RESERVED_COMMAND_NAMES,
     ChannelAgentContext,
     channel_webhook_url,
     decrypt_provider_token,
@@ -788,10 +789,10 @@ def _discord_command_shape(command: Any, *, application_id: str) -> dict[str, An
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="command name is required",
         )
-    if name.startswith("bot_"):
+    if name.startswith("bot_") or name in DISCORD_RESERVED_COMMAND_NAMES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='command names starting with "bot_" are reserved',
+            detail="command name is reserved",
         )
     raw_command_type = source.get("type")
     if isinstance(raw_command_type, bool):

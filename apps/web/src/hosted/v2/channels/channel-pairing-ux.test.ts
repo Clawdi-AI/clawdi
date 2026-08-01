@@ -54,6 +54,7 @@ describe("channel IA boundary", () => {
 		expect(agentDetail).toContain("pairingActionLabel(provider)");
 		expect(channelLinkingLogic).toContain('provider === "discord" ? "Pair Discord" : "Pair chat"');
 		expect(agentDetail).toContain('confirmLabel="Unlink"');
+		expect(agentDetail).toContain("<ConfirmAction");
 		expect(agentDetail).toContain("<PairedChatsDialog");
 		expect(pairedChatsDialog).toContain("<PairedChatRow");
 		expect(pairedChatRow).toContain("Unpair");
@@ -83,18 +84,35 @@ describe("channel IA boundary", () => {
 		expect(agentDetail).toContain("<DiscordPairDialog");
 		expect(discordPairDialog).toContain("useCreatePairCode(accountId, { toastOnError: false })");
 		expect(discordPairDialog).toContain("await pair.execute");
-		expect(discordPairDialog).toContain("run <code>/bot_pair</code>");
+		expect(discordPairDialog).toContain(
+			"verifiedDiscordPairingCommand(data.pairing_command, data.code)",
+		);
+		expect(discordPairDialog).toContain("pairing_command: pairingCommand");
+		expect(discordPairDialog).toContain("discord_user_install_url: verifiedDiscordUserInstallUrl(");
+		expect(discordPairDialog).toContain('result.pairing_command.split(" ", 1)[0]');
 		expect(discordPairDialog).toContain('data-discord-pair-path="server"');
 		expect(discordPairDialog).toContain('data-discord-pair-path="dm"');
+		expect(discordPairDialog).toContain("Direct message");
+		expect(discordPairDialog).not.toContain("If you can already open a direct message");
+		expect(discordPairDialog).toContain("Add to my apps");
+		expect(discordPairDialog).toContain("Discord User Install QR code");
+		expect(discordPairDialog).toContain("value={result.discord_user_install_url}");
+		expect(discordPairDialog).toContain("disabled={!result.discord_user_install_url}");
+		expect(discordPairDialog).toContain("Direct message pairing unavailable");
+		expect(discordPairDialog).toContain("Use Server pairing");
+		expect(discordPairDialog).toContain("enable User Install");
+		expect(discordPairDialog).toContain("applications.commands");
 		expect(discordPairDialog).toContain("Manage");
 		expect(discordPairDialog).toContain("Add to server");
 		expect(discordPairDialog).toContain("value={result.discord_install_url}");
 		expect(discordPairDialog).toContain('aria-label="Discord server install QR code"');
-		expect(discordPairDialog).toContain("paste this code into the");
+		expect(discordPairDialog).toContain("paste this code");
+		expect(discordPairDialog).toContain("into the required");
 		expect(discordPairDialog).toContain("required <code>code</code> option");
 		expect(discordPairDialog).toContain('"Copy code"');
 		expect(discordPairDialog).not.toContain("/bot_pair ${");
 		expect(discordPairDialog).not.toContain("discord://");
+		expect(discordPairDialog).not.toContain("/bot_pair");
 		expect(discordPairDialog).toContain("pairCodeExpiryLabel");
 		expect(discordPairDialog).toContain("This Discord pair code has expired");
 		expect(discordPairDialog).toContain("Generate new code");
@@ -167,6 +185,7 @@ describe("channel IA boundary", () => {
 		expect(agentDetail).toContain("selectAgentPairedChats");
 		expect(agentDetail).toContain("pairedChatsByLinkId.get(linkForBot.id) ?? []");
 		expect(pairedChatRow).toContain("Only this chat will be disconnected");
+		expect(pairedChatRow).toContain("<ConfirmAction");
 		expect(pairedChatRow).toContain("unpair.mutateAsync(binding.id)");
 		expect(pairedChatRow).toContain("unpair.isPending");
 		expect(confirmAction).toContain("void runConfirm().catch");

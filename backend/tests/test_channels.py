@@ -79,6 +79,8 @@ from app.services.channels import (
     channel_runtime_account_key,
     channel_runtime_placeholder_token,
     decrypt_agent_link_token,
+    discord_pair_command_from_payload,
+    discord_pairing_reply_for_command,
     encrypt_optional_token,
     extract_discord_routing_key,
     generate_agent_token,
@@ -124,6 +126,7 @@ def _discord_ready_config(
         "application_id": application_id,
         "public_key": DISCORD_TEST_PUBLIC_KEY,
         "discord_interactions_configured": True,
+        "discord_reserved_command_version": channel_service.DISCORD_RESERVED_COMMAND_VERSION,
     }
 
 
@@ -483,10 +486,10 @@ class _SequencedProviderClient(_FakeProviderClient):
 
 
 class _DiscordPreparationProviderClient(_FakeProviderClient):
-    responses: list[tuple[dict[str, Any], int]] = []
+    responses: list[tuple[Any, int]] = []
 
     @classmethod
-    def reset(cls, responses: list[tuple[dict[str, Any], int]]) -> None:
+    def reset(cls, responses: list[tuple[Any, int]]) -> None:
         cls.calls = []
         cls.responses = list(responses)
 
@@ -502,6 +505,91 @@ class _DiscordPreparationProviderClient(_FakeProviderClient):
     async def post(self, url, **kwargs):
         self.calls.append({"method": "POST", "url": url, **kwargs})
         return self._next_response()
+
+
+class _StatefulDiscordCommandClient(_FakeProviderClient):
+    commands_by_path: dict[str, list[dict[str, Any]]] = {}
+    delete_statuses_by_id: dict[str, list[int]] = {}
+    created_ids = {
+        "clawdi_pair": "900000000000000001",
+        "clawdi_unpair": "900000000000000002",
+    }
+
+    @classmethod
+    def reset(
+        cls,
+        commands_by_path: dict[str, list[dict[str, Any]]],
+        *,
+        delete_statuses_by_id: dict[str, list[int]] | None = None,
+    ) -> None:
+        cls.calls = []
+        cls.commands_by_path = {
+            path: [dict(command) for command in commands]
+            for path, commands in commands_by_path.items()
+        }
+        cls.delete_statuses_by_id = {
+            command_id: list(statuses)
+            for command_id, statuses in (delete_statuses_by_id or {}).items()
+        }
+
+    @classmethod
+    def _scope_path(cls, url: str) -> str | None:
+        return next(
+            (path for path in cls.commands_by_path if url.endswith(path) or f"{path}/" in url),
+            None,
+        )
+
+    async def request(self, method, url, **kwargs):
+        url = str(url)
+        self.calls.append({"method": method, "url": url, **kwargs})
+        scope_path = self._scope_path(url)
+        if scope_path is None:
+            return _FakeProviderResponse({}, status_code=404)
+        commands = self.commands_by_path[scope_path]
+        if method == "GET" and url.endswith(scope_path):
+            return _FakeProviderResponse([dict(command) for command in commands])
+        if method == "DELETE":
+            command_id = url.rsplit("/", 1)[-1]
+            remaining = [command for command in commands if command.get("id") != command_id]
+            configured_statuses = self.delete_statuses_by_id.get(command_id)
+            if configured_statuses:
+                status_code = configured_statuses.pop(0)
+                if status_code == 404:
+                    # Simulate another reconciler deleting the ID between this
+                    # client's GET and DELETE.
+                    self.commands_by_path[scope_path] = remaining
+                return _FakeProviderResponse({}, status_code=status_code)
+            if len(remaining) == len(commands):
+                return _FakeProviderResponse({}, status_code=404)
+            self.commands_by_path[scope_path] = remaining
+            return _FakeProviderResponse({}, status_code=204)
+        if method == "POST" and url.endswith(scope_path):
+            payload = kwargs.get("json")
+            if not isinstance(payload, dict):
+                return _FakeProviderResponse({}, status_code=400)
+            name = payload.get("name")
+            command_type = payload.get("type", 1)
+            existing = next(
+                (
+                    command
+                    for command in commands
+                    if command.get("name") == name and command.get("type", 1) == command_type
+                ),
+                None,
+            )
+            command_id = (
+                existing.get("id")
+                if isinstance(existing, dict)
+                else self.created_ids.get(str(name), "900000000000000099")
+            )
+            synced = {"id": command_id, **payload}
+            self.commands_by_path[scope_path] = [
+                command
+                for command in commands
+                if not (command.get("name") == name and command.get("type", 1) == command_type)
+            ] + [synced]
+            return _FakeProviderResponse(synced)
+        return _FakeProviderResponse({}, status_code=405)
 
 
 class _FakeDiscordGatewaySocket:
@@ -570,6 +658,7 @@ def _clear_fake_provider_calls() -> None:
     _FakeProviderClient.calls = []
     _FailingProviderClient.calls = []
     _SequencedProviderClient.calls = []
+    _StatefulDiscordCommandClient.calls = []
 
 
 class _MemoryFileStore:
@@ -788,7 +877,7 @@ async def _create_paired_discord_channel(
                 "user": {"id": "discord-pair-user"},
             },
             "data": {
-                "name": "bot_pair",
+                "name": "clawdi_pair",
                 "options": [{"name": "code", "value": pair["code"]}],
             },
         },
@@ -8572,7 +8661,7 @@ async def test_discord_rest_application_commands_are_tenant_shadowed(
     reserved = await client.post(
         f"/v1/channels/discord/v10/applications/{DISCORD_TEST_APPLICATION_ID}/commands",
         headers=headers,
-        json={"name": "bot_pair", "description": "bad"},
+        json={"name": "clawdi_pair", "description": "bad"},
     )
     invalid_object = await client.put(
         f"/v1/channels/discord/v10/applications/{DISCORD_TEST_APPLICATION_ID}/commands",
@@ -9157,6 +9246,9 @@ async def test_discord_pairing_replays_stored_global_commands_to_new_guild(
                     "application_id": DISCORD_TEST_APPLICATION_ID,
                     "public_key": DISCORD_TEST_PUBLIC_KEY,
                     "discord_interactions_configured": True,
+                    "discord_reserved_command_version": (
+                        channel_service.DISCORD_RESERVED_COMMAND_VERSION
+                    ),
                 },
             },
         )
@@ -9185,7 +9277,7 @@ async def test_discord_pairing_replays_stored_global_commands_to_new_guild(
                 "id": "msg-pair-replay",
                 "channel_id": "chan-replay",
                 "guild_id": "guild-replay",
-                "content": f"/bot_pair {pair['code']}",
+                "content": f"/clawdi_pair {pair['code']}",
                 "author": {"id": "discord-replay-user"},
                 "member": {"permissions": "32"},
             },
@@ -12919,6 +13011,127 @@ def test_parse_pair_command_matches_strict_bot_shapes():
     assert unknown.command == "/bot_foo"
 
 
+@pytest.mark.parametrize(
+    ("name", "expected_kind"),
+    [
+        ("clawdi_pair", "pair"),
+        ("clawdi_unpair", "unpair"),
+    ],
+)
+def test_discord_interaction_parser_accepts_current_reserved_commands(
+    name: str,
+    expected_kind: str,
+):
+    command = discord_pair_command_from_payload(
+        {
+            "type": 2,
+            "data": {
+                "name": name,
+                "options": [{"name": "code", "value": "PAIRCURRENT123"}],
+            },
+        }
+    )
+
+    assert command is not None
+    assert command.kind == expected_kind
+    assert command.code == ("PAIRCURRENT123" if expected_kind == "pair" else None)
+
+
+@pytest.mark.parametrize("name", ["bot_pair", "bot_unpair", "pair", "unpair"])
+def test_discord_interaction_parser_rejects_legacy_and_generic_commands(name: str):
+    assert (
+        discord_pair_command_from_payload(
+            {
+                "type": 2,
+                "data": {
+                    "name": name,
+                    "options": [{"name": "code", "value": "PAIRLEGACY123"}],
+                },
+            }
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("content", ["/bot_pair PAIRLEGACY123", "/bot_unpair"])
+def test_discord_message_parser_rejects_legacy_text_commands(content: str):
+    assert discord_pair_command_from_payload({"d": {"content": content}}) is None
+
+
+def test_discord_message_parser_requires_slash_for_current_commands():
+    current = discord_pair_command_from_payload({"d": {"content": "/clawdi_pair PAIRCURRENT123"}})
+
+    assert current is not None
+    assert current.kind == "pair"
+    assert current.code == "PAIRCURRENT123"
+    assert (
+        discord_pair_command_from_payload({"d": {"content": "clawdi_pair PAIRCURRENT123"}}) is None
+    )
+    assert discord_pair_command_from_payload({"d": {"content": "clawdi_unpair"}}) is None
+
+
+def test_discord_unknown_command_reply_uses_only_current_reserved_commands():
+    reply = discord_pairing_reply_for_command(
+        channel_service.ChannelPairCommand(kind="unknown", command="/clawdi_unpair"),
+        channel_service.InboundBindingResult(binding=None, command_handled=True),
+        guild_id="guild-1",
+    )
+
+    assert reply == ("Unknown command: /clawdi_unpair. Use /clawdi_pair <code> or /clawdi_unpair.")
+    assert "/bot_" not in reply
+
+
+@pytest.mark.asyncio
+async def test_discord_webhook_does_not_claim_code_for_legacy_interaction(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-legacy-command-rejected",
+                "provider_token": "discord-provider-token",
+                "config": _discord_ready_config(),
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+
+    response = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "type": 2,
+            "id": "legacy-pair-interaction",
+            "token": "legacy-pair-token",
+            "channel_id": "legacy-pair-channel",
+            "guild_id": "legacy-pair-guild",
+            "member": {
+                "permissions": "32",
+                "user": {"id": "legacy-pair-user"},
+            },
+            "data": {
+                "name": "bot_pair",
+                "options": [{"name": "code", "value": pair["code"]}],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["content"] == "Message received."
+    pair_code = await db_session.get(ChannelPairCode, UUID(pair["id"]))
+    assert pair_code is not None
+    assert pair_code.status == PAIR_CODE_STATUS_PENDING
+    assert (await client.get(f"/v1/channels/{created['id']}/bindings")).json() == []
+
+
 def test_telegram_reply_thread_requires_a_true_private_or_forum_topic():
     def update(*, chat_type: str, is_topic: bool, is_forum: bool = False):
         return {
@@ -13843,7 +14056,7 @@ async def test_discord_webhook_pair_code_creates_binding(client: httpx.AsyncClie
                 "id": "msg-1",
                 "channel_id": "chan-1",
                 "guild_id": "guild-1",
-                "content": f"/bot_pair {pair['code']}",
+                "content": f"/clawdi_pair {pair['code']}",
                 "author": {"id": "discord-msg-pair-user"},
                 "member": {"permissions": "32"},
                 "channel": {"id": "chan-1", "name": "ops"},
@@ -13937,7 +14150,7 @@ async def test_discord_interaction_pair_replays_shadowed_commands_once_for_guild
                 "user": {"id": "interaction-replay-admin"},
             },
             "data": {
-                "name": "bot_pair",
+                "name": "clawdi_pair",
                 "options": [{"name": "code", "value": pair["code"]}],
             },
         },
@@ -13988,7 +14201,7 @@ async def test_discord_interaction_pair_replays_shadowed_commands_once_for_guild
             "channel_id": "dm-no-fanout-channel",
             "user": {"id": "dm-pairing-user"},
             "data": {
-                "name": "bot_pair",
+                "name": "clawdi_pair",
                 "options": [{"name": "code", "value": dm_pair["code"]}],
             },
         },
@@ -14101,7 +14314,7 @@ async def test_discord_message_pair_code_sends_user_reply(
                 "id": "msg-1",
                 "channel_id": "chan-1",
                 "guild_id": "guild-1",
-                "content": f"/bot_pair {pair['code']}",
+                "content": f"/clawdi_pair {pair['code']}",
                 "author": {"id": "discord-msg-pair-user"},
                 "member": {"permissions": "32"},
                 "channel": {"id": "chan-1", "name": "ops"},
@@ -14159,7 +14372,7 @@ async def test_discord_guild_text_pair_without_computed_permissions_fails_closed
                 "channel_id": "guild-thread-invoking",
                 "guild_id": "guild-text-pair",
                 "channel_type": 11,
-                "content": f"/bot_pair {pair['code']}",
+                "content": f"/clawdi_pair {pair['code']}",
                 "author": {"id": "guild-text-actor"},
             },
         },
@@ -14177,7 +14390,7 @@ async def test_discord_guild_text_pair_without_computed_permissions_fails_closed
         if call["url"].endswith("/channels/guild-thread-invoking/messages")
     )
     assert reply_call["json"]["content"] == (
-        "Use the /bot_pair or /bot_unpair slash command; "
+        "Use the /clawdi_pair or /clawdi_unpair slash command; "
         "pairing a server requires Manage Server permission."
     )
 
@@ -14220,7 +14433,7 @@ async def test_discord_guild_interaction_pair_allows_manage_guild_or_administrat
                 "user": {"id": "authority-admin"},
             },
             "data": {
-                "name": "bot_pair",
+                "name": "clawdi_pair",
                 "options": [{"name": "code", "value": pair["code"]}],
             },
         },
@@ -14269,7 +14482,7 @@ async def test_discord_guild_interaction_pair_denies_non_authoritative_permissio
             "guild_id": "denied-guild",
             "member": member,
             "data": {
-                "name": "bot_pair",
+                "name": "clawdi_pair",
                 "options": [{"name": "code", "value": pair["code"]}],
             },
         },
@@ -14310,7 +14523,7 @@ async def test_discord_guild_unpair_requires_current_authority_and_pairing_actor
                     "permissions": permissions,
                     "user": {"id": actor},
                 },
-                "data": {"name": "bot_unpair"},
+                "data": {"name": "clawdi_unpair"},
             },
         )
 
@@ -14383,7 +14596,7 @@ async def test_discord_guild_cannot_move_to_second_link_until_explicit_unpair_an
                 "user": {"id": "discord-pair-user"},
             },
             "data": {
-                "name": "bot_pair",
+                "name": "clawdi_pair",
                 "options": [{"name": "code", "value": pair_b_body["code"]}],
             },
         },
@@ -14421,7 +14634,7 @@ async def test_discord_guild_cannot_move_to_second_link_until_explicit_unpair_an
                 "permissions": "32",
                 "user": {"id": "discord-pair-user"},
             },
-            "data": {"name": "bot_unpair"},
+            "data": {"name": "clawdi_unpair"},
         },
     )
     assert unpaired.json()["data"]["content"].startswith("Server unpaired.")
@@ -14440,7 +14653,7 @@ async def test_discord_guild_cannot_move_to_second_link_until_explicit_unpair_an
                 "user": {"id": "link-b-admin"},
             },
             "data": {
-                "name": "bot_pair",
+                "name": "clawdi_pair",
                 "options": [{"name": "code", "value": pair_b_body["code"]}],
             },
         },
@@ -14527,7 +14740,7 @@ async def test_discord_interaction_unpair_archives_binding_and_cleans_guild_comm
                 "user": {"id": "discord-user-unpair"},
             },
             "data": {
-                "name": "bot_pair",
+                "name": "clawdi_pair",
                 "options": [{"name": "code", "value": pair["code"]}],
             },
         },
@@ -14590,7 +14803,7 @@ async def test_discord_interaction_unpair_archives_binding_and_cleans_guild_comm
                 "permissions": "32",
                 "user": {"id": "discord-user-unpair"},
             },
-            "data": {"name": "bot_unpair"},
+            "data": {"name": "clawdi_unpair"},
         },
     )
 
@@ -14657,7 +14870,7 @@ async def test_discord_unpair_command_cleanup_failure_keeps_authority_revoked(
                 "permissions": "32",
                 "user": {"id": "discord-pair-user"},
             },
-            "data": {"name": "bot_unpair"},
+            "data": {"name": "clawdi_unpair"},
         },
     )
 
@@ -14759,7 +14972,7 @@ async def test_discord_dm_binding_delete_revokes_without_guild_cleanup(
             "channel_id": "discord-control-plane-dm",
             "user": {"id": "discord-control-plane-dm-user"},
             "data": {
-                "name": "bot_pair",
+                "name": "clawdi_pair",
                 "options": [{"name": "code", "value": pair["code"]}],
             },
         },
@@ -15075,7 +15288,7 @@ async def test_discord_dm_round_trip_is_isolated_from_other_dms_and_guilds(
             "channel_id": "discord-dm-a",
             "user": {"id": "discord-dm-actor"},
             "data": {
-                "name": "bot_pair",
+                "name": "clawdi_pair",
                 "options": [{"name": "code", "value": pair["code"]}],
             },
         },
@@ -15200,7 +15413,7 @@ async def test_discord_dm_round_trip_is_isolated_from_other_dms_and_guilds(
             "application_id": DISCORD_TEST_APPLICATION_ID,
             "channel_id": "discord-dm-a",
             "user": {"id": "discord-dm-actor"},
-            "data": {"name": "bot_unpair"},
+            "data": {"name": "clawdi_unpair"},
         },
     )
     assert unpaired.status_code == 200
@@ -15239,7 +15452,7 @@ async def test_discord_dispatch_records_bound_message(
                 "id": "msg-pair",
                 "channel_id": "chan-dispatch",
                 "guild_id": "guild-dispatch",
-                "content": f"/bot_pair {pair['code']}",
+                "content": f"/clawdi_pair {pair['code']}",
                 "author": {"id": "discord-dispatch-pair-user"},
                 "member": {"permissions": "32"},
             },
@@ -15322,7 +15535,7 @@ async def test_discord_gateway_dispatch_pair_code_creates_binding(
                 "id": "msg-gateway-pair",
                 "channel_id": "chan-gateway-pair",
                 "guild_id": "guild-gateway",
-                "content": f"/bot_pair {pair['code']}",
+                "content": f"/clawdi_pair {pair['code']}",
                 "author": {"id": "discord-gateway-pair-user"},
                 "member": {"permissions": "32"},
             },
@@ -15663,7 +15876,7 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
         json={
             "id": "discord-shared-msg",
             "channel_id": shared_chat_id,
-            "content": f"/bot_pair {pair_codes['discord']}",
+            "content": f"/clawdi_pair {pair_codes['discord']}",
             "author": {"id": "shared-discord-sender"},
         },
     )
@@ -16463,8 +16676,22 @@ async def test_discord_pair_preparation_configures_endpoint_then_global_commands
         [
             ({"id": DISCORD_TEST_APPLICATION_ID}, 200),
             ({"id": DISCORD_TEST_APPLICATION_ID}, 200),
-            ({"id": "pair-command"}, 200),
-            ({"id": "unpair-command"}, 200),
+            (
+                [
+                    {
+                        "id": "810000000000000001",
+                        "name": "runtime_status",
+                        "type": 1,
+                    },
+                    {"id": "810000000000000002", "name": "bot_pair", "type": 1},
+                    {"id": "810000000000000003", "name": "bot_unpair", "type": 1},
+                ],
+                200,
+            ),
+            ({"id": "810000000000000004", "name": "clawdi_pair", "type": 1}, 200),
+            ({"id": "810000000000000005", "name": "clawdi_unpair", "type": 1}, 200),
+            ({}, 204),
+            ({}, 204),
         ]
     )
     monkeypatch.setattr(
@@ -16496,20 +16723,40 @@ async def test_discord_pair_preparation_configures_endpoint_then_global_commands
     assert [call["method"] for call in _DiscordPreparationProviderClient.calls] == [
         "GET",
         "PATCH",
+        "GET",
         "POST",
         "POST",
+        "DELETE",
+        "DELETE",
     ]
-    get_call, patch_call, pair_command_call, unpair_command_call = (
-        _DiscordPreparationProviderClient.calls
-    )
+    get_call, patch_call, list_call, *reconciliation_calls = _DiscordPreparationProviderClient.calls
     assert get_call["url"].endswith("/applications/@me")
     assert patch_call["json"] == {"interactions_endpoint_url": created["webhook_url"]}
     expected_global_path = f"/applications/{DISCORD_TEST_APPLICATION_ID}/commands"
-    assert pair_command_call["url"].endswith(expected_global_path)
-    assert unpair_command_call["url"].endswith(expected_global_path)
-    assert "legacy-guild-must-not-scope-defaults" not in pair_command_call["url"]
-    assert pair_command_call["json"]["default_member_permissions"] == "32"
-    assert unpair_command_call["json"]["default_member_permissions"] == "32"
+    assert list_call["url"].endswith(expected_global_path)
+    assert "legacy-guild-must-not-scope-defaults" not in list_call["url"]
+    delete_calls = [call for call in reconciliation_calls if call["method"] == "DELETE"]
+    assert {call["url"].rsplit("/", 1)[-1] for call in delete_calls} == {
+        "810000000000000002",
+        "810000000000000003",
+    }
+    assert all("810000000000000001" not in call["url"] for call in delete_calls)
+    post_calls = [call for call in reconciliation_calls if call["method"] == "POST"]
+    assert [call["json"]["name"] for call in post_calls] == [
+        "clawdi_pair",
+        "clawdi_unpair",
+    ]
+    pair_command, unpair_command = [call["json"] for call in post_calls]
+    assert pair_command["default_member_permissions"] == "32"
+    assert unpair_command["default_member_permissions"] == "32"
+    assert pair_command["integration_types"] == [0, 1]
+    assert pair_command["contexts"] == [0, 1]
+    assert pair_command["description"] == "Pair this server or direct message with Clawdi."
+    assert unpair_command["integration_types"] == [0, 1]
+    assert unpair_command["contexts"] == [0, 1]
+    assert unpair_command["description"] == (
+        "Disconnect this server or direct message from Clawdi."
+    )
     install_url = pair.json()["discord_install_url"]
     assert install_url == (
         "https://discord.com/oauth2/authorize"
@@ -16517,9 +16764,468 @@ async def test_discord_pair_preparation_configures_endpoint_then_global_commands
         "&permissions=274878024768"
         "&scope=bot%20applications.commands"
     )
+    bot_permissions = int(parse_qs(urlparse(install_url).query)["permissions"][0])
+    assert bot_permissions == sum(1 << bit for bit in (6, 10, 11, 14, 15, 16, 38))
+    assert bot_permissions & ((1 << 3) | (1 << 5)) == 0
+    assert pair.json()["discord_user_install_url"] == (
+        "https://discord.com/oauth2/authorize"
+        f"?client_id={DISCORD_TEST_APPLICATION_ID}"
+        "&integration_type=1"
+        "&scope=applications.commands"
+    )
+    assert pair.json()["pairing_command"] == f"/clawdi_pair {pair.json()['code']}"
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
     assert account.config["discord_interactions_configured"] is True
+    assert (
+        account.config["discord_reserved_command_version"]
+        == channel_service.DISCORD_RESERVED_COMMAND_VERSION
+    )
+
+
+@pytest.mark.asyncio
+async def test_discord_existing_account_reconciles_reserved_commands_before_pair_code(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    application_path = f"/applications/{DISCORD_TEST_APPLICATION_ID}"
+    global_path = f"{application_path}/commands"
+    guild_path = f"{application_path}/guilds/legacy-guild-123/commands"
+    _StatefulDiscordCommandClient.reset(
+        {
+            global_path: [
+                {"id": "820000000000000001", "name": "runtime_status", "type": 1},
+                {"id": "820000000000000002", "name": "bot_pair", "type": 1},
+                {"id": "820000000000000003", "name": "bot_unpair", "type": 1},
+            ],
+            guild_path: [
+                {"id": "830000000000000001", "name": "guild_runtime", "type": 1},
+                {"id": "830000000000000002", "name": "bot_pair", "type": 1},
+                {"id": "830000000000000003", "name": "bot_unpair", "type": 1},
+            ],
+        }
+    )
+    monkeypatch.setattr(
+        "app.services.channels.httpx.AsyncClient",
+        _StatefulDiscordCommandClient,
+    )
+    legacy_config = _discord_ready_config()
+    legacy_config["discord_reserved_command_version"] = 1
+    legacy_config["guild_id"] = "legacy-guild-123"
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-existing-command-cutover",
+                "provider_token": "discord-provider-token",
+                "config": legacy_config,
+            },
+        )
+    ).json()
+
+    first_pair = await client.post(
+        f"/v1/channels/{created['id']}/pair-codes",
+        json={"ttl_seconds": 900},
+    )
+
+    assert first_pair.status_code == 201, first_pair.text
+    assert first_pair.json()["pairing_command"].startswith("/clawdi_pair ")
+    assert [call["method"] for call in _StatefulDiscordCommandClient.calls] == [
+        "GET",
+        "POST",
+        "POST",
+        "DELETE",
+        "DELETE",
+        "GET",
+        "POST",
+        "POST",
+        "DELETE",
+        "DELETE",
+    ]
+    delete_calls = [
+        call for call in _StatefulDiscordCommandClient.calls if call["method"] == "DELETE"
+    ]
+    assert {call["url"].rsplit("/", 1)[-1] for call in delete_calls} == {
+        "820000000000000002",
+        "820000000000000003",
+        "830000000000000002",
+        "830000000000000003",
+    }
+    assert all("820000000000000001" not in call["url"] for call in delete_calls)
+    assert all("830000000000000001" not in call["url"] for call in delete_calls)
+    assert {
+        command["name"] for command in _StatefulDiscordCommandClient.commands_by_path[global_path]
+    } == {
+        "runtime_status",
+        "clawdi_pair",
+        "clawdi_unpair",
+    }
+    assert {
+        command["name"] for command in _StatefulDiscordCommandClient.commands_by_path[guild_path]
+    } == {
+        "guild_runtime",
+        "clawdi_pair",
+        "clawdi_unpair",
+    }
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    assert (
+        account.config["discord_reserved_command_version"]
+        == channel_service.DISCORD_RESERVED_COMMAND_VERSION
+    )
+
+    second_pair = await client.post(
+        f"/v1/channels/{created['id']}/pair-codes",
+        json={"ttl_seconds": 900},
+    )
+
+    assert second_pair.status_code == 201, second_pair.text
+    assert len(_StatefulDiscordCommandClient.calls) == 10
+
+
+@pytest.mark.asyncio
+async def test_discord_reserved_command_reconciliation_failure_creates_no_pair_code(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _FailingProviderClient.calls = []
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FailingProviderClient)
+    stale_config = _discord_ready_config()
+    stale_config["discord_reserved_command_version"] = "1"
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-command-cutover-failure",
+                "provider_token": "discord-provider-token",
+                "config": stale_config,
+            },
+        )
+    ).json()
+
+    pair = await client.post(
+        f"/v1/channels/{created['id']}/pair-codes",
+        json={"ttl_seconds": 900},
+    )
+
+    assert pair.status_code == 502
+    assert pair.json()["detail"] == "discord api unreachable"
+    assert len(_FailingProviderClient.calls) == 1
+    assert _FailingProviderClient.calls[0]["method"] == "GET"
+    pair_codes = list(
+        (
+            await db_session.execute(
+                select(ChannelPairCode).where(ChannelPairCode.account_id == UUID(created["id"]))
+            )
+        ).scalars()
+    )
+    assert pair_codes == []
+
+
+@pytest.mark.asyncio
+async def test_discord_reserved_upsert_failure_performs_no_legacy_deletes(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _DiscordPreparationProviderClient.reset(
+        [
+            (
+                [
+                    {"id": "860000000000000001", "name": "runtime_status", "type": 1},
+                    {"id": "860000000000000002", "name": "bot_pair", "type": 1},
+                    {"id": "860000000000000003", "name": "bot_unpair", "type": 1},
+                ],
+                200,
+            ),
+            ({"id": "860000000000000004", "name": "clawdi_pair", "type": 1}, 200),
+            ({"message": "upsert failed"}, 500),
+        ]
+    )
+    monkeypatch.setattr(
+        "app.services.channels.httpx.AsyncClient",
+        _DiscordPreparationProviderClient,
+    )
+    stale_config = _discord_ready_config()
+    stale_config["discord_reserved_command_version"] = 1
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-command-upsert-failure",
+                "provider_token": "discord-provider-token",
+                "config": stale_config,
+            },
+        )
+    ).json()
+
+    pair = await client.post(
+        f"/v1/channels/{created['id']}/pair-codes",
+        json={"ttl_seconds": 900},
+    )
+
+    assert pair.status_code == 502
+    assert pair.json()["detail"] == "discord api rejected commands"
+    assert [call["method"] for call in _DiscordPreparationProviderClient.calls] == [
+        "GET",
+        "POST",
+        "POST",
+    ]
+    assert all(call["method"] != "DELETE" for call in _DiscordPreparationProviderClient.calls)
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    assert account.config["discord_reserved_command_version"] == 1
+    pair_codes = list(
+        (
+            await db_session.execute(
+                select(ChannelPairCode).where(ChannelPairCode.account_id == UUID(created["id"]))
+            )
+        ).scalars()
+    )
+    assert pair_codes == []
+
+
+@pytest.mark.asyncio
+async def test_discord_reserved_delete_not_found_is_idempotent_success(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    global_path = f"/applications/{DISCORD_TEST_APPLICATION_ID}/commands"
+    _StatefulDiscordCommandClient.reset(
+        {
+            global_path: [
+                {"id": "870000000000000001", "name": "runtime_status", "type": 1},
+                {"id": "870000000000000002", "name": "bot_pair", "type": 1},
+                {"id": "870000000000000003", "name": "bot_unpair", "type": 1},
+            ]
+        },
+        delete_statuses_by_id={"870000000000000002": [404]},
+    )
+    monkeypatch.setattr(
+        "app.services.channels.httpx.AsyncClient",
+        _StatefulDiscordCommandClient,
+    )
+    stale_config = _discord_ready_config()
+    stale_config["discord_reserved_command_version"] = 1
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-command-delete-not-found",
+                "provider_token": "discord-provider-token",
+                "config": stale_config,
+            },
+        )
+    ).json()
+
+    pair = await client.post(
+        f"/v1/channels/{created['id']}/pair-codes",
+        json={"ttl_seconds": 900},
+    )
+
+    assert pair.status_code == 201, pair.text
+    assert [call["method"] for call in _StatefulDiscordCommandClient.calls] == [
+        "GET",
+        "POST",
+        "POST",
+        "DELETE",
+        "DELETE",
+    ]
+    assert {
+        command["name"] for command in _StatefulDiscordCommandClient.commands_by_path[global_path]
+    } == {
+        "runtime_status",
+        "clawdi_pair",
+        "clawdi_unpair",
+    }
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    assert (
+        account.config["discord_reserved_command_version"]
+        == channel_service.DISCORD_RESERVED_COMMAND_VERSION
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("delete_status", "expected_status", "expected_detail"),
+    [
+        (500, 502, "discord api rejected commands"),
+        (429, 503, "discord command sync is temporarily rate limited"),
+    ],
+)
+async def test_discord_reserved_delete_failure_retries_to_convergence(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    delete_status: int,
+    expected_status: int,
+    expected_detail: str,
+):
+    global_path = f"/applications/{DISCORD_TEST_APPLICATION_ID}/commands"
+    _StatefulDiscordCommandClient.reset(
+        {
+            global_path: [
+                {"id": "880000000000000001", "name": "runtime_status", "type": 1},
+                {"id": "880000000000000002", "name": "bot_pair", "type": 1},
+                {"id": "880000000000000003", "name": "bot_unpair", "type": 1},
+            ]
+        },
+        delete_statuses_by_id={"880000000000000002": [delete_status]},
+    )
+    monkeypatch.setattr(
+        "app.services.channels.httpx.AsyncClient",
+        _StatefulDiscordCommandClient,
+    )
+    stale_config = _discord_ready_config()
+    stale_config["discord_reserved_command_version"] = 1
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-command-delete-retry",
+                "provider_token": "discord-provider-token",
+                "config": stale_config,
+            },
+        )
+    ).json()
+
+    failed_pair = await client.post(
+        f"/v1/channels/{created['id']}/pair-codes",
+        json={"ttl_seconds": 900},
+    )
+
+    assert failed_pair.status_code == expected_status
+    assert failed_pair.json()["detail"] == expected_detail
+    assert [call["method"] for call in _StatefulDiscordCommandClient.calls] == [
+        "GET",
+        "POST",
+        "POST",
+        "DELETE",
+    ]
+    assert {
+        command["name"] for command in _StatefulDiscordCommandClient.commands_by_path[global_path]
+    } == {
+        "runtime_status",
+        "bot_pair",
+        "bot_unpair",
+        "clawdi_pair",
+        "clawdi_unpair",
+    }
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    assert account.config["discord_reserved_command_version"] == 1
+    pair_codes = list(
+        (
+            await db_session.execute(
+                select(ChannelPairCode).where(ChannelPairCode.account_id == UUID(created["id"]))
+            )
+        ).scalars()
+    )
+    assert pair_codes == []
+
+    converged_pair = await client.post(
+        f"/v1/channels/{created['id']}/pair-codes",
+        json={"ttl_seconds": 900},
+    )
+
+    assert converged_pair.status_code == 201, converged_pair.text
+    assert [call["method"] for call in _StatefulDiscordCommandClient.calls[4:]] == [
+        "GET",
+        "POST",
+        "POST",
+        "DELETE",
+        "DELETE",
+    ]
+    assert {
+        command["name"] for command in _StatefulDiscordCommandClient.commands_by_path[global_path]
+    } == {
+        "runtime_status",
+        "clawdi_pair",
+        "clawdi_unpair",
+    }
+    await db_session.refresh(account)
+    assert (
+        account.config["discord_reserved_command_version"]
+        == channel_service.DISCORD_RESERVED_COMMAND_VERSION
+    )
+
+
+@pytest.mark.asyncio
+async def test_discord_reserved_command_version_waits_for_global_and_guild_success(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _DiscordPreparationProviderClient.reset(
+        [
+            (
+                [
+                    {"id": "850000000000000001", "name": "bot_pair", "type": 1},
+                    {"id": "850000000000000002", "name": "bot_unpair", "type": 1},
+                ],
+                200,
+            ),
+            ({"id": "850000000000000003", "name": "clawdi_pair", "type": 1}, 200),
+            ({"id": "850000000000000004", "name": "clawdi_unpair", "type": 1}, 200),
+            ({}, 204),
+            ({}, 204),
+            ({"message": "rate limited"}, 429),
+        ]
+    )
+    monkeypatch.setattr(
+        "app.services.channels.httpx.AsyncClient",
+        _DiscordPreparationProviderClient,
+    )
+    stale_config = _discord_ready_config()
+    stale_config["discord_reserved_command_version"] = 0
+    stale_config["guild_id"] = "legacy-guild-rate-limited"
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-command-cutover-partial-failure",
+                "provider_token": "discord-provider-token",
+                "config": stale_config,
+            },
+        )
+    ).json()
+
+    pair = await client.post(
+        f"/v1/channels/{created['id']}/pair-codes",
+        json={"ttl_seconds": 900},
+    )
+
+    assert pair.status_code == 503
+    assert pair.json()["detail"] == "discord command sync is temporarily rate limited"
+    assert [call["method"] for call in _DiscordPreparationProviderClient.calls] == [
+        "GET",
+        "POST",
+        "POST",
+        "DELETE",
+        "DELETE",
+        "GET",
+    ]
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    assert account.config["discord_reserved_command_version"] == 0
+    pair_codes = list(
+        (
+            await db_session.execute(
+                select(ChannelPairCode).where(ChannelPairCode.account_id == UUID(created["id"]))
+            )
+        ).scalars()
+    )
+    assert pair_codes == []
 
 
 @pytest.mark.asyncio
@@ -16580,13 +17286,24 @@ async def test_discord_pair_preparation_identity_or_validation_failure_creates_n
 
 
 @pytest.mark.asyncio
-async def test_discord_command_sync_upserts_application_commands(
+async def test_discord_default_command_sync_reconciles_only_reserved_commands(
     client: httpx.AsyncClient,
     monkeypatch,
 ):
-    _FakeProviderClient.calls = []
-    _FakeProviderClient.response_payload = {"id": "command-1"}
-    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    guild_path = f"/applications/{DISCORD_TEST_APPLICATION_ID}/guilds/guild-123/commands"
+    _StatefulDiscordCommandClient.reset(
+        {
+            guild_path: [
+                {"id": "840000000000000001", "name": "guild_runtime", "type": 1},
+                {"id": "840000000000000002", "name": "bot_pair", "type": 1},
+                {"id": "840000000000000003", "name": "bot_unpair", "type": 1},
+            ]
+        }
+    )
+    monkeypatch.setattr(
+        "app.services.channels.httpx.AsyncClient",
+        _StatefulDiscordCommandClient,
+    )
     created = (
         await client.post(
             "/v1/channels",
@@ -16606,16 +17323,106 @@ async def test_discord_command_sync_upserts_application_commands(
 
     assert response.status_code == 200
     assert response.json()["provider"] == "discord"
-    assert len(_FakeProviderClient.calls) == 2
-    assert _FakeProviderClient.calls[0]["url"].endswith(
-        f"/applications/{DISCORD_TEST_APPLICATION_ID}/guilds/guild-123/commands"
+    assert [call["method"] for call in _StatefulDiscordCommandClient.calls] == [
+        "GET",
+        "POST",
+        "POST",
+        "DELETE",
+        "DELETE",
+    ]
+    assert all(
+        call["url"].endswith(guild_path)
+        for call in _StatefulDiscordCommandClient.calls
+        if call["method"] != "DELETE"
     )
-    assert _FakeProviderClient.calls[0]["headers"]["Authorization"] == "Bot discord-token"
-    assert _FakeProviderClient.calls[0]["json"]["name"] == "bot_pair"
-    assert _FakeProviderClient.calls[0]["json"]["default_member_permissions"] == "32"
-    assert _FakeProviderClient.calls[0]["json"]["options"][0]["name"] == "code"
-    assert _FakeProviderClient.calls[1]["json"]["name"] == "bot_unpair"
-    assert _FakeProviderClient.calls[1]["json"]["default_member_permissions"] == "32"
+    delete_calls = [
+        call for call in _StatefulDiscordCommandClient.calls if call["method"] == "DELETE"
+    ]
+    assert {call["url"].rsplit("/", 1)[-1] for call in delete_calls} == {
+        "840000000000000002",
+        "840000000000000003",
+    }
+    assert all("840000000000000001" not in call["url"] for call in delete_calls)
+    post_calls = [call for call in _StatefulDiscordCommandClient.calls if call["method"] == "POST"]
+    assert all(call["headers"]["Authorization"] == "Bot discord-token" for call in post_calls)
+    pair_command, unpair_command = [call["json"] for call in post_calls]
+    assert pair_command["name"] == "clawdi_pair"
+    assert pair_command["default_member_permissions"] == "32"
+    assert pair_command["options"][0]["name"] == "code"
+    assert "integration_types" not in pair_command
+    assert "contexts" not in pair_command
+    assert unpair_command["name"] == "clawdi_unpair"
+    assert unpair_command["default_member_permissions"] == "32"
+    assert "integration_types" not in unpair_command
+    assert "contexts" not in unpair_command
+    assert {
+        command["name"] for command in _StatefulDiscordCommandClient.commands_by_path[guild_path]
+    } == {
+        "guild_runtime",
+        "clawdi_pair",
+        "clawdi_unpair",
+    }
+
+
+@pytest.mark.asyncio
+async def test_discord_default_command_sync_handles_network_failure(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _FailingProviderClient.calls = []
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FailingProviderClient)
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-command-network-failure",
+                "provider_token": "discord-token",
+                "config": _discord_ready_config(),
+            },
+        )
+    ).json()
+
+    response = await client.post(f"/v1/channels/{created['id']}/commands/sync", json={})
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "discord api unreachable"
+    assert len(_FailingProviderClient.calls) == 1
+    assert _FailingProviderClient.calls[0]["method"] == "GET"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "name",
+    ["bot_pair", "bot_unpair", "bot_status", "clawdi_pair", "clawdi_unpair"],
+)
+async def test_discord_custom_command_sync_rejects_reserved_names(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+):
+    _FakeProviderClient.calls = []
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": f"discord-reserved-command-{name}",
+                "provider_token": "discord-token",
+                "config": _discord_ready_config(),
+            },
+        )
+    ).json()
+
+    response = await client.post(
+        f"/v1/channels/{created['id']}/commands/sync",
+        json={"commands": [{"name": name, "description": "Reserved command"}]},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "discord command name is reserved"
+    assert _FakeProviderClient.calls == []
 
 
 @pytest.mark.asyncio

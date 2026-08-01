@@ -91,6 +91,7 @@ from app.services.channel_config import (
     validate_required_discord_interactions_config,
 )
 from app.services.channels import (
+    DISCORD_PAIR_COMMAND_NAME,
     archive_bot_agent_link,
     archive_channel_account,
     bot_agent_link_has_strict_v2_authority,
@@ -101,6 +102,8 @@ from app.services.channels import (
     create_pair_code,
     decrypt_agent_link_token,
     discord_bot_install_url,
+    discord_reserved_commands_are_current,
+    discord_user_install_url,
     encrypt_optional_token,
     enqueue_channel_outbound_message,
     ensure_bot_agent_link_provider_cardinality_or_409,
@@ -118,6 +121,7 @@ from app.services.channels import (
     list_owned_active_bot_agent_links_for_agent,
     list_strict_v2_hosted_channel_agent_ids,
     lock_channel_binding_identity,
+    mark_discord_reserved_commands_current,
     normalize_telegram_bot_username,
     rotate_bot_agent_link_token,
     store_channel_secrets,
@@ -820,8 +824,11 @@ async def create_channel_pair_code(
                 detail=f"Discord pairing is unavailable: {config_error}",
             )
         config = dict(account.config) if isinstance(account.config, dict) else {}
-        if config.get("discord_interactions_configured") is not True:
+        interactions_configured = config.get("discord_interactions_configured") is True
+        commands_current = discord_reserved_commands_are_current(account)
+        if not interactions_configured:
             await configure_discord_application(account)
+        if not interactions_configured or not commands_current:
             # Reserved control-plane commands are true account-global
             # commands so they remain available before any Guild or DM is
             # paired. Agent runtime commands are virtualized per Link.
@@ -829,8 +836,24 @@ async def create_channel_pair_code(
                 account=account,
                 use_configured_discord_guild=False,
             )
+            legacy_guild_id = config.get("guild_id")
+            if (
+                interactions_configured
+                and not commands_current
+                and isinstance(legacy_guild_id, str)
+                and legacy_guild_id.strip()
+            ):
+                # Older accounts could have installed the reserved commands in
+                # their configured guild scope. Reconcile that known scope too
+                # so the legacy bot_* commands cannot remain visible beside the
+                # new global commands.
+                await sync_channel_commands(
+                    account=account,
+                    guild_id=legacy_guild_id.strip(),
+                )
             config["discord_interactions_configured"] = True
             account.config = config
+            mark_discord_reserved_commands_current(account)
     link, agent_token = await _resolve_pair_code_link(db, auth=auth, account=account, body=body)
     created = await create_pair_code(
         db,
@@ -860,7 +883,10 @@ async def create_channel_pair_code(
     )
     await db.commit()
     await db.refresh(created.pair_code)
-    pairing_command = f"/bot_pair {created.code}"
+    pairing_command_name = (
+        DISCORD_PAIR_COMMAND_NAME if account.provider == CHANNEL_PROVIDER_DISCORD else "bot_pair"
+    )
+    pairing_command = f"/{pairing_command_name} {created.code}"
     bot_username = _telegram_bot_username(account)
     deep_link = (
         f"https://t.me/{bot_username}?start={quote(created.code, safe='')}"
@@ -879,6 +905,7 @@ async def create_channel_pair_code(
         deep_link=deep_link,
         qr_payload=deep_link,
         discord_install_url=discord_bot_install_url(account),
+        discord_user_install_url=discord_user_install_url(account),
     )
 
 
@@ -1309,6 +1336,9 @@ async def sync_channel_commands_route(
         commands=commands,
         guild_id=body.guild_id,
     )
+    if account.provider == CHANNEL_PROVIDER_DISCORD and commands is None and body.guild_id is None:
+        mark_discord_reserved_commands_current(account)
+        await db.commit()
     return ChannelCommandSyncResponse(provider=account.provider, commands=synced)
 
 

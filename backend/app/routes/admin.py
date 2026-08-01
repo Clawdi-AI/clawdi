@@ -121,6 +121,7 @@ from app.services.channels import (
     generate_webhook_secret,
     get_telegram_bot_username,
     hash_token,
+    mark_discord_reserved_commands_current,
     normalize_telegram_bot_username,
     store_channel_secrets,
     sync_channel_commands,
@@ -1136,6 +1137,7 @@ async def admin_create_channel(
         config = dict(account.config) if isinstance(account.config, dict) else {}
         config["discord_interactions_configured"] = True
         account.config = config
+        mark_discord_reserved_commands_current(account)
         await db.commit()
     await db.refresh(account)
     logger.info(
@@ -1262,6 +1264,7 @@ async def admin_update_channel(
         config = dict(account.config) if isinstance(account.config, dict) else {}
         config["discord_interactions_configured"] = True
         account.config = config
+        mark_discord_reserved_commands_current(account)
         await db.commit()
     await db.refresh(account)
     return _admin_channel_response(account, owner)
@@ -1319,6 +1322,8 @@ async def admin_sync_channel_commands(
         config = dict(account.config) if isinstance(account.config, dict) else {}
         config["discord_interactions_configured"] = True
         account.config = config
+        if body.guild_id is None:
+            mark_discord_reserved_commands_current(account)
         await db.commit()
     return ChannelCommandSyncResponse(provider=account.provider, commands=synced)
 

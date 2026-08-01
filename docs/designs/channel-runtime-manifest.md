@@ -133,7 +133,7 @@ outputs:
 | `links[].agent_id` | Target AgentEnvironment id. |
 | `links[].runtime.token_env` | Env var name that receives this link's agent SDK token. |
 | `links[].runtime.projection` | Runtime adapter. v1 implements `dotenv`; OpenClaw and Hermes should be added as target-native adapters later. |
-| `pair_code.command_env` | Optional env var containing `/bot_pair <code>` for onboarding scripts. |
+| `pair_code.command_env` | Optional env var containing the provider-specific pair command for onboarding scripts. |
 | `outputs.dotenv` | Dotenv file to write with mode `0600`. |
 
 ## Apply Behavior

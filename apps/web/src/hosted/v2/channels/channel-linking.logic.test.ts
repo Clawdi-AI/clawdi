@@ -6,6 +6,8 @@ import {
 	pairCodeExpired,
 	pairingActionLabel,
 	pairingCommand,
+	verifiedDiscordPairingCommand,
+	verifiedDiscordUserInstallUrl,
 } from "./channel-linking.logic";
 
 describe("hosted channel instructions and gates", () => {
@@ -13,9 +15,36 @@ describe("hosted channel instructions and gates", () => {
 		expect(pairingCommand("PAIRABC123")).toBe("/bot_pair PAIRABC123");
 	});
 
-	test("uses one discoverable Discord pairing action for servers and direct messages", () => {
+	test("uses one discoverable Discord server pairing action", () => {
 		expect(pairingActionLabel("discord")).toBe("Pair Discord");
 		expect(pairingActionLabel("imessage")).toBe("Pair chat");
+	});
+
+	test("accepts only the current authoritative Discord pairing command", () => {
+		expect(verifiedDiscordPairingCommand("/clawdi_pair PAIRABC123", "PAIRABC123")).toBe(
+			"/clawdi_pair PAIRABC123",
+		);
+		expect(verifiedDiscordPairingCommand("/bot_pair PAIRABC123", "PAIRABC123")).toBeNull();
+		expect(verifiedDiscordPairingCommand("/clawdi_pair OTHER", "PAIRABC123")).toBeNull();
+		expect(verifiedDiscordPairingCommand(" /clawdi_pair PAIRABC123", "PAIRABC123")).toBeNull();
+	});
+
+	test("accepts only the official Discord User Install authorize contract", () => {
+		const supported =
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands";
+		expect(verifiedDiscordUserInstallUrl(supported)).toBe(supported);
+		for (const unsupported of [
+			null,
+			undefined,
+			"not-a-url",
+			"https://example.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=applications.commands",
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&scope=applications.commands",
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=bot%20applications.commands",
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands&permissions=8",
+		]) {
+			expect(verifiedDiscordUserInstallUrl(unsupported)).toBeNull();
+		}
 	});
 
 	test("selects the first unlinked provider and exposes no form when both are linked", () => {

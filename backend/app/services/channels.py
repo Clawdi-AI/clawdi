@@ -89,6 +89,15 @@ log = logging.getLogger(__name__)
 
 PAIR_COMMAND = "/bot_pair"
 UNPAIR_COMMAND = "/bot_unpair"
+DISCORD_PAIR_COMMAND_NAME = "clawdi_pair"
+DISCORD_UNPAIR_COMMAND_NAME = "clawdi_unpair"
+DISCORD_RESERVED_COMMAND_NAMES = frozenset(
+    {
+        DISCORD_PAIR_COMMAND_NAME,
+        DISCORD_UNPAIR_COMMAND_NAME,
+    }
+)
+DISCORD_LEGACY_RESERVED_COMMAND_NAMES = frozenset({"bot_pair", "bot_unpair"})
 PAIR_CODE_PATTERN = re.compile(r"^PAIR[A-Z0-9]{8,}$")
 TELEGRAM_BOT_USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{5,32}bot$", re.IGNORECASE)
 DEFAULT_CHANNEL_COMMANDS: tuple[dict[str, Any], ...] = (
@@ -112,6 +121,12 @@ DEFAULT_CHANNEL_COMMANDS: tuple[dict[str, Any], ...] = (
 )
 DISCORD_ADMINISTRATOR_PERMISSION = 1 << 3
 DISCORD_MANAGE_GUILD_PERMISSION = 1 << 5
+DISCORD_GUILD_INSTALL = 0
+DISCORD_USER_INSTALL = 1
+DISCORD_GUILD_INTERACTION_CONTEXT = 0
+DISCORD_BOT_DM_INTERACTION_CONTEXT = 1
+DISCORD_RESERVED_COMMAND_VERSION = 2
+DISCORD_RESERVED_COMMAND_VERSION_CONFIG_KEY = "discord_reserved_command_version"
 # Discord API docs baseline b2f8adafc037242291b8f875d4cdf3adc4d48bb7.
 # ADD_REACTIONS, VIEW_CHANNEL, SEND_MESSAGES, EMBED_LINKS, ATTACH_FILES,
 # READ_MESSAGE_HISTORY, and SEND_MESSAGES_IN_THREADS. Never request
@@ -1856,7 +1871,7 @@ def discord_pairing_reply_for_command(
         return f"{scope_title} unpaired. This Discord {scope} is no longer connected to an agent."
     if result.pair_failed_reason == DISCORD_GUILD_USE_INTERACTION:
         return (
-            "Use the /bot_pair or /bot_unpair slash command; "
+            "Use the /clawdi_pair or /clawdi_unpair slash command; "
             "pairing a server requires Manage Server permission."
         )
     if result.pair_failed_reason == DISCORD_GUILD_PERMISSION_DENIED:
@@ -1867,6 +1882,10 @@ def discord_pairing_reply_for_command(
         return f"This {scope} is already paired to another Agent. Unpair it first."
     if command is not None and command.kind == "unpair" and not result.unpaired:
         return f"This {scope} is not paired."
+    if command is not None and command.kind == "pair" and result.pair_failed_reason == "usage":
+        return "Usage: /clawdi_pair <code>"
+    if command is not None and command.kind == "unknown" and command.command:
+        return f"Unknown command: {command.command}. Use /clawdi_pair <code> or /clawdi_unpair."
     return pairing_reply_for_command(command, result)
 
 
@@ -3278,10 +3297,34 @@ async def sync_channel_commands(
     if account.provider == CHANNEL_PROVIDER_TELEGRAM:
         return await sync_telegram_commands(account=account, commands=command_specs)
     if account.provider == CHANNEL_PROVIDER_DISCORD:
+        if using_default_commands:
+            discord_names = {
+                "bot_pair": DISCORD_PAIR_COMMAND_NAME,
+                "bot_unpair": DISCORD_UNPAIR_COMMAND_NAME,
+            }
+            command_specs = [
+                {
+                    **command,
+                    "name": discord_names.get(
+                        _command_name(command),
+                        _command_name(command),
+                    ),
+                }
+                for command in command_specs
+            ]
+        else:
+            for command in command_specs:
+                name = _command_name(command)
+                if name.startswith("bot_") or name in DISCORD_RESERVED_COMMAND_NAMES:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="discord command name is reserved",
+                    )
         return await sync_discord_commands(
             account=account,
             commands=command_specs,
             guild_id=guild_id,
+            reconcile_reserved_commands=using_default_commands,
             use_configured_guild=(
                 not using_default_commands
                 if use_configured_discord_guild is None
@@ -3357,6 +3400,41 @@ def discord_bot_install_url(account: ChannelAccount) -> str | None:
         f"&permissions={DISCORD_MINIMAL_BOT_PERMISSIONS}"
         "&scope=bot%20applications.commands"
     )
+
+
+def discord_user_install_url(account: ChannelAccount) -> str | None:
+    if account.provider != CHANNEL_PROVIDER_DISCORD:
+        return None
+    application_id = _account_config_str(account, "application_id")
+    if application_id is None or not valid_discord_application_id(application_id):
+        return None
+    # USER_INSTALL supports applications.commands without the bot scope or
+    # guild bot permissions. The application owner must enable User Install in
+    # Discord's Installation settings for this authorize URL to succeed.
+    # https://discord.com/developers/docs/topics/oauth2#authorization-code-grant-authorization-url-example
+    return (
+        "https://discord.com/oauth2/authorize"
+        f"?client_id={application_id}"
+        "&integration_type=1"
+        "&scope=applications.commands"
+    )
+
+
+def discord_reserved_commands_are_current(account: ChannelAccount) -> bool:
+    if not isinstance(account.config, dict):
+        return False
+    version = account.config.get(DISCORD_RESERVED_COMMAND_VERSION_CONFIG_KEY)
+    return (
+        isinstance(version, int)
+        and not isinstance(version, bool)
+        and version == DISCORD_RESERVED_COMMAND_VERSION
+    )
+
+
+def mark_discord_reserved_commands_current(account: ChannelAccount) -> None:
+    config = dict(account.config) if isinstance(account.config, dict) else {}
+    config[DISCORD_RESERVED_COMMAND_VERSION_CONFIG_KEY] = DISCORD_RESERVED_COMMAND_VERSION
+    account.config = config
 
 
 async def _discord_application_request(
@@ -3681,6 +3759,7 @@ async def sync_discord_commands(
     account: ChannelAccount,
     commands: list[dict[str, Any]],
     guild_id: str | None,
+    reconcile_reserved_commands: bool = False,
     use_configured_guild: bool = True,
 ) -> list[dict[str, Any]]:
     if account.provider != CHANNEL_PROVIDER_DISCORD:
@@ -3712,23 +3791,106 @@ async def sync_discord_commands(
     if scoped_guild_id:
         path = f"{path}/guilds/{scoped_guild_id}"
     url = f"{base_url.rstrip('/')}{path}/commands"
+    command_payloads = [
+        _discord_command_payload(
+            command,
+            global_command=scoped_guild_id is None,
+        )
+        for command in commands
+    ]
     synced: list[dict[str, Any]] = []
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            for command in commands:
+            if reconcile_reserved_commands:
+                # Reconcile only Clawdi's reserved namespace. Bulk overwrite
+                # would make these two commands the complete scope and delete
+                # unrelated application/runtime commands owned elsewhere.
+                # Discord POST is an upsert by command name. Validate both new
+                # commands before deleting any legacy command so a partial
+                # provider failure cannot remove the only usable pair path.
+                # DELETE then targets only IDs found by the preceding GET.
+                # https://discord.com/developers/docs/interactions/application-commands#get-global-application-commands
+                # https://discord.com/developers/docs/interactions/application-commands#delete-global-application-command
+                # https://discord.com/developers/docs/interactions/application-commands#create-global-application-command
+                headers = {
+                    "Authorization": f"Bot {token}",
+                    "Content-Type": "application/json",
+                }
+                response = await client.request("GET", url, headers=headers)
+                _raise_for_discord_command_sync_response(response)
+                existing_commands = _response_json_or_text(response).get("data")
+                if not isinstance(existing_commands, list) or not all(
+                    isinstance(command, dict) for command in existing_commands
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail="discord api returned invalid commands",
+                    )
+                legacy_command_ids: list[str] = []
+                for existing_command in existing_commands:
+                    existing_name = _read_optional_str(existing_command.get("name"))
+                    if existing_name not in DISCORD_LEGACY_RESERVED_COMMAND_NAMES:
+                        continue
+                    existing_type = existing_command.get("type")
+                    if isinstance(existing_type, bool) or not isinstance(existing_type, int):
+                        raise HTTPException(
+                            status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="discord api returned invalid commands",
+                        )
+                    if existing_type != 1:
+                        continue
+                    command_id = _read_optional_str(existing_command.get("id"))
+                    if command_id is None or not valid_discord_application_id(command_id):
+                        raise HTTPException(
+                            status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="discord api returned invalid commands",
+                        )
+                    legacy_command_ids.append(command_id)
+                for command_payload in command_payloads:
+                    response = await client.request(
+                        "POST",
+                        url,
+                        headers=headers,
+                        json=command_payload,
+                    )
+                    _raise_for_discord_command_sync_response(response)
+                    synced_command = _response_json_or_text(response)
+                    synced_command_id = _read_optional_str(synced_command.get("id"))
+                    if (
+                        _read_optional_str(synced_command.get("name")) != command_payload["name"]
+                        or synced_command.get("type") != 1
+                        or synced_command_id is None
+                        or not valid_discord_application_id(synced_command_id)
+                    ):
+                        raise HTTPException(
+                            status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="discord api returned invalid commands",
+                        )
+                    synced.append(synced_command)
+                for command_id in legacy_command_ids:
+                    response = await client.request(
+                        "DELETE",
+                        f"{url}/{command_id}",
+                        headers=headers,
+                    )
+                    # A concurrent reconciliation can delete the exact ID
+                    # discovered above before this request reaches Discord.
+                    # That 404 means the required absence already converged.
+                    _raise_for_discord_command_sync_response(
+                        response,
+                        allow_not_found=True,
+                    )
+                return synced
+            for command_payload in command_payloads:
                 response = await client.post(
                     url,
                     headers={
                         "Authorization": f"Bot {token}",
                         "Content-Type": "application/json",
                     },
-                    json=_discord_command_payload(command),
+                    json=command_payload,
                 )
-                if response.status_code >= 400:
-                    raise HTTPException(
-                        status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail="discord api rejected commands",
-                    )
+                _raise_for_discord_command_sync_response(response)
                 synced.append(_response_json_or_text(response))
     except httpx.HTTPError as exc:
         raise HTTPException(
@@ -3736,6 +3898,25 @@ async def sync_discord_commands(
             detail="discord api unreachable",
         ) from exc
     return synced
+
+
+def _raise_for_discord_command_sync_response(
+    response: httpx.Response,
+    *,
+    allow_not_found: bool = False,
+) -> None:
+    if allow_not_found and response.status_code == status.HTTP_404_NOT_FOUND:
+        return
+    if response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="discord command sync is temporarily rate limited",
+        )
+    if not status.HTTP_200_OK <= response.status_code < status.HTTP_300_MULTIPLE_CHOICES:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="discord api rejected commands",
+        )
 
 
 async def send_whatsapp_message(
@@ -4200,7 +4381,7 @@ def discord_text_from_payload(payload: dict[str, Any]) -> str | None:
     if payload.get("type") == 2:
         code = discord_pair_code_from_payload(payload)
         if code is not None:
-            return f"{PAIR_COMMAND} {code}"
+            return f"/{DISCORD_PAIR_COMMAND_NAME} {code}"
     return None
 
 
@@ -4211,16 +4392,16 @@ def discord_pair_code_from_payload(payload: dict[str, Any]) -> str | None:
 
 def discord_pair_command_from_payload(payload: dict[str, Any]) -> ChannelPairCommand | None:
     data = _discord_event_data(payload)
-    text_command = parse_pair_command(_read_optional_str(data.get("content")))
+    text_command = _parse_discord_pair_command(_read_optional_str(data.get("content")))
     if text_command is not None:
         return text_command
     interaction_command = data.get("data")
     if not isinstance(interaction_command, dict):
         return None
     name = interaction_command.get("name")
-    if name in {"bot_unpair", "bot-unpair", "unpair"}:
+    if name == DISCORD_UNPAIR_COMMAND_NAME:
         return ChannelPairCommand(kind="unpair")
-    if name not in {"bot_pair", "bot-pair", "pair"}:
+    if name != DISCORD_PAIR_COMMAND_NAME:
         return None
     options = interaction_command.get("options")
     if not isinstance(options, list):
@@ -4231,6 +4412,24 @@ def discord_pair_command_from_payload(payload: dict[str, Any]) -> ChannelPairCom
         if option.get("name") in {"code", "pair_code"}:
             return ChannelPairCommand(kind="pair", code=_read_optional_str(option.get("value")))
     return ChannelPairCommand(kind="pair", code="")
+
+
+def _parse_discord_pair_command(text: str | None) -> ChannelPairCommand | None:
+    if not text:
+        return None
+    trimmed = text.lstrip()
+    if not trimmed.startswith("/"):
+        return None
+    head, separator, rest = trimmed.partition(" ")
+    name = head.split("@", 1)[0].removeprefix("/")
+    if name == DISCORD_UNPAIR_COMMAND_NAME:
+        if separator and rest.strip():
+            return ChannelPairCommand(kind="unknown", command=f"/{name}")
+        return ChannelPairCommand(kind="unpair")
+    if name != DISCORD_PAIR_COMMAND_NAME:
+        return None
+    code = _single_command_arg(rest) if separator else ""
+    return ChannelPairCommand(kind="pair", code=code or "")
 
 
 def discord_message_id_from_payload(payload: dict[str, Any]) -> str | None:
@@ -4834,24 +5033,42 @@ def _command_description(command: dict[str, Any]) -> str:
     return value if isinstance(value, str) and value else _command_name(command)
 
 
-def _discord_command_payload(command: dict[str, Any]) -> dict[str, Any]:
+def _discord_command_payload(
+    command: dict[str, Any],
+    *,
+    global_command: bool,
+) -> dict[str, Any]:
     name = _command_name(command)
     payload: dict[str, Any] = {
         "name": name,
         "description": _command_description(command),
         "type": 1,
     }
-    if name in {"bot_pair", "bot_unpair"}:
+    if name in DISCORD_RESERVED_COMMAND_NAMES:
         # Discord's provider-specific default keeps Telegram's command payload
         # byte-for-byte unchanged. Server-side interaction checks remain the
         # authority; this only makes Discord hide the commands by default from
-        # members without MANAGE_GUILD.
+        # guild members without MANAGE_GUILD.
         payload["default_member_permissions"] = str(DISCORD_MANAGE_GUILD_PERMISSION)
         payload["description"] = (
             "Pair this server or direct message with Clawdi."
-            if name == "bot_pair"
+            if name == DISCORD_PAIR_COMMAND_NAME
             else "Disconnect this server or direct message from Clawdi."
         )
+        if global_command:
+            # The configured Discord application supports both Guild Install
+            # and User Install. BOT_DM is the user-installed app DM context;
+            # PRIVATE_CHANNEL is intentionally excluded because pairing does
+            # not need user-installed commands in other users' DMs.
+            # These are global-command fields and are intentionally omitted
+            # from guild-scoped writes.
+            # https://discord.com/developers/docs/resources/application#application-object-application-integration-types
+            # https://discord.com/developers/docs/interactions/receiving-and-responding#interaction-object-interaction-context-types
+            payload["integration_types"] = [DISCORD_GUILD_INSTALL, DISCORD_USER_INSTALL]
+            payload["contexts"] = [
+                DISCORD_GUILD_INTERACTION_CONTEXT,
+                DISCORD_BOT_DM_INTERACTION_CONTEXT,
+            ]
     options = command.get("options")
     if isinstance(options, list):
         payload["options"] = [option for option in options if isinstance(option, dict)]
