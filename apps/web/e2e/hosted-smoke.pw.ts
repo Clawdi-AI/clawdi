@@ -3048,10 +3048,10 @@ test("hosted Skills empty state stays neutral and excludes infrastructure summar
 	);
 	const main = page.locator("main");
 	await expect(
-		main.getByText("No Skills are available through this agent's Projects yet.", {
-			exact: true,
-		}),
-	).toBeVisible();
+		main.getByText("Skills available through this agent's Projects.", { exact: true }),
+	).toHaveCount(1);
+	await expect(main.getByText("No Skills yet.", { exact: true })).toBeVisible();
+	await expect(main.getByText("No Skills are available through", { exact: false })).toHaveCount(0);
 	await expect(main.getByText("user-visible", { exact: false })).toHaveCount(0);
 	await expect(main.getByText("Clawdi", { exact: true })).toHaveCount(0);
 });
@@ -5321,6 +5321,12 @@ test("missing live projection recovers on Check again without losing deployment 
 	await page.goto(`/agents/${missingProjectionEnvironmentId}/sessions?source=on-clawdi`);
 	const main = page.locator("main");
 	await expect(main.getByText("Some agent details are not ready", { exact: true })).toBeVisible();
+	await expect(
+		main.getByText(
+			"Sessions, Projects, Skills, Vaults, and Channels will appear when this agent is ready. Available actions and tools still work.",
+			{ exact: true },
+		),
+	).toBeVisible();
 	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
 	await main.getByRole("button", { name: "Check again", exact: true }).click();

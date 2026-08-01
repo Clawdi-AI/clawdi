@@ -18,9 +18,8 @@ describe("agent Skills resource boundary", () => {
 		expect(source).not.toMatch(/runtime-observed|managed_skills/i);
 		expect(source).not.toContain("user-visible");
 		expect(source).not.toContain("Skills appear here through");
-		expect(source).toContain(
-			`emptyMessage="No Skills are available through this agent's Projects yet."`,
-		);
+		expect(source).toContain('emptyMessage="No Skills yet."');
+		expect(source).not.toContain("No Skills are available through");
 	});
 
 	test("describes both Agent Skill surfaces as effective availability", () => {

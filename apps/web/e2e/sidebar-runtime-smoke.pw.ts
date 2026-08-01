@@ -612,9 +612,8 @@ test("agent Skills wait for effective Project bindings and fail closed on bindin
 	expect(skillRequests).toEqual([]);
 	if (!releaseBindings) throw new Error("Project binding gate was not initialized");
 	releaseBindings();
-	await expect(
-		main.getByText("No Skills are available through this agent's Projects yet.", { exact: true }),
-	).toBeVisible();
+	await expect(main.getByText("No Skills yet.", { exact: true })).toBeVisible();
+	await expect(main.getByText("No Skills are available through", { exact: false })).toHaveCount(0);
 	expect(skillRequests).toHaveLength(1);
 
 	const errorPage = await page.context().newPage();

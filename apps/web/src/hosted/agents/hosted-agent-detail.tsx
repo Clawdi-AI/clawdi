@@ -700,8 +700,8 @@ function HostedProjectionNotice({
 				<AlertTitle>Some agent details are not ready</AlertTitle>
 				<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<span>
-						Sessions, Projects, Skills, Vaults, profile, and channels will appear when they’re
-						ready. Available actions and tools still work.
+						Sessions, Projects, Skills, Vaults, and Channels will appear when this agent is ready.
+						Available actions and tools still work.
 					</span>
 					<Button type="button" variant="outline" size="sm" disabled={isFetching} onClick={onRetry}>
 						{isFetching ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}

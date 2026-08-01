@@ -151,7 +151,7 @@ export function AgentSkillsTab({
 			<SkillCardGrid
 				skills={skills ?? []}
 				isLoading={isResolvingAgentProject || skillsLoading}
-				emptyMessage="No Skills are available through this agent's Projects yet."
+				emptyMessage="No Skills yet."
 				capabilitiesFor={(skill) =>
 					skillCapabilities(
 						skill,
