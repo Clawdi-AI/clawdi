@@ -26,6 +26,8 @@ describe("agent routes", () => {
 		expect(agentSectionHref("agent 1")).toBe("/agents/agent%201");
 		expect(agentSectionHref("agent 1", "sessions")).toBe("/agents/agent%201/sessions");
 		expect(agentSectionHref("agent 1", "projects")).toBe("/agents/agent%201/project-access");
+		expect(agentSectionHref("agent 1", "vaults")).toBe("/agents/agent%201/vaults");
+		expect(agentSectionHref("agent 1", "connectors")).toBe("/agents/agent%201/connectors");
 		expect(agentSectionHref("agent 1", "ai")).toBe("/agents/agent%201/model-provider");
 		expect(agentSectionHref("agent 1", "channels")).toBe("/agents/agent%201/channel-links");
 		expect(agentSectionHref("agent 1", "settings")).toBe("/agents/agent%201/settings");
@@ -139,6 +141,8 @@ describe("agent routes", () => {
 	it("parses only canonical section segments", () => {
 		expect(agentSectionSegment("projects")).toBe("project-access");
 		expect(parseAgentSectionSegment("project-access")).toBe("projects");
+		expect(parseAgentSectionSegment("vaults")).toBe("vaults");
+		expect(parseAgentSectionSegment("connectors")).toBe("connectors");
 		expect(parseAgentSectionSegment("model-provider")).toBe("ai");
 		expect(parseAgentSectionSegment("channel-links")).toBe("channels");
 		expect(parseAgentSectionSegment("settings")).toBe("settings");
@@ -155,8 +159,10 @@ describe("agent routes", () => {
 			"sessions",
 			"skills",
 			"projects",
+			"vaults",
 			"console",
 			"terminal",
+			"connectors",
 			"ai",
 			"channels",
 			"settings",
@@ -168,8 +174,10 @@ describe("agent routes", () => {
 			sessions: "sessions",
 			skills: "skills",
 			projects: "project-access",
+			vaults: "vaults",
 			console: "console",
 			terminal: "terminal",
+			connectors: "connectors",
 			ai: "model-provider",
 			channels: "channel-links",
 			settings: "settings",
@@ -180,16 +188,22 @@ describe("agent routes", () => {
 		expect(agentSectionLabel("projects")).toBe("Projects");
 		expect(agentSectionLabel("console")).toBe("Agent Interface");
 		expect(agentSectionLabel("channels")).toBe("Channels");
+		expect(agentSectionLabel("connectors")).toBe("Connectors");
+		expect(agentSectionLabel("vaults")).toBe("Vaults");
 		expect(agentSectionLabelFromSegment("project-access")).toBe("Projects");
 		expect(agentSectionLabelFromSegment("console")).toBe("Agent Interface");
-		expect(agentSectionLabelFromSegment("model-provider")).toBe("AI & Model");
+		expect(agentSectionLabelFromSegment("model-provider")).toBe("AI Providers");
+		expect(agentSectionLabelFromSegment("connectors")).toBe("Connectors");
+		expect(agentSectionLabelFromSegment("vaults")).toBe("Vaults");
 		expect(agentSectionLabelFromSegment("settings")).toBe("Settings");
 		expect(agentSectionLabelFromSegment("bad")).toBeNull();
 	});
 
-	it("keeps Skills available for connected and hosted agent detail", () => {
-		expect(CONNECTED_AGENT_SECTION_IDS).toContain("skills");
-		expect(HOSTED_AGENT_SECTION_IDS).toContain("skills");
+	it("keeps shared resources available for connected and hosted agent detail", () => {
+		for (const section of ["skills", "projects", "vaults", "connectors"] as const) {
+			expect(CONNECTED_AGENT_SECTION_IDS).toContain(section);
+			expect(HOSTED_AGENT_SECTION_IDS).toContain(section);
+		}
 		expect(CONNECTED_AGENT_SECTION_IDS).not.toContain("mcp");
 		expect(HOSTED_AGENT_SECTION_IDS).not.toContain("mcp");
 	});
@@ -213,6 +227,14 @@ describe("agent routes", () => {
 			section: "channels",
 			search: undefined,
 		});
+		expect(legacyAgentRoute("overview", { tab: "connectors" })).toEqual({
+			section: "connectors",
+			search: undefined,
+		});
+		expect(legacyAgentRoute("overview", { tab: "vaults" })).toEqual({
+			section: "vaults",
+			search: undefined,
+		});
 		expect(legacyAgentRoute("skills", { filter: "active" })).toBeNull();
 	});
 
@@ -227,6 +249,18 @@ describe("agent routes", () => {
 		expect(parseAgentPathname("/agents/agent%201/project-access")).toEqual({
 			agentId: "agent 1",
 			section: "projects",
+			sessionId: undefined,
+			skillKey: undefined,
+		});
+		expect(parseAgentPathname("/agents/agent%201/connectors")).toEqual({
+			agentId: "agent 1",
+			section: "connectors",
+			sessionId: undefined,
+			skillKey: undefined,
+		});
+		expect(parseAgentPathname("/agents/agent%201/vaults")).toEqual({
+			agentId: "agent 1",
+			section: "vaults",
 			sessionId: undefined,
 			skillKey: undefined,
 		});

@@ -1,5 +1,6 @@
 import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
 import {
+	agentSectionLabel,
 	agentSectionLink,
 	CONNECTED_AGENT_SECTION_IDS,
 	parseAgentSectionSegment,
@@ -18,7 +19,6 @@ function safeDecodeURIComponent(value: string): string {
 }
 
 export const Route = createFileRoute("/_protected/_dashboard/agents/$id/$section")({
-	head: () => routeHeadTitle("Agent"),
 	beforeLoad: ({ params, search }) => {
 		const section = parseAgentSectionSegment(safeDecodeURIComponent(params.section));
 		if (!section || section === "overview") throw notFound();
@@ -29,6 +29,10 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id/$section
 			throw redirect({ ...agentSectionLink(params.id, "overview", search), replace: true });
 		}
 		return { section };
+	},
+	head: ({ params }) => {
+		const section = parseAgentSectionSegment(safeDecodeURIComponent(params.section));
+		return routeHeadTitle(section && section !== "overview" ? agentSectionLabel(section) : "Agent");
 	},
 	component: AgentSectionRoute,
 });

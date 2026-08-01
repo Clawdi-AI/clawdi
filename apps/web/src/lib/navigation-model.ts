@@ -1,14 +1,11 @@
 import {
 	LayoutDashboard,
-	Link2,
 	type LucideIcon,
-	MessageSquare,
 	MessagesSquare,
 	MonitorPlay,
 	Settings,
 	Sparkles,
 	TerminalSquare,
-	Zap,
 } from "lucide-react";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import {
@@ -23,8 +20,10 @@ export type AgentSectionId =
 	| "sessions"
 	| "skills"
 	| "projects"
+	| "vaults"
 	| "console"
 	| "terminal"
+	| "connectors"
 	| "ai"
 	| "channels"
 	| "settings";
@@ -43,7 +42,7 @@ export type NavigationItemMetadata<Id extends string> = {
 
 export type NavigationGroupMetadata<GroupId extends string, ItemId extends string> = {
 	id: GroupId;
-	label: string;
+	label: string | null;
 	items: readonly NavigationItemMetadata<ItemId>[];
 };
 
@@ -59,7 +58,7 @@ type ConsoleNavigationItemId =
 	| "channels"
 	| "ai-providers";
 
-type ConsoleNavigationGroupId = "primary" | "projects" | "activity" | "integrations";
+type ConsoleNavigationGroupId = "primary" | "resources";
 
 type ConsoleCommandPaletteMetadata = {
 	subtitle: string;
@@ -76,7 +75,52 @@ export type ConsoleNavigationGroup = Omit<
 	"items"
 > & {
 	items: readonly ConsoleNavigationItemMetadata[];
+	separated: boolean;
 };
+
+type CanonicalNavigationConceptId =
+	| "overview"
+	| "sessions"
+	| "memories"
+	| "skills"
+	| "projects"
+	| "vaults"
+	| "connectors"
+	| "channels"
+	| "ai-providers"
+	| "settings";
+
+/** Shared visible identity for concepts that appear in more than one navigation scope. */
+export const CANONICAL_NAVIGATION_IDENTITIES = {
+	overview: { label: "Overview", icon: LayoutDashboard },
+	sessions: {
+		label: getProjectResourceDefinition("sessions").navLabel,
+		icon: PROJECT_RESOURCE_ICONS.sessions,
+	},
+	memories: {
+		label: getProjectResourceDefinition("memories").navLabel,
+		icon: PROJECT_RESOURCE_ICONS.memories,
+	},
+	skills: {
+		label: getProjectResourceDefinition("skills").navLabel,
+		icon: PROJECT_RESOURCE_ICONS.skills,
+	},
+	projects: {
+		label: getProjectResourceDefinition("projects").navLabel,
+		icon: PROJECT_RESOURCE_ICONS.projects,
+	},
+	vaults: {
+		label: getProjectResourceDefinition("vaults").navLabel,
+		icon: PROJECT_RESOURCE_ICONS.vaults,
+	},
+	connectors: {
+		label: getProjectResourceDefinition("connectors").navLabel,
+		icon: PROJECT_RESOURCE_ICONS.connectors,
+	},
+	channels: { label: "Channels", icon: MessagesSquare },
+	"ai-providers": { label: "AI Providers", icon: Sparkles },
+	settings: { label: "Settings", icon: Settings },
+} satisfies Record<CanonicalNavigationConceptId, { label: string; icon: LucideIcon }>;
 
 function projectResourceNavigationItem(
 	id: "projects" | "skills" | "vaults" | "sessions" | "memories" | "connectors",
@@ -90,9 +134,8 @@ function projectResourceNavigationItem(
 				: "Account resources";
 	return {
 		id,
-		label: definition.navLabel,
+		...CANONICAL_NAVIGATION_IDENTITIES[id],
 		href: definition.href,
-		icon: PROJECT_RESOURCE_ICONS[id],
 		tint: RESOURCE_TINT_CLASSES[id],
 		description: definition.managementDescription,
 		tooltip: `${definition.navLabel} — ${projectResourceScopeLabel(definition.projectScope)}`,
@@ -110,9 +153,8 @@ export const CONSOLE_NAVIGATION_ITEMS: Record<
 > = {
 	overview: {
 		id: "overview",
-		label: "Overview",
+		...CANONICAL_NAVIGATION_IDENTITIES.overview,
 		href: "/",
-		icon: LayoutDashboard,
 		tint: RESOURCE_TINT_CLASSES.overview,
 		description: "Account inventory and recent activity.",
 		tooltip: "Console overview",
@@ -140,9 +182,8 @@ export const CONSOLE_NAVIGATION_ITEMS: Record<
 	connectors: projectResourceNavigationItem("connectors"),
 	channels: {
 		id: "channels",
-		label: "Channels",
+		...CANONICAL_NAVIGATION_IDENTITIES.channels,
 		href: "/channels",
-		icon: MessagesSquare,
 		tint: "bg-identity-5-bg text-identity-5-fg",
 		description: "Account channel inventory and connections.",
 		tooltip: "Channels — Account integrations",
@@ -154,9 +195,8 @@ export const CONSOLE_NAVIGATION_ITEMS: Record<
 	},
 	"ai-providers": {
 		id: "ai-providers",
-		label: "AI Providers",
+		...CANONICAL_NAVIGATION_IDENTITIES["ai-providers"],
 		href: "/ai-providers",
-		icon: Sparkles,
 		tint: "bg-identity-2-bg text-identity-2-fg",
 		description: "Account AI provider connections and credentials.",
 		tooltip: "AI Providers — Account integrations",
@@ -170,24 +210,30 @@ export const CONSOLE_NAVIGATION_ITEMS: Record<
 } satisfies Record<ConsoleNavigationItemId, ConsoleNavigationItemMetadata>;
 
 const CONSOLE_NAVIGATION_GROUPS = [
-	{ id: "primary", label: "Primary", itemIds: ["overview", "agents"] },
-	{ id: "projects", label: "Projects", itemIds: ["projects", "skills", "vaults"] },
-	{ id: "activity", label: "Activity", itemIds: ["sessions", "memories"] },
 	{
-		id: "integrations",
-		label: "Integrations",
-		itemIds: ["connectors", "channels", "ai-providers"],
+		id: "primary",
+		label: null,
+		itemIds: ["overview", "agents", "sessions", "memories"],
+		separated: false,
+	},
+	{
+		id: "resources",
+		label: "Resources",
+		itemIds: ["channels", "ai-providers", "connectors", "projects", "skills", "vaults"],
+		separated: false,
 	},
 ] as const satisfies readonly {
 	id: ConsoleNavigationGroupId;
-	label: string;
+	label: string | null;
 	itemIds: readonly ConsoleNavigationItemId[];
+	separated: boolean;
 }[];
 
 export function consoleNavigationGroups(showCloudFeatures: boolean): ConsoleNavigationGroup[] {
 	return CONSOLE_NAVIGATION_GROUPS.map((group) => ({
 		id: group.id,
 		label: group.label,
+		separated: group.separated,
 		items: group.itemIds
 			.map((id) => CONSOLE_NAVIGATION_ITEMS[id])
 			.filter((item) => item.availability === "all" || showCloudFeatures),
@@ -208,13 +254,7 @@ export function consoleCommandPaletteItems(
 		);
 }
 
-type AgentNavigationGroupId =
-	| "primary"
-	| "runtime"
-	| "activity"
-	| "context"
-	| "integrations"
-	| "manage";
+type AgentNavigationGroupId = "primary" | "resources" | "settings";
 
 export type AgentNavigationItemMetadata = Omit<NavigationItemMetadata<AgentSectionId>, "href"> & {
 	variants: readonly AgentNavigationVariant[];
@@ -225,13 +265,13 @@ export type AgentNavigationGroup = Omit<
 	"items"
 > & {
 	items: readonly AgentNavigationItemMetadata[];
+	separated: boolean;
 };
 
 export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigationItemMetadata> = {
 	overview: {
 		id: "overview",
-		label: "Overview",
-		icon: LayoutDashboard,
+		...CANONICAL_NAVIGATION_IDENTITIES.overview,
 		tint: RESOURCE_TINT_CLASSES.overview,
 		description: "Status, resources, and recent activity for this agent.",
 		tooltip: "Agent overview",
@@ -257,8 +297,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	},
 	sessions: {
 		id: "sessions",
-		label: "Sessions",
-		icon: MessageSquare,
+		...CANONICAL_NAVIGATION_IDENTITIES.sessions,
 		tint: RESOURCE_TINT_CLASSES.sessions,
 		description: "Conversation history from this agent.",
 		tooltip: "Sessions from this agent",
@@ -266,8 +305,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	},
 	skills: {
 		id: "skills",
-		label: "Skills",
-		icon: Sparkles,
+		...CANONICAL_NAVIGATION_IDENTITIES.skills,
 		tint: RESOURCE_TINT_CLASSES.skills,
 		description: "Skills synced from this agent's filesystem.",
 		tooltip: "Skills synced from this agent's filesystem",
@@ -275,17 +313,31 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	},
 	projects: {
 		id: "projects",
-		label: "Projects",
-		icon: PROJECT_RESOURCE_ICONS.projects,
+		...CANONICAL_NAVIGATION_IDENTITIES.projects,
 		tint: RESOURCE_TINT_CLASSES.projects,
 		description: "Agent Project, added Projects, and read order.",
 		tooltip: "Projects available to this agent",
-		variants: ["connected"],
+		variants: ["connected", "hosted"],
+	},
+	vaults: {
+		id: "vaults",
+		...CANONICAL_NAVIGATION_IDENTITIES.vaults,
+		tint: RESOURCE_TINT_CLASSES.vaults,
+		description: "Vaults available through this agent's Projects.",
+		tooltip: "Vaults available through this agent's Projects",
+		variants: ["connected", "hosted"],
+	},
+	connectors: {
+		id: "connectors",
+		...CANONICAL_NAVIGATION_IDENTITIES.connectors,
+		tint: RESOURCE_TINT_CLASSES.connectors,
+		description: "Account-wide connectors available across all agents.",
+		tooltip: "Account-wide connectors available across all agents",
+		variants: ["connected", "hosted"],
 	},
 	ai: {
 		id: "ai",
-		label: "AI & Model",
-		icon: Zap,
+		...CANONICAL_NAVIGATION_IDENTITIES["ai-providers"],
 		tint: "bg-identity-2-bg text-identity-2-fg",
 		description: "Provider binding and primary model used by this agent.",
 		tooltip: "Configure this agent's provider binding and primary model",
@@ -293,8 +345,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	},
 	channels: {
 		id: "channels",
-		label: "Channels",
-		icon: Link2,
+		...CANONICAL_NAVIGATION_IDENTITIES.channels,
 		tint: "bg-identity-5-bg text-identity-5-fg",
 		description: "Channels linked to this agent.",
 		tooltip: "Channels linked to this agent",
@@ -302,8 +353,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	},
 	settings: {
 		id: "settings",
-		label: "Settings",
-		icon: Settings,
+		...CANONICAL_NAVIGATION_IDENTITIES.settings,
 		tint: "bg-identity-4-bg text-identity-4-fg",
 		description: "Name, preferences, and agent controls.",
 		tooltip: "Manage this agent",
@@ -312,16 +362,24 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 };
 
 const AGENT_NAVIGATION_GROUPS = [
-	{ id: "primary", label: "Primary", itemIds: ["overview"] },
-	{ id: "runtime", label: "Runtime", itemIds: ["console", "terminal"] },
-	{ id: "activity", label: "Activity", itemIds: ["sessions"] },
-	{ id: "context", label: "Context", itemIds: ["skills", "projects"] },
-	{ id: "integrations", label: "Integrations", itemIds: ["ai", "channels"] },
-	{ id: "manage", label: "Manage", itemIds: ["settings"] },
+	{
+		id: "primary",
+		label: null,
+		itemIds: ["overview", "sessions", "console", "terminal"],
+		separated: false,
+	},
+	{
+		id: "resources",
+		label: "Resources",
+		itemIds: ["channels", "ai", "connectors", "projects", "skills", "vaults"],
+		separated: false,
+	},
+	{ id: "settings", label: null, itemIds: ["settings"], separated: true },
 ] as const satisfies readonly {
 	id: AgentNavigationGroupId;
-	label: string;
+	label: string | null;
 	itemIds: readonly AgentSectionId[];
+	separated: boolean;
 }[];
 
 export function agentNavigationSectionIds(variant: AgentNavigationVariant): AgentSectionId[] {
@@ -343,6 +401,7 @@ export function agentNavigationGroups(
 	return AGENT_NAVIGATION_GROUPS.map((group) => ({
 		id: group.id,
 		label: group.label,
+		separated: group.separated,
 		items: group.itemIds
 			.map((id) => AGENT_SECTION_NAVIGATION_ITEMS[id])
 			.filter(

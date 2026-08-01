@@ -35,7 +35,6 @@ import {
 	Mail,
 	MessageCircle,
 	Search,
-	Settings,
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -113,6 +112,7 @@ import type { AgentNavigationVariant } from "@/lib/navigation-model";
 import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
 	agentNavigationGroups,
+	CANONICAL_NAVIGATION_IDENTITIES,
 	consoleNavigationGroups,
 } from "@/lib/navigation-model";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
@@ -206,16 +206,24 @@ function SidebarNavSection({
 	label,
 	items,
 	before,
+	separated = false,
+	ariaLabel,
 	onNavigate,
 }: {
-	label: string;
+	label: string | null;
 	items: SidebarNavItem[];
 	before?: React.ReactNode;
+	separated?: boolean;
+	ariaLabel?: string;
 	onNavigate?: () => void;
 }) {
 	return (
-		<SidebarGroup className="pt-0">
-			<SidebarGroupLabel>{label}</SidebarGroupLabel>
+		<SidebarGroup
+			role="group"
+			className={cn("pt-0", separated && "mt-2 border-t pt-2")}
+			aria-label={ariaLabel ?? label ?? undefined}
+		>
+			{label ? <SidebarGroupLabel>{label}</SidebarGroupLabel> : null}
 			<SidebarGroupContent>
 				<SidebarMenu>
 					{before}
@@ -263,6 +271,20 @@ function SidebarNavSection({
 	);
 }
 
+function usePrefetchConnectorsCatalog() {
+	const api = useApi();
+	const queryClient = useQueryClient();
+	return useCallback(() => {
+		void queryClient.prefetchQuery(
+			availableAppsQueryOptions(api, {
+				page: 1,
+				pageSize: CONNECTOR_CATALOG_PAGE_SIZE,
+			}),
+		);
+		void queryClient.prefetchQuery(connectionsQueryOptions(api));
+	}, [api, queryClient]);
+}
+
 function ConsoleNavigationSections({
 	pathname,
 	showCloudFeatures,
@@ -272,17 +294,7 @@ function ConsoleNavigationSections({
 	showCloudFeatures: boolean;
 	onNavigate?: () => void;
 }) {
-	const api = useApi();
-	const queryClient = useQueryClient();
-	const prefetchConnectorsCatalog = useCallback(() => {
-		void queryClient.prefetchQuery(
-			availableAppsQueryOptions(api, {
-				page: 1,
-				pageSize: CONNECTOR_CATALOG_PAGE_SIZE,
-			}),
-		);
-		void queryClient.prefetchQuery(connectionsQueryOptions(api));
-	}, [api, queryClient]);
+	const prefetchConnectorsCatalog = usePrefetchConnectorsCatalog();
 	return consoleNavigationGroups(showCloudFeatures).map((group) => (
 		<SidebarNavSection
 			key={group.id}
@@ -295,6 +307,8 @@ function ConsoleNavigationSections({
 						: pathname === item.href || pathname.startsWith(`${item.href}/`),
 				prefetch: item.id === "connectors" ? prefetchConnectorsCatalog : undefined,
 			}))}
+			separated={group.separated}
+			ariaLabel={group.label ?? "Primary navigation"}
 			onNavigate={onNavigate}
 		/>
 	));
@@ -317,6 +331,7 @@ function AgentSectionList({
 }) {
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const routeQuery = agentDeploymentRouteQuery(searchStr);
+	const prefetchConnectorsCatalog = usePrefetchConnectorsCatalog();
 	const groups = agentNavigationGroups(variant, visibleSectionIds);
 	const normalizedActiveSection = groups.some((group) =>
 		group.items.some((item) => item.id === activeSection),
@@ -340,10 +355,15 @@ function AgentSectionList({
 								tint: item.tint,
 								tooltip: item.tooltip,
 								active: normalizedActiveSection === item.id,
+								prefetch: item.id === "connectors" ? prefetchConnectorsCatalog : undefined,
 							}),
 						),
 						...(group.id === "primary" ? extraPrimaryItems : []),
 					]}
+					separated={group.separated}
+					ariaLabel={
+						group.label ?? (group.id === "settings" ? "Agent settings" : "Primary navigation")
+					}
 					onNavigate={onNavigate}
 				/>
 			))}
@@ -401,7 +421,7 @@ function AgentFocusHostedFallbackSections({
 		<AgentSectionList
 			agentId={agentId}
 			variant="hosted"
-			visibleSectionIds={["overview", "skills"]}
+			visibleSectionIds={["overview"]}
 			activeSection={activeSection}
 			onNavigate={onNavigate}
 		/>
@@ -432,9 +452,13 @@ function AgentFocusLoadingSections({
 
 	return (
 		<>
-			<SidebarNavSection label="Primary" items={[overviewItem]} onNavigate={onNavigate} />
-			<SidebarGroup className="pt-0">
-				<SidebarGroupLabel>Loading navigation</SidebarGroupLabel>
+			<SidebarNavSection
+				label={null}
+				items={[overviewItem]}
+				ariaLabel="Primary navigation"
+				onNavigate={onNavigate}
+			/>
+			<SidebarGroup role="group" className="pt-0" aria-label="Navigation loading">
 				<SidebarGroupContent>
 					<SidebarMenu>
 						{["70%", "58%", "64%"].map((width) => (
@@ -1316,6 +1340,8 @@ function GlobalControls({
 	settingsOpen: boolean;
 	showTooltips?: boolean;
 }) {
+	const settingsIdentity = CANONICAL_NAVIGATION_IDENTITIES.settings;
+	const SettingsIcon = settingsIdentity.icon;
 	return (
 		<SidebarMenu className="w-full flex-row items-center gap-1">
 			<SidebarMenuItem>
@@ -1331,12 +1357,12 @@ function GlobalControls({
 			</SidebarMenuItem>
 			<SidebarMenuItem>
 				<GlobalControlButton
-					label="Settings"
+					label={settingsIdentity.label}
 					onClick={onSettings}
 					active={settingsOpen}
 					showTooltip={showTooltips}
 				>
-					<Settings />
+					<SettingsIcon />
 				</GlobalControlButton>
 			</SidebarMenuItem>
 		</SidebarMenu>

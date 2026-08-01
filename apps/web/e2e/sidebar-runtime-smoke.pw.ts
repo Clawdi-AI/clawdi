@@ -60,7 +60,57 @@ const projects = [
 		owner_display: "Dev User",
 		owner_handle: "dev-user",
 	},
+	{
+		id: "project-unrelated",
+		name: "Unrelated Project",
+		slug: "unrelated-project",
+		kind: "custom",
+		origin_environment_id: null,
+		archived_at: null,
+		created_at: now.toISOString(),
+		is_owner: true,
+		owner_display: "Dev User",
+		owner_handle: "dev-user",
+	},
 ];
+
+const projectBindings = [
+	{
+		id: "binding-primary",
+		agent_id: "agent-smoke-1",
+		project_id: "project-smoke",
+		binding_type: "primary",
+		priority: 0,
+		default_write_enabled: true,
+		created_at: now.toISOString(),
+	},
+];
+
+const vaults = {
+	items: [
+		{
+			id: "vault-scoped",
+			slug: "scoped-vault",
+			name: "Scoped Vault",
+			project_ids: ["project-smoke"],
+			is_owner: true,
+			item_count: 2,
+			created_at: now.toISOString(),
+		},
+		{
+			id: "vault-unrelated",
+			slug: "unrelated-vault",
+			name: "Unrelated Vault",
+			project_ids: ["project-unrelated"],
+			is_owner: true,
+			item_count: 3,
+			created_at: now.toISOString(),
+		},
+	],
+	total: 2,
+	page: 1,
+	page_size: 200,
+};
 
 const dashboardStats = {
 	total_sessions: 1,
@@ -121,7 +171,11 @@ async function fulfillJson(route: Route, body: unknown) {
 	});
 }
 
-async function stubDashboardApi(page: Page, agentOrderRequests: string[] = []) {
+async function stubDashboardApi(
+	page: Page,
+	agentOrderRequests: string[] = [],
+	options: { projectBindingsGate?: Promise<void>; vaultRequests?: string[] } = {},
+) {
 	await page.route("**/v1/**", async (route) => {
 		const url = new URL(route.request().url());
 		if (url.pathname === "/v1/agents/order" && route.request().method() === "PATCH") {
@@ -141,12 +195,61 @@ async function stubDashboardApi(page: Page, agentOrderRequests: string[] = []) {
 			await fulfillJson(route, agents);
 			return;
 		}
+		const agentMatch = url.pathname.match(/^\/v1\/agents\/([^/]+)$/);
+		if (agentMatch) {
+			const agent = agents.find((candidate) => candidate.id === decodeURIComponent(agentMatch[1]));
+			await fulfillJson(route, agent ?? { detail: "Agent not found" });
+			return;
+		}
+		if (url.pathname === "/v1/agents/agent-smoke-1/project-bindings") {
+			await options.projectBindingsGate;
+			await fulfillJson(route, projectBindings);
+			return;
+		}
 		if (url.pathname === "/v1/dashboard/stats") {
 			await fulfillJson(route, dashboardStats);
 			return;
 		}
 		if (url.pathname === "/v1/projects") {
 			await fulfillJson(route, projects);
+			return;
+		}
+		if (url.pathname === "/v1/vault") {
+			options.vaultRequests?.push(route.request().url());
+			const projectId = url.searchParams.get("project_id");
+			const items = projectId
+				? vaults.items.filter((vault) => vault.project_ids.includes(projectId))
+				: vaults.items;
+			await fulfillJson(route, {
+				...vaults,
+				items,
+				total: items.length,
+				page: Number(url.searchParams.get("page") ?? "1"),
+				page_size: Number(url.searchParams.get("page_size") ?? "25"),
+			});
+			return;
+		}
+		if (url.pathname === "/v1/connectors") {
+			await fulfillJson(route, []);
+			return;
+		}
+		if (url.pathname === "/v1/connectors/available") {
+			await fulfillJson(route, {
+				items: [
+					{
+						name: "gmail",
+						display_name: "Gmail",
+						logo: "",
+						description: "Email connector",
+						auth_type: "oauth",
+						connect_disabled: false,
+						connect_disabled_reason: null,
+					},
+				],
+				total: 48,
+				page: Number(url.searchParams.get("page") ?? "1"),
+				page_size: 24,
+			});
 			return;
 		}
 		if (url.pathname === "/v1/sessions") {
@@ -168,18 +271,22 @@ async function expectNoBrowserErrors(page: Page, errors: string[], label: string
 
 async function expectSidebarNavigationGroups(
 	page: Page,
-	expected: Array<{ label: string; items: string[] }>,
+	expected: Array<{ label: string | null; items: string[] }>,
 ) {
 	const groups = page
 		.getByTestId("app-sidebar")
 		.locator('[data-slot="sidebar-content"] > [data-slot="sidebar-group"]');
 	await expect(groups).toHaveCount(expected.length);
 	for (const [index, group] of expected.entries()) {
-		await expect(groups.nth(index).locator('[data-slot="sidebar-group-label"]')).toHaveText(
-			group.label,
-		);
+		const heading = groups.nth(index).locator('[data-slot="sidebar-group-label"]');
+		if (group.label) await expect(heading).toHaveText(group.label);
+		else await expect(heading).toHaveCount(0);
 		await expect(groups.nth(index).getByRole("link")).toHaveText(group.items);
 	}
+	await expect(
+		groups.locator('[data-slot="sidebar-group-label"]').filter({ hasText: /^Resources$/ }),
+	).toHaveCount(1);
+	await expect(groups.locator('[data-slot="sidebar-group-label"]:empty')).toHaveCount(0);
 }
 
 test("dashboard sidebar primitives run without browser errors", async ({ page }) => {
@@ -239,19 +346,81 @@ test("Console and connected agents use the scoped navigation grammar", async ({ 
 	await stubDashboardApi(page);
 	await page.goto("/");
 	await expectSidebarNavigationGroups(page, [
-		{ label: "Primary", items: ["Overview", "Agents"] },
-		{ label: "Projects", items: ["Projects", "Skills", "Vaults"] },
-		{ label: "Activity", items: ["Sessions", "Memories"] },
-		{ label: "Integrations", items: ["Connectors"] },
+		{ label: null, items: ["Overview", "Agents", "Sessions", "Memories"] },
+		{ label: "Resources", items: ["Connectors", "Projects", "Skills", "Vaults"] },
 	]);
 
 	await page.goto("/agents/agent-smoke-1");
 	await expectSidebarNavigationGroups(page, [
-		{ label: "Primary", items: ["Overview"] },
-		{ label: "Activity", items: ["Sessions"] },
-		{ label: "Context", items: ["Skills", "Projects"] },
-		{ label: "Manage", items: ["Settings"] },
+		{ label: null, items: ["Overview", "Sessions"] },
+		{ label: "Resources", items: ["Connectors", "Projects", "Skills", "Vaults"] },
+		{ label: null, items: ["Settings"] },
 	]);
+});
+
+test("connected agent resource tabs reuse scoped Projects, account Connectors, and effective Vaults", async ({
+	page,
+}) => {
+	const vaultRequests: string[] = [];
+	await stubDashboardApi(page, [], { vaultRequests });
+
+	await page.goto("/agents/agent-smoke-1/connectors?q=gmail&page=2");
+	const main = page.locator("main");
+	await expect(main.getByRole("heading", { name: "Connectors", level: 1 })).toBeVisible();
+	await expect(page).toHaveTitle("Connectors · Clawdi");
+	await expect(
+		main.getByText("Account-wide connectors available across all agents."),
+	).toBeVisible();
+	await expect(main.getByRole("link", { name: "Gmail" })).toBeVisible();
+	await expect(page).toHaveURL(/\/agents\/agent-smoke-1\/connectors\?q=gmail&page=2/);
+
+	await page.goto("/agents/agent-smoke-1/project-access");
+	await expect(main.getByRole("heading", { name: "Projects", level: 1 })).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Agent Project", level: 2 })).toBeVisible();
+	await expect(main.getByText("Smoke Project", { exact: true })).toBeVisible();
+
+	await page.goto("/agents/agent-smoke-1/vaults");
+	await expect(main.getByRole("heading", { name: "Vaults", level: 1 })).toBeVisible();
+	await expect(page).toHaveTitle("Vaults · Clawdi");
+	await expect(
+		main.getByText(
+			"Vaults appear here through this agent's Agent Project and added Projects. Open a Vault to manage it in the account-level Vaults area.",
+		),
+	).toBeVisible();
+	await expect(main.getByText("Scoped Vault", { exact: true })).toBeVisible();
+	await expect(main.getByText("Unrelated Vault", { exact: true })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: /New vault/i })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: /Add keys/i })).toHaveCount(0);
+	const vaultRequest = vaultRequests[0];
+	if (!vaultRequest) throw new Error("Agent Vault inventory was not requested");
+	const vaultRequestUrl = new URL(vaultRequest);
+	expect(vaultRequestUrl.searchParams.get("project_id")).toBe("project-smoke");
+	expect(vaultRequestUrl.searchParams.get("page")).toBe("1");
+	expect(vaultRequestUrl.searchParams.get("page_size")).toBe("200");
+});
+
+test("agent Vaults wait for effective Project bindings before requesting inventory", async ({
+	page,
+}) => {
+	let releaseBindings: (() => void) | undefined;
+	const projectBindingsGate = new Promise<void>((resolve) => {
+		releaseBindings = resolve;
+	});
+	const vaultRequests: string[] = [];
+	await stubDashboardApi(page, [], { projectBindingsGate, vaultRequests });
+
+	await page.goto("/agents/agent-smoke-1/vaults");
+	const main = page.locator("main");
+	await expect(main.getByRole("heading", { name: "Vaults", level: 1 })).toBeVisible();
+	await expect(main.getByTestId("agent-vaults-loading")).toBeVisible();
+	expect(vaultRequests).toEqual([]);
+	if (!releaseBindings) throw new Error("Project binding gate was not initialized");
+	releaseBindings();
+	await expect(main.getByText("Scoped Vault", { exact: true })).toBeVisible();
+	expect(vaultRequests).toHaveLength(1);
+	const vaultRequest = vaultRequests[0];
+	if (!vaultRequest) throw new Error("Agent Vault inventory was not requested after bindings");
+	expect(new URL(vaultRequest).searchParams.get("project_id")).toBe("project-smoke");
 });
 
 test("every agent rail tile button navigates on click", async ({ page }) => {
