@@ -109,6 +109,35 @@ def test_provider_event_id_is_stable_for_primary_alt_swaps_and_checked():
         WhatsAppSidecarEvent.model_validate(swapped)
 
 
+def test_media_contract_preserves_voice_ptt_and_rejects_it_for_non_audio():
+    voice = WhatsAppSidecarEvent.model_validate(
+        _event(
+            content={
+                "type": "media",
+                "mediaId": f"media_{'a' * 43}",
+                "mediaType": "audio",
+                "mimeType": "audio/ogg; codecs=opus",
+                "ptt": True,
+            }
+        )
+    )
+    assert voice.content.type == "media"
+    assert voice.content.ptt is True
+
+    with pytest.raises(ValidationError, match="only for audio"):
+        WhatsAppSidecarEvent.model_validate(
+            _event(
+                content={
+                    "type": "media",
+                    "mediaId": f"media_{'b' * 43}",
+                    "mediaType": "image",
+                    "mimeType": "image/jpeg",
+                    "ptt": True,
+                }
+            )
+        )
+
+
 def _provider_event_id(payload: dict[str, object]) -> str:
     chat = payload["chat"]
     actor = payload["actor"]

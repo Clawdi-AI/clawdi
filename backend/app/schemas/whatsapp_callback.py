@@ -74,6 +74,7 @@ class WhatsAppMediaContent(WhatsAppContractModel):
     media_id: str = Field(alias="mediaId", pattern=_OPAQUE_MEDIA_ID_RE)
     media_type: Literal["image", "video", "audio", "document", "sticker"] = Field(alias="mediaType")
     mime_type: str | None = Field(default=None, alias="mimeType", min_length=1, max_length=255)
+    ptt: bool | None = None
     file_name: str | None = Field(default=None, alias="fileName", min_length=1, max_length=255)
     file_length: int | None = Field(
         default=None,
@@ -82,6 +83,12 @@ class WhatsAppMediaContent(WhatsAppContractModel):
         le=9_007_199_254_740_991,
     )
     caption: str | None = Field(default=None, max_length=16_384)
+
+    @model_validator(mode="after")
+    def _voice_marker_only_for_audio(self) -> WhatsAppMediaContent:
+        if self.ptt is not None and self.media_type != "audio":
+            raise ValueError("ptt is supported only for audio media")
+        return self
 
 
 class WhatsAppReactionContent(WhatsAppContractModel):
