@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.core.auth import AuthContext, require_user_auth
+from app.core.auth import AuthContext, require_clerk_id, require_user_auth
 from app.core.config import settings
 from app.schemas.common import Paginated
 from app.schemas.connector import (
@@ -13,6 +13,7 @@ from app.schemas.connector import (
     ConnectorCredentialsConnectRequest,
     ConnectorCredentialsConnectResponse,
     ConnectorDisconnectResponse,
+    ConnectorMcpConfigResponse,
     ConnectorToolResponse,
     ConnectRequest,
 )
@@ -21,6 +22,7 @@ from app.services.composio import (
     ConnectorCustomAuthConfigRequired,
     connect_with_credentials,
     create_connect_link,
+    create_mcp_bridge_token,
     disconnect_account,
     get_app_by_name,
     get_app_tools,
@@ -142,8 +144,9 @@ async def list_connections(
     """List user's connected services."""
     if not settings.composio_api_key:
         return []
+    clerk_id = require_clerk_id(auth)
     try:
-        accounts = await get_connected_accounts(auth.user.clerk_id)
+        accounts = await get_connected_accounts(clerk_id)
     except Exception as exc:
         if _is_composio_auth_error(exc):
             log.warning("composio_key_invalid path=connectors_list")
@@ -153,7 +156,7 @@ async def list_connections(
     # Composio Tool Router sessions capture the active account set, so
     # observing the latest connected-account state should force the next
     # MCP bridge call to create a fresh session.
-    invalidate_tool_router_mcp_session(auth.user.clerk_id)
+    invalidate_tool_router_mcp_session(clerk_id)
     return [ConnectorConnectionResponse.model_validate(account) for account in accounts]
 
 
@@ -240,7 +243,7 @@ async def connect_app(
             )
         if auth_type not in _REDIRECT_AUTH_TYPES:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Connector requires credentials")
-        result = await create_connect_link(auth.user.clerk_id, app_name, redirect_url)
+        result = await create_connect_link(require_clerk_id(auth), app_name, redirect_url)
     except HTTPException:
         raise
     except Exception as exc:
@@ -385,7 +388,7 @@ async def connect_credentials(
     if any(not v.strip() for v in body.credentials.values()):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Credential values cannot be empty")
     try:
-        result = await connect_with_credentials(auth.user.clerk_id, app_name, body.credentials)
+        result = await connect_with_credentials(require_clerk_id(auth), app_name, body.credentials)
     except TimeoutError as exc:
         # `connect_with_credentials` polls Composio with a bounded
         # timeout after creating the connected account. Surface that
@@ -421,15 +424,30 @@ async def disconnect(
     if not settings.composio_api_key:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
 
-    accounts = await get_connected_accounts(auth.user.clerk_id)
+    clerk_id = require_clerk_id(auth)
+    accounts = await get_connected_accounts(clerk_id)
     if not any(a.get("id") == connection_id for a in accounts):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Connection not found")
 
     success = await disconnect_account(connection_id)
     if not success:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to disconnect")
-    invalidate_tool_router_mcp_session(auth.user.clerk_id)
+    invalidate_tool_router_mcp_session(clerk_id)
     return ConnectorDisconnectResponse(status="disconnected")
+
+
+@router.get("/mcp-config", response_model=ConnectorMcpConfigResponse)
+async def get_mcp_config(
+    auth: AuthContext = Depends(require_user_auth),
+) -> ConnectorMcpConfigResponse:
+    """Return the deprecated MCP bridge config required by CLI 0.12.7."""
+    if not settings.composio_api_key:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
+
+    return ConnectorMcpConfigResponse(
+        mcp_url=f"{settings.public_api_url.rstrip('/')}/v1/mcp/composio",
+        mcp_token=create_mcp_bridge_token(require_clerk_id(auth)),
+    )
 
 
 @router.get("/{app_name}/tools")

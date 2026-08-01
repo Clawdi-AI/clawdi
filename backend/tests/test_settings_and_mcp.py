@@ -86,7 +86,7 @@ async def test_project_migration_banner_dismiss_persists(client: httpx.AsyncClie
     assert body["project_migration_banner_dismissed_at"] == dismissed_at
 
 
-def test_clawdi_is_the_only_public_mcp_contract():
+def test_legacy_mcp_compatibility_routes_and_schema():
     route_methods = {
         (route.path, method)
         for route in iter_route_contexts(app.routes)
@@ -94,9 +94,170 @@ def test_clawdi_is_the_only_public_mcp_contract():
     }
 
     for prefix in ("/v1", "/api"):
-        assert (f"{prefix}/connectors/mcp-config", "GET") not in route_methods
-        assert (f"{prefix}/mcp/composio", "POST") not in route_methods
+        assert (f"{prefix}/connectors/mcp-config", "GET") in route_methods
+        assert (f"{prefix}/mcp/composio", "POST") in route_methods
         assert (f"{prefix}/mcp/clawdi", "POST") in route_methods
+
+    paths = app.openapi()["paths"]
+    assert "/v1/connectors/mcp-config" in paths
+    assert "/v1/mcp/composio" not in paths
+    assert "/api/connectors/mcp-config" not in paths
+    assert "/api/mcp/composio" not in paths
+
+
+@pytest.mark.asyncio
+async def test_legacy_mcp_config_preserves_cli_response_for_both_aliases(monkeypatch):
+    from app.core.auth import AuthContext, get_auth
+    from app.core.config import settings
+    from app.models.user import User
+    from app.services.composio import verify_mcp_bridge_token
+
+    async def fake_auth() -> AuthContext:
+        return AuthContext(
+            user=User(
+                email="mcp-config-test@clawdi.local",
+                name="MCP Config Test",
+                clerk_id="clerk_user_123",
+            )
+        )
+
+    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
+    monkeypatch.setattr(settings, "encryption_key", "test-encryption-key-at-least-32-bytes")
+    monkeypatch.setattr(settings, "public_api_url", "https://api.example.test/")
+    app.dependency_overrides[get_auth] = fake_auth
+    try:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            responses = [
+                await ac.get("/v1/connectors/mcp-config"),
+                await ac.get("/api/connectors/mcp-config"),
+            ]
+    finally:
+        app.dependency_overrides.clear()
+
+    for response in responses:
+        assert response.status_code == 200, response.text
+        assert set(response.json()) == {"mcp_url", "mcp_token"}
+        assert response.json()["mcp_url"] == "https://api.example.test/v1/mcp/composio"
+        assert verify_mcp_bridge_token(response.json()["mcp_token"]) == "clerk_user_123"
+
+
+@pytest.mark.asyncio
+async def test_legacy_composio_bridge_rejects_missing_and_invalid_bearer_tokens(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "encryption_key", "test-encryption-key-at-least-32-bytes")
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        missing = await ac.post("/v1/mcp/composio", json={"method": "tools/list"})
+        invalid = await ac.post(
+            "/v1/mcp/composio",
+            headers={"Authorization": "Bearer not.a.valid.jwt"},
+            json={"method": "tools/list"},
+        )
+
+    assert missing.status_code == 401, missing.text
+    assert missing.json() == {"detail": "Missing auth token"}
+    assert invalid.status_code == 401, invalid.text
+    assert invalid.json() == {"detail": "Invalid token"}
+
+
+@pytest.mark.asyncio
+async def test_legacy_composio_bridge_rejects_unknown_methods_without_upstream_session(monkeypatch):
+    from app.core.config import settings
+    from app.routes import mcp_bridge
+    from app.services.composio import create_mcp_bridge_token
+
+    async def unexpected_session(_user_id: str):
+        raise AssertionError("unsupported methods must not create an upstream session")
+
+    monkeypatch.setattr(settings, "encryption_key", "test-encryption-key-at-least-32-bytes")
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", unexpected_session)
+    token = create_mcp_bridge_token("clerk_user_123")
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        responses = [
+            await ac.post(
+                "/v1/mcp/composio",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"jsonrpc": "2.0", "id": rpc_id, "method": method},
+            )
+            for rpc_id, method in ((1, "resources/list"), (2, 42))
+        ]
+
+    for rpc_id, response in enumerate(responses, start=1):
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "jsonrpc": "2.0",
+            "id": rpc_id,
+            "error": {"code": -32601, "message": "Method not found"},
+        }
+
+
+@pytest.mark.asyncio
+async def test_legacy_composio_aliases_bridge_tools_list_and_call(monkeypatch):
+    from mcp.types import CallToolResult, ListToolsResult
+
+    from app.core.config import settings
+    from app.routes import mcp_bridge
+    from app.services.composio import ComposioMcpSession, create_mcp_bridge_token
+
+    seen: list[tuple[str, object]] = []
+    session = ComposioMcpSession(
+        url="https://composio.example.test/mcp",
+        headers={"x-session": "secret"},
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
+
+    async def fake_session(user_id: str) -> ComposioMcpSession:
+        seen.append(("session", user_id))
+        return session
+
+    async def fake_list(value: ComposioMcpSession) -> ListToolsResult:
+        assert value is session
+        return ListToolsResult.model_validate(
+            {"tools": [{"name": "COMPOSIO_SEARCH_TOOLS", "inputSchema": {"type": "object"}}]}
+        )
+
+    async def fake_call(value: ComposioMcpSession, name: str, arguments: dict) -> CallToolResult:
+        assert value is session
+        seen.append((name, arguments))
+        return CallToolResult.model_validate(
+            {"content": [{"type": "text", "text": "called"}], "isError": False}
+        )
+
+    monkeypatch.setattr(settings, "encryption_key", "test-encryption-key-at-least-32-bytes")
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_session)
+    monkeypatch.setattr(mcp_bridge, "list_tool_router_mcp_tools", fake_list)
+    monkeypatch.setattr(mcp_bridge, "call_tool_router_mcp_tool", fake_call)
+    token = create_mcp_bridge_token("clerk_user_123")
+    headers = {"Authorization": f"Bearer {token}"}
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        for prefix in ("/v1", "/api"):
+            listed = await ac.post(
+                f"{prefix}/mcp/composio",
+                headers=headers,
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            )
+            called = await ac.post(
+                f"{prefix}/mcp/composio",
+                headers=headers,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {"name": "COMPOSIO_SEARCH_TOOLS", "arguments": {"query": "mail"}},
+                },
+            )
+            assert listed.status_code == 200, listed.text
+            assert listed.json()["result"]["tools"][0]["name"] == "COMPOSIO_SEARCH_TOOLS"
+            assert called.status_code == 200, called.text
+            assert called.json()["result"]["content"] == [{"type": "text", "text": "called"}]
+            assert called.json()["result"]["isError"] is False
+
+    assert seen.count(("session", "clerk_user_123")) == 4
+    assert seen.count(("COMPOSIO_SEARCH_TOOLS", {"query": "mail"})) == 2
 
 
 @pytest.mark.asyncio

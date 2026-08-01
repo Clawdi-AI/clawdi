@@ -18,6 +18,7 @@ from app.core.auth import (
     _is_scoped_api_key,
     get_auth,
     is_runtime_deployment_principal,
+    require_clerk_id,
 )
 from app.core.database import get_session
 from app.core.query_utils import like_needle
@@ -28,6 +29,7 @@ from app.services.composio import (
     call_tool_router_mcp_tool,
     get_tool_router_mcp_session,
     list_tool_router_mcp_tools,
+    verify_mcp_bridge_token,
 )
 from app.services.file_store import get_file_store
 from app.services.memory_provider import get_memory_provider
@@ -252,6 +254,52 @@ _MEMORY_EXTRACT_INSTRUCTIONS = (
 )
 
 
+def _extract_legacy_mcp_user_id(request: Request) -> str:
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing auth token")
+    try:
+        return verify_mcp_bridge_token(authorization[7:])
+    except Exception:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token") from None
+
+
+# Deprecated compatibility bridge for CLI 0.12.7. Keep hidden from OpenAPI;
+# new clients authenticate normally and use POST /v1/mcp/clawdi.
+@router.post("/composio", include_in_schema=False)
+async def mcp_composio_post(request: Request):
+    user_id = _extract_legacy_mcp_user_id(request)
+    body = await request.json()
+    if not isinstance(body, dict):
+        return _mcp_error(None, -32600, "Invalid Request")
+
+    rpc_id = body.get("id")
+    method = body.get("method")
+    if method not in {"tools/list", "tools/call"}:
+        return _mcp_error(rpc_id, -32601, "Method not found")
+
+    try:
+        session = await get_tool_router_mcp_session(user_id)
+        if method == "tools/list":
+            result = await list_tool_router_mcp_tools(session)
+        else:
+            params = body.get("params")
+            if not isinstance(params, dict):
+                return _mcp_error(rpc_id, -32602, "Invalid params")
+            name = params.get("name")
+            arguments = params.get("arguments") or {}
+            if not isinstance(name, str) or not isinstance(arguments, dict):
+                return _mcp_error(rpc_id, -32602, "Invalid params")
+            result = await call_tool_router_mcp_tool(session, name, arguments)
+    except Exception as exc:
+        logger.error(
+            "Legacy Composio MCP error: method=%s error_type=%s", method, type(exc).__name__
+        )
+        return _mcp_error(rpc_id, -32000, "internal error")
+
+    return _mcp_result(rpc_id, result.model_dump(by_alias=True, exclude_none=True))
+
+
 @router.post("/clawdi", include_in_schema=False)
 async def mcp_clawdi_post(
     request: Request,
@@ -370,19 +418,20 @@ async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
             _require_scope(auth, "connectors:read")
         except HTTPException:
             return []
+    clerk_id = require_clerk_id(auth)
     now = time.monotonic()
-    cached = _connector_tools_cache.get(auth.user.clerk_id)
+    cached = _connector_tools_cache.get(clerk_id)
     if cached and cached[0] > now:
         return cached[1]
     tools: list[dict[str, Any]] = []
     try:
-        session = await get_tool_router_mcp_session(auth.user.clerk_id)
+        session = await get_tool_router_mcp_session(clerk_id)
         result = await list_tool_router_mcp_tools(session)
         serialized = result.model_dump(by_alias=True, exclude_none=True)
         raw_tools = serialized.get("tools")
         if isinstance(raw_tools, list):
             tools = [tool for tool in raw_tools if isinstance(tool, dict)]
-        _connector_tools_cache[auth.user.clerk_id] = (
+        _connector_tools_cache[clerk_id] = (
             now + _CONNECTOR_TOOLS_CACHE_TTL_SECONDS,
             tools,
         )
@@ -614,7 +663,7 @@ async def _tool_connector_call(
         )
     if is_runtime_deployment_principal(auth):
         _require_scope(auth, "connectors:invoke")
-    session = await get_tool_router_mcp_session(auth.user.clerk_id)
+    session = await get_tool_router_mcp_session(require_clerk_id(auth))
     response = await call_tool_router_mcp_tool(session, name, arguments)
     result = response.model_dump(by_alias=True, exclude_none=True)
     if isinstance(result, dict):
