@@ -143,6 +143,58 @@ async def test_legacy_mcp_config_preserves_cli_response_for_both_aliases(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_legacy_composio_bridge_rejects_missing_and_invalid_bearer_tokens(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "encryption_key", "test-encryption-key-at-least-32-bytes")
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        missing = await ac.post("/v1/mcp/composio", json={"method": "tools/list"})
+        invalid = await ac.post(
+            "/v1/mcp/composio",
+            headers={"Authorization": "Bearer not.a.valid.jwt"},
+            json={"method": "tools/list"},
+        )
+
+    assert missing.status_code == 401, missing.text
+    assert missing.json() == {"detail": "Missing auth token"}
+    assert invalid.status_code == 401, invalid.text
+    assert invalid.json() == {"detail": "Invalid token"}
+
+
+@pytest.mark.asyncio
+async def test_legacy_composio_bridge_rejects_unknown_methods_without_upstream_session(monkeypatch):
+    from app.core.config import settings
+    from app.routes import mcp_bridge
+    from app.services.composio import create_mcp_bridge_token
+
+    async def unexpected_session(_user_id: str):
+        raise AssertionError("unsupported methods must not create an upstream session")
+
+    monkeypatch.setattr(settings, "encryption_key", "test-encryption-key-at-least-32-bytes")
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", unexpected_session)
+    token = create_mcp_bridge_token("clerk_user_123")
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        responses = [
+            await ac.post(
+                "/v1/mcp/composio",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"jsonrpc": "2.0", "id": rpc_id, "method": method},
+            )
+            for rpc_id, method in ((1, "resources/list"), (2, 42))
+        ]
+
+    for rpc_id, response in enumerate(responses, start=1):
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "jsonrpc": "2.0",
+            "id": rpc_id,
+            "error": {"code": -32601, "message": "Method not found"},
+        }
+
+
+@pytest.mark.asyncio
 async def test_legacy_composio_aliases_bridge_tools_list_and_call(monkeypatch):
     from mcp.types import CallToolResult, ListToolsResult
 

@@ -274,11 +274,14 @@ async def mcp_composio_post(request: Request):
 
     rpc_id = body.get("id")
     method = body.get("method")
+    if method not in {"tools/list", "tools/call"}:
+        return _mcp_error(rpc_id, -32601, "Method not found")
+
     try:
         session = await get_tool_router_mcp_session(user_id)
         if method == "tools/list":
             result = await list_tool_router_mcp_tools(session)
-        elif method == "tools/call":
+        else:
             params = body.get("params")
             if not isinstance(params, dict):
                 return _mcp_error(rpc_id, -32602, "Invalid params")
@@ -287,8 +290,6 @@ async def mcp_composio_post(request: Request):
             if not isinstance(name, str) or not isinstance(arguments, dict):
                 return _mcp_error(rpc_id, -32602, "Invalid params")
             result = await call_tool_router_mcp_tool(session, name, arguments)
-        else:
-            return _mcp_error(rpc_id, -32601, "Method not found")
     except Exception as exc:
         logger.error(
             "Legacy Composio MCP error: method=%s error_type=%s", method, type(exc).__name__
