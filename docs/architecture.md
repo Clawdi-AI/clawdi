@@ -227,9 +227,9 @@ Retrieval merges available signals:
 
 `Mem0Provider` is the alternate provider when the user's settings choose Mem0
 and an API key is present. Environment provenance is stored in Mem0 metadata,
-while every operation uses the account user id as its server-side boundary. No
-session-to-memory automatic pipeline exists; agents or users add memories
-explicitly.
+while reads use the account user id as their server-side boundary and deletes
+verify that same owner before mutation. No session-to-memory automatic pipeline
+exists; agents or users add memories explicitly.
 
 ## MCP And Connectors
 

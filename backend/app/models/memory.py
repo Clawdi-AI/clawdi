@@ -19,8 +19,8 @@ class Memory(Base, TimestampMixin):
     source: Mapped[str] = mapped_column(String(50), server_default="manual")
     source_session_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     # First-class provenance for writes made by an environment-bound principal
-    # without an active Session. This is deliberately server-populated: callers
-    # cannot choose another environment and widen their own visibility.
+    # without an active Session. This is deliberately server-populated so
+    # callers cannot forge another environment as the source.
     source_environment_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("agent_environments.id", ondelete="SET NULL"),
