@@ -150,6 +150,7 @@ describe("AI provider projection", () => {
 				models: { [testCase.model]: {} },
 				transport: testCase.apiMode,
 			});
+			expect(config.providers?.[testCase.providerId]).not.toHaveProperty("discover_models");
 			expect(content).not.toContain("sentinel-secret-value");
 		}
 	});

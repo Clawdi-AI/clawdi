@@ -27,7 +27,10 @@ import {
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import { loadHostedBundledSkill } from "./hosted-bundled-skill";
 import { hostedManifestEgressProfiles } from "./hosted-egress-profiles";
-import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
+import {
+	hostedAiProviderCatalog,
+	resolveManagedGatewayModelOverrides,
+} from "./hosted-provider-resolution";
 import {
 	captureRuntimeLiveSnapshot,
 	restoreRuntimeLiveSnapshot,
@@ -2359,7 +2362,27 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 		);
 
-		const projection = hostedAiProviderCatalog(manifest, "openclaw");
+		let probeCalls = 0;
+		const overrides = resolveManagedGatewayModelOverrides(
+			manifest,
+			["openclaw"],
+			paths.userHome,
+			manifest.workspaceRoot ?? paths.workspaceRoot,
+			null,
+			() => {
+				probeCalls += 1;
+				return {
+					status: "ok",
+					endpoint: "https://api.example.test/v1/models",
+					models: [{ id: "unexpected-live-model" }],
+				};
+			},
+		);
+		const projection = hostedAiProviderCatalog(manifest, "openclaw", {
+			managedModelsOverride: overrides.models.openclaw,
+		});
+		expect(probeCalls).toBe(0);
+		expect(overrides).toEqual({ models: {} });
 		expect(projection?.catalog.providers[0]?.models).toEqual([
 			{
 				id: "example-model",
@@ -2375,7 +2398,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		]);
 	});
 
-	test("merges a discovered managed catalog with matching wire capabilities", () => {
+	test("keeps the configured primary while merging a nonempty discovered catalog", () => {
 		const paths = tempRuntimePaths();
 		const manifest = baseManifest(
 			paths,
@@ -2384,6 +2407,7 @@ describe("runtime manifest reconciliation invariants", () => {
 					enabled: true,
 					run: runSettings("openclaw", ["gateway", "run"]),
 					provider_ids: ["default"],
+					primary_model: { provider_id: "default", model: "configured-seed" },
 					services: {},
 				},
 			},
@@ -2396,6 +2420,12 @@ describe("runtime manifest reconciliation invariants", () => {
 							baseUrl: "https://api.example.test/v1",
 							apiMode: "openai_chat",
 							models: [
+								{
+									id: "configured-seed",
+									context_window: 1_048_576,
+									max_input_tokens: 1_048_576,
+									supports_tools: true,
+								},
 								{
 									id: "kimi-for-coding",
 									context_window: 262_144,
@@ -2417,7 +2447,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		);
 
 		const projection = hostedAiProviderCatalog(manifest, "openclaw", {
-			primaryModelOverride: { provider_id: "default", model: "kimi-for-coding-highspeed" },
 			managedModelsOverride: [
 				{ id: "kimi-for-coding" },
 				{
@@ -2430,9 +2459,15 @@ describe("runtime manifest reconciliation invariants", () => {
 		});
 		expect(projection?.primaryModel).toEqual({
 			provider_id: "default",
-			model: "kimi-for-coding-highspeed",
+			model: "configured-seed",
 		});
 		expect(projection?.catalog.providers[0]?.models).toEqual([
+			{
+				id: "configured-seed",
+				context_window: 1_048_576,
+				max_input_tokens: 1_048_576,
+				supports_tools: true,
+			},
 			{
 				id: "kimi-for-coding",
 				context_window: 262_144,
@@ -2446,6 +2481,85 @@ describe("runtime manifest reconciliation invariants", () => {
 				supports_tools: true,
 			},
 		]);
+	});
+
+	test("uses live managed models only when discovery succeeds with a nonempty catalog", () => {
+		const paths = tempRuntimePaths();
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					run: runSettings("openclaw", ["gateway", "run"]),
+					provider_ids: ["clawdi"],
+					primary_model: { provider_id: "clawdi", model: "configured-seed" },
+					services: {},
+				},
+			},
+			{
+				projection: {
+					providers: {
+						clawdi: {
+							type: "custom_openai_compatible",
+							managed_by: "clawdi",
+							baseUrl: "https://api.example.test/v1",
+							apiMode: "openai_chat",
+							models: [{ id: "configured-seed" }, { id: "manifest-secondary" }],
+							apiKeySecretRef: "secret://providers/clawdi/api-key",
+						},
+					},
+				},
+			},
+		);
+		const previousWarn = console.warn;
+		const warnings: string[] = [];
+		console.warn = (...values: unknown[]) => warnings.push(values.map(String).join(" "));
+		try {
+			for (const outcome of ["success", "empty", "failure"] as const) {
+				warnings.length = 0;
+				const overrides = resolveManagedGatewayModelOverrides(
+					manifest,
+					["openclaw"],
+					paths.userHome,
+					manifest.workspaceRoot ?? paths.workspaceRoot,
+					null,
+					() =>
+						outcome === "failure"
+							? {
+									status: "failed",
+									endpoint: "https://api.example.test/v1/models",
+									detail: "unavailable",
+								}
+							: {
+									status: "ok",
+									endpoint: "https://api.example.test/v1/models",
+									models: outcome === "success" ? [{ id: "live-one" }, { id: "live-two" }] : [],
+								},
+				);
+				const projection = hostedAiProviderCatalog(manifest, "openclaw", {
+					managedModelsOverride: overrides.models.openclaw,
+				});
+				expect(projection?.primaryModel).toEqual({
+					provider_id: "clawdi",
+					model: "configured-seed",
+				});
+				expect(projection?.catalog.providers[0]?.models?.map((model) => model.id)).toEqual(
+					outcome === "success"
+						? ["configured-seed", "live-one", "live-two"]
+						: ["configured-seed", "manifest-secondary"],
+				);
+				if (outcome === "failure") {
+					expect(warnings).toEqual([
+						"managed model probe failed for openclaw/clawdi at https://api.example.test/v1/models: unavailable; keeping configured catalog and default",
+					]);
+					expect(warnings[0]).not.toMatch(/upgrade|fallback/i);
+				} else {
+					expect(warnings).toEqual([]);
+				}
+			}
+		} finally {
+			console.warn = previousWarn;
+		}
 	});
 
 	test.each([

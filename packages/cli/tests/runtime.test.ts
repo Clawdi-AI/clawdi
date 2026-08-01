@@ -57,7 +57,10 @@ import {
 	readHostPolicy,
 } from "../src/runtime/host-policy";
 import { hostedManifestEgressProfiles } from "../src/runtime/hosted-egress-profiles";
-import { hostedAiProviderCatalog } from "../src/runtime/hosted-provider-resolution";
+import {
+	hostedAiProviderCatalog,
+	type ManagedGatewayModelListFetcher,
+} from "../src/runtime/hosted-provider-resolution";
 import { releaseManagedSkill, reserveManagedSkill } from "../src/runtime/managed-skill-reservation";
 import {
 	buildOpenClawHostedProviderPatch,
@@ -3832,14 +3835,25 @@ exit 0
 		);
 	});
 
-	it("preserves canonical managed model capabilities through live discovery", () => {
+	it("keeps the configured OpenClaw default and session pin while projecting live models", () => {
 		const agentProviderId = "clawdi";
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
 		const openclawPatch = join(root, "openclaw-managed-provider-patch.json");
+		const openclawSessionIndex = join(
+			home,
+			".openclaw",
+			"agents",
+			"main",
+			"sessions",
+			"sessions.json",
+		);
+		const sessionPin = '{"modelOverride":"session-model","modelOverrideSource":"user"}\n';
 		mkdirSync(dirname(openclawBin), { recursive: true });
+		mkdirSync(dirname(openclawSessionIndex), { recursive: true });
+		writeFileSync(openclawSessionIndex, sessionPin);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -3922,34 +3936,35 @@ exit 0
 			},
 		};
 
-		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths(), {
-			managedGatewayModelListFetcher: (input) => {
-				expect(input.providerId).toBe(agentProviderId);
-				expect(input.credential).toBe(MANAGED_EGRESS_PLACEHOLDER_VALUE);
-				return {
-					status: "ok",
-					endpoint: `${input.baseUrl}/models`,
-					models: [
-						{ id: "k3" },
-						{
-							id: "kimi-for-coding",
-							context_window: 262144,
-							max_input_tokens: 262144,
-							input_modalities: ["text", "image"],
-							supports_tools: true,
-							supports_reasoning: true,
-						},
-						{
-							id: "kimi-for-coding-highspeed",
-							context_window: 262144,
-							max_input_tokens: 262144,
-							input_modalities: ["text"],
-							supports_tools: true,
-							supports_reasoning: true,
-						},
-					],
-				};
-			},
+		const managedGatewayModelListFetcher: ManagedGatewayModelListFetcher = (input) => {
+			expect(input.providerId).toBe(agentProviderId);
+			expect(input.credential).toBe(MANAGED_EGRESS_PLACEHOLDER_VALUE);
+			return {
+				status: "ok",
+				endpoint: `${input.baseUrl}/models`,
+				models: [
+					{
+						id: "kimi-for-coding",
+						context_window: 262144,
+						max_input_tokens: 262144,
+						input_modalities: ["text", "image"],
+						supports_tools: true,
+						supports_reasoning: true,
+					},
+					{
+						id: "kimi-for-coding-highspeed",
+						context_window: 262144,
+						max_input_tokens: 262144,
+						input_modalities: ["text"],
+						supports_tools: true,
+						supports_reasoning: true,
+					},
+				],
+			};
+		};
+		const paths = getRuntimePaths();
+		const convergence = convergeRuntimeManifest(loaded, paths, {
+			managedGatewayModelListFetcher,
 		});
 
 		expect(convergence.installErrors).toEqual([]);
@@ -3963,10 +3978,6 @@ exit 0
 			{
 				id: "k3",
 				name: "k3",
-				input: ["text", "image"],
-				reasoning: true,
-				compat: { supportsTools: true },
-				contextWindow: 1048576,
 			},
 			{
 				id: "kimi-for-coding",
@@ -3985,10 +3996,46 @@ exit 0
 				contextWindow: 262144,
 			},
 		]);
+		expect(patch.agents.defaults).not.toHaveProperty("modelPolicy");
+		expect(patch).not.toHaveProperty("session");
+		expect(JSON.stringify(patch)).not.toContain("modelOverride");
+		expect(readFileSync(openclawSessionIndex, "utf-8")).toBe(sessionPin);
+		const firstPatch = readFileSync(openclawPatch, "utf-8");
+		const firstRevision = systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"));
+
+		const refresh = convergeRuntimeManifest(loaded, paths, {
+			managedGatewayModelListFetcher,
+		});
+
+		expect(refresh.installErrors).toEqual([]);
+		expect(readFileSync(openclawPatch, "utf-8")).toBe(firstPatch);
+		expect(systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(firstRevision);
+		expect(readFileSync(openclawSessionIndex, "utf-8")).toBe(sessionPin);
+
+		const changed = convergeRuntimeManifest(loaded, paths, {
+			managedGatewayModelListFetcher: ({ baseUrl }) => ({
+				status: "ok",
+				endpoint: `${baseUrl}/models`,
+				models: [{ id: "new-live-model" }],
+			}),
+		});
+		const changedPatch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
+
+		expect(changed.installErrors).toEqual([]);
+		expect(changedPatch.agents.defaults.model.primary).toBe(`${agentProviderId}/k3`);
+		expect(
+			changedPatch.models.providers[agentProviderId].models.map(
+				(model: { id: string }) => model.id,
+			),
+		).toEqual(["k3", "new-live-model"]);
+		expect(systemdEnvRevision(readSystemdEnvFile(paths, "openclaw-gateway"))).not.toBe(
+			firstRevision,
+		);
+		expect(readFileSync(openclawSessionIndex, "utf-8")).toBe(sessionPin);
 		expect(JSON.stringify(patch)).not.toContain("clawdi-v2");
 	});
 
-	it("uses the stable managed provider name in the native Hermes projection", () => {
+	it("projects live Hermes models without changing its configured default or session state", () => {
 		const scopedProviderId = "clawdi-v2-deployment-42";
 		const agentProviderId = "clawdi";
 		const home = join(root, "home", "clawdi");
@@ -3999,6 +4046,10 @@ exit 0
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		writeHermesVersionBinary(home, "0.18.0");
+		const hermesState = join(home, ".hermes", "state.db");
+		const sessionOverride = "model_override=session-model\n";
+		mkdirSync(dirname(hermesState), { recursive: true });
+		writeFileSync(hermesState, sessionOverride);
 		const loaded = hostedHermesProviderLoad(home);
 		const provider = loaded.manifest.projection?.providers?.hermes;
 		if (!provider) throw new Error("expected Hermes provider fixture");
@@ -4021,17 +4072,44 @@ exit 0
 			},
 		};
 
-		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+		const managedGatewayModelListFetcher: ManagedGatewayModelListFetcher = ({ baseUrl }) => ({
+			status: "ok",
+			endpoint: `${baseUrl}/models`,
+			models: [{ id: "kimi/kimi-k2" }, { id: "kimi/kimi-k2-fast" }],
+		});
+		const paths = getRuntimePaths();
+		const convergence = convergeRuntimeManifest(loaded, paths, {
+			managedGatewayModelListFetcher,
+		});
 
 		expect(convergence.installErrors).toEqual([]);
 		const config = readHermesConfigYaml(home);
 		const model = expectRecord(config.model, "Hermes managed model config");
 		expect(model.provider).toBe(`custom:${agentProviderId}`);
+		expect(model.default).toBe("kimi/kimi-for-coding");
 		const providers = expectRecord(config.providers, "Hermes managed providers config");
-		expect(providers[agentProviderId]).toBeDefined();
+		const managedProvider = expectRecord(providers[agentProviderId], "Hermes managed provider");
+		expect(Object.keys(expectRecord(managedProvider.models, "Hermes managed models"))).toEqual([
+			"kimi/kimi-for-coding",
+			"kimi/kimi-k2",
+			"kimi/kimi-k2-fast",
+		]);
+		expect(managedProvider).not.toHaveProperty("discover_models");
 		expect(providers[`clawdi-${agentProviderId}`]).toBeUndefined();
 		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
 		expect(JSON.stringify(config)).not.toContain(scopedProviderId);
+		expect(readFileSync(hermesState, "utf-8")).toBe(sessionOverride);
+		const firstConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
+		const firstRevision = systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"));
+
+		const refresh = convergeRuntimeManifest(loaded, paths, {
+			managedGatewayModelListFetcher,
+		});
+
+		expect(refresh.installErrors).toEqual([]);
+		expect(readFileSync(join(home, ".hermes", "config.yaml"), "utf-8")).toBe(firstConfig);
+		expect(systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"))).toBe(firstRevision);
+		expect(readFileSync(hermesState, "utf-8")).toBe(sessionOverride);
 	});
 
 	it("reconciles hosted provider projections when the selected provider changes", () => {
