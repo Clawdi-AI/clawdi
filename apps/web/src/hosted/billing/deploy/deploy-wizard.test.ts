@@ -176,13 +176,6 @@ describe("deploy wizard product copy and flow", () => {
 		expect(runtimesSource).not.toContain("The agent that grows with you.");
 		expect(runtimesSource).not.toContain("DEFAULT_HOSTED_RUNTIME");
 	});
-
-	test("links unresolved post-payment recovery to the agents list", () => {
-		expect(wizardSource).toContain('id: "deploy-post-payment-error"');
-		expect(wizardSource).toContain("duration: Number.POSITIVE_INFINITY");
-		expect(wizardSource).toContain("View agents");
-		expect(wizardSource).toContain('router.navigate({ href: "/agents" })');
-	});
 });
 
 describe("hosted agent security and copy", () => {

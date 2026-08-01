@@ -9,9 +9,14 @@ const DEPLOYMENT_PARAMS = ["deployment_id", "upgrade_deployment_id"] as const;
 const MARKER_PARAMS = [
 	"session_id",
 	"checkout_session_id",
+	"deploy_request_id",
 	...DEPLOYMENT_PARAMS,
 	"mockCheckout",
 ] as const;
+
+export type CheckoutReturnNavigationTarget =
+	| { kind: "deploy_request"; deployRequestId: string }
+	| { kind: "deployment"; deploymentId: string };
 
 export function checkoutReturnWasCanceled(searchStr: string): boolean {
 	return new URLSearchParams(searchStr).get("checkout") === "cancel";
@@ -36,15 +41,27 @@ export function checkoutReturnDeploymentId(searchStr: string): string | null {
 	return null;
 }
 
-type CheckoutReturnNavigationOwner = (deploymentId: string) => boolean | Promise<boolean>;
+export function checkoutReturnNavigationTarget(
+	searchStr: string,
+): CheckoutReturnNavigationTarget | null {
+	const params = new URLSearchParams(searchStr);
+	const deployRequestId = params.get("deploy_request_id")?.trim();
+	if (deployRequestId) return { kind: "deploy_request", deployRequestId };
+	const deploymentId = checkoutReturnDeploymentId(searchStr);
+	return deploymentId ? { kind: "deployment", deploymentId } : null;
+}
+
+type CheckoutReturnNavigationOwner = (
+	target: CheckoutReturnNavigationTarget,
+) => boolean | Promise<boolean>;
 
 export async function checkoutReturnHasNavigationOwner(
 	searchStr: string,
 	onNavigate: CheckoutReturnNavigationOwner,
 ): Promise<boolean> {
 	if (checkoutReturnWasCanceled(searchStr)) return false;
-	const deploymentId = checkoutReturnDeploymentId(searchStr);
-	return deploymentId !== null && (await onNavigate(deploymentId));
+	const target = checkoutReturnNavigationTarget(searchStr);
+	return target !== null && (await onNavigate(target));
 }
 
 export function useCheckoutReturnHandler({

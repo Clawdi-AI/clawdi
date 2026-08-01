@@ -43,13 +43,15 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { useBillingClient } from "@/hosted/billing/billing-client";
-import { useCheckoutReturnHandler } from "@/hosted/billing/checkout-return";
+import {
+	type CheckoutReturnNavigationTarget,
+	useCheckoutReturnHandler,
+} from "@/hosted/billing/checkout-return";
 import {
 	CHECKOUT_ELEMENTS_UI_MODE,
 	checkoutRedirectUrl,
 	checkoutSessionClientSecret,
 	checkoutUiModeForPublishableKey,
-	findNewDeploymentId,
 } from "@/hosted/billing/components/stripe-checkout.logic";
 import {
 	StripeCheckoutDialog,
@@ -62,7 +64,10 @@ import type {
 	DeployRequest,
 	Plan,
 } from "@/hosted/billing/contracts";
-import { navigateToAcceptedDeployment } from "@/hosted/billing/deploy/accepted-deployment-navigation";
+import {
+	navigateToAcceptedDeployment,
+	navigateToAcceptedDeploymentRequest,
+} from "@/hosted/billing/deploy/accepted-deployment-navigation";
 import {
 	DEFAULT_DEPLOY_AI_ACCESS_MODE,
 	DEFAULT_DEPLOY_PRIMARY_MODEL,
@@ -97,14 +102,12 @@ import {
 } from "@/hosted/billing/deploy/language-timezone-controls";
 import {
 	billingErrorNormalizer,
-	DeploymentRequestTerminalError,
 	deploySubmissionErrorPresentation,
 	isIdempotencyKeyReusedError,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
 import { billingTermLabel, formatCents, formatUsdExact } from "@/hosted/billing/format";
 import {
-	useCheckoutReturnRefresh,
 	useHostedDeployments,
 	useManagedModelCatalog,
 	usePlans,
@@ -173,14 +176,13 @@ type Compute = "basic" | "performance";
 type DeployPaymentMethod = "card" | "wallet";
 type NativeDeployCheckout = {
 	clientSecret: CheckoutSessionClientSecret;
-	previousDeploymentIds: string[];
 	request: SubscriptionCreateRequestView;
 	summary: StripeCheckoutSummary;
 	tierLabel: "Basic" | "Performance";
 };
 type AcceptedDeploymentRecovery = {
-	deploymentId: string;
 	replace: boolean;
+	target: CheckoutReturnNavigationTarget;
 };
 type PaidDeploySelection = {
 	billingTermMonths: number;
@@ -310,10 +312,11 @@ export function DeployWizard() {
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const billingClient = useBillingClient();
+	const resolveDeploymentRequest = useResolveDeploymentRequest().mutateAsync;
 	const [acceptedDeploymentRecovery, setAcceptedDeploymentRecovery] =
 		useState<AcceptedDeploymentRecovery | null>(null);
 	const acceptDeployment = useCallback(
-		async (deploymentId: string, replace = false): Promise<void> => {
+		async (target: CheckoutReturnNavigationTarget, replace = false): Promise<boolean> => {
 			setAcceptedDeploymentRecovery(null);
 			setSubmitBusyLabel("Loading agent details…");
 			setSubmitTakingLongCopy(
@@ -322,24 +325,37 @@ export function DeployWizard() {
 			setSubmitTakingLong(false);
 			setSubmitting(true);
 			try {
-				await navigateToAcceptedDeployment({
-					deploymentId,
+				const navigation = {
 					getDeployment: billingClient.getDeployment,
-					navigate: (options) => router.navigate(options),
+					navigate: (options: { href: string; replace: boolean }) => router.navigate(options),
 					queryClient,
 					replace,
-				});
+				};
+				if (target.kind === "deploy_request") {
+					await navigateToAcceptedDeploymentRequest({
+						...navigation,
+						deployRequestId: target.deployRequestId,
+						resolveDeploymentRequest,
+					});
+				} else {
+					await navigateToAcceptedDeployment({
+						...navigation,
+						deploymentId: target.deploymentId,
+					});
+				}
+				return true;
 			} catch {
-				setAcceptedDeploymentRecovery({ deploymentId, replace });
+				setAcceptedDeploymentRecovery({ replace, target });
 				setSubmitting(false);
 				setSubmitTakingLong(false);
+				return false;
 			}
 		},
-		[billingClient.getDeployment, queryClient, router],
+		[billingClient.getDeployment, queryClient, resolveDeploymentRequest, router],
 	);
 	const navigateCheckoutReturn = useCallback(
-		async (deploymentId: string) => {
-			await acceptDeployment(deploymentId, true);
+		async (target: CheckoutReturnNavigationTarget) => {
+			await acceptDeployment(target, true);
 			return true;
 		},
 		[acceptDeployment],
@@ -353,8 +369,6 @@ export function DeployWizard() {
 	const managedModelCatalog = useManagedModelCatalog();
 	const aiProviders = useUserAiProviders();
 	const createSubscription = useSensitiveCreateSubscription();
-	const resolveDeploymentRequest = useResolveDeploymentRequest();
-	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const runAction = useActionLock();
 	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const walletCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
@@ -372,7 +386,6 @@ export function DeployWizard() {
 	const [checkoutSession, setCheckoutSession] = useState<NativeDeployCheckout | null>(null);
 	const [term, setTerm] = useState(1);
 	const [submitting, setSubmitting] = useState(false);
-	const [postPaymentBlocked, setPostPaymentBlocked] = useState(false);
 	const [submitTakingLong, setSubmitTakingLong] = useState(false);
 	const [submitBusyLabel, setSubmitBusyLabel] = useState("Creating agent…");
 	const [submitTakingLongCopy, setSubmitTakingLongCopy] = useState(
@@ -562,10 +575,7 @@ export function DeployWizard() {
 		return null;
 	})();
 	const canSubmit =
-		!submitting &&
-		!postPaymentBlocked &&
-		acceptedDeploymentRecovery === null &&
-		submitBlockingReason === null;
+		!submitting && acceptedDeploymentRecovery === null && submitBlockingReason === null;
 
 	function selectCreatedProvider(providerId: string) {
 		selectCreatedAiProvider(providerId);
@@ -632,19 +642,6 @@ export function DeployWizard() {
 		}
 	}
 
-	function showPostPaymentError(title: string, description: string) {
-		setPostPaymentBlocked(true);
-		toast.error(title, {
-			id: "deploy-post-payment-error",
-			description,
-			duration: Number.POSITIVE_INFINITY,
-			action: {
-				label: "View agents",
-				onClick: () => void router.navigate({ href: "/agents" }),
-			},
-		});
-	}
-
 	function showDeploySubmissionError(error: unknown) {
 		const presentation = deploySubmissionErrorPresentation(
 			error,
@@ -692,12 +689,9 @@ export function DeployWizard() {
 
 	async function navigateToReusedSubscription({ deploymentId }: { deploymentId: string }) {
 		setCheckoutSession(null);
-		await acceptDeployment(deploymentId);
+		await acceptDeployment({ kind: "deployment", deploymentId });
 	}
-	async function handleCheckoutComplete(
-		previousDeploymentIds: readonly string[],
-		request: SubscriptionCreateRequestView | null,
-	) {
+	async function handleCheckoutComplete(request: SubscriptionCreateRequestView) {
 		setCheckoutSession(null);
 		setSubmitTakingLong(false);
 		setSubmitBusyLabel("Creating agent…");
@@ -705,57 +699,19 @@ export function DeployWizard() {
 			"Payment was confirmed and agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
 		);
 		setSubmitting(true);
-		let requestFingerprint: string | null = null;
 		try {
-			if (request) {
-				requestFingerprint = idempotencyFingerprint({
-					selection: request.selection,
-					target: request.target,
-				});
-				try {
-					const resolved = await resolveDeploymentRequest.mutateAsync(request.idempotencyKey);
-					forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
-					checkoutAttemptRef.current = null;
-					await acceptDeployment(resolved.deploymentId, true);
-					return;
-				} catch (error) {
-					if (error instanceof DeploymentRequestTerminalError) {
-						forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
-						checkoutAttemptRef.current = null;
-						const normalized = normalizeBillingError(error);
-						showPostPaymentError(
-							"Payment succeeded, but the agent could not be started",
-							`${normalized} Don’t submit another payment; check Agents for the latest state.`,
-						);
-						return;
-					}
-					// Stripe may complete before its deployment request is visible. Fall back
-					// to one inventory refresh after the bounded request-status watch ends.
-				}
-			}
-			let refreshedDeployments: Awaited<ReturnType<typeof refreshCheckoutReturn>>;
-			try {
-				refreshedDeployments = await refreshCheckoutReturn();
-			} catch {
-				showPostPaymentError(
-					"Payment succeeded; agent status is unavailable",
-					"We couldn’t refresh your agent list. Don’t submit another payment; open Agents and check again in a moment.",
-				);
-				return;
-			}
-			const deploymentId = findNewDeploymentId(previousDeploymentIds, refreshedDeployments);
-			if (!deploymentId) {
-				showPostPaymentError(
-					"Payment succeeded; your agent is not visible yet",
-					"Don’t submit another payment. Open Agents and check again in a moment while the accepted request appears.",
-				);
-				return;
-			}
-			if (requestFingerprint) {
+			const requestFingerprint = idempotencyFingerprint({
+				selection: request.selection,
+				target: request.target,
+			});
+			const accepted = await acceptDeployment(
+				{ kind: "deploy_request", deployRequestId: request.idempotencyKey },
+				true,
+			);
+			if (accepted) {
 				forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
 				checkoutAttemptRef.current = null;
 			}
-			await acceptDeployment(deploymentId, true);
 		} finally {
 			setSubmitting(false);
 			setSubmitTakingLong(false);
@@ -835,7 +791,10 @@ export function DeployWizard() {
 							? formatUsdExact(walletDebit.debitAmountUsd)
 							: formatCents(paidSelection.offer.price_cents),
 					);
-					await acceptDeployment(outcome.deploymentId);
+					await acceptDeployment({
+						kind: "deployment",
+						deploymentId: outcome.deploymentId,
+					});
 					return;
 				}
 				const checkoutFingerprint = idempotencyFingerprint({ selection, target });
@@ -871,9 +830,6 @@ export function DeployWizard() {
 				if (cardCheckoutUiMode === CHECKOUT_ELEMENTS_UI_MODE && clientSecret) {
 					setCheckoutSession({
 						clientSecret,
-						previousDeploymentIds: (deployments.data ?? []).map(
-							(deployment) => deployment.resource.id,
-						),
 						request: {
 							selection,
 							target,
@@ -916,7 +872,7 @@ export function DeployWizard() {
 				});
 			forgetIdempotencyAttempt("deployment-create", fingerprint);
 			includedCreateAttemptRef.current = null;
-			await acceptDeployment(created.deploymentId);
+			await acceptDeployment({ kind: "deployment", deploymentId: created.deploymentId });
 		} catch (e) {
 			if (paymentMethod === "wallet") {
 				void subscriptionCreateQuote.refetch();
@@ -976,7 +932,7 @@ export function DeployWizard() {
 	const primaryActionDisabled = acceptedDeploymentHydrationFailed
 		? submitting
 		: walletTopUpAction
-			? submitting || postPaymentBlocked || !wallet.data
+			? submitting || !wallet.data
 			: !canSubmit;
 	const amountExplainsBlocking =
 		paidSelection !== null &&
@@ -1445,10 +1401,11 @@ export function DeployWizard() {
 							className="mb-3"
 						>
 							<TriangleAlert />
-							<AlertTitle>Deployment accepted; details couldn’t load</AlertTitle>
+							<AlertTitle>Agent couldn’t be opened</AlertTitle>
 							<AlertDescription>
-								Retrying only loads the accepted deployment and opens its page. It won’t create
-								another agent.
+								{acceptedDeploymentRecovery?.target.kind === "deploy_request"
+									? "Retrying resumes this checkout’s existing deployment request and opens the agent. It won’t create or charge for another one."
+									: "Retrying only loads the accepted deployment and opens its page. It won’t create another agent."}
 							</AlertDescription>
 						</Alert>
 					) : null}
@@ -1509,7 +1466,7 @@ export function DeployWizard() {
 										acceptedDeploymentHydrationFailed && acceptedDeploymentRecovery
 											? () =>
 													void acceptDeployment(
-														acceptedDeploymentRecovery.deploymentId,
+														acceptedDeploymentRecovery.target,
 														acceptedDeploymentRecovery.replace,
 													)
 											: walletTopUpAction
@@ -1579,12 +1536,9 @@ export function DeployWizard() {
 				title={`Complete ${checkoutSession?.tierLabel ?? "compute"} checkout`}
 				description="Enter payment details without leaving this page. Redirect-based payment methods return here after confirmation."
 				summary={checkoutSession?.summary ?? null}
-				onComplete={() =>
-					void handleCheckoutComplete(
-						checkoutSession?.previousDeploymentIds ?? [],
-						checkoutSession?.request ?? null,
-					)
-				}
+				onComplete={() => {
+					if (checkoutSession) void handleCheckoutComplete(checkoutSession.request);
+				}}
 			/>
 		</div>
 	);

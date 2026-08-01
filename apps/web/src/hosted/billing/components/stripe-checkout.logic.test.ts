@@ -5,9 +5,7 @@ import {
 	checkoutRedirectUrl,
 	checkoutSessionClientSecret,
 	checkoutUiModeForPublishableKey,
-	findNewDeploymentId,
 } from "@/hosted/billing/components/stripe-checkout.logic";
-import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 describe("stripe checkout logic", () => {
 	function checkoutResult(
@@ -47,15 +45,5 @@ describe("stripe checkout logic", () => {
 	test("starts with hosted Checkout when Stripe.js cannot be configured", () => {
 		expect(checkoutUiModeForPublishableKey(undefined)).toBe("hosted");
 		expect(checkoutUiModeForPublishableKey("pk_test_browser")).toBe("custom");
-	});
-
-	test("finds a deployment created after checkout completes", () => {
-		const deployments = [
-			hostedDeploymentFixture({ id: "dep_old" }),
-			hostedDeploymentFixture({ id: "dep_new" }),
-		];
-
-		expect(findNewDeploymentId(["dep_old"], deployments)).toBe("dep_new");
-		expect(findNewDeploymentId(["dep_old", "dep_new"], deployments)).toBeNull();
 	});
 });

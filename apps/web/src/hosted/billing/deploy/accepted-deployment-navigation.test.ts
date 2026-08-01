@@ -4,6 +4,7 @@ import type { HostedDeployment } from "@/hosted/billing/contracts";
 import {
 	type AcceptedDeploymentNavigate,
 	navigateToAcceptedDeployment,
+	navigateToAcceptedDeploymentRequest,
 } from "@/hosted/billing/deploy/accepted-deployment-navigation";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
@@ -20,6 +21,7 @@ describe("accepted deployment navigation", () => {
 	test("cancels a stale list before authoritative cache handoff and navigation", async () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const staleList = deferred<HostedDeployment[]>();
+		const relatedRead = deferred<HostedDeployment>();
 		const existing = hostedDeploymentFixture({ id: "hdep_existing" });
 		const staleCreated = hostedDeploymentFixture({
 			id: "hdep_created",
@@ -40,6 +42,12 @@ describe("accepted deployment navigation", () => {
 				queryFn: () => staleList.promise,
 			})
 			.catch(() => undefined);
+		const inFlightRelatedRead = queryClient
+			.fetchQuery({
+				queryKey: [...billingKeys.deployments, "hdep_created"],
+				queryFn: () => relatedRead.promise,
+			})
+			.catch(() => undefined);
 		expect(queryClient.getQueryState(billingKeys.deployments)?.fetchStatus).toBe("fetching");
 
 		const navigations: Parameters<AcceptedDeploymentNavigate>[0][] = [];
@@ -50,6 +58,9 @@ describe("accepted deployment navigation", () => {
 				const cached = queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments);
 				expect(cached).toEqual([existing, authoritative]);
 				expect(queryClient.getQueryState(billingKeys.deployments)?.fetchStatus).toBe("idle");
+				expect(
+					queryClient.getQueryState([...billingKeys.deployments, "hdep_created"])?.fetchStatus,
+				).toBe("fetching");
 				expect(queryClient.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(false);
 				navigations.push(options);
 			},
@@ -58,8 +69,11 @@ describe("accepted deployment navigation", () => {
 		});
 
 		staleList.resolve([]);
+		relatedRead.resolve(authoritative);
 		await staleList.promise;
+		await relatedRead.promise;
 		await inFlightStaleList;
+		await inFlightRelatedRead;
 		await Promise.resolve();
 		expect(queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments)).toEqual([
 			existing,
@@ -70,6 +84,48 @@ describe("accepted deployment navigation", () => {
 		expect(queryClient.getQueryState(["agents"])?.isInvalidated).toBe(true);
 		expect(queryClient.getQueryCache().findAll({ queryKey: ["agents"] })).toHaveLength(1);
 
+		queryClient.clear();
+	});
+
+	test("resolves request lineage before the authoritative handoff and awaits navigation", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const authoritative = hostedDeploymentFixture({ id: "hdep_from_request", status: "creating" });
+		const navigationGate = deferred<void>();
+		const events: string[] = [];
+		let settled = false;
+
+		const handoff = navigateToAcceptedDeploymentRequest({
+			deployRequestId: "checkout/stable:key",
+			resolveDeploymentRequest: async (deployRequestId) => {
+				events.push(`resolve:${deployRequestId}`);
+				return { deploymentId: authoritative.resource.id };
+			},
+			getDeployment: async (deploymentId) => {
+				events.push(`get:${deploymentId}`);
+				return authoritative;
+			},
+			navigate: async () => {
+				events.push("navigate");
+				expect(queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments)).toEqual([
+					authoritative,
+				]);
+				await navigationGate.promise;
+			},
+			queryClient,
+			replace: true,
+		}).then(() => {
+			settled = true;
+		});
+
+		for (let turn = 0; turn < 10 && !events.includes("navigate"); turn += 1) {
+			await Promise.resolve();
+		}
+		expect(events).toEqual(["resolve:checkout/stable:key", "get:hdep_from_request", "navigate"]);
+		expect(settled).toBe(false);
+
+		navigationGate.resolve();
+		await handoff;
+		expect(settled).toBe(true);
 		queryClient.clear();
 	});
 });
