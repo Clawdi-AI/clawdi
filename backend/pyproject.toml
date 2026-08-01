@@ -9,7 +9,7 @@ dependencies = [
     "asyncpg>=0.30",
     "alembic>=1.14",
     "pydantic-settings>=2.14.0",
-    "pyjwt[crypto]>=2.10",
+    "pyjwt[crypto]==2.13.0",
     "cryptography>=44.0",
     "httpx>=0.28.1",
     "httpx2>=2.5.0,<3.0.0",
@@ -66,6 +66,7 @@ dev = [
 typeCheckingMode = "standard"
 pythonVersion = "3.12"
 include = [
+    "app/core/auth.py",
     "app/core/query_utils.py",
     "app/core/sentry.py",
     "app/core/skill_key.py",

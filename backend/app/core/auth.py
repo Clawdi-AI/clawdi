@@ -514,8 +514,8 @@ def _decode_clerk_oauth_access_jwt(
 
 
 async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | None:
-    oauth_cli = _is_oauth_access_jwt(token)
-    if oauth_cli:
+    oauth_setting: ClerkCliOAuthSetting | None = None
+    if _is_oauth_access_jwt(token):
         try:
             oauth_setting = await resolve_app_setting(db, CLERK_CLI_OAUTH_SPEC)
         except AppSettingUnavailable as error:
@@ -531,11 +531,10 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
     signing_key = await _resolve_clerk_signing_key(token)
     if signing_key is None:
         return None
-    payload = (
-        _decode_clerk_oauth_access_jwt(token, signing_key, oauth_setting)
-        if oauth_cli
-        else _decode_clerk_session_jwt(token, signing_key)
-    )
+    if oauth_setting is None:
+        payload = _decode_clerk_session_jwt(token, signing_key)
+    else:
+        payload = _decode_clerk_oauth_access_jwt(token, signing_key, oauth_setting)
     if payload is None:
         return None
 
@@ -718,6 +717,7 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
             # of being silently swallowed.
             await db.rollback()
 
+    oauth_cli = oauth_setting is not None
     oauth_access_expires_at: datetime | None = None
     if oauth_cli:
         expires_at = payload.get("exp")
