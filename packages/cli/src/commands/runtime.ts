@@ -10,6 +10,7 @@ import {
 	readFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { isClawdiManagedV2ProviderId } from "@clawdi/shared";
 import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
 import { parse as parseYaml } from "yaml";
@@ -47,14 +48,20 @@ import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
 import { buildEgressEngineEnv, SYSTEM_CA_BUNDLE } from "../runtime/egress-env";
 import { readHostPolicy } from "../runtime/host-policy";
 import {
+	acceptManagedGatewayModelTransportValidators,
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
 	loadRuntimeManifest,
+	type ManagedGatewayModelAuthorityResolution,
+	type ManagedGatewayModelListFetcher,
+	type ManagedGatewayModelTransportValidators,
 	type RuntimePrivateAppliedAuthority,
+	resolveManagedGatewayModelAuthorityForLoad,
 	runtimeRecoverableSecretValues,
 } from "../runtime/manifest";
 import { manifestSchema as runtimeDesiredStateSchema } from "../runtime/manifest-contract";
 import {
+	loadCommittedRuntimeManifest,
 	loadRemoteRuntimeManifest,
 	type RuntimeManifestFailure,
 	type RuntimeManifestLoad,
@@ -1187,6 +1194,7 @@ interface RuntimeWatchOptions {
 	notifications?: boolean;
 	notificationConsumer?: typeof consumeSse;
 	applyContext?: RuntimeApplyContext;
+	managedGatewayModelListFetcher?: ManagedGatewayModelListFetcher;
 }
 
 interface RuntimeVerifyOptions {
@@ -1253,6 +1261,9 @@ interface RuntimeApplyOptions {
 	manifestIdentity?: RuntimeManifestIdentity;
 	recoverFailedSystemdUnits?: boolean;
 	requireSystemdApplied?: boolean;
+	managedGatewayModelListFetcher?: ManagedGatewayModelListFetcher;
+	managedGatewayModelTransportValidators?: ManagedGatewayModelTransportValidators;
+	managedGatewayModelAuthorityResolution?: ManagedGatewayModelAuthorityResolution;
 }
 
 interface RuntimeManifestIdentity {
@@ -1321,8 +1332,12 @@ export function commitRuntimeAppliedState(input: {
 	}
 	// The apply identity names the Hosted control-plane snapshot; `etag` names
 	// the independently rendered runtime bundle. Persist both authorities.
-	const providerIds = runtimeSourceProviderIds(input.load.manifest);
-	input.convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(input.load, input.paths);
+	const committedLoad = { ...input.load, manifest: input.convergence.manifest };
+	const providerIds = runtimeSourceProviderIds(committedLoad.manifest);
+	input.convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(
+		committedLoad,
+		input.paths,
+	);
 	input.convergence.outputs.appliedState = writeRuntimeAppliedState(
 		{
 			schemaVersion: "clawdi.runtimeAppliedState.v2",
@@ -1341,7 +1356,7 @@ export function commitRuntimeAppliedState(input: {
 						bootNonce: input.applyIdentity.bootNonce,
 					}
 				: {}),
-			contentIdentity: runtimeAppliedContentIdentity(input.load),
+			contentIdentity: runtimeAppliedContentIdentity(committedLoad),
 			...(input.daemonAuthTokenRevision
 				? { daemonAuthTokenRevision: input.daemonAuthTokenRevision }
 				: {}),
@@ -2474,6 +2489,8 @@ async function runtimeWatchTick(
 		deferCliInstallReason?: string;
 		recoverFailedSystemdUnits?: boolean;
 		applyContext?: RuntimeApplyContext;
+		managedGatewayModelListFetcher?: ManagedGatewayModelListFetcher;
+		managedGatewayModelTransportValidators?: ManagedGatewayModelTransportValidators;
 	},
 ): Promise<Record<string, unknown>> {
 	return withRuntimeConvergeLockAsync(paths, () => runtimeWatchTickLocked(paths, opts));
@@ -2487,6 +2504,8 @@ async function runtimeWatchTickLocked(
 		deferCliInstallReason?: string;
 		recoverFailedSystemdUnits?: boolean;
 		applyContext?: RuntimeApplyContext;
+		managedGatewayModelListFetcher?: ManagedGatewayModelListFetcher;
+		managedGatewayModelTransportValidators?: ManagedGatewayModelTransportValidators;
 	},
 ): Promise<Record<string, unknown>> {
 	let reconciliation: RuntimeCliReconciliationResult;
@@ -2528,6 +2547,8 @@ async function runtimeWatchTickAfterCliReconciliation(
 		deferCliInstallReason?: string;
 		recoverFailedSystemdUnits?: boolean;
 		applyContext?: RuntimeApplyContext;
+		managedGatewayModelListFetcher?: ManagedGatewayModelListFetcher;
+		managedGatewayModelTransportValidators?: ManagedGatewayModelTransportValidators;
 	},
 ): Promise<Record<string, unknown>> {
 	const activeAppliedState = readRuntimeAppliedState(paths);
@@ -2549,6 +2570,8 @@ async function runtimeWatchTickAfterCliReconciliation(
 		};
 	}
 	const responseManifestEtag = manifestLoad.etag ?? manifestEtag ?? null;
+	let preparedModelAuthority: ManagedGatewayModelAuthorityResolution | undefined;
+	let unchangedModelAuthority: ManagedGatewayModelAuthorityResolution | undefined;
 	if (
 		"notModified" in manifestLoad &&
 		activeAppliedState !== null &&
@@ -2558,24 +2581,109 @@ async function runtimeWatchTickAfterCliReconciliation(
 			runtimeAppliedApplyIdentity(activeAppliedState),
 		)
 	) {
-		const completion = completePendingRuntimeCliUpgrade(paths, getCliVersion());
-		return {
-			schemaVersion: "clawdi.runtimeWatchEvent.v1",
-			status: "not_modified",
-			sourcePath: manifestLoad.sourcePath,
-			etag: responseManifestEtag,
-			sourceRevision: activeAppliedState.sourceRevision,
-			generation: activeAppliedState.generation,
-			instanceId: activeAppliedState.instanceId,
-			selfReexec: completion.selfReexec,
-		};
+		const appliedProviderIds = [
+			...activeAppliedState.providerIds,
+			...Object.values(activeAppliedState.projectedProviderIds).flat(),
+		];
+		if (appliedProviderIds.some(isClawdiManagedV2ProviderId)) {
+			const applyContext = manifestLoad.applyContext;
+			if (!applyContext) {
+				return {
+					schemaVersion: "clawdi.runtimeWatchEvent.v1",
+					status: "error",
+					stage: "final",
+					errors: ["runtime bundle is missing applied authority context"],
+					error: "runtime bundle is missing applied authority context",
+					activeGeneration: activeAppliedState.generation,
+					rejectedGeneration: activeAppliedState.generation,
+					instanceId: activeAppliedState.instanceId,
+				};
+			}
+			const committed = loadCommittedRuntimeManifest(paths, applyContext);
+			if ("manifest" in committed) {
+				if (
+					committed.manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2"
+				) {
+					try {
+						const committedRemoteLoad: RuntimeManifestLoad = {
+							...committed,
+							offline: false,
+							sourcePath: manifestLoad.sourcePath,
+							etag: responseManifestEtag ?? undefined,
+							sourceRevision: activeAppliedState.sourceRevision,
+						};
+						preparedModelAuthority = resolveManagedGatewayModelAuthorityForLoad(
+							committedRemoteLoad,
+							paths,
+							opts.managedGatewayModelListFetcher,
+							opts.managedGatewayModelTransportValidators,
+						);
+						if (
+							runtimeAppliedContentIdentity(preparedModelAuthority.load).sha256 !==
+							activeAppliedState.contentIdentity.sha256
+						) {
+							// The transport bundle is unchanged, but its dynamic provider
+							// representation has new effective bytes and must converge.
+						} else {
+							unchangedModelAuthority = preparedModelAuthority;
+							preparedModelAuthority = undefined;
+						}
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						return {
+							schemaVersion: "clawdi.runtimeWatchEvent.v1",
+							status: "error",
+							stage: "final",
+							errors: [message],
+							error: message,
+							activeGeneration: activeAppliedState.generation,
+							rejectedGeneration: activeAppliedState.generation,
+							instanceId: activeAppliedState.instanceId,
+						};
+					}
+				}
+			} else {
+				return {
+					schemaVersion: "clawdi.runtimeWatchEvent.v1",
+					status: "error",
+					stage: "final",
+					errors: committed.errors,
+					error: committed.errors[0],
+					activeGeneration: activeAppliedState.generation,
+					rejectedGeneration: activeAppliedState.generation,
+					instanceId: activeAppliedState.instanceId,
+				};
+			}
+		}
+		if (preparedModelAuthority) {
+			// Continue below with the already resolved effective manifest.
+		} else {
+			if (unchangedModelAuthority) {
+				acceptManagedGatewayModelTransportValidators(
+					opts.managedGatewayModelTransportValidators,
+					unchangedModelAuthority.transportValidators,
+				);
+			}
+			const completion = completePendingRuntimeCliUpgrade(paths, getCliVersion());
+			return {
+				schemaVersion: "clawdi.runtimeWatchEvent.v1",
+				status: "not_modified",
+				sourcePath: manifestLoad.sourcePath,
+				etag: responseManifestEtag,
+				sourceRevision: activeAppliedState.sourceRevision,
+				generation: activeAppliedState.generation,
+				instanceId: activeAppliedState.instanceId,
+				selfReexec: completion.selfReexec,
+			};
+		}
 	}
 
 	try {
 		const fresh =
-			"notModified" in manifestLoad
+			preparedModelAuthority?.load ??
+			("notModified" in manifestLoad
 				? await loadFullRuntimeManifestForWatch(paths, opts.applyContext)
-				: manifestLoad;
+				: manifestLoad);
 		if ("errors" in fresh) {
 			return {
 				schemaVersion: "clawdi.runtimeWatchEvent.v1",
@@ -2618,6 +2726,9 @@ async function runtimeWatchTickAfterCliReconciliation(
 			manifestIdentity,
 			recoverFailedSystemdUnits: opts.recoverFailedSystemdUnits,
 			requireSystemdApplied: applyIdentity !== null,
+			managedGatewayModelListFetcher: opts.managedGatewayModelListFetcher,
+			managedGatewayModelTransportValidators: opts.managedGatewayModelTransportValidators,
+			managedGatewayModelAuthorityResolution: preparedModelAuthority,
 		});
 		if (applyResult.kind === "cli_handoff") {
 			const activeAppliedState = readRuntimeAppliedState(paths);
@@ -2775,6 +2886,9 @@ function applyRuntimeDesiredState(
 	let egressPrerequisiteActivated = false;
 	const convergence = convergeRuntimeManifest(load, paths, {
 		cacheLastGood: false,
+		managedGatewayModelListFetcher: opts.managedGatewayModelListFetcher,
+		managedGatewayModelTransportValidators: opts.managedGatewayModelTransportValidators,
+		managedGatewayModelAuthorityResolution: opts.managedGatewayModelAuthorityResolution,
 		commitAuthority: (committedConvergence, authority) => {
 			if (opts.requireSystemdApplied && !systemdApply.applied) {
 				throw new Error("systemd apply did not activate the rendered runtime manifest");
@@ -2959,6 +3073,7 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 	let cliInstallBackoffMs = 0;
 	let nextCliInstallRetryAt = 0;
 	const wakeSignal = createRuntimeWatchWakeSignal();
+	const managedGatewayModelTransportValidators: ManagedGatewayModelTransportValidators = new Map();
 	let notificationSubscription: RuntimeWatchNotificationSubscription | null = null;
 
 	if (mode !== "hosted") {
@@ -3017,6 +3132,8 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 				// Conditional retries run every 15 seconds. Recover failed units
 				// only on the five-minute full refresh, or once in one-shot mode.
 				recoverFailedSystemdUnits: forceRefresh || opts.once === true,
+				managedGatewayModelListFetcher: opts.managedGatewayModelListFetcher,
+				managedGatewayModelTransportValidators,
 				deferCliInstallReason: deferCliInstall
 					? `CLI install retry is in backoff until ${new Date(nextCliInstallRetryAt).toISOString()}`
 					: undefined,

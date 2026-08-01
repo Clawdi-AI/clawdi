@@ -12,10 +12,16 @@ import {
 	isClawdiManagedV2ProviderId,
 } from "@clawdi/shared";
 import type { AgentPrimaryModel } from "../lib/ai-provider-projection";
+import { runtimeContentSha256 } from "./applied-state";
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import { isClawdiManagedProviderProjection } from "./hosted-egress-profiles";
-import { resolveManagedPrimaryModel } from "./managed-model-resolution";
+import {
+	buildManagedModelsEndpoint,
+	normalizeManagedLiveModels,
+	resolveManagedPrimaryModel,
+} from "./managed-model-resolution";
 import type { RuntimeManifest } from "./manifest-contract";
+import type { RuntimeManifestLoad } from "./manifest-source";
 
 export function hostedAiProviderCatalog(
 	manifest: RuntimeManifest,
@@ -189,54 +195,104 @@ function managedGatewayPrimaryModelTarget(
 	};
 }
 
-interface ManagedGatewayModelOverrides {
+export interface ManagedGatewayModelOverrides {
 	primaryModels: Partial<Record<string, AgentPrimaryModel>>;
 	models: Partial<Record<string, AiProviderModel[]>>;
 }
 
-interface ManagedGatewayModelFetchInput {
+export interface ManagedGatewayModelFetchInput {
 	baseUrl: string;
 	home: string;
 	egressSystemCaFile: string | null;
+	ifNoneMatch?: string;
 	providerId: string;
 	runtimeName: string;
+	validationMode: "legacy" | "strict-v2";
 	workspaceRoot: string;
 }
 
-type ManagedGatewayModelFetchResult =
-	| { status: "ok"; endpoint: string; models: AiProviderModel[] }
+export type ManagedGatewayModelFetchResult =
+	| { status: "ok"; endpoint: string; etag?: string; models: AiProviderModel[] }
+	| { status: "not_modified"; endpoint: string; etag?: string }
 	| { status: "failed"; endpoint: string; detail: string };
 
 export type ManagedGatewayModelListFetcher = (
 	input: ManagedGatewayModelFetchInput,
 ) => ManagedGatewayModelFetchResult;
 
-export function resolveManagedGatewayModelOverrides(
-	manifest: RuntimeManifest,
+export interface ManagedGatewayModelAuthorityResolution {
+	baseManifestRevision: string;
+	load: RuntimeManifestLoad;
+	overrides: ManagedGatewayModelOverrides;
+	transportValidators: ManagedGatewayModelTransportValidators;
+}
+
+export type ManagedGatewayModelTransportValidators = Map<string, string>;
+
+export function resolveManagedGatewayModelAuthority(
+	load: RuntimeManifestLoad,
 	enabledRuntimes: readonly string[],
 	home: string,
 	workspaceRoot: string,
 	egressSystemCaFile: string | null,
 	fetcher: ManagedGatewayModelListFetcher,
-): ManagedGatewayModelOverrides {
+	transportValidators?: ManagedGatewayModelTransportValidators,
+): ManagedGatewayModelAuthorityResolution {
+	const { manifest } = load;
+	const baseManifestRevision = runtimeContentSha256(manifest);
+	const strictV2 = manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
+	const resolvedTransportValidators = new Map(transportValidators);
 	const overrides: ManagedGatewayModelOverrides = { primaryModels: {}, models: {} };
 	const fetchCache = new Map<string, ManagedGatewayModelFetchResult>();
+	const modelCache = new Map<string, AiProviderModel[]>();
+	let effectiveManifest = manifest;
 	for (const runtimeName of enabledRuntimes) {
 		const target = managedGatewayPrimaryModelTarget(manifest, runtimeName);
 		if (!target) continue;
+		const strictTarget = strictV2 && isClawdiManagedV2ProviderId(target.providerId);
 		const cacheKey = `${target.providerId}\n${target.baseUrl}`;
 		let fetchResult = fetchCache.get(cacheKey);
+		if (!fetchResult && strictTarget && load.offline) {
+			fetchResult = {
+				status: "ok",
+				endpoint: buildManagedModelsEndpoint(target.baseUrl),
+				models: strictManagedProviderModels(manifest, target.providerId),
+			};
+			fetchCache.set(cacheKey, fetchResult);
+		}
 		if (!fetchResult) {
+			const ifNoneMatch =
+				strictTarget && load.source === "last-good-cache"
+					? resolvedTransportValidators.get(cacheKey)
+					: undefined;
 			fetchResult = fetcher({
 				baseUrl: target.baseUrl,
 				home,
 				egressSystemCaFile,
+				ifNoneMatch,
 				providerId: target.providerId,
 				runtimeName,
+				validationMode: strictTarget ? "strict-v2" : "legacy",
 				workspaceRoot,
 			});
 			fetchCache.set(cacheKey, fetchResult);
-			if (fetchResult.status === "failed") {
+			if (
+				strictTarget &&
+				fetchResult.status === "not_modified" &&
+				(!ifNoneMatch || fetchResult.etag !== ifNoneMatch)
+			) {
+				throw new Error(
+					`managed model probe returned 304 with a mismatched final validator for ${runtimeName}/${target.providerId}`,
+				);
+			}
+			if (strictTarget && fetchResult.status !== "failed") {
+				if (isStrongEntityTag(fetchResult.etag)) {
+					resolvedTransportValidators.set(cacheKey, fetchResult.etag);
+				} else {
+					resolvedTransportValidators.delete(cacheKey);
+				}
+			}
+			if (fetchResult.status === "failed" && !strictTarget) {
 				const loggedProviderId = isClawdiManagedV2ProviderId(target.providerId)
 					? CLAWDI_MANAGED_PROVIDER_ID
 					: target.providerId;
@@ -245,22 +301,124 @@ export function resolveManagedGatewayModelOverrides(
 				);
 			}
 		}
+		if (strictTarget && fetchResult.status === "failed") {
+			throw new Error(
+				`managed model probe failed for ${runtimeName}/${target.providerId} at ${fetchResult.endpoint}: ${fetchResult.detail}`,
+			);
+		}
+		let liveModels = modelCache.get(cacheKey);
+		if (!liveModels) {
+			if (fetchResult.status === "ok") {
+				liveModels = strictTarget
+					? normalizeManagedLiveModels(fetchResult.models)
+					: fetchResult.models;
+			} else if (fetchResult.status === "not_modified" && strictTarget) {
+				liveModels = strictManagedProviderModels(manifest, target.providerId);
+			} else {
+				liveModels = [];
+			}
+			modelCache.set(cacheKey, liveModels);
+		}
 		const resolution = resolveManagedPrimaryModel({
 			seedModel: target.seedModel,
-			liveModelIds:
-				fetchResult.status === "ok" ? fetchResult.models.map((model) => model.id) : null,
+			liveModelIds: fetchResult.status === "failed" ? null : liveModels.map((model) => model.id),
 		});
-		if (fetchResult.status === "ok" && fetchResult.models.length > 0) {
-			overrides.models[runtimeName] = fetchResult.models;
+		if (liveModels.length > 0) {
+			overrides.models[runtimeName] = liveModels;
 		}
 		if (!resolution.resolvedModel) continue;
+		if (strictTarget) {
+			effectiveManifest = withManagedProviderAuthority(
+				effectiveManifest,
+				runtimeName,
+				target.providerId,
+				liveModels,
+				resolution.resolvedModel,
+			);
+		}
 		if (resolution.resolvedModel === target.seedModel) continue;
 		overrides.primaryModels[runtimeName] = {
 			provider_id: target.providerId,
 			model: resolution.resolvedModel,
 		};
 	}
-	return overrides;
+	return {
+		baseManifestRevision,
+		load: effectiveManifest === manifest ? load : { ...load, manifest: effectiveManifest },
+		overrides,
+		transportValidators: resolvedTransportValidators,
+	};
+}
+
+export function acceptManagedGatewayModelTransportValidators(
+	target: ManagedGatewayModelTransportValidators | undefined,
+	resolved: ManagedGatewayModelTransportValidators,
+): void {
+	if (!target) return;
+	target.clear();
+	for (const [key, etag] of resolved) target.set(key, etag);
+}
+
+export function requiresStrictManagedGatewayModelProbe(
+	load: RuntimeManifestLoad,
+	enabledRuntimes: readonly string[],
+): boolean {
+	return (
+		!load.offline &&
+		load.manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2" &&
+		enabledRuntimes.some((runtimeName) => {
+			const target = managedGatewayPrimaryModelTarget(load.manifest, runtimeName);
+			return target !== null && isClawdiManagedV2ProviderId(target.providerId);
+		})
+	);
+}
+
+function strictManagedProviderModels(
+	manifest: RuntimeManifest,
+	providerId: string,
+): AiProviderModel[] {
+	const providers = recordValue(manifest.projection?.providers);
+	const provider = providers ? recordValue(providers[providerId]) : null;
+	if (!provider || !Array.isArray(provider.models)) {
+		throw new Error(`committed managed provider ${providerId} has no model authority`);
+	}
+	return normalizeManagedLiveModels(provider.models);
+}
+
+function withManagedProviderAuthority(
+	manifest: RuntimeManifest,
+	runtimeName: string,
+	providerId: string,
+	models: readonly AiProviderModel[],
+	resolvedModel: string,
+): RuntimeManifest {
+	const projection = structuredClone(manifest.projection);
+	const providers = recordValue(projection?.providers);
+	const provider = providers ? recordValue(providers[providerId]) : null;
+	const runtime = manifest.runtimes[runtimeName];
+	if (!projection || !providers || !provider || !runtime) {
+		throw new Error(`managed provider ${providerId} is absent from runtime ${runtimeName}`);
+	}
+	projection.providers = {
+		...providers,
+		[providerId]: { ...provider, models: [...models] },
+	};
+	return {
+		...manifest,
+		projection,
+		runtimes: {
+			...manifest.runtimes,
+			[runtimeName]: {
+				...runtime,
+				primary_model: { provider_id: providerId, model: resolvedModel },
+			},
+		},
+	};
+}
+
+function isStrongEntityTag(value: string | null | undefined): value is string {
+	if (!value || value.startsWith("W/")) return false;
+	return /^"[\x21\x23-\x7e\x80-\xff]*"$/.test(value);
 }
 
 function hostedProviderType(input: Record<string, unknown>): AiProviderType {

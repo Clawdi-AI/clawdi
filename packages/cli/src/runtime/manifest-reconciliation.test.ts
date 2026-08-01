@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import {
 	chmodSync,
 	chownSync,
@@ -25,7 +26,10 @@ import {
 	writeRuntimeAppliedState,
 } from "./applied-state";
 import { loadHostedBundledSkill } from "./hosted-bundled-skill";
-import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
+import {
+	hostedAiProviderCatalog,
+	resolveManagedGatewayModelAuthority,
+} from "./hosted-provider-resolution";
 import {
 	captureRuntimeLiveSnapshot,
 	restoreRuntimeLiveSnapshot,
@@ -35,6 +39,7 @@ import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
 	type RuntimeManifest,
+	resolveManagedGatewayModelAuthorityForLoad,
 	runtimeInstallerMutationTargets,
 	runtimeRecoverableSecretValues,
 	runtimeUserMutationTargets,
@@ -177,6 +182,51 @@ function baseManifest(
 		runtimes,
 		recovery: {},
 		...overrides,
+	};
+}
+
+async function startMalformedUtf8ModelServer(): Promise<{
+	baseUrl: string;
+	close: () => Promise<void>;
+}> {
+	const script = [
+		'const { createServer } = require("node:http");',
+		'const body = Buffer.concat([Buffer.from(\'{"data":[{"id":"model-\'), Buffer.from([0xff]), Buffer.from(\'"}]}\')]);',
+		"const server = createServer((_request, response) => {",
+		'  response.writeHead(200, { "content-type": "application/json", "content-length": body.length });',
+		"  response.end(body);",
+		"});",
+		'server.listen(0, "127.0.0.1", () => {',
+		"  const address = server.address();",
+		'  if (!address || typeof address === "string") process.exit(1);',
+		"  process.stdout.write(String(address.port));",
+		"});",
+		'server.on("error", (error) => { process.stderr.write(error.message); process.exit(1); });',
+		'server.on("close", () => process.exit(0));',
+		'process.on("SIGTERM", () => server.close());',
+	].join("\n");
+	const child = spawn(process.execPath, ["-e", script], {
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	let stderr = "";
+	child.stderr.setEncoding("utf8");
+	child.stderr.on("data", (chunk: string) => {
+		stderr += chunk;
+	});
+	const port = await Promise.race([
+		once(child.stdout, "data").then(([chunk]) => Number.parseInt(String(chunk), 10)),
+		once(child, "exit").then(([code]) => {
+			throw new Error(`malformed UTF-8 test server exited ${String(code)}: ${stderr}`);
+		}),
+	]);
+	if (!Number.isInteger(port) || port <= 0) throw new Error(`invalid test server port: ${port}`);
+	return {
+		baseUrl: `http://127.0.0.1:${port}/v1`,
+		close: async () => {
+			if (child.exitCode !== null) return;
+			child.kill("SIGTERM");
+			await once(child, "exit");
+		},
 	};
 }
 
@@ -2259,6 +2309,214 @@ describe("runtime manifest reconciliation invariants", () => {
 		]);
 	});
 
+	test("materializes strict-v2 model authority and replays it offline without probing", () => {
+		const paths = tempRuntimePaths();
+		const providerId = "clawdi-managed-v2";
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					run: runSettings("openclaw", ["gateway", "run"]),
+					provider_ids: [providerId],
+					primary_model: { provider_id: providerId, model: "model-a" },
+					services: {},
+				},
+			},
+			{
+				projection: {
+					sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+					providers: {
+						[providerId]: {
+							type: "custom_openai_compatible",
+							managed_by: "clawdi",
+							baseUrl: "https://api.example.test/v1",
+							models: [{ id: "seed-only" }],
+							apiMode: "openai_chat",
+							runtimeEnvName: "OPENAI_API_KEY",
+							apiKeySecretRef: "secret://providers/default/api-key",
+						},
+					},
+				},
+			},
+		);
+		const load = manifestLoad(manifest, "https://runtime.example.test/v1/runtime/manifest");
+		const cacheKey = `${providerId}\nhttps://api.example.test/v1`;
+		const committedValidators = new Map([[cacheKey, '"models-a"']]);
+		const online = resolveManagedGatewayModelAuthority(
+			load,
+			["openclaw"],
+			paths.userHome,
+			join(paths.userHome, "clawdi"),
+			paths.egressSystemCaFile,
+			(input) => {
+				expect(input.validationMode).toBe("strict-v2");
+				expect(input.ifNoneMatch).toBeUndefined();
+				return {
+					status: "ok",
+					endpoint: "https://api.example.test/v1/models",
+					etag: '"models-b"',
+					models: [{ id: "model-b" }, { id: "model-a", supports_tools: true }],
+				};
+			},
+			committedValidators,
+		);
+
+		expect(committedValidators.get(cacheKey)).toBe('"models-a"');
+		expect(online.transportValidators.get(cacheKey)).toBe('"models-b"');
+		expect(
+			(online.load.manifest.projection?.providers?.[providerId] as { models: unknown[] }).models,
+		).toEqual([{ id: "model-a", supports_tools: true }, { id: "model-b" }]);
+		expect(online.load.manifest.runtimes.openclaw?.primary_model).toEqual({
+			provider_id: providerId,
+			model: "model-a",
+		});
+
+		let offlineProbeCalls = 0;
+		const offline = resolveManagedGatewayModelAuthority(
+			{ ...online.load, source: "last-good-cache", offline: true },
+			["openclaw"],
+			paths.userHome,
+			join(paths.userHome, "clawdi"),
+			paths.egressSystemCaFile,
+			() => {
+				offlineProbeCalls += 1;
+				throw new Error("offline model authority must not probe");
+			},
+			online.transportValidators,
+		);
+		expect(offlineProbeCalls).toBe(0);
+		expect(offline.load.manifest).toEqual(online.load.manifest);
+	});
+
+	test("rejects malformed UTF-8 only at the strict model authority boundary", async () => {
+		const paths = tempRuntimePaths();
+		mkdirSync(dirname(paths.egressSystemCaFile), { recursive: true });
+		mkdirSync(join(paths.userHome, "clawdi"), { recursive: true });
+		writeFileSync(paths.egressSystemCaFile, "");
+		const providerId = "clawdi-managed-v2";
+		const server = await startMalformedUtf8ModelServer();
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					run: runSettings("openclaw", ["gateway", "run"]),
+					provider_ids: [providerId],
+					primary_model: { provider_id: providerId, model: "model-a" },
+					services: {},
+				},
+			},
+			{
+				projection: {
+					sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+					providers: {
+						[providerId]: {
+							type: "custom_openai_compatible",
+							managed_by: "clawdi",
+							baseUrl: server.baseUrl,
+							models: [{ id: "model-a" }],
+							apiMode: "openai_chat",
+							runtimeEnvName: "OPENAI_API_KEY",
+							apiKeySecretRef: "secret://providers/default/api-key",
+						},
+					},
+				},
+			},
+		);
+
+		try {
+			expect(() =>
+				resolveManagedGatewayModelAuthorityForLoad(
+					manifestLoad(manifest, "inline-strict-malformed-utf8"),
+					paths,
+				),
+			).toThrow(
+				/managed model probe failed.*(?:Invalid byte sequence|encoded data was not valid)/s,
+			);
+
+			const legacy = resolveManagedGatewayModelAuthorityForLoad(
+				manifestLoad(
+					{ ...manifest, projection: { ...manifest.projection, sourceBundleVersion: undefined } },
+					"inline-legacy-malformed-utf8",
+				),
+				paths,
+			);
+			expect(legacy.overrides.models.openclaw).toEqual([{ id: "model-�" }]);
+			expect(legacy.overrides.primaryModels.openclaw).toEqual({
+				provider_id: providerId,
+				model: "model-�",
+			});
+		} finally {
+			await server.close();
+		}
+	});
+
+	test("advances model transport validators only after authority commit succeeds", () => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const providerId = "clawdi-managed-v2";
+		const manifest = egressRuntimeManifest(paths, { generation: 1, profile: "absent" });
+		manifest.runtimes.openclaw = {
+			...manifest.runtimes.openclaw,
+			provider_ids: [providerId],
+			primary_model: { provider_id: providerId, model: "model-a" },
+		};
+		manifest.projection = {
+			...manifest.projection,
+			providers: {
+				[providerId]: {
+					type: "custom_openai_compatible",
+					managed_by: "clawdi",
+					baseUrl: "https://api.example.test/v1",
+					models: [{ id: "model-a" }],
+					apiMode: "openai_chat",
+					runtimeEnvName: "OPENAI_API_KEY",
+					apiKeySecretRef: "secret://providers/default/api-key",
+				},
+			},
+		};
+		const load = manifestLoad(manifest, "inline-model-validator", {
+			...TEST_HOSTED_SECRET_VALUES,
+			"secret://providers/default/api-key": "provider-secret",
+		});
+		const cacheKey = `${providerId}\nhttps://api.example.test/v1`;
+		const validators = new Map([[cacheKey, '"models-a"']]);
+		const modelFetcher = () => ({
+			status: "ok" as const,
+			endpoint: "https://api.example.test/v1/models",
+			etag: '"models-b"',
+			models: [{ id: "model-a" }, { id: "model-b" }],
+		});
+		const systemdApply = {
+			activateEgressPrerequisite: successfulPrerequisiteActivation,
+			activate: successfulPrerequisiteActivation,
+			rollback: () => {},
+		};
+
+		const failed = convergeRuntimeManifest(load, paths, {
+			cacheLastGood: false,
+			managedGatewayModelListFetcher: modelFetcher,
+			managedGatewayModelTransportValidators: validators,
+			commitAuthority: () => {
+				throw new Error("injected authority failure");
+			},
+			systemdApply,
+		});
+		expect(failed.installErrors.join("\n")).toContain("injected authority failure");
+		expect(validators.get(cacheKey)).toBe('"models-a"');
+
+		const committed = convergeRuntimeManifest(load, paths, {
+			cacheLastGood: false,
+			managedGatewayModelListFetcher: modelFetcher,
+			managedGatewayModelTransportValidators: validators,
+			commitAuthority: () => {},
+			systemdApply,
+		});
+		expect(committed.installErrors).toEqual([]);
+		expect(validators.get(cacheKey)).toBe('"models-b"');
+	});
+
 	test.each([
 		"openclaw",
 		"default",
@@ -2606,7 +2864,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		}
 		expect(upgradeErrors).not.toContain("test-token");
 		expect(upgradeCommits).toBe(0);
-		expect(rollbackCalls).toBe(1);
+		expect(rollbackCalls).toBe(failure === "activation" ? 1 : 0);
 		expectSnapshot(previous);
 		expect(
 			JSON.parse(readFileSync(runtimeRunConfigPath("openclaw", upgradePaths), "utf-8")),
@@ -2648,6 +2906,89 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(readRuntimeAppliedState(paths)?.generation).toBe(1);
 		expect(existsSync(paths.manifestLastGood)).toBe(true);
 		expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"))).toBe(true);
+	});
+
+	test("removes a fresh sidecar prerequisite when strict model probing fails", () => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const engine = installCachedTestEgressEngine(paths, "12.2.3-model-probe");
+		const providerId = "clawdi-managed-v2";
+		const manifest = egressRuntimeManifest(paths, {
+			generation: 1,
+			engine,
+			profile: "enabled",
+		});
+		manifest.runtimes.openclaw = {
+			...manifest.runtimes.openclaw,
+			provider_ids: [providerId],
+			primary_model: { provider_id: providerId, model: "model-a" },
+		};
+		manifest.projection = {
+			...manifest.projection,
+			providers: {
+				[providerId]: {
+					type: "custom_openai_compatible",
+					managed_by: "clawdi",
+					baseUrl: "https://api.example.test/v1",
+					models: [{ id: "model-a" }],
+					apiMode: "openai_chat",
+					runtimeEnvName: "OPENAI_API_KEY",
+					apiKeySecretRef: "secret://providers/default/api-key",
+				},
+			},
+		};
+		const sidecarUnit = join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service");
+		const staleSidecarPaths = [
+			sidecarUnit,
+			join(paths.systemdEnvRoot, "clawdi-runtime-sidecar.service.env"),
+			join(paths.managedSecretRoot, "egress-secrets.json"),
+		];
+		for (const path of staleSidecarPaths) {
+			mkdirSync(dirname(path), { recursive: true });
+			chmodSync(dirname(path), 0o755);
+			writeFileSync(
+				path,
+				path.endsWith("egress-secrets.json") ? "{}\n" : "uncommitted stale sidecar state\n",
+			);
+		}
+		let prerequisiteCalls = 0;
+		let activationCalls = 0;
+		let rollbackCalls = 0;
+		const result = convergeRuntimeManifest(
+			manifestLoad(manifest, "inline-model-probe-failure", {
+				...TEST_HOSTED_SECRET_VALUES,
+				"secret://providers/default/api-key": "provider-secret",
+			}),
+			paths,
+			{
+				cacheLastGood: false,
+				systemdApply: {
+					activateEgressPrerequisite: () => {
+						prerequisiteCalls += 1;
+						expect(existsSync(sidecarUnit)).toBe(true);
+						return successfulPrerequisiteActivation();
+					},
+					activate: () => {
+						activationCalls += 1;
+						return successfulPrerequisiteActivation();
+					},
+					rollback: () => {
+						rollbackCalls += 1;
+						expect(existsSync(sidecarUnit)).toBe(false);
+					},
+				},
+			},
+		);
+
+		expect(result.installErrors.join("\n")).toContain("managed model probe failed");
+		expect(prerequisiteCalls).toBe(1);
+		expect(activationCalls).toBe(0);
+		expect(rollbackCalls).toBe(1);
+		expect(readFileSync(sidecarUnit, "utf-8")).toBe("uncommitted stale sidecar state\n");
+		expect(
+			readFileSync(join(paths.systemdEnvRoot, "clawdi-runtime-sidecar.service.env"), "utf-8"),
+		).toBe("uncommitted stale sidecar state\n");
+		expect(existsSync(join(paths.managedSecretRoot, "egress-secrets.json"))).toBe(false);
 	});
 
 	test.each([
@@ -3769,7 +4110,9 @@ describe("runtime manifest reconciliation invariants", () => {
 		chmodSync(paths.managedConfig, 0o640);
 		const previousManagedStat = statSync(paths.managedConfig);
 		const previous = new Map(rootManagedPaths.map((path) => [path, readFileSync(path)]));
+		const previousNativeConfig = readFileSync(targetConfig);
 		const previousSystemEnvironment = readFileSync(systemEnvironment);
+		process.env.OPENCLAW_GATEWAY_TOKEN = "rollback-gateway-token";
 		const manifest = baseManifest(
 			paths,
 			{
@@ -3779,7 +4122,14 @@ describe("runtime manifest reconciliation invariants", () => {
 					services: {},
 				},
 			},
-			{ locale: { language: "en", timezone: "UTC" } },
+			{
+				locale: { language: "en", timezone: "UTC" },
+				openclawGatewayAuth: hostedOpenClawNativeAuth(),
+				projection: {
+					sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+					system: hostedSystemFixture(),
+				},
+			},
 		);
 
 		let activateCalls = 0;
@@ -3789,6 +4139,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: () => {
 					activateCalls += 1;
+					expect(readFileSync(targetConfig)).not.toEqual(previousNativeConfig);
 					throw new Error("injected systemd activation failure");
 				},
 				rollback: () => {
@@ -3902,13 +4253,127 @@ describe("runtime manifest reconciliation invariants", () => {
 		for (const path of staleFiles) expect(existsSync(path)).toBe(false);
 	});
 
+	test.each([
+		"activation",
+		"authorityCommit",
+	] as const)("rolls back strict-v2 Hermes native provider state after %s failure", (failure) => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const commandPath = join(paths.userHome, ".hermes", "bin", "hermes");
+		const targetConfig = join(paths.userHome, ".hermes", "config.yaml");
+		const legacyPluginDir = join(paths.userHome, ".hermes", "plugins", "model-providers", "clawdi");
+		const legacyPluginFile = join(legacyPluginDir, "__init__.py");
+		mkdirSync(dirname(commandPath), { recursive: true });
+		mkdirSync(legacyPluginDir, { recursive: true });
+		chmodSync(legacyPluginDir, 0o700);
+		writeFileSync(commandPath, "#!/usr/bin/env sh\nexit 0\n");
+		chmodSync(commandPath, 0o700);
+		writeFileSync(targetConfig, "model:\n  default: old-model\n");
+		writeFileSync(legacyPluginFile, 'LEGACY_MODEL = "committed-model"\n');
+		const previousNativeConfig = readFileSync(targetConfig);
+		const previousLegacyPlugin = readFileSync(legacyPluginFile);
+		const failureMessage =
+			failure === "activation"
+				? "injected activation failure"
+				: "injected authority commit failure";
+		const providerId = "clawdi-managed-v2";
+		const manifest = baseManifest(
+			paths,
+			{
+				hermes: {
+					enabled: true,
+					run: runSettings(commandPath, ["gateway", "run"]),
+					provider_ids: [providerId],
+					primary_model: { provider_id: providerId, model: "model-a" },
+					services: {},
+				},
+			},
+			{
+				locale: { language: "en", timezone: "Asia/Tokyo" },
+				projection: {
+					sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+					providers: {
+						[providerId]: {
+							type: "custom_openai_compatible",
+							managed_by: "clawdi",
+							baseUrl: "https://api.example.test/v1",
+							models: [{ id: "model-a" }],
+							apiMode: "openai_chat",
+							runtimeEnvName: "OPENAI_API_KEY",
+							apiKeySecretRef: "secret://providers/default/api-key",
+						},
+					},
+				},
+			},
+		);
+		const sourceLoad = manifestLoad(manifest, "inline-hermes-rollback", {
+			"secret://providers/default/api-key": "provider-secret",
+		});
+		let modelFetchCalls = 0;
+		const preparedModelAuthority = resolveManagedGatewayModelAuthority(
+			sourceLoad,
+			["hermes"],
+			paths.userHome,
+			join(paths.userHome, "clawdi"),
+			paths.egressSystemCaFile,
+			() => {
+				modelFetchCalls += 1;
+				return {
+					status: "ok",
+					endpoint: "https://api.example.test/v1/models",
+					etag: '"models-b"',
+					models: [{ id: "model-b" }],
+				};
+			},
+		);
+		expect(preparedModelAuthority.load.manifest.runtimes.hermes?.primary_model?.model).toBe(
+			"model-b",
+		);
+		let rollbackCalls = 0;
+		let authorityCommitCalls = 0;
+		const result = convergeRuntimeManifest(preparedModelAuthority.load, paths, {
+			cacheLastGood: false,
+			managedGatewayModelAuthorityResolution: preparedModelAuthority,
+			commitAuthority: () => {
+				authorityCommitCalls += 1;
+				expect(existsSync(legacyPluginDir)).toBe(false);
+				if (failure === "authorityCommit") throw new Error(failureMessage);
+			},
+			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
+				activate: () => {
+					expect(readFileSync(targetConfig)).not.toEqual(previousNativeConfig);
+					expect(existsSync(legacyPluginDir)).toBe(false);
+					if (failure === "activation") throw new Error(failureMessage);
+					return successfulPrerequisiteActivation();
+				},
+				rollback: () => {
+					rollbackCalls += 1;
+				},
+			},
+		});
+
+		expect(result.installErrors.join("\n")).toContain(failureMessage);
+		expect(readFileSync(targetConfig)).toEqual(previousNativeConfig);
+		expect(readFileSync(legacyPluginFile)).toEqual(previousLegacyPlugin);
+		expect(modelFetchCalls).toBe(1);
+		expect(authorityCommitCalls).toBe(failure === "authorityCommit" ? 1 : 0);
+		expect(rollbackCalls).toBe(1);
+	});
+
 	test("uses an explicit managed snapshot allowlist without broad runtime roots", () => {
 		const paths = tempRuntimePaths();
 		const workspaceRoot = join(paths.userHome, "clawdi");
-		const manifest = baseManifest(paths, {
-			openclaw: { enabled: true, run: runSettings("openclaw", []), services: {} },
-			hermes: { enabled: true, run: runSettings("hermes", []), services: {} },
-		});
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: { enabled: true, run: runSettings("openclaw", []), services: {} },
+				hermes: { enabled: true, run: runSettings("hermes", []), services: {} },
+			},
+			{
+				projection: { sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2" },
+			},
+		);
 		const existingSystemUnit = join(paths.systemdSystemRoot, "clawdi-existing.service");
 		const existingSystemDropIn = join(
 			paths.systemdSystemRoot,
@@ -3967,6 +4432,9 @@ describe("runtime manifest reconciliation invariants", () => {
 		);
 		expect(runtimeUserMutationTargets(manifest, paths, workspaceRoot, new Map())).toEqual(
 			expect.arrayContaining([
+				join(paths.userHome, ".openclaw", "openclaw.json"),
+				join(paths.userHome, ".hermes", "config.yaml"),
+				join(paths.userHome, ".hermes", "plugins", "model-providers", "clawdi"),
 				join(paths.userHome, ".hermes", "auth.json"),
 				join(paths.userHome, ".hermes", "auth.lock"),
 				openClawDatabase,
@@ -3980,10 +4448,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			paths.userHome,
 			workspaceRoot,
 			join(workspaceRoot, "SOUL.md"),
-			join(paths.userHome, ".openclaw", "openclaw.json"),
-			join(paths.userHome, ".hermes", "config.yaml"),
 			join(paths.userHome, ".hermes", "SOUL.md"),
-			join(paths.userHome, ".hermes", "plugins", "model-providers", "clawdi"),
 			join(paths.userHome, ".codex", "config.toml"),
 			join(paths.userHome, ".openclaw", "agents", "main", "skills", "clawdi"),
 			join(paths.userHome, ".hermes", "skills", "clawdi"),

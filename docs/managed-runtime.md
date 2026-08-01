@@ -439,6 +439,19 @@ non-empty `error.message`. A
 `provider_not_found` entry contains `kind` plus that error pair; other error and
 healthy entries retain the normal `kind`, `type`, and `baseUrl` projection.
 
+For a strict-v2 Clawdi-managed provider, the CLI validates the runtime-facing
+`/models` response and materializes its canonical model catalog and resolved
+primary model into the effective manifest before native config and systemd are
+rendered. That effective manifest is the value stored in last-good and hashed
+by the applied content identity, so offline recovery replays it without a
+network probe. A manifest `304` still revalidates this independently changing
+model representation: changed model bytes converge even when the bundle ETag
+is unchanged, while identical model bytes do not restart the runtime. The
+`/models` ETag is only an in-process conditional-request validator; it is not
+stored in applied state or included in a runtime revision, and it advances only
+after the represented bytes are committed or proven identical to committed
+authority.
+
 This strict typing claim applies only to the Hosted fields modeled in this
 release. `egressEngine` and `egressProfiles` use closed schemas matching the
 Hosted CLI wire and are validated at admin write and manifest read boundaries.
@@ -872,6 +885,9 @@ Each reconciliation plan declares the exact managed root and runtime-user file
 targets it may mutate. Before any command that can change live state, Apply
 captures complete in-memory pre-images for those targets, including absence,
 regular-file bytes or symlink target, mode, uid, gid, and directory metadata.
+A strict-v2 plan includes the selected runtime's native provider config and the
+managed legacy Hermes model-provider plugin subtree, so model authority cannot
+diverge from the restored sidecar and applied state.
 A synchronous failure restores that same bounded set and then reconciles
 systemd to the restored files. It never snapshots `$HOME` or a runtime-user
 tree. A process crash has no durable rollback journal: the next cycle converges
