@@ -121,15 +121,19 @@ releases.
 The pair-code endpoint owns the safe cutover. Before it can return instructions
 that mention `/clawdi_pair`, it checks a persisted reserved-command version and
 reconciles only the reserved command namespace in the global scope. It lists
-the existing commands, deletes the exact legacy `bot_pair` and `bot_unpair`
-chat-input command IDs, and upserts `clawdi_pair` and `clawdi_unpair`. Unrelated
-global commands are never deleted or resubmitted. For an existing account with
-a configured legacy `guild_id`, the same request performs the reserved-only
-reconciliation in that known guild scope while preserving unrelated guild
-commands. If Discord rejects, rate-limits, or cannot complete any required
-list, deletion, or upsert, the endpoint returns an error without creating a
-pair code or advancing the reserved-command version. This prevents the pairing
-UI from getting ahead of the registered commands during rollout.
+the existing commands, upserts and validates both `clawdi_pair` and
+`clawdi_unpair`, and only then deletes the exact legacy `bot_pair` and
+`bot_unpair` chat-input command IDs. This order keeps the legacy commands
+available if either new-command upsert fails. A DELETE 404 for an exact ID from
+the preceding list is an idempotent success because another reconciliation has
+already removed it. Unrelated global commands are never deleted or resubmitted.
+For an existing account with a configured legacy `guild_id`, the same request
+performs the reserved-only reconciliation in that known guild scope while
+preserving unrelated guild commands. If Discord rejects, rate-limits, or cannot
+complete any other required list, upsert, or deletion, the endpoint returns an
+error without creating a pair code or advancing the reserved-command version.
+This prevents the pairing UI from getting ahead of the registered commands
+during rollout.
 
 No operator sync is required before users can pair. To reconcile accounts
 proactively after deploying the matching backend, an operator may run the

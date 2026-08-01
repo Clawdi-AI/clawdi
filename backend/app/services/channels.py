@@ -3805,8 +3805,10 @@ async def sync_discord_commands(
                 # Reconcile only Clawdi's reserved namespace. Bulk overwrite
                 # would make these two commands the complete scope and delete
                 # unrelated application/runtime commands owned elsewhere.
-                # Discord POST is an upsert by command name; DELETE targets one
-                # command ID in the same global or Guild scope.
+                # Discord POST is an upsert by command name. Validate both new
+                # commands before deleting any legacy command so a partial
+                # provider failure cannot remove the only usable pair path.
+                # DELETE then targets only IDs found by the preceding GET.
                 # https://discord.com/developers/docs/interactions/application-commands#get-global-application-commands
                 # https://discord.com/developers/docs/interactions/application-commands#delete-global-application-command
                 # https://discord.com/developers/docs/interactions/application-commands#create-global-application-command
@@ -3824,6 +3826,7 @@ async def sync_discord_commands(
                         status_code=status.HTTP_502_BAD_GATEWAY,
                         detail="discord api returned invalid commands",
                     )
+                legacy_command_ids: list[str] = []
                 for existing_command in existing_commands:
                     existing_name = _read_optional_str(existing_command.get("name"))
                     if existing_name not in DISCORD_LEGACY_RESERVED_COMMAND_NAMES:
@@ -3842,12 +3845,7 @@ async def sync_discord_commands(
                             status_code=status.HTTP_502_BAD_GATEWAY,
                             detail="discord api returned invalid commands",
                         )
-                    response = await client.request(
-                        "DELETE",
-                        f"{url}/{command_id}",
-                        headers=headers,
-                    )
-                    _raise_for_discord_command_sync_response(response)
+                    legacy_command_ids.append(command_id)
                 for command_payload in command_payloads:
                     response = await client.request(
                         "POST",
@@ -3869,6 +3867,19 @@ async def sync_discord_commands(
                             detail="discord api returned invalid commands",
                         )
                     synced.append(synced_command)
+                for command_id in legacy_command_ids:
+                    response = await client.request(
+                        "DELETE",
+                        f"{url}/{command_id}",
+                        headers=headers,
+                    )
+                    # A concurrent reconciliation can delete the exact ID
+                    # discovered above before this request reaches Discord.
+                    # That 404 means the required absence already converged.
+                    _raise_for_discord_command_sync_response(
+                        response,
+                        allow_not_found=True,
+                    )
                 return synced
             for command_payload in command_payloads:
                 response = await client.post(
@@ -3889,7 +3900,13 @@ async def sync_discord_commands(
     return synced
 
 
-def _raise_for_discord_command_sync_response(response: httpx.Response) -> None:
+def _raise_for_discord_command_sync_response(
+    response: httpx.Response,
+    *,
+    allow_not_found: bool = False,
+) -> None:
+    if allow_not_found and response.status_code == status.HTTP_404_NOT_FOUND:
+        return
     if response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
