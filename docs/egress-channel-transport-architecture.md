@@ -53,14 +53,25 @@ sidecar.
 
 The adapters must never load the upstream stock WhatsApp connector. Doing so
 would create a second socket owner and move provider credentials into the agent
-runtime. A duplicate channel/platform registration, missing managed artifact,
-or missing link capability is a hard startup failure.
+runtime. The OpenClaw projection disables the stock plugin before registering
+the managed channel; OpenClaw rejects duplicate channel ids
+([`registry.ts` lines 943-1037](https://github.com/openclaw/openclaw/blob/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c/src/plugins/registry.ts#L943-L1037)).
+Hermes explicitly enables the managed plugin whose same-name platform registry
+entry takes precedence
+([`platform_registry.py` lines 231-248](https://github.com/NousResearch/hermes-agent/blob/f3cda0ceb18d8ba7465a6d223098ef0e56c8fee1/gateway/platform_registry.py#L231-L248)).
+A missing managed artifact or link capability is a hard startup failure.
 
-Hermes does not currently expose a processing-complete acknowledgement seam:
-its handler schedules background work before returning. The managed Hermes
-adapter may be tested offline, but restart-safe receive acknowledgement remains
-a rollout blocker. The WhatsApp readiness gates stay false until that seam and
-the live drill are complete.
+Hermes `handle_message()` schedules background work, so its return is not an
+ACK boundary. The fixed `0.19.1` contract instead calls the public
+`on_processing_complete` hook
+([`base.py` lines 4892-4910](https://github.com/NousResearch/hermes-agent/blob/f3cda0ceb18d8ba7465a6d223098ef0e56c8fee1/gateway/platforms/base.py#L4892-L4910))
+on success
+([`base.py` lines 6258-6273](https://github.com/NousResearch/hermes-agent/blob/f3cda0ceb18d8ba7465a6d223098ef0e56c8fee1/gateway/platforms/base.py#L6258-L6273))
+and failure/cancellation
+([`base.py` lines 6319-6327](https://github.com/NousResearch/hermes-agent/blob/f3cda0ceb18d8ba7465a6d223098ef0e56c8fee1/gateway/platforms/base.py#L6319-L6327)).
+The managed adapter journals before dispatch and ACKs only from that completion
+hook. Offline recovery tests pass; the readiness gates remain false because the
+runtime installers are mutable and the live drill is incomplete.
 
 ## Verification
 
