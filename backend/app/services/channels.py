@@ -130,7 +130,7 @@ DISCORD_RESERVED_COMMAND_VERSION_CONFIG_KEY = "discord_reserved_command_version"
 DISCORD_INSTALL_CONFIG_VERSION = 1
 DISCORD_INSTALL_CONFIG_VERSION_CONFIG_KEY = "discord_install_config_version"
 DISCORD_USER_INSTALL_SUPPORTED_CONFIG_KEY = "discord_user_install_supported"
-# Discord API docs baseline b2f8adafc037242291b8f875d4cdf3adc4d48bb7.
+# Discord API docs baseline 07c83a8f1c54accd8e8d13072a5e08d1b1be7ac3.
 # ADD_REACTIONS, VIEW_CHANNEL, SEND_MESSAGES, EMBED_LINKS, ATTACH_FILES,
 # READ_MESSAGE_HISTORY, and SEND_MESSAGES_IN_THREADS. Never request
 # ADMINISTRATOR or MANAGE_GUILD for the bot; pair mutation authority is the
@@ -1844,7 +1844,7 @@ def discord_guild_command_denied_reason(
     decimal-string bitfield. The installation admission check separately
     requires an application-command interaction, so MESSAGE_CREATE cannot
     manufacture authority by copying this field. Discord API docs baseline:
-    b2f8adafc037242291b8f875d4cdf3adc4d48bb7.
+    07c83a8f1c54accd8e8d13072a5e08d1b1be7ac3.
     """
     if command is None or command.kind not in {"pair", "unpair"} or guild_id is None:
         return None
@@ -3647,16 +3647,66 @@ async def configure_discord_application(account: ChannelAccount) -> dict[str, An
         },
     )
     _verify_discord_application_identity(configured, expected_application_id=application_id)
-    configured_integration_types = configured.get("integration_types_config")
-    verified_user_install = isinstance(configured_integration_types, dict) and isinstance(
-        configured_integration_types.get(str(DISCORD_USER_INSTALL)),
-        dict,
-    )
+    verified_user_install = _verify_discord_install_configuration(configured)
     config = dict(account.config) if isinstance(account.config, dict) else {}
     config[DISCORD_INSTALL_CONFIG_VERSION_CONFIG_KEY] = DISCORD_INSTALL_CONFIG_VERSION
     config[DISCORD_USER_INSTALL_SUPPORTED_CONFIG_KEY] = verified_user_install
     account.config = config
     return configured
+
+
+def _verify_discord_install_configuration(payload: dict[str, Any]) -> bool:
+    """Verify the exact install defaults Discord persisted after PATCH."""
+    integration_types = payload.get("integration_types_config")
+    if not isinstance(integration_types, dict):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Discord returned an invalid Guild Install configuration.",
+        )
+    guild_config = integration_types.get(str(DISCORD_GUILD_INSTALL))
+    if not _discord_install_params_match(
+        guild_config,
+        expected_scopes={"applications.commands", "bot"},
+        expected_permissions=str(DISCORD_MINIMAL_BOT_PERMISSIONS),
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Discord returned an invalid Guild Install configuration.",
+        )
+    user_config = integration_types.get(str(DISCORD_USER_INSTALL))
+    if user_config is None:
+        return False
+    if not _discord_install_params_match(
+        user_config,
+        expected_scopes={"applications.commands"},
+        expected_permissions="0",
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Discord returned an invalid User Install configuration.",
+        )
+    return True
+
+
+def _discord_install_params_match(
+    config: Any,
+    *,
+    expected_scopes: set[str],
+    expected_permissions: str,
+) -> bool:
+    if not isinstance(config, dict):
+        return False
+    install_params = config.get("oauth2_install_params")
+    if not isinstance(install_params, dict):
+        return False
+    scopes = install_params.get("scopes")
+    return (
+        isinstance(scopes, list)
+        and len(scopes) == len(expected_scopes)
+        and all(isinstance(scope, str) for scope in scopes)
+        and set(scopes) == expected_scopes
+        and install_params.get("permissions") == expected_permissions
+    )
 
 
 async def verify_discord_application_token_identity(
@@ -3814,6 +3864,40 @@ def discord_config_without_unverified_install_state(
     sanitized.pop(DISCORD_INSTALL_CONFIG_VERSION_CONFIG_KEY, None)
     sanitized.pop(DISCORD_USER_INSTALL_SUPPORTED_CONFIG_KEY, None)
     return sanitized
+
+
+async def rearm_discord_command_reconciliation(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+) -> int:
+    """Make blocked command retries due after verified credential/setup repair."""
+    result = await db.execute(
+        select(ChannelBotAgentLink).where(ChannelBotAgentLink.account_id == account.id)
+    )
+    rearmed = 0
+    for link in result.scalars():
+        config = dict(link.config) if isinstance(link.config, dict) else {}
+        raw_retries = config.get("discord_command_retries")
+        if not isinstance(raw_retries, dict):
+            continue
+        retries = {
+            guild_id: dict(retry)
+            for guild_id, retry in raw_retries.items()
+            if isinstance(guild_id, str) and isinstance(retry, dict)
+        }
+        changed = False
+        for retry in retries.values():
+            if retry.get("blocked") is not True:
+                continue
+            retry["blocked"] = False
+            retry["next_retry_at"] = datetime.now(UTC).isoformat()
+            changed = True
+            rearmed += 1
+        if changed:
+            config["discord_command_retries"] = retries
+            link.config = config
+    return rearmed
 
 
 def discord_reserved_commands_are_current(account: ChannelAccount) -> bool:

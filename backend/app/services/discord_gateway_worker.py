@@ -29,6 +29,7 @@ from app.models.channel import (
 from app.services.channels import decrypt_provider_token, record_discord_dispatch
 from app.services.discord_command_reconciliation_worker import (
     reconcile_discord_guild_commands,
+    reconcile_discord_guild_departure,
 )
 from app.services.url_security import UnsafeOutboundUrlError, validate_channel_websocket_url
 
@@ -315,7 +316,12 @@ class DiscordGatewayWorker:
         op = frame.get("op")
         if op == 0:
             _update_gateway_session_state(state, frame)
-            await record_discord_gateway_dispatch(self._sessionmaker, account_id, frame)
+            await record_discord_gateway_dispatch(
+                self._sessionmaker,
+                account_id,
+                frame,
+                gateway_session_id=state.session_id,
+            )
         elif op == 1:
             await _send_heartbeat(websocket, state)
         elif op == 7:
@@ -376,12 +382,35 @@ async def record_discord_gateway_dispatch(
     sessionmaker: async_sessionmaker[AsyncSession],
     account_id: UUID,
     frame: GatewayFrame,
+    *,
+    gateway_session_id: str | None = None,
 ) -> bool:
     async with sessionmaker() as db:
         account = await _load_active_discord_account(db, account_id)
         if account is None:
             await db.rollback()
             return False
+        if frame.get("t") == "GUILD_DELETE":
+            await db.rollback()
+            guild_id = _discord_departed_guild_id(frame)
+            if guild_id is None:
+                # unavailable=true is a temporary outage, not a departure.
+                return True
+            # Do not acknowledge an authority-loss event until its binding
+            # mutation is durable. A database failure must reconnect/resume so
+            # Discord can replay the sequence; provider cleanup itself is
+            # persisted as retry state and does not raise for normal failures.
+            await reconcile_discord_guild_departure(
+                sessionmaker,
+                account_id=account_id,
+                guild_id=guild_id,
+                lifecycle_event_id=_discord_lifecycle_event_id(
+                    frame,
+                    gateway_session_id=gateway_session_id,
+                    guild_id=guild_id,
+                ),
+            )
+            return True
         recorded = await record_discord_dispatch(db, account=account, frame=frame)
         if recorded:
             await db.commit()
@@ -413,6 +442,31 @@ def _discord_available_guild_id(frame: GatewayFrame) -> str | None:
         return None
     guild_id = data.get("id")
     return guild_id if isinstance(guild_id, str) and guild_id else None
+
+
+def _discord_departed_guild_id(frame: GatewayFrame) -> str | None:
+    data = frame.get("d")
+    if not isinstance(data, dict) or data.get("unavailable") is True:
+        return None
+    guild_id = data.get("id")
+    return guild_id if isinstance(guild_id, str) and guild_id else None
+
+
+def _discord_lifecycle_event_id(
+    frame: GatewayFrame,
+    *,
+    gateway_session_id: str | None,
+    guild_id: str,
+) -> str:
+    sequence = frame.get("s")
+    sequence_key = (
+        str(sequence)
+        if isinstance(sequence, int) and not isinstance(sequence, bool)
+        else hashlib.sha256(
+            json.dumps(frame, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+    )
+    return f"{gateway_session_id or 'unknown'}:{sequence_key}:GUILD_DELETE:{guild_id}"
 
 
 async def _load_active_discord_account(

@@ -126,6 +126,7 @@ from app.services.channels import (
     lock_channel_binding_identity,
     mark_discord_reserved_commands_current,
     normalize_telegram_bot_username,
+    rearm_discord_command_reconciliation,
     rotate_bot_agent_link_token,
     store_channel_secrets,
     sync_channel_commands,
@@ -838,6 +839,7 @@ async def create_channel_pair_code(
         install_config_current = discord_install_config_is_current(account)
         if not interactions_configured or not install_config_current:
             await configure_discord_application(account)
+            await rearm_discord_command_reconciliation(db, account=account)
             config = dict(account.config) if isinstance(account.config, dict) else {}
         if not interactions_configured or not install_config_current or not commands_current:
             # Reserved control-plane commands are true account-global

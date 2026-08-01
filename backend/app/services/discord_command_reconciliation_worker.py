@@ -9,14 +9,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.channel import (
+    BINDING_STATUS_ACTIVE,
+    BINDING_STATUS_ARCHIVED,
     BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_STATUS_ACTIVE,
     ChannelAccount,
+    ChannelBinding,
     ChannelBotAgentLink,
 )
 from app.routes.channel_routers.shared import (
     _clear_discord_guild_commands,
+    _discord_binding_guild_id,
     _discord_command_materializations,
     _discord_command_retries,
     _discord_guild_command_fingerprint,
@@ -25,8 +29,12 @@ from app.routes.channel_routers.shared import (
     _discord_uncontested_guilds_for_link,
     _fan_out_discord_global_commands,
 )
+from app.services.channels import lock_channel_binding_identity
 
 log = logging.getLogger(__name__)
+
+_DISCORD_GATEWAY_LIFECYCLE_EVENTS_CONFIG_KEY = "discord_gateway_lifecycle_events"
+_DISCORD_GATEWAY_LIFECYCLE_EVENT_LIMIT = 256
 
 
 async def reconcile_discord_guild_commands(
@@ -103,6 +111,86 @@ async def reconcile_discord_guild_commands(
                     exc.status_code,
                 )
     return reconciled
+
+
+async def reconcile_discord_guild_departure(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    *,
+    account_id: UUID,
+    guild_id: str,
+    lifecycle_event_id: str,
+) -> int:
+    """Archive a departed Guild exactly once, then durably clear commands."""
+    async with sessionmaker() as db:
+        account = await db.get(ChannelAccount, account_id)
+        if account is None:
+            await db.rollback()
+            return 0
+        await lock_channel_binding_identity(
+            db,
+            account_id=account.id,
+            external_chat_id=guild_id,
+        )
+        await db.refresh(account, with_for_update=True)
+        config = dict(account.config) if isinstance(account.config, dict) else {}
+        raw_events = config.get(_DISCORD_GATEWAY_LIFECYCLE_EVENTS_CONFIG_KEY)
+        events = (
+            [event for event in raw_events if isinstance(event, str)]
+            if isinstance(raw_events, list)
+            else []
+        )
+        if lifecycle_event_id in events:
+            await db.commit()
+            return 0
+        bindings = list(
+            (
+                await db.execute(
+                    select(ChannelBinding).where(
+                        ChannelBinding.account_id == account.id,
+                        ChannelBinding.status == BINDING_STATUS_ACTIVE,
+                    )
+                )
+            ).scalars()
+        )
+        departed = [
+            binding for binding in bindings if _discord_binding_guild_id(binding) == guild_id
+        ]
+        link_ids = {binding.bot_agent_link_id for binding in departed}
+        for binding in departed:
+            binding.status = BINDING_STATUS_ARCHIVED
+        config[_DISCORD_GATEWAY_LIFECYCLE_EVENTS_CONFIG_KEY] = (events + [lifecycle_event_id])[
+            -_DISCORD_GATEWAY_LIFECYCLE_EVENT_LIMIT:
+        ]
+        account.config = config
+        await db.commit()
+
+    for link_id in sorted(link_ids, key=str):
+        async with sessionmaker() as db:
+            account = await db.get(ChannelAccount, account_id)
+            link = await db.get(ChannelBotAgentLink, link_id)
+            if account is None or link is None or link.account_id != account.id:
+                await db.rollback()
+                continue
+            try:
+                await _clear_discord_guild_commands(
+                    db,
+                    account=account,
+                    link=link,
+                    application_id=_discord_application_id(account),
+                    guild_ids={guild_id},
+                    force=True,
+                )
+            except HTTPException as exc:
+                await db.rollback()
+                log.warning(
+                    "discord_command_departure_cleanup_deferred "
+                    "account_id=%s link_id=%s guild_id=%s status=%s",
+                    account_id,
+                    link_id,
+                    guild_id,
+                    exc.status_code,
+                )
+    return len(departed)
 
 
 class DiscordCommandReconciliationWorker:

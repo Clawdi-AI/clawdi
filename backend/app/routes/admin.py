@@ -126,6 +126,7 @@ from app.services.channels import (
     hash_token,
     mark_discord_reserved_commands_current,
     normalize_telegram_bot_username,
+    rearm_discord_command_reconciliation,
     require_unchanged_discord_application_identity,
     store_channel_secrets,
     sync_channel_commands,
@@ -1141,6 +1142,7 @@ async def admin_create_channel(
         # eligibility remains false until the readiness marker commits below.
         await ensure_discord_application_identity_available(db, account=account)
         await configure_discord_application(account)
+        await rearm_discord_command_reconciliation(db, account=account)
         await sync_channel_commands(
             account=account,
             use_configured_discord_guild=False,
@@ -1234,6 +1236,8 @@ async def admin_update_channel(
         ciphertext, nonce = encrypt_optional_token(body.provider_token)
         account.encrypted_provider_token = ciphertext
         account.provider_token_nonce = nonce
+        if account.provider == CHANNEL_PROVIDER_DISCORD and body.provider_token is not None:
+            await rearm_discord_command_reconciliation(db, account=account)
     if "config" in updates:
         await validate_channel_account_config_urls(provider=account.provider, config=body.config)
         account.config = (
@@ -1296,6 +1300,7 @@ async def admin_update_channel(
         ) from exc
     if reconcile_public_discord:
         await configure_discord_application(account)
+        await rearm_discord_command_reconciliation(db, account=account)
         await sync_channel_commands(
             account=account,
             use_configured_discord_guild=False,
@@ -1353,6 +1358,7 @@ async def admin_sync_channel_commands(
     if account.provider == CHANNEL_PROVIDER_DISCORD and commands is None:
         await ensure_discord_application_identity_available(db, account=account)
         await configure_discord_application(account)
+        await rearm_discord_command_reconciliation(db, account=account)
     synced = await sync_channel_commands(
         account=account,
         commands=commands,

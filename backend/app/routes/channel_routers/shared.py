@@ -72,7 +72,7 @@ from app.services.metrics import (
 )
 from app.services.url_security import UnsafeOutboundUrlError, validate_channel_http_url
 
-# Discord API docs baseline b2f8adafc037242291b8f875d4cdf3adc4d48bb7.
+# Discord API docs baseline 07c83a8f1c54accd8e8d13072a5e08d1b1be7ac3.
 # Keep both directions explicit: runtime credentials and hop-by-hop headers
 # never cross into Discord, while documented rate-limit state remains usable.
 _DISCORD_REQUEST_HEADER_ALLOWLIST = ("x-audit-log-reason",)
@@ -850,9 +850,10 @@ def _discord_command_retry_state(
         else 1
     )
     retry_after = _discord_retry_after_seconds(result) if result is not None else None
-    blocked = 400 <= status_code < 500 and (
-        status_code != status.HTTP_429_TOO_MANY_REQUESTS or retry_after is None
-    )
+    # A 429 is always transient. Discord normally supplies Retry-After, but a
+    # missing/malformed value must fall back to bounded exponential backoff
+    # instead of turning a temporary rate limit into a permanent tombstone.
+    blocked = 400 <= status_code < 500 and status_code != status.HTTP_429_TOO_MANY_REQUESTS
     if status_code == status.HTTP_429_TOO_MANY_REQUESTS and retry_after is not None:
         delay_seconds = retry_after
     else:
@@ -1311,7 +1312,11 @@ async def _fan_out_discord_global_commands(
             desired_commands,
             application_id=application_id,
         )
-        if not force and materializations.get(guild_id) == fingerprint:
+        # GUILD_CREATE is also emitted for every available Guild on READY and
+        # reconnect. A verified recovery trigger may bypass blocked/not-due
+        # retry state, but an application-aware current receipt is converged
+        # and must never cause another bulk overwrite.
+        if materializations.get(guild_id) == fingerprint:
             await db.commit()
             continue
         retry = retries.get(guild_id)
@@ -1436,7 +1441,7 @@ async def _clear_discord_guild_commands(
         # app+Guild namespace. No Link may claim materialization; converge the
         # namespace to empty until identity admission is repaired.
         retry = retries.get(guild_id)
-        if not force and materializations.get(guild_id) == empty_fingerprint and retry is None:
+        if materializations.get(guild_id) == empty_fingerprint and retry is None:
             await db.commit()
             continue
         if not force and not _discord_retry_is_due(retry, fingerprint=empty_fingerprint):

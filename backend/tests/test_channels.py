@@ -17532,6 +17532,121 @@ async def test_discord_pair_preparation_identity_or_validation_failure_creates_n
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "patched_integration_types",
+    [
+        {},
+        {
+            "0": {
+                "oauth2_install_params": {
+                    "scopes": ["applications.commands"],
+                    "permissions": str(channel_service.DISCORD_MINIMAL_BOT_PERMISSIONS),
+                }
+            }
+        },
+        {
+            "0": {
+                "oauth2_install_params": {
+                    "scopes": ["applications.commands", "bot"],
+                    "permissions": "0",
+                }
+            }
+        },
+        {
+            "0": {
+                "oauth2_install_params": {
+                    "scopes": ["applications.commands", "bot"],
+                    "permissions": str(channel_service.DISCORD_MINIMAL_BOT_PERMISSIONS),
+                }
+            },
+            "1": {
+                "oauth2_install_params": {
+                    "scopes": ["applications.commands", "bot"],
+                    "permissions": "0",
+                }
+            },
+        },
+    ],
+)
+async def test_discord_pair_preparation_requires_exact_persisted_install_contract(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    patched_integration_types: dict[str, Any],
+) -> None:
+    initial_integration_types = {
+        "0": {
+            "oauth2_install_params": {
+                "scopes": ["applications.commands"],
+                "permissions": "0",
+            }
+        },
+        "1": {
+            "oauth2_install_params": {
+                "scopes": ["applications.commands"],
+                "permissions": "0",
+            }
+        },
+    }
+    _DiscordPreparationProviderClient.reset(
+        [
+            (
+                {
+                    "id": DISCORD_TEST_APPLICATION_ID,
+                    "integration_types_config": initial_integration_types,
+                },
+                200,
+            ),
+            (
+                {
+                    "id": DISCORD_TEST_APPLICATION_ID,
+                    "integration_types_config": patched_integration_types,
+                },
+                200,
+            ),
+        ]
+    )
+    monkeypatch.setattr(channel_service.httpx, "AsyncClient", _DiscordPreparationProviderClient)
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": f"discord-install-contract-{uuid4().hex}",
+                "provider_token": "discord-provider-token",
+                "config": {
+                    "application_id": DISCORD_TEST_APPLICATION_ID,
+                    "public_key": DISCORD_TEST_PUBLIC_KEY,
+                },
+            },
+        )
+    ).json()
+
+    pair = await client.post(
+        f"/v1/channels/{created['id']}/pair-codes",
+        json={"ttl_seconds": 900},
+    )
+
+    assert pair.status_code == 502
+    assert [call["method"] for call in _DiscordPreparationProviderClient.calls] == [
+        "GET",
+        "PATCH",
+    ]
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    assert channel_service.discord_install_config_is_current(account) is False
+    assert channel_service.discord_user_install_url(account) is None
+    pair_codes = list(
+        (
+            await db_session.execute(
+                select(ChannelPairCode).where(ChannelPairCode.account_id == UUID(created["id"]))
+            )
+        ).scalars()
+    )
+    assert pair_codes == []
+
+
+@pytest.mark.asyncio
 async def test_discord_default_command_sync_reconciles_only_reserved_commands(
     client: httpx.AsyncClient,
     monkeypatch,
@@ -18499,6 +18614,7 @@ async def test_discord_replayed_unpair_cannot_archive_a_replacement_binding(
 @pytest.mark.asyncio
 async def test_discord_concurrent_replayed_unpair_waits_for_event_commit_and_repair(
     client: httpx.AsyncClient,
+    db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     guild_id = "concurrent-replayed-unpair-guild"
@@ -18548,20 +18664,29 @@ async def test_discord_concurrent_replayed_unpair_waits_for_event_commit_and_rep
     release_unpair_commit = asyncio.Event()
     paused = False
 
-    async def pause_first_unpair_before_event_commit(**kwargs: Any):
+    async def pause_first_unpair_before_event_commit(*args: Any, **kwargs: Any):
         nonlocal paused
         binding_result = kwargs["binding_result"]
         if binding_result.unpaired and not paused:
             paused = True
             unpair_before_event_commit.set()
             await release_unpair_commit.wait()
-        return await original_record(**kwargs)
+        return await original_record(*args, **kwargs)
 
     monkeypatch.setattr(
         discord_router,
         "record_inbound_messages_for_bindings",
         pause_first_unpair_before_event_commit,
     )
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    original_get_session_override = app.dependency_overrides[get_session]
+
+    async def independent_request_session() -> AsyncIterator[AsyncSession]:
+        async with sessionmaker() as request_db:
+            yield request_db
+
+    await db_session.rollback()
+    app.dependency_overrides[get_session] = independent_request_session
 
     async def post_interaction(payload: dict[str, Any]) -> httpx.Response:
         return await client.post(
@@ -18570,25 +18695,38 @@ async def test_discord_concurrent_replayed_unpair_waits_for_event_commit_and_rep
             json=payload,
         )
 
-    first_unpair_task = asyncio.create_task(post_interaction(original_unpair))
-    await asyncio.wait_for(unpair_before_event_commit.wait(), timeout=2)
-    replacement_pair_task = asyncio.create_task(post_interaction(replacement_pair))
-    await asyncio.sleep(0.05)
-    replay_task = asyncio.create_task(post_interaction(original_unpair))
-    await asyncio.sleep(0.05)
-    release_unpair_commit.set()
+    try:
+        first_unpair_task = asyncio.create_task(post_interaction(original_unpair))
+        await asyncio.wait_for(unpair_before_event_commit.wait(), timeout=2)
+        replacement_pair_task = asyncio.create_task(post_interaction(replacement_pair))
+        await asyncio.sleep(0.05)
+        replay_task = asyncio.create_task(post_interaction(original_unpair))
+        await asyncio.sleep(0.05)
+        release_unpair_commit.set()
 
-    first_unpair, repaired, replay = await asyncio.gather(
-        first_unpair_task,
-        replacement_pair_task,
-        replay_task,
-    )
+        first_unpair, repaired, replay = await asyncio.gather(
+            first_unpair_task,
+            replacement_pair_task,
+            replay_task,
+        )
+    finally:
+        app.dependency_overrides[get_session] = original_get_session_override
     assert first_unpair.json()["data"]["content"].startswith("Server unpaired.")
     assert repaired.json()["data"]["content"].startswith("Server paired.")
     assert replay.json()["data"]["content"] == "This interaction was already handled."
-    bindings = (await client.get(f"/v1/channels/{created['id']}/bindings")).json()
-    assert len(bindings) == 1
-    assert bindings[0]["external_chat_id"] == guild_id
+    async with sessionmaker() as verification_db:
+        active_bindings = list(
+            (
+                await verification_db.execute(
+                    select(ChannelBinding).where(
+                        ChannelBinding.account_id == UUID(created["id"]),
+                        ChannelBinding.status == BINDING_STATUS_ACTIVE,
+                    )
+                )
+            ).scalars()
+        )
+    assert len(active_bindings) == 1
+    assert active_bindings[0].external_chat_id == guild_id
 
 
 @pytest.mark.asyncio
@@ -18877,6 +19015,8 @@ async def test_discord_pair_code_rejects_duplicate_verified_application_identity
 async def test_discord_legacy_duplicate_application_is_contested_across_accounts(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
+    channel_agent,
+    second_channel_agent,
 ) -> None:
     guild_id = "legacy-duplicate-application-guild"
     first = await _create_paired_discord_channel(
@@ -18884,6 +19024,7 @@ async def test_discord_legacy_duplicate_application_is_contested_across_accounts
         name="discord-legacy-application-first",
         channel_id="legacy-application-first-channel",
         guild_id=guild_id,
+        agent_id=channel_agent.id,
     )
     second_application_id = "223456789012345678"
     second = await _create_paired_discord_channel(
@@ -18892,6 +19033,7 @@ async def test_discord_legacy_duplicate_application_is_contested_across_accounts
         channel_id="legacy-application-second-channel",
         guild_id=guild_id,
         application_id=second_application_id,
+        agent_id=second_channel_agent.id,
     )
     second_account = await db_session.get(ChannelAccount, UUID(second["id"]))
     assert second_account is not None
@@ -19096,6 +19238,24 @@ async def test_discord_prod_timeline_reconciles_shadow_after_guild_create(
         for command in materialized_get.json()
     ]
 
+    # Discord emits GUILD_CREATE for all available Guilds after READY and
+    # reconnect. A current receipt must make that lifecycle replay a no-op.
+    assert (
+        await record_discord_gateway_dispatch(
+            sessionmaker,
+            UUID(created["id"]),
+            {
+                "op": 0,
+                "t": "GUILD_CREATE",
+                "s": 902,
+                "d": {"id": guild_id, "unavailable": False},
+            },
+            gateway_session_id="prod-timeline-reconnect",
+        )
+        is False
+    )
+    assert len(provider_calls) == 2
+
     assert await worker.run_once() == 0
     assert len(provider_calls) == 2
 
@@ -19226,6 +19386,26 @@ async def test_discord_429_retry_after_blocks_poll_until_due(
     assert shared_router._discord_retry_after_seconds(body_only) == pytest.approx(23.5)
 
 
+def test_discord_429_without_valid_retry_after_uses_bounded_backoff() -> None:
+    before = datetime.now(UTC)
+    retry = shared_router._discord_command_retry_state(
+        previous=None,
+        fingerprint="rate-limit-without-delay",
+        status_code=429,
+        result=_discord_provider_result(
+            429,
+            {"retry_after": "invalid"},
+            headers={"Retry-After": "invalid"},
+        ),
+    )
+    after = datetime.now(UTC)
+
+    assert retry["blocked"] is False
+    assert retry["attempts"] == 1
+    due_at = datetime.fromisoformat(retry["next_retry_at"])
+    assert before + timedelta(seconds=30) <= due_at <= after + timedelta(seconds=30)
+
+
 @pytest.mark.asyncio
 async def test_discord_403_command_retry_is_blocked_without_tight_poll(
     client: httpx.AsyncClient,
@@ -19267,6 +19447,68 @@ async def test_discord_403_command_retry_is_blocked_without_tight_poll(
     assert await worker.run_once() == 0
     assert await worker.run_once() == 0
     assert len(provider_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_discord_verified_token_repair_rearms_blocked_command_retry(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    guild_id = "credential-repair-guild"
+    created = await _create_paired_discord_channel(
+        client,
+        name="discord-credential-repair",
+        channel_id="credential-repair-channel",
+        guild_id=guild_id,
+    )
+    provider_calls: list[dict[str, Any]] = []
+    responses = [
+        _discord_provider_result(403, {"message": "Missing Access"}),
+        _discord_provider_result(200, []),
+    ]
+
+    async def sequenced_provider(**kwargs: Any) -> shared_router._DiscordProviderResult:
+        provider_calls.append(kwargs)
+        return responses.pop(0)
+
+    monkeypatch.setattr(shared_router, "_request_discord_provider", sequenced_provider)
+    command_url = f"/v1/channels/discord/v10/applications/{DISCORD_TEST_APPLICATION_ID}/commands"
+    rejected = await client.put(
+        command_url,
+        headers={"Authorization": f"Bot {created['agent_token']}"},
+        json=[{"name": "repairable", "description": "Repairable command"}],
+    )
+    assert rejected.status_code == 502
+
+    admin_key = f"admin-{uuid4().hex}"
+    original_admin_key = settings.admin_api_key
+    settings.admin_api_key = admin_key
+    try:
+        repaired = await client.patch(
+            f"/v1/admin/channels/{created['id']}",
+            headers={"X-Admin-Key": admin_key},
+            json={"provider_token": "replacement-discord-provider-token"},
+        )
+    finally:
+        settings.admin_api_key = original_admin_key
+    assert repaired.status_code == 200, repaired.text
+
+    link_id = UUID(created["agent_link_id"])
+    await db_session.rollback()
+    link = await db_session.get(ChannelBotAgentLink, link_id)
+    assert link is not None
+    retry = link.config["discord_command_retries"][guild_id]
+    assert retry["blocked"] is False
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    worker = DiscordCommandReconciliationWorker(sessionmaker, poll_interval_seconds=0.01)
+
+    assert await worker.run_once() == 1
+    assert len(provider_calls) == 2
+    await db_session.rollback()
+    link = await db_session.get(ChannelBotAgentLink, link_id)
+    assert link is not None
+    assert guild_id not in link.config["discord_command_retries"]
 
 
 @pytest.mark.asyncio
@@ -19826,3 +20068,129 @@ async def test_discord_gateway_guild_create_triggers_reconcile_without_reconnect
         )
         is False
     )
+
+
+@pytest.mark.asyncio
+async def test_discord_gateway_guild_delete_unavailable_does_nothing(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    guild_id = "temporarily-unavailable-guild"
+    created = await _create_paired_discord_channel(
+        client,
+        name="discord-temporarily-unavailable-guild",
+        channel_id="temporarily-unavailable-channel",
+        guild_id=guild_id,
+    )
+    provider_calls: list[dict[str, Any]] = []
+
+    async def provider_must_not_run(**kwargs: Any) -> shared_router._DiscordProviderResult:
+        provider_calls.append(kwargs)
+        return _discord_provider_result(200, [])
+
+    monkeypatch.setattr(shared_router, "_request_discord_provider", provider_must_not_run)
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+
+    assert (
+        await record_discord_gateway_dispatch(
+            sessionmaker,
+            UUID(created["id"]),
+            {
+                "op": 0,
+                "t": "GUILD_DELETE",
+                "s": 101,
+                "d": {"id": guild_id, "unavailable": True},
+            },
+            gateway_session_id="guild-delete-unavailable-session",
+        )
+        is True
+    )
+    bindings = (await client.get(f"/v1/channels/{created['id']}/bindings")).json()
+    assert len(bindings) == 1
+    assert provider_calls == []
+
+
+@pytest.mark.asyncio
+async def test_discord_gateway_guild_delete_archives_cleans_and_is_replay_safe(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    guild_id = "departed-guild"
+    channel_id = "departed-guild-channel"
+    created = await _create_paired_discord_channel(
+        client,
+        name="discord-departed-guild",
+        channel_id=channel_id,
+        guild_id=guild_id,
+    )
+    provider_calls: list[dict[str, Any]] = []
+
+    async def provider_success(**kwargs: Any) -> shared_router._DiscordProviderResult:
+        provider_calls.append(kwargs)
+        return _discord_provider_result(200, [])
+
+    monkeypatch.setattr(shared_router, "_request_discord_provider", provider_success)
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    deleted = {
+        "op": 0,
+        "t": "GUILD_DELETE",
+        "s": 202,
+        "d": {"id": guild_id, "unavailable": False},
+    }
+
+    assert (
+        await record_discord_gateway_dispatch(
+            sessionmaker,
+            UUID(created["id"]),
+            deleted,
+            gateway_session_id="guild-delete-session",
+        )
+        is True
+    )
+    assert (await client.get(f"/v1/channels/{created['id']}/bindings")).json() == []
+    assert len(provider_calls) == 1
+    assert provider_calls[0]["body"] == b"[]"
+
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+    repaired = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "type": 2,
+            "id": "departed-guild-repair",
+            "token": "departed-guild-repair-token",
+            "application_id": DISCORD_TEST_APPLICATION_ID,
+            "channel_id": channel_id,
+            "guild_id": guild_id,
+            "context": 0,
+            "authorizing_integration_owners": {"0": guild_id},
+            "member": {"permissions": "32", "user": {"id": "discord-pair-user"}},
+            "data": {
+                "name": "clawdi_pair",
+                "options": [{"name": "code", "value": pair["code"]}],
+            },
+        },
+    )
+    assert repaired.json()["data"]["content"].startswith("Server paired.")
+    provider_calls.clear()
+
+    assert (
+        await record_discord_gateway_dispatch(
+            sessionmaker,
+            UUID(created["id"]),
+            deleted,
+            gateway_session_id="guild-delete-session",
+        )
+        is True
+    )
+    bindings = (await client.get(f"/v1/channels/{created['id']}/bindings")).json()
+    assert len(bindings) == 1
+    assert bindings[0]["external_chat_id"] == guild_id
+    assert provider_calls == []
