@@ -304,6 +304,8 @@ async def reconcile_runtime_oauth_claims(
             payload.consumer_environment_id = None
             payload.consumer_runtime = None
         if is_desired:
+            if desired_runtime is None:  # pragma: no cover - guarded by is_desired
+                raise RuntimeError("desired OAuth runtime is missing")
             await claim_oauth_payload(
                 db,
                 payload=payload,

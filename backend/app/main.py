@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from http import HTTPStatus
 from typing import Any, Literal
@@ -242,7 +242,7 @@ def _apply_public_session_export_cache_policy(
 async def request_validation_exception_handler(
     request: Request,
     exc: RequestValidationError,
-) -> JSONResponse:
+) -> Response:
     path = request.url.path
     if path.endswith("/runtime-state"):
         errors = _validation_errors_for_log(exc)
@@ -377,7 +377,7 @@ def _bluebubbles_error_response(
     *,
     status_code: int,
     detail: Any,
-    headers: dict[str, str] | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     message = _bluebubbles_error_message(status_code=status_code, detail=detail)
     return JSONResponse(

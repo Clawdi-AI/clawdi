@@ -11,6 +11,7 @@ from uuid import UUID
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.channel import (
@@ -125,7 +126,7 @@ async def load_runtime_source_batch(
 ) -> RuntimeSourceBatch:
     if not environment_ids:
         return RuntimeSourceBatch({}, {}, {}, {}, {})
-    env_filters = [AgentEnvironment.id.in_(environment_ids)]
+    env_filters: list[ColumnElement[bool]] = [AgentEnvironment.id.in_(environment_ids)]
     if owner_user_id is not None:
         env_filters.append(AgentEnvironment.user_id == owner_user_id)
     env_rows = (
@@ -269,18 +270,23 @@ def render_runtime_source(
     bound_runtime_provider_ids = list(runtime["provider_ids"])
     runtime = _agent_runtime_binding(runtime)
     dashboard_auth = system.hermesDashboardAuth
-    if runtime_name == "hermes" and dashboard_auth is None:
-        raise RuntimeSourceError(
-            "Hermes direct dashboard requires official password authentication"
-        )
-    if runtime_name == "hermes" and dashboard_auth.activation.enabled is not True:
-        raise RuntimeSourceError("Hermes password authentication must be explicitly enabled")
-    if runtime_name == "hermes" and (
-        runtime.get("services", {}).get("dashboard", {}).get("args")
-        != ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"]
-    ):
-        raise RuntimeSourceError("Hermes dashboard must bind directly to 0.0.0.0:9119")
-    if runtime_name != "hermes" and dashboard_auth is not None:
+    if runtime_name == "hermes":
+        if dashboard_auth is None:
+            raise RuntimeSourceError(
+                "Hermes direct dashboard requires official password authentication"
+            )
+        if dashboard_auth.activation.enabled is not True:
+            raise RuntimeSourceError("Hermes password authentication must be explicitly enabled")
+        if runtime.get("services", {}).get("dashboard", {}).get("args") != [
+            "dashboard",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "9119",
+            "--no-open",
+        ]:
+            raise RuntimeSourceError("Hermes dashboard must bind directly to 0.0.0.0:9119")
+    elif dashboard_auth is not None:
         raise RuntimeSourceError("Hermes dashboard auth is only valid for Hermes runtimes")
 
     providers: dict[str, Any] = {}
