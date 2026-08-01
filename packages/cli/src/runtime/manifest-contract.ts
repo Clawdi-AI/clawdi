@@ -18,7 +18,7 @@ export const OFFICIAL_INSTALL_URLS: Record<string, string> = {
 
 export const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
 	openclaw: ["--json", "--no-onboard"],
-	hermes: ["--skip-setup", "--skip-browser", "--no-skills", "--non-interactive"],
+	hermes: ["--skip-setup", "--skip-browser", "--non-interactive"],
 };
 
 const hostedRuntimeChoiceSchema = z.enum(["openclaw", "hermes"]);
