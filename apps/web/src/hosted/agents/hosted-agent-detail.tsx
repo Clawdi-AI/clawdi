@@ -3146,7 +3146,7 @@ function ComputeSettingsSections({
 	const queryClient = useQueryClient();
 	const billingClient = useBillingClient();
 	const navigateCheckoutReturn = useCallback(
-		(checkoutDeploymentId: string): false | undefined => {
+		async (checkoutDeploymentId: string): Promise<boolean> => {
 			if (checkoutDeploymentId === deployment.resource.id) return false;
 			const hydrateAndNavigate = async () => {
 				try {
@@ -3157,8 +3157,10 @@ function ComputeSettingsSections({
 						queryClient,
 						replace: true,
 					});
+					toast.dismiss(`checkout-deployment-${checkoutDeploymentId}`);
 				} catch {
 					toast.error("Deployment accepted; details couldn’t load", {
+						id: `checkout-deployment-${checkoutDeploymentId}`,
 						description: "Retrying only loads the accepted deployment. It won’t repeat checkout.",
 						duration: Number.POSITIVE_INFINITY,
 						action: {
@@ -3168,7 +3170,8 @@ function ComputeSettingsSections({
 					});
 				}
 			};
-			void hydrateAndNavigate();
+			await hydrateAndNavigate();
+			return true;
 		},
 		[billingClient.getDeployment, deployment.resource.id, queryClient, router],
 	);

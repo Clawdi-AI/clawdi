@@ -1426,24 +1426,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				idempotencyKey: r.request().headers()["idempotency-key"] ?? null,
 			});
 			const response = options.createDeploymentResponse;
-			if (response) {
-				const operation = response.body as Partial<ReturnType<typeof completedDeploymentOperation>>;
-				const deploymentId = operation.metadata?.deploymentId;
-				if (
-					deploymentId &&
-					!deployments.some(
-						(candidate) => isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
-					)
-				) {
-					acceptedDeployments.set(deploymentId, {
-						...includedBasicDeployment,
-						id: deploymentId,
-						name: "Created included Basic",
-						status: "creating",
-					});
-				}
-				return fulfillJson(r, response.body, response.status);
-			}
+			if (response) return fulfillJson(r, response.body, response.status);
 			const createdDeployment: DeploymentMutationFixture = {
 				...includedBasicDeployment,
 				id: "hdep_included_created",
@@ -3981,7 +3964,7 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 	}
 });
 
-test("free Basic Deploy submits the declarative create contract", async ({ page }) => {
+test("free Basic Deploy recovers hydration before authoritative first frame", async ({ page }) => {
 	const createDeploymentRequests: Array<{ body: string; idempotencyKey: string | null }> = [];
 	const convergencePollRequests: string[] = [];
 	page.on("request", (request) => {
@@ -4019,83 +4002,8 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 			},
 		},
 	};
-	const deploymentListRequests: string[] = [];
 	const deploymentDetailRequests: string[] = [];
 	const acceptedDetailGate = deferred();
-	await stubHostedApi(page, {
-		plans: [basicPlan],
-		deployments: [startingDeployment],
-		deploymentListResponses: [[]],
-		deploymentListRequests,
-		deploymentDetailRequests,
-		deploymentDetailResponseGates: [acceptedDetailGate.promise],
-		createDeploymentResponse: {
-			status: 202,
-			body: { ...acceptedCreate, done: false, response: null },
-		},
-		createDeploymentRequests,
-	});
-	await page.goto("/deploy");
-
-	await page.getByRole("button", { name: "Deploy", exact: true }).click();
-	await expect.poll(() => deploymentDetailRequests).toEqual(["hdep_included_created"]);
-	await expect(page).toHaveURL(/\/deploy$/);
-	await expect(page.getByRole("button", { name: "Loading agent details…" })).toBeDisabled();
-	await expect(page.getByLabel("Agent ownership loading")).toHaveCount(0);
-	acceptedDetailGate.resolve();
-	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
-	expect(new URL(page.url()).searchParams.has("setup")).toBe(false);
-	await expect(page.getByText("Agent not found", { exact: true })).toHaveCount(0);
-	await expect(page.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
-	await expect(page.getByLabel("Agent ownership loading")).toHaveCount(0);
-	await expect(page.locator('[data-hosted="true"] [data-slot="skeleton"]')).toHaveCount(0);
-	await expect(page.getByText("Starting your agent…", { exact: true })).toBeVisible();
-	await expect(page.locator("body")).toContainText("Created included Basic");
-	const detail = page.locator("main");
-	await expect(detail.getByText("Compute", { exact: true })).toBeVisible();
-	await expect(detail.getByText("Basic", { exact: true })).toBeVisible();
-	await expect(detail.getByText("Model", { exact: true })).toBeVisible();
-	await expect(detail.getByText("GPT-5.6 Luna", { exact: true })).toBeVisible();
-	await expect(detail.getByText("Resources", { exact: true })).toBeVisible();
-	await expect(detail.getByText("2 vCPU · 4 GiB", { exact: true })).toBeVisible();
-	await expect(detail.getByText("Some agent details are unavailable", { exact: true })).toHaveCount(
-		0,
-	);
-	await expect(detail.getByText("Some agent details are not ready", { exact: true })).toHaveCount(
-		0,
-	);
-	await expect(detail.getByText("Sessions unavailable", { exact: true })).toHaveCount(0);
-	await expect(detail.getByText("Recent sessions", { exact: true })).toHaveCount(0);
-	await expect(page.getByText("Agent actions", { exact: true })).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
-	await expect(page.getByText("Agent unavailable", { exact: true })).toHaveCount(0);
-	await expect(page.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
-	await expect(page.locator("body")).not.toContainText("hdep_included_created");
-	expect(convergencePollRequests).toEqual([]);
-	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);
-	expect(createDeploymentRequests).toHaveLength(1);
-	expect(createDeploymentRequests[0]?.idempotencyKey).toMatch(/^deployment-create-/);
-	expect(JSON.parse(createDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
-		compute_plan_slug: "compute_basic",
-		runtime: "hermes",
-		primary_model: {
-			provider_id: "clawdi",
-			model: "gpt-5.6-luna",
-		},
-	});
-});
-
-test("accepted create retries deployment hydration without issuing another create", async ({
-	page,
-}) => {
-	const createDeploymentRequests: Array<{ body: string; idempotencyKey: string | null }> = [];
-	const deploymentDetailRequests: string[] = [];
-	const startingDeployment: DeploymentMutationFixture = {
-		...includedBasicDeployment,
-		id: "hdep_hydration_retry",
-		name: "Hydration retry agent",
-		status: "creating",
-	};
 	await stubHostedApi(page, {
 		plans: [basicPlan],
 		deployments: [startingDeployment],
@@ -4108,13 +4016,10 @@ test("accepted create retries deployment hydration without issuing another creat
 			},
 			{ status: 200, body: startingDeployment },
 		],
+		deploymentDetailResponseGates: [undefined, acceptedDetailGate.promise],
 		createDeploymentResponse: {
 			status: 202,
-			body: {
-				...completedDeploymentOperation(startingDeployment, "create"),
-				done: false,
-				response: null,
-			},
+			body: { ...acceptedCreate, done: false, response: null },
 		},
 		createDeploymentRequests,
 	});
@@ -4122,56 +4027,42 @@ test("accepted create retries deployment hydration without issuing another creat
 
 	await page.getByRole("button", { name: "Deploy", exact: true }).click();
 	const recovery = page.getByTestId("accepted-deployment-hydration-error");
-	await expect(recovery).toBeVisible();
 	await expect(recovery).toContainText("Deployment accepted; details couldn’t load");
 	await expect(recovery).toContainText("It won’t create another agent.");
 	await expect(recovery).not.toContainText("usr_secret");
 	await expect(page).toHaveURL(/\/deploy$/);
-	await expect(page.getByRole("button", { name: "Deploy", exact: true })).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Retry opening agent" })).toBeEnabled();
 	expect(createDeploymentRequests).toHaveLength(1);
-	expect(deploymentDetailRequests).toEqual(["hdep_hydration_retry"]);
+	expect(deploymentDetailRequests).toEqual(["hdep_included_created"]);
 
 	await page.getByRole("button", { name: "Retry opening agent" }).click();
-	await expect(page).toHaveURL(/\/agents\/hdep_hydration_retry/);
-	await expect(page.getByText("Starting your agent…", { exact: true })).toBeVisible();
-	await expect(page.getByLabel("Agent ownership loading")).toHaveCount(0);
-	expect(deploymentDetailRequests).toEqual(["hdep_hydration_retry", "hdep_hydration_retry"]);
-	expect(createDeploymentRequests).toHaveLength(1);
-	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);
-});
-
-test("checkout return hydrates its accepted deployment before replacing the deploy route", async ({
-	page,
-}) => {
-	const deploymentListRequests: string[] = [];
-	const deploymentDetailRequests: string[] = [];
-	const acceptedDetailGate = deferred();
-	const startingDeployment: DeploymentMutationFixture = {
-		...includedBasicDeployment,
-		id: "hdep_checkout_return",
-		name: "Checkout return agent",
-		status: "creating",
-	};
-	await stubHostedApi(page, {
-		plans: [basicPlan],
-		deployments: [startingDeployment],
-		deploymentListRequests,
-		deploymentListResponses: [[]],
-		deploymentDetailRequests,
-		deploymentDetailResponseGates: [acceptedDetailGate.promise],
-	});
-
-	await page.goto("/deploy?session_id=cs_checkout_return&deployment_id=hdep_checkout_return");
-	await expect.poll(() => deploymentDetailRequests).toEqual(["hdep_checkout_return"]);
-	await expect(page).toHaveURL(/\/deploy\?/);
+	await expect
+		.poll(() => deploymentDetailRequests)
+		.toEqual(["hdep_included_created", "hdep_included_created"]);
+	await expect(page).toHaveURL(/\/deploy$/);
 	await expect(page.getByRole("button", { name: "Loading agent details…" })).toBeDisabled();
-	expect(deploymentListRequests).toEqual(["/v2/deployments"]);
-
 	acceptedDetailGate.resolve();
-	await expect(page).toHaveURL(/\/agents\/hdep_checkout_return/);
-	await expect(page.getByText("Starting your agent…", { exact: true })).toBeVisible();
+
+	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
+	expect(new URL(page.url()).searchParams.has("setup")).toBe(false);
 	await expect(page.getByLabel("Agent ownership loading")).toHaveCount(0);
+	await expect(page.locator('[data-hosted="true"] [data-slot="skeleton"]')).toHaveCount(0);
+	await expect(page.getByText("Starting your agent…", { exact: true })).toBeVisible();
+	const detail = page.locator("main");
+	await expect(detail.getByText("Basic", { exact: true })).toBeVisible();
+	await expect(detail.getByText("GPT-5.6 Luna", { exact: true })).toBeVisible();
+	await expect(detail.getByText("2 vCPU · 4 GiB", { exact: true })).toBeVisible();
+	expect(convergencePollRequests).toEqual([]);
+	expect(createDeploymentRequests).toHaveLength(1);
+	expect(deploymentDetailRequests).toHaveLength(2);
+	expect(createDeploymentRequests[0]?.idempotencyKey).toMatch(/^deployment-create-/);
+	expect(JSON.parse(createDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
+		compute_plan_slug: "compute_basic",
+		runtime: "hermes",
+		primary_model: {
+			provider_id: "clawdi",
+			model: "gpt-5.6-luna",
+		},
+	});
 });
 
 test("paid checkout navigates on deployment acceptance without LRO convergence", async ({

@@ -259,45 +259,31 @@ export function useCheckoutReturnRefresh() {
 	);
 }
 
-export type CheckoutReturnRefreshOptions = {
+type CheckoutReturnRefreshOptions = {
 	includeDeployments?: boolean;
 };
+
+async function refetchExactCheckoutQuery(qc: QueryClient, queryKey: readonly unknown[]) {
+	await qc.invalidateQueries({ queryKey, exact: true, refetchType: "none" });
+	await qc.refetchQueries({ queryKey, exact: true, type: "all" }, { throwOnError: true });
+}
 
 export async function refreshCheckoutReturnQueries(
 	qc: QueryClient,
 	{ includeDeployments = true }: CheckoutReturnRefreshOptions = {},
 ): Promise<HostedDeployment[] | undefined> {
-	const [deploymentsResult, walletResult] = await Promise.allSettled([
-		includeDeployments
-			? (async () => {
-					await qc.invalidateQueries({
-						queryKey: billingKeys.deployments,
-						exact: true,
-						refetchType: "none",
-					});
-					await qc.refetchQueries(
-						{ queryKey: billingKeys.deployments, exact: true, type: "all" },
-						{ throwOnError: true },
-					);
-				})()
-			: Promise.resolve(),
-		(async () => {
-			await qc.invalidateQueries({
-				queryKey: billingKeys.wallet,
-				exact: true,
-				refetchType: "none",
-			});
-			await qc.refetchQueries(
-				{ queryKey: billingKeys.wallet, exact: true, type: "all" },
-				{ throwOnError: true },
-			);
-		})(),
+	const requiredRefreshes = [refetchExactCheckoutQuery(qc, billingKeys.wallet)];
+	if (includeDeployments) {
+		requiredRefreshes.push(refetchExactCheckoutQuery(qc, billingKeys.deployments));
+	}
+	const results = await Promise.allSettled([
+		...requiredRefreshes,
 		qc.invalidateQueries({ queryKey: billingKeys.plans }),
 		qc.invalidateQueries({ queryKey: ["agents"] }),
 	]);
-	const requiredRefreshFailures = [deploymentsResult, walletResult].flatMap((result) =>
-		result.status === "rejected" ? [result.reason] : [],
-	);
+	const requiredRefreshFailures = results
+		.slice(0, requiredRefreshes.length)
+		.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
 	if (requiredRefreshFailures.length > 0) {
 		throw new AggregateError(
 			requiredRefreshFailures,

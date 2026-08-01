@@ -8,7 +8,7 @@ export type AcceptedDeploymentNavigate = (options: {
 	replace: boolean;
 }) => void | Promise<void>;
 
-export function upsertAuthoritativeDeployment(
+function upsertAuthoritativeDeployment(
 	deployments: readonly HostedDeployment[] | undefined,
 	authoritative: HostedDeployment,
 ): HostedDeployment[] {
