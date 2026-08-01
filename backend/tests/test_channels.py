@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
 import json
 import re
 import socket
@@ -48,7 +46,6 @@ from app.models.channel import (
     PAIR_CODE_STATUS_PENDING,
     PAIR_CODE_STATUS_REVOKED,
     ChannelAccount,
-    ChannelAgentCredential,
     ChannelAgentReference,
     ChannelBinding,
     ChannelBindingAlias,
@@ -105,10 +102,6 @@ from app.services.discord_gateway_worker import (
 from app.services.discord_rate_limiter import DiscordRateLimiter
 from app.services.runtime_observation import retire_runtime_environment
 from app.services.telegram_rate_limiter import telegram_rate_limiter
-from app.services.whatsapp_baileys import (
-    load_or_create_whatsapp_auth_cert,
-    mint_whatsapp_agent_credential,
-)
 
 pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
 
@@ -1697,19 +1690,6 @@ async def test_channel_bot_pool_lists_public_bots_and_owned_private_bots(
     ).scalar_one()
     disabled_account.status = CHANNEL_STATUS_DISABLED
     await db_session.flush()
-    disabled_whatsapp = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": f"pool-disabled-wa-{uuid4().hex}"},
-        )
-    ).json()
-    disabled_whatsapp_account = (
-        await db_session.execute(
-            select(ChannelAccount).where(ChannelAccount.id == UUID(disabled_whatsapp["id"]))
-        )
-    ).scalar_one()
-    disabled_whatsapp_account.status = CHANNEL_STATUS_DISABLED
-    await db_session.flush()
 
     pool = await client.get("/v1/channels/bot-pool")
     assert pool.status_code == 200
@@ -1768,20 +1748,11 @@ async def test_channel_bot_pool_lists_public_bots_and_owned_private_bots(
         f"/v1/channels/{disabled_private['id']}/messages",
         json={"external_chat_id": "12345", "text": "hello"},
     )
-    disabled_whatsapp_credential = await client.post(
-        f"/v1/channels/whatsapp/{disabled_whatsapp['id']}/tenant-creds",
-        json={},
-    )
-    disabled_whatsapp_auth_cert = await client.get(
-        f"/v1/channels/whatsapp/{disabled_whatsapp['id']}/auth-cert"
-    )
     assert disabled_detail.status_code == 200
     assert disabled_links.status_code == 200
     assert disabled_link_create.status_code == 404
     assert disabled_pair.status_code == 404
     assert disabled_send.status_code == 404
-    assert disabled_whatsapp_credential.status_code == 404
-    assert disabled_whatsapp_auth_cert.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -2842,7 +2813,7 @@ async def test_historical_pending_pair_code_cannot_create_new_chat_binding(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("agent_type", ["hermes", "openclaw"])
-async def test_hosted_runtime_agent_rejects_whatsapp_links_and_tenant_credentials(
+async def test_hosted_runtime_agent_rejects_whatsapp_links_while_rollout_is_disabled(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
@@ -2868,16 +2839,10 @@ async def test_hosted_runtime_agent_rejects_whatsapp_links_and_tenant_credential
             f"/v1/channels/{account_id}/agent-links",
             json={"agent_id": str(agent.id)},
         )
-        tenant_credential = await user_client.post(
-            f"/v1/channels/whatsapp/{account_id}/tenant-creds",
-            json={"agent_id": str(agent.id)},
-        )
 
     expected_detail = channel_service.WHATSAPP_COMING_SOON_DETAIL
     assert link.status_code == 409
     assert link.json()["detail"] == expected_detail
-    assert tenant_credential.status_code == 409
-    assert tenant_credential.json()["detail"] == expected_detail
     links = (
         (
             await db_session.execute(
@@ -2892,102 +2857,6 @@ async def test_hosted_runtime_agent_rejects_whatsapp_links_and_tenant_credential
         .all()
     )
     assert links == []
-
-    legacy_link = ChannelBotAgentLink(
-        account_id=UUID(account_id),
-        user_id=user.id,
-        agent_id=agent.id,
-    )
-    db_session.add(legacy_link)
-    await db_session.commit()
-    await db_session.refresh(legacy_link)
-
-    async with _client_for_user(db_session, user) as user_client:
-        tenant_credential_by_link = await user_client.post(
-            f"/v1/channels/whatsapp/{account_id}/tenant-creds",
-            json={"agent_link_id": str(legacy_link.id)},
-        )
-
-    assert tenant_credential_by_link.status_code == 409
-    assert tenant_credential_by_link.json()["detail"] == expected_detail
-    credentials = (
-        (
-            await db_session.execute(
-                select(ChannelAgentCredential).where(
-                    ChannelAgentCredential.bot_agent_link_id == legacy_link.id,
-                    ChannelAgentCredential.revoked_at.is_(None),
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    assert credentials == []
-
-
-@pytest.mark.asyncio
-async def test_historical_local_whatsapp_link_cannot_mint_tenant_credentials(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    seed_user,
-):
-    created = await _create_admin_channel(
-        client,
-        target_clerk_id=seed_user.clerk_id,
-        provider=CHANNEL_PROVIDER_WHATSAPP,
-        name=f"historical-local-whatsapp-{uuid4().hex}",
-        config={"phone_number_id": "phone-historical-local"},
-    )
-    assert created.status_code == 201, created.text
-    account_id = created.json()["id"]
-    user, agent = await _create_user_with_channel_agent(
-        db_session,
-        label="historical-local-whatsapp",
-        agent_type="openclaw",
-        hosted=False,
-    )
-    link, _token = await _seed_existing_channel_link(
-        db_session,
-        account_id=account_id,
-        agent=agent,
-    )
-
-    async with _client_for_user(db_session, user) as user_client:
-        by_link = await user_client.post(
-            f"/v1/channels/whatsapp/{account_id}/tenant-creds",
-            json={"agent_link_id": str(link.id)},
-        )
-        implicit = await user_client.post(
-            f"/v1/channels/whatsapp/{account_id}/tenant-creds",
-            json={},
-        )
-        listed_links = await user_client.get(f"/v1/channels/{account_id}/agent-links")
-        listed_credentials = await user_client.get(
-            f"/v1/channels/whatsapp/{account_id}/tenant-creds"
-        )
-        unlink = await user_client.delete(f"/v1/channels/{account_id}/agent-links/{link.id}")
-
-    expected_detail = channel_service.STRICT_V2_AGENT_LINK_DETAIL
-    assert by_link.status_code == 409
-    assert by_link.json()["detail"] == expected_detail
-    assert implicit.status_code == 409
-    assert implicit.json()["detail"] == expected_detail
-    assert listed_links.status_code == 200
-    assert [item["id"] for item in listed_links.json()] == [str(link.id)]
-    assert listed_credentials.status_code == 200
-    assert listed_credentials.json() == []
-    assert unlink.status_code == 204
-    credentials = list(
-        (
-            await db_session.execute(
-                select(ChannelAgentCredential).where(
-                    ChannelAgentCredential.bot_agent_link_id == link.id,
-                    ChannelAgentCredential.revoked_at.is_(None),
-                )
-            )
-        ).scalars()
-    )
-    assert credentials == []
 
 
 @pytest.mark.asyncio
@@ -3854,183 +3723,6 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
     assert send_unowned.status_code == 403
     assert own_link.status_code == 201
     assert own_link.json()["agent_id"] == str(agent_b.id)
-
-
-@pytest.mark.asyncio
-async def test_public_whatsapp_bot_runtime_credentials_are_user_scoped(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    seed_user,
-):
-    created = await _create_admin_channel(
-        client,
-        target_clerk_id=seed_user.clerk_id,
-        provider="whatsapp",
-        name=f"public-whatsapp-{uuid4().hex}",
-        provider_token="wa-access-token",
-        config={"phone_number_id": "phone-public"},
-    )
-    assert created.status_code == 201, created.text
-    account_id = created.json()["id"]
-
-    user_a, agent_a = await _create_user_with_channel_agent(
-        db_session,
-        label="public-wa-a",
-        agent_type="claude_code",
-        hosted=False,
-    )
-    user_b, _agent_b = await _create_user_with_channel_agent(
-        db_session,
-        label="public-wa-b",
-        agent_type="claude_code",
-        hosted=False,
-    )
-    link_a, _token = await _seed_existing_channel_link(
-        db_session,
-        account_id=account_id,
-        agent=agent_a,
-    )
-    account = await db_session.get(ChannelAccount, UUID(account_id))
-    assert account is not None
-    # Seed historical persisted state directly so this test stays focused on
-    # read isolation; the public create API is intentionally fail-closed.
-    stored = await mint_whatsapp_agent_credential(
-        db_session,
-        account=account,
-        bot_agent_link_id=link_a.id,
-        user_id=user_a.id,
-        phone_user="15551234567",
-    )
-    await db_session.commit()
-    await db_session.refresh(stored.credential)
-
-    async with _client_for_user(db_session, user_a) as client_a:
-        auth_cert = await client_a.get(f"/v1/channels/whatsapp/{account_id}/auth-cert")
-        listed_a = await client_a.get(f"/v1/channels/whatsapp/{account_id}/tenant-creds")
-
-    assert auth_cert.status_code == 200
-    assert auth_cert.json()["ISSUER"] == "clawdi"
-    assert len(listed_a.json()) == 1
-    assert listed_a.json()[0]["credential_id"] == str(stored.credential.id)
-    assert listed_a.json()[0]["agent_id"] == str(agent_a.id)
-
-    async with _client_for_user(db_session, user_b) as client_b:
-        listed_b = await client_b.get(f"/v1/channels/whatsapp/{account_id}/tenant-creds")
-        auth_cert_b = await client_b.get(f"/v1/channels/whatsapp/{account_id}/auth-cert")
-
-    assert listed_b.status_code == 200
-    assert listed_b.json() == []
-    assert auth_cert_b.status_code == 200
-    assert auth_cert_b.json()["PUBLIC_KEY"] == auth_cert.json()["PUBLIC_KEY"]
-
-
-@pytest.mark.asyncio
-async def test_env_bound_list_channels_hides_historical_local_whatsapp_credentials(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    seed_user,
-):
-    created = await _create_admin_channel(
-        client,
-        target_clerk_id=seed_user.clerk_id,
-        provider="whatsapp",
-        name=f"runtime-whatsapp-{uuid4().hex}",
-        provider_token="wa-provider-token",
-        config={"phone_number_id": "phone-runtime"},
-    )
-    assert created.status_code == 201, created.text
-    account_id = created.json()["id"]
-    user, agent = await _create_user_with_channel_agent(
-        db_session,
-        label="runtime-wa-creds",
-        agent_type="claude_code",
-        hosted=False,
-    )
-    link, _token = await _seed_existing_channel_link(
-        db_session,
-        account_id=account_id,
-        agent=agent,
-    )
-    account = await db_session.get(ChannelAccount, UUID(account_id))
-    assert account is not None
-    # Seed historical persisted state directly to verify the env-bound read
-    # projection without reopening tenant-credential admission.
-    await load_or_create_whatsapp_auth_cert(db_session, account=account)
-    first = await mint_whatsapp_agent_credential(
-        db_session,
-        account=account,
-        bot_agent_link_id=link.id,
-        user_id=user.id,
-        phone_user="15551234567",
-    )
-    await db_session.commit()
-    second = await mint_whatsapp_agent_credential(
-        db_session,
-        account=account,
-        bot_agent_link_id=link.id,
-        user_id=user.id,
-        phone_user="15557654321",
-    )
-    await db_session.commit()
-    await db_session.refresh(first.credential)
-    await db_session.refresh(second.credential)
-
-    async with _client_for_user(db_session, user) as user_client:
-        browser_list = await user_client.get("/v1/channels")
-
-    assert browser_list.status_code == 200, browser_list.text
-    assert "runtime_credentials" not in browser_list.text
-    assert "advSecretKey" not in browser_list.text
-
-    active_credentials = (
-        (
-            await db_session.execute(
-                select(ChannelAgentCredential).where(
-                    ChannelAgentCredential.account_id == UUID(account_id),
-                    ChannelAgentCredential.revoked_at.is_(None),
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    assert {str(credential.id) for credential in active_credentials} == {
-        str(first.credential.id),
-        str(second.credential.id),
-    }
-
-    api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="hosted-wa-runtime")
-    async with _client_for_api_key(db_session, user, api_key) as runtime_client:
-        listed = await runtime_client.get("/v1/channels")
-
-    assert listed.status_code == 200, listed.text
-    assert "wa-provider-token" not in listed.text
-    assert str(first.credential.id) not in listed.text
-    assert listed.json() == []
-
-    async with _client_for_user(db_session, user) as user_client:
-        deleted = await user_client.delete(f"/v1/channels/{account_id}/agent-links/{link.id}")
-    assert deleted.status_code == 204, deleted.text
-
-    active_credentials_after_unlink = (
-        (
-            await db_session.execute(
-                select(ChannelAgentCredential).where(
-                    ChannelAgentCredential.account_id == UUID(account_id),
-                    ChannelAgentCredential.revoked_at.is_(None),
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    assert active_credentials_after_unlink == []
-
-    async with _client_for_api_key(db_session, user, api_key) as runtime_client:
-        listed_after_unlink = await runtime_client.get("/v1/channels")
-
-    assert listed_after_unlink.status_code == 200, listed_after_unlink.text
-    assert listed_after_unlink.json() == []
 
 
 @pytest.mark.asyncio
@@ -10386,80 +10078,6 @@ async def test_discord_unobserved_channel_provider_network_error_fails_closed(
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_graph_agent_send_uses_agent_token_and_binding(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    monkeypatch,
-    channel_agent,
-):
-    _FakeProviderClient.calls = []
-    _FakeProviderClient.response_payload = {"messages": [{"id": "wamid.agent.pair-reply"}]}
-    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={
-                "provider": "whatsapp",
-                "name": "wa-agent",
-                "provider_token": "wa-provider-token",
-                "config": {"phone_number_id": "phone-agent"},
-            },
-        )
-    ).json()
-    await _seed_created_channel_link(db_session, created=created, agent=channel_agent)
-    pair = (
-        await client.post(
-            f"/v1/channels/{created['id']}/pair-codes",
-            json={"ttl_seconds": 900},
-        )
-    ).json()
-    await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/webhook",
-        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
-        json={
-            "entry": [
-                {
-                    "changes": [
-                        {
-                            "value": {
-                                "messages": [
-                                    {
-                                        "id": "wamid.agent.pair",
-                                        "from": "15550002222",
-                                        "text": {"body": f"/bot_pair {pair['code']}"},
-                                    }
-                                ],
-                            }
-                        }
-                    ]
-                }
-            ]
-        },
-    )
-    _reset_fake_provider_client({"messages": [{"id": "wamid.agent.sent"}]})
-
-    sent = await client.post(
-        "/v1/channels/whatsapp/graph/v20.0/phone-agent/messages",
-        headers={"Authorization": f"Bearer {created['agent_token']}"},
-        json={
-            "messaging_product": "whatsapp",
-            "to": "15550002222",
-            "type": "text",
-            "text": {"body": "hello wa agent"},
-        },
-    )
-
-    assert sent.status_code == 200
-    assert sent.json()["messages"][0]["id"] == "wamid.agent.sent"
-    message = (
-        await db_session.execute(
-            select(ChannelMessage).where(ChannelMessage.provider_message_id == "wamid.agent.sent")
-        )
-    ).scalar_one()
-    assert message.text == "hello wa agent"
-
-
-@pytest.mark.asyncio
 async def test_bluebubbles_agent_send_uses_agent_token_and_binding(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -15450,141 +15068,8 @@ async def test_imessage_webhook_pair_code_sends_user_reply(
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_webhook_pair_code_creates_binding(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    channel_agent,
-):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={
-                "provider": "whatsapp",
-                "name": "wa-main",
-                "provider_token": "wa-access-token",
-                "config": {"phone_number_id": "phone-1"},
-            },
-        )
-    ).json()
-    await _seed_created_channel_link(db_session, created=created, agent=channel_agent)
-    pair = (
-        await client.post(
-            f"/v1/channels/{created['id']}/pair-codes",
-            json={"ttl_seconds": 900},
-        )
-    ).json()
-
-    verify = await client.get(
-        f"/v1/channels/whatsapp/{created['id']}/webhook",
-        params={
-            "hub.mode": "subscribe",
-            "hub.verify_token": created["webhook_secret"],
-            "hub.challenge": "challenge-1",
-        },
-    )
-    assert verify.status_code == 200
-    assert verify.text == "challenge-1"
-
-    webhook = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/webhook",
-        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
-        json={
-            "entry": [
-                {
-                    "changes": [
-                        {
-                            "value": {
-                                "contacts": [{"profile": {"name": "Ops Phone"}}],
-                                "messages": [
-                                    {
-                                        "id": "wamid.1",
-                                        "from": "15551234567",
-                                        "text": {"body": f"/bot_pair {pair['code']}"},
-                                    }
-                                ],
-                            }
-                        }
-                    ]
-                }
-            ]
-        },
-    )
-
-    assert webhook.status_code == 200
-    assert webhook.json()["paired"] is True
-    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
-    assert bindings.json()[0]["external_chat_id"] == "15551234567"
-    assert bindings.json()[0]["external_chat_name"] == "Ops Phone"
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_webhook_pair_code_sends_user_reply(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
-    channel_agent,
-):
-    _reset_fake_provider_client({"messages": [{"id": "wamid.pair-reply"}]})
-    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={
-                "provider": "whatsapp",
-                "name": "wa-pair-reply",
-                "provider_token": "wa-access-token",
-                "config": {"phone_number_id": "phone-1"},
-            },
-        )
-    ).json()
-    await _seed_created_channel_link(db_session, created=created, agent=channel_agent)
-    pair = (
-        await client.post(
-            f"/v1/channels/{created['id']}/pair-codes",
-            json={"ttl_seconds": 900},
-        )
-    ).json()
-
-    webhook = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/webhook",
-        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
-        json={
-            "entry": [
-                {
-                    "changes": [
-                        {
-                            "value": {
-                                "messages": [
-                                    {
-                                        "id": "wamid.1",
-                                        "from": "15551234567",
-                                        "text": {"body": f"/bot_pair {pair['code']}"},
-                                    }
-                                ],
-                            }
-                        }
-                    ]
-                }
-            ]
-        },
-    )
-
-    assert webhook.status_code == 200
-    assert webhook.json()["paired"] is True
-    assert _FakeProviderClient.calls[0]["url"].endswith("/phone-1/messages")
-    assert _FakeProviderClient.calls[0]["headers"]["Authorization"] == "Bearer wa-access-token"
-    assert _FakeProviderClient.calls[0]["json"]["to"] == "15551234567"
-    assert (
-        _FakeProviderClient.calls[0]["json"]["text"]["body"]
-        == "Paired! This chat is now connected to your agent."
-    )
-
-
-@pytest.mark.asyncio
 async def test_same_external_chat_id_is_isolated_across_channel_providers(
     client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    channel_agent,
 ):
     shared_chat_id = "shared-chat-id"
     channel_specs = [
@@ -15614,25 +15099,11 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
                 "config": {"server_url": "https://bluebubbles.example"},
             },
         ),
-        (
-            "whatsapp",
-            {
-                "provider": "whatsapp",
-                "name": "whatsapp-shared-chat",
-                "provider_token": "wa-access-token",
-                "config": {"phone_number_id": "phone-shared"},
-            },
-        ),
     ]
     created_by_provider = {
         provider: (await client.post("/v1/channels", json=body)).json()
         for provider, body in channel_specs
     }
-    await _seed_created_channel_link(
-        db_session,
-        created=created_by_provider["whatsapp"],
-        agent=channel_agent,
-    )
     pair_codes = {
         provider: (
             await client.post(
@@ -15680,253 +15151,19 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
             }
         },
     )
-    whatsapp = created_by_provider["whatsapp"]
-    await client.post(
-        f"/v1/channels/whatsapp/{whatsapp['id']}/webhook",
-        headers={"x-clawdi-channel-secret": whatsapp["webhook_secret"]},
-        json={
-            "entry": [
-                {
-                    "changes": [
-                        {
-                            "value": {
-                                "messages": [
-                                    {
-                                        "id": "wamid.shared",
-                                        "from": shared_chat_id,
-                                        "text": {"body": f"/bot_pair {pair_codes['whatsapp']}"},
-                                    }
-                                ],
-                            }
-                        }
-                    ]
-                }
-            ]
-        },
-    )
-
     bindings_by_provider = {}
     for provider, created in created_by_provider.items():
         bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
         assert bindings.status_code == 200
         bindings_by_provider[provider] = bindings.json()
 
-    assert set(bindings_by_provider) == {"telegram", "discord", "imessage", "whatsapp"}
+    assert set(bindings_by_provider) == {"telegram", "discord", "imessage"}
     assert {bindings[0]["external_chat_id"] for bindings in bindings_by_provider.values()} == {
         shared_chat_id
     }
     assert len({bindings[0]["account_id"] for bindings in bindings_by_provider.values()}) == len(
         bindings_by_provider
     )
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_webhook_accepts_meta_hmac_signature(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    channel_agent,
-):
-    app_secret = "wa-app-secret"
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={
-                "provider": "whatsapp",
-                "name": "wa-hmac",
-                "secrets": {"app_secret": app_secret},
-            },
-        )
-    ).json()
-    await _seed_created_channel_link(db_session, created=created, agent=channel_agent)
-    pair = (
-        await client.post(
-            f"/v1/channels/{created['id']}/pair-codes",
-            json={"ttl_seconds": 900},
-        )
-    ).json()
-    body = json.dumps(
-        {
-            "entry": [
-                {
-                    "changes": [
-                        {
-                            "value": {
-                                "messages": [
-                                    {
-                                        "id": "wamid.hmac",
-                                        "from": "15551239999",
-                                        "text": {"body": f"/bot_pair {pair['code']}"},
-                                    }
-                                ],
-                            }
-                        }
-                    ]
-                }
-            ]
-        },
-        separators=(",", ":"),
-    ).encode("utf-8")
-    signature = hmac.new(app_secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
-
-    webhook = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/webhook",
-        headers={
-            "x-hub-signature-256": f"sha256={signature}",
-            "content-type": "application/json",
-        },
-        content=body,
-    )
-
-    assert webhook.status_code == 200
-    assert webhook.json()["paired"] is True
-    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
-    assert bindings.json()[0]["external_chat_id"] == "15551239999"
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_webhook_rejects_bad_meta_hmac_signature(client: httpx.AsyncClient):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={
-                "provider": "whatsapp",
-                "name": "wa-hmac-bad",
-                "secrets": {"app_secret": "wa-app-secret"},
-            },
-        )
-    ).json()
-
-    response = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/webhook",
-        headers={
-            "x-hub-signature-256": "sha256=bad",
-            "content-type": "application/json",
-        },
-        content=b'{"message":{"key":{"remoteJid":"15550000000@s.whatsapp.net"}}}',
-    )
-
-    assert response.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_webhook_skips_from_me_messages(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    channel_agent,
-):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-from-me"},
-        )
-    ).json()
-    await _seed_created_channel_link(db_session, created=created, agent=channel_agent)
-    pair = (
-        await client.post(
-            f"/v1/channels/{created['id']}/pair-codes",
-            json={"ttl_seconds": 900},
-        )
-    ).json()
-
-    response = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/webhook",
-        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
-        json={
-            "message": {
-                "key": {
-                    "id": "FROM-ME-PAIR",
-                    "remoteJid": "15551112222@s.whatsapp.net",
-                    "fromMe": True,
-                },
-                "message": {"conversation": f"/bot_pair {pair['code']}"},
-            }
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.json()["paired"] is False
-    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
-    assert bindings.json() == []
-    messages = (
-        (
-            await db_session.execute(
-                select(ChannelMessage).where(ChannelMessage.account_id == UUID(created["id"]))
-            )
-        )
-        .scalars()
-        .all()
-    )
-    assert messages == []
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_webhook_pairs_from_common_baileys_wrappers(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    channel_agent,
-):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-wrapper-pair"},
-        )
-    ).json()
-    await _seed_created_channel_link(db_session, created=created, agent=channel_agent)
-    wrappers = [
-        (
-            "ephemeral",
-            lambda body: {
-                "ephemeralMessage": {
-                    "message": {"extendedTextMessage": {"text": body}},
-                }
-            },
-        ),
-        (
-            "viewonce",
-            lambda body: {"viewOnceMessageV2": {"message": {"conversation": body}}},
-        ),
-        (
-            "devicesent",
-            lambda body: {"deviceSentMessage": {"message": {"conversation": body}}},
-        ),
-        (
-            "edited",
-            lambda body: {
-                "protocolMessage": {
-                    "editedMessage": {"extendedTextMessage": {"text": body}},
-                }
-            },
-        ),
-    ]
-
-    for label, wrapped_message in wrappers:
-        pair = (
-            await client.post(
-                f"/v1/channels/{created['id']}/pair-codes",
-                json={"ttl_seconds": 900},
-            )
-        ).json()
-        jid = f"{label}@s.whatsapp.net"
-        response = await client.post(
-            f"/v1/channels/whatsapp/{created['id']}/webhook",
-            headers={"x-clawdi-channel-secret": created["webhook_secret"]},
-            json={
-                "message": {
-                    "key": {"id": f"PAIR-{label}", "remoteJid": jid, "fromMe": False},
-                    "message": wrapped_message(f"/bot_pair {pair['code']}"),
-                }
-            },
-        )
-        assert response.status_code == 200
-        assert response.json()["paired"] is True
-
-    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
-    assert {binding["external_chat_id"] for binding in bindings.json()} == {
-        "ephemeral@s.whatsapp.net",
-        "viewonce@s.whatsapp.net",
-        "devicesent@s.whatsapp.net",
-        "edited@s.whatsapp.net",
-    }
 
 
 @pytest.mark.asyncio
@@ -16661,211 +15898,6 @@ async def test_discord_send_uses_provider_rest_api(
     assert _FakeProviderClient.calls[0]["url"].endswith("/channels/chan-2/messages")
     assert _FakeProviderClient.calls[0]["headers"]["Authorization"] == "Bot discord-token"
     assert _FakeProviderClient.calls[0]["json"]["content"] == "deploy done"
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_send_uses_cloud_api(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    monkeypatch,
-):
-    _FakeProviderClient.calls = []
-    _FakeProviderClient.response_payload = {"messages": [{"id": "wamid.sent"}]}
-    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={
-                "provider": "whatsapp",
-                "name": "wa-send",
-                "provider_token": "wa-access-token",
-                "config": {"phone_number_id": "phone-123"},
-            },
-        )
-    ).json()
-
-    sent = await client.post(
-        f"/v1/channels/{created['id']}/messages",
-        json={"external_chat_id": "15551234567", "text": "hello"},
-    )
-
-    assert sent.status_code == 201
-    assert sent.json()["delivery_status"] == "pending"
-
-    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    delivered_id = await ChannelDeliveryWorker(sessionmaker).run_once()
-    assert delivered_id == UUID(sent.json()["delivery_id"])
-
-    message = (
-        await db_session.execute(
-            select(ChannelMessage).where(ChannelMessage.id == UUID(sent.json()["id"]))
-        )
-    ).scalar_one()
-    assert message.provider_message_id == "wamid.sent"
-    assert _FakeProviderClient.calls[0]["url"].endswith("/phone-123/messages")
-    assert _FakeProviderClient.calls[0]["headers"]["Authorization"] == "Bearer wa-access-token"
-    assert _FakeProviderClient.calls[0]["json"]["text"]["body"] == "hello"
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_delivery_worker_uses_structured_provider_payload(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    monkeypatch,
-):
-    _FakeProviderClient.calls = []
-    _FakeProviderClient.response_payload = {"messages": [{"id": "wamid.structured"}]}
-    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={
-                "provider": "whatsapp",
-                "name": "wa-structured-send",
-                "provider_token": "wa-access-token",
-                "config": {"phone_number_id": "phone-123"},
-            },
-        )
-    ).json()
-
-    sent = await client.post(
-        f"/v1/channels/{created['id']}/messages",
-        json={"external_chat_id": "15551234567:3@s.whatsapp.net", "text": "fallback"},
-    )
-    assert sent.status_code == 201
-    message = await db_session.get(ChannelMessage, UUID(sent.json()["id"]))
-    assert message is not None
-    message.payload = {
-        "delivery": "pending",
-        "providerPayload": {
-            "type": "text",
-            "text": {"body": "reply with quote"},
-            "context": {"message_id": "wamid.original"},
-        },
-    }
-    await db_session.commit()
-
-    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    delivered_id = await ChannelDeliveryWorker(sessionmaker).run_once()
-    assert delivered_id == UUID(sent.json()["delivery_id"])
-
-    await db_session.rollback()
-    message = (
-        await db_session.execute(
-            select(ChannelMessage)
-            .where(ChannelMessage.id == UUID(sent.json()["id"]))
-            .execution_options(populate_existing=True)
-        )
-    ).scalar_one()
-    assert message.provider_message_id == "wamid.structured"
-    assert message.payload["delivery"] == "succeeded"
-    assert message.payload["providerPayload"]["text"]["body"] == "reply with quote"
-    assert message.payload["providerResponse"] == {"messages": [{"id": "wamid.structured"}]}
-    assert _FakeProviderClient.calls[0]["json"] == {
-        "messaging_product": "whatsapp",
-        "to": "15551234567",
-        "type": "text",
-        "text": {"body": "reply with quote"},
-        "context": {"message_id": "wamid.original"},
-    }
-
-
-@pytest.mark.asyncio
-async def test_channel_delivery_worker_fails_invalid_whatsapp_provider_payload(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    monkeypatch,
-):
-    _FakeProviderClient.calls = []
-    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={
-                "provider": "whatsapp",
-                "name": "wa-invalid-structured-send",
-                "provider_token": "wa-access-token",
-                "config": {"phone_number_id": "phone-123"},
-            },
-        )
-    ).json()
-    sent = await client.post(
-        f"/v1/channels/{created['id']}/messages",
-        json={"external_chat_id": "15551234567", "text": "fallback"},
-    )
-    assert sent.status_code == 201
-    message = await db_session.get(ChannelMessage, UUID(sent.json()["id"]))
-    assert message is not None
-    message.payload = {
-        "delivery": "pending",
-        "providerPayload": {"type": "image", "image": {"id": "media-id", "link": "https://x"}},
-    }
-    await db_session.commit()
-
-    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    delivered_id = await ChannelDeliveryWorker(sessionmaker).run_once()
-    assert delivered_id == UUID(sent.json()["delivery_id"])
-
-    await db_session.rollback()
-    delivery = (
-        await db_session.execute(
-            select(ChannelDelivery)
-            .where(ChannelDelivery.id == UUID(sent.json()["delivery_id"]))
-            .execution_options(populate_existing=True)
-        )
-    ).scalar_one()
-    assert delivery.status == "failed"
-    assert delivery.attempts == 1
-    assert delivery.last_error == "whatsapp image payload requires exactly one of id or link"
-    assert _FakeProviderClient.calls == []
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_delivery_worker_uses_structured_audio_provider_payload(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    monkeypatch,
-):
-    _FakeProviderClient.calls = []
-    _FakeProviderClient.response_payload = {"messages": [{"id": "wamid.audio"}]}
-    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={
-                "provider": "whatsapp",
-                "name": "wa-audio-structured-send",
-                "provider_token": "wa-access-token",
-                "config": {"phone_number_id": "phone-123"},
-            },
-        )
-    ).json()
-    sent = await client.post(
-        f"/v1/channels/{created['id']}/messages",
-        json={"external_chat_id": "15551234567", "text": "fallback"},
-    )
-    assert sent.status_code == 201
-    message = await db_session.get(ChannelMessage, UUID(sent.json()["id"]))
-    assert message is not None
-    message.payload = {
-        "delivery": "pending",
-        "providerPayload": {
-            "type": "audio",
-            "audio": {"link": "https://cdn.example.test/voice.ogg"},
-        },
-    }
-    await db_session.commit()
-
-    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    delivered_id = await ChannelDeliveryWorker(sessionmaker).run_once()
-    assert delivered_id == UUID(sent.json()["delivery_id"])
-
-    assert _FakeProviderClient.calls[0]["json"] == {
-        "messaging_product": "whatsapp",
-        "to": "15551234567",
-        "type": "audio",
-        "audio": {"link": "https://cdn.example.test/voice.ogg"},
-    }
 
 
 @pytest.mark.asyncio

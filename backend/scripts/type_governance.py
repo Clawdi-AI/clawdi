@@ -25,7 +25,6 @@ EXPECTED_CONFIG = {
         "app/routes/ai_providers.py",
         "app/routes/channel_routers/imessage_core.py",
         "app/routes/channel_routers/telegram.py",
-        "app/routes/channel_routers/whatsapp.py",
         "app/routes/dashboard.py",
         "app/routes/sharing.py",
         "app/routes/vault.py",
@@ -43,9 +42,6 @@ EXPECTED_CONFIG = {
         "app/services/private_ip.py",
         "app/services/runtime_observation.py",
         "app/services/sync_events.py",
-        "app/services/whatsapp_baileys.py",
-        "app/services/whatsapp_noise.py",
-        "app/services/whatsapp_shared_runtime.py",
     ],
     "strict": [
         "app/core/query_utils.py",

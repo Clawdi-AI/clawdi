@@ -368,50 +368,6 @@ async def _pair_imessage(
     assert paired["paired"] is True
 
 
-async def _pair_whatsapp(
-    client: httpx.AsyncClient,
-    headers: dict[str, str],
-    account: dict[str, Any],
-    *,
-    phone: str,
-    run_id: str,
-) -> None:
-    pair = await _request_json(
-        client,
-        "POST",
-        f"/v1/channels/{account['id']}/pair-codes",
-        expected=201,
-        headers=headers,
-        json={"ttl_seconds": 900},
-    )
-    paired = await _request_json(
-        client,
-        "POST",
-        f"/v1/channels/whatsapp/{account['id']}/webhook",
-        headers={"x-clawdi-channel-secret": account["webhook_secret"]},
-        json={
-            "entry": [
-                {
-                    "changes": [
-                        {
-                            "value": {
-                                "messages": [
-                                    {
-                                        "id": f"wamid-pair-{run_id}",
-                                        "from": phone,
-                                        "text": {"body": f"/bot_pair {pair['code']}"},
-                                    }
-                                ]
-                            }
-                        }
-                    ]
-                }
-            ]
-        },
-    )
-    assert paired["paired"] is True
-
-
 async def _assert_discord_gateway(
     *,
     gateway_url: str,
@@ -485,14 +441,7 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
                 name=f"e2e-imessage-{run_id}",
                 config={"os_version": "15.0"},
             )
-            whatsapp = await _create_channel(
-                client,
-                backend.auth_headers,
-                "whatsapp",
-                name=f"e2e-whatsapp-{run_id}",
-                config={"phone_number_id": f"phone-{run_id}"},
-            )
-            account_ids.extend([telegram["id"], discord["id"], imessage["id"], whatsapp["id"]])
+            account_ids.extend([telegram["id"], discord["id"], imessage["id"]])
 
             legacy_tg = await client.get(
                 _telegram_bot_path(telegram, "getMe").removeprefix("/v1/channels/telegram")
@@ -513,7 +462,6 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
             discord_guild_id = f"guild-{run_id}"
             discord_channel_id = f"chan-{run_id}"
             imessage_chat_guid = f"iMessage;-;+1555{int(run_id[:6], 16) % 1_000_000:06d}"
-            whatsapp_phone = f"1555{int(run_id[:6], 16) % 1_000_000:06d}"
 
             await _pair_telegram(
                 client,
@@ -535,13 +483,6 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
                 backend.auth_headers,
                 imessage,
                 chat_guid=imessage_chat_guid,
-                run_id=run_id,
-            )
-            await _pair_whatsapp(
-                client,
-                backend.auth_headers,
-                whatsapp,
-                phone=whatsapp_phone,
                 run_id=run_id,
             )
 
@@ -626,24 +567,6 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
             assert bluebubbles["data"]["private_api"] is True
             assert bluebubbles["data"]["server_version"] == "clawdi"
 
-            wa_creds = await _request_json(
-                client,
-                "POST",
-                f"/v1/channels/whatsapp/{whatsapp['id']}/tenant-creds",
-                expected=201,
-                headers=backend.auth_headers,
-                json={"phone_user": whatsapp_phone, "name": f"wa-{run_id}"},
-            )
-            assert wa_creds["jid"].endswith("@s.whatsapp.net")
-            assert wa_creds["auth_cert"]["ISSUER"] == "clawdi"
-            wa_cert = await _request_json(
-                client,
-                "GET",
-                f"/v1/channels/whatsapp/{whatsapp['id']}/auth-cert",
-                headers=backend.auth_headers,
-            )
-            assert wa_cert == wa_creds["auth_cert"]
-
             debug_health = await _request_json(
                 client,
                 "GET",
@@ -651,7 +574,7 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
                 headers=backend.auth_headers,
             )
             providers = {entry["provider"] for entry in debug_health["channels"]}
-            assert {"telegram", "discord", "whatsapp", "imessage"}.issubset(providers)
+            assert {"telegram", "discord", "imessage"}.issubset(providers)
             passed = True
     finally:
         try:

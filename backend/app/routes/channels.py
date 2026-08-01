@@ -8,7 +8,6 @@ from app.routes.channel_routers import (
     imessage,
     public,
     telegram,
-    whatsapp,
 )
 
 router = APIRouter(tags=["channels"])
@@ -20,7 +19,6 @@ router.include_router(public.router)
 
 # Provider routers own the SDK-compatible and webhook surfaces under
 # /v1/channels/{provider}/*.
-router.include_router(whatsapp.router)
 router.include_router(telegram.router)
 router.include_router(imessage.router)
 router.include_router(discord.router)

@@ -65,7 +65,6 @@ from app.services.ai_provider_auth_transition import OAuthCredentialPayloadCorru
 from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
-from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegistry
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -100,16 +99,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     finishes before the first embedding call, that call is fast.
     """
     background: set[asyncio.Task[None]] = set()
-    whatsapp_sidecars = ConfiguredWhatsAppSidecarRegistry(
-        settings.channel_whatsapp_baileys_sidecars_json
-    )
     await start_postgres_listener()
-    try:
-        await whatsapp_sidecars.start()
-    except Exception:
-        await stop_postgres_listener()
-        raise
-
     await warm_clerk_jwks()
 
     if settings.memory_embedding_mode.lower() == "local":
@@ -137,11 +127,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             t.cancel()
         if background:
             await asyncio.gather(*background, return_exceptions=True)
-        try:
-            await whatsapp_sidecars.stop()
-        finally:
-            await stop_postgres_listener()
-            await close_composio_client()
+        await stop_postgres_listener()
+        await close_composio_client()
 
 
 app = FastAPI(

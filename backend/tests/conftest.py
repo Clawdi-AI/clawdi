@@ -40,7 +40,6 @@ _TEST_PUBLIC_DNS_HOSTS = {
     "api.telegram.org",
     "discord.com",
     "gateway.discord.gg",
-    "graph.facebook.com",
 }
 _TEST_PUBLIC_DNS_SUFFIXES = (".example", ".test")
 

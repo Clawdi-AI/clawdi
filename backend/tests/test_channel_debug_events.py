@@ -14,10 +14,6 @@ from app.models.channel import (
 )
 from app.models.user import User
 from app.services.channel_debug_events import record_channel_debug_event
-from app.services.whatsapp_shared_runtime import (
-    register_whatsapp_shared_bot_transport,
-    unregister_whatsapp_shared_bot_transport,
-)
 
 pytestmark = pytest.mark.usefixtures("channel_agent")
 
@@ -157,61 +153,3 @@ async def test_channel_debug_health_reports_pending_inbox_and_last_error(
     assert health["pendingInbox"] == 1
     assert health["lastEvent"]["stage"] == "rest"
     assert health["lastError"]["error"] == "rate limited"
-
-
-@pytest.mark.asyncio
-async def test_channel_debug_health_reports_whatsapp_native_transport_status(
-    client: httpx.AsyncClient,
-):
-    class FakeWhatsAppTransport:
-        async def relay_outbound_message(self, message):
-            return None
-
-        async def relay_raw_node(self, node):
-            return None
-
-        async def query_iq(self, node, timeout_ms):
-            return None
-
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "debug-whatsapp-native"},
-        )
-    ).json()
-
-    unavailable = await client.get("/v1/channels/debug/health")
-    assert unavailable.status_code == 200
-    health = next(
-        channel
-        for channel in unavailable.json()["channels"]
-        if channel["accountId"] == created["id"]
-    )
-    assert health["nativeTransport"] == {
-        "available": False,
-        "mode": "none",
-        "reason": "shared-bot-transport-unavailable",
-        "supportsOutboundMessages": False,
-        "supportsRawRelay": False,
-        "supportsIqQueries": False,
-    }
-
-    account_id = UUID(created["id"])
-    register_whatsapp_shared_bot_transport(account_id, FakeWhatsAppTransport())
-    try:
-        available = await client.get("/v1/channels/debug/health")
-    finally:
-        unregister_whatsapp_shared_bot_transport(account_id)
-
-    assert available.status_code == 200
-    health = next(
-        channel for channel in available.json()["channels"] if channel["accountId"] == created["id"]
-    )
-    assert health["nativeTransport"] == {
-        "available": True,
-        "mode": "in_process",
-        "reason": None,
-        "supportsOutboundMessages": True,
-        "supportsRawRelay": True,
-        "supportsIqQueries": True,
-    }

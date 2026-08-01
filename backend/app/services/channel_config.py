@@ -8,7 +8,6 @@ from fastapi import HTTPException, status
 from app.models.channel import (
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_IMESSAGE,
-    CHANNEL_PROVIDER_WHATSAPP,
     ChannelAccount,
 )
 from app.services.url_security import (
@@ -68,12 +67,6 @@ async def validate_channel_account_config_urls(
     if provider == CHANNEL_PROVIDER_DISCORD:
         await _validate_optional_http_config(config, "api_base_url", "discord api_base_url")
         await _validate_optional_websocket_config(config, "gateway_url", "discord gateway_url")
-    if provider == CHANNEL_PROVIDER_WHATSAPP:
-        await _validate_optional_http_config(
-            config,
-            "graph_api_base_url",
-            "whatsapp graph_api_base_url",
-        )
     if provider == CHANNEL_PROVIDER_IMESSAGE:
         await _validate_optional_http_config(config, "server_url", "imessage server_url")
 
