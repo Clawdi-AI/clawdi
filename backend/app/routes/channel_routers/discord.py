@@ -45,10 +45,10 @@ from app.models.channel import (
     ChannelBotAgentLink,
 )
 from app.routes.channel_routers.shared import (
+    _clear_discord_guild_commands,
     _discord_application_id,
     _discord_bot_user,
     _discord_gateway_dispatch,
-    _discord_guild_owner_principals,
     _discord_interaction_content,
     _DiscordProviderResult,
     _fan_out_discord_global_commands,
@@ -74,9 +74,10 @@ from app.services.channels import (
     discord_channel_scope_from_payload,
     discord_chat_from_payload,
     discord_external_user_id_from_payload,
-    discord_guild_command_denied_reason,
     discord_message_id_from_payload,
     discord_pair_command_from_payload,
+    discord_pairing_command_denied_reason,
+    discord_pairing_command_event_was_handled,
     discord_pairing_reply_for_command,
     discord_text_from_payload,
     get_active_channel_account,
@@ -1004,14 +1005,15 @@ async def discord_webhook(
     if account.provider != CHANNEL_PROVIDER_DISCORD:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
     body = await request.body()
+    signature_verified = verify_discord_signature(
+        account=account,
+        body=body,
+        signature=x_signature_ed25519,
+        timestamp=x_signature_timestamp,
+    )
     if not (
         verify_webhook_secret(x_clawdi_channel_secret, account.webhook_secret_hash)
-        or verify_discord_signature(
-            account=account,
-            body=body,
-            signature=x_signature_ed25519,
-            timestamp=x_signature_timestamp,
-        )
+        or signature_verified
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1027,19 +1029,40 @@ async def discord_webhook(
     external_chat_id, external_chat_type, external_chat_name = chat
     command = discord_pair_command_from_payload(payload)
     channel_id, guild_id = discord_channel_scope_from_payload(payload)
+    provider_event_id = discord_message_id_from_payload(payload)
+    if await discord_pairing_command_event_was_handled(
+        db,
+        account=account,
+        external_chat_id=external_chat_id,
+        provider_event_id=provider_event_id,
+        command=command,
+    ):
+        if payload.get("type") == 2:
+            return {
+                "type": 4,
+                "data": {
+                    "content": "This interaction was already handled.",
+                    "flags": 64,
+                },
+            }
+        return {"ok": True}
+    external_user_id = discord_external_user_id_from_payload(payload)
     binding_result = await resolve_inbound_binding(
         db,
         account=account,
         external_chat_id=external_chat_id,
         external_chat_type=external_chat_type,
         external_chat_name=external_chat_name,
-        external_user_id=discord_external_user_id_from_payload(payload),
+        external_user_id=external_user_id,
         text=discord_text_from_payload(payload),
         command=command,
-        command_denied_reason=discord_guild_command_denied_reason(
+        command_denied_reason=await discord_pairing_command_denied_reason(
+            account,
             payload,
             command=command,
             guild_id=guild_id,
+            external_user_id=external_user_id,
+            trusted_interaction=signature_verified,
         ),
         command_actor_required=True,
     )
@@ -1049,7 +1072,7 @@ async def discord_webhook(
         account=account,
         binding_result=binding_result,
         external_chat_id=external_chat_id,
-        provider_message_id=discord_message_id_from_payload(payload),
+        provider_message_id=provider_event_id,
         text=discord_text_from_payload(payload),
         payload=payload,
     )
@@ -1172,6 +1195,7 @@ async def _replay_discord_commands_on_pair(
             application_id=application_id,
             commands=[command for command in commands if isinstance(command, dict)],
             guild_ids={guild_id},
+            force=True,
         )
     except HTTPException:
         return
@@ -1212,62 +1236,20 @@ async def cleanup_discord_guild_commands_after_authority_revoked(
     bot_agent_link_id: UUID,
     guild_ids: set[str],
 ) -> bool:
-    """Best-effort cleanup after durable unpair/unlink authority revocation."""
-    cleanup_succeeded = True
+    """Durably reconcile Guild command cleanup after authority revocation."""
     try:
         async with async_session_factory() as db:
             account = await get_active_channel_account(db, account_id=account_id)
             link = await db.get(ChannelBotAgentLink, bot_agent_link_id)
-            link_config = link.config if link is not None and isinstance(link.config, dict) else {}
-            command_shadow = link_config.get("discord_agent_commands")
-            if not isinstance(command_shadow, dict) or not any(
-                isinstance(commands, list) and commands for commands in command_shadow.values()
-            ):
-                return True
-            application_id = _discord_application_id(account)
-            for guild_id in sorted(guild_ids):
-                # A new pairing can win after the revocation commit. Never erase its
-                # newly materialized commands.
-                if await _discord_guild_owner_principals(
-                    db,
-                    account_id=account.id,
-                    guild_id=guild_id,
-                ):
-                    log.info(
-                        "discord_command_cleanup_skipped_active_owner "
-                        "account_id=%s link_id=%s guild_id=%s",
-                        account_id,
-                        bot_agent_link_id,
-                        guild_id,
-                    )
-                    continue
-                try:
-                    result = await _request_discord_provider(
-                        account=account,
-                        method="PUT",
-                        path=f"/applications/{application_id}/guilds/{guild_id}/commands",
-                        body=b"[]",
-                    )
-                    if result.status_code >= 400:
-                        cleanup_succeeded = False
-                        log.warning(
-                            "discord_command_cleanup_rejected "
-                            "account_id=%s link_id=%s guild_id=%s status=%s",
-                            account_id,
-                            bot_agent_link_id,
-                            guild_id,
-                            result.status_code,
-                        )
-                except HTTPException:
-                    cleanup_succeeded = False
-                    log.exception(
-                        "discord_command_cleanup_failed account_id=%s link_id=%s guild_id=%s",
-                        account_id,
-                        bot_agent_link_id,
-                        guild_id,
-                    )
-                    continue
-        return cleanup_succeeded
+            if link is None or link.account_id != account.id:
+                return False
+            return await _clear_discord_guild_commands(
+                db,
+                account=account,
+                link=link,
+                application_id=_discord_application_id(account),
+                guild_ids=guild_ids,
+            )
     except (HTTPException, SQLAlchemyError):
         log.exception(
             "discord_command_cleanup_setup_failed account_id=%s link_id=%s",

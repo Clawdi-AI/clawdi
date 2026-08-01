@@ -41,6 +41,38 @@ export function verifiedDiscordPairingCommand(pairingCommand: string, code: stri
 	return pairingCommand === expected ? pairingCommand : null;
 }
 
+export function verifiedDiscordServerInstallUrl(value: string | null | undefined): string | null {
+	if (!value) return null;
+	try {
+		const url = new URL(value);
+		const clientId = url.searchParams.get("client_id");
+		const scopes = new Set((url.searchParams.get("scope") ?? "").split(" "));
+		if (
+			url.origin !== "https://discord.com" ||
+			url.pathname !== "/oauth2/authorize" ||
+			url.username ||
+			url.password ||
+			url.hash ||
+			!clientId ||
+			!/^[0-9]{17,20}$/.test(clientId) ||
+			url.searchParams.getAll("client_id").length !== 1 ||
+			url.searchParams.get("integration_type") !== "0" ||
+			url.searchParams.getAll("integration_type").length !== 1 ||
+			url.searchParams.get("permissions") !== "274878024768" ||
+			url.searchParams.getAll("permissions").length !== 1 ||
+			url.searchParams.getAll("scope").length !== 1 ||
+			scopes.size !== 2 ||
+			!scopes.has("applications.commands") ||
+			!scopes.has("bot")
+		) {
+			return null;
+		}
+		return value;
+	} catch {
+		return null;
+	}
+}
+
 export function verifiedDiscordUserInstallUrl(value: string | null | undefined): string | null {
 	if (!value) return null;
 	try {

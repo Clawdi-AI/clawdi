@@ -27,6 +27,9 @@ from app.models.channel import (
     ChannelAccount,
 )
 from app.services.channels import decrypt_provider_token, record_discord_dispatch
+from app.services.discord_command_reconciliation_worker import (
+    reconcile_discord_guild_commands,
+)
 from app.services.url_security import UnsafeOutboundUrlError, validate_channel_websocket_url
 
 log = logging.getLogger(__name__)
@@ -382,9 +385,34 @@ async def record_discord_gateway_dispatch(
         recorded = await record_discord_dispatch(db, account=account, frame=frame)
         if recorded:
             await db.commit()
-            return True
-        await db.rollback()
-        return False
+        else:
+            await db.rollback()
+        guild_id = _discord_available_guild_id(frame)
+        if guild_id is not None:
+            try:
+                await reconcile_discord_guild_commands(
+                    sessionmaker,
+                    account_id=account_id,
+                    guild_id=guild_id,
+                )
+            # Reconciliation failures must not reconnect the healthy Gateway.
+            except Exception:
+                log.exception(
+                    "discord_command_guild_create_reconciliation_failed account_id=%s guild_id=%s",
+                    account_id,
+                    guild_id,
+                )
+        return recorded
+
+
+def _discord_available_guild_id(frame: GatewayFrame) -> str | None:
+    if frame.get("t") != "GUILD_CREATE":
+        return None
+    data = frame.get("d")
+    if not isinstance(data, dict) or data.get("unavailable") is True:
+        return None
+    guild_id = data.get("id")
+    return guild_id if isinstance(guild_id, str) and guild_id else None
 
 
 async def _load_active_discord_account(

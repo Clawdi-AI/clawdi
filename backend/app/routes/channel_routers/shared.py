@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -18,7 +19,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -91,6 +92,9 @@ _DISCORD_RESPONSE_HEADER_ALLOWLIST = (
     "x-ratelimit-scope",
     "x-request-id",
 )
+_DISCORD_AGENT_COMMANDS_CONFIG_KEY = "discord_agent_commands"
+_DISCORD_COMMAND_MATERIALIZATIONS_CONFIG_KEY = "discord_command_materializations"
+_DISCORD_COMMAND_RETRIES_CONFIG_KEY = "discord_command_retries"
 
 
 def _channel_visibility(account: ChannelAccount) -> ChannelVisibility:
@@ -612,15 +616,42 @@ async def _handle_discord_application_commands(
         guild_id=guild_id,
     ):
         return _discord_command_error("Missing Access", 50001, 403)
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        # Pair claims lock this Link row too. Take the same lock before the DM
+        # boundary check so a concurrent User Install cannot make a rejected
+        # mutation commit a hidden shadow.
+        await db.refresh(link, with_for_update=True)
+        await _assert_discord_command_mutation_supported(
+            db,
+            account=account,
+            link=link,
+            guild_id=guild_id,
+        )
+        # Serialize desired-shadow mutations with provider receipts/retries.
+        # The subsequent shadow commit releases this row lock before network I/O.
 
     commands = _discord_command_shadow(link)
     if request.method == "GET" and command_id is None:
-        return commands.get(scope_key, [])
+        return await _discord_materialized_command_list(
+            db,
+            account=account,
+            link=link,
+            guild_id=guild_id,
+        )
     if request.method == "GET" and command_id is not None:
-        command = _find_discord_command(commands.get(scope_key, []), command_id)
+        materialized_commands = await _discord_materialized_command_list(
+            db,
+            account=account,
+            link=link,
+            guild_id=guild_id,
+        )
+        command = _find_discord_command(materialized_commands, command_id)
         return command or _discord_command_error("Unknown application command", 10063, 404)
     if request.method == "DELETE" and command_id is None:
-        commands.pop(scope_key, None)
+        # Keep an explicit empty desired scope as a durable tombstone. If the
+        # provider call fails, the worker can still converge the physical Guild
+        # command set after the client observes an error or retries to a 404.
+        commands[scope_key] = []
         await _store_discord_command_shadow(db, link=link, commands=commands)
         await _materialize_discord_command_scope(
             db,
@@ -734,7 +765,7 @@ def _discord_command_error(message: str, code: int, status_code: int) -> Respons
 
 def _discord_command_shadow(link: ChannelBotAgentLink) -> dict[str, list[dict[str, Any]]]:
     config = link.config if isinstance(link.config, dict) else {}
-    commands = config.get("discord_agent_commands")
+    commands = config.get(_DISCORD_AGENT_COMMANDS_CONFIG_KEY)
     if not isinstance(commands, dict):
         return {}
     clean: dict[str, list[dict[str, Any]]] = {}
@@ -744,6 +775,170 @@ def _discord_command_shadow(link: ChannelBotAgentLink) -> dict[str, list[dict[st
     return clean
 
 
+def _discord_command_materializations(link: ChannelBotAgentLink) -> dict[str, str]:
+    config = link.config if isinstance(link.config, dict) else {}
+    raw = config.get(_DISCORD_COMMAND_MATERIALIZATIONS_CONFIG_KEY)
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        guild_id: fingerprint
+        for guild_id, fingerprint in raw.items()
+        if isinstance(guild_id, str) and guild_id and isinstance(fingerprint, str) and fingerprint
+    }
+
+
+def _discord_command_retries(link: ChannelBotAgentLink) -> dict[str, dict[str, Any]]:
+    config = link.config if isinstance(link.config, dict) else {}
+    raw = config.get(_DISCORD_COMMAND_RETRIES_CONFIG_KEY)
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        guild_id: dict(value)
+        for guild_id, value in raw.items()
+        if isinstance(guild_id, str) and guild_id and isinstance(value, dict)
+    }
+
+
+def _discord_retry_is_due(retry: dict[str, Any] | None, *, fingerprint: str) -> bool:
+    if retry is None or retry.get("fingerprint") != fingerprint:
+        return True
+    if retry.get("blocked") is True:
+        return False
+    next_retry_at = retry.get("next_retry_at")
+    if not isinstance(next_retry_at, str):
+        return True
+    try:
+        due_at = datetime.fromisoformat(next_retry_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    return due_at <= datetime.now(UTC)
+
+
+def _discord_retry_after_seconds(result: _DiscordProviderResult) -> float | None:
+    raw_header = next(
+        (value for key, value in (result.headers or {}).items() if key.lower() == "retry-after"),
+        None,
+    )
+    if raw_header is not None:
+        try:
+            value = float(raw_header)
+        except ValueError:
+            value = -1
+        if value >= 0:
+            return value
+    payload = result.json_object()
+    raw_body = payload.get("retry_after") if payload is not None else None
+    if isinstance(raw_body, (int, float)) and not isinstance(raw_body, bool) and raw_body >= 0:
+        return float(raw_body)
+    return None
+
+
+def _discord_command_retry_state(
+    *,
+    previous: dict[str, Any] | None,
+    fingerprint: str,
+    status_code: int,
+    result: _DiscordProviderResult | None,
+) -> dict[str, Any]:
+    previous_attempts = previous.get("attempts") if isinstance(previous, dict) else None
+    attempts = (
+        previous_attempts + 1
+        if isinstance(previous_attempts, int)
+        and not isinstance(previous_attempts, bool)
+        and previous_attempts >= 0
+        and previous.get("fingerprint") == fingerprint
+        else 1
+    )
+    retry_after = _discord_retry_after_seconds(result) if result is not None else None
+    blocked = 400 <= status_code < 500 and (
+        status_code != status.HTTP_429_TOO_MANY_REQUESTS or retry_after is None
+    )
+    if status_code == status.HTTP_429_TOO_MANY_REQUESTS and retry_after is not None:
+        delay_seconds = retry_after
+    else:
+        delay_seconds = min(30.0 * (2 ** (attempts - 1)), 3600.0)
+    return {
+        "fingerprint": fingerprint,
+        "attempts": attempts,
+        "status_code": status_code,
+        "blocked": blocked,
+        "next_retry_at": (
+            None if blocked else (datetime.now(UTC) + timedelta(seconds=delay_seconds)).isoformat()
+        ),
+    }
+
+
+def _discord_effective_guild_commands(
+    shadow: dict[str, list[dict[str, Any]]],
+    *,
+    guild_id: str,
+) -> list[dict[str, Any]]:
+    guild_commands = shadow.get(f"guild:{guild_id}")
+    return guild_commands if guild_commands is not None else shadow.get("global", [])
+
+
+def _discord_guild_command_fingerprint(
+    commands: list[dict[str, Any]],
+    *,
+    application_id: str,
+) -> str:
+    provider_commands = [_discord_guild_command_provider_payload(command) for command in commands]
+    encoded = json.dumps(
+        {
+            "application_id": application_id,
+            "commands": provider_commands,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+async def _discord_materialized_command_list(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+    guild_id: str | None,
+) -> list[dict[str, Any]]:
+    shadow = _discord_command_shadow(link)
+    materializations = _discord_command_materializations(link)
+    application_id = _discord_application_id(account)
+    if guild_id is not None:
+        desired = _discord_effective_guild_commands(shadow, guild_id=guild_id)
+        expected = _discord_guild_command_fingerprint(
+            desired,
+            application_id=application_id,
+        )
+        return desired if materializations.get(guild_id) == expected else []
+    guild_ids = await _discord_uncontested_guilds_for_link(
+        db,
+        account=account,
+        bot_agent_link_id=link.id,
+    )
+    global_commands = shadow.get("global", [])
+    global_targets = [
+        target_guild_id for target_guild_id in guild_ids if f"guild:{target_guild_id}" not in shadow
+    ]
+    if not guild_ids:
+        # Before any chat is paired, the shadow is a durable desired state for
+        # a future server. Once the Link is DM-only, returning an empty list is
+        # the explicit boundary: per-Link global commands are not materialized
+        # into Discord's shared application-global DM namespace.
+        bindings = await _discord_active_bindings_for_link(db, account=account, link=link)
+        return global_commands if not bindings else []
+    if not global_targets:
+        return global_commands
+    expected = _discord_guild_command_fingerprint(
+        global_commands,
+        application_id=application_id,
+    )
+    if all(materializations.get(target) == expected for target in global_targets):
+        return global_commands
+    return []
+
+
 async def _store_discord_command_shadow(
     db: AsyncSession,
     *,
@@ -751,7 +946,7 @@ async def _store_discord_command_shadow(
     commands: dict[str, list[dict[str, Any]]],
 ) -> None:
     config = dict(link.config) if isinstance(link.config, dict) else {}
-    config["discord_agent_commands"] = commands
+    config[_DISCORD_AGENT_COMMANDS_CONFIG_KEY] = commands
     link.config = config
     await db.commit()
 
@@ -878,7 +1073,7 @@ async def _discord_guild_owned_by_link(
 ) -> bool:
     owners = await _discord_guild_owner_principals(
         db,
-        account_id=account.id,
+        application_id=_discord_application_id(account),
         guild_id=guild_id,
     )
     return owners == {(account.id, bot_agent_link_id)}
@@ -890,13 +1085,13 @@ async def _discord_uncontested_guilds_for_link(
     account: ChannelAccount,
     bot_agent_link_id: UUID,
 ) -> list[str]:
+    application_id = _discord_application_id(account)
     result = await db.execute(
         select(ChannelBinding, ChannelAccount, ChannelBotAgentLink)
         .join(ChannelAccount, ChannelAccount.id == ChannelBinding.account_id)
         .join(ChannelBotAgentLink, ChannelBotAgentLink.id == ChannelBinding.bot_agent_link_id)
         .where(
             ChannelAccount.provider == CHANNEL_PROVIDER_DISCORD,
-            ChannelBinding.account_id == account.id,
             ChannelBinding.status == BINDING_STATUS_ACTIVE,
             ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
             ChannelBotAgentLink.archived_at.is_(None),
@@ -904,6 +1099,8 @@ async def _discord_uncontested_guilds_for_link(
     )
     owners_by_guild: dict[str, set[tuple[UUID, UUID]]] = {}
     for binding, owner_account, owner_link in result.all():
+        if _discord_application_id(owner_account) != application_id:
+            continue
         guild_id = _discord_binding_guild_id(binding)
         if guild_id is None:
             continue
@@ -915,20 +1112,62 @@ async def _discord_uncontested_guilds_for_link(
     )
 
 
+async def _discord_active_bindings_for_link(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+) -> list[ChannelBinding]:
+    result = await db.execute(
+        select(ChannelBinding).where(
+            ChannelBinding.account_id == account.id,
+            ChannelBinding.bot_agent_link_id == link.id,
+            ChannelBinding.status == BINDING_STATUS_ACTIVE,
+        )
+    )
+    return list(result.scalars())
+
+
+async def _assert_discord_command_mutation_supported(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+    guild_id: str | None,
+) -> None:
+    if guild_id is not None:
+        return
+    guild_ids = await _discord_uncontested_guilds_for_link(
+        db,
+        account=account,
+        bot_agent_link_id=link.id,
+    )
+    if guild_ids:
+        return
+    bindings = await _discord_active_bindings_for_link(db, account=account, link=link)
+    if bindings:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "agent-defined Discord commands require a paired server; "
+                "per-Link commands are unavailable in direct messages"
+            ),
+        )
+
+
 async def _discord_guild_owner_principals(
     db: AsyncSession,
     *,
-    account_id: UUID,
+    application_id: str,
     guild_id: str,
 ) -> set[tuple[UUID, UUID]]:
-    """Return active Link owners within one physical Discord account namespace."""
+    """Return active Link owners within one physical Discord app namespace."""
     result = await db.execute(
         select(ChannelBinding, ChannelAccount, ChannelBotAgentLink)
         .join(ChannelAccount, ChannelAccount.id == ChannelBinding.account_id)
         .join(ChannelBotAgentLink, ChannelBotAgentLink.id == ChannelBinding.bot_agent_link_id)
         .where(
             ChannelAccount.provider == CHANNEL_PROVIDER_DISCORD,
-            ChannelBinding.account_id == account_id,
             ChannelBinding.status == BINDING_STATUS_ACTIVE,
             ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
             ChannelBotAgentLink.archived_at.is_(None),
@@ -936,7 +1175,10 @@ async def _discord_guild_owner_principals(
     )
     owners: set[tuple[UUID, UUID]] = set()
     for binding, owner_account, owner_link in result.all():
-        if _discord_binding_guild_id(binding) == guild_id:
+        if (
+            _discord_application_id(owner_account) == application_id
+            and _discord_binding_guild_id(binding) == guild_id
+        ):
             owners.add((owner_account.id, owner_link.id))
     return owners
 
@@ -950,6 +1192,60 @@ def _discord_binding_guild_id(binding: ChannelBinding) -> str | None:
     return None
 
 
+async def _lock_discord_command_projection(
+    db: AsyncSession,
+    *,
+    application_id: str,
+    guild_id: str,
+) -> None:
+    """Serialize every physical command overwrite for one app/Guild namespace."""
+    lock_name = f"discord-command-projection:{application_id}:{guild_id}"
+    await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(lock_name, 0))))
+
+
+def _discord_retry_exception(retry: dict[str, Any]) -> HTTPException:
+    status_code = retry.get("status_code")
+    if status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+        headers: dict[str, str] | None = None
+        next_retry_at = retry.get("next_retry_at")
+        if isinstance(next_retry_at, str):
+            try:
+                due_at = datetime.fromisoformat(next_retry_at.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+            else:
+                remaining = max(0.0, (due_at - datetime.now(UTC)).total_seconds())
+                headers = {"Retry-After": f"{remaining:.3f}"}
+        return HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="discord command sync is rate limited",
+            headers=headers,
+        )
+    if retry.get("blocked") is True:
+        return HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="discord api rejected commands",
+        )
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="discord command reconciliation is deferred",
+    )
+
+
+def _discord_provider_failure_exception(result: _DiscordProviderResult) -> HTTPException:
+    if result.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+        retry_after = _discord_retry_after_seconds(result)
+        return HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="discord command sync is rate limited",
+            headers=({"Retry-After": f"{retry_after:.3f}"} if retry_after is not None else None),
+        )
+    return HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="discord api rejected commands",
+    )
+
+
 async def _fan_out_discord_global_commands(
     db: AsyncSession,
     *,
@@ -958,9 +1254,25 @@ async def _fan_out_discord_global_commands(
     application_id: str,
     commands: list[dict[str, Any]],
     guild_ids: set[str] | None = None,
-) -> None:
+    automatic: bool = False,
+    force: bool = False,
+) -> int:
     if not account.encrypted_provider_token or not account.provider_token_nonce:
-        return
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="discord bot credential unavailable",
+        )
+    link = await db.get(ChannelBotAgentLink, bot_agent_link_id)
+    if (
+        link is None
+        or link.account_id != account.id
+        or link.status != BOT_AGENT_LINK_STATUS_ACTIVE
+        or link.archived_at is not None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="discord agent link unavailable",
+        )
     uncontested_guild_ids = await _discord_uncontested_guilds_for_link(
         db,
         account=account,
@@ -970,22 +1282,200 @@ async def _fan_out_discord_global_commands(
         guild_id for guild_id in uncontested_guild_ids if guild_ids is None or guild_id in guild_ids
     ]
     if not target_guild_ids:
-        return
-    body = json.dumps(
-        [_discord_guild_command_provider_payload(command) for command in commands]
-    ).encode("utf-8")
+        return 0
+    reconciled = 0
+    first_error: HTTPException | None = None
     for guild_id in target_guild_ids:
-        result = await _request_discord_provider(
-            account=account,
-            method="PUT",
-            path=f"/applications/{application_id}/guilds/{guild_id}/commands",
-            body=body,
+        await _lock_discord_command_projection(
+            db,
+            application_id=application_id,
+            guild_id=guild_id,
         )
-        if result.status_code >= 400:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="discord api rejected commands",
+        await db.refresh(link, with_for_update=True)
+        if not await _discord_guild_owned_by_link(
+            db,
+            account=account,
+            bot_agent_link_id=link.id,
+            guild_id=guild_id,
+        ):
+            await db.commit()
+            continue
+        desired_shadow = _discord_command_shadow(link)
+        materializations = _discord_command_materializations(link)
+        retries = _discord_command_retries(link)
+        desired_commands = _discord_effective_guild_commands(
+            desired_shadow,
+            guild_id=guild_id,
+        )
+        fingerprint = _discord_guild_command_fingerprint(
+            desired_commands,
+            application_id=application_id,
+        )
+        if not force and materializations.get(guild_id) == fingerprint:
+            await db.commit()
+            continue
+        retry = retries.get(guild_id)
+        if not force and not _discord_retry_is_due(retry, fingerprint=fingerprint):
+            await db.commit()
+            if not automatic and first_error is None and retry is not None:
+                first_error = _discord_retry_exception(retry)
+            continue
+        body = json.dumps(
+            [_discord_guild_command_provider_payload(command) for command in desired_commands]
+        ).encode("utf-8")
+        try:
+            result = await _request_discord_provider(
+                account=account,
+                method="PUT",
+                path=f"/applications/{application_id}/guilds/{guild_id}/commands",
+                body=body,
             )
+        except HTTPException as exc:
+            retries[guild_id] = _discord_command_retry_state(
+                previous=retries.get(guild_id),
+                fingerprint=fingerprint,
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                result=None,
+            )
+            config = dict(link.config) if isinstance(link.config, dict) else {}
+            config[_DISCORD_COMMAND_RETRIES_CONFIG_KEY] = retries
+            link.config = config
+            await db.commit()
+            if not automatic and first_error is None:
+                first_error = exc
+            continue
+        if not 200 <= result.status_code < 300:
+            retries[guild_id] = _discord_command_retry_state(
+                previous=retries.get(guild_id),
+                fingerprint=fingerprint,
+                status_code=result.status_code,
+                result=result,
+            )
+            config = dict(link.config) if isinstance(link.config, dict) else {}
+            config[_DISCORD_COMMAND_RETRIES_CONFIG_KEY] = retries
+            link.config = config
+            await db.commit()
+            if not automatic and first_error is None:
+                first_error = _discord_provider_failure_exception(result)
+            continue
+        materializations[guild_id] = fingerprint
+        retries.pop(guild_id, None)
+        config = dict(link.config) if isinstance(link.config, dict) else {}
+        config[_DISCORD_COMMAND_MATERIALIZATIONS_CONFIG_KEY] = materializations
+        config[_DISCORD_COMMAND_RETRIES_CONFIG_KEY] = retries
+        link.config = config
+        await db.commit()
+        reconciled += 1
+    if first_error is not None:
+        raise first_error
+    return reconciled
+
+
+async def _discord_historical_guilds_for_link(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+) -> set[str]:
+    result = await db.execute(
+        select(ChannelBinding).where(
+            ChannelBinding.account_id == account.id,
+            ChannelBinding.bot_agent_link_id == link.id,
+        )
+    )
+    return {
+        guild_id
+        for binding in result.scalars()
+        if (guild_id := _discord_binding_guild_id(binding)) is not None
+    }
+
+
+async def _clear_discord_guild_commands(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+    application_id: str,
+    guild_ids: set[str],
+    force: bool = False,
+) -> bool:
+    """Converge stale physical Guild scopes to an explicit empty tombstone."""
+    if not account.encrypted_provider_token or not account.provider_token_nonce:
+        return False
+    empty_fingerprint = _discord_guild_command_fingerprint(
+        [],
+        application_id=application_id,
+    )
+    succeeded = True
+    for guild_id in sorted(guild_ids):
+        await _lock_discord_command_projection(
+            db,
+            application_id=application_id,
+            guild_id=guild_id,
+        )
+        await db.refresh(link, with_for_update=True)
+        materializations = _discord_command_materializations(link)
+        retries = _discord_command_retries(link)
+        owners = await _discord_guild_owner_principals(
+            db,
+            application_id=application_id,
+            guild_id=guild_id,
+        )
+        if len(owners) == 1:
+            # A new active Link owns the physical namespace. Retire only this
+            # stale Link's receipt; its owner will reconcile the desired set.
+            materializations[guild_id] = empty_fingerprint
+            retries.pop(guild_id, None)
+            config = dict(link.config) if isinstance(link.config, dict) else {}
+            config[_DISCORD_COMMAND_MATERIALIZATIONS_CONFIG_KEY] = materializations
+            config[_DISCORD_COMMAND_RETRIES_CONFIG_KEY] = retries
+            link.config = config
+            await db.commit()
+            continue
+        # Multiple owners are a legacy/invalid collision in the same physical
+        # app+Guild namespace. No Link may claim materialization; converge the
+        # namespace to empty until identity admission is repaired.
+        retry = retries.get(guild_id)
+        if not force and materializations.get(guild_id) == empty_fingerprint and retry is None:
+            await db.commit()
+            continue
+        if not force and not _discord_retry_is_due(retry, fingerprint=empty_fingerprint):
+            succeeded = False
+            await db.commit()
+            continue
+        try:
+            result = await _request_discord_provider(
+                account=account,
+                method="PUT",
+                path=f"/applications/{application_id}/guilds/{guild_id}/commands",
+                body=b"[]",
+            )
+        except HTTPException:
+            retries[guild_id] = _discord_command_retry_state(
+                previous=retry,
+                fingerprint=empty_fingerprint,
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                result=None,
+            )
+            succeeded = False
+        else:
+            if 200 <= result.status_code < 300:
+                materializations[guild_id] = empty_fingerprint
+                retries.pop(guild_id, None)
+            else:
+                retries[guild_id] = _discord_command_retry_state(
+                    previous=retry,
+                    fingerprint=empty_fingerprint,
+                    status_code=result.status_code,
+                    result=result,
+                )
+                succeeded = False
+        config = dict(link.config) if isinstance(link.config, dict) else {}
+        config[_DISCORD_COMMAND_MATERIALIZATIONS_CONFIG_KEY] = materializations
+        config[_DISCORD_COMMAND_RETRIES_CONFIG_KEY] = retries
+        link.config = config
+        await db.commit()
+    return succeeded
 
 
 async def _materialize_discord_command_scope(
@@ -1001,13 +1491,38 @@ async def _materialize_discord_command_scope(
     # physical global command set or DMs; only materialize them into this
     # Link's Guild bindings. Built-in reserved commands use the separate
     # account-level sync path and remain physical global commands.
+    target_guild_ids = await _discord_uncontested_guilds_for_link(
+        db,
+        account=account,
+        bot_agent_link_id=link.id,
+    )
+    selected_guild_ids = (
+        [target for target in target_guild_ids if target == guild_id]
+        if guild_id is not None
+        else target_guild_ids
+    )
+    if not selected_guild_ids:
+        bindings = await _discord_active_bindings_for_link(
+            db,
+            account=account,
+            link=link,
+        )
+        if bindings:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "agent-defined Discord commands require a paired server; "
+                    "per-Link commands are unavailable in direct messages"
+                ),
+            )
+        return
     await _fan_out_discord_global_commands(
         db,
         account=account,
         bot_agent_link_id=link.id,
         application_id=application_id,
         commands=commands,
-        guild_ids={guild_id} if guild_id is not None else None,
+        guild_ids=set(selected_guild_ids),
     )
 
 
@@ -1122,7 +1637,7 @@ async def _request_discord_provider(
                 discord_rate_limiter.observe(
                     method,
                     normalized_path,
-                    response.headers,
+                    _discord_rate_limit_response_headers(response),
                     response.status_code,
                 )
     except httpx.HTTPError as exc:
@@ -1138,7 +1653,7 @@ async def _request_discord_provider(
         content=response.content,
         status_code=response.status_code,
         media_type=response.headers.get("content-type", "application/json"),
-        headers=_discord_response_headers(response.headers),
+        headers=_discord_response_headers(_discord_rate_limit_response_headers(response)),
     )
 
 
@@ -1174,6 +1689,24 @@ def _discord_response_headers(headers: Any) -> dict[str, str]:
     return {
         name: value for name in _DISCORD_RESPONSE_HEADER_ALLOWLIST if (value := headers.get(name))
     }
+
+
+def _discord_rate_limit_response_headers(response: httpx.Response) -> dict[str, str]:
+    headers = {str(key).lower(): str(value) for key, value in response.headers.items()}
+    if response.status_code != status.HTTP_429_TOO_MANY_REQUESTS or "retry-after" in headers:
+        return headers
+    try:
+        payload = response.json()
+    except ValueError:
+        return headers
+    raw_retry_after = payload.get("retry_after") if isinstance(payload, dict) else None
+    if (
+        isinstance(raw_retry_after, (int, float))
+        and not isinstance(raw_retry_after, bool)
+        and raw_retry_after >= 0
+    ):
+        headers["retry-after"] = str(raw_retry_after)
+    return headers
 
 
 async def _validate_discord_provider_base_url(base_url: str) -> None:

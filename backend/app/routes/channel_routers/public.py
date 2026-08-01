@@ -102,11 +102,14 @@ from app.services.channels import (
     create_pair_code,
     decrypt_agent_link_token,
     discord_bot_install_url,
+    discord_config_without_unverified_install_state,
+    discord_install_config_is_current,
     discord_reserved_commands_are_current,
     discord_user_install_url,
     encrypt_optional_token,
     enqueue_channel_outbound_message,
     ensure_bot_agent_link_provider_cardinality_or_409,
+    ensure_discord_application_identity_available,
     ensure_hosted_agent_provider_link_available,
     generate_agent_token,
     generate_webhook_secret,
@@ -606,6 +609,11 @@ async def create_channel(
 
     ciphertext, nonce = encrypt_optional_token(body.provider_token)
     webhook_secret = generate_webhook_secret()
+    account_config = (
+        discord_config_without_unverified_install_state(body.config)
+        if body.provider == CHANNEL_PROVIDER_DISCORD
+        else body.config
+    )
     account = ChannelAccount(
         user_id=auth.user_id,
         provider=body.provider,
@@ -613,7 +621,7 @@ async def create_channel(
         encrypted_provider_token=ciphertext,
         provider_token_nonce=nonce,
         webhook_secret_hash=hash_token(webhook_secret),
-        config=body.config,
+        config=account_config,
     )
     if initial_agent_id is not None:
         # Runtime authority and provider support checks must precede Telegram
@@ -817,6 +825,7 @@ async def create_channel_pair_code(
 ) -> ChannelPairCodeResponse:
     account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
     if account.provider == CHANNEL_PROVIDER_DISCORD:
+        await ensure_discord_application_identity_available(db, account=account)
         config_error = discord_interactions_config_error(account.config)
         if config_error is not None:
             raise HTTPException(
@@ -826,9 +835,11 @@ async def create_channel_pair_code(
         config = dict(account.config) if isinstance(account.config, dict) else {}
         interactions_configured = config.get("discord_interactions_configured") is True
         commands_current = discord_reserved_commands_are_current(account)
-        if not interactions_configured:
+        install_config_current = discord_install_config_is_current(account)
+        if not interactions_configured or not install_config_current:
             await configure_discord_application(account)
-        if not interactions_configured or not commands_current:
+            config = dict(account.config) if isinstance(account.config, dict) else {}
+        if not interactions_configured or not install_config_current or not commands_current:
             # Reserved control-plane commands are true account-global
             # commands so they remain available before any Guild or DM is
             # paired. Agent runtime commands are virtualized per Link.

@@ -117,15 +117,20 @@ from app.services.channels import (
     channel_webhook_url,
     configure_discord_application,
     configure_telegram_provider_webhook,
+    discord_application_id_from_config,
+    discord_config_without_unverified_install_state,
     encrypt_optional_token,
+    ensure_discord_application_identity_available,
     generate_webhook_secret,
     get_telegram_bot_username,
     hash_token,
     mark_discord_reserved_commands_current,
     normalize_telegram_bot_username,
+    require_unchanged_discord_application_identity,
     store_channel_secrets,
     sync_channel_commands,
     upsert_channel_secrets,
+    verify_discord_application_token_identity,
 )
 from app.services.hosted_runtime_secrets import (
     hosted_runtime_secret_values_changed,
@@ -1070,6 +1075,11 @@ async def admin_create_channel(
     target = await _resolve_or_create_user(db, body.target_clerk_id)
     ciphertext, nonce = encrypt_optional_token(body.provider_token)
     webhook_secret = generate_webhook_secret()
+    account_config = (
+        discord_config_without_unverified_install_state(body.config)
+        if body.provider == CHANNEL_PROVIDER_DISCORD
+        else body.config
+    )
     account = ChannelAccount(
         user_id=target.id,
         provider=body.provider,
@@ -1078,7 +1088,7 @@ async def admin_create_channel(
         encrypted_provider_token=ciphertext,
         provider_token_nonce=nonce,
         webhook_secret_hash=hash_token(webhook_secret),
-        config=body.config,
+        config=account_config,
     )
     db.add(account)
     try:
@@ -1129,6 +1139,7 @@ async def admin_create_channel(
         # Discord validates the PATCH with a signed PING, so the account and
         # public key must be committed and webhook-visible first. Bot-pool
         # eligibility remains false until the readiness marker commits below.
+        await ensure_discord_application_identity_available(db, account=account)
         await configure_discord_application(account)
         await sync_channel_commands(
             account=account,
@@ -1186,6 +1197,24 @@ async def admin_update_channel(
         else None
     )
     telegram_bot_username = current_telegram_bot_username
+    if account.provider == CHANNEL_PROVIDER_DISCORD and "config" in updates:
+        require_unchanged_discord_application_identity(account, body.config)
+    if (
+        account.provider == CHANNEL_PROVIDER_DISCORD
+        and "provider_token" in updates
+        and body.provider_token is not None
+    ):
+        application_id = discord_application_id_from_config(account.config)
+        if application_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Discord application identity is missing; recreate the channel.",
+            )
+        await verify_discord_application_token_identity(
+            application_id=application_id,
+            provider_token=body.provider_token,
+            config=account.config,
+        )
     if "provider_token" in updates:
         if account.provider == CHANNEL_PROVIDER_TELEGRAM and body.provider_token:
             if current_telegram_bot_username is None:
@@ -1207,7 +1236,16 @@ async def admin_update_channel(
         account.provider_token_nonce = nonce
     if "config" in updates:
         await validate_channel_account_config_urls(provider=account.provider, config=body.config)
-        account.config = body.config
+        account.config = (
+            discord_config_without_unverified_install_state(body.config)
+            if account.provider == CHANNEL_PROVIDER_DISCORD
+            else body.config
+        )
+    elif account.provider == CHANNEL_PROVIDER_DISCORD and "provider_token" in updates:
+        # A replacement token may belong to a different application. Force the
+        # next pairing request through /applications/@me identity and install
+        # capability verification before exposing install URLs or commands.
+        account.config = discord_config_without_unverified_install_state(account.config)
     if account.provider == CHANNEL_PROVIDER_TELEGRAM and (
         "provider_token" in updates or "config" in updates
     ):
@@ -1234,6 +1272,7 @@ async def admin_update_channel(
         config = dict(account.config) if isinstance(account.config, dict) else {}
         config["discord_interactions_configured"] = False
         account.config = config
+        await ensure_discord_application_identity_available(db, account=account)
     try:
         if "secrets" in updates:
             await upsert_channel_secrets(db, account=account, secrets_by_name=body.secrets)
@@ -1312,6 +1351,7 @@ async def admin_sync_channel_commands(
         else None
     )
     if account.provider == CHANNEL_PROVIDER_DISCORD and commands is None:
+        await ensure_discord_application_identity_available(db, account=account)
         await configure_discord_application(account)
     synced = await sync_channel_commands(
         account=account,
