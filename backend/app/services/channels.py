@@ -90,6 +90,7 @@ log = logging.getLogger(__name__)
 PAIR_COMMAND = "/bot_pair"
 TELEGRAM_PAIR_COMMAND = "/clawdi_pair"
 UNPAIR_COMMAND = "/bot_unpair"
+TELEGRAM_UNPAIR_COMMAND = "/clawdi_unpair"
 DISCORD_PAIR_COMMAND_NAME = "clawdi_pair"
 DISCORD_UNPAIR_COMMAND_NAME = "clawdi_unpair"
 DISCORD_RESERVED_COMMAND_NAMES = frozenset(
@@ -100,6 +101,8 @@ DISCORD_RESERVED_COMMAND_NAMES = frozenset(
 )
 DISCORD_LEGACY_RESERVED_COMMAND_NAMES = frozenset({"bot_pair", "bot_unpair"})
 PAIR_CODE_PATTERN = re.compile(r"^PAIR[A-Z0-9]{8,}$")
+PAIR_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+PAIR_CODE_SUFFIX_LENGTH = 16
 TELEGRAM_BOT_USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{5,32}bot$", re.IGNORECASE)
 DEFAULT_CHANNEL_COMMANDS: tuple[dict[str, Any], ...] = (
     {
@@ -266,7 +269,8 @@ def generate_webhook_secret() -> str:
 
 
 def generate_pair_code() -> str:
-    return "PAIR" + secrets.token_urlsafe(18).replace("-", "").replace("_", "")[:24].upper()
+    suffix = "".join(secrets.choice(PAIR_CODE_ALPHABET) for _ in range(PAIR_CODE_SUFFIX_LENGTH))
+    return f"PAIR{suffix}"
 
 
 def generate_agent_token(provider: str) -> str:
@@ -1789,7 +1793,7 @@ def parse_pair_command(text: str | None) -> ChannelPairCommand | None:
         if code is None:
             code = ""
         return ChannelPairCommand(kind="pair", code=code)
-    if command == UNPAIR_COMMAND:
+    if command in {UNPAIR_COMMAND, TELEGRAM_UNPAIR_COMMAND}:
         if separator and rest.strip():
             return ChannelPairCommand(kind="unknown", command=command)
         return ChannelPairCommand(kind="unpair")
@@ -1811,6 +1815,7 @@ def pairing_reply_for_command(
     result: InboundBindingResult,
     *,
     pair_command: str = PAIR_COMMAND,
+    unpair_command: str = UNPAIR_COMMAND,
 ) -> str:
     if result.paired:
         return PAIRING_REPLY_PAIRED
@@ -1830,7 +1835,7 @@ def pairing_reply_for_command(
             return PAIRING_REPLY_FORBIDDEN
         return PAIRING_REPLY_NOT_PAIRED
     if command.kind == "unknown" and command.command:
-        return f"Unknown command: {command.command}. Use {pair_command} <code> or {UNPAIR_COMMAND}."
+        return f"Unknown command: {command.command}. Use {pair_command} <code> or {unpair_command}."
     return "Message received."
 
 
@@ -2117,13 +2122,14 @@ async def send_pairing_command_reply(
 ) -> ChannelMessage | None:
     if not binding_result.command_handled:
         return None
-    pair_command = (
-        TELEGRAM_PAIR_COMMAND if account.provider == CHANNEL_PROVIDER_TELEGRAM else PAIR_COMMAND
-    )
+    is_telegram = account.provider == CHANNEL_PROVIDER_TELEGRAM
+    pair_command = TELEGRAM_PAIR_COMMAND if is_telegram else PAIR_COMMAND
+    unpair_command = TELEGRAM_UNPAIR_COMMAND if is_telegram else UNPAIR_COMMAND
     reply_text = reply or pairing_reply_for_command(
         command,
         binding_result,
         pair_command=pair_command,
+        unpair_command=unpair_command,
     )
     reply_link_id = (
         binding_result.binding.bot_agent_link_id
@@ -3540,14 +3546,14 @@ async def sync_channel_commands(
     using_default_commands = commands is None
     command_specs = commands or [dict(command) for command in DEFAULT_CHANNEL_COMMANDS]
     if account.provider == CHANNEL_PROVIDER_TELEGRAM:
+        telegram_command_names = {
+            PAIR_COMMAND.removeprefix("/"): TELEGRAM_PAIR_COMMAND.removeprefix("/"),
+            UNPAIR_COMMAND.removeprefix("/"): TELEGRAM_UNPAIR_COMMAND.removeprefix("/"),
+        }
         command_specs = [
             {
                 **command,
-                "name": (
-                    TELEGRAM_PAIR_COMMAND.removeprefix("/")
-                    if _command_name(command) == PAIR_COMMAND.removeprefix("/")
-                    else _command_name(command)
-                ),
+                "name": telegram_command_names.get(_command_name(command), _command_name(command)),
             }
             for command in command_specs
         ]

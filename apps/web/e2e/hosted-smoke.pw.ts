@@ -8914,7 +8914,7 @@ test("Telegram and Discord pairing acknowledge one newly active binding at 320px
 			agent_id: agentId,
 			code: "TELEGRAMSUCCESS123",
 			expires_at: validExpiry,
-			pairing_command: "/bot_pair TELEGRAMSUCCESS123",
+			pairing_command: "/clawdi_pair TELEGRAMSUCCESS123",
 			bot_username: "Pair_Success_Telegram_Bot",
 			deep_link: "https://t.me/Pair_Success_Telegram_Bot?start=TELEGRAMSUCCESS123",
 			qr_payload: "https://t.me/Pair_Success_Telegram_Bot?start=TELEGRAMSUCCESS123",
@@ -9127,7 +9127,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 			agent_token: "agent-channel-token-must-not-render",
 			code,
 			expires_at: validExpiry,
-			pairing_command: `/bot_pair ${code}`,
+			pairing_command: `/clawdi_pair ${code}`,
 			bot_username: "Clawdi_Ready_Bot",
 			deep_link: `https://t.me/Clawdi_Ready_Bot?start=${code}`,
 			qr_payload: `https://t.me/Clawdi_Ready_Bot?start=${code}`,
@@ -9426,7 +9426,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 					agent_token: "agent-channel-token-must-not-render",
 					code: "AGENTMANUAL123",
 					expires_at: validExpiry,
-					pairing_command: "/bot_pair AGENTMANUAL123",
+					pairing_command: "/clawdi_pair AGENTMANUAL123",
 					bot_username: "Clawdi_Ready_Bot",
 					deep_link: null,
 					qr_payload: null,
@@ -9441,7 +9441,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 					agent_token: "agent-channel-token-must-not-render",
 					code: "AGENTEXPIRED123",
 					expires_at: "2000-01-01T00:00:00Z",
-					pairing_command: "/bot_pair AGENTEXPIRED123",
+					pairing_command: "/clawdi_pair AGENTEXPIRED123",
 					bot_username: "Clawdi_Ready_Bot",
 					deep_link: "https://t.me/Clawdi_Ready_Bot?start=AGENTEXPIRED123",
 					qr_payload: "https://t.me/Clawdi_Ready_Bot?start=AGENTEXPIRED123",
@@ -9887,9 +9887,9 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	const pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
 	const telegramQr = pairDialog.getByRole("img", { name: "Telegram pairing QR code" });
 	await expect(telegramQr).toBeVisible();
-	await expect(pairDialog.getByText("Private chat", { exact: true })).toBeVisible();
+	await expect(pairDialog.getByText("Chat", { exact: true })).toBeVisible();
 	await expect(
-		pairDialog.getByText("Scan the QR code or open Telegram to pair a private chat.", {
+		pairDialog.getByText("Use the link or pairing command to connect a chat.", {
 			exact: true,
 		}),
 	).toBeVisible();
@@ -10031,25 +10031,25 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	await expect(
 		recoveryDialog.getByText("Telegram link unavailable", { exact: true }),
 	).toBeVisible();
-	await recoveryDialog.getByText("Pair a group manually", { exact: true }).click();
+	await recoveryDialog.getByText("Pair manually", { exact: true }).click();
 	await expect(
-		recoveryDialog.getByText("Add @Clawdi_Ready_Bot to the group, then send:", { exact: true }),
+		recoveryDialog.getByText("Send this to @Clawdi_Ready_Bot:", { exact: true }),
 	).toBeVisible();
-	const copyTelegramGroupCommand = recoveryDialog.getByRole("button", {
-		name: "Copy Telegram group pairing command",
+	const copyTelegramCommand = recoveryDialog.getByRole("button", {
+		name: "Copy Telegram pairing command",
 		exact: true,
 	});
-	await expect(copyTelegramGroupCommand).toContainText("/bot_pair AGENTMANUAL123");
-	await copyTelegramGroupCommand.click();
+	await expect(copyTelegramCommand).toContainText("/clawdi_pair AGENTMANUAL123");
+	await copyTelegramCommand.click();
 	await expect(
 		recoveryDialog.getByRole("button", {
-			name: "Telegram group pairing command copied",
+			name: "Telegram pairing command copied",
 			exact: true,
 		}),
 	).toBeVisible();
 	await expect
 		.poll(() => page.evaluate(() => navigator.clipboard.readText()))
-		.toBe("/bot_pair AGENTMANUAL123");
+		.toBe("/clawdi_pair AGENTMANUAL123");
 	await recoveryDialog.getByRole("button", { name: "Close", exact: true }).click();
 
 	await pairButton.click();
@@ -10154,9 +10154,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 			exact: true,
 		}),
 	).toBeVisible();
-	await expect(
-		discordPairDialog.getByText(/ask the bot owner to enable User Install/),
-	).toBeVisible();
+	await expect(discordPairDialog).not.toContainText("enable User Install");
 	const addDiscordToMyApps = discordPairDialog.getByRole("button", {
 		name: "Add to my apps",
 		exact: true,

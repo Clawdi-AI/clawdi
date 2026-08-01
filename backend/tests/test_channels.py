@@ -88,6 +88,7 @@ from app.services.channels import (
     encrypt_optional_token,
     extract_discord_routing_key,
     generate_agent_token,
+    generate_pair_code,
     hash_token,
     normalize_telegram_bot_username,
     parse_pair_command,
@@ -6571,7 +6572,7 @@ async def test_telegram_bot_commands_preserve_scope_language_and_delete(
     assert deleted_es.status_code == 200
     assert get_deleted_es.json()["result"] == [
         {"command": "clawdi_pair", "description": "Pair this chat with Clawdi."},
-        {"command": "bot_unpair", "description": "Disconnect this chat from Clawdi."},
+        {"command": "clawdi_unpair", "description": "Disconnect this chat from Clawdi."},
     ]
 
 
@@ -6848,7 +6849,7 @@ async def test_telegram_repair_and_unpair_clear_previous_link_commands(
     )
     assert second_get.json()["result"] == [
         {"command": "clawdi_pair", "description": "Pair this chat with Clawdi."},
-        {"command": "bot_unpair", "description": "Disconnect this chat from Clawdi."},
+        {"command": "clawdi_unpair", "description": "Disconnect this chat from Clawdi."},
     ]
 
     second_commands = [{"command": "second", "description": "Second link"}]
@@ -12158,7 +12159,7 @@ async def test_telegram_webhook_pair_command_sends_failure_replies(
         {
             "chat_id": "987654322",
             "message_thread_id": 322,
-            "text": "Usage: /bot_pair <code>",
+            "text": "Usage: /clawdi_pair <code>",
         },
         {
             "chat_id": "987654322",
@@ -13096,6 +13097,9 @@ def test_parse_pair_command_matches_strict_bot_shapes():
     assert parse_pair_command("/clawdi_pair ABCDEF1234").code == "ABCDEF1234"
     assert parse_pair_command("/clawdi_pair@shared_bot ABC123").code == "ABC123"
     assert parse_pair_command("/clawdi_pair ABC123 thanks").code == ""
+    assert parse_pair_command("/clawdi_unpair").kind == "unpair"
+    assert parse_pair_command("/clawdi_unpair@shared_bot").kind == "unpair"
+    assert parse_pair_command("/clawdi_unpair now").kind == "unknown"
     assert parse_pair_command("/bot_pair ABCDEF1234") is not None
     assert parse_pair_command("/bot_pair ABCDEF1234").code == "ABCDEF1234"
     assert parse_pair_command("/bot_pair@shared_bot ABC123").code == "ABC123"
@@ -13115,6 +13119,15 @@ def test_parse_pair_command_matches_strict_bot_shapes():
     assert unknown is not None
     assert unknown.kind == "unknown"
     assert unknown.command == "/bot_foo"
+
+
+def test_generate_pair_code_uses_unambiguous_80_bit_shape_and_varies():
+    codes = {generate_pair_code() for _ in range(32)}
+
+    assert len(codes) > 1
+    assert all(len(code) == 20 for code in codes)
+    assert all(code.startswith("PAIR") for code in codes)
+    assert all(set(code[4:]) <= set("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for code in codes)
 
 
 @pytest.mark.parametrize(
@@ -16834,7 +16847,7 @@ async def test_telegram_command_sync_uses_set_my_commands(
     assert _FakeProviderClient.calls[0]["url"].endswith("/bot123456:telegram-secret/setMyCommands")
     assert _FakeProviderClient.calls[0]["json"]["commands"] == [
         {"command": "clawdi_pair", "description": "Pair this chat with Clawdi."},
-        {"command": "bot_unpair", "description": "Disconnect this chat from Clawdi."},
+        {"command": "clawdi_unpair", "description": "Disconnect this chat from Clawdi."},
     ]
 
 

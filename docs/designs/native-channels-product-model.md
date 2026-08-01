@@ -187,7 +187,8 @@ Pair flow:
 1. A user chooses an accessible channel account and one of their agents.
 2. Clawdi creates or reuses a `channel_bot_agent_links` row.
 3. Clawdi returns a one-time provider command. Discord uses
-   `/clawdi_pair <code>`; Telegram, WhatsApp, and iMessage use
+   `/clawdi_pair <code>`; Telegram also uses `/clawdi_pair <code>` while
+   accepting legacy `/bot_pair <code>` input. WhatsApp and iMessage use
    `/bot_pair <code>`.
 4. The user sends the code into the external chat.
 5. Provider ingress extracts:
@@ -253,7 +254,8 @@ intent while preserving the adapter's documented allow-everyone behavior.
 Unpair flow:
 
 1. The external actor sends the provider's unpair command. Discord uses
-   `/clawdi_unpair`; Telegram, WhatsApp, and iMessage use `/bot_unpair`.
+   `/clawdi_unpair`; Telegram also uses `/clawdi_unpair` while accepting
+   legacy `/bot_unpair`. WhatsApp and iMessage use `/bot_unpair`.
 2. Provider ingress resolves the active binding for the chat.
 3. The backend verifies the command actor matches
    `ChannelBinding.paired_external_user_id`.
@@ -270,8 +272,8 @@ The backend must prevent this attack. For example, on Telegram:
 
 1. Alice pairs a public bot in a group chat to Alice's agent.
 2. Bob is another group participant.
-3. Bob sends `/bot_unpair`.
-4. Bob sends `/bot_pair <bob-code>`.
+3. Bob sends `/clawdi_unpair`.
+4. Bob sends `/clawdi_pair <bob-code>`.
 
 Bob must not be able to unpair Alice's route or replace it with Bob's agent.
 

@@ -285,7 +285,7 @@ outputs:
 							agent_id: "agent-1",
 							code: "PAIR123",
 							expires_at: "2026-06-08T00:10:00Z",
-							pairing_command: "/bot_pair PAIR123",
+							pairing_command: "/clawdi_pair PAIR123",
 						},
 						201,
 					),
@@ -326,7 +326,7 @@ outputs:
 		const dotenv = readFileSync(join(tmpHome, ".env.channels"), "utf-8");
 		expect(dotenv).toContain("TELEGRAM_AGENT_TOKEN=agent-token");
 		expect(dotenv).toContain("TELEGRAM_BOT_API_BASE_URL=https://api.test/v1/channels/telegram");
-		expect(dotenv).toContain('TELEGRAM_PAIR_COMMAND="/bot_pair PAIR123"');
+		expect(dotenv).toContain('TELEGRAM_PAIR_COMMAND="/clawdi_pair PAIR123"');
 		expect(dotenv).toContain("# >>> clawdi channel runtime >>>");
 		expect(dotenv).toContain("# <<< clawdi channel runtime <<<");
 		expect(

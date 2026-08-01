@@ -26,10 +26,12 @@ does not run or proxy the legacy TypeScript channel bridge service.
   Bindings also record the external actor that claimed the route.
 - `channel_pair_codes` authorize a user to bind a chat by sending the
   provider-specific pair command and are scoped to a bot-agent link. Discord
-  uses `/clawdi_pair`; Telegram, WhatsApp, and iMessage use `/bot_pair`.
+  and Telegram use `/clawdi_pair`; WhatsApp and iMessage use `/bot_pair`.
+  Telegram also accepts legacy `/bot_pair` input for compatibility.
 - The provider-specific unpair command archives a single active binding across
   Telegram, Discord, WhatsApp, and iMessage ingress. Discord uses
-  `/clawdi_unpair`; the other providers use `/bot_unpair`. Pairing the same
+  `/clawdi_unpair`; Telegram uses `/clawdi_unpair` and accepts legacy
+  `/bot_unpair`; WhatsApp and iMessage use `/bot_unpair`. Pairing the same
   chat with a different
   bot-agent link moves the active route to that link only when the command is
   sent by the external actor that claimed the current binding.

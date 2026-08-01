@@ -329,7 +329,7 @@ describe("channel commands", () => {
 							agent_token: null,
 							code: "PAIR12345678",
 							expires_at: new Date().toISOString(),
-							pairing_command: "/bot_pair PAIR12345678",
+							pairing_command: "/clawdi_pair PAIR12345678",
 						},
 						201,
 					),
