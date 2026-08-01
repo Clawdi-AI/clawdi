@@ -11,6 +11,7 @@ function source(relativePath: string): string {
 const card = source("./channel-card.tsx");
 const consoleChannels = source("./channels-page.tsx");
 const agentChannels = source("../../agents/hosted-agent-detail.tsx");
+const pairedChatsDialog = source("./paired-chats-dialog.tsx");
 
 describe("shared Channel card", () => {
 	test("renders the hosted v2 Entity Card shell with aligned headers and composable content", () => {
@@ -53,5 +54,19 @@ describe("shared Channel card", () => {
 		expect(consoleChannels).not.toContain("Unpair");
 		expect(consoleChannels).not.toContain("Unlink");
 		expect(consoleChannels).toContain('to="/channels/$id"');
+	});
+
+	test("opens paired chats outside the card through responsive design-system overlays", () => {
+		expect(agentChannels).toContain("<PairedChatsDialog");
+		expect(pairedChatsDialog).toContain("<Dialog");
+		expect(pairedChatsDialog).toContain("<DialogTrigger");
+		expect(pairedChatsDialog).toContain("<Sheet");
+		expect(pairedChatsDialog).toContain("<SheetTrigger");
+		expect(pairedChatsDialog).toContain("useIsMobile()");
+		expect(pairedChatsDialog).toContain('side="bottom"');
+		expect(pairedChatsDialog).toContain("overflow-y-auto");
+		expect(pairedChatsDialog).toContain("h-10 min-h-10 max-h-10");
+		expect(pairedChatsDialog).not.toContain("Show more");
+		expect(pairedChatsDialog).not.toContain("Show less");
 	});
 });

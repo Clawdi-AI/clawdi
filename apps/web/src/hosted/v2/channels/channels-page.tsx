@@ -36,7 +36,7 @@ import {
 import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
 import { cn } from "@/lib/utils";
 
-const DESCRIPTION = "Manage your bots and discover shared bots for your Agents.";
+const DESCRIPTION = "Manage Custom bots and discover Clawdi bots for your Agents.";
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 
 export function ChannelsPage() {
@@ -84,7 +84,7 @@ export function ChannelsPage() {
 				actions={
 					<Button size="sm" variant="outline" onClick={() => setConnectOpen(true)}>
 						<Plus />
-						Connect bot
+						Connect custom bot
 					</Button>
 				}
 			/>
@@ -93,7 +93,7 @@ export function ChannelsPage() {
 				<EmptyState
 					icon={MessagesSquare}
 					title="No bots yet"
-					description="Connect a Telegram or Discord bot to make it available to your Agents."
+					description="Connect a Custom Telegram or Discord bot you manage."
 				/>
 			) : (
 				<>
@@ -176,7 +176,7 @@ function OwnedBotsSection({
 
 	return (
 		<section data-owned-bots-section className="flex flex-col gap-3">
-			<SectionLabel count={!isLoading ? visibleCount : undefined}>Your bots</SectionLabel>
+			<SectionLabel count={!isLoading ? visibleCount : undefined}>Custom bots</SectionLabel>
 			{healthError ? (
 				<ApiErrorPanel
 					error={healthError}
@@ -211,7 +211,7 @@ function SharedBotsSection({
 			</div>
 		);
 	} else if (error) {
-		content = <ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load shared bots" />;
+		content = <ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load Clawdi bots" />;
 	} else if (visibleBots.length === 0) {
 		return null;
 	} else {
@@ -225,10 +225,12 @@ function SharedBotsSection({
 	}
 
 	return (
-		<section data-shared-bots-section className="flex flex-col gap-3">
+		<section data-shared-bots-section className="flex min-w-0 flex-col gap-3">
 			<div>
-				<SectionLabel count={!isLoading ? visibleBots.length : undefined}>Shared bots</SectionLabel>
-				<p className="mt-1 text-xs text-muted-foreground">Connect them from Agent → Channels.</p>
+				<SectionLabel count={!isLoading ? visibleBots.length : undefined}>Clawdi bots</SectionLabel>
+				<p className="mt-1 text-xs text-muted-foreground">
+					Add them from an Agent&apos;s Channels tab.
+				</p>
 			</div>
 			{content}
 		</section>

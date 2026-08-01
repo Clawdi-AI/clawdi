@@ -1,6 +1,6 @@
 "use client";
 
-import { MessageCircle, MessagesSquare } from "lucide-react";
+import { Link2Off, MessageCircle, MessagesSquare } from "lucide-react";
 import { EntityHeader } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,7 @@ import { pairedChatScopeLabel, pairedChatTitle } from "@/hosted/v2/channels/pair
 import { cn, relativeTime } from "@/lib/utils";
 
 export const PAIRED_CHAT_ROW_CLASS =
-	"grid min-h-14 grid-cols-[minmax(0,1fr)] items-center gap-2 px-1 py-2.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-3";
+	"grid min-h-14 min-w-0 grid-cols-[minmax(0,1fr)_7rem] items-center gap-1.5 px-1 py-2.5";
 
 export function PairedChatRow({
 	accountId,
@@ -35,6 +35,24 @@ export function PairedChatRow({
 	const scope = pairedChatScopeLabel(provider, binding);
 	const privateChat = chatType === "private" || scope === "direct message";
 	const chatName = pairedChatTitle(binding, provider);
+	const displayName = binding.external_chat_name?.trim() || binding.external_chat_id;
+	const scopeLabel =
+		provider === "discord"
+			? scope === "direct message"
+				? "Direct message"
+				: "Server"
+			: chatType === "private"
+				? "Private chat"
+				: chatType === "group" || chatType === "supergroup"
+					? "Group chat"
+					: "Chat";
+	const metaDetail = unpair.error ? (
+		<span className="font-medium text-destructive">Couldn&apos;t unpair · Try again</span>
+	) : !isNormalChannelStatus(binding.status) ? (
+		<ChannelStatusBadge status={binding.status} />
+	) : binding.last_message_at ? (
+		<span>Last activity {relativeTime(binding.last_message_at)}</span>
+	) : null;
 
 	return (
 		<div
@@ -49,25 +67,22 @@ export function PairedChatRow({
 			<EntityHeader
 				className="min-w-0"
 				icon={<IconChip size="sm">{privateChat ? <MessageCircle /> : <MessagesSquare />}</IconChip>}
-				title={chatName}
-				titleClassName="line-clamp-2 whitespace-normal break-words text-clip"
-				meta={[
-					...(binding.last_message_at
-						? [<span key="activity">Last activity {relativeTime(binding.last_message_at)}</span>]
-						: []),
-					...(isNormalChannelStatus(binding.status)
-						? []
-						: [<ChannelStatusBadge key="status" status={binding.status} />]),
-					...(unpair.error
-						? [
-								<span key="error" className="font-medium text-destructive">
-									Couldn&apos;t unpair · Try again
-								</span>,
-							]
-						: []),
-				]}
+				title={displayName}
+				titleClassName="truncate"
+				titleAttribute={displayName}
+				meta={
+					<span className="flex min-w-0 items-center">
+						<span className="shrink-0">{scopeLabel}</span>
+						{metaDetail ? (
+							<>
+								<span className="mx-1.5 shrink-0 text-muted-foreground/40">·</span>
+								<span className="min-w-0 truncate">{metaDetail}</span>
+							</>
+						) : null}
+					</span>
+				}
 			/>
-			<div className="flex min-h-8 min-w-0 justify-end sm:shrink-0">
+			<div className="flex min-h-8 min-w-0 justify-end">
 				<ConfirmAction
 					title={`Unpair ${chatName}?`}
 					description="Only this chat will be disconnected. Other chats and the connected channel stay active."
@@ -78,7 +93,7 @@ export function PairedChatRow({
 					<Button
 						variant="ghost"
 						size="sm"
-						className={CHANNEL_DESTRUCTIVE_ACTION_CLASS}
+						className={cn(CHANNEL_DESTRUCTIVE_ACTION_CLASS, "w-full min-w-0")}
 						disabled={unpair.isPending}
 						aria-label={`${unpair.isPending ? "Unpairing" : "Unpair"} ${chatName}`}
 					>
@@ -88,7 +103,10 @@ export function PairedChatRow({
 								Unpairing…
 							</>
 						) : (
-							"Unpair"
+							<>
+								<Link2Off className="size-3.5" />
+								<span>Unpair</span>
+							</>
 						)}
 					</Button>
 				</ConfirmAction>
