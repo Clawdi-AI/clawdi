@@ -7,6 +7,9 @@ import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import { cn } from "@/lib/utils";
 
+export const CHANNEL_DESTRUCTIVE_ACTION_CLASS =
+	"text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive";
+
 /** Real app-icon for a channel provider (delegates to the unified EntityIcon). */
 export function ProviderChip({
 	provider,

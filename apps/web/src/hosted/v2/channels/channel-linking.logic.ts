@@ -44,14 +44,3 @@ export function pairCodeExpired(expiresAt: string, nowMs: number): boolean {
 	const expiresAtMs = Date.parse(expiresAt);
 	return !Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs;
 }
-
-/** Account-level activity is useful, but it is not proof of agent-runtime delivery. */
-export function channelActivityAfterLink(
-	lastMessageAt: string | null | undefined,
-	linkCreatedAt: string,
-): boolean {
-	if (!lastMessageAt) return false;
-	const messageTime = Date.parse(lastMessageAt);
-	const linkTime = Date.parse(linkCreatedAt);
-	return Number.isFinite(messageTime) && Number.isFinite(linkTime) && messageTime >= linkTime;
-}

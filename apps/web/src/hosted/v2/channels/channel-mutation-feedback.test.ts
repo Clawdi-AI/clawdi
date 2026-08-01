@@ -30,6 +30,7 @@ describe("channel mutation feedback", () => {
 		const discordPairDialog = source("./discord-pair-dialog.tsx");
 		const pairDialog = source("./telegram-pair-dialog.tsx");
 		const pairedChatRow = source("./paired-chat-row.tsx");
+		const clipboardHook = source("../../../hooks/use-copy-to-clipboard.ts");
 
 		expectFeedbackBeforeRequest(
 			detail,
@@ -50,11 +51,20 @@ describe("channel mutation feedback", () => {
 		expect(detail).toContain('"Pair Telegram"');
 		expect(detail).toContain("pairingActionLabel(provider)");
 		expect(pairDialog).toContain("Creating a secure Telegram link…");
+		expect(pairDialog).toContain("useCreatePairCode(accountId, { toastOnError: false })");
 		expectFeedbackBeforeRequest(discordPairDialog, "setPreparing(true)", "await pair.execute");
-		expect(discordPairDialog).toContain("Preparing Discord and creating a pair code…");
+		expect(discordPairDialog).toContain("Creating a Discord pair code…");
+		expect(discordPairDialog).toContain("useCreatePairCode(accountId, { toastOnError: false })");
+		expect(pairDialog).toContain("success: false");
+		expect(discordPairDialog).toContain("success: false");
+		expect(clipboardHook).toContain("success?: string | false");
+		expect(clipboardHook).toContain("if (toasts.success !== false)");
+		expect(clipboardHook).toContain("toast.error(toasts.error ??");
 		expect(pairedChatRow).toContain("disabled={unpair.isPending}");
-		expect(pairedChatRow).toContain('"Unpairing…"');
-		expect(pairedChatRow).toContain('"Retry unpair"');
+		expect(pairedChatRow).toContain("unpair.isPending ? (");
+		expect(pairedChatRow).toContain("Couldn&apos;t unpair · Try again");
+		expect(pairedChatRow).not.toContain('"Unpairing…"');
+		expect(pairedChatRow).not.toContain('"Retry unpair"');
 	});
 
 	test("uses per-action feedback for bot-owned detail mutations", () => {

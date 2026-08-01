@@ -1,5 +1,5 @@
 import type { DeploymentRead } from "@clawdi/shared/api";
-import { expect, type Page, type Route, test } from "@playwright/test";
+import { expect, type Locator, type Page, type Route, test } from "@playwright/test";
 import type { ManagedModelCatalogItem } from "../src/hosted/billing/contracts";
 import {
 	presetCatalogToProviderModels,
@@ -2001,6 +2001,17 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 async function expectNoQuarterlyCopy(page: Page) {
 	await expect(page.getByText("Quarterly", { exact: true })).toHaveCount(0);
 	await expect(page.getByText(/\/qtr/)).toHaveCount(0);
+}
+
+async function expectActionCenterUncovered(action: Locator) {
+	await expect(action).toBeVisible();
+	expect(
+		await action.evaluate((element) => {
+			const rect = element.getBoundingClientRect();
+			const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+			return hit !== null && (hit === element || element.contains(hit));
+		}),
+	).toBe(true);
 }
 
 async function capturePricingScreenshot(page: Page, path: string) {
@@ -7326,7 +7337,9 @@ test("Agent Connect bot defaults to Discord after Telegram is linked", async ({
 
 test("Agent Channels uses compact task-ordered rows and the shared Telegram pair dialog", async ({
 	page,
+	context,
 }, testInfo) => {
+	await context.grantPermissions(["clipboard-read", "clipboard-write"]);
 	await page.setViewportSize({ width: 1440, height: 1100 });
 	const errors = collectBrowserErrors(page);
 	const agentId = missingProjectionEnvironmentId;
@@ -7343,6 +7356,7 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 	const polledBindingId = "79999999-9999-4999-8999-999999999999";
 	const discordServerBindingId = "7aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 	const discordDmBindingId = "7bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+	const discordDmName = "Discord DM — urgent customer support escalation ".repeat(10).slice(0, 300);
 	const validExpiry = new Date(Date.now() + 15 * 60_000).toISOString();
 	const successfulPairResponse = (id: string, code: string): StubResponse => ({
 		status: 201,
@@ -7411,6 +7425,7 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 			external_chat_name: "Current Agent DM",
 			status: "active",
 			created_at: "2026-07-30T10:00:00Z",
+			last_message_at: "2026-07-30T10:12:00Z",
 		},
 		{
 			id: otherAgentBindingId,
@@ -7431,6 +7446,7 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 			external_chat_name: "Clawdi Community",
 			status: "active",
 			created_at: "2026-07-30T10:06:00Z",
+			last_message_at: "2026-07-30T10:16:00Z",
 		},
 		{
 			id: discordDmBindingId,
@@ -7438,9 +7454,10 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 			agent_link_id: discordLinkId,
 			external_chat_id: "discord-dm-1",
 			external_chat_type: "private",
-			external_chat_name: "Discord DM",
+			external_chat_name: discordDmName,
 			status: "active",
 			created_at: "2026-07-30T10:07:00Z",
+			last_message_at: null,
 		},
 	];
 	await stubHostedApi(page, {
@@ -7603,6 +7620,32 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 						"https://discord.com/oauth2/authorize?client_id=123456789012345678&permissions=274878024768&scope=bot%20applications.commands",
 				},
 			},
+			{
+				status: 201,
+				body: {
+					id: "agent-channel-discord-pair-expired",
+					agent_link_id: discordLinkId,
+					agent_id: agentId,
+					code: "DISCORDEXPIRED123",
+					expires_at: "2000-01-01T00:00:00Z",
+					pairing_command: "/bot_pair DISCORDEXPIRED123",
+					discord_install_url:
+						"https://discord.com/oauth2/authorize?client_id=123456789012345678&permissions=274878024768&scope=bot%20applications.commands",
+				},
+			},
+			{
+				status: 201,
+				body: {
+					id: "agent-channel-discord-pair-regenerated",
+					agent_link_id: discordLinkId,
+					agent_id: agentId,
+					code: "DISCORDNEW123",
+					expires_at: validExpiry,
+					pairing_command: "/bot_pair DISCORDNEW123",
+					discord_install_url:
+						"https://discord.com/oauth2/authorize?client_id=123456789012345678&permissions=274878024768&scope=bot%20applications.commands",
+				},
+			},
 		],
 	});
 
@@ -7614,25 +7657,72 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 	await expect(connectedSection.getByText("Connected channels", { exact: true })).toBeVisible();
 	await expect(page.locator("[data-agent-paired-chats]")).toHaveCount(0);
 	await expect(page.getByText("Paired chats", { exact: true })).toHaveCount(0);
-	await expect(addSection.getByText("Add a channel", { exact: true })).toBeVisible();
+	await expect(addSection).toHaveCount(0);
+	await expect(page.getByText("Add a channel", { exact: true })).toHaveCount(0);
+	await expect(
+		page.getByText("Link a bot to this Agent, then choose where it should answer.", {
+			exact: true,
+		}),
+	).toHaveCount(0);
 	const telegramGroup = page.locator(`[data-agent-channel-group-id="${telegramLinkId}"]`);
 	const discordGroup = page.locator(`[data-agent-channel-group-id="${discordLinkId}"]`);
 	const telegramRow = page.locator(`[data-agent-channel-link-id="${telegramLinkId}"]`);
 	const discordRow = page.locator(`[data-agent-channel-link-id="${discordLinkId}"]`);
 	await expect(telegramRow).toContainText("Support Telegram");
-	await expect(telegramRow).toContainText("Last activity");
+	await expect(telegramRow).not.toContainText("Last activity");
+	await expect(telegramRow).not.toContainText("No activity yet");
+	await expect(telegramRow).not.toContainText("Checking activity");
 	await expect(discordRow).toContainText("Community Discord");
+	await expect(discordRow).not.toContainText("Last activity");
 	const pairButton = telegramRow.getByRole("button", { name: "Pair Telegram", exact: true });
 	await expect(pairButton).toBeVisible();
 	const discordPairButton = discordRow.getByRole("button", { name: "Pair Discord", exact: true });
 	await expect(discordPairButton).toBeVisible();
-	await expect(telegramRow.getByRole("button", { name: "Unlink", exact: true })).toBeVisible();
+	const telegramUnlinkButton = telegramRow.getByRole("button", {
+		name: "Unlink Support Telegram from Hosted agent",
+		exact: true,
+	});
+	await expect(telegramUnlinkButton).toBeVisible();
+	async function buttonColors(button: Locator) {
+		return button.evaluate((element) => {
+			const style = getComputedStyle(element);
+			return {
+				backgroundColor: style.backgroundColor,
+				borderColor: style.borderColor,
+				color: style.color,
+			};
+		});
+	}
+	const [telegramPairColors, discordPairColors, telegramPairBox, discordPairBox] =
+		await Promise.all([
+			buttonColors(pairButton),
+			buttonColors(discordPairButton),
+			pairButton.boundingBox(),
+			discordPairButton.boundingBox(),
+		]);
+	expect(telegramPairColors).toEqual(discordPairColors);
+	expect(telegramPairBox?.height).toBe(discordPairBox?.height);
+	expect(telegramPairBox?.height).toBe(32);
 	await expect(addSection.locator(`[data-add-channel-id="${readyId}"]`)).toHaveCount(0);
 	await expect(addSection.getByText("Use your own bot", { exact: true })).toHaveCount(0);
 	await expect(addSection.locator("details")).toHaveCount(0);
 	await expect(page.getByRole("button", { name: /^Access .* Dashboard$/ })).toHaveCount(0);
 	const currentBindingRow = page.locator(`[data-channel-binding-id="${currentBindingId}"]`);
 	await expect(currentBindingRow).toContainText("Current Agent DM");
+	await expect(currentBindingRow).toContainText("Last activity");
+	const telegramUnpairButton = currentBindingRow.getByRole("button", {
+		name: "Unpair Current Agent DM",
+		exact: true,
+	});
+	const [unlinkColors, unpairColors, unlinkBox, unpairBox] = await Promise.all([
+		buttonColors(telegramUnlinkButton),
+		buttonColors(telegramUnpairButton),
+		telegramUnlinkButton.boundingBox(),
+		telegramUnpairButton.boundingBox(),
+	]);
+	expect(unlinkColors).toEqual(unpairColors);
+	expect({ width: unlinkBox?.width, height: unlinkBox?.height }).toEqual({ width: 32, height: 32 });
+	expect({ width: unpairBox?.width, height: unpairBox?.height }).toEqual({ width: 32, height: 32 });
 	await expect(
 		telegramGroup.locator(`[data-channel-binding-id="${currentBindingId}"]`),
 	).toBeVisible();
@@ -7641,7 +7731,10 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 	);
 	const discordDmRow = discordGroup.locator(`[data-channel-binding-id="${discordDmBindingId}"]`);
 	await expect(discordServerRow).toContainText("Server · Clawdi Community");
-	await expect(discordDmRow).toContainText("Direct message · Discord DM");
+	await expect(discordDmRow).toContainText(`Direct message · ${discordDmName}`);
+	await expect(discordServerRow).toContainText("Last activity");
+	await expect(discordDmRow).not.toContainText("Last activity");
+	await expect(discordDmRow).not.toContainText("No activity yet");
 	await expect(discordServerRow).toContainText("Run /bot_unpair in this server.");
 	await expect(discordDmRow).toContainText("Run /bot_unpair in this direct message.");
 	await expect(discordGroup.getByRole("button", { name: /Unpair/ })).toHaveCount(0);
@@ -7670,7 +7763,8 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 		agent_link_id: telegramLinkId,
 	});
 	const pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
-	await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toBeVisible();
+	const telegramQr = pairDialog.getByRole("img", { name: "Telegram pairing QR code" });
+	await expect(telegramQr).toBeVisible();
 	await expect(pairDialog.getByRole("button", { name: "Copy link", exact: true })).toBeVisible();
 	await expect(pairDialog.getByRole("button", { name: "Open @Clawdi_Ready_Bot" })).toHaveAttribute(
 		"href",
@@ -7683,6 +7777,34 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 			testInfo.outputPath("agent-channels-pair-dialog.png"),
 		fullPage: true,
 	});
+	const desktopTelegramQrBox = await telegramQr.boundingBox();
+	expect(desktopTelegramQrBox?.width ?? 0).toBeLessThanOrEqual(192);
+	await page.setViewportSize({ width: 320, height: 568 });
+	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+	await expect(telegramQr).toBeVisible();
+	const mobileTelegramQrBox = await telegramQr.boundingBox();
+	expect(mobileTelegramQrBox?.width ?? 0).toBeLessThanOrEqual(192);
+	const mobileTelegramDialogBox = await pairDialog.boundingBox();
+	const mobileTelegramActionBox = await pairDialog
+		.getByRole("button", { name: "Open @Clawdi_Ready_Bot" })
+		.boundingBox();
+	expect(mobileTelegramDialogBox?.y ?? -1).toBeGreaterThanOrEqual(0);
+	expect(
+		(mobileTelegramDialogBox?.y ?? 568) + (mobileTelegramDialogBox?.height ?? 1),
+	).toBeLessThanOrEqual(568);
+	expect(
+		(mobileTelegramActionBox?.y ?? 568) + (mobileTelegramActionBox?.height ?? 1),
+	).toBeLessThanOrEqual(568);
+	await pairDialog.screenshot({
+		path: testInfo.outputPath("agent-telegram-pair-dialog-320x568.png"),
+	});
+	await pairDialog.getByRole("button", { name: "Copy link", exact: true }).click();
+	await expect(pairDialog.getByRole("button", { name: "Copied", exact: true })).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+	await expectActionCenterUncovered(
+		pairDialog.getByRole("button", { name: "Open @Clawdi_Ready_Bot" }),
+	);
+	await page.setViewportSize({ width: 1440, height: 1100 });
 
 	channelBindings.push({
 		id: polledBindingId,
@@ -7711,6 +7833,7 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 	await expect(
 		page.getByRole("dialog", { name: "Pair Telegram" }).getByText("Couldn't create Telegram link"),
 	).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 	await page
 		.getByRole("dialog", { name: "Pair Telegram" })
 		.getByRole("button", { name: "Retry", exact: true })
@@ -7721,6 +7844,12 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 			.getByRole("dialog", { name: "Pair Telegram" })
 			.getByRole("img", { name: "Telegram pairing QR code" }),
 	).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+	await expectActionCenterUncovered(
+		page
+			.getByRole("dialog", { name: "Pair Telegram" })
+			.getByRole("button", { name: "Open @Clawdi_Ready_Bot" }),
+	);
 	await page
 		.getByRole("dialog", { name: "Pair Telegram" })
 		.getByRole("button", { name: "Close", exact: true })
@@ -7733,6 +7862,9 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 		recoveryDialog.getByText("Telegram link unavailable", { exact: true }),
 	).toBeVisible();
 	await recoveryDialog.getByText("Pair a group manually", { exact: true }).click();
+	await expect(
+		recoveryDialog.getByText("Add @Clawdi_Ready_Bot to the group, then send:", { exact: true }),
+	).toBeVisible();
 	await expect(recoveryDialog.getByText("/bot_pair AGENTMANUAL123", { exact: true })).toBeVisible();
 	await recoveryDialog.getByRole("button", { name: "Close", exact: true }).click();
 
@@ -7753,6 +7885,7 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 	await expect(
 		discordPairDialog.getByText("Couldn't prepare Discord pairing", { exact: true }),
 	).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 	await discordPairDialog.screenshot({
 		path: testInfo.outputPath("agent-discord-pair-error-desktop.png"),
 	});
@@ -7760,24 +7893,106 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 	await expect.poll(() => pairCodeRequests.length).toBe(7);
 	discordPairDialog = page.getByRole("dialog", { name: "Pair Discord" });
 	await expect(discordPairDialog.getByText("Server", { exact: true })).toBeVisible();
-	await expect(discordPairDialog.getByText("Direct message", { exact: true })).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+	const directMessageTab = discordPairDialog.getByRole("tab", {
+		name: "Direct message",
+		exact: true,
+	});
+	await expect(directMessageTab).toBeVisible();
 	await expect(discordPairDialog.getByText("DISCORDPAIR123", { exact: true })).toBeVisible();
+	const discordQr = discordPairDialog.getByRole("img", { name: "Discord server install QR code" });
+	await expect(discordQr).toBeVisible();
+	const copyDiscordCodeButton = discordPairDialog.getByRole("button", {
+		name: "Copy code",
+		exact: true,
+	});
+	await expect(copyDiscordCodeButton).toBeVisible();
+	await expect(discordPairDialog.getByText(/required code option/)).toBeVisible();
 	await expect(discordPairDialog.getByRole("button", { name: "Add to server" })).toHaveAttribute(
 		"href",
 		/permissions=274878024768/,
 	);
+	await expectActionCenterUncovered(copyDiscordCodeButton);
+	await expectActionCenterUncovered(
+		discordPairDialog.getByRole("button", { name: "Add to server" }),
+	);
 	await discordPairDialog.screenshot({
 		path: testInfo.outputPath("agent-discord-pair-code-desktop.png"),
 	});
-	await page.setViewportSize({ width: 320, height: 844 });
+	const desktopDiscordQrBox = await discordQr.boundingBox();
+	expect(desktopDiscordQrBox?.width ?? 0).toBeLessThanOrEqual(192);
+	await page.setViewportSize({ width: 320, height: 568 });
 	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+	const mobileDiscordQrBox = await discordQr.boundingBox();
+	expect(mobileDiscordQrBox?.width ?? 0).toBeLessThanOrEqual(192);
+	const mobileDiscordDialogBox = await discordPairDialog.boundingBox();
+	const mobileDiscordActionBox = await discordPairDialog
+		.getByRole("button", { name: "Add to server" })
+		.boundingBox();
+	expect(mobileDiscordDialogBox?.y ?? -1).toBeGreaterThanOrEqual(0);
+	expect(
+		(mobileDiscordDialogBox?.y ?? 568) + (mobileDiscordDialogBox?.height ?? 1),
+	).toBeLessThanOrEqual(568);
+	expect(
+		(mobileDiscordActionBox?.y ?? 568) + (mobileDiscordActionBox?.height ?? 1),
+	).toBeLessThanOrEqual(568);
+	await expectActionCenterUncovered(
+		discordPairDialog.getByRole("button", { name: "Add to server" }),
+	);
 	await discordPairDialog.screenshot({
-		path: testInfo.outputPath("agent-discord-pair-code-320.png"),
+		path: testInfo.outputPath("agent-discord-pair-code-320x568.png"),
+	});
+	await copyDiscordCodeButton.click();
+	await expect(
+		discordPairDialog.getByRole("button", { name: "Code copied", exact: true }),
+	).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+	await expectActionCenterUncovered(
+		discordPairDialog.getByRole("button", { name: "Add to server" }),
+	);
+	await expect(
+		discordPairDialog.getByRole("button", { name: "Copy code", exact: true }),
+	).toBeVisible({ timeout: 2_500 });
+	await directMessageTab.click();
+	await expect(
+		discordPairDialog.getByText("No server permission is required.", { exact: false }),
+	).toBeVisible();
+	await expect(
+		discordPairDialog.getByRole("img", { name: "Discord server install QR code" }),
+	).toHaveCount(0);
+	await expect(discordPairDialog.getByRole("button", { name: "Add to server" })).toHaveCount(0);
+	await expect(discordPairDialog.locator('a[href^="discord:"]')).toHaveCount(0);
+	const mobileDiscordDmActionBox = await discordPairDialog
+		.getByRole("button", { name: "Copy code", exact: true })
+		.boundingBox();
+	expect(
+		(mobileDiscordDmActionBox?.y ?? 568) + (mobileDiscordDmActionBox?.height ?? 1),
+	).toBeLessThanOrEqual(568);
+	await expectActionCenterUncovered(copyDiscordCodeButton);
+	await discordPairDialog.screenshot({
+		path: testInfo.outputPath("agent-discord-pair-dm-320x568.png"),
 	});
 	await page.keyboard.press("Escape");
 	await page.setViewportSize({ width: 1440, height: 1100 });
 
-	await currentBindingRow.getByRole("button", { name: "Unpair", exact: true }).click();
+	await discordPairButton.click();
+	await expect.poll(() => pairCodeRequests.length).toBe(8);
+	discordPairDialog = page.getByRole("dialog", { name: "Pair Discord" });
+	await expect(
+		discordPairDialog.getByText("This Discord pair code has expired", { exact: true }),
+	).toBeVisible();
+	await expect(
+		discordPairDialog.getByRole("button", { name: "Copy code", exact: true }),
+	).toHaveCount(0);
+	await discordPairDialog.getByRole("button", { name: "Generate new code", exact: true }).click();
+	await expect.poll(() => pairCodeRequests.length).toBe(9);
+	await expect(discordPairDialog.getByText("DISCORDNEW123", { exact: true })).toBeVisible();
+	await expect(
+		discordPairDialog.getByRole("img", { name: "Discord server install QR code" }),
+	).toBeVisible();
+	await page.keyboard.press("Escape");
+
+	await telegramUnpairButton.click();
 	const unpairConfirmation = page.getByRole("alertdialog", { name: "Unpair Current Agent DM?" });
 	await unpairConfirmation.getByRole("button", { name: "Unpair chat", exact: true }).click();
 	await expect.poll(() => deleteBindingRequests.length).toBe(1);
@@ -7800,7 +8015,10 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 	await page.setViewportSize({ width: 320, height: 844 });
 	const mobileChatRow = page.locator(`[data-channel-binding-id="${polledBindingId}"]`);
 	const mobileChatTitle = mobileChatRow.getByText("Newly Paired DM", { exact: true });
-	const mobileUnpair = mobileChatRow.getByRole("button", { name: "Unpair", exact: true });
+	const mobileUnpair = mobileChatRow.getByRole("button", {
+		name: "Unpair Newly Paired DM",
+		exact: true,
+	});
 	await expect(mobileChatTitle).toBeVisible();
 	await expect(mobileUnpair).toBeVisible();
 	const mobileTitleBox = await mobileChatTitle.boundingBox();
@@ -7813,8 +8031,33 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 	const mobilePairActionBox = await mobilePairAction.boundingBox();
 	expect(mobileChannelTitleBox?.width ?? 0).toBeGreaterThan(100);
 	expect(mobilePairActionBox?.y ?? 0).toBeGreaterThan(mobileChannelTitleBox?.y ?? 0);
+	const mobileDiscordDmTitle = discordDmRow.getByText(`Direct message · ${discordDmName}`, {
+		exact: true,
+	});
+	await expect(mobileDiscordDmTitle).toBeVisible();
+	const mobileDiscordDmTitleLayout = await mobileDiscordDmTitle.evaluate((element) => {
+		const style = getComputedStyle(element);
+		return {
+			height: element.getBoundingClientRect().height,
+			lineHeight: Number.parseFloat(style.lineHeight),
+			overflow: style.overflow,
+			textOverflow: style.textOverflow,
+			whiteSpace: style.whiteSpace,
+			webkitLineClamp: style.webkitLineClamp,
+		};
+	});
+	expect(discordDmName).toHaveLength(300);
+	expect(mobileDiscordDmTitleLayout).toMatchObject({
+		overflow: "hidden",
+		textOverflow: "clip",
+		whiteSpace: "normal",
+		webkitLineClamp: "2",
+	});
+	expect(mobileDiscordDmTitleLayout.height).toBeLessThanOrEqual(
+		mobileDiscordDmTitleLayout.lineHeight * 2 + 1,
+	);
 	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
-	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 7_000 });
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 	await page.screenshot({
 		path:
 			process.env.AGENT_CHANNELS_MOBILE_SCREENSHOT_PATH ??
@@ -7822,8 +8065,16 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 		fullPage: true,
 	});
 
-	await discordRow.getByRole("button", { name: "Unlink", exact: true }).click();
-	const unlinkConfirmation = page.getByRole("alertdialog", { name: "Unlink this channel?" });
+	await discordRow
+		.getByRole("button", {
+			name: "Unlink Community Discord from Hosted agent",
+			exact: true,
+		})
+		.click();
+	const unlinkConfirmation = page.getByRole("alertdialog", {
+		name: "Unlink Community Discord?",
+		exact: true,
+	});
 	await unlinkConfirmation.getByRole("button", { name: "Unlink", exact: true }).click();
 	await expect.poll(() => unlinkAgentRequests.length).toBe(1);
 	expect(unlinkAgentRequests).toEqual([`/v1/channels/${discordId}/agent-links/${discordLinkId}`]);

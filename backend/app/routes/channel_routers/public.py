@@ -1078,8 +1078,22 @@ async def list_channel_bindings(
     db: AsyncSession = Depends(get_session),
 ) -> list[ChannelBindingResponse]:
     account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    binding_activity = (
+        select(
+            ChannelMessage.binding_id.label("binding_id"),
+            func.max(ChannelMessage.created_at).label("last_message_at"),
+        )
+        .where(
+            ChannelMessage.account_id == account.id,
+            ChannelMessage.user_id == auth.user_id,
+            ChannelMessage.binding_id.is_not(None),
+        )
+        .group_by(ChannelMessage.binding_id)
+        .subquery()
+    )
     result = await db.execute(
-        select(ChannelBinding)
+        select(ChannelBinding, binding_activity.c.last_message_at)
+        .outerjoin(binding_activity, binding_activity.c.binding_id == ChannelBinding.id)
         .where(
             ChannelBinding.account_id == account.id,
             ChannelBinding.user_id == auth.user_id,
@@ -1087,7 +1101,10 @@ async def list_channel_bindings(
         )
         .order_by(ChannelBinding.created_at.desc())
     )
-    return [_binding_response(binding) for binding in result.scalars().all()]
+    return [
+        _binding_response(binding, last_message_at=last_message_at)
+        for binding, last_message_at in result.all()
+    ]
 
 
 @router.delete("/{account_id}/bindings/{binding_id}")

@@ -16,6 +16,10 @@ const pairedChatRow = source("./paired-chat-row.tsx");
 const pairedChatRowLogic = source("./paired-chat-row.logic.ts");
 const confirmAction = source("../../../components/ui/confirm-action.tsx");
 const agentBindingLogic = source("./agent-channel-bindings.logic.ts");
+const linkedChannelRow = agentDetail.slice(
+	agentDetail.indexOf("function LinkedChannelRow"),
+	agentDetail.indexOf("// ── Settings / Compute"),
+);
 
 describe("channel IA boundary", () => {
 	test("keeps bot detail read-only for Agent relationships and navigates to Agent Channels", () => {
@@ -59,18 +63,28 @@ describe("channel IA boundary", () => {
 		expect(connectDialog).toContain("agent_id: agentId ?? null");
 		expect(agentDetail).toContain("body: { agent_id: environmentId }");
 		expect(agentDetail).toContain("setDiscordPairOpen(true)");
-		expect(agentDetail).toContain("setDiscordPair({ accountId: bot.id");
+		expect(agentDetail).toContain("setDiscordPair({");
 		expect(agentDetail).toContain("<DiscordPairDialog");
-		expect(discordPairDialog).toContain("useCreatePairCode(accountId)");
+		expect(discordPairDialog).toContain("useCreatePairCode(accountId, { toastOnError: false })");
 		expect(discordPairDialog).toContain("await pair.execute");
 		expect(discordPairDialog).toContain("run <code>/bot_pair</code>");
 		expect(discordPairDialog).toContain('data-discord-pair-path="server"');
 		expect(discordPairDialog).toContain('data-discord-pair-path="dm"');
 		expect(discordPairDialog).toContain("Manage");
 		expect(discordPairDialog).toContain("Add to server");
-		expect(discordPairDialog).toContain('label="pair code"');
+		expect(discordPairDialog).toContain("value={result.discord_install_url}");
+		expect(discordPairDialog).toContain('aria-label="Discord server install QR code"');
+		expect(discordPairDialog).toContain("paste this code into the");
+		expect(discordPairDialog).toContain("required <code>code</code> option");
+		expect(discordPairDialog).toContain('"Copy code"');
+		expect(discordPairDialog).not.toContain("/bot_pair ${");
+		expect(discordPairDialog).not.toContain("discord://");
 		expect(discordPairDialog).toContain("pairCodeExpiryLabel");
+		expect(discordPairDialog).toContain("This Discord pair code has expired");
+		expect(discordPairDialog).toContain("Generate new code");
 		expect(discordPairDialog).toContain("Couldn't prepare Discord pairing");
+		expect(discordPairDialog).toContain("success: false");
+		expect(hooks).toContain("if (toastOnError) toastApiError");
 		expect(agentDetail).not.toContain("Commands synced. In Discord");
 		expect(agentDetail).not.toContain("Paired servers and direct messages");
 	});
@@ -78,7 +92,7 @@ describe("channel IA boundary", () => {
 	test("keeps Discord preparation server-owned for private and shared bots", () => {
 		expect(agentDetail).toContain("visibility: bot.visibility");
 		expect(discordPairDialog).not.toContain("useSyncCommands");
-		expect(discordPairDialog).toContain("Preparing Discord and creating a pair code…");
+		expect(discordPairDialog).toContain("Creating a Discord pair code…");
 	});
 
 	test("opens the shared fixed-TTL Telegram flow immediately after a new link", () => {
@@ -90,6 +104,8 @@ describe("channel IA boundary", () => {
 		expect(pairDialog).toContain("agent_link_id: agentLinkId");
 		expect(pairDialog).toContain("ttl_seconds: TELEGRAM_PAIR_TTL_SECONDS");
 		expect(pairDialog).toContain("openKeyRef.current === openKey");
+		expect(pairDialog).toContain("useCreatePairCode(accountId, { toastOnError: false })");
+		expect(pairDialog).toContain("success: false");
 		expect(pairDialog).not.toContain("Select");
 	});
 
@@ -102,6 +118,14 @@ describe("channel IA boundary", () => {
 		expect(pairDialog).toContain("Telegram link unavailable");
 		expect(pairDialog).toContain("This Telegram link has expired");
 		expect(pairDialog).toContain("Pair a group manually");
+		expect(pairDialog).toContain("!expired && result.bot_username");
+		expect(pairDialog).toContain("Add @{result.bot_username.replace");
+		expect(pairDialog).toContain("to the group, then send:");
+		expect(pairDialog).toContain(
+			'<CopyInline value={result.pairing_command} label="pairing command" />',
+		);
+		expect(pairDialog).toContain("to pair with {botIdentity}");
+		expect(pairDialog).not.toContain("agentName");
 		expect(pairDialog).toContain('title="Couldn\'t create Telegram link"');
 	});
 
@@ -117,6 +141,30 @@ describe("channel IA boundary", () => {
 		expect(hooks).toContain("keys.bindings(accountId)");
 		expect(hooks).toContain('toastApiError("Couldn\'t unpair chat")');
 		expect(hooks).toContain("refetchInterval: 3_000");
+		expect(pairedChatRow).toContain("binding.last_message_at");
+		expect(pairedChatRow).toContain("Last activity {relativeTime(binding.last_message_at)}");
+		expect(pairedChatRow).not.toContain("No activity yet");
+		expect(agentDetail).not.toContain("Checking activity");
+		expect(agentDetail).not.toContain("No activity yet");
+		expect(agentDetail).not.toContain("Last activity");
+	});
+
+	test("keeps repeated row actions visually stable without provider variants", () => {
+		expect(linkedChannelRow).toContain('variant="outline"');
+		expect(linkedChannelRow).toContain('size="sm"');
+		expect(linkedChannelRow).toContain('<QrCode className="size-3.5" />');
+		expect(linkedChannelRow).toContain("AGENT_CHANNEL_PAIR_ACTIONS_CLASS");
+		expect(linkedChannelRow).not.toContain('variant={provider === "telegram"');
+		expect(linkedChannelRow).not.toContain('provider === "telegram" ? "default"');
+		expect(linkedChannelRow).toContain('variant="ghost"');
+		expect(linkedChannelRow).toContain('size="icon-sm"');
+		expect(linkedChannelRow).toContain("CHANNEL_DESTRUCTIVE_ACTION_CLASS");
+		expect(linkedChannelRow).toContain("aria-label={`Unlink ");
+		expect(pairedChatRow).toContain('variant="ghost"');
+		expect(pairedChatRow).toContain('size="icon-sm"');
+		expect(pairedChatRow).toContain("CHANNEL_DESTRUCTIVE_ACTION_CLASS");
+		expect(pairedChatRow).toContain("aria-label={`Unpair ");
+		expect(pairedChatRow).not.toContain('variant="outline"');
 	});
 
 	test("renders chats below channels without duplicating provider identity", () => {
@@ -124,6 +172,10 @@ describe("channel IA boundary", () => {
 		expect(pairedChatRow).toContain("<MessageCircle");
 		expect(pairedChatRow).toContain("<MessagesSquare");
 		expect(pairedChatRow).toContain("pairedChatTitle(binding, provider)");
+		expect(pairedChatRow).toContain(
+			'titleClassName="line-clamp-2 whitespace-normal break-words text-clip"',
+		);
+		expect(pairedChatRow).not.toContain("overflow-visible");
 		expect(pairedChatRow).toContain("pairedChatScopeLabel(provider, binding)");
 		expect(pairedChatRow).toContain("Run /bot_unpair in this");
 		expect(pairedChatRowLogic).toContain("external_chat_name?.trim()");

@@ -170,6 +170,7 @@ export function EntityHeader({
 	meta,
 	align = "center",
 	className,
+	titleClassName,
 }: {
 	icon: ReactNode;
 	title: ReactNode;
@@ -178,6 +179,7 @@ export function EntityHeader({
 	/** `start` aligns the icon to the top for multi-line bodies. */
 	align?: "center" | "start";
 	className?: string;
+	titleClassName?: string;
 }) {
 	return (
 		<div
@@ -190,7 +192,9 @@ export function EntityHeader({
 			{icon}
 			<div className="min-w-0 flex-1">
 				<div className="flex min-w-0 items-center gap-2">
-					<span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
+					<span className={cn("min-w-0 flex-1 truncate text-sm font-medium", titleClassName)}>
+						{title}
+					</span>
 					{titleAdornment ? <span className="shrink-0">{titleAdornment}</span> : null}
 				</div>
 				{meta !== undefined ? <EntityMeta items={meta} /> : null}

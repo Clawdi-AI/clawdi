@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -1229,7 +1230,11 @@ def _whatsapp_graph_text(params: dict[str, Any]) -> str:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="text.body is required")
 
 
-def _binding_response(binding: ChannelBinding) -> ChannelBindingResponse:
+def _binding_response(
+    binding: ChannelBinding,
+    *,
+    last_message_at: datetime | None = None,
+) -> ChannelBindingResponse:
     return ChannelBindingResponse(
         id=binding.id,
         account_id=binding.account_id,
@@ -1239,6 +1244,7 @@ def _binding_response(binding: ChannelBinding) -> ChannelBindingResponse:
         external_chat_name=binding.external_chat_name,
         status=binding.status,
         created_at=binding.created_at,
+        last_message_at=last_message_at,
     )
 
 

@@ -15,12 +15,15 @@ const channelsTab = agentChannels.slice(
 describe("hosted-agent channel finish line", () => {
 	test("keeps diagnosis compact inside a shared connected-channel row", () => {
 		expect(channelsTab).toContain("const health = useChannelHealth()");
-		expect(channelsTab).toContain("channelActivityAfterLink(");
 		expect(channelsTab).toContain("AGENT_CHANNEL_LIST_CLASS");
 		expect(channelsTab).toContain("AGENT_CHANNEL_ROW_CLASS");
-		expect(channelsTab).toContain("Last activity");
-		expect(channelsTab).toContain("No activity yet");
-		expect(channelsTab).toContain("Activity unavailable · Retry");
+		expect(channelsTab).not.toContain("channelActivityAfterLink(");
+		expect(channelsTab).not.toContain("Last activity");
+		expect(channelsTab).not.toContain("No activity yet");
+		expect(channelsTab).not.toContain("Checking activity");
+		expect(channelsTab).toContain("health.error && visibleActiveLinks.length > 0");
+		expect(channelsTab).toContain('title="Couldn\'t refresh channel health"');
+		expect(channelsTab).toContain("onRetry={() => void health.refetch()}");
 		expect(channelsTab).toContain("<ChannelStatusBadge status={link.status} />");
 		expect(channelsTab).toContain("<HealthBadge");
 		expect(channelsTab).not.toContain("Waiting for channel activity");
@@ -56,6 +59,17 @@ describe("hosted-agent channel finish line", () => {
 		expect(channelsTab).not.toContain(">Paired chats<");
 		expect(channelsTab).not.toContain("No chats paired");
 		expect(channelsTab).toContain("data-agent-add-channel");
+		expect(channelsTab).toContain("const availableBotProviders = useMemo(");
+		expect(channelsTab).toContain("const showAddChannelSection =");
+		expect(channelsTab).toContain("{showAddChannelSection ? (");
+		expect(channelsTab).toContain("availableBotProviders.length > 0");
+		const addSectionGate = channelsTab.slice(
+			channelsTab.indexOf("const showAddChannelSection ="),
+			channelsTab.indexOf("const healthByAccount"),
+		);
+		expect(addSectionGate).toContain("readyBots.length > 0");
+		expect(addSectionGate).not.toContain("botPool.isLoading");
+		expect(addSectionGate).not.toContain("botPool.error");
 		expect(channelsTab).toContain("data-add-channel-id");
 		expect(channelsTab).not.toContain("No bot connected yet");
 		expect(channelsTab).toContain("Connect a bot");

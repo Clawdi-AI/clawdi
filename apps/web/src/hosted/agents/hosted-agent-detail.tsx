@@ -82,6 +82,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusDot, type StatusTone } from "@/components/ui/status-badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
@@ -237,11 +238,11 @@ import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client"
 import {
 	agentProviderHasSingleLinkLimit,
 	availableBotProvidersForAgent,
-	channelActivityAfterLink,
 	channelProviderLinkingReady,
 	pairingActionLabel,
 } from "@/hosted/v2/channels/channel-linking.logic";
 import {
+	CHANNEL_DESTRUCTIVE_ACTION_CLASS,
 	ChannelStatusBadge,
 	CopyInline,
 	HealthBadge,
@@ -277,7 +278,7 @@ import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { settingsQueryHref } from "@/lib/settings-routes";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
-import { cn, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type Runtime = HostedRuntime;
 type HostedAgentTab =
@@ -2308,6 +2309,8 @@ const AGENT_CHANNEL_ROW_CLASS =
 	"grid min-h-16 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-4 py-3 sm:grid-cols-[auto_minmax(0,1fr)_auto]";
 const AGENT_CHANNEL_ACTIONS_CLASS =
 	"col-span-2 flex min-w-0 items-center justify-end gap-2 sm:col-span-1 sm:col-start-3 sm:row-start-1";
+const AGENT_CHANNEL_PAIR_ACTIONS_CLASS =
+	"col-span-2 grid min-h-8 w-full grid-cols-[minmax(0,1fr)_2rem] items-center gap-2 sm:col-span-1 sm:col-start-3 sm:row-start-1 sm:w-48";
 
 function ChannelsTab({
 	environmentId,
@@ -2334,6 +2337,7 @@ function ChannelsTab({
 	const [discordPair, setDiscordPair] = useState<{
 		accountId: string;
 		agentLinkId: string;
+		channelName: string;
 	} | null>(null);
 	const [connectOpen, setConnectOpen] = useState(false);
 	const [linkingAccountId, setLinkingAccountId] = useState<string | null>(null);
@@ -2437,6 +2441,11 @@ function ChannelsTab({
 				.map((bot) => ({ id: bot.id, provider: bot.provider, name: bot.name })),
 		[botPool.data, linkedIds, linkedProviders, agentType],
 	);
+	const availableBotProviders = useMemo(
+		() => availableBotProvidersForAgent(environmentId, agentType, linkedProviders),
+		[agentType, environmentId, linkedProviders],
+	);
+	const showAddChannelSection = readyBots.length > 0 || availableBotProviders.length > 0;
 	const healthByAccount = useMemo(
 		() => new Map((health.data?.items ?? []).map((item) => [item.account_id, item])),
 		[health.data],
@@ -2561,9 +2570,7 @@ function ChannelsTab({
 									onBindingsRetry={() => void bindingQuery?.refetch()}
 									fallbackAccount={accountSummaries.get(link.account_id)}
 									health={healthByAccount.get(link.account_id)}
-									healthLoading={health.isLoading}
-									healthError={Boolean(health.error)}
-									onHealthRetry={() => void health.refetch()}
+									agentName={agentName}
 									unlinking={unlinkingLinkIds.has(link.id)}
 									onUnlink={() => startUnlink(link.account_id, link.id)}
 								/>
@@ -2578,95 +2585,104 @@ function ChannelsTab({
 						title="Couldn't refresh every linked channel"
 					/>
 				) : null}
+				{health.error && visibleActiveLinks.length > 0 ? (
+					<ApiErrorPanel
+						error={health.error}
+						onRetry={() => void health.refetch()}
+						title="Couldn't refresh channel health"
+					/>
+				) : null}
 			</section>
 
-			<section data-agent-add-channel className="flex flex-col gap-3 border-t pt-6">
-				<div className="space-y-1">
-					<SectionLabel>Add a channel</SectionLabel>
-					<p className="px-0.5 text-sm text-muted-foreground">
-						Link a bot to this Agent, then choose where it should answer.
-					</p>
-				</div>
-				{botPool.isLoading ? (
-					<div className={AGENT_CHANNEL_LIST_CLASS}>
-						<div className={AGENT_CHANNEL_ROW_CLASS}>
-							<Skeleton className="size-8 shrink-0 rounded-md" />
-							<Skeleton className="h-4 min-w-0 flex-1 max-w-48" />
-							<div className={AGENT_CHANNEL_ACTIONS_CLASS}>
-								<Skeleton className="h-8 w-16 rounded-md" />
+			{showAddChannelSection ? (
+				<section data-agent-add-channel className="flex flex-col gap-3 border-t pt-6">
+					<div className="space-y-1">
+						<SectionLabel>Add a channel</SectionLabel>
+						<p className="px-0.5 text-sm text-muted-foreground">
+							Link a bot to this Agent, then choose where it should answer.
+						</p>
+					</div>
+					{botPool.isLoading ? (
+						<div className={AGENT_CHANNEL_LIST_CLASS}>
+							<div className={AGENT_CHANNEL_ROW_CLASS}>
+								<Skeleton className="size-8 shrink-0 rounded-md" />
+								<Skeleton className="h-4 min-w-0 flex-1 max-w-48" />
+								<div className={AGENT_CHANNEL_ACTIONS_CLASS}>
+									<Skeleton className="h-8 w-16 rounded-md" />
+								</div>
 							</div>
 						</div>
-					</div>
-				) : botPool.error ? (
-					<ApiErrorPanel
-						error={botPool.error}
-						onRetry={() => botPool.refetch()}
-						title="Couldn't load ready-to-go bots"
-					/>
-				) : readyBots.length > 0 ? (
-					<div className={AGENT_CHANNEL_LIST_CLASS}>
-						{readyBots.map((bot) => (
-							<AddChannelRow
-								key={bot.id}
-								channel={bot}
-								kind="Shared bot"
-								linking={linkingAccountId === bot.id}
-								disabled={linkingAccountId !== null}
-								onLink={() => void submitLink(bot.id)}
-							/>
-						))}
-					</div>
-				) : null}
-
-				{availableBotProvidersForAgent(environmentId, agentType, linkedProviders).length > 0 ? (
-					<details className="group border-t pt-4">
-						<summary className="cursor-pointer text-sm font-medium">Use your own bot</summary>
-						<div className="mt-3 space-y-3">
-							{channels.isLoading ? (
-								<Skeleton className="h-16 w-full rounded-lg" />
-							) : channels.error ? (
-								<ApiErrorPanel
-									error={channels.error}
-									onRetry={() => channels.refetch()}
-									title="Couldn't load your bots"
+					) : botPool.error ? (
+						<ApiErrorPanel
+							error={botPool.error}
+							onRetry={() => botPool.refetch()}
+							title="Couldn't load ready-to-go bots"
+						/>
+					) : readyBots.length > 0 ? (
+						<div className={AGENT_CHANNEL_LIST_CLASS}>
+							{readyBots.map((bot) => (
+								<AddChannelRow
+									key={bot.id}
+									channel={bot}
+									kind="Shared bot"
+									linking={linkingAccountId === bot.id}
+									disabled={linkingAccountId !== null}
+									onLink={() => void submitLink(bot.id)}
 								/>
-							) : ownedChannels.length > 0 ? (
-								<div className={AGENT_CHANNEL_LIST_CLASS}>
-									{ownedChannels.map((channel) => (
-										<AddChannelRow
-											key={channel.id}
-											channel={channel}
-											kind={undefined}
-											linking={linkingAccountId === channel.id}
-											disabled={linkingAccountId !== null}
-											onLink={() => void submitLink(channel.id)}
-											secondary
-										/>
-									))}
-								</div>
-							) : (
-								<Button size="sm" onClick={() => setConnectOpen(true)}>
-									<Plus className="size-3.5" />
-									Connect a bot
-								</Button>
-							)}
-							{ownedChannels.length > 0 ? (
-								<div className="flex flex-wrap gap-2">
-									<Button
-										type="button"
-										variant="outline"
-										size="sm"
-										onClick={() => setConnectOpen(true)}
-									>
+							))}
+						</div>
+					) : null}
+
+					{availableBotProviders.length > 0 ? (
+						<details className="group border-t pt-4">
+							<summary className="cursor-pointer text-sm font-medium">Use your own bot</summary>
+							<div className="mt-3 space-y-3">
+								{channels.isLoading ? (
+									<Skeleton className="h-16 w-full rounded-lg" />
+								) : channels.error ? (
+									<ApiErrorPanel
+										error={channels.error}
+										onRetry={() => channels.refetch()}
+										title="Couldn't load your bots"
+									/>
+								) : ownedChannels.length > 0 ? (
+									<div className={AGENT_CHANNEL_LIST_CLASS}>
+										{ownedChannels.map((channel) => (
+											<AddChannelRow
+												key={channel.id}
+												channel={channel}
+												kind={undefined}
+												linking={linkingAccountId === channel.id}
+												disabled={linkingAccountId !== null}
+												onLink={() => void submitLink(channel.id)}
+												secondary
+											/>
+										))}
+									</div>
+								) : (
+									<Button size="sm" onClick={() => setConnectOpen(true)}>
 										<Plus className="size-3.5" />
 										Connect a bot
 									</Button>
-								</div>
-							) : null}
-						</div>
-					</details>
-				) : null}
-			</section>
+								)}
+								{ownedChannels.length > 0 ? (
+									<div className="flex flex-wrap gap-2">
+										<Button
+											type="button"
+											variant="outline"
+											size="sm"
+											onClick={() => setConnectOpen(true)}
+										>
+											<Plus className="size-3.5" />
+											Connect a bot
+										</Button>
+									</div>
+								) : null}
+							</div>
+						</details>
+					) : null}
+				</section>
+			) : null}
 
 			<ConnectBotDialog
 				open={connectOpen}
@@ -2684,7 +2700,11 @@ function ChannelsTab({
 						return;
 					}
 					if (bot.provider === "discord") {
-						setDiscordPair({ accountId: bot.id, agentLinkId: bot.agentLinkId });
+						setDiscordPair({
+							accountId: bot.id,
+							agentLinkId: bot.agentLinkId,
+							channelName: bot.name,
+						});
 					}
 				}}
 			/>
@@ -2696,7 +2716,6 @@ function ChannelsTab({
 					}}
 					accountId={telegramPair.accountId}
 					agentLinkId={telegramPair.agentLinkId}
-					agentName={agentName}
 					channelName={telegramPair.channelName}
 				/>
 			) : null}
@@ -2708,6 +2727,7 @@ function ChannelsTab({
 					}}
 					accountId={discordPair.accountId}
 					agentLinkId={discordPair.agentLinkId}
+					channelName={discordPair.channelName}
 				/>
 			) : null}
 		</div>
@@ -2724,9 +2744,7 @@ function ConnectedChannelGroup({
 	unlinking,
 	fallbackAccount,
 	health,
-	healthLoading,
-	healthError,
-	onHealthRetry,
+	agentName,
 }: {
 	link: AgentChannelLink;
 	pairedChats: AgentPairedChatItem[];
@@ -2737,9 +2755,7 @@ function ConnectedChannelGroup({
 	unlinking: boolean;
 	fallbackAccount?: ChannelAccountSummary;
 	health?: components["schemas"]["ChannelHealthItemResponse"];
-	healthLoading: boolean;
-	healthError: boolean;
-	onHealthRetry: () => void;
+	agentName: string;
 }) {
 	const showChats = pairedChats.length > 0 || bindingsLoading || bindingsError;
 	const provider = link.account?.provider ?? fallbackAccount?.provider ?? "";
@@ -2750,9 +2766,7 @@ function ConnectedChannelGroup({
 				link={link}
 				fallbackAccount={fallbackAccount}
 				health={health}
-				healthLoading={healthLoading}
-				healthError={healthError}
-				onHealthRetry={onHealthRetry}
+				agentName={agentName}
 				unlinking={unlinking}
 				onUnlink={onUnlink}
 			/>
@@ -2845,18 +2859,14 @@ function LinkedChannelRow({
 	unlinking,
 	fallbackAccount,
 	health,
-	healthLoading,
-	healthError,
-	onHealthRetry,
+	agentName,
 }: {
 	link: AgentChannelLink;
 	onUnlink: () => void;
 	unlinking: boolean;
 	fallbackAccount?: ChannelAccountSummary;
 	health?: components["schemas"]["ChannelHealthItemResponse"];
-	healthLoading: boolean;
-	healthError: boolean;
-	onHealthRetry: () => void;
+	agentName: string;
 }) {
 	const pair = useCreatePairCode(link.account_id);
 	const [code, setCode] = useState<AgentPairCodeResult | null>(null);
@@ -2872,7 +2882,6 @@ function LinkedChannelRow({
 	const provider = account?.provider ?? "";
 	const isDiscord = provider === "discord";
 	const name = account?.name ?? "Unnamed channel";
-	const hasActivity = channelActivityAfterLink(health?.last_message_at, link.created_at);
 	useEffect(() => {
 		if (!code) return;
 		setNowMs(Date.now());
@@ -2907,23 +2916,6 @@ function LinkedChannelRow({
 					{health && !isNormalChannelHealth(health.health_status) ? (
 						<HealthBadge status={health.health_status} />
 					) : null}
-					{healthLoading ? (
-						<span className="inline-flex items-center gap-1">
-							<Spinner className="size-3" /> Checking activity…
-						</span>
-					) : healthError ? (
-						<button
-							type="button"
-							className="font-medium text-destructive underline-offset-2 hover:underline"
-							onClick={onHealthRetry}
-						>
-							Activity unavailable · Retry
-						</button>
-					) : hasActivity ? (
-						<span>Last activity {relativeTime(health?.last_message_at)}</span>
-					) : (
-						<span>No activity yet</span>
-					)}
 				</div>
 				{provider !== "telegram" && !isDiscord && pair.error ? (
 					<p className="mt-1 text-xs font-medium text-destructive">Pair failed · Try again</p>
@@ -2937,11 +2929,12 @@ function LinkedChannelRow({
 					</div>
 				) : null}
 			</div>
-			<div className={AGENT_CHANNEL_ACTIONS_CLASS}>
+			<div className={AGENT_CHANNEL_PAIR_ACTIONS_CLASS}>
 				<Button
 					type="button"
-					variant={provider === "telegram" ? "default" : "outline"}
+					variant="outline"
 					size="sm"
+					className="w-full"
 					disabled={provider !== "telegram" && creatingPairCode}
 					onClick={() => {
 						if (provider === "telegram") setTelegramPairOpen(true);
@@ -2958,23 +2951,30 @@ function LinkedChannelRow({
 								? "Retry pairing"
 								: pairingActionLabel(provider)}
 				</Button>
-				<ConfirmAction
-					title="Unlink this channel?"
-					description={<p>This Agent will stop answering through {name}.</p>}
-					confirmLabel="Unlink"
-					destructive
-					onConfirm={onUnlink}
-				>
-					<Button
-						variant="ghost"
-						size="sm"
-						className="text-muted-foreground hover:text-destructive"
-						disabled={unlinking}
-					>
-						{unlinking ? <Spinner className="size-3.5" /> : <Link2Off className="size-3.5" />}
-						{unlinking ? "Unlinking…" : "Unlink"}
-					</Button>
-				</ConfirmAction>
+				<Tooltip>
+					<TooltipTrigger render={<span className="inline-flex size-8" />}>
+						<ConfirmAction
+							title={`Unlink ${name}?`}
+							description={<p>{agentName} will stop answering through this bot.</p>}
+							confirmLabel="Unlink"
+							destructive
+							onConfirm={onUnlink}
+						>
+							<Button
+								variant="ghost"
+								size="icon-sm"
+								className={CHANNEL_DESTRUCTIVE_ACTION_CLASS}
+								disabled={unlinking}
+								aria-label={`Unlink ${name} from ${agentName}`}
+							>
+								{unlinking ? <Spinner className="size-3.5" /> : <Link2Off className="size-3.5" />}
+							</Button>
+						</ConfirmAction>
+					</TooltipTrigger>
+					<TooltipContent>
+						Unlink {name} from {agentName}
+					</TooltipContent>
+				</Tooltip>
 			</div>
 
 			{provider === "telegram" ? (
@@ -2992,6 +2992,7 @@ function LinkedChannelRow({
 					onOpenChange={setDiscordPairOpen}
 					accountId={link.account_id}
 					agentLinkId={link.id}
+					channelName={name}
 				/>
 			) : null}
 		</div>

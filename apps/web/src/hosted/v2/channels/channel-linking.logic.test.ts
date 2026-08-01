@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
 	agentProviderHasSingleLinkLimit,
 	availableBotProvidersForAgent,
-	channelActivityAfterLink,
 	channelProviderLinkingReady,
 	pairCodeExpired,
 	pairingActionLabel,
@@ -56,12 +55,5 @@ describe("hosted channel instructions and gates", () => {
 		}
 		expect(agentProviderHasSingleLinkLimit("openclaw", "whatsapp")).toBe(false);
 		expect(agentProviderHasSingleLinkLimit("codex", "telegram")).toBe(false);
-	});
-
-	test("only treats real account activity after linking as new channel activity", () => {
-		expect(channelActivityAfterLink(null, "2026-07-26T09:00:00Z")).toBe(false);
-		expect(channelActivityAfterLink("2026-07-26T08:59:59Z", "2026-07-26T09:00:00Z")).toBe(false);
-		expect(channelActivityAfterLink("2026-07-26T09:00:01Z", "2026-07-26T09:00:00Z")).toBe(true);
-		expect(channelActivityAfterLink("not-a-date", "2026-07-26T09:00:00Z")).toBe(false);
 	});
 });

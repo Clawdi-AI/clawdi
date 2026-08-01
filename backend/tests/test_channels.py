@@ -11302,6 +11302,83 @@ async def test_telegram_webhook_pair_code_creates_binding(client: httpx.AsyncCli
 
 
 @pytest.mark.asyncio
+async def test_channel_bindings_include_binding_scoped_last_message_at(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={"provider": "telegram", "name": "binding-activity"},
+        )
+    ).json()
+    account_id = UUID(created["id"])
+    agent_link_id = UUID(created["agent_link_id"])
+    active_binding = ChannelBinding(
+        account_id=account_id,
+        bot_agent_link_id=agent_link_id,
+        user_id=seed_user.id,
+        external_chat_id="active-chat",
+        external_chat_type="private",
+        external_chat_name="Active chat",
+    )
+    quiet_binding = ChannelBinding(
+        account_id=account_id,
+        bot_agent_link_id=agent_link_id,
+        user_id=seed_user.id,
+        external_chat_id="quiet-chat",
+        external_chat_type="private",
+        external_chat_name="Quiet chat",
+    )
+    db_session.add_all([active_binding, quiet_binding])
+    await db_session.flush()
+    earlier = datetime(2026, 7, 30, 9, 0, tzinfo=UTC)
+    latest = datetime(2026, 7, 30, 10, 0, tzinfo=UTC)
+    db_session.add_all(
+        [
+            ChannelMessage(
+                account_id=account_id,
+                bot_agent_link_id=agent_link_id,
+                binding_id=active_binding.id,
+                user_id=seed_user.id,
+                direction=MESSAGE_DIRECTION_INBOUND,
+                external_chat_id=active_binding.external_chat_id,
+                text="earlier bound message",
+                created_at=earlier,
+            ),
+            ChannelMessage(
+                account_id=account_id,
+                bot_agent_link_id=agent_link_id,
+                binding_id=active_binding.id,
+                user_id=seed_user.id,
+                direction=MESSAGE_DIRECTION_OUTBOUND,
+                external_chat_id=active_binding.external_chat_id,
+                text="latest bound message",
+                created_at=latest,
+            ),
+            ChannelMessage(
+                account_id=account_id,
+                bot_agent_link_id=agent_link_id,
+                user_id=seed_user.id,
+                direction=MESSAGE_DIRECTION_INBOUND,
+                external_chat_id=quiet_binding.external_chat_id,
+                text="newer unbound account message",
+                created_at=latest + timedelta(hours=1),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    response = await client.get(f"/v1/channels/{created['id']}/bindings")
+
+    assert response.status_code == 200, response.text
+    bindings = {item["external_chat_id"]: item for item in response.json()}
+    assert datetime.fromisoformat(bindings["active-chat"]["last_message_at"]) == latest
+    assert bindings["quiet-chat"]["last_message_at"] is None
+
+
+@pytest.mark.asyncio
 async def test_telegram_pairing_threads_share_one_chat_binding(client: httpx.AsyncClient):
     created = (
         await client.post(
