@@ -27,6 +27,7 @@ describe("pairing dialog primitives", () => {
 		);
 
 		expect(markup).toContain('aria-label="Pairing QR code"');
+		expect(markup).toContain("data-pairing-qr-container");
 		expect(markup).toContain("max-w-44 sm:max-w-48");
 		expect(markup).toContain("bg-white");
 	});

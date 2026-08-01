@@ -211,7 +211,8 @@ export function DiscordPairDialog({
 												<p className="text-sm font-medium">Direct message pairing unavailable</p>
 												<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
 													<span>
-														Use Server pairing. The bot owner can enable User Install with the
+														Use Server pairing. The bot owner can enable Discord User Install with
+														the
 													</span>
 													<CopyablePairingCode
 														value="applications.commands"
@@ -245,7 +246,7 @@ export function DiscordPairDialog({
 										<TabsContent value="dm" data-discord-pair-path="dm" className="mt-3 space-y-4">
 											<PairingQrCode
 												value={result.discord_user_install_url}
-												label="Discord direct message install QR code"
+												label="Discord User Install QR code"
 											/>
 											<PairingExpiry>{pairCodeExpiryLabel(result.expires_at, nowMs)}</PairingExpiry>
 											<PairingInstructionPanel>

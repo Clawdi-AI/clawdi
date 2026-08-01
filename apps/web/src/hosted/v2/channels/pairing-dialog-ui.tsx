@@ -19,6 +19,7 @@ export function PairingDialogContent({ children }: { children: ReactNode }) {
 		<DialogContent
 			data-hosted="true"
 			data-v2="true"
+			data-pairing-dialog
 			className="h-[min(40rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-4 overflow-hidden sm:h-auto sm:max-w-md"
 		>
 			{children}
@@ -64,7 +65,13 @@ export function PairingDialogBody({ className, ...props }: ComponentProps<"div">
 }
 
 export function PairingDialogFooter({ className, ...props }: ComponentProps<typeof DialogFooter>) {
-	return <DialogFooter className={cn("border-t pt-4", className)} {...props} />;
+	return (
+		<DialogFooter
+			data-pairing-dialog-footer
+			className={cn("border-t pt-4", className)}
+			{...props}
+		/>
+	);
 }
 
 export function PairingLoading({ children }: { children: ReactNode }) {
@@ -90,7 +97,7 @@ export function PairingNotice({ title, children }: { title: string; children: Re
 
 export function PairingQrCode({ value, label }: { value: string; label: string }) {
 	return (
-		<div className="flex justify-center">
+		<div data-pairing-qr-container className="flex justify-center">
 			<div className="max-w-full rounded-md border bg-white p-3 shadow-sm">
 				<QRCodeSVG
 					value={value}
@@ -127,6 +134,7 @@ export function PairingExpiry({
 export function PairingInstructionPanel({ className, ...props }: ComponentProps<"div">) {
 	return (
 		<div
+			data-pairing-instruction-panel
 			className={cn("space-y-2 rounded-lg border bg-muted/20 p-3 text-sm", className)}
 			{...props}
 		/>

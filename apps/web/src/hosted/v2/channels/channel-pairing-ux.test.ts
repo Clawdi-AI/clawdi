@@ -96,7 +96,7 @@ describe("channel IA boundary", () => {
 		expect(discordPairDialog).toContain("Direct message");
 		expect(discordPairDialog).not.toContain("If you can already open a direct message");
 		expect(discordPairDialog).toContain("Add to my apps");
-		expect(discordPairDialog).toContain("Discord direct message install QR code");
+		expect(discordPairDialog).toContain("Discord User Install QR code");
 		expect(discordPairDialog).toContain("value={result.discord_user_install_url}");
 		expect(discordPairDialog).toContain("disabled={!result.discord_user_install_url}");
 		expect(discordPairDialog).toContain("Direct message pairing unavailable");
@@ -166,7 +166,7 @@ describe("channel IA boundary", () => {
 		expect(pairDialog).toContain("value={validLink}");
 		expect(pairDialog).toContain("href={validLink}");
 		expect(pairDialog).toContain("qrPayload: result.qr_payload");
-		expect(pairDialog).toContain('label="Telegram private chat pairing QR code"');
+		expect(pairDialog).toContain('label="Telegram pairing QR code"');
 		expect(pairDialog).toContain('"Copy link"');
 		expect(pairDialog).toContain("Telegram link unavailable");
 		expect(pairDialog).toContain("This Telegram link has expired");
@@ -178,6 +178,7 @@ describe("channel IA boundary", () => {
 		expect(pairDialog).toContain('label="Telegram group pairing command"');
 		expect(pairDialog).toContain('scope="Private chat"');
 		expect(pairDialog).toContain("Scan the QR code or open Telegram to pair a private chat.");
+		expect(pairDialog).toContain('aria-label={copied ? "Link copied" : "Copy link"}');
 		expect(pairDialog).not.toContain("agentName");
 		expect(pairDialog).toContain('title="Couldn\'t create Telegram link"');
 	});
@@ -197,6 +198,8 @@ describe("channel IA boundary", () => {
 		expect(pairingDialogUi).toContain("rounded-md border bg-background");
 		expect(pairingDialogUi).toContain('variant === "inline"');
 		expect(pairingDialogUi).toContain("max-w-44 sm:max-w-48");
+		expect(pairingDialogUi).toContain("data-pairing-instruction-panel");
+		expect(pairingDialogUi).toContain("data-pairing-dialog-footer");
 	});
 
 	test("shows chat identity and isolates Unpair to the selected chat with recovery", () => {

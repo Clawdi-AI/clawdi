@@ -168,7 +168,7 @@ export function TelegramPairDialog({
 					) : result ? (
 						<div className="space-y-4">
 							{validLink ? (
-								<PairingQrCode value={validLink} label="Telegram private chat pairing QR code" />
+								<PairingQrCode value={validLink} label="Telegram pairing QR code" />
 							) : (
 								<PairingNotice
 									title={expired ? "This Telegram link has expired" : "Telegram link unavailable"}
@@ -205,9 +205,7 @@ export function TelegramPairDialog({
 							variant="outline"
 							className="w-full min-w-0 whitespace-normal sm:w-auto"
 							onClick={() => void copy(validLink)}
-							aria-label={
-								copied ? "Telegram private chat link copied" : "Copy Telegram private chat link"
-							}
+							aria-label={copied ? "Link copied" : "Copy link"}
 							aria-live="polite"
 						>
 							{copied ? <Check className="size-4" /> : <Copy className="size-4" />}
