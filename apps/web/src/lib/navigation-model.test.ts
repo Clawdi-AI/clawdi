@@ -234,12 +234,31 @@ describe("sidebar navigation model", () => {
 			new URL("../hosted/agents/hosted-agent-detail.tsx", import.meta.url),
 			"utf8",
 		);
+		const agentVaultsTab = readFileSync(
+			new URL("../components/dashboard/agent-vaults-tab.tsx", import.meta.url),
+			"utf8",
+		);
+		const connectorsPage = readFileSync(
+			new URL("../pages/dashboard/connectors/page.tsx", import.meta.url),
+			"utf8",
+		);
+		const vaultPage = readFileSync(
+			new URL("../pages/dashboard/vault/page.tsx", import.meta.url),
+			"utf8",
+		);
 		for (const source of [connectedDetail, hostedDetail]) {
 			expect(source).toContain("AGENT_SECTION_NAVIGATION_ITEMS[activeTab]");
 			expect(source).toContain("<AgentProjectsTab");
 			expect(source).toContain("<AgentVaultsTab");
 			expect(source).toContain("<ConnectorsSurface embedded");
+			expect(source).not.toContain("@/pages/dashboard");
 		}
+		expect(agentVaultsTab).toContain("@/components/vault/vaults-surface");
+		expect(agentVaultsTab).not.toContain("@/pages/dashboard");
+		expect(connectorsPage).toContain("@/components/connectors/connectors-surface");
+		expect(connectorsPage).not.toContain("useQuery");
+		expect(vaultPage).toContain("@/components/vault/vaults-surface");
+		expect(vaultPage).not.toContain("useQuery");
 		expect(connectedDetail).not.toContain("function AgentProjectsPanel");
 	});
 });

@@ -1788,7 +1788,8 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	});
 	// Cloud API (/v1/*).
 	await page.route(`${CLOUD_API}/**`, async (r) => {
-		const p = new URL(r.request().url()).pathname;
+		const url = new URL(r.request().url());
+		const p = url.pathname;
 		if (p === "/v1/me") {
 			options.productAccessRequests?.push(`CLOUD ${p}`);
 			return fulfillJson(
@@ -2074,30 +2075,32 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			if (!options.agentResourceFixtures) {
 				return fulfillJson(r, { items: [], total: 0, page: 1, page_size: 200 });
 			}
+			const projectId = url.searchParams.get("project_id");
+			const items = [
+				{
+					id: "vault-hosted",
+					slug: "hosted-vault",
+					name: "Hosted Scoped Vault",
+					project_ids: ["project-hosted"],
+					is_owner: true,
+					item_count: 1,
+					created_at: "2026-07-15T00:00:00Z",
+				},
+				{
+					id: "vault-other",
+					slug: "other-vault",
+					name: "Other Account Vault",
+					project_ids: ["project-other"],
+					is_owner: true,
+					item_count: 1,
+					created_at: "2026-07-15T00:00:00Z",
+				},
+			].filter((vault) => !projectId || vault.project_ids.includes(projectId));
 			return fulfillJson(r, {
-				items: [
-					{
-						id: "vault-hosted",
-						slug: "hosted-vault",
-						name: "Hosted Scoped Vault",
-						project_ids: ["project-hosted"],
-						is_owner: true,
-						item_count: 1,
-						created_at: "2026-07-15T00:00:00Z",
-					},
-					{
-						id: "vault-other",
-						slug: "other-vault",
-						name: "Other Account Vault",
-						project_ids: ["project-other"],
-						is_owner: true,
-						item_count: 1,
-						created_at: "2026-07-15T00:00:00Z",
-					},
-				],
-				total: 2,
-				page: 1,
-				page_size: 200,
+				items,
+				total: items.length,
+				page: Number(url.searchParams.get("page") ?? "1"),
+				page_size: Number(url.searchParams.get("page_size") ?? "25"),
 			});
 		}
 		if (p === "/v1/connectors") return fulfillJson(r, []);

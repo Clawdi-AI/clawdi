@@ -32,6 +32,7 @@ import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState 
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
@@ -286,7 +287,6 @@ import { sessionListQueryOptions } from "@/lib/session-queries";
 import { settingsQueryHref } from "@/lib/settings-routes";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn } from "@/lib/utils";
-import { ConnectorsSurface } from "@/pages/dashboard/connectors/page";
 
 type Runtime = HostedRuntime;
 type HostedAgentTab =

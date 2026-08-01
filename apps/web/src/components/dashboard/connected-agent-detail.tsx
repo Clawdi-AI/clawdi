@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
 import {
 	AgentSourceBadgeForEnvironment,
 	agentDisplayName,
@@ -33,7 +34,6 @@ import { isApiNotFoundError } from "@/lib/api-errors";
 import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn, errorMessage } from "@/lib/utils";
-import { ConnectorsSurface } from "@/pages/dashboard/connectors/page";
 
 type AgentTab =
 	| "overview"
