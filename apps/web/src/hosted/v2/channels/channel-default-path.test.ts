@@ -6,14 +6,16 @@ function source(relativePath: string): string {
 }
 
 describe("global Channels inventory", () => {
-	test("separates owned and shared bot inventory without relationship actions", () => {
+	test("separates Custom and Clawdi bot inventory without relationship actions", () => {
 		const channelsPage = source("./channels-page.tsx");
 
 		expect(channelsPage).toContain("<OwnedBotsSection");
 		expect(channelsPage).toContain("data-owned-bots-section");
 		expect(channelsPage).toContain("<SharedBotsSection");
 		expect(channelsPage).toContain("data-shared-bots-section");
-		expect(channelsPage).toContain("Connect bot");
+		expect(channelsPage).toContain("Connect custom bot");
+		expect(channelsPage).toContain("Custom bots");
+		expect(channelsPage).toContain("Clawdi bots");
 		expect(channelsPage).toContain("orderedChannelsForFilter");
 		expect(channelsPage).toContain("useBotPool");
 		expect(channelsPage).not.toContain("ReadyBotsSection");
@@ -44,13 +46,22 @@ describe("global Channels inventory", () => {
 		expect(hooks).toContain("export function useUnlinkAgentChannel(");
 	});
 
-	test("creates an unlinked asset globally and targets the current Agent only in Agent context", () => {
+	test("reuses one Custom bot form for Console inventory and direct Agent setup", () => {
 		const connectDialog = source("./connect-bot-dialog.tsx");
 		const agentDetail = source("../../agents/hosted-agent-detail.tsx");
+		const addChannelDialog = source("./add-channel-dialog.tsx");
 
 		expect(connectDialog).toContain("agent_id: agentId ?? null");
+		expect(connectDialog).toContain("onAgentConnected");
+		expect(connectDialog).toContain("availableBotProvidersForAgent");
+		expect(agentDetail).toContain("<AddChannelDialog");
+		expect(agentDetail).toContain("<ConnectBotDialog");
+		expect(agentDetail).toContain('channelSetupDialog === "connect-custom"');
 		expect(agentDetail).toContain("agentId={environmentId}");
-		expect(agentDetail).toContain("onAgentConnected={(bot)");
+		expect(agentDetail).toContain("linkedProviders={linkedProviders}");
+		expect(addChannelDialog).toContain("Choose a bot for this Agent.");
+		expect(addChannelDialog).toContain("Connect custom bot");
+		expect(agentDetail).toContain("body: { agent_id: environmentId }");
 		expect(agentDetail).toContain("setTelegramPair({");
 	});
 

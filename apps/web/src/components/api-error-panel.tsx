@@ -49,7 +49,7 @@ export function ApiErrorPanel({
 			<Icon />
 			<AlertTitle>{expired ? "Your session expired" : title}</AlertTitle>
 			<AlertDescription className="flex flex-col items-start gap-3">
-				<span>{normalizer.normalizeError(error)}</span>
+				<span className="min-w-0 [overflow-wrap:anywhere]">{normalizer.normalizeError(error)}</span>
 				<div className="flex flex-wrap gap-2">
 					{expired ? (
 						<Button size="sm" onClick={reauthenticate}>

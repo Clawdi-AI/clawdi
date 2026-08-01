@@ -1116,13 +1116,16 @@ type HostedApiStubOptions = {
 	checkoutResponses?: StubResponse[];
 	channelAccount?: unknown;
 	channelAccounts?: unknown[];
+	channelAccountsResponses?: StubResponse[];
 	channelAgentLinks?: readonly unknown[];
 	channelBindings?: unknown[];
 	channelBindingResponses?: Record<string, StubResponse[]>;
 	channelBotPool?: unknown;
+	channelBotPoolResponses?: StubResponse[];
 	channelHealthItems?: unknown[];
 	linkAgentRequests?: Array<{ accountId: string; body: string }>;
 	linkAgentResponses?: StubResponse[];
+	linkAgentResponseGates?: Array<Promise<void> | undefined>;
 	unlinkAgentRequests?: string[];
 	unlinkAgentResponses?: StubResponse[];
 	onLinkAgent?: (response: unknown) => void;
@@ -1133,6 +1136,7 @@ type HostedApiStubOptions = {
 	onCreateChannel?: (response: unknown) => void;
 	pairCodeRequests?: string[];
 	pairCodeResponses?: StubResponse[];
+	pairCodeResponseGates?: Array<Promise<void> | undefined>;
 	cloudAgentOverrides?: Record<string, unknown>;
 	cloudAgents?: readonly unknown[];
 	cloudAgentsResponse?: StubResponse;
@@ -1894,6 +1898,11 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			});
 		}
 		if (p === "/v1/channels" && r.request().method() === "GET") {
+			const response = options.channelAccountsResponses?.shift();
+			if (response?.delayMs) {
+				await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+			}
+			if (response) return fulfillJson(r, response.body, response.status);
 			return fulfillJson(
 				r,
 				options.channelAccounts ?? (options.channelAccount ? [options.channelAccount] : []),
@@ -1901,11 +1910,18 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p === "/v1/channels" && r.request().method() === "POST") {
 			options.createChannelRequests?.push(r.request().postData() ?? "");
-			const response = options.createChannelResponse ?? {};
-			options.onCreateChannel?.(response);
-			return fulfillJson(r, response, 201);
+			const configured = options.createChannelResponse ?? {};
+			const response = isStubResponse(configured) ? configured : { body: configured, status: 201 };
+			if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+			if (response.status < 400) options.onCreateChannel?.(response.body);
+			return fulfillJson(r, response.body, response.status);
 		}
 		if (p === "/v1/channels/bot-pool") {
+			const response = options.channelBotPoolResponses?.shift();
+			if (response?.delayMs) {
+				await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+			}
+			if (response) return fulfillJson(r, response.body, response.status);
 			return fulfillJson(r, options.channelBotPool ?? { providers: {} });
 		}
 		if (p === "/v1/channels/health") {
@@ -1944,6 +1960,8 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				body: r.request().postData() ?? "",
 			});
 			const response = options.linkAgentResponses?.shift() ?? { body: {}, status: 201 };
+			const responseGate = options.linkAgentResponseGates?.shift();
+			await responseGate;
 			if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
 			if (response.status < 400) options.onLinkAgent?.(response.body);
 			return fulfillJson(r, response.body, response.status);
@@ -1960,6 +1978,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p.endsWith("/pair-codes") && r.request().method() === "POST") {
 			options.pairCodeRequests?.push(r.request().postData() ?? "");
 			const response = options.pairCodeResponses?.shift() ?? { body: {}, status: 201 };
+			const responseGate = options.pairCodeResponseGates?.shift();
+			await responseGate;
+			if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
 			return fulfillJson(r, response.body, response.status);
 		}
 		if (p.match(/\/bindings\/[^/]+$/) && r.request().method() === "DELETE") {
@@ -2205,11 +2226,88 @@ function collectBrowserErrors(page: Page): string[] {
 	return errors;
 }
 
-async function expectNonZeroBox(locator: ReturnType<Page["locator"]>, label: string) {
-	const box = await locator.boundingBox();
-	expect(box, `${label} should render a layout box`).not.toBeNull();
-	expect(box?.width, `${label} width`).toBeGreaterThan(0);
-	expect(box?.height, `${label} height`).toBeGreaterThan(0);
+async function expectNoHorizontalOverflow(locator: Locator, label: string) {
+	const metrics = await locator.evaluate((element) => ({
+		clientWidth: element.clientWidth,
+		scrollWidth: element.scrollWidth,
+	}));
+	expect(metrics.scrollWidth, `${label} horizontal overflow`).toBeLessThanOrEqual(
+		metrics.clientWidth + 1,
+	);
+}
+
+async function expectContainedInOwnerAndViewport(
+	page: Page,
+	control: Locator,
+	owner: Locator,
+	label: string,
+) {
+	await expect(control, `${label} should be visible`).toBeVisible();
+	await control.scrollIntoViewIfNeeded();
+	const [controlBox, ownerBox] = await Promise.all([control.boundingBox(), owner.boundingBox()]);
+	expect(controlBox, `${label} control box`).not.toBeNull();
+	expect(ownerBox, `${label} owner box`).not.toBeNull();
+	if (!controlBox || !ownerBox) return;
+	const tolerance = 1;
+	const controlRight = controlBox.x + controlBox.width;
+	const controlBottom = controlBox.y + controlBox.height;
+	const ownerRight = ownerBox.x + ownerBox.width;
+	const ownerBottom = ownerBox.y + ownerBox.height;
+	expect(controlBox.x, `${label} left edge in owner`).toBeGreaterThanOrEqual(
+		ownerBox.x - tolerance,
+	);
+	expect(controlBox.y, `${label} top edge in owner`).toBeGreaterThanOrEqual(ownerBox.y - tolerance);
+	expect(controlRight, `${label} right edge in owner`).toBeLessThanOrEqual(ownerRight + tolerance);
+	expect(controlBottom, `${label} bottom edge in owner`).toBeLessThanOrEqual(
+		ownerBottom + tolerance,
+	);
+	const viewport = page.viewportSize();
+	if (!viewport) throw new Error("Playwright viewport is required for containment checks");
+	expect(controlBox.x, `${label} left edge in viewport`).toBeGreaterThanOrEqual(-tolerance);
+	expect(controlBox.y, `${label} top edge in viewport`).toBeGreaterThanOrEqual(-tolerance);
+	expect(controlRight, `${label} right edge in viewport`).toBeLessThanOrEqual(
+		viewport.width + tolerance,
+	);
+	expect(controlBottom, `${label} bottom edge in viewport`).toBeLessThanOrEqual(
+		viewport.height + tolerance,
+	);
+
+	if (await control.evaluate((element) => element.matches("button, [role=button]"))) {
+		const content = await control.evaluate((element) => ({
+			clientHeight: element.clientHeight,
+			clientWidth: element.clientWidth,
+			scrollHeight: element.scrollHeight,
+			scrollWidth: element.scrollWidth,
+		}));
+		expect(content.scrollWidth, `${label} button content width`).toBeLessThanOrEqual(
+			content.clientWidth + tolerance,
+		);
+		expect(content.scrollHeight, `${label} button content height`).toBeLessThanOrEqual(
+			content.clientHeight + tolerance,
+		);
+	}
+}
+
+async function expectControlsDoNotOverlap(controls: Locator[], label: string) {
+	const boxes = await Promise.all(controls.map((control) => control.boundingBox()));
+	for (let first = 0; first < boxes.length; first += 1) {
+		const firstBox = boxes[first];
+		if (!firstBox) continue;
+		for (let second = first + 1; second < boxes.length; second += 1) {
+			const secondBox = boxes[second];
+			if (!secondBox) continue;
+			const horizontalOverlap =
+				Math.min(firstBox.x + firstBox.width, secondBox.x + secondBox.width) -
+				Math.max(firstBox.x, secondBox.x);
+			const verticalOverlap =
+				Math.min(firstBox.y + firstBox.height, secondBox.y + secondBox.height) -
+				Math.max(firstBox.y, secondBox.y);
+			expect(
+				horizontalOverlap > 0 && verticalOverlap > 0,
+				`${label}: controls ${first + 1} and ${second + 1} overlap`,
+			).toBe(false);
+		}
+	}
 }
 
 async function expectPointerCursor(locator: ReturnType<Page["locator"]>, label: string) {
@@ -6796,7 +6894,7 @@ test("app 404 offers a working exit to the dashboard", async ({ page }) => {
 	expect(errors, `app 404: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("Channels separates owned and shared bots with compact connect forms", async ({
+test("Channels separates Custom and Clawdi bots with compact connect forms", async ({
 	page,
 }, testInfo) => {
 	await page.setViewportSize({ width: 1440, height: 1100 });
@@ -6814,6 +6912,16 @@ test("Channels separates owned and shared bots with compact connect forms", asyn
 	const personalTelegramId = "10bbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 	const personalDiscordId = "10cccccc-cccc-4ccc-8ccc-cccccccccccc";
 	const globalCreatedBotId = "10dddddd-dddd-4ddd-8ddd-dddddddddddd";
+	const longCustomTelegramName = `Custom Telegram — ${"identity".repeat(36)}`.slice(0, 300);
+	const longCustomDiscordName = `Custom Discord — ${"localized channel name ".repeat(20)}`.slice(
+		0,
+		300,
+	);
+	const longClawdiTelegramName = `Clawdi Telegram — ${"sharedbot".repeat(36)}`.slice(0, 300);
+	const longClawdiDiscordName = `Clawdi Discord — ${"community server name ".repeat(20)}`.slice(
+		0,
+		300,
+	);
 	const createChannelRequests: string[] = [];
 	const cloudHermesDeployment = {
 		...runningMissingProjectionDeployment,
@@ -6846,7 +6954,7 @@ test("Channels separates owned and shared bots with compact connect forms", asyn
 	const bot = {
 		id: accountId,
 		provider: "telegram",
-		name: "Clawdi Support Bot",
+		name: longClawdiTelegramName,
 		status: "active",
 		visibility: "public",
 		has_provider_token: true,
@@ -6868,14 +6976,14 @@ test("Channels separates owned and shared bots with compact connect forms", asyn
 		...bot,
 		id: discordBotId,
 		provider: "discord",
-		name: "Clawdi Community Bot",
+		name: longClawdiDiscordName,
 		webhook_url: "https://cloud.example.test/channels/community",
 		link_count: 91,
 	};
 	const personalTelegram = {
 		id: personalTelegramId,
 		provider: "telegram",
-		name: "Personal Telegram",
+		name: longCustomTelegramName,
 		status: "active",
 		visibility: "private",
 		has_provider_token: true,
@@ -6886,7 +6994,7 @@ test("Channels separates owned and shared bots with compact connect forms", asyn
 		...personalTelegram,
 		id: personalDiscordId,
 		provider: "discord",
-		name: "Personal Discord",
+		name: longCustomDiscordName,
 		status: "error",
 		webhook_url: "https://cloud.example.test/channels/personal-discord",
 		created_at: "2026-07-27T12:27:00Z",
@@ -6964,8 +7072,8 @@ test("Channels separates owned and shared bots with compact connect forms", asyn
 	await page.goto("/channels");
 	const ownedSection = page.locator("[data-owned-bots-section]");
 	const sharedSection = page.locator("[data-shared-bots-section]");
-	await expect(ownedSection).toContainText(/Your bots\s*2/);
-	await expect(sharedSection).toContainText(/Shared bots\s*2/);
+	await expect(ownedSection).toContainText(/Custom bots\s*2/);
+	await expect(sharedSection).toContainText(/Clawdi bots\s*2/);
 	expect(
 		await ownedSection
 			.locator("[data-channel-account-id]")
@@ -6989,13 +7097,25 @@ test("Channels separates owned and shared bots with compact connect forms", asyn
 	await expect(page.locator("[data-ready-bots-section]")).toHaveCount(0);
 	await expect(page.locator("[data-pool-account-id]")).toHaveCount(0);
 	await expect(page.getByText("Ready-to-go bots", { exact: true })).toHaveCount(0);
-	await expect(sharedSection.getByText("Clawdi Support Bot", { exact: true })).toBeVisible();
-	await expect(sharedSection.getByText("Clawdi Community Bot", { exact: true })).toBeVisible();
+	await expect(sharedSection.getByText(longClawdiTelegramName, { exact: true })).toBeVisible();
+	await expect(sharedSection.getByText(longClawdiDiscordName, { exact: true })).toBeVisible();
 	await expect(sharedSection.getByText("Shared", { exact: true })).toHaveCount(0);
 	await expect(sharedSection.getByText("Discord", { exact: true })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Link an agent", exact: true })).toHaveCount(0);
 	await expect(page.getByRole("dialog", { name: "Link an agent" })).toHaveCount(0);
 	const ownedCards = ownedSection.locator("[data-channel-account-id]");
+	for (const [card, name] of [
+		[ownedCards.nth(0), longCustomTelegramName],
+		[ownedCards.nth(1), longCustomDiscordName],
+		[sharedSection.locator("[data-shared-channel-account-id]").nth(0), longClawdiTelegramName],
+		[sharedSection.locator("[data-shared-channel-account-id]").nth(1), longClawdiDiscordName],
+	] as const) {
+		await expect(card.locator(`[title="${name}"]`)).toBeVisible();
+		await expectNoHorizontalOverflow(
+			card.locator("article"),
+			`desktop bot card ${name.slice(0, 24)}`,
+		);
+	}
 	const [firstOwnedBox, secondOwnedBox] = await Promise.all([
 		ownedCards.nth(0).boundingBox(),
 		ownedCards.nth(1).boundingBox(),
@@ -7012,8 +7132,8 @@ test("Channels separates owned and shared bots with compact connect forms", asyn
 		fullPage: true,
 	});
 
-	await page.getByRole("button", { name: "Connect bot", exact: true }).click();
-	let connectDialog = page.getByRole("dialog", { name: "Connect a bot" });
+	await page.getByRole("button", { name: "Connect custom bot", exact: true }).click();
+	let connectDialog = page.getByRole("dialog", { name: "Connect custom bot" });
 	await expect(connectDialog.getByRole("button", { name: /^Telegram Telegram$/ })).toHaveAttribute(
 		"aria-pressed",
 		"true",
@@ -7028,11 +7148,31 @@ test("Channels separates owned and shared bots with compact connect forms", asyn
 	await expect(connectDialog.getByLabel("Public key")).toBeVisible();
 	await expect(connectDialog.getByText(/Server ID/i)).toHaveCount(0);
 	await connectDialog.screenshot({ path: testInfo.outputPath("connect-bot-discord-desktop.png") });
-	await connectDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+	await connectDialog.getByRole("button", { name: /^Telegram Telegram$/ }).click();
+	await connectDialog.getByLabel("Name").fill("Inventory Telegram");
+	await connectDialog.getByLabel("Bot token").fill("123456:console-inventory-token");
+	await connectDialog.getByRole("button", { name: "Connect custom bot", exact: true }).click();
+	await expect.poll(() => createChannelRequests.length).toBe(1);
+	expect(JSON.parse(createChannelRequests[0] ?? "{}")).toEqual({
+		provider: "telegram",
+		name: "Inventory Telegram",
+		provider_token: "123456:console-inventory-token",
+		agent_id: null,
+	});
+	const successDialog = page.getByRole("dialog", { name: "Custom bot connected" });
+	await expect(successDialog).toBeVisible();
+	await expect(
+		successDialog.getByRole("button", { name: "View Custom bot", exact: true }),
+	).toBeVisible();
+	await expectNoHorizontalOverflow(successDialog, "Console Custom bot success Dialog");
+	await successDialog.screenshot({
+		path: testInfo.outputPath("connect-custom-bot-success-desktop.png"),
+	});
+	await successDialog.getByRole("button", { name: "Done", exact: true }).click();
 
 	await page.setViewportSize({ width: 320, height: 568 });
-	await expect(ownedSection.getByText("Personal Telegram", { exact: true })).toBeVisible();
-	await expect(sharedSection.getByText("Clawdi Community Bot", { exact: true })).toBeVisible();
+	await expect(ownedSection.getByText(longCustomTelegramName, { exact: true })).toBeVisible();
+	await expect(sharedSection.getByText(longClawdiDiscordName, { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: /WhatsApp/ })).toHaveCount(0);
 	const [firstOwnedMobileBox, secondOwnedMobileBox] = await Promise.all([
 		ownedCards.nth(0).boundingBox(),
@@ -7040,19 +7180,56 @@ test("Channels separates owned and shared bots with compact connect forms", asyn
 	]);
 	expect(firstOwnedMobileBox?.x).toBe(secondOwnedMobileBox?.x);
 	expect(secondOwnedMobileBox?.y ?? 0).toBeGreaterThan(firstOwnedMobileBox?.y ?? 0);
-	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+	await expectNoHorizontalOverflow(page.locator("html"), "Console Channels document at 320px");
+	for (const card of await ownedCards.all()) {
+		await expectNoHorizontalOverflow(card.locator("article"), "Custom bot card at 320px");
+	}
 	await page.screenshot({
 		path:
 			process.env.CHANNELS_HOME_MOBILE_SCREENSHOT_PATH ??
 			testInfo.outputPath("channels-owned-bot-inventory-320x568.png"),
 		fullPage: false,
 	});
-	await page.getByRole("button", { name: "Connect bot", exact: true }).click();
-	connectDialog = page.getByRole("dialog", { name: "Connect a bot" });
+	await page.getByRole("button", { name: "Connect custom bot", exact: true }).click();
+	connectDialog = page.getByRole("dialog", { name: "Connect custom bot" });
+	await expectNoHorizontalOverflow(connectDialog, "Telegram credentials dialog at 320px");
+	await expectContainedInOwnerAndViewport(
+		page,
+		connectDialog.getByRole("button", { name: "Cancel", exact: true }),
+		connectDialog,
+		"Telegram credentials Cancel",
+	);
+	await expectContainedInOwnerAndViewport(
+		page,
+		connectDialog.getByRole("button", { name: "Connect custom bot", exact: true }),
+		connectDialog,
+		"Telegram credentials Connect custom bot",
+	);
 	await connectDialog.screenshot({ path: testInfo.outputPath("connect-bot-telegram-320.png") });
 	await connectDialog.getByRole("button", { name: /^Discord Discord$/ }).click();
+	await connectDialog.getByLabel("Bot token").fill("!".repeat(300));
+	await connectDialog.getByLabel("Application ID").fill("9".repeat(300));
+	await connectDialog.getByLabel("Public key").fill("z".repeat(300));
 	await expect(connectDialog.getByLabel("Public key")).toBeVisible();
-	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+	await expect(
+		connectDialog.getByText("Enter a valid Discord bot token.", { exact: true }),
+	).toBeVisible();
+	await expect(
+		connectDialog.getByText("Enter a valid numeric application ID.", { exact: true }),
+	).toBeVisible();
+	await expect(
+		connectDialog.getByText("Enter a 64-character hex public key.", { exact: true }),
+	).toBeVisible();
+	await expectNoHorizontalOverflow(connectDialog, "Discord credentials dialog at 320px");
+	for (const input of await connectDialog.locator("input").all()) {
+		await expectContainedInOwnerAndViewport(page, input, connectDialog, "Discord credential input");
+	}
+	await expectContainedInOwnerAndViewport(
+		page,
+		connectDialog.getByRole("button", { name: "Connect custom bot", exact: true }),
+		connectDialog,
+		"Discord credentials Connect custom bot",
+	);
 	await connectDialog.screenshot({ path: testInfo.outputPath("connect-bot-discord-320.png") });
 	expect(errors, `Channels inventory browser errors: ${errors.join(" | ")}`).toEqual([]);
 });
@@ -7100,7 +7277,9 @@ test("Channels shared-only inventory stays primary without duplicate empty actio
 	await expect(sharedSection.getByText("Shared Discord", { exact: true })).toBeVisible();
 	await expect(sharedSection.getByRole("img", { name: "Discord" })).toBeVisible();
 	await expect(page.getByText("No bots yet", { exact: true })).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Connect bot", exact: true })).toHaveCount(1);
+	await expect(page.getByRole("button", { name: "Connect custom bot", exact: true })).toHaveCount(
+		1,
+	);
 	await expect(page.getByRole("button", { name: /Discord\s+1/ })).toBeVisible();
 	await page.screenshot({
 		path: testInfo.outputPath("channels-shared-only-desktop.png"),
@@ -7116,122 +7295,287 @@ test("Channels shared-only inventory stays primary without duplicate empty actio
 	expect(errors, `Channels shared-only browser errors: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("channel connect updates its auto-linked agent page without reload", async ({ page }) => {
-	const errors = collectBrowserErrors(page);
-	const channelId = "11111111-1111-4111-8111-111111111111";
-	const linkId = "22222222-2222-4222-8222-222222222222";
-	const channelAccounts: unknown[] = [];
-	const channelAgentLinks: unknown[] = [];
-	const createChannelRequests: string[] = [];
-	const pairCodeRequests: string[] = [];
-	const validExpiry = new Date(Date.now() + 15 * 60_000).toISOString();
-	const channelAccount = {
-		id: channelId,
-		provider: "telegram",
-		name: "Browser Telegram",
-		status: "active",
-		visibility: "private",
-		has_provider_token: true,
-		webhook_url: "https://cloud.example.test/channels/browser",
-		created_at: "2026-07-27T12:00:00Z",
-	};
-	const channelLink = {
-		id: linkId,
-		account_id: channelId,
-		agent_id: missingProjectionEnvironmentId,
-		status: "active",
-		created_at: "2026-07-27T12:00:00Z",
-		account: channelAccount,
-	};
-	await stubHostedApi(page, {
-		deployments: [runningMissingProjectionDeployment],
-		channelAccounts,
-		channelAgentLinks,
-		createChannelRequests,
-		createChannelResponse: {
-			...channelAccount,
-			webhook_secret: "one-time-webhook-secret",
-			agent_link_id: linkId,
-			agent_id: missingProjectionEnvironmentId,
-			agent_token: "one-time-agent-token",
-		},
-		onCreateChannel: () => {
-			channelAccounts.push(channelAccount);
-			channelAgentLinks.push(channelLink);
-		},
-		pairCodeRequests,
-		pairCodeResponses: [
-			{
-				status: 201,
-				body: {
-					id: "connected-bot-pair-code",
-					agent_link_id: linkId,
-					agent_id: missingProjectionEnvironmentId,
-					code: "CONNECTED123",
-					expires_at: validExpiry,
-					pairing_command: "/bot_pair CONNECTED123",
-					bot_username: "Browser_Telegram_Bot",
-					deep_link: "https://t.me/Browser_Telegram_Bot?start=CONNECTED123",
-					qr_payload: "https://t.me/Browser_Telegram_Bot?start=CONNECTED123",
-				},
-			},
-		],
-	});
-	await page.goto("/channels");
-	const globalConnect = page.getByRole("button", { name: "Connect bot", exact: true }).first();
-	await expect(globalConnect).toBeVisible();
-	await expect(page.locator('[data-slot="tabs-list"]')).toHaveCount(0);
-	await expect(page.getByText("Ready-to-go bots", { exact: true })).toHaveCount(0);
-	await expect(page.getByText("Bots", { exact: true })).toBeVisible();
-	await expectNonZeroBox(page.locator('[data-sidebar="separator"]').first(), "sidebar separator");
-	await globalConnect.click();
-	const globalDialog = page.getByRole("dialog");
-	await expect(globalDialog).toBeVisible();
-	await globalDialog.getByRole("button", { name: "Cancel", exact: true }).click();
-
-	await page.goto(
-		`/agents/${missingProjectionEnvironmentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
-	);
-
-	await expect(page.getByText("No connected channels", { exact: true })).toBeVisible();
-	await page.getByText("Use your own bot", { exact: true }).click();
-	const connect = page.getByRole("button", { name: "Connect a bot", exact: true }).first();
-	await expect(connect).toBeVisible();
-	await connect.click();
-	const dialog = page.getByRole("dialog");
-	await dialog.getByLabel("Name").fill("Browser Telegram");
-	await dialog.getByLabel("Bot token").fill("123456:browser-test-token");
-	await dialog.getByRole("button", { name: "Connect", exact: true }).click();
-
-	await expect.poll(() => createChannelRequests.length).toBe(1);
-	await expect.poll(() => pairCodeRequests.length).toBe(1);
-	const pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
-	await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toBeVisible();
-	await expect(page.locator("body")).not.toContainText("one-time-agent-token");
-	await pairDialog.getByRole("button", { name: "Close", exact: true }).click();
-	await expect(page.getByText("No connected channels", { exact: true })).toHaveCount(0);
-	await expect(page.getByText("Browser Telegram", { exact: true }).first()).toBeVisible();
-	expect(JSON.parse(createChannelRequests[0] ?? "{}")).toEqual({
-		provider: "telegram",
-		name: "Browser Telegram",
-		provider_token: "123456:browser-test-token",
-		agent_id: missingProjectionEnvironmentId,
-	});
-	expect(JSON.parse(pairCodeRequests[0] ?? "{}")).toEqual({
-		ttl_seconds: 900,
-		agent_link_id: linkId,
-	});
-	expect(errors, `channel connect convergence: ${errors.join(" | ")}`).toEqual([]);
-});
-
-test("Agent Connect bot defaults to Discord after Telegram is linked", async ({
+test("Console Channels contains long inventory loading and error states at 320px", async ({
 	page,
 }, testInfo) => {
+	await page.setViewportSize({ width: 320, height: 568 });
+	const customErrorText = `Custom inventory error ${"localizederror".repeat(25)}`;
+	const clawdiErrorText = `Clawdi inventory error ${"localizederror".repeat(25)}`;
+	await stubHostedApi(page, {
+		channelAccountsResponses: [
+			{ status: 400, delayMs: 1_500, body: { detail: customErrorText } },
+			{ status: 200, body: [] },
+		],
+		channelBotPoolResponses: [
+			{ status: 400, delayMs: 1_500, body: { detail: clawdiErrorText } },
+			{ status: 200, body: { providers: {} } },
+		],
+	});
+
+	await page.goto("/channels");
+	await expect(page.locator('[data-slot="skeleton"]').first()).toBeVisible();
+	await expectNoHorizontalOverflow(page.locator("html"), "loading Console Channels at 320px");
+	const customError = page.getByRole("alert").filter({ hasText: "Couldn't load channels" });
+	const clawdiError = page.getByRole("alert").filter({ hasText: "Couldn't load Clawdi bots" });
+	await expect(customError).toContainText(customErrorText);
+	await expect(clawdiError).toContainText(clawdiErrorText);
+	await expectNoHorizontalOverflow(customError, "long Console Custom error");
+	await expectNoHorizontalOverflow(clawdiError, "long Console Clawdi error");
+	for (const [errorPanel, label] of [
+		[customError, "Console Custom Retry"],
+		[clawdiError, "Console Clawdi Retry"],
+	] as const) {
+		await expectContainedInOwnerAndViewport(
+			page,
+			errorPanel.getByRole("button", { name: "Retry", exact: true }),
+			errorPanel,
+			label,
+		);
+	}
+	await page.screenshot({
+		path: testInfo.outputPath("console-channels-errors-320x568.png"),
+		fullPage: false,
+	});
+	await customError.getByRole("button", { name: "Retry", exact: true }).click();
+	await clawdiError.getByRole("button", { name: "Retry", exact: true }).click();
+	await expect(page.getByText("No bots yet", { exact: true })).toBeVisible();
+});
+
+for (const firstTimeViewport of [
+	{ label: "desktop", size: { width: 1440, height: 900 } },
+	{ label: "320x568", size: { width: 320, height: 568 } },
+] as const) {
+	test(`first-time Agent connects, links, and pairs a Custom bot at ${firstTimeViewport.label}`, async ({
+		page,
+	}, testInfo) => {
+		await page.setViewportSize(firstTimeViewport.size);
+		const errors = collectBrowserErrors(page);
+		const channelId = "11111111-1111-4111-8111-111111111111";
+		const linkId = "22222222-2222-4222-8222-222222222222";
+		const channelAccounts: unknown[] = [];
+		const channelAgentLinks: unknown[] = [];
+		const channelBindings: unknown[] = [];
+		const createChannelRequests: string[] = [];
+		const linkAgentRequests: Array<{ accountId: string; body: string }> = [];
+		const pairCodeRequests: string[] = [];
+		const validExpiry = new Date(Date.now() + 15 * 60_000).toISOString();
+		const channelAccount = {
+			id: channelId,
+			provider: "telegram",
+			name: "Browser Telegram",
+			status: "active",
+			visibility: "private",
+			has_provider_token: true,
+			webhook_url: "https://cloud.example.test/channels/browser",
+			created_at: "2026-07-27T12:00:00Z",
+		};
+		const channelLink = {
+			id: linkId,
+			account_id: channelId,
+			agent_id: missingProjectionEnvironmentId,
+			status: "active",
+			created_at: "2026-07-27T12:00:00Z",
+			account: channelAccount,
+		};
+		await stubHostedApi(page, {
+			deployments: [runningMissingProjectionDeployment],
+			channelAccounts,
+			channelAgentLinks,
+			channelBindings,
+			createChannelRequests,
+			createChannelResponse: {
+				status: 201,
+				delayMs: 1_500,
+				body: {
+					...channelAccount,
+					webhook_secret: "one-time-webhook-secret",
+					agent_link_id: linkId,
+					agent_id: missingProjectionEnvironmentId,
+					agent_token: "agent-custom-bot-token-must-not-render",
+				},
+			},
+			onCreateChannel: () => {
+				channelAccounts.push(channelAccount);
+				channelAgentLinks.push(channelLink);
+			},
+			linkAgentRequests,
+			pairCodeRequests,
+			pairCodeResponses: [
+				{
+					status: 201,
+					body: {
+						id: "connected-bot-pair-code",
+						agent_link_id: linkId,
+						agent_id: missingProjectionEnvironmentId,
+						code: "CONNECTED123",
+						expires_at: validExpiry,
+						pairing_command: "/bot_pair CONNECTED123",
+						bot_username: "Browser_Telegram_Bot",
+						deep_link: "https://t.me/Browser_Telegram_Bot?start=CONNECTED123",
+						qr_payload: "https://t.me/Browser_Telegram_Bot?start=CONNECTED123",
+					},
+				},
+			],
+		});
+
+		await page.goto(
+			`/agents/${missingProjectionEnvironmentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+		);
+		await expect(page.getByText("No connected channels", { exact: true })).toBeVisible();
+		const addChannel = page.getByRole("button", { name: "Add channel", exact: true });
+		await addChannel.click();
+		const addDialog = page.getByRole("dialog", { name: "Add channel" });
+		await expect(
+			addDialog.getByText("No Clawdi or Custom bots to add", { exact: true }),
+		).toBeVisible();
+		await expectNoHorizontalOverflow(page.locator("html"), `${firstTimeViewport.label} document`);
+		await expectNoHorizontalOverflow(addDialog, `${firstTimeViewport.label} Add channel Dialog`);
+		const connectCustom = addDialog.getByRole("button", {
+			name: "Connect custom bot",
+			exact: true,
+		});
+		await expect(connectCustom.locator("svg")).toHaveCount(1);
+		await expect(connectCustom.getByText("Connect custom bot", { exact: true })).toBeVisible();
+		await expectContainedInOwnerAndViewport(
+			page,
+			connectCustom,
+			addDialog,
+			`${firstTimeViewport.label} Add channel Connect custom bot`,
+		);
+		await addDialog.screenshot({
+			path: testInfo.outputPath(`agent-first-time-add-channel-${firstTimeViewport.label}.png`),
+		});
+
+		await connectCustom.click();
+		await expect(addDialog).toHaveCount(0);
+		const connectDialog = page.getByRole("dialog", { name: "Connect custom bot" });
+		await expect(connectDialog).toBeVisible();
+		await expect(page.getByRole("dialog")).toHaveCount(1);
+		await expect(connectDialog).toContainText("Connect a Custom bot you manage to this Agent.");
+		await connectDialog.getByLabel("Name").fill("Browser Telegram");
+		await connectDialog.getByLabel("Bot token").fill("123456:browser-test-token");
+		await expectNoHorizontalOverflow(
+			connectDialog,
+			`${firstTimeViewport.label} Connect custom bot Dialog`,
+		);
+		for (const input of await connectDialog.locator("input").all()) {
+			await expectContainedInOwnerAndViewport(
+				page,
+				input,
+				connectDialog,
+				`${firstTimeViewport.label} Custom bot credential input`,
+			);
+		}
+		const submitCustomBot = connectDialog.getByRole("button", {
+			name: "Connect custom bot",
+			exact: true,
+		});
+		await expectContainedInOwnerAndViewport(
+			page,
+			submitCustomBot,
+			connectDialog,
+			`${firstTimeViewport.label} Connect custom bot submit`,
+		);
+		await connectDialog.screenshot({
+			path: testInfo.outputPath(`agent-first-time-custom-bot-form-${firstTimeViewport.label}.png`),
+		});
+
+		await submitCustomBot.click();
+		const connecting = connectDialog.getByRole("button", { name: "Connecting…", exact: true });
+		await expect(connecting).toBeVisible();
+		await expectContainedInOwnerAndViewport(
+			page,
+			connecting,
+			connectDialog,
+			`${firstTimeViewport.label} pending Connect custom bot`,
+		);
+		await connectDialog.screenshot({
+			path: testInfo.outputPath(
+				`agent-first-time-custom-bot-pending-${firstTimeViewport.label}.png`,
+			),
+		});
+		await expect.poll(() => createChannelRequests.length).toBe(1);
+		expect(JSON.parse(createChannelRequests[0] ?? "{}")).toEqual({
+			provider: "telegram",
+			name: "Browser Telegram",
+			provider_token: "123456:browser-test-token",
+			agent_id: missingProjectionEnvironmentId,
+		});
+		expect(linkAgentRequests).toEqual([]);
+
+		await expect.poll(() => pairCodeRequests.length).toBe(1);
+		const pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
+		await expect(connectDialog).toHaveCount(0);
+		await expect(page.getByRole("dialog")).toHaveCount(1);
+		await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toBeVisible();
+		await expectNoHorizontalOverflow(
+			pairDialog,
+			`${firstTimeViewport.label} first-time Telegram Pair Dialog`,
+		);
+		await expectContainedInOwnerAndViewport(
+			page,
+			pairDialog.getByRole("button", { name: "Open Telegram" }),
+			pairDialog,
+			`${firstTimeViewport.label} first-time Open Telegram`,
+		);
+		await pairDialog.screenshot({
+			path: testInfo.outputPath(`agent-first-time-pair-telegram-${firstTimeViewport.label}.png`),
+		});
+		expect(JSON.parse(pairCodeRequests[0] ?? "{}")).toEqual({
+			ttl_seconds: 900,
+			agent_link_id: linkId,
+		});
+		await expect(page.locator("body")).not.toContainText("agent-custom-bot-token-must-not-render");
+		channelBindings.push({
+			id: "33333333-3333-4333-8333-333333333333",
+			account_id: channelId,
+			agent_link_id: linkId,
+			external_chat_id: "first-time-private-chat",
+			external_chat_type: "private",
+			external_chat_name: "First-time private chat",
+			status: "active",
+			created_at: "2026-08-01T01:00:00Z",
+			last_message_at: null,
+		});
+		await expect(pairDialog).toHaveCount(0, { timeout: 5_000 });
+		const successToast = page.locator("[data-sonner-toast]").filter({ hasText: "Chat paired" });
+		await expect(successToast).toHaveCount(1);
+		await expect(successToast).toContainText("Telegram private chat is ready.");
+		await expectNoHorizontalOverflow(
+			successToast,
+			`${firstTimeViewport.label} first-time pair success toast`,
+		);
+		await expectContainedInOwnerAndViewport(
+			page,
+			successToast,
+			page.locator("html"),
+			`${firstTimeViewport.label} first-time pair success toast`,
+		);
+		await page.screenshot({
+			path: testInfo.outputPath(`agent-first-time-pair-success-${firstTimeViewport.label}.png`),
+			fullPage: false,
+		});
+		await expect(page.getByText("No connected channels", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("Browser Telegram", { exact: true }).first()).toBeVisible();
+		await expect(
+			page.locator(`[data-agent-paired-chats-trigger="${linkId}"]`),
+		).toHaveAccessibleName("Paired chats · 1");
+		expect(
+			errors,
+			`${firstTimeViewport.label} first-time channel path: ${errors.join(" | ")}`,
+		).toEqual([]);
+	});
+}
+
+test("Agent Add channel offers only providers not already linked", async ({ page }, testInfo) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 	const errors = collectBrowserErrors(page);
 	const agentId = missingProjectionEnvironmentId;
 	const telegramId = "6aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 	const telegramLinkId = "6bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+	const replacementTelegramId = "6ccccccc-cccc-4ccc-8ccc-cccccccccccc";
+	const discordId = "6ddddddd-dddd-4ddd-8ddd-dddddddddddd";
+	const clawdiDiscordId = "6eeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 	const telegramAccount = {
 		id: telegramId,
 		provider: "telegram",
@@ -7242,9 +7586,37 @@ test("Agent Connect bot defaults to Discord after Telegram is linked", async ({
 		webhook_url: "https://cloud.example.test/channels/linked-telegram",
 		created_at: "2026-07-31T00:00:00Z",
 	};
+	const replacementTelegram = {
+		...telegramAccount,
+		id: replacementTelegramId,
+		name: "Replacement Telegram",
+	};
+	const discordAccount = {
+		...telegramAccount,
+		id: discordId,
+		provider: "discord",
+		name: `Custom Discord — ${"long localized bot identity ".repeat(16)}`.slice(0, 300),
+	};
+	const clawdiDiscord = {
+		...discordAccount,
+		id: clawdiDiscordId,
+		name: `Clawdi Discord — ${"long localized bot identity ".repeat(16)}`.slice(0, 300),
+		visibility: "public",
+		access: "public",
+		available: true,
+		capabilities: {
+			link_agent: true,
+			pair_chat: true,
+			send_message: true,
+			manage_account: false,
+			sync_commands: true,
+		},
+		link_count: 0,
+		max_links: null,
+	};
 	await stubHostedApi(page, {
 		deployments: [runningMissingProjectionDeployment],
-		channelAccounts: [telegramAccount],
+		channelAccounts: [telegramAccount, replacementTelegram, discordAccount],
 		channelAgentLinks: [
 			{
 				id: telegramLinkId,
@@ -7255,52 +7627,182 @@ test("Agent Connect bot defaults to Discord after Telegram is linked", async ({
 				account: telegramAccount,
 			},
 		],
-		channelBotPool: { providers: {} },
+		channelBotPool: { providers: { discord: [clawdiDiscord] } },
 	});
 
 	await page.goto(
 		`/agents/${agentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
 	);
-	await page.getByText("Use your own bot", { exact: true }).click();
-	await page.getByRole("button", { name: "Connect a bot", exact: true }).click();
-	let dialog = page.getByRole("dialog", { name: "Connect a bot" });
-	await expect(dialog.getByRole("button", { name: /Telegram.*Already linked/ })).toBeDisabled();
-	await expect(dialog.getByRole("button", { name: /^Discord Discord$/ })).toHaveAttribute(
-		"aria-pressed",
-		"true",
-	);
+	await page.getByRole("button", { name: "Add channel", exact: true }).click();
+	let dialog = page.getByRole("dialog", { name: "Add channel" });
+	await expect(dialog.locator(`[data-add-channel-id="${telegramId}"]`)).toHaveCount(0);
+	await expect(dialog.locator(`[data-add-channel-id="${replacementTelegramId}"]`)).toHaveCount(0);
+	const discordRow = dialog.locator(`[data-add-channel-id="${discordId}"]`);
+	const clawdiDiscordRow = dialog.locator(`[data-add-channel-id="${clawdiDiscordId}"]`);
+	await expect(dialog.getByText("Clawdi bots", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("Custom bots", { exact: true })).toBeVisible();
+	await expect(discordRow).toBeVisible();
+	await expect(clawdiDiscordRow).toBeVisible();
+	await expect(discordRow.locator(`[title="${discordAccount.name}"]`)).toBeVisible();
+	await expect(clawdiDiscordRow.locator(`[title="${clawdiDiscord.name}"]`)).toBeVisible();
 	await expect(
-		dialog.getByText("Unlink Telegram from this Agent first.", { exact: true }),
+		dialog.getByRole("button", { name: "Connect custom bot", exact: true }),
 	).toBeVisible();
-	await expect(dialog.getByLabel("Application ID")).toBeVisible();
-	await dialog.screenshot({ path: testInfo.outputPath("connect-bot-discord-default-desktop.png") });
+	await expect(dialog.getByLabel("Application ID")).toHaveCount(0);
+	await expectNoHorizontalOverflow(dialog, "desktop provider-limited Add channel dialog");
+	await dialog.screenshot({ path: testInfo.outputPath("add-channel-discord-only-desktop.png") });
 
-	await page.setViewportSize({ width: 320, height: 844 });
-	dialog = page.getByRole("dialog", { name: "Connect a bot" });
-	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
-	await expect(dialog.getByLabel("Public key")).toBeVisible();
-	await expect(dialog.getByRole("button", { name: "Connect", exact: true })).toBeVisible();
-	await dialog.screenshot({ path: testInfo.outputPath("connect-bot-discord-default-320.png") });
-	expect(errors, `Agent connect default browser errors: ${errors.join(" | ")}`).toEqual([]);
+	await page.setViewportSize({ width: 320, height: 568 });
+	dialog = page.getByRole("dialog", { name: "Add channel" });
+	await expectNoHorizontalOverflow(page.locator("html"), "provider-limited Agent at 320px");
+	await expectNoHorizontalOverflow(dialog, "provider-limited Add channel at 320px");
+	await expectContainedInOwnerAndViewport(
+		page,
+		discordRow.getByRole("button", { name: "Add", exact: true }),
+		dialog,
+		"Add Custom Discord at 320px",
+	);
+	await expectContainedInOwnerAndViewport(
+		page,
+		clawdiDiscordRow.getByRole("button", { name: "Add", exact: true }),
+		dialog,
+		"Add Clawdi Discord at 320px",
+	);
+	await dialog.screenshot({ path: testInfo.outputPath("add-channel-discord-only-320x568.png") });
+	expect(errors, `Agent Add channel provider limit errors: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("Agent Add channel contains long loading and provider-error states at 320px", async ({
+	page,
+}, testInfo) => {
+	await page.setViewportSize({ width: 320, height: 568 });
+	const agentId = missingProjectionEnvironmentId;
+	const customBotId = "60000000-1111-4111-8111-111111111111";
+	const clawdiBotId = "60000000-2222-4222-8222-222222222222";
+	const customName = `Custom Telegram — ${"longidentity".repeat(26)}`.slice(0, 300);
+	const clawdiName = `Clawdi Discord — ${"localized bot name ".repeat(18)}`.slice(0, 300);
+	const customBot = {
+		id: customBotId,
+		provider: "telegram",
+		name: customName,
+		status: "active",
+		visibility: "private",
+		has_provider_token: true,
+		webhook_url: "https://cloud.example.test/channels/custom-overflow",
+		created_at: "2026-07-31T00:10:00Z",
+	};
+	const clawdiBot = {
+		...customBot,
+		id: clawdiBotId,
+		provider: "discord",
+		name: clawdiName,
+		visibility: "public",
+		access: "public",
+		available: true,
+		capabilities: {
+			link_agent: true,
+			pair_chat: true,
+			send_message: true,
+			manage_account: false,
+			sync_commands: true,
+		},
+		link_count: 0,
+		max_links: null,
+	};
+	const longCustomError = `Custom bot provider error ${"localizederror".repeat(24)}`;
+	const longClawdiError = `Clawdi bot provider error ${"localizederror".repeat(24)}`;
+	await stubHostedApi(page, {
+		deployments: [runningMissingProjectionDeployment],
+		channelAccountsResponses: [
+			{ status: 400, delayMs: 1_500, body: { detail: longCustomError } },
+			{ status: 200, body: [customBot] },
+		],
+		channelBotPoolResponses: [
+			{ status: 400, delayMs: 1_500, body: { detail: longClawdiError } },
+			{ status: 200, body: { providers: { discord: [clawdiBot] } } },
+		],
+	});
+
+	await page.goto(
+		`/agents/${agentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+	);
+	await page.getByRole("button", { name: "Add channel", exact: true }).click();
+	const dialog = page.getByRole("dialog", { name: "Add channel" });
+	await expect(dialog.getByRole("status")).toContainText("Loading Clawdi and Custom bots");
+	await expectNoHorizontalOverflow(dialog, "loading Add channel Dialog at 320px");
+	await dialog.screenshot({ path: testInfo.outputPath("agent-add-channel-loading-320x568.png") });
+
+	const clawdiError = dialog.getByRole("alert").filter({ hasText: "Couldn't load Clawdi bots" });
+	const customError = dialog.getByRole("alert").filter({ hasText: "Couldn't load Custom bots" });
+	await expect(clawdiError).toContainText(longClawdiError);
+	await expect(customError).toContainText(longCustomError);
+	await expectNoHorizontalOverflow(dialog, "error Add channel Dialog at 320px");
+	await expectNoHorizontalOverflow(clawdiError, "long Clawdi provider error");
+	await expectNoHorizontalOverflow(customError, "long Custom provider error");
+	const clawdiRetry = clawdiError.getByRole("button", { name: "Retry", exact: true });
+	const customRetry = customError.getByRole("button", { name: "Retry", exact: true });
+	await expectContainedInOwnerAndViewport(
+		page,
+		clawdiRetry,
+		dialog,
+		"Clawdi provider Retry at 320px",
+	);
+	await expectContainedInOwnerAndViewport(
+		page,
+		customRetry,
+		dialog,
+		"Custom provider Retry at 320px",
+	);
+	await dialog.screenshot({ path: testInfo.outputPath("agent-add-channel-errors-320x568.png") });
+	await clawdiRetry.click();
+	await customRetry.click();
+	await expect(dialog.locator(`[data-add-channel-id="${clawdiBotId}"]`)).toBeVisible();
+	await expect(dialog.locator(`[data-add-channel-id="${customBotId}"]`)).toBeVisible();
+	await expectNoHorizontalOverflow(dialog, "recovered Add channel Dialog at 320px");
 });
 
 test("Agent Channel cards keep paired-chat loading and error recovery inside the owner", async ({
 	page,
-}) => {
+}, testInfo) => {
+	await page.setViewportSize({ width: 320, height: 568 });
 	const agentId = missingProjectionEnvironmentId;
 	const accountId = "61111111-1111-4111-8111-111111111111";
 	const linkId = "62222222-2222-4222-8222-222222222222";
 	const bindingId = "63333333-3333-4333-8333-333333333333";
+	const longRecoveryName = `Recovery Telegram — ${"channelidentity".repeat(24)}`.slice(0, 300);
 	const account = {
 		id: accountId,
 		provider: "telegram",
-		name: "Recovery Telegram",
+		name: longRecoveryName,
 		status: "active",
 		visibility: "private",
 		has_provider_token: true,
 		webhook_url: "https://cloud.example.test/channels/recovery-telegram",
 		created_at: "2026-07-30T09:00:00Z",
 	};
+	const recoveredBindingResponse: StubResponse = {
+		status: 200,
+		body: [
+			{
+				id: bindingId,
+				account_id: accountId,
+				agent_link_id: linkId,
+				external_chat_id: "recovered-chat",
+				external_chat_type: "private",
+				external_chat_name: "Recovered chat",
+				status: "active",
+				created_at: "2026-07-30T09:10:00Z",
+				last_message_at: "2026-07-30T09:11:00Z",
+			},
+		],
+	};
+	const bindingResponses: StubResponse[] = [
+		{
+			status: 400,
+			delayMs: 1_500,
+			body: { detail: `temporary binding read error ${"providererror".repeat(24)}` },
+		},
+	];
 	await stubHostedApi(page, {
 		deployments: [runningMissingProjectionDeployment],
 		cloudAgents: [
@@ -7323,25 +7825,7 @@ test("Agent Channel cards keep paired-chat loading and error recovery inside the
 			},
 		],
 		channelBindingResponses: {
-			[accountId]: [
-				{ status: 400, delayMs: 500, body: { detail: "temporary binding read error" } },
-				{
-					status: 200,
-					body: [
-						{
-							id: bindingId,
-							account_id: accountId,
-							agent_link_id: linkId,
-							external_chat_id: "recovered-chat",
-							external_chat_type: "private",
-							external_chat_name: "Recovered chat",
-							status: "active",
-							created_at: "2026-07-30T09:10:00Z",
-							last_message_at: "2026-07-30T09:11:00Z",
-						},
-					],
-				},
-			],
+			[accountId]: bindingResponses,
 		},
 	});
 
@@ -7349,20 +7833,384 @@ test("Agent Channel cards keep paired-chat loading and error recovery inside the
 		`/agents/${agentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
 	);
 	const owner = page.locator(`[data-agent-channel-group-id="${linkId}"]`);
-	const disclosure = owner.getByRole("button", { name: /Paired chats · 0/ });
-	await expect(disclosure).toHaveAttribute("aria-expanded", "false");
-	await disclosure.click();
-	await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+	const pairedChatsTrigger = owner.getByRole("button", { name: /Paired chats · 0/ });
+	await expect(pairedChatsTrigger).toHaveAttribute("aria-haspopup", "dialog");
+	await pairedChatsTrigger.click();
+	const pairedChatsDialog = page.getByRole("dialog", { name: "Paired chats", exact: true });
+	await expect(pairedChatsDialog).toBeVisible();
+	await expect(pairedChatsDialog).toContainText("connected through this channel");
 	await expect(
-		owner.locator(`[data-agent-channel-chats-for="${linkId}"]`).getByRole("status"),
+		pairedChatsDialog.locator(
+			`[data-agent-paired-chats-channel-name][title="${longRecoveryName}"]`,
+		),
 	).toBeVisible();
-	const bindingError = owner.getByRole("alert");
+	await expect(pairedChatsDialog.getByRole("status")).toBeVisible();
+	const bindingError = pairedChatsDialog.getByRole("alert");
 	await expect(bindingError).toContainText("Couldn’t load paired chats");
+	await expectNoHorizontalOverflow(page.locator("html"), "paired-chat recovery document at 320px");
+	await expectNoHorizontalOverflow(pairedChatsDialog, "paired-chat recovery Sheet at 320px");
+	await expectNoHorizontalOverflow(
+		pairedChatsDialog.locator("[data-agent-paired-chats-list]"),
+		"paired-chat recovery list at 320px",
+	);
+	await expectContainedInOwnerAndViewport(
+		page,
+		bindingError.getByRole("button", { name: "Retry", exact: true }),
+		pairedChatsDialog,
+		"paired chats Retry at 320px",
+	);
+	await pairedChatsDialog.screenshot({
+		path: testInfo.outputPath("agent-channel-paired-chats-error-320x568.png"),
+	});
+	bindingResponses.push(recoveredBindingResponse);
 	await bindingError.getByRole("button", { name: "Retry", exact: true }).click();
-	await expect(owner.locator(`[data-channel-binding-id="${bindingId}"]`)).toContainText(
+	await expect(pairedChatsDialog.locator(`[data-channel-binding-id="${bindingId}"]`)).toContainText(
 		"Recovered chat",
 	);
 	await expect(bindingError).toHaveCount(0);
+	await page.keyboard.press("Escape");
+	await expect(pairedChatsDialog).toHaveCount(0);
+	await expect(pairedChatsTrigger).toBeFocused();
+});
+
+test("generic Channel pairing keeps pending, retry, errors, icons, and labels contained at 320px", async ({
+	page,
+}, testInfo) => {
+	await page.setViewportSize({ width: 320, height: 568 });
+	const agentId = missingProjectionEnvironmentId;
+	const accountId = "64444444-4444-4444-8444-444444444444";
+	const linkId = "65555555-5555-4555-8555-555555555555";
+	const longChannelName = `WhatsApp Channel — ${"unbrokenidentity".repeat(24)}`.slice(0, 300);
+	const account = {
+		id: accountId,
+		provider: "whatsapp",
+		name: longChannelName,
+		status: "active",
+		visibility: "private",
+		has_provider_token: true,
+		webhook_url: "https://cloud.example.test/channels/whatsapp-overflow",
+		created_at: "2026-07-31T01:00:00Z",
+	};
+	const pairCodeRequests: string[] = [];
+	const pairResponseGate = deferred();
+	const validExpiry = new Date(Date.now() + 15 * 60_000).toISOString();
+	await stubHostedApi(page, {
+		deployments: [runningMissingProjectionDeployment],
+		channelAccounts: [account],
+		channelAgentLinks: [
+			{
+				id: linkId,
+				account_id: accountId,
+				agent_id: agentId,
+				status: "active",
+				created_at: "2026-07-31T01:01:00Z",
+				account,
+			},
+		],
+		pairCodeRequests,
+		pairCodeResponseGates: [pairResponseGate.promise],
+		pairCodeResponses: [
+			{
+				status: 503,
+				body: { detail: `provider pairing error ${"localizederror".repeat(24)}` },
+			},
+			{
+				status: 201,
+				body: {
+					id: "generic-pair-code",
+					agent_link_id: linkId,
+					agent_id: agentId,
+					code: "GENERIC123",
+					expires_at: validExpiry,
+					pairing_command: "/bot_pair GENERIC123",
+				},
+			},
+		],
+	});
+
+	await page.goto(
+		`/agents/${agentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+	);
+	const card = page.locator(`[data-agent-channel-link-id="${linkId}"]`);
+	const cardShell = card.locator("article");
+	await expect(card.locator(`[title="${longChannelName}"]`)).toBeVisible();
+	const pair = card.getByRole("button", { name: "Pair chat", exact: true });
+	const unlink = card.getByRole("button", {
+		name: `Unlink ${longChannelName} from Hosted agent`,
+		exact: true,
+	});
+	await expect(pair.locator("svg")).toHaveCount(1);
+	await expect(unlink.locator("svg")).toHaveCount(1);
+	await expect(unlink.getByText("Unlink", { exact: true })).toBeVisible();
+	await expectNoHorizontalOverflow(page.locator("html"), "generic Channel document at 320px");
+	await expectNoHorizontalOverflow(cardShell, "generic Channel card at 320px");
+	await expectContainedInOwnerAndViewport(page, pair, cardShell, "normal Pair chat");
+	await expectContainedInOwnerAndViewport(page, unlink, cardShell, "normal Unlink");
+	await expectControlsDoNotOverlap([pair, unlink], "generic Channel card actions");
+
+	const initialPairClick = pair.click();
+	await expect.poll(() => pairCodeRequests.length).toBe(1);
+	const generating = card.locator("button", { hasText: "Generating…" });
+	await expect(generating).toBeVisible();
+	await expectContainedInOwnerAndViewport(page, generating, cardShell, "Generating pairing code");
+	pairResponseGate.resolve();
+	await initialPairClick;
+	const retry = card.getByRole("button", { name: "Retry pairing", exact: true });
+	await expect(retry).toBeVisible();
+	await expect(retry.locator("svg")).toHaveCount(1);
+	await expectContainedInOwnerAndViewport(page, retry, cardShell, "Retry pairing");
+	const errorToast = page.locator("[data-sonner-toast]").last();
+	await expect(errorToast).toBeVisible();
+	await expectNoHorizontalOverflow(errorToast, "long provider-error toast");
+	await expectContainedInOwnerAndViewport(
+		page,
+		errorToast,
+		page.locator("html"),
+		"long provider-error toast",
+	);
+	await page.screenshot({
+		path: testInfo.outputPath("agent-channel-generic-retry-320x568.png"),
+		fullPage: false,
+	});
+	await retry.click();
+	await expect.poll(() => pairCodeRequests.length).toBe(2);
+	await expect(card.getByRole("button", { name: "Copy pairing command" })).toBeVisible();
+});
+
+test("Telegram and Discord pairing acknowledge one newly active binding at 320px", async ({
+	page,
+}, testInfo) => {
+	await page.setViewportSize({ width: 320, height: 568 });
+	const errors = collectBrowserErrors(page);
+	const agentId = missingProjectionEnvironmentId;
+	const telegramId = "67777777-7777-4777-8777-777777777777";
+	const telegramLinkId = "68888888-8888-4888-8888-888888888888";
+	const discordId = "69999999-9999-4999-8999-999999999999";
+	const discordLinkId = "6aaaaaaa-1111-4aaa-8aaa-111111111111";
+	const telegramExistingBindingId = "6bbbbbbb-1111-4bbb-8bbb-111111111111";
+	const discordExistingBindingId = "6ccccccc-1111-4ccc-8ccc-111111111111";
+	const telegramNewBindingId = "6ddddddd-1111-4ddd-8ddd-111111111111";
+	const discordNewBindingId = "6eeeeeee-1111-4eee-8eee-111111111111";
+	const telegramLateBindingId = "6fffffff-1111-4fff-8fff-111111111111";
+	const telegramAccount = {
+		id: telegramId,
+		provider: "telegram",
+		name: `Pair Success Telegram — ${"long channel identity ".repeat(16)}`.slice(0, 300),
+		status: "active",
+		visibility: "private",
+		has_provider_token: true,
+		webhook_url: "https://cloud.example.test/channels/pair-success-telegram",
+		created_at: "2026-08-01T02:00:00Z",
+	};
+	const discordAccount = {
+		...telegramAccount,
+		id: discordId,
+		provider: "discord",
+		name: `Pair Success Discord — ${"long channel identity ".repeat(16)}`.slice(0, 300),
+		webhook_url: "https://cloud.example.test/channels/pair-success-discord",
+	};
+	const channelBindings: unknown[] = [
+		{
+			id: telegramExistingBindingId,
+			account_id: telegramId,
+			agent_link_id: telegramLinkId,
+			external_chat_id: "telegram-existing",
+			external_chat_type: "private",
+			external_chat_name: "Existing Telegram chat",
+			status: "active",
+			created_at: "2026-08-01T02:01:00Z",
+			last_message_at: null,
+		},
+		{
+			id: discordExistingBindingId,
+			account_id: discordId,
+			agent_link_id: discordLinkId,
+			external_chat_id: "discord-existing",
+			external_chat_type: "guild",
+			external_chat_name: "Existing Discord server",
+			status: "active",
+			created_at: "2026-08-01T02:02:00Z",
+			last_message_at: null,
+		},
+	];
+	const pairCodeRequests: string[] = [];
+	const validExpiry = new Date(Date.now() + 15 * 60_000).toISOString();
+	const telegramPairResponse: StubResponse = {
+		status: 201,
+		body: {
+			id: "telegram-success-pair-code",
+			agent_link_id: telegramLinkId,
+			agent_id: agentId,
+			code: "TELEGRAMSUCCESS123",
+			expires_at: validExpiry,
+			pairing_command: "/bot_pair TELEGRAMSUCCESS123",
+			bot_username: "Pair_Success_Telegram_Bot",
+			deep_link: "https://t.me/Pair_Success_Telegram_Bot?start=TELEGRAMSUCCESS123",
+			qr_payload: "https://t.me/Pair_Success_Telegram_Bot?start=TELEGRAMSUCCESS123",
+		},
+	};
+	await stubHostedApi(page, {
+		deployments: [runningMissingProjectionDeployment],
+		channelAccounts: [telegramAccount, discordAccount],
+		channelAgentLinks: [
+			{
+				id: telegramLinkId,
+				account_id: telegramId,
+				agent_id: agentId,
+				status: "active",
+				created_at: "2026-08-01T02:03:00Z",
+				account: telegramAccount,
+			},
+			{
+				id: discordLinkId,
+				account_id: discordId,
+				agent_id: agentId,
+				status: "active",
+				created_at: "2026-08-01T02:04:00Z",
+				account: discordAccount,
+			},
+		],
+		channelBindings,
+		pairCodeRequests,
+		pairCodeResponses: [
+			telegramPairResponse,
+			{
+				status: 201,
+				body: {
+					id: "discord-success-pair-code",
+					agent_link_id: discordLinkId,
+					agent_id: agentId,
+					code: "DISCORDSUCCESS123",
+					expires_at: validExpiry,
+					pairing_command: "/bot_pair DISCORDSUCCESS123",
+					discord_install_url:
+						"https://discord.com/oauth2/authorize?client_id=123&scope=bot&permissions=274878024768",
+				},
+			},
+			telegramPairResponse,
+		],
+	});
+
+	await page.goto(
+		`/agents/${agentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+	);
+	const telegramCard = page.locator(`[data-agent-channel-link-id="${telegramLinkId}"]`);
+	const discordCard = page.locator(`[data-agent-channel-link-id="${discordLinkId}"]`);
+	const telegramChatsTrigger = page.locator(
+		`[data-agent-paired-chats-trigger="${telegramLinkId}"]`,
+	);
+	const discordChatsTrigger = page.locator(`[data-agent-paired-chats-trigger="${discordLinkId}"]`);
+	await expect(telegramChatsTrigger).toHaveAccessibleName("Paired chats · 1");
+	await expect(discordChatsTrigger).toHaveAccessibleName("Paired chats · 1");
+
+	await telegramCard.getByRole("button", { name: "Pair Telegram", exact: true }).click();
+	let pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
+	await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toBeVisible();
+	await page.waitForTimeout(3_200);
+	await expect(page.locator("[data-sonner-toast]").filter({ hasText: "Chat paired" })).toHaveCount(
+		0,
+	);
+
+	channelBindings.push({
+		id: telegramNewBindingId,
+		account_id: telegramId,
+		agent_link_id: telegramLinkId,
+		external_chat_id: "telegram-new",
+		external_chat_type: "private",
+		external_chat_name: "New Telegram private chat",
+		status: "active",
+		created_at: "2026-08-01T02:05:00Z",
+		last_message_at: null,
+	});
+	await expect(pairDialog).toHaveCount(0, { timeout: 5_000 });
+	const telegramSuccessToast = page
+		.locator("[data-sonner-toast]")
+		.filter({ hasText: "Chat paired" });
+	await expect(telegramSuccessToast).toHaveCount(1);
+	await expect(telegramSuccessToast).toContainText("Telegram private chat is ready.");
+	await expect(telegramChatsTrigger).toHaveAccessibleName("Paired chats · 2");
+	await expectNoHorizontalOverflow(page.locator("html"), "Telegram pair success document at 320px");
+	await expectNoHorizontalOverflow(telegramSuccessToast, "Telegram pair success toast at 320px");
+	await expectContainedInOwnerAndViewport(
+		page,
+		telegramSuccessToast,
+		page.locator("html"),
+		"Telegram pair success toast at 320px",
+	);
+	await page.screenshot({
+		path: testInfo.outputPath("agent-telegram-pair-success-320x568.png"),
+		fullPage: false,
+	});
+	await expect(telegramSuccessToast).toHaveCount(0, { timeout: 8_000 });
+	await page.waitForTimeout(3_200);
+	await expect(page.locator("[data-sonner-toast]").filter({ hasText: "Chat paired" })).toHaveCount(
+		0,
+	);
+
+	await discordCard.getByRole("button", { name: "Pair Discord", exact: true }).click();
+	pairDialog = page.getByRole("dialog", { name: "Pair Discord" });
+	await expect(pairDialog.getByText("DISCORDSUCCESS123", { exact: true })).toBeVisible();
+	await page.waitForTimeout(3_200);
+	await expect(page.locator("[data-sonner-toast]").filter({ hasText: "Chat paired" })).toHaveCount(
+		0,
+	);
+
+	channelBindings.push({
+		id: discordNewBindingId,
+		account_id: discordId,
+		agent_link_id: discordLinkId,
+		external_chat_id: "discord-new-dm",
+		external_chat_type: "private",
+		external_chat_name: "New Discord direct message",
+		status: "active",
+		created_at: "2026-08-01T02:06:00Z",
+		last_message_at: null,
+	});
+	await expect(pairDialog).toHaveCount(0, { timeout: 5_000 });
+	const discordSuccessToast = page
+		.locator("[data-sonner-toast]")
+		.filter({ hasText: "Chat paired" });
+	await expect(discordSuccessToast).toHaveCount(1);
+	await expect(discordSuccessToast).toContainText("Discord direct message is ready.");
+	await expect(discordChatsTrigger).toHaveAccessibleName("Paired chats · 2");
+	await expectNoHorizontalOverflow(page.locator("html"), "Discord pair success document at 320px");
+	await expectNoHorizontalOverflow(discordSuccessToast, "Discord pair success toast at 320px");
+	await expectContainedInOwnerAndViewport(
+		page,
+		discordSuccessToast,
+		page.locator("html"),
+		"Discord pair success toast at 320px",
+	);
+	await page.screenshot({
+		path: testInfo.outputPath("agent-discord-pair-success-320x568.png"),
+		fullPage: false,
+	});
+	await expect(discordSuccessToast).toHaveCount(0, { timeout: 8_000 });
+
+	await telegramCard.getByRole("button", { name: "Pair Telegram", exact: true }).click();
+	pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
+	await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toBeVisible();
+	await pairDialog.getByRole("button", { name: "Close", exact: true }).click();
+	channelBindings.push({
+		id: telegramLateBindingId,
+		account_id: telegramId,
+		agent_link_id: telegramLinkId,
+		external_chat_id: "telegram-after-close",
+		external_chat_type: "group",
+		external_chat_name: "Paired after dialog close",
+		status: "active",
+		created_at: "2026-08-01T02:07:00Z",
+		last_message_at: null,
+	});
+	await expect(telegramChatsTrigger).toHaveAccessibleName("Paired chats · 3", {
+		timeout: 5_000,
+	});
+	await page.waitForTimeout(3_200);
+	await expect(page.locator("[data-sonner-toast]").filter({ hasText: "Chat paired" })).toHaveCount(
+		0,
+	);
+	expect(pairCodeRequests).toHaveLength(3);
+	expect(errors, `pair success feedback errors: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("Agent Channels uses compact task-ordered cards and the shared Telegram pair dialog", async ({
@@ -7391,6 +8239,11 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	const discordOpsBindingId = "7eeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 	const discordPartnersBindingId = "7fffffff-ffff-4fff-8fff-ffffffffffff";
 	const discordDmName = "Discord DM — urgent customer support escalation ".repeat(10).slice(0, 300);
+	const telegramChannelName = `Support Telegram — ${"agentchannel".repeat(26)}`.slice(0, 300);
+	const discordChannelName = `Community Discord — ${"localized server identity ".repeat(16)}`.slice(
+		0,
+		300,
+	);
 	const validExpiry = new Date(Date.now() + 15 * 60_000).toISOString();
 	const successfulPairResponse = (id: string, code: string): StubResponse => ({
 		status: 201,
@@ -7419,7 +8272,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	const telegramAccount = {
 		id: telegramId,
 		provider: "telegram",
-		name: "Support Telegram",
+		name: telegramChannelName,
 		status: "active",
 		visibility: "private",
 		has_provider_token: true,
@@ -7429,7 +8282,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	const discordAccount = {
 		id: discordId,
 		provider: "discord",
-		name: "Community Discord",
+		name: discordChannelName,
 		status: "active",
 		visibility: "private",
 		has_provider_token: true,
@@ -7449,6 +8302,24 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	const pairCodeRequests: string[] = [];
 	const deleteBindingRequests: string[] = [];
 	const unlinkAgentRequests: string[] = [];
+	const extraDiscordBindings = [
+		"Engineering",
+		"Research",
+		"Field Support",
+		"Release Coordination",
+		"Documentation",
+		"Community Events",
+	].map((name, index) => ({
+		id: `80000000-0000-4000-8000-00000000000${index}`,
+		account_id: discordId,
+		agent_link_id: discordLinkId,
+		external_chat_id: `discord-guild-${index + 6}`,
+		external_chat_type: "guild",
+		external_chat_name: name,
+		status: "active",
+		created_at: `2026-07-30T10:${12 + index}:00Z`,
+		last_message_at: `2026-07-30T10:${22 + index}:00Z`,
+	}));
 	const channelBindings: unknown[] = [
 		{
 			id: currentBindingId,
@@ -7537,6 +8408,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 			created_at: "2026-07-30T10:11:00Z",
 			last_message_at: "2026-07-30T10:21:00Z",
 		},
+		...extraDiscordBindings,
 	];
 	await stubHostedApi(page, {
 		deployments: [agentChannelsDeployment],
@@ -7610,7 +8482,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 			{
 				account_id: telegramId,
 				provider: "telegram",
-				name: "Support Telegram",
+				name: telegramChannelName,
 				visibility: "private",
 				channel_status: "active",
 				health_status: "ok",
@@ -7623,7 +8495,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 			{
 				account_id: discordId,
 				provider: "discord",
-				name: "Community Discord",
+				name: discordChannelName,
 				visibility: "private",
 				channel_status: "active",
 				health_status: "ok",
@@ -7637,7 +8509,10 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 		deleteBindingRequests,
 		unlinkAgentRequests,
 		deleteBindingResponses: [
-			{ status: 502, body: { detail: "temporary Telegram cleanup error" } },
+			{
+				status: 502,
+				body: { detail: `temporary Telegram cleanup error ${"localizederror".repeat(24)}` },
+			},
 			{
 				status: 200,
 				body: {
@@ -7664,7 +8539,10 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 		pairCodeRequests,
 		pairCodeResponses: [
 			successfulPairResponse("agent-channel-pair-code", "AGENTPAIR123"),
-			{ status: 503, body: { detail: "temporary Telegram pair error" } },
+			{
+				status: 503,
+				body: { detail: `temporary Telegram pair error ${"localizederror".repeat(24)}` },
+			},
 			successfulPairResponse("agent-channel-pair-retry", "AGENTRETRY123"),
 			{
 				status: 201,
@@ -7696,7 +8574,10 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 					qr_payload: "https://t.me/Clawdi_Ready_Bot?start=AGENTEXPIRED123",
 				},
 			},
-			{ status: 503, body: { detail: "temporary Discord preparation error" } },
+			{
+				status: 503,
+				body: { detail: `temporary Discord preparation error ${"localizederror".repeat(24)}` },
+			},
 			{
 				status: 201,
 				body: {
@@ -7760,21 +8641,47 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	const discordRow = page.locator(`[data-agent-channel-link-id="${discordLinkId}"]`);
 	const telegramHeader = telegramRow.locator("[data-channel-card-header]");
 	const discordHeader = discordRow.locator("[data-channel-card-header]");
-	await expect(telegramRow).toContainText("Support Telegram");
+	await expect(telegramRow).toContainText(telegramChannelName);
 	await expect(telegramHeader).not.toContainText("Last activity");
 	await expect(telegramHeader).not.toContainText("No activity yet");
 	await expect(telegramHeader).not.toContainText("Checking activity");
-	await expect(discordRow).toContainText("Community Discord");
+	await expect(discordRow).toContainText(discordChannelName);
 	await expect(discordHeader).not.toContainText("Last activity");
 	const pairButton = telegramRow.getByRole("button", { name: "Pair Telegram", exact: true });
 	await expect(pairButton).toBeVisible();
 	const discordPairButton = discordRow.getByRole("button", { name: "Pair Discord", exact: true });
 	await expect(discordPairButton).toBeVisible();
 	const telegramUnlinkButton = telegramRow.getByRole("button", {
-		name: "Unlink Support Telegram from Hosted agent",
+		name: `Unlink ${telegramChannelName} from Hosted agent`,
 		exact: true,
 	});
 	await expect(telegramUnlinkButton).toBeVisible();
+	await expect(telegramUnlinkButton.locator("svg")).toHaveCount(1);
+	await expect(telegramUnlinkButton.getByText("Unlink", { exact: true })).toBeVisible();
+	const discordUnlinkButton = discordRow.getByRole("button", {
+		name: `Unlink ${discordChannelName} from Hosted agent`,
+		exact: true,
+	});
+	await expect(discordUnlinkButton.locator("svg")).toHaveCount(1);
+	await expect(discordUnlinkButton.getByText("Unlink", { exact: true })).toBeVisible();
+	await expectNoHorizontalOverflow(telegramRow.locator("article"), "desktop Telegram Channel card");
+	await expectNoHorizontalOverflow(discordRow.locator("article"), "desktop Discord Channel card");
+	await expectContainedInOwnerAndViewport(
+		page,
+		pairButton,
+		telegramRow.locator("article"),
+		"desktop Pair Telegram",
+	);
+	await expectContainedInOwnerAndViewport(
+		page,
+		telegramUnlinkButton,
+		telegramRow.locator("article"),
+		"desktop Unlink Telegram",
+	);
+	await expectControlsDoNotOverlap(
+		[pairButton, telegramUnlinkButton],
+		"desktop Telegram card actions",
+	);
 	async function buttonColors(button: Locator) {
 		return button.evaluate((element) => {
 			const style = getComputedStyle(element);
@@ -7785,46 +8692,50 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 			};
 		});
 	}
-	const [telegramPairColors, discordPairColors, telegramPairBox, discordPairBox] =
-		await Promise.all([
-			buttonColors(pairButton),
-			buttonColors(discordPairButton),
-			pairButton.boundingBox(),
-			discordPairButton.boundingBox(),
-		]);
+	const [
+		telegramPairColors,
+		discordPairColors,
+		telegramPairBox,
+		discordPairBox,
+		unlinkColors,
+		unlinkBox,
+	] = await Promise.all([
+		buttonColors(pairButton),
+		buttonColors(discordPairButton),
+		pairButton.boundingBox(),
+		discordPairButton.boundingBox(),
+		buttonColors(telegramUnlinkButton),
+		telegramUnlinkButton.boundingBox(),
+	]);
 	expect(telegramPairColors).toEqual(discordPairColors);
 	expect(telegramPairBox?.height).toBe(discordPairBox?.height);
 	expect(telegramPairBox?.height).toBe(32);
 	await expect(page.locator(`[data-add-channel-id="${readyId}"]`)).toHaveCount(0);
 	await addChannelButton.click();
-	const fullSlotDialog = page.getByRole("dialog", { name: "Connect a bot" });
-	await expect(fullSlotDialog.getByRole("button", { name: /Telegram.*Connected/ })).toBeDisabled();
-	await expect(fullSlotDialog.getByRole("button", { name: /Discord.*Connected/ })).toBeDisabled();
+	const fullSlotDialog = page.getByRole("dialog", { name: "Add channel" });
 	await expect(
-		fullSlotDialog.getByText("This Agent already has one bot from each provider.", {
-			exact: false,
-		}),
+		fullSlotDialog.getByText("No Clawdi or Custom bots to add", { exact: true }),
 	).toBeVisible();
 	await expect(
-		fullSlotDialog.getByRole("button", { name: "Manage bots", exact: true }),
-	).toHaveAttribute("href", "/channels");
-	await fullSlotDialog.getByRole("button", { name: "Done", exact: true }).click();
+		fullSlotDialog.getByRole("button", { name: "Connect custom bot", exact: true }),
+	).toBeVisible();
+	await fullSlotDialog.getByRole("button", { name: "Close", exact: true }).click();
 	await expect(page.getByRole("button", { name: /^Access .* Dashboard$/ })).toHaveCount(0);
 	const currentBindingRow = page.locator(`[data-channel-binding-id="${currentBindingId}"]`);
-	const telegramChatsDisclosure = telegramGroup.getByRole("button", {
-		name: "Paired chats · 1",
-		exact: true,
-	});
-	const discordChatsDisclosure = discordGroup.getByRole("button", {
-		name: "Paired chats · 6",
-		exact: true,
-	});
-	await expect(telegramChatsDisclosure).toHaveAttribute("aria-expanded", "false");
-	await expect(discordChatsDisclosure).toHaveAttribute("aria-expanded", "false");
-	await expect(currentBindingRow).toBeHidden();
-	await expect(
-		discordGroup.locator(`[data-channel-binding-id="${discordServerBindingId}"]`),
-	).toBeHidden();
+	const telegramChatsTrigger = telegramGroup.locator(
+		`[data-agent-paired-chats-trigger="${telegramLinkId}"]`,
+	);
+	const discordChatsTrigger = discordGroup.locator(
+		`[data-agent-paired-chats-trigger="${discordLinkId}"]`,
+	);
+	await expect(telegramChatsTrigger).toHaveAccessibleName("Paired chats · 1");
+	await expect(discordChatsTrigger).toHaveAccessibleName("Paired chats · 12");
+	await expect(telegramChatsTrigger).toHaveAttribute("aria-haspopup", "dialog");
+	await expect(discordChatsTrigger).toHaveAttribute("aria-haspopup", "dialog");
+	await expect(currentBindingRow).toHaveCount(0);
+	await expect(page.locator(`[data-channel-binding-id="${discordServerBindingId}"]`)).toHaveCount(
+		0,
+	);
 	const defaultTelegramBox = await telegramGroup.boundingBox();
 	const defaultDiscordBox = await discordGroup.boundingBox();
 	expect(defaultTelegramBox?.y).toBe(defaultDiscordBox?.y);
@@ -7835,40 +8746,65 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	await page.screenshot({
 		path:
 			process.env.AGENT_CHANNELS_PAGE_SCREENSHOT_PATH ??
-			testInfo.outputPath("agent-channels-compact-page.png"),
-		fullPage: true,
+			testInfo.outputPath("agent-channel-paired-chats-closed-desktop.png"),
+		fullPage: false,
 	});
 
-	await telegramChatsDisclosure.click();
-	await expect(telegramChatsDisclosure).toHaveAttribute("aria-expanded", "true");
+	await telegramChatsTrigger.click();
+	let pairedChatsPanel = page.getByRole("dialog", { name: "Paired chats", exact: true });
+	await expect(pairedChatsPanel).toContainText("connected through this channel");
+	await expect(
+		pairedChatsPanel.locator(
+			`[data-agent-paired-chats-channel-name][title="${telegramChannelName}"]`,
+		),
+	).toBeVisible();
 	await expect(currentBindingRow).toContainText("Current Agent DM");
+	await expect(currentBindingRow.getByText("Private chat", { exact: true })).toBeVisible();
 	await expect(currentBindingRow).toContainText("Last activity");
 	const telegramUnpairButton = currentBindingRow.getByRole("button", {
 		name: "Unpair Current Agent DM",
 		exact: true,
 	});
-	const [unlinkColors, unpairColors, unlinkBox, unpairBox] = await Promise.all([
-		buttonColors(telegramUnlinkButton),
+	await expect(telegramUnpairButton.locator("svg")).toHaveCount(1);
+	await expect(telegramUnpairButton.getByText("Unpair", { exact: true })).toBeVisible();
+	await expectNoHorizontalOverflow(pairedChatsPanel, "desktop Telegram paired chats Dialog");
+	await expectNoHorizontalOverflow(
+		pairedChatsPanel.locator("[data-agent-paired-chats-list]"),
+		"desktop Telegram paired chats list",
+	);
+	await expectContainedInOwnerAndViewport(
+		page,
+		telegramUnpairButton,
+		currentBindingRow,
+		"desktop Telegram Unpair",
+	);
+	const [unpairColors, unpairBox] = await Promise.all([
 		buttonColors(telegramUnpairButton),
-		telegramUnlinkButton.boundingBox(),
 		telegramUnpairButton.boundingBox(),
 	]);
 	expect(unlinkColors).toEqual(unpairColors);
 	expect(unlinkBox?.height).toBe(32);
-	expect(unpairBox?.height).toBe(32);
+	expect(Math.abs((unpairBox?.height ?? 0) - (unlinkBox?.height ?? 0))).toBeLessThanOrEqual(1);
 	expect(unlinkBox?.width ?? 0).toBeGreaterThan(48);
 	expect(unpairBox?.width ?? 0).toBeGreaterThan(48);
+	await pairedChatsPanel.getByRole("button", { name: "Close", exact: true }).click();
+	await expect(pairedChatsPanel).toHaveCount(0);
+	await expect(telegramChatsTrigger).toBeFocused();
+
+	await discordChatsTrigger.click();
+	pairedChatsPanel = page.getByRole("dialog", { name: "Paired chats", exact: true });
+	await expect(pairedChatsPanel).toContainText("connected through this channel");
 	await expect(
-		telegramGroup.locator(`[data-channel-binding-id="${currentBindingId}"]`),
+		pairedChatsPanel.locator(
+			`[data-agent-paired-chats-channel-name][title="${discordChannelName}"]`,
+		),
 	).toBeVisible();
-	const discordServerRow = discordGroup.locator(
-		`[data-channel-binding-id="${discordServerBindingId}"]`,
-	);
-	const discordDmRow = discordGroup.locator(`[data-channel-binding-id="${discordDmBindingId}"]`);
-	await discordChatsDisclosure.click();
-	await expect(discordChatsDisclosure).toHaveAttribute("aria-expanded", "true");
-	await expect(discordServerRow).toContainText("Server · Clawdi Community");
-	await expect(discordDmRow).toContainText(`Direct message · ${discordDmName}`);
+	const discordServerRow = page.locator(`[data-channel-binding-id="${discordServerBindingId}"]`);
+	const discordDmRow = page.locator(`[data-channel-binding-id="${discordDmBindingId}"]`);
+	await expect(discordServerRow.getByText("Clawdi Community", { exact: true })).toBeVisible();
+	await expect(discordServerRow.getByText("Server", { exact: true })).toBeVisible();
+	await expect(discordDmRow.getByText(discordDmName, { exact: true })).toBeVisible();
+	await expect(discordDmRow.getByText("Direct message", { exact: true })).toBeVisible();
 	await expect(discordServerRow).toContainText("Last activity");
 	await expect(discordDmRow).not.toContainText("Last activity");
 	await expect(discordDmRow).not.toContainText("No activity yet");
@@ -7877,35 +8813,173 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	await expect(
 		discordServerRow.getByRole("button", { name: "Unpair Server · Clawdi Community" }),
 	).toBeVisible();
-	const hiddenDiscordChat = discordGroup.locator(
+	const discordServerUnpair = discordServerRow.getByRole("button", {
+		name: "Unpair Server · Clawdi Community",
+	});
+	await expect(discordServerUnpair.locator("svg")).toHaveCount(1);
+	await expect(discordServerUnpair.getByText("Unpair", { exact: true })).toBeVisible();
+	await expectNoHorizontalOverflow(pairedChatsPanel, "desktop Discord paired chats Dialog");
+	await expectNoHorizontalOverflow(
+		pairedChatsPanel.locator("[data-agent-paired-chats-list]"),
+		"desktop Discord paired chats list",
+	);
+	const lastDiscordChat = pairedChatsPanel.locator(
+		`[data-channel-binding-id="${extraDiscordBindings.at(-1)?.id}"]`,
+	);
+	await expect(lastDiscordChat).toContainText("Community Events");
+	const partnerDiscordChat = pairedChatsPanel.locator(
 		`[data-channel-binding-id="${discordPartnersBindingId}"]`,
 	);
-	await expect(hiddenDiscordChat).toBeHidden();
-	const showMoreChats = discordGroup.getByRole("button", { name: "Show more", exact: true });
-	await expect(showMoreChats).toHaveAttribute("aria-expanded", "false");
-	await showMoreChats.click();
-	await expect(hiddenDiscordChat).toContainText("Server · Partner Support");
-	await expect(
-		telegramGroup.locator(`[data-channel-binding-id="${discordPartnersBindingId}"]`),
-	).toHaveCount(0);
-	const showLessChats = discordGroup.getByRole("button", { name: "Show less", exact: true });
-	await expect(showLessChats).toHaveAttribute("aria-expanded", "true");
-	await showLessChats.click();
-	await expect(hiddenDiscordChat).toBeHidden();
-	await discordGroup.getByRole("button", { name: "Show more", exact: true }).click();
-	await expect(hiddenDiscordChat).toBeVisible();
-	await expect(currentBindingRow).not.toContainText("Support Telegram");
+	await expect(partnerDiscordChat).toContainText("Partner Support");
+	await expect(pairedChatsPanel.getByRole("button", { name: /Show (more|less)/ })).toHaveCount(0);
+	const desktopPairedChatsScroll = pairedChatsPanel.locator("[data-agent-paired-chats-scroll]");
+	const desktopScrollMetrics = await desktopPairedChatsScroll.evaluate((element) => ({
+		clientHeight: element.clientHeight,
+		overflowY: getComputedStyle(element).overflowY,
+		scrollHeight: element.scrollHeight,
+	}));
+	expect(desktopScrollMetrics.overflowY).toBe("auto");
+	expect(desktopScrollMetrics.scrollHeight).toBeGreaterThan(desktopScrollMetrics.clientHeight);
+	const openDesktopTelegramBox = await telegramGroup.boundingBox();
+	const openDesktopDiscordBox = await discordGroup.boundingBox();
+	expect(openDesktopTelegramBox?.height).toBe(defaultTelegramBox?.height);
+	expect(openDesktopDiscordBox?.height).toBe(defaultDiscordBox?.height);
 	await expect(page.locator(`[data-channel-binding-id="${otherAgentBindingId}"]`)).toHaveCount(0);
 	await expect(page.getByText("Other Agent DM", { exact: true })).toHaveCount(0);
-	await expect(currentBindingRow).not.toContainText("101");
 	await expect(telegramHeader).not.toContainText("Active");
 	await expect(telegramHeader).not.toContainText("Healthy");
 	await expect(page.getByText("Waiting for channel activity", { exact: true })).toHaveCount(0);
 	await expect(page.getByText("Finish pairing", { exact: false })).toHaveCount(0);
 	await page.screenshot({
-		path: testInfo.outputPath("agent-channels-expanded-page.png"),
-		fullPage: true,
+		path: testInfo.outputPath("agent-channel-paired-chats-open-desktop.png"),
+		fullPage: false,
 	});
+	await page.keyboard.press("Escape");
+	await expect(pairedChatsPanel).toHaveCount(0);
+	await expect(discordChatsTrigger).toBeFocused();
+
+	await page.setViewportSize({ width: 320, height: 568 });
+	await discordGroup.evaluate((element) => element.scrollIntoView({ block: "center" }));
+	await expectNoHorizontalOverflow(page.locator("html"), "Agent Channels document at 320px");
+	await expectNoHorizontalOverflow(discordRow.locator("article"), "Discord Channel card at 320px");
+	await expectContainedInOwnerAndViewport(
+		page,
+		discordPairButton,
+		discordRow.locator("article"),
+		"mobile Pair Discord",
+	);
+	await expectContainedInOwnerAndViewport(
+		page,
+		discordUnlinkButton,
+		discordRow.locator("article"),
+		"mobile Unlink Discord",
+	);
+	await expectControlsDoNotOverlap(
+		[discordPairButton, discordUnlinkButton],
+		"mobile Discord card actions",
+	);
+	const closedMobileDiscordBox = await discordGroup.boundingBox();
+	await page.screenshot({
+		path: testInfo.outputPath("agent-channel-paired-chats-closed-320x568.png"),
+		fullPage: false,
+	});
+	await discordChatsTrigger.click();
+	pairedChatsPanel = page.getByRole("dialog", { name: "Paired chats", exact: true });
+	await expect(pairedChatsPanel).toBeVisible();
+	await expect(pairedChatsPanel).toHaveAttribute("data-slot", "sheet-content");
+	await expect
+		.poll(async () => {
+			const box = await pairedChatsPanel.boundingBox();
+			return (box?.y ?? 568) + (box?.height ?? 1);
+		})
+		.toBeLessThanOrEqual(568);
+	const mobilePanelBox = await pairedChatsPanel.boundingBox();
+	expect(mobilePanelBox?.y ?? -1).toBeGreaterThanOrEqual(0);
+	expect((mobilePanelBox?.y ?? 568) + (mobilePanelBox?.height ?? 1)).toBeLessThanOrEqual(568);
+	const openMobileDiscordBox = await discordGroup.boundingBox();
+	expect(openMobileDiscordBox?.height).toBe(closedMobileDiscordBox?.height);
+	const mobilePairedChatsScroll = pairedChatsPanel.locator("[data-agent-paired-chats-scroll]");
+	await expectNoHorizontalOverflow(pairedChatsPanel, "mobile paired chats Sheet");
+	await expectNoHorizontalOverflow(mobilePairedChatsScroll, "mobile paired chats scroll area");
+	const mobileScrollMetrics = await mobilePairedChatsScroll.evaluate((element) => ({
+		clientHeight: element.clientHeight,
+		overflowY: getComputedStyle(element).overflowY,
+		scrollHeight: element.scrollHeight,
+	}));
+	expect(mobileScrollMetrics.overflowY).toBe("auto");
+	expect(mobileScrollMetrics.scrollHeight).toBeGreaterThan(mobileScrollMetrics.clientHeight);
+	const mobileDiscordDmTitle = pairedChatsPanel.getByText(discordDmName, { exact: true });
+	const mobileDiscordScope = discordDmRow.getByText("Direct message", { exact: true });
+	await expect(mobileDiscordDmTitle).toBeVisible();
+	await expect(mobileDiscordDmTitle).toHaveAttribute("title", discordDmName);
+	await expect(mobileDiscordScope).toBeVisible();
+	const mobileDiscordDmTitleLayout = await mobileDiscordDmTitle.evaluate((element) => {
+		const style = getComputedStyle(element);
+		return {
+			overflow: style.overflow,
+			textOverflow: style.textOverflow,
+			whiteSpace: style.whiteSpace,
+		};
+	});
+	expect(discordDmName).toHaveLength(300);
+	expect(mobileDiscordDmTitleLayout).toEqual({
+		overflow: "hidden",
+		textOverflow: "ellipsis",
+		whiteSpace: "nowrap",
+	});
+	const mobileDiscordDmUnpair = discordDmRow.getByRole("button", {
+		name: `Unpair Direct message · ${discordDmName}`,
+		exact: true,
+	});
+	await expect(mobileDiscordDmUnpair.locator("svg")).toHaveCount(1);
+	await expect(mobileDiscordDmUnpair.getByText("Unpair", { exact: true })).toBeVisible();
+	await expectContainedInOwnerAndViewport(
+		page,
+		mobileDiscordDmUnpair,
+		discordDmRow,
+		"mobile long-name Unpair",
+	);
+	await mobileDiscordDmUnpair.click();
+	const longNameConfirmation = page.getByRole("alertdialog", {
+		name: `Unpair Direct message · ${discordDmName}?`,
+		exact: true,
+	});
+	await expectNoHorizontalOverflow(longNameConfirmation, "long-name Unpair confirmation");
+	const cancelLongUnpair = longNameConfirmation.getByRole("button", {
+		name: "Cancel",
+		exact: true,
+	});
+	const confirmLongUnpair = longNameConfirmation.getByRole("button", {
+		name: "Unpair chat",
+		exact: true,
+	});
+	await expectContainedInOwnerAndViewport(
+		page,
+		cancelLongUnpair,
+		longNameConfirmation,
+		"long-name Unpair Cancel",
+	);
+	await expectContainedInOwnerAndViewport(
+		page,
+		confirmLongUnpair,
+		longNameConfirmation,
+		"long-name Unpair confirm",
+	);
+	await expectControlsDoNotOverlap(
+		[cancelLongUnpair, confirmLongUnpair],
+		"long-name Unpair confirmation actions",
+	);
+	await page.keyboard.press("Escape");
+	await expect(longNameConfirmation).toHaveCount(0);
+	await expect(mobileDiscordDmUnpair).toBeFocused();
+	await page.screenshot({
+		path: testInfo.outputPath("agent-channel-paired-chats-open-320x568.png"),
+		fullPage: false,
+	});
+	await pairedChatsPanel.getByRole("button", { name: "Close", exact: true }).click();
+	await expect(pairedChatsPanel).toHaveCount(0);
+	await expect(discordChatsTrigger).toBeFocused();
+	await page.setViewportSize({ width: 1440, height: 1100 });
 
 	await pairButton.click();
 	await expect.poll(() => pairCodeRequests.length).toBe(1);
@@ -7917,7 +8991,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	const telegramQr = pairDialog.getByRole("img", { name: "Telegram pairing QR code" });
 	await expect(telegramQr).toBeVisible();
 	await expect(pairDialog.getByRole("button", { name: "Copy link", exact: true })).toBeVisible();
-	await expect(pairDialog.getByRole("button", { name: "Open @Clawdi_Ready_Bot" })).toHaveAttribute(
+	await expect(pairDialog.getByRole("button", { name: "Open Telegram" })).toHaveAttribute(
 		"href",
 		"https://t.me/Clawdi_Ready_Bot?start=AGENTPAIR123",
 	);
@@ -7931,13 +9005,14 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	const desktopTelegramQrBox = await telegramQr.boundingBox();
 	expect(desktopTelegramQrBox?.width ?? 0).toBeLessThanOrEqual(192);
 	await page.setViewportSize({ width: 320, height: 568 });
-	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+	await expectNoHorizontalOverflow(page.locator("html"), "Telegram pairing document at 320px");
+	await expectNoHorizontalOverflow(pairDialog, "Telegram pairing Dialog at 320px");
 	await expect(telegramQr).toBeVisible();
 	const mobileTelegramQrBox = await telegramQr.boundingBox();
 	expect(mobileTelegramQrBox?.width ?? 0).toBeLessThanOrEqual(192);
 	const mobileTelegramDialogBox = await pairDialog.boundingBox();
 	const mobileTelegramActionBox = await pairDialog
-		.getByRole("button", { name: "Open @Clawdi_Ready_Bot" })
+		.getByRole("button", { name: "Open Telegram" })
 		.boundingBox();
 	expect(mobileTelegramDialogBox?.y ?? -1).toBeGreaterThanOrEqual(0);
 	expect(
@@ -7946,17 +9021,29 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	expect(
 		(mobileTelegramActionBox?.y ?? 568) + (mobileTelegramActionBox?.height ?? 1),
 	).toBeLessThanOrEqual(568);
+	const copyTelegramLink = pairDialog.getByRole("button", { name: "Copy link", exact: true });
+	const openTelegram = pairDialog.getByRole("button", { name: "Open Telegram" });
+	await expectContainedInOwnerAndViewport(
+		page,
+		copyTelegramLink,
+		pairDialog,
+		"mobile Copy Telegram link",
+	);
+	await expectContainedInOwnerAndViewport(page, openTelegram, pairDialog, "mobile Open Telegram");
+	await expectControlsDoNotOverlap(
+		[copyTelegramLink, openTelegram],
+		"mobile Telegram pairing actions",
+	);
 	await pairDialog.screenshot({
 		path: testInfo.outputPath("agent-telegram-pair-dialog-320x568.png"),
 	});
-	await pairDialog.getByRole("button", { name: "Copy link", exact: true }).click();
+	await copyTelegramLink.click();
 	await expect(pairDialog.getByRole("button", { name: "Copied", exact: true })).toBeVisible();
 	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
-	await expectActionCenterUncovered(
-		pairDialog.getByRole("button", { name: "Open @Clawdi_Ready_Bot" }),
-	);
+	await expectActionCenterUncovered(pairDialog.getByRole("button", { name: "Open Telegram" }));
 	await page.setViewportSize({ width: 1440, height: 1100 });
 
+	await pairDialog.getByRole("button", { name: "Close", exact: true }).click();
 	channelBindings.push({
 		id: polledBindingId,
 		account_id: telegramId,
@@ -7967,28 +9054,40 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 		status: "active",
 		created_at: "2026-07-30T10:10:00Z",
 	});
-	await pairDialog.getByRole("button", { name: "Close", exact: true }).click();
-	await expect(page.locator(`[data-channel-binding-id="${polledBindingId}"]`)).toContainText(
-		"Newly Paired DM",
-		{ timeout: 5_000 },
-	);
-	await expect(
-		telegramGroup.locator(`[data-channel-binding-id="${polledBindingId}"]`),
-	).toBeVisible();
-	await expect(discordGroup.locator(`[data-channel-binding-id="${polledBindingId}"]`)).toHaveCount(
+	await expect(telegramChatsTrigger).toHaveAccessibleName("Paired chats · 2", { timeout: 5_000 });
+	await expect(page.locator("[data-sonner-toast]").filter({ hasText: "Chat paired" })).toHaveCount(
 		0,
 	);
+	await expect(page.locator(`[data-channel-binding-id="${polledBindingId}"]`)).toHaveCount(0);
+	await telegramChatsTrigger.click();
+	pairedChatsPanel = page.getByRole("dialog", { name: "Paired chats", exact: true });
+	await expect(
+		pairedChatsPanel.locator(`[data-channel-binding-id="${polledBindingId}"]`),
+	).toContainText("Newly Paired DM");
+	await expect(
+		pairedChatsPanel.locator(`[data-channel-binding-id="${otherAgentBindingId}"]`),
+	).toHaveCount(0);
+	await pairedChatsPanel.getByRole("button", { name: "Close", exact: true }).click();
 
 	await pairButton.click();
 	await expect.poll(() => pairCodeRequests.length).toBe(2);
-	await expect(
-		page.getByRole("dialog", { name: "Pair Telegram" }).getByText("Couldn't create Telegram link"),
-	).toBeVisible();
+	let telegramErrorDialog = page.getByRole("dialog", { name: "Pair Telegram" });
+	await expect(telegramErrorDialog.getByText("Couldn't create Telegram link")).toBeVisible();
+	await page.setViewportSize({ width: 320, height: 568 });
+	telegramErrorDialog = page.getByRole("dialog", { name: "Pair Telegram" });
+	await expectNoHorizontalOverflow(telegramErrorDialog, "Telegram error Dialog at 320px");
+	const telegramRetry = telegramErrorDialog.getByRole("button", { name: "Retry", exact: true });
+	await expectContainedInOwnerAndViewport(
+		page,
+		telegramRetry,
+		telegramErrorDialog,
+		"Telegram error Retry",
+	);
+	await telegramErrorDialog.screenshot({
+		path: testInfo.outputPath("agent-telegram-pair-error-320x568.png"),
+	});
 	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
-	await page
-		.getByRole("dialog", { name: "Pair Telegram" })
-		.getByRole("button", { name: "Retry", exact: true })
-		.click();
+	await telegramRetry.click();
 	await expect.poll(() => pairCodeRequests.length).toBe(3);
 	await expect(
 		page
@@ -7999,12 +9098,13 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	await expectActionCenterUncovered(
 		page
 			.getByRole("dialog", { name: "Pair Telegram" })
-			.getByRole("button", { name: "Open @Clawdi_Ready_Bot" }),
+			.getByRole("button", { name: "Open Telegram" }),
 	);
 	await page
 		.getByRole("dialog", { name: "Pair Telegram" })
 		.getByRole("button", { name: "Close", exact: true })
 		.click();
+	await page.setViewportSize({ width: 1440, height: 1100 });
 
 	await pairButton.click();
 	await expect.poll(() => pairCodeRequests.length).toBe(4);
@@ -8036,12 +9136,23 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	await expect(
 		discordPairDialog.getByText("Couldn't prepare Discord pairing", { exact: true }),
 	).toBeVisible();
+	await page.setViewportSize({ width: 320, height: 568 });
+	discordPairDialog = page.getByRole("dialog", { name: "Pair Discord" });
+	await expectNoHorizontalOverflow(discordPairDialog, "Discord error Dialog at 320px");
+	const discordRetry = discordPairDialog.getByRole("button", { name: "Retry", exact: true });
+	await expectContainedInOwnerAndViewport(
+		page,
+		discordRetry,
+		discordPairDialog,
+		"Discord error Retry",
+	);
 	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 	await discordPairDialog.screenshot({
-		path: testInfo.outputPath("agent-discord-pair-error-desktop.png"),
+		path: testInfo.outputPath("agent-discord-pair-error-320x568.png"),
 	});
-	await discordPairDialog.getByRole("button", { name: "Retry", exact: true }).click();
+	await discordRetry.click();
 	await expect.poll(() => pairCodeRequests.length).toBe(7);
+	await page.setViewportSize({ width: 1440, height: 1100 });
 	discordPairDialog = page.getByRole("dialog", { name: "Pair Discord" });
 	await expect(discordPairDialog.getByText("Server", { exact: true })).toBeVisible();
 	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
@@ -8073,7 +9184,8 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	const desktopDiscordQrBox = await discordQr.boundingBox();
 	expect(desktopDiscordQrBox?.width ?? 0).toBeLessThanOrEqual(192);
 	await page.setViewportSize({ width: 320, height: 568 });
-	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+	await expectNoHorizontalOverflow(page.locator("html"), "Discord pairing document at 320px");
+	await expectNoHorizontalOverflow(discordPairDialog, "Discord pairing Dialog at 320px");
 	const mobileDiscordQrBox = await discordQr.boundingBox();
 	expect(mobileDiscordQrBox?.width ?? 0).toBeLessThanOrEqual(192);
 	const mobileDiscordDialogBox = await discordPairDialog.boundingBox();
@@ -8087,6 +9199,23 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	expect(
 		(mobileDiscordActionBox?.y ?? 568) + (mobileDiscordActionBox?.height ?? 1),
 	).toBeLessThanOrEqual(568);
+	const addDiscordToServer = discordPairDialog.getByRole("button", { name: "Add to server" });
+	await expectContainedInOwnerAndViewport(
+		page,
+		copyDiscordCodeButton,
+		discordPairDialog,
+		"mobile Copy Discord code",
+	);
+	await expectContainedInOwnerAndViewport(
+		page,
+		addDiscordToServer,
+		discordPairDialog,
+		"mobile Add Discord to server",
+	);
+	await expectControlsDoNotOverlap(
+		[copyDiscordCodeButton, addDiscordToServer],
+		"mobile Discord pairing actions",
+	);
 	await expectActionCenterUncovered(
 		discordPairDialog.getByRole("button", { name: "Add to server" }),
 	);
@@ -8143,14 +9272,37 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	).toBeVisible();
 	await page.keyboard.press("Escape");
 
+	await page.setViewportSize({ width: 320, height: 568 });
+	await telegramChatsTrigger.click();
+	pairedChatsPanel = page.getByRole("dialog", { name: "Paired chats", exact: true });
+	await expect(currentBindingRow).toBeVisible();
 	await telegramUnpairButton.click();
 	const unpairConfirmation = page.getByRole("alertdialog", { name: "Unpair Current Agent DM?" });
-	await unpairConfirmation.getByRole("button", { name: "Unpair chat", exact: true }).click();
+	await expectNoHorizontalOverflow(unpairConfirmation, "Telegram Unpair confirmation at 320px");
+	const telegramConfirmUnpair = unpairConfirmation.getByRole("button", {
+		name: "Unpair chat",
+		exact: true,
+	});
+	await expectContainedInOwnerAndViewport(
+		page,
+		telegramConfirmUnpair,
+		unpairConfirmation,
+		"Telegram Unpair confirmation action",
+	);
+	await telegramConfirmUnpair.click();
 	await expect.poll(() => deleteBindingRequests.length).toBe(1);
 	await expect(page.getByText("Couldn't unpair chat", { exact: true })).toBeVisible();
+	const unpairErrorToast = page.locator("[data-sonner-toast]").last();
+	await expectNoHorizontalOverflow(unpairErrorToast, "long Unpair error toast at 320px");
+	await expectContainedInOwnerAndViewport(
+		page,
+		unpairErrorToast,
+		page.locator("html"),
+		"long Unpair error toast at 320px",
+	);
 	await expect(currentBindingRow).toContainText("Couldn't unpair · Try again");
 	await expect(unpairConfirmation).toBeVisible();
-	await unpairConfirmation.getByRole("button", { name: "Unpair chat", exact: true }).click();
+	await telegramConfirmUnpair.click();
 	await expect.poll(() => deleteBindingRequests.length).toBe(2);
 	expect(deleteBindingRequests.slice(0, 2)).toEqual([
 		`/v1/channels/${telegramId}/bindings/${currentBindingId}`,
@@ -8162,7 +9314,11 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	expect(
 		channelBindings.some((binding) => isRecord(binding) && binding.id === otherAgentBindingId),
 	).toBe(true);
+	await pairedChatsPanel.getByRole("button", { name: "Close", exact: true }).click();
 
+	await discordChatsTrigger.click();
+	pairedChatsPanel = page.getByRole("dialog", { name: "Paired chats", exact: true });
+	await expect(discordServerRow).toBeVisible();
 	const discordUnpairButton = discordServerRow.getByRole("button", {
 		name: "Unpair Server · Clawdi Community",
 		exact: true,
@@ -8176,94 +9332,63 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 		.getByRole("button", { name: "Unpair chat", exact: true })
 		.click();
 	await expect.poll(() => deleteBindingRequests.length).toBe(3);
-	await expect(discordServerRow.getByText("Unpairing…", { exact: true })).toBeVisible();
+	const pendingDiscordUnpair = discordServerRow.locator("button", { hasText: "Unpairing…" });
+	await expect(pendingDiscordUnpair).toBeVisible();
+	await expectContainedInOwnerAndViewport(
+		page,
+		pendingDiscordUnpair,
+		discordServerRow,
+		"pending Discord Unpair",
+	);
 	expect(deleteBindingRequests[2]).toBe(
 		`/v1/channels/${discordId}/bindings/${discordServerBindingId}`,
 	);
 	await discordUnpairClick;
 	await expect(discordServerRow).toHaveCount(0);
-
-	await page.setViewportSize({ width: 320, height: 568 });
-	const mobileChatRow = page.locator(`[data-channel-binding-id="${polledBindingId}"]`);
-	const mobileChatTitle = mobileChatRow.getByText("Newly Paired DM", { exact: true });
-	const mobileUnpair = mobileChatRow.getByRole("button", {
-		name: "Unpair Newly Paired DM",
-		exact: true,
-	});
-	await expect(mobileChatTitle).toBeVisible();
-	await expect(mobileUnpair).toBeVisible();
-	const mobileTitleBox = await mobileChatTitle.boundingBox();
-	const mobileActionBox = await mobileUnpair.boundingBox();
-	expect(mobileTitleBox?.width ?? 0).toBeGreaterThan(100);
-	expect(mobileActionBox?.y ?? 0).toBeGreaterThan(mobileTitleBox?.y ?? 0);
-	const mobileChannelTitle = telegramRow.getByText("Support Telegram", { exact: true });
-	const mobilePairAction = telegramRow.getByRole("button", { name: "Pair Telegram", exact: true });
-	const mobileChannelTitleBox = await mobileChannelTitle.boundingBox();
-	const mobilePairActionBox = await mobilePairAction.boundingBox();
-	expect(mobileChannelTitleBox?.width ?? 0).toBeGreaterThan(100);
-	expect(mobilePairActionBox?.y ?? 0).toBeGreaterThan(mobileChannelTitleBox?.y ?? 0);
-	const mobileDiscordDmTitle = discordDmRow.getByText(`Direct message · ${discordDmName}`, {
-		exact: true,
-	});
-	await expect(mobileDiscordDmTitle).toBeVisible();
-	const mobileDiscordDmTitleLayout = await mobileDiscordDmTitle.evaluate((element) => {
-		const style = getComputedStyle(element);
-		return {
-			height: element.getBoundingClientRect().height,
-			lineHeight: Number.parseFloat(style.lineHeight),
-			overflow: style.overflow,
-			textOverflow: style.textOverflow,
-			whiteSpace: style.whiteSpace,
-			webkitLineClamp: style.webkitLineClamp,
-		};
-	});
-	expect(discordDmName).toHaveLength(300);
-	expect(mobileDiscordDmTitleLayout).toMatchObject({
-		overflow: "hidden",
-		textOverflow: "clip",
-		whiteSpace: "normal",
-		webkitLineClamp: "2",
-	});
-	expect(mobileDiscordDmTitleLayout.height).toBeLessThanOrEqual(
-		mobileDiscordDmTitleLayout.lineHeight * 2 + 1,
-	);
-	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
 	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
-	await discordGroup.evaluate((element) => {
-		element.scrollIntoView({ block: "start" });
-		let scrollParent = element.parentElement;
-		while (scrollParent && scrollParent.scrollHeight <= scrollParent.clientHeight) {
-			scrollParent = scrollParent.parentElement;
-		}
-		if (scrollParent) scrollParent.scrollTop = Math.max(0, scrollParent.scrollTop - 72);
-	});
-	await page.screenshot({
-		path:
-			process.env.AGENT_CHANNELS_MOBILE_SCREENSHOT_PATH ??
-			testInfo.outputPath("agent-channels-320x568.png"),
-		fullPage: false,
-	});
+	await pairedChatsPanel.getByRole("button", { name: "Close", exact: true }).click();
+	await expect(discordChatsTrigger).toHaveAccessibleName("Paired chats · 11");
 
-	await discordRow
-		.getByRole("button", {
-			name: "Unlink Community Discord from Hosted agent",
-			exact: true,
-		})
-		.click();
+	await discordRow.evaluate((element) => element.scrollIntoView({ block: "center" }));
+	await discordUnlinkButton.click();
 	const unlinkConfirmation = page.getByRole("alertdialog", {
-		name: "Unlink Community Discord?",
+		name: `Unlink ${discordChannelName}?`,
 		exact: true,
 	});
+	await expectNoHorizontalOverflow(unlinkConfirmation, "long-name Unlink confirmation at 320px");
+	const unlinkCancel = unlinkConfirmation.getByRole("button", { name: "Cancel", exact: true });
+	const unlinkConfirm = unlinkConfirmation.getByRole("button", { name: "Unlink", exact: true });
+	await expectContainedInOwnerAndViewport(
+		page,
+		unlinkCancel,
+		unlinkConfirmation,
+		"Unlink Cancel at 320px",
+	);
+	await expectContainedInOwnerAndViewport(
+		page,
+		unlinkConfirm,
+		unlinkConfirmation,
+		"Unlink confirm at 320px",
+	);
+	await expectControlsDoNotOverlap(
+		[unlinkCancel, unlinkConfirm],
+		"Unlink confirmation actions at 320px",
+	);
 	const unlinkClick = unlinkConfirmation
 		.getByRole("button", { name: "Unlink", exact: true })
 		.click();
 	await expect.poll(() => unlinkAgentRequests.length).toBe(1);
-	await expect(
-		discordRow.getByRole("button", {
-			name: "Unlinking Community Discord from Hosted agent",
-			exact: true,
-		}),
-	).toContainText("Unlinking…");
+	const pendingUnlink = discordRow.getByRole("button", {
+		name: `Unlinking ${discordChannelName} from Hosted agent`,
+		exact: true,
+	});
+	await expect(pendingUnlink).toContainText("Unlinking…");
+	await expectContainedInOwnerAndViewport(
+		page,
+		pendingUnlink,
+		discordRow.locator("article"),
+		"pending Discord Unlink at 320px",
+	);
 	await unlinkClick;
 	expect(unlinkAgentRequests).toEqual([`/v1/channels/${discordId}/agent-links/${discordLinkId}`]);
 	const unexpectedErrors = errors.filter(

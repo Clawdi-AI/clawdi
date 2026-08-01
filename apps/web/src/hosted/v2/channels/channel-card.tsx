@@ -36,12 +36,13 @@ export function ChannelCard({
 		>
 			<div
 				data-channel-card-header
-				className="grid min-h-20 min-w-0 gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+				className="grid min-h-20 min-w-0 gap-3 p-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center"
 			>
 				<EntityHeader
 					align="start"
 					icon={<ProviderChip provider={provider} />}
 					title={title}
+					titleAttribute={typeof title === "string" ? title : undefined}
 					meta={state}
 				/>
 				{actions ? (

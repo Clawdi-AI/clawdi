@@ -34,7 +34,12 @@ const Toaster = ({ ...props }: ToasterProps) => {
 			}
 			toastOptions={{
 				classNames: {
-					toast: "cn-toast",
+					toast: "cn-toast max-w-[calc(100vw-2rem)] overflow-hidden",
+					content: "min-w-0",
+					title: "min-w-0 [overflow-wrap:anywhere]",
+					description: "min-w-0 [overflow-wrap:anywhere]",
+					actionButton: "shrink-0",
+					cancelButton: "shrink-0",
 				},
 			}}
 			{...props}

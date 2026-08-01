@@ -170,7 +170,7 @@ export function useCreateChannel() {
 				"id" | "name" | "provider" | "webhook_url" | "agent_link_id" | "agent_id"
 			>;
 		} catch (error) {
-			toastApiError("Couldn't connect channel")(error);
+			toastApiError("Couldn't connect Custom bot")(error);
 			throw error;
 		}
 	});

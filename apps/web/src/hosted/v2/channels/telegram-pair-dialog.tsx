@@ -20,6 +20,8 @@ import {
 	telegramPairDeepLink,
 } from "@/hosted/v2/channels/channel-detail-page.logic";
 import { pairCodeExpired } from "@/hosted/v2/channels/channel-linking.logic";
+import { usePairingSuccess } from "@/hosted/v2/channels/channel-pairing-success";
+import type { ChannelBinding } from "@/hosted/v2/channels/channel-types";
 import { CopyInline } from "@/hosted/v2/channels/channel-ui";
 import { useCreatePairCode } from "@/hosted/v2/channels/channels-hooks";
 import { cn } from "@/lib/utils";
@@ -41,12 +43,14 @@ export function TelegramPairDialog({
 	accountId,
 	agentLinkId,
 	channelName,
+	bindings,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	accountId: string;
 	agentLinkId: string;
 	channelName?: string;
+	bindings?: readonly ChannelBinding[];
 }) {
 	const pair = useCreatePairCode(accountId, { toastOnError: false });
 	const { copied, copy } = useCopyToClipboard({
@@ -60,6 +64,14 @@ export function TelegramPairDialog({
 	const openKeyRef = useRef<string | null>(null);
 	const sessionRef = useRef(0);
 	const lockedSessionRef = useRef<number | null>(null);
+	const handlePairingOpenChange = usePairingSuccess({
+		open,
+		onOpenChange,
+		accountId,
+		agentLinkId,
+		provider: "telegram",
+		bindings,
+	});
 
 	const generate = useCallback(
 		async (session = sessionRef.current) => {
@@ -134,22 +146,23 @@ export function TelegramPairDialog({
 		: channelName?.trim() || "this bot";
 
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
+		<Dialog open={open} onOpenChange={handlePairingOpenChange}>
 			<DialogContent
 				data-hosted="true"
 				data-v2="true"
-				className="h-[min(40rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:h-auto sm:max-w-md"
+				className="h-[min(40rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:h-auto sm:max-w-md"
 			>
 				<DialogHeader>
 					<DialogTitle>Pair Telegram</DialogTitle>
-					<DialogDescription>
-						Scan the QR code or open Telegram to pair with {botIdentity}.
-					</DialogDescription>
+					<p className="min-w-0 truncate text-sm font-medium" title={botIdentity}>
+						{botIdentity}
+					</p>
+					<DialogDescription>Scan the QR code or open Telegram to pair.</DialogDescription>
 				</DialogHeader>
 
 				<div
 					data-telegram-pair-dialog-body
-					className="min-h-0 overflow-y-auto overscroll-contain pr-1"
+					className="min-h-0 min-w-0 break-words overflow-y-auto overscroll-contain pr-1 [overflow-wrap:anywhere]"
 				>
 					{generating ? (
 						<div className="flex min-h-64 flex-col items-center justify-center gap-3 text-muted-foreground">
@@ -166,10 +179,11 @@ export function TelegramPairDialog({
 						<div className="flex flex-col gap-4">
 							{validLink ? (
 								<div className="flex justify-center">
-									<div className="rounded-md border bg-white p-3 shadow-sm">
+									<div className="max-w-full rounded-md border bg-white p-3 shadow-sm">
 										<QRCodeSVG
 											value={validLink}
 											size={192}
+											className="h-auto w-full max-w-48"
 											role="img"
 											aria-label="Telegram pairing QR code"
 										/>
@@ -213,23 +227,26 @@ export function TelegramPairDialog({
 
 				{validLink ? (
 					<DialogFooter>
-						<Button variant="outline" onClick={() => void copy(validLink)}>
+						<Button
+							variant="outline"
+							className="min-w-0 whitespace-normal"
+							onClick={() => void copy(validLink)}
+						>
 							{copied ? <Check className="size-4" /> : <Copy className="size-4" />}
 							{copied ? "Copied" : "Copy link"}
 						</Button>
 						<Button
 							render={<a href={validLink} target="_blank" rel="noopener noreferrer" />}
 							nativeButton={false}
+							className="min-w-0 whitespace-normal"
 						>
-							{result?.bot_username
-								? `Open @${result.bot_username.replace(/^@/, "")}`
-								: "Open Telegram"}
+							Open Telegram
 							<ExternalLink className="size-4" />
 						</Button>
 					</DialogFooter>
 				) : result && !generating ? (
 					<DialogFooter>
-						<Button onClick={() => void generate()}>
+						<Button className="min-w-0 whitespace-normal" onClick={() => void generate()}>
 							<QrCode className="size-4" />
 							{expired ? "Generate new link" : "Try again"}
 						</Button>

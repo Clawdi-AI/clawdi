@@ -18,7 +18,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
 import { pairCodeExpired } from "@/hosted/v2/channels/channel-linking.logic";
-import type { ChannelPairCode } from "@/hosted/v2/channels/channel-types";
+import { usePairingSuccess } from "@/hosted/v2/channels/channel-pairing-success";
+import type { ChannelBinding, ChannelPairCode } from "@/hosted/v2/channels/channel-types";
 import { useCreatePairCode } from "@/hosted/v2/channels/channels-hooks";
 
 const DISCORD_PAIR_TTL_SECONDS = 900;
@@ -31,12 +32,14 @@ export function DiscordPairDialog({
 	accountId,
 	agentLinkId,
 	channelName,
+	bindings,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	accountId: string;
 	agentLinkId: string;
 	channelName?: string;
+	bindings?: readonly ChannelBinding[];
 }) {
 	const pair = useCreatePairCode(accountId, { toastOnError: false });
 	const { copied, copy } = useCopyToClipboard({
@@ -51,6 +54,14 @@ export function DiscordPairDialog({
 	const openKeyRef = useRef<string | null>(null);
 	const sessionRef = useRef(0);
 	const lockedSessionRef = useRef<number | null>(null);
+	const handlePairingOpenChange = usePairingSuccess({
+		open,
+		onOpenChange,
+		accountId,
+		agentLinkId,
+		provider: "discord",
+		bindings,
+	});
 
 	const prepare = useCallback(
 		async (session = sessionRef.current) => {
@@ -113,22 +124,23 @@ export function DiscordPairDialog({
 	const botIdentity = channelName?.trim() || "this bot";
 
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
+		<Dialog open={open} onOpenChange={handlePairingOpenChange}>
 			<DialogContent
 				data-hosted="true"
 				data-v2="true"
-				className="h-[min(40rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:h-auto sm:max-w-md"
+				className="h-[min(40rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:h-auto sm:max-w-md"
 			>
 				<DialogHeader>
 					<DialogTitle>Pair Discord</DialogTitle>
-					<DialogDescription>
-						Choose a server or direct message for {botIdentity}.
-					</DialogDescription>
+					<p className="min-w-0 truncate text-sm font-medium" title={botIdentity}>
+						{botIdentity}
+					</p>
+					<DialogDescription>Choose a server or direct message to pair.</DialogDescription>
 				</DialogHeader>
 
 				<div
 					data-discord-pair-dialog-body
-					className="min-h-0 overflow-y-auto overscroll-contain pr-1"
+					className="min-h-0 min-w-0 break-words overflow-y-auto overscroll-contain pr-1 [overflow-wrap:anywhere]"
 				>
 					{preparing ? (
 						<div className="flex min-h-64 flex-col items-center justify-center gap-3 text-muted-foreground">
@@ -196,9 +208,7 @@ export function DiscordPairDialog({
 											</div>
 										)}
 										<div className="space-y-2 border-t pt-3 text-sm">
-											<p>
-												1. Add {botIdentity} to the server. You need Manage Server or Administrator.
-											</p>
+											<p>1. Add the bot to the server. You need Manage Server or Administrator.</p>
 											<p>
 												2. In that server, run <code>/bot_pair</code> and paste this code into the
 												required <code>code</code> option.
@@ -208,7 +218,7 @@ export function DiscordPairDialog({
 									</TabsContent>
 									<TabsContent value="dm" data-discord-pair-path="dm" className="mt-2 space-y-3">
 										<p className="text-sm text-muted-foreground">
-											If you can already open a direct message with {botIdentity}, run{" "}
+											If you can already open a direct message with the bot, run{" "}
 											<code>/bot_pair</code> and paste this code into the required <code>code</code>{" "}
 											option. No server permission is required.
 										</p>
@@ -227,6 +237,7 @@ export function DiscordPairDialog({
 					<DialogFooter>
 						<Button
 							variant={path === "server" ? "outline" : "default"}
+							className="min-w-0 whitespace-normal"
 							onClick={() => void copy(result.code)}
 						>
 							{copied ? <Check className="size-4" /> : <Copy className="size-4" />}
@@ -238,6 +249,7 @@ export function DiscordPairDialog({
 									<a href={result.discord_install_url} target="_blank" rel="noopener noreferrer" />
 								}
 								nativeButton={false}
+								className="min-w-0 whitespace-normal"
 							>
 								Add to server
 								<ExternalLink className="size-4" />
@@ -246,7 +258,7 @@ export function DiscordPairDialog({
 					</DialogFooter>
 				) : result && expired ? (
 					<DialogFooter>
-						<Button onClick={() => void prepare()}>
+						<Button className="min-w-0 whitespace-normal" onClick={() => void prepare()}>
 							<RefreshCw className="size-4" />
 							Generate new code
 						</Button>

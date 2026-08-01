@@ -171,6 +171,7 @@ export function EntityHeader({
 	align = "center",
 	className,
 	titleClassName,
+	titleAttribute,
 }: {
 	icon: ReactNode;
 	title: ReactNode;
@@ -180,6 +181,8 @@ export function EntityHeader({
 	align?: "center" | "start";
 	className?: string;
 	titleClassName?: string;
+	/** Full plain-text identity for a visually truncated title. */
+	titleAttribute?: string;
 }) {
 	return (
 		<div
@@ -192,7 +195,10 @@ export function EntityHeader({
 			{icon}
 			<div className="min-w-0 flex-1">
 				<div className="flex min-w-0 items-center gap-2">
-					<span className={cn("min-w-0 flex-1 truncate text-sm font-medium", titleClassName)}>
+					<span
+						className={cn("min-w-0 flex-1 truncate text-sm font-medium", titleClassName)}
+						title={titleAttribute}
+					>
 						{title}
 					</span>
 					{titleAdornment ? <span className="shrink-0">{titleAdornment}</span> : null}

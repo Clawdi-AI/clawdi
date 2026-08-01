@@ -1,7 +1,7 @@
 "use client";
 
 import { Link } from "@tanstack/react-router";
-import { Check, ExternalLink } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { EntityIcon } from "@/components/entity-icon";
@@ -65,7 +65,6 @@ export function ConnectBotDialog({
 	const openRef = useRef(open);
 	const dialogSessionRef = useRef(0);
 	openRef.current = open;
-
 	const availableProviders = availableBotProvidersForAgent(agentId, agentType, linkedProviders);
 	const unavailableProviders = CONNECTABLE_BOT_PROVIDERS.filter(
 		(item) => !availableProviders.includes(item),
@@ -147,8 +146,8 @@ export function ConnectBotDialog({
 				}
 				setCreated(data);
 			} else {
-				toast.success("Channel connected", {
-					description: `${data.name} is ready on the Channels page.`,
+				toast.success("Custom bot connected", {
+					description: `${data.name} is ready to use.`,
 				});
 			}
 		} catch {
@@ -161,14 +160,6 @@ export function ConnectBotDialog({
 
 	function handleOpenChange(nextOpen: boolean) {
 		if (!nextOpen) {
-			if (created?.agent_link_id && onAgentConnected) {
-				onAgentConnected({
-					id: created.id,
-					name: created.name,
-					provider: created.provider,
-					agentLinkId: created.agent_link_id,
-				});
-			}
 			dialogSessionRef.current += 1;
 			setToken("");
 			setCreated(null);
@@ -191,13 +182,8 @@ export function ConnectBotDialog({
 						onClick={() => changeProvider(item)}
 					>
 						<EntityIcon kind="channel" id={item} label={PROVIDER_META[item].label} size="sm" />
-						<span className="min-w-0 text-left leading-tight">
-							<span className="block">{PROVIDER_META[item].label}</span>
-							{alreadyLinked ? (
-								<span className="flex items-center gap-1 whitespace-nowrap text-[10px] font-normal text-muted-foreground">
-									<Check className="size-3" /> Connected
-								</span>
-							) : null}
+						<span className="min-w-0 truncate text-left leading-tight">
+							{PROVIDER_META[item].label}
 						</span>
 					</Button>
 				);
@@ -210,171 +196,183 @@ export function ConnectBotDialog({
 			<DialogContent
 				data-hosted="true"
 				data-v2="true"
-				className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"
+				className="max-h-[calc(100dvh-2rem)] min-w-0 overflow-x-hidden overflow-y-auto sm:max-w-md [&>*]:min-w-0"
 			>
 				{created ? (
 					<>
 						<DialogHeader>
-							<DialogTitle>Bot connected</DialogTitle>
+							<DialogTitle>Custom bot connected</DialogTitle>
 							<DialogDescription>
-								<span className="font-medium">{created.name}</span> is ready to use.
+								<span className="font-medium [overflow-wrap:anywhere]" title={created.name}>
+									{created.name}
+								</span>{" "}
+								is ready to use.
 							</DialogDescription>
 						</DialogHeader>
 						<DialogFooter>
-							<Button variant="outline" onClick={() => handleOpenChange(false)}>
+							<Button
+								variant="outline"
+								className="min-w-0 whitespace-normal"
+								onClick={() => handleOpenChange(false)}
+							>
 								Done
 							</Button>
 							<Button
 								render={<Link to="/channels/$id" params={{ id: created.id }} />}
 								nativeButton={false}
+								className="min-w-0 whitespace-normal"
 							>
-								View bot
+								View Custom bot
 							</Button>
 						</DialogFooter>
 					</>
 				) : (
 					<>
 						<DialogHeader>
-							<DialogTitle>Connect a bot</DialogTitle>
+							<DialogTitle>Connect custom bot</DialogTitle>
 							<DialogDescription>
-								{agentId ? "Connect a bot you manage to this Agent." : "Add a bot you manage."}
+								{agentId
+									? "Connect a Custom bot you manage to this Agent."
+									: "Connect a Custom bot you manage."}
 							</DialogDescription>
 						</DialogHeader>
 
 						{availableProviders.length === 0 ? (
-							<>
-								<div className="space-y-3">
-									{providerChoices}
-									<p role="status" className="text-sm text-muted-foreground">
-										This Agent already has one bot from each provider. Unlink one from its card
-										before connecting a replacement.
-									</p>
-								</div>
-								<DialogFooter>
-									<Button render={<Link to="/channels" />} nativeButton={false} variant="outline">
-										Manage bots
-									</Button>
-									<Button onClick={() => handleOpenChange(false)}>Done</Button>
-								</DialogFooter>
-							</>
+							<div className="space-y-3">
+								{providerChoices}
+								<p role="status" className="text-sm text-muted-foreground">
+									This Agent already has a channel from each provider. Unlink one before connecting
+									a Custom bot.
+								</p>
+							</div>
 						) : (
-							<>
-								<div className="flex flex-col gap-3">
-									{providerChoices}
-									{unavailableProviders.length === 1 ? (
-										<p className="whitespace-normal text-xs text-muted-foreground">
-											Unlink {PROVIDER_META[unavailableProviders[0]].label} from its card to replace
-											it. You can also{" "}
-											<Link
-												to="/channels"
-												className="font-medium text-foreground underline underline-offset-4"
-											>
-												manage bots
-											</Link>
-											.
+							<div className="flex flex-col gap-3">
+								{providerChoices}
+								{unavailableProviders.length === 1 ? (
+									<p className="text-xs text-muted-foreground">
+										{PROVIDER_META[unavailableProviders[0]].label} is already linked to this Agent.
+										Unlink it to connect another Custom bot from that provider.
+									</p>
+								) : null}
+								<p className="min-w-0 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
+									{provider === "telegram" ? "Need a bot token? " : "Need app credentials? "}
+									<a
+										href={meta.setupUrl}
+										target="_blank"
+										rel="noreferrer"
+										className="inline-flex min-w-0 flex-wrap items-center gap-1 font-medium text-foreground underline underline-offset-4"
+									>
+										{provider === "telegram"
+											? "Create a bot with @BotFather"
+											: "Open Discord Developer Portal"}
+										<ExternalLink className="size-3" />
+									</a>
+								</p>
+
+								<div className="flex flex-col gap-1.5">
+									<Label htmlFor="connect-name">Name</Label>
+									<Input
+										id="connect-name"
+										value={name}
+										onChange={(event) => setName(event.target.value)}
+										placeholder="Support Bot"
+										autoComplete="off"
+									/>
+								</div>
+
+								<div className="flex flex-col gap-1.5">
+									<Label htmlFor="connect-token">Bot token</Label>
+									<Input
+										id="connect-token"
+										type="password"
+										value={token}
+										onChange={(event) => setToken(event.target.value)}
+										placeholder={meta.tokenPlaceholder}
+										autoComplete="off"
+										spellCheck={false}
+										required
+										aria-invalid={Boolean(tokenError)}
+										aria-describedby={tokenError ? "connect-token-error" : undefined}
+									/>
+									{tokenError ? (
+										<p
+											id="connect-token-error"
+											className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
+										>
+											{tokenError}
 										</p>
 									) : null}
-									<p className="text-xs text-muted-foreground">
-										{provider === "telegram" ? "Need a bot token? " : "Need app credentials? "}
-										<a
-											href={meta.setupUrl}
-											target="_blank"
-											rel="noreferrer"
-											className="inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-4"
-										>
-											{provider === "telegram"
-												? "Create a bot with @BotFather"
-												: "Open Discord Developer Portal"}
-											<ExternalLink className="size-3" />
-										</a>
-									</p>
-
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="connect-name">Name</Label>
-										<Input
-											id="connect-name"
-											value={name}
-											onChange={(event) => setName(event.target.value)}
-											placeholder="Support Bot"
-											autoComplete="off"
-										/>
-									</div>
-
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="connect-token">Bot token</Label>
-										<Input
-											id="connect-token"
-											type="password"
-											value={token}
-											onChange={(event) => setToken(event.target.value)}
-											placeholder={meta.tokenPlaceholder}
-											autoComplete="off"
-											spellCheck={false}
-											required
-											aria-invalid={Boolean(tokenError)}
-											aria-describedby={tokenError ? "connect-token-error" : undefined}
-										/>
-										{tokenError ? (
-											<p id="connect-token-error" className="text-xs text-destructive">
-												{tokenError}
-											</p>
-										) : null}
-									</div>
-
-									{discordSelected ? (
-										<>
-											<div className="flex flex-col gap-1.5">
-												<Label htmlFor="connect-app-id">Application ID</Label>
-												<Input
-													id="connect-app-id"
-													value={applicationId}
-													onChange={(event) => setApplicationId(event.target.value)}
-													placeholder="Application ID"
-													autoComplete="off"
-													spellCheck={false}
-													required
-													aria-invalid={Boolean(applicationIdError)}
-													aria-describedby={applicationIdError ? "connect-app-id-error" : undefined}
-												/>
-												{applicationIdError ? (
-													<p id="connect-app-id-error" className="text-xs text-destructive">
-														{applicationIdError}
-													</p>
-												) : null}
-											</div>
-											<div className="flex flex-col gap-1.5">
-												<Label htmlFor="connect-public-key">Public key</Label>
-												<Input
-													id="connect-public-key"
-													value={publicKey}
-													onChange={(event) => setPublicKey(event.target.value)}
-													placeholder="64-character hex public key"
-													autoComplete="off"
-													spellCheck={false}
-													required
-													aria-invalid={Boolean(publicKeyError)}
-													aria-describedby={publicKeyError ? "connect-public-key-error" : undefined}
-												/>
-												{publicKeyError ? (
-													<p id="connect-public-key-error" className="text-xs text-destructive">
-														{publicKeyError}
-													</p>
-												) : null}
-											</div>
-										</>
-									) : null}
 								</div>
 
-								<DialogFooter>
-									<Button variant="outline" onClick={() => handleOpenChange(false)}>
-										{isSubmitting ? "Close" : "Cancel"}
-									</Button>
-									<Button onClick={() => void submit()} disabled={!canSubmit || isSubmitting}>
-										{isSubmitting ? "Connecting…" : "Connect"}
-									</Button>
-								</DialogFooter>
-							</>
+								{discordSelected ? (
+									<>
+										<div className="flex flex-col gap-1.5">
+											<Label htmlFor="connect-app-id">Application ID</Label>
+											<Input
+												id="connect-app-id"
+												value={applicationId}
+												onChange={(event) => setApplicationId(event.target.value)}
+												placeholder="Application ID"
+												autoComplete="off"
+												spellCheck={false}
+												required
+												aria-invalid={Boolean(applicationIdError)}
+												aria-describedby={applicationIdError ? "connect-app-id-error" : undefined}
+											/>
+											{applicationIdError ? (
+												<p
+													id="connect-app-id-error"
+													className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
+												>
+													{applicationIdError}
+												</p>
+											) : null}
+										</div>
+										<div className="flex flex-col gap-1.5">
+											<Label htmlFor="connect-public-key">Public key</Label>
+											<Input
+												id="connect-public-key"
+												value={publicKey}
+												onChange={(event) => setPublicKey(event.target.value)}
+												placeholder="64-character hex public key"
+												autoComplete="off"
+												spellCheck={false}
+												required
+												aria-invalid={Boolean(publicKeyError)}
+												aria-describedby={publicKeyError ? "connect-public-key-error" : undefined}
+											/>
+											{publicKeyError ? (
+												<p
+													id="connect-public-key-error"
+													className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
+												>
+													{publicKeyError}
+												</p>
+											) : null}
+										</div>
+									</>
+								) : null}
+							</div>
 						)}
+
+						<DialogFooter>
+							<Button
+								variant="outline"
+								className="min-w-0 whitespace-normal"
+								onClick={() => handleOpenChange(false)}
+							>
+								{isSubmitting ? "Close" : "Cancel"}
+							</Button>
+							{availableProviders.length > 0 ? (
+								<Button
+									className="min-w-0 whitespace-normal"
+									onClick={() => void submit()}
+									disabled={!canSubmit || isSubmitting}
+								>
+									{isSubmitting ? "Connecting…" : "Connect custom bot"}
+								</Button>
+							) : null}
+						</DialogFooter>
 					</>
 				)}
 			</DialogContent>

@@ -7,6 +7,11 @@ const agentChannels = readFileSync(
 );
 const channelDetail = readFileSync(new URL("./channel-detail-page.tsx", import.meta.url), "utf8");
 const channelHooks = readFileSync(new URL("./channels-hooks.ts", import.meta.url), "utf8");
+const pairedChatsDialog = readFileSync(
+	new URL("./paired-chats-dialog.tsx", import.meta.url),
+	"utf8",
+);
+const addChannelDialog = readFileSync(new URL("./add-channel-dialog.tsx", import.meta.url), "utf8");
 const channelsTab = agentChannels.slice(
 	agentChannels.indexOf("function ChannelsTab"),
 	agentChannels.indexOf("// ── Settings / Compute"),
@@ -33,7 +38,8 @@ describe("hosted-agent channel finish line", () => {
 	});
 
 	test("separates linking a channel from pairing a chat with one short instruction", () => {
-		expect(channelsTab).toContain("Link a bot to this Agent, then choose where it should answer.");
+		expect(channelsTab).toContain("Add a channel, then pair where this Agent should answer.");
+		expect(addChannelDialog).toContain("Choose a bot for this Agent.");
 		expect(channelsTab).toContain("Pair Telegram");
 		expect(channelsTab).toContain("pairingActionLabel(provider)");
 		expect(channelsTab).toContain("<TelegramPairDialog");
@@ -45,50 +51,42 @@ describe("hosted-agent channel finish line", () => {
 		expect(channelsTab).not.toContain("source revision");
 	});
 
-	test("keeps Add persistent and nests progressively disclosed chats inside their bot", () => {
+	test("keeps Add persistent and opens paired chats without expanding their bot", () => {
 		const connectedIndex = channelsTab.indexOf("<section data-agent-connected-channels");
 		const addIndex = channelsTab.indexOf("data-agent-add-channel");
 		const availableIndex = channelsTab.indexOf("<section data-agent-available-channels");
-		const readyBotIndex = channelsTab.indexOf('kind="Shared bot"');
 		expect(connectedIndex).toBeGreaterThanOrEqual(0);
 		expect(addIndex).toBeGreaterThan(connectedIndex);
-		expect(availableIndex).toBeGreaterThan(addIndex);
-		expect(readyBotIndex).toBeGreaterThan(availableIndex);
+		expect(availableIndex).toBe(-1);
 		expect(channelsTab).toContain("data-agent-connected-channels");
 		expect(channelsTab).toContain("data-agent-channel-group-id={link.id}");
-		expect(channelsTab).toContain("data-agent-channel-chats-for={link.id}");
+		expect(channelsTab).toContain("<PairedChatsDialog");
+		expect(pairedChatsDialog).toContain("data-agent-channel-chats-for={linkId}");
 		expect(channelsTab).not.toContain("data-agent-paired-chats");
-		expect(channelsTab).toContain("Paired chats");
+		expect(pairedChatsDialog).toContain("Paired chats");
 		expect(channelsTab).not.toContain("No chats paired");
 		expect(channelsTab).toContain("data-agent-add-channel");
-		expect(channelsTab).toContain("const showAvailableBotsSection =");
-		expect(channelsTab).toContain("{showAvailableBotsSection ? (");
-		const availableSectionGate = channelsTab.slice(
-			channelsTab.indexOf("const showAvailableBotsSection ="),
-			channelsTab.indexOf("const healthByAccount"),
-		);
-		expect(availableSectionGate).toContain("readyBots.length > 0");
-		expect(availableSectionGate).toContain("botPool.isLoading");
-		expect(availableSectionGate).toContain("botPool.error");
-		expect(addIndex).toBeLessThan(channelsTab.indexOf("{showAvailableBotsSection ? ("));
-		expect(channelsTab).toContain("data-add-channel-id");
+		expect(channelsTab).toContain("<AddChannelDialog");
+		expect(addChannelDialog).toContain("data-agent-add-channel-dialog");
+		expect(addChannelDialog).toContain("data-add-channel-id");
+		expect(addChannelDialog).toContain("Clawdi bots");
+		expect(addChannelDialog).toContain("Custom bots");
 		expect(channelsTab).not.toContain("No bot connected yet");
 		expect(channelsTab).not.toContain("View all channels");
 		expect(channelsTab).not.toContain("setAdvancedOpen");
 		expect(channelsTab).not.toContain('<details className="group border-t pt-4">');
 		expect(channelsTab).not.toContain("Fastest: use a ready-to-go bot");
 		expect(channelsTab).not.toContain("Use your own bot (advanced)");
-		expect(agentChannels).toContain("INITIAL_PAIRED_CHAT_COUNT = 3");
-		expect(channelsTab).toContain("pairedChats.slice(0, INITIAL_PAIRED_CHAT_COUNT)");
-		expect(channelsTab).toContain("const pairedChatsLabel =");
-		expect(channelsTab).toContain("Paired chats ·");
-		expect(channelsTab).toContain("aria-expanded={chatsOpen}");
-		expect(channelsTab).toContain("aria-controls={chatsId}");
-		expect(channelsTab).toContain("hidden={!chatsOpen}");
-		expect(channelsTab).toContain('showAllChats ? "Show less" : "Show more"');
-		expect(channelsTab).toContain("Show less");
+		expect(pairedChatsDialog).toContain("pairedChats.map");
+		expect(pairedChatsDialog).toContain("Paired chats ·");
+		expect(pairedChatsDialog).toContain("h-10 min-h-10 max-h-10");
+		expect(pairedChatsDialog).toContain("overflow-y-auto");
+		expect(pairedChatsDialog).toContain("<Dialog");
+		expect(pairedChatsDialog).toContain("<Sheet");
+		expect(pairedChatsDialog).not.toContain("Show more");
+		expect(pairedChatsDialog).not.toContain("Show less");
 		expect(channelsTab).toContain("onBindingsRetry");
-		expect(channelsTab).toContain("Loading paired chats");
+		expect(pairedChatsDialog).toContain("Loading paired chats");
 	});
 
 	test("replaces setup jargon with a bounded automatic wait and exits", () => {
