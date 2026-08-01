@@ -1,8 +1,5 @@
 import base64
-import binascii
 import hashlib
-import json
-import logging
 import re
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -11,11 +8,10 @@ from urllib.parse import urlencode, urlparse
 from uuid import UUID
 
 import httpx
-from cryptography.exceptions import InvalidTag
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
@@ -25,10 +21,11 @@ from app.core.auth import (
     require_user_auth_unbound,
     require_user_cli,
 )
-from app.core.config import settings
 from app.core.database import async_session_factory, get_session
-from app.models.ai_provider import AiProvider, AiProviderAuthPayload
-from app.models.user import User
+from app.models.ai_provider import (
+    AiProvider,
+    AiProviderAuthPayload,
+)
 from app.schemas.ai_provider import (
     AiProviderAcceptRequest,
     AiProviderAcceptResponse,
@@ -67,6 +64,10 @@ from app.schemas.ai_provider import (
     CredentialMaterialState,
     ai_provider_auth_from_persistence,
 )
+from app.services.ai_provider_auth_transition import (
+    AuthCredentialWrite,
+    transition_ai_provider_auth,
+)
 from app.services.ai_provider_capabilities import (
     AiProviderCapabilityInput,
     effective_provider_api_mode,
@@ -77,17 +78,36 @@ from app.services.ai_provider_credentials import (
     OAuthCredentialClaimConflict,
     OAuthCredentialConsumer,
     claim_oauth_payload,
-    claim_unique_bound_runtime,
     environment_binds_provider,
     environment_matches_runtime,
+    lock_ai_provider_owner,
+    provider_has_hosted_runtime_consumer,
+    validate_prospective_bound_runtime_auth,
+)
+from app.services.ai_provider_oauth_attempt import (
+    CODEX_OAUTH_PROVIDER,
+    AiProviderOAuthAttemptService,
+    OAuthDevicePollPending,
+)
+from app.services.ai_provider_oauth_attempt import (
+    oauth_config_for as _oauth_config_for,
+)
+from app.services.ai_provider_oauth_attempt import (
+    required_oauth_config as _required_oauth_config,
+)
+from app.services.ai_provider_oauth_attempt import (
+    validate_codex_oauth_provider_shape as _validate_codex_oauth_provider_shape,
+)
+from app.services.ai_provider_oauth_attempt import (
+    validate_oauth_url as _validate_oauth_url,
+)
+from app.services.ai_provider_oauth_attempt import (
+    validate_redirect_uri as _validate_redirect_uri,
 )
 from app.services.codex_oauth import (
     CODEX_DEVICE_VERIFICATION_URL,
     CODEX_OAUTH_CLIENT_ID,
-    CODEX_OAUTH_TOKEN_URL,
     CodexOAuthUpstreamError,
-    exchange_device_code,
-    poll_device_authorization,
     start_device_authorization,
 )
 from app.services.managed_ai_provider import (
@@ -106,11 +126,12 @@ from app.services.platform_contract import (
     read_platform_replay,
     store_platform_response,
 )
+from app.services.private_ip import is_private_hostname
 from app.services.sync_events import queue_provider_runtime_manifest_changed
-from app.services.vault_crypto import decrypt, encrypt
+from app.services.url_security import is_public_https_url
+from app.services.vault_crypto import decrypt
 
 router = APIRouter(prefix="/ai-providers", tags=["ai-providers"])
-logger = logging.getLogger(__name__)
 AI_PROVIDER_SCOPE = "account_global"
 
 ALLOWED_API_MODES: dict[str, set[str]] = {
@@ -126,22 +147,8 @@ ALLOWED_API_MODES: dict[str, set[str]] = {
 }
 OAUTH_STATE_TTL_SECONDS = 10 * 60
 OAUTH_DEVICE_STATE_TTL_SECONDS = 15 * 60
-CODEX_OAUTH_PROVIDER = "codex"
-CODEX_OPENAI_BASE_URL = "https://api.openai.com/v1"
 SUPPORTED_AGENT_PROFILE_TOOLS = {CODEX_OAUTH_PROVIDER}
 SUPPORTED_OAUTH_PROVIDERS = {CODEX_OAUTH_PROVIDER}
-CODEX_OAUTH_CONFIG = {
-    "authorization_url": "https://auth.openai.com/oauth/authorize",
-    "token_url": CODEX_OAUTH_TOKEN_URL,
-    "client_id": CODEX_OAUTH_CLIENT_ID,
-    "scope": "openid profile email offline_access api.connectors.read api.connectors.invoke",
-    "extra_authorize_params": {
-        "id_token_add_organizations": "true",
-        "codex_cli_simplified_flow": "true",
-        "originator": "codex_cli_rs",
-    },
-}
-BUILTIN_OAUTH_CONFIGS = {CODEX_OAUTH_PROVIDER: CODEX_OAUTH_CONFIG}
 RESERVED_OAUTH_AUTHORIZE_PARAMS = {
     "audience",
     "client_id",
@@ -159,7 +166,16 @@ IdempotencyKey = Annotated[
 ]
 
 _AI_PROVIDER_ACCEPT_OPERATION = "ai_provider.accept"
-_OAUTH_PENDING_SOURCE = "oauth_pending"
+
+
+def _oauth_attempt_service(auth: AuthContext) -> AiProviderOAuthAttemptService:
+    async def build_response(db: AsyncSession, provider: AiProvider) -> AiProviderResponse:
+        return await _to_response(db, auth, provider)
+
+    return AiProviderOAuthAttemptService(
+        response_builder=build_response,
+        session_factory=async_session_factory,
+    )
 
 
 async def _require_ai_provider_accept_auth(
@@ -218,60 +234,58 @@ async def upsert_ai_provider(
     errors = _validate_provider(body)
     if errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": errors})
-    await _lock_provider_pool(db, auth.user_id)
+    await lock_ai_provider_owner(db, auth.user_id)
+    await _validate_hosted_consumer_endpoint(
+        db,
+        owner_user_id=auth.user_id,
+        provider_id=body.provider_id,
+        base_url=body.base_url,
+    )
     await _validate_runtime_env_unique(db, auth, body)
     existing = await _find_provider(db, auth, body.provider_id, include_archived=True)
     if existing is not None and existing.archived_at is None and not replace:
         raise HTTPException(status.HTTP_409_CONFLICT, "AI Provider already exists")
-    previous_signature = _runtime_manifest_provider_signature(existing)
+    previous_non_auth_signature = _runtime_manifest_provider_non_auth_signature(existing)
+    auth_event_queued = False
     provider = existing or AiProvider(owner_user_id=auth.user_id, provider_id=body.provider_id)
-    _apply_provider_body(provider, body)
+    _apply_provider_body(provider, body, apply_auth=False)
+    auth_ref, auth_metadata = body.auth.persistence_fields()
+    if existing is None:
+        try:
+            await validate_prospective_bound_runtime_auth(
+                db,
+                owner_user_id=auth.user_id,
+                provider_id=provider.provider_id,
+                prospective_auth_type=body.auth.type,
+            )
+        except OAuthCredentialClaimConflict as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        provider.auth_type = body.auth.type
+        provider.auth_ref = auth_ref
+        provider.auth_metadata = auth_metadata
+    else:
+        try:
+            transition = await transition_ai_provider_auth(
+                db,
+                owner_user_id=auth.user_id,
+                provider=provider,
+                auth_type=body.auth.type,
+                auth_ref=auth_ref,
+                auth_metadata=auth_metadata,
+            )
+        except OAuthCredentialClaimConflict as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        auth_event_queued = transition.manifest_event_queued
     provider.archived_at = None
     db.add(provider)
-    if previous_signature != _runtime_manifest_provider_signature(provider):
+    if (
+        previous_non_auth_signature != _runtime_manifest_provider_non_auth_signature(provider)
+        and not auth_event_queued
+    ):
         await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
     await db.refresh(provider)
     return await _to_response(db, auth, provider)
-
-
-async def _validate_device_oauth_state(
-    db: AsyncSession,
-    auth: AuthContext,
-    provider: AiProvider,
-    encoded_state: str,
-) -> dict:
-    _validate_codex_oauth_provider_shape(provider)
-    state_payload = _decode_oauth_state(encoded_state)
-    if (
-        state_payload.get("flow") != "device_code"
-        or state_payload.get("provider_id") != provider.provider_id
-        or state_payload.get("owner_user_id") != str(auth.user_id)
-    ):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state does not match this user")
-    expires_at = _parse_state_datetime(str(state_payload.get("expires_at") or ""))
-    if expires_at < datetime.now(UTC):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state expired")
-    oauth_provider = _normalize_profile(str(state_payload.get("oauth_provider") or ""))
-    _validate_supported_oauth_provider(oauth_provider)
-    profile = _normalize_profile(str(state_payload.get("profile") or "default"))
-    payload = await _find_auth_payload(db, auth, provider.provider_id, profile)
-    current_revision = (
-        payload.credential_revision if payload is not None and payload.archived_at is None else None
-    )
-    base_revision = state_payload.get("base_credential_revision")
-    if base_revision != current_revision:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "AI Provider credentials changed after this sign-in started",
-        )
-    metadata = provider.auth_metadata or {}
-    if metadata.get("source") == _OAUTH_PENDING_SOURCE:
-        expected_hash = str(metadata.get("state_sha256") or "")
-        actual_hash = hashlib.sha256(encoded_state.encode()).hexdigest()
-        if not expected_hash or not secrets.compare_digest(expected_hash, actual_hash):
-            raise HTTPException(status.HTTP_409_CONFLICT, "AI Provider OAuth setup is not pending")
-    return state_payload
 
 
 @router.post(
@@ -283,110 +297,20 @@ async def poll_ai_provider_oauth_device(
     provider_id: str,
     body: AiProviderOAuthDevicePollRequest,
     auth: AuthContext = Depends(require_user_auth_unbound),
+    request_db: AsyncSession = Depends(get_session),
 ) -> AiProviderOAuthDevicePollResponse:
-    async with async_session_factory() as db:
-        provider = await _get_provider_or_404(db, auth, provider_id)
-        oauth_state = await _validate_device_oauth_state(db, auth, provider, body.state)
-        await db.rollback()
-
-    interval_seconds = oauth_state.get("poll_interval_seconds")
-    retry_after_seconds = (
-        min(max(interval_seconds, 1), 30) if isinstance(interval_seconds, int) else 5
+    await _get_provider_or_404(request_db, auth, provider_id)
+    result = await _oauth_attempt_service(auth).poll_device_attempt(
+        owner_user_id=auth.user_id,
+        provider_id=provider_id,
+        state_value=body.state,
     )
-    oauth_provider = _normalize_profile(str(oauth_state.get("oauth_provider") or ""))
-    profile = _normalize_profile(str(oauth_state.get("profile") or "default"))
-    config = _oauth_config_for(oauth_provider)
-    client_id = _required_oauth_config(config, "client_id", oauth_provider)
-    if client_id != CODEX_OAUTH_CLIENT_ID:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "ChatGPT device sign-in requires the official Codex OAuth client",
+    if isinstance(result, OAuthDevicePollPending):
+        return AiProviderOAuthDevicePendingResponse(
+            status="pending",
+            retry_after_seconds=result.retry_after_seconds,
         )
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            poll_result = await poll_device_authorization(
-                client,
-                device_auth_id=str(oauth_state.get("device_auth_id") or ""),
-                user_code=str(oauth_state.get("user_code") or ""),
-            )
-            if poll_result.pending:
-                return AiProviderOAuthDevicePendingResponse(
-                    status="pending",
-                    retry_after_seconds=retry_after_seconds,
-                )
-            if poll_result.authorization_code is None or poll_result.code_verifier is None:
-                raise HTTPException(
-                    status.HTTP_502_BAD_GATEWAY,
-                    "ChatGPT device authorization response was incomplete",
-                )
-            token_response = await exchange_device_code(
-                client,
-                client_id=client_id,
-                authorization_code=poll_result.authorization_code,
-                code_verifier=poll_result.code_verifier,
-            )
-            payload_text, provider_auth_type, metadata = await _oauth_payload_from_token_response(
-                client,
-                oauth_provider,
-                config,
-                token_response,
-                profile,
-                source="device_code",
-            )
-    except CodexOAuthUpstreamError as exc:
-        if exc.pending_retry and exc.retry_after is not None:
-            return AiProviderOAuthDevicePendingResponse(
-                status="pending",
-                retry_after_seconds=exc.retry_after,
-            )
-        raise HTTPException(
-            status.HTTP_429_TOO_MANY_REQUESTS
-            if exc.retry_after is not None
-            else (
-                status.HTTP_503_SERVICE_UNAVAILABLE
-                if exc.unavailable
-                else status.HTTP_502_BAD_GATEWAY
-            ),
-            str(exc),
-            headers=(
-                {"Retry-After": str(exc.retry_after)} if exc.retry_after is not None else None
-            ),
-        ) from exc
-
-    async with async_session_factory() as db:
-        try:
-            provider = await _get_provider_or_404_for_update(db, auth, provider_id)
-            await _validate_device_oauth_state(db, auth, provider, body.state)
-            previous_signature = _runtime_manifest_provider_signature(provider)
-            await _store_auth_payload(
-                db,
-                auth,
-                provider.provider_id,
-                profile,
-                provider_auth_type,
-                payload_text,
-                metadata,
-            )
-            provider.auth_type = provider_auth_type
-            provider.auth_ref = None
-            provider.auth_metadata = metadata
-            if previous_signature != _runtime_manifest_provider_signature(provider):
-                await queue_provider_runtime_manifest_changed(
-                    db,
-                    auth.user_id,
-                    provider.provider_id,
-                )
-            await db.commit()
-            await db.refresh(provider)
-            provider_response = await _to_response(db, auth, provider)
-        except Exception:
-            await db.rollback()
-            await _revoke_oauth_material_best_effort(
-                _revocable_oauth_token_from_envelope(payload_text),
-                provider_id,
-            )
-            raise
-    return AiProviderOAuthDeviceReadyResponse(status="ready", provider=provider_response)
+    return AiProviderOAuthDeviceReadyResponse(status="ready", provider=result)
 
 
 @router.post(
@@ -405,6 +329,7 @@ async def accept_ai_provider(
 
     request_hash = _ai_provider_accept_request_hash(body)
     try:
+        await lock_ai_provider_owner(db, auth.user_id)
         replay = await _load_ai_provider_accept_replay(
             db,
             operation=_AI_PROVIDER_ACCEPT_OPERATION,
@@ -733,9 +658,10 @@ async def patch_ai_provider(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
-    await _lock_provider_pool(db, auth.user_id)
-    provider = await _get_provider_or_404(db, auth, provider_id)
-    previous_signature = _runtime_manifest_provider_signature(provider)
+    await lock_ai_provider_owner(db, auth.user_id)
+    provider = await _get_provider_or_404_for_update(db, auth, provider_id)
+    previous_non_auth_signature = _runtime_manifest_provider_non_auth_signature(provider)
+    auth_event_queued = False
     merged = await _to_response(db, auth, provider)
     update = {field: getattr(body, field) for field in body.model_fields_set}
     null_errors = _validate_patch_nulls(update)
@@ -746,9 +672,32 @@ async def patch_ai_provider(
     errors = _validate_provider(merged)
     if errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": errors})
+    await _validate_hosted_consumer_endpoint(
+        db,
+        owner_user_id=auth.user_id,
+        provider_id=provider.provider_id,
+        base_url=merged.base_url,
+    )
     await _validate_runtime_env_unique(db, auth, merged, exclude_provider_id=provider.provider_id)
-    _apply_provider_body(provider, merged, apply_auth="auth" in body.model_fields_set)
-    if previous_signature != _runtime_manifest_provider_signature(provider):
+    _apply_provider_body(provider, merged, apply_auth=False)
+    if "auth" in body.model_fields_set:
+        auth_ref, auth_metadata = merged.auth.persistence_fields()
+        try:
+            transition = await transition_ai_provider_auth(
+                db,
+                owner_user_id=auth.user_id,
+                provider=provider,
+                auth_type=merged.auth.type,
+                auth_ref=auth_ref,
+                auth_metadata=auth_metadata,
+            )
+        except OAuthCredentialClaimConflict as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        auth_event_queued = transition.manifest_event_queued
+    if (
+        previous_non_auth_signature != _runtime_manifest_provider_non_auth_signature(provider)
+        and not auth_event_queued
+    ):
         await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
     await db.refresh(provider)
@@ -761,122 +710,23 @@ async def delete_ai_provider(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderDeleteResponse:
-    await _lock_provider_pool(db, auth.user_id)
+    await lock_ai_provider_owner(db, auth.user_id)
     provider = await _get_provider_or_404_for_update(db, auth, provider_id)
-    archived_at = datetime.now(UTC)
-    provider.archived_at = archived_at
-    payloads = (
-        (
-            await db.execute(
-                select(AiProviderAuthPayload)
-                .where(
-                    AiProviderAuthPayload.owner_user_id == auth.user_id,
-                    AiProviderAuthPayload.provider_id == provider.provider_id,
-                    AiProviderAuthPayload.archived_at.is_(None),
-                )
-                .order_by(AiProviderAuthPayload.auth_profile)
-                .with_for_update()
-            )
-        )
-        .scalars()
-        .all()
+    result = await transition_ai_provider_auth(
+        db,
+        owner_user_id=auth.user_id,
+        provider=provider,
+        auth_type=provider.auth_type,
+        auth_ref=provider.auth_ref,
+        auth_metadata=provider.auth_metadata,
+        archive_provider=True,
     )
-    for payload in payloads:
-        if payload.kind in {"agent_profile", "oauth_profile"}:
-            await _revoke_oauth_payload_best_effort(payload)
-        payload.archived_at = archived_at
-        payload.consumer_environment_id = None
-        payload.consumer_runtime = None
-    await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
+    response_provider_id = runtime_managed_provider_id(provider.provider_id)
     await db.commit()
     return AiProviderDeleteResponse(
         status="deleted",
-        provider_id=runtime_managed_provider_id(provider.provider_id),
-    )
-
-
-def _revocable_oauth_token_from_envelope(payload_text: str) -> tuple[str, str] | None:
-    try:
-        envelope = json.loads(payload_text)
-        files = envelope.get("files") if isinstance(envelope, dict) else None
-        if not isinstance(files, list):
-            return None
-        auth_file = next(
-            (
-                item
-                for item in files
-                if isinstance(item, dict)
-                and item.get("logicalName") == "auth.json"
-                and isinstance(item.get("content"), str)
-            ),
-            None,
-        )
-        if auth_file is None:
-            return None
-        auth_json = json.loads(auth_file["content"])
-        if not isinstance(auth_json, dict) or auth_json.get("auth_mode") != "chatgpt":
-            return None
-        tokens = auth_json.get("tokens")
-        if not isinstance(tokens, dict):
-            return None
-        refresh_token = tokens.get("refresh_token")
-        if isinstance(refresh_token, str) and refresh_token:
-            return refresh_token, "refresh_token"
-        access_token = tokens.get("access_token")
-        if isinstance(access_token, str) and access_token:
-            return access_token, "access_token"
-    except (TypeError, ValueError):
-        return None
-    return None
-
-
-def _revocable_oauth_token(payload: AiProviderAuthPayload) -> tuple[str, str] | None:
-    try:
-        return _revocable_oauth_token_from_envelope(
-            decrypt(payload.encrypted_payload, payload.nonce)
-        )
-    except (InvalidTag, RuntimeError, TypeError, ValueError):
-        return None
-
-
-async def _revoke_oauth_material_best_effort(
-    revocable: tuple[str, str] | None,
-    provider_id: str,
-) -> None:
-    if revocable is None:
-        return
-    token, token_type = revocable
-    config = _oauth_config_for(CODEX_OAUTH_PROVIDER)
-    token_url = _required_oauth_config(config, "token_url", CODEX_OAUTH_PROVIDER)
-    parsed = urlparse(token_url)
-    revoke_url = parsed._replace(path="/oauth/revoke", query="", fragment="").geturl()
-    request: dict[str, str] = {"token": token, "token_type_hint": token_type}
-    if token_type == "refresh_token":
-        request["client_id"] = _required_oauth_config(
-            config,
-            "client_id",
-            CODEX_OAUTH_PROVIDER,
-        )
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(revoke_url, json=request)
-        if response.status_code >= 400:
-            logger.warning(
-                "oauth_revoke_failed provider_id=%s status=%s",
-                provider_id,
-                response.status_code,
-            )
-    except httpx.HTTPError:
-        logger.warning(
-            "oauth_revoke_failed provider_id=%s network_error=true",
-            provider_id,
-        )
-
-
-async def _revoke_oauth_payload_best_effort(payload: AiProviderAuthPayload) -> None:
-    await _revoke_oauth_material_best_effort(
-        _revocable_oauth_token(payload),
-        payload.provider_id,
+        provider_id=response_provider_id,
+        remote_revoke_status=result.remote_revoke_status,
     )
 
 
@@ -903,7 +753,7 @@ async def set_ai_provider_api_key(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
-    await _lock_provider_pool(db, auth.user_id)
+    await lock_ai_provider_owner(db, auth.user_id)
     provider = await _get_provider_or_404_for_update(db, auth, provider_id)
     profile = "default"
     runtime_env_name = body.runtime_env_name
@@ -916,22 +766,23 @@ async def set_ai_provider_api_key(
         proposed_runtime_env_name,
         exclude_provider_id=provider.provider_id,
     )
-    await _store_auth_payload(
+    metadata = {"source": "managed", "profile": profile}
+    await transition_ai_provider_auth(
         db,
-        auth,
-        provider.provider_id,
-        profile,
-        "api_key",
-        body.value.get_secret_value(),
-        _compact({"runtime_env_name": runtime_env_name}),
+        owner_user_id=auth.user_id,
+        provider=provider,
+        auth_type="api_key",
+        auth_ref=None,
+        auth_metadata=metadata,
+        credential=AuthCredentialWrite(
+            profile=profile,
+            kind="api_key",
+            plaintext=body.value.get_secret_value(),
+            metadata=_compact({"runtime_env_name": runtime_env_name}),
+        ),
     )
-
-    provider.auth_type = "api_key"
-    provider.auth_ref = None
-    provider.auth_metadata = {"source": "managed", "profile": profile}
     if runtime_env_name is not None:
         provider.runtime_env_name = runtime_env_name
-    await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
     await db.refresh(provider)
     return await _to_response(db, auth, provider)
@@ -948,51 +799,41 @@ async def import_ai_provider_auth(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
+    await lock_ai_provider_owner(db, auth.user_id)
     provider = await _get_provider_or_404_for_update(db, auth, provider_id)
-    previous_signature = _runtime_manifest_provider_signature(provider)
     auth_import = body.root
     profile = _normalize_profile(auth_import.profile)
-    if auth_import.type == "agent_profile":
-        tool = _normalize_profile(auth_import.tool)
-        _validate_supported_agent_profile_tool(tool)
-        metadata = {
-            "tool": tool,
-            "profile": profile,
-        }
-        provider.auth_type = "agent_profile"
-        provider.auth_ref = None
-        provider.auth_metadata = metadata
-    elif auth_import.type == "oauth_profile":
+    if auth_import.type == "oauth_profile":
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "oauth_profile import is not supported; use Codex OAuth connect",
         )
-    await _store_auth_payload(
-        db,
-        auth,
-        provider.provider_id,
-        profile,
-        auth_import.type,
-        auth_import.payload.get_secret_value(),
-        provider.auth_metadata,
-    )
-    if previous_signature != _runtime_manifest_provider_signature(provider):
-        await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
+    tool = _normalize_profile(auth_import.tool)
+    _validate_supported_agent_profile_tool(tool)
+    metadata = {
+        "tool": tool,
+        "profile": profile,
+    }
+    try:
+        await transition_ai_provider_auth(
+            db,
+            owner_user_id=auth.user_id,
+            provider=provider,
+            auth_type=auth_import.type,
+            auth_ref=None,
+            auth_metadata=metadata,
+            credential=AuthCredentialWrite(
+                profile=profile,
+                kind=auth_import.type,
+                plaintext=auth_import.payload.get_secret_value(),
+                metadata=metadata,
+            ),
+        )
+    except OAuthCredentialClaimConflict as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     await db.commit()
     await db.refresh(provider)
     return await _to_response(db, auth, provider)
-
-
-def _validate_codex_oauth_provider_shape(provider: AiProvider | AiProviderUpsert) -> None:
-    if (
-        provider.type != "openai"
-        or effective_provider_api_mode(provider.type, provider.api_mode) != "openai_responses"
-        or provider.base_url.rstrip("/") != CODEX_OPENAI_BASE_URL
-    ):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "ChatGPT sign-in requires the canonical OpenAI Responses provider",
-        )
 
 
 async def _build_codex_device_authorization(
@@ -1002,7 +843,6 @@ async def _build_codex_device_authorization(
     provider: AiProvider,
     oauth_provider: str,
 ) -> AiProviderOAuthDeviceStartResponse:
-    _validate_supported_oauth_provider(oauth_provider)
     _validate_codex_oauth_provider_shape(provider)
     config = _oauth_config_for(oauth_provider)
     client_id = _required_oauth_config(config, "client_id", oauth_provider)
@@ -1028,24 +868,19 @@ async def _build_codex_device_authorization(
             headers=headers,
         ) from exc
     profile = "default"
-    payload = await _find_auth_payload(db, auth, provider.provider_id, profile)
-    base_revision = (
-        payload.credential_revision if payload is not None and payload.archived_at is None else None
-    )
     expires_at = datetime.now(UTC) + timedelta(seconds=OAUTH_DEVICE_STATE_TTL_SECONDS)
-    state_value = _encode_oauth_state(
-        {
-            "flow": "device_code",
-            "provider_id": provider.provider_id,
-            "owner_user_id": str(auth.user_id),
-            "oauth_provider": oauth_provider,
-            "profile": profile,
+    state_value = await _oauth_attempt_service(auth).persist_attempt(
+        db,
+        owner_user_id=auth.user_id,
+        provider=provider,
+        profile=profile,
+        flow_kind="device_code",
+        expires_at=expires_at,
+        flow_payload={
             "device_auth_id": authorization.device_auth_id,
             "user_code": authorization.user_code,
             "poll_interval_seconds": authorization.poll_interval_seconds,
-            "base_credential_revision": base_revision,
-            "expires_at": expires_at.isoformat(),
-        }
+        },
     )
     return AiProviderOAuthDeviceStartResponse(
         provider_id=runtime_managed_provider_id(provider.provider_id),
@@ -1070,12 +905,16 @@ async def start_ai_provider_oauth_device(
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderOAuthDeviceStartResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
-    return await _build_codex_device_authorization(
+    oauth_provider = _normalize_profile(body.provider)
+    _validate_supported_oauth_provider(oauth_provider)
+    response = await _build_codex_device_authorization(
         db=db,
         auth=auth,
         provider=provider,
-        oauth_provider=_normalize_profile(body.provider),
+        oauth_provider=oauth_provider,
     )
+    await db.commit()
+    return response
 
 
 @router.post(
@@ -1107,16 +946,17 @@ async def start_ai_provider_oauth(
     code_verifier = secrets.token_urlsafe(48)
     code_challenge = _code_challenge(code_verifier)
     expires_at = datetime.now(UTC) + timedelta(seconds=OAUTH_STATE_TTL_SECONDS)
-    state = _encode_oauth_state(
-        {
-            "provider_id": provider.provider_id,
-            "owner_user_id": str(auth.user_id),
-            "oauth_provider": oauth_provider,
-            "profile": profile,
+    state = await _oauth_attempt_service(auth).persist_attempt(
+        db,
+        owner_user_id=auth.user_id,
+        provider=provider,
+        profile=profile,
+        flow_kind="authorization_code",
+        expires_at=expires_at,
+        flow_payload={
             "redirect_uri": redirect_uri,
             "code_verifier": code_verifier,
-            "expires_at": expires_at.isoformat(),
-        }
+        },
     )
     params: dict[str, str] = {
         "response_type": "code",
@@ -1145,7 +985,7 @@ async def start_ai_provider_oauth(
 
     separator = "&" if "?" in authorization_url else "?"
     auth_url = f"{authorization_url}{separator}{urlencode(params)}"
-    return AiProviderOAuthStartResponse(
+    response = AiProviderOAuthStartResponse(
         provider_id=runtime_managed_provider_id(provider.provider_id),
         oauth_provider=oauth_provider,
         profile=profile,
@@ -1154,6 +994,8 @@ async def start_ai_provider_oauth(
         redirect_uri=redirect_uri,
         expires_at=expires_at,
     )
+    await db.commit()
+    return response
 
 
 @router.post(
@@ -1167,77 +1009,24 @@ async def complete_ai_provider_oauth(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
-    provider = await _get_provider_or_404(db, auth, provider_id)
-    _validate_codex_oauth_provider_shape(provider)
-    state = _decode_oauth_state(body.state)
-    if state.get("provider_id") != provider.provider_id or state.get("owner_user_id") != str(
-        auth.user_id
-    ):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state does not match this user")
-    expires_at = _parse_state_datetime(str(state.get("expires_at") or ""))
-    if expires_at < datetime.now(UTC):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state expired")
-    oauth_provider = _normalize_profile(str(state.get("oauth_provider") or ""))
-    profile = _normalize_profile(str(state.get("profile") or "default"))
-    state_redirect_uri = str(state.get("redirect_uri") or "")
-    redirect_uri = body.redirect_uri or state_redirect_uri
-    _validate_redirect_uri(redirect_uri)
-    if redirect_uri != state_redirect_uri:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth redirect_uri does not match state")
-    config = _oauth_config_for(oauth_provider)
-    token_url = _required_oauth_config(config, "token_url", oauth_provider)
-    client_id = _required_oauth_config(config, "client_id", oauth_provider)
-    _validate_oauth_url(token_url, "token_url")
-
-    form = {
-        "grant_type": "authorization_code",
-        "client_id": client_id,
-        "code": body.code,
-        "redirect_uri": redirect_uri,
-        "code_verifier": str(state.get("code_verifier") or ""),
-    }
-    client_secret = str(config.get("client_secret") or "")
-    if client_secret:
-        form["client_secret"] = client_secret
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.post(token_url, data=form)
-        if response.status_code >= 400:
-            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OAuth token exchange failed")
-        payload_text, provider_auth_type, metadata = await _oauth_payload_from_token_response(
-            client,
-            oauth_provider,
-            config,
-            response,
-            profile,
-        )
-
-    # The token exchange deliberately happens without a row lock. Re-lock and
-    # revalidate before writing so a concurrent delete or reconnect wins
-    # cleanly instead of reviving archived credential state.
-    provider = await _get_provider_or_404_for_update(db, auth, provider_id)
-    _validate_codex_oauth_provider_shape(provider)
-    if state.get("provider_id") != provider.provider_id or state.get("owner_user_id") != str(
-        auth.user_id
-    ):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state does not match this user")
-    previous_signature = _runtime_manifest_provider_signature(provider)
-    await _store_auth_payload(
-        db,
-        auth,
-        provider.provider_id,
-        profile,
-        provider_auth_type,
-        payload_text,
-        metadata,
+    await _get_provider_or_404(db, auth, provider_id)
+    service = _oauth_attempt_service(auth)
+    begin = await service.begin_exchange(
+        owner_user_id=auth.user_id,
+        provider_id=provider_id,
+        state_value=body.state,
+        flow_kind="authorization_code",
+        payload_updates={
+            "authorization_code": body.code,
+            "requested_redirect_uri": body.redirect_uri,
+        },
     )
-    provider.auth_type = provider_auth_type
-    provider.auth_ref = None
-    provider.auth_metadata = metadata
-    if previous_signature != _runtime_manifest_provider_signature(provider):
-        await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
-    await db.commit()
-    await db.refresh(provider)
-    return await _to_response(db, auth, provider)
+    if isinstance(begin, AiProviderResponse):
+        return begin
+    return await service.exchange_and_commit(
+        attempt_id=begin,
+        owner_user_id=auth.user_id,
+    )
 
 
 def _ai_provider_accept_request_hash(body: AiProviderAcceptRequest) -> str:
@@ -1294,12 +1083,18 @@ async def _accept_ai_provider(
     _raise_if_deployment_managed_provider_id(provider_body.provider_id)
     if provider_body.provider_id in V2_MANAGED_AI_PROVIDER_IDS:
         provider_body = provider_body.model_copy(update={"provider_id": V2_MANAGED_AI_PROVIDER_ID})
-    _validate_ai_provider_accept_contract(provider_body, body.credential)
+    oauth_provider = _validate_ai_provider_accept_contract(provider_body, body.credential)
     errors = _validate_provider(provider_body)
     if errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": errors})
 
-    await _lock_provider_pool(db, auth.user_id)
+    await lock_ai_provider_owner(db, auth.user_id)
+    await _validate_hosted_consumer_endpoint(
+        db,
+        owner_user_id=auth.user_id,
+        provider_id=provider_body.provider_id,
+        base_url=provider_body.base_url,
+    )
     await _validate_runtime_env_unique(db, auth, provider_body)
     existing = await _find_provider(
         db,
@@ -1312,16 +1107,35 @@ async def _accept_ai_provider(
         can_resume = not existing_response.usable and _accept_can_resume(
             existing,
             body.credential,
+            oauth_provider=oauth_provider,
         )
         if not body.replace and not can_resume:
             raise HTTPException(status.HTTP_409_CONFLICT, "AI Provider already exists")
 
-    previous_signature = _runtime_manifest_provider_signature(existing)
+    previous_non_auth_signature = _runtime_manifest_provider_non_auth_signature(existing)
     provider = existing or AiProvider(
         owner_user_id=auth.user_id,
         provider_id=provider_body.provider_id,
     )
-    _apply_provider_body(provider, provider_body)
+    auth_ref, auth_metadata = provider_body.auth.persistence_fields()
+    _apply_provider_body(provider, provider_body, apply_auth=False)
+    if existing is None or (
+        isinstance(body.credential, AiProviderOAuthAcceptCredential)
+        and provider_body.auth.type != existing.auth_type
+    ):
+        try:
+            await validate_prospective_bound_runtime_auth(
+                db,
+                owner_user_id=auth.user_id,
+                provider_id=provider.provider_id,
+                prospective_auth_type=provider_body.auth.type,
+            )
+        except OAuthCredentialClaimConflict as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    if existing is None:
+        provider.auth_type = provider_body.auth.type
+        provider.auth_ref = auth_ref
+        provider.auth_metadata = auth_metadata
     provider.archived_at = None
     db.add(provider)
     # Make the provider row real inside the transaction before the credential
@@ -1329,23 +1143,30 @@ async def _accept_ai_provider(
     await db.flush()
 
     if isinstance(body.credential, AiProviderApiKeyAcceptCredential):
-        profile = str(provider.auth_metadata.get("profile") or "default")
-        await _store_auth_payload(
+        profile = str((auth_metadata or {}).get("profile") or "default")
+        transition = await transition_ai_provider_auth(
             db,
-            auth,
-            provider.provider_id,
-            profile,
-            "api_key",
-            body.credential.value.get_secret_value(),
-            provider.auth_metadata,
+            owner_user_id=auth.user_id,
+            provider=provider,
+            auth_type=provider_body.auth.type,
+            auth_ref=auth_ref,
+            auth_metadata=auth_metadata,
+            credential=AuthCredentialWrite(
+                profile=profile,
+                kind="api_key",
+                plaintext=body.credential.value.get_secret_value(),
+                metadata=auth_metadata,
+            ),
         )
-        # Credential rotation changes runtime secret material even when every
-        # public provider metadata field remains byte-for-byte identical.
-        await queue_provider_runtime_manifest_changed(
-            db,
-            auth.user_id,
-            provider.provider_id,
-        )
+        if (
+            previous_non_auth_signature != _runtime_manifest_provider_non_auth_signature(provider)
+            and not transition.manifest_event_queued
+        ):
+            await queue_provider_runtime_manifest_changed(
+                db,
+                auth.user_id,
+                provider.provider_id,
+            )
         await db.flush()
         await db.refresh(provider)
         provider_response = await _to_response(db, auth, provider)
@@ -1356,20 +1177,18 @@ async def _accept_ai_provider(
             provider=provider_response,
         )
 
-    authorization = await _build_oauth_accept_authorization(
+    if oauth_provider is None:
+        raise RuntimeError("OAuth accept contract is missing its provider")
+    authorization = await _build_codex_device_authorization(
         db=db,
         auth=auth,
         provider=provider,
-        body=body.credential,
+        oauth_provider=oauth_provider,
     )
-    provider.auth_metadata = {
-        "tool": authorization.oauth_provider,
-        "profile": authorization.profile,
-        "source": _OAUTH_PENDING_SOURCE,
-        "state_sha256": hashlib.sha256(authorization.state.encode()).hexdigest(),
-        "expires_at": authorization.expires_at.isoformat(),
-    }
-    if previous_signature != _runtime_manifest_provider_signature(provider):
+    if (
+        previous_non_auth_signature != _runtime_manifest_provider_non_auth_signature(provider)
+        or existing is None
+    ):
         await queue_provider_runtime_manifest_changed(
             db,
             auth.user_id,
@@ -1378,8 +1197,6 @@ async def _accept_ai_provider(
     await db.flush()
     await db.refresh(provider)
     provider_response = await _to_response(db, auth, provider)
-    if provider_response.usable:
-        raise RuntimeError("OAuth-pending AI provider accept is already usable")
     return AiProviderOAuthPendingAcceptResponse(
         status="pending",
         provider=provider_response,
@@ -1390,18 +1207,17 @@ async def _accept_ai_provider(
 def _validate_ai_provider_accept_contract(
     provider: AiProviderUpsert,
     credential: AiProviderApiKeyAcceptCredential | AiProviderOAuthAcceptCredential,
-) -> None:
+) -> str | None:
     if isinstance(credential, AiProviderApiKeyAcceptCredential):
         if provider.auth.type != "api_key" or provider.auth.source != "managed":
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "API-key accept requires managed api_key provider auth",
             )
-        return
+        return None
 
     oauth_provider = _normalize_profile(credential.provider)
     _validate_supported_oauth_provider(oauth_provider)
-    _validate_codex_oauth_provider_shape(provider)
     if (
         provider.auth.type != "agent_profile"
         or provider.auth.tool != oauth_provider
@@ -1411,36 +1227,22 @@ def _validate_ai_provider_accept_contract(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "OAuth accept requires the default Codex agent profile",
         )
+    return oauth_provider
 
 
 def _accept_can_resume(
     provider: AiProvider,
     credential: AiProviderApiKeyAcceptCredential | AiProviderOAuthAcceptCredential,
+    *,
+    oauth_provider: str | None,
 ) -> bool:
     metadata = provider.auth_metadata or {}
     if isinstance(credential, AiProviderApiKeyAcceptCredential):
         return provider.auth_type == "api_key" and metadata.get("source") == "managed"
-    return (
+    return oauth_provider is not None and (
         provider.auth_type == "agent_profile"
-        and metadata.get("tool") == _normalize_profile(credential.provider)
+        and metadata.get("tool") == oauth_provider
         and str(metadata.get("profile") or "default") == "default"
-    )
-
-
-async def _build_oauth_accept_authorization(
-    *,
-    db: AsyncSession,
-    auth: AuthContext,
-    provider: AiProvider,
-    body: AiProviderOAuthAcceptCredential,
-) -> AiProviderOAuthDeviceStartResponse:
-    oauth_provider = _normalize_profile(body.provider)
-    _validate_supported_oauth_provider(oauth_provider)
-    return await _build_codex_device_authorization(
-        db=db,
-        auth=auth,
-        provider=provider,
-        oauth_provider=oauth_provider,
     )
 
 
@@ -1483,151 +1285,6 @@ async def _get_provider_or_404_for_update(
     return provider
 
 
-async def _oauth_payload_from_token_response(
-    client: httpx.AsyncClient,
-    oauth_provider: str,
-    config: dict,
-    response: httpx.Response,
-    profile: str,
-    *,
-    source: str = "oauth_pkce",
-) -> tuple[str, str, dict]:
-    if oauth_provider == CODEX_OAUTH_PROVIDER:
-        payload = await _codex_auth_profile_payload(client, config, response, profile)
-        return (
-            payload,
-            "agent_profile",
-            {
-                "tool": "codex",
-                "profile": profile,
-                "source": source,
-            },
-        )
-    return (
-        response.text,
-        "oauth_profile",
-        {
-            "provider": oauth_provider,
-            "profile": profile,
-            "source": source,
-        },
-    )
-
-
-async def _codex_auth_profile_payload(
-    client: httpx.AsyncClient,
-    config: dict,
-    response: httpx.Response,
-    profile: str,
-) -> str:
-    token_data = _token_response_json(response)
-    access_token = _required_token_field(token_data, "access_token")
-    refresh_token = _required_token_field(token_data, "refresh_token")
-    id_token_value = token_data.get("id_token")
-    id_token = id_token_value if isinstance(id_token_value, str) and id_token_value else None
-    api_key = await _obtain_codex_api_key(client, config, id_token) if id_token else None
-    claims = _jwt_auth_claims(id_token or access_token)
-    account_id = claims.get("chatgpt_account_id")
-    tokens = {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "account_id": account_id if isinstance(account_id, str) and account_id else None,
-    }
-    if id_token:
-        tokens["id_token"] = id_token
-    auth_json = {
-        "auth_mode": "chatgpt",
-        "tokens": tokens,
-        "last_refresh": datetime.now(UTC).isoformat(),
-    }
-    if api_key:
-        auth_json["OPENAI_API_KEY"] = api_key
-    content = json.dumps(auth_json, indent=2)
-    envelope = {
-        "schemaVersion": 1,
-        "kind": "local_agent_profile",
-        "tool": "codex",
-        "profile": profile,
-        "importedAt": datetime.now(UTC).isoformat(),
-        "files": [
-            {
-                "logicalName": "auth.json",
-                "sourcePath": "codex-oauth",
-                "targetStrategy": "adapter_default",
-                "sourceKind": "file",
-                "content": content,
-                "mode": 0o600,
-                "size": len(content.encode("utf-8")),
-            }
-        ],
-    }
-    return json.dumps(envelope, separators=(",", ":"))
-
-
-def _token_response_json(response: httpx.Response) -> dict:
-    try:
-        data = response.json()
-    except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "OAuth token response was not JSON",
-        ) from exc
-    if not isinstance(data, dict):
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OAuth token response had invalid shape")
-    return data
-
-
-def _required_token_field(data: dict, field: str) -> str:
-    value = data.get(field)
-    if not isinstance(value, str) or not value:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            f"OAuth token response missing {field}",
-        )
-    return value
-
-
-async def _obtain_codex_api_key(
-    client: httpx.AsyncClient,
-    config: dict,
-    id_token: str,
-) -> str | None:
-    token_url = _required_oauth_config(config, "token_url", CODEX_OAUTH_PROVIDER)
-    client_id = _required_oauth_config(config, "client_id", CODEX_OAUTH_PROVIDER)
-    response = await client.post(
-        token_url,
-        data={
-            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-            "client_id": client_id,
-            "requested_token": "openai-api-key",
-            "subject_token": id_token,
-            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
-        },
-    )
-    if response.status_code >= 400:
-        return None
-    data = _token_response_json(response)
-    access_token = data.get("access_token")
-    return access_token if isinstance(access_token, str) and access_token else None
-
-
-def _jwt_auth_claims(jwt: str) -> dict:
-    parts = jwt.split(".")
-    if len(parts) < 2:
-        return {}
-    payload = parts[1]
-    padding = "=" * (-len(payload) % 4)
-    try:
-        decoded = base64.urlsafe_b64decode(f"{payload}{padding}".encode())
-        claims = json.loads(decoded)
-    except (binascii.Error, ValueError, json.JSONDecodeError):
-        return {}
-    if not isinstance(claims, dict):
-        return {}
-    auth_claims = claims.get("https://api.openai.com/auth")
-    return auth_claims if isinstance(auth_claims, dict) else {}
-
-
 @router.post("/{provider_id}/auth/resolve", response_model=AiProviderAuthResolveResponse)
 async def resolve_ai_provider_auth(
     provider_id: str,
@@ -1635,6 +1292,7 @@ async def resolve_ai_provider_auth(
     auth: AuthContext = Depends(require_user_cli),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderAuthResolveResponse:
+    await lock_ai_provider_owner(db, auth.user_id)
     provider = await _get_provider_or_404_for_update(db, auth, provider_id)
     metadata = provider.auth_metadata or {}
     if provider.auth_type == "api_key" and metadata.get("source") != "managed":
@@ -1713,95 +1371,21 @@ async def resolve_ai_provider_auth(
             credential_revision=payload.credential_revision,
         )
     if provider.auth_type in {"agent_profile", "oauth_profile"}:
-        return AiProviderAuthResolveResponse(
-            provider_id=runtime_managed_provider_id(provider.provider_id),
-            auth_type=provider.auth_type,
-            payload=plaintext,
-            tool=metadata.get("tool"),
-            provider=metadata.get("provider"),
-            profile=profile,
-            credential_revision=payload.credential_revision,
+        return AiProviderAuthResolveResponse.model_validate(
+            {
+                "provider_id": runtime_managed_provider_id(provider.provider_id),
+                "auth_type": provider.auth_type,
+                "payload": plaintext,
+                "tool": metadata.get("tool"),
+                "provider": metadata.get("provider"),
+                "profile": profile,
+                "credential_revision": payload.credential_revision,
+            }
         )
     raise HTTPException(
         status.HTTP_409_CONFLICT,
         "AI Provider auth has no managed payload",
     )
-
-
-def _oauth_config_for(oauth_provider: str) -> dict:
-    config: dict = dict(BUILTIN_OAUTH_CONFIGS.get(oauth_provider, {}))
-    raw = settings.ai_provider_oauth_config_json.strip()
-    if raw:
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise HTTPException(
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-                "AI Provider OAuth config is invalid JSON",
-            ) from exc
-        if not isinstance(data, dict):
-            raise HTTPException(
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-                "AI Provider OAuth config must be an object",
-            )
-        configured = data.get(oauth_provider)
-        if configured is not None and not isinstance(configured, dict):
-            raise HTTPException(
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-                f"AI Provider OAuth config for {oauth_provider} must be an object",
-            )
-        if isinstance(configured, dict):
-            config = _merge_oauth_config(config, configured)
-    if not config:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            f"AI Provider OAuth config not found for {oauth_provider}",
-        )
-    return config
-
-
-def _merge_oauth_config(base: dict, override: dict) -> dict:
-    merged = {**base, **override}
-    base_extra = base.get("extra_authorize_params")
-    override_extra = override.get("extra_authorize_params")
-    if isinstance(base_extra, dict) or isinstance(override_extra, dict):
-        merged["extra_authorize_params"] = {
-            **(base_extra if isinstance(base_extra, dict) else {}),
-            **(override_extra if isinstance(override_extra, dict) else {}),
-        }
-    return merged
-
-
-def _required_oauth_config(config: dict, key: str, oauth_provider: str) -> str:
-    value = config.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            f"AI Provider OAuth config for {oauth_provider} is missing {key}",
-        )
-    return value.strip()
-
-
-def _encode_oauth_state(payload: dict[str, object]) -> str:
-    ciphertext, nonce = encrypt(json.dumps(payload, separators=(",", ":"), sort_keys=True))
-    return f"v1.{_base64url(nonce)}.{_base64url(ciphertext)}"
-
-
-def _decode_oauth_state(state: str) -> dict:
-    try:
-        version, nonce, ciphertext = state.split(".", 2)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state") from exc
-    if version != "v1":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state")
-    try:
-        plaintext = decrypt(_base64url_decode_bytes(ciphertext), _base64url_decode_bytes(nonce))
-        decoded = json.loads(plaintext)
-    except Exception as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state") from exc
-    if not isinstance(decoded, dict):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state")
-    return decoded
 
 
 def _code_challenge(code_verifier: str) -> str:
@@ -1810,27 +1394,6 @@ def _code_challenge(code_verifier: str) -> str:
 
 def _base64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-
-def _base64url_decode_bytes(raw: str) -> bytes:
-    padding = "=" * ((4 - len(raw) % 4) % 4)
-    return base64.urlsafe_b64decode(f"{raw}{padding}")
-
-
-def _parse_state_datetime(input: str) -> datetime:
-    try:
-        parsed = datetime.fromisoformat(input)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state") from exc
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
-
-
-def _validate_oauth_url(input: str, label: str) -> None:
-    parsed = urlparse(input)
-    if parsed.scheme != "https" or not parsed.netloc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"{label} must be an https URL")
 
 
 def _oauth_authorization_code_redirect_uri(
@@ -1869,46 +1432,24 @@ def _oauth_authorization_code_redirect_uri(
     return registered
 
 
-def _validate_redirect_uri(input: str) -> None:
-    parsed = urlparse(input)
-    if parsed.scheme == "https" and parsed.netloc:
+async def _validate_hosted_consumer_endpoint(
+    db: AsyncSession,
+    *,
+    owner_user_id: UUID,
+    provider_id: str,
+    base_url: str,
+) -> None:
+    if is_public_https_url(base_url):
         return
-    if parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
-        return
-    if (
-        settings.environment == "development"
-        and parsed.scheme == "http"
-        and _url_origin(parsed) in _development_oauth_redirect_origins()
+    if await provider_has_hosted_runtime_consumer(
+        db,
+        owner_user_id=owner_user_id,
+        provider_id=provider_id,
     ):
-        return
-    raise HTTPException(
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
-        "redirect_uri must be https or loopback http",
-    )
-
-
-def _url_origin(parsed) -> str | None:
-    if not parsed.scheme or not parsed.netloc or parsed.username or parsed.password:
-        return None
-    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
-
-
-def _development_oauth_redirect_origins() -> set[str]:
-    origins = [settings.web_origin, *settings.cors_origins]
-    allowed_origins: set[str] = set()
-    for origin in origins:
-        parsed = urlparse(origin)
-        if parsed.scheme == "http":
-            parsed_origin = _url_origin(parsed)
-            if parsed_origin:
-                allowed_origins.add(parsed_origin)
-    return allowed_origins
-
-
-async def _lock_provider_pool(db: AsyncSession, owner_user_id: UUID) -> None:
-    """Serialize user-provider mutations across the runtime env-name boundary."""
-
-    await db.execute(select(User.id).where(User.id == owner_user_id).with_for_update())
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Hosted AI Provider base_url must be a public HTTPS URL",
+        )
 
 
 async def _validate_runtime_env_unique(
@@ -2102,7 +1643,7 @@ async def _to_responses(
 def _provider_credential_material(
     provider: AiProvider,
     payload_keys: set[tuple[str, str, str]],
-) -> str:
+) -> CredentialMaterialState:
     active_profile = _active_auth_profile(provider)
     if active_profile is not None:
         if (provider.provider_id, active_profile, provider.auth_type) in payload_keys:
@@ -2132,31 +1673,33 @@ def _provider_consumer(
 def _build_response(
     provider: AiProvider,
     *,
-    credential_material: str,
+    credential_material: CredentialMaterialState,
     consumer: AiProviderConsumer | None = None,
 ) -> AiProviderResponse:
     readiness = provider_readiness(
         _provider_capability_input(provider),
         credential_material=credential_material,
     )
-    return AiProviderResponse(
-        id=str(provider.id),
-        provider_id=runtime_managed_provider_id(provider.provider_id),
-        scope=AI_PROVIDER_SCOPE,
-        type=provider.type,
-        label=provider.label,
-        base_url=provider.base_url,
-        api_mode=provider.api_mode,
-        auth=_to_auth(provider),
-        usable=credential_material != "missing",
-        readiness=readiness,
-        consumer=consumer,
-        managed_by=provider.managed_by,
-        runtime_env_name=provider.runtime_env_name,
-        capabilities=provider.capabilities,
-        models=provider.models,
-        created_at=provider.created_at,
-        updated_at=provider.updated_at,
+    return AiProviderResponse.model_validate(
+        {
+            "id": str(provider.id),
+            "provider_id": runtime_managed_provider_id(provider.provider_id),
+            "scope": AI_PROVIDER_SCOPE,
+            "type": provider.type,
+            "label": provider.label,
+            "base_url": provider.base_url,
+            "api_mode": provider.api_mode,
+            "auth": _to_auth(provider),
+            "usable": credential_material != "missing",
+            "readiness": readiness,
+            "consumer": consumer,
+            "managed_by": provider.managed_by,
+            "runtime_env_name": provider.runtime_env_name,
+            "capabilities": provider.capabilities,
+            "models": provider.models,
+            "created_at": provider.created_at,
+            "updated_at": provider.updated_at,
+        }
     )
 
 
@@ -2174,6 +1717,17 @@ def _runtime_manifest_provider_signature(provider: AiProvider | None) -> dict | 
         "managed_by": provider.managed_by,
         "runtime_env_name": provider.runtime_env_name,
         "archived_at": provider.archived_at,
+    }
+
+
+def _runtime_manifest_provider_non_auth_signature(provider: AiProvider | None) -> dict | None:
+    signature = _runtime_manifest_provider_signature(provider)
+    if signature is None:
+        return None
+    return {
+        key: value
+        for key, value in signature.items()
+        if key not in {"auth_type", "auth_ref", "auth_metadata"}
     }
 
 
@@ -2396,25 +1950,10 @@ def _validate_base_url(base_url: str, auth: AiProviderAuth) -> list[str]:
     if auth.type != "none":
         return errors
     hostname = parsed.hostname or ""
-    if _is_loopback_host(hostname):
-        return errors
-    if _is_private_host(hostname):
+    if is_private_hostname(hostname):
         return errors
     errors.append("none auth is only allowed for loopback or private-network base_url")
     return errors
-
-
-def _is_loopback_host(hostname: str) -> bool:
-    return hostname in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
-
-
-def _is_private_host(hostname: str) -> bool:
-    if hostname.startswith("10.") or hostname.startswith("192.168."):
-        return True
-    match = re.fullmatch(r"172\.(\d+)\..*", hostname)
-    if not match:
-        return False
-    return 16 <= int(match.group(1)) <= 31
 
 
 def _compact(data: dict) -> dict | None:
@@ -2438,76 +1977,6 @@ async def _find_auth_payload(
     if for_update:
         statement = statement.with_for_update().execution_options(populate_existing=True)
     return (await db.execute(statement)).scalar_one_or_none()
-
-
-async def _store_auth_payload(
-    db: AsyncSession,
-    auth: AuthContext,
-    provider_id: str,
-    profile: str,
-    kind: str,
-    plaintext: str,
-    metadata: dict | None,
-) -> None:
-    ciphertext, nonce = encrypt(plaintext)
-    payload = await _find_auth_payload(db, auth, provider_id, profile, for_update=True)
-    if payload is None:
-        payload = AiProviderAuthPayload(
-            owner_user_id=auth.user_id,
-            provider_id=provider_id,
-            auth_profile=profile,
-            kind=kind,
-            source="managed",
-            encrypted_payload=ciphertext,
-            nonce=nonce,
-            payload_metadata=metadata,
-            credential_revision=secrets.token_hex(16),
-        )
-        db.add(payload)
-    else:
-        payload.kind = kind
-        payload.source = "managed"
-        payload.encrypted_payload = ciphertext
-        payload.nonce = nonce
-        payload.payload_metadata = metadata
-        payload.credential_revision = secrets.token_hex(16)
-        payload.archived_at = None
-    if kind not in {"agent_profile", "oauth_profile"}:
-        payload.consumer_environment_id = None
-        payload.consumer_runtime = None
-    else:
-        try:
-            await claim_unique_bound_runtime(
-                db,
-                owner_user_id=auth.user_id,
-                provider_id=provider_id,
-                payload=payload,
-            )
-        except OAuthCredentialClaimConflict as exc:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    await _archive_other_auth_payloads(db, auth, provider_id, profile)
-
-
-async def _archive_other_auth_payloads(
-    db: AsyncSession,
-    auth: AuthContext,
-    provider_id: str,
-    active_profile: str,
-) -> None:
-    await db.execute(
-        update(AiProviderAuthPayload)
-        .where(
-            AiProviderAuthPayload.owner_user_id == auth.user_id,
-            AiProviderAuthPayload.provider_id == provider_id,
-            AiProviderAuthPayload.auth_profile != active_profile,
-            AiProviderAuthPayload.archived_at.is_(None),
-        )
-        .values(
-            archived_at=datetime.now(UTC),
-            consumer_environment_id=None,
-            consumer_runtime=None,
-        )
-    )
 
 
 def _active_auth_profile(provider: AiProvider) -> str | None:

@@ -26,12 +26,11 @@ export interface HostedAiProviderBootstrap extends Record<string, unknown> {
 
 export type HostedAiBindingSelection =
 	| { mode: "unmanaged" }
-	| { mode: "managed"; model: string; providerIds?: readonly string[] }
+	| { mode: "managed"; model: string }
 	| {
 			mode: "saved";
 			model: string;
-			primaryProviderId: string;
-			providerIds: readonly string[];
+			providerId: string;
 	  };
 
 export type HostedAiBindingOperationMode = "create" | "update";
@@ -115,35 +114,20 @@ const CAPABILITY_KEYS = [
 	"image_generation",
 ] as const;
 
-export function hostedAiProviderRuntimeId(provider: HostedSavedAiProvider): string {
-	return provider.provider_id;
-}
-
-export function hostedAiProviderAuthKind(
-	provider: HostedSavedAiProvider,
-): HostedAiProviderAuthKind {
+function hostedAiProviderAuthKind(provider: HostedSavedAiProvider): HostedAiProviderAuthKind {
 	return provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile"
 		? "codex_oauth"
 		: "api_key";
 }
 
-export function buildHostedAiProviderPoolBootstrap(
-	providers: readonly HostedSavedAiProvider[],
-	selectedProviderId: string,
-	authKind: HostedAiProviderAuthKind,
+function buildHostedAiProviderBootstrap(
+	provider: HostedSavedAiProvider,
 ): HostedAiProviderBootstrap {
-	const runtimeProviders = providers.map(toHostedRuntimeAiProvider);
-	const selectedProvider = runtimeProviders.find((provider) => provider.id === selectedProviderId);
-	if (!selectedProvider) {
-		throw new HostedAiBindingError(
-			"provider_missing",
-			"Selected AI provider is not in the provider pool.",
-		);
-	}
+	const runtimeProvider = toHostedRuntimeAiProvider(provider);
 	const catalog: AiProviderCatalog = {
 		schema_version: 1,
-		providers: runtimeProviders,
-		defaults: { chat_provider_id: selectedProvider.id },
+		providers: [runtimeProvider],
+		defaults: { chat_provider_id: runtimeProvider.id },
 	};
 	const validation = validateAiProviderCatalog(catalog);
 	if (!validation.valid) {
@@ -154,13 +138,13 @@ export function buildHostedAiProviderPoolBootstrap(
 	}
 	return {
 		schema_version: 1,
-		selected_provider_id: selectedProvider.id,
-		auth_kind: authKind,
+		selected_provider_id: runtimeProvider.id,
+		auth_kind: hostedAiProviderAuthKind(provider),
 		catalog,
 	};
 }
 
-export function toHostedRuntimeAiProvider(provider: HostedSavedAiProvider): RuntimeAiProvider {
+function toHostedRuntimeAiProvider(provider: HostedSavedAiProvider): RuntimeAiProvider {
 	const runtimeProvider: RuntimeAiProvider = {
 		id: provider.provider_id,
 		type: provider.type,
@@ -217,105 +201,60 @@ export function buildHostedAiBindingFields({
 				"Load the managed model catalog and choose a model before deploying.",
 			);
 		}
-		const providerIds = selectedProviderIds(
-			selection.providerIds ?? [CLAWDI_MANAGED_PROVIDER_ID],
-			CLAWDI_MANAGED_PROVIDER_ID,
-		);
-		const customProviders = savedProvidersForIds(
-			providerIds.filter((providerId) => providerId !== CLAWDI_MANAGED_PROVIDER_ID),
-			providers,
-		);
 		const fields: ReturnType<typeof buildHostedAiBindingFields> = {
 			ai_provider_auth_kind: "managed",
 			ai_provider_id: null,
-			provider_ids: providerIds,
+			provider_ids: [CLAWDI_MANAGED_PROVIDER_ID],
 			primary_model: { provider_id: CLAWDI_MANAGED_PROVIDER_ID, model },
 		};
-		if (customProviders.length > 0) {
-			const bootstrapProvider = customProviders[0];
-			if (!bootstrapProvider) {
-				throw new HostedAiBindingError("provider_missing", "The provider pool is unavailable.");
-			}
-			const authKind = hostedAiProviderAuthKind(bootstrapProvider);
-			fields.ai_provider_bootstrap = buildHostedAiProviderPoolBootstrap(
-				customProviders,
-				bootstrapProvider.provider_id,
-				authKind,
-			);
-		} else if (mode === "update") {
+		if (mode === "update") {
 			fields.ai_provider_bootstrap = null;
 		}
 		return fields;
 	}
 
-	const providerIds = selectedProviderIds(selection.providerIds, selection.primaryProviderId);
-	if (selection.primaryProviderId === CLAWDI_MANAGED_PROVIDER_ID) {
-		throw firstPartyManagedProviderError(selection.primaryProviderId);
-	}
-	const selectedProviders = savedProvidersForIds(
-		providerIds.filter((providerId) => providerId !== CLAWDI_MANAGED_PROVIDER_ID),
-		providers,
-	);
-	const primaryProvider = selectedProviders.find(
-		(provider) => provider.provider_id === selection.primaryProviderId,
-	);
-	if (!primaryProvider) {
-		throw new HostedAiBindingError("provider_missing", "The primary AI provider is unavailable.");
-	}
-	const authKind = hostedAiProviderAuthKind(primaryProvider);
+	const provider = savedProviderForId(selection.providerId, providers);
+	const authKind = hostedAiProviderAuthKind(provider);
 	return {
 		ai_provider_auth_kind: authKind,
-		ai_provider_id: primaryProvider.provider_id,
-		provider_ids: providerIds,
-		primary_model: { provider_id: primaryProvider.provider_id, model },
-		ai_provider_bootstrap: buildHostedAiProviderPoolBootstrap(
-			selectedProviders,
-			primaryProvider.provider_id,
-			authKind,
-		),
+		ai_provider_id: provider.provider_id,
+		provider_ids: [provider.provider_id],
+		primary_model: { provider_id: provider.provider_id, model },
+		ai_provider_bootstrap: buildHostedAiProviderBootstrap(provider),
 	};
 }
 
-function selectedProviderIds(providerIds: readonly string[], primaryProviderId: string): string[] {
-	const selected = dedupeProviderIds(providerIds);
-	if (!selected.includes(primaryProviderId)) selected.unshift(primaryProviderId);
-	return selected;
-}
-
-function savedProvidersForIds(
-	providerIds: readonly string[],
+function savedProviderForId(
+	value: string,
 	providers: readonly HostedSavedAiProvider[],
-): HostedSavedAiProvider[] {
-	const selectedProviders: HostedSavedAiProvider[] = [];
-	for (const providerId of providerIds) {
-		if (isFirstPartyManagedAiProvider({ provider_id: providerId })) {
-			throw firstPartyManagedProviderError(providerId);
-		}
-		const provider = providers.find((candidate) => candidate.provider_id === providerId);
-		if (!provider) {
-			throw new HostedAiBindingError(
-				"provider_missing",
-				`Saved AI provider ${providerId} is unavailable. Refresh providers or choose another provider.`,
-			);
-		}
-		if (isFirstPartyManagedAiProvider(provider)) {
-			throw firstPartyManagedProviderError(providerId);
-		}
-		if (!provider.readiness) {
-			throw new HostedAiBindingError(
-				"provider_unusable",
-				`${provider.label?.trim() || provider.provider_id} has no Hosted readiness metadata. Refresh providers and try again.`,
-			);
-		}
-		if (!provider.readiness.deployable || provider.auth.type === "none") {
-			throw new HostedAiBindingError(
-				"provider_unusable",
-				`${provider.label?.trim() || provider.provider_id} cannot deliver its credential to a Hosted agent.`,
-			);
-		}
-		selectedProviders.push(provider);
+): HostedSavedAiProvider {
+	const providerId = value.trim();
+	if (isFirstPartyManagedAiProvider({ provider_id: providerId })) {
+		throw firstPartyManagedProviderError(providerId);
 	}
-	return selectedProviders;
+	const provider = providers.find((candidate) => candidate.provider_id === providerId);
+	if (!provider) {
+		throw new HostedAiBindingError(
+			"provider_missing",
+			`Saved AI provider ${providerId} is unavailable. Refresh providers or choose another provider.`,
+		);
+	}
+	if (isFirstPartyManagedAiProvider(provider)) {
+		throw firstPartyManagedProviderError(providerId);
+	}
+	if (!provider.readiness) {
+		throw new HostedAiBindingError(
+			"provider_unusable",
+			`${provider.label?.trim() || provider.provider_id} has no Hosted readiness metadata. Refresh providers and try again.`,
+		);
+	}
+	if (!provider.readiness.deployable || provider.auth.type === "none") {
+		throw new HostedAiBindingError(
+			"provider_unusable",
+			`${provider.label?.trim() || provider.provider_id} cannot deliver its credential to a Hosted agent.`,
+		);
+	}
+	return provider;
 }
 
 function firstPartyManagedProviderError(providerId: string): HostedAiBindingError {
@@ -323,18 +262,6 @@ function firstPartyManagedProviderError(providerId: string): HostedAiBindingErro
 		"first_party_managed_provider",
 		`AI provider ${providerId} is managed by Clawdi and cannot be used as a saved provider. Choose managed AI instead.`,
 	);
-}
-
-function dedupeProviderIds(providerIds: readonly string[]): string[] {
-	const seen = new Set<string>();
-	const result: string[] = [];
-	for (const value of providerIds) {
-		const providerId = value.trim();
-		if (!providerId || seen.has(providerId)) continue;
-		seen.add(providerId);
-		result.push(providerId);
-	}
-	return result;
 }
 
 function toRuntimeModels(models: HostedSavedAiProvider["models"]): RuntimeAiProviderModel[] {

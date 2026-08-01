@@ -134,8 +134,8 @@ When the user asks to configure model providers, API keys, or Codex OAuth for ag
 - Add reusable providers with `clawdi ai-provider add <id> --type <openai|anthropic|openrouter|gemini|mistral|custom_openai_compatible> --default-model <model> --auth <env:KEY|clawdi://...|agent:codex/profile|none>`.
 - Validate metadata with `clawdi ai-provider validate [provider-id]`.
 - Check local auth availability with `clawdi ai-provider test <provider-id>`; add `--live` only when the user explicitly wants a real provider API probe.
-- Apply agent config with `clawdi ai-provider apply --engine codex|hermes|openclaw --dry-run` first, then run without `--dry-run` if the diff is acceptable.
 - Connect Codex OAuth with `clawdi ai-provider connect <provider-id> --tool codex`; use `--callback manual` when loopback localhost cannot be reached.
-- Materialize a stored provider auth profile with `clawdi ai-provider materialize-auth <provider-id>`.
+- Treat the local Provider Catalog as multi-record metadata. Do not activate it into local agent config; Core Hosted activation is supplied by the runtime manifest/controller, whose configured runtime binds exactly one provider and whose unmanaged runtime binds none.
+- Keep Codex OAuth ownership singular across Hosted runtimes. Hermes/OpenClaw native refresh, revoke, and ownership state belongs to Hosted convergence, not a local CLI materialization command.
 - Default export/import is metadata-only; `--include-secrets` requires passphrase-encrypted secret export.
 - BYOK model requests go directly from the agent runtime to the configured provider. Clawdi stores metadata and secret references but is not a model proxy.

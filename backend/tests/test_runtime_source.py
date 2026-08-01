@@ -191,7 +191,7 @@ def _batch(
     )
 
 
-def _add_managed_provider(
+def _replace_runtime_provider(
     batch: RuntimeSourceBatch,
     *,
     provider_id: str,
@@ -201,14 +201,15 @@ def _add_managed_provider(
     state = batch.rows[ENV_ID].state
     assert state is not None
     runtime = dict(state.runtimes["openclaw"])
-    runtime["provider_ids"] = [*runtime["provider_ids"], provider_id]
+    runtime["provider_ids"] = [provider_id]
+    runtime["primary_model"] = {"provider_id": provider_id, "model": "gpt-test"}
     state.runtimes = {"openclaw": runtime}
     batch.providers[(USER_ID, provider_id)] = AiProvider(
         id=provider_row_id,
         owner_user_id=USER_ID,
         provider_id=provider_id,
         type="openai",
-        label="Second provider",
+        label="Runtime provider",
         base_url="https://provider-two.test/v1",
         api_mode="responses",
         auth_type="api_key",
@@ -477,6 +478,28 @@ def test_runtime_secret_source_collision_fails_before_decrypt(monkeypatch) -> No
     assert decrypt_calls == []
 
 
+def test_runtime_source_rejects_non_public_provider_before_auth_selection(monkeypatch) -> None:
+    from app.services import runtime_source
+
+    batch = _batch()
+    provider = batch.providers[(USER_ID, "managed")]
+    provider.base_url = "https://provider.home.arpa/v1"
+
+    def reject_auth_selection(*args, **kwargs):
+        raise AssertionError("invalid Hosted endpoint must fail before auth selection")
+
+    monkeypatch.setattr(runtime_source, "_selected_auth_payload", reject_auth_selection)
+
+    with pytest.raises(RuntimeSourceError, match="public host"):
+        render_runtime_source(
+            batch,
+            environment_id=ENV_ID,
+            public_api_url="https://api.example.test",
+            vault_key_identity="vault-key",
+            decrypt_secrets=True,
+        )
+
+
 def test_runtime_source_never_decrypts_or_projects_channel_provider_token(monkeypatch) -> None:
     from app.services import runtime_source
 
@@ -693,28 +716,6 @@ def test_bare_managed_alias_prefers_deployment_source_over_fallback_rows() -> No
     assert manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]["models"] == [{"id": "scoped-model"}]
 
 
-def test_multiple_managed_bindings_cannot_collapse_to_one_agent_provider() -> None:
-    batch = _batch()
-    state = batch.rows[ENV_ID].state
-    assert state is not None
-    runtime = dict(state.runtimes["openclaw"])
-    runtime["provider_ids"] = [
-        V2_MANAGED_AI_PROVIDER_ID,
-        V2_LEGACY_MANAGED_AI_PROVIDER_ID,
-    ]
-    runtime["primary_model"] = {
-        "provider_id": V2_MANAGED_AI_PROVIDER_ID,
-        "model": "gpt-test",
-    }
-    state.runtimes = {"openclaw": runtime}
-
-    with pytest.raises(
-        RuntimeSourceError,
-        match="multiple provider bindings project to agent provider clawdi",
-    ):
-        _render(batch)
-
-
 @pytest.mark.parametrize(
     "failure",
     [
@@ -745,11 +746,11 @@ def test_codex_tool_provider_fails_closed_without_platform_credential(failure: s
         _render(batch)
 
 
-def test_runtime_source_preserves_distinct_valid_provider_ids(monkeypatch) -> None:
+def test_runtime_source_preserves_runtime_and_codex_tool_provider_ids(monkeypatch) -> None:
     from app.services import runtime_source
 
     batch = _batch()
-    _add_managed_provider(
+    _replace_runtime_provider(
         batch,
         provider_id="managed-",
         provider_row_id=UUID("30000000-0000-0000-0000-000000000013"),
@@ -809,7 +810,7 @@ def test_runtime_source_rejects_duplicate_normalized_provider_ref_before_decrypt
     from app.services import runtime_source
 
     batch = _batch()
-    _add_managed_provider(
+    _replace_runtime_provider(
         batch,
         provider_id="managed-",
         provider_row_id=UUID("30000000-0000-0000-0000-000000000013"),

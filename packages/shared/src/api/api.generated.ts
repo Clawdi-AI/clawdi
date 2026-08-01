@@ -3239,6 +3239,12 @@ export interface components {
             status: "deleted";
             /** Provider Id */
             provider_id: string;
+            /**
+             * Remote Revoke Status
+             * @default not_required
+             * @enum {string}
+             */
+            remote_revoke_status: "pending" | "not_required";
         };
         /** AiProviderEnvApiKeyAuth */
         AiProviderEnvApiKeyAuth: {

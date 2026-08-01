@@ -20,7 +20,6 @@ interface Capabilities {
 	};
 	mcp: { available: true; command: "clawdi mcp" };
 	daemon: { available: true; command: "clawdi daemon run" };
-	providerApply: { available: true; command: "clawdi ai-provider apply" };
 }
 
 function buildCapabilities(commands: string[]): Capabilities {
@@ -49,7 +48,6 @@ function buildCapabilities(commands: string[]): Capabilities {
 		},
 		mcp: { available: true, command: "clawdi mcp" },
 		daemon: { available: true, command: "clawdi daemon run" },
-		providerApply: { available: true, command: "clawdi ai-provider apply" },
 	};
 }
 

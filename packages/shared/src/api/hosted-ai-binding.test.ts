@@ -8,10 +8,8 @@ import {
 } from "../ai-provider";
 import {
 	buildHostedAiBindingFields,
-	buildHostedAiProviderPoolBootstrap,
 	HostedAiBindingError,
 	type HostedSavedAiProvider,
-	toHostedRuntimeAiProvider,
 } from "./hosted-ai-binding";
 
 const managedModels = [
@@ -67,14 +65,6 @@ const codexProvider = {
 	label: "Codex",
 	models: [{ id: "gpt-codex" }],
 	auth: { type: "agent_profile", tool: "codex", profile: "default" },
-} satisfies HostedSavedAiProvider;
-
-const secondaryProvider = {
-	...apiKeyProvider,
-	id: "row-secondary",
-	provider_id: "openai-secondary",
-	label: "OpenAI Secondary",
-	models: [{ id: "gpt-secondary" }],
 } satisfies HostedSavedAiProvider;
 
 const noncanonicalManagedProviders: HostedSavedAiProvider[] = [
@@ -135,8 +125,7 @@ describe("shared Hosted AI provider binding", () => {
 				providers: [apiKeyProvider],
 				selection: {
 					mode: "saved",
-					providerIds: [apiKeyProvider.provider_id],
-					primaryProviderId: apiKeyProvider.provider_id,
+					providerId: apiKeyProvider.provider_id,
 					model,
 				},
 			});
@@ -146,10 +135,21 @@ describe("shared Hosted AI provider binding", () => {
 				provider_ids: ["openai-main"],
 				primary_model: { provider_id: "openai-main", model },
 				ai_provider_bootstrap: {
+					schema_version: 1,
 					selected_provider_id: "openai-main",
 					auth_kind: "api_key",
+					catalog: {
+						schema_version: 1,
+						defaults: { chat_provider_id: "openai-main" },
+					},
 				},
 			});
+			expect(Object.keys(fields.ai_provider_bootstrap ?? {}).sort()).toEqual([
+				"auth_kind",
+				"catalog",
+				"schema_version",
+				"selected_provider_id",
+			]);
 			expect(fields.ai_provider_bootstrap?.catalog.providers[0]?.auth).toEqual({
 				type: "api_key",
 				source: "managed",
@@ -165,8 +165,7 @@ describe("shared Hosted AI provider binding", () => {
 			providers: [codexProvider],
 			selection: {
 				mode: "saved",
-				providerIds: [codexProvider.provider_id],
-				primaryProviderId: codexProvider.provider_id,
+				providerId: codexProvider.provider_id,
 				model: "gpt-codex",
 			},
 		});
@@ -181,127 +180,7 @@ describe("shared Hosted AI provider binding", () => {
 		expect(JSON.stringify(fields)).not.toContain("api_key_value");
 	});
 
-	test("preserves a managed primary with an ordered saved secondary", () => {
-		for (const mode of ["create", "update"] as const) {
-			expect(
-				buildHostedAiBindingFields({
-					managedModels,
-					mode,
-					providers: [apiKeyProvider],
-					selection: {
-						mode: "managed",
-						model: "gpt-managed",
-						providerIds: [CLAWDI_MANAGED_PROVIDER_ID, apiKeyProvider.provider_id],
-					},
-				}),
-			).toEqual({
-				ai_provider_auth_kind: "managed",
-				ai_provider_id: null,
-				provider_ids: [CLAWDI_MANAGED_PROVIDER_ID, "openai-main"],
-				primary_model: {
-					provider_id: CLAWDI_MANAGED_PROVIDER_ID,
-					model: "gpt-managed",
-				},
-				ai_provider_bootstrap: {
-					schema_version: 1,
-					selected_provider_id: "openai-main",
-					auth_kind: "api_key",
-					catalog: {
-						schema_version: 1,
-						providers: [
-							{
-								id: "openai-main",
-								type: "openai",
-								label: "OpenAI",
-								base_url: "https://api.openai.com/v1",
-								auth: { type: "api_key", source: "managed", profile: "work" },
-								managed_by: "user",
-								models: [{ id: "gpt-catalog" }],
-								api_mode: "openai_responses",
-								runtime_env_name: "OPENAI_API_KEY",
-								capabilities: { chat: true, responses: true },
-							},
-						],
-						defaults: { chat_provider_id: "openai-main" },
-					},
-				},
-			});
-		}
-	});
-
-	test("rejects noncanonical first-party managed secondaries in a managed pool", () => {
-		for (const provider of noncanonicalManagedProviders) {
-			expect(() =>
-				buildHostedAiBindingFields({
-					managedModels,
-					mode: "create",
-					providers: [apiKeyProvider, provider],
-					selection: {
-						mode: "managed",
-						model: "gpt-managed",
-						providerIds: [
-							CLAWDI_MANAGED_PROVIDER_ID,
-							apiKeyProvider.provider_id,
-							provider.provider_id,
-						],
-					},
-				}),
-			).toThrow("cannot be used as a saved provider");
-		}
-	});
-
-	test("preserves a canonical managed secondary without materializing it in saved bootstrap", () => {
-		const canonicalManagedProvider = {
-			...apiKeyProvider,
-			id: "row-managed-v2",
-			provider_id: CLAWDI_MANAGED_PROVIDER_ID,
-			managed_by: "clawdi",
-		} satisfies HostedSavedAiProvider;
-
-		for (const includeCanonicalRow of [false, true]) {
-			for (const mode of ["create", "update"] as const) {
-				const fields = buildHostedAiBindingFields({
-					managedModels,
-					mode,
-					providers: [
-						apiKeyProvider,
-						codexProvider,
-						...(includeCanonicalRow ? [canonicalManagedProvider] : []),
-						secondaryProvider,
-					],
-					selection: {
-						mode: "saved",
-						model: "gpt-codex",
-						primaryProviderId: codexProvider.provider_id,
-						providerIds: [
-							codexProvider.provider_id,
-							CLAWDI_MANAGED_PROVIDER_ID,
-							secondaryProvider.provider_id,
-						],
-					},
-				});
-
-				expect(fields.provider_ids).toEqual([
-					"codex-main",
-					CLAWDI_MANAGED_PROVIDER_ID,
-					"openai-secondary",
-				]);
-				expect(fields.primary_model).toEqual({
-					provider_id: "codex-main",
-					model: "gpt-codex",
-				});
-				expect(fields.ai_provider_id).toBe("codex-main");
-				expect(fields.ai_provider_auth_kind).toBe("codex_oauth");
-				expect(fields.ai_provider_bootstrap?.selected_provider_id).toBe("codex-main");
-				expect(fields.ai_provider_bootstrap?.auth_kind).toBe("codex_oauth");
-				expect(
-					fields.ai_provider_bootstrap?.catalog.providers.map((provider) => provider.id),
-				).toEqual(["codex-main", "openai-secondary"]);
-			}
-		}
-	});
-
-	test("rejects canonical managed provider as a saved primary with or without its row", () => {
+	test("rejects canonical managed provider as a saved selection with or without its row", () => {
 		const canonicalManagedProvider = {
 			...apiKeyProvider,
 			id: "row-managed-v2",
@@ -317,8 +196,7 @@ describe("shared Hosted AI provider binding", () => {
 					providers,
 					selection: {
 						mode: "saved",
-						providerIds: [CLAWDI_MANAGED_PROVIDER_ID],
-						primaryProviderId: CLAWDI_MANAGED_PROVIDER_ID,
+						providerId: CLAWDI_MANAGED_PROVIDER_ID,
 						model: "gpt-catalog",
 					},
 				});
@@ -331,29 +209,24 @@ describe("shared Hosted AI provider binding", () => {
 		}
 	});
 
-	test("rejects noncanonical first-party managed providers anywhere in a saved pool", () => {
+	test("rejects noncanonical first-party managed providers as saved selections", () => {
 		for (const provider of noncanonicalManagedProviders) {
-			for (const asPrimary of [false, true]) {
-				try {
-					buildHostedAiBindingFields({
-						managedModels,
-						mode: "create",
-						providers: [apiKeyProvider, provider],
-						selection: {
-							mode: "saved",
-							providerIds: asPrimary
-								? [provider.provider_id]
-								: [apiKeyProvider.provider_id, provider.provider_id],
-							primaryProviderId: asPrimary ? provider.provider_id : apiKeyProvider.provider_id,
-							model: "gpt-catalog",
-						},
-					});
-					throw new Error(`Expected ${provider.provider_id} to be rejected.`);
-				} catch (error) {
-					expect(error).toBeInstanceOf(HostedAiBindingError);
-					if (!(error instanceof HostedAiBindingError)) throw error;
-					expect(error.code).toBe("first_party_managed_provider");
-				}
+			try {
+				buildHostedAiBindingFields({
+					managedModels,
+					mode: "create",
+					providers: [provider],
+					selection: {
+						mode: "saved",
+						providerId: provider.provider_id,
+						model: "gpt-catalog",
+					},
+				});
+				throw new Error(`Expected ${provider.provider_id} to be rejected.`);
+			} catch (error) {
+				expect(error).toBeInstanceOf(HostedAiBindingError);
+				if (!(error instanceof HostedAiBindingError)) throw error;
+				expect(error.code).toBe("first_party_managed_provider");
 			}
 		}
 	});
@@ -366,8 +239,7 @@ describe("shared Hosted AI provider binding", () => {
 				providers,
 				selection: {
 					mode: "saved",
-					providerIds: [apiKeyProvider.provider_id],
-					primaryProviderId: apiKeyProvider.provider_id,
+					providerId: apiKeyProvider.provider_id,
 					model: "gpt-catalog",
 				},
 			});
@@ -394,24 +266,6 @@ describe("shared Hosted AI provider binding", () => {
 		).toThrow(HostedAiBindingError);
 	});
 
-	test("validates the projected provider catalog before returning bootstrap", () => {
-		expect(() =>
-			buildHostedAiProviderPoolBootstrap(
-				[
-					{
-						...apiKeyProvider,
-						provider_id: "public-no-auth",
-						type: "custom_openai_compatible",
-						base_url: "https://example.com/v1",
-						auth: { type: "none" },
-					},
-				],
-				"public-no-auth",
-				"api_key",
-			),
-		).toThrow("uses no auth on a public URL");
-	});
-
 	test("omits generated nullable runtime and model cost fields", () => {
 		const nullableProvider: HostedSavedAiProvider = JSON.parse(
 			JSON.stringify({
@@ -431,7 +285,18 @@ describe("shared Hosted AI provider binding", () => {
 			}),
 		);
 
-		expect(toHostedRuntimeAiProvider(nullableProvider)).toEqual({
+		const fields = buildHostedAiBindingFields({
+			managedModels,
+			mode: "create",
+			providers: [nullableProvider],
+			selection: {
+				mode: "saved",
+				providerId: nullableProvider.provider_id,
+				model: "gpt-nullable",
+			},
+		});
+
+		expect(fields.ai_provider_bootstrap?.catalog.providers[0]).toEqual({
 			id: "openai-main",
 			type: "openai",
 			base_url: "https://api.openai.com/v1",
@@ -447,11 +312,16 @@ describe("shared Hosted AI provider binding", () => {
 			JSON.stringify({ ...apiKeyProvider, auth: { type: "api_key" } }),
 		);
 		expect(() =>
-			buildHostedAiProviderPoolBootstrap(
-				[malformedProvider],
-				malformedProvider.provider_id,
-				"api_key",
-			),
+			buildHostedAiBindingFields({
+				managedModels,
+				mode: "create",
+				providers: [malformedProvider],
+				selection: {
+					mode: "saved",
+					providerId: malformedProvider.provider_id,
+					model: "gpt-catalog",
+				},
+			}),
 		).toThrow("Invalid AI provider auth source.");
 	});
 });

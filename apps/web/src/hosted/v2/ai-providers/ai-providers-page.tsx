@@ -198,6 +198,9 @@ function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage
 	const [acknowledged, setAcknowledged] = useState(false);
 	const providerLabel = providerPresentation(provider).label;
 	const impact = providerRemovalImpact(usage);
+	const revokesChatGpt =
+		(provider.auth.type === "agent_profile" && provider.auth.tool === "codex") ||
+		provider.auth.type === "oauth_profile";
 	const acknowledgementId = `remove-provider-ack-${provider.provider_id}`;
 
 	function changeOpen(next: boolean) {
@@ -235,6 +238,12 @@ function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage
 					<AlertDialogTitle>Remove {providerLabel}?</AlertDialogTitle>
 					<AlertDialogDescription render={<div className="space-y-2" />}>
 						<p>This provider will be removed from your account and cannot be restored.</p>
+						{revokesChatGpt ? (
+							<p>
+								Local access is removed immediately. Upstream ChatGPT revocation may finish
+								asynchronously.
+							</p>
+						) : null}
 						<p>{impact.warning}</p>
 					</AlertDialogDescription>
 				</AlertDialogHeader>

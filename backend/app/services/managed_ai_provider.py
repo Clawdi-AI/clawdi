@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import re
-import secrets
-from datetime import UTC, datetime
-from urllib.parse import urlparse
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.ai_provider import AiProvider, AiProviderAuthPayload
+from app.models.ai_provider import AiProvider
 from app.models.user import User
-from app.services.vault_crypto import encrypt
+from app.services.ai_provider_auth_transition import (
+    AuthCredentialWrite,
+    transition_ai_provider_auth,
+)
+from app.services.ai_provider_credentials import lock_ai_provider_owner
+from app.services.url_security import UnsafePublicHttpsUrlError, validate_public_https_url
 
 CLAWDI_MANAGED_PROVIDER_ID = "clawdi"
 V1_MANAGED_AI_PROVIDER_ID = "clawdi-managed"
@@ -96,9 +98,10 @@ def managed_provider_api_mode(provider_id: str) -> str | None:
 
 
 def validate_managed_provider_base_url(base_url: str) -> None:
-    parsed = urlparse(base_url.strip())
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("base_url must be an http(s) URL")
+    try:
+        validate_public_https_url(base_url, label="base_url")
+    except UnsafePublicHttpsUrlError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 async def lock_deployment_managed_provider_mutation(
@@ -115,6 +118,7 @@ async def lock_deployment_managed_provider_mutation(
 
     if not is_v2_deployment_managed_provider_id(provider_id):
         raise ValueError("unsupported deployment managed provider id")
+    await lock_ai_provider_owner(db, owner_user_id)
     lock_name = f"managed-ai-provider:{owner_user_id}:{provider_id}"
     await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(lock_name, 0))))
 
@@ -135,6 +139,7 @@ async def upsert_clawdi_managed_provider(
     # TODO(#425): Remove legacy v2 upsert acceptance after the compatibility window closes.
     if not is_v2_managed_provider_id(provider_id):
         raise ValueError("unsupported managed provider id")
+    await lock_ai_provider_owner(db, user.id)
     validate_managed_provider_base_url(base_url)
     normalized_base_url = base_url.strip()
     if not api_key.strip():
@@ -152,6 +157,9 @@ async def upsert_clawdi_managed_provider(
     provider = existing or AiProvider(
         owner_user_id=user.id,
         provider_id=provider_id,
+        auth_type="api_key",
+        auth_ref=None,
+        auth_metadata={"source": "managed", "profile": MANAGED_AI_PROVIDER_PROFILE},
     )
     provider.type = MANAGED_AI_PROVIDER_TYPE
     provider.label = label or MANAGED_AI_PROVIDER_LABEL
@@ -162,60 +170,25 @@ async def upsert_clawdi_managed_provider(
         provider.models = models
     else:
         provider.models = [{"id": default_model}] if default_model else None
-    provider.auth_type = "api_key"
-    provider.auth_ref = None
-    provider.auth_metadata = {"source": "managed", "profile": MANAGED_AI_PROVIDER_PROFILE}
     provider.managed_by = "clawdi"
     provider.runtime_env_name = MANAGED_AI_PROVIDER_RUNTIME_ENV
     provider.archived_at = None
     db.add(provider)
-
-    ciphertext, nonce = encrypt(api_key)
-    payload = (
-        await db.execute(
-            select(AiProviderAuthPayload)
-            .where(
-                AiProviderAuthPayload.owner_user_id == user.id,
-                AiProviderAuthPayload.provider_id == provider_id,
-                AiProviderAuthPayload.auth_profile == MANAGED_AI_PROVIDER_PROFILE,
-            )
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
-    if payload is None:
-        payload = AiProviderAuthPayload(
-            owner_user_id=user.id,
-            provider_id=provider_id,
-            auth_profile=MANAGED_AI_PROVIDER_PROFILE,
+    await db.flush()
+    auth_metadata = {"source": "managed", "profile": MANAGED_AI_PROVIDER_PROFILE}
+    await transition_ai_provider_auth(
+        db,
+        owner_user_id=user.id,
+        provider=provider,
+        auth_type="api_key",
+        auth_ref=None,
+        auth_metadata=auth_metadata,
+        credential=AuthCredentialWrite(
+            profile=MANAGED_AI_PROVIDER_PROFILE,
             kind="api_key",
-            source="managed",
-            encrypted_payload=ciphertext,
-            nonce=nonce,
-            payload_metadata={"runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV},
-        )
-        db.add(payload)
-    else:
-        payload.kind = "api_key"
-        payload.source = "managed"
-        payload.encrypted_payload = ciphertext
-        payload.nonce = nonce
-        payload.payload_metadata = {"runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV}
-        payload.credential_revision = secrets.token_hex(16)
-        payload.archived_at = None
-
-    await db.execute(
-        update(AiProviderAuthPayload)
-        .where(
-            AiProviderAuthPayload.owner_user_id == user.id,
-            AiProviderAuthPayload.provider_id == provider_id,
-            AiProviderAuthPayload.auth_profile != MANAGED_AI_PROVIDER_PROFILE,
-            AiProviderAuthPayload.archived_at.is_(None),
-        )
-        .values(
-            archived_at=datetime.now(UTC),
-            consumer_environment_id=None,
-            consumer_runtime=None,
-        )
+            plaintext=api_key,
+            metadata={"runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV},
+        ),
     )
     return provider
 
@@ -248,6 +221,7 @@ async def archive_clawdi_managed_provider(
 ) -> AiProvider | None:
     """Archive managed provider metadata and encrypted auth for one owner."""
 
+    await lock_ai_provider_owner(db, owner_user_id)
     provider = (
         await db.execute(
             select(AiProvider)
@@ -261,19 +235,13 @@ async def archive_clawdi_managed_provider(
     ).scalar_one_or_none()
     if provider is None:
         return None
-    archived_at = datetime.now(UTC)
-    provider.archived_at = archived_at
-    await db.execute(
-        update(AiProviderAuthPayload)
-        .where(
-            AiProviderAuthPayload.owner_user_id == owner_user_id,
-            AiProviderAuthPayload.provider_id == provider_id,
-            AiProviderAuthPayload.archived_at.is_(None),
-        )
-        .values(
-            archived_at=archived_at,
-            consumer_environment_id=None,
-            consumer_runtime=None,
-        )
+    await transition_ai_provider_auth(
+        db,
+        owner_user_id=owner_user_id,
+        provider=provider,
+        auth_type=provider.auth_type,
+        auth_ref=provider.auth_ref,
+        auth_metadata=provider.auth_metadata,
+        archive_provider=True,
     )
     return provider

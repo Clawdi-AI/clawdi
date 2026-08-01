@@ -29,17 +29,21 @@ import { agentSkillTargetDir } from "../adapters/registry";
 import { type AgentPrimaryModel, buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import {
 	decideChatGptOAuthCredentialReconciliation,
-	type NativeOAuthCredentialAction,
+	intentLedgerForDecision,
 	type NativeOAuthCredentialObservation,
+	type OAuthCredentialLedgerSnapshot,
 } from "../lib/chatgpt-oauth-reconciliation";
 import {
 	HERMES_CODEX_AUTH_HELPER,
 	type HermesCodexAuthAction,
+	type NativeOAuthCredentialMutationResult,
+	nativeOAuthMutationResult,
 	nativeOAuthObservation,
 	nativeOAuthProfileId,
 	type OAuthCredentialOwnership,
 	OPENCLAW_PROVIDER_AUTH_HELPER,
 	type OpenClawProviderAuthAction,
+	oauthCredentialFingerprint,
 	resolveOpenClawProviderAuthSdkExport,
 } from "../lib/codex-oauth-native-store";
 import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
@@ -54,6 +58,13 @@ import {
 	renderHermesMcpServerRemoval,
 	renderHermesRuntimeLocale,
 } from "../lib/hermes-config-merge";
+import {
+	type OAuthCredentialLedger,
+	oauthCredentialLedgerPath,
+	oauthCredentialLedgerSnapshot,
+	readOAuthCredentialLedger,
+	writeOAuthCredentialLedger,
+} from "../lib/oauth-credential-ledger";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { readRuntimeAppliedState, runtimeContentSha256 } from "./applied-state";
 import type { RuntimeApplyContext } from "./apply-identity";
@@ -279,25 +290,7 @@ interface RuntimeInstallObservation {
 	error: string | null;
 }
 
-const RUNTIME_OAUTH_RECEIPT_SCHEMA_VERSION = "clawdi.runtimeOAuthCredential.v1";
 const OPENCLAW_CODEX_PROVIDER_ID = "openai";
-
-const runtimeOAuthReceiptSchema = z
-	.object({
-		schemaVersion: z.literal(RUNTIME_OAUTH_RECEIPT_SCHEMA_VERSION),
-		runtime: z.enum(["hermes", "openclaw"]),
-		providerId: z.string().min(1),
-		nativeProfileId: z.string().min(1),
-		credentialRevision: z.string().min(1).max(64),
-		state: z.enum(["seeded", "adopted", "revoked"]),
-		credentialFingerprint: z
-			.string()
-			.regex(/^sha256:[a-f0-9]{64}$/)
-			.optional(),
-	})
-	.strict();
-
-type RuntimeOAuthReceipt = z.infer<typeof runtimeOAuthReceiptSchema>;
 
 interface RuntimeOAuthMaterial {
 	accessToken: string;
@@ -1819,27 +1812,36 @@ function agentTargetProjectionInput(
 	};
 }
 
-function runtimeOAuthReceiptPath(
+function runtimeOAuthLedgerPath(
 	paths: RuntimePaths,
 	runtime: "hermes" | "openclaw",
 	providerId: string,
 ): string {
-	const key = createHash("sha256").update(providerId).digest("hex");
-	return join(paths.oauthCredentialRoot, runtime, `${key}.json`);
+	return oauthCredentialLedgerPath(paths.oauthCredentialRoot, runtime, providerId);
 }
 
-function readRuntimeOAuthReceipt(path: string): RuntimeOAuthReceipt | null {
-	if (!existsSync(path)) return null;
-	return runtimeOAuthReceiptSchema.parse(JSON.parse(readFileSync(path, "utf8")) as unknown);
-}
-
-function writeRuntimeOAuthReceipt(path: string, receipt: RuntimeOAuthReceipt): void {
-	writePrivateFileAtomic(path, `${JSON.stringify(receipt, null, 2)}\n`, {
-		mode: 0o600,
-		dirMode: 0o700,
+function writeRuntimeOAuthLedger(
+	path: string,
+	runtime: "hermes" | "openclaw",
+	providerId: string,
+	snapshot: OAuthCredentialLedgerSnapshot,
+): void {
+	writeOAuthCredentialLedger(path, { runtime, providerId }, snapshot, {
+		afterWrite: (writtenPath, parent) => {
+			makeRootOwned(writtenPath);
+			makeRootOwned(parent);
+		},
 	});
-	makeRootOwned(path);
-	makeRootOwned(dirname(path));
+}
+
+function readRuntimeOAuthLedger(path: string): OAuthCredentialLedger | null {
+	return readOAuthCredentialLedger(path, {
+		migrateLegacy: true,
+		afterMigrate: (migratedPath, parent) => {
+			makeRootOwned(migratedPath);
+			makeRootOwned(parent);
+		},
+	});
 }
 
 function decodeJwtExpiryMs(token: string): number | null {
@@ -1947,8 +1949,10 @@ function runHermesCodexAuthCommand(
 	workspaceRoot: string,
 	action: HermesCodexAuthAction,
 	profileId: string,
+	credentialRevision: string,
 	material?: RuntimeOAuthMaterial,
 	ownership?: OAuthCredentialOwnership,
+	expectedFingerprint?: string,
 ): Record<string, unknown> {
 	const authPath = hermesAuthPath(home);
 	makeRuntimeUserPrivateDir(dirname(authPath), home);
@@ -1966,6 +1970,8 @@ function runHermesCodexAuthCommand(
 			action,
 			profileId,
 			ownership?.nativeProfileId ?? "",
+			credentialRevision,
+			expectedFingerprint ?? "",
 		],
 		home,
 		workspaceRoot,
@@ -1984,11 +1990,19 @@ function observeHermesCodexAuth(
 	home: string,
 	workspaceRoot: string,
 	profileId: string,
+	credentialRevision: string,
 	ownership?: OAuthCredentialOwnership,
 ): NativeOAuthCredentialObservation {
 	return nativeOAuthObservation(
-		runHermesCodexAuthCommand(home, workspaceRoot, "inspect", profileId, undefined, ownership)
-			.observation,
+		runHermesCodexAuthCommand(
+			home,
+			workspaceRoot,
+			"inspect",
+			profileId,
+			credentialRevision,
+			undefined,
+			ownership,
+		),
 	);
 }
 
@@ -1997,12 +2011,22 @@ function runHermesCodexAuth(
 	workspaceRoot: string,
 	action: Exclude<HermesCodexAuthAction, "inspect">,
 	profileId: string,
+	credentialRevision: string,
 	material?: RuntimeOAuthMaterial,
 	ownership?: OAuthCredentialOwnership,
-): boolean {
-	return (
-		runHermesCodexAuthCommand(home, workspaceRoot, action, profileId, material, ownership)
-			.updated === true
+	expectedFingerprint?: string,
+): NativeOAuthCredentialMutationResult {
+	return nativeOAuthMutationResult(
+		runHermesCodexAuthCommand(
+			home,
+			workspaceRoot,
+			action,
+			profileId,
+			credentialRevision,
+			material,
+			ownership,
+			expectedFingerprint,
+		),
 	);
 }
 
@@ -2107,8 +2131,10 @@ function runOpenClawProviderAuthCommand(
 	workspaceRoot: string,
 	action: OpenClawProviderAuthAction,
 	profileId: string,
+	credentialRevision: string,
 	material?: RuntimeOAuthMaterial,
 	ownership?: OAuthCredentialOwnership,
+	expectedFingerprint?: string,
 ): Record<string, unknown> {
 	const credential = material
 		? JSON.stringify({
@@ -2133,6 +2159,8 @@ function runOpenClawProviderAuthCommand(
 			action,
 			profileId,
 			ownership?.nativeProfileId ?? "",
+			credentialRevision,
+			expectedFingerprint ?? "",
 		],
 		home,
 		workspaceRoot,
@@ -2152,6 +2180,7 @@ function observeOpenClawProviderAuth(
 	home: string,
 	workspaceRoot: string,
 	profileId: string,
+	credentialRevision: string,
 	ownership?: OAuthCredentialOwnership,
 ): NativeOAuthCredentialObservation {
 	return nativeOAuthObservation(
@@ -2161,9 +2190,10 @@ function observeOpenClawProviderAuth(
 			workspaceRoot,
 			"inspect",
 			profileId,
+			credentialRevision,
 			undefined,
 			ownership,
-		).observation,
+		),
 	);
 }
 
@@ -2173,26 +2203,48 @@ function runOpenClawProviderAuth(
 	workspaceRoot: string,
 	action: Exclude<OpenClawProviderAuthAction, "inspect">,
 	profileId: string,
+	credentialRevision: string,
 	material?: RuntimeOAuthMaterial,
 	ownership?: OAuthCredentialOwnership,
-): boolean {
-	return (
+	expectedFingerprint?: string,
+): NativeOAuthCredentialMutationResult {
+	return nativeOAuthMutationResult(
 		runOpenClawProviderAuthCommand(
 			observation,
 			home,
 			workspaceRoot,
 			action,
 			profileId,
+			credentialRevision,
 			material,
 			ownership,
-		).updated === true
+			expectedFingerprint,
+		),
 	);
 }
 
-function runtimeOAuthReceiptOwnership(
-	receipt: RuntimeOAuthReceipt | null,
+function runtimeOAuthLedgerOwnership(
+	ledger: OAuthCredentialLedger | null,
 ): OAuthCredentialOwnership | undefined {
-	return receipt?.state === "seeded" ? { nativeProfileId: receipt.nativeProfileId } : undefined;
+	if (!ledger) return undefined;
+	const credentialFingerprint =
+		ledger.state === "seeded"
+			? ledger.credentialFingerprint
+			: ledger.state === "intent" && ledger.operation === "remove"
+				? ledger.beforeCredentialFingerprint
+				: undefined;
+	if (ledger.state !== "seeded" && !(ledger.state === "intent" && ledger.operation === "remove")) {
+		return undefined;
+	}
+	return {
+		nativeProfileId: ledger.nativeProfileId,
+		...(credentialFingerprint
+			? {
+					credentialRevision: ledger.credentialRevision,
+					credentialFingerprint,
+				}
+			: {}),
+	};
 }
 
 function observeHostedRuntimeOAuthCredential(input: {
@@ -2201,6 +2253,7 @@ function observeHostedRuntimeOAuthCredential(input: {
 	home: string;
 	workspaceRoot: string;
 	nativeProfileId: string;
+	credentialRevision: string;
 	ownership?: OAuthCredentialOwnership;
 }): NativeOAuthCredentialObservation {
 	if (input.runtime === "hermes") {
@@ -2208,6 +2261,7 @@ function observeHostedRuntimeOAuthCredential(input: {
 			input.home,
 			input.workspaceRoot,
 			input.nativeProfileId,
+			input.credentialRevision,
 			input.ownership,
 		);
 	}
@@ -2216,41 +2270,65 @@ function observeHostedRuntimeOAuthCredential(input: {
 		input.home,
 		input.workspaceRoot,
 		input.nativeProfileId,
+		input.credentialRevision,
 		input.ownership,
 	);
 }
 
 function executeHostedRuntimeOAuthAction(input: {
-	action: NativeOAuthCredentialAction;
+	decision: ReturnType<typeof decideChatGptOAuthCredentialReconciliation>;
 	runtime: "hermes" | "openclaw";
 	observation?: RuntimeInstallObservation;
 	home: string;
 	workspaceRoot: string;
 	nativeProfileId: string;
+	credentialRevision: string;
 	material: RuntimeOAuthMaterial;
 }): void {
-	if (input.action === "preserve") return;
-	if (input.action === "remove") {
+	const action = input.decision.nativeAction;
+	if (action === "preserve") return;
+	if (action === "remove") {
 		throw new Error("Desired hosted OAuth reconciliation cannot remove a credential");
 	}
-	const action = input.action === "seed" ? "seed-if-missing" : "upsert";
+	const adapterAction = action === "seed" ? "seed-if-missing" : "upsert";
+	const expectedFingerprint =
+		action === "seed"
+			? "missing"
+			: requireRuntimeDecisionFingerprint(input.decision.expectedCredentialFingerprint, "before");
+	const targetFingerprint = requireRuntimeDecisionFingerprint(
+		input.decision.targetCredentialFingerprint,
+		"target",
+	);
+	let result: NativeOAuthCredentialMutationResult;
 	if (input.runtime === "hermes") {
-		runHermesCodexAuth(
+		result = runHermesCodexAuth(
 			input.home,
 			input.workspaceRoot,
-			action,
+			adapterAction,
 			input.nativeProfileId,
+			input.credentialRevision,
 			input.material,
+			undefined,
+			expectedFingerprint,
 		);
-		return;
+	} else {
+		result = runOpenClawProviderAuth(
+			input.observation,
+			input.home,
+			input.workspaceRoot,
+			adapterAction,
+			input.nativeProfileId,
+			input.credentialRevision,
+			input.material,
+			undefined,
+			expectedFingerprint,
+		);
 	}
-	runOpenClawProviderAuth(
-		input.observation,
-		input.home,
-		input.workspaceRoot,
-		action,
-		input.nativeProfileId,
-		input.material,
+	assertRuntimeNativeMutationCompleted(
+		result,
+		expectedFingerprint,
+		targetFingerprint,
+		`${input.runtime} OAuth credential`,
 	);
 }
 
@@ -2260,28 +2338,82 @@ function removeHostedRuntimeOAuthCredential(input: {
 	home: string;
 	workspaceRoot: string;
 	nativeProfileId: string;
+	credentialRevision: string;
 	ownership: OAuthCredentialOwnership;
+	expectedFingerprint: string;
 }): void {
+	let result: NativeOAuthCredentialMutationResult;
 	if (input.runtime === "hermes") {
-		runHermesCodexAuth(
+		result = runHermesCodexAuth(
 			input.home,
 			input.workspaceRoot,
 			"remove",
 			input.nativeProfileId,
+			input.credentialRevision,
 			undefined,
 			input.ownership,
+			input.expectedFingerprint,
 		);
-		return;
+	} else {
+		result = runOpenClawProviderAuth(
+			input.observation,
+			input.home,
+			input.workspaceRoot,
+			"remove",
+			input.nativeProfileId,
+			input.credentialRevision,
+			undefined,
+			input.ownership,
+			input.expectedFingerprint,
+		);
 	}
-	runOpenClawProviderAuth(
-		input.observation,
-		input.home,
-		input.workspaceRoot,
-		"remove",
-		input.nativeProfileId,
-		undefined,
-		input.ownership,
+	assertRuntimeNativeRemovalCompleted(
+		result,
+		input.expectedFingerprint,
+		`${input.runtime} OAuth credential`,
 	);
+}
+
+function requireRuntimeDecisionFingerprint(value: string | undefined, label: string): string {
+	if (!value) throw new Error(`OAuth credential decision is missing ${label} fingerprint evidence`);
+	return value;
+}
+
+function assertRuntimeNativeMutationCompleted(
+	result: NativeOAuthCredentialMutationResult,
+	expectedFingerprint: string,
+	targetFingerprint: string,
+	label: string,
+): void {
+	if (!result.casMatched) throw new Error(`${label} changed before the mutation could be applied`);
+	assertRuntimeNativeMutationBeforeEvidence(result, expectedFingerprint, label);
+	if (!result.updated || result.afterCredentialFingerprint !== targetFingerprint) {
+		throw new Error(`${label} mutation did not produce the intended fingerprint`);
+	}
+}
+
+function assertRuntimeNativeRemovalCompleted(
+	result: NativeOAuthCredentialMutationResult,
+	expectedFingerprint: string,
+	label: string,
+): void {
+	if (!result.casMatched) throw new Error(`${label} changed before removal could be applied`);
+	assertRuntimeNativeMutationBeforeEvidence(result, expectedFingerprint, label);
+	if (!result.updated || result.afterCredentialFingerprint) {
+		throw new Error(`${label} removal could not verify absence`);
+	}
+}
+
+function assertRuntimeNativeMutationBeforeEvidence(
+	result: NativeOAuthCredentialMutationResult,
+	expectedFingerprint: string,
+	label: string,
+): void {
+	const matches =
+		expectedFingerprint === "missing"
+			? result.beforeCredentialFingerprint === undefined
+			: result.beforeCredentialFingerprint === expectedFingerprint;
+	if (!matches) throw new Error(`${label} mutation returned inconsistent before evidence`);
 }
 
 function reconcileHostedRuntimeOAuthCredentials(input: {
@@ -2294,80 +2426,110 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 	workspaceRoot: string;
 }): void {
 	const desired = hostedRuntimeOAuthCredentials(input.manifest, input.runtime, input.secretValues);
-	if (desired.length > 1) {
-		throw new Error(`${input.runtime} cannot consume more than one Codex OAuth credential family`);
-	}
 	const desiredProviderIds = new Set(desired.map((credential) => credential.providerId));
-	const receiptDir = join(input.paths.oauthCredentialRoot, input.runtime);
-	if (existsSync(receiptDir)) {
-		for (const filename of readdirSync(receiptDir).filter((name) => name.endsWith(".json"))) {
-			const path = join(receiptDir, filename);
-			const receipt = readRuntimeOAuthReceipt(path);
-			if (!receipt || desiredProviderIds.has(receipt.providerId)) continue;
-			const ownership = runtimeOAuthReceiptOwnership(receipt);
+	const ledgerDir = join(input.paths.oauthCredentialRoot, input.runtime);
+	if (existsSync(ledgerDir)) {
+		for (const filename of readdirSync(ledgerDir).filter((name) => name.endsWith(".json"))) {
+			const path = join(ledgerDir, filename);
+			const ledger = readRuntimeOAuthLedger(path);
+			if (!ledger || desiredProviderIds.has(ledger.providerId) || ledger.state === "retired") {
+				continue;
+			}
+			const snapshot = oauthCredentialLedgerSnapshot(ledger);
+			const ownership = runtimeOAuthLedgerOwnership(ledger);
 			const native = observeHostedRuntimeOAuthCredential({
 				runtime: input.runtime,
 				observation: input.observation,
 				home: input.home,
 				workspaceRoot: input.workspaceRoot,
-				nativeProfileId: receipt.nativeProfileId,
+				nativeProfileId: ledger.nativeProfileId,
+				credentialRevision: ledger.credentialRevision,
 				ownership,
 			});
 			const decision = decideChatGptOAuthCredentialReconciliation({
 				desiredCredentialRevision: null,
 				desiredNativeProfileId: null,
-				receipt,
+				desiredCredentialFingerprint: null,
+				ledger: snapshot,
 				native,
 			});
-			if (decision.nativeAction === "remove" && ownership) {
+			if (decision.requiresWriteAheadIntent) {
+				writeRuntimeOAuthLedger(
+					path,
+					input.runtime,
+					ledger.providerId,
+					intentLedgerForDecision(decision),
+				);
+			}
+			if (decision.nativeAction === "remove") {
+				const expectedFingerprint = requireRuntimeDecisionFingerprint(
+					decision.expectedCredentialFingerprint,
+					"before",
+				);
+				const removalOwnership = ownership ?? {
+					nativeProfileId: ledger.nativeProfileId,
+					credentialRevision: ledger.credentialRevision,
+					credentialFingerprint: expectedFingerprint,
+				};
 				removeHostedRuntimeOAuthCredential({
 					runtime: input.runtime,
 					observation: input.observation,
 					home: input.home,
 					workspaceRoot: input.workspaceRoot,
-					nativeProfileId: receipt.nativeProfileId,
-					ownership,
+					nativeProfileId: ledger.nativeProfileId,
+					credentialRevision: ledger.credentialRevision,
+					ownership: removalOwnership,
+					expectedFingerprint,
 				});
 			}
-			rmSync(path, { force: true });
+			writeRuntimeOAuthLedger(path, input.runtime, ledger.providerId, decision.nextLedger);
 		}
 	}
 	for (const credential of desired) {
-		const receiptPath = runtimeOAuthReceiptPath(input.paths, input.runtime, credential.providerId);
-		const receipt = readRuntimeOAuthReceipt(receiptPath);
+		const ledgerPath = runtimeOAuthLedgerPath(input.paths, input.runtime, credential.providerId);
+		const ledger = readRuntimeOAuthLedger(ledgerPath);
+		const snapshot = oauthCredentialLedgerSnapshot(ledger);
 		const nativeProfileId = nativeOAuthProfileId(input.runtime, credential.providerId);
+		const desiredFingerprint = oauthCredentialFingerprint(
+			credential.credentialRevision,
+			credential.material.accessToken,
+			credential.material.refreshToken,
+		);
 		const native = observeHostedRuntimeOAuthCredential({
 			runtime: input.runtime,
 			observation: input.observation,
 			home: input.home,
 			workspaceRoot: input.workspaceRoot,
 			nativeProfileId,
-			ownership: runtimeOAuthReceiptOwnership(receipt),
+			credentialRevision: credential.credentialRevision,
+			ownership: runtimeOAuthLedgerOwnership(ledger),
 		});
 		const decision = decideChatGptOAuthCredentialReconciliation({
 			desiredCredentialRevision: credential.credentialRevision,
 			desiredNativeProfileId: nativeProfileId,
-			receipt,
+			desiredCredentialFingerprint: desiredFingerprint,
+			ledger: snapshot,
 			native,
 		});
+		if (decision.requiresWriteAheadIntent) {
+			writeRuntimeOAuthLedger(
+				ledgerPath,
+				input.runtime,
+				credential.providerId,
+				intentLedgerForDecision(decision),
+			);
+		}
 		executeHostedRuntimeOAuthAction({
-			action: decision.nativeAction,
+			decision,
 			runtime: input.runtime,
 			observation: input.observation,
 			home: input.home,
 			workspaceRoot: input.workspaceRoot,
 			nativeProfileId,
+			credentialRevision: credential.credentialRevision,
 			material: credential.material,
 		});
-		if (!decision.nextReceipt) {
-			throw new Error("Desired hosted OAuth reconciliation did not produce a receipt");
-		}
-		writeRuntimeOAuthReceipt(receiptPath, {
-			schemaVersion: RUNTIME_OAUTH_RECEIPT_SCHEMA_VERSION,
-			runtime: input.runtime,
-			providerId: credential.providerId,
-			...decision.nextReceipt,
-		});
+		writeRuntimeOAuthLedger(ledgerPath, input.runtime, credential.providerId, decision.nextLedger);
 	}
 }
 
@@ -4599,14 +4761,6 @@ function validateRuntimeProjectionPlan(input: {
 		const observation = observations.get(name);
 		if (!observation) throw new Error(`runtime ${name} install observation is missing`);
 		const runtimeName = runtimeNameSchema.parse(name);
-		if (runtimeName === "hermes" || runtimeName === "openclaw") {
-			const oauthCredentials = hostedRuntimeOAuthCredentials(manifest, runtimeName, secretValues);
-			if (oauthCredentials.length > 1) {
-				throw new Error(
-					`${runtimeName} cannot consume more than one Codex OAuth credential family`,
-				);
-			}
-		}
 		const providerEnvironment = runtime.enabled
 			? hostedProviderEnvironment(manifest, name, { validateOverlap: true })
 			: { placeholderEnv: {}, secretEnv: {} };

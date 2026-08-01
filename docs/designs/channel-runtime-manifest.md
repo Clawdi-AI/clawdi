@@ -15,8 +15,8 @@ What exists today:
   `/v1/channels`.
 - `clawdi run ...` injects Vault and AI Provider runtime env into a child
   process.
-- `clawdi ai-provider apply ...` materializes AI Provider config into selected
-  agent runtimes.
+- Core Hosted manifests carry the controller-selected AI Provider binding and
+  the runtime reconciler projects it into Hermes or OpenClaw native config.
 - `clawdi runtime plan/status/apply` reads `clawdi.runtime.yaml`, creates or
   reuses private channel accounts, links accessible bots to agents, emits pair
   codes, and writes dotenv/WhatsApp Baileys runtime outputs with private file
@@ -272,8 +272,8 @@ output when OpenClaw supports it.
 
 ### Hermes Projection
 
-Hermes should be a structured `config.yaml` merge, similar to
-`clawdi ai-provider apply --target hermes`.
+Hermes should be a structured `config.yaml` merge, using the same target-native
+provider projection owned by Hosted runtime convergence.
 
 Telegram:
 

@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from http import HTTPStatus
 from typing import Any, Literal
@@ -61,6 +61,7 @@ from app.routes.skills import router as skills_router
 from app.routes.skills import scope_router as skills_scope_router
 from app.routes.sync import router as sync_router
 from app.routes.vault import router as vault_router
+from app.services.ai_provider_auth_transition import OAuthCredentialPayloadCorruptError
 from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
@@ -241,7 +242,7 @@ def _apply_public_session_export_cache_policy(
 async def request_validation_exception_handler(
     request: Request,
     exc: RequestValidationError,
-) -> JSONResponse:
+) -> Response:
     path = request.url.path
     if path.endswith("/runtime-state"):
         errors = _validation_errors_for_log(exc)
@@ -325,6 +326,18 @@ app.include_router(skills_scope_router, prefix="/api", include_in_schema=False)
 app.include_router(metrics_router)
 
 
+@app.exception_handler(OAuthCredentialPayloadCorruptError)
+async def oauth_credential_payload_corrupt_exception_handler(
+    request: Request,
+    exc: OAuthCredentialPayloadCorruptError,
+) -> Response:
+    response = JSONResponse(
+        status_code=409,
+        content={"detail": str(exc)},
+    )
+    return _apply_public_session_export_cache_policy(request, response)
+
+
 @app.exception_handler(StarletteHTTPException)
 async def clawdi_http_exception_handler(
     request: Request,
@@ -364,7 +377,7 @@ def _bluebubbles_error_response(
     *,
     status_code: int,
     detail: Any,
-    headers: dict[str, str] | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     message = _bluebubbles_error_message(status_code=status_code, detail=detail)
     return JSONResponse(

@@ -136,7 +136,7 @@ Current Playwright coverage is shallow:
 Missing browser coverage:
 
 - `can_use_v2=false` with existing deployments still visible/manageable.
-- Deploy wizard request payload for runtime XOR, compute plan, provider pool,
+- Deploy wizard request payload for runtime XOR, compute plan, provider selection,
   primary model, and checkout path.
 - Agent detail overview/console/terminal/provider/lifecycle/delete.
 - Billing wallet, top-up, usage empty/loading/error.
@@ -178,7 +178,7 @@ Fix: make the first skeleton section two columns/two tiles.
 | Flow step | Status | Evidence |
 |---|---|---|
 | 1. Discover/gating | **BROKEN** | v2-off users can see v1, but existing v2 deployment management is also hidden because every Cloud deployment surface depends on `canUseCloudAgents`; see finding 1. |
-| 2. Deploy wizard | **COMPLETE, with polish** | Runtime is single-select (`deploy-wizard.tsx:275`, `:655`, `:664`); request sends one runtime (`deploy-request.ts:26`, `:34`); Free/Performance compute is present (`deploy-wizard.tsx:784`); Performance checkout and Free deploy are wired (`deploy-wizard.tsx:549`, `:579`); provider pool and primary model are wired (`deploy-wizard.tsx:467`, `:494`, `:731`). Skeleton still shows three runtime tiles. |
+| 2. Deploy wizard | **COMPLETE, with polish** | Runtime is single-select (`deploy-wizard.tsx:275`, `:655`, `:664`); request sends one runtime (`deploy-request.ts:26`, `:34`); Free/Performance compute is present (`deploy-wizard.tsx:784`); Performance checkout and Free deploy are wired (`deploy-wizard.tsx:549`, `:579`); single-provider selection and its model are wired (`deploy-wizard.tsx:467`, `:494`, `:731`). Skeleton still shows three runtime tiles. |
 | 3. Agent/deployment detail | **GAP** | One selected runtime detail is rendered (`agent-home.tsx:110`, `hosted-agent-detail.tsx:320`); status cards exist (`hosted-agent-detail.tsx:682`); console/watch URL exists (`hosted-agent-detail.tsx:725`, `:769`, `:822`); terminal is wired (`billing-client.ts:163`, `hosted-agent-detail.tsx:886`); provider rebind is wired (`deployment-hooks.ts:123`, `hosted-agent-detail.tsx:1226`); lifecycle/delete exists (`hosted-agent-detail.tsx:2288`, `:2351`). Runtime switch is missing from the frontend. |
 | 4. Billing/wallet surfaces | **COMPLETE for normal v2-on; GAP under rollback** | Wallet calls `/v2/wallet`, ledger, top-up, auto-reload (`billing-client.ts:92`, `:95`, `:101`, `:107`); plans/checkout/portal/cancel/resume/usage are wired (`billing-client.ts:109`, `:112`, `:118`, `:120`, `:122`, `:123`); wallet loading/error/content exists (`wallet-page.tsx:34`, `:43`, `:58`); top-up validates and calls mutation (`top-up-dialog.tsx:57`, `:92`); usage loading/error/empty/content exists (`usage-page.tsx:22`, `:31`, `:55`, `:68`). Under rollback, billing settings hide with `canUseCloudAgents=false`. |
 | 5. Cross-screen consistency | **GAP/POLISH** | UI mostly follows `DESIGN.md`: designed states are expected at `DESIGN.md:30`, page width at `DESIGN.md:97`, collection/card framework at `DESIGN.md:132`. Hosted roots have invariant tests (`oss-clean.test.ts:208`). Visible copy mostly says Clawdi Cloud rather than V2; internal `v2` names remain in code/tests/docs. The main consistency gap is capability semantics, not visual style. |

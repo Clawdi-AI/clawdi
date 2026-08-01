@@ -136,7 +136,7 @@ class _AiProviderApiKeyAuth(_AiProviderAuthVariant):
 
 
 class AiProviderEnvApiKeyAuth(_AiProviderApiKeyAuth):
-    source: Literal["env"]
+    source: Literal["env"]  # pyright: ignore[reportIncompatibleVariableOverride]
     ref: EnvSecretRef
 
     def persistence_fields(self) -> tuple[str, dict[str, str]]:
@@ -144,7 +144,7 @@ class AiProviderEnvApiKeyAuth(_AiProviderApiKeyAuth):
 
 
 class AiProviderVaultApiKeyAuth(_AiProviderApiKeyAuth):
-    source: Literal["vault"]
+    source: Literal["vault"]  # pyright: ignore[reportIncompatibleVariableOverride]
     ref: VaultSecretRef
 
     def persistence_fields(self) -> tuple[str, dict[str, str]]:
@@ -152,7 +152,7 @@ class AiProviderVaultApiKeyAuth(_AiProviderApiKeyAuth):
 
 
 class AiProviderManagedApiKeyAuth(_AiProviderApiKeyAuth):
-    source: Literal["managed"]
+    source: Literal["managed"]  # pyright: ignore[reportIncompatibleVariableOverride]
 
     def persistence_fields(self) -> tuple[None, dict[str, str]]:
         return None, self._metadata()
@@ -418,6 +418,7 @@ class AiProviderListResponse(BaseModel):
 class AiProviderDeleteResponse(BaseModel):
     status: Literal["deleted"]
     provider_id: str
+    remote_revoke_status: Literal["pending", "not_required"] = "not_required"
 
 
 class AiProviderValidationResponse(BaseModel):

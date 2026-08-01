@@ -8,11 +8,7 @@ import {
 } from "@/hosted/v2/ai-providers/ai-provider-binding";
 import { MANAGED_AI_CHOICE, MANAGED_PROVIDER_ID } from "@/hosted/v2/ai-providers/model-binding";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
-import {
-	changeAiBindingPrimaryProvider,
-	selectAiBindingProvider,
-	toggleAiBindingProvider,
-} from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
+import { selectAiBindingProvider } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 
 const managedModels = [
 	{
@@ -74,7 +70,6 @@ describe("AI provider binding fields", () => {
 			buildAiBindingFields(
 				{
 					bindingMode: "unmanaged",
-					providerChoices: [MANAGED_AI_CHOICE],
 					primaryProviderChoice: MANAGED_AI_CHOICE,
 					primaryModel: "",
 				},
@@ -88,7 +83,6 @@ describe("AI provider binding fields", () => {
 			buildAiBindingFields(
 				{
 					bindingMode: "unmanaged",
-					providerChoices: [MANAGED_AI_CHOICE],
 					primaryProviderChoice: MANAGED_AI_CHOICE,
 					primaryModel: "",
 				},
@@ -109,7 +103,6 @@ describe("AI provider binding fields", () => {
 			buildAiBindingFields(
 				{
 					bindingMode: "configured",
-					providerChoices: [MANAGED_AI_CHOICE],
 					primaryProviderChoice: MANAGED_AI_CHOICE,
 					primaryModel: "",
 				},
@@ -127,7 +120,6 @@ describe("AI provider binding fields", () => {
 	test("create omits an empty bootstrap while update clears it", () => {
 		const draft = {
 			bindingMode: "configured" as const,
-			providerChoices: [MANAGED_AI_CHOICE],
 			primaryProviderChoice: MANAGED_AI_CHOICE,
 			primaryModel: "gpt-managed",
 		};
@@ -152,10 +144,9 @@ describe("AI provider binding fields", () => {
 		expect(updateFields).toEqual({ ...createFields, ai_provider_bootstrap: null });
 	});
 
-	test("uses one auth mapping and selection order for create and update bootstraps", () => {
+	test("uses one auth mapping for create and update bootstraps", () => {
 		const draft = {
 			bindingMode: "configured" as const,
-			providerChoices: [oauthProvider.provider_id, apiKeyProvider.provider_id],
 			primaryProviderChoice: oauthProvider.provider_id,
 			primaryModel: "gpt-custom",
 		};
@@ -167,69 +158,12 @@ describe("AI provider binding fields", () => {
 				providers: [apiKeyProvider, oauthProvider],
 			});
 
-			expect(fields.provider_ids).toEqual([oauthProvider.provider_id, apiKeyProvider.provider_id]);
+			expect(fields.provider_ids).toEqual([oauthProvider.provider_id]);
 			expect(fields.ai_provider_bootstrap?.selected_provider_id).toBe(oauthProvider.provider_id);
 			expect(fields.ai_provider_bootstrap?.auth_kind).toBe("codex_oauth");
 			expect(
 				fields.ai_provider_bootstrap?.catalog.providers.map((provider) => provider.id),
-			).toEqual([oauthProvider.provider_id, apiKeyProvider.provider_id]);
-		}
-	});
-
-	test("keeps managed primary and saved secondary fields identical across create and update", () => {
-		const draft = {
-			bindingMode: "configured" as const,
-			providerChoices: [MANAGED_AI_CHOICE, apiKeyProvider.provider_id],
-			primaryProviderChoice: MANAGED_AI_CHOICE,
-			primaryModel: "gpt-managed",
-		};
-
-		for (const mode of ["create", "update"] as const) {
-			const fields = buildAiBindingFields(draft, {
-				managedModels,
-				mode,
-				providers: [apiKeyProvider],
-			});
-			expect(fields.provider_ids).toEqual([MANAGED_PROVIDER_ID, apiKeyProvider.provider_id]);
-			expect(fields.primary_model).toEqual({
-				provider_id: MANAGED_PROVIDER_ID,
-				model: "gpt-managed",
-			});
-			expect(fields.ai_provider_auth_kind).toBe("managed");
-			expect(fields.ai_provider_id).toBeNull();
-			expect(fields.ai_provider_bootstrap?.selected_provider_id).toBe(apiKeyProvider.provider_id);
-			expect(
-				fields.ai_provider_bootstrap?.catalog.providers.map((provider) => provider.id),
-			).toEqual([apiKeyProvider.provider_id]);
-		}
-	});
-
-	test("keeps saved primary with managed and another saved provider in the ordered pool", () => {
-		const draft = {
-			bindingMode: "configured" as const,
-			providerChoices: [oauthProvider.provider_id, MANAGED_AI_CHOICE, apiKeyProvider.provider_id],
-			primaryProviderChoice: oauthProvider.provider_id,
-			primaryModel: "gpt-custom",
-		};
-
-		for (const mode of ["create", "update"] as const) {
-			const fields = buildAiBindingFields(draft, {
-				managedModels,
-				mode,
-				providers: [apiKeyProvider, oauthProvider],
-			});
-			expect(fields.provider_ids).toEqual([
-				oauthProvider.provider_id,
-				MANAGED_PROVIDER_ID,
-				apiKeyProvider.provider_id,
-			]);
-			expect(fields.primary_model).toEqual({
-				provider_id: oauthProvider.provider_id,
-				model: "gpt-custom",
-			});
-			expect(
-				fields.ai_provider_bootstrap?.catalog.providers.map((provider) => provider.id),
-			).toEqual([oauthProvider.provider_id, apiKeyProvider.provider_id]);
+			).toEqual([oauthProvider.provider_id]);
 		}
 	});
 
@@ -247,7 +181,6 @@ describe("AI provider binding fields", () => {
 		};
 		const draft = {
 			bindingMode: "configured" as const,
-			providerChoices: [unfinishedProvider.provider_id],
 			primaryProviderChoice: unfinishedProvider.provider_id,
 			primaryModel: "gpt-custom",
 		};
@@ -263,43 +196,20 @@ describe("AI provider binding fields", () => {
 });
 
 describe("AI provider binding draft transitions", () => {
-	test("removes the only selected provider by switching to unmanaged", () => {
-		const removed = toggleAiBindingProvider(
-			{
-				bindingMode: "configured",
-				providerChoices: [oauthProvider.provider_id],
-				primaryProviderChoice: oauthProvider.provider_id,
-				primaryModel: "gpt-custom",
-			},
-			oauthProvider.provider_id,
-			{
-				managedModels,
-				operationMode: "update",
-				providers: [oauthProvider],
-			},
-		);
-
-		expect(removed.bindingMode).toBe("unmanaged");
-		expect(removed.providerChoices).toEqual([]);
-	});
-
-	test("selects exactly one provider from an existing multi-provider draft", () => {
+	test("replaces the selected provider", () => {
 		const selected = selectAiBindingProvider(
 			{
 				bindingMode: "configured",
-				providerChoices: [MANAGED_AI_CHOICE, oauthProvider.provider_id],
 				primaryProviderChoice: MANAGED_AI_CHOICE,
 				primaryModel: "gpt-managed",
 			},
 			apiKeyProvider.provider_id,
 			{
 				managedModels,
-				operationMode: "update",
 				providers: [apiKeyProvider, oauthProvider],
 			},
 		);
 
-		expect(selected.providerChoices).toEqual([apiKeyProvider.provider_id]);
 		expect(selected.primaryProviderChoice).toBe(apiKeyProvider.provider_id);
 		expect(selected.primaryModel).toBe("gpt-custom");
 		expect(
@@ -312,18 +222,17 @@ describe("AI provider binding draft transitions", () => {
 	});
 
 	test("replaces a BYO provider with a managed-only update request", () => {
-		const managed = toggleAiBindingProvider(
+		const managed = selectAiBindingProvider(
 			{
 				bindingMode: "configured",
-				providerChoices: [apiKeyProvider.provider_id],
 				primaryProviderChoice: apiKeyProvider.provider_id,
 				primaryModel: "gpt-custom",
 			},
 			MANAGED_AI_CHOICE,
-			{ managedModels, operationMode: "update", providers: [apiKeyProvider] },
+			{ managedModels, providers: [apiKeyProvider] },
 		);
 
-		expect(managed.providerChoices).toEqual([MANAGED_AI_CHOICE]);
+		expect(managed.primaryProviderChoice).toBe(MANAGED_AI_CHOICE);
 		expect(buildAiBindingFields(managed, { managedModels, mode: "update", providers: [] })).toEqual(
 			{
 				ai_provider_auth_kind: "managed",
@@ -338,39 +247,34 @@ describe("AI provider binding draft transitions", () => {
 	test("clears a stale catalog model when the next provider has no default", () => {
 		const draft = {
 			bindingMode: "configured" as const,
-			providerChoices: [MANAGED_AI_CHOICE],
 			primaryProviderChoice: MANAGED_AI_CHOICE,
 			primaryModel: "   ",
 		};
 
 		expect(
-			changeAiBindingPrimaryProvider(draft, "missing-models", {
+			selectAiBindingProvider(draft, "missing-models", {
 				managedModels,
-				operationMode: "create",
 				providers: [],
 			}).primaryModel,
 		).toBe("");
 		expect(
-			changeAiBindingPrimaryProvider(draft, "missing-models", {
+			selectAiBindingProvider(draft, "missing-models", {
 				managedModels,
-				operationMode: "update",
 				providers: [],
 			}).primaryModel,
 		).toBe("");
 	});
 
 	test("preserves an existing custom model across provider switches", () => {
-		const selected = changeAiBindingPrimaryProvider(
+		const selected = selectAiBindingProvider(
 			{
 				bindingMode: "configured",
-				providerChoices: [apiKeyProvider.provider_id],
 				primaryProviderChoice: apiKeyProvider.provider_id,
 				primaryModel: "owner/custom-model",
 			},
 			oauthProvider.provider_id,
 			{
 				managedModels,
-				operationMode: "update",
 				providers: [apiKeyProvider, oauthProvider],
 			},
 		);
@@ -385,17 +289,15 @@ describe("AI provider binding draft transitions", () => {
 			type: "anthropic",
 			models: [{ id: "claude-owner-default" }, { id: "claude-owner-alternate" }],
 		} satisfies AiProvider;
-		const selected = changeAiBindingPrimaryProvider(
+		const selected = selectAiBindingProvider(
 			{
 				bindingMode: "configured",
-				providerChoices: [apiKeyProvider.provider_id],
 				primaryProviderChoice: apiKeyProvider.provider_id,
 				primaryModel: "gpt-custom",
 			},
 			nextProvider.provider_id,
 			{
 				managedModels,
-				operationMode: "create",
 				providers: [apiKeyProvider, nextProvider],
 			},
 		);
@@ -411,16 +313,13 @@ describe("AI provider binding draft transitions", () => {
 
 		const draft = {
 			bindingMode: "configured" as const,
-			providerChoices: [unresolved],
 			primaryProviderChoice: unresolved,
 			primaryModel: "legacy-model",
 		};
-		const updateDraft = toggleAiBindingProvider(draft, MANAGED_AI_CHOICE, {
+		const updateDraft = selectAiBindingProvider(draft, MANAGED_AI_CHOICE, {
 			managedModels,
-			operationMode: "update",
 			providers: [],
 		});
-		expect(updateDraft.providerChoices).toEqual([MANAGED_AI_CHOICE]);
 		expect(updateDraft.primaryProviderChoice).toBe(MANAGED_AI_CHOICE);
 		expect(updateDraft.primaryModel).toBe("gpt-managed");
 		expect(() =>

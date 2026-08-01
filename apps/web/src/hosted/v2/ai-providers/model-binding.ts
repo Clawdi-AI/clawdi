@@ -84,18 +84,6 @@ export function primaryModelRef(providerId: string, model: string): PrimaryModel
 	return { provider_id, model: value };
 }
 
-export function dedupeProviderIds(providerIds: readonly string[]): string[] {
-	const seen = new Set<string>();
-	const result: string[] = [];
-	for (const raw of providerIds) {
-		const providerId = raw.trim();
-		if (!providerId || seen.has(providerId)) continue;
-		seen.add(providerId);
-		result.push(providerId);
-	}
-	return result;
-}
-
 export function isManagedProviderId(providerId: string | null | undefined): boolean {
 	return typeof providerId === "string" && isClawdiManagedProviderId(providerId);
 }
@@ -343,13 +331,4 @@ export function firstModelForProvider(
 		);
 	}
 	return models[0]?.id ?? "";
-}
-
-export function normalizeSelectedProviderIds(
-	choices: readonly string[],
-	primaryChoice: string,
-): string[] {
-	const normalized = dedupeProviderIds(choices);
-	if (normalized.includes(primaryChoice)) return normalized;
-	return dedupeProviderIds([primaryChoice, ...normalized]);
 }

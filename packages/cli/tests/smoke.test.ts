@@ -113,9 +113,18 @@ describe("CLI smoke — src entry", () => {
 			expect(parsed.commands).toContain("deploy");
 			expect(parsed.commands).toContain("channel");
 			expect(parsed.updateMode).toBe("local-self-update");
+			expect(parsed.providerApply).toBeUndefined();
 		} finally {
 			rmSync(fakeHome, { recursive: true, force: true });
 		}
+	});
+
+	it("ai-provider help omits retired local activation commands", async () => {
+		const { stdout, code } = await runCli(["ai-provider", "--help"]);
+		expect(code).toBe(0);
+		expect(stdout).not.toContain("apply");
+		expect(stdout).not.toContain("materialize-auth");
+		expect(stdout).not.toContain("status");
 	});
 
 	it("auth status reports no auth in an isolated HOME", async () => {

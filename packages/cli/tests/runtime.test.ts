@@ -26,7 +26,10 @@ import {
 	runtimePublicContentRevision,
 	runtimeWatch as runtimeWatchWithContext,
 } from "../src/commands/runtime";
-import { nativeOAuthProfileId } from "../src/lib/codex-oauth-native-store";
+import {
+	nativeOAuthProfileId,
+	oauthCredentialFingerprint,
+} from "../src/lib/codex-oauth-native-store";
 import { getCliVersion } from "../src/lib/version";
 import {
 	readRuntimeAppliedState,
@@ -4714,6 +4717,8 @@ exit 0
 		const paths = getRuntimePaths();
 		const authPath = join(home, ".hermes", "auth.json");
 		const nativeProfileId = nativeOAuthProfileId("hermes", "openai-codex");
+		const ledgerKey = createHash("sha256").update("openai-codex").digest("hex");
+		const ledgerPath = join(paths.oauthCredentialRoot, "hermes", `${ledgerKey}.json`);
 		mkdirSync(dirname(authPath), { recursive: true });
 		writeFileSync(
 			authPath,
@@ -4747,6 +4752,24 @@ exit 0
 			accessToken: "hermes-seed-access",
 			refreshToken: "hermes-seed-refresh",
 		});
+		mkdirSync(dirname(ledgerPath), { recursive: true });
+		writeFileSync(
+			ledgerPath,
+			`${JSON.stringify({
+				schemaVersion: "clawdi.oauthCredentialOwnership.v2",
+				runtime: "hermes",
+				providerId: "openai-codex",
+				nativeProfileId,
+				credentialRevision: "hermes-revision-1",
+				state: "intent",
+				operation: "seed",
+				targetCredentialFingerprint: oauthCredentialFingerprint(
+					"hermes-revision-1",
+					"hermes-seed-access",
+					"hermes-seed-refresh",
+				),
+			})}\n`,
+		);
 
 		const first = convergeRuntimeManifest(firstLoad, paths);
 		expect(first.installErrors).toEqual([]);
@@ -4761,6 +4784,7 @@ exit 0
 		});
 		expect(auth.credential_pool["openai-codex"][1].id).toBe("user-independent");
 		expect(existsSync(join(home, ".hermes", "auth.lock"))).toBe(true);
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("seeded");
 
 		auth.credential_pool["openai-codex"][0].access_token = "hermes-runtime-rotated";
 		auth.credential_pool["openai-codex"][0].refresh_token = "hermes-runtime-rotated-refresh";
@@ -4768,15 +4792,14 @@ exit 0
 		convergeRuntimeManifest(firstLoad, paths);
 		auth = JSON.parse(readFileSync(authPath, "utf8"));
 		expect(auth.credential_pool["openai-codex"][0].access_token).toBe("hermes-runtime-rotated");
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("seeded");
 
 		auth.credential_pool["openai-codex"] = auth.credential_pool["openai-codex"].filter(
 			(entry: { id?: string }) => entry.id !== nativeProfileId,
 		);
 		writeFileSync(authPath, `${JSON.stringify(auth, null, 2)}\n`);
 		convergeRuntimeManifest(firstLoad, paths);
-		const receiptKey = createHash("sha256").update("openai-codex").digest("hex");
-		const receiptPath = join(paths.oauthCredentialRoot, "hermes", `${receiptKey}.json`);
-		expect(JSON.parse(readFileSync(receiptPath, "utf8"))).toMatchObject({
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8"))).toMatchObject({
 			nativeProfileId,
 			credentialRevision: "hermes-revision-1",
 			state: "revoked",
@@ -4784,7 +4807,7 @@ exit 0
 		auth = JSON.parse(readFileSync(authPath, "utf8"));
 		expect(auth.credential_pool["openai-codex"][0].id).toBe("user-independent");
 		convergeRuntimeManifest(firstLoad, paths);
-		expect(JSON.parse(readFileSync(receiptPath, "utf8")).state).toBe("revoked");
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("revoked");
 
 		const nativeReauthenticatedLoad = hostedOAuthRuntimeLoad({
 			home,
@@ -4802,7 +4825,7 @@ exit 0
 			access_token: "explicit-reconnect-access",
 			refresh_token: "explicit-reconnect-refresh",
 		});
-		expect(JSON.parse(readFileSync(receiptPath, "utf8"))).toMatchObject({
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8"))).toMatchObject({
 			credentialRevision: "hermes-revision-2",
 			state: "seeded",
 		});
@@ -4839,7 +4862,53 @@ exit 0
 				refresh_token: "user-independent-refresh",
 			}),
 		]);
-		expect(existsSync(receiptPath)).toBe(false);
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("retired");
+
+		auth.credential_pool["openai-codex"].unshift({
+			id: nativeProfileId,
+			label: "User replacement",
+			auth_type: "oauth",
+			priority: 0,
+			source: "manual:device_code",
+			access_token: "foreign-namespaced-access",
+			refresh_token: "foreign-namespaced-refresh",
+		});
+		writeFileSync(authPath, `${JSON.stringify(auth, null, 2)}\n`);
+		writeFileSync(
+			ledgerPath,
+			`${JSON.stringify({
+				schemaVersion: "clawdi.oauthCredentialOwnership.v2",
+				runtime: "hermes",
+				providerId: "openai-codex",
+				nativeProfileId,
+				credentialRevision: "hermes-revision-2",
+				state: "adopted",
+			})}\n`,
+		);
+		convergeRuntimeManifest(removedLoad, paths);
+		auth = JSON.parse(readFileSync(authPath, "utf8"));
+		expect(auth.credential_pool["openai-codex"]).toEqual([
+			expect.objectContaining({
+				id: nativeProfileId,
+				access_token: "foreign-namespaced-access",
+				refresh_token: "foreign-namespaced-refresh",
+			}),
+			expect.objectContaining({ id: "user-independent" }),
+		]);
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("retired");
+
+		const readdedLoad: RuntimeManifestLoad = {
+			...nativeReauthenticatedLoad,
+			manifest: { ...nativeReauthenticatedLoad.manifest, generation: 4 },
+		};
+		convergeRuntimeManifest(readdedLoad, paths);
+		auth = JSON.parse(readFileSync(authPath, "utf8"));
+		expect(auth.credential_pool["openai-codex"][0]).toMatchObject({
+			id: nativeProfileId,
+			access_token: "foreign-namespaced-access",
+			refresh_token: "foreign-namespaced-refresh",
+		});
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("adopted");
 	});
 
 	it("uses OpenClaw provider-auth SQLite ownership without reviving logout", () => {
@@ -4860,6 +4929,8 @@ exit 0
 		seedOpenClawBinary(home);
 		const paths = getRuntimePaths();
 		const nativeProfileId = nativeOAuthProfileId("openclaw", "openai-codex");
+		const ledgerKey = createHash("sha256").update("openai-codex").digest("hex");
+		const ledgerPath = join(paths.oauthCredentialRoot, "openclaw", `${ledgerKey}.json`);
 		const storePath = join(home, ".openclaw", "agents", "main", "agent", "openclaw-agent.sqlite");
 		mkdirSync(dirname(storePath), { recursive: true });
 		writeFileSync(
@@ -4886,6 +4957,24 @@ exit 0
 			accessToken: "openclaw-seed-access",
 			refreshToken: "openclaw-seed-refresh",
 		});
+		mkdirSync(dirname(ledgerPath), { recursive: true });
+		writeFileSync(
+			ledgerPath,
+			`${JSON.stringify({
+				schemaVersion: "clawdi.oauthCredentialOwnership.v2",
+				runtime: "openclaw",
+				providerId: "openai-codex",
+				nativeProfileId,
+				credentialRevision: "openclaw-revision-1",
+				state: "intent",
+				operation: "seed",
+				targetCredentialFingerprint: oauthCredentialFingerprint(
+					"openclaw-revision-1",
+					"openclaw-seed-access",
+					"openclaw-seed-refresh",
+				),
+			})}\n`,
+		);
 
 		const first = convergeRuntimeManifest(firstLoad, paths);
 		expect(first.installErrors).toEqual([]);
@@ -4903,6 +4992,7 @@ exit 0
 		});
 		expect(store.order.openai).toEqual([nativeProfileId, "openai:default"]);
 		expect(existsSync(join(dirname(storePath), "auth-profiles.json"))).toBe(false);
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("seeded");
 
 		store.profiles[nativeProfileId].access = "openclaw-runtime-rotated";
 		store.profiles[nativeProfileId].refresh = "openclaw-runtime-rotated-refresh";
@@ -4911,15 +5001,14 @@ exit 0
 		expect(JSON.parse(readFileSync(storePath, "utf8")).profiles[nativeProfileId].access).toBe(
 			"openclaw-runtime-rotated",
 		);
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("seeded");
 
 		store = JSON.parse(readFileSync(storePath, "utf8"));
 		delete store.profiles[nativeProfileId];
 		writeFileSync(storePath, `${JSON.stringify(store, null, 2)}\n`);
 		convergeRuntimeManifest(firstLoad, paths);
 		expect(JSON.parse(readFileSync(storePath, "utf8")).profiles[nativeProfileId]).toBeUndefined();
-		const receiptKey = createHash("sha256").update("openai-codex").digest("hex");
-		const receiptPath = join(paths.oauthCredentialRoot, "openclaw", `${receiptKey}.json`);
-		expect(JSON.parse(readFileSync(receiptPath, "utf8"))).toMatchObject({
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8"))).toMatchObject({
 			nativeProfileId,
 			credentialRevision: "openclaw-revision-1",
 			state: "revoked",
@@ -4930,7 +5019,7 @@ exit 0
 		store.profiles["openai:default"].refresh = "native-reauth-refresh";
 		writeFileSync(storePath, `${JSON.stringify(store, null, 2)}\n`);
 		convergeRuntimeManifest(firstLoad, paths);
-		expect(JSON.parse(readFileSync(receiptPath, "utf8")).state).toBe("revoked");
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("revoked");
 
 		const nativeReauthenticatedLoad = hostedOAuthRuntimeLoad({
 			home,
@@ -4947,7 +5036,7 @@ exit 0
 			access: "explicit-reconnect-access",
 			refresh: "explicit-reconnect-refresh",
 		});
-		expect(JSON.parse(readFileSync(receiptPath, "utf8"))).toMatchObject({
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8"))).toMatchObject({
 			credentialRevision: "openclaw-revision-2",
 			state: "seeded",
 		});
@@ -4975,6 +5064,17 @@ exit 0
 				},
 			},
 		};
+		writeFileSync(
+			ledgerPath,
+			`${JSON.stringify({
+				schemaVersion: "clawdi.runtimeOAuthCredential.v1",
+				runtime: "openclaw",
+				providerId: "openai-codex",
+				nativeProfileId,
+				credentialRevision: "openclaw-revision-2",
+				state: "seeded",
+			})}\n`,
+		);
 		convergeRuntimeManifest(removedLoad, paths);
 		store = JSON.parse(readFileSync(storePath, "utf8"));
 		expect(store.profiles[nativeProfileId]).toBeUndefined();
@@ -4986,7 +5086,54 @@ exit 0
 		expect(store.order?.openai ?? []).toEqual(["openai:default"]);
 		expect(store.lastGood?.openai).toBeUndefined();
 		expect(store.usageStats?.[nativeProfileId]).toBeUndefined();
-		expect(existsSync(receiptPath)).toBe(false);
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8"))).toMatchObject({
+			schemaVersion: "clawdi.oauthCredentialOwnership.v2",
+			state: "retired",
+		});
+
+		store.profiles[nativeProfileId] = {
+			type: "oauth",
+			provider: "openai",
+			access: "foreign-namespaced-access",
+			refresh: "foreign-namespaced-refresh",
+		};
+		store.order.openai = [nativeProfileId, "openai:default"];
+		writeFileSync(storePath, `${JSON.stringify(store, null, 2)}\n`);
+		writeFileSync(
+			ledgerPath,
+			`${JSON.stringify({
+				schemaVersion: "clawdi.oauthCredentialOwnership.v2",
+				runtime: "openclaw",
+				providerId: "openai-codex",
+				nativeProfileId,
+				credentialRevision: "openclaw-revision-2",
+				state: "adopted",
+			})}\n`,
+		);
+		convergeRuntimeManifest(removedLoad, paths);
+		store = JSON.parse(readFileSync(storePath, "utf8"));
+		expect(store.profiles[nativeProfileId]).toMatchObject({
+			access: "foreign-namespaced-access",
+			refresh: "foreign-namespaced-refresh",
+		});
+		expect(store.profiles["openai:default"]).toMatchObject({
+			access: "native-reauth-access",
+			refresh: "native-reauth-refresh",
+		});
+		expect(store.order.openai).toEqual([nativeProfileId, "openai:default"]);
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("retired");
+
+		const readdedLoad: RuntimeManifestLoad = {
+			...nativeReauthenticatedLoad,
+			manifest: { ...nativeReauthenticatedLoad.manifest, generation: 4 },
+		};
+		convergeRuntimeManifest(readdedLoad, paths);
+		store = JSON.parse(readFileSync(storePath, "utf8"));
+		expect(store.profiles[nativeProfileId]).toMatchObject({
+			access: "foreign-namespaced-access",
+			refresh: "foreign-namespaced-refresh",
+		});
+		expect(JSON.parse(readFileSync(ledgerPath, "utf8")).state).toBe("adopted");
 		const calls = readFileSync(sdkCalls, "utf8");
 		expect(calls).toContain("ensure ");
 		expect(calls).toContain("update ");
@@ -5117,95 +5264,15 @@ cp '${sdkSource}' '${sdkTarget}'
 		expect(systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"))).toBe(firstRevision);
 	});
 
-	it("registers multiple Hermes hosted providers in one native config authority", () => {
+	it("rejects multiple Hermes hosted providers at manifest admission", () => {
 		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		mkdirSync(home, { recursive: true });
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		writeHermesVersionBinary(home, "0.18.0");
 		const loaded = hostedHermesProviderLoad(home);
-		loaded.secretValues = {
-			...loaded.secretValues,
-			"secret://provider.moonshot.apiKey": "sk-moonshot-provider",
-		};
 		loaded.manifest.runtimes.hermes = {
 			...loaded.manifest.runtimes.hermes,
 			provider_ids: ["hermes", "moonshot"],
-			primary_model: {
-				provider_id: "hermes",
-				model: "kimi/kimi-for-coding",
-			},
-		};
-		loaded.manifest.projection = {
-			...loaded.manifest.projection,
-			providers: {
-				...loaded.manifest.projection?.providers,
-				moonshot: {
-					kind: "openai-compatible",
-					baseUrl: "https://moonshot-provider.example.test/v1",
-					model: "moonshot-v1-8k",
-					models: [
-						{
-							id: "moonshot-v1-8k",
-							context_window: 8192,
-							max_tokens: 4096,
-							supports_tools: true,
-						},
-					],
-					apiMode: "openai_chat",
-					runtimeEnvName: "MOONSHOT_PROVIDER_API_KEY",
-					apiKeySecretRef: "secret://provider.moonshot.apiKey",
-				},
-			},
 		};
 
-		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
-
-		expect(convergence.installErrors).toEqual([]);
-		const hermesConfig = readHermesConfigYaml(home);
-		const hermesModel = expectRecord(hermesConfig.model, "Hermes model config");
-		expect(hermesModel.provider).toBe("custom:hermes");
-		const hermesProviders = expectRecord(hermesConfig.providers, "Hermes providers config");
-		const primaryHermesProvider = expectRecord(hermesProviders.hermes, "primary Hermes provider");
-		expect(primaryHermesProvider.api).toBe("https://hermes-provider.example.test/v1");
-		expect(primaryHermesProvider.transport).toBe("chat_completions");
-		expect(primaryHermesProvider.key_env).toBe("HERMES_PROVIDER_API_KEY");
-		const primaryHermesModels = expectRecord(
-			primaryHermesProvider.models,
-			"primary Hermes provider models",
-		);
-		expect(
-			expectRecord(primaryHermesModels["kimi/kimi-for-coding"], "primary Hermes model metadata")
-				.context_length,
-		).toBe(262144);
-		const moonshotProvider = expectRecord(hermesProviders.moonshot, "secondary Hermes provider");
-		expect(moonshotProvider.api).toBe("https://moonshot-provider.example.test/v1");
-		expect(moonshotProvider.transport).toBe("chat_completions");
-		expect(moonshotProvider.key_env).toBe("MOONSHOT_PROVIDER_API_KEY");
-		const moonshotModels = expectRecord(
-			moonshotProvider.models,
-			"secondary Hermes provider models",
-		);
-		expect(
-			expectRecord(moonshotModels["moonshot-v1-8k"], "secondary Hermes model metadata")
-				.context_length,
-		).toBe(8192);
-		const hermesRunConfig = JSON.parse(
-			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
-		);
-		expect(hermesRunConfig.env.HERMES_PROVIDER_API_KEY).toBeUndefined();
-		expect(hermesRunConfig.env.MOONSHOT_PROVIDER_API_KEY).toBeUndefined();
-		expect(hermesRunConfig.secretEnv).toEqual({
-			HERMES_PROVIDER_API_KEY: "secret://provider.hermes.apiKey",
-			MOONSHOT_PROVIDER_API_KEY: "secret://provider.moonshot.apiKey",
-		});
-		expect(JSON.stringify(hermesRunConfig)).not.toContain("sk-hermes-provider");
-		expect(JSON.stringify(hermesRunConfig)).not.toContain("sk-moonshot-provider");
-		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
+		expect(manifestSchema.safeParse(loaded.manifest).success).toBe(false);
 	});
 
 	it("removes the stale Hermes plugin and native provider when projection disappears", () => {

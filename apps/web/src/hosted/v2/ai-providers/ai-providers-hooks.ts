@@ -94,9 +94,14 @@ export function useDeleteProvider() {
 					params: { path: { provider_id: providerId } },
 				}),
 			),
-		onSuccess: () => {
+		onSuccess: (result) => {
 			qc.invalidateQueries({ queryKey: KEY });
-			toast.success("Provider removed");
+			toast.success("Provider removed", {
+				description:
+					result.remote_revoke_status === "pending"
+						? "Local access is removed immediately. Upstream ChatGPT revocation will finish asynchronously."
+						: "Local access is removed immediately.",
+			});
 		},
 		onError: toastApiError("Couldn't remove provider"),
 	});

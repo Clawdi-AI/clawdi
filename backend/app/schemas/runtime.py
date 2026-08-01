@@ -1,4 +1,5 @@
 import re
+from collections.abc import Mapping
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -313,13 +314,12 @@ class HostedEgressPathReplace(_StrictHostedWireModel):
 
 
 def _validate_egress_header_names(
-    value: dict[str, object] | None,
-) -> dict[str, object] | None:
+    value: Mapping[str, object] | None,
+) -> None:
     if value is not None and any(
         _EGRESS_HEADER_NAME_PATTERN.fullmatch(name) is None for name in value
     ):
         raise ValueError("egress header names must be canonical")
-    return value
 
 
 class HostedEgressProfileMatch(_StrictHostedWireModel):
@@ -799,14 +799,12 @@ def _validate_runtime_provider_ids(value: list[str]) -> list[str]:
         raise ValueError(
             "provider_ids must contain canonical non-empty strings up to 80 characters"
         )
-    if len(set(value)) != len(value):
-        raise ValueError("provider_ids must not contain duplicates")
     return value
 
 
 class HostedRuntimeConfiguredDesiredState(_HostedRuntimeDesiredStateBase):
     providerMode: Literal["configured"]
-    provider_ids: list[str] = Field(min_length=1)
+    provider_ids: list[str] = Field(min_length=1, max_length=1)
     primary_model: HostedRuntimePrimaryModel
 
     @field_validator("provider_ids")

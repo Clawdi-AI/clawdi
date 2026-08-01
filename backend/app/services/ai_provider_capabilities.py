@@ -10,6 +10,7 @@ from app.schemas.ai_provider import (
     CredentialMaterialState,
     VerificationState,
 )
+from app.services.url_security import is_public_https_url
 
 _DEFAULT_API_MODES = {
     "openai": "openai_responses",
@@ -109,6 +110,7 @@ def provider_readiness(
         credential_material == "available"
         and hosted_auth_delivery
         and any((compatibility.openclaw, compatibility.hermes))
+        and is_hosted_deployable_endpoint(provider.base_url)
     )
     return AiProviderReadiness(
         credential_material=credential_material,
@@ -119,9 +121,16 @@ def provider_readiness(
     )
 
 
+def is_hosted_deployable_endpoint(base_url: str) -> bool:
+    """Return the shared deterministic Hosted URL admission result."""
+
+    return is_public_https_url(base_url)
+
+
 __all__ = [
     "AiProviderCapabilityInput",
     "effective_provider_api_mode",
+    "is_hosted_deployable_endpoint",
     "provider_readiness",
     "provider_runtime_compatibility",
 ]

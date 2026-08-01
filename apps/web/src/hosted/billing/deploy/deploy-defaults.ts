@@ -13,7 +13,6 @@ export type DeployWizardAiAccessMode = "unmanaged" | "configured";
 export const DEFAULT_DEPLOY_RUNTIME: HostedRuntime = DEFAULT_HOSTED_DEPLOY_RUNTIME;
 export const DEFAULT_DEPLOY_AI_ACCESS_MODE: DeployWizardAiAccessMode =
 	DEFAULT_HOSTED_DEPLOY_AI_ACCESS_MODE;
-export const DEFAULT_DEPLOY_AI_PROVIDER_CHOICES = [MANAGED_AI_CHOICE] as const;
 export const DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE = MANAGED_AI_CHOICE;
 // The managed catalog supplies the real default model after it loads.
 export const DEFAULT_DEPLOY_PRIMARY_MODEL = DEFAULT_HOSTED_DEPLOY_PRIMARY_MODEL;

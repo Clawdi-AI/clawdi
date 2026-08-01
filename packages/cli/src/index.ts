@@ -506,50 +506,6 @@ aiProviderCmd
 	});
 
 aiProviderCmd
-	.command("materialize-auth <provider-id>")
-	.description("Materialize an AI Provider's local auth profile on this machine")
-	.option("--to <path>", "Override destination path (only for single-file profiles)")
-	.option("-y, --yes", "Skip confirmation prompt")
-	.option("--no-backup", "Overwrite existing files without creating .bak-* copies")
-	.option("--dry-run", "Show what would be written without changing files")
-	.option("--json", "Emit machine-readable JSON")
-	.action(async (providerId: string, opts) => {
-		const { aiProviderMaterializeAuthCommand } = await import("./commands/ai-provider.js");
-		await aiProviderMaterializeAuthCommand(providerId, opts);
-	});
-
-aiProviderCmd
-	.command("apply [source]")
-	.description("Apply AI Provider config and target-native auth to verified agent entrypoints")
-	.option("--source <source>", "AI Provider source: provider id, default, or all")
-	.option("--target <target>", "Agent target: all, codex, hermes, or openclaw (default: all)")
-	.option("--dry-run", "Preview writes and agent CLI commands without changing files")
-	.option("--json", "Emit machine-readable JSON")
-	.addHelpText(
-		"after",
-		`
-Examples:
-  $ clawdi ai-provider apply openai-main --target codex --dry-run
-  $ clawdi ai-provider apply openai-codex
-
-Codex OAuth sources are applied as source -> target. Non-dry-run apply writes
-the compatible target config and the target's native auth store.`,
-	)
-	.action(async (source: string | undefined, opts) => {
-		const { aiProviderApplyCommand } = await import("./commands/ai-provider-apply.js");
-		await aiProviderApplyCommand({ ...opts, source: opts.source ?? source });
-	});
-
-aiProviderCmd
-	.command("status")
-	.description("Inspect AI Provider agent apply state")
-	.option("--json", "Emit machine-readable JSON")
-	.action(async (opts) => {
-		const { aiProviderStatusCommand } = await import("./commands/ai-provider-apply.js");
-		await aiProviderStatusCommand(opts);
-	});
-
-aiProviderCmd
 	.command("export")
 	.description("Export Provider Catalog metadata and refs")
 	.option("--out <file>", "Write to a file instead of stdout")
@@ -1233,21 +1189,9 @@ memoryCmd
 program
 	.command("doctor")
 	.description("Diagnose auth, agents, vault, and MCP connectivity")
-	.argument("[topic]", "Optional doctor topic, e.g. ai-provider")
 	.option("--json", "Output as JSON")
-	.addHelpText(
-		"after",
-		"\nExamples:\n  $ clawdi doctor\n  $ clawdi doctor --json\n  $ clawdi doctor ai-provider",
-	)
-	.action(async (topic: string | undefined, opts) => {
-		if (topic === "ai-provider") {
-			const { doctorAiProviderCommand } = await import("./commands/ai-provider-apply.js");
-			await doctorAiProviderCommand(opts);
-			return;
-		}
-		if (topic) {
-			throw new Error(`Unknown doctor topic: ${topic}`);
-		}
+	.addHelpText("after", "\nExamples:\n  $ clawdi doctor\n  $ clawdi doctor --json")
+	.action(async (opts) => {
 		const { doctor } = await import("./commands/doctor.js");
 		await doctor(opts);
 	});
@@ -1644,10 +1588,7 @@ agentCredentialsCmd
 Examples:
   $ clawdi agent credentials materialize claude-code
   $ clawdi agent credentials materialize gh
-  $ clawdi agent credentials materialize aws --profile work --to ~/.aws/credentials
-
-Codex model-provider auth:
-  $ clawdi ai-provider materialize-auth openai-codex`,
+  $ clawdi agent credentials materialize aws --profile work --to ~/.aws/credentials`,
 	)
 	.action(async (tool: string, opts) => {
 		const { agentCredentialsMaterializeCommand } = await import("./commands/agent-credentials.js");

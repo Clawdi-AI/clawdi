@@ -28,7 +28,7 @@ can land in this file under the same auth dep.
 
 import logging
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Never, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -95,6 +95,7 @@ from app.services.agent_skill_projection import (
 )
 from app.services.ai_provider_credentials import (
     OAuthCredentialClaimConflict,
+    lock_ai_provider_owner,
     reconcile_runtime_oauth_claims,
     release_runtime_oauth_claims,
 )
@@ -155,7 +156,6 @@ from app.services.runtime_manifest_resources import (
 )
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
-    queue_provider_runtime_manifest_changed,
     queue_runtime_manifest_changed,
 )
 from app.services.user_provisioning import (
@@ -484,7 +484,7 @@ async def _raise_deployment_managed_provider_scope_denied(
     owner: PlatformOwner,
     owner_user_id: UUID,
     provider_id: str,
-) -> None:
+) -> Never:
     # Deliberately do not probe by provider id alone. A scoped miss is reported
     # uniformly, so the admin contract neither leaks nor crosses another owner.
     _record_deployment_managed_provider_audit(
@@ -808,11 +808,6 @@ async def admin_upsert_clawdi_managed_ai_provider(
         except ValueError as e:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
 
-        await queue_provider_runtime_manifest_changed(
-            db,
-            target.id,
-            provider.provider_id,
-        )
         record_control_plane_audit(
             db,
             actor_type="admin",
@@ -891,11 +886,6 @@ async def admin_upsert_clawdi_managed_ai_provider(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
 
     await db.flush()
-    await queue_provider_runtime_manifest_changed(
-        db,
-        target.id,
-        provider.provider_id,
-    )
     _record_deployment_managed_provider_audit(
         db,
         action="ai_provider.managed.upsert",
@@ -1003,7 +993,6 @@ async def admin_delete_clawdi_managed_ai_provider(
             owner_user_id=target.id,
             provider_id=provider_id,
         )
-    await queue_provider_runtime_manifest_changed(db, target.id, provider_id)
     _record_deployment_managed_provider_audit(
         db,
         action=action,
@@ -1478,6 +1467,20 @@ async def _admin_delete_environment(
         env=env,
         target_clerk_id=target_clerk_id,
     )
+    await lock_ai_provider_owner(db, target_user_id)
+    env = (
+        await db.execute(
+            select(AgentEnvironment)
+            .where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == target_user_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
     record_control_plane_audit(
         db,
         actor_type="admin",
@@ -1563,9 +1566,7 @@ async def _admin_upsert_runtime_state(
     db: AsyncSession,
 ) -> AdminRuntimeStateResponse:
     env = (
-        await db.execute(
-            select(AgentEnvironment).where(AgentEnvironment.id == environment_id).with_for_update()
-        )
+        await db.execute(select(AgentEnvironment).where(AgentEnvironment.id == environment_id))
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
@@ -1574,6 +1575,20 @@ async def _admin_upsert_runtime_state(
         env=env,
         target_clerk_id=body.target_clerk_id,
     )
+    await lock_ai_provider_owner(db, target_user_id)
+    env = (
+        await db.execute(
+            select(AgentEnvironment)
+            .where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == target_user_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
 
     # Lock the parent before the optional child row so concurrent first creates
     # serialize even when there is no HostedRuntimeState row to lock yet.
@@ -1770,6 +1785,20 @@ async def _admin_delete_runtime_state(
         env=env,
         target_clerk_id=target_clerk_id,
     )
+    await lock_ai_provider_owner(db, target_user_id)
+    env = (
+        await db.execute(
+            select(AgentEnvironment)
+            .where(
+                AgentEnvironment.id == environment_id,
+                AgentEnvironment.user_id == target_user_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent environment not found")
 
     state = (
         await db.execute(
@@ -1874,7 +1903,7 @@ def _admin_channel_response(account: ChannelAccount, owner: User) -> AdminChanne
         provider=account.provider,
         name=account.name,
         status=account.status,
-        visibility=account.visibility,
+        visibility=cast(AdminChannelVisibility, account.visibility),
         has_provider_token=bool(account.encrypted_provider_token and account.provider_token_nonce),
         webhook_url=channel_webhook_url(account.id, account.provider),
         config=account.config,

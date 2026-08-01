@@ -336,9 +336,6 @@ describe("deploy provider choice", () => {
 		expect(wizardSource).toContain("selectAiProviderChoice(provider.provider_id)");
 		expect(wizardSource).not.toContain("showProviderSelect");
 		expect(wizardSource).not.toContain("onPrimaryProviderChange");
-		expect(wizardSource).not.toContain("toggleAiProviderChoice");
-		expect(wizardSource).not.toContain("selectedProviderCount");
-		expect(wizardSource).not.toContain("aiProviderChoices.includes");
 	});
 });
 
