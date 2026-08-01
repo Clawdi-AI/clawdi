@@ -253,24 +253,34 @@ export function useResumeSubscription() {
 
 export function useCheckoutReturnRefresh() {
 	const queryClient = useQueryClient();
-	return useCallback(() => refreshCheckoutReturnQueries(queryClient), [queryClient]);
+	return useCallback(
+		(options?: CheckoutReturnRefreshOptions) => refreshCheckoutReturnQueries(queryClient, options),
+		[queryClient],
+	);
 }
+
+export type CheckoutReturnRefreshOptions = {
+	includeDeployments?: boolean;
+};
 
 export async function refreshCheckoutReturnQueries(
 	qc: QueryClient,
+	{ includeDeployments = true }: CheckoutReturnRefreshOptions = {},
 ): Promise<HostedDeployment[] | undefined> {
 	const [deploymentsResult, walletResult] = await Promise.allSettled([
-		(async () => {
-			await qc.invalidateQueries({
-				queryKey: billingKeys.deployments,
-				exact: true,
-				refetchType: "none",
-			});
-			await qc.refetchQueries(
-				{ queryKey: billingKeys.deployments, exact: true, type: "all" },
-				{ throwOnError: true },
-			);
-		})(),
+		includeDeployments
+			? (async () => {
+					await qc.invalidateQueries({
+						queryKey: billingKeys.deployments,
+						exact: true,
+						refetchType: "none",
+					});
+					await qc.refetchQueries(
+						{ queryKey: billingKeys.deployments, exact: true, type: "all" },
+						{ throwOnError: true },
+					);
+				})()
+			: Promise.resolve(),
 		(async () => {
 			await qc.invalidateQueries({
 				queryKey: billingKeys.wallet,

@@ -87,7 +87,9 @@ describe("deploy wizard personalization", () => {
 		expect(wizardSource).toContain('aria-live="polite"');
 		expect(wizardSource).toContain('" — limit reached."');
 		expect(wizardSource).toContain("Name limit reached. You can enter up to");
-		expect(wizardSource).toContain('type={walletTopUpAction ? "button" : "submit"}');
+		expect(wizardSource).toContain(
+			'acceptedDeploymentHydrationFailed || walletTopUpAction ? "button" : "submit"',
+		);
 		expect(wizardSource).toContain("submitBlockingReason");
 	});
 });
@@ -227,8 +229,8 @@ describe("first Basic agent copy", () => {
 		expect(wizardSource).not.toContain("included Basic slot");
 		expect(wizardSource).not.toContain("included Basic deployment");
 		expect(wizardSource).not.toContain("included slot");
-		expect(wizardSource).toContain("acceptDeployment(created.deploymentId)");
-		expect(wizardSource).toContain("acceptDeployment(outcome.deploymentId)");
+		expect(wizardSource).toContain("await acceptDeployment(created.deploymentId)");
+		expect(wizardSource).toContain("await acceptDeployment(outcome.deploymentId)");
 		expect(wizardSource).not.toContain("resolveWalletDeploymentId");
 	});
 
@@ -238,7 +240,7 @@ describe("first Basic agent copy", () => {
 		);
 		expect(wizardSource).not.toContain("setup=accepted");
 		expect(wizardSource).not.toContain("waitForRuntime");
-		expect(wizardSource).not.toContain("getDeployment(created.deploymentId)");
+		expect(wizardSource).toContain("getDeployment: billingClient.getDeployment");
 		expect(wizardSource).not.toContain("Agent deployment started");
 		expect(wizardSource).not.toContain("agent is getting ready now");
 		expect(wizardSource).toContain('toast.success("Wallet payment confirmed"');
@@ -391,19 +393,22 @@ describe("deploy acceptance", () => {
 		);
 		expect(walletBranch).not.toContain("refreshCheckoutReturn");
 		expect(walletBranch).not.toContain("recheckCanCreateCloudAgents");
-		expect(wizardSource).toContain("acceptDeployment(outcome.deploymentId)");
+		expect(wizardSource).toContain("await acceptDeployment(outcome.deploymentId)");
 	});
 
-	test("funnels every accepted create and activation through the same immediate navigation", () => {
+	test("funnels every accepted create and activation through the same hydrated navigation", () => {
 		for (const acceptedId of [
 			"resolved.deploymentId",
 			"deploymentId",
 			"outcome.deploymentId",
 			"created.deploymentId",
 		]) {
-			expect(wizardSource).toContain(`acceptDeployment(${acceptedId}`);
+			expect(wizardSource).toContain(`await acceptDeployment(${acceptedId}`);
 		}
 		expect(wizardSource).toContain("navigateToAcceptedDeployment({");
+		expect(wizardSource).toContain("Deployment accepted; details couldn’t load");
+		expect(wizardSource).toContain("Retry opening agent");
+		expect(wizardSource).toContain("It won’t create");
 		expect(wizardSource).not.toContain("setup=accepted");
 	});
 
@@ -413,7 +418,8 @@ describe("deploy acceptance", () => {
 		expect(wizardSource).toContain('"Opening secure checkout…"');
 		expect(wizardSource).toContain('"Creating agent…"');
 		expect(wizardSource).toContain('<Spinner data-icon="inline-start" />');
-		expect(wizardSource).toContain("{submitting ? submitBusyLabel : deployLabel}");
+		expect(wizardSource).toContain('? "Retry opening agent"');
+		expect(wizardSource).toContain(": deployLabel}");
 		expect(wizardSource).toContain('id: "deploy-submit-error"');
 		expect(wizardSource).toContain('label: "Retry"');
 		expect(wizardSource).toContain("deploySubmissionErrorPresentation(");
