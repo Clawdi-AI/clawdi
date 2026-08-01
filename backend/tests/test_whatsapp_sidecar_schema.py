@@ -31,21 +31,21 @@ def _event() -> dict[str, object]:
                 "actorJid": "120363000000000002@g.us",
                 "actorJidAlt": None,
             },
-            "invalid WhatsApp application user JID",
+            "invalid WhatsApp sidecar user JID",
         ),
         ({"actorJid": "15551113333@s.whatsapp.net"}, "DM actorJid must match"),
         ({"actorJidAlt": "15551114444@s.whatsapp.net"}, "DM actorJidAlt must match"),
         (
             {"chatJid": "status@broadcast", "actorJid": "status@broadcast"},
-            "invalid WhatsApp application chat JID",
+            "invalid WhatsApp sidecar chat JID",
         ),
         (
             {"chatJid": "12345@newsletter", "actorJid": "12345@newsletter"},
-            "invalid WhatsApp application chat JID",
+            "invalid WhatsApp sidecar chat JID",
         ),
         (
             {"chatJid": "15551112222@other.example", "actorJid": "15551112222@other.example"},
-            "invalid WhatsApp application chat JID",
+            "invalid WhatsApp sidecar chat JID",
         ),
     ],
 )

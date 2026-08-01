@@ -12,6 +12,10 @@ export type RuntimeHealth = {
 	};
 	lastDisconnectReason?: string;
 	pendingCallbackEvents?: number;
+	pairing?: {
+		method: "qr" | "code";
+		value: string;
+	};
 };
 
 export type RelayMessageRequest = {

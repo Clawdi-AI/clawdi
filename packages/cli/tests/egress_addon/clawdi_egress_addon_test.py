@@ -43,7 +43,6 @@ class Flow:
         pretty_host=None,
         path="/v1/messages",
         headers=None,
-        method="POST",
     ):
         self.request = SimpleNamespace(
             scheme=scheme,
@@ -53,7 +52,6 @@ class Flow:
             path=path,
             url=f"{scheme}://{host}{path}",
             headers=Headers(headers or {}),
-            method=method,
             stream=False,
         )
         self.response = None
@@ -497,92 +495,6 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         exact_origin.request.port = 18080
         self.assertEqual(egress.apply_to_flow(exact_origin).profile_id, "managed-mcp")
         self.assertEqual(exact_origin.request.headers["authorization"], "Bearer deployment-token")
-
-    def test_whatsapp_application_rewrite_requires_exact_method_path_host_and_placeholder(self):
-        path = "/v1/channels/whatsapp/application/clawdi_account/inbox"
-        egress = self.load(
-            [
-                {
-                    "id": "whatsapp-application-inbox",
-                    "enabled": True,
-                    "kind": "provider",
-                    "match": {
-                        "scheme": "https",
-                        "method": "GET",
-                        "host": "cloud.test",
-                        "path": {"type": "equals", "value": path},
-                        "headers": {
-                            "authorization": {
-                                "type": "secretRefEquals",
-                                "secretRef": "secret://placeholder",
-                                "prefix": "Bearer ",
-                            }
-                        },
-                    },
-                    "rewrite": {
-                        "preservePath": True,
-                        "setHeaders": {
-                            "authorization": {
-                                "type": "secretRef",
-                                "secretRef": "secret://link-token",
-                                "prefix": "Bearer ",
-                            }
-                        },
-                    },
-                }
-            ],
-            {
-                "secret://placeholder": "deterministic-placeholder",
-                "secret://link-token": "real-link-token",
-            },
-        )
-        cases = [
-            Flow(
-                method="get",
-                host="cloud.test",
-                path=path,
-                headers={"authorization": "Bearer deterministic-placeholder"},
-            ),
-            Flow(
-                method="POST",
-                host="cloud.test",
-                path=path,
-                headers={"authorization": "Bearer deterministic-placeholder"},
-            ),
-            Flow(
-                method="GET",
-                host="cloud.test",
-                path=f"{path}/extra",
-                headers={"authorization": "Bearer deterministic-placeholder"},
-            ),
-            Flow(
-                method="GET",
-                host="other.test",
-                path=path,
-                headers={"authorization": "Bearer deterministic-placeholder"},
-            ),
-            Flow(
-                method="GET",
-                host="cloud.test",
-                path=path,
-                headers={"authorization": "Bearer wrong-placeholder"},
-            ),
-        ]
-
-        for flow in cases:
-            decision = egress.apply_to_flow(flow)
-            self.assertIsNone(decision.profile)
-            self.assertNotEqual(flow.request.headers["authorization"], "Bearer real-link-token")
-
-        exact = Flow(
-            method="GET",
-            host="cloud.test",
-            path=path,
-            headers={"authorization": "Bearer deterministic-placeholder"},
-        )
-        decision = egress.apply_to_flow(exact)
-        self.assertEqual(decision.profile_id, "whatsapp-application-inbox")
-        self.assertEqual(exact.request.headers["authorization"], "Bearer real-link-token")
 
     def test_telegram_rewrite_keeps_non_secret_route_and_moves_credential_to_header(self):
         egress = self.load(

@@ -1,6 +1,6 @@
 import { extractMessageContent, isJidGroup, type proto, type WAMessage } from "baileys";
 
-import { normalizeApplicationChatJid, normalizeApplicationUserJid } from "./application-jid.js";
+import { normalizeChatJid, normalizeUserJid } from "./jid.js";
 import type { NormalizedInboundMessage } from "./types.js";
 
 export function normalizeInboundMessage(
@@ -10,15 +10,13 @@ export function normalizeInboundMessage(
 	if (metadata.upsertType !== "notify") return null;
 	const messageId = nonEmpty(message.key.id);
 	const rawChatJid = nonEmpty(message.key.remoteJid);
-	const chatJid = rawChatJid ? normalizeApplicationChatJid(rawChatJid) : undefined;
+	const chatJid = rawChatJid ? normalizeChatJid(rawChatJid) : undefined;
 	if (!messageId || !chatJid || message.key.fromMe === true || !message.message) {
 		return null;
 	}
 	const isGroup = Boolean(isJidGroup(chatJid));
 	const rawParticipantJid = nonEmpty(message.key.participant);
-	const participantJid = rawParticipantJid
-		? normalizeApplicationUserJid(rawParticipantJid)
-		: undefined;
+	const participantJid = rawParticipantJid ? normalizeUserJid(rawParticipantJid) : undefined;
 	if (isGroup && !participantJid) return null;
 	const actorJid = isGroup ? participantJid : chatJid;
 	if (!actorJid) {
@@ -29,9 +27,9 @@ export function normalizeInboundMessage(
 	if (!text) return null;
 	const timestamp = numericTimestamp(message.messageTimestamp);
 	const rawChatJidAlt = nonEmpty(message.key.remoteJidAlt);
-	const chatJidAlt = rawChatJidAlt ? normalizeApplicationUserJid(rawChatJidAlt) : undefined;
+	const chatJidAlt = rawChatJidAlt ? normalizeUserJid(rawChatJidAlt) : undefined;
 	const rawActorJidAlt = nonEmpty(message.key.participantAlt);
-	const actorJidAlt = rawActorJidAlt ? normalizeApplicationUserJid(rawActorJidAlt) : undefined;
+	const actorJidAlt = rawActorJidAlt ? normalizeUserJid(rawActorJidAlt) : undefined;
 	return {
 		schemaVersion: "clawdi.whatsapp.sidecar-event.v1",
 		providerEventId: `message:${messageId}`,

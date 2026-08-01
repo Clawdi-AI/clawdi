@@ -8,11 +8,11 @@ import httpx
 import pytest
 
 from app.services.whatsapp_native_transport import (
-    WhatsAppApplicationSendRequest,
     WhatsAppBaileysSidecarClient,
     WhatsAppBaileysSidecarConfig,
     WhatsAppNativeRelayRequest,
     WhatsAppNativeTransportAdapter,
+    WhatsAppSidecarSendRequest,
 )
 from app.services.whatsapp_runtime_types import WhatsAppOutboundMessage
 from app.services.whatsapp_shared_runtime import (
@@ -175,8 +175,8 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
     assert await client.refresh_health() is True
     assert client.connected is True
 
-    sent_message_id = await client.send_application_message(
-        WhatsAppApplicationSendRequest(
+    sent_message_id = await client.send_text_message(
+        WhatsAppSidecarSendRequest(
             jid="120363000000000000@g.us",
             text="final reply",
             message_id="outbound-1",

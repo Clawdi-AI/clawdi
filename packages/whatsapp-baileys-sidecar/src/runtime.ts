@@ -9,6 +9,7 @@ import {
 	type WASocket,
 } from "baileys";
 import pino, { type Logger } from "pino";
+import * as qrcodeTerminal from "qrcode-terminal";
 
 import { CallbackQueueFullError, ClawdiCallbackDeliveryQueue } from "./callback.js";
 import type { SidecarConfig } from "./config.js";
@@ -25,6 +26,15 @@ import {
 	type SendTextMessageResult,
 } from "./types.js";
 
+const RECONNECT_BASE_DELAY_MS = 3_000;
+const RECONNECT_MAX_DELAY_MS = 60_000;
+const TRANSIENT_DISCONNECT_REASONS = new Set<number>([
+	DisconnectReason.connectionClosed,
+	DisconnectReason.connectionLost,
+	DisconnectReason.restartRequired,
+	DisconnectReason.unavailableService,
+]);
+
 export class BaileysSocketRuntime implements BaileysRuntime {
 	private socket: WASocket | null = null;
 	private status: RuntimeStatus = "stopped";
@@ -38,6 +48,9 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	private readonly shutdown = new AbortController();
 	private readonly providerState: SQLiteBaileysState;
 	private fatalReason: string | undefined;
+	private pairingQr: string | undefined;
+	private pairingCode: string | undefined;
+	private reconnectAttempt = 0;
 
 	constructor(private readonly config: SidecarConfig) {
 		this.logger = pino({ level: config.logLevel });
@@ -87,7 +100,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		const socket = this.requireSocket();
 		const accountJid = socket.user?.id ?? this.providerState.state.creds.me?.id;
 		const quoted = await resolveQuotedMessage(this.providerState, accountJid, request);
-		const sent = await sendApplicationTextThroughSocket(socket, request, quoted);
+		const sent = await sendTextThroughSocket(socket, request, quoted);
 		const { messageId, retryStoreError } = recordProviderSentMessage(
 			this.providerState,
 			accountJid,
@@ -123,6 +136,11 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 						pendingCallbackEvents: this.callbackQueue.pendingCount(),
 					}
 				: {}),
+			...(this.pairingCode
+				? { pairing: { method: "code" as const, value: this.pairingCode } }
+				: this.pairingQr
+					? { pairing: { method: "qr" as const, value: this.pairingQr } }
+					: {}),
 		};
 	}
 
@@ -154,7 +172,6 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			version,
 			auth: this.providerState.state,
 			logger: this.logger.child({ component: "baileys" }),
-			printQRInTerminal: false,
 			syncFullHistory: false,
 			markOnlineOnConnect: false,
 			getMessage: async (key) =>
@@ -234,18 +251,30 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			const { connection, lastDisconnect, qr } = update;
 			const fatalStateFailure = this.fatalSockets.has(socket);
 			if (fatalStateFailure && connection !== "close") return;
-			if (qr) {
-				this.logger.warn("WhatsApp pairing QR is available on the physical sidecar");
+			if (qr && !this.config.pairingPhoneNumber) {
+				this.pairingQr = qr;
+				this.pairingCode = undefined;
+				qrcodeTerminal.generate(qr, { small: true }, (rendered) => {
+					process.stderr.write(
+						`\nScan this WhatsApp pairing QR on the primary phone:\n${rendered}\n`,
+					);
+				});
+				this.logger.warn("WhatsApp pairing QR rendered on the physical sidecar terminal");
 			}
 			if (connection === "open") {
 				this.status = "connected";
 				this.lastDisconnectReason = undefined;
+				this.pairingQr = undefined;
+				this.pairingCode = undefined;
+				this.reconnectAttempt = 0;
 				this.logger.info("WhatsApp connected");
 				return;
 			}
 			if (connection === "close") {
 				this.status = "disconnected";
 				this.socket = null;
+				this.pairingQr = undefined;
+				this.pairingCode = undefined;
 				const reason = disconnectReason(lastDisconnect?.error);
 				this.lastDisconnectReason = fatalStateFailure
 					? this.fatalReason
@@ -258,12 +287,31 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 				}
 			}
 		});
+		if (!this.providerState.state.creds.registered && this.config.pairingPhoneNumber) {
+			try {
+				const code = await socket.requestPairingCode(this.config.pairingPhoneNumber);
+				if (this.socket === socket) {
+					this.pairingCode = code;
+					this.pairingQr = undefined;
+					process.stderr.write(`\nWhatsApp pairing code: ${code}\n`);
+					this.logger.warn(
+						"WhatsApp manual pairing code rendered on the physical sidecar terminal",
+					);
+				}
+			} catch (error: unknown) {
+				if (this.socket === socket) this.socket = null;
+				socket.end(error instanceof Error ? error : new Error(String(error)));
+				throw error;
+			}
+		}
 	}
 
 	private scheduleReconnect(): void {
 		if (this.reconnectTimer || this.status === "stopped") {
 			return;
 		}
+		const delayMs = reconnectDelayMs(this.reconnectAttempt);
+		this.reconnectAttempt += 1;
 		this.reconnectTimer = setTimeout(async () => {
 			this.reconnectTimer = undefined;
 			if (this.status === "stopped") return;
@@ -273,7 +321,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 				this.logger.error({ error }, "WhatsApp reconnect failed");
 				this.scheduleReconnect();
 			});
-		}, 3000);
+		}, delayMs);
 	}
 
 	private requireSocket(): WASocket {
@@ -299,7 +347,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	}
 }
 
-type ApplicationTextSocket = {
+type TextSocket = {
 	sendMessage(
 		jid: string,
 		content: { text: string },
@@ -307,8 +355,8 @@ type ApplicationTextSocket = {
 	): Promise<WAMessage | undefined>;
 };
 
-export async function sendApplicationTextThroughSocket(
-	socket: ApplicationTextSocket,
+export async function sendTextThroughSocket(
+	socket: TextSocket,
 	request: SendTextMessageRequest,
 	quoted?: WAMessage,
 ): Promise<WAMessage> {
@@ -419,7 +467,21 @@ export function shouldReconnectAfterClose(
 	fatalStateFailure: boolean,
 	disconnectReasonCode: number | undefined,
 ): boolean {
-	return !fatalStateFailure && disconnectReasonCode !== DisconnectReason.loggedOut;
+	return (
+		!fatalStateFailure &&
+		disconnectReasonCode !== undefined &&
+		TRANSIENT_DISCONNECT_REASONS.has(disconnectReasonCode)
+	);
+}
+
+export function reconnectDelayMs(attempt: number, randomValue = Math.random()): number {
+	const boundedAttempt = Math.max(0, Math.min(Math.floor(attempt), 10));
+	const exponentialDelay = Math.min(
+		RECONNECT_MAX_DELAY_MS,
+		RECONNECT_BASE_DELAY_MS * 2 ** boundedAttempt,
+	);
+	const boundedRandom = Math.max(0, Math.min(randomValue, 1));
+	return Math.round(exponentialDelay * (0.5 + boundedRandom / 2));
 }
 
 function disconnectReason(error: unknown): number | undefined {

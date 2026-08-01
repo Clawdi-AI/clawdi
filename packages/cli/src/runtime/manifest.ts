@@ -186,7 +186,7 @@ import {
 	TRANSPARENT_EGRESS_TABLE,
 	TRANSPARENT_EGRESS_TRANSPORT_VERSION,
 } from "./transparent-egress";
-import { WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY } from "./whatsapp-gate";
+import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 
 type ManagedGatewayModelFetchInput = Parameters<ManagedGatewayModelListFetcher>[0];
 type ManagedGatewayModelFetchResult = ReturnType<ManagedGatewayModelListFetcher>;
@@ -459,7 +459,7 @@ function materializeHostedChannelCredentials(
 	home: string,
 ): void {
 	if (!hostedChannelCredentialsDeclared(manifest)) return;
-	if (!WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY) {
+	if (!WHATSAPP_UPSTREAM_READY) {
 		removeStaleManagedWhatsAppAuthDirs(home, new Set());
 		return;
 	}
@@ -499,8 +499,7 @@ function validateHostedChannelCredentialsPlan(
 	secretValues: Record<string, string> | undefined,
 	home: string,
 ): void {
-	if (!hostedChannelCredentialsDeclared(manifest) || !WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY)
-		return;
+	if (!hostedChannelCredentialsDeclared(manifest) || !WHATSAPP_UPSTREAM_READY) return;
 	const normalizedSecrets = normalizeSecretValues(secretValues);
 	for (const credential of hostedWhatsAppAuthCredentials(manifest)) {
 		const authDirError = managedWhatsAppAuthDirError(home, credential);
@@ -1724,10 +1723,7 @@ function egressSidecarOnlySecretRefs(manifest: RuntimeManifest): string[] {
 		if (profileRecord?.owner === "mcp-projection") {
 			collectSecretRefs(profile, refs);
 		}
-		if (
-			profileRecord?.owner === "clawdi-native-channels" ||
-			profileRecord?.owner === "clawdi-whatsapp-application"
-		) {
+		if (profileRecord?.owner === "clawdi-native-channels") {
 			collectChannelRewriteSecretRefs(profileRecord, refs);
 		}
 	}
@@ -3186,7 +3182,7 @@ function hermesWhatsAppProjection(
 	channelCredentials: unknown,
 	baseUrl: string,
 ): { sessionDir: string; wsUrl: string } | null {
-	if (!WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY) return null;
+	if (!WHATSAPP_UPSTREAM_READY) return null;
 	if (!channelHasAccounts(channels.whatsapp)) return null;
 	if (!Array.isArray(channelCredentials)) return null;
 	for (const credential of channelCredentials) {
@@ -3277,8 +3273,7 @@ function openClawManagedAccountReplaceArgs(channels: Record<string, unknown>): s
 }
 
 function openClawRuntimeReadyChannels(channels: Record<string, unknown>): Record<string, unknown> {
-	if (WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY || !Object.hasOwn(channels, "whatsapp"))
-		return channels;
+	if (WHATSAPP_UPSTREAM_READY || !Object.hasOwn(channels, "whatsapp")) return channels;
 	const runtimeReadyChannels = { ...channels };
 	delete runtimeReadyChannels.whatsapp;
 	return runtimeReadyChannels;
@@ -3300,7 +3295,7 @@ function installOpenClawChannelPlugins(input: {
 	receiptTargets: RuntimeInstallReceiptTargets;
 }): void {
 	for (const channel of Object.keys(input.channels).sort()) {
-		if (channel === "whatsapp" && !WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY) continue;
+		if (channel === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		const specs = OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS[channel];
 		if (!specs) continue;
 		const key = `openclaw:${channel}`;

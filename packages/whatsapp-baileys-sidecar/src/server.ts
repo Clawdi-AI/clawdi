@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
-import { normalizeApplicationChatJid, normalizeApplicationUserJid } from "./application-jid.js";
+import { normalizeChatJid, normalizeUserJid } from "./jid.js";
 import {
 	decodeBase64,
 	decodeJsonBytes,
@@ -79,7 +79,7 @@ function parseSendTextMessageBody(body: unknown): SendTextMessageRequest {
 	if (!isRecord(body)) {
 		throw new HttpError(400, "body_must_be_object");
 	}
-	const jid = normalizeApplicationChatJid(requiredText(body.jid, "jid", 300));
+	const jid = normalizeChatJid(requiredText(body.jid, "jid", 300));
 	if (!jid) {
 		throw new HttpError(400, "unsupported_jid");
 	}
@@ -95,9 +95,7 @@ function parseSendTextMessageBody(body: unknown): SendTextMessageRequest {
 		"replyTo.participantJid",
 		300,
 	);
-	const participantJid = rawParticipantJid
-		? normalizeApplicationUserJid(rawParticipantJid)
-		: undefined;
+	const participantJid = rawParticipantJid ? normalizeUserJid(rawParticipantJid) : undefined;
 	if (rawParticipantJid && !participantJid) {
 		throw new HttpError(400, "unsupported_participant_jid");
 	}

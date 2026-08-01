@@ -339,19 +339,15 @@ class WhatsAppTenantCredentialMetadata(BaseModel):
     created_at: datetime
 
 
-_WHATSAPP_APPLICATION_CHAT_JID_PATTERN = re.compile(r"^[^@\s]{1,255}@(s\.whatsapp\.net|g\.us|lid)$")
-_WHATSAPP_APPLICATION_USER_JID_PATTERN = re.compile(r"^[^@\s]{1,255}@(s\.whatsapp\.net|lid)$")
+_WHATSAPP_SIDECAR_CHAT_JID_PATTERN = re.compile(r"^[^@\s]{1,255}@(s\.whatsapp\.net|g\.us|lid)$")
+_WHATSAPP_SIDECAR_USER_JID_PATTERN = re.compile(r"^[^@\s]{1,255}@(s\.whatsapp\.net|lid)$")
 
 
-class _WhatsAppInternalModel(BaseModel):
+class _WhatsAppSidecarModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=True)
 
 
-class _WhatsAppApplicationModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-
-class WhatsAppSidecarEvent(_WhatsAppInternalModel):
+class WhatsAppSidecarEvent(_WhatsAppSidecarModel):
     schema_version: Literal["clawdi.whatsapp.sidecar-event.v1"] = Field(alias="schemaVersion")
     provider_event_id: str = Field(alias="providerEventId", min_length=1, max_length=300)
     message_id: str = Field(alias="messageId", min_length=1, max_length=300)
@@ -378,21 +374,21 @@ class WhatsAppSidecarEvent(_WhatsAppInternalModel):
     @classmethod
     def _validate_content_text(cls, value: str) -> str:
         if not value.strip():
-            raise ValueError("WhatsApp application text must not be blank")
+            raise ValueError("WhatsApp sidecar text must not be blank")
         return value
 
     @field_validator("chat_jid")
     @classmethod
     def _validate_chat_jid(cls, value: str) -> str:
-        if not _WHATSAPP_APPLICATION_CHAT_JID_PATTERN.fullmatch(value):
-            raise ValueError("invalid WhatsApp application chat JID")
+        if not _WHATSAPP_SIDECAR_CHAT_JID_PATTERN.fullmatch(value):
+            raise ValueError("invalid WhatsApp sidecar chat JID")
         return value
 
     @field_validator("chat_jid_alt", "actor_jid", "actor_jid_alt")
     @classmethod
     def _validate_user_jid(cls, value: str | None) -> str | None:
-        if value is not None and not _WHATSAPP_APPLICATION_USER_JID_PATTERN.fullmatch(value):
-            raise ValueError("invalid WhatsApp application user JID")
+        if value is not None and not _WHATSAPP_SIDECAR_USER_JID_PATTERN.fullmatch(value):
+            raise ValueError("invalid WhatsApp sidecar user JID")
         return value
 
     @model_validator(mode="after")
@@ -418,58 +414,9 @@ class WhatsAppSidecarEvent(_WhatsAppInternalModel):
         return self
 
 
-class WhatsAppSidecarEventResponse(_WhatsAppInternalModel):
+class WhatsAppSidecarEventResponse(_WhatsAppSidecarModel):
     ok: Literal[True] = True
     duplicate: bool = False
     paired: bool = False
     unpaired: bool = False
     binding_id: UUID | None = Field(default=None, alias="bindingId")
-
-
-class WhatsAppApplicationInboxEvent(_WhatsAppApplicationModel):
-    sequence: int = Field(ge=1)
-    binding_id: UUID = Field(alias="bindingId")
-    chat_jid: str = Field(alias="chatJid")
-    actor_jid: str = Field(alias="actorJid")
-    actor_jid_alt: str | None = Field(default=None, alias="actorJidAlt")
-    message_id: str = Field(alias="messageId")
-    text: str | None = None
-    push_name: str | None = Field(default=None, alias="pushName")
-    timestamp: int | None = None
-
-
-class WhatsAppApplicationInboxResponse(_WhatsAppApplicationModel):
-    events: list[WhatsAppApplicationInboxEvent]
-
-
-class WhatsAppApplicationAckRequest(_WhatsAppApplicationModel):
-    through_sequence: int = Field(alias="throughSequence", ge=1)
-
-
-class WhatsAppApplicationAckResponse(_WhatsAppApplicationModel):
-    acked_count: int = Field(alias="ackedCount", ge=0)
-    through_sequence: int = Field(alias="throughSequence", ge=1)
-
-
-class WhatsAppApplicationOutboundRequest(_WhatsAppApplicationModel):
-    binding_id: UUID = Field(alias="bindingId")
-    client_message_id: str = Field(
-        alias="clientMessageId",
-        min_length=1,
-        max_length=200,
-        pattern=r"^[A-Za-z0-9_-]+$",
-    )
-    text: str = Field(min_length=1, max_length=4096)
-    final: Literal[True]
-    reply_to_sequence: int | None = Field(default=None, alias="replyToSequence", ge=1)
-
-    @field_validator("text")
-    @classmethod
-    def _validate_content_text(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("WhatsApp application text must not be blank")
-        return value
-
-
-class WhatsAppApplicationOutboundResponse(_WhatsAppApplicationModel):
-    provider_message_id: str = Field(alias="providerMessageId")

@@ -12,10 +12,7 @@ import type {
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runtimeSecretValue } from "./secret-values";
-import {
-	WHATSAPP_APPLICATION_RUNTIME_PROJECTION_READY,
-	WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY,
-} from "./whatsapp-gate";
+import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 
 type EgressProfile = EgressProfileInputBundle["profiles"][number];
 type ChannelProvider = RuntimeChannelAccount["provider"];
@@ -146,12 +143,7 @@ function managedChannelLinks(channels: RuntimeChannelAccount[]): ManagedChannelL
 	const links: ManagedChannelLink[] = [];
 	for (const account of channels) {
 		if (account.status !== "active") continue;
-		if (
-			account.provider === "whatsapp" &&
-			!WHATSAPP_APPLICATION_RUNTIME_PROJECTION_READY &&
-			!WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY
-		)
-			continue;
+		if (account.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		for (const link of account.runtime_links) {
 			if (link.status !== "active" || !link.agent_token) continue;
 			const accountKey = channelAccountKey(account);
@@ -211,7 +203,7 @@ function buildOpenClawChannelsProjection(
 	const channels: Record<string, unknown> = {};
 	for (const link of links) {
 		const provider = link.account.provider;
-		if (provider === "whatsapp" && !WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY) continue;
+		if (provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		if (provider === "telegram") {
 			const channel = ensureAccountChannel(channels, "telegram", link.accountKey);
 			channel.accounts[link.accountKey] = {
@@ -280,7 +272,7 @@ function applyOpenClawRuntimeChannelSettings(
 	const existingRun = openclaw.run ?? { env: {}, prependPath: [] };
 	const secretEnv = omitOpenClawManagedChannelSecretEnv(existingRun.secretEnv ?? {});
 	for (const link of links) {
-		if (link.account.provider === "whatsapp" && !WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY) continue;
+		if (link.account.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		secretEnv[openClawChannelTokenEnvName(link)] = link.placeholderSecretRef;
 	}
 	if (!openclaw.run && Object.keys(secretEnv).length === 0) {
@@ -311,9 +303,7 @@ function applyHermesRuntimeChannelSettings(
 
 	const telegram = singleLinkForProvider(links, "telegram");
 	const discord = singleLinkForProvider(links, "discord");
-	const whatsapp = WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY
-		? singleLinkForProvider(links, "whatsapp")
-		: null;
+	const whatsapp = WHATSAPP_UPSTREAM_READY ? singleLinkForProvider(links, "whatsapp") : null;
 	const whatsappCredentials = whatsapp ? whatsappBaileysCredentials(whatsapp) : [];
 	const whatsappCredential = whatsappCredentials.find(
 		(credential) => whatsappCredentialCreds(credential) !== null,
@@ -369,24 +359,14 @@ function singleLinkForProvider(
 }
 
 function assertSingleManagedLinkPerProvider(links: ManagedChannelLink[]): void {
-	const providers: ChannelProvider[] = ["telegram", "discord"];
-	if (WHATSAPP_APPLICATION_RUNTIME_PROJECTION_READY || WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY) {
-		providers.push("whatsapp");
-	}
-	for (const provider of providers) {
+	for (const provider of ["telegram", "discord"] as const) {
 		singleLinkForProvider(links, provider);
 	}
 }
 
 function runtimeProviderLinkLimitDetail(provider: ChannelProvider): string {
 	const label =
-		provider === "telegram"
-			? "Telegram"
-			: provider === "discord"
-				? "Discord"
-				: provider === "whatsapp"
-					? "WhatsApp"
-					: provider;
+		provider === "telegram" ? "Telegram" : provider === "discord" ? "Discord" : provider;
 	return `This Agent has multiple active ${label} bots. Unlink the extras until only one remains.`;
 }
 
@@ -574,17 +554,6 @@ function buildManagedChannelEgressProfiles(
 			});
 		}
 		if (link.account.provider === "whatsapp") {
-			if (WHATSAPP_APPLICATION_RUNTIME_PROJECTION_READY) {
-				profiles.push(
-					...whatsappApplicationEgressProfiles({
-						accountKey: link.accountKey,
-						placeholderSecretRef: link.placeholderSecretRef,
-						linkSecretRef: link.secretRef,
-						cloudApiUrl,
-					}),
-				);
-			}
-			if (!WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY) continue;
 			profiles.push({
 				id: `native-${idSuffix}-graph-managed`,
 				enabled: true,
@@ -622,60 +591,6 @@ function buildManagedChannelEgressProfiles(
 	return profiles;
 }
 
-export function whatsappApplicationEgressProfiles(input: {
-	accountKey: string;
-	placeholderSecretRef: string;
-	linkSecretRef: string;
-	cloudApiUrl: string;
-}): EgressProfile[] {
-	const controlPlane = new URL(input.cloudApiUrl);
-	if (
-		(controlPlane.protocol !== "http:" && controlPlane.protocol !== "https:") ||
-		controlPlane.username ||
-		controlPlane.password ||
-		controlPlane.search ||
-		controlPlane.hash
-	) {
-		throw new Error("WhatsApp application control plane must be an unambiguous HTTP(S) URL");
-	}
-	const scheme = controlPlane.protocol.slice(0, -1) as "http" | "https";
-	const routeBase = `/v1/channels/whatsapp/application/${encodeURIComponent(input.accountKey)}`;
-	const profile = (operation: "inbox" | "ack" | "messages", method: "GET" | "POST") => ({
-		id: `whatsapp-application-${input.accountKey}-${operation}`,
-		enabled: true,
-		kind: "provider" as const,
-		match: {
-			scheme,
-			method,
-			host: controlPlane.host.toLowerCase(),
-			path: { type: "equals" as const, value: `${routeBase}/${operation}` },
-			headers: {
-				authorization: {
-					type: "secretRefEquals" as const,
-					secretRef: input.placeholderSecretRef,
-					prefix: "Bearer ",
-				},
-			},
-			query: {},
-		},
-		rewrite: {
-			preservePath: true,
-			setHeaders: {
-				authorization: {
-					type: "secretRef" as const,
-					secretRef: input.linkSecretRef,
-					prefix: "Bearer ",
-				},
-			},
-		},
-		logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
-		priority: 60,
-		owner: "clawdi-whatsapp-application",
-		description: `Clawdi WhatsApp application ${operation}.`,
-	});
-	return [profile("inbox", "GET"), profile("ack", "POST"), profile("messages", "POST")];
-}
-
 function mergeEgressProfiles(
 	existing: EgressProfileInputBundle | undefined,
 	managed: EgressProfile[],
@@ -695,7 +610,6 @@ function mergeEgressProfiles(
 function isChannelProjectionProfile(profile: EgressProfile): boolean {
 	return (
 		profile.owner === "clawdi-native-channels" ||
-		profile.owner === "clawdi-whatsapp-application" ||
 		profile.id === "direct-provider-passthrough" ||
 		profile.id.startsWith("direct-provider-passthrough-")
 	);
@@ -773,7 +687,7 @@ function whatsappBaileysCredentialProjection(
 	runtimeHome: string,
 	targets: RuntimeCredentialTargets,
 ): RuntimeChannelCredentialProjection | null {
-	if (!WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY) return null;
+	if (!WHATSAPP_UPSTREAM_READY) return null;
 	const credential = whatsappBaileysCredentials(link)[0];
 	if (!credential || whatsappCredentialCreds(credential) === null) return null;
 	const openclawAuthDir = openClawWhatsAppAuthDir(runtimeHome, link.accountKey);

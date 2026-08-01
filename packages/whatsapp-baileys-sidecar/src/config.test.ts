@@ -39,6 +39,25 @@ describe("sidecar config", () => {
 		}
 	});
 
+	it("accepts an explicit manual pairing phone number without formatting characters", () => {
+		const sessionDir = mkdtempSync(join(tmpdir(), "clawdi-wa-sidecar-"));
+		const config = loadConfigFromEnv({
+			CLAWDI_WA_SIDECAR_TOKEN: "token",
+			CLAWDI_WA_SIDECAR_SESSION_DIR: sessionDir,
+			CLAWDI_WA_PAIRING_PHONE_NUMBER: "15551112222",
+		});
+		expect(config.pairingPhoneNumber).toBe("15551112222");
+		for (const value of ["+15551112222", "1 555 111 2222", "05551112222", "123"]) {
+			expect(() =>
+				loadConfigFromEnv({
+					CLAWDI_WA_SIDECAR_TOKEN: "token",
+					CLAWDI_WA_SIDECAR_SESSION_DIR: sessionDir,
+					CLAWDI_WA_PAIRING_PHONE_NUMBER: value,
+				}),
+			).toThrow("E.164 phone number without + or separators");
+		}
+	});
+
 	it("loads the account-scoped callback without changing session ownership", () => {
 		const sessionDir = mkdtempSync(join(tmpdir(), "clawdi-wa-sidecar-"));
 		const spoolDir = mkdtempSync(join(tmpdir(), "clawdi-wa-spool-"));

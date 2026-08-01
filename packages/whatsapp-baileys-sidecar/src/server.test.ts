@@ -18,6 +18,7 @@ class FakeRuntime implements BaileysRuntime {
 	queries: Array<{ node: BinaryNode; timeoutMs: number }> = [];
 	textMessages: SendTextMessageRequest[] = [];
 	quotedMessageMissing = false;
+	pairing: { method: "qr" | "code"; value: string } | undefined;
 
 	async start(): Promise<void> {}
 	async stop(): Promise<void> {}
@@ -27,6 +28,7 @@ class FakeRuntime implements BaileysRuntime {
 			status: this.connected ? "connected" : "disconnected",
 			connected: this.connected,
 			uptimeSeconds: 1,
+			...(this.pairing ? { pairing: this.pairing } : {}),
 		} as const;
 	}
 
@@ -91,7 +93,9 @@ describe("sidecar HTTP contract", () => {
 	});
 
 	it("reports health", async () => {
-		const { url } = await startTestServer(new FakeRuntime());
+		const runtime = new FakeRuntime();
+		runtime.pairing = { method: "qr", value: "copyable-pairing-payload" };
+		const { url } = await startTestServer(runtime);
 
 		const response = await authedFetch(`${url}/v1/health`);
 
@@ -100,6 +104,7 @@ describe("sidecar HTTP contract", () => {
 			status: "connected",
 			connected: true,
 			uptimeSeconds: 1,
+			pairing: { method: "qr", value: "copyable-pairing-payload" },
 		});
 	});
 
@@ -134,7 +139,7 @@ describe("sidecar HTTP contract", () => {
 		});
 	});
 
-	it("preserves final application text exactly with optional reply context", async () => {
+	it("preserves final sidecar text exactly with optional reply context", async () => {
 		const runtime = new FakeRuntime();
 		const { url } = await startTestServer(runtime);
 
@@ -188,7 +193,7 @@ describe("sidecar HTTP contract", () => {
 		]);
 	});
 
-	it("rejects unsupported application JIDs, participants, and incomplete messages", async () => {
+	it("rejects unsupported chat JIDs, participants, and incomplete messages", async () => {
 		const runtime = new FakeRuntime();
 		const { url } = await startTestServer(runtime);
 

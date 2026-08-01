@@ -3,7 +3,7 @@ import type { WAMessage } from "baileys";
 
 import { normalizeInboundMessage } from "./normalize.js";
 
-describe("Baileys application event normalization", () => {
+describe("Baileys sidecar event normalization", () => {
 	it("keeps group routing on the group JID and actor identity on the participant", () => {
 		const message: WAMessage = {
 			key: {

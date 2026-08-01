@@ -81,10 +81,7 @@ import {
 	loadTransparentEgressEnvConfig,
 	type TransparentEgressEnvConfig,
 } from "../runtime/transparent-egress";
-import {
-	WHATSAPP_APPLICATION_RUNTIME_PROJECTION_READY,
-	WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY,
-} from "../runtime/whatsapp-gate";
+import { WHATSAPP_UPSTREAM_READY } from "../runtime/whatsapp-gate";
 import { consumeSse } from "../serve/sse-client";
 
 type ChannelAccount = components["schemas"]["ChannelAccountResponse"];
@@ -577,10 +574,7 @@ async function applyLink(
 
 	let token = link.agent_token ?? null;
 	let tokenWritten = false;
-	const runtimeOutputGated =
-		channel.provider === "whatsapp" &&
-		!WHATSAPP_APPLICATION_RUNTIME_PROJECTION_READY &&
-		!WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY;
+	const runtimeOutputGated = channel.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY;
 	if (
 		ctx.rotateAllTokens ||
 		(ctx.rotateMissingTokens &&
@@ -657,7 +651,7 @@ async function applyLink(
 
 	if (
 		channel.provider === "whatsapp" &&
-		WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY &&
+		WHATSAPP_UPSTREAM_READY &&
 		linkManifest.whatsapp?.baileys_credentials_dir
 	) {
 		await writeWhatsAppCredentials(ctx, account.id, link, linkManifest);
@@ -846,12 +840,7 @@ function preflightRuntimeOutputs(manifest: RuntimeManifest, manifestDir: string)
 	for (const channel of manifest.channels) {
 		const accountKey = runtimeAccountKey(channel);
 		for (const link of channel.links) {
-			if (
-				channel.provider === "whatsapp" &&
-				!WHATSAPP_APPLICATION_RUNTIME_PROJECTION_READY &&
-				!WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY
-			)
-				continue;
+			if (channel.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 			claim(link.runtime.token_env, `token:${link.ref}`, link.ref);
 			if (link.pair_code?.command_env) {
 				claim(link.pair_code.command_env, `pair-code:${link.ref}`, link.ref);

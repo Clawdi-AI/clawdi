@@ -324,7 +324,6 @@ def _validate_egress_header_names(
 
 class HostedEgressProfileMatch(_StrictHostedWireModel):
     scheme: Literal["http", "https", "ws", "wss"] | None = None
-    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] | None = None
     host: str = Field(min_length=1)
     pathPrefix: str | None = Field(default=None, min_length=1)
     path: HostedEgressPathMatcher | None = None

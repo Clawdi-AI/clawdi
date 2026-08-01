@@ -5088,8 +5088,6 @@ export interface components {
         HostedEgressProfileMatch: {
             /** Scheme */
             scheme?: ("http" | "https" | "ws" | "wss") | null;
-            /** Method */
-            method?: ("GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS") | null;
             /** Host */
             host: string;
             /** Pathprefix */

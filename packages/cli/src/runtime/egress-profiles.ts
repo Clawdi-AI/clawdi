@@ -117,7 +117,6 @@ const pathReplaceSchema = z.object({
 
 const egressProfileMatchSchema = z.object({
 	scheme: z.enum(["http", "https", "ws", "wss"]).optional(),
-	method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]).optional(),
 	host: z.string().min(1),
 	pathPrefix: z
 		.string()

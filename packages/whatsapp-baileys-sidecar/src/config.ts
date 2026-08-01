@@ -6,6 +6,7 @@ export type SidecarConfig = {
 	port: number;
 	apiToken: string;
 	sessionDir: string;
+	pairingPhoneNumber?: string;
 	waWebSocketUrl?: string;
 	authCert?: {
 		SERIAL: number;
@@ -41,6 +42,7 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Sidecar
 		port: parsePort(env.CLAWDI_WA_SIDECAR_PORT ?? "8787"),
 		apiToken,
 		sessionDir,
+		pairingPhoneNumber: parsePairingPhoneNumber(env.CLAWDI_WA_PAIRING_PHONE_NUMBER),
 		waWebSocketUrl: nonEmpty(env.CLAWDI_WA_WEBSOCKET_URL),
 		authCert: parseAuthCert(env),
 		logLevel: nonEmpty(env.CLAWDI_WA_SIDECAR_LOG_LEVEL) ?? "info",
@@ -173,6 +175,17 @@ function parsePositiveInt(raw: string, name: string): number {
 	const value = Number.parseInt(raw, 10);
 	if (!Number.isInteger(value) || value < 1) {
 		throw new Error(`invalid ${name}: ${raw}`);
+	}
+	return value;
+}
+
+function parsePairingPhoneNumber(raw: string | undefined): string | undefined {
+	const value = nonEmpty(raw);
+	if (!value) return undefined;
+	if (!/^[1-9][0-9]{6,14}$/.test(value)) {
+		throw new Error(
+			"CLAWDI_WA_PAIRING_PHONE_NUMBER must be an E.164 phone number without + or separators",
+		);
 	}
 	return value;
 }

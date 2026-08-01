@@ -1,160 +1,140 @@
-# WhatsApp Baileys Application Runtime
+# WhatsApp Baileys Sidecar Foundation
 
-Status: foundation only; runtime projection disabled
-Date: 2026-08-01
+Status: disabled foundation
 
-## Decision
+## Boundary
 
-Clawdi will use exactly one physical `@whiskeysockets/baileys` sidecar for each
-linked WhatsApp account. That sidecar alone owns the provider socket and the
-provider authentication state. It sends normalized application events to the
-Clawdi backend and accepts a narrow final-text application send operation.
+Each configured WhatsApp account has one physical
+`@whiskeysockets/baileys` sidecar. The sidecar alone owns the WhatsApp Web
+socket, auth credentials, Signal keys, and bounded retry-message store.
 
-Clawdi owns the product control plane: physical account registration,
-`AgentLink` and `Binding` authorization, account-scoped deduplication, durable
-application inboxes, monotonic acknowledgements, and outbound idempotency. An
-Agent/runtime provider may have at most one active WhatsApp account/link.
+The backend keeps the existing authorization chain:
 
-OpenClaw and Hermes must eventually consume the authenticated Clawdi
-application inbox and outbound endpoint through documented external plugin
-surfaces. They must not receive the real `AgentLink` token or any Baileys auth
-state. Runtime egress will substitute a deterministic placeholder bearer only
-for exact control-plane host, path, and HTTP method matches.
+```text
+ChannelAccount (physical WhatsApp account)
+  -> ChannelBotAgentLink (one hosted Agent capability)
+    -> ChannelBinding (one paired DM or group chat)
+```
 
-This is not a shared raw socket design. Clawdi does not copy authentication,
-multiplex Noise or Signal sessions, create synthetic WhatsApp identities, or
-run a native Baileys client inside an Agent runtime.
+One hosted Agent may have at most one active WhatsApp account Link. Existing
+WhatsApp creation/linking remains unavailable to hosted Agents, and
+`WHATSAPP_UPSTREAM_READY` remains `false`. No OpenClaw or Hermes config,
+credential, plugin, profile, token, or auth-state projection is enabled.
 
-## Current foundation
+This foundation does not add or emulate the Meta Cloud API. It adds no Graph
+route, Cloud payload facade, transparent-egress profile, placeholder token, or
+hidden runtime Agent/profile. Existing legacy compatibility code is not a
+dependency of the new sidecar event path.
 
-The sidecar package at `packages/whatsapp-baileys-sidecar` uses the installed
-`@whiskeysockets/baileys@7.0.0-rc13` contracts and currently provides:
+## Pairing
 
-- one `makeWASocket` owner for one physical account;
-- `messages.upsert` ingestion for `notify` only; `append` and `replace` do not
-  create application turns;
-- normalized text events for PN/LID direct messages and groups, with group chat
-  routing separate from the participant actor;
-- explicit rejection or omission of status, broadcast, newsletter,
-  sent-by-self, and unsupported media-only events;
-- a durable callback journal outside the auth `sessionDir`, with atomic writes,
-  file and directory fsync, monotonically ordered filenames, crash recovery,
-  Clawdi-2xx deletion, and hard event and byte limits;
-- sticky fatal/degraded behavior on callback capacity exhaustion, auth/key
-  persistence failure, or retry-message persistence failure; the socket does
-  not automatically reconnect from these states;
-- a narrow `POST /v1/messages` final-text/reply operation requiring a stable
-  caller `messageId`;
-- exact quoted-message lookup from a bounded sidecar-local retry store; a miss
-  fails closed instead of fabricating an empty protocol message; and
-- compatibility-only raw relay, raw node, and IQ routes. These routes are not
-  an application runtime contract and are retained for existing consumers
-  pending a separately audited cutover.
+On an unregistered Baileys session, the sidecar handles the `qr` value from
+`connection.update` and renders a scannable QR in the physical sidecar
+terminal. The same authenticated local health response contains the current QR
+payload so an operator surface can render it without scraping logs.
 
-Provider auth and Signal keys are stored transactionally in
-`sessionDir/baileys-state.sqlite` with `BufferJSON` encoding. The same local
-SQLite database has a bounded, expiring message retry store keyed by physical
-account and the complete `WAMessageKey`. Callback event payloads never contain
-the stored protobuf. The callback journal is a separate persistence domain and
-must not overlap `sessionDir`.
+For the upstream manual pairing-code alternative, set an E.164 number without
+`+` or separators:
 
-The backend foundation currently provides:
+```dotenv
+CLAWDI_WA_PAIRING_PHONE_NUMBER=15551112222
+```
 
-- sidecar ingress authentication tied to the configured physical-account
-  registration and disabled when that registration has no `ingress_token`;
-- strict independent normalized-event validation and account-scoped dedupe;
-- JID alias routing, Binding-scope pairing, participant actor semantics for
-  groups, and a minimal durable inbox payload;
-- per-account-key Link-token authentication for inbox GET, ack POST, and final
-  outbound POST, with exact active Binding/Link ownership; and
-- stable `clientMessageId` reuse through backend retry and metadata-commit
-  failure. A provider success remains a success response even if the
-  best-effort metadata update fails.
+The sidecar calls `requestPairingCode` and writes the copyable code to its
+terminal. The code and QR are ephemeral and are cleared on connection or
+disconnect; neither is persisted in the auth database or callback spool.
 
-Pairing and unpairing replies happen only after the durable database commit.
-Reply delivery failure is logged and does not roll back the binding change or
-retry the provider event.
+Chat authorization remains separate from device pairing. A user generates the
+existing one-time Clawdi pair code and sends the existing manual message in the
+WhatsApp chat:
 
-The CLI transparent-egress foundation matches the HTTP method exactly and has
-WhatsApp-specific same-control-plane-host profiles for the inbox GET, ack POST,
-and outbound POST paths. Host, path, method, and placeholder mismatches do not
-rewrite authorization, and the egress process UID is excluded from recursive
-interception.
+```text
+/bot_pair PAIRXXXXXXXX
+```
 
-## Upstream contract evidence
+The backend commits the pair/unpair result before asking the sidecar to send
+the reply. A reply failure does not roll back the binding.
 
-The implementation follows the installed rc13 source rather than older guide
-snippets:
+## Durable State
 
-- The locally installed
-  `packages/whatsapp-baileys-sidecar/node_modules/baileys/README.md` from
-  `@whiskeysockets/baileys@7.0.0-rc13`, “Saving & Restoring
-  Sessions,” says `useMultiFileAuthState` is a guide and recommends a SQL or
-  NoSQL auth/key store for production-grade systems. The following note says
-  Signal keys update during message send and receive and must be persisted.
-- The same installed README, “Improve Retry System & Decrypt Poll Votes,”
-  requires a real store-backed `getMessage`. The sidecar returns the exact
-  local message or `undefined`; it never substitutes `{ conversation: "" }`.
-- The installed `node_modules/baileys/lib/Types/Message.d.ts`,
-  `MinimalRelayOptions.messageId`, documents the
-  custom message-id override.
-- The installed `node_modules/baileys/lib/Socket/messages-send.js` constructs a
-  generated default `messageId` and
-  then spreads caller `options`, so the application caller's stable ID wins.
-- The installed `node_modules/baileys/lib/Utils/messages.js`,
-  `generateWAMessageFromContent`, normalizes the
-  supplied quoted `WAMessage.message`. A quoted reply therefore uses a real
-  locally stored message and cannot use an empty placeholder.
+The sidecar writes `baileys-state.sqlite` under
+`CLAWDI_WA_SIDECAR_SESSION_DIR` with SQLite WAL and `synchronous=FULL`:
 
-## Disabled release boundary
+- auth credentials use Baileys `BufferJSON` encoding;
+- Signal key batches update transactionally;
+- retry messages are keyed by account plus the complete `WAMessageKey`;
+- retry storage has count, byte, and TTL limits; and
+- a missing quoted message fails closed instead of fabricating content.
 
-Both CLI gates remain false in this foundation:
+Normalized inbound `messages.upsert` events use `notify` only. History,
+replacement, self-sent, status, broadcast, newsletter, and unsupported
+media-only events do not become Agent turns. PN/LID aliases stay account
+scoped; a group JID is the chat while the participant JID is the actor.
 
-- `WHATSAPP_APPLICATION_RUNTIME_PROJECTION_READY = false`
-- `WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY = false`
+Before delivery, each normalized batch is atomically written to the separate
+callback spool configured by `CLAWDI_WA_SIDECAR_CALLBACK_SPOOL_DIR`. Recovery
+preserves monotonic file order. Events remain until the account-scoped backend
+endpoint returns 2xx. Capacity or persistence failure stops the provider socket
+in a sticky fatal state and requires operator restart.
 
-No projectable OpenClaw or Hermes WhatsApp application adapter is included.
-The audited public extension surfaces have not yet been exercised end to end
-against the installed upstream runtimes. Documentation and fixtures do not
-count as that E2E. Until real adapters and the complete local fake flow exist,
-projection must not install `@openclaw/whatsapp`, materialize
-`HERMES_WA_CREDS_JSON`, copy `creds.json`, or expose a real Link token.
+Transient connection closes create a fresh socket with exponential jittered
+backoff capped at 60 seconds. Logout, replaced connection, bad session,
+multi-device mismatch, forbidden, unknown, and fatal persistence closes remain
+stopped for explicit operator recovery.
 
-Current application capability is final text and reply only. Media, read
-receipts, and typing are not implemented by the application sidecar contract,
-so they remain disabled rather than being represented as supported frames.
+The backend authenticates ingress with the configured account's independent
+`ingress_token`, deduplicates by `(account, provider event)`, resolves the
+account's Link and chat binding, writes the inbound `ChannelMessage`, and only
+then returns success. The generic webhook secret and AgentLink token cannot
+authorize sidecar ingress.
 
-## Compatibility and later removal
+## Upstream Evidence
 
-The existing backend `/tenant-creds` and `/{account_id}/baileys` surfaces stay
-reachable for compatibility. Historical credential/auth-certificate reads and
-unlink/delete cleanup also remain. Legacy Python Noise, synthetic credential,
-and credential-projection code must not be newly enabled.
+This package pins `@whiskeysockets/baileys@7.0.0-rc13` (tag commit
+`8053b086ecc97ec3f78299561de11959bab05d39`):
 
-The final product direction removes the Meta WhatsApp Cloud API transport and
-fallback. That removal is not part of this foundation because the sidecar does
-not yet cover the existing media, read, and typing consumers. The Graph config,
-Cloud payload/media/typing/read code, provider send path, Graph facade,
-`phone_number_id` fields, helpers, and tests must be removed together only after
-replacement capability and active-consumer audits pass. Clawdi's own cloud
-control-plane URL is unrelated and must remain.
+- [`SocketConfig`](https://github.com/WhiskeySockets/Baileys/blob/8053b086ecc97ec3f78299561de11959bab05d39/src/Types/Socket.ts#L56-L64)
+  marks `printQRInTerminal` deprecated, while
+  [`ConnectionState`](https://github.com/WhiskeySockets/Baileys/blob/8053b086ecc97ec3f78299561de11959bab05d39/src/Types/State.ts#L21-L31)
+  exposes `qr`; the sidecar therefore owns QR rendering.
+- [`requestPairingCode`](https://github.com/WhiskeySockets/Baileys/blob/8053b086ecc97ec3f78299561de11959bab05d39/src/Socket/socket.ts#L758-L807)
+  is the upstream manual alternative; it is used only when the explicit phone
+  number setting is present.
+- The upstream
+  [session guidance](https://github.com/WhiskeySockets/Baileys/blob/8053b086ecc97ec3f78299561de11959bab05d39/README.md#L285-L307)
+  recommends a SQL/NoSQL auth store for production and requires Signal key
+  updates to be persisted.
+- `SocketConfig.getMessage` is an explicit
+  [store-backed callback](https://github.com/WhiskeySockets/Baileys/blob/8053b086ecc97ec3f78299561de11959bab05d39/src/Types/Socket.ts#L137-L144),
+  and upstream retry/poll guidance requires real stored content.
+- [`MinimalRelayOptions.messageId`](https://github.com/WhiskeySockets/Baileys/blob/8053b086ecc97ec3f78299561de11959bab05d39/src/Types/Message.ts#L304-L312)
+  and message construction's
+  [caller override](https://github.com/WhiskeySockets/Baileys/blob/8053b086ecc97ec3f78299561de11959bab05d39/src/Utils/messages.ts#L748-L757)
+  support stable sidecar message IDs.
 
-## Exit criteria
+OpenClaw and Hermes remain a capability boundary, not an implementation claim.
+Their current built-in WhatsApp paths own their own provider sessions and do
+not export a verified Clawdi sidecar-consumer contract. Projecting the physical
+auth state into either runtime would create a second provider owner and is
+forbidden by this design.
 
-The application gate may change only after all of the following are complete:
+## Limitations
 
-1. exported, documented OpenClaw `ChannelPlugin` and Hermes
-   `ctx.register_platform(BasePlatformAdapter)` adapters exist without private
-   dist imports or copied upstream internals;
-2. a local fake E2E proves sidecar inbound, backend dedupe/routing, per-Link
-   inbox, adapter reconnect/replay/ack, stable outbound idempotency, and fake
-   sidecar delivery for both runtimes;
-3. an explicit admin lifecycle owns QR/pairing status, account replacement,
-   shutdown, and operator recovery without exposing provider auth to runtimes;
-4. the sidecar covers media, read, and typing plus each required Cloud
-   compatibility consumer before the corresponding Meta transport is removed;
-   and
-5. parent review explicitly approves enabling the application path.
+- No OpenClaw or Hermes WhatsApp runtime adapter is enabled.
+- No media download/upload, reactions, typing, or read receipts exist on the
+  normalized sidecar contract.
+- Pair/unpair reply delivery is best effort after the durable binding commit.
+- Spool-capacity exhaustion is fail-stop and needs operator recovery.
+- No live-account, deployment, or production verification is part of this
+  foundation.
 
-No real-account smoke, deployment, or production operation is authorized by
-this document.
+## Verification
+
+```bash
+bun run --cwd packages/whatsapp-baileys-sidecar typecheck
+bun run --cwd packages/whatsapp-baileys-sidecar test:local
+```
+
+Done: both commands exit 0; tests cover SQLite restart/rollback, bounded retry
+storage, callback recovery/order/caps, normalized ingress, pairing exposure,
+quoted replies, and the authenticated sidecar HTTP contract.

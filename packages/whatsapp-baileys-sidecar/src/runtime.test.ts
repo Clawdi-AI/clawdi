@@ -10,10 +10,11 @@ import { ClawdiCallbackDeliveryQueue } from "./callback.js";
 import {
 	type BaileysInboundCallbackSource,
 	BaileysSocketRuntime,
+	reconnectDelayMs,
 	recordProviderSentMessage,
 	registerBaileysInboundCallbackListener,
 	resolveQuotedMessage,
-	sendApplicationTextThroughSocket,
+	sendTextThroughSocket,
 	shouldReconnectAfterClose,
 } from "./runtime.js";
 import { SQLiteBaileysState } from "./sqlite-state.js";
@@ -77,6 +78,22 @@ function queue(
 }
 
 describe("Baileys runtime callback boundary", () => {
+	it("reconnects only transient closes with bounded exponential jitter", () => {
+		expect(shouldReconnectAfterClose(false, 428)).toBe(true);
+		expect(shouldReconnectAfterClose(false, 408)).toBe(true);
+		expect(shouldReconnectAfterClose(false, 515)).toBe(true);
+		expect(shouldReconnectAfterClose(false, 503)).toBe(true);
+		for (const reason of [undefined, 401, 403, 411, 440, 500]) {
+			expect(shouldReconnectAfterClose(false, reason)).toBe(false);
+		}
+		expect(shouldReconnectAfterClose(true, 408)).toBe(false);
+
+		expect(reconnectDelayMs(0, 0)).toBe(1_500);
+		expect(reconnectDelayMs(0, 1)).toBe(3_000);
+		expect(reconnectDelayMs(1, 1)).toBe(6_000);
+		expect(reconnectDelayMs(100, 1)).toBe(60_000);
+	});
+
 	it("atomically journals every normalized event in a batched upsert before delivery", async () => {
 		let releaseFirst: (() => void) | undefined;
 		const blocked = new Promise<void>((resolve) => {
@@ -330,10 +347,10 @@ describe("Baileys runtime callback boundary", () => {
 		await runtime.stop();
 	});
 
-	it("passes application text to Baileys without trimming whitespace or newlines", async () => {
+	it("passes sidecar text to Baileys without trimming whitespace or newlines", async () => {
 		const originalText = "  first line\nsecond line\t ";
 		let receivedText: string | undefined;
-		const sent = await sendApplicationTextThroughSocket(
+		const sent = await sendTextThroughSocket(
 			{
 				sendMessage: async (_jid, content) => {
 					receivedText = content.text;

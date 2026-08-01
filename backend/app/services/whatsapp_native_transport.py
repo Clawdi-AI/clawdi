@@ -15,7 +15,7 @@ _HEALTH_PATH = "/v1/health"
 _RELAY_MESSAGE_PATH = "/v1/relay-message"
 _RAW_NODE_PATH = "/v1/raw-node"
 _QUERY_IQ_PATH = "/v1/query-iq"
-_APPLICATION_MESSAGE_PATH = "/v1/messages"
+_SIDECAR_MESSAGE_PATH = "/v1/messages"
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ class WhatsAppBaileysSidecarConfig:
 
 
 @dataclass(frozen=True)
-class WhatsAppApplicationSendRequest:
+class WhatsAppSidecarSendRequest:
     jid: str
     text: str
     message_id: str
@@ -59,7 +59,7 @@ class WhatsAppNativeTransportAdapter:
 
     The wrapped client can be an in-process Python implementation or a narrow
     HTTP wrapper around a Baileys sidecar. Clawdi owns product state; this seam
-    only relays Baileys-native protocol operations that Cloud API cannot express.
+    only relays Baileys-native protocol operations.
     """
 
     def __init__(self, client: WhatsAppNativeUpstreamClient) -> None:
@@ -132,9 +132,9 @@ class WhatsAppBaileysSidecarClient:
         self._connected = _sidecar_health_connected(data)
         return self._connected
 
-    async def send_application_message(
+    async def send_text_message(
         self,
-        request: WhatsAppApplicationSendRequest,
+        request: WhatsAppSidecarSendRequest,
     ) -> str:
         reply_to = None
         if request.reply_to_message_id is not None:
@@ -148,7 +148,7 @@ class WhatsAppBaileysSidecarClient:
             }
         response = await self._request(
             "POST",
-            _APPLICATION_MESSAGE_PATH,
+            _SIDECAR_MESSAGE_PATH,
             json={
                 "jid": request.jid,
                 "text": request.text,

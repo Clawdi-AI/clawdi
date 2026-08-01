@@ -288,10 +288,6 @@ def profile_matches(flow: Any, profile: dict[str, Any], secrets: dict[str, str])
     configured_scheme = match.get("scheme")
     if configured_scheme and configured_scheme != request_scheme:
         return False
-    configured_method = match.get("method")
-    request_method = str(getattr(flow.request, "method", "") or "")
-    if configured_method and configured_method != request_method:
-        return False
     if kind == "websocket" and not is_websocket_request(flow):
         return False
     if kind in {"http", "provider"} and is_websocket_request(flow):
