@@ -32,6 +32,7 @@ from app.models.api_key import ApiKey
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BINDING_STATUS_ARCHIVED,
+    BOT_AGENT_LINK_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ARCHIVED,
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_IMESSAGE,
@@ -61,11 +62,11 @@ from app.models.hosted_runtime import HostedRuntimeState
 from app.models.runtime_observation import V2RuntimeEnvironmentFence
 from app.routes.channel_routers.discord import (
     _DISCORD_GATEWAY_SESSIONS,
-    _cleanup_discord_guild_commands_after_authority_revoked,
     _discord_bound_guild_channels,
     _discord_bound_guilds,
     _discord_gateway_url,
     _discord_guild_create_payload,
+    cleanup_discord_guild_commands_after_authority_revoked,
 )
 from app.routes.channel_routers.shared import _discord_gateway_dispatch
 from app.services import channels as channel_service
@@ -9125,7 +9126,7 @@ async def test_discord_stale_cleanup_does_not_erase_same_account_new_link_winner
         _FakeProviderClient,
     )
 
-    await _cleanup_discord_guild_commands_after_authority_revoked(
+    await cleanup_discord_guild_commands_after_authority_revoked(
         account_id=account.id,
         bot_agent_link_id=link_a.id,
         guild_ids={"same-account-winner-guild"},
@@ -14668,14 +14669,15 @@ async def test_discord_unpair_command_cleanup_failure_keeps_authority_revoked(
 
 
 @pytest.mark.asyncio
-async def test_discord_binding_delete_requires_provider_authorized_unpair(
+async def test_discord_guild_binding_delete_revokes_authority_then_cleans_commands(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     created = await _create_paired_discord_channel(
         client,
-        name="discord-control-plane-unpair-denied",
-        channel_id="discord-control-plane-channel",
+        name="discord-control-plane-guild-unpair",
+        channel_id="discord-control-plane-guild-channel",
         guild_id="discord-control-plane-guild",
     )
     binding = (
@@ -14686,11 +14688,245 @@ async def test_discord_binding_delete_requires_provider_authorized_unpair(
             )
         )
     ).scalar_one()
+    link = await db_session.get(ChannelBotAgentLink, binding.bot_agent_link_id)
+    assert link is not None
+    link.config = {
+        "discord_agent_commands": {
+            "global": [{"name": "agent_status", "description": "Agent status"}]
+        }
+    }
+    await db_session.commit()
+    _reset_fake_provider_client({"id": "discord-control-plane-cleanup"})
+    monkeypatch.setattr(
+        "app.routes.channel_routers.shared.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
 
     response = await client.delete(f"/v1/channels/{created['id']}/bindings/{binding.id}")
 
-    assert response.status_code == 409
-    assert response.json()["detail"].startswith("Run /bot_unpair")
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "binding_id": str(binding.id),
+        "unpaired": True,
+        "notification_status": "not_applicable",
+        "provider_cleanup_status": "succeeded",
+        "warning": None,
+    }
+    await db_session.refresh(binding)
+    assert binding.status == BINDING_STATUS_ARCHIVED
+    assert len(_FakeProviderClient.calls) == 1
+    cleanup_call = _FakeProviderClient.calls[0]
+    assert cleanup_call["method"] == "PUT"
+    assert cleanup_call["url"].endswith(
+        f"/applications/{DISCORD_TEST_APPLICATION_ID}/guilds/discord-control-plane-guild/commands"
+    )
+    assert cleanup_call["content"] == b"[]"
+
+
+@pytest.mark.asyncio
+async def test_discord_dm_binding_delete_revokes_without_guild_cleanup(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-control-plane-dm-unpair",
+                "provider_token": "discord-provider-token",
+                "config": _discord_ready_config(),
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": created["agent_link_id"], "ttl_seconds": 900},
+        )
+    ).json()
+    paired = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "type": 2,
+            "id": "discord-control-plane-dm-pair",
+            "token": "discord-control-plane-dm-token",
+            "application_id": DISCORD_TEST_APPLICATION_ID,
+            "channel_id": "discord-control-plane-dm",
+            "user": {"id": "discord-control-plane-dm-user"},
+            "data": {
+                "name": "bot_pair",
+                "options": [{"name": "code", "value": pair["code"]}],
+            },
+        },
+    )
+    assert paired.status_code == 200, paired.text
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(
+                ChannelBinding.account_id == UUID(created["id"]),
+                ChannelBinding.status == BINDING_STATUS_ACTIVE,
+            )
+        )
+    ).scalar_one()
+    link = await db_session.get(ChannelBotAgentLink, binding.bot_agent_link_id)
+    assert link is not None
+    link.config = {
+        "discord_agent_commands": {
+            "global": [{"name": "agent_status", "description": "Agent status"}]
+        }
+    }
+    await db_session.commit()
+    _reset_fake_provider_client({"id": "must-not-run-for-dm"})
+    monkeypatch.setattr(
+        "app.routes.channel_routers.shared.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+
+    response = await client.delete(f"/v1/channels/{created['id']}/bindings/{binding.id}")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "binding_id": str(binding.id),
+        "unpaired": True,
+        "notification_status": "not_applicable",
+        "provider_cleanup_status": "not_applicable",
+        "warning": None,
+    }
+    await db_session.refresh(binding)
+    assert binding.status == BINDING_STATUS_ARCHIVED
+    assert _FakeProviderClient.calls == []
+
+
+@pytest.mark.asyncio
+async def test_discord_binding_delete_cleanup_failure_warns_after_durable_revocation(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = await _create_paired_discord_channel(
+        client,
+        name="discord-control-plane-cleanup-failure",
+        channel_id="discord-control-plane-cleanup-channel",
+        guild_id="discord-control-plane-cleanup-guild",
+    )
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(
+                ChannelBinding.account_id == UUID(created["id"]),
+                ChannelBinding.status == BINDING_STATUS_ACTIVE,
+            )
+        )
+    ).scalar_one()
+    link = await db_session.get(ChannelBotAgentLink, binding.bot_agent_link_id)
+    assert link is not None
+    link.config = {
+        "discord_agent_commands": {
+            "global": [{"name": "agent_status", "description": "Agent status"}]
+        }
+    }
+    await db_session.commit()
+    _reset_fake_provider_client({"message": "provider failure"}, status_code=500)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.shared.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+
+    response = await client.delete(f"/v1/channels/{created['id']}/bindings/{binding.id}")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "binding_id": str(binding.id),
+        "unpaired": True,
+        "notification_status": "not_applicable",
+        "provider_cleanup_status": "failed",
+        "warning": "Chat was unpaired, but Discord server command cleanup did not complete.",
+    }
+    await db_session.refresh(binding)
+    assert binding.status == BINDING_STATUS_ARCHIVED
+    audit = await client.get(
+        "/v1/audit/events",
+        params={"channel_account_id": created["id"], "limit": 20},
+    )
+    cleanup_event = next(
+        item
+        for item in audit.json()["items"]
+        if item["action"] == "channel.binding.discord_cleanup"
+    )
+    assert cleanup_event["details"] == {
+        "guild_id": "discord-control-plane-cleanup-guild",
+        "provider_cleanup_status": "failed",
+    }
+
+
+@pytest.mark.asyncio
+async def test_discord_binding_delete_denies_cross_user_account_inactive_link_and_unowned_agent(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    created = await _create_paired_discord_channel(
+        client,
+        name="discord-control-plane-authority-boundary",
+        channel_id="discord-control-plane-authority-channel",
+        guild_id="discord-control-plane-authority-guild",
+    )
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(
+                ChannelBinding.account_id == UUID(created["id"]),
+                ChannelBinding.status == BINDING_STATUS_ACTIVE,
+            )
+        )
+    ).scalar_one()
+    link = await db_session.get(ChannelBotAgentLink, binding.bot_agent_link_id)
+    assert link is not None
+    wrong_account = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-control-plane-wrong-account",
+                "provider_token": "discord-provider-token-2",
+                "config": _discord_ready_config("223456789012345678"),
+            },
+        )
+    ).json()
+    other_user, other_agent = await _create_user_with_channel_agent(
+        db_session,
+        label="discord-control-plane-other-user",
+    )
+
+    wrong_account_response = await client.delete(
+        f"/v1/channels/{wrong_account['id']}/bindings/{binding.id}"
+    )
+    async with _client_for_user(db_session, other_user) as other_client:
+        cross_user_response = await other_client.delete(
+            f"/v1/channels/{created['id']}/bindings/{binding.id}"
+        )
+
+    link.status = BOT_AGENT_LINK_STATUS_ARCHIVED
+    link.archived_at = datetime.now(UTC)
+    await db_session.commit()
+    inactive_link_response = await client.delete(
+        f"/v1/channels/{created['id']}/bindings/{binding.id}"
+    )
+
+    link.status = BOT_AGENT_LINK_STATUS_ACTIVE
+    link.archived_at = None
+    link.agent_id = other_agent.id
+    await db_session.commit()
+    unowned_agent_response = await client.delete(
+        f"/v1/channels/{created['id']}/bindings/{binding.id}"
+    )
+
+    assert wrong_account_response.status_code == 404
+    assert cross_user_response.status_code == 404
+    assert inactive_link_response.status_code == 404
+    assert unowned_agent_response.status_code == 404
     await db_session.refresh(binding)
     assert binding.status == BINDING_STATUS_ACTIVE
 

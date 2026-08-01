@@ -1091,7 +1091,7 @@ async def discord_webhook(
             )
         if binding_result.unpaired and guild_id is not None and binding_result.bindings:
             background_tasks.add_task(
-                _cleanup_discord_guild_commands_after_authority_revoked,
+                cleanup_discord_guild_commands_after_authority_revoked,
                 account_id=account.id,
                 bot_agent_link_id=binding_result.bindings[0].bot_agent_link_id,
                 guild_ids={guild_id},
@@ -1206,13 +1206,14 @@ async def _replay_discord_commands_for_paired_guild(
         )
 
 
-async def _cleanup_discord_guild_commands_after_authority_revoked(
+async def cleanup_discord_guild_commands_after_authority_revoked(
     *,
     account_id: UUID,
     bot_agent_link_id: UUID,
     guild_ids: set[str],
-) -> None:
+) -> bool:
     """Best-effort cleanup after durable unpair/unlink authority revocation."""
+    cleanup_succeeded = True
     try:
         async with async_session_factory() as db:
             account = await get_active_channel_account(db, account_id=account_id)
@@ -1222,7 +1223,7 @@ async def _cleanup_discord_guild_commands_after_authority_revoked(
             if not isinstance(command_shadow, dict) or not any(
                 isinstance(commands, list) and commands for commands in command_shadow.values()
             ):
-                return
+                return True
             application_id = _discord_application_id(account)
             for guild_id in sorted(guild_ids):
                 # A new pairing can win after the revocation commit. Never erase its
@@ -1248,6 +1249,7 @@ async def _cleanup_discord_guild_commands_after_authority_revoked(
                         body=b"[]",
                     )
                     if result.status_code >= 400:
+                        cleanup_succeeded = False
                         log.warning(
                             "discord_command_cleanup_rejected "
                             "account_id=%s link_id=%s guild_id=%s status=%s",
@@ -1257,6 +1259,7 @@ async def _cleanup_discord_guild_commands_after_authority_revoked(
                             result.status_code,
                         )
                 except HTTPException:
+                    cleanup_succeeded = False
                     log.exception(
                         "discord_command_cleanup_failed account_id=%s link_id=%s guild_id=%s",
                         account_id,
@@ -1264,12 +1267,14 @@ async def _cleanup_discord_guild_commands_after_authority_revoked(
                         guild_id,
                     )
                     continue
+        return cleanup_succeeded
     except (HTTPException, SQLAlchemyError):
         log.exception(
             "discord_command_cleanup_setup_failed account_id=%s link_id=%s",
             account_id,
             bot_agent_link_id,
         )
+        return False
 
 
 async def _ack_discord_gateway_sequence(

@@ -53,10 +53,12 @@ describe("channel IA boundary", () => {
 		expect(agentDetail).toContain("body: { agent_id: environmentId }");
 		expect(agentDetail).toContain("agentProviderHasSingleLinkLimit");
 		expect(agentDetail).toContain("linkedProviders={linkedProviders}");
-		expect(connectDialog).toContain("Already linked");
+		expect(connectDialog).toContain("Connected");
 		expect(connectDialog).toContain("availableBotProvidersForAgent");
-		expect(connectDialog).toContain("This Agent already has a Telegram and Discord bot.");
-		expect(agentDetail).toContain('<details className="group border-t pt-4">');
+		expect(connectDialog).toContain("This Agent already has one bot from each provider.");
+		expect(connectDialog).toContain("before connecting a replacement");
+		expect(connectDialog).toContain("Manage bots");
+		expect(agentDetail).not.toContain('<details className="group border-t pt-4">');
 	});
 
 	test("provides a novice Discord connect, sync, and pair path in one compact dialog", () => {
@@ -147,6 +149,15 @@ describe("channel IA boundary", () => {
 		expect(agentDetail).not.toContain("Checking activity");
 		expect(agentDetail).not.toContain("No activity yet");
 		expect(agentDetail).not.toContain("Last activity");
+		expect(agentDetail).toContain("INITIAL_PAIRED_CHAT_COUNT = 3");
+		expect(agentDetail).toContain("Show less");
+		expect(agentDetail).toContain("const pairedChatsLabel =");
+		expect(agentDetail).toContain("Paired chats ·");
+		expect(agentDetail).toContain("aria-expanded={chatsOpen}");
+		expect(agentDetail).toContain("aria-controls={chatsId}");
+		expect(agentDetail).toContain("hidden={!chatsOpen}");
+		expect(agentDetail).toContain('role="status"');
+		expect(agentDetail).toContain('role="alert"');
 	});
 
 	test("keeps repeated row actions visually stable without provider variants", () => {
@@ -157,13 +168,16 @@ describe("channel IA boundary", () => {
 		expect(linkedChannelRow).not.toContain('variant={provider === "telegram"');
 		expect(linkedChannelRow).not.toContain('provider === "telegram" ? "default"');
 		expect(linkedChannelRow).toContain('variant="ghost"');
-		expect(linkedChannelRow).toContain('size="icon-sm"');
+		expect(linkedChannelRow).toContain('size="sm"');
 		expect(linkedChannelRow).toContain("CHANNEL_DESTRUCTIVE_ACTION_CLASS");
-		expect(linkedChannelRow).toContain("aria-label={`Unlink ");
+		expect(linkedChannelRow).toContain("Unlinking…");
+		expect(linkedChannelRow).toContain('"Unlink"');
+		expect(linkedChannelRow).not.toContain("<Tooltip>");
 		expect(pairedChatRow).toContain('variant="ghost"');
-		expect(pairedChatRow).toContain('size="icon-sm"');
+		expect(pairedChatRow).toContain('size="sm"');
 		expect(pairedChatRow).toContain("CHANNEL_DESTRUCTIVE_ACTION_CLASS");
-		expect(pairedChatRow).toContain("aria-label={`Unpair ");
+		expect(pairedChatRow).toContain("Unpairing…");
+		expect(pairedChatRow).toContain('"Unpair"');
 		expect(pairedChatRow).not.toContain('variant="outline"');
 	});
 
@@ -177,13 +191,15 @@ describe("channel IA boundary", () => {
 		);
 		expect(pairedChatRow).not.toContain("overflow-visible");
 		expect(pairedChatRow).toContain("pairedChatScopeLabel(provider, binding)");
-		expect(pairedChatRow).toContain("Run /bot_unpair in this");
+		expect(pairedChatRow).not.toContain("Run /bot_unpair in this");
 		expect(pairedChatRowLogic).toContain("external_chat_name?.trim()");
 		expect(pairedChatRowLogic).toContain("binding.external_chat_id");
 		expect(pairedChatRow).not.toContain("<ProviderChip");
 		expect(pairedChatRow).not.toContain("CopyInline");
 		expect(pairedChatRow).not.toContain("Paired to");
 		expect(pairedChatRow).not.toContain("Through");
+		expect(pairedChatRow).not.toContain("border-l-2");
+		expect(pairedChatRow).not.toContain("ml-4");
 	});
 
 	test("filters Agent-page chats by the visible active link and account", () => {

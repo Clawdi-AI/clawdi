@@ -1038,11 +1038,11 @@ async def delete_channel_agent_link(
     await db.commit()
     if discord_guild_ids:
         from app.routes.channel_routers.discord import (
-            _cleanup_discord_guild_commands_after_authority_revoked,
+            cleanup_discord_guild_commands_after_authority_revoked,
         )
 
         background_tasks.add_task(
-            _cleanup_discord_guild_commands_after_authority_revoked,
+            cleanup_discord_guild_commands_after_authority_revoked,
             account_id=account.id,
             bot_agent_link_id=link.id,
             guild_ids=discord_guild_ids,
@@ -1139,15 +1139,7 @@ async def delete_channel_binding(
     ).one_or_none()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="binding not found")
-    binding, link = row
-    if account.provider == CHANNEL_PROVIDER_DISCORD:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Run /bot_unpair in the paired Discord server or direct message. "
-                "Discord pairing authority cannot be verified from this API."
-            ),
-        )
+    binding, _link = row
     await lock_channel_binding_identity(
         db,
         account_id=account.id,
@@ -1180,6 +1172,9 @@ async def delete_channel_binding(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="binding not found")
     binding, link = row
     await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=link.agent_id)
+    discord_guild_id = (
+        _discord_binding_guild_id(binding) if account.provider == CHANNEL_PROVIDER_DISCORD else None
+    )
 
     if binding.status != BINDING_STATUS_ACTIVE:
         return ChannelBindingDeleteResponse(
@@ -1207,8 +1202,8 @@ async def delete_channel_binding(
             "external_chat_id": binding.external_chat_id,
         },
     )
-    # The archive commits before any provider I/O. A failed Telegram cleanup or
-    # notification can never roll back a completed unpair.
+    # Authority commits before any provider I/O. Notification or provider cleanup
+    # failure can never roll back a completed unpair.
     await db.commit()
 
     notification_status = "not_applicable"
@@ -1247,6 +1242,37 @@ async def delete_channel_binding(
             source="api.channels",
             details={
                 "notification_status": notification_status,
+                "provider_cleanup_status": provider_cleanup_status,
+            },
+        )
+        await db.commit()
+    elif account.provider == CHANNEL_PROVIDER_DISCORD and discord_guild_id is not None:
+        from app.routes.channel_routers.discord import (
+            cleanup_discord_guild_commands_after_authority_revoked,
+        )
+
+        cleanup_succeeded = await cleanup_discord_guild_commands_after_authority_revoked(
+            account_id=account.id,
+            bot_agent_link_id=link.id,
+            guild_ids={discord_guild_id},
+        )
+        provider_cleanup_status = "succeeded" if cleanup_succeeded else "failed"
+        if not cleanup_succeeded:
+            warning = "Chat was unpaired, but Discord server command cleanup did not complete."
+        record_control_plane_audit(
+            db,
+            actor_type="user",
+            actor_user_id=auth.user_id,
+            target_user_id=auth.user_id,
+            action="channel.binding.discord_cleanup",
+            resource_type="channel_binding",
+            resource_id=str(binding.id),
+            environment_id=link.agent_id,
+            channel_account_id=account.id,
+            channel_agent_link_id=link.id,
+            source="api.channels",
+            details={
+                "guild_id": discord_guild_id,
                 "provider_cleanup_status": provider_cleanup_status,
             },
         )
