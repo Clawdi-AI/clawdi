@@ -160,6 +160,7 @@ function managedGatewayPrimaryModelTarget(
 	runtimeName: string,
 ): {
 	baseUrl: string;
+	credential: string;
 	providerId: string;
 	seedModel: string | null;
 } | null {
@@ -179,8 +180,12 @@ function managedGatewayPrimaryModelTarget(
 	if (!baseUrl) return null;
 	const apiMode = hostedProviderApiMode(provider);
 	if (!managedProviderSupportsLiveModelProbe(apiMode)) return null;
+	const runtimeEnvName = hostedProviderRuntimeEnvName(selectedProviderId, provider);
+	const credential = hostedProviderPlaceholderEnv(manifest, runtimeName)[runtimeEnvName];
+	if (!credential) return null;
 	return {
 		baseUrl,
+		credential,
 		providerId: selectedProviderId,
 		seedModel:
 			currentPrimary && currentPrimary.provider_id === selectedProviderId
@@ -196,6 +201,7 @@ interface ManagedGatewayModelOverrides {
 
 interface ManagedGatewayModelFetchInput {
 	baseUrl: string;
+	credential: string;
 	home: string;
 	egressSystemCaFile: string | null;
 	providerId: string;
@@ -210,6 +216,15 @@ type ManagedGatewayModelFetchResult =
 export type ManagedGatewayModelListFetcher = (
 	input: ManagedGatewayModelFetchInput,
 ) => ManagedGatewayModelFetchResult;
+
+export function requiresManagedGatewayModelProbe(
+	manifest: RuntimeManifest,
+	enabledRuntimes: readonly string[],
+): boolean {
+	return enabledRuntimes.some(
+		(runtimeName) => managedGatewayPrimaryModelTarget(manifest, runtimeName) !== null,
+	);
+}
 
 export function resolveManagedGatewayModelOverrides(
 	manifest: RuntimeManifest,
@@ -229,6 +244,7 @@ export function resolveManagedGatewayModelOverrides(
 		if (!fetchResult) {
 			fetchResult = fetcher({
 				baseUrl: target.baseUrl,
+				credential: target.credential,
 				home,
 				egressSystemCaFile,
 				providerId: target.providerId,

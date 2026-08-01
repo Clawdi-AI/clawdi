@@ -47,6 +47,7 @@ import {
 	rollbackPendingRuntimeCliUpgrade,
 } from "../src/runtime/cli-update";
 import { withRuntimeConvergeLock } from "../src/runtime/converge-lock";
+import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "../src/runtime/egress-env";
 import {
 	deniedCommandReason,
 	evaluateHostPolicyForCommand,
@@ -3921,6 +3922,7 @@ exit 0
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths(), {
 			managedGatewayModelListFetcher: (input) => {
 				expect(input.providerId).toBe(agentProviderId);
+				expect(input.credential).toBe(MANAGED_EGRESS_PLACEHOLDER_VALUE);
 				return {
 					status: "ok",
 					endpoint: `${input.baseUrl}/models`,
@@ -8954,7 +8956,9 @@ fi
 			expect(event.status).toBe("error");
 			expect(event.error).toContain("prerequisite activation failed");
 			expect(readRuntimeAppliedState(paths)).toBeNull();
-			expect(readFileSync(installerLog, "utf8")).not.toContain(installArgs);
+			expect(existsSync(installerLog) ? readFileSync(installerLog, "utf8") : "").not.toContain(
+				installArgs,
+			);
 			const failedManagerCalls = readFileSync(systemctlLog, "utf8").trim().split("\n");
 			expect(
 				failedManagerCalls.some((call) => /^(start|restart) .*clawdi-daemon\.service/.test(call)),

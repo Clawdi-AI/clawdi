@@ -1305,6 +1305,37 @@ function officialRuntimeSystemdPrograms(
 		.map(([, program]) => program);
 }
 
+export function writeRuntimeSidecarSystemdUnit(input: {
+	program: RuntimeEgressSystemdProgram;
+	identity: RuntimeEgressIdentity;
+	manifest: RuntimeManifest;
+	paths: RuntimePaths;
+	workspaceRoot: string;
+	commonEnvironment: Record<string, string>;
+}): string {
+	return writeSystemdSystemUnit({
+		paths: input.paths,
+		name: "clawdi-runtime-sidecar",
+		description: "Clawdi hosted runtime sidecar",
+		command: input.paths.cliManagedBin,
+		args: ["runtime", "sidecar"],
+		cwd: input.workspaceRoot,
+		env: {
+			...input.commonEnvironment,
+			CLAWDI_AUTH_TOKEN: "",
+			CLAWDI_EGRESS_ENV_FILE: input.program.envFilePath,
+			CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(
+				input.manifest,
+				input.program,
+				input.identity,
+			),
+		},
+		serviceType: "notify",
+		extraUnitLines: [`Before=user@${input.identity.runtimeUid}.service`],
+		extraServiceLines: ["NotifyAccess=main"],
+	});
+}
+
 export function writeRuntimeSystemdState(input: {
 	runtimePrograms: RuntimeSystemdUserProgram[];
 	egressProgram: RuntimeEgressSystemdProgram | null;
@@ -1336,13 +1367,11 @@ export function writeRuntimeSystemdState(input: {
 		runtimeRevision,
 		commonEnvironment,
 	} = input;
-	const runtimeUser = commonEnvironment.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 	const systemUnits: string[] = [];
 	const shouldRunEgress = egressProgram !== null && runtimePrograms.length > 0;
 	const activeEgressProgram = shouldRunEgress ? egressProgram : null;
 	const activeEgressIdentity = shouldRunEgress ? egressIdentity : null;
 	const userUnits: string[] = [];
-	const runtimeUid = shouldRunEgress ? runtimeUserUid(runtimeUser) : null;
 	const desiredSystemUnitNames = [
 		...(daemonAuthTokenFile ? ["clawdi-runtime-watch.service", "clawdi-daemon.service"] : []),
 		...(activeEgressProgram ? ["clawdi-runtime-sidecar.service"] : []),
@@ -1406,27 +1435,17 @@ export function writeRuntimeSystemdState(input: {
 	}
 
 	if (activeEgressProgram) {
+		if (!activeEgressIdentity) {
+			throw new Error("runtime sidecar egress revision requires the configured numeric identity");
+		}
 		systemUnits.push(
-			writeSystemdSystemUnit({
+			writeRuntimeSidecarSystemdUnit({
+				program: activeEgressProgram,
+				identity: activeEgressIdentity,
+				manifest,
 				paths,
-				name: "clawdi-runtime-sidecar",
-				description: "Clawdi hosted runtime sidecar",
-				command: paths.cliManagedBin,
-				args: ["runtime", "sidecar"],
-				cwd: workspaceRoot,
-				env: {
-					...commonEnvironment,
-					CLAWDI_AUTH_TOKEN: "",
-					CLAWDI_EGRESS_ENV_FILE: activeEgressProgram.envFilePath,
-					CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(
-						manifest,
-						activeEgressProgram,
-						activeEgressIdentity,
-					),
-				},
-				serviceType: "notify",
-				extraUnitLines: runtimeUid === null ? undefined : [`Before=user@${runtimeUid}.service`],
-				extraServiceLines: ["NotifyAccess=main"],
+				workspaceRoot,
+				commonEnvironment,
 			}),
 		);
 	}
