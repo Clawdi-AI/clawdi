@@ -2426,9 +2426,6 @@ function reconcileHostedRuntimeOAuthCredentials(input: {
 	workspaceRoot: string;
 }): void {
 	const desired = hostedRuntimeOAuthCredentials(input.manifest, input.runtime, input.secretValues);
-	if (desired.length > 1) {
-		throw new Error(`${input.runtime} cannot consume more than one Codex OAuth credential family`);
-	}
 	const desiredProviderIds = new Set(desired.map((credential) => credential.providerId));
 	const ledgerDir = join(input.paths.oauthCredentialRoot, input.runtime);
 	if (existsSync(ledgerDir)) {
@@ -4764,14 +4761,6 @@ function validateRuntimeProjectionPlan(input: {
 		const observation = observations.get(name);
 		if (!observation) throw new Error(`runtime ${name} install observation is missing`);
 		const runtimeName = runtimeNameSchema.parse(name);
-		if (runtimeName === "hermes" || runtimeName === "openclaw") {
-			const oauthCredentials = hostedRuntimeOAuthCredentials(manifest, runtimeName, secretValues);
-			if (oauthCredentials.length > 1) {
-				throw new Error(
-					`${runtimeName} cannot consume more than one Codex OAuth credential family`,
-				);
-			}
-		}
 		const providerEnvironment = runtime.enabled
 			? hostedProviderEnvironment(manifest, name, { validateOverlap: true })
 			: { placeholderEnv: {}, secretEnv: {} };

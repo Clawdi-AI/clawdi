@@ -1,5 +1,10 @@
 # AI Provider Agent Contract Audit
 
+> HISTORICAL - This audit describes the unpublished local AI Provider
+> apply/materialization surface that has been retired. See
+> [`ai-providers.md`](ai-providers.md) for the current Core Hosted
+> manifest/controller path.
+
 Date: 2026-07-27
 
 This audit records source evidence for the verified contract baselines used by AI

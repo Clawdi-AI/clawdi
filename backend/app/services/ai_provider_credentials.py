@@ -35,7 +35,7 @@ async def lock_ai_provider_owner(db: AsyncSession, owner_user_id: UUID) -> None:
     await db.execute(select(User.id).where(User.id == owner_user_id).with_for_update())
 
 
-def selected_runtime_binding(runtimes: object) -> tuple[OAuthConsumerRuntime, set[str]] | None:
+def selected_runtime_binding(runtimes: object) -> tuple[OAuthConsumerRuntime, str | None] | None:
     if not isinstance(runtimes, dict) or len(runtimes) != 1:
         return None
     runtime_name, raw_runtime = next(iter(runtimes.items()))
@@ -45,7 +45,8 @@ def selected_runtime_binding(runtimes: object) -> tuple[OAuthConsumerRuntime, se
         runtime = validate_hosted_runtime_desired_state(raw_runtime)
     except ValidationError:
         return None
-    return runtime_name, set(runtime.provider_ids)
+    provider_id = runtime.provider_ids[0] if runtime.provider_ids else None
+    return runtime_name, provider_id
 
 
 async def environment_binds_provider(
@@ -75,7 +76,7 @@ async def environment_binds_provider(
     if environment.agent_type != runtime or state is None:
         return False
     binding = selected_runtime_binding(state.runtimes)
-    return binding is not None and binding[0] == runtime and provider_id in binding[1]
+    return binding is not None and binding[0] == runtime and provider_id == binding[1]
 
 
 async def environment_matches_runtime(
@@ -158,27 +159,12 @@ async def validate_prospective_bound_runtime_auth(
     consumers: list[OAuthCredentialConsumer] = []
     for environment_id, runtimes in rows:
         binding = selected_runtime_binding(runtimes)
-        if binding is None or provider_id not in binding[1]:
+        if binding is None or provider_id != binding[1]:
             continue
         consumers.append(OAuthCredentialConsumer(environment_id, binding[0]))
     if prospective_auth_type in {"agent_profile", "oauth_profile"} and len(consumers) > 1:
         raise OAuthCredentialClaimConflict(
             "OAuth credential cannot be bound to multiple Agent runtimes"
-        )
-    for consumer in consumers:
-        binding = next(
-            selected_runtime_binding(runtimes)
-            for environment_id, runtimes in rows
-            if environment_id == consumer.environment_id
-        )
-        if binding is None:  # pragma: no cover - consumer construction invariant
-            raise OAuthCredentialClaimConflict("Hosted runtime provider pool is invalid")
-        await _lock_and_validate_runtime_oauth_pool(
-            db,
-            owner_user_id=owner_user_id,
-            provider_ids=binding[1],
-            prospective_provider_id=provider_id,
-            prospective_auth_type=prospective_auth_type,
         )
     return consumers
 
@@ -201,59 +187,34 @@ async def provider_has_hosted_runtime_consumer(
         )
     ).scalars()
     return any(
-        (binding := selected_runtime_binding(runtimes)) is not None and provider_id in binding[1]
+        (binding := selected_runtime_binding(runtimes)) is not None and provider_id == binding[1]
         for runtimes in rows
     )
 
 
-async def _lock_and_validate_runtime_oauth_pool(
+async def _lock_and_validate_runtime_provider(
     db: AsyncSession,
     *,
     owner_user_id: UUID,
-    provider_ids: set[str],
-    prospective_provider_id: str | None = None,
-    prospective_auth_type: str | None = None,
-) -> list[AiProvider]:
-    providers = list(
-        (
-            await db.execute(
-                select(AiProvider)
-                .where(
-                    AiProvider.owner_user_id == owner_user_id,
-                    AiProvider.provider_id.in_(sorted(provider_ids)),
-                    AiProvider.archived_at.is_(None),
-                )
-                .order_by(AiProvider.provider_id)
-                .with_for_update()
-            )
-        ).scalars()
-    )
-    oauth_provider_ids = {
-        provider.provider_id
-        for provider in providers
-        if (
-            prospective_auth_type
-            if provider.provider_id == prospective_provider_id
-            else provider.auth_type
+    provider_id: str | None,
+) -> AiProvider | None:
+    if provider_id is None:
+        return None
+    provider = await db.scalar(
+        select(AiProvider)
+        .where(
+            AiProvider.owner_user_id == owner_user_id,
+            AiProvider.provider_id == provider_id,
+            AiProvider.archived_at.is_(None),
         )
-        in {"agent_profile", "oauth_profile"}
-    }
-    if prospective_provider_id in provider_ids and prospective_auth_type in {
-        "agent_profile",
-        "oauth_profile",
-    }:
-        oauth_provider_ids.add(prospective_provider_id)
-    if len(oauth_provider_ids) > 1:
-        raise OAuthCredentialClaimConflict("A runtime cannot bind more than one OAuth AI Provider")
-    invalid_endpoint_ids = sorted(
-        provider.provider_id for provider in providers if not is_public_https_url(provider.base_url)
+        .with_for_update()
     )
-    if invalid_endpoint_ids:
+    if provider is not None and not is_public_https_url(provider.base_url):
         raise OAuthCredentialClaimConflict(
             "Hosted runtime AI Provider base_url must be a public HTTPS URL: "
-            + ", ".join(invalid_endpoint_ids)
+            + provider.provider_id
         )
-    return providers
+    return provider
 
 
 async def reconcile_runtime_oauth_claims(
@@ -265,17 +226,17 @@ async def reconcile_runtime_oauth_claims(
 ) -> None:
     await lock_ai_provider_owner(db, owner_user_id)
     binding = selected_runtime_binding(runtimes)
-    desired_runtime, desired_provider_ids = binding if binding is not None else (None, set())
-    providers = await _lock_and_validate_runtime_oauth_pool(
+    desired_runtime, desired_provider_id = binding if binding is not None else (None, None)
+    provider = await _lock_and_validate_runtime_provider(
         db,
         owner_user_id=owner_user_id,
-        provider_ids=desired_provider_ids,
+        provider_id=desired_provider_id,
     )
-    oauth_provider_ids = {
+    desired_oauth_provider_id = (
         provider.provider_id
-        for provider in providers
-        if provider.auth_type in {"agent_profile", "oauth_profile"}
-    }
+        if provider is not None and provider.auth_type in {"agent_profile", "oauth_profile"}
+        else None
+    )
     payloads = list(
         (
             await db.execute(
@@ -284,7 +245,7 @@ async def reconcile_runtime_oauth_claims(
                     AiProviderAuthPayload.owner_user_id == owner_user_id,
                     AiProviderAuthPayload.archived_at.is_(None),
                     (AiProviderAuthPayload.consumer_environment_id == environment_id)
-                    | (AiProviderAuthPayload.provider_id.in_(sorted(oauth_provider_ids))),
+                    | (AiProviderAuthPayload.provider_id == desired_oauth_provider_id),
                 )
                 .order_by(
                     AiProviderAuthPayload.provider_id,
@@ -297,7 +258,7 @@ async def reconcile_runtime_oauth_claims(
     for payload in payloads:
         is_desired = (
             desired_runtime is not None
-            and payload.provider_id in oauth_provider_ids
+            and payload.provider_id == desired_oauth_provider_id
             and payload.kind in {"agent_profile", "oauth_profile"}
         )
         if payload.consumer_environment_id == environment_id and not is_desired:

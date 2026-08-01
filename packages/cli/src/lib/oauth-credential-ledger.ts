@@ -10,7 +10,7 @@ export const OAUTH_CREDENTIAL_LEDGER_SCHEMA_VERSION = "clawdi.oauthCredentialOwn
 const oauthCredentialLedgerSchema = z
 	.object({
 		schemaVersion: z.literal(OAUTH_CREDENTIAL_LEDGER_SCHEMA_VERSION),
-		runtime: z.enum(["codex", "hermes", "openclaw"]),
+		runtime: z.enum(["hermes", "openclaw"]),
 		providerId: z.string().min(1),
 		nativeProfileId: z.string().min(1),
 		credentialRevision: z.string().min(1).max(64),
@@ -68,7 +68,7 @@ const oauthCredentialLedgerSchema = z
 const legacyOAuthCredentialReceiptSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.runtimeOAuthCredential.v1"),
-		runtime: z.enum(["codex", "hermes", "openclaw"]),
+		runtime: z.enum(["hermes", "openclaw"]),
 		providerId: z.string().min(1),
 		nativeProfileId: z.string().min(1),
 		credentialRevision: z.string().min(1).max(64),

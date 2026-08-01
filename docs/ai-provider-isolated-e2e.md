@@ -1,9 +1,9 @@
 # AI Provider Isolated Smoke Record
 
-> HISTORICAL - recorded smoke evidence for the 2026-06 AI Provider slice. Use
-> [`ai-providers.md`](ai-providers.md) for current user behavior and
-> [`ai-provider-agent-contract-audit.md`](ai-provider-agent-contract-audit.md)
-> for verified target contract baselines.
+> HISTORICAL - This smoke record exercises the unpublished local AI Provider
+> apply/materialization surface that has been retired. See
+> [`ai-providers.md`](ai-providers.md) for the current Core Hosted
+> manifest/controller path.
 
 This document records the Docker-isolated smoke test for the first non-UI AI
 Provider slice.

@@ -96,7 +96,7 @@ Clawdi is the shared layer underneath:
 - **Project sharing** — Share read-only Project access from the dashboard or CLI, accept it from a share page or CLI inbox, and explicitly attach accepted Projects to Agents when they should be used at runtime.
 - **Session sync** — Push local session history to the dashboard for review and recall.
 - **Vault secrets** — Store secrets server-side, commit only `clawdi://` references, and resolve them at runtime.
-- **AI Providers** — Define model providers once, keep keys in env/Vault/auth profiles, and apply verified Codex, Hermes, or OpenClaw agent config without proxying BYOK model traffic.
+- **AI Providers** — Keep a multi-record provider catalog and auth references while Core Hosted manifests bind at most one provider to Hermes or OpenClaw, without proxying BYOK model traffic.
 - **App connections** — Hook agents into Notion, Gmail, Drive, Calendar, Linear, GitHub, and more from the dashboard. Tools show up inside every connected agent automatically over MCP.
 - **MCP tools** — Memory, vault, and connector tools served through the Model Context Protocol so any MCP-aware agent can use them.
 
@@ -159,18 +159,7 @@ clawdi ai-provider test openai-main --live # optional direct provider probe
 
 AI Provider metadata lives in `~/.clawdi/ai-providers/catalog.json`; API keys do not. Use `env:...` refs, `clawdi://...` Vault refs, `none` for local unauthenticated endpoints, or a verified auth profile such as `agent:codex/default`. BYOK model requests still go directly from the agent runtime to OpenAI, Anthropic, OpenRouter, Gemini, Mistral, or your compatible endpoint.
 
-Apply provider config explicitly, with a dry run first:
-
-```bash
-clawdi ai-provider apply openai-main --dry-run
-clawdi ai-provider apply openai-main
-codex --profile clawdi-ai-provider
-
-clawdi ai-provider apply openai-main --target hermes --dry-run
-clawdi ai-provider apply openai-main --target openclaw --dry-run
-```
-
-Codex OAuth is managed through the AI Provider surface:
+Codex OAuth is connected through the AI Provider surface:
 
 ```bash
 clawdi ai-provider add openai-codex \
@@ -178,14 +167,18 @@ clawdi ai-provider add openai-codex \
   --default-model gpt-5-codex \
   --auth agent:codex/default
 clawdi ai-provider connect openai-codex --tool codex
-clawdi ai-provider apply openai-codex --target codex
 ```
 
-Each Codex OAuth credential family has one owner. Choose exactly one target:
-Codex uses `$CODEX_HOME/auth.json`, Hermes uses `$HERMES_HOME/auth.json`, and
-OpenClaw uses its database-first `openclaw-agent.sqlite` credential store via
-the official provider-auth SDK. Clawdi seeds a missing store but does not
-overwrite tokens rotated by the target runtime.
+Local Provider Catalogs may contain many records. Core Hosted activation comes
+from the stable runtime manifest/controller path: configured Hermes or OpenClaw
+binds exactly one `provider_ids` entry, while unmanaged mode binds none.
+Selection is replacement-only, with no fallback or secondary pool.
+
+Each Codex OAuth credential family still has one Hosted runtime owner. Hermes
+uses its native auth store and OpenClaw uses its database-first
+`openclaw-agent.sqlite` store through the public provider-auth SDK. Clawdi seeds
+a missing owned entry but preserves target-native token refresh and durable
+revoke state.
 
 Use `clawdi ai-provider connect ... --callback manual` in headless environments. Export/import is metadata-only by default; `--include-secrets` requires passphrase-encrypted secret export.
 
@@ -311,15 +304,15 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | `clawdi project create/list/show/share/share-links/invite/invites/members/leave/unshare` | Manage Projects and read-only sharing |
 | `clawdi inbox [accept/decline/forget]` | Accept invitations and share links |
 | `clawdi agent projects list/attach/detach/move` | View the fixed Agent Project and manage attached Projects |
-| `clawdi agent credentials import/materialize` | Compatibility backup/restore for local CLI credential profiles; use `ai-provider import-auth/connect/materialize-auth` for Codex provider auth |
-| `clawdi ai-provider list/add/edit/remove/validate/test/connect/complete-oauth/import-auth/materialize-auth/apply/status/export/import` | Manage portable model providers, auth refs, Codex OAuth/profile auth, tests, verified Codex/Hermes/OpenClaw agent config apply, and provider-only export/import |
+| `clawdi agent credentials import/materialize` | Compatibility backup/restore for local CLI credential profiles; use `ai-provider import-auth/connect` for Codex provider auth |
+| `clawdi ai-provider list/add/edit/remove/validate/test/connect/complete-oauth/import-auth/export/import` | Manage local provider catalog records, auth refs, Codex OAuth/profile auth, direct tests, and provider-only export/import; Core Hosted activation comes from the runtime manifest/controller |
 | `clawdi channel list/available/get/create/links/link/rotate-token/pair-code/send/bindings/sync-commands/delete` | Manage channel bots, bot-agent links, chat pairing, outbound messages, and provider slash-command sync |
 | `clawdi project folder link/status/unlink` | Link a local folder to a Project for vault reference selection |
 | `clawdi vault set/list/import/attach/detach/rm/resolve` | Manage encrypted secrets, Project access, exact references, and dry-run/explicit secret resolution |
 | `clawdi read <clawdi://...>` | Explicitly print one vault reference value |
 | `clawdi inject --in <file> --out <file>` | Render `clawdi://` references into templates |
 | `clawdi run --env-file <file> -- <cmd>` | Run a command with explicit vault references resolved |
-| `clawdi doctor [ai-provider]` | Diagnose auth, agent paths, vault, MCP config, and AI Provider setup |
+| `clawdi doctor` | Diagnose auth, agent paths, vault, and MCP config |
 | `clawdi update` | Install the latest CLI version (`--check` only reports) |
 | `clawdi mcp` | Start the MCP stdio server used by agents |
 

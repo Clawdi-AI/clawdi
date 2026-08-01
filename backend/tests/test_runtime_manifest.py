@@ -526,6 +526,11 @@ async def test_runtime_only_bundle_is_explicitly_unmanaged(
             "provider_ids": [],
         },
         {
+            **next(iter(_runtime_state().values())),
+            "provider_ids": ["primary", "secondary"],
+            "primary_model": {"provider_id": "primary", "model": "gpt-5.5"},
+        },
+        {
             key: value
             for key, value in next(iter(_runtime_state().values())).items()
             if key != "providerMode"
@@ -3054,123 +3059,35 @@ async def test_runtime_manifest_rejects_persisted_mcp_without_servers(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_projects_selected_runtime_provider_pool(
-    admin_client,
-    db_session,
-    seed_user,
-):
-    env = await create_env_with_project(
-        db_session,
-        user_id=seed_user.id,
-        machine_id=f"provider-conflict-{uuid4().hex[:8]}",
-        machine_name="Runtime provider conflict",
-        agent_type="openclaw",
-    )
-    openclaw_ciphertext, openclaw_nonce = encrypt("sk-openclaw-provider")
-    hermes_ciphertext, hermes_nonce = encrypt("sk-hermes-provider")
-    db_session.add_all(
-        [
-            AiProvider(
-                owner_user_id=seed_user.id,
-                provider_id="openai-managed",
-                type="custom_openai_compatible",
-                base_url="https://openclaw-provider.test/v1",
-                models=[{"id": "gpt-5.5"}],
-                api_mode="openai_responses",
-                auth_type="api_key",
-                auth_metadata={"source": "managed"},
-                managed_by="user",
-                runtime_env_name="OPENCLAW_PROVIDER_API_KEY",
-            ),
-            AiProviderAuthPayload(
-                owner_user_id=seed_user.id,
-                provider_id="openai-managed",
-                auth_profile="default",
-                kind="api_key",
-                source="managed",
-                encrypted_payload=openclaw_ciphertext,
-                nonce=openclaw_nonce,
-            ),
-            AiProvider(
-                owner_user_id=seed_user.id,
-                provider_id="anthropic-managed",
-                type="custom_openai_compatible",
-                base_url="https://hermes-provider.test/v1",
-                models=[{"id": "claude-opus-4-6"}],
-                api_mode="openai_chat",
-                auth_type="api_key",
-                auth_metadata={"source": "managed"},
-                managed_by="user",
-                runtime_env_name="HERMES_PROVIDER_API_KEY",
-            ),
-            AiProviderAuthPayload(
-                owner_user_id=seed_user.id,
-                provider_id="anthropic-managed",
-                auth_profile="default",
-                kind="api_key",
-                source="managed",
-                encrypted_payload=hermes_ciphertext,
-                nonce=hermes_nonce,
-            ),
-        ]
-    )
-    await db_session.commit()
-    await _write_runtime_state(
-        admin_client,
-        str(env.id),
-        runtimes=_runtime_state(
-            provider_ids=["openai-managed", "anthropic-managed"],
-            primary_model={"provider_id": "openai-managed", "model": "gpt-5.5"},
-        ),
-    )
-
-    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
-    async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/v1/runtime/manifest")
-    app.dependency_overrides.clear()
-
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert "default" not in payload["manifest"]["providers"]
-    assert "openclaw" not in payload["manifest"]["providers"]
-    assert payload["manifest"]["providers"]["openai-managed"] == {
-        "kind": "openai-compatible",
-        "type": "custom_openai_compatible",
-        "baseUrl": "https://openclaw-provider.test/v1",
-        "apiMode": "openai_responses",
-        "models": [{"id": "gpt-5.5"}],
-        "runtimeEnvName": "OPENCLAW_PROVIDER_API_KEY",
-        "apiKeySecretRef": "secret://provider.openai-managed.apiKey",
-    }
-    assert payload["manifest"]["providers"]["anthropic-managed"] == {
-        "kind": "openai-compatible",
-        "type": "custom_openai_compatible",
-        "baseUrl": "https://hermes-provider.test/v1",
-        "apiMode": "openai_chat",
-        "models": [{"id": "claude-opus-4-6"}],
-        "runtimeEnvName": "HERMES_PROVIDER_API_KEY",
-        "apiKeySecretRef": "secret://provider.anthropic-managed.apiKey",
-    }
-    assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
-        "openai-managed",
-        "anthropic-managed",
-    ]
-    assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
-        "provider_id": "openai-managed",
-        "model": "gpt-5.5",
-    }
-    assert payload["secretValues"] == {
-        "secret://provider.anthropic-managed.apiKey": "sk-hermes-provider",
-        "secret://provider.openai-managed.apiKey": "sk-openclaw-provider",
-        "secret://tool.codex.apiKey": "sk-codex-tool",
-    }
-
-
-@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider",
+    [
+        {
+            "provider_id": "anthropic-byok",
+            "type": "anthropic",
+            "base_url": "https://api.anthropic.com",
+            "model": "claude-opus-4-6",
+            "api_mode": "anthropic_messages",
+            "runtime_env_name": "ANTHROPIC_API_KEY",
+            "secret": "sk-anthropic-provider",
+        },
+        {
+            "provider_id": "gemini-byok",
+            "type": "gemini",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta",
+            "model": "gemini-2.5-pro",
+            "api_mode": "google_generate_content",
+            "runtime_env_name": "GEMINI_API_KEY",
+            "secret": "sk-gemini-provider",
+        },
+    ],
+    ids=["anthropic", "gemini"],
+)
 async def test_runtime_manifest_preserves_non_openai_provider_protocols(
     admin_client,
     db_session,
     seed_user,
+    provider,
 ):
     env = await create_env_with_project(
         db_session,
@@ -3179,51 +3096,29 @@ async def test_runtime_manifest_preserves_non_openai_provider_protocols(
         machine_name="Runtime provider protocol",
         agent_type="openclaw",
     )
-    anthropic_ciphertext, anthropic_nonce = encrypt("sk-anthropic-provider")
-    gemini_ciphertext, gemini_nonce = encrypt("sk-gemini-provider")
+    ciphertext, nonce = encrypt(provider["secret"])
     db_session.add_all(
         [
             AiProvider(
                 owner_user_id=seed_user.id,
-                provider_id="anthropic-byok",
-                type="anthropic",
-                base_url="https://api.anthropic.com",
-                models=[{"id": "claude-opus-4-6"}],
-                api_mode="anthropic_messages",
+                provider_id=provider["provider_id"],
+                type=provider["type"],
+                base_url=provider["base_url"],
+                models=[{"id": provider["model"]}],
+                api_mode=provider["api_mode"],
                 auth_type="api_key",
                 auth_metadata={"source": "managed"},
                 managed_by="user",
-                runtime_env_name="ANTHROPIC_API_KEY",
+                runtime_env_name=provider["runtime_env_name"],
             ),
             AiProviderAuthPayload(
                 owner_user_id=seed_user.id,
-                provider_id="anthropic-byok",
+                provider_id=provider["provider_id"],
                 auth_profile="default",
                 kind="api_key",
                 source="managed",
-                encrypted_payload=anthropic_ciphertext,
-                nonce=anthropic_nonce,
-            ),
-            AiProvider(
-                owner_user_id=seed_user.id,
-                provider_id="gemini-byok",
-                type="gemini",
-                base_url="https://generativelanguage.googleapis.com/v1beta",
-                models=[{"id": "gemini-2.5-pro"}],
-                api_mode="google_generate_content",
-                auth_type="api_key",
-                auth_metadata={"source": "managed"},
-                managed_by="user",
-                runtime_env_name="GEMINI_API_KEY",
-            ),
-            AiProviderAuthPayload(
-                owner_user_id=seed_user.id,
-                provider_id="gemini-byok",
-                auth_profile="default",
-                kind="api_key",
-                source="managed",
-                encrypted_payload=gemini_ciphertext,
-                nonce=gemini_nonce,
+                encrypted_payload=ciphertext,
+                nonce=nonce,
             ),
         ]
     )
@@ -3232,10 +3127,10 @@ async def test_runtime_manifest_preserves_non_openai_provider_protocols(
         admin_client,
         str(env.id),
         runtimes=_runtime_state(
-            provider_ids=["anthropic-byok", "gemini-byok"],
+            provider_ids=[provider["provider_id"]],
             primary_model={
-                "provider_id": "anthropic-byok",
-                "model": "claude-opus-4-6",
+                "provider_id": provider["provider_id"],
+                "model": provider["model"],
             },
         ),
     )
@@ -3247,35 +3142,24 @@ async def test_runtime_manifest_preserves_non_openai_provider_protocols(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["manifest"]["providers"]["anthropic-byok"] == {
-        "kind": "openai-compatible",
-        "type": "anthropic",
-        "baseUrl": "https://api.anthropic.com",
-        "apiMode": "anthropic_messages",
-        "models": [{"id": "claude-opus-4-6"}],
-        "runtimeEnvName": "ANTHROPIC_API_KEY",
-        "apiKeySecretRef": "secret://provider.anthropic-byok.apiKey",
-    }
-    assert payload["manifest"]["providers"]["gemini-byok"] == {
-        "kind": "openai-compatible",
-        "type": "gemini",
-        "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
-        "apiMode": "google_generate_content",
-        "models": [{"id": "gemini-2.5-pro"}],
-        "runtimeEnvName": "GEMINI_API_KEY",
-        "apiKeySecretRef": "secret://provider.gemini-byok.apiKey",
+    assert payload["manifest"]["providers"] == {
+        provider["provider_id"]: {
+            "kind": "openai-compatible",
+            "type": provider["type"],
+            "baseUrl": provider["base_url"],
+            "apiMode": provider["api_mode"],
+            "models": [{"id": provider["model"]}],
+            "runtimeEnvName": provider["runtime_env_name"],
+            "apiKeySecretRef": f"secret://provider.{provider['provider_id']}.apiKey",
+        }
     }
     assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
-        "provider_id": "anthropic-byok",
-        "model": "claude-opus-4-6",
+        "provider_id": provider["provider_id"],
+        "model": provider["model"],
     }
-    assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
-        "anthropic-byok",
-        "gemini-byok",
-    ]
+    assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [provider["provider_id"]]
     assert payload["secretValues"] == {
-        "secret://provider.gemini-byok.apiKey": "sk-gemini-provider",
-        "secret://provider.anthropic-byok.apiKey": "sk-anthropic-provider",
+        f"secret://provider.{provider['provider_id']}.apiKey": provider["secret"],
         "secret://tool.codex.apiKey": "sk-codex-tool",
     }
 

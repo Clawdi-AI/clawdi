@@ -264,15 +264,13 @@ stay in FastAPI/PostgreSQL.
 
 AI Providers are account-global model-provider definitions with auth references
 and target-specific projection support. Metadata lives in `ai_providers`; stored
-auth payloads live in `ai_provider_auth_payloads`.
+auth payloads live in `ai_provider_auth_payloads`. Catalog CRUD remains
+multi-record, while a Core Hosted manifest binds at most one provider to its
+selected Hermes or OpenClaw runtime. BYOK model traffic goes directly from the
+runtime to the provider; Clawdi does not proxy those calls.
 
-The current apply targets are Codex, Hermes, and OpenClaw. Claude Code OAuth is
-not supported in AI Provider v1. BYOK model traffic goes directly from the
-agent/runtime to the configured provider; Clawdi does not proxy those calls.
-
-User docs live in [`ai-providers.md`](ai-providers.md); verified target contract
-baselines live in
-[`ai-provider-agent-contract-audit.md`](ai-provider-agent-contract-audit.md).
+Current behavior and the Hosted manifest/controller boundary are documented in
+[`ai-providers.md`](ai-providers.md).
 
 ## Managed Runtime
 

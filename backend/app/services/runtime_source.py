@@ -337,15 +337,6 @@ def render_runtime_source(
                 f"multiple provider bindings project to agent provider {agent_provider_id}"
             )
         provider_sources[agent_provider_id] = source_provider_id
-    oauth_runtime_provider_ids = {
-        source_provider_id
-        for agent_provider_id, source_provider_id in provider_sources.items()
-        if agent_provider_id in set(bound_runtime_provider_ids)
-        and (provider := batch.providers.get((user_id, source_provider_id))) is not None
-        and provider.auth_type in {"agent_profile", "oauth_profile"}
-    }
-    if len(oauth_runtime_provider_ids) > 1:
-        raise RuntimeSourceError("A runtime cannot bind more than one OAuth AI Provider")
     provider_material: dict[str, dict[str, Any]] = {}
     runtime_provider_ids = set(runtime["provider_ids"])
     for agent_provider_id, source_provider_id in sorted(provider_sources.items()):

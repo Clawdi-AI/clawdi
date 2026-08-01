@@ -1,5 +1,10 @@
 # OpenClaw v2 model projection investigation
 
+> HISTORICAL - This investigation includes the unpublished local AI Provider
+> apply surface that has been retired. See
+> [`../../../docs/ai-providers.md`](../../../docs/ai-providers.md) for the
+> current Core Hosted manifest/controller path.
+
 Date: 2026-07-07
 
 Status: resolved in the CLI on 2026-07-17. This document retains the original

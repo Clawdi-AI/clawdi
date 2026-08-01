@@ -947,7 +947,7 @@ describe("runtime manifest reconciliation invariants", () => {
 	test.each([
 		["missing provider_ids", { provider_ids: undefined }],
 		["empty provider_ids", { provider_ids: [] }],
-		["duplicate provider_ids", { provider_ids: ["default", "default"] }],
+		["multiple provider_ids", { provider_ids: ["default", "secondary"] }],
 		["missing primary_model", { primary_model: undefined }],
 		[
 			"primary model provider outside provider_ids",
@@ -2017,7 +2017,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(envFile).not.toContain("sk-managed");
 	});
 
-	test("converges Hermes providers as one native authority with secret refs and stale cleanup", () => {
+	test("replaces the selected Hermes provider with secret refs and stale cleanup", () => {
 		const paths = tempRuntimePaths();
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
 		const hermesConfig = join(paths.userHome, ".hermes", "config.yaml");
@@ -2112,18 +2112,19 @@ describe("runtime manifest reconciliation invariants", () => {
 
 		const initial = convergeRuntimeManifest(
 			manifestLoad(
-				manifestFor(providerEntries, { provider_id: "responses", model: "gpt-test" }, 1),
+				manifestFor(
+					{ responses: providerEntries.responses },
+					{ provider_id: "responses", model: "gpt-test" },
+					1,
+				),
 				"inline-hermes-native-providers",
-				{
-					"secret://providers/responses/api-key": responsesKey,
-					"secret://providers/anthropic/api-key": anthropicKey,
-				},
+				{ "secret://providers/responses/api-key": responsesKey },
 			),
 			paths,
 		);
 
 		expect(initial.installErrors).toEqual([]);
-		expect(initial.projectedProviderIds.hermes).toEqual(["anthropic", "responses"]);
+		expect(initial.projectedProviderIds.hermes).toEqual(["responses"]);
 		expect(existsSync(dirname(legacyPlugin))).toBe(false);
 		const initialConfig = readFileSync(hermesConfig, "utf8");
 		const initialRunConfig = readFileSync(runtimeRunConfigPath("hermes", paths), "utf8");
@@ -2141,22 +2142,13 @@ describe("runtime manifest reconciliation invariants", () => {
 			models: { "gpt-test": {} },
 			transport: "codex_responses",
 		});
-		expect(initialHermes.providers?.anthropic).toMatchObject({
-			api: "https://anthropic.example.test",
-			key_env: "ANTHROPIC_TEST_API_KEY",
-			models: { "claude-test": {} },
-			transport: "anthropic_messages",
-		});
 		expect(JSON.parse(initialRunConfig)).toMatchObject({
 			secretEnv: {
 				RESPONSES_API_KEY: "secret://providers/responses/api-key",
-				ANTHROPIC_TEST_API_KEY: "secret://providers/anthropic/api-key",
 			},
 		});
-		for (const secret of [responsesKey, anthropicKey]) {
-			expect(initialConfig).not.toContain(secret);
-			expect(initialRunConfig).not.toContain(secret);
-		}
+		expect(initialConfig).not.toContain(responsesKey);
+		expect(initialRunConfig).not.toContain(responsesKey);
 		expect(initialConfig).not.toContain("stale-inline-secret");
 		expect(initialConfig).not.toContain("https://stale.example.test/v1");
 

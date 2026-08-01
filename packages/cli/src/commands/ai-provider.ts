@@ -1,9 +1,8 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { createServer, type RequestListener, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { join } from "node:path";
 import {
 	type AiProvider,
 	type AiProviderApiMode,
@@ -23,7 +22,6 @@ import {
 } from "@clawdi/shared";
 import chalk from "chalk";
 import { parse as parseYaml } from "yaml";
-import { getCodexHome } from "../adapters/paths";
 import {
 	aiProviderCatalogPath,
 	coerceAiProviderCatalog,
@@ -39,31 +37,8 @@ import {
 	publicAiProviderAuthStatus,
 } from "../lib/ai-provider-test";
 import { ApiClient } from "../lib/api-client";
-import {
-	decideChatGptOAuthCredentialReconciliation,
-	intentLedgerForDecision,
-	type NativeOAuthCredentialObservation,
-	type OAuthCredentialLedgerSnapshot,
-} from "../lib/chatgpt-oauth-reconciliation";
-import {
-	nativeOAuthCredentialEvidenceFingerprint,
-	oauthCredentialFingerprint,
-} from "../lib/codex-oauth-native-store";
-import { getClawdiDir } from "../lib/config";
-import {
-	type OAuthCredentialLedger,
-	oauthCredentialLedgerPath,
-	oauthCredentialLedgerSnapshot,
-	readOAuthCredentialLedger,
-	writeOAuthCredentialLedger,
-} from "../lib/oauth-credential-ledger";
 import { PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
-import { getEnvIdByAgent } from "../lib/select-adapter";
-import {
-	collectAgentCredentialProfilePayload,
-	materializeAgentCredentialProfilePayload,
-	parseAgentCredentialProfilePayload,
-} from "./agent-credentials";
+import { collectAgentCredentialProfilePayload } from "./agent-credentials";
 
 interface AiProviderAddOptions {
 	type?: string;
@@ -145,15 +120,6 @@ interface AiProviderImportAuthOptions {
 	json?: boolean;
 }
 
-interface AiProviderMaterializeAuthOptions {
-	project?: string;
-	to?: string;
-	yes?: boolean;
-	dryRun?: boolean;
-	json?: boolean;
-	backup?: boolean;
-}
-
 interface AiProviderConnectOptions {
 	method?: string;
 	tool?: string;
@@ -178,132 +144,6 @@ interface AiProviderBackendResponse {
 	auth: AiProviderAuth;
 	models?: AiProvider["models"] | null;
 	runtime_env_name?: string | null;
-}
-
-interface AiProviderAuthResolveBackendResponse {
-	auth_type: AiProviderAuth["type"];
-	payload?: string | null;
-	tool?: string | null;
-	profile?: string | null;
-	credential_revision?: string | null;
-}
-
-function cleanupStaleCodexOAuthMaterializations(currentProviderId: string, authPath: string): void {
-	const ledgerDir = join(getClawdiDir(), "oauth-credentials", "codex");
-	if (!existsSync(ledgerDir)) return;
-	for (const filename of readdirSync(ledgerDir).filter((name) => name.endsWith(".json"))) {
-		const path = join(ledgerDir, filename);
-		const ledger = readOAuthCredentialLedger(path, { migrateLegacy: true });
-		if (!ledger || ledger.providerId === currentProviderId || ledger.state === "retired") continue;
-		const snapshot = oauthCredentialLedgerSnapshot(ledger);
-		const native = observeCodexOAuthMaterialization(authPath, ledger, ledger.credentialRevision);
-		const decision = decideChatGptOAuthCredentialReconciliation({
-			desiredCredentialRevision: null,
-			desiredNativeProfileId: null,
-			desiredCredentialFingerprint: null,
-			ledger: snapshot,
-			native,
-		});
-		if (decision.requiresWriteAheadIntent) {
-			writeCodexOAuthLedger(path, ledger.providerId, intentLedgerForDecision(decision));
-		}
-		if (decision.nativeAction === "remove") {
-			const expectedFingerprint = requireDecisionFingerprint(
-				decision.expectedCredentialFingerprint,
-				"before",
-			);
-			const current = observeCodexOAuthMaterialization(authPath, ledger, ledger.credentialRevision);
-			if (current.credentialFingerprint !== expectedFingerprint) {
-				throw new Error("Codex OAuth credential changed after the removal intent was recorded");
-			}
-			rmSync(authPath, { force: true });
-			if (
-				observeCodexOAuthMaterialization(authPath, ledger, ledger.credentialRevision).state !==
-				"missing"
-			) {
-				throw new Error("Codex OAuth credential removal could not verify absence");
-			}
-		}
-		writeCodexOAuthLedger(path, ledger.providerId, decision.nextLedger);
-	}
-}
-
-function writeCodexOAuthLedger(
-	path: string,
-	providerId: string,
-	snapshot: OAuthCredentialLedgerSnapshot,
-): void {
-	writeOAuthCredentialLedger(path, { runtime: "codex", providerId }, snapshot);
-}
-
-function codexOAuthFingerprintFromAuthJson(
-	content: string,
-	credentialRevision: string,
-): string | null {
-	try {
-		const parsed: unknown = JSON.parse(content);
-		const auth = asRecord(parsed, "Codex auth.json");
-		const tokens = asRecord(auth.tokens, "Codex auth.json tokens");
-		const accessToken = stringField(tokens, "access_token");
-		const refreshToken = stringField(tokens, "refresh_token");
-		return accessToken && refreshToken
-			? oauthCredentialFingerprint(credentialRevision, accessToken, refreshToken)
-			: null;
-	} catch {
-		return null;
-	}
-}
-
-function resolvedCodexOAuthFingerprint(
-	profile: string,
-	payload: string,
-	credentialRevision: string,
-): string {
-	const envelope = parseAgentCredentialProfilePayload("codex", profile, payload);
-	const authFile = envelope.files.find((file) => file.logicalName === "auth.json");
-	if (!authFile) throw new Error("Stored Codex credential profile is missing auth.json.");
-	const fingerprint = codexOAuthFingerprintFromAuthJson(authFile.content, credentialRevision);
-	if (!fingerprint) throw new Error("Stored Codex auth.json is missing OAuth token material.");
-	return fingerprint;
-}
-
-function observeCodexOAuthMaterialization(
-	authPath: string,
-	ledger: OAuthCredentialLedger | null,
-	credentialRevision: string,
-): NativeOAuthCredentialObservation {
-	if (existsSync(authPath)) {
-		const content = readFileSync(authPath, "utf8");
-		const credentialFingerprint = codexOAuthFingerprintFromAuthJson(content, credentialRevision);
-		if (credentialFingerprint) {
-			const ownedFingerprint =
-				ledger?.state === "seeded" && ledger.credentialFingerprint
-					? codexOAuthFingerprintFromAuthJson(content, ledger.credentialRevision)
-					: null;
-			return {
-				state:
-					ownedFingerprint && ownedFingerprint === ledger?.credentialFingerprint
-						? "managed"
-						: "foreign",
-				credentialFingerprint,
-			};
-		}
-		return {
-			state: "foreign",
-			credentialFingerprint: nativeOAuthCredentialEvidenceFingerprint(["codex-auth-json", content]),
-		};
-	}
-	if (ledger?.state === "seeded" || (ledger?.state === "intent" && ledger.operation === "remove")) {
-		return { state: "missing" };
-	}
-	return spawnSync("codex", ["login", "status"], { env: process.env, stdio: "ignore" }).status === 0
-		? {
-				state: "foreign",
-				credentialFingerprint: nativeOAuthCredentialEvidenceFingerprint(
-					"codex-keyring-login-present",
-				),
-			}
-		: { state: "missing" };
 }
 
 interface AiProviderOAuthStartBackendResponse {
@@ -584,144 +424,6 @@ export async function aiProviderImportAuthCommand(
 			`✓ Bound ${providerId} auth to agent profile ${collected.tool}/${collected.profile}`,
 		),
 	);
-}
-
-export async function aiProviderMaterializeAuthCommand(
-	providerId: string,
-	opts: AiProviderMaterializeAuthOptions = {},
-): Promise<void> {
-	if (opts.project) {
-		throw new Error("AI Provider auth is account-global; --project is not supported here.");
-	}
-	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
-	const provider = findProvider(catalog, providerId);
-	if (provider.auth.type !== "agent_profile") {
-		throw new Error(
-			`AI Provider ${providerId} does not use agent_profile auth. Current auth: ${describeAuth(provider.auth)}`,
-		);
-	}
-	assertSupportedAgentProfileTool(provider.auth.tool);
-	if (opts.to) {
-		throw new Error("OAuth materialization only supports the canonical Codex auth store.");
-	}
-	const profile = provider.auth.profile;
-	const authPath = join(getCodexHome(), "auth.json");
-	if (opts.dryRun) {
-		printAiProviderMaterializeAuthDryRun(providerId, profile, authPath, Boolean(opts.json));
-		return;
-	}
-	const environmentId = getEnvIdByAgent("codex");
-	if (!environmentId) {
-		throw new Error("Codex must be registered before materializing provider OAuth auth.");
-	}
-	const resolved = await new ApiClient().postJsonBody<AiProviderAuthResolveBackendResponse>(
-		`/v1/ai-providers/${encodeURIComponent(providerId)}/auth/resolve`,
-		{ profile, environment_id: environmentId, consumer_runtime: "codex" },
-	);
-	if (!resolved.payload) {
-		throw new Error(`AI Provider ${providerId} auth resolve returned no credential payload.`);
-	}
-	if (!resolved.credential_revision) {
-		throw new Error(`AI Provider ${providerId} auth resolve returned no credential revision.`);
-	}
-	const ledgerPath = oauthCredentialLedgerPath(
-		join(getClawdiDir(), "oauth-credentials"),
-		"codex",
-		providerId,
-	);
-	cleanupStaleCodexOAuthMaterializations(providerId, authPath);
-	const existingLedger = readOAuthCredentialLedger(ledgerPath, { migrateLegacy: true });
-	const existingSnapshot = oauthCredentialLedgerSnapshot(existingLedger);
-	const desiredFingerprint = resolvedCodexOAuthFingerprint(
-		resolved.profile ?? profile,
-		resolved.payload,
-		resolved.credential_revision,
-	);
-	const native = observeCodexOAuthMaterialization(
-		authPath,
-		existingLedger,
-		resolved.credential_revision,
-	);
-	const decision = decideChatGptOAuthCredentialReconciliation({
-		desiredCredentialRevision: resolved.credential_revision,
-		desiredNativeProfileId: "default",
-		desiredCredentialFingerprint: desiredFingerprint,
-		ledger: existingSnapshot,
-		native,
-	});
-	if (decision.requiresWriteAheadIntent) {
-		writeCodexOAuthLedger(ledgerPath, providerId, intentLedgerForDecision(decision));
-	}
-	if (decision.nativeAction !== "preserve") {
-		const expectedFingerprint =
-			decision.nativeAction === "seed"
-				? "missing"
-				: requireDecisionFingerprint(decision.expectedCredentialFingerprint, "before");
-		const current = observeCodexOAuthMaterialization(
-			authPath,
-			existingLedger,
-			resolved.credential_revision,
-		);
-		const currentMatches =
-			expectedFingerprint === "missing"
-				? current.state === "missing"
-				: current.credentialFingerprint === expectedFingerprint;
-		if (!currentMatches) {
-			throw new Error("Codex OAuth credential changed after the ownership intent was recorded");
-		}
-		const materialized = await materializeAgentCredentialProfilePayload(
-			resolved.tool ?? provider.auth.tool,
-			resolved.profile ?? profile,
-			resolved.payload,
-			{
-				to: opts.to,
-				yes: opts.yes,
-				json: opts.json,
-				backup: opts.backup,
-			},
-		);
-		if (!materialized) return;
-		const after = observeCodexOAuthMaterialization(authPath, null, resolved.credential_revision);
-		if (after.credentialFingerprint !== desiredFingerprint) {
-			throw new Error("Codex OAuth credential mutation did not produce the intended fingerprint");
-		}
-	}
-	writeCodexOAuthLedger(ledgerPath, providerId, decision.nextLedger);
-}
-
-function printAiProviderMaterializeAuthDryRun(
-	providerId: string,
-	profile: string,
-	authPath: string,
-	json: boolean,
-): void {
-	if (json) {
-		console.log(
-			JSON.stringify(
-				{
-					provider_id: providerId,
-					tool: "codex",
-					profile,
-					dry_run: true,
-					credential_material: "not_fetched",
-					target_path: authPath,
-				},
-				null,
-				2,
-			),
-		);
-		return;
-	}
-	console.log(
-		chalk.gray(
-			`Would materialize ${providerId} (${profile}) to ${authPath}; credential material will be fetched only during a real mutation.`,
-		),
-	);
-}
-
-function requireDecisionFingerprint(value: string | undefined, label: string): string {
-	if (!value) throw new Error(`OAuth credential decision is missing ${label} fingerprint evidence`);
-	return value;
 }
 
 export async function aiProviderConnectCommand(

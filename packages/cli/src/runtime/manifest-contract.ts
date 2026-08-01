@@ -119,7 +119,7 @@ const runtimeSchema = z.object({
 	install: installSchema.optional(),
 	run: runtimeRunSettingsSchema.optional(),
 	services: z.record(runtimeServiceNameSchema, runtimeRunSettingsSchema).default({}),
-	provider_ids: z.array(z.string().min(1)).optional(),
+	provider_ids: z.array(z.string().min(1)).max(1).optional(),
 	primary_model: z
 		.object({
 			provider_id: z.string().min(1),
@@ -362,12 +362,7 @@ const hostedPrimaryModelSchema = z
 	})
 	.strict();
 
-const hostedProviderIdsSchema = z
-	.array(z.string().min(1))
-	.min(1)
-	.refine((providerIds) => new Set(providerIds).size === providerIds.length, {
-		message: "must contain unique provider ids",
-	});
+const hostedProviderIdsSchema = z.array(z.string().min(1)).min(1).max(1);
 
 const hostedRuntimeEntryBaseShape = {
 	enabled: z.boolean(),

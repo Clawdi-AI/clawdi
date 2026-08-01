@@ -1,9 +1,9 @@
 # AI Provider Catalog Design
 
-> HISTORICAL - design plan that led to the current AI Provider implementation.
-> Use [`../ai-providers.md`](../ai-providers.md) for current user behavior and
-> [`../ai-provider-agent-contract-audit.md`](../ai-provider-agent-contract-audit.md)
-> for pinned target contracts.
+> HISTORICAL - This design includes the unpublished local AI Provider
+> apply/materialization surface that has been retired. See
+> [`../ai-providers.md`](../ai-providers.md) for the current Core Hosted
+> manifest/controller path.
 
 **Status:** implementation slice in progress
 **Last updated:** 2026-06-01

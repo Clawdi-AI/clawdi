@@ -1,4 +1,4 @@
-/** Canonical native credential-store helpers shared by local apply and hosted runtime. */
+/** Canonical native credential-store helpers for Hosted Hermes and OpenClaw runtimes. */
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
@@ -49,11 +49,7 @@ export function hermesCodexAuthInvocation(
 	};
 }
 
-export function nativeOAuthProfileId(
-	runtime: "codex" | "hermes" | "openclaw",
-	providerId: string,
-): string {
-	if (runtime === "codex") return "default";
+export function nativeOAuthProfileId(runtime: "hermes" | "openclaw", providerId: string): string {
 	const providerHash = createHash("sha256").update(providerId).digest("hex").slice(0, 24);
 	return runtime === "hermes" ? `clawdi:${providerHash}` : `openai:clawdi-${providerHash}`;
 }

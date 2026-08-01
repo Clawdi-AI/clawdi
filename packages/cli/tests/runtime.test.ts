@@ -5264,95 +5264,15 @@ cp '${sdkSource}' '${sdkTarget}'
 		expect(systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"))).toBe(firstRevision);
 	});
 
-	it("registers multiple Hermes hosted providers in one native config authority", () => {
+	it("rejects multiple Hermes hosted providers at manifest admission", () => {
 		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		mkdirSync(home, { recursive: true });
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		writeHermesVersionBinary(home, "0.18.0");
 		const loaded = hostedHermesProviderLoad(home);
-		loaded.secretValues = {
-			...loaded.secretValues,
-			"secret://provider.moonshot.apiKey": "sk-moonshot-provider",
-		};
 		loaded.manifest.runtimes.hermes = {
 			...loaded.manifest.runtimes.hermes,
 			provider_ids: ["hermes", "moonshot"],
-			primary_model: {
-				provider_id: "hermes",
-				model: "kimi/kimi-for-coding",
-			},
-		};
-		loaded.manifest.projection = {
-			...loaded.manifest.projection,
-			providers: {
-				...loaded.manifest.projection?.providers,
-				moonshot: {
-					kind: "openai-compatible",
-					baseUrl: "https://moonshot-provider.example.test/v1",
-					model: "moonshot-v1-8k",
-					models: [
-						{
-							id: "moonshot-v1-8k",
-							context_window: 8192,
-							max_tokens: 4096,
-							supports_tools: true,
-						},
-					],
-					apiMode: "openai_chat",
-					runtimeEnvName: "MOONSHOT_PROVIDER_API_KEY",
-					apiKeySecretRef: "secret://provider.moonshot.apiKey",
-				},
-			},
 		};
 
-		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
-
-		expect(convergence.installErrors).toEqual([]);
-		const hermesConfig = readHermesConfigYaml(home);
-		const hermesModel = expectRecord(hermesConfig.model, "Hermes model config");
-		expect(hermesModel.provider).toBe("custom:hermes");
-		const hermesProviders = expectRecord(hermesConfig.providers, "Hermes providers config");
-		const primaryHermesProvider = expectRecord(hermesProviders.hermes, "primary Hermes provider");
-		expect(primaryHermesProvider.api).toBe("https://hermes-provider.example.test/v1");
-		expect(primaryHermesProvider.transport).toBe("chat_completions");
-		expect(primaryHermesProvider.key_env).toBe("HERMES_PROVIDER_API_KEY");
-		const primaryHermesModels = expectRecord(
-			primaryHermesProvider.models,
-			"primary Hermes provider models",
-		);
-		expect(
-			expectRecord(primaryHermesModels["kimi/kimi-for-coding"], "primary Hermes model metadata")
-				.context_length,
-		).toBe(262144);
-		const moonshotProvider = expectRecord(hermesProviders.moonshot, "secondary Hermes provider");
-		expect(moonshotProvider.api).toBe("https://moonshot-provider.example.test/v1");
-		expect(moonshotProvider.transport).toBe("chat_completions");
-		expect(moonshotProvider.key_env).toBe("MOONSHOT_PROVIDER_API_KEY");
-		const moonshotModels = expectRecord(
-			moonshotProvider.models,
-			"secondary Hermes provider models",
-		);
-		expect(
-			expectRecord(moonshotModels["moonshot-v1-8k"], "secondary Hermes model metadata")
-				.context_length,
-		).toBe(8192);
-		const hermesRunConfig = JSON.parse(
-			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
-		);
-		expect(hermesRunConfig.env.HERMES_PROVIDER_API_KEY).toBeUndefined();
-		expect(hermesRunConfig.env.MOONSHOT_PROVIDER_API_KEY).toBeUndefined();
-		expect(hermesRunConfig.secretEnv).toEqual({
-			HERMES_PROVIDER_API_KEY: "secret://provider.hermes.apiKey",
-			MOONSHOT_PROVIDER_API_KEY: "secret://provider.moonshot.apiKey",
-		});
-		expect(JSON.stringify(hermesRunConfig)).not.toContain("sk-hermes-provider");
-		expect(JSON.stringify(hermesRunConfig)).not.toContain("sk-moonshot-provider");
-		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
+		expect(manifestSchema.safeParse(loaded.manifest).success).toBe(false);
 	});
 
 	it("removes the stale Hermes plugin and native provider when projection disappears", () => {
