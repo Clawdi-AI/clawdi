@@ -22,7 +22,7 @@ import {
 	shouldReconnectAfterClose,
 } from "./runtime.js";
 import { SQLiteBaileysState } from "./sqlite-state.js";
-import type { SendOperation } from "./types.js";
+import type { SendOperation, SidecarOperation } from "./types.js";
 
 describe("single-socket runtime", () => {
 	it("uses the persisted fixed advertised version and never creates overlapping sockets", async () => {
@@ -84,6 +84,169 @@ describe("single-socket runtime", () => {
 				messageId: "BACKEND-M1",
 			});
 			expect(socket.sent).toHaveLength(1);
+			await runtime.stop();
+		});
+	});
+
+	it("maps the complete typed operation surface to exact public Baileys calls", async () => {
+		await withRuntime(async (config) => {
+			const socket = new FakeSocket();
+			const runtime = new BaileysSocketRuntime(config, { makeSocket: () => socket });
+			await runtime.start();
+			socket.emitConnection({ connection: "open" });
+			const groupJid = "120363000000001@g.us";
+			const participantJid = "15550001111@s.whatsapp.net";
+			socket.emitMessages({
+				type: "notify",
+				messages: [
+					{
+						key: {
+							remoteJid: groupJid,
+							id: "PEER-1",
+							fromMe: false,
+							participant: participantJid,
+						},
+						message: { conversation: "peer message" },
+					},
+				],
+			});
+
+			const operations: SidecarOperation[] = [
+				{
+					schemaVersion: "clawdi.whatsapp.operation.v1",
+					operationId: "op-owned-send",
+					chatJid: groupJid,
+					type: "send",
+					messageId: "OWNED-1",
+					content: { type: "text", text: "owned message" },
+				},
+				{
+					schemaVersion: "clawdi.whatsapp.operation.v1",
+					operationId: "op-reply",
+					chatJid: groupJid,
+					type: "send",
+					messageId: "REPLY-1",
+					content: { type: "text", text: "reply" },
+					replyTo: {
+						messageId: "PEER-1",
+						fromMe: false,
+						participantJid,
+					},
+				},
+				{
+					schemaVersion: "clawdi.whatsapp.operation.v1",
+					operationId: "op-edit",
+					chatJid: groupJid,
+					type: "edit",
+					messageId: "EDIT-1",
+					target: { messageId: "OWNED-1", fromMe: true },
+					text: "edited",
+				},
+				{
+					schemaVersion: "clawdi.whatsapp.operation.v1",
+					operationId: "op-delete",
+					chatJid: groupJid,
+					type: "delete",
+					messageId: "DELETE-1",
+					target: { messageId: "OWNED-1", fromMe: true },
+				},
+				{
+					schemaVersion: "clawdi.whatsapp.operation.v1",
+					operationId: "op-reaction",
+					chatJid: groupJid,
+					type: "reaction",
+					messageId: "REACTION-1",
+					target: {
+						messageId: "PEER-1",
+						fromMe: false,
+						participantJid,
+					},
+					reaction: "👍",
+				},
+				{
+					schemaVersion: "clawdi.whatsapp.operation.v1",
+					operationId: "op-media",
+					chatJid: groupJid,
+					type: "send",
+					messageId: "MEDIA-OUT-1",
+					content: {
+						type: "media",
+						mediaType: "document",
+						dataBase64: Buffer.from("file content").toString("base64"),
+						mimeType: "text/plain",
+						fileName: "note.txt",
+						caption: "attached",
+					},
+				},
+				{
+					schemaVersion: "clawdi.whatsapp.operation.v1",
+					operationId: "op-presence",
+					chatJid: groupJid,
+					type: "presence",
+					presence: "composing",
+				},
+				{
+					schemaVersion: "clawdi.whatsapp.operation.v1",
+					operationId: "op-read",
+					chatJid: groupJid,
+					type: "read",
+					messages: [
+						{
+							messageId: "PEER-1",
+							fromMe: false,
+							participantJid,
+						},
+					],
+				},
+			];
+			for (const operation of operations) {
+				expect(
+					(await runtime.performOperation(operation, `hash-${operation.operationId}`)).status,
+				).toBe("completed");
+			}
+
+			expect(socket.sent).toHaveLength(6);
+			expect(socket.sent[1]?.options?.quoted?.key).toMatchObject({
+				remoteJid: groupJid,
+				id: "PEER-1",
+				fromMe: false,
+				participant: participantJid,
+			});
+			expect(socket.sent[2]?.content).toMatchObject({
+				text: "edited",
+				edit: { remoteJid: groupJid, id: "OWNED-1", fromMe: true },
+			});
+			expect(socket.sent[3]?.content).toMatchObject({
+				delete: { remoteJid: groupJid, id: "OWNED-1", fromMe: true },
+			});
+			expect(socket.sent[4]?.content).toMatchObject({
+				react: {
+					key: {
+						remoteJid: groupJid,
+						id: "PEER-1",
+						fromMe: false,
+						participant: participantJid,
+					},
+					text: "👍",
+				},
+			});
+			expect(socket.sent[5]?.content).toMatchObject({
+				document: Buffer.from("file content"),
+				mimetype: "text/plain",
+				fileName: "note.txt",
+				caption: "attached",
+			});
+			expect(socket.presences).toEqual([{ type: "composing", jid: groupJid }]);
+			expect(socket.reads).toEqual([
+				[
+					{
+						remoteJid: groupJid,
+						id: "PEER-1",
+						fromMe: false,
+						participant: participantJid,
+					},
+				],
+			]);
 			await runtime.stop();
 		});
 	});
@@ -397,6 +560,8 @@ class FakeSocket implements SocketLike {
 		content: AnyMessageContent;
 		options?: MiscMessageGenerationOptions;
 	}> = [];
+	readonly reads: WAMessageKey[][] = [];
+	readonly presences: Array<{ type: WAPresence; jid?: string }> = [];
 	logoutCount = 0;
 	logoutError: Error | undefined;
 
@@ -433,8 +598,12 @@ class FakeSocket implements SocketLike {
 		};
 	}
 
-	async readMessages(_keys: WAMessageKey[]): Promise<void> {}
-	async sendPresenceUpdate(_type: WAPresence, _jid?: string): Promise<void> {}
+	async readMessages(keys: WAMessageKey[]): Promise<void> {
+		this.reads.push(keys);
+	}
+	async sendPresenceUpdate(type: WAPresence, jid?: string): Promise<void> {
+		this.presences.push({ type, ...(jid ? { jid } : {}) });
+	}
 	async requestPairingCode(_phoneNumber: string): Promise<string> {
 		return "CODE-SECRET";
 	}
