@@ -19,12 +19,14 @@ from app.services.managed_ai_provider import (
     V2_MANAGED_AI_PROVIDER_ID,
 )
 from app.services.runtime_source import (
+    WHATSAPP_RUNTIME_SOURCE_READY,
     RuntimeSourceBatch,
     RuntimeSourceError,
     RuntimeSourceRow,
     expected_runtime_bundle_v2_etag,
     render_runtime_bundle,
     render_runtime_source,
+    runtime_source_channel_providers,
 )
 
 USER_ID = UUID("10000000-0000-0000-0000-000000000001")
@@ -45,6 +47,16 @@ def test_runtime_bundle_v2_etag_is_derived_from_source_revision() -> None:
     assert expected_runtime_bundle_v2_etag("b" * 64) != expected_runtime_bundle_v2_etag(
         source_revision
     )
+
+
+def test_whatsapp_runtime_source_stays_disabled_until_native_upstreams_are_ready(
+    monkeypatch,
+) -> None:
+    assert WHATSAPP_RUNTIME_SOURCE_READY is False
+    assert runtime_source_channel_providers() == ("telegram", "discord")
+    monkeypatch.setattr("app.services.runtime_source.WHATSAPP_RUNTIME_SOURCE_READY", True)
+    with pytest.raises(RuntimeSourceError, match="managed Link material projection"):
+        runtime_source_channel_providers()
 
 
 def _batch(

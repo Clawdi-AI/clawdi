@@ -1,6 +1,11 @@
 # WhatsApp Baileys Sidecar Runtime
 
-Status: adopted; runtime implemented
+> HISTORICAL - This experimental second-socket design is not the managed
+> OpenClaw/Hermes runtime path. Stock Baileys 7.0.0-rc13 cannot trust the
+> backend Noise certificate because it has no `authCert` override; see
+> `packages/cli/src/runtime/whatsapp-upstream-contract.ts`.
+
+Status: superseded; retained as historical protocol-runtime context
 Date: 2026-06-07
 
 ## Context
@@ -78,7 +83,6 @@ Runtime configuration is explicit:
 - `CLAWDI_WA_SIDECAR_PORT` defaults to `8787`.
 - `CLAWDI_WA_WEBSOCKET_URL` may point Baileys at the Clawdi FastAPI WhatsApp
   websocket for local/runtime smoke.
-- `CLAWDI_WA_AUTH_CERT_*` can inject the backend-minted auth cert shape.
 
 The FastAPI backend registers sidecars through
 `CHANNEL_WHATSAPP_BAILEYS_SIDECARS_JSON`, a JSON object keyed by WhatsApp

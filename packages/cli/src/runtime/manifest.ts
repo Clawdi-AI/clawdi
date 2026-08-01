@@ -3215,11 +3215,7 @@ function applyHostedChannelProjection(
 		withRuntimeUserFileAccess(() => {
 			mergeHermesChannelConfig(
 				configPath,
-				hermesManagedChannelsPatch(
-					channels,
-					manifest.controlPlane.apiUrl,
-					manifest.projection?.channelCredentials,
-				),
+				hermesManagedChannelsPatch(channels, manifest.projection?.channelCredentials),
 			);
 			makeRuntimeUserOwned(configPath);
 		});
@@ -3262,14 +3258,12 @@ function installHostedChannelProjectionDependencies(
 
 function hermesManagedChannelsPatch(
 	channels: Record<string, unknown>,
-	cloudApiUrl: string,
 	channelCredentials: unknown,
 ): Record<string, unknown> {
-	const baseUrl = stripTrailingSlash(cloudApiUrl);
 	const telegramEnabled = channelHasAccounts(channels.telegram);
 	const discordEnabled = channelHasAccounts(channels.discord);
 	const sharedChannelSessionsEnabled = telegramEnabled || discordEnabled;
-	const whatsapp = hermesWhatsAppProjection(channels, channelCredentials, baseUrl);
+	const whatsapp = hermesWhatsAppProjection(channels, channelCredentials);
 	return {
 		telegram: telegramEnabled
 			? {
@@ -3298,16 +3292,20 @@ function hermesManagedChannelsPatch(
 					bots_require_inline_mention: false,
 				}
 			: { enabled: false },
-		whatsapp: whatsapp
+		...(WHATSAPP_UPSTREAM_READY
 			? {
-					enabled: true,
-					dm_policy: "open",
-					group_policy: "open",
-					allow_from: ["*"],
-					group_allow_from: ["*"],
-					require_mention: false,
+					whatsapp: whatsapp
+						? {
+								enabled: true,
+								dm_policy: "open",
+								group_policy: "open",
+								allow_from: ["*"],
+								group_allow_from: ["*"],
+								require_mention: false,
+							}
+						: { enabled: false },
 				}
-			: { enabled: false },
+			: {}),
 		group_sessions_per_user: sharedChannelSessionsEnabled ? false : null,
 		thread_sessions_per_user: sharedChannelSessionsEnabled ? false : null,
 		platforms: {
@@ -3317,15 +3315,18 @@ function hermesManagedChannelsPatch(
 					thread_sessions_per_user: telegramEnabled ? false : null,
 				},
 			},
-			whatsapp: whatsapp
+			...(WHATSAPP_UPSTREAM_READY
 				? {
-						enabled: true,
-						extra: {
-							session_path: whatsapp.sessionDir,
-							ws_url: whatsapp.wsUrl,
-						},
+						whatsapp: whatsapp
+							? {
+									enabled: true,
+									extra: {
+										session_path: whatsapp.sessionDir,
+									},
+								}
+							: { enabled: false },
 					}
-				: { enabled: false },
+				: {}),
 		},
 		display: {
 			platforms: {
@@ -3340,8 +3341,7 @@ function hermesManagedChannelsPatch(
 function hermesWhatsAppProjection(
 	channels: Record<string, unknown>,
 	channelCredentials: unknown,
-	baseUrl: string,
-): { sessionDir: string; wsUrl: string } | null {
+): { sessionDir: string } | null {
 	if (!WHATSAPP_UPSTREAM_READY) return null;
 	if (!channelHasAccounts(channels.whatsapp)) return null;
 	if (!Array.isArray(channelCredentials)) return null;
@@ -3357,10 +3357,7 @@ function hermesWhatsAppProjection(
 			? (stringValue(hermesTarget.sessionDir) ?? stringValue(hermesTarget.authDir))
 			: null;
 		if (!accountId || !sessionDir) continue;
-		return {
-			sessionDir,
-			wsUrl: `${toWebSocketUrl(baseUrl)}/v1/channels/whatsapp/${accountId}/baileys`,
-		};
+		return { sessionDir };
 	}
 	return null;
 }
@@ -3375,16 +3372,6 @@ function openClawManagedChannelUsesEnvSecretRefs(channels: Record<string, unknow
 	return ["telegram", "discord", "whatsapp"].some((channel) =>
 		channelHasAccounts(channels[channel]),
 	);
-}
-
-function stripTrailingSlash(value: string): string {
-	return value.replace(/\/+$/, "");
-}
-
-function toWebSocketUrl(baseUrl: string): string {
-	if (baseUrl.startsWith("https://")) return `wss://${baseUrl.slice("https://".length)}`;
-	if (baseUrl.startsWith("http://")) return `ws://${baseUrl.slice("http://".length)}`;
-	return baseUrl;
 }
 
 function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record<string, unknown> {
@@ -3440,10 +3427,10 @@ function openClawRuntimeReadyChannels(channels: Record<string, unknown>): Record
 }
 
 function openClawManagedChannelDeletes(): Record<string, null> {
-	return Object.fromEntries(OPENCLAW_MANAGED_CHANNELS.map((channel) => [channel, null])) as Record<
-		string,
-		null
-	>;
+	const channels = WHATSAPP_UPSTREAM_READY
+		? OPENCLAW_MANAGED_CHANNELS
+		: OPENCLAW_MANAGED_CHANNELS.filter((channel) => channel !== "whatsapp");
+	return Object.fromEntries(channels.map((channel) => [channel, null])) as Record<string, null>;
 }
 
 function installOpenClawChannelPlugins(input: {
@@ -4432,11 +4419,7 @@ function runtimeProgramRevisionForManifest(
 		? runtime === "openclaw"
 			? openClawManagedChannelsPatch(channels)
 			: runtime === "hermes"
-				? hermesManagedChannelsPatch(
-						channels,
-						manifest.controlPlane.apiUrl,
-						manifest.projection?.channelCredentials,
-					)
+				? hermesManagedChannelsPatch(channels, manifest.projection?.channelCredentials)
 				: null
 		: null;
 	return runtimeProgramRevision({
@@ -4830,11 +4813,7 @@ function validateRuntimeProjectionPlan(input: {
 		if (channels && name === "hermes") {
 			hermesConfig = renderHermesChannelConfig(
 				hermesConfig,
-				hermesManagedChannelsPatch(
-					channels,
-					manifest.controlPlane.apiUrl,
-					manifest.projection?.channelCredentials,
-				),
+				hermesManagedChannelsPatch(channels, manifest.projection?.channelCredentials),
 			);
 		}
 	}

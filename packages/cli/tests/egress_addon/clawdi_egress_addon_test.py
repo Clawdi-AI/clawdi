@@ -603,6 +603,165 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             addon.ctx.log.info = original_info
         self.assertNotIn("link-secret", "\n".join(messages))
 
+    def test_whatsapp_upgrade_routes_only_managed_capability_and_preserves_ws_shape(self):
+        capability_header = "x-clawdi-whatsapp-link-capability"
+        valid_profile = {
+            "id": "native-whatsapp-baileys-link-a",
+            "enabled": True,
+            "kind": "websocket",
+            "match": {
+                "scheme": "wss",
+                "host": "web.whatsapp.com",
+                "notAfter": "2099-08-01T00:00:00Z",
+                "path": {"type": "equals", "value": "/ws/chat"},
+                "headers": {
+                    capability_header: {
+                        "type": "secretRefEquals",
+                        "secretRef": "secret://whatsapp/link-a/capability",
+                    }
+                },
+            },
+            "rewrite": {
+                "upstreamBaseUrl": "wss://cloud.test/v1/channels/whatsapp/baileys",
+                "preservePath": False,
+                "removeHeaders": [capability_header],
+                "setHeaders": {
+                    "authorization": {
+                        "type": "secretRef",
+                        "secretRef": "secret://whatsapp/link-a/agent-token",
+                        "prefix": "Bearer ",
+                    }
+                },
+            },
+            "logging": {
+                "redactHeaders": [capability_header, "authorization"],
+                "redactUrlPatterns": [],
+            },
+            "priority": 40,
+        }
+        deny_profile = {
+            "id": "native-whatsapp-baileys-invalid-capability",
+            "enabled": True,
+            "kind": "deny",
+            "match": {
+                "scheme": "wss",
+                "host": "web.whatsapp.com",
+                "path": {"type": "equals", "value": "/ws/chat"},
+                "headers": {capability_header: {"type": "exists"}},
+            },
+            "logging": {
+                "redactHeaders": [capability_header],
+                "redactUrlPatterns": [],
+            },
+            "priority": 49,
+        }
+        egress = self.load(
+            [valid_profile, deny_profile],
+            {
+                "secret://whatsapp/link-a/capability": "capability-generation-2",
+                "secret://whatsapp/link-a/agent-token": "agent-token-generation-2",
+            },
+        )
+
+        user_owned = Flow(
+            scheme="https",
+            host="web.whatsapp.com",
+            path="/ws/chat?ED=user-owned",
+            headers={
+                "Upgrade": "websocket",
+                "Sec-WebSocket-Protocol": "chat",
+            },
+        )
+        self.assertEqual(egress.apply_to_flow(user_owned).action, "allow")
+        self.assertEqual(user_owned.request.host, "web.whatsapp.com")
+        self.assertEqual(user_owned.request.path, "/ws/chat?ED=user-owned")
+        self.assertNotIn("authorization", user_owned.request.headers)
+
+        for reconnect in range(2):
+            managed = Flow(
+                scheme="https",
+                host="web.whatsapp.com",
+                path=f"/ws/chat?ED=managed-{reconnect}&foo=%2Fopaque",
+                headers={
+                    "Upgrade": "websocket",
+                    "Sec-WebSocket-Protocol": "chat, binary",
+                    capability_header: "capability-generation-2",
+                    "X-Opaque": "unchanged",
+                },
+            )
+            binary_messages = [b"\x00\xffnoise", b"\x01\x02signal"]
+            managed.websocket = SimpleNamespace(messages=binary_messages)
+
+            decision = egress.apply_to_flow(managed)
+
+            self.assertEqual(decision.action, "websocket")
+            self.assertEqual(managed.request.host, "cloud.test")
+            self.assertEqual(
+                managed.request.path,
+                f"/v1/channels/whatsapp/baileys?ED=managed-{reconnect}&foo=%2Fopaque",
+            )
+            self.assertEqual(managed.request.headers["Upgrade"], "websocket")
+            self.assertEqual(
+                managed.request.headers["Sec-WebSocket-Protocol"], "chat, binary"
+            )
+            self.assertEqual(managed.request.headers["X-Opaque"], "unchanged")
+            self.assertNotIn(capability_header, managed.request.headers)
+            self.assertEqual(
+                managed.request.headers["authorization"],
+                "Bearer agent-token-generation-2",
+            )
+            self.assertIs(managed.websocket.messages, binary_messages)
+
+        for invalid_capability in ["capability-generation-1", "wrong-link-capability"]:
+            stale = Flow(
+                scheme="https",
+                host="web.whatsapp.com",
+                path="/ws/chat?ED=stale",
+                headers={
+                    "Upgrade": "websocket",
+                    capability_header: invalid_capability,
+                },
+            )
+            decision = egress.apply_to_flow(stale)
+            self.assertEqual(decision.action, "deny")
+            self.assertEqual(stale.request.host, "web.whatsapp.com")
+            self.assertIsNotNone(stale.response)
+
+        expired_profile = {
+            **valid_profile,
+            "match": {**valid_profile["match"], "notAfter": "2000-01-01T00:00:00Z"},
+        }
+        self.tmp.cleanup()
+        expired_egress = self.load(
+            [expired_profile, deny_profile],
+            {
+                "secret://whatsapp/link-a/capability": "capability-generation-2",
+                "secret://whatsapp/link-a/agent-token": "agent-token-generation-2",
+            },
+        )
+        expired = Flow(
+            scheme="https",
+            host="web.whatsapp.com",
+            path="/ws/chat?ED=expired",
+            headers={
+                "Upgrade": "websocket",
+                capability_header: "capability-generation-2",
+            },
+        )
+        self.assertEqual(expired_egress.apply_to_flow(expired).action, "deny")
+
+        redacted = addon.redacted_headers(
+            Headers(
+                {
+                    capability_header: "capability-generation-2",
+                    "authorization": "Bearer agent-token-generation-2",
+                }
+            ),
+            valid_profile,
+        )
+        self.assertEqual(redacted[capability_header], "[redacted]")
+        self.assertEqual(redacted["authorization"], "[redacted]")
+
     def test_deny_profile_sets_safe_response(self):
         egress = self.load(
             [

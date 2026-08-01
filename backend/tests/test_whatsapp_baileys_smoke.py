@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import contextlib
 import json
 import os
@@ -32,16 +31,10 @@ from app.models.project import PROJECT_KIND_PERSONAL, Project
 from app.models.session import AgentEnvironment  # noqa: F401 - register FK table
 from app.models.user import User
 from app.services.channels import hash_token
-from app.services.whatsapp_baileys import (
-    encode_buffer_json,
-    load_or_create_whatsapp_auth_cert,
-    mint_whatsapp_agent_credential,
-    serialize_whatsapp_auth_cert,
-)
+from app.services.whatsapp_baileys import encode_buffer_json, mint_whatsapp_agent_credential
 
-pytestmark = pytest.mark.skipif(
-    os.getenv("CLAWDI_RUN_BAILEYS_SMOKE") != "1",
-    reason="set CLAWDI_RUN_BAILEYS_SMOKE=1 to run the real Node Baileys websocket smoke",
+pytestmark = pytest.mark.skip(
+    reason=("stock Baileys 7.0.0-rc13 has no authCert trust seam; keep native smoke disabled"),
 )
 
 
@@ -230,7 +223,6 @@ async def test_whatsapp_baileys_sidecar_reaches_open_with_fastapi_runtime() -> N
                     port=sidecar_port,
                     token="sidecar-smoke-token",
                     ws_url=seeded["ws_url"],
-                    auth_cert=seeded["auth_cert"],
                 )
                 health = await _wait_for_sidecar_health(
                     port=sidecar_port,
@@ -373,7 +365,6 @@ async def _seed_whatsapp_smoke_account(
         )
         db.add(link)
         await db.flush()
-        auth_cert = await load_or_create_whatsapp_auth_cert(db, account=account)
         stored = await mint_whatsapp_agent_credential(
             db,
             account=account,
@@ -451,7 +442,6 @@ async def _seed_whatsapp_smoke_account(
             "account_id": str(account.id),
             "jid": stored.minted.jid,
             "creds": encode_buffer_json(stored.minted.creds),
-            "auth_cert": serialize_whatsapp_auth_cert(auth_cert),
         }
         if expected_inbound is not None:
             seeded["expected_inbound"] = expected_inbound
@@ -490,9 +480,7 @@ def _start_sidecar_smoke_process(
     port: int,
     token: str,
     ws_url: str,
-    auth_cert: dict[str, Any],
 ) -> subprocess.Popen[str]:
-    public_key = _buffer_json_to_bytes(auth_cert["PUBLIC_KEY"])
     env = {
         **os.environ,
         "CLAWDI_WA_SIDECAR_TOKEN": token,
@@ -500,9 +488,6 @@ def _start_sidecar_smoke_process(
         "CLAWDI_WA_SIDECAR_HOST": "127.0.0.1",
         "CLAWDI_WA_SIDECAR_PORT": str(port),
         "CLAWDI_WA_WEBSOCKET_URL": ws_url,
-        "CLAWDI_WA_AUTH_CERT_SERIAL": str(auth_cert["SERIAL"]),
-        "CLAWDI_WA_AUTH_CERT_ISSUER": str(auth_cert["ISSUER"]),
-        "CLAWDI_WA_AUTH_CERT_PUBKEY_BASE64": base64.b64encode(public_key).decode("ascii"),
         "CLAWDI_WA_SIDECAR_LOG_LEVEL": "silent",
     }
     return subprocess.Popen(
@@ -542,17 +527,6 @@ async def _wait_for_sidecar_health(
             await asyncio.sleep(0.05)
     stdout, stderr = _process_output(process)
     raise AssertionError(f"sidecar did not connect\nstdout={stdout}\nstderr={stderr}")
-
-
-def _buffer_json_to_bytes(value: Any) -> bytes:
-    if not isinstance(value, dict) or value.get("type") != "Buffer":
-        raise AssertionError(f"expected BufferJSON public key, got {value!r}")
-    data = value.get("data")
-    if isinstance(data, str):
-        return base64.b64decode(data)
-    if not isinstance(data, list):
-        raise AssertionError(f"expected BufferJSON data list or base64 string, got {value!r}")
-    return bytes(int(part) for part in data)
 
 
 def _stop_process(process: subprocess.Popen[str] | None) -> None:
@@ -629,7 +603,6 @@ const sock = makeWASocket({
   browser: Browsers.appropriate("clawdi python smoke"),
   printQRInTerminal: false,
   waWebSocketUrl: input.ws_url,
-  authCert: input.auth_cert,
   syncFullHistory: false,
   connectTimeoutMs: 5000,
 });

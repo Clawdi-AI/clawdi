@@ -288,10 +288,50 @@ async def get_whatsapp_auth_cert(
     return serialize_whatsapp_auth_cert(auth_cert)
 
 
+@router.websocket("/baileys")
+async def whatsapp_baileys_managed_websocket(websocket: WebSocket) -> None:
+    token = _extract_bearer_token(websocket.headers.get("authorization"))
+    if token is None:
+        await websocket.close(code=1008)
+        return
+    async with async_session_factory() as db:
+        try:
+            agent = await resolve_channel_agent_by_token(
+                db,
+                provider=CHANNEL_PROVIDER_WHATSAPP,
+                token=token,
+            )
+        except HTTPException:
+            await websocket.close(code=1008)
+            return
+        account_id = agent.account.id
+        bot_agent_link_id = agent.link.id
+    await _run_whatsapp_baileys_websocket(
+        websocket,
+        account_id=account_id,
+        bot_agent_link_id=bot_agent_link_id,
+    )
+
+
 @router.websocket("/{account_id}/baileys")
 async def whatsapp_baileys_agent_websocket(
     websocket: WebSocket,
     account_id: UUID,
+) -> None:
+    """Compatibility route for existing protocol tests and explicit URL overrides."""
+
+    await _run_whatsapp_baileys_websocket(
+        websocket,
+        account_id=account_id,
+        bot_agent_link_id=None,
+    )
+
+
+async def _run_whatsapp_baileys_websocket(
+    websocket: WebSocket,
+    *,
+    account_id: UUID,
+    bot_agent_link_id: UUID | None,
 ) -> None:
     async with async_session_factory() as db:
         try:
@@ -312,7 +352,14 @@ async def whatsapp_baileys_agent_websocket(
                 db,
                 identity_public_key=identity_public_key,
             )
-            if credential is None or credential.account_id != account_id:
+            if (
+                credential is None
+                or credential.account_id != account_id
+                or (
+                    bot_agent_link_id is not None
+                    and credential.bot_agent_link_id != bot_agent_link_id
+                )
+            ):
                 return None
             bundle = whatsapp_agent_bundle_from_config(credential.config)
             signal_senders = whatsapp_signal_senders_from_config(credential.config)

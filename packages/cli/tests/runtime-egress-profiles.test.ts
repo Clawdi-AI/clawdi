@@ -72,6 +72,27 @@ describe("runtime egress profile schema", () => {
 		).toBe(true);
 	});
 
+	it("accepts narrowly scoped removal of internal routing headers", () => {
+		expect(
+			egressProfileSchema.safeParse({
+				id: "whatsapp-managed-upgrade",
+				enabled: true,
+				kind: "websocket",
+				match: {
+					scheme: "wss",
+					host: "web.whatsapp.com",
+					path: { type: "equals", value: "/ws/chat" },
+					headers: { "x-clawdi-whatsapp-link-capability": { type: "exists" } },
+				},
+				rewrite: {
+					upstreamBaseUrl: "wss://cloud-api.test/v1/channels/whatsapp/baileys",
+					preservePath: false,
+					removeHeaders: ["x-clawdi-whatsapp-link-capability"],
+				},
+			}).success,
+		).toBe(true);
+	});
+
 	it("requires upstream base URLs for HTTP and websocket rewrite profiles", () => {
 		for (const kind of ["http", "websocket"] as const) {
 			expect(

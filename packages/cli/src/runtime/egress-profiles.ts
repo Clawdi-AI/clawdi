@@ -118,6 +118,7 @@ const pathReplaceSchema = z.object({
 const egressProfileMatchSchema = z.object({
 	scheme: z.enum(["http", "https", "ws", "wss"]).optional(),
 	host: z.string().min(1),
+	notAfter: z.string().datetime({ offset: true }).optional(),
 	pathPrefix: z
 		.string()
 		.min(1)
@@ -140,6 +141,7 @@ const egressProfileRewriteSchema = z.object({
 		.optional(),
 	preservePath: z.boolean().default(true),
 	pathReplace: pathReplaceSchema.optional(),
+	removeHeaders: z.array(headerNameSchema).optional(),
 	setHeaders: z.record(headerNameSchema, headerSetterSchema).default({}),
 });
 

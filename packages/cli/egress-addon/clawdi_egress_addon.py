@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -283,6 +284,8 @@ def profile_matches(flow: Any, profile: dict[str, Any], secrets: dict[str, str])
     match = profile.get("match")
     if not isinstance(match, dict):
         return False
+    if not match_time_is_valid(match):
+        return False
     kind = profile.get("kind")
     request_scheme = request_profile_scheme(flow)
     configured_scheme = match.get("scheme")
@@ -316,6 +319,21 @@ def profile_matches(flow: Any, profile: dict[str, Any], secrets: dict[str, str])
             if not matcher_matches(value, matcher, secrets):
                 return False
     return True
+
+
+def match_time_is_valid(match: dict[str, Any], now: datetime | None = None) -> bool:
+    if "notAfter" not in match:
+        return True
+    not_after = match.get("notAfter")
+    if not isinstance(not_after, str):
+        return False
+    try:
+        parsed = datetime.fromisoformat(not_after.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed.tzinfo is None:
+        return False
+    return (now or datetime.now(UTC)) < parsed
 
 
 def host_matches(flow: Any, profile: dict[str, Any]) -> bool:
@@ -456,6 +474,8 @@ def split_authority(authority: str) -> tuple[str, int | None]:
 
 def apply_rewrite_headers(flow: Any, profile: dict[str, Any], secrets: dict[str, str]) -> None:
     rewrite = profile.get("rewrite") if isinstance(profile.get("rewrite"), dict) else {}
+    for name in rewrite.get("removeHeaders", []):
+        header_delete(flow.request.headers, str(name))
     for name, setter in rewrite.get("setHeaders", {}).items():
         resolved = resolve_header_setter(setter, secrets)
         if resolved is not None:
@@ -555,6 +575,18 @@ def header_get_optional(headers: Any, name: str) -> str | None:
 
 def header_set(headers: Any, name: str, value: str) -> None:
     headers[name] = value
+
+
+def header_delete(headers: Any, name: str) -> None:
+    lower = name.lower()
+    for key in list(getattr(headers, "keys", lambda: [])()):
+        if str(key).lower() != lower:
+            continue
+        try:
+            del headers[key]
+        except (KeyError, TypeError):
+            pass
+        return
 
 
 def redact_url(url: str, profile: dict[str, Any] | None) -> str:

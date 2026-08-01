@@ -101,7 +101,6 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			markOnlineOnConnect: false,
 			getMessage: async () => ({ conversation: "" }),
 			...(this.config.waWebSocketUrl ? { waWebSocketUrl: this.config.waWebSocketUrl } : {}),
-			...(this.config.authCert ? { authCert: this.config.authCert } : {}),
 		});
 		this.socket = socket;
 		socket.ev.on("creds.update", saveCreds);
