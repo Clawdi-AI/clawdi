@@ -166,6 +166,22 @@ async function expectNoBrowserErrors(page: Page, errors: string[], label: string
 	expect(errors, label).toEqual([]);
 }
 
+async function expectSidebarNavigationGroups(
+	page: Page,
+	expected: Array<{ label: string; items: string[] }>,
+) {
+	const groups = page
+		.getByTestId("app-sidebar")
+		.locator('[data-slot="sidebar-content"] > [data-slot="sidebar-group"]');
+	await expect(groups).toHaveCount(expected.length);
+	for (const [index, group] of expected.entries()) {
+		await expect(groups.nth(index).locator('[data-slot="sidebar-group-label"]')).toHaveText(
+			group.label,
+		);
+		await expect(groups.nth(index).getByRole("link")).toHaveText(group.items);
+	}
+}
+
 test("dashboard sidebar primitives run without browser errors", async ({ page }) => {
 	const browserErrors: string[] = [];
 	page.on("console", (message) => {
@@ -217,6 +233,25 @@ test("dashboard sidebar primitives run without browser errors", async ({ page })
 	await page.getByTestId("settings-theme-select").click();
 	await expect(page.getByRole("option", { name: "Dark" })).toBeVisible();
 	await expectNoBrowserErrors(page, browserErrors, "settings select");
+});
+
+test("Console and connected agents use the scoped navigation grammar", async ({ page }) => {
+	await stubDashboardApi(page);
+	await page.goto("/");
+	await expectSidebarNavigationGroups(page, [
+		{ label: "Primary", items: ["Overview", "Agents"] },
+		{ label: "Projects", items: ["Projects", "Skills", "Vaults"] },
+		{ label: "Activity", items: ["Sessions", "Memories"] },
+		{ label: "Integrations", items: ["Connectors"] },
+	]);
+
+	await page.goto("/agents/agent-smoke-1");
+	await expectSidebarNavigationGroups(page, [
+		{ label: "Primary", items: ["Overview"] },
+		{ label: "Activity", items: ["Sessions"] },
+		{ label: "Context", items: ["Skills", "Projects"] },
+		{ label: "Manage", items: ["Settings"] },
+	]);
 });
 
 test("every agent rail tile button navigates on click", async ({ page }) => {

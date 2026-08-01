@@ -30,20 +30,12 @@ import {
 	Cloud,
 	ExternalLink,
 	History,
-	Layers,
 	LayoutDashboard,
-	Link2,
 	type LucideIcon,
 	Mail,
 	MessageCircle,
-	MessageSquare,
-	MessagesSquare,
-	MonitorPlay,
 	Search,
 	Settings,
-	Sparkles,
-	TerminalSquare,
-	Zap,
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -68,7 +60,6 @@ import {
 import { DaemonStatusBadge, type DaemonStatusSource } from "@/components/dashboard/daemon-status";
 import { NewAgentButton } from "@/components/dashboard/new-agent-button";
 import { IconChip } from "@/components/icon-chip";
-import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -106,7 +97,6 @@ import {
 	agentDeploymentRouteQuery,
 	agentDeploymentSelector,
 	agentSectionHref,
-	agentSectionLabel,
 	parseAgentPathname,
 } from "@/lib/agent-routes";
 import { unwrap, useApi } from "@/lib/api";
@@ -119,11 +109,12 @@ import {
 import { IS_HOSTED } from "@/lib/hosted";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
+import type { AgentNavigationVariant } from "@/lib/navigation-model";
 import {
-	PROJECT_RESOURCE_GROUPS,
-	projectResourceDefinitionsForGroup,
-	projectResourceScopeLabel,
-} from "@/lib/project-resource-model";
+	AGENT_SECTION_NAVIGATION_ITEMS,
+	agentNavigationGroups,
+	consoleNavigationGroups,
+} from "@/lib/navigation-model";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 import { DEFAULT_SETTINGS_SECTION, type SettingsSectionId } from "@/lib/settings-routes";
 import { useHydrated } from "@/lib/use-hydrated";
@@ -149,101 +140,6 @@ function useAgentChromeKind(
 	return agentOwnershipKindFromId(agent.id, ownership);
 }
 
-const CONNECTED_AGENT_SECTIONS: {
-	id: AgentSectionId;
-	icon: LucideIcon;
-	tooltip: string;
-}[] = [
-	{
-		id: "overview",
-		icon: LayoutDashboard,
-		tooltip: "Agent overview",
-	},
-	{
-		id: "sessions",
-		icon: MessageSquare,
-		tooltip: "Sessions from this agent",
-	},
-	{
-		id: "skills",
-		icon: Sparkles,
-		tooltip: "Skills synced from this Agent filesystem",
-	},
-	{
-		id: "projects",
-		icon: Layers,
-		tooltip: "Agent Project and added Projects",
-	},
-	{
-		id: "settings",
-		icon: Settings,
-		tooltip: "Name and avatar for this agent",
-	},
-];
-
-const HOSTED_AGENT_SECTIONS: {
-	id: AgentSectionId;
-	icon: LucideIcon;
-	tooltip: string;
-}[] = [
-	{
-		id: "overview",
-		icon: LayoutDashboard,
-		tooltip: "Agent overview",
-	},
-	{
-		id: "console",
-		icon: MonitorPlay,
-		tooltip: "Open this agent's browser interface",
-	},
-	{
-		id: "terminal",
-		icon: TerminalSquare,
-		tooltip: "Open a terminal for this agent",
-	},
-	{
-		id: "sessions",
-		icon: MessageSquare,
-		tooltip: "Sessions from this agent",
-	},
-	{
-		id: "skills",
-		icon: Sparkles,
-		tooltip: "Skills synced from this Agent filesystem",
-	},
-	{
-		id: "ai",
-		icon: Zap,
-		tooltip: "AI providers and primary model",
-	},
-	{
-		id: "channels",
-		icon: Link2,
-		tooltip: "Channels linked to this agent",
-	},
-	{
-		id: "settings",
-		icon: Settings,
-		tooltip: "Name, preferences, plan, and lifecycle",
-	},
-];
-
-const HOSTED_AGENT_FALLBACK_SECTIONS = HOSTED_AGENT_SECTIONS.filter(
-	(section) => section.id === "overview" || section.id === "skills",
-);
-
-const AGENT_SECTION_TINTS = {
-	overview: RESOURCE_TINT_CLASSES.overview,
-	sessions: RESOURCE_TINT_CLASSES.sessions,
-	skills: RESOURCE_TINT_CLASSES.skills,
-	projects: RESOURCE_TINT_CLASSES.projects,
-	console: "bg-identity-6-bg text-identity-6-fg",
-	terminal: "bg-identity-7-bg text-identity-7-fg",
-	ai: "bg-identity-2-bg text-identity-2-fg",
-	channels: "bg-identity-5-bg text-identity-5-fg",
-	settings: "bg-identity-4-bg text-identity-4-fg",
-} satisfies Record<AgentSectionId, string>;
-
 const LEGACY_DASHBOARD_TINT = "bg-warning-muted text-warning-muted-foreground";
 
 type SidebarEnvironment = components["schemas"]["AgentResponse"];
@@ -259,12 +155,6 @@ type SidebarNavItem = {
 	active: boolean;
 	external?: boolean;
 	prefetch?: () => void;
-};
-
-type AgentSectionDefinition = {
-	id: AgentSectionId;
-	icon: LucideIcon;
-	tooltip: string;
 };
 
 const RAIL_DRAG_ACTIVATION_DISTANCE = 10;
@@ -373,38 +263,7 @@ function SidebarNavSection({
 	);
 }
 
-function ConsolePrimarySection({
-	pathname,
-	onNavigate,
-}: {
-	pathname: string;
-	onNavigate?: () => void;
-}) {
-	const items: SidebarNavItem[] = [
-		{
-			id: "overview",
-			label: "Overview",
-			href: "/",
-			icon: LayoutDashboard,
-			tint: RESOURCE_TINT_CLASSES.overview,
-			tooltip: "Console overview",
-			active: pathname === "/",
-		},
-		{
-			id: "agents",
-			label: "Agents",
-			href: "/agents",
-			icon: MonitorPlay,
-			tint: "bg-identity-6-bg text-identity-6-fg",
-			tooltip: "All agents",
-			active: pathname === "/agents",
-		},
-	];
-
-	return <SidebarNavSection label="Primary" items={items} onNavigate={onNavigate} />;
-}
-
-function ConsoleResourcesSection({
+function ConsoleNavigationSections({
 	pathname,
 	showCloudFeatures,
 	onNavigate,
@@ -424,105 +283,70 @@ function ConsoleResourcesSection({
 		);
 		void queryClient.prefetchQuery(connectionsQueryOptions(api));
 	}, [api, queryClient]);
-	const resourceItems: SidebarNavItem[] = PROJECT_RESOURCE_GROUPS.flatMap((group) =>
-		projectResourceDefinitionsForGroup(group.id).map((definition) => {
-			const Icon = PROJECT_RESOURCE_ICONS[definition.id];
-			return {
-				id: definition.id,
-				label: definition.navLabel,
-				href: definition.href,
-				icon: Icon,
-				tint: RESOURCE_TINT_CLASSES[definition.id],
-				tooltip: `${definition.navLabel} - ${projectResourceScopeLabel(definition.projectScope)}`,
-				active: pathname === definition.href || pathname.startsWith(`${definition.href}/`),
-				prefetch: definition.id === "connectors" ? prefetchConnectorsCatalog : undefined,
-			};
-		}),
-	);
-
-	if (showCloudFeatures) {
-		resourceItems.push(
-			{
-				id: "channels",
-				label: "Channels",
-				href: "/channels",
-				icon: MessagesSquare,
-				tint: "bg-identity-5-bg text-identity-5-fg",
-				tooltip: "Channels - Account resources",
-				active: pathname === "/channels" || pathname.startsWith("/channels/"),
-			},
-			{
-				id: "model-providers",
-				label: "AI Providers",
-				href: "/ai-providers",
-				icon: Sparkles,
-				tint: "bg-identity-2-bg text-identity-2-fg",
-				tooltip: "AI Providers - Account resources",
-				active: pathname === "/ai-providers" || pathname.startsWith("/ai-providers/"),
-			},
-		);
-	}
-
-	return <SidebarNavSection label="Resources" items={resourceItems} onNavigate={onNavigate} />;
+	return consoleNavigationGroups(showCloudFeatures).map((group) => (
+		<SidebarNavSection
+			key={group.id}
+			label={group.label}
+			items={group.items.map((item) => ({
+				...item,
+				active:
+					item.href === "/"
+						? pathname === item.href
+						: pathname === item.href || pathname.startsWith(`${item.href}/`),
+				prefetch: item.id === "connectors" ? prefetchConnectorsCatalog : undefined,
+			}))}
+			onNavigate={onNavigate}
+		/>
+	));
 }
 
 function AgentSectionList({
 	agentId,
-	sections,
+	variant,
+	visibleSectionIds,
 	activeSection,
 	extraPrimaryItems = [],
 	onNavigate,
 }: {
 	agentId: string;
-	sections: readonly AgentSectionDefinition[];
+	variant: AgentNavigationVariant;
+	visibleSectionIds?: readonly AgentSectionId[];
 	activeSection: AgentSectionId;
 	extraPrimaryItems?: SidebarNavItem[];
 	onNavigate?: () => void;
 }) {
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const routeQuery = agentDeploymentRouteQuery(searchStr);
-	const normalizedActiveSection = sections.some((section) => section.id === activeSection)
+	const groups = agentNavigationGroups(variant, visibleSectionIds);
+	const normalizedActiveSection = groups.some((group) =>
+		group.items.some((item) => item.id === activeSection),
+	)
 		? activeSection
 		: "overview";
-	const primarySections = sections.filter(
-		(section) => section.id === "overview" || section.id === "console" || section.id === "terminal",
-	);
-	const resourceSections = sections.filter(
-		(section) => section.id !== "overview" && section.id !== "console" && section.id !== "terminal",
-	);
-
-	const primaryItems = [
-		...primarySections.map((section): SidebarNavItem => {
-			const Icon = section.icon;
-			return {
-				id: section.id,
-				label: agentSectionLabel(section.id),
-				href: agentSectionHref(agentId, section.id, routeQuery),
-				icon: Icon,
-				tint: AGENT_SECTION_TINTS[section.id],
-				tooltip: section.tooltip,
-				active: normalizedActiveSection === section.id,
-			};
-		}),
-		...extraPrimaryItems,
-	];
-	const resourceItems = resourceSections.map((section): SidebarNavItem => {
-		const Icon = section.icon;
-		return {
-			id: section.id,
-			label: agentSectionLabel(section.id),
-			href: agentSectionHref(agentId, section.id, routeQuery),
-			icon: Icon,
-			tint: AGENT_SECTION_TINTS[section.id],
-			tooltip: section.tooltip,
-			active: normalizedActiveSection === section.id,
-		};
-	});
 
 	return (
 		<>
-			<SidebarNavSection label="Primary" items={primaryItems} onNavigate={onNavigate} />
-			<SidebarNavSection label="Resources" items={resourceItems} onNavigate={onNavigate} />
+			{groups.map((group) => (
+				<SidebarNavSection
+					key={group.id}
+					label={group.label}
+					items={[
+						...group.items.map(
+							(item): SidebarNavItem => ({
+								id: item.id,
+								label: item.label,
+								href: agentSectionHref(agentId, item.id, routeQuery),
+								icon: item.icon,
+								tint: item.tint,
+								tooltip: item.tooltip,
+								active: normalizedActiveSection === item.id,
+							}),
+						),
+						...(group.id === "primary" ? extraPrimaryItems : []),
+					]}
+					onNavigate={onNavigate}
+				/>
+			))}
 		</>
 	);
 }
@@ -556,7 +380,7 @@ function AgentFocusSections({
 	return (
 		<AgentSectionList
 			agentId={agentId}
-			sections={kind === "cloud" ? HOSTED_AGENT_SECTIONS : CONNECTED_AGENT_SECTIONS}
+			variant={kind === "cloud" ? "hosted" : "connected"}
 			activeSection={activeSection}
 			extraPrimaryItems={extraPrimaryItems}
 			onNavigate={onNavigate}
@@ -576,7 +400,8 @@ function AgentFocusHostedFallbackSections({
 	return (
 		<AgentSectionList
 			agentId={agentId}
-			sections={HOSTED_AGENT_FALLBACK_SECTIONS}
+			variant="hosted"
+			visibleSectionIds={["overview", "skills"]}
 			activeSection={activeSection}
 			onNavigate={onNavigate}
 		/>
@@ -594,13 +419,14 @@ function AgentFocusLoadingSections({
 }) {
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const routeQuery = agentDeploymentRouteQuery(searchStr);
+	const overviewMetadata = AGENT_SECTION_NAVIGATION_ITEMS.overview;
 	const overviewItem: SidebarNavItem = {
-		id: "overview",
-		label: "Overview",
+		id: overviewMetadata.id,
+		label: overviewMetadata.label,
 		href: agentSectionHref(agentId, "overview", routeQuery),
-		icon: LayoutDashboard,
-		tint: RESOURCE_TINT_CLASSES.overview,
-		tooltip: "Agent overview",
+		icon: overviewMetadata.icon,
+		tint: overviewMetadata.tint,
+		tooltip: overviewMetadata.tooltip,
 		active: activeSection === "overview",
 	};
 
@@ -608,7 +434,7 @@ function AgentFocusLoadingSections({
 		<>
 			<SidebarNavSection label="Primary" items={[overviewItem]} onNavigate={onNavigate} />
 			<SidebarGroup className="pt-0">
-				<SidebarGroupLabel>Resources</SidebarGroupLabel>
+				<SidebarGroupLabel>Loading navigation</SidebarGroupLabel>
 				<SidebarGroupContent>
 					<SidebarMenu>
 						{["70%", "58%", "64%"].map((width) => (
@@ -685,14 +511,11 @@ function SidebarMainNavigation({
 	}
 
 	return (
-		<>
-			<ConsolePrimarySection pathname={pathname} onNavigate={onNavigate} />
-			<ConsoleResourcesSection
-				pathname={pathname}
-				showCloudFeatures={showCloudFeatures}
-				onNavigate={onNavigate}
-			/>
-		</>
+		<ConsoleNavigationSections
+			pathname={pathname}
+			showCloudFeatures={showCloudFeatures}
+			onNavigate={onNavigate}
+		/>
 	);
 }
 

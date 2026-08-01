@@ -1,15 +1,9 @@
 import { defaultParseSearch, defaultStringifySearch, linkOptions } from "@tanstack/react-router";
+import type { AgentSectionId } from "@/lib/navigation-model";
+import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 
-export type AgentSectionId =
-	| "overview"
-	| "sessions"
-	| "skills"
-	| "projects"
-	| "console"
-	| "terminal"
-	| "ai"
-	| "channels"
-	| "settings";
+export type { AgentSectionId } from "@/lib/navigation-model";
+export { CONNECTED_AGENT_SECTION_IDS, HOSTED_AGENT_SECTION_IDS } from "@/lib/navigation-model";
 
 export type RouteSearchParamsRecord = Record<string, string | string[] | undefined>;
 export type AgentRouteSearch = Record<string, unknown> & {
@@ -28,25 +22,6 @@ export type AgentRouteQuery =
 
 export const AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY = "d";
 
-export const CONNECTED_AGENT_SECTION_IDS = [
-	"overview",
-	"sessions",
-	"skills",
-	"projects",
-	"settings",
-] as const satisfies readonly AgentSectionId[];
-
-export const HOSTED_AGENT_SECTION_IDS = [
-	"overview",
-	"console",
-	"terminal",
-	"sessions",
-	"skills",
-	"ai",
-	"channels",
-	"settings",
-] as const satisfies readonly AgentSectionId[];
-
 const AGENT_SECTION_SEGMENTS = {
 	overview: "",
 	sessions: "sessions",
@@ -57,18 +32,6 @@ const AGENT_SECTION_SEGMENTS = {
 	ai: "model-provider",
 	channels: "channel-links",
 	settings: "settings",
-} as const satisfies Record<AgentSectionId, string>;
-
-const AGENT_SECTION_LABELS = {
-	overview: "Overview",
-	sessions: "Sessions",
-	skills: "Skills",
-	projects: "Project Access",
-	console: "Agent Interface",
-	terminal: "Terminal",
-	ai: "AI Providers",
-	channels: "Channels",
-	settings: "Settings",
 } as const satisfies Record<AgentSectionId, string>;
 
 const AGENT_SEGMENT_TO_SECTION = Object.fromEntries(
@@ -89,7 +52,7 @@ export function agentSectionSegment(section: AgentSectionId): string {
 }
 
 export function agentSectionLabel(section: AgentSectionId): string {
-	return AGENT_SECTION_LABELS[section];
+	return AGENT_SECTION_NAVIGATION_ITEMS[section].label;
 }
 
 export function agentSectionLabelFromSegment(segment: string): string | null {
