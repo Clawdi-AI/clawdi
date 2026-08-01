@@ -1,16 +1,13 @@
 import { createHash } from "node:crypto";
-import { join } from "node:path";
 import type { EgressProfileInputBundle } from "./egress-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
 import type {
 	RuntimeBundleChannelBinding,
 	RuntimeChannelAccount,
-	RuntimeChannelCredential,
 	RuntimeChannelsLoad,
 	RuntimeManifestLoad,
 } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
-import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runtimeSecretValue } from "./secret-values";
 import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 
@@ -21,15 +18,8 @@ const HERMES_MANAGED_CHANNEL_ENV = [
 	"TELEGRAM_ALLOW_ALL_USERS",
 	"DISCORD_ALLOW_ALL_USERS",
 	"HERMES_TELEGRAM_DISABLE_FALLBACK_IPS",
-	"WHATSAPP_ENABLED",
-	"WHATSAPP_MODE",
-	"WHATSAPP_ALLOWED_USERS",
 ] as const;
-const HERMES_MANAGED_CHANNEL_SECRET_ENV = [
-	"TELEGRAM_BOT_TOKEN",
-	"DISCORD_BOT_TOKEN",
-	"HERMES_WA_CREDS_JSON",
-] as const;
+const HERMES_MANAGED_CHANNEL_SECRET_ENV = ["TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN"] as const;
 const OPENCLAW_CHANNEL_TOKEN_ENV_PREFIX = "CLAWDI_CHANNEL_";
 const OPENCLAW_CHANNEL_TOKEN_ENV_SUFFIX = "_AGENT_TOKEN";
 
@@ -41,36 +31,12 @@ interface ManagedChannelLink {
 	agentToken: string;
 	secretRef: string;
 	placeholderSecretRef: string;
-	credentials: RuntimeChannelCredential[];
 }
 
 interface OpenClawEnvSecretRef {
 	source: "env";
 	provider: "default";
 	id: string;
-}
-
-interface RuntimeChannelCredentialProjection {
-	provider: "whatsapp";
-	kind: "whatsapp_baileys_auth_state";
-	accountId: string;
-	accountKey: string;
-	linkId: string;
-	credentialId: string;
-	authDir: string;
-	files: {
-		path: "creds.json";
-		secretRef: string;
-	}[];
-	targets: {
-		openclaw?: {
-			authDir: string;
-		};
-		hermes?: {
-			sessionDir: string;
-			credsJsonEnv: "HERMES_WA_CREDS_JSON";
-		};
-	};
 }
 
 export function applyRuntimeChannelsToManifestLoad(
@@ -83,7 +49,7 @@ export function applyRuntimeChannelsToManifestLoad(
 	const manifest = applyRuntimeChannelProjection(load.manifest, managedLinks, paths);
 	const secretValues = {
 		...(load.secretValues ?? {}),
-		...channelSecretValues(managedLinks, manifest.projection?.channelCredentials),
+		...channelSecretValues(managedLinks),
 	};
 	return {
 		...load,
@@ -99,7 +65,7 @@ export function applyRuntimeBundleChannelsToManifestLoad(
 ): RuntimeManifestLoad {
 	if (!load.channelBindings) return load;
 	const secretValues = load.secretValues ?? {};
-	const links: ManagedChannelLink[] = load.channelBindings.map((binding) =>
+	const links = load.channelBindings.map((binding) =>
 		managedBundleChannelLink(binding, secretValues),
 	);
 	return {
@@ -135,7 +101,6 @@ function managedBundleChannelLink(
 		agentToken,
 		secretRef: binding.agentTokenSecretRef,
 		placeholderSecretRef: binding.placeholderTokenSecretRef,
-		credentials: [],
 	};
 }
 
@@ -155,9 +120,6 @@ function managedChannelLinks(channels: RuntimeChannelAccount[]): ManagedChannelL
 				agentToken: link.agent_token,
 				secretRef: channelLinkSecretRef(account.provider, accountKey, link.id),
 				placeholderSecretRef: channelPlaceholderSecretRef(account.provider, accountKey),
-				credentials: (account.runtime_credentials ?? []).filter(
-					(credential) => credential.agent_link_id === link.id,
-				),
 			});
 		}
 	}
@@ -173,19 +135,16 @@ function applyRuntimeChannelProjection(
 	links: ManagedChannelLink[],
 	paths: RuntimePaths,
 ): RuntimeManifest {
+	void paths;
 	const managedProfiles = buildManagedChannelEgressProfiles(links, manifest.controlPlane.apiUrl);
-	const runtimeHome = hostedRuntimeProjectionHome(manifest, paths);
-	const channelCredentials = buildRuntimeChannelCredentialsProjection(
-		links,
-		runtimeHome,
-		runtimeCredentialTargets(manifest),
-	);
 	const projected: RuntimeManifest = {
 		...manifest,
 		projection: {
 			...(manifest.projection ?? {}),
-			channels: buildOpenClawChannelsProjection(links, manifest.controlPlane.apiUrl, runtimeHome),
-			channelCredentials,
+			channels: buildOpenClawChannelsProjection(links),
+			// Runtime credentials may still appear in an older control-plane response.
+			// Managed WhatsApp never consumes or projects provider/socket material.
+			channelCredentials: [],
 		},
 		egressProfiles: mergeEgressProfiles(manifest.egressProfiles, managedProfiles),
 	};
@@ -195,11 +154,7 @@ function applyRuntimeChannelProjection(
 	);
 }
 
-function buildOpenClawChannelsProjection(
-	links: ManagedChannelLink[],
-	cloudApiUrl: string,
-	runtimeHome: string,
-): Record<string, unknown> {
+function buildOpenClawChannelsProjection(links: ManagedChannelLink[]): Record<string, unknown> {
 	const channels: Record<string, unknown> = {};
 	for (const link of links) {
 		const provider = link.account.provider;
@@ -227,38 +182,9 @@ function buildOpenClawChannelsProjection(
 				allowFrom: ["*"],
 				guilds: { "*": { requireMention: false, users: ["*"] } },
 			};
-			continue;
-		}
-		if (provider === "whatsapp") {
-			const channel = ensureAccountChannel(channels, "whatsapp", link.accountKey);
-			const credential = whatsappBaileysCredentialProjection(link, runtimeHome, {
-				openclaw: true,
-				hermes: false,
-			});
-			channel.accounts[link.accountKey] = {
-				enabled: true,
-				wsUrl: `${toWebSocketUrl(stripTrailingSlash(cloudApiUrl))}/v1/channels/whatsapp/${link.account.id}/baileys`,
-				token: openClawChannelPlaceholderTokenSecretRef(link),
-				...(credential ? { authDir: credential.authDir } : {}),
-			};
 		}
 	}
 	return channels;
-}
-
-function buildRuntimeChannelCredentialsProjection(
-	links: ManagedChannelLink[],
-	runtimeHome: string,
-	targets: RuntimeCredentialTargets,
-): RuntimeChannelCredentialProjection[] {
-	return links
-		.map((link) => whatsappBaileysCredentialProjection(link, runtimeHome, targets))
-		.filter((credential): credential is RuntimeChannelCredentialProjection => credential !== null)
-		.sort((left, right) =>
-			`${left.provider}:${left.accountKey}:${left.credentialId}`.localeCompare(
-				`${right.provider}:${right.accountKey}:${right.credentialId}`,
-			),
-		);
 }
 
 function applyOpenClawRuntimeChannelSettings(
@@ -275,9 +201,7 @@ function applyOpenClawRuntimeChannelSettings(
 		if (link.account.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		secretEnv[openClawChannelTokenEnvName(link)] = link.placeholderSecretRef;
 	}
-	if (!openclaw.run && Object.keys(secretEnv).length === 0) {
-		return manifest;
-	}
+	if (!openclaw.run && Object.keys(secretEnv).length === 0) return manifest;
 
 	return {
 		...manifest,
@@ -285,10 +209,7 @@ function applyOpenClawRuntimeChannelSettings(
 			...manifest.runtimes,
 			openclaw: {
 				...openclaw,
-				run: {
-					...existingRun,
-					secretEnv,
-				},
+				run: { ...existingRun, secretEnv },
 			},
 		},
 	};
@@ -303,11 +224,6 @@ function applyHermesRuntimeChannelSettings(
 
 	const telegram = singleLinkForProvider(links, "telegram");
 	const discord = singleLinkForProvider(links, "discord");
-	const whatsapp = WHATSAPP_UPSTREAM_READY ? singleLinkForProvider(links, "whatsapp") : null;
-	const whatsappCredentials = whatsapp ? whatsappBaileysCredentials(whatsapp) : [];
-	const whatsappCredential = whatsappCredentials.find(
-		(credential) => whatsappCredentialCreds(credential) !== null,
-	);
 	const existingRun = hermes.run ?? { env: {}, prependPath: [] };
 	const env = omitKeys(existingRun.env ?? {}, HERMES_MANAGED_CHANNEL_ENV);
 	const secretEnv = omitKeys(existingRun.secretEnv ?? {}, HERMES_MANAGED_CHANNEL_SECRET_ENV);
@@ -321,15 +237,6 @@ function applyHermesRuntimeChannelSettings(
 		env.DISCORD_ALLOW_ALL_USERS = "true";
 		secretEnv.DISCORD_BOT_TOKEN = discord.placeholderSecretRef;
 	}
-	if (whatsapp && whatsappCredential) {
-		env.WHATSAPP_ENABLED = "true";
-		env.WHATSAPP_MODE = "bot";
-		env.WHATSAPP_ALLOWED_USERS = "*";
-		secretEnv.HERMES_WA_CREDS_JSON = whatsappBaileysCredsJsonSecretRef(
-			whatsapp,
-			whatsappCredential,
-		);
-	}
 
 	return {
 		...manifest,
@@ -337,11 +244,7 @@ function applyHermesRuntimeChannelSettings(
 			...manifest.runtimes,
 			hermes: {
 				...hermes,
-				run: {
-					...existingRun,
-					env,
-					secretEnv,
-				},
+				run: { ...existingRun, env, secretEnv },
 			},
 		},
 	};
@@ -352,9 +255,7 @@ function singleLinkForProvider(
 	provider: ChannelProvider,
 ): ManagedChannelLink | null {
 	const matching = links.filter((link) => link.account.provider === provider);
-	if (matching.length > 1) {
-		throw new Error(runtimeProviderLinkLimitDetail(provider));
-	}
+	if (matching.length > 1) throw new Error(runtimeProviderLinkLimitDetail(provider));
 	return matching[0] ?? null;
 }
 
@@ -365,17 +266,12 @@ function assertSingleManagedLinkPerProvider(links: ManagedChannelLink[]): void {
 }
 
 function runtimeProviderLinkLimitDetail(provider: ChannelProvider): string {
-	const label =
-		provider === "telegram" ? "Telegram" : provider === "discord" ? "Discord" : provider;
+	const label = provider === "telegram" ? "Telegram" : "Discord";
 	return `This Agent has multiple active ${label} bots. Unlink the extras until only one remains.`;
 }
 
 function openClawChannelPlaceholderTokenSecretRef(link: ManagedChannelLink): OpenClawEnvSecretRef {
-	return {
-		source: "env",
-		provider: "default",
-		id: openClawChannelTokenEnvName(link),
-	};
+	return { source: "env", provider: "default", id: openClawChannelTokenEnvName(link) };
 }
 
 function openClawChannelTokenEnvName(link: ManagedChannelLink): string {
@@ -421,7 +317,7 @@ function omitKeys<T extends string>(
 
 function ensureAccountChannel(
 	channels: Record<string, unknown>,
-	channelName: "telegram" | "discord" | "whatsapp",
+	channelName: "telegram" | "discord",
 	defaultAccount: string,
 ): { enabled: boolean; defaultAccount: string; accounts: Record<string, unknown> } {
 	const existing = channels[channelName];
@@ -499,8 +395,6 @@ function buildManagedChannelEgressProfiles(
 				match: {
 					scheme: "https",
 					host: "discord.com",
-					// Discord's own REST prefix (discord.com/api/v10/...) — external
-					// URL shape, not a clawdi-cloud API path; keep it /api/.
 					pathPrefix: "/api/",
 					headers: {
 						authorization: {
@@ -553,40 +447,6 @@ function buildManagedChannelEgressProfiles(
 				owner: "clawdi-native-channels",
 			});
 		}
-		if (link.account.provider === "whatsapp") {
-			profiles.push({
-				id: `native-${idSuffix}-graph-managed`,
-				enabled: true,
-				kind: "http",
-				match: {
-					scheme: "https",
-					host: "graph.facebook.com",
-					pathPrefix: "/v",
-					headers: {
-						authorization: {
-							type: "secretRefEquals",
-							secretRef: link.placeholderSecretRef,
-							prefix: "Bearer ",
-						},
-					},
-					query: {},
-				},
-				rewrite: {
-					upstreamBaseUrl: `${baseUrl}/v1/channels/whatsapp/graph`,
-					preservePath: true,
-					setHeaders: {
-						authorization: {
-							type: "secretRef",
-							secretRef: link.secretRef,
-							prefix: "Bearer ",
-						},
-					},
-				},
-				logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
-				priority: 102,
-				owner: "clawdi-native-channels",
-			});
-		}
 	}
 	return profiles;
 }
@@ -615,50 +475,17 @@ function isChannelProjectionProfile(profile: EgressProfile): boolean {
 	);
 }
 
-function channelSecretValues(
-	links: ManagedChannelLink[],
-	channelCredentials: unknown,
-): Record<string, string> {
+function channelSecretValues(links: ManagedChannelLink[]): Record<string, string> {
 	const values: Record<string, string> = {};
-	const projectedCredentialSecrets = projectedWhatsAppCredentialSecretRefs(channelCredentials);
 	for (const link of links) {
-		addSecretValue(values, link.secretRef, link.agentToken);
-		addSecretValue(
-			values,
-			link.placeholderSecretRef,
-			channelPlaceholderToken(link.account.provider, link.accountKey),
+		if (link.account.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
+		values[link.secretRef] = link.agentToken;
+		values[link.placeholderSecretRef] = channelPlaceholderToken(
+			link.account.provider,
+			link.accountKey,
 		);
-		for (const credential of whatsappBaileysCredentials(link)) {
-			const creds = whatsappCredentialCreds(credential);
-			if (creds === null) continue;
-			const secretRef = whatsappBaileysCredsJsonSecretRef(link, credential);
-			if (!projectedCredentialSecrets.has(secretRef)) continue;
-			addSecretValue(values, secretRef, JSON.stringify(creds));
-		}
 	}
 	return values;
-}
-
-function projectedWhatsAppCredentialSecretRefs(channelCredentials: unknown): Set<string> {
-	const refs = new Set<string>();
-	if (!Array.isArray(channelCredentials)) return refs;
-	for (const credential of channelCredentials) {
-		const record = recordValue(credential);
-		if (record?.provider !== "whatsapp" || record.kind !== "whatsapp_baileys_auth_state") {
-			continue;
-		}
-		const files = Array.isArray(record.files) ? record.files : [];
-		for (const file of files) {
-			const fileRecord = recordValue(file);
-			const secretRef = stringValue(fileRecord?.secretRef);
-			if (fileRecord?.path === "creds.json" && secretRef) refs.add(secretRef);
-		}
-	}
-	return refs;
-}
-
-function addSecretValue(values: Record<string, string>, ref: string, value: string): void {
-	values[ref] = value;
 }
 
 function channelLinkSecretRef(
@@ -680,98 +507,6 @@ function channelPlaceholderToken(provider: ChannelProvider, accountKey: string):
 		.slice(0, 32);
 	if (provider === "telegram") return `999999999:${suffix}`;
 	return `clawdi_${suffix}`;
-}
-
-function whatsappBaileysCredentialProjection(
-	link: ManagedChannelLink,
-	runtimeHome: string,
-	targets: RuntimeCredentialTargets,
-): RuntimeChannelCredentialProjection | null {
-	if (!WHATSAPP_UPSTREAM_READY) return null;
-	const credential = whatsappBaileysCredentials(link)[0];
-	if (!credential || whatsappCredentialCreds(credential) === null) return null;
-	const openclawAuthDir = openClawWhatsAppAuthDir(runtimeHome, link.accountKey);
-	const targetProjection: RuntimeChannelCredentialProjection["targets"] = {};
-	if (targets.openclaw) {
-		targetProjection.openclaw = { authDir: openclawAuthDir };
-	}
-	if (targets.hermes) {
-		targetProjection.hermes = {
-			sessionDir: hermesWhatsAppSessionDir(runtimeHome),
-			credsJsonEnv: "HERMES_WA_CREDS_JSON",
-		};
-	}
-	if (!targetProjection.openclaw && !targetProjection.hermes) return null;
-	return {
-		provider: "whatsapp",
-		kind: "whatsapp_baileys_auth_state",
-		accountId: link.account.id,
-		accountKey: link.accountKey,
-		linkId: link.linkId,
-		credentialId: credential.id,
-		authDir: openclawAuthDir,
-		files: [
-			{
-				path: "creds.json",
-				secretRef: whatsappBaileysCredsJsonSecretRef(link, credential),
-			},
-		],
-		targets: targetProjection,
-	};
-}
-
-function whatsappBaileysCredentials(link: ManagedChannelLink): RuntimeChannelCredential[] {
-	if (link.account.provider !== "whatsapp") return [];
-	return link.credentials.filter(
-		(credential) =>
-			credential.provider === "whatsapp" && credential.kind === "whatsapp_baileys_auth_state",
-	);
-}
-
-function whatsappCredentialCreds(credential: RuntimeChannelCredential): unknown | null {
-	const material = recordValue(credential.material);
-	if (material?.schemaVersion !== "clawdi.whatsappBaileysAuthState.v1") {
-		return null;
-	}
-	const creds = material.creds;
-	if (!creds || typeof creds !== "object" || Array.isArray(creds)) return null;
-	return creds;
-}
-
-function whatsappBaileysCredsJsonSecretRef(
-	link: ManagedChannelLink,
-	credential: RuntimeChannelCredential,
-): string {
-	return `secret://channels/whatsapp/${link.accountKey}/credentials/${credential.id}/creds-json`;
-}
-
-function openClawWhatsAppAuthDir(runtimeHome: string, accountKey: string): string {
-	return join(runtimeHome, ".openclaw", "credentials", "whatsapp", accountKey);
-}
-
-function hermesWhatsAppSessionDir(runtimeHome: string): string {
-	return join(runtimeHome, ".hermes", "platforms", "whatsapp", "session");
-}
-
-interface RuntimeCredentialTargets {
-	openclaw: boolean;
-	hermes: boolean;
-}
-
-function runtimeCredentialTargets(manifest: RuntimeManifest): RuntimeCredentialTargets {
-	return {
-		openclaw: manifest.runtimes.openclaw?.enabled === true,
-		hermes: manifest.runtimes.hermes?.enabled === true,
-	};
-}
-
-function recordValue(value: unknown): Record<string, unknown> | null {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-	return value as Record<string, unknown>;
-}
-
-function stringValue(value: unknown): string | null {
-	return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 function channelAccountKey(account: RuntimeChannelAccount): string {

@@ -16,7 +16,7 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getConfig } from "../lib/config";
-import { PRIVATE_DIR_MODE, writePrivateFileAtomic } from "../lib/private-file";
+import { writePrivateFileAtomic } from "../lib/private-file";
 import { isSemverLessThan } from "../lib/semver";
 import { getCliVersion } from "../lib/version";
 import {
@@ -124,14 +124,7 @@ const accountSchema = z.union([
 ]);
 
 const runtimeProjectionSchema = z.enum(["dotenv"]);
-const runtimeEnvKeySchema = z.enum([
-	"api_base_url",
-	"gateway_url",
-	"websocket_url",
-	"media_proxy_base_url",
-	"auth_dir",
-	"password",
-]);
+const runtimeEnvKeySchema = z.enum(["api_base_url", "gateway_url", "websocket_url", "password"]);
 
 const linkSchema = z
 	.object({
@@ -148,15 +141,6 @@ const linkSchema = z
 			.object({
 				ttl_seconds: z.number().int().min(60).max(86_400).default(900),
 				command_env: envNameSchema.optional(),
-			})
-			.strict()
-			.optional(),
-		whatsapp: z
-			.object({
-				baileys_credentials_dir: z.string().min(1).optional(),
-				phone_user: z.string().min(1).optional(),
-				device: z.number().int().min(1).default(1),
-				name: z.string().min(1).optional(),
 			})
 			.strict()
 			.optional(),
@@ -240,13 +224,6 @@ const manifestSchema = z
 						"pair_code",
 						"command_env",
 					]);
-				}
-				if (channel.provider !== "whatsapp" && link.whatsapp) {
-					ctx.addIssue({
-						code: "custom",
-						path: ["channels", channelIndex, "links", linkIndex, "whatsapp"],
-						message: "whatsapp runtime options require provider: whatsapp",
-					});
 				}
 			}
 		}
@@ -348,7 +325,7 @@ export async function runtimeApplyCommand(opts: RuntimeApplyOptions = {}): Promi
 		return;
 	}
 	const { manifest, manifestDir } = readManifest(opts.file);
-	preflightRuntimeOutputs(manifest, manifestDir);
+	preflightRuntimeOutputs(manifest);
 	const ctx: ApplyContext = {
 		api: new ApiClient(),
 		manifest,
@@ -603,7 +580,7 @@ async function applyLink(
 	}
 
 	if (token && !runtimeOutputGated) {
-		addRuntimeEnv(ctx, channel.provider, account.id, linkManifest, token);
+		addRuntimeEnv(ctx, channel.provider, linkManifest, token);
 		tokenWritten = true;
 	} else if (!runtimeOutputGated) {
 		const existingToken = readDotenvValue(
@@ -612,7 +589,7 @@ async function applyLink(
 			linkManifest.runtime.token_env,
 		);
 		if (existingToken) {
-			addRuntimeEnv(ctx, channel.provider, account.id, linkManifest, existingToken);
+			addRuntimeEnv(ctx, channel.provider, linkManifest, existingToken);
 			tokenWritten = true;
 		} else {
 			ctx.warnings.push(
@@ -649,14 +626,6 @@ async function applyLink(
 		});
 	}
 
-	if (
-		channel.provider === "whatsapp" &&
-		WHATSAPP_UPSTREAM_READY &&
-		linkManifest.whatsapp?.baileys_credentials_dir
-	) {
-		await writeWhatsAppCredentials(ctx, account.id, link, linkManifest);
-	}
-
 	ctx.links.push({
 		ref: linkManifest.ref,
 		account_ref: channel.ref,
@@ -667,69 +636,9 @@ async function applyLink(
 	});
 }
 
-async function writeWhatsAppCredentials(
-	ctx: ApplyContext,
-	accountId: string,
-	link: ChannelAgentLink,
-	linkManifest: RuntimeLink,
-): Promise<void> {
-	const options = linkManifest.whatsapp;
-	if (!options?.baileys_credentials_dir) return;
-	const credential = unwrap(
-		await ctx.api.POST("/v1/channels/whatsapp/{account_id}/tenant-creds", {
-			params: { path: { account_id: accountId } },
-			body: {
-				agent_id: null,
-				agent_link_id: link.id,
-				phone_user: options.phone_user ?? null,
-				device: options.device,
-				name: options.name ?? null,
-				self_identity: null,
-			},
-		}),
-	);
-	const dir = resolvePath(ctx.manifestDir, options.baileys_credentials_dir);
-	writePrivateFileAtomic(
-		join(dir, "creds.json"),
-		`${JSON.stringify(credential.creds, null, 2)}\n`,
-		{
-			dirMode: PRIVATE_DIR_MODE,
-		},
-	);
-	writePrivateFileAtomic(
-		join(dir, "auth-cert.json"),
-		`${JSON.stringify(credential.auth_cert, null, 2)}\n`,
-		{ dirMode: PRIVATE_DIR_MODE },
-	);
-	writePrivateFileAtomic(
-		join(dir, "clawdi-whatsapp.json"),
-		`${JSON.stringify(credential, null, 2)}\n`,
-		{ dirMode: PRIVATE_DIR_MODE },
-	);
-	setRuntimeEnv(
-		ctx,
-		runtimeEnvName(linkManifest, "websocket_url", "WA_WEBSOCKET_URL"),
-		credential.websocket_url,
-	);
-	setRuntimeEnv(
-		ctx,
-		runtimeEnvName(linkManifest, "media_proxy_base_url", "WHATSAPP_MEDIA_PROXY_BASE_URL"),
-		credential.media_proxy_base_url,
-	);
-	setRuntimeEnv(ctx, runtimeEnvName(linkManifest, "auth_dir", "CLAWDI_WHATSAPP_AUTH_DIR"), dir);
-	ctx.writes.push(dir);
-	ctx.actions.push({
-		action: "write_whatsapp_baileys_credentials",
-		link_ref: linkManifest.ref,
-		account_id: accountId,
-		link_id: link.id,
-	});
-}
-
 function addRuntimeEnv(
 	ctx: ApplyContext,
 	provider: ChannelProvider,
-	accountId: string,
 	link: RuntimeLink,
 	token: string,
 ): void {
@@ -752,18 +661,6 @@ function addRuntimeEnv(
 			ctx,
 			runtimeEnvName(link, "gateway_url", "DISCORD_GATEWAY_URL"),
 			`${toWebSocketUrl(baseUrl)}/v1/channels/discord/gateway`,
-		);
-	}
-	if (provider === "whatsapp") {
-		setRuntimeEnv(
-			ctx,
-			runtimeEnvName(link, "api_base_url", "WHATSAPP_GRAPH_API_BASE_URL"),
-			`${baseUrl}/v1/channels/whatsapp/graph`,
-		);
-		setRuntimeEnv(
-			ctx,
-			runtimeEnvName(link, "websocket_url", "WA_WEBSOCKET_URL"),
-			`${toWebSocketUrl(baseUrl)}/v1/channels/whatsapp/${accountId}/baileys`,
 		);
 	}
 	if (provider === "imessage") {
@@ -824,7 +721,7 @@ function readManifest(file = "clawdi.runtime.yaml"): {
 	return { manifest: result.data, manifestDir: dirname(path) };
 }
 
-function preflightRuntimeOutputs(manifest: RuntimeManifest, manifestDir: string): void {
+function preflightRuntimeOutputs(manifest: RuntimeManifest): void {
 	const baseUrl = stripTrailingSlash(getConfig().apiUrl);
 	const outputs = new Map<string, { value: string; ref: string }>();
 	const claim = (name: string, value: string, ref: string) => {
@@ -838,7 +735,6 @@ function preflightRuntimeOutputs(manifest: RuntimeManifest, manifestDir: string)
 	};
 
 	for (const channel of manifest.channels) {
-		const accountKey = runtimeAccountKey(channel);
 		for (const link of channel.links) {
 			if (channel.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 			claim(link.runtime.token_env, `token:${link.ref}`, link.ref);
@@ -864,30 +760,6 @@ function preflightRuntimeOutputs(manifest: RuntimeManifest, manifestDir: string)
 					link.ref,
 				);
 			}
-			if (channel.provider === "whatsapp") {
-				claim(
-					runtimeEnvName(link, "api_base_url", "WHATSAPP_GRAPH_API_BASE_URL"),
-					`${baseUrl}/v1/channels/whatsapp/graph`,
-					link.ref,
-				);
-				claim(
-					runtimeEnvName(link, "websocket_url", "WA_WEBSOCKET_URL"),
-					`whatsapp-websocket:${accountKey}`,
-					link.ref,
-				);
-				if (link.whatsapp?.baileys_credentials_dir) {
-					claim(
-						runtimeEnvName(link, "media_proxy_base_url", "WHATSAPP_MEDIA_PROXY_BASE_URL"),
-						`${baseUrl}/v1/channels/whatsapp/media`,
-						link.ref,
-					);
-					claim(
-						runtimeEnvName(link, "auth_dir", "CLAWDI_WHATSAPP_AUTH_DIR"),
-						resolvePath(manifestDir, link.whatsapp.baileys_credentials_dir),
-						link.ref,
-					);
-				}
-			}
 			if (channel.provider === "imessage") {
 				claim(
 					runtimeEnvName(link, "password", "BLUEBUBBLES_PASSWORD"),
@@ -907,12 +779,6 @@ function preflightRuntimeOutputs(manifest: RuntimeManifest, manifestDir: string)
 			}
 		}
 	}
-}
-
-function runtimeAccountKey(channel: RuntimeChannel): string {
-	if (isExistingAccountSpec(channel.account)) return `account:${channel.account.id}`;
-	const account = createPrivateAccountSpec(channel.account);
-	return `private:${channel.provider}:${account.name}`;
 }
 
 function assertManifestAccountCompatible(channel: RuntimeChannel, account: ChannelAccount): void {
