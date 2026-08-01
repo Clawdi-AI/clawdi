@@ -70,6 +70,8 @@ include = [
     "app/core/query_utils.py",
     "app/core/sentry.py",
     "app/core/skill_key.py",
+    "app/routes/sharing.py",
+    "app/services/agent_bindings.py",
     "app/services/composio.py",
     "app/services/discord_gateway_worker.py",
     "app/services/embedding.py",
