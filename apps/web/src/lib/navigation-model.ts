@@ -18,6 +18,7 @@ import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 export type AgentSectionId =
 	| "overview"
 	| "sessions"
+	| "memories"
 	| "skills"
 	| "projects"
 	| "vaults"
@@ -282,8 +283,8 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		label: "Agent Interface",
 		icon: MonitorPlay,
 		tint: "bg-identity-6-bg text-identity-6-fg",
-		description: "Open this agent's browser interface.",
-		tooltip: "Open this agent's browser interface",
+		description: "Use this agent's browser interface.",
+		tooltip: "Use this agent's browser interface",
 		variants: ["hosted"],
 	},
 	terminal: {
@@ -291,8 +292,8 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		label: "Terminal",
 		icon: TerminalSquare,
 		tint: "bg-identity-7-bg text-identity-7-fg",
-		description: "Open a terminal for this agent.",
-		tooltip: "Open a terminal for this agent",
+		description: "Use a terminal for this agent.",
+		tooltip: "Use a terminal for this agent",
 		variants: ["hosted"],
 	},
 	sessions: {
@@ -303,20 +304,28 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		tooltip: "Sessions from this agent",
 		variants: ["connected", "hosted"],
 	},
+	memories: {
+		id: "memories",
+		...CANONICAL_NAVIGATION_IDENTITIES.memories,
+		tint: RESOURCE_TINT_CLASSES.memories,
+		description: "Memories are account-wide and available across all agents.",
+		tooltip: "Account-wide memories available across all agents",
+		variants: ["connected", "hosted"],
+	},
 	skills: {
 		id: "skills",
 		...CANONICAL_NAVIGATION_IDENTITIES.skills,
 		tint: RESOURCE_TINT_CLASSES.skills,
 		description: "Skills available through this agent's Projects.",
-		tooltip: "View Skills available through this agent's Projects",
+		tooltip: "Skills available through this agent's Projects",
 		variants: ["connected", "hosted"],
 	},
 	projects: {
 		id: "projects",
 		...CANONICAL_NAVIGATION_IDENTITIES.projects,
 		tint: RESOURCE_TINT_CLASSES.projects,
-		description: "Agent Project, added Projects, and read order.",
-		tooltip: "Projects available to this agent",
+		description: "Projects this agent uses, in read order.",
+		tooltip: "Projects this agent uses, in read order",
 		variants: ["connected", "hosted"],
 	},
 	vaults: {
@@ -339,8 +348,8 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "ai",
 		...CANONICAL_NAVIGATION_IDENTITIES["ai-providers"],
 		tint: "bg-identity-2-bg text-identity-2-fg",
-		description: "Provider binding and primary model used by this agent.",
-		tooltip: "Configure this agent's provider binding and primary model",
+		description: "AI provider and primary model used by this agent.",
+		tooltip: "Choose this agent's AI provider and primary model",
 		variants: ["hosted"],
 	},
 	channels: {
@@ -365,7 +374,7 @@ const AGENT_NAVIGATION_GROUPS = [
 	{
 		id: "primary",
 		label: null,
-		itemIds: ["overview", "sessions", "console", "terminal"],
+		itemIds: ["overview", "sessions", "memories", "console", "terminal"],
 		separated: false,
 	},
 	{

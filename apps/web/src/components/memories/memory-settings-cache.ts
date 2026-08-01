@@ -3,7 +3,7 @@ export interface MemorySettingsCacheSnapshot {
 	mem0_api_key_configured: boolean;
 }
 
-/** Project settings into the only non-secret fields this page caches. */
+/** Project settings into the only non-secret fields the Memories surface caches. */
 export function memorySettingsForCache(
 	settings: Record<string, unknown>,
 ): MemorySettingsCacheSnapshot {

@@ -110,6 +110,7 @@ describe("sidebar navigation model", () => {
 				items: [
 					{ id: "overview", label: "Overview" },
 					{ id: "sessions", label: "Sessions" },
+					{ id: "memories", label: "Memories" },
 				],
 			},
 			{
@@ -141,6 +142,7 @@ describe("sidebar navigation model", () => {
 				items: [
 					{ id: "overview", label: "Overview" },
 					{ id: "sessions", label: "Sessions" },
+					{ id: "memories", label: "Memories" },
 					{ id: "console", label: "Agent Interface" },
 					{ id: "terminal", label: "Terminal" },
 				],
@@ -170,6 +172,7 @@ describe("sidebar navigation model", () => {
 		expect(CONNECTED_AGENT_SECTION_IDS).toEqual([
 			"overview",
 			"sessions",
+			"memories",
 			"connectors",
 			"projects",
 			"skills",
@@ -179,6 +182,7 @@ describe("sidebar navigation model", () => {
 		expect(HOSTED_AGENT_SECTION_IDS).toEqual([
 			"overview",
 			"sessions",
+			"memories",
 			"console",
 			"terminal",
 			"channels",
@@ -204,6 +208,7 @@ describe("sidebar navigation model", () => {
 		const pairs = [
 			["overview", "overview"],
 			["sessions", "sessions"],
+			["memories", "memories"],
 			["skills", "skills"],
 			["projects", "projects"],
 			["vaults", "vaults"],
@@ -220,7 +225,10 @@ describe("sidebar navigation model", () => {
 			);
 		}
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.ai.description).toBe(
-			"Provider binding and primary model used by this agent.",
+			"AI provider and primary model used by this agent.",
+		);
+		expect(AGENT_SECTION_NAVIGATION_ITEMS.memories.description).toBe(
+			"Memories are account-wide and available across all agents.",
 		);
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.settings.icon).toBe(Settings);
 	});
@@ -238,6 +246,10 @@ describe("sidebar navigation model", () => {
 			new URL("../components/dashboard/agent-vaults-tab.tsx", import.meta.url),
 			"utf8",
 		);
+		const memoriesPage = readFileSync(
+			new URL("../pages/dashboard/memories/page.tsx", import.meta.url),
+			"utf8",
+		);
 		const connectorsPage = readFileSync(
 			new URL("../pages/dashboard/connectors/page.tsx", import.meta.url),
 			"utf8",
@@ -251,6 +263,7 @@ describe("sidebar navigation model", () => {
 			expect(source).toContain("<AgentProjectsTab");
 			expect(source).toContain("<AgentVaultsTab");
 			expect(source).toContain("<ConnectorsSurface embedded");
+			expect(source).toContain("<MemoriesSurface");
 			expect(source).not.toContain("@/pages/dashboard");
 		}
 		expect(agentVaultsTab).toContain("@/components/vault/vaults-surface");
@@ -259,6 +272,8 @@ describe("sidebar navigation model", () => {
 		expect(connectorsPage).not.toContain("useQuery");
 		expect(vaultPage).toContain("@/components/vault/vaults-surface");
 		expect(vaultPage).not.toContain("useQuery");
+		expect(memoriesPage).toContain("@/components/memories/memories-surface");
+		expect(memoriesPage).not.toContain("useQuery");
 		expect(connectedDetail).not.toContain("function AgentProjectsPanel");
 	});
 });

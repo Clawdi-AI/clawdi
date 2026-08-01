@@ -16,6 +16,11 @@ describe("agent Skills resource boundary", () => {
 		expect(source).not.toMatch(/managed_resources|mcp_server|MCP servers/i);
 		expect(source).not.toMatch(/has_mcp|Deployment MCP/i);
 		expect(source).not.toMatch(/runtime-observed|managed_skills/i);
+		expect(source).not.toContain("user-visible");
+		expect(source).not.toContain("Skills appear here through");
+		expect(source).toContain(
+			`emptyMessage="No Skills are available through this agent's Projects yet."`,
+		);
 	});
 
 	test("describes both Agent Skill surfaces as effective availability", () => {

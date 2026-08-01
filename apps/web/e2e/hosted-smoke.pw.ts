@@ -32,6 +32,24 @@ function hostedUser(canUseV2 = true, canUseV1 = false) {
 	};
 }
 const emptyPage = { items: [], total: 0, page: 1, page_size: 25 };
+const hostedMemories = {
+	items: [
+		{
+			id: "memory-hosted-shared",
+			content: "Hosted and connected agents share this memory",
+			category: "context",
+			tags: ["shared"],
+			source: "web",
+			source_session_id: null,
+			source_machine_name: "another-agent.local",
+			access_count: 2,
+			created_at: "2026-07-15T00:00:00Z",
+		},
+	],
+	total: 1,
+	page: 1,
+	page_size: 25,
+};
 
 // Must match the API hosts configured in playwright.hosted.config.ts.
 const CLOUD_API = "http://127.0.0.1:8000";
@@ -2148,6 +2166,10 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			});
 		}
 		if (p === "/v1/sessions") return fulfillJson(r, emptyPage);
+		if (p === "/v1/memories") return fulfillJson(r, hostedMemories);
+		if (p === "/v1/settings") {
+			return fulfillJson(r, { memory_provider: "builtin", mem0_api_key: null });
+		}
 		if (p === "/v1/auth/keys") return fulfillJson(r, []);
 		return fulfillJson(r, {});
 	});
@@ -2685,6 +2707,7 @@ test("hosted agent sidebar renders one Resources heading in canonical order", as
 	await expect(groups.nth(0).getByRole("link")).toHaveText([
 		"Overview",
 		"Sessions",
+		"Memories",
 		"Agent Interface",
 		"Terminal",
 	]);
@@ -2704,6 +2727,46 @@ test("hosted agent sidebar renders one Resources heading in canonical order", as
 
 	const query = `?source=on-clawdi&d=${railHostedDeployment.id}`;
 	const main = page.locator("main");
+	await page.setViewportSize({ width: 2000, height: 1000 });
+	const memoriesLink = groups.nth(0).getByRole("link", { name: "Memories", exact: true });
+	await expect(memoriesLink).toHaveAttribute(
+		"href",
+		`/agents/${railHostedEnvironmentId}/memories${query}`,
+	);
+	await memoriesLink.click();
+	await expect(page).toHaveURL(
+		(url) =>
+			url.pathname === `/agents/${railHostedEnvironmentId}/memories` &&
+			url.searchParams.get("source") === "on-clawdi" &&
+			url.searchParams.get("d") === railHostedDeployment.id,
+	);
+	await expect(main.getByRole("heading", { name: "Memories", level: 1 })).toBeVisible();
+	await expect(page).toHaveTitle("Memories · Clawdi");
+	await expect(page.locator('[data-slot="breadcrumb-page"]')).toHaveText("Memories");
+	await expect(
+		main.getByText("Memories are account-wide and available across all agents.", { exact: true }),
+	).toHaveCount(1);
+	const memoriesSurface = main.getByTestId("memories-surface");
+	await expect(
+		memoriesSurface.getByText("Hosted and connected agents share this memory"),
+	).toBeVisible();
+	await expect(
+		memoriesSurface
+			.locator("article")
+			.filter({ hasText: "Hosted and connected agents share this memory" })
+			.getByRole("link"),
+	).toHaveAttribute("href", "/memories/memory-hosted-shared");
+	expect(await memoriesLink.evaluate((element) => element.hasAttribute("data-active"))).toBe(true);
+	await expect(page.getByTestId("hosted-agent-live-surface")).toHaveCount(0);
+	const centeredAgentSurface = memoriesSurface.locator(
+		"xpath=ancestor::div[@data-hosted='true'][1]",
+	);
+	const centeredWidth = await centeredAgentSurface.evaluate(
+		(element) => element.getBoundingClientRect().width,
+	);
+	expect(centeredWidth).toBeLessThanOrEqual(1280);
+	expect(centeredWidth).toBeLessThan(2000);
+
 	await page.goto(`/agents/${railHostedEnvironmentId}/connectors${query}`);
 	await expect(main.getByRole("heading", { name: "Connectors", level: 1 })).toBeVisible();
 	await expect(page).toHaveTitle("Connectors · Clawdi");
@@ -2985,10 +3048,11 @@ test("hosted Skills empty state stays neutral and excludes infrastructure summar
 	);
 	const main = page.locator("main");
 	await expect(
-		main.getByText("No user-visible Skills are available through this agent's Projects yet.", {
+		main.getByText("No Skills are available through this agent's Projects yet.", {
 			exact: true,
 		}),
 	).toBeVisible();
+	await expect(main.getByText("user-visible", { exact: false })).toHaveCount(0);
 	await expect(main.getByText("Clawdi", { exact: true })).toHaveCount(0);
 });
 
