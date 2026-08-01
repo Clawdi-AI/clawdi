@@ -12,7 +12,7 @@ const pairingSuccess = source("./channel-pairing-success.ts");
 const channelLinkingLogic = source("./channel-linking.logic.ts");
 const hooks = source("./channels-hooks.ts");
 const connectDialog = source("./connect-bot-dialog.tsx");
-const addChannelDialog = source("./add-channel-dialog.tsx");
+const agentCardsLogic = source("./agent-channel-cards.logic.ts");
 const agentDetail = source("../../agents/hosted-agent-detail.tsx");
 const pairedChatRow = source("./paired-chat-row.tsx");
 const pairedChatRowLogic = source("./paired-chat-row.logic.ts");
@@ -41,12 +41,15 @@ describe("channel IA boundary", () => {
 		expect(detail).not.toContain("Link an agent");
 	});
 
-	test("keeps Add, Pair, Unpair, and Unlink on Agent Channels", () => {
-		expect(agentDetail).toContain("data-agent-connected-channels");
+	test("keeps Link, Pair, Unpair, and Unlink on stable Agent bot cards", () => {
+		expect(agentDetail).toContain("data-agent-channels");
+		expect(agentDetail).toContain("data-agent-channel-section={kind}");
+		expect(agentDetail).toContain("data-agent-channel-account-id={bot.id}");
 		expect(agentDetail).toContain("data-agent-channel-group-id={link.id}");
 		expect(pairedChatsDialog).toContain("data-agent-channel-chats-for={linkId}");
 		expect(agentDetail).not.toContain("data-agent-paired-chats");
-		expect(agentDetail).toContain("data-agent-add-channel");
+		expect(agentDetail).toContain("data-agent-add-custom-bot");
+		expect(agentDetail).toContain('linking ? "Linking…" : "Link"');
 		expect(agentDetail).toContain("Pair Telegram");
 		expect(agentDetail).toContain("pairingActionLabel(provider)");
 		expect(channelLinkingLogic).toContain('provider === "discord" ? "Pair Discord" : "Pair chat"');
@@ -56,15 +59,16 @@ describe("channel IA boundary", () => {
 		expect(pairedChatRow).toContain("Unpair");
 		expect(agentDetail).toContain("body: { agent_id: environmentId }");
 		expect(agentDetail).toContain("agentProviderHasSingleLinkLimit");
-		expect(agentDetail).toContain("<AddChannelDialog");
-		expect(addChannelDialog).toContain("Clawdi bots");
-		expect(addChannelDialog).toContain("Custom bots");
-		expect(addChannelDialog).toContain("No Clawdi or Custom bots to add");
-		expect(addChannelDialog).toContain("Connect custom bot");
-		expect(addChannelDialog).toContain("onConnectCustomBot");
-		expect(agentDetail).not.toContain("data-agent-available-channels");
+		expect(agentDetail).toContain('title="Clawdi bots"');
+		expect(agentDetail).toContain('title="Custom bots"');
+		expect(agentDetail).toContain("No Clawdi bots available");
+		expect(agentDetail).toContain("No custom bots yet");
+		expect(agentDetail).toContain("Add custom bot");
+		expect(agentDetail).not.toContain("<AddChannelDialog");
 		expect(agentDetail).toContain("<ConnectBotDialog");
-		expect(agentDetail).toContain('setChannelSetupDialog("connect-custom")');
+		expect(agentDetail).toContain("setCustomBotDialogOpen(true)");
+		expect(agentCardsLogic).toContain("canonicalAgentChannelLinks");
+		expect(agentCardsLogic).toContain("buildAgentChannelCardGroups");
 		expect(agentDetail).not.toContain('<details className="group border-t pt-4">');
 	});
 
@@ -72,8 +76,7 @@ describe("channel IA boundary", () => {
 		expect(connectDialog).toContain("agent_id: agentId ?? null");
 		expect(connectDialog).toContain("Connect custom bot");
 		expect(connectDialog).toContain("onAgentConnected");
-		expect(addChannelDialog).toContain("Add channel");
-		expect(addChannelDialog).toContain('adding ? "Adding…" : "Add"');
+		expect(agentDetail).toContain('linking ? "Linking…" : "Link"');
 		expect(agentDetail).toContain("body: { agent_id: environmentId }");
 		expect(agentDetail).toContain("setDiscordPairOpen(true)");
 		expect(agentDetail).toContain("setDiscordPair({");
@@ -111,7 +114,7 @@ describe("channel IA boundary", () => {
 	test("opens the shared fixed-TTL Telegram flow immediately after a new link", () => {
 		expect(agentDetail).toContain("const [telegramPair, setTelegramPair]");
 		expect(agentDetail).toContain('account?.provider === "telegram"');
-		expect(agentDetail).toContain("onAdd={submitLink}");
+		expect(agentDetail).toContain("onLink={() => void submitLink(bot.id)}");
 		expect(agentDetail).toContain("<TelegramPairDialog");
 		expect(pairDialog).toContain("const TELEGRAM_PAIR_TTL_SECONDS = 900");
 		expect(pairDialog).toContain("agent_link_id: agentLinkId");
@@ -162,7 +165,7 @@ describe("channel IA boundary", () => {
 	test("shows chat identity and isolates Unpair to the selected chat with recovery", () => {
 		expect(agentDetail).toContain("useChannelBindingsForAccounts(activeAccountIds)");
 		expect(agentDetail).toContain("selectAgentPairedChats");
-		expect(agentDetail).toContain("pairedChatsByLinkId.get(link.id) ?? []");
+		expect(agentDetail).toContain("pairedChatsByLinkId.get(linkForBot.id) ?? []");
 		expect(pairedChatRow).toContain("Only this chat will be disconnected");
 		expect(pairedChatRow).toContain("unpair.mutateAsync(binding.id)");
 		expect(pairedChatRow).toContain("unpair.isPending");
@@ -178,7 +181,7 @@ describe("channel IA boundary", () => {
 		expect(agentDetail).not.toContain("No activity yet");
 		expect(agentDetail).not.toContain("Last activity");
 		expect(pairedChatsDialog).toContain("pairedChats.map");
-		expect(pairedChatsDialog).toContain("Paired chats ·");
+		expect(pairedChatsDialog).toContain("Manage paired chats ·");
 		expect(pairedChatsDialog).toContain("aria-controls={panelId}");
 		expect(pairedChatsDialog).toContain('role="status"');
 		expect(pairedChatsDialog).toContain('role="alert"');

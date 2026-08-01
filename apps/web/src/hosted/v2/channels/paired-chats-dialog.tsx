@@ -45,7 +45,8 @@ export function PairedChatsDialog({
 	const [open, setOpen] = useState(false);
 	const isMobile = useIsMobile();
 	const panelId = `paired-chats-${linkId}`;
-	const label = `Paired chats · ${pairedChats.length}`;
+	const label =
+		pairedChats.length > 0 ? `Manage paired chats · ${pairedChats.length}` : "Manage paired chats";
 	const description = `${pairedChats.length} ${pairedChats.length === 1 ? "chat" : "chats"} connected through this channel. Unpairing affects only the selected chat.`;
 	const trigger = (
 		<button

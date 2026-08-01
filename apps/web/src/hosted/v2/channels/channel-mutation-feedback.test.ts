@@ -27,7 +27,6 @@ describe("channel mutation feedback", () => {
 
 	test("keeps agent-page link, unlink, and pair-code feedback scoped to the acting control", () => {
 		const detail = source("../../agents/hosted-agent-detail.tsx");
-		const addChannelDialog = source("./add-channel-dialog.tsx");
 		const discordPairDialog = source("./discord-pair-dialog.tsx");
 		const pairDialog = source("./telegram-pair-dialog.tsx");
 		const pairedChatRow = source("./paired-chat-row.tsx");
@@ -35,7 +34,7 @@ describe("channel mutation feedback", () => {
 
 		expectFeedbackBeforeRequest(
 			detail,
-			"setLinkingAccountId(channelId)",
+			"setLinkingAccountIds((current) => new Set(current).add(channelId))",
 			"await link.execute(channelId)",
 		);
 		expectFeedbackBeforeRequest(
@@ -45,8 +44,8 @@ describe("channel mutation feedback", () => {
 		);
 		expectFeedbackBeforeRequest(detail, "setCreatingPairCode(true)", "await pair.execute");
 		expectFeedbackBeforeRequest(pairDialog, "setGenerating(true)", "await pair.execute");
-		expect(detail).toContain("unlinking={unlinkingLinkIds.has(link.id)}");
-		expect(addChannelDialog).toContain('adding ? "Adding…" : "Add"');
+		expect(detail).toContain("unlinkingLinkIds.has(linkForBot.id)");
+		expect(detail).toContain('linking ? "Linking…" : "Link"');
 		expect(detail).toContain('unlinking ? "Unlinking" : "Unlink"');
 		expect(detail).toContain("Unlinking…");
 		expect(detail).toContain("creatingPairCode ? (");
