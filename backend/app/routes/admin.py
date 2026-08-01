@@ -28,7 +28,7 @@ can land in this file under the same auth dep.
 
 import logging
 from datetime import UTC, datetime
-from typing import Annotated, Any, Never
+from typing import Annotated, Any, Never, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -1896,24 +1896,20 @@ async def _admin_get_channel_row(
 
 
 def _admin_channel_response(account: ChannelAccount, owner: User) -> AdminChannelResponse:
-    return AdminChannelResponse.model_validate(
-        {
-            "id": account.id,
-            "owner_user_id": account.user_id,
-            "owner_clerk_id": owner.clerk_id,
-            "provider": account.provider,
-            "name": account.name,
-            "status": account.status,
-            "visibility": account.visibility,
-            "has_provider_token": bool(
-                account.encrypted_provider_token and account.provider_token_nonce
-            ),
-            "webhook_url": channel_webhook_url(account.id, account.provider),
-            "config": account.config,
-            "archived_at": account.archived_at,
-            "created_at": account.created_at,
-            "updated_at": account.updated_at,
-        }
+    return AdminChannelResponse(
+        id=account.id,
+        owner_user_id=account.user_id,
+        owner_clerk_id=owner.clerk_id,
+        provider=account.provider,
+        name=account.name,
+        status=account.status,
+        visibility=cast(AdminChannelVisibility, account.visibility),
+        has_provider_token=bool(account.encrypted_provider_token and account.provider_token_nonce),
+        webhook_url=channel_webhook_url(account.id, account.provider),
+        config=account.config,
+        archived_at=account.archived_at,
+        created_at=account.created_at,
+        updated_at=account.updated_at,
     )
 
 

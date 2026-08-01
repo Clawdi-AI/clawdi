@@ -109,8 +109,8 @@ clawdi ai-provider add lmstudio-local \
 Public no-auth URLs are rejected by default. Hosted provider base URLs are
 validated as public HTTPS URLs before projection.
 
-Claude Code OAuth is not part of AI Provider v1. Use an Anthropic API key,
-env, or Vault reference:
+Claude Code OAuth is not part of the current AI Provider surface. Use an
+Anthropic API key, env, or Vault reference:
 
 ```bash
 clawdi ai-provider add anthropic-main \
@@ -186,7 +186,7 @@ debt and are not the Hosted binding contract. Provider Catalog CRUD likewise
 remains multi-record.
 
 The bootstrap response is the only Hosted wire used for convergence. Provider
-selection does not add a compatibility or version handshake.
+selection does not alter that stable contract.
 
 Done: `bun test packages/cli/src/runtime/manifest-reconciliation.test.ts`
 exits 0 and includes rejection of multiple configured `provider_ids`.
@@ -216,11 +216,6 @@ OAuth reconcile is durable and target-native:
 The last rule is a cross-runtime ownership fence. It is not a multi-provider
 pool rule and remains required even though each runtime binds at most one
 provider.
-
-Hosted terminal Codex is a separate typed tool projection. Its managed provider
-may be deduplicated with the runtime provider, and a real agent-facing provider
-ID collision remains rejected. It does not turn runtime `provider_ids` into a
-provider pool.
 
 ## Import And Export
 
