@@ -7666,6 +7666,19 @@ test("Agent bot groups keep every bot visible and gate provider conflicts in pla
 	await stubHostedApi(page, {
 		deployments: [runningMissingProjectionDeployment],
 		channelAccounts: [telegramAccount, replacementTelegram, discordAccount],
+		channelBindings: [
+			{
+				id: "6fffffff-ffff-4fff-8fff-ffffffffffff",
+				account_id: telegramId,
+				agent_link_id: telegramLinkId,
+				external_chat_id: "linked-telegram-chat",
+				external_chat_type: "private",
+				external_chat_name: "Linked Telegram chat",
+				status: "active",
+				created_at: "2026-07-31T00:02:00Z",
+				last_message_at: null,
+			},
+		],
 		channelAgentLinks: [
 			{
 				id: telegramLinkId,
@@ -7677,6 +7690,21 @@ test("Agent bot groups keep every bot visible and gate provider conflicts in pla
 			},
 		],
 		channelBotPool: { providers: { discord: [clawdiDiscord] } },
+		channelHealthItems: [
+			{
+				account_id: telegramId,
+				provider: "telegram",
+				name: telegramAccount.name,
+				visibility: "private",
+				channel_status: "active",
+				health_status: "warning",
+				pending_inbox: 0,
+				pending_deliveries: 0,
+				in_progress_deliveries: 0,
+				failed_deliveries: 0,
+				last_message_at: null,
+			},
+		],
 	});
 
 	await page.goto(
@@ -7708,6 +7736,24 @@ test("Agent bot groups keep every bot visible and gate provider conflicts in pla
 	await expect(clawdiDiscordRow).toBeVisible();
 	await expect(discordRow.locator(`[title="${discordAccount.name}"]`)).toBeVisible();
 	await expect(clawdiDiscordRow.locator(`[title="${clawdiDiscord.name}"]`)).toBeVisible();
+	const linkedTelegramHeader = linkedTelegramRow.locator("[data-channel-card-header]");
+	const linkedTelegramChats = linkedTelegramRow.locator(
+		`[data-agent-paired-chats-trigger="${telegramLinkId}"]`,
+	);
+	await expect(linkedTelegramHeader.getByText("Paired", { exact: true })).toBeVisible();
+	await expect(linkedTelegramHeader.getByText("Warning", { exact: true })).toBeVisible();
+	await expect(linkedTelegramHeader).not.toContainText("1 chat");
+	await expect(linkedTelegramChats).toHaveAccessibleName("Manage paired chats · 1");
+	await expect(discordRow.locator("[data-agent-paired-chats-trigger]")).toHaveCount(0);
+	const [linkedTelegramBox, unlinkedDiscordBox] = await Promise.all([
+		linkedTelegramRow.locator("article").boundingBox(),
+		discordRow.locator("article").boundingBox(),
+	]);
+	if (!linkedTelegramBox || !unlinkedDiscordBox) {
+		throw new Error("Expected linked Telegram and unlinked Discord card bounds");
+	}
+	expect(linkedTelegramBox.y).toBe(unlinkedDiscordBox.y);
+	expect(linkedTelegramBox.height).toBe(unlinkedDiscordBox.height);
 	await expect(
 		customSection.getByRole("button", { name: "Add custom bot", exact: true }),
 	).toBeVisible();

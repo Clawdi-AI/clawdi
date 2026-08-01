@@ -2695,7 +2695,7 @@ function AgentChannelBotsSection({
 			) : bots.length > 0 ? (
 				<div className={CHANNEL_CARD_GRID_CLASS}>
 					{bots.map((bot) => (
-						<div key={bot.id} className="min-w-0">
+						<div key={bot.id} className="h-full min-w-0">
 							{renderBot(bot)}
 						</div>
 					))}
@@ -2742,7 +2742,7 @@ function AgentChannelBotCard({
 }) {
 	const unavailableReason = agentChannelLinkUnavailableReason({ bot, agentType, linkedProviders });
 	return (
-		<div data-agent-channel-account-id={bot.id} className="min-w-0">
+		<div data-agent-channel-account-id={bot.id} className="h-full min-w-0">
 			{bot.link ? (
 				<ConnectedChannelGroup
 					link={bot.link}
@@ -2813,14 +2813,14 @@ function ConnectedChannelGroup({
 	const channelName = link.account?.name ?? fallbackAccount?.name ?? "Unnamed channel";
 
 	return (
-		<div data-agent-channel-group-id={link.id} className="min-w-0">
+		<div data-agent-channel-group-id={link.id} className="h-full min-w-0">
 			<LinkedChannelRow
 				link={link}
 				fallbackAccount={fallbackAccount}
 				health={health}
 				agentName={agentName}
 				bindings={bindings}
-				pairedChatCount={pairedChats.length}
+				hasPairedChats={pairedChats.length > 0}
 				unlinking={unlinking}
 				onUnlink={onUnlink}
 			>
@@ -2852,7 +2852,7 @@ function LinkedChannelRow({
 	health,
 	agentName,
 	bindings,
-	pairedChatCount,
+	hasPairedChats,
 	children,
 }: {
 	link: AgentChannelLink;
@@ -2862,7 +2862,7 @@ function LinkedChannelRow({
 	health?: components["schemas"]["ChannelHealthItemResponse"];
 	agentName: string;
 	bindings: readonly ChannelBinding[] | undefined;
-	pairedChatCount: number;
+	hasPairedChats: boolean;
 	children?: React.ReactNode;
 }) {
 	const pair = useCreatePairCode(link.account_id);
@@ -2904,9 +2904,9 @@ function LinkedChannelRow({
 		}
 	}
 	const exceptionalState = [
-		pairedChatCount > 0 ? (
+		hasPairedChats ? (
 			<span key="paired" className="font-medium text-foreground">
-				Paired · {pairedChatCount} {pairedChatCount === 1 ? "chat" : "chats"}
+				Paired
 			</span>
 		) : null,
 		isNormalChannelStatus(link.status) ? null : (
@@ -2929,7 +2929,7 @@ function LinkedChannelRow({
 	];
 	return (
 		<>
-			<div data-agent-channel-link-id={link.id} className="min-w-0">
+			<div data-agent-channel-link-id={link.id} className="h-full min-w-0">
 				<ChannelCard
 					provider={provider}
 					title={name}

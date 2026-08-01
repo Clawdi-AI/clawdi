@@ -29,14 +29,30 @@ describe("shared Channel card", () => {
 		expect(markup).toContain("data-channel-card-header");
 		expect(markup).toContain("min-h-20");
 		expect(markup).toContain("data-channel-card-actions");
+		expect(markup).toContain("h-full");
+		expect(markup).toContain("flex-1");
+		expect(markup).toContain("content-center");
 		expect(markup).toContain(">Support Telegram<");
 		expect(markup).toContain(">Pair<");
 		expect(markup).toContain("Paired chats · 2");
 
 		expect(card).toContain("ENTITY_CARD_BASE");
 		expect(card).toContain("ENTITY_GRID_CLASS");
-		expect(card).toContain('"items-start xl:grid-cols-2"');
-		expect(card).not.toContain("h-full");
+		expect(card).toContain('"items-stretch xl:grid-cols-2"');
+	});
+
+	test("stretches the real header instead of rendering an empty footer", () => {
+		const markup = renderToStaticMarkup(
+			createElement(ChannelCard, {
+				provider: "discord",
+				title: "Community Discord",
+				actions: createElement("button", { type: "button" }, "Link"),
+			}),
+		);
+
+		expect(markup).toContain("data-channel-card-header");
+		expect(markup).toContain("flex-1");
+		expect(markup).not.toContain("border-t");
 	});
 
 	test("is reused by Console inventory and Agent channel cards", () => {
