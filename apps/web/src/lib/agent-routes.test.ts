@@ -25,6 +25,7 @@ describe("agent routes", () => {
 	it("builds canonical segment routes for agent sections", () => {
 		expect(agentSectionHref("agent 1")).toBe("/agents/agent%201");
 		expect(agentSectionHref("agent 1", "sessions")).toBe("/agents/agent%201/sessions");
+		expect(agentSectionHref("agent 1", "memories")).toBe("/agents/agent%201/memories");
 		expect(agentSectionHref("agent 1", "projects")).toBe("/agents/agent%201/project-access");
 		expect(agentSectionHref("agent 1", "vaults")).toBe("/agents/agent%201/vaults");
 		expect(agentSectionHref("agent 1", "connectors")).toBe("/agents/agent%201/connectors");
@@ -157,6 +158,7 @@ describe("agent routes", () => {
 		const sections = [
 			"overview",
 			"sessions",
+			"memories",
 			"skills",
 			"projects",
 			"vaults",
@@ -172,6 +174,7 @@ describe("agent routes", () => {
 		).toEqual({
 			overview: "",
 			sessions: "sessions",
+			memories: "memories",
 			skills: "skills",
 			projects: "project-access",
 			vaults: "vaults",
@@ -186,11 +189,13 @@ describe("agent routes", () => {
 
 	it("keeps canonical labels while preserving backward-compatible URL segments", () => {
 		expect(agentSectionLabel("projects")).toBe("Projects");
+		expect(agentSectionLabel("memories")).toBe("Memories");
 		expect(agentSectionLabel("console")).toBe("Agent Interface");
 		expect(agentSectionLabel("channels")).toBe("Channels");
 		expect(agentSectionLabel("connectors")).toBe("Connectors");
 		expect(agentSectionLabel("vaults")).toBe("Vaults");
 		expect(agentSectionLabelFromSegment("project-access")).toBe("Projects");
+		expect(agentSectionLabelFromSegment("memories")).toBe("Memories");
 		expect(agentSectionLabelFromSegment("console")).toBe("Agent Interface");
 		expect(agentSectionLabelFromSegment("model-provider")).toBe("AI Providers");
 		expect(agentSectionLabelFromSegment("connectors")).toBe("Connectors");
@@ -200,7 +205,7 @@ describe("agent routes", () => {
 	});
 
 	it("keeps shared resources available for connected and hosted agent detail", () => {
-		for (const section of ["skills", "projects", "vaults", "connectors"] as const) {
+		for (const section of ["memories", "skills", "projects", "vaults", "connectors"] as const) {
 			expect(CONNECTED_AGENT_SECTION_IDS).toContain(section);
 			expect(HOSTED_AGENT_SECTION_IDS).toContain(section);
 		}
@@ -222,6 +227,10 @@ describe("agent routes", () => {
 		expect(legacyAgentRoute("overview", { tab: "sessions", filter: "active" })).toEqual({
 			section: "sessions",
 			search: { filter: "active" },
+		});
+		expect(legacyAgentRoute("overview", { tab: "memories" })).toEqual({
+			section: "memories",
+			search: undefined,
 		});
 		expect(legacyAgentRoute("skills", { tab: "channel-links" })).toEqual({
 			section: "channels",
@@ -249,6 +258,12 @@ describe("agent routes", () => {
 		expect(parseAgentPathname("/agents/agent%201/project-access")).toEqual({
 			agentId: "agent 1",
 			section: "projects",
+			sessionId: undefined,
+			skillKey: undefined,
+		});
+		expect(parseAgentPathname("/agents/agent%201/memories")).toEqual({
+			agentId: "agent 1",
+			section: "memories",
 			sessionId: undefined,
 			skillKey: undefined,
 		});

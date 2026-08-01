@@ -163,6 +163,25 @@ const sessions = {
 	page_size: 25,
 };
 
+const memories = {
+	items: [
+		{
+			id: "memory-smoke-1",
+			content: "Shared account context",
+			category: "context",
+			tags: ["shared"],
+			source: "web",
+			source_session_id: null,
+			source_machine_name: "smoke-machine.local",
+			access_count: 1,
+			created_at: now.toISOString(),
+		},
+	],
+	total: 1,
+	page: 1,
+	page_size: 25,
+};
+
 async function fulfillJson(route: Route, body: unknown, status = 200) {
 	await route.fulfill({
 		status,
@@ -289,6 +308,14 @@ async function stubDashboardApi(
 			await fulfillJson(route, sessions);
 			return;
 		}
+		if (url.pathname === "/v1/memories") {
+			await fulfillJson(route, memories);
+			return;
+		}
+		if (url.pathname === "/v1/settings") {
+			await fulfillJson(route, { memory_provider: "builtin", mem0_api_key: null });
+			return;
+		}
 		if (url.pathname === "/v1/auth/keys") {
 			await fulfillJson(route, []);
 			return;
@@ -385,10 +412,35 @@ test("Console and connected agents use the scoped navigation grammar", async ({ 
 
 	await page.goto("/agents/agent-smoke-1");
 	await expectSidebarNavigationGroups(page, [
-		{ label: null, items: ["Overview", "Sessions"] },
+		{ label: null, items: ["Overview", "Sessions", "Memories"] },
 		{ label: "Resources", items: ["Connectors", "Projects", "Skills", "Vaults"] },
 		{ label: null, items: ["Settings"] },
 	]);
+});
+
+test("connected agent Memories stays account-wide with canonical detail links", async ({
+	page,
+}) => {
+	await stubDashboardApi(page);
+	await page.goto("/agents/agent-smoke-1/memories");
+
+	const main = page.locator("main");
+	await expect(main.getByRole("heading", { name: "Memories", level: 1 })).toBeVisible();
+	await expect(page).toHaveTitle("Memories · Clawdi");
+	await expect(page.locator('[data-slot="breadcrumb-page"]')).toHaveText("Memories");
+	await expect(
+		main.getByText("Memories are account-wide and available across all agents.", { exact: true }),
+	).toHaveCount(1);
+	await expect(main.getByTestId("memories-surface")).toBeVisible();
+	const memoryCard = main.locator("article").filter({ hasText: "Shared account context" });
+	await expect(memoryCard).toBeVisible();
+	await expect(memoryCard.getByRole("link")).toHaveAttribute("href", "/memories/memory-smoke-1");
+
+	const sidebar = page.getByTestId("app-sidebar");
+	const memoriesLink = sidebar.getByRole("link", { name: "Memories", exact: true });
+	const sessionsLink = sidebar.getByRole("link", { name: "Sessions", exact: true });
+	expect(await memoriesLink.evaluate((element) => element.hasAttribute("data-active"))).toBe(true);
+	expect(await sessionsLink.evaluate((element) => element.hasAttribute("data-active"))).toBe(false);
 });
 
 test("connected agent resource tabs reuse scoped Projects, account Connectors, and effective Vaults", async ({
@@ -469,13 +521,18 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 	const projectRows = projectStack.locator('ol[aria-label="Effective Project read order"] > li');
 	await expect(projectRows).toHaveCount(3);
 	await expect(projectRows.nth(0)).toContainText("Smoke Project");
-	await expect(projectRows.nth(0)).toContainText("Fixed");
-	await expect(projectRows.nth(0)).toContainText("Default writes · Reads Skills and Vaults");
+	await expect(projectRows.nth(0)).toContainText("Writes here by default");
+	await expect(projectRows.nth(0)).not.toContainText("Fixed");
+	await expect(projectRows.nth(0)).not.toContainText("Default writes");
+	await expect(projectRows.nth(0).locator('[data-slot="badge"]')).toHaveCount(2);
 	await expect(projectRows.nth(0).getByRole("button")).toHaveCount(0);
 	await expect(projectRows.nth(1)).toContainText("Team Knowledge");
 	await expect(projectRows.nth(1)).toContainText("Viewer");
-	await expect(projectRows.nth(1)).toContainText("Read access · Skills and Vaults");
+	await expect(projectRows.nth(1)).not.toContainText("Read access");
+	await expect(projectRows.nth(1)).not.toContainText("Skills and Vaults");
+	await expect(projectRows.nth(1).locator('[data-slot="badge"]')).toHaveCount(2);
 	await expect(projectRows.nth(2)).toContainText("Automation Library");
+	await expect(projectRows.nth(2).locator('[data-slot="badge"]')).toHaveCount(1);
 	await expect(
 		projectRows.nth(1).getByRole("button", { name: "Move Team Knowledge up" }),
 	).toBeDisabled();
@@ -495,10 +552,9 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 	await expect(main.getByRole("heading", { name: "Vaults", level: 1 })).toBeVisible();
 	await expect(page).toHaveTitle("Vaults · Clawdi");
 	await expect(
-		main.getByText(
-			"Vaults appear here through this agent's Agent Project and added Projects. Open a Vault to manage it in the account-level Vaults area.",
-		),
-	).toBeVisible();
+		main.getByText("Vaults available through this agent's Projects.", { exact: true }),
+	).toHaveCount(1);
+	await expect(main.getByText("Vaults appear here through", { exact: false })).toHaveCount(0);
 	await expect(main.getByText("Scoped Vault", { exact: true })).toBeVisible();
 	await expect(main.getByText("Unrelated Vault", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /New vault/i })).toHaveCount(0);
@@ -549,12 +605,15 @@ test("agent Skills wait for effective Project bindings and fail closed on bindin
 	const main = page.locator("main");
 	await expect(main.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible();
 	await expect(main.getByTestId("agent-skills-inventory")).toBeVisible();
+	await expect(
+		main.getByText("Skills available through this agent's Projects.", { exact: true }),
+	).toHaveCount(1);
+	await expect(main.getByText("Skills appear here through", { exact: false })).toHaveCount(0);
 	expect(skillRequests).toEqual([]);
 	if (!releaseBindings) throw new Error("Project binding gate was not initialized");
 	releaseBindings();
-	await expect(
-		main.getByText("No Skills are available through this agent's Projects yet.", { exact: true }),
-	).toBeVisible();
+	await expect(main.getByText("No Skills yet.", { exact: true })).toBeVisible();
+	await expect(main.getByText("No Skills are available through", { exact: false })).toHaveCount(0);
 	expect(skillRequests).toHaveLength(1);
 
 	const errorPage = await page.context().newPage();

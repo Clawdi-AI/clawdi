@@ -40,4 +40,13 @@ describe("hosted agent detail header", () => {
 		expect(detailSource).not.toContain("Access {runtimeBrowserUiLabel(runtime)}");
 		expect(detailSource).toContain("<RuntimeUiAccessDialog");
 	});
+
+	test("describes missing projection sections with visible navigation labels", () => {
+		const source = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
+
+		expect(source).toContain(
+			"Sessions, Projects, Skills, Vaults, and Channels will appear when this agent is ready.",
+		);
+		expect(source).not.toContain("Vaults, profile, and channels");
+	});
 });

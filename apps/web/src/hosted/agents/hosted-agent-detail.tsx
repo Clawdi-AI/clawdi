@@ -46,6 +46,7 @@ import {
 	EntityChoiceCard,
 } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
+import { MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
@@ -294,6 +295,7 @@ type HostedAgentTab =
 	| "console"
 	| "terminal"
 	| "sessions"
+	| "memories"
 	| "connectors"
 	| "projects"
 	| "skills"
@@ -607,6 +609,7 @@ export function HostedAgentDetail({
 							<ProjectionDependentUnavailable label="Sessions" />
 						)
 					) : null}
+					{activeTab === "memories" ? <MemoriesSurface /> : null}
 					{activeTab === "connectors" ? <ConnectorsSurface embedded /> : null}
 					{activeTab === "projects" ? (
 						projection.status === "resolved" ? (
@@ -622,7 +625,6 @@ export function HostedAgentDetail({
 								agentProjectId={agent?.default_project_id}
 								routeSearch={routeSearch}
 								projectionFence={deployment.resource.metadata.resourceVersion}
-								hosted
 							/>
 						) : (
 							<ProjectionDependentUnavailable label="Skills" />
@@ -698,8 +700,8 @@ function HostedProjectionNotice({
 				<AlertTitle>Some agent details are not ready</AlertTitle>
 				<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<span>
-						Sessions, Projects, skills, Vaults, profile, and channels will appear when they’re
-						ready. Available actions and tools still work.
+						Sessions, Projects, Skills, Vaults, and Channels will appear when this agent is ready.
+						Available actions and tools still work.
 					</span>
 					<Button type="button" variant="outline" size="sm" disabled={isFetching} onClick={onRetry}>
 						{isFetching ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
