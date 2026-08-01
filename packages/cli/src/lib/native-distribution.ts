@@ -85,9 +85,20 @@ export function detectNativeInstall(
 		validateNativeInstallIdentity(versionDir, compiledIdentity, manifest);
 		if (!lstatSync(join(versionDir, "egress-addon")).isDirectory()) return null;
 		if (!lstatSync(join(versionDir, "skills")).isDirectory()) return null;
+		if (!lstatSync(join(versionDir, "runtime-adapters")).isDirectory()) return null;
 		if (!lstatSync(join(versionDir, "egress-addon", "clawdi_egress_addon.py")).isFile())
 			return null;
 		if (!lstatSync(join(versionDir, "skills", "clawdi", "SKILL.md")).isFile()) return null;
+		if (
+			!lstatSync(
+				join(versionDir, "runtime-adapters", "whatsapp", "openclaw", "openclaw.plugin.json"),
+			).isFile()
+		)
+			return null;
+		if (
+			!lstatSync(join(versionDir, "runtime-adapters", "whatsapp", "hermes", "plugin.yaml")).isFile()
+		)
+			return null;
 	} catch {
 		return null;
 	}

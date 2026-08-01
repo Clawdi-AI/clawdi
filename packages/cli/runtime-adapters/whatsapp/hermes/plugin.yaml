@@ -1,0 +1,19 @@
+name: clawdi-whatsapp
+label: WhatsApp (Clawdi managed)
+kind: platform
+version: 0.1.0
+description: Clawdi application-relay platform adapter for Hermes Agent.
+author: Clawdi
+requires_env:
+  - name: CLAWDI_WHATSAPP_RELAY_URL
+    description: Clawdi WhatsApp application relay base URL
+    prompt: Relay URL
+    password: false
+  - name: CLAWDI_WHATSAPP_ACCOUNT_ID
+    description: Clawdi WhatsApp account ID
+    prompt: Account ID
+    password: false
+  - name: CLAWDI_WHATSAPP_LINK_TOKEN
+    description: Link-scoped Clawdi agent token
+    prompt: Link token
+    password: true

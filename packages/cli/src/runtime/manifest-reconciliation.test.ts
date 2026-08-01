@@ -4259,6 +4259,45 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toThrow(`runtime managed directory is not a real directory: ${symlinkPaths.runConfigRoot}`);
 	});
 
+	test("keeps bundled WhatsApp adapter paths inert while the activation gate is false", () => {
+		const paths = tempRuntimePaths();
+		const manifest = baseManifest(paths, {});
+		const workspaceRoot = manifest.workspaceRoot ?? join(paths.userHome, "clawdi");
+		const adapterTargets = [
+			join(paths.userHome, ".openclaw", "extensions", "clawdi-whatsapp"),
+			join(paths.userHome, ".hermes", "plugins", "clawdi-whatsapp"),
+		];
+		for (const [index, target] of adapterTargets.entries()) {
+			mkdirSync(target, { recursive: true });
+			writeFileSync(join(target, ".clawdi-managed-adapter.json"), `preserve-${index}\n`);
+		}
+
+		const mutationTargets = runtimeUserMutationTargets(manifest, paths, workspaceRoot, new Map());
+		for (const adapterTarget of adapterTargets) {
+			expect(mutationTargets).not.toContain(adapterTarget);
+			expect(mutationTargets.some((target) => adapterTarget.startsWith(`${target}/`))).toBe(false);
+		}
+
+		const convergence = convergeRuntimeManifest(
+			manifestLoad(manifest, "false-gated-whatsapp-adapters"),
+			paths,
+			{
+				cacheLastGood: false,
+				systemdApply: {
+					activateEgressPrerequisite: successfulPrerequisiteActivation,
+					activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
+					rollback: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
+				},
+			},
+		);
+		expect(convergence.installErrors).toEqual([]);
+		for (const [index, target] of adapterTargets.entries()) {
+			expect(readFileSync(join(target, ".clawdi-managed-adapter.json"), "utf8")).toBe(
+				`preserve-${index}\n`,
+			);
+		}
+	});
+
 	test("snapshots exact installer targets only when the planned executable is missing", () => {
 		const paths = tempRuntimePaths();
 		const home = paths.userHome;

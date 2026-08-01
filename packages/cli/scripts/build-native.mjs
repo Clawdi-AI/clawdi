@@ -56,3 +56,8 @@ cpSync(resolve(cliRoot, "skills"), resolve(outputDirectory, "skills"), {
 	recursive: true,
 });
 console.log(`copied bundled skills to ${resolve(outputDirectory, "skills")}`);
+
+cpSync(resolve(cliRoot, "runtime-adapters"), resolve(outputDirectory, "runtime-adapters"), {
+	recursive: true,
+});
+console.log(`copied runtime adapters to ${resolve(outputDirectory, "runtime-adapters")}`);

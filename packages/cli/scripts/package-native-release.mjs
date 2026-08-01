@@ -27,6 +27,11 @@ run("test", ["-x", resolve(nativeDir, "clawdi")]);
 run("test", ["-f", resolve(nativeDir, "egress-addon", "clawdi_egress_addon.py")]);
 run("test", ["-f", resolve(nativeDir, "skills", "clawdi", "SKILL.md")]);
 run("test", ["-f", resolve(nativeDir, "skills", "hosted-versions", "1", "clawdi", "SKILL.md")]);
+run("test", [
+	"-f",
+	resolve(nativeDir, "runtime-adapters", "whatsapp", "openclaw", "openclaw.plugin.json"),
+]);
+run("test", ["-f", resolve(nativeDir, "runtime-adapters", "whatsapp", "hermes", "plugin.yaml")]);
 run("tar", [
 	"-C",
 	nativeDir,
@@ -38,6 +43,7 @@ run("tar", [
 	"clawdi",
 	"egress-addon",
 	"skills",
+	"runtime-adapters",
 ]);
 
 console.log(`packaged ${assetPath}`);

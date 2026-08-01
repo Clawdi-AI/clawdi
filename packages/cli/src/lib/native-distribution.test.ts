@@ -25,10 +25,20 @@ describe("native install ownership", () => {
 		const manifest = nativeManifest(identity.version);
 		mkdirSync(join(versionDir, "egress-addon"), { recursive: true });
 		mkdirSync(join(versionDir, "skills", "clawdi"), { recursive: true });
+		mkdirSync(join(versionDir, "runtime-adapters", "whatsapp", "openclaw"), { recursive: true });
+		mkdirSync(join(versionDir, "runtime-adapters", "whatsapp", "hermes"), { recursive: true });
 		mkdirSync(join(prefix, "bin"), { recursive: true });
 		writeFileSync(executable, "native\n");
 		writeFileSync(join(versionDir, "egress-addon", "clawdi_egress_addon.py"), "addon\n");
 		writeFileSync(join(versionDir, "skills", "clawdi", "SKILL.md"), "# skill\n");
+		writeFileSync(
+			join(versionDir, "runtime-adapters", "whatsapp", "openclaw", "openclaw.plugin.json"),
+			"{}\n",
+		);
+		writeFileSync(
+			join(versionDir, "runtime-adapters", "whatsapp", "hermes", "plugin.yaml"),
+			"name: test\n",
+		);
 		writeFileSync(join(versionDir, "clawdi-cli-manifest.txt"), manifest);
 		symlinkSync("../share/clawdi/versions/1.2.3-linux-x64/clawdi", join(prefix, "bin", "clawdi"));
 

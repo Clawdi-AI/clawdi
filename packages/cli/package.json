@@ -12,6 +12,7 @@
 		"bin",
 		"dist",
 		"egress-addon",
+		"runtime-adapters",
 		"skills",
 		"LICENSE",
 		"README.md"

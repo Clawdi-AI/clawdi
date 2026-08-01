@@ -1,0 +1,40 @@
+{
+	"name": "@clawdi/openclaw-whatsapp-relay",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Clawdi application-relay channel adapter for OpenClaw",
+	"type": "module",
+	"exports": {
+		".": "./index.js",
+		"./api.js": "./api.js",
+		"./relay-client.js": "./relay-client.js"
+	},
+	"peerDependencies": {
+		"openclaw": ">=2026.7.1"
+	},
+	"peerDependenciesMeta": {
+		"openclaw": {
+			"optional": true
+		}
+	},
+	"openclaw": {
+		"extensions": [
+			"./index.js"
+		],
+		"channel": {
+			"id": "whatsapp",
+			"label": "WhatsApp",
+			"selectionLabel": "WhatsApp (Clawdi managed)",
+			"detailLabel": "WhatsApp",
+			"docsPath": "/channels/whatsapp",
+			"docsLabel": "whatsapp",
+			"blurb": "WhatsApp through the Clawdi application relay.",
+			"order": 70,
+			"exposure": {
+				"configured": false,
+				"setup": false,
+				"docs": false
+			}
+		}
+	}
+}

@@ -247,6 +247,7 @@ afterAll(() => {
 				"clawdi",
 				"egress-addon",
 				"skills",
+				"runtime-adapters",
 			]);
 			run("tar", ["-rf", plainTar, "-C", join(duplicate.directory, "payload"), "clawdi"]);
 			const compressed = spawnSync("gzip", ["-c", plainTar], {
@@ -455,6 +456,7 @@ function repack(fixture: NativeReleaseFixture): void {
 		"clawdi",
 		"egress-addon",
 		"skills",
+		"runtime-adapters",
 	]);
 	rewriteNativeReleaseManifest(fixture);
 }

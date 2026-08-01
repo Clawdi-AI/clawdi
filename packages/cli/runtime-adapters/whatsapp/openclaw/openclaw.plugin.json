@@ -1,0 +1,12 @@
+{
+	"id": "clawdi-whatsapp",
+	"activation": {
+		"onStartup": false
+	},
+	"channels": ["whatsapp"],
+	"configSchema": {
+		"type": "object",
+		"additionalProperties": false,
+		"properties": {}
+	}
+}

@@ -108,7 +108,6 @@ function managedChannelLinks(channels: RuntimeChannelAccount[]): ManagedChannelL
 	const links: ManagedChannelLink[] = [];
 	for (const account of channels) {
 		if (account.status !== "active") continue;
-		if (account.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		for (const link of account.runtime_links) {
 			if (link.status !== "active" || !link.agent_token) continue;
 			const accountKey = channelAccountKey(account);
@@ -123,11 +122,16 @@ function managedChannelLinks(channels: RuntimeChannelAccount[]): ManagedChannelL
 			});
 		}
 	}
-	return links.sort((left, right) =>
+	const sorted = links.sort((left, right) =>
 		`${left.account.provider}:${left.accountKey}:${left.linkId}`.localeCompare(
 			`${right.account.provider}:${right.accountKey}:${right.linkId}`,
 		),
 	);
+	const projected = sorted.filter(
+		(link) => link.account.provider !== "whatsapp" || WHATSAPP_UPSTREAM_READY,
+	);
+	assertSingleManagedLinkPerProvider(projected);
+	return projected;
 }
 
 function applyRuntimeChannelProjection(
@@ -136,6 +140,7 @@ function applyRuntimeChannelProjection(
 	paths: RuntimePaths,
 ): RuntimeManifest {
 	void paths;
+	assertSingleManagedLinkPerProvider(links);
 	const managedProfiles = buildManagedChannelEgressProfiles(links, manifest.controlPlane.apiUrl);
 	const projected: RuntimeManifest = {
 		...manifest,
@@ -193,7 +198,6 @@ function applyOpenClawRuntimeChannelSettings(
 ): RuntimeManifest {
 	const openclaw = manifest.runtimes.openclaw;
 	if (!openclaw?.enabled) return manifest;
-	assertSingleManagedLinkPerProvider(links);
 
 	const existingRun = openclaw.run ?? { env: {}, prependPath: [] };
 	const secretEnv = omitOpenClawManagedChannelSecretEnv(existingRun.secretEnv ?? {});
@@ -260,13 +264,14 @@ function singleLinkForProvider(
 }
 
 function assertSingleManagedLinkPerProvider(links: ManagedChannelLink[]): void {
-	for (const provider of ["telegram", "discord"] as const) {
+	for (const provider of ["telegram", "discord", "whatsapp"] as const) {
 		singleLinkForProvider(links, provider);
 	}
 }
 
 function runtimeProviderLinkLimitDetail(provider: ChannelProvider): string {
-	const label = provider === "telegram" ? "Telegram" : "Discord";
+	const label =
+		provider === "telegram" ? "Telegram" : provider === "discord" ? "Discord" : "WhatsApp";
 	return `This Agent has multiple active ${label} bots. Unlink the extras until only one remains.`;
 }
 

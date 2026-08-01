@@ -118,8 +118,20 @@ export function createNativeReleaseFixture(input: {
 		recursive: true,
 	});
 	cpSync(join(input.resourceRoot, "skills"), join(payload, "skills"), { recursive: true });
+	cpSync(join(input.resourceRoot, "runtime-adapters"), join(payload, "runtime-adapters"), {
+		recursive: true,
+	});
 	const asset = nativeAssetName(identity.target);
-	run("tar", ["-czf", join(directory, asset), "-C", payload, "clawdi", "egress-addon", "skills"]);
+	run("tar", [
+		"-czf",
+		join(directory, asset),
+		"-C",
+		payload,
+		"clawdi",
+		"egress-addon",
+		"skills",
+		"runtime-adapters",
+	]);
 	writeManifest(directory, version, identity.target);
 	return { directory, version, target: identity.target };
 }

@@ -48,6 +48,8 @@ const REQUIRED_NATIVE_FILES = [
 	"egress-addon/clawdi_egress_addon.py",
 	"skills/clawdi/SKILL.md",
 	"skills/hosted-versions/1/clawdi/SKILL.md",
+	"runtime-adapters/whatsapp/openclaw/openclaw.plugin.json",
+	"runtime-adapters/whatsapp/hermes/plugin.yaml",
 ] as const;
 const MAX_NATIVE_ARCHIVE_BYTES = 256 * 1024 * 1024;
 const MAX_NATIVE_ARCHIVE_ENTRIES = 20_000;
@@ -450,7 +452,9 @@ function assertAllowedNativeArchiveEntry(path: string, type: string, size: numbe
 		!normalized ||
 		path.startsWith("/") ||
 		segments.some((segment) => segment === "" || segment === ".." || segment === ".") ||
-		!(["clawdi", "egress-addon", "skills"] as string[]).includes(segments[0] ?? "") ||
+		!(["clawdi", "egress-addon", "skills", "runtime-adapters"] as string[]).includes(
+			segments[0] ?? "",
+		) ||
 		(type !== "File" && type !== "Directory")
 	) {
 		throw new Error(`native archive contains unsafe entry: ${path}`);
@@ -529,6 +533,7 @@ function validateStagedResources(directory: string): void {
 	}
 	assertTreeHasNoLinks(join(directory, "egress-addon"));
 	assertTreeHasNoLinks(join(directory, "skills"));
+	assertTreeHasNoLinks(join(directory, "runtime-adapters"));
 }
 
 function normalizeNativeTreeModes(directory: string, root = directory): void {

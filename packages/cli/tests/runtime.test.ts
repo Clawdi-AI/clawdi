@@ -6437,6 +6437,55 @@ exit 64
 		}
 	});
 
+	it("keeps duplicate dormant WhatsApp links inert behind the false gate", () => {
+		const loaded: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_duplicate_whatsapp",
+				environmentId: "env_duplicate_whatsapp",
+				instanceId: "iid_duplicate_whatsapp",
+				generation: 1,
+				issuedAt: "2026-07-30T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: { openclaw: { enabled: true }, hermes: { enabled: true } },
+			},
+			source: "remote-datasource",
+			sourcePath: "https://cloud-api.test/v1/runtime/manifest",
+		};
+		const channels: RuntimeChannelsLoad = {
+			channels: ["one", "two"].map((suffix) => ({
+				id: `acct-whatsapp-${suffix}`,
+				provider: "whatsapp" as const,
+				name: `WhatsApp ${suffix}`,
+				status: "active" as const,
+				visibility: "private" as const,
+				runtime_links: [
+					{
+						id: `link-whatsapp-${suffix}`,
+						account_id: `acct-whatsapp-${suffix}`,
+						agent_id: "env_duplicate_whatsapp",
+						status: "active" as const,
+						agent_token: `agent-token-${suffix}`,
+					},
+				],
+				runtime_credentials: [],
+			})),
+			source: "remote-datasource",
+			sourcePath: "https://cloud-api.test/v1/channels",
+			etag: testBundleEtag("duplicate-whatsapp-links"),
+		};
+
+		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
+		const serialized = JSON.stringify(projected);
+		expect(projected.manifest.projection?.channels).toEqual({});
+		expect(projected.manifest.egressProfiles?.profiles).toEqual([]);
+		expect(serialized).not.toContain("CLAWDI_WHATSAPP_");
+		expect(serialized).not.toContain("clawdi-whatsapp");
+		expect(serialized).not.toContain("agent-token-one");
+		expect(serialized).not.toContain("agent-token-two");
+		expect(Object.keys(projected.secretValues ?? {})).toEqual([]);
+	});
+
 	it("reconciles environment-scoped hosted bundle channel create, rotation, and removal", () => {
 		const accountKey = "clawdi_00000000000000000000000000000001";
 		const agentRef = `secret://channels/telegram/${accountKey}/agent-token`;
@@ -6639,6 +6688,7 @@ exit 64
 	it("gates WhatsApp runtime channel projection until upstream support is ready", () => {
 		const accountId = "00000000-0000-0000-0000-000000000001";
 		const linkId = "link-whatsapp-1";
+		const credentialId = "credential-whatsapp-1";
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
 				schemaVersion: "clawdi.runtimeDesiredState.v1",
@@ -6677,7 +6727,26 @@ exit 64
 							agent_token: "wa-agent-token",
 						},
 					],
-					runtime_credentials: [],
+					runtime_credentials: [
+						{
+							id: credentialId,
+							account_id: accountId,
+							agent_link_id: linkId,
+							agent_id: "env_whatsapp_creds_projection",
+							provider: "whatsapp",
+							kind: "whatsapp_baileys_auth_state",
+							created_at: "2026-07-07T00:00:00Z",
+							jid: "15551234567:1@s.whatsapp.net",
+							identity_pub_key_hex: "aabbcc",
+							material: {
+								schemaVersion: "clawdi.whatsappBaileysAuthState.v1",
+								creds: {
+									advSecretKey: "wa-adv-secret",
+									me: { id: "15551234567:1@s.whatsapp.net" },
+								},
+							},
+						},
+					],
 				},
 			],
 			source: "remote-datasource",
@@ -6690,9 +6759,18 @@ exit 64
 		expect(projected.manifest.projection?.channels).toEqual({});
 		expect(projected.manifest.projection?.channelCredentials).toEqual([]);
 		expect(projected.manifest.egressProfiles?.profiles).toEqual([]);
+		expect(JSON.stringify(projected.manifest)).not.toContain("CLAWDI_WHATSAPP_");
+		expect(JSON.stringify(projected.manifest)).not.toContain("clawdi-whatsapp");
+		expect(JSON.stringify(projected.manifest)).not.toContain('"whatsapp":{"enabled"');
 		expect(JSON.stringify(projected.manifest)).not.toContain(accountId);
+		expect(JSON.stringify(projected.manifest)).not.toContain("baileys");
 		expect(JSON.stringify(projected.manifest)).not.toContain("wa-agent-token");
+		expect(JSON.stringify(projected.manifest)).not.toContain("wa-adv-secret");
 		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("wa-agent-token");
+		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("wa-adv-secret");
+		expect(
+			Object.keys(projected.secretValues ?? {}).some((key) => key.includes("/whatsapp/")),
+		).toBe(false);
 	});
 
 	it("removes stale channel-driven egress profiles when runtime channels are disabled", () => {
@@ -12524,6 +12602,14 @@ exit 64
 		const hermesEnv = readSystemdEnvFile(getRuntimePaths(), "hermes-gateway");
 		expect(hermesEnv).not.toContain("TELEGRAM_BOT_TOKEN");
 		expect(hermesEnv).not.toContain("DISCORD_BOT_TOKEN");
+		expect(clearedChannelsConfig).toHaveProperty("whatsapp", {
+			enabled: true,
+			custom_user_setting: "keep-whatsapp",
+		});
+		expect(clearedChannelsConfig).toHaveProperty("platforms.whatsapp", {
+			enabled: true,
+			extra: { custom_user_setting: "keep-platform-whatsapp" },
+		});
 	});
 
 	it("converges empty native channel projection with merge-patch deletes", () => {

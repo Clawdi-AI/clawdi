@@ -28,6 +28,9 @@ if (!packageFiles.includes("egress-addon")) {
 if (!packageFiles.includes("skills")) {
 	problems.push('package.json files must include "skills"');
 }
+if (!packageFiles.includes("runtime-adapters")) {
+	problems.push('package.json files must include "runtime-adapters"');
+}
 
 if (problems.length > 0) {
 	console.error("The published CLI package manifest is not ready:");

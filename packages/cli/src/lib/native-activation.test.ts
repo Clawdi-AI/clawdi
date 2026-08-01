@@ -33,7 +33,16 @@ describe("native archive safety", () => {
 	it("rejects duplicate archive paths", async () => {
 		const root = fixtureRoot();
 		const tarPath = join(root, "duplicate.tar");
-		run("tar", ["-cf", tarPath, "-C", root, "clawdi", "egress-addon", "skills"]);
+		run("tar", [
+			"-cf",
+			tarPath,
+			"-C",
+			root,
+			"clawdi",
+			"egress-addon",
+			"skills",
+			"runtime-adapters",
+		]);
 		run("tar", ["-rf", tarPath, "-C", root, "clawdi"]);
 		const compressed = spawnSync("gzip", ["-c", tarPath]);
 		if (compressed.status !== 0 || !compressed.stdout) throw new Error("gzip fixture failed");
@@ -134,7 +143,7 @@ describe("native launcher transaction", () => {
 
 function buildArchive(root = fixtureRoot()): Buffer {
 	const archive = join(root, "native.tar.gz");
-	run("tar", ["-czf", archive, "-C", root, "clawdi", "egress-addon", "skills"]);
+	run("tar", ["-czf", archive, "-C", root, "clawdi", "egress-addon", "skills", "runtime-adapters"]);
 	return readFileSync(archive);
 }
 
@@ -144,10 +153,20 @@ function fixtureRoot(): string {
 	mkdirSync(join(root, "egress-addon"), { recursive: true });
 	mkdirSync(join(root, "skills", "clawdi"), { recursive: true });
 	mkdirSync(join(root, "skills", "hosted-versions", "1", "clawdi"), { recursive: true });
+	mkdirSync(join(root, "runtime-adapters", "whatsapp", "openclaw"), { recursive: true });
+	mkdirSync(join(root, "runtime-adapters", "whatsapp", "hermes"), { recursive: true });
 	writeFileSync(join(root, "clawdi"), "native\n");
 	writeFileSync(join(root, "egress-addon", "clawdi_egress_addon.py"), "addon\n");
 	writeFileSync(join(root, "skills", "clawdi", "SKILL.md"), "# skill\n");
 	writeFileSync(join(root, "skills", "hosted-versions", "1", "clawdi", "SKILL.md"), "# hosted\n");
+	writeFileSync(
+		join(root, "runtime-adapters", "whatsapp", "openclaw", "openclaw.plugin.json"),
+		"{}\n",
+	);
+	writeFileSync(
+		join(root, "runtime-adapters", "whatsapp", "hermes", "plugin.yaml"),
+		"name: test\n",
+	);
 	return root;
 }
 

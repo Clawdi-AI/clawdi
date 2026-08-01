@@ -447,6 +447,12 @@ describe("update install", () => {
 		mkdirSync(join(payload, "skills", "hosted-versions", "1", "clawdi"), {
 			recursive: true,
 		});
+		mkdirSync(join(payload, "runtime-adapters", "whatsapp", "openclaw"), {
+			recursive: true,
+		});
+		mkdirSync(join(payload, "runtime-adapters", "whatsapp", "hermes"), {
+			recursive: true,
+		});
 		writeFileSync(
 			join(payload, "clawdi"),
 			'#!/bin/sh\nprintf "%s\\n" "$0" "$@" > "$CLAWDI_NATIVE_PROBE_LOG"\nexit 0\n',
@@ -458,6 +464,14 @@ describe("update install", () => {
 			join(payload, "skills", "hosted-versions", "1", "clawdi", "SKILL.md"),
 			"# hosted\n",
 		);
+		writeFileSync(
+			join(payload, "runtime-adapters", "whatsapp", "openclaw", "openclaw.plugin.json"),
+			"{}\n",
+		);
+		writeFileSync(
+			join(payload, "runtime-adapters", "whatsapp", "hermes", "plugin.yaml"),
+			"name: test\n",
+		);
 		const tarResult = spawnSync("tar", [
 			"-czf",
 			archivePath,
@@ -466,6 +480,7 @@ describe("update install", () => {
 			"clawdi",
 			"egress-addon",
 			"skills",
+			"runtime-adapters",
 		]);
 		expect(tarResult.status).toBe(0);
 		const archive = readFileSync(archivePath);
