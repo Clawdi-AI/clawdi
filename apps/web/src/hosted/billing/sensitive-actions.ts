@@ -16,10 +16,16 @@ import {
 } from "@/hosted/billing/subscription/subscription-create-adapter";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
-function useInvalidateBillingAfterCheckout() {
+function useInvalidateBillingAfterCheckout({
+	invalidateDeployments,
+}: {
+	invalidateDeployments: boolean;
+}) {
 	const queryClient = useQueryClient();
 	return () => {
-		queryClient.invalidateQueries({ queryKey: billingKeys.deployments });
+		if (invalidateDeployments) {
+			queryClient.invalidateQueries({ queryKey: billingKeys.deployments });
+		}
 		queryClient.invalidateQueries({ queryKey: billingKeys.wallet });
 		queryClient.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });
 		queryClient.invalidateQueries({ queryKey: ["agents"] });
@@ -39,9 +45,13 @@ export function useSensitiveSetAutoReload() {
 	return useSensitiveAction((body: WalletAutoReloadRequest) => client.setAutoReload(body));
 }
 
-export function useSensitiveCreateSubscription() {
+export function useSensitiveCreateSubscription({
+	invalidateDeployments = true,
+}: {
+	invalidateDeployments?: boolean;
+} = {}) {
 	const client = useBillingClient();
-	const invalidate = useInvalidateBillingAfterCheckout();
+	const invalidate = useInvalidateBillingAfterCheckout({ invalidateDeployments });
 	return useSensitiveAction(async (request: SubscriptionCreateRequestView) => {
 		const apiRequest = subscriptionCreateRequest(request);
 		const result = subscriptionCreateOutcome(

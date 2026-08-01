@@ -185,6 +185,37 @@ describe("refreshCheckoutReturnQueries", () => {
 		expect(qc.getQueryState(["agents"])?.isInvalidated).toBe(true);
 	});
 
+	test("refreshes ancillary checkout state without invalidating a seeded deployment handoff", async () => {
+		const qc = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+		});
+		const authoritative = hostedDeploymentFixture({ id: "hdep_accepted", status: "creating" });
+		let deploymentsCalls = 0;
+		let walletCalls = 0;
+		await qc.prefetchQuery({
+			queryKey: billingKeys.deployments,
+			queryFn: async () => {
+				deploymentsCalls += 1;
+				return [authoritative];
+			},
+		});
+		await qc.prefetchQuery({
+			queryKey: billingKeys.wallet,
+			queryFn: async () => {
+				walletCalls += 1;
+				return { balance_cents: walletCalls };
+			},
+		});
+
+		const result = await refreshCheckoutReturnQueries(qc, { includeDeployments: false });
+
+		expect(deploymentsCalls).toBe(1);
+		expect(walletCalls).toBe(2);
+		expect(result).toEqual([authoritative]);
+		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(false);
+		qc.clear();
+	});
+
 	test("rejects instead of claiming success when the required wallet refresh fails", async () => {
 		const qc = new QueryClient({
 			defaultOptions: { queries: { retry: false } },

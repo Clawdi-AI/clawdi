@@ -55,9 +55,11 @@ export function useCheckoutReturnHandler({
 		const canceled = checkoutReturnWasCanceled(searchStr);
 		const deploymentId = canceled ? null : checkoutReturnDeploymentId(searchStr);
 		if (deploymentId && onNavigate(deploymentId) !== false) {
-			void refreshCheckoutReturn().catch(() => {
+			// The navigation owner hydrates the committed deployment by id. Refresh
+			// only ancillary billing state here so a stale list cannot erase it.
+			void refreshCheckoutReturn({ includeDeployments: false }).catch(() => {
 				toast.error("Couldn’t refresh checkout status", {
-					description: "Refresh the page to check your agents, subscription, and wallet.",
+					description: "Refresh the page to check your subscription and wallet.",
 				});
 			});
 			return;
