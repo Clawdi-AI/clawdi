@@ -7683,6 +7683,7 @@ export interface components {
             reaction?: components["schemas"]["WhatsAppApplicationReaction"] | null;
             /** Media */
             media?: components["schemas"]["WhatsAppApplicationMedia"][];
+            unsupported?: components["schemas"]["WhatsAppApplicationUnsupportedContent"] | null;
         };
         /** WhatsAppApplicationReaction */
         WhatsAppApplicationReaction: {
@@ -7697,6 +7698,11 @@ export interface components {
             id: string;
             /** Name */
             name?: string | null;
+        };
+        /** WhatsAppApplicationUnsupportedContent */
+        WhatsAppApplicationUnsupportedContent: {
+            /** Providercontenttype */
+            providerContentType: string;
         };
         /** WhatsAppDeleteMessageOperation */
         WhatsAppDeleteMessageOperation: {
