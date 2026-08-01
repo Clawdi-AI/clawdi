@@ -135,13 +135,13 @@ export function parseOperation(value: unknown): SidecarOperation {
 	if (type === "presence") {
 		assertKeys(body, ["schemaVersion", "operationId", "chatJid", "type", "presence"], "body");
 		const presence = requiredString(body.presence, "presence", 20);
-		if (!new Set(["available", "unavailable", "composing", "recording", "paused"]).has(presence)) {
+		if (!new Set(["composing", "recording", "paused"]).has(presence)) {
 			fail("unsupported_presence");
 		}
 		return {
 			...base,
 			type,
-			presence: presence as "available" | "unavailable" | "composing" | "recording" | "paused",
+			presence: presence as "composing" | "recording" | "paused",
 		};
 	}
 	if (type === "read") {

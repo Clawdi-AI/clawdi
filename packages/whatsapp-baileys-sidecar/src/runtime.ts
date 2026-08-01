@@ -351,12 +351,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		const socket = this.requireSocket();
 		if (operation.type === "presence") {
 			try {
-				await socket.sendPresenceUpdate(
-					operation.presence,
-					operation.presence === "available" || operation.presence === "unavailable"
-						? undefined
-						: operation.chatJid,
-				);
+				await socket.sendPresenceUpdate(operation.presence, operation.chatJid);
 			} catch {
 				return this.persistAmbiguousOperation(operation.operationId, requestHash);
 			}

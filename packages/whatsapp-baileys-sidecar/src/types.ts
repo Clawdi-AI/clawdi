@@ -101,7 +101,7 @@ export type ReactionOperation = OperationBase & {
 
 export type PresenceOperation = OperationBase & {
 	type: "presence";
-	presence: "available" | "unavailable" | "composing" | "recording" | "paused";
+	presence: "composing" | "recording" | "paused";
 };
 
 export type ReadOperation = OperationBase & {

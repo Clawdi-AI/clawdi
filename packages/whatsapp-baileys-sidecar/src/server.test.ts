@@ -152,6 +152,19 @@ describe("sidecar HTTP contract", () => {
 			const response = await authedFetch(`${url}${path}`, { method: "POST", body: "{}" });
 			expect(response.status).toBe(404);
 		}
+		for (const presence of ["available", "unavailable"]) {
+			const response = await authedFetch(`${url}/v1/operations`, {
+				method: "POST",
+				body: JSON.stringify({
+					schemaVersion: "clawdi.whatsapp.operation.v1",
+					operationId: `global-presence-${presence}`,
+					chatJid: "15550001111@s.whatsapp.net",
+					type: "presence",
+					presence,
+				}),
+			});
+			expect(response.status).toBe(400);
+		}
 		expect(runtime.operations).toHaveLength(0);
 	});
 
