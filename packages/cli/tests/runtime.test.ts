@@ -6471,7 +6471,7 @@ exit 64
 		expect(JSON.stringify(projected.manifest.projection?.channels ?? {})).not.toContain("whatsapp");
 	});
 
-	it("gates WhatsApp runtime channel projection until upstream support is ready", () => {
+	it("gates WhatsApp runtime channel projection until application adapter E2E is ready", () => {
 		const accountId = "00000000-0000-0000-0000-000000000001";
 		const linkId = "link-whatsapp-1";
 		const credentialId = "credential-whatsapp-1";
@@ -12256,7 +12256,7 @@ exit 64
 		expect(clearedHermesConfig).not.toHaveProperty("display.platforms.telegram.streaming");
 	});
 
-	it("keeps Hermes native WhatsApp disabled until upstream websocket support is ready", () => {
+	it("keeps Hermes WhatsApp disabled until its application adapter E2E is ready", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -12723,7 +12723,7 @@ exit 0
 		}
 	});
 
-	it("keeps OpenClaw WhatsApp materialization disabled until upstream support is ready", () => {
+	it("keeps OpenClaw WhatsApp materialization disabled until its application adapter E2E is ready", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -12898,7 +12898,7 @@ exit 64
 		expect(existsSync(authDir)).toBe(false);
 	});
 
-	it("removes stale OpenClaw WhatsApp auth state while upstream support is gated", () => {
+	it("removes stale OpenClaw WhatsApp auth state while legacy projection is gated", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");

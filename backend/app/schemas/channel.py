@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
 ChannelVisibility = Literal["private", "public"]
@@ -336,3 +337,139 @@ class WhatsAppTenantCredentialMetadata(BaseModel):
     jid: str
     identity_pub_key_hex: str
     created_at: datetime
+
+
+_WHATSAPP_APPLICATION_CHAT_JID_PATTERN = re.compile(r"^[^@\s]{1,255}@(s\.whatsapp\.net|g\.us|lid)$")
+_WHATSAPP_APPLICATION_USER_JID_PATTERN = re.compile(r"^[^@\s]{1,255}@(s\.whatsapp\.net|lid)$")
+
+
+class _WhatsAppInternalModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=True)
+
+
+class _WhatsAppApplicationModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class WhatsAppSidecarEvent(_WhatsAppInternalModel):
+    schema_version: Literal["clawdi.whatsapp.sidecar-event.v1"] = Field(alias="schemaVersion")
+    provider_event_id: str = Field(alias="providerEventId", min_length=1, max_length=300)
+    message_id: str = Field(alias="messageId", min_length=1, max_length=300)
+    chat_jid: str = Field(alias="chatJid", min_length=3, max_length=300)
+    chat_jid_alt: str | None = Field(
+        default=None,
+        alias="chatJidAlt",
+        min_length=3,
+        max_length=300,
+    )
+    actor_jid: str = Field(alias="actorJid", min_length=3, max_length=300)
+    actor_jid_alt: str | None = Field(
+        default=None,
+        alias="actorJidAlt",
+        min_length=3,
+        max_length=300,
+    )
+    from_me: Literal[False] = Field(alias="fromMe")
+    text: str = Field(min_length=1, max_length=4096)
+    push_name: str | None = Field(default=None, alias="pushName", min_length=1, max_length=300)
+    timestamp: int | None = Field(default=None, ge=0)
+
+    @field_validator("text")
+    @classmethod
+    def _validate_content_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("WhatsApp application text must not be blank")
+        return value
+
+    @field_validator("chat_jid")
+    @classmethod
+    def _validate_chat_jid(cls, value: str) -> str:
+        if not _WHATSAPP_APPLICATION_CHAT_JID_PATTERN.fullmatch(value):
+            raise ValueError("invalid WhatsApp application chat JID")
+        return value
+
+    @field_validator("chat_jid_alt", "actor_jid", "actor_jid_alt")
+    @classmethod
+    def _validate_user_jid(cls, value: str | None) -> str | None:
+        if value is not None and not _WHATSAPP_APPLICATION_USER_JID_PATTERN.fullmatch(value):
+            raise ValueError("invalid WhatsApp application user JID")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_normalized_identity(self) -> WhatsAppSidecarEvent:
+        if self.provider_event_id != f"message:{self.message_id}":
+            raise ValueError("providerEventId must be derived from messageId")
+        if self.chat_jid.endswith("@g.us"):
+            if self.actor_jid.endswith("@g.us") or not self.actor_jid.endswith(
+                ("@s.whatsapp.net", "@lid")
+            ):
+                raise ValueError("group actorJid must identify a participant")
+            if self.actor_jid_alt is not None and (
+                self.actor_jid_alt.endswith("@g.us")
+                or not self.actor_jid_alt.endswith(("@s.whatsapp.net", "@lid"))
+            ):
+                raise ValueError("group actorJidAlt must identify a participant")
+            return self
+        allowed_identities = {self.chat_jid, self.chat_jid_alt}
+        if self.actor_jid not in allowed_identities:
+            raise ValueError("DM actorJid must match the chat identity")
+        if self.actor_jid_alt is not None and self.actor_jid_alt not in allowed_identities:
+            raise ValueError("DM actorJidAlt must match the chat identity")
+        return self
+
+
+class WhatsAppSidecarEventResponse(_WhatsAppInternalModel):
+    ok: Literal[True] = True
+    duplicate: bool = False
+    paired: bool = False
+    unpaired: bool = False
+    binding_id: UUID | None = Field(default=None, alias="bindingId")
+
+
+class WhatsAppApplicationInboxEvent(_WhatsAppApplicationModel):
+    sequence: int = Field(ge=1)
+    binding_id: UUID = Field(alias="bindingId")
+    chat_jid: str = Field(alias="chatJid")
+    actor_jid: str = Field(alias="actorJid")
+    actor_jid_alt: str | None = Field(default=None, alias="actorJidAlt")
+    message_id: str = Field(alias="messageId")
+    text: str | None = None
+    push_name: str | None = Field(default=None, alias="pushName")
+    timestamp: int | None = None
+
+
+class WhatsAppApplicationInboxResponse(_WhatsAppApplicationModel):
+    events: list[WhatsAppApplicationInboxEvent]
+
+
+class WhatsAppApplicationAckRequest(_WhatsAppApplicationModel):
+    through_sequence: int = Field(alias="throughSequence", ge=1)
+
+
+class WhatsAppApplicationAckResponse(_WhatsAppApplicationModel):
+    acked_count: int = Field(alias="ackedCount", ge=0)
+    through_sequence: int = Field(alias="throughSequence", ge=1)
+
+
+class WhatsAppApplicationOutboundRequest(_WhatsAppApplicationModel):
+    binding_id: UUID = Field(alias="bindingId")
+    client_message_id: str = Field(
+        alias="clientMessageId",
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    text: str = Field(min_length=1, max_length=4096)
+    final: Literal[True]
+    reply_to_sequence: int | None = Field(default=None, alias="replyToSequence", ge=1)
+
+    @field_validator("text")
+    @classmethod
+    def _validate_content_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("WhatsApp application text must not be blank")
+        return value
+
+
+class WhatsAppApplicationOutboundResponse(_WhatsAppApplicationModel):
+    provider_message_id: str = Field(alias="providerMessageId")

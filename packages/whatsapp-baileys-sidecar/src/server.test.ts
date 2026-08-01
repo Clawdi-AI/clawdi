@@ -5,8 +5,10 @@ import type { BinaryNode } from "baileys";
 import { createSidecarServer } from "./server.js";
 import {
 	type BaileysRuntime,
+	QuotedMessageNotFoundError,
 	type RelayMessageRequest,
 	RuntimeNotConnectedError,
+	type SendTextMessageRequest,
 } from "./types.js";
 
 class FakeRuntime implements BaileysRuntime {
@@ -14,6 +16,8 @@ class FakeRuntime implements BaileysRuntime {
 	relayRequests: RelayMessageRequest[] = [];
 	rawNodes: BinaryNode[] = [];
 	queries: Array<{ node: BinaryNode; timeoutMs: number }> = [];
+	textMessages: SendTextMessageRequest[] = [];
+	quotedMessageMissing = false;
 
 	async start(): Promise<void> {}
 	async stop(): Promise<void> {}
@@ -24,6 +28,15 @@ class FakeRuntime implements BaileysRuntime {
 			connected: this.connected,
 			uptimeSeconds: 1,
 		} as const;
+	}
+
+	async sendTextMessage(request: SendTextMessageRequest): Promise<{ messageId: string }> {
+		if (!this.connected) {
+			throw new RuntimeNotConnectedError();
+		}
+		if (this.quotedMessageMissing) throw new QuotedMessageNotFoundError();
+		this.textMessages.push(request);
+		return { messageId: "sent-1" };
 	}
 
 	async relayMessage(request: RelayMessageRequest): Promise<string> {
@@ -119,6 +132,122 @@ describe("sidecar HTTP contract", () => {
 				addressing_mode: "lid",
 			},
 		});
+	});
+
+	it("preserves final application text exactly with optional reply context", async () => {
+		const runtime = new FakeRuntime();
+		const { url } = await startTestServer(runtime);
+
+		const response = await authedFetch(`${url}/v1/messages`, {
+			method: "POST",
+			body: JSON.stringify({
+				jid: "120363012345678901@g.us",
+				text: "  final answer\nsecond line\t ",
+				messageId: "client-final-1",
+				replyTo: {
+					messageId: "inbound-1",
+					participantJid: "15551114444@s.whatsapp.net",
+				},
+			}),
+		});
+		const retry = await authedFetch(`${url}/v1/messages`, {
+			method: "POST",
+			body: JSON.stringify({
+				jid: "120363012345678901@g.us",
+				text: "  final answer\nsecond line\t ",
+				messageId: "client-final-1",
+				replyTo: {
+					messageId: "inbound-1",
+					participantJid: "15551114444@s.whatsapp.net",
+				},
+			}),
+		});
+
+		expect(response.status).toBe(200);
+		expect(retry.status).toBe(200);
+		expect(await response.json()).toEqual({ ok: true, messageId: "sent-1" });
+		expect(runtime.textMessages).toEqual([
+			{
+				jid: "120363012345678901@g.us",
+				text: "  final answer\nsecond line\t ",
+				messageId: "client-final-1",
+				replyTo: {
+					messageId: "inbound-1",
+					participantJid: "15551114444@s.whatsapp.net",
+				},
+			},
+			{
+				jid: "120363012345678901@g.us",
+				text: "  final answer\nsecond line\t ",
+				messageId: "client-final-1",
+				replyTo: {
+					messageId: "inbound-1",
+					participantJid: "15551114444@s.whatsapp.net",
+				},
+			},
+		]);
+	});
+
+	it("rejects unsupported application JIDs, participants, and incomplete messages", async () => {
+		const runtime = new FakeRuntime();
+		const { url } = await startTestServer(runtime);
+
+		const wrongJid = await authedFetch(`${url}/v1/messages`, {
+			method: "POST",
+			body: JSON.stringify({
+				jid: "status@broadcast",
+				text: "no",
+				messageId: "client-1",
+			}),
+		});
+		const legacyCUs = await authedFetch(`${url}/v1/messages`, {
+			method: "POST",
+			body: JSON.stringify({
+				jid: "15551114444@c.us",
+				text: "no legacy server",
+				messageId: "client-c-us",
+			}),
+		});
+		const emptyText = await authedFetch(`${url}/v1/messages`, {
+			method: "POST",
+			body: JSON.stringify({
+				jid: "15551114444@s.whatsapp.net",
+				text: " ",
+				messageId: "client-2",
+			}),
+		});
+		const missingMessageId = await authedFetch(`${url}/v1/messages`, {
+			method: "POST",
+			body: JSON.stringify({ jid: "15551114444@s.whatsapp.net", text: "no id" }),
+		});
+
+		expect(wrongJid.status).toBe(400);
+		expect(legacyCUs.status).toBe(400);
+		expect(emptyText.status).toBe(400);
+		expect(missingMessageId.status).toBe(400);
+		expect(runtime.textMessages).toEqual([]);
+	});
+
+	it("fails closed when quoted content is absent from the local retry store", async () => {
+		const runtime = new FakeRuntime();
+		runtime.quotedMessageMissing = true;
+		const { url } = await startTestServer(runtime);
+
+		const response = await authedFetch(`${url}/v1/messages`, {
+			method: "POST",
+			body: JSON.stringify({
+				jid: "120363012345678901@g.us",
+				text: "reply",
+				messageId: "client-reply-missing",
+				replyTo: {
+					messageId: "missing-inbound",
+					participantJid: "15551114444@s.whatsapp.net",
+				},
+			}),
+		});
+
+		expect(response.status).toBe(404);
+		expect(await response.json()).toEqual({ error: "quoted_message_not_found" });
 	});
 
 	it("decodes raw node bytes and encodes IQ response bytes", async () => {

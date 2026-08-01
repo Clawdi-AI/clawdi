@@ -15,6 +15,7 @@ _HEALTH_PATH = "/v1/health"
 _RELAY_MESSAGE_PATH = "/v1/relay-message"
 _RAW_NODE_PATH = "/v1/raw-node"
 _QUERY_IQ_PATH = "/v1/query-iq"
+_APPLICATION_MESSAGE_PATH = "/v1/messages"
 
 
 @dataclass(frozen=True)
@@ -29,7 +30,17 @@ class WhatsAppNativeRelayRequest:
 class WhatsAppBaileysSidecarConfig:
     base_url: str
     api_token: str | None = None
+    ingress_token: str | None = None
     timeout_seconds: float = 10.0
+
+
+@dataclass(frozen=True)
+class WhatsAppApplicationSendRequest:
+    jid: str
+    text: str
+    message_id: str
+    reply_to_message_id: str | None = None
+    reply_to_participant_jid: str | None = None
 
 
 class WhatsAppNativeUpstreamClient(Protocol):
@@ -120,6 +131,39 @@ class WhatsAppBaileysSidecarClient:
         data = response.json()
         self._connected = _sidecar_health_connected(data)
         return self._connected
+
+    async def send_application_message(
+        self,
+        request: WhatsAppApplicationSendRequest,
+    ) -> str:
+        reply_to = None
+        if request.reply_to_message_id is not None:
+            reply_to = {
+                "messageId": request.reply_to_message_id,
+                **(
+                    {"participantJid": request.reply_to_participant_jid}
+                    if request.reply_to_participant_jid is not None
+                    else {}
+                ),
+            }
+        response = await self._request(
+            "POST",
+            _APPLICATION_MESSAGE_PATH,
+            json={
+                "jid": request.jid,
+                "text": request.text,
+                "messageId": request.message_id,
+                **({"replyTo": reply_to} if reply_to is not None else {}),
+            },
+        )
+        data = response.json()
+        message_id = data.get("messageId") if isinstance(data, Mapping) else None
+        if not isinstance(message_id, str) or not message_id.strip():
+            raise ValueError("baileys sidecar send response requires messageId")
+        if message_id.strip() != request.message_id:
+            raise ValueError("baileys sidecar changed the requested messageId")
+        self._connected = True
+        return message_id.strip()
 
     async def relay_message(self, request: WhatsAppNativeRelayRequest) -> None:
         await self._request(

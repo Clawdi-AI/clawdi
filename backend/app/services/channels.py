@@ -127,7 +127,7 @@ HERMES_AGENT_TYPE = "hermes"
 OPENCLAW_AGENT_TYPE = "openclaw"
 HOSTED_RUNTIME_AGENT_TYPES = frozenset({HERMES_AGENT_TYPE, OPENCLAW_AGENT_TYPE})
 HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS = frozenset(
-    {CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD}
+    {CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD, CHANNEL_PROVIDER_WHATSAPP}
 )
 STRICT_V2_AGENT_LINK_DETAIL = "Only Cloud Agents can be linked or paired with channels."
 WHATSAPP_COMING_SOON_DETAIL = (
@@ -139,6 +139,7 @@ def hosted_agent_provider_link_limit_detail(provider: str, *, duplicate: bool = 
     label = {
         CHANNEL_PROVIDER_TELEGRAM: "Telegram",
         CHANNEL_PROVIDER_DISCORD: "Discord",
+        CHANNEL_PROVIDER_WHATSAPP: "WhatsApp",
     }.get(provider, provider.title())
     if duplicate:
         return (

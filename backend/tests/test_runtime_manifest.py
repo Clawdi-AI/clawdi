@@ -95,6 +95,7 @@ TEST_EGRESS_PROFILES = {
             "kind": "provider",
             "match": {
                 "scheme": "https",
+                "method": "POST",
                 "host": "ai-gateway.example.test",
                 "headers": {},
                 "query": {},
@@ -134,6 +135,20 @@ TEST_HERMES_DASHBOARD_AUTH = {
 OPTIONAL_RUNTIME_STATE_FIELDS = ("egress_engine", "egress_profiles", "mcp", "skills")
 TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.57"
 TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC = "clawdi@0.13.2-test"
+
+
+@pytest.mark.parametrize(("method", "accepted"), [("GET", True), ("get", False), ("TRACE", False)])
+def test_hosted_egress_method_match_is_canonical_and_allowlisted(
+    method: str,
+    accepted: bool,
+) -> None:
+    profiles = json.loads(json.dumps(TEST_EGRESS_PROFILES))
+    profiles["profiles"][0]["match"]["method"] = method
+    if accepted:
+        HostedEgressProfiles.model_validate(profiles)
+        return
+    with pytest.raises(ValidationError):
+        HostedEgressProfiles.model_validate(profiles)
 
 
 @pytest.mark.parametrize(

@@ -9,6 +9,7 @@ from app.routes.channel_routers import (
     public,
     telegram,
     whatsapp,
+    whatsapp_application,
 )
 
 router = APIRouter(tags=["channels"])
@@ -20,6 +21,7 @@ router.include_router(public.router)
 
 # Provider routers own the SDK-compatible and webhook surfaces under
 # /v1/channels/{provider}/*.
+router.include_router(whatsapp_application.router)
 router.include_router(whatsapp.router)
 router.include_router(telegram.router)
 router.include_router(imessage.router)

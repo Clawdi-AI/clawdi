@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { whatsappApplicationEgressProfiles } from "../src/runtime/channels";
 import { egressProfileSchema, secretRefSchema } from "../src/runtime/egress-profiles";
 import {
 	hostedManifestEgressProfiles,
@@ -44,6 +45,66 @@ describe("runtime egress profile schema", () => {
 				rewrite: { upstreamBaseUrl: "wss://router.test/discord/gateway" },
 			}).success,
 		).toBe(true);
+	});
+
+	it("accepts only canonical exact HTTP method matchers", () => {
+		const base = {
+			id: "method-aware",
+			enabled: true,
+			kind: "provider",
+			match: { scheme: "https", method: "GET", host: "cloud.test" },
+		};
+		expect(egressProfileSchema.safeParse(base).success).toBe(true);
+		expect(
+			egressProfileSchema.safeParse({
+				...base,
+				match: { ...base.match, method: "get" },
+			}).success,
+		).toBe(false);
+		expect(
+			egressProfileSchema.safeParse({
+				...base,
+				match: { ...base.match, method: "TRACE" },
+			}).success,
+		).toBe(false);
+	});
+
+	it("builds exact same-origin WhatsApp application profiles without exposing the Link token", () => {
+		const profiles = whatsappApplicationEgressProfiles({
+			accountKey: "clawdi_account",
+			placeholderSecretRef: "secret://channels/whatsapp/clawdi_account/placeholder-token",
+			linkSecretRef: "secret://channels/whatsapp/clawdi_account/links/link-1/agent-token",
+			cloudApiUrl: "https://cloud.test",
+		});
+
+		expect(profiles.map((profile) => [profile.match.method, profile.match.path])).toEqual([
+			[
+				"GET",
+				{
+					type: "equals",
+					value: "/v1/channels/whatsapp/application/clawdi_account/inbox",
+				},
+			],
+			[
+				"POST",
+				{
+					type: "equals",
+					value: "/v1/channels/whatsapp/application/clawdi_account/ack",
+				},
+			],
+			[
+				"POST",
+				{
+					type: "equals",
+					value: "/v1/channels/whatsapp/application/clawdi_account/messages",
+				},
+			],
+		]);
+		expect(profiles.every((profile) => profile.match.host === "cloud.test")).toBe(true);
+		expect(profiles.every((profile) => profile.rewrite?.upstreamBaseUrl === undefined)).toBe(true);
+		expect(JSON.stringify(profiles)).not.toContain("real-link-token");
+		for (const profile of profiles)
+			expect(egressProfileSchema.safeParse(profile).success).toBe(true);
 	});
 
 	it("accepts secretRef-backed rewrite headers", () => {

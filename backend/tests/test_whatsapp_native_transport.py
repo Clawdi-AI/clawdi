@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from app.services.whatsapp_native_transport import (
+    WhatsAppApplicationSendRequest,
     WhatsAppBaileysSidecarClient,
     WhatsAppBaileysSidecarConfig,
     WhatsAppNativeRelayRequest,
@@ -125,6 +126,17 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
                 "additionalAttributes": {"edit": "8"},
             }
             return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/v1/messages":
+            assert _json_body(request) == {
+                "jid": "120363000000000000@g.us",
+                "text": "final reply",
+                "messageId": "outbound-1",
+                "replyTo": {
+                    "messageId": "inbound-1",
+                    "participantJid": "15551112222@s.whatsapp.net",
+                },
+            }
+            return httpx.Response(200, json={"messageId": "outbound-1"})
         if request.url.path == "/v1/raw-node":
             body = _json_body(request)
             assert body["node"]["content"][0]["content"] == {
@@ -163,6 +175,16 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
     assert await client.refresh_health() is True
     assert client.connected is True
 
+    sent_message_id = await client.send_application_message(
+        WhatsAppApplicationSendRequest(
+            jid="120363000000000000@g.us",
+            text="final reply",
+            message_id="outbound-1",
+            reply_to_message_id="inbound-1",
+            reply_to_participant_jid="15551112222@s.whatsapp.net",
+        )
+    )
+
     await transport.relay_outbound_message(
         WhatsAppOutboundMessage(
             to_jid="15551114444@s.whatsapp.net",
@@ -192,10 +214,12 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
 
     assert [request.url.path for request in requests] == [
         "/v1/health",
+        "/v1/messages",
         "/v1/relay-message",
         "/v1/raw-node",
         "/v1/query-iq",
     ]
+    assert sent_message_id == "outbound-1"
     assert response == {
         "tag": "iq",
         "attrs": {"id": "response", "type": "result"},

@@ -9,6 +9,8 @@ from app.services.whatsapp_native_transport import WhatsAppBaileysSidecarConfig
 from app.services.whatsapp_shared_runtime import whatsapp_shared_bot_transport_status
 from app.services.whatsapp_sidecar_registry import (
     ConfiguredWhatsAppSidecarRegistry,
+    configured_whatsapp_sidecar_ingress_token,
+    get_configured_whatsapp_sidecar_client,
     parse_whatsapp_sidecar_registrations,
 )
 
@@ -59,6 +61,7 @@ def test_parse_whatsapp_sidecar_registrations_accepts_account_map():
                 str(account_id): {
                     "base_url": "http://127.0.0.1:8787/",
                     "api_token": "sidecar-token",
+                    "ingress_token": "callback-token",
                     "timeout_seconds": 2.5,
                 }
             }
@@ -69,7 +72,37 @@ def test_parse_whatsapp_sidecar_registrations_accepts_account_map():
     sidecar = registrations[account_id]
     assert sidecar.base_url == "http://127.0.0.1:8787/"
     assert sidecar.api_token == "sidecar-token"
+    assert sidecar.ingress_token == "callback-token"
     assert sidecar.timeout_seconds == 2.5
+    assert (
+        configured_whatsapp_sidecar_ingress_token(
+            account_id,
+            json.dumps(
+                {
+                    str(account_id): {
+                        "base_url": "http://127.0.0.1:8787/",
+                        "api_token": "sidecar-token",
+                        "ingress_token": "callback-token",
+                    }
+                }
+            ),
+        )
+        == "callback-token"
+    )
+    assert (
+        configured_whatsapp_sidecar_ingress_token(
+            account_id,
+            json.dumps(
+                {
+                    str(account_id): {
+                        "base_url": "http://127.0.0.1:8787/",
+                        "api_token": "sidecar-token",
+                    }
+                }
+            ),
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -79,9 +112,10 @@ def test_parse_whatsapp_sidecar_registrations_accepts_account_map():
         '{"not-a-uuid": {"base_url": "http://sidecar"}}',
         '{"00000000-0000-0000-0000-000000000777": {}}',
         '{"00000000-0000-0000-0000-000000000777": {"base_url": 123}}',
+        '{"00000000-0000-0000-0000-000000000777": {"base_url": "http://sidecar"}}',
         (
             '{"00000000-0000-0000-0000-000000000777": '
-            '{"base_url": "http://sidecar", "timeout_seconds": 0}}'
+            '{"base_url": "http://sidecar", "api_token": "secret", "timeout_seconds": 0}}'
         ),
     ],
 )
@@ -109,10 +143,12 @@ async def test_configured_whatsapp_sidecar_registry_registers_and_closes_transpo
         assert status.mode == "sidecar"
         assert clients[0].config.base_url == "http://sidecar.local"
         assert clients[0].health_checks == 1
+        assert get_configured_whatsapp_sidecar_client(account_id) is clients[0]
     finally:
         await registry.stop()
 
     assert clients[0].closed is True
+    assert get_configured_whatsapp_sidecar_client(account_id) is None
     assert (
         whatsapp_shared_bot_transport_status(account_id).reason
         == "shared-bot-transport-unavailable"
@@ -122,7 +158,7 @@ async def test_configured_whatsapp_sidecar_registry_registers_and_closes_transpo
 @pytest.mark.asyncio
 async def test_configured_whatsapp_sidecar_registry_keeps_unhealthy_sidecar_visible():
     account_id = UUID("00000000-0000-0000-0000-000000000999")
-    raw = json.dumps({str(account_id): {"base_url": "http://sidecar.local"}})
+    raw = json.dumps({str(account_id): {"base_url": "http://sidecar.local", "api_token": "secret"}})
     client = _FakeSidecarClient(
         WhatsAppBaileysSidecarConfig(base_url="http://sidecar.local"),
         fail_health=True,

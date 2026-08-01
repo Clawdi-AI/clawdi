@@ -1,5 +1,7 @@
-// WhatsApp runtime wiring is disabled for the gated beta across OpenClaw and
-// Hermes. OpenClaw's wsUrl path is a stopgap that has not passed a live pairing
-// drill, and Hermes needs the Baileys WSS egress profile before it can reach the
-// Clawdi relay instead of upstream WhatsApp directly.
-export const WHATSAPP_UPSTREAM_READY = false;
+// Application adapters have not passed a local fake end-to-end run against the
+// installed OpenClaw and Hermes extension contracts. Keep projection off.
+export const WHATSAPP_APPLICATION_RUNTIME_PROJECTION_READY = false;
+
+// Historical native Baileys credential projection is retained only for cleanup
+// compatibility. It must never materialize auth state into managed runtimes.
+export const WHATSAPP_LEGACY_RUNTIME_PROJECTION_READY = false;

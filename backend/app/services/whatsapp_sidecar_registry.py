@@ -20,6 +20,7 @@ from app.services.whatsapp_shared_runtime import (
 log = logging.getLogger(__name__)
 
 SidecarClientFactory = Callable[[WhatsAppBaileysSidecarConfig], WhatsAppBaileysSidecarClient]
+_ACTIVE_SIDECAR_CLIENTS: dict[UUID, WhatsAppBaileysSidecarClient] = {}
 
 
 class ConfiguredWhatsAppSidecarRegistry:
@@ -51,10 +52,12 @@ class ConfiguredWhatsAppSidecarRegistry:
                 WhatsAppNativeTransportAdapter(client),
             )
             self._clients[account_id] = client
+            _ACTIVE_SIDECAR_CLIENTS[account_id] = client
 
     async def stop(self) -> None:
         for account_id in tuple(self._clients):
             unregister_whatsapp_shared_bot_transport(account_id)
+            _ACTIVE_SIDECAR_CLIENTS.pop(account_id, None)
         clients = tuple(self._clients.values())
         self._clients.clear()
         if clients:
@@ -87,13 +90,25 @@ def parse_whatsapp_sidecar_registrations(
     return registrations
 
 
+def get_configured_whatsapp_sidecar_client(
+    account_id: UUID,
+) -> WhatsAppBaileysSidecarClient | None:
+    return _ACTIVE_SIDECAR_CLIENTS.get(account_id)
+
+
+def configured_whatsapp_sidecar_ingress_token(account_id: UUID, raw_config: str) -> str | None:
+    registration = parse_whatsapp_sidecar_registrations(raw_config).get(account_id)
+    return registration.ingress_token if registration is not None else None
+
+
 def _parse_sidecar_config(*, account_id: UUID, value: Any) -> WhatsAppBaileysSidecarConfig:
     if not isinstance(value, Mapping):
         raise ValueError(f"WhatsApp sidecar config for {account_id} must be an object")
     base_url = _required_str(value, "base_url", account_id=account_id)
     return WhatsAppBaileysSidecarConfig(
         base_url=base_url,
-        api_token=_optional_str(value, "api_token", account_id=account_id),
+        api_token=_required_str(value, "api_token", account_id=account_id),
+        ingress_token=_optional_str(value, "ingress_token", account_id=account_id),
         timeout_seconds=_optional_float(value, "timeout_seconds", account_id=account_id) or 10.0,
     )
 
