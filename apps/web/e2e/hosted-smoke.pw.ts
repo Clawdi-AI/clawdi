@@ -1102,6 +1102,7 @@ function isStubResponse(value: unknown): value is StubResponse {
 
 type HostedApiStubOptions = {
 	aiProviders?: readonly unknown[];
+	agentResourceFixtures?: boolean;
 	agentOrderRequests?: string[];
 	autoReloadRequests?: string[];
 	autoReloadResponses?: StubResponse[];
@@ -1824,6 +1825,21 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				}),
 			);
 		}
+		if (p.match(/^\/v1\/agents\/[^/]+\/project-bindings$/) && r.request().method() === "GET") {
+			if (!options.agentResourceFixtures) return fulfillJson(r, []);
+			const agentId = decodeURIComponent(p.split("/")[3] ?? "");
+			return fulfillJson(r, [
+				{
+					id: `binding-${agentId}`,
+					agent_id: agentId,
+					project_id: "project-hosted",
+					binding_type: "primary",
+					priority: 0,
+					default_write_enabled: true,
+					created_at: "2026-07-15T00:00:00Z",
+				},
+			]);
+		}
 		if (p.startsWith("/v1/agents/") && r.request().method() === "GET") {
 			const id = decodeURIComponent(p.slice("/v1/agents/".length));
 			const response = options.cloudAgentResponses?.[id]?.shift();
@@ -2037,7 +2053,75 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p.endsWith("/activity") && r.request().method() === "GET") {
 			return fulfillJson(r, { items: [] });
 		}
-		if (p === "/v1/projects") return fulfillJson(r, []);
+		if (p === "/v1/projects") {
+			if (!options.agentResourceFixtures) return fulfillJson(r, []);
+			return fulfillJson(r, [
+				{
+					id: "project-hosted",
+					name: "Hosted Agent Project",
+					slug: "hosted-agent-project",
+					kind: "environment",
+					origin_environment_id: railHostedEnvironmentId,
+					archived_at: null,
+					created_at: "2026-07-15T00:00:00Z",
+					is_owner: true,
+					owner_display: "Hosted User",
+					owner_handle: "hosted-user",
+				},
+			]);
+		}
+		if (p === "/v1/vault") {
+			if (!options.agentResourceFixtures) {
+				return fulfillJson(r, { items: [], total: 0, page: 1, page_size: 200 });
+			}
+			return fulfillJson(r, {
+				items: [
+					{
+						id: "vault-hosted",
+						slug: "hosted-vault",
+						name: "Hosted Scoped Vault",
+						project_ids: ["project-hosted"],
+						is_owner: true,
+						item_count: 1,
+						created_at: "2026-07-15T00:00:00Z",
+					},
+					{
+						id: "vault-other",
+						slug: "other-vault",
+						name: "Other Account Vault",
+						project_ids: ["project-other"],
+						is_owner: true,
+						item_count: 1,
+						created_at: "2026-07-15T00:00:00Z",
+					},
+				],
+				total: 2,
+				page: 1,
+				page_size: 200,
+			});
+		}
+		if (p === "/v1/connectors") return fulfillJson(r, []);
+		if (p === "/v1/connectors/available") {
+			if (!options.agentResourceFixtures) {
+				return fulfillJson(r, { items: [], total: 0, page: 1, page_size: 24 });
+			}
+			return fulfillJson(r, {
+				items: [
+					{
+						name: "github",
+						display_name: "GitHub",
+						logo: "",
+						description: "Source control connector",
+						auth_type: "oauth",
+						connect_disabled: false,
+						connect_disabled_reason: null,
+					},
+				],
+				total: 1,
+				page: 1,
+				page_size: 24,
+			});
+		}
 		if (p === "/v1/sessions") return fulfillJson(r, emptyPage);
 		if (p === "/v1/auth/keys") return fulfillJson(r, []);
 		return fulfillJson(r, {});
@@ -2556,6 +2640,62 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	}
 	expect(agentOrderRequests).toEqual([]);
 	expect(touchOrderRequests).toEqual([]);
+});
+
+test("hosted agent sidebar renders one Resources heading in canonical order", async ({ page }) => {
+	await stubHostedApi(page, {
+		agentResourceFixtures: true,
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+	});
+
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+	const groups = page
+		.getByTestId("app-sidebar")
+		.locator('[data-slot="sidebar-content"] > [data-slot="sidebar-group"]');
+	await expect(groups).toHaveCount(3);
+	await expect(groups.nth(0).locator('[data-slot="sidebar-group-label"]')).toHaveCount(0);
+	await expect(groups.nth(0).getByRole("link")).toHaveText([
+		"Overview",
+		"Sessions",
+		"Agent Interface",
+		"Terminal",
+	]);
+	await expect(groups.nth(1).locator('[data-slot="sidebar-group-label"]')).toHaveText("Resources");
+	await expect(groups.nth(1).getByRole("link")).toHaveText([
+		"Channels",
+		"AI Providers",
+		"Connectors",
+		"Projects",
+		"Skills",
+		"Vaults",
+	]);
+	await expect(groups.nth(2).locator('[data-slot="sidebar-group-label"]')).toHaveCount(0);
+	await expect(groups.nth(2).getByRole("link")).toHaveText(["Settings"]);
+	await expect(groups.locator('[data-slot="sidebar-group-label"]')).toHaveCount(1);
+	await expect(groups.locator('[data-slot="sidebar-group-label"]:empty')).toHaveCount(0);
+
+	const query = `?source=on-clawdi&d=${railHostedDeployment.id}`;
+	const main = page.locator("main");
+	await page.goto(`/agents/${railHostedEnvironmentId}/connectors${query}`);
+	await expect(main.getByRole("heading", { name: "Connectors", level: 1 })).toBeVisible();
+	await expect(page).toHaveTitle("Connectors · Clawdi");
+	await expect(
+		main.getByText("Account-wide connectors available across all agents."),
+	).toBeVisible();
+	await expect(main.getByRole("link", { name: "GitHub" })).toBeVisible();
+
+	await page.goto(`/agents/${railHostedEnvironmentId}/project-access${query}`);
+	await expect(main.getByRole("heading", { name: "Projects", level: 1 })).toBeVisible();
+	await expect(main.getByText("Hosted Agent Project", { exact: true })).toBeVisible();
+
+	await page.goto(`/agents/${railHostedEnvironmentId}/vaults${query}`);
+	await expect(main.getByRole("heading", { name: "Vaults", level: 1 })).toBeVisible();
+	await expect(page).toHaveTitle("Vaults · Clawdi");
+	await expect(main.getByText("Hosted Scoped Vault", { exact: true })).toBeVisible();
+	await expect(main.getByText("Other Account Vault", { exact: true })).toHaveCount(0);
 });
 
 test("agent cards stay action-free and brand marks fill their tiles", async ({

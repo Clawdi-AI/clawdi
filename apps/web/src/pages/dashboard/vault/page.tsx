@@ -31,6 +31,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { vaultDetailSearch } from "@/components/vault/vault-detail-identity";
+import { vaultsForProjectIds } from "@/components/vault/vault-scope";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
@@ -47,6 +48,16 @@ const VAULTS_RESOURCE = getProjectResourceDefinition("vaults");
  * /vault/[slug] for keys and sharing. The old split-pane admin view is gone. */
 
 export default function VaultPage() {
+	return <VaultsSurface />;
+}
+
+export function VaultsSurface({
+	embedded = false,
+	agentProjectIds,
+}: {
+	embedded?: boolean;
+	agentProjectIds?: readonly string[];
+}) {
 	const api = useApi();
 	const [search, setSearch] = useState("");
 	const [projectFilter, setProjectFilter] = useState<string>("all");
@@ -68,7 +79,15 @@ export default function VaultPage() {
 		[projects.data],
 	);
 
-	const items = vaults.data?.items ?? [];
+	const allItems = vaults.data?.items ?? [];
+	const items = useMemo(
+		() => (agentProjectIds ? vaultsForProjectIds(allItems, agentProjectIds) : allItems),
+		[agentProjectIds, allItems],
+	);
+	const visibleProjectIds = useMemo(
+		() => (agentProjectIds ? new Set(agentProjectIds) : null),
+		[agentProjectIds],
+	);
 	const hasActiveFilter = search.trim().length > 0 || projectFilter !== "all";
 	const filtered = useMemo(() => {
 		const q = search.trim().toLowerCase();
@@ -84,10 +103,14 @@ export default function VaultPage() {
 	const vaultCountByProject = useMemo(() => {
 		const m = new Map<string, number>();
 		for (const v of items) {
-			for (const pid of v.project_ids ?? []) m.set(pid, (m.get(pid) ?? 0) + 1);
+			for (const pid of v.project_ids ?? []) {
+				if (!visibleProjectIds || visibleProjectIds.has(pid)) {
+					m.set(pid, (m.get(pid) ?? 0) + 1);
+				}
+			}
 		}
 		return m;
-	}, [items]);
+	}, [items, visibleProjectIds]);
 	const filterableProjects = useMemo(() => {
 		return (projects.data ?? [])
 			.filter((p) => (vaultCountByProject.get(p.id) ?? 0) > 0)
@@ -106,8 +129,21 @@ export default function VaultPage() {
 	const shared = filtered.filter((v) => v.is_owner === false).sort(byKeysDesc);
 
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<PageHeader title="Vaults" description={VAULTS_RESOURCE.managementDescription} />
+		<div
+			className={cn(
+				embedded ? "space-y-6" : CENTERED_PAGE_WIDTH_CLASS.page,
+				!embedded && "space-y-6 px-4 lg:px-6",
+			)}
+			data-testid="vaults-surface"
+		>
+			{embedded ? (
+				<p className="text-sm text-muted-foreground">
+					Vaults appear here through this agent&apos;s Agent Project and added Projects. Open a
+					Vault to manage it in the account-level Vaults area.
+				</p>
+			) : (
+				<PageHeader title="Vaults" description={VAULTS_RESOURCE.managementDescription} />
+			)}
 
 			<ListToolbar
 				search={<SearchInput value={search} onChange={setSearch} placeholder="Search vaults…" />}
@@ -137,10 +173,12 @@ export default function VaultPage() {
 					) : null
 				}
 				actions={
-					<>
-						<AddKeysDialog />
-						<NewVaultDialog />
-					</>
+					embedded ? null : (
+						<>
+							<AddKeysDialog />
+							<NewVaultDialog />
+						</>
+					)
 				}
 			/>
 
@@ -164,10 +202,12 @@ export default function VaultPage() {
 					description={
 						hasActiveFilter
 							? "Try a different search or Project filter."
-							: "Create a vault to group API keys for your agents."
+							: embedded
+								? "This agent does not have any Vaults through its Projects yet."
+								: "Create a vault to group API keys for your agents."
 					}
 					action={
-						hasActiveFilter ? null : (
+						hasActiveFilter || embedded ? null : (
 							<NewVaultDialog
 								trigger={
 									<Button size="sm">
@@ -203,6 +243,7 @@ export default function VaultPage() {
 								vault={vault}
 								projectNameById={projectNameById}
 								projectNamesUnavailable={!!projects.error}
+								visibleProjectIds={visibleProjectIds}
 							/>
 						))}
 					</div>
@@ -219,6 +260,7 @@ export default function VaultPage() {
 										vault={vault}
 										projectNameById={projectNameById}
 										projectNamesUnavailable={!!projects.error}
+										visibleProjectIds={visibleProjectIds}
 										shared
 									/>
 								))}
@@ -235,14 +277,19 @@ function VaultCard({
 	vault,
 	projectNameById,
 	projectNamesUnavailable,
+	visibleProjectIds,
 	shared = false,
 }: {
 	vault: VaultSummary;
 	projectNameById: ReadonlyMap<string, string>;
 	projectNamesUnavailable: boolean;
+	visibleProjectIds: ReadonlySet<string> | null;
 	shared?: boolean;
 }) {
 	const api = useApi();
+	const itemProjectId =
+		vault.project_ids?.find((projectId) => visibleProjectIds?.has(projectId)) ??
+		vault.project_ids?.[0];
 	// Key count ships on the list response (names only, never values) —
 	// no per-card items fetch. EXCEPT under deploy skew: a web build that
 	// knows item_count can face an API that doesn't send it yet (web and
@@ -250,7 +297,7 @@ function VaultCard({
 	// users every vault was empty. Fall back to the per-card fetch then.
 	const listCount: number | undefined = vault.item_count;
 	const keys = useQuery({
-		queryKey: ["vault-items", vault.id, vault.slug, vault.project_ids?.[0]],
+		queryKey: ["vault-items", vault.id, vault.slug, itemProjectId],
 		enabled: listCount === undefined,
 		queryFn: async () =>
 			unwrap(
@@ -258,7 +305,7 @@ function VaultCard({
 					params: {
 						path: { slug: vault.slug },
 						query: {
-							project_id: vault.project_ids?.[0] ?? undefined,
+							project_id: itemProjectId,
 							vault_id: vault.id,
 						},
 					},
@@ -269,6 +316,7 @@ function VaultCard({
 		listCount ??
 		(keys.data ? Object.values(keys.data).reduce((n, arr) => n + arr.length, 0) : null);
 	const usedBy = (vault.project_ids ?? [])
+		.filter((id) => !visibleProjectIds || visibleProjectIds.has(id))
 		.map((id) => projectNameById.get(id))
 		.filter((n): n is string => !!n);
 

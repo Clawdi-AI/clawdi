@@ -51,17 +51,30 @@ const parseAsPositivePage = createParser({
  * loading skeleton the body renders once mounted.
  */
 export default function ConnectorsPage() {
+	return <ConnectorsSurface />;
+}
+
+export function ConnectorsSurface({ embedded = false }: { embedded?: boolean }) {
 	return (
-		<Suspense fallback={<ConnectorsListSkeleton />}>
-			<ConnectorsList />
+		<Suspense fallback={<ConnectorsListSkeleton embedded={embedded} />}>
+			<ConnectorsList embedded={embedded} />
 		</Suspense>
 	);
 }
 
-function ConnectorsListSkeleton() {
+function connectorsSurfaceClassName(embedded: boolean) {
+	return cn(
+		embedded ? "space-y-5" : CENTERED_PAGE_WIDTH_CLASS.page,
+		!embedded && "space-y-5 px-4 lg:px-6",
+	);
+}
+
+function ConnectorsListSkeleton({ embedded }: { embedded: boolean }) {
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			<PageHeader title="Connectors" description={CONNECTORS_RESOURCE.managementDescription} />
+		<div className={connectorsSurfaceClassName(embedded)} data-testid="connectors-surface">
+			{embedded ? null : (
+				<PageHeader title="Connectors" description={CONNECTORS_RESOURCE.managementDescription} />
+			)}
 			<Skeleton className="h-10 w-full max-w-xl" />
 			<section className="space-y-3">
 				<SectionLabel>Connected</SectionLabel>
@@ -83,7 +96,7 @@ function ConnectorsListSkeleton() {
 	);
 }
 
-function ConnectorsList() {
+function ConnectorsList({ embedded }: { embedded: boolean }) {
 	// Page + search live in the URL via nuqs so a deep-link reproduces
 	// the user's filtered view, and the back button restores the prior
 	// page after a detail-page round-trip. `clearOnDefault: true` keeps
@@ -161,12 +174,14 @@ function ConnectorsList() {
 		) : null;
 
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			<PageHeader
-				title="Connectors"
-				description={CONNECTORS_RESOURCE.managementDescription}
-				status={headerStatus}
-			/>
+		<div className={connectorsSurfaceClassName(embedded)} data-testid="connectors-surface">
+			{embedded ? null : (
+				<PageHeader
+					title="Connectors"
+					description={CONNECTORS_RESOURCE.managementDescription}
+					status={headerStatus}
+				/>
+			)}
 
 			<ListToolbar
 				search={

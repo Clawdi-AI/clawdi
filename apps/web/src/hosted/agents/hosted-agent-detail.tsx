@@ -33,8 +33,10 @@ import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
+import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { AgentSkillsTab } from "@/components/dashboard/agent-skills-tab";
+import { AgentVaultsTab } from "@/components/dashboard/agent-vaults-tab";
 import { EmptyState } from "@/components/empty-state";
 import {
 	ENTITY_CHOICE_GRID_CLASS,
@@ -284,6 +286,7 @@ import { sessionListQueryOptions } from "@/lib/session-queries";
 import { settingsQueryHref } from "@/lib/settings-routes";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn } from "@/lib/utils";
+import { ConnectorsSurface } from "@/pages/dashboard/connectors/page";
 
 type Runtime = HostedRuntime;
 type HostedAgentTab =
@@ -291,7 +294,10 @@ type HostedAgentTab =
 	| "console"
 	| "terminal"
 	| "sessions"
+	| "connectors"
+	| "projects"
 	| "skills"
+	| "vaults"
 	| "ai"
 	| "channels"
 	| "settings";
@@ -304,7 +310,9 @@ function parseHostedAgentTab(value: AgentSectionId | string | null): HostedAgent
 
 /** Only surfaces whose primary content needs the cloud-agent projection own its notice. */
 export function shouldShowHostedProjectionNotice(section: AgentSectionId): boolean {
-	return section === "sessions" || section === "skills";
+	return (
+		section === "sessions" || section === "projects" || section === "skills" || section === "vaults"
+	);
 }
 
 function LiveNote({ children }: { children: React.ReactNode }) {
@@ -599,6 +607,14 @@ export function HostedAgentDetail({
 							<ProjectionDependentUnavailable label="Sessions" />
 						)
 					) : null}
+					{activeTab === "connectors" ? <ConnectorsSurface embedded /> : null}
+					{activeTab === "projects" ? (
+						projection.status === "resolved" ? (
+							<AgentProjectsTab agentId={environmentId} />
+						) : (
+							<ProjectionDependentUnavailable label="Projects" />
+						)
+					) : null}
 					{activeTab === "skills" ? (
 						projection.status === "resolved" ? (
 							<AgentSkillsTab
@@ -609,6 +625,13 @@ export function HostedAgentDetail({
 							/>
 						) : (
 							<ProjectionDependentUnavailable label="Skills" />
+						)
+					) : null}
+					{activeTab === "vaults" ? (
+						projection.status === "resolved" ? (
+							<AgentVaultsTab agentId={environmentId} />
+						) : (
+							<ProjectionDependentUnavailable label="Vaults" />
 						)
 					) : null}
 					{deploymentStatus.known && activeTab === "ai" ? (
@@ -674,8 +697,8 @@ function HostedProjectionNotice({
 				<AlertTitle>Some agent details are not ready</AlertTitle>
 				<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<span>
-						Sessions, skills, profile, and channels will appear when they’re ready. Available
-						actions and tools still work.
+						Sessions, Projects, skills, Vaults, profile, and channels will appear when they’re
+						ready. Available actions and tools still work.
 					</span>
 					<Button type="button" variant="outline" size="sm" disabled={isFetching} onClick={onRetry}>
 						{isFetching ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
