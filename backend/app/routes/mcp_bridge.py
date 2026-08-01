@@ -28,6 +28,7 @@ from app.services.composio import (
     call_tool_router_mcp_tool,
     get_tool_router_mcp_session,
     list_tool_router_mcp_tools,
+    verify_mcp_bridge_token,
 )
 from app.services.file_store import get_file_store
 from app.services.memory_provider import get_memory_provider
@@ -250,6 +251,51 @@ _MEMORY_EXTRACT_INSTRUCTIONS = (
     "(unless they demonstrate a preferred pattern); anything readable from the current code "
     "state; conversational noise."
 )
+
+
+def _extract_legacy_mcp_user_id(request: Request) -> str:
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing auth token")
+    try:
+        return verify_mcp_bridge_token(authorization[7:])
+    except Exception:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token") from None
+
+
+# Deprecated compatibility bridge for CLI 0.12.7. Keep hidden from OpenAPI;
+# new clients authenticate normally and use POST /v1/mcp/clawdi.
+@router.post("/composio", include_in_schema=False)
+async def mcp_composio_post(request: Request):
+    user_id = _extract_legacy_mcp_user_id(request)
+    body = await request.json()
+    if not isinstance(body, dict):
+        return _mcp_error(None, -32600, "Invalid Request")
+
+    rpc_id = body.get("id")
+    method = body.get("method")
+    try:
+        session = await get_tool_router_mcp_session(user_id)
+        if method == "tools/list":
+            result = await list_tool_router_mcp_tools(session)
+        elif method == "tools/call":
+            params = body.get("params")
+            if not isinstance(params, dict):
+                return _mcp_error(rpc_id, -32602, "Invalid params")
+            name = params.get("name")
+            arguments = params.get("arguments") or {}
+            if not isinstance(name, str) or not isinstance(arguments, dict):
+                return _mcp_error(rpc_id, -32602, "Invalid params")
+            result = await call_tool_router_mcp_tool(session, name, arguments)
+        else:
+            return _mcp_error(rpc_id, -32601, "Method not found")
+    except Exception as exc:
+        logger.error(
+            "Legacy Composio MCP error: method=%s error_type=%s", method, type(exc).__name__
+        )
+        return _mcp_error(rpc_id, -32000, "internal error")
+
+    return _mcp_result(rpc_id, result.model_dump(by_alias=True, exclude_none=True))
 
 
 @router.post("/clawdi", include_in_schema=False)

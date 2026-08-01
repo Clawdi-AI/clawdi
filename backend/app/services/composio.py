@@ -29,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import httpx2
+import jwt
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, ListToolsResult
@@ -121,6 +122,34 @@ async def close_composio_client() -> None:
     if _sdk_client is not None:
         await asyncio.to_thread(_sdk_client.client.close)
         _sdk_client = None
+
+
+def _jwt_signing_key() -> str:
+    key = settings.encryption_key
+    if not key:
+        raise RuntimeError(
+            "ENCRYPTION_KEY is not configured. Generate a 32-byte hex value and "
+            "set it in backend/.env; it must be distinct from VAULT_ENCRYPTION_KEY."
+        )
+    return key
+
+
+def create_mcp_bridge_token(user_id: str) -> str:
+    """Create the short-lived credential used by legacy CLI MCP config."""
+    payload = {
+        "sub": "mcp",
+        "user_id": user_id,
+        "exp": datetime.now(UTC) + timedelta(days=30),
+    }
+    return jwt.encode(payload, _jwt_signing_key(), algorithm="HS256")
+
+
+def verify_mcp_bridge_token(token: str) -> str:
+    """Verify a legacy MCP bridge credential and return its user id."""
+    payload = jwt.decode(token, _jwt_signing_key(), algorithms=["HS256"])
+    if payload.get("sub") != "mcp" or not isinstance(payload.get("user_id"), str):
+        raise ValueError("Invalid MCP bridge token")
+    return payload["user_id"]
 
 
 async def get_tool_router_mcp_session(user_id: str) -> ComposioMcpSession:
