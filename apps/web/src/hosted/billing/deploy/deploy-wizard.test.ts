@@ -117,6 +117,13 @@ describe("deploy wizard responsive layout", () => {
 		expect(wizardSource.match(/className="items-center p-3"/g)).toHaveLength(2);
 		expect(wizardSource).toContain('testId="basic-ram-resource"');
 		expect(wizardSource).toContain('testId="performance-ram-resource"');
+		expect(wizardSource).toContain("diskGb={basicPlan.disk_size}");
+		expect(wizardSource).toContain("diskGb={perfPlan.disk_size}");
+		expect(wizardSource).toContain("{diskGb} GB storage");
+		expect(wizardSource).toContain("Basic plan unavailable");
+		expect(wizardSource).not.toContain("basicPlan?.vcpu ?? 2");
+		expect(wizardSource).not.toContain("basicPlan?.ram_gb ?? 4");
+		expect(agentDetailSource).toContain("disk_gib} GiB storage");
 		expect(wizardSource).toContain('className="whitespace-nowrap" data-testid={testId}');
 		expect(wizardSource).toMatch(/data-testid=\{`\$\{testId\}-savings`\}/);
 	});

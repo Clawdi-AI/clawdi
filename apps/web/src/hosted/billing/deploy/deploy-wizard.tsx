@@ -268,10 +268,12 @@ function ComputeResources({
 	testId,
 	vcpu,
 	ramGb,
+	diskGb,
 }: {
 	testId: string;
 	vcpu: number;
 	ramGb: number;
+	diskGb: number;
 }) {
 	return (
 		<span className="text-xs">
@@ -280,6 +282,8 @@ function ComputeResources({
 			<span className="whitespace-nowrap" data-testid={testId}>
 				{ramGb} GB RAM
 			</span>
+			{" · "}
+			<span className="whitespace-nowrap">{diskGb} GB storage</span>
 		</span>
 	);
 }
@@ -1215,12 +1219,15 @@ export function DeployWizard() {
 												? "Basic availability couldn't be checked"
 												: "Checking free Basic slot availability"}
 										</span>
-									) : (
+									) : basicPlan ? (
 										<ComputeResources
 											testId="basic-ram-resource"
-											vcpu={basicPlan?.vcpu ?? 2}
-											ramGb={basicPlan?.ram_gb ?? 4}
+											vcpu={basicPlan.vcpu}
+											ramGb={basicPlan.ram_gb}
+											diskGb={basicPlan.disk_size}
 										/>
+									) : (
+										<span className="text-xs">Basic plan unavailable</span>
 									)
 								}
 								detailsPlacement="trailing"
@@ -1272,6 +1279,7 @@ export function DeployWizard() {
 											testId="performance-ram-resource"
 											vcpu={perfPlan.vcpu}
 											ramGb={perfPlan.ram_gb}
+											diskGb={perfPlan.disk_size}
 										/>
 									) : (
 										<span className="text-xs">Performance plan unavailable</span>
