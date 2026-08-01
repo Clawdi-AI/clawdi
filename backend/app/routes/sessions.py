@@ -4,7 +4,7 @@ import logging
 import mimetypes
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, cast
+from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import (
@@ -89,10 +89,7 @@ from app.services.agent_skill_projection import (
     delete_agent_project_skill_rows,
     delete_agent_skill_files_best_effort,
 )
-from app.services.ai_provider_credentials import (
-    lock_ai_provider_owner,
-    release_runtime_oauth_claims,
-)
+from app.services.ai_provider_credentials import release_runtime_oauth_claims
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.memory_extraction import extract_memories_from_session
@@ -340,10 +337,7 @@ async def list_agents(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[AgentResponse] | Response:
-    return cast(
-        list[AgentResponse] | Response,
-        await _list_agent_identities(request, response, auth, db, agent_response=True),
-    )
+    return await _list_agent_identities(request, response, auth, db, agent_response=True)
 
 
 @router.get(
@@ -365,10 +359,7 @@ async def list_environments(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[EnvironmentResponse] | Response:
-    return cast(
-        list[EnvironmentResponse] | Response,
-        await _list_agent_identities(request, response, auth, db, agent_response=False),
-    )
+    return await _list_agent_identities(request, response, auth, db, agent_response=False)
 
 
 async def _get_agent_identity(
@@ -453,9 +444,7 @@ async def list_environment_runtime_observed(
                 owner_user_id=auth.user_id,
             )
             states_by_env = {
-                environment_id: row.state
-                for environment_id, row in source_batch.rows.items()
-                if row.state is not None
+                environment_id: row.state for environment_id, row in source_batch.rows.items()
             }
             key_identity = vault_key_identity(settings.vault_encryption_key)
             for environment_id in source_batch.rows:
@@ -581,10 +570,7 @@ async def reorder_agents(
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[AgentResponse]:
-    return cast(
-        list[AgentResponse],
-        await _reorder_agent_identities(body.agent_ids, auth, db, agent_response=True),
-    )
+    return await _reorder_agent_identities(body.agent_ids, auth, db, agent_response=True)
 
 
 @router.patch("/environments/order", response_model=list[EnvironmentResponse], deprecated=True)
@@ -593,14 +579,11 @@ async def reorder_environments(
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[EnvironmentResponse]:
-    return cast(
-        list[EnvironmentResponse],
-        await _reorder_agent_identities(
-            body.environment_ids,
-            auth,
-            db,
-            agent_response=False,
-        ),
+    return await _reorder_agent_identities(
+        body.environment_ids,
+        auth,
+        db,
+        agent_response=False,
     )
 
 
@@ -639,16 +622,13 @@ async def get_environment(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentResponse | Response:
-    return cast(
-        EnvironmentResponse | Response,
-        await _get_agent_identity(
-            environment_id,
-            request,
-            response,
-            auth,
-            db,
-            agent_response=False,
-        ),
+    return await _get_agent_identity(
+        environment_id,
+        request,
+        response,
+        auth,
+        db,
+        agent_response=False,
     )
 
 
@@ -691,10 +671,7 @@ async def update_agent(
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ) -> AgentResponse:
-    return cast(
-        AgentResponse,
-        await _update_agent_identity(agent_id, body, auth, db, agent_response=True),
-    )
+    return await _update_agent_identity(agent_id, body, auth, db, agent_response=True)
 
 
 @router.patch(
@@ -708,10 +685,7 @@ async def update_environment(
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentResponse:
-    return cast(
-        EnvironmentResponse,
-        await _update_agent_identity(environment_id, body, auth, db, agent_response=False),
-    )
+    return await _update_agent_identity(environment_id, body, auth, db, agent_response=False)
 
 
 async def _clear_agent_avatar(
@@ -752,10 +726,7 @@ async def clear_agent_avatar(
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ) -> AgentResponse:
-    return cast(
-        AgentResponse,
-        await _clear_agent_avatar(agent_id, auth, db, agent_response=True),
-    )
+    return await _clear_agent_avatar(agent_id, auth, db, agent_response=True)
 
 
 @router.delete(
@@ -768,10 +739,7 @@ async def clear_environment_avatar(
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentResponse:
-    return cast(
-        EnvironmentResponse,
-        await _clear_agent_avatar(environment_id, auth, db, agent_response=False),
-    )
+    return await _clear_agent_avatar(environment_id, auth, db, agent_response=False)
 
 
 async def _upload_agent_avatar(
@@ -831,10 +799,7 @@ async def upload_agent_avatar(
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ) -> AgentResponse:
-    return cast(
-        AgentResponse,
-        await _upload_agent_avatar(agent_id, file, auth, db, agent_response=True),
-    )
+    return await _upload_agent_avatar(agent_id, file, auth, db, agent_response=True)
 
 
 @router.post(
@@ -848,10 +813,7 @@ async def upload_environment_avatar(
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentResponse:
-    return cast(
-        EnvironmentResponse,
-        await _upload_agent_avatar(environment_id, file, auth, db, agent_response=False),
-    )
+    return await _upload_agent_avatar(environment_id, file, auth, db, agent_response=False)
 
 
 @router.get(
@@ -1453,7 +1415,7 @@ def _runtime_desired_provider_binding(
 
 def _runtime_observed_provider_status(
     observed: HostedRuntimeObservedProviderPayload | None,
-) -> Literal["ok", "error", "unknown", "not_configured"]:
+) -> str:
     if observed is None:
         return "unknown"
     payload = observed.root
@@ -1564,20 +1526,6 @@ async def _delete_agent_identity(
     )
     env = result.scalar_one_or_none()
     if not env:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
-    await lock_ai_provider_owner(db, auth.user_id)
-    env = (
-        await db.execute(
-            select(AgentEnvironment)
-            .where(
-                AgentEnvironment.id == agent_id,
-                AgentEnvironment.user_id == auth.user_id,
-            )
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-    ).scalar_one_or_none()
-    if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
     if env.registration_key is None:
         raise HTTPException(
@@ -2374,14 +2322,13 @@ async def list_sessions(
     # ANY of summary / project / id wins, and the strongest match
     # drives the rank. NULL-safe via COALESCE — sessions with NULL
     # summary still match if their project_path or id does.
-    relevance_expr: Any | None
     if q:
         sim_summary = func.similarity(func.coalesce(Session.summary, ""), q)
         sim_project = func.similarity(func.coalesce(Session.project_path, ""), q)
         sim_local = func.similarity(Session.local_session_id, q)
         relevance_expr = func.greatest(sim_summary, sim_project, sim_local)
     else:
-        relevance_expr = None
+        relevance_expr = None  # type: ignore[assignment]
 
     base = select(
         Session,
@@ -2391,7 +2338,7 @@ async def list_sessions(
         AgentEnvironment.machine_name,
         is_shared_subq,
     ).outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
-    session_filters: list[Any] = [Session.user_id == auth.user_id]
+    session_filters = [Session.user_id == auth.user_id]
     agent_filter = AgentEnvironment.agent_type == agent if agent else None
     if bound_env is not None:
         session_filters.append(Session.environment_id == bound_env)
@@ -2450,7 +2397,7 @@ async def list_sessions(
         else:
             session_filters.append(_MANUAL_SESSION_SUMMARY_FILTER)
 
-    if q and relevance_expr is not None:
+    if q:
         # pg_trgm `similarity()` for typo / partial-word tolerance.
         # NOT index-accelerated — the function-call form doesn't trigger
         # the `gin_trgm_ops` operator class (only `%` / `<->` / `LIKE`
@@ -3180,18 +3127,16 @@ def _link_is_shared_subq():
 
 
 def _permission_to_response(p: SessionPermission) -> SessionPermissionResponse:
-    return SessionPermissionResponse.model_validate(
-        {
-            "id": str(p.id),
-            "kind": p.kind,
-            "user_id": str(p.user_id) if p.user_id else None,
-            "email": p.email,
-            "role": p.role,
-            "invited_by": str(p.invited_by) if p.invited_by else None,
-            "accepted_at": p.accepted_at,
-            "expires_at": p.expires_at,
-            "created_at": p.created_at,
-        }
+    return SessionPermissionResponse(
+        id=str(p.id),
+        kind=p.kind,
+        user_id=str(p.user_id) if p.user_id else None,
+        email=p.email,
+        role=p.role,
+        invited_by=str(p.invited_by) if p.invited_by else None,
+        accepted_at=p.accepted_at,
+        expires_at=p.expires_at,
+        created_at=p.created_at,
     )
 
 

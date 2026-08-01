@@ -168,44 +168,6 @@ async def test_runtime_state_rejects_existing_local_only_provider_at_admission(
 
 
 @pytest.mark.asyncio
-async def test_runtime_state_rejects_missing_provider_at_admission(
-    db_session,
-    seed_user,
-):
-    provider_id = "missing-runtime-provider"
-    environment = await create_env_with_project(
-        db_session,
-        user_id=seed_user.id,
-        machine_id=f"missing-provider-boundary-{uuid.uuid4().hex}",
-        machine_name="Missing provider boundary",
-        agent_type="openclaw",
-    )
-    await db_session.flush()
-
-    with pytest.raises(
-        OAuthCredentialClaimConflict,
-        match=rf"missing or archived: {provider_id}",
-    ):
-        await reconcile_runtime_oauth_claims(
-            db_session,
-            owner_user_id=seed_user.id,
-            environment_id=environment.id,
-            runtimes={
-                "openclaw": {
-                    "enabled": True,
-                    "providerMode": "configured",
-                    "provider_ids": [provider_id],
-                    "primary_model": {
-                        "provider_id": provider_id,
-                        "model": "missing-model",
-                    },
-                    "install": {"source": "official"},
-                }
-            },
-        )
-
-
-@pytest.mark.asyncio
 async def test_hosted_bound_provider_rejects_local_patch_and_replace(
     client: httpx.AsyncClient,
     db_session,

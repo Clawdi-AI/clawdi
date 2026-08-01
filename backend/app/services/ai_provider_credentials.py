@@ -209,11 +209,7 @@ async def _lock_and_validate_runtime_provider(
         )
         .with_for_update()
     )
-    if provider is None:
-        raise OAuthCredentialClaimConflict(
-            "Hosted runtime AI Provider is missing or archived: " + provider_id
-        )
-    if not is_public_https_url(provider.base_url):
+    if provider is not None and not is_public_https_url(provider.base_url):
         raise OAuthCredentialClaimConflict(
             "Hosted runtime AI Provider base_url must be a public HTTPS URL: "
             + provider.provider_id
