@@ -1204,7 +1204,7 @@ function OverviewTab({
 				<StatCard label="Model" value={model} />
 				<StatCard
 					label="Resources"
-					value={`${spec.resources.vcpu} vCPU · ${formatMemoryMib(spec.resources.memory_mib)}`}
+					value={`${spec.resources.vcpu} vCPU · ${formatMemoryMib(spec.resources.memory_mib)} · ${spec.resources.disk_gib} GiB storage`}
 				/>
 			</div>
 			{projectionAvailable ? (

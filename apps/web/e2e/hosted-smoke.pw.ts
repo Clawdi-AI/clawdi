@@ -4050,7 +4050,7 @@ test("free Basic Deploy recovers hydration before authoritative first frame", as
 	const detail = page.locator("main");
 	await expect(detail.getByText("Basic", { exact: true })).toBeVisible();
 	await expect(detail.getByText("GPT-5.6 Luna", { exact: true })).toBeVisible();
-	await expect(detail.getByText("2 vCPU · 4 GiB", { exact: true })).toBeVisible();
+	await expect(detail.getByText("2 vCPU · 4 GiB · 20 GiB storage", { exact: true })).toBeVisible();
 	expect(convergencePollRequests).toEqual([]);
 	expect(createDeploymentRequests).toHaveLength(1);
 	expect(deploymentDetailRequests).toHaveLength(2);
