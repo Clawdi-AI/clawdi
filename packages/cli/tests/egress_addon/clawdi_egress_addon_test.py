@@ -74,11 +74,206 @@ def bundle(profiles):
 
 
 class AddonProfileInterpreterTest(unittest.TestCase):
+    def test_generic_engine_source_contains_no_channel_product_constants(self):
+        source = ADDON_PATH.read_text(encoding="utf-8").lower()
+
+        for product_constant in (
+            "telegram",
+            "discord",
+            "whatsapp",
+            "api.telegram.org",
+            "discord.com",
+            "web.whatsapp.com",
+            "x-clawdi-whatsapp",
+        ):
+            self.assertNotIn(product_constant, source)
+
+    def test_channel_placeholder_profiles_share_the_generic_matcher_and_rewriter(self):
+        marker_header = "x-clawdi-whatsapp-link-capability"
+        profiles = [
+            {
+                "id": "managed-telegram-path-placeholder",
+                "enabled": True,
+                "kind": "http",
+                "match": {
+                    "scheme": "https",
+                    "host": "api.telegram.org",
+                    "path": {
+                        "type": "secretRefPrefix",
+                        "secretRef": "secret://telegram/placeholder",
+                        "prefix": "/bot",
+                        "suffix": "/",
+                    },
+                },
+                "rewrite": {
+                    "upstreamBaseUrl": "https://relay.test/v1/channels/telegram",
+                    "preservePath": True,
+                    "setHeaders": {
+                        "authorization": {
+                            "type": "secretRef",
+                            "secretRef": "secret://telegram/link-bearer",
+                            "prefix": "Bearer ",
+                        }
+                    },
+                },
+                "priority": 10,
+            },
+            {
+                "id": "managed-discord-header-placeholder",
+                "enabled": True,
+                "kind": "http",
+                "match": {
+                    "scheme": "https",
+                    "host": "discord.com",
+                    "pathPrefix": "/api/",
+                    "headers": {
+                        "authorization": {
+                            "type": "secretRefEquals",
+                            "secretRef": "secret://discord/placeholder",
+                            "prefix": "Bot ",
+                        }
+                    },
+                },
+                "rewrite": {
+                    "upstreamBaseUrl": "https://relay.test/v1/channels/discord",
+                    "preservePath": True,
+                    "setHeaders": {
+                        "authorization": {
+                            "type": "secretRef",
+                            "secretRef": "secret://discord/link-bearer",
+                            "prefix": "Bearer ",
+                        }
+                    },
+                },
+                "priority": 10,
+            },
+            {
+                "id": "managed-whatsapp-marker",
+                "enabled": True,
+                "kind": "websocket",
+                "match": {
+                    "scheme": "wss",
+                    "host": "web.whatsapp.com",
+                    "path": {"type": "equals", "value": "/ws/chat"},
+                    "headers": {
+                        marker_header: {
+                            "type": "secretRefEquals",
+                            "secretRef": "secret://whatsapp/marker",
+                        }
+                    },
+                },
+                "rewrite": {
+                    "upstreamBaseUrl": "wss://relay.test/v1/channels/whatsapp/baileys",
+                    "preservePath": False,
+                    "removeHeaders": [marker_header],
+                    "setHeaders": {
+                        "authorization": {
+                            "type": "secretRef",
+                            "secretRef": "secret://whatsapp/link-bearer",
+                            "prefix": "Bearer ",
+                        }
+                    },
+                },
+                "priority": 10,
+            },
+        ]
+        egress = self.load(
+            profiles,
+            {
+                "secret://telegram/placeholder": "999999999:placeholder",
+                "secret://telegram/link-bearer": "telegram-link",
+                "secret://discord/placeholder": "discord-placeholder",
+                "secret://discord/link-bearer": "discord-link",
+                "secret://whatsapp/marker": "managed-marker",
+                "secret://whatsapp/link-bearer": "whatsapp-link",
+            },
+        )
+        cases = (
+            (
+                Flow(host="api.telegram.org", path="/bot999999999:placeholder/sendMessage"),
+                "managed-telegram-path-placeholder",
+                "telegram-link",
+            ),
+            (
+                Flow(
+                    host="discord.com",
+                    path="/api/v10/channels/1/messages",
+                    headers={"authorization": "Bot discord-placeholder"},
+                ),
+                "managed-discord-header-placeholder",
+                "discord-link",
+            ),
+            (
+                Flow(
+                    host="web.whatsapp.com",
+                    path="/ws/chat",
+                    headers={"upgrade": "websocket", marker_header: "managed-marker"},
+                ),
+                "managed-whatsapp-marker",
+                "whatsapp-link",
+            ),
+        )
+
+        for flow, profile_id, link_bearer in cases:
+            with self.subTest(profile_id=profile_id):
+                decision = egress.apply_to_flow(flow)
+                self.assertEqual(decision.profile_id, profile_id)
+                self.assertEqual(flow.request.host, "relay.test")
+                self.assertEqual(flow.request.headers["authorization"], f"Bearer {link_bearer}")
+
+        self.assertNotIn(marker_header, cases[2][0].request.headers)
+
     def test_addon_loads_when_executed_as_a_script_path(self):
         loaded = runpy.run_path(str(ADDON_PATH))
 
         self.assertIn("addons", loaded)
         self.assertEqual(len(loaded["addons"]), 1)
+
+    def test_secret_ref_prefix_matcher_is_shared_by_headers_and_query(self):
+        egress = self.load(
+            [
+                {
+                    "id": "generic-prefix-identity",
+                    "enabled": True,
+                    "kind": "http",
+                    "match": {
+                        "scheme": "https",
+                        "host": "provider.test",
+                        "headers": {
+                            "authorization": {
+                                "type": "secretRefPrefix",
+                                "secretRef": "secret://placeholder",
+                                "prefix": "Bearer ",
+                                "suffix": ".",
+                            }
+                        },
+                        "query": {
+                            "identity": {
+                                "type": "secretRefPrefix",
+                                "secretRef": "secret://placeholder",
+                            }
+                        },
+                    },
+                    "rewrite": {"upstreamBaseUrl": "https://relay.test/provider"},
+                    "priority": 10,
+                }
+            ],
+            {"secret://placeholder": "managed"},
+        )
+
+        matched = Flow(
+            host="provider.test",
+            path="/v1/messages?identity=managed.gateway",
+            headers={"authorization": "Bearer managed.session"},
+        )
+        wrong_query = Flow(
+            host="provider.test",
+            path="/v1/messages?identity=user-owned",
+            headers={"authorization": "Bearer managed.session"},
+        )
+
+        self.assertEqual(egress.apply_to_flow(matched).profile_id, "generic-prefix-identity")
+        self.assertIsNone(egress.apply_to_flow(wrong_query).profile)
 
     def load(self, profiles, secrets=None):
         self.tmp = tempfile.TemporaryDirectory()

@@ -95,6 +95,7 @@ describe("native WhatsApp egress contract", () => {
 		const noiseHandler = readFileSync(join(baileysRoot, "lib/Utils/noise-handler.js"), "utf-8");
 		const socketTypes = readFileSync(join(baileysRoot, "lib/Types/Socket.d.ts"), "utf-8");
 		const sidecarRuntime = readFileSync(join(sidecarRoot, "src/runtime.ts"), "utf-8");
+		const sidecarConfig = readFileSync(join(sidecarRoot, "src/config.ts"), "utf-8");
 		const lockfile = readFileSync(join(import.meta.dir, "../../../bun.lock"), "utf-8");
 		const release = WHATSAPP_UPSTREAM_AUDIT.baileysRelease;
 		const openclawArtifact = release.artifacts.openclaw;
@@ -130,6 +131,10 @@ describe("native WhatsApp egress contract", () => {
 		expect(noiseHandler).toContain("issuerSerial !== WA_CERT_DETAILS.SERIAL");
 		expect(socketTypes).not.toMatch(/\bauthCert\s*[?:]/);
 		expect(sidecarRuntime).not.toContain("authCert");
+		expect(sidecarRuntime).not.toContain("waWebSocketUrl");
+		expect(sidecarConfig).not.toContain("CLAWDI_WA_WEBSOCKET_URL");
+		expect(sidecarRuntime.match(/makeWASocket\(/g)).toHaveLength(1);
+		expect(sidecarRuntime).toContain("acquireProviderAccountOwnerLock");
 		expect(release.noiseTrustSeam.available).toBe(false);
 	});
 });

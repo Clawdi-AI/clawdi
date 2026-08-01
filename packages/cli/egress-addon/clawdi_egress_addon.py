@@ -425,9 +425,14 @@ def matcher_matches(value: str | None, matcher: Any, secrets: dict[str, str]) ->
         return False
     if matcher_type == "equals":
         return value == f"{matcher.get('prefix', '')}{matcher.get('value', '')}"
-    if matcher_type == "secretRefEquals":
+    if matcher_type in {"secretRefEquals", "secretRefPrefix"}:
         secret = secrets.get(str(matcher.get("secretRef", "")))
-        return secret is not None and value == f"{matcher.get('prefix', '')}{secret}"
+        if secret is None:
+            return False
+        expected = f"{matcher.get('prefix', '')}{secret}{matcher.get('suffix', '')}"
+        if matcher_type == "secretRefEquals":
+            return value == expected
+        return value.startswith(expected)
     return False
 
 

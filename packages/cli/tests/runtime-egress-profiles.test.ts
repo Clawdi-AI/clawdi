@@ -72,6 +72,35 @@ describe("runtime egress profile schema", () => {
 		).toBe(true);
 	});
 
+	it("accepts generic secretRef prefix matchers for headers and query values", () => {
+		expect(
+			egressProfileSchema.safeParse({
+				id: "managed-upgrade-identity",
+				enabled: true,
+				kind: "websocket",
+				match: {
+					scheme: "wss",
+					host: "socket.example.test",
+					headers: {
+						"x-managed-identity": {
+							type: "secretRefPrefix",
+							secretRef: "secret://runtime/placeholder",
+							prefix: "Managed ",
+						},
+					},
+					query: {
+						identity: {
+							type: "secretRefPrefix",
+							secretRef: "secret://runtime/placeholder",
+							suffix: ".",
+						},
+					},
+				},
+				rewrite: { upstreamBaseUrl: "wss://relay.example.test/session" },
+			}).success,
+		).toBe(true);
+	});
+
 	it("accepts narrowly scoped removal of internal routing headers", () => {
 		expect(
 			egressProfileSchema.safeParse({

@@ -64,6 +64,12 @@ const headerMatcherSchema = z
 			secretRef: secretRefSchema,
 			prefix: z.string().optional(),
 		}),
+		z.object({
+			type: z.literal("secretRefPrefix"),
+			secretRef: secretRefSchema,
+			prefix: z.string().default(""),
+			suffix: z.string().default(""),
+		}),
 	])
 	.describe(
 		"Header matchers must never inline secret values unless type=equals is intentionally public.",
