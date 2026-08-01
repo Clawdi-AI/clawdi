@@ -7737,23 +7737,58 @@ test("Agent bot groups keep every bot visible and gate provider conflicts in pla
 	await expect(discordRow.locator(`[title="${discordAccount.name}"]`)).toBeVisible();
 	await expect(clawdiDiscordRow.locator(`[title="${clawdiDiscord.name}"]`)).toBeVisible();
 	const linkedTelegramHeader = linkedTelegramRow.locator("[data-channel-card-header]");
+	const unlinkedDiscordHeader = discordRow.locator("[data-channel-card-header]");
+	const linkedTelegramFooter = linkedTelegramRow.locator("[data-channel-card-footer]");
+	const unlinkedDiscordFooter = discordRow.locator("[data-channel-card-footer]");
 	const linkedTelegramChats = linkedTelegramRow.locator(
 		`[data-agent-paired-chats-trigger="${telegramLinkId}"]`,
 	);
-	await expect(linkedTelegramHeader.getByText("Paired", { exact: true })).toBeVisible();
 	await expect(linkedTelegramHeader.getByText("Warning", { exact: true })).toBeVisible();
 	await expect(linkedTelegramHeader).not.toContainText("1 chat");
+	await expect(linkedTelegramHeader).not.toContainText("Paired");
+	await expect(unlinkedDiscordHeader).not.toContainText("Paired");
 	await expect(linkedTelegramChats).toHaveAccessibleName("Manage paired chats · 1");
+	await expect(linkedTelegramFooter).toContainText("Manage paired chats · 1");
+	await expect(unlinkedDiscordFooter).toContainText("Link to start pairing chats");
+	await expect(
+		unlinkedDiscordHeader.getByRole("button", { name: "Link", exact: true }),
+	).toBeVisible();
+	await expect(
+		unlinkedDiscordFooter.getByRole("button", { name: "Link", exact: true }),
+	).toHaveCount(0);
 	await expect(discordRow.locator("[data-agent-paired-chats-trigger]")).toHaveCount(0);
-	const [linkedTelegramBox, unlinkedDiscordBox] = await Promise.all([
+	const [
+		linkedTelegramBox,
+		unlinkedDiscordBox,
+		linkedTelegramHeaderBox,
+		unlinkedDiscordHeaderBox,
+		linkedTelegramFooterBox,
+		unlinkedDiscordFooterBox,
+	] = await Promise.all([
 		linkedTelegramRow.locator("article").boundingBox(),
 		discordRow.locator("article").boundingBox(),
+		linkedTelegramHeader.boundingBox(),
+		unlinkedDiscordHeader.boundingBox(),
+		linkedTelegramFooter.boundingBox(),
+		unlinkedDiscordFooter.boundingBox(),
 	]);
-	if (!linkedTelegramBox || !unlinkedDiscordBox) {
-		throw new Error("Expected linked Telegram and unlinked Discord card bounds");
+	if (
+		!linkedTelegramBox ||
+		!unlinkedDiscordBox ||
+		!linkedTelegramHeaderBox ||
+		!unlinkedDiscordHeaderBox ||
+		!linkedTelegramFooterBox ||
+		!unlinkedDiscordFooterBox
+	) {
+		throw new Error("Expected linked Telegram and unlinked Discord two-section card bounds");
 	}
 	expect(linkedTelegramBox.y).toBe(unlinkedDiscordBox.y);
 	expect(linkedTelegramBox.height).toBe(unlinkedDiscordBox.height);
+	expect(linkedTelegramHeaderBox.y).toBe(unlinkedDiscordHeaderBox.y);
+	expect(linkedTelegramHeaderBox.height).toBe(unlinkedDiscordHeaderBox.height);
+	expect(linkedTelegramFooterBox.y).toBe(unlinkedDiscordFooterBox.y);
+	expect(linkedTelegramFooterBox.height).toBe(unlinkedDiscordFooterBox.height);
+	expect(linkedTelegramFooterBox.height).toBeGreaterThan(0);
 	await expect(
 		customSection.getByRole("button", { name: "Add custom bot", exact: true }),
 	).toBeVisible();
@@ -7780,6 +7815,41 @@ test("Agent bot groups keep every bot visible and gate provider conflicts in pla
 		clawdiDiscordRow,
 		"Link Clawdi Discord at 320px",
 	);
+	const [
+		mobileLinkedTelegramBox,
+		mobileUnlinkedDiscordBox,
+		mobileLinkedTelegramHeaderBox,
+		mobileUnlinkedDiscordHeaderBox,
+		mobileLinkedTelegramFooterBox,
+		mobileUnlinkedDiscordFooterBox,
+	] = await Promise.all([
+		linkedTelegramRow.locator("article").boundingBox(),
+		discordRow.locator("article").boundingBox(),
+		linkedTelegramHeader.boundingBox(),
+		unlinkedDiscordHeader.boundingBox(),
+		linkedTelegramFooter.boundingBox(),
+		unlinkedDiscordFooter.boundingBox(),
+	]);
+	if (
+		!mobileLinkedTelegramBox ||
+		!mobileUnlinkedDiscordBox ||
+		!mobileLinkedTelegramHeaderBox ||
+		!mobileUnlinkedDiscordHeaderBox ||
+		!mobileLinkedTelegramFooterBox ||
+		!mobileUnlinkedDiscordFooterBox
+	) {
+		throw new Error("Expected mobile linked and unlinked two-section card bounds");
+	}
+	expect(mobileLinkedTelegramBox.height).toBe(mobileUnlinkedDiscordBox.height);
+	expect(mobileLinkedTelegramHeaderBox.height).toBe(mobileUnlinkedDiscordHeaderBox.height);
+	expect(mobileLinkedTelegramHeaderBox.y - mobileLinkedTelegramBox.y).toBe(
+		mobileUnlinkedDiscordHeaderBox.y - mobileUnlinkedDiscordBox.y,
+	);
+	expect(mobileLinkedTelegramFooterBox.height).toBe(mobileUnlinkedDiscordFooterBox.height);
+	expect(mobileLinkedTelegramFooterBox.y - mobileLinkedTelegramBox.y).toBe(
+		mobileUnlinkedDiscordFooterBox.y - mobileUnlinkedDiscordBox.y,
+	);
+	await discordRow.evaluate((element) => element.scrollIntoView({ block: "start" }));
 	await page.screenshot({
 		path: testInfo.outputPath("agent-bot-groups-provider-limits-320x568.png"),
 		fullPage: false,

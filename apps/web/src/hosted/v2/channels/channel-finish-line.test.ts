@@ -20,7 +20,7 @@ describe("hosted-agent channel finish line", () => {
 	test("keeps diagnosis compact inside shared equal-height channel cards", () => {
 		expect(channelsTab).toContain("const health = useChannelHealth()");
 		expect(channelsTab).toContain("CHANNEL_CARD_GRID_CLASS");
-		expect(channelsTab).toContain("<ChannelCard");
+		expect(channelsTab).toContain("<AgentChannelCard");
 		expect(channelsTab).not.toContain("AGENT_CHANNEL_LIST_CLASS");
 		expect(channelsTab).not.toContain("AGENT_CHANNEL_ROW_CLASS");
 		expect(channelsTab).not.toContain("channelActivityAfterLink(");
@@ -32,7 +32,8 @@ describe("hosted-agent channel finish line", () => {
 		expect(channelsTab).toContain("onRetry={() => void health.refetch()}");
 		expect(channelsTab).toContain('<ChannelStatusBadge key="status" status={link.status} />');
 		expect(channelsTab).toContain("<HealthBadge");
-		expect(channelsTab).toContain("hasPairedChats={pairedChats.length > 0}");
+		expect(channelsTab).toContain("Link to start pairing chats");
+		expect(channelsTab).not.toContain('key="paired"');
 		expect(channelsTab).not.toContain("pairedChatCount");
 		expect(channelsTab).not.toContain('1 ? "chat" : "chats"');
 		expect(channelsTab).not.toContain("Waiting for channel activity");

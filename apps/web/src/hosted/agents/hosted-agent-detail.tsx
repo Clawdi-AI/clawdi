@@ -29,7 +29,7 @@ import {
 	X,
 	Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -2262,6 +2262,18 @@ function ChannelsSyncState({
 const AGENT_CHANNEL_PAIR_ACTIONS_CLASS =
 	"grid min-h-8 w-full grid-cols-[minmax(0,1fr)_7rem] items-center gap-1.5 xl:flex xl:w-auto xl:gap-2";
 
+const AGENT_CHANNEL_CARD_HEADER_CLASS =
+	"h-[7.5rem] flex-none grid-rows-[2.75rem_2rem] xl:h-20 xl:grid-rows-1";
+
+function AgentChannelCard({ headerClassName, ...props }: ComponentProps<typeof ChannelCard>) {
+	return (
+		<ChannelCard
+			{...props}
+			headerClassName={cn(AGENT_CHANNEL_CARD_HEADER_CLASS, headerClassName)}
+		/>
+	);
+}
+
 function agentChannelLinkUnavailableReason({
 	bot,
 	agentType,
@@ -2762,7 +2774,7 @@ function AgentChannelBotCard({
 					onUnlink={onUnlink}
 				/>
 			) : (
-				<ChannelCard
+				<AgentChannelCard
 					provider={bot.provider}
 					title={bot.name}
 					state={unavailableReason}
@@ -2778,7 +2790,14 @@ function AgentChannelBotCard({
 							{linking ? "Linking…" : "Link"}
 						</Button>
 					}
-				/>
+				>
+					<p
+						data-agent-channel-link-guidance
+						className="flex h-10 min-h-10 max-h-10 min-w-0 items-center px-4 text-sm text-muted-foreground"
+					>
+						<span className="min-w-0 truncate">Link to start pairing chats</span>
+					</p>
+				</AgentChannelCard>
 			)}
 		</div>
 	);
@@ -2820,7 +2839,6 @@ function ConnectedChannelGroup({
 				health={health}
 				agentName={agentName}
 				bindings={bindings}
-				hasPairedChats={pairedChats.length > 0}
 				unlinking={unlinking}
 				onUnlink={onUnlink}
 			>
@@ -2852,7 +2870,6 @@ function LinkedChannelRow({
 	health,
 	agentName,
 	bindings,
-	hasPairedChats,
 	children,
 }: {
 	link: AgentChannelLink;
@@ -2862,7 +2879,6 @@ function LinkedChannelRow({
 	health?: components["schemas"]["ChannelHealthItemResponse"];
 	agentName: string;
 	bindings: readonly ChannelBinding[] | undefined;
-	hasPairedChats: boolean;
 	children?: React.ReactNode;
 }) {
 	const pair = useCreatePairCode(link.account_id);
@@ -2904,11 +2920,6 @@ function LinkedChannelRow({
 		}
 	}
 	const exceptionalState = [
-		hasPairedChats ? (
-			<span key="paired" className="font-medium text-foreground">
-				Paired
-			</span>
-		) : null,
 		isNormalChannelStatus(link.status) ? null : (
 			<ChannelStatusBadge key="status" status={link.status} />
 		),
@@ -2930,7 +2941,7 @@ function LinkedChannelRow({
 	return (
 		<>
 			<div data-agent-channel-link-id={link.id} className="h-full min-w-0">
-				<ChannelCard
+				<AgentChannelCard
 					provider={provider}
 					title={name}
 					state={exceptionalState}
@@ -2992,7 +3003,7 @@ function LinkedChannelRow({
 					}
 				>
 					{children}
-				</ChannelCard>
+				</AgentChannelCard>
 			</div>
 			{provider === "telegram" ? (
 				<TelegramPairDialog
