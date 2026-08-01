@@ -29,6 +29,7 @@ EXPECTED_CONFIG = {
         "app/services/embedding.py",
         "app/services/file_store.py",
         "app/services/memory_extraction.py",
+        "app/services/private_ip.py",
         "app/services/runtime_observation.py",
     ],
 }
