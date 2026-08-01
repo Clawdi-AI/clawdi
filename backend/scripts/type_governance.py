@@ -18,6 +18,7 @@ EXPECTED_CONFIG = {
     "typeCheckingMode": "standard",
     "pythonVersion": "3.12",
     "include": [
+        "app/core/auth.py",
         "app/core/query_utils.py",
         "app/core/sentry.py",
         "app/core/skill_key.py",
