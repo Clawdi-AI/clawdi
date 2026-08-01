@@ -22,6 +22,7 @@ import {
 import {
 	HERMES_CODEX_AUTH_HELPER,
 	type HermesCodexAuthAction,
+	hermesCodexAuthInvocation,
 	type NativeOAuthCredentialMutationResult,
 	nativeOAuthCredentialEvidenceFingerprint,
 	nativeOAuthMutationResult,
@@ -691,12 +692,8 @@ function runLocalHermesCodexAuthCommand(
 		credentialRevision,
 		expectedFingerprint ?? "",
 	];
-	const command = process.platform === "win32" ? "node" : "flock";
-	const args =
-		process.platform === "win32"
-			? nodeArgs
-			: ["--timeout", "10", join(dirname(path), "auth.lock"), "node", ...nodeArgs];
-	const output = execFileSync(command, args, {
+	const invocation = hermesCodexAuthInvocation(action, nodeArgs, join(dirname(path), "auth.lock"));
+	const output = execFileSync(invocation.command, invocation.args, {
 		encoding: "utf8",
 		input: JSON.stringify(material ?? null),
 		stdio: ["pipe", "pipe", "pipe"],

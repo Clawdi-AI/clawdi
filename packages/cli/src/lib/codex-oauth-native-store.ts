@@ -24,6 +24,31 @@ export interface NativeOAuthCredentialMutationResult {
 	afterCredentialFingerprint?: string;
 }
 
+export interface HermesCodexAuthInvocation {
+	command: string;
+	args: string[];
+}
+
+export function hermesCodexAuthInvocation(
+	action: HermesCodexAuthAction,
+	nodeArgs: string[],
+	lockPath: string,
+	platform: NodeJS.Platform = process.platform,
+): HermesCodexAuthInvocation {
+	if (platform === "win32") {
+		if (action !== "inspect") {
+			throw new Error(
+				"Hermes Codex auth mutation is unavailable on Windows because Clawdi cannot acquire Hermes auth.lock with the official msvcrt protocol.",
+			);
+		}
+		return { command: "node", args: nodeArgs };
+	}
+	return {
+		command: "flock",
+		args: ["--timeout", "10", lockPath, "node", ...nodeArgs],
+	};
+}
+
 export function nativeOAuthProfileId(
 	runtime: "codex" | "hermes" | "openclaw",
 	providerId: string,
@@ -175,13 +200,20 @@ if (pool["openai-codex"] !== undefined && !Array.isArray(pool["openai-codex"])) 
   throw new Error("Hermes openai-codex credential pool must be an array");
 }
 const rawEntries = Array.isArray(pool["openai-codex"]) ? pool["openai-codex"] : [];
-const entries = rawEntries.filter((entry) => entry && typeof entry === "object");
+if (rawEntries.some((entry) => !entry || typeof entry !== "object" || Array.isArray(entry))) {
+  throw new Error("Hermes openai-codex credential pool contains an unknown entry");
+}
+const entries = rawEntries;
 const valid = (entry) => typeof entry.access_token === "string" && entry.access_token.length > 0 && typeof entry.refresh_token === "string" && entry.refresh_token.length > 0;
 const digest = (value) => "sha256:" + createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const fingerprint = (entry, revision) => valid(entry)
   ? digest(["clawdi.runtimeOAuthCredential.v1", revision, entry.access_token, entry.refresh_token])
   : digest(["clawdi.nativeOAuthCredentialEvidence.v1", entry]);
-const reservedEntry = entries.find((entry) => entry.id === profileId);
+const reservedEntries = entries.filter((entry) => entry.id === profileId);
+if (reservedEntries.length > 1) {
+  throw new Error("Hermes openai-codex credential pool contains duplicate reserved IDs");
+}
+const reservedEntry = reservedEntries[0];
 const present = Boolean(reservedEntry);
 const beforeCredentialFingerprint = present ? fingerprint(reservedEntry, credentialRevision) : undefined;
 const managed = present && valid(reservedEntry) && reservedEntry.auth_type === "oauth" && reservedEntry.source === "manual:device_code" && ownedProfileId === profileId;

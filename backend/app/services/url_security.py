@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
 from app.services.private_ip import has_private_resolved_ip, is_private_hostname
 
@@ -22,7 +22,7 @@ def validate_public_https_url(url: str, *, label: str) -> None:
 
     candidate = url.strip()
     try:
-        parsed = urlparse(candidate)
+        parsed = urlsplit(candidate)
         parsed.port
     except ValueError as exc:
         raise UnsafePublicHttpsUrlError(f"{label} must be a public HTTPS URL") from exc
@@ -33,7 +33,8 @@ def validate_public_https_url(url: str, *, label: str) -> None:
         or not parsed.hostname
         or parsed.username is not None
         or parsed.password is not None
-        or ";" in candidate
+        or any(character.isspace() for character in candidate)
+        or ";" in parsed.netloc
         or "?" in candidate
         or "#" in candidate
     ):
@@ -75,7 +76,7 @@ async def validate_outbound_url(
     schemes = {scheme.lower() for scheme in allowed_schemes}
     candidate = url.strip()
     try:
-        parsed = urlparse(candidate)
+        parsed = urlsplit(candidate)
         parsed.port
     except ValueError as exc:
         raise UnsafeOutboundUrlError(f"{label} must use {_scheme_list(schemes)}") from exc

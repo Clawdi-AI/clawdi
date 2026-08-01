@@ -151,6 +151,36 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    # Keep the check and drop atomic with respect to new OAuth work. Terminal
+    # rows are already scrubbed by database constraints and may follow the
+    # normal retention policy; active material and revoke obligations may not
+    # be discarded by a rollback.
+    bind.execute(
+        sa.text(
+            "LOCK TABLE ai_provider_oauth_attempts, "
+            "ai_provider_oauth_revoke_tombstones IN ACCESS EXCLUSIVE MODE"
+        )
+    )
+    active_attempts = bind.scalar(
+        sa.text(
+            "SELECT count(*) FROM ai_provider_oauth_attempts "
+            "WHERE status IN ('pending', 'polling', 'exchanging')"
+        )
+    )
+    pending_revokes = bind.scalar(
+        sa.text(
+            "SELECT count(*) FROM ai_provider_oauth_revoke_tombstones "
+            "WHERE status IN ('pending', 'processing')"
+        )
+    )
+    if active_attempts or pending_revokes:
+        raise RuntimeError(
+            "Cannot downgrade durable AI Provider OAuth state while "
+            f"{active_attempts} attempt(s) are active and "
+            f"{pending_revokes} revoke obligation(s) are unfinished"
+        )
+
     op.drop_index("ix_ai_provider_oauth_revoke_tombstones_terminal_updated_at")
     op.drop_index("ix_ai_provider_oauth_revoke_tombstones_next_attempt_at")
     op.drop_index("ix_ai_provider_oauth_revoke_tombstones_owner_user_id")

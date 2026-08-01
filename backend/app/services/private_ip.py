@@ -4,13 +4,13 @@ import asyncio
 import ipaddress
 import socket
 
-_CGNAT = ipaddress.ip_network("100.64.0.0/10")
 _PRIVATE_HOST_ALIASES = {
     "localhost",
     "ip6-localhost",
     "metadata",
     "metadata.google.internal",
 }
+_PRIVATE_HOST_SUFFIXES = (".localhost", ".local", ".internal", ".home.arpa", ".svc")
 
 
 def is_private_hostname(hostname: str | None) -> bool:
@@ -19,7 +19,7 @@ def is_private_hostname(hostname: str | None) -> bool:
         return True
     if host in _PRIVATE_HOST_ALIASES:
         return True
-    if host.endswith(".local") or host.endswith(".localhost"):
+    if any(host == suffix[1:] or host.endswith(suffix) for suffix in _PRIVATE_HOST_SUFFIXES):
         return True
     try:
         ip = ipaddress.ip_address(host)
@@ -28,13 +28,7 @@ def is_private_hostname(hostname: str | None) -> bool:
     mapped = getattr(ip, "ipv4_mapped", None)
     if mapped is not None:
         ip = mapped
-    return (
-        ip.is_loopback
-        or ip.is_private
-        or ip.is_link_local
-        or ip.is_unspecified
-        or (ip.version == 4 and ip in _CGNAT)
-    )
+    return not ip.is_global or ip.is_multicast or ip.is_reserved
 
 
 async def has_private_resolved_ip(hostname: str | None) -> bool:
