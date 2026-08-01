@@ -27,6 +27,7 @@ describe("shared Channel card", () => {
 		expect(markup).toContain('data-hosted="true"');
 		expect(markup).toContain('data-v2="true"');
 		expect(markup).toContain("data-channel-card-header");
+		expect(markup).toContain("data-channel-card-footer");
 		expect(markup).toContain("min-h-20");
 		expect(markup).toContain("data-channel-card-actions");
 		expect(markup).toContain("h-full");
@@ -41,7 +42,7 @@ describe("shared Channel card", () => {
 		expect(card).toContain('"items-stretch xl:grid-cols-2"');
 	});
 
-	test("stretches the real header instead of rendering an empty footer", () => {
+	test("keeps optional content out of Console-style inventory cards", () => {
 		const markup = renderToStaticMarkup(
 			createElement(ChannelCard, {
 				provider: "discord",
@@ -52,7 +53,7 @@ describe("shared Channel card", () => {
 
 		expect(markup).toContain("data-channel-card-header");
 		expect(markup).toContain("flex-1");
-		expect(markup).not.toContain("border-t");
+		expect(markup).not.toContain("data-channel-card-footer");
 	});
 
 	test("is reused by Console inventory and Agent channel cards", () => {
@@ -60,7 +61,7 @@ describe("shared Channel card", () => {
 		expect(consoleChannels).toContain("CHANNEL_CARD_GRID_CLASS");
 		expect(consoleChannels).toContain("<SharedChannelCard");
 		expect(agentChannels).toContain('from "@/hosted/v2/channels/channel-card"');
-		expect(agentChannels).toContain("<ChannelCard");
+		expect(agentChannels).toContain("<AgentChannelCard");
 		expect(agentChannels).toContain("CHANNEL_CARD_GRID_CLASS");
 	});
 
@@ -69,7 +70,17 @@ describe("shared Channel card", () => {
 		expect(consoleChannels).not.toContain("Pair Discord");
 		expect(consoleChannels).not.toContain("Unpair");
 		expect(consoleChannels).not.toContain("Unlink");
+		expect(consoleChannels).not.toContain("Link to start pairing chats");
 		expect(consoleChannels).toContain('to="/channels/$id"');
+	});
+
+	test("composes a real equal-height footer for every Agent channel card", () => {
+		expect(agentChannels).toContain("data-agent-channel-link-guidance");
+		expect(agentChannels).toContain("Link to start pairing chats");
+		expect(agentChannels).toContain("h-10 min-h-10 max-h-10");
+		expect(agentChannels).toContain("h-[7.5rem] flex-none grid-rows-[2.75rem_2rem]");
+		expect(agentChannels).toContain("xl:h-20 xl:grid-rows-1");
+		expect(agentChannels).not.toContain('key="paired"');
 	});
 
 	test("opens paired chats outside the card through responsive design-system overlays", () => {

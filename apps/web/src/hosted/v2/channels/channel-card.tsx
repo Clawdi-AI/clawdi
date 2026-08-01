@@ -20,6 +20,7 @@ export function ChannelCard({
 	actions,
 	children,
 	className,
+	headerClassName,
 }: {
 	provider: string;
 	title: ReactNode;
@@ -27,6 +28,7 @@ export function ChannelCard({
 	actions?: ReactNode;
 	children?: ReactNode;
 	className?: string;
+	headerClassName?: string;
 }) {
 	return (
 		<article
@@ -36,7 +38,10 @@ export function ChannelCard({
 		>
 			<div
 				data-channel-card-header
-				className="grid min-h-20 min-w-0 flex-1 content-center gap-3 p-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center"
+				className={cn(
+					"grid min-h-20 min-w-0 flex-1 content-center gap-3 p-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center",
+					headerClassName,
+				)}
 			>
 				<EntityHeader
 					align="start"
@@ -51,7 +56,11 @@ export function ChannelCard({
 					</div>
 				) : null}
 			</div>
-			{children ? <div className="shrink-0 border-t">{children}</div> : null}
+			{children ? (
+				<div data-channel-card-footer className="shrink-0 border-t">
+					{children}
+				</div>
+			) : null}
 		</article>
 	);
 }
