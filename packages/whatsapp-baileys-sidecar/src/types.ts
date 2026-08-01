@@ -73,6 +73,7 @@ export type SendOperation = OperationBase & {
 				mediaType: "image" | "video" | "audio" | "document";
 				dataBase64: string;
 				mimeType: string;
+				ptt?: boolean;
 				fileName?: string;
 				caption?: string;
 		  };
@@ -133,6 +134,7 @@ export type NormalizedContent =
 			mediaId: string;
 			mediaType: "image" | "video" | "audio" | "document" | "sticker";
 			mimeType?: string;
+			ptt?: boolean;
 			fileName?: string;
 			fileLength?: number;
 			caption?: string;

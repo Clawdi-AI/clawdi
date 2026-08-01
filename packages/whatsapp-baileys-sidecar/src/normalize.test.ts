@@ -84,6 +84,26 @@ describe("WhatsApp callback normalization", () => {
 		expect(JSON.stringify(content)).not.toContain("secret");
 		expect(JSON.stringify(content)).not.toContain("AQID");
 	});
+
+	it("preserves the provider voice-note marker without exposing provider media secrets", () => {
+		const voice = message({ remoteJid: "15550001111@s.whatsapp.net" });
+		voice.message = {
+			audioMessage: {
+				mediaKey: Buffer.from([4, 5, 6]),
+				directPath: "/voice-secret",
+				mimetype: "audio/ogg; codecs=opus",
+				ptt: true,
+			},
+		};
+		const content = normalizeInboundMessage(voice, "account-a")?.content;
+		expect(content).toMatchObject({
+			type: "media",
+			mediaType: "audio",
+			ptt: true,
+		});
+		expect(JSON.stringify(content)).not.toContain("voice-secret");
+		expect(JSON.stringify(content)).not.toContain("BAUG");
+	});
 });
 
 function message(key: Partial<WAMessage["key"]>): WAMessage {

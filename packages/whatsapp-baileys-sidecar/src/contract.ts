@@ -47,7 +47,7 @@ export function parseOperation(value: unknown): SidecarOperation {
 		if (contentType !== "media") fail("unsupported_send_content");
 		assertKeys(
 			content,
-			["type", "mediaType", "dataBase64", "mimeType", "fileName", "caption"],
+			["type", "mediaType", "dataBase64", "mimeType", "ptt", "fileName", "caption"],
 			"content",
 		);
 		const mediaType = requiredString(content.mediaType, "content.mediaType", 20);
@@ -66,8 +66,18 @@ export function parseOperation(value: unknown): SidecarOperation {
 			fail("content_media_invalid_or_too_large");
 		}
 		const mimeType = requiredString(content.mimeType, "content.mimeType", 255);
-		if (!/^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/.test(mimeType)) {
+		if (
+			!/^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+(?:\s*;\s*[A-Za-z0-9!#$&^_.+-]+=[A-Za-z0-9!#$&^_.+-]+)*$/.test(
+				mimeType,
+			)
+		) {
 			fail("content_mimeType_invalid");
+		}
+		if (content.ptt !== undefined && typeof content.ptt !== "boolean") {
+			fail("content.ptt_must_be_boolean");
+		}
+		if (content.ptt !== undefined && mediaType !== "audio") {
+			fail("content.ptt_only_supported_for_audio");
 		}
 		const fileName = optionalString(content.fileName, "content.fileName", 255);
 		const caption = optionalContentText(content.caption, "content.caption", 4096);
@@ -80,6 +90,7 @@ export function parseOperation(value: unknown): SidecarOperation {
 				mediaType: mediaType as "image" | "video" | "audio" | "document",
 				dataBase64,
 				mimeType,
+				...(content.ptt !== undefined ? { ptt: content.ptt } : {}),
 				...(fileName ? { fileName } : {}),
 				...(caption ? { caption } : {}),
 			},

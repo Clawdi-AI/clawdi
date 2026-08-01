@@ -88,6 +88,38 @@ describe("single-socket runtime", () => {
 		});
 	});
 
+	it("sends voice media only when the typed operation explicitly preserves ptt", async () => {
+		await withRuntime(async (config) => {
+			const socket = new FakeSocket();
+			const runtime = new BaileysSocketRuntime(config, { makeSocket: () => socket });
+			await runtime.start();
+			socket.emitConnection({ connection: "open" });
+			const operation: SendOperation = {
+				schemaVersion: "clawdi.whatsapp.operation.v1",
+				operationId: "voice-op",
+				chatJid: "15550001111@s.whatsapp.net",
+				type: "send",
+				messageId: "VOICE-1",
+				content: {
+					type: "media",
+					mediaType: "audio",
+					dataBase64: Buffer.from("voice bytes").toString("base64"),
+					mimeType: "audio/ogg; codecs=opus",
+					ptt: true,
+				},
+			};
+			expect(await runtime.performOperation(operation, "voice-hash")).toMatchObject({
+				status: "completed",
+			});
+			expect(socket.sent[0]?.content).toMatchObject({
+				audio: Buffer.from("voice bytes"),
+				mimetype: "audio/ogg; codecs=opus",
+				ptt: true,
+			});
+			await runtime.stop();
+		});
+	});
+
 	it("maps the complete typed operation surface to exact public Baileys calls", async () => {
 		await withRuntime(async (config) => {
 			const socket = new FakeSocket();

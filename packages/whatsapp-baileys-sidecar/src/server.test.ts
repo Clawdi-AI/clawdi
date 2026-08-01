@@ -186,6 +186,42 @@ describe("sidecar HTTP contract", () => {
 			chatJid: "15550001111@s.whatsapp.net",
 		});
 		expect(runtime.operations[0]?.hash).toMatch(/^[0-9a-f]{64}$/);
+
+		const voice = await authedFetch(`${url}/v1/operations`, {
+			method: "POST",
+			body: JSON.stringify({
+				...sendBody(),
+				operationId: "voice-op",
+				messageId: "VOICE-1",
+				content: {
+					type: "media",
+					mediaType: "audio",
+					dataBase64: Buffer.from("voice").toString("base64"),
+					mimeType: "audio/ogg; codecs=opus",
+					ptt: true,
+				},
+			}),
+		});
+		expect(voice.status).toBe(200);
+		expect(runtime.operations[1]?.operation).toMatchObject({
+			content: { mediaType: "audio", ptt: true },
+		});
+
+		const invalidPtt = await authedFetch(`${url}/v1/operations`, {
+			method: "POST",
+			body: JSON.stringify({
+				...sendBody(),
+				operationId: "invalid-ptt-op",
+				content: {
+					type: "media",
+					mediaType: "image",
+					dataBase64: Buffer.from("image").toString("base64"),
+					mimeType: "image/jpeg",
+					ptt: true,
+				},
+			}),
+		});
+		expect(invalidPtt.status).toBe(400);
 	});
 
 	it("denies hosted, broadcast, newsletter, global, raw, and proto operations", async () => {

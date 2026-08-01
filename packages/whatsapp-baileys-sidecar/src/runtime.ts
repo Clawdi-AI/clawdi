@@ -446,7 +446,14 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 				return { content: { video: data, ...common }, options };
 			}
 			if (operation.content.mediaType === "audio") {
-				return { content: { audio: data, mimetype: operation.content.mimeType }, options };
+				return {
+					content: {
+						audio: data,
+						mimetype: operation.content.mimeType,
+						...(operation.content.ptt !== undefined ? { ptt: operation.content.ptt } : {}),
+					},
+					options,
+				};
 			}
 			return {
 				content: {

@@ -87,6 +87,7 @@ function normalizeContent(message: WAMessage, eventId: string): NormalizedConten
 			type: "media",
 			mediaId: mediaIdForEvent(eventId),
 			mediaType: media.type,
+			...(media.type === "audio" && media.value.ptt === true ? { ptt: true } : {}),
 			...(boundedText(media.value.mimetype, 255)
 				? { mimeType: boundedText(media.value.mimetype, 255) }
 				: {}),
@@ -125,6 +126,7 @@ function mediaContent(content: proto.IMessage):
 				fileName?: string | null;
 				fileLength?: number | LongLike | null;
 				caption?: string | null;
+				ptt?: boolean | null;
 			};
 	  }
 	| undefined {
