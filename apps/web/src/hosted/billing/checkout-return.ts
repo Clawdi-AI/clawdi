@@ -36,13 +36,24 @@ export function checkoutReturnDeploymentId(searchStr: string): string | null {
 	return null;
 }
 
+type CheckoutReturnNavigationOwner = (deploymentId: string) => boolean | Promise<boolean>;
+
+export async function checkoutReturnHasNavigationOwner(
+	searchStr: string,
+	onNavigate: CheckoutReturnNavigationOwner,
+): Promise<boolean> {
+	if (checkoutReturnWasCanceled(searchStr)) return false;
+	const deploymentId = checkoutReturnDeploymentId(searchStr);
+	return deploymentId !== null && (await onNavigate(deploymentId));
+}
+
 export function useCheckoutReturnHandler({
 	onCancelCopy,
 	onNavigate,
 }: {
 	onCancelCopy: string;
-	/** Return false to keep the current page and show the refresh toast. */
-	onNavigate: (deploymentId: string) => false | undefined;
+	/** Return true when the callback owns navigation and deployment hydration. */
+	onNavigate: CheckoutReturnNavigationOwner;
 }): void {
 	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const searchStr = useLocation({ select: (location) => location.searchStr });
@@ -53,30 +64,28 @@ export function useCheckoutReturnHandler({
 		if (!marker || handledMarkerRef.current === marker) return;
 		handledMarkerRef.current = marker;
 		const canceled = checkoutReturnWasCanceled(searchStr);
-		const deploymentId = canceled ? null : checkoutReturnDeploymentId(searchStr);
-		if (deploymentId && onNavigate(deploymentId) !== false) {
-			// The navigation owner hydrates the committed deployment by id. Refresh
-			// only ancillary billing state here so a stale list cannot erase it.
-			void refreshCheckoutReturn({ includeDeployments: false }).catch(() => {
-				toast.error("Couldn’t refresh checkout status", {
-					description: "Refresh the page to check your subscription and wallet.",
-				});
-			});
-			return;
-		}
-		void refreshCheckoutReturn()
-			.then(() => {
-				if (canceled) {
-					toast.message("Checkout canceled", { description: onCancelCopy });
+		void checkoutReturnHasNavigationOwner(searchStr, onNavigate)
+			.then(async (owned) => {
+				try {
+					await refreshCheckoutReturn(owned ? { includeDeployments: false } : undefined);
+				} catch {
+					toast.error("Couldn’t refresh checkout status", {
+						description: owned
+							? "Refresh the page to check your subscription and wallet."
+							: "Refresh the page to check your agents, subscription, and wallet.",
+					});
 					return;
 				}
-				toast.message("Checkout status refreshed", {
-					description: "We checked your agents, subscription, and wallet.",
+				if (owned) return;
+				toast.message(canceled ? "Checkout canceled" : "Checkout status refreshed", {
+					description: canceled
+						? onCancelCopy
+						: "We checked your agents, subscription, and wallet.",
 				});
 			})
 			.catch(() => {
-				toast.error("Couldn’t refresh checkout status", {
-					description: "Refresh the page to check your agents, subscription, and wallet.",
+				toast.error("Couldn’t open the checkout result", {
+					description: "Refresh the page to try again.",
 				});
 			});
 	}, [onCancelCopy, onNavigate, refreshCheckoutReturn, searchStr]);

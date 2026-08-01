@@ -5,7 +5,11 @@ import {
 	QueryClient,
 	QueryObserver,
 } from "@tanstack/react-query";
-import { checkoutReturnMarker, checkoutReturnWasCanceled } from "@/hosted/billing/checkout-return";
+import {
+	checkoutReturnHasNavigationOwner,
+	checkoutReturnMarker,
+	checkoutReturnWasCanceled,
+} from "@/hosted/billing/checkout-return";
 import type {
 	ComputeSubscriptionActionResult,
 	DeploymentOperation,
@@ -484,7 +488,36 @@ describe("reconcileDeploymentSnapshots", () => {
 	});
 });
 
-describe("checkout return parsing", () => {
+describe("checkout return", () => {
+	test("awaits an async navigation owner before choosing ancillary-only refresh", async () => {
+		let release: () => void = () => undefined;
+		const gate = new Promise<void>((resolve) => {
+			release = () => resolve();
+		});
+		const navigated: string[] = [];
+		let settled = false;
+		const ownership = checkoutReturnHasNavigationOwner(
+			"?session_id=cs_return&deployment_id=hdep_returned",
+			async (deploymentId) => {
+				navigated.push(deploymentId);
+				await gate;
+				return true;
+			},
+		).then((owned) => {
+			settled = true;
+			return owned;
+		});
+
+		await Promise.resolve();
+		expect(navigated).toEqual(["hdep_returned"]);
+		expect(settled).toBe(false);
+		release();
+		expect(await ownership).toBe(true);
+		expect(await checkoutReturnHasNavigationOwner("?deployment_id=hdep_current", () => false)).toBe(
+			false,
+		);
+	});
+
 	test("recognizes Stripe cancel returns as checkout markers", () => {
 		expect(checkoutReturnWasCanceled("?checkout=cancel")).toBe(true);
 		expect(checkoutReturnWasCanceled("?settings=billing-plan&checkout=cancel")).toBe(true);

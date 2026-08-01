@@ -178,10 +178,9 @@ type NativeDeployCheckout = {
 	summary: StripeCheckoutSummary;
 	tierLabel: "Basic" | "Performance";
 };
-type AcceptedDeploymentHandoff = {
+type AcceptedDeploymentRecovery = {
 	deploymentId: string;
 	replace: boolean;
-	error: string | null;
 };
 type PaidDeploySelection = {
 	billingTermMonths: number;
@@ -307,11 +306,11 @@ export function DeployWizard() {
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const billingClient = useBillingClient();
-	const [acceptedDeploymentHandoff, setAcceptedDeploymentHandoff] =
-		useState<AcceptedDeploymentHandoff | null>(null);
+	const [acceptedDeploymentRecovery, setAcceptedDeploymentRecovery] =
+		useState<AcceptedDeploymentRecovery | null>(null);
 	const acceptDeployment = useCallback(
-		async (deploymentId: string, replace = false): Promise<boolean> => {
-			setAcceptedDeploymentHandoff({ deploymentId, replace, error: null });
+		async (deploymentId: string, replace = false): Promise<void> => {
+			setAcceptedDeploymentRecovery(null);
 			setSubmitBusyLabel("Loading agent details…");
 			setSubmitTakingLongCopy(
 				"Your deployment was accepted. Keep this page open while we load its committed details.",
@@ -326,23 +325,18 @@ export function DeployWizard() {
 					queryClient,
 					replace,
 				});
-				return true;
-			} catch (error) {
-				setAcceptedDeploymentHandoff({
-					deploymentId,
-					replace,
-					error: normalizeBillingError(error),
-				});
+			} catch {
+				setAcceptedDeploymentRecovery({ deploymentId, replace });
 				setSubmitting(false);
 				setSubmitTakingLong(false);
-				return false;
 			}
 		},
 		[billingClient.getDeployment, queryClient, router],
 	);
 	const navigateCheckoutReturn = useCallback(
-		(deploymentId: string): undefined => {
-			void acceptDeployment(deploymentId, true);
+		async (deploymentId: string) => {
+			await acceptDeployment(deploymentId, true);
+			return true;
 		},
 		[acceptDeployment],
 	);
@@ -354,7 +348,7 @@ export function DeployWizard() {
 	const deployments = useHostedDeployments();
 	const managedModelCatalog = useManagedModelCatalog();
 	const aiProviders = useUserAiProviders();
-	const createSubscription = useSensitiveCreateSubscription({ invalidateDeployments: false });
+	const createSubscription = useSensitiveCreateSubscription();
 	const resolveDeploymentRequest = useResolveDeploymentRequest();
 	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const runAction = useActionLock();
@@ -566,7 +560,7 @@ export function DeployWizard() {
 	const canSubmit =
 		!submitting &&
 		!postPaymentBlocked &&
-		acceptedDeploymentHandoff === null &&
+		acceptedDeploymentRecovery === null &&
 		submitBlockingReason === null;
 
 	function selectCreatedProvider(providerId: string) {
@@ -974,7 +968,7 @@ export function DeployWizard() {
 				: null;
 	const walletTopUpAction =
 		paidSelection !== null && paymentMethod === "wallet" && walletInsufficient;
-	const acceptedDeploymentHydrationFailed = Boolean(acceptedDeploymentHandoff?.error);
+	const acceptedDeploymentHydrationFailed = acceptedDeploymentRecovery !== null;
 	const primaryActionDisabled = acceptedDeploymentHydrationFailed
 		? submitting
 		: walletTopUpAction
@@ -1504,11 +1498,11 @@ export function DeployWizard() {
 										visibleSubmitBlockingReason ? "deploy-blocking-reason" : undefined
 									}
 									onClick={
-										acceptedDeploymentHydrationFailed && acceptedDeploymentHandoff
+										acceptedDeploymentHydrationFailed && acceptedDeploymentRecovery
 											? () =>
 													void acceptDeployment(
-														acceptedDeploymentHandoff.deploymentId,
-														acceptedDeploymentHandoff.replace,
+														acceptedDeploymentRecovery.deploymentId,
+														acceptedDeploymentRecovery.replace,
 													)
 											: walletTopUpAction
 												? () => walletTopUp.show(walletShortfallUsd)
