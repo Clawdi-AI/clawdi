@@ -3,12 +3,12 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { QueryClient } from "@tanstack/react-query";
+import { memorySettingsForCache } from "@/components/memories/memory-settings-cache";
 import type { WalletState } from "@/hosted/billing/contracts";
 import { walletSnapshotForCache } from "@/hosted/billing/wallet/wallet-cache";
 import { whatsappCredentialMetadataForCache } from "@/hosted/v2/channels/whatsapp-credential-cache";
 import { cacheValueContains } from "@/lib/sensitive-cache";
 import { executeSensitiveAction } from "@/lib/use-sensitive-action";
-import { memorySettingsForCache } from "@/pages/dashboard/memories/memory-settings-cache";
 
 function cachedState(queryClient: QueryClient) {
 	return {
@@ -206,7 +206,7 @@ describe("structural secret boundaries without the denylist", () => {
 			["components/sharing/share-project-dialog.tsx", ["const create = useSensitiveAction"]],
 			["components/vault/add-keys-dialog.tsx", ["const save = useSensitiveAction"]],
 			["pages/dashboard/connectors/[name]/page.tsx", ["const connectAction = useSensitiveAction"]],
-			["pages/dashboard/memories/page.tsx", ["const saveMem0Key = useSensitiveAction"]],
+			["components/memories/memories-surface.tsx", ["const saveMem0Key = useSensitiveAction"]],
 			["pages/share/project-share-page.tsx", ["const upgrade = useSensitiveAction"]],
 			[
 				"pages/cli-authorize/page.tsx",
@@ -244,7 +244,7 @@ describe("structural secret boundaries without the denylist", () => {
 		expect(source("hosted/v2/channels/channels-hooks.ts")).toContain(
 			"whatsappCredentialMetadataForCache(",
 		);
-		expect(source("pages/dashboard/memories/page.tsx")).toContain(
+		expect(source("components/memories/memories-surface.tsx")).toContain(
 			"memorySettingsForCache(unwrap(await api.GET",
 		);
 
