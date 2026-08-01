@@ -13,6 +13,9 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	displayProjectName,
 	isCustomProject,
+	type ProjectAgentMetadata,
+	projectAgentFor,
+	projectAgentLabel,
 	projectKindSortRank,
 } from "@/components/projects/project-metadata";
 import {
@@ -40,6 +43,7 @@ import { getProjectResourceDefinition, projectDetailHref } from "@/lib/project-r
 import { cn, errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
+type Env = components["schemas"]["AgentResponse"];
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
 type CountValue = number | "unavailable";
@@ -63,6 +67,15 @@ export default function ProjectsPage() {
 	});
 
 	const rows = projects.data ?? [];
+	const environments = useQuery({
+		queryKey: ["agents"],
+		queryFn: async (): Promise<Env[]> => unwrap(await api.GET("/v1/agents")),
+		enabled: rows.some((project) => project.kind === "environment"),
+	});
+	const agentsById = useMemo(
+		() => new Map((environments.data ?? []).map((agent) => [agent.id, agent])),
+		[environments.data],
+	);
 
 	// Per-project resource counts for the cards. Shares the skills cache with
 	// the Skills page (same queryKey); vault list carries project_ids.
@@ -334,19 +347,12 @@ export default function ProjectsPage() {
 					{systemOpen ? (
 						<div className={HERO_GRID_CLASS}>
 							{systemProjects.map((project) => (
-								<ProjectResourceCard
+								<SystemProjectCard
 									key={project.id}
 									project={project}
-									footer={[
-										formatCountLabel(
-											skills.error ? "unavailable" : (skillCounts.get(project.id) ?? 0),
-											"skill",
-										),
-										formatCountLabel(
-											vaults.error ? "unavailable" : (vaultCounts.get(project.id) ?? 0),
-											"vault",
-										),
-									]}
+									agent={projectAgentFor(project, agentsById)}
+									skillCount={skills.error ? "unavailable" : (skillCounts.get(project.id) ?? 0)}
+									vaultCount={vaults.error ? "unavailable" : (vaultCounts.get(project.id) ?? 0)}
 								/>
 							))}
 						</div>
@@ -354,6 +360,30 @@ export default function ProjectsPage() {
 				</section>
 			) : null}
 		</div>
+	);
+}
+
+function SystemProjectCard({
+	project,
+	agent,
+	skillCount,
+	vaultCount,
+}: {
+	project: ProjectRow;
+	agent: ProjectAgentMetadata | null;
+	skillCount: CountValue;
+	vaultCount: CountValue;
+}) {
+	return (
+		<ProjectResourceCard
+			project={project}
+			showKind
+			footer={[
+				formatCountLabel(skillCount, "skill"),
+				formatCountLabel(vaultCount, "vault"),
+				project.kind === "environment" && agent ? `Agent: ${projectAgentLabel(agent)}` : null,
+			]}
+		/>
 	);
 }
 

@@ -394,5 +394,5 @@ function AgentProjectCard({
 			/>
 		);
 	}
-	return <ProjectResourceCard project={project} footer={footer} actions={actions} />;
+	return <ProjectResourceCard project={project} footer={footer} actions={actions} showKind />;
 }

@@ -34,7 +34,9 @@ describe("agent Projects presentation", () => {
 		);
 
 		expect(source).toContain("<ProjectKindBadge");
-		expect(source).toContain('isProjectOwner(project) ? "Owner" : "Viewer"');
+		expect(source).toContain("const showViewer = !isProjectOwner(project)");
+		expect(source).toContain('showViewer ? <Badge variant="outline">Viewer</Badge> : null');
+		expect(source).toContain("showKind ? <ProjectKindBadge");
 		expect(source).toContain("description={projectAlias(project)}");
 		expect(source).toContain('to: "/projects/$id"');
 		expect(source).toContain("ariaLabel={");

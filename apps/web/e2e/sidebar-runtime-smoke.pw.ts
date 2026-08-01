@@ -540,8 +540,8 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 	await expect(projectCards.nth(0)).toContainText("Read order 1");
 	await expect(projectCards.nth(0)).toContainText("Default write destination");
 	await expect(projectCards.nth(0)).not.toContainText("Fixed");
-	await expect(projectCards.nth(0)).toContainText("Owner");
-	await expect(projectCards.nth(0).locator('[data-slot="badge"]')).toHaveCount(2);
+	await expect(projectCards.nth(0)).not.toContainText("Owner");
+	await expect(projectCards.nth(0).locator('[data-slot="badge"]')).toHaveCount(1);
 	await expect(projectCards.nth(0).getByRole("button")).toHaveCount(0);
 	await expect(
 		projectCards.nth(0).getByRole("link", { name: "Open Smoke Project" }),
@@ -554,7 +554,7 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 	await expect(projectCards.nth(1).locator('[data-slot="badge"]')).toHaveCount(2);
 	await expect(projectCards.nth(2)).toContainText(longContextProjectName);
 	await expect(projectCards.nth(2)).toContainText("Read order 3");
-	await expect(projectCards.nth(2).locator('[data-slot="badge"]')).toHaveCount(2);
+	await expect(projectCards.nth(2).locator('[data-slot="badge"]')).toHaveCount(1);
 	await projectCards.nth(1).hover();
 	await expect(
 		projectCards.nth(1).getByRole("button", { name: "Move Team Knowledge up" }),
@@ -657,8 +657,16 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 		name: "Open Team Knowledge",
 	});
 	await expect(consoleSharedProject).toHaveAttribute("href", "/projects/project-context-first");
-	await expect(consoleSharedProject.locator("xpath=..")).toContainText("Custom Project");
 	await expect(consoleSharedProject.locator("xpath=..")).toContainText("Viewer");
+	await expect(consoleProjectGrid.getByText("Custom Project", { exact: true })).toHaveCount(0);
+	await expect(consoleProjectGrid.getByText("Owner", { exact: true })).toHaveCount(0);
+	await main.getByRole("button", { name: /System projects/i }).click();
+	const systemProjectCard = main
+		.getByRole("link", { name: "Open Smoke Project" })
+		.locator("xpath=..");
+	await expect(systemProjectCard).toContainText("Agent Project");
+	await expect(systemProjectCard).toContainText("Agent: Smoke Codex");
+	await expect(systemProjectCard).not.toContainText("Owner");
 	await main.screenshot({ path: testInfo.outputPath("console-projects-desktop.png") });
 	await page.locator("html").evaluate((element) => element.classList.add("dark"));
 	await main.screenshot({ path: testInfo.outputPath("console-projects-dark.png") });

@@ -23,15 +23,18 @@ export function ProjectResourceCard({
 	project,
 	footer,
 	actions,
+	showKind = false,
 	className,
 }: {
 	project: ProjectMetadata;
 	footer?: ReactNode | ReactNode[];
 	actions?: ReactNode;
+	showKind?: boolean;
 	className?: string;
 }) {
 	const projectName = displayProjectName(project);
 	const identity = identityFor(projectName);
+	const showViewer = !isProjectOwner(project);
 	return (
 		<HeroCard
 			icon={
@@ -41,10 +44,12 @@ export function ProjectResourceCard({
 			}
 			title={projectName}
 			badges={
-				<>
-					<ProjectKindBadge kind={project.kind ?? "workspace"} />
-					<Badge variant="outline">{isProjectOwner(project) ? "Owner" : "Viewer"}</Badge>
-				</>
+				showKind || showViewer ? (
+					<>
+						{showKind ? <ProjectKindBadge kind={project.kind ?? "workspace"} /> : null}
+						{showViewer ? <Badge variant="outline">Viewer</Badge> : null}
+					</>
+				) : undefined
 			}
 			description={projectAlias(project)}
 			descriptionClassName="truncate font-mono"

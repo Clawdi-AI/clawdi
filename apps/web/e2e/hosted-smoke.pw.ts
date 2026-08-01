@@ -2872,7 +2872,7 @@ test("hosted agent sidebar renders one Resources heading in canonical order", as
 	await expect(projectCards.nth(0)).toContainText("Hosted Agent Project");
 	await expect(projectCards.nth(0)).toContainText("Read order 1");
 	await expect(projectCards.nth(0)).toContainText("Default write destination");
-	await expect(projectCards.nth(0)).toContainText("Owner");
+	await expect(projectCards.nth(0)).not.toContainText("Owner");
 	await expect(
 		projectCards.nth(0).getByRole("link", { name: "Open Hosted Agent Project" }),
 	).toHaveAttribute("href", "/projects/project-hosted");
