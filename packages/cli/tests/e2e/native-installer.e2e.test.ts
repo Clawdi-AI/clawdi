@@ -136,6 +136,28 @@ afterAll(() => {
 		expect(readFileSync(join(activeDir, "egress-addon", "clawdi_egress_addon.py"), "utf8")).toBe(
 			readFileSync(join(resourceRoot, "egress-addon", "clawdi_egress_addon.py"), "utf8"),
 		);
+		expect(
+			readFileSync(
+				join(activeDir, "runtime-adapters", "whatsapp", "openclaw", "openclaw.plugin.json"),
+				"utf8",
+			),
+		).toBe(
+			readFileSync(
+				join(resourceRoot, "runtime-adapters", "whatsapp", "openclaw", "openclaw.plugin.json"),
+				"utf8",
+			),
+		);
+		expect(
+			readFileSync(
+				join(activeDir, "runtime-adapters", "whatsapp", "hermes", "plugin.yaml"),
+				"utf8",
+			),
+		).toBe(
+			readFileSync(
+				join(resourceRoot, "runtime-adapters", "whatsapp", "hermes", "plugin.yaml"),
+				"utf8",
+			),
+		);
 		await assertCompiledSetupUsesInstalledSkill({ launcher, root, home, clawdiHome, activeDir });
 	}, 120_000);
 
@@ -358,6 +380,7 @@ function assertPublicNativeModes(prefix: string, active: string): void {
 		active,
 		join(active, "skills"),
 		join(active, "egress-addon"),
+		join(active, "runtime-adapters"),
 	]) {
 		expect(mode(directory), directory).toBe(0o755);
 	}
@@ -367,6 +390,8 @@ function assertPublicNativeModes(prefix: string, active: string): void {
 		join(active, "clawdi-native-install.txt"),
 		join(active, "skills", "clawdi", "SKILL.md"),
 		join(active, "egress-addon", "clawdi_egress_addon.py"),
+		join(active, "runtime-adapters", "whatsapp", "openclaw", "openclaw.plugin.json"),
+		join(active, "runtime-adapters", "whatsapp", "hermes", "plugin.yaml"),
 	]) {
 		expect(mode(file), file).toBe(0o644);
 	}

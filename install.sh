@@ -185,14 +185,19 @@ awk '
     p=$0; sub(/^\.\//,"",p); sub(/\/$/,"",p)
     if (p=="" || p ~ /^\// || p ~ /(^|\/)\.\.($|\/)/ || seen[p]++) exit 1
     split(p, part, "/")
-    if (part[1]!="clawdi" && part[1]!="egress-addon" && part[1]!="skills") exit 1
+    if (part[1]!="clawdi" && part[1]!="egress-addon" && part[1]!="skills" &&
+        part[1]!="runtime-adapters") exit 1
     if (part[1]=="clawdi" && p!="clawdi") exit 1
     if (p=="clawdi" || p=="egress-addon/clawdi_egress_addon.py" ||
-        p=="skills/clawdi/SKILL.md" || p=="skills/hosted-versions/1/clawdi/SKILL.md") required[p]=1
+        p=="skills/clawdi/SKILL.md" || p=="skills/hosted-versions/1/clawdi/SKILL.md" ||
+        p=="runtime-adapters/whatsapp/openclaw/openclaw.plugin.json" ||
+        p=="runtime-adapters/whatsapp/hermes/plugin.yaml") required[p]=1
   }
   END {
     if (!required["clawdi"] || !required["egress-addon/clawdi_egress_addon.py"] ||
-        !required["skills/clawdi/SKILL.md"] || !required["skills/hosted-versions/1/clawdi/SKILL.md"]) exit 1
+        !required["skills/clawdi/SKILL.md"] || !required["skills/hosted-versions/1/clawdi/SKILL.md"] ||
+        !required["runtime-adapters/whatsapp/openclaw/openclaw.plugin.json"] ||
+        !required["runtime-adapters/whatsapp/hermes/plugin.yaml"]) exit 1
   }
 ' "$entries" || fail 'native artifact contains unsafe, duplicate, excessive, or unexpected paths'
 awk '{ t=substr($1,1,1); if (t!="-" && t!="d") exit 1 }' "$types" || fail 'native artifact contains links or unsupported entry types'
