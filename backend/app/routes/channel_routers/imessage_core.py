@@ -93,7 +93,8 @@ async def bluebubbles_register_webhook(
     token = auth.token
     if token is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing agent token")
-    events = params.get("events") if isinstance(params.get("events"), list) else []
+    raw_events = params.get("events")
+    events: list[object] = list(raw_events) if isinstance(raw_events, list) else []
     config = dict(account.config) if isinstance(account.config, dict) else {}
     config["bluebubbles_webhook"] = bluebubbles_webhook_update(
         url=url,

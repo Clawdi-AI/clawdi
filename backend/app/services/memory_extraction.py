@@ -66,7 +66,7 @@ class _SessionMessage(BaseModel):
 # json_schema for OpenAI structured output. Mirrored from `ExtractionResult`
 # but written by hand because Pydantic-generated schemas use `$ref`/`$defs`
 # which OpenAI's strict mode rejects (must be fully inlined).
-_RESPONSE_SCHEMA = {
+_RESPONSE_SCHEMA: dict[str, object] = {
     "type": "object",
     "additionalProperties": False,
     "required": ["memories"],

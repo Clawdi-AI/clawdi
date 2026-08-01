@@ -22,15 +22,39 @@ EXPECTED_CONFIG = {
         "app/core/query_utils.py",
         "app/core/sentry.py",
         "app/core/skill_key.py",
+        "app/routes/ai_providers.py",
+        "app/routes/channel_routers/imessage_core.py",
+        "app/routes/channel_routers/telegram.py",
+        "app/routes/channel_routers/whatsapp.py",
+        "app/routes/dashboard.py",
         "app/routes/sharing.py",
+        "app/routes/vault.py",
+        "app/schemas/ai_provider.py",
         "app/services/agent_bindings.py",
+        "app/services/agent_environments.py",
+        "app/services/ai_provider_credentials.py",
+        "app/services/channel_webhooks.py",
         "app/services/composio.py",
         "app/services/discord_gateway_worker.py",
         "app/services/embedding.py",
         "app/services/file_store.py",
+        "app/services/imessage_routing.py",
         "app/services/memory_extraction.py",
         "app/services/private_ip.py",
         "app/services/runtime_observation.py",
+        "app/services/sync_events.py",
+        "app/services/whatsapp_baileys.py",
+        "app/services/whatsapp_noise.py",
+        "app/services/whatsapp_shared_runtime.py",
+    ],
+    "strict": [
+        "app/core/query_utils.py",
+        "app/core/skill_key.py",
+        "app/routes/sharing.py",
+        "app/services/agent_bindings.py",
+        "app/services/embedding.py",
+        "app/services/imessage_routing.py",
+        "app/services/memory_extraction.py",
     ],
 }
 EXPECTED_VERSION = "1.39.9"
@@ -55,11 +79,33 @@ def validate_config() -> None:
     with CONFIG.open("rb") as handle:
         document = tomllib.load(handle)
     configured = document.get("tool", {}).get("basedpyright")
+    if isinstance(configured, dict) and "strict" in configured:
+        validate_strict_paths(configured)
     if configured != EXPECTED_CONFIG:
         raise ValueError(
             "BasedPyright configuration mismatch; expected exactly "
             f"{json.dumps(EXPECTED_CONFIG, sort_keys=True)}"
         )
+
+
+def validate_strict_paths(configured: dict[str, object]) -> None:
+    owned = configured.get("include")
+    strict = configured.get("strict")
+    if not isinstance(owned, list) or not all(isinstance(path, str) for path in owned):
+        raise ValueError("BasedPyright owned include must be a path list")
+    if (
+        not isinstance(strict, list)
+        or not strict
+        or not all(isinstance(path, str) for path in strict)
+    ):
+        raise ValueError("BasedPyright strict must be a non-empty path list")
+    if strict != sorted(strict):
+        raise ValueError("BasedPyright strict paths must be sorted")
+    if len(strict) != len(set(strict)):
+        raise ValueError("BasedPyright strict paths must not contain duplicates")
+    if not set(strict).issubset(owned):
+        raise ValueError("BasedPyright strict paths must be a subset of owned include paths")
+    production_paths(strict)
 
 
 def production_paths(raw_paths: Sequence[str]) -> list[str]:
@@ -194,6 +240,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("owned")
+    subparsers.add_parser("strict")
     changed = subparsers.add_parser("changed")
     changed.add_argument("paths", nargs="*")
     changed_from = subparsers.add_parser("changed-from")
@@ -205,6 +252,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         validate_config()
         if args.command == "owned":
             result: object = analyze(EXPECTED_CONFIG["include"], gating=True)["summary"]
+        elif args.command == "strict":
+            result = analyze(EXPECTED_CONFIG["strict"], gating=True)["summary"]
         elif args.command == "changed":
             result = analyze(production_paths(args.paths), gating=True)["summary"]
         elif args.command == "changed-from":

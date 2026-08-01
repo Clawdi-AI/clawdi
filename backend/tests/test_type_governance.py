@@ -107,6 +107,43 @@ def test_config_mismatch_fails_closed(tmp_path: Path, monkeypatch: pytest.Monkey
         type_governance.validate_config()
 
 
+def strict_config(*, strict: list[str], include: list[str] | None = None) -> dict[str, object]:
+    return {
+        "include": include or list(type_governance.EXPECTED_CONFIG["include"]),
+        "strict": strict,
+    }
+
+
+def test_strict_paths_accept_sorted_production_subset() -> None:
+    type_governance.validate_strict_paths(
+        strict_config(strict=list(type_governance.EXPECTED_CONFIG["strict"]))
+    )
+
+
+def test_strict_paths_reject_unsorted_paths() -> None:
+    with pytest.raises(ValueError, match="sorted"):
+        type_governance.validate_strict_paths(
+            strict_config(strict=list(reversed(type_governance.EXPECTED_CONFIG["strict"])))
+        )
+
+
+def test_strict_paths_reject_duplicates() -> None:
+    path = type_governance.EXPECTED_CONFIG["strict"][0]
+    with pytest.raises(ValueError, match="duplicates"):
+        type_governance.validate_strict_paths(strict_config(strict=[path, path]))
+
+
+def test_strict_paths_reject_non_owned_paths() -> None:
+    with pytest.raises(ValueError, match="subset"):
+        type_governance.validate_strict_paths(strict_config(strict=["app/main.py"]))
+
+
+def test_strict_paths_reject_nonproduction_paths() -> None:
+    path = "tests/test_type_governance.py"
+    with pytest.raises(ValueError, match="owned production"):
+        type_governance.validate_strict_paths(strict_config(strict=[path], include=[path]))
+
+
 def install_analyzer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -562,9 +562,10 @@ async def _postgres_listener_loop(
         connection: asyncpg.Connection | None = None
         terminated = asyncio.Event()
         try:
-            connection = await asyncpg.connect(_asyncpg_dsn(), timeout=10)
-            await connection.add_listener(_POSTGRES_CHANNEL, _on_postgres_notification)
-            connection.add_termination_listener(lambda _connection: terminated.set())
+            active_connection = await asyncpg.connect(_asyncpg_dsn(), timeout=10)
+            connection = active_connection
+            await active_connection.add_listener(_POSTGRES_CHANNEL, _on_postgres_notification)
+            active_connection.add_termination_listener(lambda _connection: terminated.set())
             if not ready.done():
                 ready.set_result(None)
             reconnect_delay = 1.0

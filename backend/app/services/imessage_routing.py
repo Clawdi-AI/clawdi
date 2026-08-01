@@ -104,7 +104,11 @@ def parse_direct_service_chat_guid(
     lowered = service.lower()
     if lowered not in {"any", "imessage", "sms"}:
         return None
-    return lowered, handle
+    if lowered == "any":
+        return "any", handle
+    if lowered == "imessage":
+        return "imessage", handle
+    return "sms", handle
 
 
 def service_prefix_for_wire(service: Literal["any", "imessage", "sms"]) -> str:

@@ -285,7 +285,11 @@ async def _next_explicit_default_name(db: AsyncSession, user_id: UUID, agent_typ
     )
     next_index = (
         max(
-            (_agent_default_name_index(name, base) or 0 for name in existing_names),
+            (
+                _agent_default_name_index(name, base) or 0
+                for name in existing_names
+                if name is not None
+            ),
             default=0,
         )
         + 1

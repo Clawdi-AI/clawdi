@@ -107,7 +107,7 @@ class WhatsAppSharedBotRuntime(Protocol):
         self,
         node: BinaryNode,
         lookup_inbound_sender: Callable[[str], str | None],
-    ) -> None: ...
+    ) -> WhatsAppSharedBotRawRelayResult: ...
 
     async def forward_iq(self, node: BinaryNode, tenant_id: str | None) -> BinaryNode | None: ...
 
@@ -944,7 +944,4 @@ def _native_outbound_relay(
 ) -> Callable[[WhatsAppOutboundMessage], Awaitable[None]] | None:
     if transport is None:
         return None
-    relay = getattr(transport, "relay_outbound_message", None)
-    if not callable(relay):
-        return None
-    return relay
+    return transport.relay_outbound_message

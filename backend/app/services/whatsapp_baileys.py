@@ -2568,6 +2568,7 @@ def _init_signal_session(
         if our_ephemeral_key is None or our_signed_key is not None or their_signed_pub_key is None:
             raise ValueError("signal: invalid initiator session")
         our_signed_key = our_ephemeral_key
+        base_public_key = our_ephemeral_key.public_key
     else:
         if (
             our_signed_key is None
@@ -2576,6 +2577,7 @@ def _init_signal_session(
         ):
             raise ValueError("signal: invalid responder session")
         their_signed_pub_key = their_ephemeral_pub_key
+        base_public_key = their_ephemeral_pub_key
 
     shared_secret = bytearray(32 * (5 if our_ephemeral_key and their_ephemeral_pub_key else 4))
     shared_secret[:32] = b"\xff" * 32
@@ -2615,9 +2617,7 @@ def _init_signal_session(
             "created": 0,
             "used": 0,
             "remoteIdentityKey": _signal_prefixed_public_key(their_identity_pub_key),
-            "baseKey": _signal_prefixed_public_key(
-                our_ephemeral_key.public_key if is_initiator else their_ephemeral_pub_key
-            ),
+            "baseKey": _signal_prefixed_public_key(base_public_key),
             "baseKeyType": SIGNAL_BASE_KEY_OURS if is_initiator else SIGNAL_BASE_KEY_THEIRS,
             "closed": -1,
         },

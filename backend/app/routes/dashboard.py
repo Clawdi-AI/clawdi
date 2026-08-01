@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, require_web_auth
+from app.core.auth import AuthContext, require_clerk_id, require_web_auth
 from app.core.config import settings
 from app.core.database import get_session
 from app.models.session import Session
@@ -227,7 +227,7 @@ async def get_stats(
         if item["contribution_day"] is not None
     }
 
-    connectors_count = await _cached_connectors_count(auth.user.clerk_id)
+    connectors_count = await _cached_connectors_count(require_clerk_id(auth))
 
     return DashboardStatsResponse(
         total_sessions=int(row["total_sessions"] or 0),
