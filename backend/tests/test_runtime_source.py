@@ -520,14 +520,14 @@ def test_runtime_source_rejects_non_public_provider_before_auth_selection(monkey
 
     batch = _batch()
     provider = batch.providers[(USER_ID, "managed")]
-    provider.base_url = "http://127.0.0.1:11434/v1"
+    provider.base_url = "https://provider.home.arpa/v1"
 
     def reject_auth_selection(*args, **kwargs):
         raise AssertionError("invalid Hosted endpoint must fail before auth selection")
 
     monkeypatch.setattr(runtime_source, "_selected_auth_payload", reject_auth_selection)
 
-    with pytest.raises(RuntimeSourceError, match="public HTTPS URL"):
+    with pytest.raises(RuntimeSourceError, match="public host"):
         render_runtime_source(
             batch,
             environment_id=ENV_ID,

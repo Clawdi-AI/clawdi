@@ -273,7 +273,7 @@ async def test_hosted_bound_provider_rejects_local_patch_and_replace(
 
     patched = await client.patch(
         f"/v1/ai-providers/{provider_id}",
-        json={"base_url": "http://127.0.0.1:11434/v1"},
+        json={"base_url": "https://api.provider.internal/v1"},
     )
     replaced = await client.post(
         "/v1/ai-providers",

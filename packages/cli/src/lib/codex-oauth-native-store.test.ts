@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	HERMES_CODEX_AUTH_HELPER,
+	hermesCodexAuthInvocation,
 	oauthCredentialFingerprint,
 	resolveOpenClawProviderAuthSdkExport,
 } from "./codex-oauth-native-store";
@@ -22,6 +23,29 @@ afterEach(() => {
 });
 
 describe("native OAuth store contracts", () => {
+	function runHermesHelper(
+		authPath: string,
+		action: "inspect" | "upsert",
+		profileId: string,
+		input: unknown = null,
+	) {
+		return spawnSync(
+			"node",
+			[
+				"--input-type=module",
+				"--eval",
+				HERMES_CODEX_AUTH_HELPER,
+				authPath,
+				action,
+				profileId,
+				"",
+				"revision-test",
+				"missing",
+			],
+			{ encoding: "utf8", input: JSON.stringify(input) },
+		);
+	}
+
 	test("resolves OpenClaw provider auth through the public package export", () => {
 		const packageRoot = tempRoot();
 		const sdkPath = join(packageRoot, "provider-auth.mjs");
@@ -121,6 +145,97 @@ describe("native OAuth store contracts", () => {
 		expect(result.status).not.toBe(0);
 		expect(readFileSync(authPath, "utf8")).toBe(original);
 	});
+
+	test.each([
+		{
+			name: "unknown array item",
+			entries: [null, { id: "user-entry", access_token: "preserve" }],
+			error: "unknown entry",
+		},
+		{
+			name: "duplicate reserved ID",
+			entries: [
+				{ id: "clawdi:reserved", access_token: "first", refresh_token: "first-refresh" },
+				{ id: "clawdi:reserved", access_token: "second", refresh_token: "second-refresh" },
+			],
+			error: "duplicate reserved IDs",
+		},
+	])("preserves original Hermes bytes for $name", ({ entries, error }) => {
+		const root = tempRoot();
+		const authPath = join(root, "auth.json");
+		const original = `${JSON.stringify({
+			version: 1,
+			credential_pool: { "openai-codex": entries },
+		})}\n`;
+		writeFileSync(authPath, original);
+
+		const result = runHermesHelper(authPath, "upsert", "clawdi:reserved", {
+			accessToken: "replacement-access",
+			refreshToken: "replacement-refresh",
+		});
+
+		expect(result.status).not.toBe(0);
+		expect(result.stderr).toContain(error);
+		expect(readFileSync(authPath, "utf8")).toBe(original);
+	});
+
+	test("rejects Windows mutations instead of bypassing the official Hermes lock", () => {
+		expect(() =>
+			hermesCodexAuthInvocation(
+				"upsert",
+				["--input-type=module", "--eval", HERMES_CODEX_AUTH_HELPER],
+				"C:\\Hermes\\auth.lock",
+				"win32",
+			),
+		).toThrow("official msvcrt protocol");
+		expect(hermesCodexAuthInvocation("inspect", ["--eval", "inspect"], "ignored", "win32")).toEqual(
+			{ command: "node", args: ["--eval", "inspect"] },
+		);
+	});
+
+	test.skipIf(process.platform === "win32")(
+		"serializes mutations on the official Hermes auth.lock boundary",
+		() => {
+			const root = tempRoot();
+			const authPath = join(root, "auth.json");
+			const lockPath = join(root, "auth.lock");
+			const readyPath = join(root, "lock-ready");
+			const holder = spawn("flock", [lockPath, "sh", "-c", `touch "${readyPath}"; sleep 0.35`]);
+			const deadline = Date.now() + 2_000;
+			while (!existsSync(readyPath) && Date.now() < deadline) {
+				Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+			}
+			expect(existsSync(readyPath)).toBe(true);
+
+			const nodeArgs = [
+				"--input-type=module",
+				"--eval",
+				HERMES_CODEX_AUTH_HELPER,
+				authPath,
+				"upsert",
+				"clawdi:reserved",
+				"",
+				"revision-lock",
+				"missing",
+			];
+			const invocation = hermesCodexAuthInvocation("upsert", nodeArgs, lockPath);
+			const startedAt = Date.now();
+			const mutation = spawnSync(invocation.command, invocation.args, {
+				encoding: "utf8",
+				input: JSON.stringify({ accessToken: "access", refreshToken: "refresh" }),
+			});
+			const elapsedMs = Date.now() - startedAt;
+
+			expect(mutation.status).toBe(0);
+			expect(elapsedMs).toBeGreaterThanOrEqual(200);
+			expect(JSON.parse(readFileSync(authPath, "utf8"))).toMatchObject({
+				credential_pool: {
+					"openai-codex": [{ id: "clawdi:reserved", access_token: "access" }],
+				},
+			});
+			holder.kill();
+		},
+	);
 
 	test("fences Hermes mutations with before and target credential fingerprints", () => {
 		const root = tempRoot();

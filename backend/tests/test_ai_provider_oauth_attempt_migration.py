@@ -23,8 +23,10 @@ def _load_migration():
 
 
 @pytest.mark.asyncio
-async def test_ai_provider_oauth_attempt_migration_preserves_revoke_compensation(
+@pytest.mark.parametrize("revoke_status", ["pending", "processing"])
+async def test_ai_provider_oauth_attempt_migration_rejects_unfinished_revoke_compensation(
     engine: AsyncEngine,
+    revoke_status: str,
 ) -> None:
     migration = _load_migration()
     assert migration.down_revision == "a9c4e7d2f1b6"
@@ -102,7 +104,7 @@ async def test_ai_provider_oauth_attempt_migration_preserves_revoke_compensation
                     ) VALUES (
                         :id, :owner_user_id, :oauth_attempt_id, 'openai-codex',
                         'codex', 'refresh_token', :token_sha256,
-                        :encrypted_token, :token_nonce, 'pending'
+                        :encrypted_token, :token_nonce, :status
                     )
                     """
                 ),
@@ -113,6 +115,7 @@ async def test_ai_provider_oauth_attempt_migration_preserves_revoke_compensation
                     "token_sha256": "b" * 64,
                     "encrypted_token": b"token",
                     "token_nonce": b"nonce",
+                    "status": revoke_status,
                 },
             )
 
@@ -141,7 +144,121 @@ async def test_ai_provider_oauth_attempt_migration_preserves_revoke_compensation
                 )
                 == user_id
             )
+            with pytest.raises(
+                RuntimeError,
+                match=r"0 attempt\(s\) are active and 1 revoke obligation\(s\) are unfinished",
+            ):
+                migration.downgrade()
+            assert (
+                sync_conn.scalar(
+                    sa.text("SELECT count(*) FROM ai_provider_oauth_revoke_tombstones")
+                )
+                == 1
+            )
+
+            sync_conn.execute(
+                sa.text(
+                    "UPDATE ai_provider_oauth_revoke_tombstones "
+                    "SET status = 'quarantined', encrypted_token = NULL, token_nonce = NULL"
+                )
+            )
             migration.downgrade()
+            assert (
+                sync_conn.scalar(
+                    sa.text("SELECT to_regclass('ai_provider_oauth_revoke_tombstones')")
+                )
+                is None
+            )
+        finally:
+            migration.op = old_op
+            sync_conn.execute(sa.text("RESET search_path"))
+            sync_conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+
+    async with engine.begin() as conn:
+        await conn.run_sync(run_migration)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attempt_status", ["pending", "polling", "exchanging"])
+async def test_ai_provider_oauth_attempt_migration_rejects_active_attempts(
+    engine: AsyncEngine,
+    attempt_status: str,
+) -> None:
+    migration = _load_migration()
+    schema = f"ai_provider_oauth_active_{uuid.uuid4().hex}"
+    user_id = uuid.uuid4()
+    provider_row_id = uuid.uuid4()
+
+    def run_migration(sync_conn: sa.Connection) -> None:
+        old_op = migration.op
+        sync_conn.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
+        sync_conn.execute(sa.text(f'SET search_path TO "{schema}"'))
+        try:
+            sync_conn.execute(sa.text("CREATE TABLE users (id uuid PRIMARY KEY)"))
+            sync_conn.execute(
+                sa.text(
+                    "CREATE TABLE ai_providers ("
+                    "id uuid PRIMARY KEY, owner_user_id uuid NOT NULL REFERENCES users(id)"
+                    ")"
+                )
+            )
+            migration.op = Operations(MigrationContext.configure(sync_conn))
+            migration.upgrade()
+            sync_conn.execute(sa.text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
+            sync_conn.execute(
+                sa.text(
+                    "INSERT INTO ai_providers (id, owner_user_id) VALUES (:id, :owner_user_id)"
+                ),
+                {"id": provider_row_id, "owner_user_id": user_id},
+            )
+            sync_conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO ai_provider_oauth_attempts (
+                        id, flow_id, owner_user_id, provider_row_id, provider_id,
+                        oauth_provider, auth_profile, flow_kind, status,
+                        state_sha256, encrypted_flow_payload, flow_payload_nonce,
+                        poll_claim_id, expires_at
+                    ) VALUES (
+                        :id, :flow_id, :owner_user_id, :provider_row_id, 'openai-codex',
+                        'codex', 'default', 'device_code', :status,
+                        :state_sha256, :encrypted_payload, :nonce,
+                        :poll_claim_id, now() + interval '5 minutes'
+                    )
+                    """
+                ),
+                {
+                    "id": uuid.uuid4(),
+                    "flow_id": uuid.uuid4(),
+                    "owner_user_id": user_id,
+                    "provider_row_id": provider_row_id,
+                    "status": attempt_status,
+                    "state_sha256": "c" * 64,
+                    "encrypted_payload": b"payload",
+                    "nonce": b"nonce",
+                    "poll_claim_id": "poll-claim" if attempt_status == "polling" else None,
+                },
+            )
+
+            with pytest.raises(
+                RuntimeError,
+                match=r"1 attempt\(s\) are active and 0 revoke obligation\(s\) are unfinished",
+            ):
+                migration.downgrade()
+            assert sync_conn.scalar(sa.text("SELECT count(*) FROM ai_provider_oauth_attempts")) == 1
+
+            sync_conn.execute(
+                sa.text(
+                    "UPDATE ai_provider_oauth_attempts "
+                    "SET status = 'failed', encrypted_flow_payload = NULL, "
+                    "flow_payload_nonce = NULL, poll_claim_id = NULL, completed_at = now()"
+                )
+            )
+            migration.downgrade()
+            assert (
+                sync_conn.scalar(sa.text("SELECT to_regclass('ai_provider_oauth_attempts')"))
+                is None
+            )
         finally:
             migration.op = old_op
             sync_conn.execute(sa.text("RESET search_path"))
