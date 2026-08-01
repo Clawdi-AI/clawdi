@@ -33,7 +33,7 @@ export function availableBotProvidersForAgent(
 }
 
 export function pairingCommand(code: string): string {
-	return `/bot_pair ${code}`;
+	return `/clawdi_pair ${code}`;
 }
 
 export function verifiedDiscordPairingCommand(pairingCommand: string, code: string): string | null {

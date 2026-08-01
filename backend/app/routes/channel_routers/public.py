@@ -92,6 +92,7 @@ from app.services.channel_config import (
 )
 from app.services.channels import (
     DISCORD_PAIR_COMMAND_NAME,
+    TELEGRAM_PAIR_COMMAND,
     archive_bot_agent_link,
     archive_channel_account,
     bot_agent_link_has_strict_v2_authority,
@@ -896,9 +897,10 @@ async def create_channel_pair_code(
     )
     await db.commit()
     await db.refresh(created.pair_code)
-    pairing_command_name = (
-        DISCORD_PAIR_COMMAND_NAME if account.provider == CHANNEL_PROVIDER_DISCORD else "bot_pair"
-    )
+    pairing_command_name = {
+        CHANNEL_PROVIDER_DISCORD: DISCORD_PAIR_COMMAND_NAME,
+        CHANNEL_PROVIDER_TELEGRAM: TELEGRAM_PAIR_COMMAND.removeprefix("/"),
+    }.get(account.provider, "bot_pair")
     pairing_command = f"/{pairing_command_name} {created.code}"
     bot_username = _telegram_bot_username(account)
     deep_link = (

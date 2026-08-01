@@ -88,6 +88,7 @@ from app.services.vault_crypto import decrypt, encrypt
 log = logging.getLogger(__name__)
 
 PAIR_COMMAND = "/bot_pair"
+TELEGRAM_PAIR_COMMAND = "/clawdi_pair"
 UNPAIR_COMMAND = "/bot_unpair"
 DISCORD_PAIR_COMMAND_NAME = "clawdi_pair"
 DISCORD_UNPAIR_COMMAND_NAME = "clawdi_unpair"
@@ -230,7 +231,6 @@ class ChannelAgentContext:
 PAIRING_REPLY_PAIRED = "Paired! This chat is now connected to your agent."
 PAIRING_REPLY_UNPAIRED = "Unpaired. This chat is no longer connected to an agent."
 PAIRING_REPLY_NOT_PAIRED = "This chat is not paired."
-PAIRING_REPLY_USAGE_BOT_PAIR = "Usage: /bot_pair <code>"
 PAIRING_REPLY_FORBIDDEN = "Only the user who paired this chat can change its pairing."
 
 
@@ -1780,11 +1780,11 @@ def parse_pair_command(text: str | None) -> ChannelPairCommand | None:
         if code is not None and PAIR_CODE_PATTERN.fullmatch(code):
             return ChannelPairCommand(kind="pair", code=code)
         return None
-    if not trimmed.startswith("/bot_"):
+    if not trimmed.startswith(("/bot_", "/clawdi_")):
         return None
     head, separator, rest = trimmed.partition(" ")
     command = head.split("@", 1)[0]
-    if command == PAIR_COMMAND:
+    if command in {PAIR_COMMAND, TELEGRAM_PAIR_COMMAND}:
         code = _single_command_arg(rest) if separator else ""
         if code is None:
             code = ""
@@ -1809,6 +1809,8 @@ def _single_command_arg(rest: str) -> str | None:
 def pairing_reply_for_command(
     command: ChannelPairCommand | None,
     result: InboundBindingResult,
+    *,
+    pair_command: str = PAIR_COMMAND,
 ) -> str:
     if result.paired:
         return PAIRING_REPLY_PAIRED
@@ -1818,7 +1820,7 @@ def pairing_reply_for_command(
         return "Message received."
     if command.kind == "pair":
         if result.pair_failed_reason == "usage":
-            return PAIRING_REPLY_USAGE_BOT_PAIR
+            return f"Usage: {pair_command} <code>"
         if result.pair_failed_reason == "forbidden":
             return PAIRING_REPLY_FORBIDDEN
         reason = result.pair_failed_reason or "invalid"
@@ -1828,7 +1830,7 @@ def pairing_reply_for_command(
             return PAIRING_REPLY_FORBIDDEN
         return PAIRING_REPLY_NOT_PAIRED
     if command.kind == "unknown" and command.command:
-        return f"Unknown command: {command.command}. Use /bot_pair <code> or /bot_unpair."
+        return f"Unknown command: {command.command}. Use {pair_command} <code> or {UNPAIR_COMMAND}."
     return "Message received."
 
 
@@ -2115,7 +2117,14 @@ async def send_pairing_command_reply(
 ) -> ChannelMessage | None:
     if not binding_result.command_handled:
         return None
-    reply_text = reply or pairing_reply_for_command(command, binding_result)
+    pair_command = (
+        TELEGRAM_PAIR_COMMAND if account.provider == CHANNEL_PROVIDER_TELEGRAM else PAIR_COMMAND
+    )
+    reply_text = reply or pairing_reply_for_command(
+        command,
+        binding_result,
+        pair_command=pair_command,
+    )
     reply_link_id = (
         binding_result.binding.bot_agent_link_id
         if binding_result.binding is not None and (binding_result.paired or binding_result.unpaired)
@@ -3531,6 +3540,17 @@ async def sync_channel_commands(
     using_default_commands = commands is None
     command_specs = commands or [dict(command) for command in DEFAULT_CHANNEL_COMMANDS]
     if account.provider == CHANNEL_PROVIDER_TELEGRAM:
+        command_specs = [
+            {
+                **command,
+                "name": (
+                    TELEGRAM_PAIR_COMMAND.removeprefix("/")
+                    if _command_name(command) == PAIR_COMMAND.removeprefix("/")
+                    else _command_name(command)
+                ),
+            }
+            for command in command_specs
+        ]
         return await sync_telegram_commands(account=account, commands=command_specs)
     if account.provider == CHANNEL_PROVIDER_DISCORD:
         if using_default_commands:

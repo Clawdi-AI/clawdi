@@ -6570,7 +6570,7 @@ async def test_telegram_bot_commands_preserve_scope_language_and_delete(
     assert get_chat_scope.json()["result"] == [{"command": "deploy", "description": "Deploy"}]
     assert deleted_es.status_code == 200
     assert get_deleted_es.json()["result"] == [
-        {"command": "bot_pair", "description": "Pair this chat with Clawdi."},
+        {"command": "clawdi_pair", "description": "Pair this chat with Clawdi."},
         {"command": "bot_unpair", "description": "Disconnect this chat from Clawdi."},
     ]
 
@@ -6847,7 +6847,7 @@ async def test_telegram_repair_and_unpair_clear_previous_link_commands(
         json={},
     )
     assert second_get.json()["result"] == [
-        {"command": "bot_pair", "description": "Pair this chat with Clawdi."},
+        {"command": "clawdi_pair", "description": "Pair this chat with Clawdi."},
         {"command": "bot_unpair", "description": "Disconnect this chat from Clawdi."},
     ]
 
@@ -11867,7 +11867,7 @@ async def test_telegram_pair_code_returns_server_owned_deep_link_metadata(
 
     assert response.status_code == 201
     pair = response.json()
-    assert pair["pairing_command"] == f"/bot_pair {pair['code']}"
+    assert pair["pairing_command"] == f"/clawdi_pair {pair['code']}"
     assert pair["bot_username"] == "Clawdi_Test_Bot"
     assert pair["deep_link"] == f"https://t.me/Clawdi_Test_Bot?start={pair['code']}"
     assert pair["qr_payload"] == pair["deep_link"]
@@ -11899,7 +11899,7 @@ async def test_telegram_pair_code_omits_link_metadata_for_invalid_username(
     assert pair["bot_username"] is None
     assert pair["deep_link"] is None
     assert pair["qr_payload"] is None
-    assert pair["pairing_command"] == f"/bot_pair {pair['code']}"
+    assert pair["pairing_command"] == f"/clawdi_pair {pair['code']}"
 
 
 @pytest.mark.asyncio
@@ -13093,6 +13093,9 @@ async def test_telegram_webhook_rejects_invalid_secret(client: httpx.AsyncClient
 
 
 def test_parse_pair_command_matches_strict_bot_shapes():
+    assert parse_pair_command("/clawdi_pair ABCDEF1234").code == "ABCDEF1234"
+    assert parse_pair_command("/clawdi_pair@shared_bot ABC123").code == "ABC123"
+    assert parse_pair_command("/clawdi_pair ABC123 thanks").code == ""
     assert parse_pair_command("/bot_pair ABCDEF1234") is not None
     assert parse_pair_command("/bot_pair ABCDEF1234").code == "ABCDEF1234"
     assert parse_pair_command("/bot_pair@shared_bot ABC123").code == "ABC123"
@@ -16830,7 +16833,7 @@ async def test_telegram_command_sync_uses_set_my_commands(
     assert response.json()["provider"] == "telegram"
     assert _FakeProviderClient.calls[0]["url"].endswith("/bot123456:telegram-secret/setMyCommands")
     assert _FakeProviderClient.calls[0]["json"]["commands"] == [
-        {"command": "bot_pair", "description": "Pair this chat with Clawdi."},
+        {"command": "clawdi_pair", "description": "Pair this chat with Clawdi."},
         {"command": "bot_unpair", "description": "Disconnect this chat from Clawdi."},
     ]
 

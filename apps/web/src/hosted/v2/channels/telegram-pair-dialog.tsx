@@ -152,8 +152,8 @@ export function TelegramPairDialog({
 				<PairingDialogHeader
 					title="Pair Telegram"
 					identity={botIdentity}
-					scope="Private chat"
-					description="Scan the QR code or open Telegram to pair a private chat."
+					scope="Chat"
+					description="Use the link or pairing command to connect a chat."
 				/>
 
 				<PairingDialogBody data-telegram-pair-dialog-body>
@@ -183,13 +183,13 @@ export function TelegramPairDialog({
 								<PairingInstructionPanel>
 									<details>
 										<summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-											Pair a group manually
+											Pair manually
 										</summary>
 										<div className="mt-3 space-y-3">
-											<p>Add @{result.bot_username.replace(/^@/, "")} to the group, then send:</p>
+											<p>Send this to @{result.bot_username.replace(/^@/, "")}:</p>
 											<CopyablePairingCode
 												value={result.pairing_command}
-												label="Telegram group pairing command"
+												label="Telegram pairing command"
 											/>
 										</div>
 									</details>

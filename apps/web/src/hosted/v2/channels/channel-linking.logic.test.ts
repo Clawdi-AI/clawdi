@@ -13,7 +13,7 @@ import {
 
 describe("hosted channel instructions and gates", () => {
 	test("renders the exact command accepted by the channel backend", () => {
-		expect(pairingCommand("PAIRABC123")).toBe("/bot_pair PAIRABC123");
+		expect(pairingCommand("PAIRABC123")).toBe("/clawdi_pair PAIRABC123");
 	});
 
 	test("uses one discoverable Discord server pairing action", () => {

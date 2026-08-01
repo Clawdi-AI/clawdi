@@ -261,7 +261,7 @@ async def _pair_telegram(
             "update_id": 10,
             "message": {
                 "message_id": 10,
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chat": {"id": chat_id, "type": "private"},
             },
         },

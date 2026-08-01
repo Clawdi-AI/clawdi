@@ -216,18 +216,7 @@ export function DiscordPairDialog({
 										{!result.discord_user_install_url ? (
 											<PairingInstructionPanel role="status">
 												<p className="text-sm font-medium">Direct message pairing unavailable</p>
-												<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-													<span>
-														Use Server pairing. The bot owner can enable Discord User Install with
-														the
-													</span>
-													<CopyablePairingCode
-														value="applications.commands"
-														label="Discord application commands scope"
-														variant="inline"
-													/>
-													<span>scope to add direct message pairing.</span>
-												</div>
+												<p className="text-xs text-muted-foreground">Use Server pairing.</p>
 											</PairingInstructionPanel>
 										) : null}
 										<PairingInstructionPanel>
@@ -247,10 +236,6 @@ export function DiscordPairDialog({
 											</div>
 											<CopyablePairingCode value={result.code} label="Discord pair code" />
 										</PairingInstructionPanel>
-										<p className="text-xs text-muted-foreground">
-											The default install grants only Clawdi&apos;s text, attachment, reaction, and
-											thread baseline. Voice and advanced server-management actions are not enabled.
-										</p>
 									</TabsContent>
 
 									{result.discord_user_install_url ? (
@@ -274,22 +259,6 @@ export function DiscordPairDialog({
 												</div>
 												<CopyablePairingCode value={result.code} label="Discord pair code" />
 											</PairingInstructionPanel>
-											<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-												<span>
-													If Discord rejects the install, ask the bot owner to enable User Install
-													with
-												</span>
-												<CopyablePairingCode
-													value="applications.commands"
-													label="Discord application commands scope"
-													variant="inline"
-												/>
-												<span>in the Discord Developer Portal.</span>
-											</div>
-											<p className="text-xs text-muted-foreground">
-												Agent-defined slash commands are server-only. Direct messages support
-												pairing and message routing, not per-Agent command menus.
-											</p>
 										</TabsContent>
 									) : null}
 								</Tabs>
