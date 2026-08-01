@@ -1,4 +1,5 @@
 import re
+from collections.abc import Mapping
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -313,13 +314,12 @@ class HostedEgressPathReplace(_StrictHostedWireModel):
 
 
 def _validate_egress_header_names(
-    value: dict[str, object] | None,
-) -> dict[str, object] | None:
+    value: Mapping[str, object] | None,
+) -> None:
     if value is not None and any(
         _EGRESS_HEADER_NAME_PATTERN.fullmatch(name) is None for name in value
     ):
         raise ValueError("egress header names must be canonical")
-    return value
 
 
 class HostedEgressProfileMatch(_StrictHostedWireModel):
