@@ -215,10 +215,9 @@ The built-in memory provider stores account-owned `memories` with text,
 category, source, tags, optional source Session or direct source Agent id,
 access counters, JSONB metadata, and a 768-dimensional embedding. A write from
 an environment-bound principal records `source_environment_id` directly; it
-does not invent a Session. Bound reads accept that direct provenance or legacy
-`source_session_id -> sessions.environment_id` provenance and reject
-unattributed or other-Agent rows. Unbound account clients retain their full
-account view.
+does not invent a Session. Provenance explains where a memory came from; it is
+not an authorization boundary. Memory is account-shared so preferences and
+durable decisions remain available across the user's agents.
 
 Retrieval merges available signals:
 
@@ -228,10 +227,9 @@ Retrieval merges available signals:
 
 `Mem0Provider` is the alternate provider when the user's settings choose Mem0
 and an API key is present. Environment provenance is stored in Mem0 metadata,
-and bound search/list/count operations send the equivalent user plus direct-or-
-legacy provenance filter to Mem0. Operations that cannot enforce that boundary
-server-side, such as a bound delete by id, fail closed. No session-to-memory
-automatic pipeline exists; agents or users add memories explicitly.
+while every operation uses the account user id as its server-side boundary. No
+session-to-memory automatic pipeline exists; agents or users add memories
+explicitly.
 
 ## MCP And Connectors
 

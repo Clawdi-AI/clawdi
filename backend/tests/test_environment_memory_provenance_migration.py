@@ -37,9 +37,12 @@ STRICT_SCOPES = [
 ]
 PLATFORM_PREVIOUS_SCOPES = ["sessions:write", "skills:read", "skills:write"]
 PLATFORM_SCOPES = [
+    "connectors:read",
+    "connectors:invoke",
     "memories:read",
     "memories:write",
     "projects:read",
+    "sessions:read",
     "sessions:write",
     "skills:read",
     "skills:write",

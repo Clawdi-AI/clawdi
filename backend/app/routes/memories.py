@@ -22,7 +22,7 @@ from app.schemas.memory import (
     MemoryResponse,
 )
 from app.services.embedding import resolve_embedder
-from app.services.memory_provider import BuiltinProvider, get_memory_provider, memory_to_dict
+from app.services.memory_provider import get_memory_provider, memory_to_dict
 from app.services.memory_recall import (
     bump_recall_counts,
     recall_counting_enabled,
@@ -124,108 +124,6 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/memories", tags=["memories"])
 
 
-async def _project_filter_memories(
-    db: AsyncSession, auth: AuthContext, items: list[dict]
-) -> list[dict]:
-    """For Agent API keys, drop memories whose
-    source session lives outside that Agent's boundary.
-
-    Direct `source_environment_id` provenance is authoritative for writes made
-    without a Session. Legacy rows remain visible when their source Session
-    belongs to the bound environment. Unattributed manual memories are dropped.
-
-    Gate is `_is_env_bound_api_key` (presence of `environment_id`),
-    NOT `_is_scoped_api_key` (presence of an explicit API permission
-    list). Default deploy keys mint with `scopes=None` (full
-    capability, matching the "deploy key behaves like user-installed
-    clawdi" policy), so the permission-list gate let them bypass the
-    env filter — a leaked Agent A key could read Agent B's
-    memories. Personal CLI keys and Clerk JWT have no env binding and
-    see everything user-owned.
-    """
-    if not _is_env_bound_api_key(auth):
-        return items
-    if auth.api_key is None or auth.api_key.environment_id is None:
-        # Defensive: `_is_env_bound_api_key` already checked, but
-        # the type narrower can't see through the helper. Bail
-        # out as "no memories" rather than crash.
-        return []
-    bound_env_id = auth.api_key.environment_id
-    direct_matches: set[int] = set()
-    sids: set[UUID] = set()
-    for index, d in enumerate(items):
-        raw_environment_id = d.get("source_environment_id")
-        if raw_environment_id:
-            try:
-                if UUID(str(raw_environment_id)) == bound_env_id:
-                    direct_matches.add(index)
-            except (TypeError, ValueError):
-                pass
-        raw = d.get("source_session_id")
-        if not raw:
-            continue
-        try:
-            sids.add(UUID(str(raw)))
-        except (TypeError, ValueError):
-            continue
-    rows = []
-    if sids:
-        rows = (
-            await db.execute(
-                select(Session.id, Session.environment_id).where(
-                    Session.id.in_(sids),
-                    Session.user_id == auth.user_id,
-                )
-            )
-        ).all()
-    in_bound = {sid for (sid, env_id) in rows if env_id == bound_env_id}
-    out: list[dict] = []
-    for index, d in enumerate(items):
-        if index in direct_matches:
-            out.append(d)
-            continue
-        raw = d.get("source_session_id")
-        if not raw:
-            continue  # manual memories dropped for scoped keys
-        try:
-            sid_u = UUID(str(raw))
-        except (TypeError, ValueError):
-            continue
-        if sid_u in in_bound:
-            out.append(d)
-    return out
-
-
-async def _provider_environment_scope(
-    provider: object,
-    db: AsyncSession,
-    auth: AuthContext,
-) -> dict:
-    """Return provider kwargs that enforce an env-bound read at the source.
-
-    PostgreSQL can resolve legacy Session provenance with a subquery. External
-    providers cannot access that table, so pass the authenticated environment's
-    Session ids into their server-side metadata filter as well.
-    """
-    if not _is_env_bound_api_key(auth):
-        return {}
-    if auth.api_key is None or auth.api_key.environment_id is None:
-        return {"source_environment_id": UUID(int=0), "source_session_ids": []}
-    environment_id = auth.api_key.environment_id
-    scope: dict = {"source_environment_id": environment_id}
-    if not isinstance(provider, BuiltinProvider):
-        session_ids = (
-            await db.execute(
-                select(Session.id).where(
-                    Session.user_id == auth.user_id,
-                    Session.environment_id == environment_id,
-                )
-            )
-        ).scalars()
-        scope["source_session_ids"] = list(session_ids)
-    return scope
-
-
 @router.get("")
 async def list_memories(
     background_tasks: BackgroundTasks,
@@ -238,7 +136,6 @@ async def list_memories(
     order: str = Query(default="desc", pattern=r"^(asc|desc)$"),
 ) -> Paginated[MemoryResponse]:
     provider = await get_memory_provider(str(auth.user_id), db)
-    provider_scope = await _provider_environment_scope(provider, db, auth)
 
     if q:
         # Search is top-N ranked (FTS + trgm + vector hybrid). Paging through
@@ -250,10 +147,8 @@ async def list_memories(
             q,
             limit=page_size,
             category=category,
-            **provider_scope,
         )
         await _attach_source_machines(db, auth, hits)
-        hits = await _project_filter_memories(db, auth, hits)
         # Re-cap to page_size so the response shape stays predictable
         # regardless of how much we overfetched.
         hits = hits[:page_size]
@@ -270,26 +165,15 @@ async def list_memories(
             page_size=page_size,
         )
 
-    total = await provider.count(str(auth.user_id), category=category, **provider_scope)
+    total = await provider.count(str(auth.user_id), category=category)
     rows = await provider.list_all(
         str(auth.user_id),
         limit=page_size,
         offset=(page - 1) * page_size,
         category=category,
         order=order,
-        **provider_scope,
     )
     await _attach_source_machines(db, auth, rows)
-    # Defense-in-depth: provider-side filtering is authoritative for paging
-    # and Mem0 isolation, while this rejects any malformed/mis-scoped result.
-    if _is_env_bound_api_key(auth):
-        rows = await _project_filter_memories(db, auth, rows)
-        return Paginated[MemoryResponse](
-            items=[MemoryResponse.model_validate(m) for m in rows],
-            total=total,
-            page=page,
-            page_size=page_size,
-        )
     return Paginated[MemoryResponse](
         items=[MemoryResponse.model_validate(m) for m in rows],
         total=total,
@@ -315,16 +199,7 @@ async def get_memory(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Memory not found")
     payload = memory_to_dict(memory)
     await _attach_source_machines(db, auth, [payload])
-    # Apply the same project filter as list_memories: a deploy key
-    # bound to Agent A can read its own memories by ID but is 404'd
-    # on memories whose source session lives in Agent B (or manual
-    # adds with no env attribution). Without this guard a deploy
-    # key with memories:read could enumerate IDs and read the
-    # entire user's memory store.
-    filtered = await _project_filter_memories(db, auth, [payload])
-    if not filtered:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Memory not found")
-    return MemoryResponse.model_validate(filtered[0])
+    return MemoryResponse.model_validate(payload)
 
 
 @router.post("")
@@ -367,40 +242,9 @@ async def delete_memory(
     auth: AuthContext = Depends(require_scope("memories:write")),
     db: AsyncSession = Depends(get_session),
 ) -> MemoryDeleteResponse:
-    # Same project guard as the read path: a scoped api_key bound
-    # to Agent A must not be able to delete a memory sourced from
-    # Agent B. The pre-delete check is gated on the resolved
-    # provider being the Builtin store: Mem0 memories live in
-    # Mem0's cloud, not the PG `memories` table. Pre-fix this
-    # path always queried PG, which 404'd every Mem0-backed
-    # delete (the row simply isn't there) — Mem0 users couldn't
-    # delete any memory through the API.
     provider = await get_memory_provider(str(auth.user_id), db)
-    if isinstance(provider, BuiltinProvider):
-        result = await db.execute(
-            select(Memory).where(
-                Memory.id == memory_id,
-                Memory.user_id == auth.user_id,
-            )
-        )
-        target = result.scalar_one_or_none()
-        if target is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Memory not found")
-        payload = memory_to_dict(target)
-        filtered = await _project_filter_memories(db, auth, [payload])
-        if not filtered:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Memory not found")
-    elif _is_env_bound_api_key(auth):
-        # Mem0 + scoped key: provider can't filter by env project,
-        # and we can't easily pre-check ownership here. Refuse
-        # rather than allow a deploy key to delete out-of-env
-        # memories. Future: query Mem0 by id and check metadata
-        # for source_session_id ↔ env mapping.
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "Scoped api keys cannot delete Mem0-backed memories yet.",
-        )
-    await provider.delete(str(auth.user_id), str(memory_id))
+    if not await provider.delete(str(auth.user_id), str(memory_id)):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Memory not found")
     return MemoryDeleteResponse(status="deleted")
 
 
@@ -420,12 +264,9 @@ async def embed_backfill(
     With `force=true`, re-embeds rows that already have embeddings too
     (useful after changing the embedding model).
 
-    Agent API keys are rejected: this is a maintenance/admin
-    operation that touches every memory the user owns, including
-    cross-Agent memories the bound key isn't allowed to read. Pre-fix
-    a leaked Agent A deploy key with `scopes=None` could call this
-    endpoint and feed every Agent's content to the embedder as a side
-    channel.
+    Agent API keys are rejected because this bulk maintenance operation is not
+    part of ordinary Memory read/write behavior. Environment-bound runtimes may
+    recall account Memory but cannot trigger account-wide re-embedding work.
     """
     if _is_env_bound_api_key(auth):
         raise HTTPException(

@@ -889,14 +889,14 @@ def _is_env_bound_api_key(auth: AuthContext) -> bool:
     Legacy v1 Agent keys may have `scopes=None` (full account
     capability, same as a user's own laptop key), while strict-v2
     runtime deployment keys carry an issuer-owned scope bundle.
-    Either way, their BLAST RADIUS still has to honour the env
-    binding: a leaked env-A key must not read env-B's data. Memory /
-    session / skill / vault routes filter by env when this is true.
+    Resource types with an Agent or Project boundary (sessions, skills, and
+    Vault attachments) honour this binding. Memory is intentionally
+    account-shared when the key has a Memory scope; its environment id is
+    provenance, not visibility.
 
     Distinct from `_is_scoped_api_key`: the latter is about
     capability narrowing (used to reject from user-only routes);
-    this one is about env-project visibility (used to filter
-    list/read/delete results)."""
+    this one is about env-project identity and visibility."""
     return auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None
 
 

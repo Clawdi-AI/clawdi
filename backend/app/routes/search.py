@@ -100,23 +100,11 @@ async def _search_sessions(db: AsyncSession, auth: AuthContext, query: str) -> l
 
 async def _search_memories(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
     provider = await get_memory_provider(str(auth.user_id), db)
-    from app.routes.memories import _project_filter_memories, _provider_environment_scope
-
-    provider_scope = await _provider_environment_scope(provider, db, auth)
     rows = await provider.search(
         str(auth.user_id),
         query,
         limit=TYPE_LIMIT,
-        **provider_scope,
     )
-    # Apply the same Agent Project filter the direct /v1/memories route
-    # uses. Without this, a scoped Agent API key with `memories:read`
-    # could read memories from other Agents (or manual memories with
-    # no Agent attribution) via the search palette — a side-channel
-    # around _project_filter_memories. Imported lazily to avoid a
-    # circular import between search.py and memories.py.
-    rows = await _project_filter_memories(db, auth, list(rows))
-    rows = rows[:TYPE_LIMIT]
     return [
         SearchHit(
             type="memory",

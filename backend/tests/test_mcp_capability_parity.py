@@ -77,7 +77,7 @@ def _assert_no_vault_values(value: object) -> None:
 
 
 @pytest.mark.asyncio
-async def test_hosted_memory_project_and_vault_mcp_round_trip_isolation(
+async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
     db_session,
     seed_user,
     monkeypatch,
@@ -194,14 +194,14 @@ async def test_hosted_memory_project_and_vault_mcp_round_trip_isolation(
                 client,
                 2,
                 "memory_add",
-                {"content": "Hosted direct parity marker belongs only to environment A."},
+                {"content": "Hosted direct parity marker is shared across the account."},
             )
             assert "Memory stored" in added["content"][0]["text"]
             direct_memory = (
                 await db_session.execute(
                     select(Memory).where(
                         Memory.content
-                        == "Hosted direct parity marker belongs only to environment A."
+                        == "Hosted direct parity marker is shared across the account."
                     )
                 )
             ).scalar_one()
@@ -214,7 +214,7 @@ async def test_hosted_memory_project_and_vault_mcp_round_trip_isolation(
                 "memory_search",
                 {"query": "Hosted direct parity marker"},
             )
-            assert "belongs only to environment A" in direct_search["content"][0]["text"]
+            assert "shared across the account" in direct_search["content"][0]["text"]
             legacy_search = await _tool_call(
                 client,
                 4,
@@ -222,7 +222,7 @@ async def test_hosted_memory_project_and_vault_mcp_round_trip_isolation(
                 {"query": "Legacy parity marker"},
             )
             assert "environment A" in legacy_search["content"][0]["text"]
-            assert "environment B" not in legacy_search["content"][0]["text"]
+            assert "environment B" in legacy_search["content"][0]["text"]
 
             current = _tool_json(await _tool_call(client, 5, "project_current"))
             projects = _tool_json(await _tool_call(client, 6, "project_list"))["projects"]
@@ -265,9 +265,8 @@ async def test_hosted_memory_project_and_vault_mcp_round_trip_isolation(
                 "memory_search",
                 {"query": "Hosted direct parity marker"},
             )
-            assert "belongs only to environment A" not in other_search["content"][0]["text"]
-            assert (await client.get(f"/v1/memories/{direct_memory.id}")).status_code == 404
-            assert (await client.delete(f"/v1/memories/{direct_memory.id}")).status_code == 404
+            assert "shared across the account" in other_search["content"][0]["text"]
+            assert (await client.get(f"/v1/memories/{direct_memory.id}")).status_code == 200
 
             inaccessible_project = await _tool_call(
                 client,
@@ -321,7 +320,7 @@ async def test_hosted_memory_project_and_vault_mcp_round_trip_isolation(
                 "memory_search",
                 {"query": "Hosted direct parity marker"},
             )
-            assert "belongs only to environment A" in cli_search["content"][0]["text"]
+            assert "shared across the account" in cli_search["content"][0]["text"]
             assert (await client.get(f"/v1/memories/{direct_memory.id}")).status_code == 200
 
             active_auth["value"] = AuthContext(
@@ -345,7 +344,7 @@ async def test_hosted_memory_project_and_vault_mcp_round_trip_isolation(
 
 
 @pytest.mark.asyncio
-async def test_environment_bound_mem0_delete_fails_closed(
+async def test_environment_bound_mem0_delete_uses_account_scope(
     db_session,
     seed_user,
     monkeypatch,
@@ -359,6 +358,8 @@ async def test_environment_bound_mem0_delete_fails_closed(
     )
     provider = Mem0Provider.__new__(Mem0Provider)
     provider.client = MagicMock()
+    memory_id = uuid.uuid4()
+    provider.client.get.return_value = {"id": str(memory_id), "user_id": str(seed_user.id)}
 
     async def override_session():
         yield db_session
@@ -375,14 +376,14 @@ async def test_environment_bound_mem0_delete_fails_closed(
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.delete(f"/v1/memories/{uuid.uuid4()}")
+            response = await client.delete(f"/v1/memories/{memory_id}")
     finally:
         app.dependency_overrides.pop(get_session, None)
         app.dependency_overrides.pop(get_auth, None)
 
-    assert response.status_code == 403
-    assert "cannot delete Mem0-backed memories" in response.json()["detail"]
-    provider.client.delete.assert_not_called()
+    assert response.status_code == 200
+    provider.client.get.assert_called_once_with(str(memory_id))
+    provider.client.delete.assert_called_once()
 
 
 @pytest.mark.asyncio

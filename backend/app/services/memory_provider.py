@@ -8,11 +8,10 @@ import uuid
 from datetime import UTC, datetime
 from typing import Protocol
 
-from sqlalchemy import or_, select, text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.memory import Memory
-from app.models.session import Session
 from app.services.embedding import Embedder, resolve_embedder
 from app.services.vault_crypto import decrypt_field
 
@@ -37,8 +36,6 @@ class MemoryProvider(Protocol):
         query: str,
         limit: int = 50,
         category: str | None = None,
-        source_environment_id: uuid.UUID | None = None,
-        source_session_ids: list[uuid.UUID] | None = None,
     ) -> list[dict]: ...
 
     async def list_all(
@@ -48,19 +45,15 @@ class MemoryProvider(Protocol):
         offset: int = 0,
         category: str | None = None,
         order: str = "desc",
-        source_environment_id: uuid.UUID | None = None,
-        source_session_ids: list[uuid.UUID] | None = None,
     ) -> list[dict]: ...
 
     async def count(
         self,
         user_id: str,
         category: str | None = None,
-        source_environment_id: uuid.UUID | None = None,
-        source_session_ids: list[uuid.UUID] | None = None,
     ) -> int: ...
 
-    async def delete(self, user_id: str, memory_id: str) -> None: ...
+    async def delete(self, user_id: str, memory_id: str) -> bool: ...
 
 
 class BuiltinProvider:
@@ -116,28 +109,13 @@ class BuiltinProvider:
         query: str,
         limit: int = 50,
         category: str | None = None,
-        source_environment_id: uuid.UUID | None = None,
-        source_session_ids: list[uuid.UUID] | None = None,
     ) -> list[dict]:
-        del source_session_ids  # PostgreSQL resolves legacy Session provenance with a subquery.
-        fts_rows = await self._search_fts(
-            user_id,
-            query,
-            limit,
-            category,
-            source_environment_id,
-        )
+        fts_rows = await self._search_fts(user_id, query, limit, category)
         if self.embedder is None:
             return [_strip_scores(r) for r in fts_rows]
 
         try:
-            vec_rows = await self._search_vector(
-                user_id,
-                query,
-                limit,
-                category,
-                source_environment_id,
-            )
+            vec_rows = await self._search_vector(user_id, query, limit, category)
         except Exception as e:
             log.warning("vector search failed, using FTS-only: %s", e)
             return [_strip_scores(r) for r in fts_rows]
@@ -151,7 +129,6 @@ class BuiltinProvider:
         query: str,
         limit: int,
         category: str | None,
-        source_environment_id: uuid.UUID | None,
     ) -> list[dict]:
         """FTS + trigram hybrid with strict/relaxed score floor.
 
@@ -163,7 +140,6 @@ class BuiltinProvider:
             "pattern": f"%{query}%",
             "cat": category,
             "lim": limit,
-            "env": source_environment_id,
         }
         sql = text("""
             WITH candidates AS (
@@ -173,17 +149,6 @@ class BuiltinProvider:
               FROM memories m
               WHERE user_id = :uid
                 AND (CAST(:cat AS text) IS NULL OR category = :cat)
-                AND (
-                  CAST(:env AS uuid) IS NULL
-                  OR source_environment_id = CAST(:env AS uuid)
-                  OR EXISTS (
-                    SELECT 1
-                    FROM sessions s
-                    WHERE s.id = m.source_session_id
-                      AND s.user_id = :uid
-                      AND s.environment_id = CAST(:env AS uuid)
-                  )
-                )
                 AND (
                   content_tsv @@ websearch_to_tsquery('simple', :q)
                   OR similarity(content, :q) > 0.1
@@ -224,7 +189,6 @@ class BuiltinProvider:
         query: str,
         limit: int,
         category: str | None,
-        source_environment_id: uuid.UUID | None,
     ) -> list[dict]:
         """pgvector cosine-distance nearest neighbors among rows with embeddings.
 
@@ -242,7 +206,6 @@ class BuiltinProvider:
             limit,
             category,
             self.VECTOR_DISTANCE_STRICT,
-            source_environment_id,
         )
         if not rows:
             rows = await self._run_vector_search(
@@ -251,7 +214,6 @@ class BuiltinProvider:
                 limit,
                 category,
                 self.VECTOR_DISTANCE_RELAXED,
-                source_environment_id,
             )
         out: list[dict] = []
         for mem, dist in rows:
@@ -269,7 +231,6 @@ class BuiltinProvider:
         limit: int,
         category: str | None,
         max_distance: float,
-        source_environment_id: uuid.UUID | None,
     ):
         distance = Memory.embedding.cosine_distance(q_vec)
         stmt = (
@@ -284,17 +245,6 @@ class BuiltinProvider:
         )
         if category:
             stmt = stmt.where(Memory.category == category)
-        if source_environment_id is not None:
-            legacy_session_ids = select(Session.id).where(
-                Session.user_id == uuid.UUID(user_id),
-                Session.environment_id == source_environment_id,
-            )
-            stmt = stmt.where(
-                or_(
-                    Memory.source_environment_id == source_environment_id,
-                    Memory.source_session_id.in_(legacy_session_ids),
-                )
-            )
         return (await self.db.execute(stmt)).all()
 
     async def list_all(
@@ -304,24 +254,10 @@ class BuiltinProvider:
         offset: int = 0,
         category: str | None = None,
         order: str = "desc",
-        source_environment_id: uuid.UUID | None = None,
-        source_session_ids: list[uuid.UUID] | None = None,
     ) -> list[dict]:
-        del source_session_ids  # PostgreSQL resolves legacy Session provenance with a subquery.
         q = select(Memory).where(Memory.user_id == uuid.UUID(user_id))
         if category:
             q = q.where(Memory.category == category)
-        if source_environment_id is not None:
-            legacy_session_ids = select(Session.id).where(
-                Session.user_id == uuid.UUID(user_id),
-                Session.environment_id == source_environment_id,
-            )
-            q = q.where(
-                or_(
-                    Memory.source_environment_id == source_environment_id,
-                    Memory.source_session_id.in_(legacy_session_ids),
-                )
-            )
         order_col = Memory.created_at.asc() if order == "asc" else Memory.created_at.desc()
         q = q.order_by(order_col).limit(limit).offset(offset)
         result = await self.db.execute(q)
@@ -331,29 +267,15 @@ class BuiltinProvider:
         self,
         user_id: str,
         category: str | None = None,
-        source_environment_id: uuid.UUID | None = None,
-        source_session_ids: list[uuid.UUID] | None = None,
     ) -> int:
         from sqlalchemy import func as sqlfunc
 
-        del source_session_ids  # PostgreSQL resolves legacy Session provenance with a subquery.
         q = select(sqlfunc.count()).select_from(Memory).where(Memory.user_id == uuid.UUID(user_id))
         if category:
             q = q.where(Memory.category == category)
-        if source_environment_id is not None:
-            legacy_session_ids = select(Session.id).where(
-                Session.user_id == uuid.UUID(user_id),
-                Session.environment_id == source_environment_id,
-            )
-            q = q.where(
-                or_(
-                    Memory.source_environment_id == source_environment_id,
-                    Memory.source_session_id.in_(legacy_session_ids),
-                )
-            )
         return (await self.db.execute(q)).scalar_one()
 
-    async def delete(self, user_id: str, memory_id: str) -> None:
+    async def delete(self, user_id: str, memory_id: str) -> bool:
         result = await self.db.execute(
             select(Memory).where(
                 Memory.id == uuid.UUID(memory_id),
@@ -361,17 +283,20 @@ class BuiltinProvider:
             )
         )
         memory = result.scalar_one_or_none()
-        if memory:
-            await self.db.delete(memory)
-            await self.db.commit()
+        if memory is None:
+            return False
+        await self.db.delete(memory)
+        await self.db.commit()
+        return True
 
 
 class Mem0Provider:
     """Memory provider backed by Mem0 API."""
 
     def __init__(self, api_key: str):
-        mem0 = __import__("mem0", fromlist=["MemoryClient"])
-        self.client = mem0.MemoryClient(api_key=api_key)
+        from mem0 import MemoryClient  # pyright: ignore[reportMissingImports]
+
+        self.client = MemoryClient(api_key=api_key)
 
     async def add(
         self,
@@ -407,17 +332,10 @@ class Mem0Provider:
         query: str,
         limit: int = 50,
         category: str | None = None,
-        source_environment_id: uuid.UUID | None = None,
-        source_session_ids: list[uuid.UUID] | None = None,
     ) -> list[dict]:
         results = self.client.search(
             query,
-            filters=_mem0_filters(
-                user_id,
-                category=category,
-                source_environment_id=source_environment_id,
-                source_session_ids=source_session_ids,
-            ),
+            filters=_mem0_filters(user_id, category=category),
             top_k=limit,
         )
         items = _mem0_items(results)
@@ -450,17 +368,10 @@ class Mem0Provider:
         category: str | None = None,
         order: str = "desc",  # mem0 returns in insertion order; accepted for
         # Protocol compatibility but ignored here.
-        source_environment_id: uuid.UUID | None = None,
-        source_session_ids: list[uuid.UUID] | None = None,
     ) -> list[dict]:
         del order  # intentionally unused for mem0 provider
         results = self.client.get_all(
-            filters=_mem0_filters(
-                user_id,
-                category=category,
-                source_environment_id=source_environment_id,
-                source_session_ids=source_session_ids,
-            ),
+            filters=_mem0_filters(user_id, category=category),
             page=(offset // limit) + 1,
             page_size=limit,
         )
@@ -483,16 +394,9 @@ class Mem0Provider:
         self,
         user_id: str,
         category: str | None = None,
-        source_environment_id: uuid.UUID | None = None,
-        source_session_ids: list[uuid.UUID] | None = None,
     ) -> int:
         results = self.client.get_all(
-            filters=_mem0_filters(
-                user_id,
-                category=category,
-                source_environment_id=source_environment_id,
-                source_session_ids=source_session_ids,
-            ),
+            filters=_mem0_filters(user_id, category=category),
             page=1,
             page_size=1,
         )
@@ -503,8 +407,12 @@ class Mem0Provider:
         items = _mem0_items(results)
         return len(items)
 
-    async def delete(self, user_id: str, memory_id: str) -> None:
+    async def delete(self, user_id: str, memory_id: str) -> bool:
+        memory = self.client.get(memory_id)
+        if not isinstance(memory, dict) or memory.get("user_id") != user_id:
+            return False
         self.client.delete(memory_id)
+        return True
 
 
 # ---------- helpers ----------
@@ -563,30 +471,11 @@ def _mem0_filters(
     user_id: str,
     *,
     category: str | None,
-    source_environment_id: uuid.UUID | None,
-    source_session_ids: list[uuid.UUID] | None,
 ) -> dict:
-    """Build a Mem0 Platform v3 server-side provenance filter.
-
-    Metadata filtering is the security boundary for an environment-bound
-    caller. Returning all user memories and filtering in this process would
-    make provider pagination/ranking capable of hiding in-scope results and
-    would depend on Mem0 returning provenance faithfully. The v3 API accepts
-    nested AND/OR filters and exact metadata clauses, so both direct and
-    legacy Session provenance can be constrained before results leave Mem0.
-    """
+    """Build an account-scoped Mem0 Platform v3 filter."""
     conditions: list[dict] = [{"user_id": user_id}]
     if category is not None:
         conditions.append({"metadata": {"category": category}})
-    if source_environment_id is not None:
-        provenance: list[dict] = [
-            {"metadata": {"source_environment_id": str(source_environment_id)}}
-        ]
-        provenance.extend(
-            {"metadata": {"source_session_id": str(session_id)}}
-            for session_id in source_session_ids or []
-        )
-        conditions.append({"OR": provenance})
     return {"AND": conditions}
 
 

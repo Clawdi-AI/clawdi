@@ -44,9 +44,12 @@ _PLATFORM_PREVIOUS_SCOPES = (
     "skills:write",
 )
 _PLATFORM_SCOPES = (
+    "connectors:read",
+    "connectors:invoke",
     "memories:read",
     "memories:write",
     "projects:read",
+    "sessions:read",
     "sessions:write",
     "skills:read",
     "skills:write",

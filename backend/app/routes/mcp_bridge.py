@@ -25,7 +25,6 @@ from sqlalchemy.types import String
 from app.core.auth import (
     AuthContext,
     _is_env_bound_api_key,
-    _is_scoped_api_key,
     get_auth,
     is_runtime_deployment_principal,
     require_clerk_id,
@@ -36,11 +35,7 @@ from app.core.query_utils import like_needle
 from app.models.project import Project
 from app.models.session import AgentEnvironment, Session
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
-from app.routes.memories import (
-    _attach_source_machines,
-    _project_filter_memories,
-    _provider_environment_scope,
-)
+from app.routes.memories import _attach_source_machines
 from app.routes.public_sessions import _resolve_session_for_view
 from app.services.composio import (
     call_tool_router_mcp_tool,
@@ -600,17 +595,10 @@ _DECLARED_NATIVE_TOOL_NAMES = frozenset(
 
 
 async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
-    # Mirror `require_user_auth`, which guarded the old connector MCP
-    # config route: narrowly-scoped api keys are deliberate capability
-    # narrowing and get no connector surface. Don't list what the
-    # caller can't call.
-    if _is_scoped_api_key(auth) and not is_runtime_deployment_principal(auth):
+    try:
+        _require_scope(auth, "connectors:read")
+    except HTTPException:
         return []
-    if is_runtime_deployment_principal(auth):
-        try:
-            _require_scope(auth, "connectors:read")
-        except HTTPException:
-            return []
     clerk_id = require_clerk_id(auth)
     now = time.monotonic()
     cached = _connector_tools_cache.get(clerk_id)
@@ -709,15 +697,12 @@ async def _tool_memory_search(
     _require_scope(auth, "memories:read")
     parsed = _validate_arguments(_MemorySearchArguments, arguments)
     provider = await get_memory_provider(str(auth.user_id), db)
-    provider_scope = await _provider_environment_scope(provider, db, auth)
     hits = await provider.search(
         str(auth.user_id),
         parsed.query,
         limit=parsed.limit,
-        **provider_scope,
     )
     await _attach_source_machines(db, auth, hits)
-    hits = (await _project_filter_memories(db, auth, hits))[: parsed.limit]
     text = (
         "\n\n".join(f"[{item.get('category', 'fact')}] {item.get('content', '')}" for item in hits)
         if hits
@@ -1063,13 +1048,7 @@ async def _tool_vault_get(
 async def _tool_connector_call(
     name: str, arguments: dict[str, Any], *, auth: AuthContext
 ) -> dict[str, Any]:
-    if _is_scoped_api_key(auth) and not is_runtime_deployment_principal(auth):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "Connector tools are not available to scoped api keys",
-        )
-    if is_runtime_deployment_principal(auth):
-        _require_scope(auth, "connectors:invoke")
+    _require_scope(auth, "connectors:invoke")
     session = await get_tool_router_mcp_session(require_clerk_id(auth))
     response = await call_tool_router_mcp_tool(session, name, arguments)
     result = response.model_dump(by_alias=True, exclude_none=True)

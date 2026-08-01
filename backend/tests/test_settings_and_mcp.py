@@ -441,7 +441,7 @@ async def test_clawdi_mcp_preserves_standard_composio_tool_contract(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_clawdi_mcp_memory_search_respects_env_bound_api_key(
+async def test_clawdi_mcp_memory_search_shares_account_memory_across_agents(
     db_session,
     seed_user,
     monkeypatch,
@@ -543,7 +543,7 @@ async def test_clawdi_mcp_memory_search_respects_env_bound_api_key(
     assert response.status_code == 200, response.text
     text = response.json()["result"]["content"][0]["text"]
     assert "OpenClaw alpha runtime" in text
-    assert "Hermes beta runtime" not in text
+    assert "Hermes beta runtime" in text
 
 
 @pytest.mark.asyncio
@@ -836,15 +836,12 @@ async def test_create_tool_router_mcp_session_fails_closed_on_invalid_sdk_contra
 
 
 @pytest.mark.asyncio
-async def test_clawdi_mcp_connector_tools_denied_for_scoped_api_key(
+async def test_clawdi_mcp_connector_tools_follow_scoped_key_permissions(
     db_session,
     seed_user,
     monkeypatch,
 ):
-    """Scoped api keys are deliberate capability narrowing; the old
-    connector config route rejected them via `require_user_auth`, and the
-    MCP entrypoint must not reopen that surface: connector tools are
-    neither listed nor callable."""
+    """A scoped key without Connector permissions cannot list or invoke them."""
     from datetime import timedelta
 
     from app.core.auth import AuthContext, get_auth
@@ -856,11 +853,16 @@ async def test_clawdi_mcp_connector_tools_denied_for_scoped_api_key(
     async def override_session():
         yield db_session
 
-    async def override_auth() -> AuthContext:
-        return AuthContext(
+    scoped_key = ApiKey(user_id=seed_user.id, scopes=["sessions:read"])
+    active_auth = {
+        "value": AuthContext(
             user=seed_user,
-            api_key=ApiKey(user_id=seed_user.id, scopes=["sessions:read"]),
+            api_key=scoped_key,
         )
+    }
+
+    async def override_auth() -> AuthContext:
+        return active_auth["value"]
 
     async def fake_session(user_id: str) -> ComposioMcpSession:
         return ComposioMcpSession(
@@ -876,8 +878,16 @@ async def test_clawdi_mcp_connector_tools_denied_for_scoped_api_key(
             {"tools": [{"name": "COMPOSIO_DANGEROUS", "inputSchema": {"type": "object"}}]}
         )
 
+    async def fake_call(session, name, arguments):
+        from mcp.types import CallToolResult
+
+        return CallToolResult.model_validate(
+            {"content": [{"type": "text", "text": "connector allowed"}]}
+        )
+
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_session)
     monkeypatch.setattr(mcp_bridge, "list_tool_router_mcp_tools", fake_list)
+    monkeypatch.setattr(mcp_bridge, "call_tool_router_mcp_tool", fake_call)
     monkeypatch.setattr(mcp_bridge, "_connector_tools_cache", {})
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_auth] = override_auth
@@ -897,6 +907,21 @@ async def test_clawdi_mcp_connector_tools_denied_for_scoped_api_key(
                     "params": {"name": "COMPOSIO_DANGEROUS", "arguments": {}},
                 },
             )
+            scoped_key.scopes = ["connectors:read", "connectors:invoke"]
+            mcp_bridge._connector_tools_cache.clear()
+            allowed_list = await ac.post(
+                "/v1/mcp/clawdi",
+                json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
+            )
+            allowed_call = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "tools/call",
+                    "params": {"name": "COMPOSIO_DANGEROUS", "arguments": {}},
+                },
+            )
     finally:
         app.dependency_overrides.pop(get_session, None)
         app.dependency_overrides.pop(get_auth, None)
@@ -909,11 +934,14 @@ async def test_clawdi_mcp_connector_tools_denied_for_scoped_api_key(
     assert called.status_code == 200, called.text
     result = called.json()["result"]
     assert result["isError"] is True
-    assert "scoped api keys" in result["content"][0]["text"]
+    assert "missing scope: connectors:invoke" in result["content"][0]["text"]
+    allowed_names = [tool["name"] for tool in allowed_list.json()["result"]["tools"]]
+    assert "COMPOSIO_DANGEROUS" in allowed_names
+    assert allowed_call.json()["result"]["content"][0]["text"] == "connector allowed"
 
 
 @pytest.mark.asyncio
-async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_scoped_memory(
+async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_account_memory(
     db_session,
     seed_user,
     monkeypatch,

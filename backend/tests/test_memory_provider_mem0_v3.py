@@ -9,7 +9,6 @@ from app.services.memory_provider import Mem0Provider
 
 USER_ID = "11111111-1111-1111-1111-111111111111"
 ENVIRONMENT_ID = UUID("22222222-2222-2222-2222-222222222222")
-SESSION_ID = UUID("33333333-3333-3333-3333-333333333333")
 
 
 def _provider(client: MagicMock) -> Mem0Provider:
@@ -18,18 +17,10 @@ def _provider(client: MagicMock) -> Mem0Provider:
     return provider
 
 
-def _scoped_filters(*, category: str | None = None) -> dict:
+def _filters(*, category: str | None = None) -> dict:
     conditions: list[dict] = [{"user_id": USER_ID}]
     if category is not None:
         conditions.append({"metadata": {"category": category}})
-    conditions.append(
-        {
-            "OR": [
-                {"metadata": {"source_environment_id": str(ENVIRONMENT_ID)}},
-                {"metadata": {"source_session_id": str(SESSION_ID)}},
-            ]
-        }
-    )
     return {"AND": conditions}
 
 
@@ -64,8 +55,6 @@ async def test_mem0_v3_add_and_search_use_filters_and_top_k() -> None:
         "Scoped",
         limit=7,
         category="decision",
-        source_environment_id=ENVIRONMENT_ID,
-        source_session_ids=[SESSION_ID],
     )
 
     assert added == {"id": "mem0-added"}
@@ -81,7 +70,7 @@ async def test_mem0_v3_add_and_search_use_filters_and_top_k() -> None:
     )
     client.search.assert_called_once_with(
         "Scoped",
-        filters=_scoped_filters(category="decision"),
+        filters=_filters(category="decision"),
         top_k=7,
     )
     assert hits[0]["source_environment_id"] == str(ENVIRONMENT_ID)
@@ -113,25 +102,37 @@ async def test_mem0_v3_list_and_count_preserve_server_pagination() -> None:
         limit=10,
         offset=20,
         category="fact",
-        source_environment_id=ENVIRONMENT_ID,
-        source_session_ids=[SESSION_ID],
     )
     total = await provider.count(
         USER_ID,
         category="fact",
-        source_environment_id=ENVIRONMENT_ID,
-        source_session_ids=[SESSION_ID],
     )
 
     assert [row["id"] for row in rows] == ["page-three"]
     assert total == 23
     assert client.get_all.call_args_list[0].kwargs == {
-        "filters": _scoped_filters(category="fact"),
+        "filters": _filters(category="fact"),
         "page": 3,
         "page_size": 10,
     }
     assert client.get_all.call_args_list[1].kwargs == {
-        "filters": _scoped_filters(category="fact"),
+        "filters": _filters(category="fact"),
         "page": 1,
         "page_size": 1,
     }
+
+
+@pytest.mark.asyncio
+async def test_mem0_delete_verifies_account_owner() -> None:
+    client = MagicMock()
+    client.get.side_effect = [
+        {"id": "owned", "user_id": USER_ID},
+        {"id": "foreign", "user_id": "another-user"},
+    ]
+    provider = _provider(client)
+
+    assert await provider.delete(USER_ID, "owned") is True
+    assert await provider.delete(USER_ID, "foreign") is False
+
+    assert [call.args for call in client.get.call_args_list] == [("owned",), ("foreign",)]
+    client.delete.assert_called_once_with("owned")
