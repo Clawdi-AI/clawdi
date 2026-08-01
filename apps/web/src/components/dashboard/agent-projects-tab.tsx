@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, FolderKanban, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -14,19 +14,33 @@ import {
 	orderedAgentProjectBindings,
 } from "@/components/dashboard/agent-project-scope";
 import { EmptyState } from "@/components/empty-state";
+import { HERO_CARD_BASE, HERO_GRID_CLASS, HeroCard } from "@/components/entity-card";
+import { IconChip } from "@/components/icon-chip";
+import { ListToolbar } from "@/components/list-toolbar";
 import {
+	displayProjectName,
 	isCustomProject,
 	isProjectOwner,
-	ProjectIdentity,
-	ProjectScopePicker,
+	ProjectCompactPicker,
+	ProjectKindBadge,
+	projectAlias,
 } from "@/components/projects/project-metadata";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
+import { identityFor } from "@/lib/identity";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
 
@@ -91,6 +105,7 @@ function AgentProjectsPanel({
 }) {
 	const api = useApi();
 	const [contextProjectId, setContextProjectId] = useState("");
+	const [addOpen, setAddOpen] = useState(false);
 	const orderedBindings = orderedAgentProjectBindings(bindings);
 	const primary = orderedBindings.find((binding) => binding.binding_type === "primary") ?? null;
 	const contexts = orderedBindings.filter((binding) => binding.binding_type === "context");
@@ -115,6 +130,7 @@ function AgentProjectsPanel({
 		},
 		onSuccess: () => {
 			setContextProjectId("");
+			setAddOpen(false);
 			onChanged();
 			toast.success("Project added");
 		},
@@ -165,9 +181,20 @@ function AgentProjectsPanel({
 
 	if (isLoading) {
 		return (
-			<div className="space-y-3" data-testid="agent-projects-loading">
-				<Skeleton className="h-4 w-96 max-w-full" />
-				<Skeleton className="h-52 w-full rounded-lg" />
+			<div className="space-y-4" data-testid="agent-projects-loading">
+				<div className="flex justify-end">
+					<Skeleton className="h-8 w-28 rounded-md" />
+				</div>
+				<div className={HERO_GRID_CLASS}>
+					{Array.from({ length: 3 }).map((_, index) => (
+						<div key={index} className={`${HERO_CARD_BASE} flex min-h-36 flex-col gap-3`}>
+							<Skeleton className="size-10 rounded-lg" />
+							<Skeleton className="h-4 w-36 max-w-full" />
+							<Skeleton className="h-3 w-28 max-w-full" />
+							<Skeleton className="mt-auto h-3 w-40 max-w-full" />
+						</div>
+					))}
+				</div>
 			</div>
 		);
 	}
@@ -194,157 +221,211 @@ function AgentProjectsPanel({
 
 	return (
 		<div className="space-y-4" data-testid="agent-project-stack">
-			<section className="overflow-hidden rounded-lg border bg-card/60">
-				{effectiveBindings.length === 0 ? (
-					<EmptyState
-						variant="inset"
-						className="rounded-none border-0"
-						description="The Agent Project is not available yet."
-					/>
-				) : (
-					<ol className="divide-y" aria-label="Effective Project read order">
-						{effectiveBindings.map((binding, position) => {
-							const project = projectsById.get(binding.project_id);
-							const projectName = project?.name || binding.project_id;
-							const isRemoving = removeBinding.isPending && removeBinding.variables === binding.id;
-							const contextIndex = binding.binding_type === "context" ? position - 1 : -1;
-							return (
-								<li
-									key={binding.id}
-									className="grid gap-3 px-3 py-3 sm:px-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
-									data-binding-type={binding.binding_type}
-								>
-									<div className="flex min-w-0 items-start gap-3">
-										<div className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-semibold tabular-nums">
-											<span className="sr-only">Position </span>
-											{position + 1}
-										</div>
-										<ProjectUseLine binding={binding} project={project} />
-									</div>
-									{binding.binding_type === "context" ? (
-										<div className="flex items-center justify-end gap-1">
-											<Button
-												variant="ghost"
-												size="icon-sm"
-												disabled={contextIndex === 0 || reorder.isPending}
-												onClick={() => moveContext(binding.id, -1)}
-												title="Move up"
-												aria-label={`Move ${projectName} up`}
-											>
-												<ArrowUp className="size-3.5" />
-											</Button>
-											<Button
-												variant="ghost"
-												size="icon-sm"
-												disabled={contextIndex === contexts.length - 1 || reorder.isPending}
-												onClick={() => moveContext(binding.id, 1)}
-												title="Move down"
-												aria-label={`Move ${projectName} down`}
-											>
-												<ArrowDown className="size-3.5" />
-											</Button>
-											<ConfirmAction
-												title="Remove this Project?"
-												description={
-													<>
-														<p>{projectName} will no longer be available to this agent.</p>
-														<p>The Project and its resources are not deleted.</p>
-													</>
-												}
-												confirmLabel="Remove Project"
-												destructive
-												onConfirm={() => removeBinding.mutate(binding.id)}
-											>
+			<ListToolbar
+				actions={
+					<Button
+						size="sm"
+						disabled={!primary}
+						onClick={() => {
+							setContextProjectId("");
+							setAddOpen(true);
+						}}
+					>
+						<Plus className="size-3.5" />
+						Add Project
+					</Button>
+				}
+			/>
+
+			{effectiveBindings.length === 0 ? (
+				<EmptyState variant="inset" description="The Agent Project is not available yet." />
+			) : (
+				<ol
+					className={HERO_GRID_CLASS}
+					aria-label="Effective Project read order"
+					data-testid="agent-project-grid"
+				>
+					{effectiveBindings.map((binding, position) => {
+						const project = projectsById.get(binding.project_id);
+						const projectName = project ? displayProjectName(project) : binding.project_id;
+						const isRemoving = removeBinding.isPending && removeBinding.variables === binding.id;
+						const contextIndex = binding.binding_type === "context" ? position - 1 : -1;
+						return (
+							<li
+								key={binding.id}
+								className="min-w-0"
+								data-binding-type={binding.binding_type}
+								data-testid="agent-project-card"
+							>
+								<AgentProjectCard
+									binding={binding}
+									project={project}
+									position={position}
+									actions={
+										binding.binding_type === "context" ? (
+											<div className="flex items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
 												<Button
 													variant="ghost"
 													size="icon-sm"
-													disabled={isRemoving}
-													title="Remove"
-													aria-label={`Remove ${projectName}`}
+													disabled={contextIndex === 0 || reorder.isPending}
+													onClick={() => moveContext(binding.id, -1)}
+													title="Move up"
+													aria-label={`Move ${projectName} up`}
 												>
-													{isRemoving ? (
-														<Spinner className="size-3.5" />
-													) : (
-														<Trash2 className="size-3.5 text-destructive" />
-													)}
+													<ArrowUp className="size-3.5" />
 												</Button>
-											</ConfirmAction>
-										</div>
-									) : null}
-								</li>
-							);
-						})}
-					</ol>
-				)}
+												<Button
+													variant="ghost"
+													size="icon-sm"
+													disabled={contextIndex === contexts.length - 1 || reorder.isPending}
+													onClick={() => moveContext(binding.id, 1)}
+													title="Move down"
+													aria-label={`Move ${projectName} down`}
+												>
+													<ArrowDown className="size-3.5" />
+												</Button>
+												<ConfirmAction
+													title="Remove this Project?"
+													description={
+														<>
+															<p>{projectName} will no longer be available to this agent.</p>
+															<p>The Project and its resources are not deleted.</p>
+														</>
+													}
+													confirmLabel="Remove Project"
+													destructive
+													onConfirm={() => removeBinding.mutate(binding.id)}
+												>
+													<Button
+														variant="ghost"
+														size="icon-sm"
+														disabled={isRemoving}
+														title="Remove"
+														aria-label={`Remove ${projectName}`}
+													>
+														{isRemoving ? (
+															<Spinner className="size-3.5" />
+														) : (
+															<Trash2 className="size-3.5 text-destructive" />
+														)}
+													</Button>
+												</ConfirmAction>
+											</div>
+										) : null
+									}
+								/>
+							</li>
+						);
+					})}
+				</ol>
+			)}
 
-				<div
-					className="grid gap-3 border-t bg-background/40 p-3 sm:p-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end"
-					data-testid="agent-project-add"
-				>
-					<div className="space-y-2">
-						<ProjectScopePicker
-							projects={contextChoices}
-							value={contextProjectId}
-							onValueChange={setContextProjectId}
-							label="Add a Project"
-							placeholder="Choose a Custom or shared Project…"
-							layout="stacked"
-							disabled={!primary || contextChoices.length === 0}
-						/>
-						{contextChoices.length === 0 ? (
-							<p className="text-xs text-muted-foreground">
+			<Dialog
+				open={addOpen}
+				onOpenChange={(open) => {
+					setAddOpen(open);
+					if (!open) setContextProjectId("");
+				}}
+			>
+				<DialogContent className="sm:max-w-md" data-testid="agent-project-add-dialog">
+					<DialogHeader>
+						<DialogTitle>Add Project</DialogTitle>
+						<DialogDescription>
+							Add a Custom or shared Project to this agent's read order.
+						</DialogDescription>
+					</DialogHeader>
+					<form
+						className="space-y-4"
+						onSubmit={(event) => {
+							event.preventDefault();
+							if (!contextProjectId || addContext.isPending) return;
+							addContext.mutate();
+						}}
+					>
+						{contextChoices.length > 0 ? (
+							<ProjectCompactPicker
+								projects={contextChoices}
+								value={contextProjectId}
+								onValueChange={setContextProjectId}
+								placeholder="Choose a Project…"
+								ariaLabel="Project to add"
+								disabled={addContext.isPending}
+							/>
+						) : (
+							<p className="text-sm text-muted-foreground">
 								No Custom or shared Projects are available to add.
 							</p>
-						) : null}
-					</div>
-					<Button
-						size="sm"
-						disabled={!primary || !contextProjectId || addContext.isPending}
-						variant={contextProjectId ? "default" : "outline"}
-						onClick={() => addContext.mutate()}
-					>
-						{addContext.isPending ? (
-							<Spinner className="size-3.5" />
-						) : (
-							<Plus className="size-3.5" />
 						)}
-						Add Project
-					</Button>
-				</div>
-			</section>
+						<DialogFooter>
+							<Button type="button" variant="ghost" onClick={() => setAddOpen(false)}>
+								Cancel
+							</Button>
+							<Button type="submit" disabled={!contextProjectId || addContext.isPending}>
+								{addContext.isPending ? (
+									<Spinner className="size-3.5" />
+								) : (
+									<Plus className="size-3.5" />
+								)}
+								Add Project
+							</Button>
+						</DialogFooter>
+					</form>
+				</DialogContent>
+			</Dialog>
 		</div>
 	);
 }
 
-function ProjectUseLine({
+function AgentProjectCard({
 	binding,
 	project,
+	position,
+	actions,
 }: {
 	binding: AgentProjectBinding;
 	project: ProjectRow | undefined;
+	position: number;
+	actions?: React.ReactNode;
 }) {
-	const defaultWriteBadge =
-		binding.binding_type === "primary" ? (
-			<Badge variant="secondary">Writes here by default</Badge>
-		) : null;
+	const footer = [
+		`Read order ${position + 1}`,
+		binding.binding_type === "primary" ? "Default write destination" : null,
+	];
 	if (!project) {
 		return (
-			<div className="min-w-0">
-				<div className="flex flex-wrap items-center gap-2">
-					<span className="truncate text-sm font-medium">{binding.project_id}</span>
-					{defaultWriteBadge}
-					<Badge variant="outline">Access unavailable</Badge>
-				</div>
-			</div>
+			<HeroCard
+				icon={
+					<IconChip tint="bg-muted text-muted-foreground">
+						<FolderKanban />
+					</IconChip>
+				}
+				title={binding.project_id}
+				badges={<Badge variant="outline">Access unavailable</Badge>}
+				footer={footer}
+				actions={actions}
+			/>
 		);
 	}
+	const projectName = displayProjectName(project);
+	const identity = identityFor(projectName);
 	return (
-		<div className="min-w-0">
-			<ProjectIdentity
-				project={project}
-				badges={defaultWriteBadge}
-				showAccess={!isProjectOwner(project)}
-			/>
-		</div>
+		<HeroCard
+			icon={
+				<IconChip tint={identity.colorClasses} className="text-xl">
+					{identity.emoji}
+				</IconChip>
+			}
+			title={projectName}
+			badges={
+				<>
+					<ProjectKindBadge kind={project.kind ?? "workspace"} />
+					{isProjectOwner(project) ? null : <Badge variant="outline">Viewer</Badge>}
+				</>
+			}
+			description={projectAlias(project)}
+			descriptionClassName="truncate font-mono"
+			footer={footer}
+			actions={actions}
+		/>
 	);
 }

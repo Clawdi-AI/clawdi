@@ -2689,9 +2689,92 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	expect(touchOrderRequests).toEqual([]);
 });
 
-test("hosted agent sidebar renders one Resources heading in canonical order", async ({ page }) => {
+test("hosted agent sidebar renders one Resources heading in canonical order", async ({
+	page,
+}, testInfo) => {
+	const hostedProjectBindings = [
+		{
+			id: "binding-hosted-context-later",
+			agent_id: railHostedEnvironmentId,
+			project_id: "project-hosted-context-later",
+			binding_type: "context",
+			priority: 2,
+			default_write_enabled: false,
+			created_at: "2026-07-15T00:02:00Z",
+		},
+		{
+			id: "binding-hosted-primary",
+			agent_id: railHostedEnvironmentId,
+			project_id: "project-hosted",
+			binding_type: "primary",
+			priority: 0,
+			default_write_enabled: true,
+			created_at: "2026-07-15T00:00:00Z",
+		},
+		{
+			id: "binding-hosted-context-first",
+			agent_id: railHostedEnvironmentId,
+			project_id: "project-hosted-context-first",
+			binding_type: "context",
+			priority: 1,
+			default_write_enabled: false,
+			created_at: "2026-07-15T00:01:00Z",
+		},
+	];
+	const hostedAgentProjects = [
+		{
+			id: "project-hosted",
+			name: "Hosted Agent Project",
+			slug: "hosted-agent-project",
+			kind: "environment",
+			origin_environment_id: railHostedEnvironmentId,
+			archived_at: null,
+			created_at: "2026-07-15T00:00:00Z",
+			is_owner: true,
+			owner_display: "Hosted User",
+			owner_handle: "hosted-user",
+		},
+		{
+			id: "project-hosted-context-first",
+			name: "Hosted Shared Knowledge",
+			slug: "hosted-shared-knowledge",
+			kind: "workspace",
+			origin_environment_id: null,
+			archived_at: null,
+			created_at: "2026-07-15T00:01:00Z",
+			is_owner: false,
+			owner_display: "Platform Team",
+			owner_handle: "platform-team",
+		},
+		{
+			id: "project-hosted-context-later",
+			name: "Hosted Automation",
+			slug: "hosted-automation",
+			kind: "workspace",
+			origin_environment_id: null,
+			archived_at: null,
+			created_at: "2026-07-15T00:02:00Z",
+			is_owner: true,
+			owner_display: "Hosted User",
+			owner_handle: "hosted-user",
+		},
+		{
+			id: "project-hosted-choice",
+			name: "Hosted Project Choice",
+			slug: "hosted-project-choice",
+			kind: "workspace",
+			origin_environment_id: null,
+			archived_at: null,
+			created_at: "2026-07-15T00:03:00Z",
+			is_owner: true,
+			owner_display: "Hosted User",
+			owner_handle: "hosted-user",
+		},
+	];
 	await stubHostedApi(page, {
 		agentResourceFixtures: true,
+		agentProjectBindings: hostedProjectBindings,
+		agentProjects: hostedAgentProjects,
 		deployments: [railHostedDeployment],
 		cloudAgents: [railHostedCloudAgent],
 	});
@@ -2777,7 +2860,82 @@ test("hosted agent sidebar renders one Resources heading in canonical order", as
 
 	await page.goto(`/agents/${railHostedEnvironmentId}/project-access${query}`);
 	await expect(main.getByRole("heading", { name: "Projects", level: 1 })).toBeVisible();
-	await expect(main.getByText("Hosted Agent Project", { exact: true })).toBeVisible();
+	const projectStack = main.getByTestId("agent-project-stack");
+	const projectGrid = projectStack.getByTestId("agent-project-grid");
+	const projectCards = projectGrid.getByTestId("agent-project-card");
+	await expect(projectCards).toHaveCount(3);
+	expect(
+		await projectGrid.evaluate(
+			(element) => getComputedStyle(element).gridTemplateColumns.split(" ").length,
+		),
+	).toBe(3);
+	await expect(projectCards.nth(0)).toContainText("Hosted Agent Project");
+	await expect(projectCards.nth(0)).toContainText("Read order 1");
+	await expect(projectCards.nth(0)).toContainText("Default write destination");
+	await expect(projectCards.nth(0)).not.toContainText("Owner");
+	await expect(projectCards.nth(1)).toContainText("Hosted Shared Knowledge");
+	await expect(projectCards.nth(1)).toContainText("Read order 2");
+	await expect(projectCards.nth(1)).toContainText("Viewer");
+	await expect(projectCards.nth(2)).toContainText("Hosted Automation");
+	await expect(projectCards.nth(2)).toContainText("Read order 3");
+	for (const card of await projectCards.all()) {
+		await expect(card.locator(":scope > div")).toHaveCSS("border-top-width", "1px");
+	}
+	await projectCards.nth(1).hover();
+	await expect(
+		projectCards.nth(1).getByRole("button", { name: "Move Hosted Shared Knowledge up" }),
+	).toBeDisabled();
+	await expect(
+		projectCards.nth(1).getByRole("button", { name: "Remove Hosted Shared Knowledge" }),
+	).toBeVisible();
+	await projectCards.nth(1).getByRole("button", { name: "Remove Hosted Shared Knowledge" }).click();
+	const removeProjectDialog = page.getByRole("alertdialog", { name: "Remove this Project?" });
+	await expect(removeProjectDialog).toContainText(
+		"Hosted Shared Knowledge will no longer be available to this agent.",
+	);
+	await removeProjectDialog.getByRole("button", { name: "Cancel" }).click();
+	await expect(projectStack.getByLabel("Project to add")).toHaveCount(0);
+	await projectStack.getByRole("button", { name: "Add Project", exact: true }).click();
+	const addProjectDialog = page.getByTestId("agent-project-add-dialog");
+	await expect(addProjectDialog).toBeVisible();
+	const compactProjectPicker = addProjectDialog.getByLabel("Project to add");
+	await compactProjectPicker.click();
+	await page.getByRole("option", { name: /Hosted Project Choice/ }).click();
+	await expect(
+		addProjectDialog.getByRole("button", { name: "Add Project", exact: true }),
+	).toBeEnabled();
+	await addProjectDialog.getByRole("button", { name: "Cancel" }).click();
+	await projectStack.screenshot({ path: testInfo.outputPath("hosted-agent-projects-desktop.png") });
+	await page.locator("html").evaluate((element) => element.classList.add("dark"));
+	await projectStack.screenshot({ path: testInfo.outputPath("hosted-agent-projects-dark.png") });
+	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+	const centeredProjectsSurface = projectStack.locator(
+		"xpath=ancestor::div[@data-hosted='true'][1]",
+	);
+	expect(
+		await centeredProjectsSurface.evaluate((element) => element.getBoundingClientRect().width),
+	).toBeLessThanOrEqual(1280);
+
+	await page.setViewportSize({ width: 390, height: 844 });
+	expect(
+		await projectGrid.evaluate(
+			(element) => getComputedStyle(element).gridTemplateColumns.split(" ").length,
+		),
+	).toBe(1);
+	await expect
+		.poll(() =>
+			projectCards
+				.nth(1)
+				.getByRole("button", { name: "Remove Hosted Shared Knowledge" })
+				.evaluate((element) => getComputedStyle(element.parentElement ?? element).opacity),
+		)
+		.toBe("1");
+	expect(
+		await page
+			.locator("html")
+			.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+	).toBe(true);
+	await projectStack.screenshot({ path: testInfo.outputPath("hosted-agent-projects-mobile.png") });
 
 	await page.goto(`/agents/${railHostedEnvironmentId}/vaults${query}`);
 	await expect(main.getByRole("heading", { name: "Vaults", level: 1 })).toBeVisible();
