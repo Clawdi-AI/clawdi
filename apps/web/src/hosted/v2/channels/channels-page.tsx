@@ -18,7 +18,11 @@ import {
 	ChannelCard as SharedChannelCard,
 } from "@/hosted/v2/channels/channel-card";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
-import type { ChannelAccount, ChannelBotPoolItem } from "@/hosted/v2/channels/channel-types";
+import type {
+	ChannelAccount,
+	ChannelBotPoolItem,
+	ChannelHealthItem,
+} from "@/hosted/v2/channels/channel-types";
 import {
 	ChannelStatusBadge,
 	HealthBadge,
@@ -137,7 +141,7 @@ function OwnedBotsSection({
 	isLoading: boolean;
 	error: Error | null;
 	onRetry: () => void;
-	healthItems: { account_id: string; health_status: string }[];
+	healthItems: ChannelHealthItem[];
 	healthError: Error | null;
 	onRetryHealth: () => void;
 	filter: ChannelProviderFilter;
@@ -160,7 +164,7 @@ function OwnedBotsSection({
 	} else if (visibleCount === 0) {
 		return null;
 	} else {
-		const healthByAccount = new Map(healthItems.map((h) => [h.account_id, h.health_status]));
+		const healthByAccount = new Map(healthItems.map((item) => [item.account_id, item]));
 		content = (
 			<div className={CHANNEL_CARD_GRID_CLASS}>
 				{visibleChannels.map((channel) => (
@@ -245,7 +249,7 @@ function SharedBotCard({ bot }: { bot: ChannelBotPoolItem }) {
 	);
 }
 
-function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: string }) {
+function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: ChannelHealthItem }) {
 	return (
 		<div data-channel-account-id={channel.id} className="group relative z-0 h-full min-w-0">
 			<SharedChannelCard
@@ -253,8 +257,8 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: st
 				title={channel.name}
 				className="transition-colors group-hover:bg-muted/50"
 				state={[
-					health && !isNormalChannelHealth(health) ? (
-						<HealthBadge key="health" status={health} />
+					health && !isNormalChannelHealth(health.health_status) ? (
+						<HealthBadge key="health" health={health} />
 					) : null,
 					isNormalChannelStatus(channel.status) ? null : (
 						<ChannelStatusBadge key="status" status={channel.status} />

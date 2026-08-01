@@ -32,6 +32,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { isHostedRuntime } from "@/hosted/runtimes";
 import { nativeTransportSummary } from "@/hosted/v2/channels/channel-detail-page.logic";
+import { channelHealthSummary } from "@/hosted/v2/channels/channel-health-summary";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelActivityItem, ChannelAgentLink } from "@/hosted/v2/channels/channel-types";
 import {
@@ -249,7 +250,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 						<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
 							{isNormalChannelStatus(ch.status) ? null : <ChannelStatusBadge status={ch.status} />}
 							{healthItem && !isNormalChannelHealth(healthItem.health_status) ? (
-								<HealthBadge status={healthItem.health_status} />
+								<HealthBadge health={healthItem} />
 							) : null}
 						</div>
 					) : undefined
@@ -481,18 +482,13 @@ function HealthTab({ accountId }: { accountId: string }) {
 		{ label: "Failed deliveries", value: h.failed_deliveries },
 	];
 	const transport = h.native_transport ? nativeTransportSummary(h.native_transport) : null;
+	const summary = channelHealthSummary(h);
 
 	return (
 		<div className="flex flex-col gap-4">
-			<div className="flex items-center gap-2">
-				<HealthBadge status={h.health_status} />
-				{(h.reasons ?? []).length > 0 ? (
-					<span className="text-xs text-muted-foreground">
-						{(h.reasons ?? []).join(" · ").replace(/_/g, " ")}
-					</span>
-				) : (
-					<span className="text-xs text-muted-foreground">No issues detected</span>
-				)}
+			<div className="flex flex-wrap items-center gap-2">
+				<HealthBadge health={h} />
+				<span className="text-xs text-muted-foreground">{summary.detail}</span>
 			</div>
 
 			<div className="grid grid-cols-2 gap-2 sm:grid-cols-4">

@@ -4,7 +4,9 @@ import { Check, CircleAlert, CircleCheck, Copy, TriangleAlert } from "lucide-rea
 import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { channelHealthSummary } from "@/hosted/v2/channels/channel-health-summary";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
+import type { ChannelHealthItem } from "@/hosted/v2/channels/channel-types";
 import { cn } from "@/lib/utils";
 
 export const CHANNEL_DESTRUCTIVE_ACTION_CLASS =
@@ -26,20 +28,32 @@ export function ProviderChip({
 	);
 }
 
-const HEALTH_META: Record<string, { label: string; tone: StatusTone; icon: typeof CircleCheck }> = {
-	ok: { label: "Healthy", tone: "success", icon: CircleCheck },
-	warning: { label: "Warning", tone: "warning", icon: TriangleAlert },
-	error: { label: "Error", tone: "destructive", icon: CircleAlert },
+const HEALTH_META: Record<string, { tone: StatusTone; icon: typeof CircleCheck }> = {
+	ok: { tone: "success", icon: CircleCheck },
+	warning: { tone: "warning", icon: TriangleAlert },
+	error: { tone: "destructive", icon: CircleAlert },
 };
 
-/** Health chip (ok / warning / error) from `GET /api/channels/health`. */
-export function HealthBadge({ status, className }: { status: string; className?: string }) {
-	const m = HEALTH_META[status] ?? HEALTH_META.warning;
+/** Health chip (ok / warning / error) from `GET /v1/channels/health`. */
+export function HealthBadge({
+	health,
+	className,
+}: {
+	health: ChannelHealthItem;
+	className?: string;
+}) {
+	const m = HEALTH_META[health.health_status] ?? HEALTH_META.warning;
+	const summary = channelHealthSummary(health);
 	const Icon = m.icon;
 	return (
-		<StatusBadge status={m.tone} className={className}>
-			<Icon />
-			{m.label}
+		<StatusBadge
+			status={m.tone}
+			className={className}
+			title={summary.detail}
+			aria-label={`${summary.label}. ${summary.detail}`}
+		>
+			<Icon aria-hidden="true" />
+			{summary.label}
 		</StatusBadge>
 	);
 }
@@ -112,15 +126,23 @@ export function CopyInline({
 			type="button"
 			data-hosted="true"
 			data-v2="true"
-			onClick={() => copy(value)}
+			onClick={() => void copy(value)}
 			className={cn(
-				"inline-flex min-w-0 max-w-full items-center gap-1 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground",
+				"inline-flex min-w-0 max-w-full items-center gap-1 rounded-md border bg-background px-1.5 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
 				className,
 			)}
-			aria-label={`Copy ${label}`}
+			aria-label={copied ? `${label} copied` : `Copy ${label}`}
+			title={copied ? `${label} copied` : `Copy ${label}`}
 		>
-			<span className="truncate">{value}</span>
-			{copied ? <Check className="size-3 shrink-0" /> : <Copy className="size-3 shrink-0" />}
+			<code className="truncate">{value}</code>
+			{copied ? (
+				<Check className="size-3 shrink-0" aria-hidden="true" />
+			) : (
+				<Copy className="size-3 shrink-0" aria-hidden="true" />
+			)}
+			<span className="sr-only" aria-live="polite">
+				{copied ? `${label} copied` : ""}
+			</span>
 		</button>
 	);
 }

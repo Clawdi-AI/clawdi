@@ -29,6 +29,7 @@ describe("channel mutation feedback", () => {
 		const detail = source("../../agents/hosted-agent-detail.tsx");
 		const discordPairDialog = source("./discord-pair-dialog.tsx");
 		const pairDialog = source("./telegram-pair-dialog.tsx");
+		const pairingDialogUi = source("./pairing-dialog-ui.tsx");
 		const pairedChatRow = source("./paired-chat-row.tsx");
 		const clipboardHook = source("../../../hooks/use-copy-to-clipboard.ts");
 
@@ -59,7 +60,7 @@ describe("channel mutation feedback", () => {
 		expect(discordPairDialog).toContain("Creating a Discord pair code…");
 		expect(discordPairDialog).toContain("useCreatePairCode(accountId, { toastOnError: false })");
 		expect(pairDialog).toContain("success: false");
-		expect(discordPairDialog).toContain("success: false");
+		expect(pairingDialogUi).toContain("success: false");
 		expect(clipboardHook).toContain("success?: string | false");
 		expect(clipboardHook).toContain("if (toasts.success !== false)");
 		expect(clipboardHook).toContain("toast.error(toasts.error ??");

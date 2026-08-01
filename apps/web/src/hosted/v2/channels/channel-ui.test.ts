@@ -6,7 +6,8 @@ const uiSource = readFileSync(new URL("./channel-ui.tsx", import.meta.url), "utf
 describe("CopyInline", () => {
 	test("copies compact non-secret identifiers without a reveal state", () => {
 		expect(uiSource).toContain("export function CopyInline");
-		expect(uiSource).toContain("onClick={() => copy(value)}");
+		expect(uiSource).toContain("onClick={() => void copy(value)}");
+		expect(uiSource).toContain('aria-live="polite"');
 		expect(uiSource).not.toContain("TokenReveal");
 	});
 });
