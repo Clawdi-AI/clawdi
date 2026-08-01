@@ -46,7 +46,10 @@ describe("channel mutation feedback", () => {
 		expectFeedbackBeforeRequest(pairDialog, "setGenerating(true)", "await pair.execute");
 		expect(detail).toContain("unlinking={unlinkingLinkIds.has(link.id)}");
 		expect(detail).toContain('linking ? "Linking…" : "Link"');
-		expect(detail).toContain('creatingPairCode ? <Spinner className="size-3.5" />');
+		expect(detail).toContain('unlinking ? "Unlinking" : "Unlink"');
+		expect(detail).toContain("Unlinking…");
+		expect(detail).toContain("creatingPairCode ? (");
+		expect(detail).toContain('<Spinner className="size-3.5" />');
 		expect(detail).toContain('"Generating…"');
 		expect(detail).toContain('"Pair Telegram"');
 		expect(detail).toContain("pairingActionLabel(provider)");
@@ -63,7 +66,8 @@ describe("channel mutation feedback", () => {
 		expect(pairedChatRow).toContain("disabled={unpair.isPending}");
 		expect(pairedChatRow).toContain("unpair.isPending ? (");
 		expect(pairedChatRow).toContain("Couldn&apos;t unpair · Try again");
-		expect(pairedChatRow).not.toContain('"Unpairing…"');
+		expect(pairedChatRow).toContain("Unpairing…");
+		expect(pairedChatRow).toContain('"Unpair"');
 		expect(pairedChatRow).not.toContain('"Retry unpair"');
 	});
 

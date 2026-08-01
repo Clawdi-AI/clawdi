@@ -6,20 +6,17 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
-import {
-	ENTITY_CARD_BASE,
-	ENTITY_GRID_CLASS,
-	ENTITY_STRETCHED_LINK_CLASS,
-	EntityCardSkeleton,
-	EntityHeader,
-} from "@/components/entity-card";
-import { EntityIcon } from "@/components/entity-icon";
+import { ENTITY_STRETCHED_LINK_CLASS, EntityCardSkeleton } from "@/components/entity-card";
 import { FilterChip } from "@/components/filter-chip";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
+import {
+	CHANNEL_CARD_GRID_CLASS,
+	ChannelCard as SharedChannelCard,
+} from "@/hosted/v2/channels/channel-card";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelAccount, ChannelBotPoolItem } from "@/hosted/v2/channels/channel-types";
 import {
@@ -41,7 +38,6 @@ import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Manage your bots and discover shared bots for your Agents.";
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
-const CHANNEL_GRID_CLASS = ENTITY_GRID_CLASS;
 
 export function ChannelsPage() {
 	const [connectOpen, setConnectOpen] = useState(false);
@@ -153,7 +149,7 @@ function OwnedBotsSection({
 
 	if (isLoading) {
 		content = (
-			<div className={CHANNEL_GRID_CLASS}>
+			<div className={CHANNEL_CARD_GRID_CLASS}>
 				{[0, 1, 2].map((i) => (
 					<EntityCardSkeleton key={i} trailingBadge />
 				))}
@@ -166,7 +162,7 @@ function OwnedBotsSection({
 	} else {
 		const healthByAccount = new Map(healthItems.map((h) => [h.account_id, h.health_status]));
 		content = (
-			<div className={CHANNEL_GRID_CLASS}>
+			<div className={CHANNEL_CARD_GRID_CLASS}>
 				{visibleChannels.map((channel) => (
 					<ChannelCard
 						key={channel.id}
@@ -210,7 +206,7 @@ function SharedBotsSection({
 	let content: ReactNode;
 	if (isLoading) {
 		content = (
-			<div className={CHANNEL_GRID_CLASS}>
+			<div className={CHANNEL_CARD_GRID_CLASS}>
 				<EntityCardSkeleton trailingBadge />
 			</div>
 		);
@@ -220,7 +216,7 @@ function SharedBotsSection({
 		return null;
 	} else {
 		content = (
-			<div className={CHANNEL_GRID_CLASS}>
+			<div className={CHANNEL_CARD_GRID_CLASS}>
 				{visibleBots.map((bot) => (
 					<SharedBotCard key={bot.id} bot={bot} />
 				))}
@@ -240,48 +236,29 @@ function SharedBotsSection({
 }
 
 function SharedBotCard({ bot }: { bot: ChannelBotPoolItem }) {
-	const meta = providerMeta(bot.provider);
 	return (
-		<div
-			data-shared-channel-account-id={bot.id}
-			className={cn(ENTITY_CARD_BASE, "flex h-full items-start gap-3")}
-		>
-			<EntityHeader
-				className="w-full"
-				align="start"
-				icon={<EntityIcon kind="channel" id={bot.provider} label={meta.label} />}
-				title={bot.name}
-			/>
+		<div data-shared-channel-account-id={bot.id} className="min-w-0">
+			<SharedChannelCard provider={bot.provider} title={bot.name} />
 		</div>
 	);
 }
 
 function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: string }) {
-	const meta = providerMeta(channel.provider);
-
 	return (
-		<div data-channel-account-id={channel.id} className="group relative z-0 h-full min-w-0">
-			<div
-				className={cn(
-					ENTITY_CARD_BASE,
-					"flex h-full items-start gap-3 transition-colors group-hover:bg-muted/50",
-				)}
-			>
-				<EntityHeader
-					className="w-full"
-					align="start"
-					icon={<EntityIcon kind="channel" id={channel.provider} label={meta.label} />}
-					title={channel.name}
-					titleAdornment={
-						health && !isNormalChannelHealth(health) ? <HealthBadge status={health} /> : undefined
-					}
-					meta={
-						isNormalChannelStatus(channel.status) ? undefined : (
-							<ChannelStatusBadge status={channel.status} />
-						)
-					}
-				/>
-			</div>
+		<div data-channel-account-id={channel.id} className="group relative z-0 min-w-0">
+			<SharedChannelCard
+				provider={channel.provider}
+				title={channel.name}
+				className="transition-colors group-hover:bg-muted/50"
+				state={[
+					health && !isNormalChannelHealth(health) ? (
+						<HealthBadge key="health" status={health} />
+					) : null,
+					isNormalChannelStatus(channel.status) ? null : (
+						<ChannelStatusBadge key="status" status={channel.status} />
+					),
+				]}
+			/>
 			<Link to="/channels/$id" params={{ id: channel.id }} className={ENTITY_STRETCHED_LINK_CLASS}>
 				<span className="sr-only">Open {channel.name}</span>
 			</Link>

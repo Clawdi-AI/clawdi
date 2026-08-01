@@ -176,6 +176,35 @@ export function ConnectBotDialog({
 		onOpenChange(nextOpen);
 	}
 
+	const providerChoices = (
+		<fieldset className="grid grid-cols-2 gap-2 border-0 p-0" aria-label="Provider">
+			{CONNECTABLE_BOT_PROVIDERS.map((item) => {
+				const alreadyLinked = !availableProviders.includes(item);
+				return (
+					<Button
+						key={item}
+						type="button"
+						variant={!alreadyLinked && provider === item ? "secondary" : "outline"}
+						className="h-12 min-w-0 justify-start gap-2 px-2.5"
+						disabled={alreadyLinked}
+						aria-pressed={!alreadyLinked && provider === item}
+						onClick={() => changeProvider(item)}
+					>
+						<EntityIcon kind="channel" id={item} label={PROVIDER_META[item].label} size="sm" />
+						<span className="min-w-0 text-left leading-tight">
+							<span className="block">{PROVIDER_META[item].label}</span>
+							{alreadyLinked ? (
+								<span className="flex items-center gap-1 whitespace-nowrap text-[10px] font-normal text-muted-foreground">
+									<Check className="size-3" /> Connected
+								</span>
+							) : null}
+						</span>
+					</Button>
+				);
+			})}
+		</fieldset>
+	);
+
 	return (
 		<Dialog open={open} onOpenChange={handleOpenChange}>
 			<DialogContent
@@ -207,55 +236,42 @@ export function ConnectBotDialog({
 					<>
 						<DialogHeader>
 							<DialogTitle>Connect a bot</DialogTitle>
-							<DialogDescription>Use your own bot.</DialogDescription>
+							<DialogDescription>
+								{agentId ? "Connect a bot you manage to this Agent." : "Add a bot you manage."}
+							</DialogDescription>
 						</DialogHeader>
 
 						{availableProviders.length === 0 ? (
 							<>
-								<p role="status" className="py-2 text-sm text-muted-foreground">
-									This Agent already has a Telegram and Discord bot.
-								</p>
+								<div className="space-y-3">
+									{providerChoices}
+									<p role="status" className="text-sm text-muted-foreground">
+										This Agent already has one bot from each provider. Unlink one from its card
+										before connecting a replacement.
+									</p>
+								</div>
 								<DialogFooter>
+									<Button render={<Link to="/channels" />} nativeButton={false} variant="outline">
+										Manage bots
+									</Button>
 									<Button onClick={() => handleOpenChange(false)}>Done</Button>
 								</DialogFooter>
 							</>
 						) : (
 							<>
 								<div className="flex flex-col gap-3">
-									<fieldset className="grid grid-cols-2 gap-2 border-0 p-0" aria-label="Provider">
-										{CONNECTABLE_BOT_PROVIDERS.map((item) => {
-											const alreadyLinked = !availableProviders.includes(item);
-											return (
-												<Button
-													key={item}
-													type="button"
-													variant={provider === item ? "secondary" : "outline"}
-													className="h-12 min-w-0 justify-start gap-2 px-2.5"
-													disabled={alreadyLinked}
-													aria-pressed={provider === item}
-													onClick={() => changeProvider(item)}
-												>
-													<EntityIcon
-														kind="channel"
-														id={item}
-														label={PROVIDER_META[item].label}
-														size="sm"
-													/>
-													<span className="min-w-0 text-left leading-tight">
-														<span className="block">{PROVIDER_META[item].label}</span>
-														{alreadyLinked ? (
-															<span className="flex items-center gap-1 whitespace-nowrap text-[10px] font-normal text-muted-foreground">
-																<Check className="size-3" /> Already linked
-															</span>
-														) : null}
-													</span>
-												</Button>
-											);
-										})}
-									</fieldset>
+									{providerChoices}
 									{unavailableProviders.length === 1 ? (
 										<p className="whitespace-normal text-xs text-muted-foreground">
-											Unlink {PROVIDER_META[unavailableProviders[0]].label} from this Agent first.
+											Unlink {PROVIDER_META[unavailableProviders[0]].label} from its card to replace
+											it. You can also{" "}
+											<Link
+												to="/channels"
+												className="font-medium text-foreground underline underline-offset-4"
+											>
+												manage bots
+											</Link>
+											.
 										</p>
 									) : null}
 									<p className="text-xs text-muted-foreground">

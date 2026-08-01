@@ -1,12 +1,11 @@
 "use client";
 
-import { Link2Off, MessageCircle, MessagesSquare } from "lucide-react";
+import { MessageCircle, MessagesSquare } from "lucide-react";
 import { EntityHeader } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Spinner } from "@/components/ui/spinner";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ChannelBinding } from "@/hosted/v2/channels/channel-types";
 import {
 	CHANNEL_DESTRUCTIVE_ACTION_CLASS,
@@ -18,7 +17,7 @@ import { pairedChatScopeLabel, pairedChatTitle } from "@/hosted/v2/channels/pair
 import { cn, relativeTime } from "@/lib/utils";
 
 export const PAIRED_CHAT_ROW_CLASS =
-	"ml-4 grid min-h-12 grid-cols-[minmax(0,1fr)] items-center gap-2 border-l-2 border-muted py-2 pr-0 pl-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-3";
+	"grid min-h-14 grid-cols-[minmax(0,1fr)] items-center gap-2 px-1 py-2.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-3";
 
 export function PairedChatRow({
 	accountId,
@@ -36,7 +35,6 @@ export function PairedChatRow({
 	const scope = pairedChatScopeLabel(provider, binding);
 	const privateChat = chatType === "private" || scope === "direct message";
 	const chatName = pairedChatTitle(binding, provider);
-	const discordUnpairInstruction = `Run /bot_unpair in this ${scope}.`;
 
 	return (
 		<div
@@ -60,7 +58,7 @@ export function PairedChatRow({
 					...(isNormalChannelStatus(binding.status)
 						? []
 						: [<ChannelStatusBadge key="status" status={binding.status} />]),
-					...(provider !== "discord" && unpair.error
+					...(unpair.error
 						? [
 								<span key="error" className="font-medium text-destructive">
 									Couldn&apos;t unpair · Try again
@@ -69,39 +67,31 @@ export function PairedChatRow({
 						: []),
 				]}
 			/>
-			<div className="flex min-h-8 min-w-0 justify-end sm:w-28 sm:shrink-0">
-				{provider === "discord" ? (
-					<p className="w-full text-right text-xs text-muted-foreground">
-						{discordUnpairInstruction}
-					</p>
-				) : (
-					<Tooltip>
-						<TooltipTrigger render={<span className="inline-flex size-8" />}>
-							<ConfirmAction
-								title={`Unpair ${chatName}?`}
-								description="Only this chat will be disconnected. Other chats and the connected channel stay active."
-								confirmLabel="Unpair chat"
-								destructive
-								onConfirm={() => unpair.mutateAsync(binding.id)}
-							>
-								<Button
-									variant="ghost"
-									size="icon-sm"
-									className={CHANNEL_DESTRUCTIVE_ACTION_CLASS}
-									disabled={unpair.isPending}
-									aria-label={`Unpair ${chatName}`}
-								>
-									{unpair.isPending ? (
-										<Spinner className="size-3.5" />
-									) : (
-										<Link2Off className="size-3.5" />
-									)}
-								</Button>
-							</ConfirmAction>
-						</TooltipTrigger>
-						<TooltipContent>Unpair {chatName}</TooltipContent>
-					</Tooltip>
-				)}
+			<div className="flex min-h-8 min-w-0 justify-end sm:shrink-0">
+				<ConfirmAction
+					title={`Unpair ${chatName}?`}
+					description="Only this chat will be disconnected. Other chats and the connected channel stay active."
+					confirmLabel="Unpair chat"
+					destructive
+					onConfirm={() => unpair.mutateAsync(binding.id)}
+				>
+					<Button
+						variant="ghost"
+						size="sm"
+						className={CHANNEL_DESTRUCTIVE_ACTION_CLASS}
+						disabled={unpair.isPending}
+						aria-label={`${unpair.isPending ? "Unpairing" : "Unpair"} ${chatName}`}
+					>
+						{unpair.isPending ? (
+							<>
+								<Spinner className="size-3.5" />
+								Unpairing…
+							</>
+						) : (
+							"Unpair"
+						)}
+					</Button>
+				</ConfirmAction>
 			</div>
 		</div>
 	);
