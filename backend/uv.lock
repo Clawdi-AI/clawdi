@@ -396,7 +396,7 @@ requires-dist = [
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10" },
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.23" },
+    { name = "sentry-sdk", extras = ["fastapi"], specifier = "==2.66.1" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
     { name = "websockets", specifier = "==17.0.1" },

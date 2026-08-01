@@ -19,6 +19,7 @@ EXPECTED_CONFIG = {
     "pythonVersion": "3.12",
     "include": [
         "app/core/query_utils.py",
+        "app/core/sentry.py",
         "app/core/skill_key.py",
         "app/services/composio.py",
         "app/services/discord_gateway_worker.py",
