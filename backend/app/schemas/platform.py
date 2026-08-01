@@ -24,9 +24,13 @@ from app.schemas.runtime import (
 
 PlatformOwnerKind = Literal["clerk", "partner_tenant"]
 PLATFORM_RUNTIME_KEY_SCOPES = (
+    "memories:read",
+    "memories:write",
+    "projects:read",
     "sessions:write",
     "skills:read",
     "skills:write",
+    "vault:metadata:read",
 )
 
 _CLERK_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")

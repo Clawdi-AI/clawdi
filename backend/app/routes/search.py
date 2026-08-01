@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, _is_env_bound_api_key, _is_scoped_api_key, get_auth
+from app.core.auth import AuthContext, _is_scoped_api_key, get_auth
 from app.core.database import get_session
 from app.core.project import project_ids_visible_to
 from app.core.query_utils import like_needle
@@ -100,23 +100,21 @@ async def _search_sessions(db: AsyncSession, auth: AuthContext, query: str) -> l
 
 async def _search_memories(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
     provider = await get_memory_provider(str(auth.user_id), db)
-    # Same overfetch trick the direct `/v1/memories?q=` path uses
-    # for scoped keys: provider.search returns top-N ranked across
-    # ALL of the user's memories, then `_project_filter_memories`
-    # drops out-of-Agent rows. Asking for only TYPE_LIMIT hits when
-    # other Agents rank ahead truncated the in-Agent hits to nothing.
-    # Overfetch by 10x then re-cap to TYPE_LIMIT after the filter
-    # so the response shape stays predictable.
-    fetch_limit = max(TYPE_LIMIT * 10, 100) if _is_env_bound_api_key(auth) else TYPE_LIMIT
-    rows = await provider.search(str(auth.user_id), query, limit=fetch_limit)
+    from app.routes.memories import _project_filter_memories, _provider_environment_scope
+
+    provider_scope = await _provider_environment_scope(provider, db, auth)
+    rows = await provider.search(
+        str(auth.user_id),
+        query,
+        limit=TYPE_LIMIT,
+        **provider_scope,
+    )
     # Apply the same Agent Project filter the direct /v1/memories route
     # uses. Without this, a scoped Agent API key with `memories:read`
     # could read memories from other Agents (or manual memories with
     # no Agent attribution) via the search palette — a side-channel
     # around _project_filter_memories. Imported lazily to avoid a
     # circular import between search.py and memories.py.
-    from app.routes.memories import _project_filter_memories
-
     rows = await _project_filter_memories(db, auth, list(rows))
     rows = rows[:TYPE_LIMIT]
     return [

@@ -10,11 +10,15 @@ from app.models.base import Base, TimestampMixin
 RUNTIME_DEPLOYMENT_KEY_SCOPES = (
     "connectors:read",
     "connectors:invoke",
+    "memories:read",
+    "memories:write",
+    "projects:read",
     "runtime-observations:write",
     "sessions:read",
     "sessions:write",
     "skills:read",
     "skills:write",
+    "vault:metadata:read",
 )
 
 

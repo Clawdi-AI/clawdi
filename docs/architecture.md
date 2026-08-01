@@ -211,9 +211,14 @@ CLI credential import/materialization flows.
 
 ## Memory
 
-The built-in memory provider stores account-scoped `memories` with text,
-category, source, tags, optional source session id, access counters, JSONB
-metadata, and a 768-dimensional embedding.
+The built-in memory provider stores account-owned `memories` with text,
+category, source, tags, optional source Session or direct source Agent id,
+access counters, JSONB metadata, and a 768-dimensional embedding. A write from
+an environment-bound principal records `source_environment_id` directly; it
+does not invent a Session. Bound reads accept that direct provenance or legacy
+`source_session_id -> sessions.environment_id` provenance and reject
+unattributed or other-Agent rows. Unbound account clients retain their full
+account view.
 
 Retrieval merges available signals:
 
@@ -222,19 +227,33 @@ Retrieval merges available signals:
 - `pgvector` semantic search when local or API embeddings are enabled.
 
 `Mem0Provider` is the alternate provider when the user's settings choose Mem0
-and an API key is present. No session-to-memory automatic pipeline exists;
-agents or users add memories explicitly.
+and an API key is present. Environment provenance is stored in Mem0 metadata,
+and bound search/list/count operations send the equivalent user plus direct-or-
+legacy provenance filter to Mem0. Operations that cannot enforce that boundary
+server-side, such as a bound delete by id, fail closed. No session-to-memory
+automatic pipeline exists; agents or users add memories explicitly.
 
 ## MCP And Connectors
 
 The backend MCP endpoint is `POST /v1/mcp/clawdi`, a stateless JSON-RPC surface
-authenticated with a Clawdi API key. It exposes native tools such as memory and
-session tools, then dynamically lists connector tools and forwards those calls
-through the connector bridge.
+authenticated with a Clawdi API key. It is the single runtime authority for
+native tool schemas, scope gating, calls, and connector dispatch. Native tools
+cover memory, sessions, read-only Project metadata, and read-only Vault
+metadata/references. Tools requiring unavailable scopes are omitted from
+`tools/list`, while direct calls still fail the scope check. Connector names
+can never shadow a declared native tool, including one hidden by scope.
 
-For agents that only support stdio MCP, `clawdi mcp` registers local tool
-schemas and forwards calls to the backend. The backend keeps connector OAuth
+For agents that only support stdio MCP, `clawdi mcp` is a protocol-transparent
+stdio-to-HTTP wrapper: it forwards MCP messages and does not declare a second
+copy of tool schemas or business logic. The backend keeps connector OAuth
 tokens and bridge credentials out of the agent process.
+
+Vault MCP tools select only attachment metadata and field names. They never
+select or decrypt `encrypted_value`, `nonce`, or credential payloads. Returned
+references use the exact canonical forms
+`clawdi://project/<project-id>/vault/<vault>/field/<field>` and
+`clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`.
+Environment-bound callers see only attachments in their bound Agent Project.
 
 The safe MCP inventory API may contain only explicit user declarations whose
 provenance is supported by a user management contract. This release has no such
@@ -301,7 +320,7 @@ Core tables verified under `backend/app/models/`:
 | `sessions`, `session_permissions` | Conversation metadata, object-store body pointer, public/user/email sharing permissions. |
 | `skills` | Project-scoped skill metadata and object-store tarball pointer. |
 | `vaults`, `vault_project_attachments`, `vault_project_slug_aliases`, `vault_items`, `vault_credential_profiles` | Account-owned vaults, Project access attachments, compatibility slug aliases, encrypted secret fields, encrypted local auth profiles. |
-| `memories` | Built-in memory text, tags, source, metadata, access counters, and optional embedding vector. |
+| `memories` | Built-in memory text, tags, direct Agent or legacy Session provenance, metadata, access counters, and optional embedding vector. |
 | `ai_providers`, `ai_provider_auth_payloads` | Account-global provider metadata and encrypted provider auth payloads. |
 | `channel_accounts`, `channel_bot_agent_links`, `channel_secrets`, `channel_bindings`, `channel_binding_aliases`, `channel_pair_codes`, `channel_messages`, `channel_deliveries`, `channel_agent_credentials`, `channel_whatsapp_auth_certs`, `channel_debug_events`, `channel_attachment_uploads`, `channel_scheduled_messages`, `channel_agent_references` | Native channel control state, routing, inbox/outbox, credentials, debug and provider-specific state. |
 | `control_plane_audit_events` | Audit events for control-plane-facing operations exposed by this backend. |

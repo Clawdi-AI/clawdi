@@ -904,7 +904,7 @@ async def test_clawdi_mcp_connector_tools_denied_for_scoped_api_key(
     assert listed.status_code == 200, listed.text
     tool_names = [tool["name"] for tool in listed.json()["result"]["tools"]]
     assert "COMPOSIO_DANGEROUS" not in tool_names
-    assert "memory_search" in tool_names
+    assert "memory_search" not in tool_names
 
     assert called.status_code == 200, called.text
     result = called.json()["result"]
@@ -913,7 +913,7 @@ async def test_clawdi_mcp_connector_tools_denied_for_scoped_api_key(
 
 
 @pytest.mark.asyncio
-async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_without_memory(
+async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_scoped_memory(
     db_session,
     seed_user,
     monkeypatch,
@@ -1104,16 +1104,15 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_without_me
     assert "connector_calendar" in names
     assert "session_search" in names
     assert "session_read" in names
-    assert not {"memory_search", "memory_add", "memory_extract"} & set(names)
+    assert {"memory_search", "memory_add", "memory_extract"} <= set(names)
     search_text = searched.json()["result"]["content"][0]["text"]
     assert "Alpha hosted runtime work" in search_text
     assert "Beta hosted runtime work" in search_text
     assert "Cross-agent session detail" in read.json()["result"]["content"][0]["text"]
     assert connector.json()["result"]["content"][0]["text"] == "connector ok"
-    assert memory.json()["result"]["isError"] is True
-    assert "not available" in memory.json()["result"]["content"][0]["text"]
+    assert memory.json()["result"]["content"][0]["text"] == "No memories found."
     identity_only_names = {tool["name"] for tool in identity_only_listed.json()["result"]["tools"]}
-    assert "session_search" in identity_only_names
+    assert "session_search" not in identity_only_names
     assert "connector_calendar" not in identity_only_names
     assert not {"memory_search", "memory_add", "memory_extract"} & identity_only_names
     assert (
@@ -1124,7 +1123,10 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_without_me
         "missing scope: connectors:invoke"
         in identity_only_connector.json()["result"]["content"][0]["text"]
     )
-    assert "not available" in identity_only_memory.json()["result"]["content"][0]["text"]
+    assert (
+        "missing scope: memories:read"
+        in identity_only_memory.json()["result"]["content"][0]["text"]
+    )
 
 
 @pytest.mark.asyncio

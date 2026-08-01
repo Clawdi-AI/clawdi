@@ -757,11 +757,15 @@ async def test_v2_provision_precedes_scoped_deploy_key_and_retirement_replays_ex
     assert set(key.scopes) == {
         "connectors:read",
         "connectors:invoke",
+        "memories:read",
+        "memories:write",
+        "projects:read",
         "runtime-observations:write",
         "sessions:read",
         "sessions:write",
         "skills:read",
         "skills:write",
+        "vault:metadata:read",
     }
     provision_audit = (
         await db_session.execute(

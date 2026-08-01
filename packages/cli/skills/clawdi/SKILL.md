@@ -77,6 +77,35 @@ MUST call `session_search` when:
 
 When the user's request is **conceptual** ("how do I usually do X"), prefer `memory_search`. When they want to **revisit a specific past conversation** ("the session where..."), use `session_search`. When unsure, try `memory_search` first (cheaper, faster), fall back to `session_search` if empty.
 
+## Projects
+
+Three read-only tools expose the caller's visible Project context:
+
+- `project_current` — Read the current or runtime-bound Project.
+- `project_list` — List visible Projects.
+- `project_get` — Read one visible Project by UUID.
+
+Hosted runtimes see only their bound Project. Treat a not-found response as an
+access boundary as well as a possible unknown UUID; do not try to bypass it
+through another tool.
+
+## Vault Metadata
+
+Two read-only MCP tools expose safe Vault metadata without secret values:
+
+- `vault_list` — List Vault attachments and key counts for visible Projects.
+- `vault_get` — List key names, provenance, and exact `clawdi://` references for one attached Vault.
+
+These tools never resolve or return plaintext. Never ask them for a value and
+never imply that a returned key name is a secret value. Preserve their exact
+references when passing them to an authorized runtime:
+
+- `clawdi://project/<project-id>/vault/<vault>/field/<field>`
+- `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`
+
+Use the live schemas from the `clawdi` MCP server as authoritative; the local
+stdio command only transports the protocol.
+
 ## Connectors
 
 Use the Composio Tool Router meta-tools returned by `tools/list` on the `clawdi` MCP server.
