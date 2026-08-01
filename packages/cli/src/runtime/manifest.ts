@@ -2548,7 +2548,6 @@ function applyHostedAiProviderProjection(
 	}
 	const projectionInput = agentTargetProjectionInput(
 		hostedAiProviderCatalog(manifest, name, {
-			primaryModelOverride: managedModelOverrides.primaryModels[name],
 			managedModelsOverride: managedModelOverrides.models[name],
 		}),
 	);
@@ -2620,7 +2619,6 @@ function previewHostedAiProviderProjectionRevision(
 	}
 	const projectionInput = agentTargetProjectionInput(
 		hostedAiProviderCatalog(manifest, name, {
-			primaryModelOverride: managedModelOverrides.primaryModels[name],
 			managedModelsOverride: managedModelOverrides.models[name],
 		}),
 	);
@@ -4785,7 +4783,6 @@ function validateRuntimeProjectionPlan(input: {
 
 		const projectionInput = agentTargetProjectionInput(
 			hostedAiProviderCatalog(manifest, name, {
-				primaryModelOverride: managedModelOverrides?.primaryModels[name],
 				managedModelsOverride: managedModelOverrides?.models[name],
 			}),
 		);

@@ -14,22 +14,19 @@ import {
 import type { AgentPrimaryModel } from "../lib/ai-provider-projection";
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import { isClawdiManagedProviderProjection } from "./hosted-egress-profiles";
-import { resolveManagedPrimaryModel } from "./managed-model-resolution";
 import type { RuntimeManifest } from "./manifest-contract";
 
 export function hostedAiProviderCatalog(
 	manifest: RuntimeManifest,
 	runtimeName?: string,
 	options: {
-		primaryModelOverride?: AgentPrimaryModel;
 		managedModelsOverride?: readonly AiProviderModel[];
 	} = {},
 ): { catalog: AiProviderCatalog; primaryModel: AgentPrimaryModel } | null {
 	const providers = manifest.projection?.providers;
 	if (!providers || Object.keys(providers).length === 0) return null;
 	const rawEntries = hostedProviderEntries(providers, runtimeName, manifest);
-	const primaryModel =
-		options.primaryModelOverride ?? hostedRuntimePrimaryModel(manifest, runtimeName);
+	const primaryModel = hostedRuntimePrimaryModel(manifest, runtimeName);
 	if (!primaryModel) return null;
 	const entries = rawEntries
 		.map(([id, raw]) => {
@@ -136,7 +133,12 @@ function hostedProviderModels(
 		models.unshift({ id: singularModel, api_mode: providerApiMode });
 	}
 	if (primaryModel && !models.some((model) => model.id === primaryModel.model)) {
-		models.unshift({ id: primaryModel.model, api_mode: providerApiMode });
+		models.unshift(
+			manifestModelsById.get(primaryModel.model) ?? {
+				id: primaryModel.model,
+				api_mode: providerApiMode,
+			},
+		);
 	}
 	return models.filter(
 		(model, index, entries) => entries.findIndex((entry) => entry.id === model.id) === index,
@@ -162,7 +164,6 @@ function managedGatewayPrimaryModelTarget(
 	baseUrl: string;
 	credential: string;
 	providerId: string;
-	seedModel: string | null;
 } | null {
 	const providers = recordValue(manifest.projection?.providers);
 	if (!providers) return null;
@@ -187,15 +188,10 @@ function managedGatewayPrimaryModelTarget(
 		baseUrl,
 		credential,
 		providerId: selectedProviderId,
-		seedModel:
-			currentPrimary && currentPrimary.provider_id === selectedProviderId
-				? currentPrimary.model
-				: null,
 	};
 }
 
 interface ManagedGatewayModelOverrides {
-	primaryModels: Partial<Record<string, AgentPrimaryModel>>;
 	models: Partial<Record<string, AiProviderModel[]>>;
 }
 
@@ -234,7 +230,7 @@ export function resolveManagedGatewayModelOverrides(
 	egressSystemCaFile: string | null,
 	fetcher: ManagedGatewayModelListFetcher,
 ): ManagedGatewayModelOverrides {
-	const overrides: ManagedGatewayModelOverrides = { primaryModels: {}, models: {} };
+	const overrides: ManagedGatewayModelOverrides = { models: {} };
 	const fetchCache = new Map<string, ManagedGatewayModelFetchResult>();
 	for (const runtimeName of enabledRuntimes) {
 		const target = managedGatewayPrimaryModelTarget(manifest, runtimeName);
@@ -257,24 +253,13 @@ export function resolveManagedGatewayModelOverrides(
 					? CLAWDI_MANAGED_PROVIDER_ID
 					: target.providerId;
 				console.warn(
-					`managed model probe failed for ${runtimeName}/${loggedProviderId} at ${fetchResult.endpoint}: ${fetchResult.detail}; keeping configured seed`,
+					`managed model probe failed for ${runtimeName}/${loggedProviderId} at ${fetchResult.endpoint}: ${fetchResult.detail}; keeping configured catalog and default`,
 				);
 			}
 		}
-		const resolution = resolveManagedPrimaryModel({
-			seedModel: target.seedModel,
-			liveModelIds:
-				fetchResult.status === "ok" ? fetchResult.models.map((model) => model.id) : null,
-		});
 		if (fetchResult.status === "ok" && fetchResult.models.length > 0) {
 			overrides.models[runtimeName] = fetchResult.models;
 		}
-		if (!resolution.resolvedModel) continue;
-		if (resolution.resolvedModel === target.seedModel) continue;
-		overrides.primaryModels[runtimeName] = {
-			provider_id: target.providerId,
-			model: resolution.resolvedModel,
-		};
 	}
 	return overrides;
 }
