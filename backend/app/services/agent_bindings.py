@@ -97,13 +97,21 @@ async def delete_project_bindings_for_users(
         return 0
 
     agent_ids = select(AgentEnvironment.id).where(AgentEnvironment.user_id.in_(user_ids))
-    result = await db.execute(
-        sql_delete(AgentProjectBinding).where(
-            AgentProjectBinding.project_id == project_id,
-            AgentProjectBinding.agent_id.in_(agent_ids),
+    deleted_binding_ids = (
+        (
+            await db.execute(
+                sql_delete(AgentProjectBinding)
+                .where(
+                    AgentProjectBinding.project_id == project_id,
+                    AgentProjectBinding.agent_id.in_(agent_ids),
+                )
+                .returning(AgentProjectBinding.id)
+            )
         )
+        .scalars()
+        .all()
     )
-    return int(result.rowcount or 0)
+    return len(deleted_binding_ids)
 
 
 async def _next_context_priority(db: AsyncSession, *, agent_id: UUID) -> int:
