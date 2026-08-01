@@ -32,6 +32,8 @@ describe("hosted-agent channel finish line", () => {
 		expect(channelsTab).toContain("onRetry={() => void health.refetch()}");
 		expect(channelsTab).toContain('<ChannelStatusBadge key="status" status={link.status} />');
 		expect(channelsTab).toContain("<HealthBadge");
+		expect(channelsTab).toContain('state={unavailableReason ?? "Available"}');
+		expect(channelsTab).toContain('isNormalChannelStatus(link.status) ? (\n\t\t\t"Linked"');
 		expect(channelsTab).toContain("Link to start pairing chats");
 		expect(channelsTab).not.toContain('key="paired"');
 		expect(channelsTab).not.toContain("pairedChatCount");

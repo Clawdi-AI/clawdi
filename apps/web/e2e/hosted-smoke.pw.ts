@@ -7737,16 +7737,24 @@ test("Agent bot groups keep every bot visible and gate provider conflicts in pla
 	await expect(discordRow.locator(`[title="${discordAccount.name}"]`)).toBeVisible();
 	await expect(clawdiDiscordRow.locator(`[title="${clawdiDiscord.name}"]`)).toBeVisible();
 	const linkedTelegramHeader = linkedTelegramRow.locator("[data-channel-card-header]");
+	const unavailableTelegramHeader = replacementTelegramRow.locator("[data-channel-card-header]");
 	const unlinkedDiscordHeader = discordRow.locator("[data-channel-card-header]");
 	const linkedTelegramFooter = linkedTelegramRow.locator("[data-channel-card-footer]");
 	const unlinkedDiscordFooter = discordRow.locator("[data-channel-card-footer]");
 	const linkedTelegramChats = linkedTelegramRow.locator(
 		`[data-agent-paired-chats-trigger="${telegramLinkId}"]`,
 	);
+	await expect(linkedTelegramHeader.getByText("Linked", { exact: true })).toBeVisible();
 	await expect(linkedTelegramHeader.getByText("Warning", { exact: true })).toBeVisible();
 	await expect(linkedTelegramHeader).not.toContainText("1 chat");
 	await expect(linkedTelegramHeader).not.toContainText("Paired");
+	await expect(unlinkedDiscordHeader.getByText("Available", { exact: true })).toBeVisible();
+	await expect(unlinkedDiscordHeader).not.toContainText("1 chat");
 	await expect(unlinkedDiscordHeader).not.toContainText("Paired");
+	await expect(unavailableTelegramHeader).toContainText(
+		"Another bot from this provider is already linked",
+	);
+	await expect(unavailableTelegramHeader).not.toContainText("Available");
 	await expect(linkedTelegramChats).toHaveAccessibleName("Manage paired chats · 1");
 	await expect(linkedTelegramFooter).toContainText("Manage paired chats · 1");
 	await expect(unlinkedDiscordFooter).toContainText("Link to start pairing chats");

@@ -54,6 +54,8 @@ describe("shared Channel card", () => {
 		expect(markup).toContain("data-channel-card-header");
 		expect(markup).toContain("flex-1");
 		expect(markup).not.toContain("data-channel-card-footer");
+		expect(markup).not.toContain("Available");
+		expect(markup).not.toContain("Linked");
 	});
 
 	test("is reused by Console inventory and Agent channel cards", () => {
@@ -80,7 +82,11 @@ describe("shared Channel card", () => {
 		expect(agentChannels).toContain("h-10 min-h-10 max-h-10");
 		expect(agentChannels).toContain("h-[7.5rem] flex-none grid-rows-[2.75rem_2rem]");
 		expect(agentChannels).toContain("xl:h-20 xl:grid-rows-1");
+		expect(agentChannels).toContain('state={unavailableReason ?? "Available"}');
+		expect(agentChannels).toContain('isNormalChannelStatus(link.status) ? (\n\t\t\t"Linked"');
 		expect(agentChannels).not.toContain('key="paired"');
+		expect(consoleChannels).not.toContain('state="Available"');
+		expect(consoleChannels).not.toContain('state="Linked"');
 	});
 
 	test("opens paired chats outside the card through responsive design-system overlays", () => {

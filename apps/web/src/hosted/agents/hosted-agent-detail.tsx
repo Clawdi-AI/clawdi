@@ -2777,7 +2777,7 @@ function AgentChannelBotCard({
 				<AgentChannelCard
 					provider={bot.provider}
 					title={bot.name}
-					state={unavailableReason}
+					state={unavailableReason ?? "Available"}
 					actions={
 						<Button
 							type="button"
@@ -2919,8 +2919,10 @@ function LinkedChannelRow({
 			setCreatingPairCode(false);
 		}
 	}
-	const exceptionalState = [
-		isNormalChannelStatus(link.status) ? null : (
+	const relationshipState = [
+		isNormalChannelStatus(link.status) ? (
+			"Linked"
+		) : (
 			<ChannelStatusBadge key="status" status={link.status} />
 		),
 		health && !isNormalChannelHealth(health.health_status) ? (
@@ -2944,7 +2946,7 @@ function LinkedChannelRow({
 				<AgentChannelCard
 					provider={provider}
 					title={name}
-					state={exceptionalState}
+					state={relationshipState}
 					actions={
 						<div className={AGENT_CHANNEL_PAIR_ACTIONS_CLASS}>
 							<Button
