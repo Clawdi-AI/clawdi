@@ -76,6 +76,14 @@ describe("shared Channel card", () => {
 		expect(consoleChannels).toContain('to="/channels/$id"');
 	});
 
+	test("passes complete health records to card badges", () => {
+		expect(consoleChannels).toContain(
+			"new Map(healthItems.map((item) => [item.account_id, item]))",
+		);
+		expect(consoleChannels).toContain('<HealthBadge key="health" health={health} />');
+		expect(consoleChannels).not.toContain("status={health}");
+	});
+
 	test("composes a real equal-height footer for every Agent channel card", () => {
 		expect(agentChannels).toContain("data-agent-channel-link-guidance");
 		expect(agentChannels).toContain("Link to start pairing chats");

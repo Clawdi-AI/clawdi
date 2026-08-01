@@ -18,3 +18,4 @@ export type ChannelAgentLink = Schemas["ChannelAgentLinkResponse"];
 export type ChannelBinding = Schemas["ChannelBindingResponse"];
 export type ChannelPairCode = Schemas["ChannelPairCodeResponse"];
 export type ChannelActivityItem = Schemas["ChannelActivityItemResponse"];
+export type ChannelHealthItem = Schemas["ChannelHealthItemResponse"];

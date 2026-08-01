@@ -2906,7 +2906,7 @@ function LinkedChannelRow({
 			<ChannelStatusBadge key="status" status={link.status} />
 		),
 		health && !isNormalChannelHealth(health.health_status) ? (
-			<HealthBadge key="health" status={health.health_status} />
+			<HealthBadge key="health" health={health} />
 		) : null,
 		provider !== "telegram" && !isDiscord && pair.error ? (
 			<span key="pair-error" className="font-medium text-destructive">

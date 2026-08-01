@@ -8,6 +8,7 @@ function source(relativePath: string): string {
 const detail = source("./channel-detail-page.tsx");
 const pairDialog = source("./telegram-pair-dialog.tsx");
 const discordPairDialog = source("./discord-pair-dialog.tsx");
+const pairingDialogUi = source("./pairing-dialog-ui.tsx");
 const pairingSuccess = source("./channel-pairing-success.ts");
 const channelLinkingLogic = source("./channel-linking.logic.ts");
 const hooks = source("./channels-hooks.ts");
@@ -95,7 +96,7 @@ describe("channel IA boundary", () => {
 		expect(discordPairDialog).toContain("Direct message");
 		expect(discordPairDialog).not.toContain("If you can already open a direct message");
 		expect(discordPairDialog).toContain("Add to my apps");
-		expect(discordPairDialog).toContain("Discord User Install QR code");
+		expect(discordPairDialog).toContain("Discord direct message install QR code");
 		expect(discordPairDialog).toContain("value={result.discord_user_install_url}");
 		expect(discordPairDialog).toContain("disabled={!result.discord_user_install_url}");
 		expect(discordPairDialog).toContain("Direct message pairing unavailable");
@@ -105,11 +106,12 @@ describe("channel IA boundary", () => {
 		expect(discordPairDialog).toContain("Manage");
 		expect(discordPairDialog).toContain("Add to server");
 		expect(discordPairDialog).toContain("value={result.discord_install_url}");
-		expect(discordPairDialog).toContain('aria-label="Discord server install QR code"');
-		expect(discordPairDialog).toContain("paste this code");
+		expect(discordPairDialog).toContain('label="Discord server install QR code"');
+		expect(discordPairDialog).toContain("paste this");
 		expect(discordPairDialog).toContain("into the required");
-		expect(discordPairDialog).toContain("required <code>code</code> option");
-		expect(discordPairDialog).toContain('"Copy code"');
+		expect(discordPairDialog).toContain('label="Discord pairing command"');
+		expect(discordPairDialog).toContain('label="Discord pair code"');
+		expect(discordPairDialog).not.toContain("onClick={() => void copy(result.code)}");
 		expect(discordPairDialog).not.toContain("/bot_pair ${");
 		expect(discordPairDialog).not.toContain("discord://");
 		expect(discordPairDialog).not.toContain("/bot_pair");
@@ -117,7 +119,7 @@ describe("channel IA boundary", () => {
 		expect(discordPairDialog).toContain("This Discord pair code has expired");
 		expect(discordPairDialog).toContain("Generate new code");
 		expect(discordPairDialog).toContain("Couldn't prepare Discord pairing");
-		expect(discordPairDialog).toContain("success: false");
+		expect(pairingDialogUi).toContain("success: false");
 		expect(hooks).toContain("if (toastOnError) toastApiError");
 		expect(agentDetail).not.toContain("Commands synced. In Discord");
 		expect(agentDetail).not.toContain("Paired servers and direct messages");
@@ -164,7 +166,7 @@ describe("channel IA boundary", () => {
 		expect(pairDialog).toContain("value={validLink}");
 		expect(pairDialog).toContain("href={validLink}");
 		expect(pairDialog).toContain("qrPayload: result.qr_payload");
-		expect(pairDialog).toContain('aria-label="Telegram pairing QR code"');
+		expect(pairDialog).toContain('label="Telegram private chat pairing QR code"');
 		expect(pairDialog).toContain('"Copy link"');
 		expect(pairDialog).toContain("Telegram link unavailable");
 		expect(pairDialog).toContain("This Telegram link has expired");
@@ -172,12 +174,29 @@ describe("channel IA boundary", () => {
 		expect(pairDialog).toContain("!expired && result.bot_username");
 		expect(pairDialog).toContain("Add @{result.bot_username.replace");
 		expect(pairDialog).toContain("to the group, then send:");
-		expect(pairDialog).toContain(
-			'<CopyInline value={result.pairing_command} label="pairing command" />',
-		);
-		expect(pairDialog).toContain("Scan the QR code or open Telegram to pair.");
+		expect(pairDialog).toContain("<CopyablePairingCode");
+		expect(pairDialog).toContain('label="Telegram group pairing command"');
+		expect(pairDialog).toContain('scope="Private chat"');
+		expect(pairDialog).toContain("Scan the QR code or open Telegram to pair a private chat.");
 		expect(pairDialog).not.toContain("agentName");
 		expect(pairDialog).toContain('title="Couldn\'t create Telegram link"');
+	});
+
+	test("shares responsive dialog structure and accessible copy controls", () => {
+		for (const dialog of [pairDialog, discordPairDialog]) {
+			expect(dialog).toContain("<PairingDialogContent>");
+			expect(dialog).toContain("<PairingDialogHeader");
+			expect(dialog).toContain("<PairingDialogBody");
+			expect(dialog).toContain("<PairingQrCode");
+			expect(dialog).toContain("<PairingExpiry");
+			expect(dialog).toContain("<PairingInstructionPanel");
+			expect(dialog).toContain("<PairingDialogFooter>");
+		}
+		expect(pairingDialogUi).toContain("onClick={() => void copy(value)}");
+		expect(pairingDialogUi).toContain('aria-live="polite"');
+		expect(pairingDialogUi).toContain("rounded-md border bg-background");
+		expect(pairingDialogUi).toContain('variant === "inline"');
+		expect(pairingDialogUi).toContain("max-w-44 sm:max-w-48");
 	});
 
 	test("shows chat identity and isolates Unpair to the selected chat with recovery", () => {

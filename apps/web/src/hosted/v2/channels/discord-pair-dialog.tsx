@@ -1,21 +1,11 @@
 "use client";
 
-import { Check, Copy, ExternalLink, MessageCircle, RefreshCw, Server } from "lucide-react";
-import { QRCodeSVG } from "qrcode.react";
+import { ExternalLink, MessageCircle, RefreshCw, Server } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
-import { Spinner } from "@/components/ui/spinner";
+import { Dialog } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
 import {
 	pairCodeExpired,
@@ -25,6 +15,18 @@ import {
 import { usePairingSuccess } from "@/hosted/v2/channels/channel-pairing-success";
 import type { ChannelBinding, ChannelPairCode } from "@/hosted/v2/channels/channel-types";
 import { useCreatePairCode } from "@/hosted/v2/channels/channels-hooks";
+import {
+	CopyablePairingCode,
+	PairingDialogBody,
+	PairingDialogContent,
+	PairingDialogFooter,
+	PairingDialogHeader,
+	PairingExpiry,
+	PairingInstructionPanel,
+	PairingLoading,
+	PairingNotice,
+	PairingQrCode,
+} from "@/hosted/v2/channels/pairing-dialog-ui";
 
 const DISCORD_PAIR_TTL_SECONDS = 900;
 
@@ -49,10 +51,6 @@ export function DiscordPairDialog({
 	bindings?: readonly ChannelBinding[];
 }) {
 	const pair = useCreatePairCode(accountId, { toastOnError: false });
-	const { copied, copy } = useCopyToClipboard({
-		success: false,
-		error: "Couldn't copy Discord pair code",
-	});
 	const [result, setResult] = useState<DiscordPairResult | null>(null);
 	const [requestError, setRequestError] = useState<unknown>(null);
 	const [preparing, setPreparing] = useState(false);
@@ -136,31 +134,25 @@ export function DiscordPairDialog({
 
 	const expired = result ? pairCodeExpired(result.expires_at, nowMs) : false;
 	const botIdentity = channelName?.trim() || "this bot";
+	const installAction =
+		result && path === "server" && result.discord_install_url
+			? { url: result.discord_install_url, label: "Add to server" }
+			: result && path === "dm" && result.discord_user_install_url
+				? { url: result.discord_user_install_url, label: "Add to my apps" }
+				: null;
 
 	return (
 		<Dialog open={open} onOpenChange={handlePairingOpenChange}>
-			<DialogContent
-				data-hosted="true"
-				data-v2="true"
-				className="h-[min(40rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:h-auto sm:max-w-md"
-			>
-				<DialogHeader>
-					<DialogTitle>Pair Discord</DialogTitle>
-					<p className="min-w-0 truncate text-sm font-medium" title={botIdentity}>
-						{botIdentity}
-					</p>
-					<DialogDescription>Choose a server or direct message to pair.</DialogDescription>
-				</DialogHeader>
+			<PairingDialogContent>
+				<PairingDialogHeader
+					title="Pair Discord"
+					identity={botIdentity}
+					description="Choose a server or direct message to pair."
+				/>
 
-				<div
-					data-discord-pair-dialog-body
-					className="min-h-0 min-w-0 break-words overflow-y-auto overscroll-contain pr-1 [overflow-wrap:anywhere]"
-				>
+				<PairingDialogBody data-discord-pair-dialog-body>
 					{preparing ? (
-						<div className="flex min-h-64 flex-col items-center justify-center gap-3 text-muted-foreground">
-							<Spinner className="size-5" />
-							<p>Creating a Discord pair code…</p>
-						</div>
+						<PairingLoading>Creating a Discord pair code…</PairingLoading>
 					) : requestError ? (
 						<ApiErrorPanel
 							error={requestError}
@@ -169,12 +161,9 @@ export function DiscordPairDialog({
 						/>
 					) : result ? (
 						expired ? (
-							<div role="alert" className="rounded-lg border border-warning/40 bg-muted/20 p-4">
-								<p className="text-sm font-medium">This Discord pair code has expired</p>
-								<p className="mt-1 text-xs text-muted-foreground">
-									Create a new code before pairing Discord.
-								</p>
-							</div>
+							<PairingNotice title="This Discord pair code has expired">
+								Create a new code before pairing Discord.
+							</PairingNotice>
 						) : (
 							<div className="space-y-4">
 								<Tabs
@@ -203,149 +192,119 @@ export function DiscordPairDialog({
 									<TabsContent
 										value="server"
 										data-discord-pair-path="server"
-										className="mt-2 space-y-4"
+										className="mt-3 space-y-4"
 									>
 										{result.discord_install_url ? (
-											<div className="flex justify-center">
-												<div className="max-w-full rounded-md border bg-white p-3 shadow-sm">
-													<QRCodeSVG
-														value={result.discord_install_url}
-														size={192}
-														className="h-auto w-full max-w-48"
-														role="img"
-														aria-label="Discord server install QR code"
-													/>
-												</div>
-											</div>
+											<PairingQrCode
+												value={result.discord_install_url}
+												label="Discord server install QR code"
+											/>
 										) : (
-											<div
-												role="alert"
-												className="rounded-lg border border-warning/40 bg-muted/20 p-3"
-											>
-												<p className="text-sm font-medium">Server install unavailable</p>
-												<p className="mt-1 text-xs text-muted-foreground">
-													Use a server where this bot is already installed, or ask the bot owner for
-													a valid server install link.
-												</p>
-											</div>
+											<PairingNotice title="Server install unavailable">
+												Use a server where this bot is already installed, or ask the bot owner for a
+												valid server install link.
+											</PairingNotice>
 										)}
+										<PairingExpiry>{pairCodeExpiryLabel(result.expires_at, nowMs)}</PairingExpiry>
 										{!result.discord_user_install_url ? (
-											<div role="status" className="rounded-lg border bg-muted/20 p-3">
+											<PairingInstructionPanel role="status">
 												<p className="text-sm font-medium">Direct message pairing unavailable</p>
-												<p className="mt-1 text-xs text-muted-foreground">
-													Use Server pairing. The bot owner can enable Discord User Install with the{" "}
-													<code>applications.commands</code> scope to add DM pairing.
-												</p>
-											</div>
+												<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+													<span>
+														Use Server pairing. The bot owner can enable User Install with the
+													</span>
+													<CopyablePairingCode
+														value="applications.commands"
+														label="Discord application commands scope"
+														variant="inline"
+													/>
+													<span>scope to add direct message pairing.</span>
+												</div>
+											</PairingInstructionPanel>
 										) : null}
-										<div className="space-y-2 border-t pt-3 text-sm">
+										<PairingInstructionPanel>
 											<p>
 												{result.discord_install_url
 													? "1. Add the bot to the server. You need Manage Server or Administrator."
 													: "1. Open a server where this bot is already installed. You need Manage Server or Administrator."}
 											</p>
-											<p>
-												2. In that server, run{" "}
-												<code>{result.pairing_command.split(" ", 1)[0]}</code> and paste this code
-												into the required <code>code</code> option.
-											</p>
-											<DiscordPairCode code={result.code} />
-										</div>
+											<div className="flex flex-wrap items-center gap-1.5">
+												<span>2. In that server, run</span>
+												<CopyablePairingCode
+													value={result.pairing_command.split(" ", 1)[0]}
+													label="Discord pairing command"
+													variant="inline"
+												/>
+												<span>and paste this into the required code option:</span>
+											</div>
+											<CopyablePairingCode value={result.code} label="Discord pair code" />
+										</PairingInstructionPanel>
 									</TabsContent>
 
 									{result.discord_user_install_url ? (
-										<TabsContent value="dm" data-discord-pair-path="dm" className="mt-2 space-y-4">
-											<div className="flex justify-center">
-												<div className="max-w-full rounded-md border bg-white p-3 shadow-sm">
-													<QRCodeSVG
-														value={result.discord_user_install_url}
-														size={192}
-														className="h-auto w-full max-w-48"
-														role="img"
-														aria-label="Discord User Install QR code"
-													/>
-												</div>
-											</div>
-											<div className="space-y-2 border-t pt-3 text-sm">
+										<TabsContent value="dm" data-discord-pair-path="dm" className="mt-3 space-y-4">
+											<PairingQrCode
+												value={result.discord_user_install_url}
+												label="Discord direct message install QR code"
+											/>
+											<PairingExpiry>{pairCodeExpiryLabel(result.expires_at, nowMs)}</PairingExpiry>
+											<PairingInstructionPanel>
 												<p>1. Install the app and choose Add to my apps in Discord.</p>
 												<p>2. Open the app from Discord Direct Messages.</p>
-												<p>
-													3. Run <code>{result.pairing_command.split(" ", 1)[0]}</code> and paste
-													this code into the required <code>code</code> option.
-												</p>
-												<DiscordPairCode code={result.code} />
+												<div className="flex flex-wrap items-center gap-1.5">
+													<span>3. Run</span>
+													<CopyablePairingCode
+														value={result.pairing_command.split(" ", 1)[0]}
+														label="Discord pairing command"
+														variant="inline"
+													/>
+													<span>and paste this into the required code option:</span>
+												</div>
+												<CopyablePairingCode value={result.code} label="Discord pair code" />
+											</PairingInstructionPanel>
+											<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+												<span>
+													If Discord rejects the install, ask the bot owner to enable User Install
+													with
+												</span>
+												<CopyablePairingCode
+													value="applications.commands"
+													label="Discord application commands scope"
+													variant="inline"
+												/>
+												<span>in the Discord Developer Portal.</span>
 											</div>
-											<p className="text-xs text-muted-foreground">
-												If Discord rejects the install, ask the bot owner to enable User Install
-												with <code>applications.commands</code> in the Discord Developer Portal.
-											</p>
 										</TabsContent>
 									) : null}
 								</Tabs>
-								<p role="status" className="text-center text-sm text-muted-foreground">
-									{pairCodeExpiryLabel(result.expires_at, nowMs)}
-								</p>
 							</div>
 						)
 					) : null}
-				</div>
+				</PairingDialogBody>
 
-				{result && !expired ? (
-					<DialogFooter>
+				{result && !expired && installAction ? (
+					<PairingDialogFooter>
 						<Button
-							variant="outline"
-							className="min-w-0 whitespace-normal"
-							onClick={() => void copy(result.code)}
+							render={<a href={installAction.url} target="_blank" rel="noopener noreferrer" />}
+							nativeButton={false}
+							className="w-full min-w-0 whitespace-normal sm:w-auto"
 						>
-							{copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-							{copied ? "Code copied" : "Copy code"}
+							{installAction.label}
+							<ExternalLink className="size-4" />
 						</Button>
-						{path === "server" && result.discord_install_url ? (
-							<Button
-								render={
-									<a href={result.discord_install_url} target="_blank" rel="noopener noreferrer" />
-								}
-								nativeButton={false}
-								className="min-w-0 whitespace-normal"
-							>
-								Add to server
-								<ExternalLink className="size-4" />
-							</Button>
-						) : path === "dm" && result.discord_user_install_url ? (
-							<Button
-								render={
-									<a
-										href={result.discord_user_install_url}
-										target="_blank"
-										rel="noopener noreferrer"
-									/>
-								}
-								nativeButton={false}
-								className="min-w-0 whitespace-normal"
-							>
-								Add to my apps
-								<ExternalLink className="size-4" />
-							</Button>
-						) : null}
-					</DialogFooter>
+					</PairingDialogFooter>
 				) : result && expired ? (
-					<DialogFooter>
-						<Button className="min-w-0 whitespace-normal" onClick={() => void prepare()}>
+					<PairingDialogFooter>
+						<Button
+							className="w-full min-w-0 whitespace-normal sm:w-auto"
+							onClick={() => void prepare()}
+						>
 							<RefreshCw className="size-4" />
 							Generate new code
 						</Button>
-					</DialogFooter>
+					</PairingDialogFooter>
 				) : null}
-			</DialogContent>
+			</PairingDialogContent>
 		</Dialog>
-	);
-}
-
-function DiscordPairCode({ code }: { code: string }) {
-	return (
-		<div className="flex min-w-0 items-center justify-between gap-3 border-y py-3">
-			<span className="text-xs font-medium text-muted-foreground">Required code</span>
-			<code className="min-w-0 break-all text-right text-sm font-medium">{code}</code>
-		</div>
 	);
 }

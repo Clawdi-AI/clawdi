@@ -1,19 +1,10 @@
 "use client";
 
 import { Check, Copy, ExternalLink, QrCode } from "lucide-react";
-import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
-import { Spinner } from "@/components/ui/spinner";
+import { Dialog } from "@/components/ui/dialog";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import {
 	pairCodeExpiryLabel,
@@ -22,9 +13,19 @@ import {
 import { pairCodeExpired } from "@/hosted/v2/channels/channel-linking.logic";
 import { usePairingSuccess } from "@/hosted/v2/channels/channel-pairing-success";
 import type { ChannelBinding } from "@/hosted/v2/channels/channel-types";
-import { CopyInline } from "@/hosted/v2/channels/channel-ui";
 import { useCreatePairCode } from "@/hosted/v2/channels/channels-hooks";
-import { cn } from "@/lib/utils";
+import {
+	CopyablePairingCode,
+	PairingDialogBody,
+	PairingDialogContent,
+	PairingDialogFooter,
+	PairingDialogHeader,
+	PairingExpiry,
+	PairingInstructionPanel,
+	PairingLoading,
+	PairingNotice,
+	PairingQrCode,
+} from "@/hosted/v2/channels/pairing-dialog-ui";
 
 const TELEGRAM_PAIR_TTL_SECONDS = 900;
 
@@ -147,28 +148,17 @@ export function TelegramPairDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={handlePairingOpenChange}>
-			<DialogContent
-				data-hosted="true"
-				data-v2="true"
-				className="h-[min(40rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:h-auto sm:max-w-md"
-			>
-				<DialogHeader>
-					<DialogTitle>Pair Telegram</DialogTitle>
-					<p className="min-w-0 truncate text-sm font-medium" title={botIdentity}>
-						{botIdentity}
-					</p>
-					<DialogDescription>Scan the QR code or open Telegram to pair.</DialogDescription>
-				</DialogHeader>
+			<PairingDialogContent>
+				<PairingDialogHeader
+					title="Pair Telegram"
+					identity={botIdentity}
+					scope="Private chat"
+					description="Scan the QR code or open Telegram to pair a private chat."
+				/>
 
-				<div
-					data-telegram-pair-dialog-body
-					className="min-h-0 min-w-0 break-words overflow-y-auto overscroll-contain pr-1 [overflow-wrap:anywhere]"
-				>
+				<PairingDialogBody data-telegram-pair-dialog-body>
 					{generating ? (
-						<div className="flex min-h-64 flex-col items-center justify-center gap-3 text-muted-foreground">
-							<Spinner className="size-5" />
-							<p>Creating a secure Telegram link…</p>
-						</div>
+						<PairingLoading>Creating a secure Telegram link…</PairingLoading>
 					) : requestError ? (
 						<ApiErrorPanel
 							error={requestError}
@@ -176,83 +166,74 @@ export function TelegramPairDialog({
 							title="Couldn't create Telegram link"
 						/>
 					) : result ? (
-						<div className="flex flex-col gap-4">
+						<div className="space-y-4">
 							{validLink ? (
-								<div className="flex justify-center">
-									<div className="max-w-full rounded-md border bg-white p-3 shadow-sm">
-										<QRCodeSVG
-											value={validLink}
-											size={192}
-											className="h-auto w-full max-w-48"
-											role="img"
-											aria-label="Telegram pairing QR code"
-										/>
-									</div>
-								</div>
+								<PairingQrCode value={validLink} label="Telegram private chat pairing QR code" />
 							) : (
-								<div role="alert" className="rounded-lg border border-warning/40 bg-muted/20 p-4">
-									<p className="text-sm font-medium">
-										{expired ? "This Telegram link has expired" : "Telegram link unavailable"}
-									</p>
-									<p className="mt-1 text-xs text-muted-foreground">
-										Create a new link to restore the QR and Telegram actions.
-									</p>
-								</div>
+								<PairingNotice
+									title={expired ? "This Telegram link has expired" : "Telegram link unavailable"}
+								>
+									Create a new link to restore the QR and Telegram actions.
+								</PairingNotice>
 							)}
-							<p
-								role="status"
-								className={cn(
-									"text-center text-sm font-medium",
-									expired ? "text-destructive" : "text-muted-foreground",
-								)}
-							>
+							<PairingExpiry expired={expired}>
 								{pairCodeExpiryLabel(result.expires_at, nowMs)}
-							</p>
+							</PairingExpiry>
 							{!expired && result.bot_username ? (
-								<details className="rounded-md border bg-muted/20 px-3 py-2">
-									<summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-										Pair a group manually
-									</summary>
-									<div className="mt-2 space-y-2">
-										<p className="text-sm">
-											Add @{result.bot_username.replace(/^@/, "")} to the group, then send:
-										</p>
-										<CopyInline value={result.pairing_command} label="pairing command" />
-									</div>
-								</details>
+								<PairingInstructionPanel>
+									<details>
+										<summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+											Pair a group manually
+										</summary>
+										<div className="mt-3 space-y-3">
+											<p>Add @{result.bot_username.replace(/^@/, "")} to the group, then send:</p>
+											<CopyablePairingCode
+												value={result.pairing_command}
+												label="Telegram group pairing command"
+											/>
+										</div>
+									</details>
+								</PairingInstructionPanel>
 							) : null}
 						</div>
 					) : null}
-				</div>
+				</PairingDialogBody>
 
 				{validLink ? (
-					<DialogFooter>
+					<PairingDialogFooter>
 						<Button
 							variant="outline"
-							className="min-w-0 whitespace-normal"
+							className="w-full min-w-0 whitespace-normal sm:w-auto"
 							onClick={() => void copy(validLink)}
+							aria-label={
+								copied ? "Telegram private chat link copied" : "Copy Telegram private chat link"
+							}
+							aria-live="polite"
 						>
 							{copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-							{copied ? "Copied" : "Copy link"}
+							{copied ? "Link copied" : "Copy link"}
 						</Button>
 						<Button
 							render={<a href={validLink} target="_blank" rel="noopener noreferrer" />}
 							nativeButton={false}
-							className="min-w-0 whitespace-normal"
+							className="w-full min-w-0 whitespace-normal sm:w-auto"
 						>
 							Open Telegram
 							<ExternalLink className="size-4" />
 						</Button>
-					</DialogFooter>
+					</PairingDialogFooter>
 				) : result && !generating ? (
-					<DialogFooter>
-						<Button className="min-w-0 whitespace-normal" onClick={() => void generate()}>
+					<PairingDialogFooter>
+						<Button
+							className="w-full min-w-0 whitespace-normal sm:w-auto"
+							onClick={() => void generate()}
+						>
 							<QrCode className="size-4" />
 							{expired ? "Generate new link" : "Try again"}
 						</Button>
-					</DialogFooter>
+					</PairingDialogFooter>
 				) : null}
-			</DialogContent>
+			</PairingDialogContent>
 		</Dialog>
 	);
 }
