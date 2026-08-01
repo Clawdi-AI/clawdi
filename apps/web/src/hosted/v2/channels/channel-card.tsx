@@ -5,8 +5,8 @@ import { ENTITY_CARD_BASE, ENTITY_GRID_CLASS, EntityHeader } from "@/components/
 import { ProviderChip } from "@/hosted/v2/channels/channel-ui";
 import { cn } from "@/lib/utils";
 
-/** Channel cards stay content-height so a long chat list never stretches its neighbour. */
-export const CHANNEL_CARD_GRID_CLASS = cn(ENTITY_GRID_CLASS, "items-start xl:grid-cols-2");
+/** Channel cards in the same grid row share a stable outer height. */
+export const CHANNEL_CARD_GRID_CLASS = cn(ENTITY_GRID_CLASS, "items-stretch xl:grid-cols-2");
 
 /**
  * Shared visual shell for bot inventory and Agent channel cards. Provider
@@ -32,11 +32,11 @@ export function ChannelCard({
 		<article
 			data-hosted="true"
 			data-v2="true"
-			className={cn(ENTITY_CARD_BASE, "overflow-hidden p-0", className)}
+			className={cn(ENTITY_CARD_BASE, "flex h-full flex-col overflow-hidden p-0", className)}
 		>
 			<div
 				data-channel-card-header
-				className="grid min-h-20 min-w-0 gap-3 p-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center"
+				className="grid min-h-20 min-w-0 flex-1 content-center gap-3 p-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center"
 			>
 				<EntityHeader
 					align="start"
@@ -51,7 +51,7 @@ export function ChannelCard({
 					</div>
 				) : null}
 			</div>
-			{children ? <div className="border-t">{children}</div> : null}
+			{children ? <div className="shrink-0 border-t">{children}</div> : null}
 		</article>
 	);
 }

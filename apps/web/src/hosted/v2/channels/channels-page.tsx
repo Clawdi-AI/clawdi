@@ -239,7 +239,7 @@ function SharedBotsSection({
 
 function SharedBotCard({ bot }: { bot: ChannelBotPoolItem }) {
 	return (
-		<div data-shared-channel-account-id={bot.id} className="min-w-0">
+		<div data-shared-channel-account-id={bot.id} className="h-full min-w-0">
 			<SharedChannelCard provider={bot.provider} title={bot.name} />
 		</div>
 	);
@@ -247,7 +247,7 @@ function SharedBotCard({ bot }: { bot: ChannelBotPoolItem }) {
 
 function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: string }) {
 	return (
-		<div data-channel-account-id={channel.id} className="group relative z-0 min-w-0">
+		<div data-channel-account-id={channel.id} className="group relative z-0 h-full min-w-0">
 			<SharedChannelCard
 				provider={channel.provider}
 				title={channel.name}
