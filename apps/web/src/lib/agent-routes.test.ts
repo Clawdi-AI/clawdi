@@ -149,6 +149,33 @@ describe("agent routes", () => {
 		expect(parseAgentSectionSegment("bad")).toBeNull();
 	});
 
+	it("keeps every released agent section segment backward-compatible", () => {
+		const sections = [
+			"overview",
+			"sessions",
+			"skills",
+			"projects",
+			"console",
+			"terminal",
+			"ai",
+			"channels",
+			"settings",
+		] as const;
+		expect(
+			Object.fromEntries(sections.map((section) => [section, agentSectionSegment(section)])),
+		).toEqual({
+			overview: "",
+			sessions: "sessions",
+			skills: "skills",
+			projects: "project-access",
+			console: "console",
+			terminal: "terminal",
+			ai: "model-provider",
+			channels: "channel-links",
+			settings: "settings",
+		});
+	});
+
 	it("keeps canonical labels while preserving backward-compatible URL segments", () => {
 		expect(agentSectionLabel("projects")).toBe("Projects");
 		expect(agentSectionLabel("console")).toBe("Agent Interface");

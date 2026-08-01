@@ -141,6 +141,9 @@ describe("sidebar navigation model", () => {
 	});
 
 	test("keeps labels, icons, and descriptions canonical across navigation and page headers", () => {
+		for (const item of Object.values(AGENT_SECTION_NAVIGATION_ITEMS)) {
+			expect(item).not.toHaveProperty("href");
+		}
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.overview).toMatchObject({
 			label: "Overview",
 			icon: LayoutDashboard,

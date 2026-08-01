@@ -72,7 +72,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { vaultDetailSearch } from "@/components/vault/vault-detail-identity";
-import { agentSectionHref } from "@/lib/agent-routes";
+import { agentSectionHref, agentSectionLabel } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { formatApiError, isApiNotFoundError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
@@ -91,6 +91,8 @@ type AgentProjectBinding = components["schemas"]["AgentProjectBindingResponse"];
 type ProjectRow = components["schemas"]["ProjectResponse"];
 type Member = components["schemas"]["MemberResponse"];
 type CountValue = number | "unavailable";
+
+const AGENT_PROJECTS_SECTION_LABEL = agentSectionLabel("projects");
 
 export default function ProjectDetailPage({ projectId }: { projectId: string }) {
 	const api = useApi();
@@ -944,8 +946,8 @@ function UseProjectWithAgentDialog({
 						<Bot className="size-4" />
 						<AlertTitle>No agents connected</AlertTitle>
 						<AlertDescription>
-							Add an agent from Overview first, then add this Project here or from the agent&apos;s
-							Project Access section.
+							Add an agent from Overview first, then add this Project here or from the agent&apos;s{" "}
+							{AGENT_PROJECTS_SECTION_LABEL} section.
 						</AlertDescription>
 					</Alert>
 				) : (
@@ -1014,8 +1016,8 @@ function UseProjectWithAgentDialog({
 									<div>
 										<div className="font-medium">This Is the Agent&apos;s Main Project</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											No extra step is needed. Open the agent&apos;s Project Access section to
-											review its read order.
+											No extra step is needed. Open the agent&apos;s {AGENT_PROJECTS_SECTION_LABEL}{" "}
+											section to review its read order.
 										</p>
 									</div>
 								</div>
@@ -1025,8 +1027,8 @@ function UseProjectWithAgentDialog({
 									<div>
 										<div className="font-medium">Already Added as Extra</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											Open the agent&apos;s Project Access section to review its read order or
-											remove it.
+											Open the agent&apos;s {AGENT_PROJECTS_SECTION_LABEL} section to review its
+											read order or remove it.
 										</p>
 									</div>
 								</div>

@@ -216,7 +216,7 @@ type AgentNavigationGroupId =
 	| "integrations"
 	| "manage";
 
-export type AgentNavigationItemMetadata = NavigationItemMetadata<AgentSectionId> & {
+export type AgentNavigationItemMetadata = Omit<NavigationItemMetadata<AgentSectionId>, "href"> & {
 	variants: readonly AgentNavigationVariant[];
 };
 
@@ -231,7 +231,6 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	overview: {
 		id: "overview",
 		label: "Overview",
-		href: "",
 		icon: LayoutDashboard,
 		tint: RESOURCE_TINT_CLASSES.overview,
 		description: "Status, resources, and recent activity for this agent.",
@@ -241,7 +240,6 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	console: {
 		id: "console",
 		label: "Agent Interface",
-		href: "console",
 		icon: MonitorPlay,
 		tint: "bg-identity-6-bg text-identity-6-fg",
 		description: "Open this agent's browser interface.",
@@ -251,7 +249,6 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	terminal: {
 		id: "terminal",
 		label: "Terminal",
-		href: "terminal",
 		icon: TerminalSquare,
 		tint: "bg-identity-7-bg text-identity-7-fg",
 		description: "Open a terminal for this agent.",
@@ -261,7 +258,6 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	sessions: {
 		id: "sessions",
 		label: "Sessions",
-		href: "sessions",
 		icon: MessageSquare,
 		tint: RESOURCE_TINT_CLASSES.sessions,
 		description: "Conversation history from this agent.",
@@ -271,7 +267,6 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	skills: {
 		id: "skills",
 		label: "Skills",
-		href: "skills",
 		icon: Sparkles,
 		tint: RESOURCE_TINT_CLASSES.skills,
 		description: "Skills synced from this agent's filesystem.",
@@ -281,7 +276,6 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	projects: {
 		id: "projects",
 		label: "Projects",
-		href: "project-access",
 		icon: PROJECT_RESOURCE_ICONS.projects,
 		tint: RESOURCE_TINT_CLASSES.projects,
 		description: "Agent Project, added Projects, and read order.",
@@ -291,7 +285,6 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	ai: {
 		id: "ai",
 		label: "AI & Model",
-		href: "model-provider",
 		icon: Zap,
 		tint: "bg-identity-2-bg text-identity-2-fg",
 		description: "Provider binding and primary model used by this agent.",
@@ -301,7 +294,6 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	channels: {
 		id: "channels",
 		label: "Channels",
-		href: "channel-links",
 		icon: Link2,
 		tint: "bg-identity-5-bg text-identity-5-fg",
 		description: "Channels linked to this agent.",
@@ -311,7 +303,6 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	settings: {
 		id: "settings",
 		label: "Settings",
-		href: "settings",
 		icon: Settings,
 		tint: "bg-identity-4-bg text-identity-4-fg",
 		description: "Name, preferences, and agent controls.",
