@@ -215,7 +215,13 @@ class ClawdiWhatsAppAdapter(BasePlatformAdapter):
         if not self.relay_url or not self.account_id or not self.link_token:
             return False
         relay = urlsplit(self.relay_url)
-        return relay.scheme in {"http", "https"} and not relay.username and not relay.password
+        return (
+            relay.scheme in {"http", "https"}
+            and not relay.username
+            and not relay.password
+            and not relay.query
+            and not relay.fragment
+        )
 
     async def connect(self, *, is_reconnect=False):
         del is_reconnect
@@ -476,7 +482,11 @@ class ClawdiWhatsAppAdapter(BasePlatformAdapter):
     def _authorized_media_url(self, value):
         candidate = urlsplit(_required_string(value, "media URL"))
         relay = urlsplit(self.relay_url)
-        prefix = f"/v1/channels/whatsapp/application/{quote(self.account_id, safe='')}/media/"
+        relay_path = relay.path.rstrip("/")
+        prefix = (
+            f"{relay_path}/v1/channels/whatsapp/application/"
+            f"{quote(self.account_id, safe='')}/media/"
+        )
         if (
             candidate.scheme != relay.scheme
             or candidate.netloc != relay.netloc
@@ -545,21 +555,24 @@ class ClawdiWhatsAppAdapter(BasePlatformAdapter):
 
     async def on_processing_complete(self, event, outcome):
         event_id = _required_string(event.metadata.get("clawdi_relay_event_id"), "event ID")
-        if outcome == ProcessingOutcome.SUCCESS:
-            async with self._journal_lock:
-                self.journal.complete(event_id)
-                self._inflight.discard(event_id)
-            try:
+        try:
+            if outcome == ProcessingOutcome.SUCCESS:
                 async with self._journal_lock:
-                    raw_event = self.journal.records[event_id].get("payload")
-                await self._finalize_completed(event_id, raw_event)
-            except Exception:
-                pass
-        else:
-            async with self._journal_lock:
-                self.journal.release(event_id, getattr(outcome, "value", str(outcome)))
-                self._inflight.discard(event_id)
-        await super().on_processing_complete(event, outcome)
+                    self.journal.complete(event_id)
+                    self._inflight.discard(event_id)
+                try:
+                    async with self._journal_lock:
+                        raw_event = self.journal.records[event_id].get("payload")
+                    await self._finalize_completed(event_id, raw_event)
+                except Exception:
+                    pass
+            else:
+                async with self._journal_lock:
+                    self.journal.release(event_id, getattr(outcome, "value", str(outcome)))
+                    self._inflight.discard(event_id)
+            await super().on_processing_complete(event, outcome)
+        finally:
+            _REPLY_CONTEXT.set(None)
 
     def _target(self, chat_id):
         value = str(chat_id or "").strip()

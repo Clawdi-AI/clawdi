@@ -336,7 +336,7 @@ function durableJournal(account) {
 	});
 }
 
-async function processDurableEvent({ account, cfg, client, journal, event, signal }) {
+async function processDurableEvent({ account, cfg, client, journal, event, signal, inflight }) {
 	await processDurableInboxEvent({
 		journal,
 		client,
@@ -345,6 +345,7 @@ async function processDurableEvent({ account, cfg, client, journal, event, signa
 		dispatch: async (durableEvent) => await dispatchInbound({ account, cfg, event: durableEvent }),
 		finalize: async (durableEvent) =>
 			await markInboundRead({ client, event: durableEvent, signal }),
+		inflight,
 	});
 }
 
@@ -368,6 +369,7 @@ async function startAccount(ctx) {
 		linkToken: account.linkToken,
 	});
 	const journal = durableJournal(account);
+	const inflight = new Set();
 	ctx.setStatus({
 		accountId: account.accountId,
 		running: true,
@@ -390,7 +392,15 @@ async function startAccount(ctx) {
 			client,
 			signal: ctx.abortSignal,
 			dispatch: (event, signal) =>
-				processDurableEvent({ account, cfg: ctx.cfg, client, journal, event, signal }),
+				processDurableEvent({
+					account,
+					cfg: ctx.cfg,
+					client,
+					journal,
+					event,
+					signal,
+					inflight,
+				}),
 		});
 	} finally {
 		ctx.setStatus({ accountId: account.accountId, running: false });

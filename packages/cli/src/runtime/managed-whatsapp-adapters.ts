@@ -37,7 +37,7 @@ export type ManagedWhatsAppAdapterRuntime = "openclaw" | "hermes";
 
 export interface ManagedWhatsAppAdapterReadiness {
 	runtime: ManagedWhatsAppAdapterRuntime;
-	ready: false;
+	ready: boolean;
 	installerArtifactsPinned: false;
 	deploymentReproducible: false;
 	blockers: string[];
@@ -111,10 +111,8 @@ export function managedWhatsAppAdapterReadiness(
 	};
 }
 
-export function managedWhatsAppAdapterCanActivate(runtime: ManagedWhatsAppAdapterRuntime): false {
-	void runtime;
-	void WHATSAPP_UPSTREAM_READY;
-	return false;
+export function managedWhatsAppAdapterCanActivate(runtime: ManagedWhatsAppAdapterRuntime): boolean {
+	return WHATSAPP_UPSTREAM_READY && managedWhatsAppAdapterReadiness(runtime).ready;
 }
 
 export function buildManagedWhatsAppAdapterBundle(
@@ -410,8 +408,16 @@ function requiredAsset(assets: ManagedWhatsAppAdapterAsset[], path: string): str
 
 function normalizedRelayUrl(value: string): string {
 	const url = new URL(requiredValue(value, "WhatsApp relay URL"));
-	if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password) {
-		throw new Error("WhatsApp relay URL must use HTTP or HTTPS without URL credentials");
+	if (
+		(url.protocol !== "https:" && url.protocol !== "http:") ||
+		url.username ||
+		url.password ||
+		url.search ||
+		url.hash
+	) {
+		throw new Error(
+			"WhatsApp relay URL must use HTTP or HTTPS without URL credentials, query, or fragment",
+		);
 	}
 	return url.toString().replace(/\/+$/, "");
 }

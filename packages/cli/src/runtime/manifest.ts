@@ -51,6 +51,7 @@ import {
 	mergeHermesChannelConfig,
 	mergeHermesConfig,
 	mergeHermesDashboardBasicAuth,
+	mergeHermesManagedPlugin,
 	mergeHermesRuntimeLocale,
 	renderHermesChannelConfig,
 	renderHermesConfig,
@@ -114,6 +115,12 @@ import {
 	releaseManagedSkill,
 	reserveManagedSkill,
 } from "./managed-skill-reservation";
+import {
+	buildManagedWhatsAppAdapterBundle,
+	managedWhatsAppAdapterCanActivate,
+	managedWhatsAppAdapterTargetDir,
+	reconcileManagedWhatsAppAdapterBundle,
+} from "./managed-whatsapp-adapters";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 import {
 	type HostedMcpServerDesiredState,
@@ -2919,6 +2926,45 @@ function hostedChannelProjection(manifest: RuntimeManifest): Record<string, unkn
 	return channels;
 }
 
+function managedWhatsAppChannelDesired(manifest: RuntimeManifest): boolean {
+	if (
+		!managedWhatsAppAdapterCanActivate("openclaw") ||
+		!managedWhatsAppAdapterCanActivate("hermes")
+	) {
+		return false;
+	}
+	const channels = hostedChannelProjection(manifest);
+	return channels ? channelHasAccounts(channels.whatsapp) : false;
+}
+
+function applyManagedWhatsAppAdapters(
+	manifest: RuntimeManifest,
+	home: string,
+	observations: ReadonlyMap<string, RuntimeInstallObservation>,
+): void {
+	if (
+		!managedWhatsAppAdapterCanActivate("openclaw") ||
+		!managedWhatsAppAdapterCanActivate("hermes")
+	) {
+		return;
+	}
+	const channelDesired = managedWhatsAppChannelDesired(manifest);
+	for (const runtime of ["openclaw", "hermes"] as const) {
+		const observation = observations.get(runtime);
+		const runtimeReady = Boolean(
+			manifest.runtimes[runtime]?.enabled &&
+				observation?.enabled &&
+				observation.status !== "install_failed" &&
+				observation.commandPath,
+		);
+		const desired =
+			channelDesired && runtimeReady ? buildManagedWhatsAppAdapterBundle(runtime) : null;
+		withRuntimeUserFileAccess(() => {
+			reconcileManagedWhatsAppAdapterBundle({ home, runtime, desired });
+		});
+	}
+}
+
 function applyHostedChannelProjection(
 	name: string,
 	observation: RuntimeInstallObservation,
@@ -2937,6 +2983,13 @@ function applyHostedChannelProjection(
 		const configPath = join(home, ".hermes", "config.yaml");
 		withRuntimeUserFileAccess(() => {
 			mergeHermesChannelConfig(configPath, hermesManagedChannelsPatch(channels));
+			if (managedWhatsAppAdapterCanActivate("hermes")) {
+				mergeHermesManagedPlugin(
+					configPath,
+					"clawdi-whatsapp",
+					channelHasAccounts(channels.whatsapp),
+				);
+			}
 			makeRuntimeUserOwned(configPath);
 		});
 		return configPath;
@@ -2979,7 +3032,9 @@ function installHostedChannelProjectionDependencies(
 function hermesManagedChannelsPatch(channels: Record<string, unknown>): Record<string, unknown> {
 	const telegramEnabled = channelHasAccounts(channels.telegram);
 	const discordEnabled = channelHasAccounts(channels.discord);
-	const sharedChannelSessionsEnabled = telegramEnabled || discordEnabled;
+	const whatsappEnabled =
+		managedWhatsAppAdapterCanActivate("hermes") && channelHasAccounts(channels.whatsapp);
+	const sharedChannelSessionsEnabled = telegramEnabled || discordEnabled || whatsappEnabled;
 	return {
 		telegram: telegramEnabled
 			? {
@@ -3008,6 +3063,13 @@ function hermesManagedChannelsPatch(channels: Record<string, unknown>): Record<s
 					bots_require_inline_mention: false,
 				}
 			: { enabled: false },
+		...(managedWhatsAppAdapterCanActivate("hermes")
+			? {
+					whatsapp: whatsappEnabled
+						? { enabled: true, extra: { managed_by: "clawdi" } }
+						: { enabled: false },
+				}
+			: {}),
 		group_sessions_per_user: sharedChannelSessionsEnabled ? false : null,
 		thread_sessions_per_user: sharedChannelSessionsEnabled ? false : null,
 		platforms: {
@@ -3017,6 +3079,11 @@ function hermesManagedChannelsPatch(channels: Record<string, unknown>): Record<s
 					thread_sessions_per_user: telegramEnabled ? false : null,
 				},
 			},
+			...(managedWhatsAppAdapterCanActivate("hermes")
+				? {
+						whatsapp: whatsappEnabled ? { enabled: true, extra: { managed_by: "clawdi" } } : null,
+					}
+				: {}),
 		},
 		display: {
 			platforms: {
@@ -3052,7 +3119,7 @@ function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record
 		},
 		plugins: {
 			entries: {
-				...deleteEntries,
+				...openClawManagedPluginDeletes(),
 				...channelPluginEntries(runtimeReadyChannels),
 			},
 		},
@@ -3075,7 +3142,7 @@ function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record
 function openClawManagedAccountReplaceArgs(channels: Record<string, unknown>): string[] {
 	const runtimeReadyChannels = openClawRuntimeReadyChannels(channels);
 	const args: string[] = [];
-	for (const provider of OPENCLAW_MANAGED_CHANNELS) {
+	for (const provider of openClawManagedChannelIds()) {
 		const channel = runtimeReadyChannels[provider];
 		if (!isPlainRecord(channel) || !isPlainRecord(channel.accounts)) continue;
 		args.push("--replace-path", `channels.${provider}.accounts`);
@@ -3085,17 +3152,29 @@ function openClawManagedAccountReplaceArgs(channels: Record<string, unknown>): s
 
 function openClawRuntimeReadyChannels(channels: Record<string, unknown>): Record<string, unknown> {
 	return Object.fromEntries(
-		OPENCLAW_MANAGED_CHANNELS.flatMap((channel) =>
+		openClawManagedChannelIds().flatMap((channel) =>
 			Object.hasOwn(channels, channel) ? [[channel, channels[channel]]] : [],
 		),
 	);
 }
 
 function openClawManagedChannelDeletes(): Record<string, null> {
-	return Object.fromEntries(OPENCLAW_MANAGED_CHANNELS.map((channel) => [channel, null])) as Record<
-		string,
-		null
-	>;
+	return Object.fromEntries(
+		openClawManagedChannelIds().map((channel) => [channel, null]),
+	) as Record<string, null>;
+}
+
+function openClawManagedChannelIds(): string[] {
+	return managedWhatsAppAdapterCanActivate("openclaw")
+		? [...OPENCLAW_MANAGED_CHANNELS, "whatsapp"]
+		: [...OPENCLAW_MANAGED_CHANNELS];
+}
+
+function openClawManagedPluginDeletes(): Record<string, null> {
+	return {
+		...openClawManagedChannelDeletes(),
+		...(managedWhatsAppAdapterCanActivate("openclaw") ? { "clawdi-whatsapp": null } : {}),
+	};
 }
 
 function installOpenClawChannelPlugins(input: {
@@ -3179,6 +3258,11 @@ function channelPluginEntries(
 ): Record<string, { enabled: boolean }> {
 	const entries: Record<string, { enabled: boolean }> = {};
 	for (const channel of Object.keys(channels).sort()) {
+		if (channel === "whatsapp" && managedWhatsAppAdapterCanActivate("openclaw")) {
+			entries.whatsapp = { enabled: false };
+			entries["clawdi-whatsapp"] = { enabled: true };
+			continue;
+		}
 		entries[channel] = { enabled: true };
 	}
 	return entries;
@@ -4560,6 +4644,14 @@ export function runtimeUserMutationTargets(
 			if (target) targets.add(target);
 		}
 	}
+	if (
+		managedWhatsAppAdapterCanActivate("openclaw") &&
+		managedWhatsAppAdapterCanActivate("hermes")
+	) {
+		for (const runtime of ["openclaw", "hermes"] as const) {
+			targets.add(managedWhatsAppAdapterTargetDir(home, runtime));
+		}
+	}
 	const channels = hostedChannelProjection(manifest);
 	if (channels) {
 		for (const channel of Object.keys(channels)) {
@@ -5127,6 +5219,15 @@ export function convergeRuntimeManifest(
 					}`,
 				);
 			}
+		}
+		try {
+			applyManagedWhatsAppAdapters(manifest, projectionHome, observations);
+		} catch (error) {
+			installErrors.push(
+				`runtime WhatsApp adapter projection failed: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
 		}
 		try {
 			applyHostedMcpProjections(manifest, paths, observations, workspaceRoot);

@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 import {
 	buildActionOperation,
 	buildMarkReadOperation,
@@ -23,6 +24,7 @@ import {
 	processDurableInboxEvent,
 	runInboxLoop,
 } from "../runtime-adapters/whatsapp/openclaw/relay-client.js";
+import { renderHermesManagedPlugin } from "../src/lib/hermes-config-merge";
 import {
 	buildManagedWhatsAppAdapterBundle,
 	buildManagedWhatsAppAdapterProjection,
@@ -184,6 +186,36 @@ describe("managed WhatsApp adapter bundles", () => {
 				CLAWDI_WHATSAPP_LINK_TOKEN: "secret://channels/whatsapp/default/agent-token",
 			});
 		}
+		expect(() =>
+			buildManagedWhatsAppAdapterProjection({
+				accountId: "account-1",
+				accountKey: "default",
+				relayUrl: "https://relay.test/root?credential=forbidden",
+				linkTokenSecretRef: "secret://channels/whatsapp/default/agent-token",
+			}),
+		).toThrow("query");
+	});
+
+	test("enables only the managed Hermes plugin and preserves unrelated plugin choices", () => {
+		const enabled = parseYaml(
+			renderHermesManagedPlugin(
+				"plugins:\n  enabled: [user-plugin]\n  disabled: [clawdi-whatsapp, blocked-plugin]\n",
+				"clawdi-whatsapp",
+				true,
+			),
+		) as { plugins: { enabled: string[]; disabled: string[] } };
+		expect(enabled.plugins.enabled).toEqual(["clawdi-whatsapp", "user-plugin"]);
+		expect(enabled.plugins.disabled).toEqual(["blocked-plugin"]);
+
+		const removed = parseYaml(
+			renderHermesManagedPlugin(
+				"plugins:\n  enabled: [clawdi-whatsapp, user-plugin]\n  disabled: [blocked-plugin]\n",
+				"clawdi-whatsapp",
+				false,
+			),
+		) as { plugins: { enabled: string[]; disabled: string[] } };
+		expect(removed.plugins.enabled).toEqual(["user-plugin"]);
+		expect(removed.plugins.disabled).toEqual(["blocked-plugin"]);
 	});
 
 	test("loads the OpenClaw plugin against the fixed 0790 public export surface", () => {
@@ -638,6 +670,9 @@ async def main():
     assert client.calls[-2]["operationId"] == "inbound:event-1:mark-read"
     assert client.calls[-2]["messageId"] == "message-1"
     assert client.calls[-1]["type"] == "ack"
+    blocked_after_completion = await adapter.send(first_event.source.chat_id, "outside inbound")
+    assert blocked_after_completion.success is False
+    assert "durable_outbound_unavailable" in blocked_after_completion.error
 
     dispatched_before_redelivery = len(adapter.dispatched)
     assert await adapter._accept_and_dispatch(first) == "acknowledged"
@@ -673,7 +708,7 @@ async def main():
 
     voice_event = relay_event("event-voice", "message-voice")
     voice_event["message"]["media"] = [{
-        "url": "http://127.0.0.1:18080/v1/channels/whatsapp/application/account-1/media/voice-1",
+        "url": "http://127.0.0.1:18080/root/v1/channels/whatsapp/application/account-1/media/voice-1",
         "mimeType": "audio/ogg",
         "ptt": True,
     }]
@@ -724,7 +759,7 @@ async def main():
     assert len(client.calls) == calls_before_inline_voice
 
     relay_voice_url = (
-        "http://127.0.0.1:18080/v1/channels/whatsapp/application/"
+        "http://127.0.0.1:18080/root/v1/channels/whatsapp/application/"
         "account-1/media/voice-1"
     )
     sent_voice = await adapter.send_voice(
@@ -958,7 +993,7 @@ asyncio.run(main())
 					PATH: process.env.PATH ?? "",
 					HOME: join(root, "home"),
 					HERMES_HOME: join(root, "home", ".hermes"),
-					CLAWDI_WHATSAPP_RELAY_URL: "http://127.0.0.1:18080",
+					CLAWDI_WHATSAPP_RELAY_URL: "http://127.0.0.1:18080/root",
 					CLAWDI_WHATSAPP_ACCOUNT_ID: "account-1",
 					CLAWDI_WHATSAPP_LINK_TOKEN: "link-token",
 					PYTHONDONTWRITEBYTECODE: "1",
@@ -1144,6 +1179,30 @@ describe("OpenClaw managed WhatsApp relay contract", () => {
 		expect(calls).toEqual(["dispatch", "release"]);
 	});
 
+	test("retries a released pending dispatch in the same process", async () => {
+		let attempts = 0;
+		let completed = false;
+		const journal = {
+			accept: async () => ({ kind: "pending", record: { payload: event } }),
+			complete: async () => {
+				completed = true;
+			},
+			release: async () => true,
+		};
+		const result = await processDurableInboxEvent({
+			journal,
+			client: { acknowledge: async () => undefined },
+			event,
+			dispatch: async () => {
+				attempts += 1;
+			},
+			inflight: new Set(),
+		});
+		expect(result).toBe("completed");
+		expect(attempts).toBe(1);
+		expect(completed).toBe(true);
+	});
+
 	test("retries a failed ACK from the completed tombstone without redispatch", async () => {
 		let completed = false;
 		let dispatches = 0;
@@ -1242,6 +1301,7 @@ describe("OpenClaw managed WhatsApp relay contract", () => {
 				},
 			},
 			event,
+			inflight: new Set([event.id]),
 			dispatch: async () => {
 				dispatches += 1;
 			},

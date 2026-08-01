@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import type { EgressProfileInputBundle } from "./egress-profiles";
+import {
+	buildManagedWhatsAppAdapterProjection,
+	type ManagedWhatsAppAdapterProjection,
+} from "./managed-whatsapp-adapters";
 import type { RuntimeManifest } from "./manifest-contract";
 import type {
 	RuntimeBundleChannelBinding,
@@ -18,10 +22,21 @@ const HERMES_MANAGED_CHANNEL_ENV = [
 	"TELEGRAM_ALLOW_ALL_USERS",
 	"DISCORD_ALLOW_ALL_USERS",
 	"HERMES_TELEGRAM_DISABLE_FALLBACK_IPS",
+	"CLAWDI_WHATSAPP_RELAY_URL",
+	"CLAWDI_WHATSAPP_ACCOUNT_ID",
 ] as const;
-const HERMES_MANAGED_CHANNEL_SECRET_ENV = ["TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN"] as const;
+const HERMES_MANAGED_CHANNEL_SECRET_ENV = [
+	"TELEGRAM_BOT_TOKEN",
+	"DISCORD_BOT_TOKEN",
+	"CLAWDI_WHATSAPP_LINK_TOKEN",
+] as const;
 const OPENCLAW_CHANNEL_TOKEN_ENV_PREFIX = "CLAWDI_CHANNEL_";
 const OPENCLAW_CHANNEL_TOKEN_ENV_SUFFIX = "_AGENT_TOKEN";
+const OPENCLAW_MANAGED_WHATSAPP_ENV = [
+	"CLAWDI_WHATSAPP_RELAY_URL",
+	"CLAWDI_WHATSAPP_ACCOUNT_ID",
+] as const;
+const OPENCLAW_MANAGED_WHATSAPP_SECRET_ENV = "CLAWDI_WHATSAPP_LINK_TOKEN";
 
 interface ManagedChannelLink {
 	account: RuntimeChannelAccount;
@@ -141,12 +156,21 @@ function applyRuntimeChannelProjection(
 ): RuntimeManifest {
 	void paths;
 	assertSingleManagedLinkPerProvider(links);
+	const whatsappLink = singleLinkForProvider(links, "whatsapp");
+	const whatsappProjection = whatsappLink
+		? buildManagedWhatsAppAdapterProjection({
+				accountId: whatsappLink.account.id,
+				accountKey: whatsappLink.accountKey,
+				relayUrl: manifest.controlPlane.apiUrl,
+				linkTokenSecretRef: whatsappLink.secretRef,
+			})
+		: null;
 	const managedProfiles = buildManagedChannelEgressProfiles(links, manifest.controlPlane.apiUrl);
 	const projected: RuntimeManifest = {
 		...manifest,
 		projection: {
 			...(manifest.projection ?? {}),
-			channels: buildOpenClawChannelsProjection(links),
+			channels: buildOpenClawChannelsProjection(links, whatsappProjection),
 			// Runtime credentials may still appear in an older control-plane response.
 			// Managed WhatsApp never consumes or projects provider/socket material.
 			channelCredentials: [],
@@ -154,12 +178,16 @@ function applyRuntimeChannelProjection(
 		egressProfiles: mergeEgressProfiles(manifest.egressProfiles, managedProfiles),
 	};
 	return applyHermesRuntimeChannelSettings(
-		applyOpenClawRuntimeChannelSettings(projected, links),
+		applyOpenClawRuntimeChannelSettings(projected, links, whatsappProjection),
 		links,
+		whatsappProjection,
 	);
 }
 
-function buildOpenClawChannelsProjection(links: ManagedChannelLink[]): Record<string, unknown> {
+function buildOpenClawChannelsProjection(
+	links: ManagedChannelLink[],
+	whatsappProjection: ManagedWhatsAppAdapterProjection | null,
+): Record<string, unknown> {
 	const channels: Record<string, unknown> = {};
 	for (const link of links) {
 		const provider = link.account.provider;
@@ -187,6 +215,10 @@ function buildOpenClawChannelsProjection(links: ManagedChannelLink[]): Record<st
 				allowFrom: ["*"],
 				guilds: { "*": { requireMention: false, users: ["*"] } },
 			};
+			continue;
+		}
+		if (provider === "whatsapp" && whatsappProjection) {
+			channels.whatsapp = whatsappProjection.openclaw.channel;
 		}
 	}
 	return channels;
@@ -195,17 +227,26 @@ function buildOpenClawChannelsProjection(links: ManagedChannelLink[]): Record<st
 function applyOpenClawRuntimeChannelSettings(
 	manifest: RuntimeManifest,
 	links: ManagedChannelLink[],
+	whatsappProjection: ManagedWhatsAppAdapterProjection | null,
 ): RuntimeManifest {
 	const openclaw = manifest.runtimes.openclaw;
 	if (!openclaw?.enabled) return manifest;
 
 	const existingRun = openclaw.run ?? { env: {}, prependPath: [] };
+	const env = omitKeys(existingRun.env ?? {}, OPENCLAW_MANAGED_WHATSAPP_ENV);
 	const secretEnv = omitOpenClawManagedChannelSecretEnv(existingRun.secretEnv ?? {});
 	for (const link of links) {
-		if (link.account.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
+		if (link.account.provider === "whatsapp") continue;
 		secretEnv[openClawChannelTokenEnvName(link)] = link.placeholderSecretRef;
 	}
-	if (!openclaw.run && Object.keys(secretEnv).length === 0) return manifest;
+	delete secretEnv[OPENCLAW_MANAGED_WHATSAPP_SECRET_ENV];
+	if (whatsappProjection) {
+		Object.assign(env, whatsappProjection.openclaw.env);
+		Object.assign(secretEnv, whatsappProjection.openclaw.secretEnv);
+	}
+	if (!openclaw.run && Object.keys(env).length === 0 && Object.keys(secretEnv).length === 0) {
+		return manifest;
+	}
 
 	return {
 		...manifest,
@@ -213,7 +254,7 @@ function applyOpenClawRuntimeChannelSettings(
 			...manifest.runtimes,
 			openclaw: {
 				...openclaw,
-				run: { ...existingRun, secretEnv },
+				run: { ...existingRun, env, secretEnv },
 			},
 		},
 	};
@@ -222,6 +263,7 @@ function applyOpenClawRuntimeChannelSettings(
 function applyHermesRuntimeChannelSettings(
 	manifest: RuntimeManifest,
 	links: ManagedChannelLink[],
+	whatsappProjection: ManagedWhatsAppAdapterProjection | null,
 ): RuntimeManifest {
 	const hermes = manifest.runtimes.hermes;
 	if (!hermes?.enabled) return manifest;
@@ -240,6 +282,10 @@ function applyHermesRuntimeChannelSettings(
 	if (discord) {
 		env.DISCORD_ALLOW_ALL_USERS = "true";
 		secretEnv.DISCORD_BOT_TOKEN = discord.placeholderSecretRef;
+	}
+	if (whatsappProjection) {
+		Object.assign(env, whatsappProjection.hermes.env);
+		Object.assign(secretEnv, whatsappProjection.hermes.secretEnv);
 	}
 
 	return {
@@ -485,6 +531,7 @@ function channelSecretValues(links: ManagedChannelLink[]): Record<string, string
 	for (const link of links) {
 		if (link.account.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		values[link.secretRef] = link.agentToken;
+		if (link.account.provider === "whatsapp") continue;
 		values[link.placeholderSecretRef] = channelPlaceholderToken(
 			link.account.provider,
 			link.accountKey,

@@ -85,6 +85,73 @@ export function mergeHermesChannelConfig(configPath: string, patch: Record<strin
 	);
 }
 
+export function mergeHermesManagedPlugin(
+	configPath: string,
+	pluginId: string,
+	enabled: boolean,
+): void {
+	writeHermesConfig(
+		configPath,
+		renderHermesManagedPlugin(readHermesConfigContent(configPath), pluginId, enabled),
+	);
+}
+
+export function renderHermesManagedPlugin(
+	content: string,
+	pluginId: string,
+	enabled: boolean,
+): string {
+	if (!/^[a-z0-9][a-z0-9._-]{0,63}$/u.test(pluginId)) {
+		throw new Error("Hermes managed plugin ID is invalid.");
+	}
+	const document = parseHermesConfig(content, "Hermes config");
+	const root = document.toJS();
+	if (isPlainRecord(root) && root.plugins !== undefined && !isPlainRecord(root.plugins)) {
+		throw new Error("Hermes config field plugins must be a YAML object.");
+	}
+	const plugins = isPlainRecord(root) && isPlainRecord(root.plugins) ? root.plugins : {};
+	const currentEnabled = hermesPluginList(plugins.enabled, "enabled");
+	const currentDisabled = hermesPluginList(plugins.disabled, "disabled");
+	const nextEnabled = new Set(currentEnabled);
+	const nextDisabled = new Set(currentDisabled);
+	if (enabled) {
+		nextEnabled.add(pluginId);
+		nextDisabled.delete(pluginId);
+	} else {
+		nextEnabled.delete(pluginId);
+	}
+	if (!isPlainRecord(root) || !isPlainRecord(root.plugins)) {
+		document.set("plugins", document.createNode({}));
+	}
+	setHermesPluginList(document, "enabled", [...nextEnabled].sort());
+	setHermesPluginList(document, "disabled", [...nextDisabled].sort());
+	const updated = document.toJS();
+	if (isPlainRecord(updated) && isPlainRecord(updated.plugins)) {
+		if (Object.keys(updated.plugins).length === 0) document.delete("plugins");
+	}
+	return String(document);
+}
+
+function hermesPluginList(value: unknown, field: string): string[] {
+	if (value === undefined) return [];
+	if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+		throw new Error(`Hermes config field plugins.${field} must be a string array.`);
+	}
+	return value;
+}
+
+function setHermesPluginList(
+	document: ReturnType<typeof parseDocument>,
+	field: string,
+	values: string[],
+): void {
+	if (values.length === 0) {
+		document.deleteIn(["plugins", field]);
+		return;
+	}
+	document.setIn(["plugins", field], values);
+}
+
 export function renderHermesChannelConfig(content: string, patch: Record<string, unknown>): string {
 	const document = parseHermesConfig(content, "Hermes config");
 	for (const [platform, config] of Object.entries(patch)) {
@@ -103,7 +170,9 @@ export function renderHermesChannelConfig(content: string, patch: Record<string,
 				applyHermesChannelNestedPatch(document, [platform], config);
 			} else {
 				for (const [nestedPlatform, nestedConfig] of Object.entries(config)) {
-					if (nestedPlatform === "telegram" && isPlainRecord(nestedConfig)) {
+					if (nestedConfig === null) {
+						document.deleteIn([platform, nestedPlatform]);
+					} else if (nestedPlatform === "telegram" && isPlainRecord(nestedConfig)) {
 						applyHermesChannelNestedPatch(document, [platform, nestedPlatform], nestedConfig);
 						const updated = valueAtPath(document.toJS(), [platform, nestedPlatform]);
 						if (isPlainRecord(updated) && Object.keys(updated).length === 0) {

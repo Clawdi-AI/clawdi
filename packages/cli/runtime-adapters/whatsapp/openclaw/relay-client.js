@@ -72,9 +72,13 @@ export function createRelayClient({ relayUrl, accountId, linkToken, fetchImpl = 
 	if (
 		(relay.protocol !== "https:" && relay.protocol !== "http:") ||
 		relay.username ||
-		relay.password
+		relay.password ||
+		relay.search ||
+		relay.hash
 	) {
-		throw new Error("Clawdi WhatsApp relay URL must be an HTTP URL without credentials");
+		throw new Error(
+			"Clawdi WhatsApp relay URL must be an HTTP URL without credentials, query, or fragment",
+		);
 	}
 	const normalizedRelayUrl = relay.toString();
 	const normalizedAccountId = requiredString(accountId, "account ID");
@@ -172,7 +176,13 @@ export function createRelayClient({ relayUrl, accountId, linkToken, fetchImpl = 
 }
 
 async function readBoundedResponseBody(response, maxBytes) {
-	if (!response.body) return Buffer.from(await response.arrayBuffer());
+	if (!response.body) {
+		const buffer = Buffer.from(await response.arrayBuffer());
+		if (buffer.length > maxBytes) {
+			throw new Error("WhatsApp media payload exceeds 8 MiB");
+		}
+		return buffer;
+	}
 	const reader = response.body.getReader();
 	const chunks = [];
 	let total = 0;
@@ -483,6 +493,7 @@ export async function processDurableInboxEvent({
 	signal,
 	dispatch,
 	finalize,
+	inflight,
 }) {
 	const accepted = await journal.accept(event.id, event, { receivedAt: Date.now() });
 	if (accepted.kind === "completed") {
@@ -490,15 +501,20 @@ export async function processDurableInboxEvent({
 		await client.acknowledge(event.id, signal);
 		return "already_completed";
 	}
-	if (accepted.kind === "pending") return "already_pending";
-	return await replayDurableInboxEvent({
-		journal,
-		client,
-		event: accepted.record.payload,
-		signal,
-		dispatch,
-		finalize,
-	});
+	if (inflight?.has(event.id)) return "already_pending";
+	inflight?.add(event.id);
+	try {
+		return await replayDurableInboxEvent({
+			journal,
+			client,
+			event: accepted.record.payload,
+			signal,
+			dispatch,
+			finalize,
+		});
+	} finally {
+		inflight?.delete(event.id);
+	}
 }
 
 export async function replayDurableInboxEvent({
