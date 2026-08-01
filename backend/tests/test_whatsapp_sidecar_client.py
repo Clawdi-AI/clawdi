@@ -19,6 +19,7 @@ from app.services.whatsapp_sidecar_client import (
 async def test_sidecar_client_matches_integrated_http_contract_fixtures_exactly():
     account_id = uuid4()
     seen: list[tuple[str, str]] = []
+    recover_requests: list[dict[str, object]] = []
     operation = {
         "schemaVersion": "clawdi.whatsapp.operation.v1",
         "operationId": "op-1",
@@ -103,7 +104,9 @@ async def test_sidecar_client_matches_integrated_http_contract_fixtures_exactly(
                 request=request,
             )
         if request.url.path == "/v1/recover":
-            assert json.loads(request.content) == {"acceptVersionChange": True}
+            recovery = json.loads(request.content)
+            assert isinstance(recovery, dict)
+            recover_requests.append(recovery)
             return httpx.Response(200, json={"ok": True}, request=request)
         if request.url.path == "/v1/operations":
             assert json.loads(request.content) == operation
@@ -141,6 +144,7 @@ async def test_sidecar_client_matches_integrated_http_contract_fixtures_exactly(
         cancelled = await client.pairing_cancel()
         logged_out = await client.pairing_logout()
         await client.recover(accept_version_change=True)
+        await client.recover(accept_version_change=False, reset_logged_out=True)
         result = await client.execute_operation(operation, expected_operation_id="op-1")
         media = await client.fetch_media(f"media_{'a' * 43}")
 
@@ -162,6 +166,10 @@ async def test_sidecar_client_matches_integrated_http_contract_fixtures_exactly(
     assert "CODE-SECRET" not in repr(code)
     assert cancelled.status == "stopped"
     assert logged_out.status == "stopped"
+    assert recover_requests == [
+        {"acceptVersionChange": True, "resetLoggedOut": False},
+        {"acceptVersionChange": False, "resetLoggedOut": True},
+    ]
     assert result.metadata() == {
         "transport": "whatsapp_sidecar_v1",
         "operationId": "op-1",
@@ -177,6 +185,7 @@ async def test_sidecar_client_matches_integrated_http_contract_fixtures_exactly(
         ("POST", "/v1/pairing/code"),
         ("POST", "/v1/pairing/cancel"),
         ("POST", "/v1/pairing/logout"),
+        ("POST", "/v1/recover"),
         ("POST", "/v1/recover"),
         ("POST", "/v1/operations"),
         ("GET", f"/v1/media/media_{'a' * 43}"),
@@ -267,6 +276,49 @@ async def test_sidecar_client_maps_operation_results_and_redacts_rejections():
     assert rejected.value.code == "request_rejected"
     assert "top-secret-token" not in repr(config)
     assert "top-secret-token" not in str(rejected.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("http_status", "operation_status"),
+    [
+        (200, "failed"),
+        (200, "ambiguous"),
+        (409, "completed"),
+        (409, "failed"),
+        (422, "completed"),
+        (422, "ambiguous"),
+    ],
+)
+async def test_sidecar_client_rejects_http_operation_outcome_mismatches(
+    http_status: int,
+    operation_status: str,
+):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            http_status,
+            json={
+                "operationId": "op-inconsistent",
+                "status": operation_status,
+            },
+            request=request,
+        )
+
+    config = WhatsAppSidecarConfig(
+        account_id=uuid4(),
+        base_url="http://sidecar.local",
+        api_token="token",
+    )
+    async with httpx.AsyncClient(
+        base_url=config.base_url,
+        transport=httpx.MockTransport(handler),
+    ) as http_client:
+        client = WhatsAppSidecarClient(config, client=http_client)
+        with pytest.raises(
+            WhatsAppSidecarProtocolError,
+            match="HTTP status does not match outcome",
+        ):
+            await client.execute_operation({}, expected_operation_id="op-inconsistent")
 
 
 @pytest.mark.asyncio

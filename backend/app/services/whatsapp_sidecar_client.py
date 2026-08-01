@@ -248,8 +248,20 @@ class WhatsAppSidecarClient:
         raw_error = result_payload.get("error")
         if not isinstance(operation_id, str) or operation_id != expected_operation_id:
             raise WhatsAppSidecarProtocolError("sidecar changed operationId")
-        if status_value not in {"completed", "failed", "ambiguous"}:
+        if not isinstance(status_value, str) or status_value not in {
+            "completed",
+            "failed",
+            "ambiguous",
+        }:
             raise WhatsAppSidecarProtocolError("invalid operation response")
+        operation_status = cast(WhatsAppOperationStatus, status_value)
+        expected_http_status = {
+            "completed": 200,
+            "failed": 422,
+            "ambiguous": 409,
+        }[operation_status]
+        if response.status_code != expected_http_status:
+            raise WhatsAppSidecarProtocolError("operation HTTP status does not match outcome")
         if message_id is not None and (
             not isinstance(message_id, str) or not 0 < len(message_id) <= 300
         ):
@@ -260,7 +272,7 @@ class WhatsAppSidecarClient:
         self._last_connected = True
         return WhatsAppSidecarOperationResult(
             operation_id=operation_id,
-            status=cast(WhatsAppOperationStatus, status_value),
+            status=operation_status,
             message_id=message_id,
             error_code=error_code,
         )
@@ -310,11 +322,19 @@ class WhatsAppSidecarClient:
     async def pairing_logout(self) -> WhatsAppSidecarPairingStatus:
         return _validated_pairing_status(await self._json_request("POST", "/v1/pairing/logout"))
 
-    async def recover(self, *, accept_version_change: bool) -> None:
+    async def recover(
+        self,
+        *,
+        accept_version_change: bool,
+        reset_logged_out: bool = False,
+    ) -> None:
         payload = await self._json_request(
             "POST",
             "/v1/recover",
-            json={"acceptVersionChange": accept_version_change},
+            json={
+                "acceptVersionChange": accept_version_change,
+                "resetLoggedOut": reset_logged_out,
+            },
         )
         if payload != {"ok": True}:
             raise WhatsAppSidecarProtocolError("invalid recovery response")

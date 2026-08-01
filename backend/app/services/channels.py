@@ -126,7 +126,7 @@ HERMES_AGENT_TYPE = "hermes"
 OPENCLAW_AGENT_TYPE = "openclaw"
 HOSTED_RUNTIME_AGENT_TYPES = frozenset({HERMES_AGENT_TYPE, OPENCLAW_AGENT_TYPE})
 HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS = frozenset(
-    {CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD}
+    {CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD, CHANNEL_PROVIDER_WHATSAPP}
 )
 STRICT_V2_AGENT_LINK_DETAIL = "Only Cloud Agents can be linked or paired with channels."
 WHATSAPP_COMING_SOON_DETAIL = (
@@ -138,6 +138,7 @@ def hosted_agent_provider_link_limit_detail(provider: str, *, duplicate: bool = 
     label = {
         CHANNEL_PROVIDER_TELEGRAM: "Telegram",
         CHANNEL_PROVIDER_DISCORD: "Discord",
+        CHANNEL_PROVIDER_WHATSAPP: "WhatsApp",
     }.get(provider, provider.title())
     if duplicate:
         return (
@@ -1133,6 +1134,12 @@ async def get_active_channel_account(db: AsyncSession, *, account_id: UUID) -> C
 
 
 async def archive_channel_account(db: AsyncSession, *, account: ChannelAccount) -> None:
+    if account.provider == CHANNEL_PROVIDER_WHATSAPP:
+        from app.services.whatsapp_sidecar_registry import (
+            require_whatsapp_sidecar_logout_for_archive,
+        )
+
+        await require_whatsapp_sidecar_logout_for_archive(account.id)
     now = datetime.now(UTC)
     account.archived_at = now
     account.status = CHANNEL_STATUS_DISABLED
@@ -3101,13 +3108,54 @@ async def deliver_channel_delivery(
                     ),
                 )
         message = await _delivery_message(db, delivery)
-        await _lock_active_delivery_binding(db, delivery=delivery, message=message)
-        provider_message_id, provider_response = await send_provider_outbound_payload(
-            account=account,
-            external_chat_id=message.external_chat_id,
-            text=message.text or "",
-            provider_payload=_channel_message_provider_payload(message),
-        )
+        binding = await _lock_active_delivery_binding(db, delivery=delivery, message=message)
+        if account.provider == CHANNEL_PROVIDER_WHATSAPP:
+            if binding is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="WhatsApp delivery requires an active binding",
+                )
+            try:
+                from app.services.whatsapp_application import (
+                    execute_whatsapp_delivery_operation,
+                )
+
+                provider_message_id, provider_response = await execute_whatsapp_delivery_operation(
+                    account=account,
+                    binding=binding,
+                    message=message,
+                    delivery=delivery,
+                )
+            except Exception as exc:
+                from app.services.whatsapp_sidecar_client import (
+                    WhatsAppSidecarProtocolError,
+                    WhatsAppSidecarRejectedError,
+                    WhatsAppSidecarUnavailableError,
+                )
+
+                if isinstance(exc, WhatsAppSidecarRejectedError):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        detail=f"WhatsApp sidecar rejected delivery: {exc.code}",
+                    ) from exc
+                if isinstance(exc, WhatsAppSidecarProtocolError):
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail="WhatsApp sidecar returned an invalid response",
+                    ) from exc
+                if isinstance(exc, WhatsAppSidecarUnavailableError):
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="WhatsApp sidecar is unavailable",
+                    ) from exc
+                raise
+        else:
+            provider_message_id, provider_response = await send_provider_outbound_payload(
+                account=account,
+                external_chat_id=message.external_chat_id,
+                text=message.text or "",
+                provider_payload=_channel_message_provider_payload(message),
+            )
     except HTTPException as exc:
         error = _http_exception_detail(exc)
         if _is_delivery_link_lock_contention(exc, error=error):

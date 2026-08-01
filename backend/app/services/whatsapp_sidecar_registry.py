@@ -8,6 +8,8 @@ from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID
 
+from fastapi import HTTPException, status
+
 from app.services.whatsapp_sidecar_client import (
     DEFAULT_MAX_MEDIA_DOWNLOAD_BYTES,
     WhatsAppSidecarClient,
@@ -106,6 +108,37 @@ def whatsapp_sidecar_status(account_id: UUID) -> dict[str, bool | str | None]:
         "configured": client is not None,
         "connected": client.connected if client is not None else None,
     }
+
+
+async def require_whatsapp_sidecar_logout_for_archive(account_id: UUID) -> None:
+    """Confirm provider logout before destructive account archival.
+
+    A configured client must either already be in the explicit
+    stopped/unregistered state or confirm that state after logout. The current
+    durable account model cannot prove that an unregistered client was never
+    linked, so missing lifecycle authority fails closed.
+    """
+    client = _ACTIVE_CLIENTS.get(account_id)
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WhatsApp provider logout could not be confirmed",
+        )
+    try:
+        current = await client.pairing_status()
+        if current.status == "stopped" and not current.registered:
+            return
+        logged_out = await client.pairing_logout()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WhatsApp provider logout could not be confirmed",
+        ) from exc
+    if logged_out.status != "stopped" or logged_out.registered:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WhatsApp provider logout could not be confirmed",
+        )
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
