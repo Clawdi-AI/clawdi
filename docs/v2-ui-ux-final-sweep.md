@@ -80,7 +80,8 @@ Every required user intent → is there a complete, discoverable path?
 | Stop / start / restart / delete an agent | Yes | Yes | `20-...-settings`; `deployment-status.ts:139-188` |
 | Open a real terminal shell | Yes | Yes | `20-...-terminal`; `hosted-terminal-panel.tsx` |
 | Link a native channel to a deployed agent | Yes | Yes | `20-...-channels`; agent **Channel Links** tab |
-| Connect a new bot (Telegram/Discord/WhatsApp) | Yes | Yes | `32-channels-connect-dialog` |
+| Connect a new bot (Telegram/Discord) | Yes | Yes | `32-channels-connect-dialog` |
+| Connect WhatsApp | No (foundation only) | No | `WHATSAPP_LINKING_READY=false`; readiness and live drills remain incomplete. |
 | Create / edit / delete an AI provider | Yes | Yes | `41-aiproviders-populated`, `42-...-add-dialog` |
 | Rebind agent BYOK↔managed | Yes (see F2) | Yes | `21-agent-hermes-ai`; `hosted-agent-detail.tsx:1226-1285` |
 | Top up wallet | Yes | Yes | `50-wallet`; inline Stripe Elements |

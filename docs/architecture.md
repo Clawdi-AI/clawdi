@@ -248,7 +248,7 @@ behind `POST /v1/mcp/clawdi`; neither is a user-manageable MCP inventory row.
 Native Channels are owned by the FastAPI backend and PostgreSQL. They support
 Telegram, Discord, WhatsApp, and iMessage/BlueBubbles provider families through
 channel accounts, bot-agent links, pair codes, bindings, message rows,
-delivery outbox rows, credentials, and provider-specific adapters.
+delivery outbox rows, account secrets, and provider-specific adapters.
 
 Channels bind external bots to Agents, not Projects. A conversation session
 routes to exactly one active bot-agent link. Public bots are shared provider
@@ -257,8 +257,11 @@ deliveries, and agent SDK tokens remain user-owned.
 
 The product model is in
 [`designs/native-channels-product-model.md`](designs/native-channels-product-model.md).
-The WhatsApp Baileys sidecar is a protocol adapter only; routing and persistence
-stay in FastAPI/PostgreSQL.
+The WhatsApp Baileys sidecar is the sole socket and auth/Signal-state owner for
+its physical account. FastAPI/PostgreSQL retain routing and product
+persistence; managed Agent adapters receive link capabilities but no WhatsApp
+provider credentials. WhatsApp rollout remains disabled until the documented
+readiness matrix and live drill are complete.
 
 ## AI Providers
 
@@ -303,7 +306,7 @@ Core tables verified under `backend/app/models/`:
 | `vaults`, `vault_project_attachments`, `vault_project_slug_aliases`, `vault_items`, `vault_credential_profiles` | Account-owned vaults, Project access attachments, compatibility slug aliases, encrypted secret fields, encrypted local auth profiles. |
 | `memories` | Built-in memory text, tags, source, metadata, access counters, and optional embedding vector. |
 | `ai_providers`, `ai_provider_auth_payloads` | Account-global provider metadata and encrypted provider auth payloads. |
-| `channel_accounts`, `channel_bot_agent_links`, `channel_secrets`, `channel_bindings`, `channel_binding_aliases`, `channel_pair_codes`, `channel_messages`, `channel_deliveries`, `channel_agent_credentials`, `channel_whatsapp_auth_certs`, `channel_debug_events`, `channel_attachment_uploads`, `channel_scheduled_messages`, `channel_agent_references` | Native channel control state, routing, inbox/outbox, credentials, debug and provider-specific state. |
+| `channel_accounts`, `channel_bot_agent_links`, `channel_secrets`, `channel_bindings`, `channel_binding_aliases`, `channel_pair_codes`, `channel_messages`, `channel_deliveries`, `channel_debug_events`, `channel_attachment_uploads`, `channel_scheduled_messages`, `channel_agent_references` | Native channel control state, routing, inbox/outbox, account secrets, debug and provider-specific state. |
 | `control_plane_audit_events` | Audit events for control-plane-facing operations exposed by this backend. |
 | `device_authorizations` | CLI device authorization flow state. |
 

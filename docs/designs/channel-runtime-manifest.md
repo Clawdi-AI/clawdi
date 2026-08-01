@@ -1,7 +1,7 @@
 # Channel Runtime Manifest
 
-Status: implemented baseline
-Date: 2026-06-08
+Status: implemented for enabled providers; WhatsApp rollout disabled
+Date: 2026-08-01
 
 ## Current State
 
@@ -19,18 +19,15 @@ What exists today:
   the runtime reconciler projects it into Hermes or OpenClaw native config.
 - `clawdi runtime plan/status/apply` reads `clawdi.runtime.yaml`, creates or
   reuses private channel accounts, links accessible bots to agents, emits pair
-  codes, and writes dotenv/WhatsApp Baileys runtime outputs with private file
-  permissions.
+  codes, and writes supported runtime outputs with private file permissions.
 
 Still intentionally out of scope for this baseline:
 
 - Admin/public bot publishing from the CLI.
 - Provider webhook ownership, pair-code claiming, bindings, command replies,
   provider protocol state, and worker queues. Those remain backend-owned.
-- Runtime output adapters beyond dotenv and the implemented WhatsApp Baileys
-  credential output.
-- OpenClaw/Hermes target-native adapters. They should be added as explicit
-  future projections instead of overloading the dotenv baseline.
+- WhatsApp rollout. Its managed OpenClaw/Hermes application adapters are a
+  disabled foundation until the readiness matrix and live drill are complete.
 
 ## Decision
 
@@ -51,7 +48,7 @@ source of truth is Clawdi-native channel state:
 - `channel_bot_agent_links`
 - `channel_pair_codes`
 - `channel_bindings`
-- provider-specific credential rows such as WhatsApp tenant credentials
+- provider-specific account secrets and durable message/delivery state
 
 ## Requirements
 
@@ -67,6 +64,10 @@ source of truth is Clawdi-native channel state:
   `CLAWDI_HOME`; hosted-runtime tests should prefer an isolated Docker
   container home instead of the developer's host `~/.clawdi`.
 - Each bot-agent link owns its own agent SDK token.
+- OpenClaw and Hermes allow at most one active WhatsApp link per Agent.
+- WhatsApp runtime output contains only a Clawdi link capability and managed
+  adapter configuration. It never contains provider auth state, Signal keys,
+  pairing secrets, or a provider socket URL.
 - Provider secrets are read from env or a future secret reference, never stored
   inline in the manifest.
 - Agent SDK tokens are written only to explicit outputs with private file mode.
@@ -164,7 +165,6 @@ Apply is idempotent except for explicitly requested one-time values:
 - New link token issuance.
 - Token rotation.
 - New pair code issuance.
-- WhatsApp tenant credential minting when explicitly requested.
 
 ## One-Time Token Policy
 
@@ -191,7 +191,7 @@ Store only non-secret apply state under:
 
 This state can cache account ids, link ids, output paths, and last-applied
 manifest refs. It must not cache provider tokens, agent SDK tokens, pair codes,
-or WhatsApp auth private keys.
+or provider auth private keys.
 
 ## Runtime Projections
 
@@ -215,12 +215,8 @@ DISCORD_BOT_API_BASE_URL=https://channels.example.test/v1/channels/discord
 DISCORD_GATEWAY_URL=wss://channels.example.test/v1/channels/discord/gateway
 ```
 
-WhatsApp Graph-compatible runtime:
-
-```dotenv
-WHATSAPP_ACCESS_TOKEN=<agent-sdk-token>
-WHATSAPP_GRAPH_API_BASE_URL=https://channels.example.test/v1/channels/whatsapp/graph
-```
+WhatsApp has no dotenv-compatible provider facade. It requires the managed
+application adapter described below.
 
 iMessage / BlueBubbles-compatible runtime:
 
@@ -263,7 +259,7 @@ for channel accounts:
 
 - Telegram account token and API root.
 - Discord token, REST base URL, and Gateway URL.
-- WhatsApp websocket URL and credential path.
+- WhatsApp managed application relay account and link capability.
 - iMessage server URL and password.
 
 The projection must allow multiple accounts per provider. Env names are still
@@ -309,43 +305,24 @@ shape. Multiple bots for the same provider should require either multiple
 Hermes profiles or a Hermes-side multi-account config before the adapter
 claims full multi-bot support.
 
-### WhatsApp Baileys Projection
+### WhatsApp Managed Application Adapter
 
-WhatsApp needs more than env:
+The WhatsApp projection installs a managed adapter under the default OpenClaw
+Agent or default Hermes profile. The adapter registers the `whatsapp`
+application channel/platform and disables the stock upstream WhatsApp
+connector. Its only remote authority is the Clawdi relay authenticated by the
+bot-agent link capability.
 
-```yaml
-channels:
-  - ref: shared-whatsapp
-    provider: whatsapp
-    account:
-      id: 00000000-0000-0000-0000-000000000303
-    links:
-      - ref: wa-main
-        agent_id: 00000000-0000-0000-0000-000000000101
-        runtime:
-          projection: dotenv
-          token_env: WHATSAPP_ACCESS_TOKEN
-        whatsapp:
-          baileys_credentials_dir: .clawdi/whatsapp/default
-```
+The adapter must not start Baileys, create a credential directory, project a
+QR session, or connect to a WhatsApp WebSocket. The account's one Baileys
+sidecar owns all of that provider state. Chats and groups arrive as
+link-filtered relay events and retain `ChannelBinding` identity in the runtime
+session key.
 
-Apply should call:
-
-- `POST /v1/channels/whatsapp/{account_id}/tenant-creds` to mint or reuse a
-  link-scoped credential.
-- `GET /v1/channels/whatsapp/{account_id}/auth-cert` when the runtime needs
-  shared account public auth material.
-
-It should write the Baileys auth state into the requested credential directory
-with private permissions and emit:
-
-```dotenv
-WA_WEBSOCKET_URL=wss://channels.example.test/v1/channels/whatsapp/<account-id>/baileys
-CLAWDI_WHATSAPP_AUTH_DIR=.clawdi/whatsapp/default
-```
-
-This projection is the Clawdi-native WhatsApp runtime contract. It must not
-emit old router env names.
+The projection is unavailable while the WhatsApp readiness gates are false.
+Offline bundle tests are necessary but do not enable rollout. See
+[`whatsapp-baileys-sidecar-runtime.md`](whatsapp-baileys-sidecar-runtime.md)
+for the capability matrix and live drill.
 
 ## CLI Commands
 
@@ -380,9 +357,9 @@ The CLI should use only existing user APIs:
 - `POST /v1/channels/{account_id}/agent-links/{link_id}/token`
 - `POST /v1/channels/{account_id}/pair-codes`
 - `POST /v1/channels/{account_id}/commands/sync`
-- `POST /v1/channels/whatsapp/{account_id}/tenant-creds`
-- `GET /v1/channels/whatsapp/{account_id}/tenant-creds`
-- `GET /v1/channels/whatsapp/{account_id}/auth-cert`
+
+Provider-specific application relay calls are made by the installed managed
+adapter, not by manifest reconciliation.
 
 No admin endpoint is needed for user runtime setup.
 
@@ -403,16 +380,17 @@ webhooks, or recreate the legacy channel bridge tenant router.
 | `TELEGRAM_BOT_API_BASE_URL` | Runtime projection output. |
 | `DISCORD_BOT_API_BASE_URL` | Runtime projection output. |
 | `DISCORD_GATEWAY_URL` | Runtime projection output. |
-| `WA_WEBSOCKET_URL` | WhatsApp Baileys projection output. |
+| WhatsApp provider env/auth files | No compatibility output; use the managed application adapter. |
 | `BLUEBUBBLES_SERVER_URL` / `BLUEBUBBLES_PASSWORD` | iMessage projection output. |
 
 ## Endpoint Security Boundary
 
 The runtime manifest describes agent-facing configuration: SDK tokens,
-pair-code setup, dotenv projection, and WhatsApp Baileys credential files. It
-must not expose backend provider egress knobs such as Discord REST/Gateway
-base URLs, WhatsApp Graph API base URLs, or iMessage server URLs as ordinary
-runtime fields.
+pair-code setup, dotenv projection for compatible providers, and managed
+adapter configuration. It must not expose backend provider egress knobs such
+as Discord REST/Gateway base URLs or iMessage server URLs as ordinary runtime
+fields. WhatsApp additionally forbids provider endpoint, token, and auth-state
+projection.
 
 Provider endpoint overrides live on channel account config and are validated by
 the backend when accounts are created or updated, then again before each
@@ -424,9 +402,9 @@ boundary.
 
 - Whether `clawdi run` should automatically load `outputs.dotenv`, or whether
   users should pass `--env-file .env.clawdi.channels` explicitly.
-- Exact target-native OpenClaw and Hermes config merge shape.
-- Whether WhatsApp tenant credential reuse needs a stable manifest-local ref
-  on the backend to avoid minting parallel credentials.
+- Reproducible OpenClaw and Hermes runtime artifact versions and digests.
+- A public Hermes processing-complete acknowledgement seam for restart-safe
+  receive acknowledgement.
 - Whether the backend should expose a user API to update private channel
   account config after creation. Today the manifest can create or reuse private
   bots, but not reconcile changed provider config without deletion.
@@ -438,8 +416,8 @@ boundary.
 3. Implement idempotent account and link reconciliation through user APIs.
 4. Implement dotenv projection with private atomic writes.
 5. Implement explicit token rotation flags and missing-token warnings.
-6. Add WhatsApp tenant credential materialization.
-7. Add OpenClaw and Hermes target-native adapters.
+6. Install exact, digest-verified managed OpenClaw and Hermes adapters.
+7. Keep WhatsApp projection gated until offline contracts and live drills pass.
 8. Add CLI tests proving:
    - no admin endpoint is called,
    - private bot create/reuse is idempotent,
@@ -447,5 +425,6 @@ boundary.
    - existing one-time tokens are not silently rotated,
    - multiple bots can link to one agent with distinct token env names,
    - one bot can link to multiple agents,
-   - WhatsApp writes private credential files,
+   - WhatsApp writes no provider credential files or socket configuration,
+   - the managed adapter does not load the stock WhatsApp connector,
    - malformed manifests fail before API mutation.
