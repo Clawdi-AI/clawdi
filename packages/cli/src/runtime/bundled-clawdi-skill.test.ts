@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 const cliRoot = resolve(import.meta.dir, "../..");
 const genericSkill = readFileSync(resolve(cliRoot, "skills/clawdi/SKILL.md"), "utf-8");
 const hostedSkill = readFileSync(
-	resolve(cliRoot, "skills/hosted-versions/1/clawdi/SKILL.md"),
+	resolve(cliRoot, "skills/hosted-versions/2/clawdi/SKILL.md"),
 	"utf-8",
 );
 
@@ -86,11 +86,16 @@ describe("bundled Clawdi skill connector contract", () => {
 		}
 	});
 
-	it("keeps hosted-only guidance free of local Clawdi capabilities", () => {
-		expect(hostedSkill).not.toMatch(/\bMemory\b|memory_(?:search|add|extract)/i);
-		expect(hostedSkill).not.toMatch(
-			/\bVault\b|\bAI Provider\b|\bCLI\b|\bconfig(?:uration)?\b|\bsetup\b/i,
-		);
+	it("teaches hosted MCP capabilities without local-only operations", () => {
+		expect(hostedSkill).toContain("## Memory");
+		expect(hostedSkill).toContain("`memory_search`");
+		expect(hostedSkill).toContain("`memory_add`");
+		expect(hostedSkill).toContain("`memory_extract`");
+		expect(hostedSkill).toContain("## Projects");
+		expect(hostedSkill).toContain("`project_current`");
+		expect(hostedSkill).toContain("## Vault Metadata");
+		expect(hostedSkill).toContain("`vault_get`");
+		expect(hostedSkill).not.toMatch(/\bVault CLI\b|\bAI Provider CLI\b|\bsetup\b/i);
 		expect(hostedSkill).not.toMatch(/dashboard/i);
 		expect(genericSkill).toContain("## Memory");
 		expect(genericSkill).toContain("## Vault CLI");

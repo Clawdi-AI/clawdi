@@ -514,8 +514,8 @@ higher or lower exact version.
 Hosted bundled Skills have separate version authority. The trusted CLI catalog
 maps `(id, version)` to an immutable directory and SHA-256 digest;
 `clawdiCli.packageSpec` may locate installed CLI assets but never selects a
-Skill version. The current `clawdi` entry is version `1` at
-`skills/hosted-versions/1/clawdi/SKILL.md`, so the Skill file's direct parent
+Skill version. The current `clawdi` entry is version `2` at
+`skills/hosted-versions/2/clawdi/SKILL.md`, so the Skill file's direct parent
 still matches its frontmatter name. This entry is private platform desired
 state, not a public deployment field or a user Skill. Source paths, variants,
 content, digests, and package specs never cross the runtime wire. Unknown ids
