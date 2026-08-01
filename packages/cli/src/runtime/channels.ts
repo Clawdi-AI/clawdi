@@ -547,15 +547,26 @@ function buildManagedChannelEgressProfiles(
 				owner: "clawdi-native-channels",
 			});
 			profiles.push({
-				id: `native-${idSuffix}-gateway-passthrough`,
+				id: `native-${idSuffix}-gateway-managed`,
 				enabled: true,
-				kind: "passthrough",
+				kind: "websocket",
 				match: {
 					scheme: "wss",
 					host: "gateway.discord.gg",
 					pathPrefix: "/",
 					headers: {},
 					query: {},
+				},
+				rewrite: {
+					upstreamBaseUrl: `${toWebSocketUrl(baseUrl)}/v1/channels/discord/gateway`,
+					preservePath: false,
+					setHeaders: {
+						authorization: {
+							type: "secretRef",
+							secretRef: link.secretRef,
+							prefix: "Bearer ",
+						},
+					},
 				},
 				logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
 				priority: 201,

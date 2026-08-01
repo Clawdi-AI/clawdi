@@ -6828,7 +6828,7 @@ async def test_telegram_private_and_forum_thread_methods_preserve_message_thread
         chat_type="supergroup",
     )
     _reset_fake_provider_client({"ok": True, "result": True})
-    requests = (
+    json_requests = (
         (
             "sendMessageDraft",
             b'{ "chat_id": 42, "message_thread_id": 7, "draft_id": 1, "text": "draft" }\n',
@@ -6847,7 +6847,7 @@ async def test_telegram_private_and_forum_thread_methods_preserve_message_thread
         ),
     )
 
-    for method, body in requests:
+    for method, body in json_requests:
         response = await client.post(
             _telegram_bot_path(created, method),
             headers={**_telegram_agent_headers(created), "content-type": "application/json"},
@@ -6855,11 +6855,33 @@ async def test_telegram_private_and_forum_thread_methods_preserve_message_thread
         )
         assert response.status_code == 200
 
+    private_form = b"chat_id=42&message_thread_id=8&action=typing&future_hint=preserved"
+    form_response = await client.post(
+        _telegram_bot_path(created, "sendChatAction"),
+        headers={
+            **_telegram_agent_headers(created),
+            "content-type": "application/x-www-form-urlencoded",
+        },
+        content=private_form,
+    )
+    ordinary_private = b'{ "chat_id": 42, "action": "typing", "future_hint": true }\n'
+    ordinary_response = await client.post(
+        _telegram_bot_path(created, "sendChatAction"),
+        headers={**_telegram_agent_headers(created), "content-type": "application/json"},
+        content=ordinary_private,
+    )
+    assert form_response.status_code == 200
+    assert ordinary_response.status_code == 200
+
     assert [call["content"] for call in _FakeProviderClient.calls] == [
-        body for _method, body in requests
+        *[body for _method, body in json_requests],
+        private_form,
+        ordinary_private,
     ]
     assert [call["url"].rsplit("/", 1)[-1] for call in _FakeProviderClient.calls] == [
-        method for method, _body in requests
+        *[method for method, _body in json_requests],
+        "sendChatAction",
+        "sendChatAction",
     ]
     assert all(
         b"direct_messages_topic_id" not in call["content"] for call in _FakeProviderClient.calls
@@ -8264,6 +8286,216 @@ def test_discord_gateway_capability_accepts_runtime_placeholder(monkeypatch):
     resume_url = urlparse(ready["d"]["resume_gateway_url"])
     assert resume_url.path.startswith("/v1/channels/discord/gateway/")
     assert resume_url.path.rpartition("/")[2]
+
+
+def test_discord_gateway_link_authorization_accepts_runtime_placeholder(monkeypatch):
+    _install_discord_gateway_protocol_fakes(monkeypatch)
+    agent = _discord_gateway_protocol_agent()
+    placeholder = channel_runtime_placeholder_token(
+        CHANNEL_PROVIDER_DISCORD,
+        channel_runtime_account_key(agent.account.id),
+    )
+
+    with TestClient(app) as sync_client:
+        with sync_client.websocket_connect(
+            "/v1/channels/discord/gateway?v=10&encoding=json",
+            headers={"Authorization": "Bearer valid-discord-token"},
+        ) as websocket:
+            assert websocket.receive_json()["op"] == 10
+            websocket.send_json({"op": 2, "d": {"token": placeholder, "intents": 0}})
+            ready = websocket.receive_json()
+            session_id = ready["d"]["session_id"]
+            guild = websocket.receive_json()
+
+    assert ready["t"] == "READY"
+    assert guild["t"] == "GUILD_CREATE"
+    assert ready["d"]["resume_gateway_url"] == settings.channel_discord_gateway_url
+
+    # discord.py reconnects to the external URL, which the egress sidecar rewrites
+    # back to this canonical endpoint and authenticates with the same Link header.
+    with TestClient(app) as sync_client:
+        with sync_client.websocket_connect(
+            "/v1/channels/discord/gateway",
+            headers={"Authorization": "Bearer valid-discord-token"},
+        ) as websocket:
+            assert websocket.receive_json()["op"] == 10
+            websocket.send_json(
+                {
+                    "op": 6,
+                    "d": {"token": placeholder, "session_id": session_id, "seq": guild["s"]},
+                }
+            )
+            assert websocket.receive_json()["t"] == "RESUMED"
+
+
+def test_discord_gateway_link_authorization_rejects_wrong_placeholder(monkeypatch):
+    _install_discord_gateway_protocol_fakes(monkeypatch)
+
+    with TestClient(app) as sync_client:
+        with sync_client.websocket_connect(
+            "/v1/channels/discord/gateway?v=10&encoding=json",
+            headers={"Authorization": "Bearer valid-discord-token"},
+        ) as websocket:
+            assert websocket.receive_json()["op"] == 10
+            websocket.send_json({"op": 2, "d": {"token": "clawdi_wrong-placeholder", "intents": 0}})
+            with pytest.raises(WebSocketDisconnect) as raised:
+                websocket.receive_json()
+
+    assert raised.value.code == 4004
+
+
+@pytest.mark.asyncio
+async def test_discord_gateway_shared_account_link_bearers_are_isolated(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    second_channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _DISCORD_GATEWAY_SESSIONS.clear()
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-shared-gateway-isolation",
+                "provider_token": "discord-provider-token",
+                "config": _discord_ready_config(),
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    second_response = await client.post(
+        f"/v1/channels/{created['id']}/agent-links",
+        json={"agent_id": str(second_channel_agent.id)},
+    )
+    assert second_response.status_code == 201, second_response.text
+    second = second_response.json()
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    link_a = await db_session.get(ChannelBotAgentLink, UUID(created["agent_link_id"]))
+    link_b = await db_session.get(ChannelBotAgentLink, UUID(second["id"]))
+    assert account is not None and link_a is not None and link_b is not None
+    account.visibility = CHANNEL_VISIBILITY_PUBLIC
+    binding_a = ChannelBinding(
+        account_id=account.id,
+        bot_agent_link_id=link_a.id,
+        user_id=account.user_id,
+        external_chat_id="shared-gateway-channel-a",
+        external_chat_type="guild_text",
+        external_chat_name="shared-gateway-guild-a",
+    )
+    binding_b = ChannelBinding(
+        account_id=account.id,
+        bot_agent_link_id=link_b.id,
+        user_id=account.user_id,
+        external_chat_id="shared-gateway-channel-b",
+        external_chat_type="guild_text",
+        external_chat_name="shared-gateway-guild-b",
+    )
+    db_session.add_all([binding_a, binding_b])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            ChannelBindingAlias(
+                account_id=account.id,
+                bot_agent_link_id=link_a.id,
+                user_id=account.user_id,
+                binding_id=binding_a.id,
+                alias_kind="discord_channel",
+                alias_external_chat_id="shared-gateway-channel-a",
+            ),
+            ChannelBindingAlias(
+                account_id=account.id,
+                bot_agent_link_id=link_b.id,
+                user_id=account.user_id,
+                binding_id=binding_b.id,
+                alias_kind="discord_channel",
+                alias_external_chat_id="shared-gateway-channel-b",
+            ),
+        ]
+    )
+    await db_session.commit()
+    _install_discord_gateway_test_session_factory(monkeypatch)
+    placeholder = channel_runtime_placeholder_token(
+        CHANNEL_PROVIDER_DISCORD,
+        channel_runtime_account_key(account.id),
+    )
+
+    def identify(bearer: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        with TestClient(app) as sync_client:
+            with sync_client.websocket_connect(
+                "/v1/channels/discord/gateway?v=10&encoding=json",
+                headers={"Authorization": f"Bearer {bearer}"},
+            ) as websocket:
+                assert websocket.receive_json()["op"] == 10
+                websocket.send_json({"op": 2, "d": {"token": placeholder, "intents": 0}})
+                return websocket.receive_json(), websocket.receive_json()
+
+    ready_a, guild_a = identify(created["agent_token"])
+    ready_b, guild_b = identify(second["agent_token"])
+
+    assert ready_a["d"]["resume_gateway_url"] == settings.channel_discord_gateway_url
+    assert ready_b["d"]["resume_gateway_url"] == settings.channel_discord_gateway_url
+    assert ready_a["d"]["guilds"] == [{"id": "shared-gateway-guild-a", "unavailable": False}]
+    assert ready_b["d"]["guilds"] == [{"id": "shared-gateway-guild-b", "unavailable": False}]
+    assert [channel["id"] for channel in guild_a["d"]["channels"]] == ["shared-gateway-channel-a"]
+    assert [channel["id"] for channel in guild_b["d"]["channels"]] == ["shared-gateway-channel-b"]
+    assert "/v1/channels/discord/gateway" not in ready_a["d"]["resume_gateway_url"]
+
+    # Simulate discord.py reconnecting to the external resume URL: egress rewrites
+    # it to /gateway and re-injects the same Link bearer. Session ownership then
+    # proves the resumed connection cannot cross-select the sibling Link.
+    with TestClient(app) as sync_client:
+        with sync_client.websocket_connect(
+            "/v1/channels/discord/gateway",
+            headers={"Authorization": f"Bearer {created['agent_token']}"},
+        ) as websocket:
+            assert websocket.receive_json()["op"] == 10
+            websocket.send_json(
+                {
+                    "op": 6,
+                    "d": {
+                        "token": placeholder,
+                        "session_id": ready_a["d"]["session_id"],
+                        "seq": guild_a["s"],
+                    },
+                }
+            )
+            assert websocket.receive_json()["t"] == "RESUMED"
+
+    capability_a_path = urlparse(
+        _discord_gateway_url(ChannelAgentContext(account=account, link=link_a))
+    ).path
+    with TestClient(app) as sync_client:
+        with sync_client.websocket_connect(
+            capability_a_path,
+            headers={"Authorization": f"Bearer {second['agent_token']}"},
+        ) as websocket:
+            assert websocket.receive_json()["op"] == 10
+            websocket.send_json({"op": 2, "d": {"token": placeholder, "intents": 0}})
+            with pytest.raises(WebSocketDisconnect) as raised:
+                websocket.receive_json()
+    assert raised.value.code == 4004
+
+    rotated = await client.post(
+        f"/v1/channels/{created['id']}/agent-links/{created['agent_link_id']}/token"
+    )
+    assert rotated.status_code == 200, rotated.text
+    for rejected_bearer in (created["agent_token"], "wrong-link-bearer", second["agent_token"]):
+        if rejected_bearer == second["agent_token"]:
+            link_b.status = BOT_AGENT_LINK_STATUS_ARCHIVED
+            link_b.archived_at = datetime.now(UTC)
+            await db_session.commit()
+        with TestClient(app) as sync_client:
+            with sync_client.websocket_connect(
+                "/v1/channels/discord/gateway",
+                headers={"Authorization": f"Bearer {rejected_bearer}"},
+            ) as websocket:
+                assert websocket.receive_json()["op"] == 10
+                websocket.send_json({"op": 2, "d": {"token": placeholder, "intents": 0}})
+                with pytest.raises(WebSocketDisconnect) as raised:
+                    websocket.receive_json()
+        assert raised.value.code == 4004
 
 
 @pytest.mark.asyncio

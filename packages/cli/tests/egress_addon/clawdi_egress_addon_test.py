@@ -644,16 +644,28 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                     "enabled": True,
                     "kind": "websocket",
                     "match": {"scheme": "wss", "host": "socket.test", "pathPrefix": "/ws"},
-                    "rewrite": {"upstreamBaseUrl": "wss://relay.test/session"},
+                    "rewrite": {
+                        "upstreamBaseUrl": "wss://relay.test/session",
+                        "preservePath": False,
+                        "setHeaders": {
+                            "authorization": {
+                                "type": "secretRef",
+                                "secretRef": "secret://link-token",
+                                "prefix": "Bearer ",
+                            }
+                        },
+                    },
+                    "logging": {"redactHeaders": ["authorization"]},
                     "priority": 10,
                 }
-            ]
+            ],
+            {"secret://link-token": "link-secret"},
         )
 
         flow = Flow(
             scheme="https",
             host="socket.test",
-            path="/ws/chat",
+            path="/ws/chat?v=10&encoding=json",
             headers={"Upgrade": "websocket"},
         )
         decision = egress.apply_to_flow(flow)
@@ -661,7 +673,23 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         self.assertEqual(decision.action, "websocket")
         self.assertEqual(flow.request.scheme, "https")
         self.assertEqual(flow.request.host, "relay.test")
-        self.assertEqual(flow.request.path, "/session/ws/chat")
+        self.assertEqual(flow.request.path, "/session?v=10&encoding=json")
+        self.assertEqual(flow.request.headers["Upgrade"], "websocket")
+        self.assertEqual(flow.request.headers["authorization"], "Bearer link-secret")
+
+        profile = egress.profiles[0]
+        self.assertEqual(
+            addon.redacted_headers(flow.request.headers, profile)["authorization"],
+            "[redacted]",
+        )
+        messages = []
+        original_info = addon.ctx.log.info
+        addon.ctx.log.info = messages.append
+        try:
+            egress.log_decision(flow, decision)
+        finally:
+            addon.ctx.log.info = original_info
+        self.assertNotIn("link-secret", "\n".join(messages))
 
     def test_deny_profile_sets_safe_response(self):
         egress = self.load(
