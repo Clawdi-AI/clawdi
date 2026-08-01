@@ -7,7 +7,6 @@ import type { AiProviderAuthKind, ManagedModelCatalogItem } from "@/hosted/billi
 import {
 	MANAGED_AI_CHOICE,
 	MANAGED_PROVIDER_LABEL,
-	normalizeSelectedProviderIds,
 	type primaryModelRef,
 	providerChoiceFromRef,
 	providerRefFromChoice,
@@ -19,7 +18,6 @@ export type AiBindingMode = "unmanaged" | "configured";
 
 export type AiProviderBindingDraft = {
 	bindingMode: AiBindingMode;
-	providerChoices: string[];
 	primaryProviderChoice: string;
 	primaryModel: string;
 };
@@ -95,33 +93,24 @@ export function buildAiBindingFields(
 		});
 	}
 
-	const selectedChoices = normalizeSelectedProviderIds(
-		draft.providerChoices,
-		draft.primaryProviderChoice,
-	);
-	const providerRefs = selectedChoices
-		.map((choice) => providerRefFromChoice(choice, providers))
-		.filter((providerId): providerId is string => Boolean(providerId));
-	if (providerRefs.length !== selectedChoices.length) {
-		throw new AiBindingBuildError(
-			"Provider unavailable",
-			mode === "create"
-				? `Refresh providers or choose ${MANAGED_PROVIDER_LABEL}.`
-				: "Refresh providers before applying these settings.",
-		);
-	}
-
 	try {
 		if (draft.primaryProviderChoice === MANAGED_AI_CHOICE) {
 			return buildHostedAiBindingFields({
 				managedModels,
 				mode,
 				providers,
-				selection: { mode: "managed", model: draft.primaryModel, providerIds: providerRefs },
+				selection: { mode: "managed", model: draft.primaryModel },
 			});
 		}
-		const primaryProviderId =
-			providerRefFromChoice(draft.primaryProviderChoice, providers) ?? draft.primaryProviderChoice;
+		const providerId = providerRefFromChoice(draft.primaryProviderChoice, providers);
+		if (!providerId) {
+			throw new AiBindingBuildError(
+				"Provider unavailable",
+				mode === "create"
+					? `Refresh providers or choose ${MANAGED_PROVIDER_LABEL}.`
+					: "Refresh providers before applying these settings.",
+			);
+		}
 		return buildHostedAiBindingFields({
 			managedModels,
 			mode,
@@ -129,8 +118,7 @@ export function buildAiBindingFields(
 			selection: {
 				mode: "saved",
 				model: draft.primaryModel,
-				primaryProviderId,
-				providerIds: providerRefs,
+				providerId,
 			},
 		});
 	} catch (error) {

@@ -10,7 +10,7 @@ describe("providerUsage", () => {
 		expect(providerUsage("openai", null)).toEqual({ known: false, agentCount: 0 });
 	});
 
-	test("counts agents whose runtime provider pool contains the provider", () => {
+	test("counts agents whose runtime provider binding contains the provider", () => {
 		const deployments = [
 			hostedDeploymentFixture({
 				id: "dep_openai",
@@ -31,7 +31,7 @@ describe("providerUsage", () => {
 		expect(providerUsage("openai", deployments)).toEqual({ known: true, agentCount: 1 });
 	});
 
-	test("detects a primary-model reference even when the provider pool is incomplete", () => {
+	test("detects a primary-model reference when binding metadata is incomplete", () => {
 		const deployment = hostedDeploymentFixture({
 			runtimeConfiguration: {
 				primary_model: { provider_id: "openai", model: "gpt-5.5" },

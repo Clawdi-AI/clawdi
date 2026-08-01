@@ -217,7 +217,6 @@ import {
 	MANAGED_PROVIDER_LABEL,
 	modelBindingDisplayName,
 	modelOptionsForProvider,
-	normalizeSelectedProviderIds,
 	primaryModelProviderId,
 	primaryModelValue,
 	providerAvailabilityIssue,
@@ -2011,8 +2010,8 @@ function AiProviderTab({
 	const availabilityContext = { runtime, environmentId };
 	const managedModels = managedModelCatalog.data?.models ?? [];
 	// A provider reference is only unresolved after the catalog has settled. While
-	// it is loading, preserve the server id verbatim so an existing multi-provider
-	// binding does not briefly seed the draft with stale `unresolved:` choices.
+	// it is loading, preserve the server id verbatim so the binding does not briefly
+	// seed the draft with a stale `unresolved:` choice.
 	const providerChoiceFromServerRef = providers.isPending
 		? providerChoiceFromRef
 		: updateProviderChoiceFromRef;
@@ -2026,22 +2025,12 @@ function AiProviderTab({
 		: undefined;
 	const currentAuthKind = runtimeAiProviderAuthKind(deployment, runtime);
 	const initialMode = currentAuthKind === "unmanaged" ? "unmanaged" : "configured";
-	const legacyProviderRef =
-		currentAuthKind === "unmanaged" ? null : (primaryConfiguredProvider?.provider_id ?? null);
-	const rawProviderRefs =
-		currentAuthKind === "unmanaged"
-			? []
-			: configuredProviders.length > 0
-				? configuredProviders.map((provider) => provider.provider_id)
-				: legacyProviderRef
-					? [legacyProviderRef]
-					: [MANAGED_PROVIDER_ID];
 	const primaryProviderRef =
 		currentAuthKind === "unmanaged"
 			? MANAGED_PROVIDER_ID
 			: (primaryModelProviderId(configuredPrimaryModel) ??
-				legacyProviderRef ??
-				rawProviderRefs[0] ??
+				primaryConfiguredProvider?.provider_id ??
+				configuredProviders[0]?.provider_id ??
 				MANAGED_PROVIDER_ID);
 	const initialPrimaryChoice =
 		currentAuthKind === "unmanaged"
@@ -2050,15 +2039,6 @@ function AiProviderTab({
 				(isManagedProviderId(primaryProviderRef)
 					? MANAGED_AI_CHOICE
 					: unresolvedProviderChoice(primaryProviderRef)));
-	const initialProviderChoices =
-		currentAuthKind === "unmanaged"
-			? []
-			: normalizeSelectedProviderIds(
-					rawProviderRefs
-						.map((providerRef) => providerChoiceFromServerRef(providerRef, list))
-						.filter((choice): choice is string => Boolean(choice)),
-					initialPrimaryChoice,
-				);
 	const bindingModelIdentity =
 		currentAuthKind === "unmanaged"
 			? ""
@@ -2077,23 +2057,16 @@ function AiProviderTab({
 	// same identity → in-progress edits stay untouched; a real change → reset to
 	// the new truth. This is React's "adjust state during render" idiom, which
 	// replaces an effect that re-ran on every keystroke.
-	const bindingIdentity = JSON.stringify([
-		initialMode,
-		initialProviderChoices,
-		initialPrimaryChoice,
-		bindingModelIdentity,
-	]);
+	const bindingIdentity = JSON.stringify([initialMode, initialPrimaryChoice, bindingModelIdentity]);
 	const {
 		draft: aiBindingDraft,
 		managedPrimaryModelReady,
-		selectedProviderChoices,
 		selectProvider,
 		setBindingMode,
 		setPrimaryModel,
 	} = useAiProviderBindingDraft({
 		initialDraft: {
 			bindingMode: initialMode,
-			providerChoices: initialProviderChoices,
 			primaryProviderChoice: initialPrimaryChoice,
 			primaryModel: currentModel,
 		},
@@ -2103,20 +2076,11 @@ function AiProviderTab({
 		providers: list,
 		syncIdentity: bindingIdentity,
 	});
-	const {
-		bindingMode,
-		primaryModel,
-		primaryProviderChoice,
-		providerChoices: selectedProviders,
-	} = aiBindingDraft;
-	const selectedIdentity = JSON.stringify(selectedProviderChoices);
-	const initialSelectedIdentity = JSON.stringify(initialProviderChoices);
+	const { bindingMode, primaryModel, primaryProviderChoice } = aiBindingDraft;
 	const dirty =
 		bindingMode !== initialMode ||
 		(bindingMode === "configured" &&
-			(selectedIdentity !== initialSelectedIdentity ||
-				primaryProviderChoice !== initialPrimaryChoice ||
-				primaryModel !== currentModel));
+			(primaryProviderChoice !== initialPrimaryChoice || primaryModel !== currentModel));
 	function applyProviderSettings() {
 		let update: DeploymentUpdateRequest;
 		try {
@@ -2138,15 +2102,13 @@ function AiProviderTab({
 			<div className={ENTITY_CHOICE_GRID_CLASS} data-testid="provider-choice-grid">
 				<EntityChoiceCard
 					onClick={() => selectProvider(MANAGED_AI_CHOICE)}
-					selected={bindingMode === "configured" && selectedProviders.includes(MANAGED_AI_CHOICE)}
+					selected={bindingMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE}
 					icon={<ProviderIcon provider={MANAGED_PROVIDER_ID} />}
 					title={MANAGED_PROVIDER_LABEL}
 					description="No setup required. Usage draws from your Wallet."
 					badge={
 						bindingMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE ? (
-							<Badge variant="secondary">Primary</Badge>
-						) : bindingMode === "configured" && selectedProviders.includes(MANAGED_AI_CHOICE) ? (
-							<Badge variant="outline">Bound</Badge>
+							<Badge variant="secondary">Selected</Badge>
 						) : null
 					}
 				/>
@@ -2173,24 +2135,18 @@ function AiProviderTab({
 						/>
 					</div>
 				) : null}
-				{bindingMode === "configured"
-					? selectedProviders
-							.filter(isUnresolvedProviderChoice)
-							.map((choice) => (
-								<EntityChoiceCard
-									key={choice}
-									selected
-									disabled
-									icon={<ProviderIcon provider={unresolvedProviderRef(choice)} />}
-									title={`Using ${providerDisplayLabel(unresolvedProviderRef(choice), list)}`}
-									description={`Saved connection details couldn't be loaded. Choose ${MANAGED_PROVIDER_LABEL} to replace it.`}
-									badge={<Badge variant="secondary">In use</Badge>}
-								/>
-							))
-					: null}
+				{bindingMode === "configured" && isUnresolvedProviderChoice(primaryProviderChoice) ? (
+					<EntityChoiceCard
+						selected
+						disabled
+						icon={<ProviderIcon provider={unresolvedProviderRef(primaryProviderChoice)} />}
+						title={`Using ${providerDisplayLabel(unresolvedProviderRef(primaryProviderChoice), list)}`}
+						description={`Saved connection details couldn't be loaded. Choose ${MANAGED_PROVIDER_LABEL} to replace it.`}
+						badge={<Badge variant="secondary">In use</Badge>}
+					/>
+				) : null}
 				{list.map((p) => {
-					const selected =
-						bindingMode === "configured" && selectedProviders.includes(p.provider_id);
+					const selected = bindingMode === "configured" && primaryProviderChoice === p.provider_id;
 					const issue = providerAvailabilityIssue(p, availabilityContext);
 					const disabled = Boolean(issue) && !selected;
 					return (
@@ -2203,10 +2159,8 @@ function AiProviderTab({
 							title={providerDisplayLabel(p)}
 							description={issue?.message ?? providerCatalogDescription(p)}
 							badge={
-								bindingMode === "configured" && primaryProviderChoice === p.provider_id ? (
-									<Badge variant="secondary">Primary</Badge>
-								) : selected ? (
-									<Badge variant="outline">Bound</Badge>
+								selected ? (
+									<Badge variant="secondary">Selected</Badge>
 								) : issue ? (
 									<Badge variant="secondary">Unavailable</Badge>
 								) : (

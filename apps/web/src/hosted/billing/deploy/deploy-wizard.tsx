@@ -65,7 +65,6 @@ import type {
 import { navigateToAcceptedDeployment } from "@/hosted/billing/deploy/accepted-deployment-navigation";
 import {
 	DEFAULT_DEPLOY_AI_ACCESS_MODE,
-	DEFAULT_DEPLOY_AI_PROVIDER_CHOICES,
 	DEFAULT_DEPLOY_PRIMARY_MODEL,
 	DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE,
 	DEFAULT_DEPLOY_RUNTIME,
@@ -473,18 +472,12 @@ export function DeployWizard() {
 	} = useAiProviderBindingDraft({
 		initialDraft: {
 			bindingMode: DEFAULT_DEPLOY_AI_ACCESS_MODE,
-			providerChoices: [...DEFAULT_DEPLOY_AI_PROVIDER_CHOICES],
 			primaryProviderChoice: DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE,
 			primaryModel: DEFAULT_DEPLOY_PRIMARY_MODEL,
 		},
 		managedCatalogReady: managedModelCatalog.isSuccess,
 		managedModels,
 		operationMode: "create",
-		providerCatalog: {
-			dataUpdatedAt: aiProviders.dataUpdatedAt,
-			isFetching: aiProviders.isFetching,
-			isSuccess: aiProviders.isSuccess,
-		},
 		providers: providerList,
 	});
 	const { bindingMode: aiAccessMode, primaryModel, primaryProviderChoice } = aiBindingDraft;
@@ -546,7 +539,7 @@ export function DeployWizard() {
 	const canSubmit = !submitting && !postPaymentBlocked && submitBlockingReason === null;
 
 	function selectCreatedProvider(providerId: string) {
-		selectCreatedAiProvider(providerId, aiProviders.dataUpdatedAt);
+		selectCreatedAiProvider(providerId);
 	}
 
 	function selectRuntime(nextRuntime: HostedRuntime) {
