@@ -24,7 +24,9 @@ import {
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
 } from "./applied-state";
+import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import { loadHostedBundledSkill } from "./hosted-bundled-skill";
+import { hostedManifestEgressProfiles } from "./hosted-egress-profiles";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import {
 	captureRuntimeLiveSnapshot,
@@ -2648,6 +2650,121 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(readRuntimeAppliedState(paths)?.generation).toBe(1);
 		expect(existsSync(paths.manifestLastGood)).toBe(true);
 		expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"))).toBe(true);
+	});
+
+	test("activates transparent egress before authenticated managed-model discovery", () => {
+		const paths = tempRuntimePaths();
+		const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const officialUnitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
+		mkdirSync(dirname(commandPath), { recursive: true });
+		writeFileSync(
+			commandPath,
+			[
+				"#!/usr/bin/env sh",
+				'if [ "$1" = "--version" ]; then printf "0.13.26\\n"; exit 0; fi',
+				'if [ "$1 $2 $3" = "config patch --stdin" ]; then cat >/dev/null; exit 0; fi',
+				'if [ "$1 $2 $3" = "gateway install --force" ]; then',
+				`  mkdir -p ${JSON.stringify(dirname(officialUnitPath))}`,
+				`  printf '[Unit]\\nDescription=Official gateway\\n\\n[Service]\\nExecStart=openclaw gateway run\\n' > ${JSON.stringify(officialUnitPath)}`,
+				"  exit 0",
+				"fi",
+				"exit 2",
+				"",
+			].join("\n"),
+		);
+		chmodSync(commandPath, 0o700);
+		const providerSecretRef = "secret://provider.clawdi.apiKey";
+		const providers = {
+			clawdi: {
+				kind: "openai-compatible",
+				baseUrl: "https://ai-gateway.clawdi.ai/v1",
+				models: [{ id: "gpt-5.5" }],
+				apiMode: "openai_responses",
+				managed_by: "clawdi",
+				runtimeEnvName: "OPENAI_API_KEY",
+				apiKeySecretRef: providerSecretRef,
+			},
+		};
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					run: runSettings(commandPath, ["gateway", "run"]),
+					services: {},
+					provider_ids: ["clawdi"],
+					primary_model: { provider_id: "clawdi", model: "gpt-5.5" },
+				},
+			},
+			{
+				openclawGatewayAuth: hostedOpenClawNativeAuth(),
+				projection: {
+					sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+					system: hostedSystemFixture(),
+					providers,
+				},
+				egressProfiles: hostedManifestEgressProfiles({ providers }),
+				egressEngine: installCachedTestEgressEngine(paths, "12.2.3-test-model-probe"),
+			},
+		);
+		const load = manifestLoad(manifest, "managed-model-probe", {
+			...TEST_HOSTED_SECRET_VALUES,
+			[providerSecretRef]: "test-managed-provider-key",
+		});
+		const prerequisiteSignals: Array<{ restartEgressSidecar: boolean }> = [];
+		const activationSignals: Array<{ restartEgressSidecar: boolean }> = [];
+		let probeCalls = 0;
+		const converge = () =>
+			convergeRuntimeManifest(load, paths, {
+				cacheLastGood: false,
+				commitAuthority: (convergence, authority) =>
+					commitTestRuntimeAuthority(load, paths, convergence, authority),
+				managedGatewayModelListFetcher: (input) => {
+					probeCalls += 1;
+					expect(input.credential).toBe(MANAGED_EGRESS_PLACEHOLDER_VALUE);
+					expect(input.egressSystemCaFile).toBe(paths.egressSystemCaFile);
+					expect(existsSync(paths.egressSystemCaFile)).toBe(true);
+					return {
+						status: "ok",
+						endpoint: `${input.baseUrl}/models`,
+						models: [{ id: "gpt-5.5" }, { id: "gpt-5.6" }],
+					};
+				},
+				systemdApply: {
+					activateEgressPrerequisite: (signal) => {
+						prerequisiteSignals.push(signal);
+						expect(existsSync(paths.egressProfileBundle)).toBe(true);
+						expect(existsSync(join(paths.managedSecretRoot, "egress-secrets.json"))).toBe(true);
+						expect(
+							existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service")),
+						).toBe(true);
+						expect(readFileSync(paths.egressProfileBundle, "utf8")).toContain(
+							MANAGED_EGRESS_PLACEHOLDER_VALUE,
+						);
+						writeFileSync(paths.egressSystemCaFile, "test-ca\n", { mode: 0o644 });
+						return successfulPrerequisiteActivation();
+					},
+					activate: (signal) => {
+						activationSignals.push(signal);
+						return successfulPrerequisiteActivation();
+					},
+					rollback: () => {},
+				},
+			});
+
+		const first = converge();
+		expect(first.installErrors).toEqual([]);
+		expect(probeCalls).toBe(1);
+		expect(prerequisiteSignals).toHaveLength(1);
+		expect(prerequisiteSignals[0]?.restartEgressSidecar).toBe(true);
+		expect(activationSignals[0]?.restartEgressSidecar).toBe(true);
+
+		const refresh = converge();
+		expect(refresh.installErrors).toEqual([]);
+		expect(probeCalls).toBe(2);
+		expect(prerequisiteSignals).toHaveLength(1);
+		expect(activationSignals).toHaveLength(2);
+		expect(activationSignals[1]?.restartEgressSidecar).toBe(false);
 	});
 
 	test.each([

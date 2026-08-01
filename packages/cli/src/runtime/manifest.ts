@@ -79,6 +79,7 @@ import {
 	type ManagedGatewayModelListFetcher,
 	mergeRuntimeEnvWithProviderPlaceholders,
 	mergeRuntimeServiceEnvWithProviderPlaceholders,
+	requiresManagedGatewayModelProbe,
 	resolveManagedGatewayModelOverrides,
 } from "./hosted-provider-resolution";
 import {
@@ -165,6 +166,7 @@ import {
 	runtimeSystemdCommonEnvironment,
 	uninstallStaleOfficialRuntimeServices,
 	validateRuntimeSystemdPlan,
+	writeRuntimeSidecarSystemdUnit,
 	writeRuntimeSystemdState,
 } from "./runtime-systemd-reconciliation";
 import {
@@ -1453,7 +1455,7 @@ function applyHostedLocaleProjection(
 const MANAGED_GATEWAY_MODEL_FETCH_TIMEOUT_MS = 3_000;
 
 const MANAGED_GATEWAY_MODEL_FETCH_SCRIPT = [
-	"const [url, timeoutRaw] = process.argv.slice(1);",
+	"const [url, timeoutRaw, credential] = process.argv.slice(1);",
 	"const timeoutMs = Number.parseInt(timeoutRaw ?? '', 10) || 3000;",
 	"const controller = new AbortController();",
 	"const timer = setTimeout(() => controller.abort(), timeoutMs);",
@@ -1461,7 +1463,7 @@ const MANAGED_GATEWAY_MODEL_FETCH_SCRIPT = [
 	"  try {",
 	"    const response = await fetch(url, {",
 	"      method: 'GET',",
-	"      headers: { accept: 'application/json' },",
+	"      headers: { accept: 'application/json', authorization: 'Bearer ' + credential },",
 	"      signal: controller.signal,",
 	"    });",
 	"    const body = await response.text();",
@@ -1497,6 +1499,7 @@ function fetchManagedGatewayModelList(
 			MANAGED_GATEWAY_MODEL_FETCH_SCRIPT,
 			endpoint,
 			String(MANAGED_GATEWAY_MODEL_FETCH_TIMEOUT_MS),
+			input.credential,
 		],
 		input.home,
 		input.workspaceRoot,
@@ -5014,6 +5017,7 @@ export function convergeRuntimeManifest(
 	let rollbackEgressSecretOverride: RuntimeEgressSecretMaterial | undefined;
 	let rollbackEgressSecretRevision: string | undefined;
 	let egressRollbackAuthorityVerified = true;
+	let egressPrerequisiteActivated = false;
 	let staleSystemdFiles: RuntimeSystemdStaleFilePlan = {
 		files: [],
 		systemUnits: [],
@@ -5090,24 +5094,6 @@ export function convergeRuntimeManifest(
 			}
 		}
 		if (installErrors.length > 0) throw new Error(installErrors.join("; "));
-
-		const managedModelOverrides = resolveManagedGatewayModelOverrides(
-			manifest,
-			enabledRuntimes,
-			projectionHome,
-			workspaceRoot,
-			plannedEgressProfileBundlePath ? paths.egressSystemCaFile : null,
-			opts.managedGatewayModelListFetcher ?? fetchManagedGatewayModelList,
-		);
-		validateRuntimeProjectionPlan({
-			manifest,
-			paths,
-			workspaceRoot,
-			secretValues,
-			observations,
-			previousProjectedProviderIds,
-			managedModelOverrides,
-		});
 
 		ensureRuntimeUserHome(paths.userHome);
 		withRuntimeUserFileAccess(() => {
@@ -5253,6 +5239,91 @@ export function convergeRuntimeManifest(
 				egress: egressSystemdProgram,
 			}),
 		);
+		const egressSidecarActive =
+			egressSystemdProgram !== null &&
+			egressIdentity !== null &&
+			runtimeSystemdUserPrograms.length > 0;
+		const committedEgressSidecarSecretRevision = appliedState?.egressSidecarSecretRevision;
+		if (egressSidecarActive) {
+			desiredEgressSidecarSecretRevision = egressSecretWrite.material.revision;
+			restartEgressSidecar =
+				egressSecretWrite.changed ||
+				committedEgressSidecarSecretRevision === undefined ||
+				committedEgressSidecarSecretRevision !== desiredEgressSidecarSecretRevision;
+			if (committedEgressSidecarSecretRevision === undefined) {
+				// Legacy applied state has no private egress revision. An exact
+				// applied content identity can still prove complete last-good material
+				// for rollback, but its absence must not block loading the desired
+				// material. If desired activation later fails, unverified live bytes
+				// must never be loaded by a rollback restart.
+				rollbackEgressSecretOverride =
+					verifiedCommittedEgressSecretMaterial(paths, applyContext) ?? undefined;
+				egressRollbackAuthorityVerified = rollbackEgressSecretOverride !== undefined;
+			} else if (
+				restartEgressSidecar &&
+				egressSecretWrite.previousRevision !== committedEgressSidecarSecretRevision
+			) {
+				if (desiredEgressSidecarSecretRevision === committedEgressSidecarSecretRevision) {
+					rollbackEgressSecretOverride = egressSecretWrite.material;
+				} else {
+					// A crash may have already advanced both the live file and last-good
+					// cache while the applied authority still describes the loaded secret.
+					// Do not require rollback material until activation actually fails:
+					// successfully restarting the desired material can safely commit it.
+					rollbackEgressSecretRevision = committedEgressSidecarSecretRevision;
+				}
+			}
+		}
+		const commonSystemdEnvironment = runtimeSystemdCommonEnvironment(paths);
+		const egressCaUnavailable = !existsSync(paths.egressSystemCaFile);
+		if (
+			requiresManagedGatewayModelProbe(manifest, enabledRuntimes) &&
+			egressCaUnavailable &&
+			egressSystemdProgram &&
+			egressIdentity &&
+			runtimeSystemdUserPrograms.length > 0 &&
+			opts.systemdApply
+		) {
+			writeRuntimeSidecarSystemdUnit({
+				program: egressSystemdProgram,
+				identity: egressIdentity,
+				manifest,
+				paths,
+				workspaceRoot,
+				commonEnvironment: commonSystemdEnvironment,
+			});
+			restartEgressSidecar = restartEgressSidecar || egressCaUnavailable;
+			const prerequisite = opts.systemdApply.activateEgressPrerequisite({
+				restartDaemon,
+				restartEgressSidecar,
+				stopEgressSidecar: false,
+				reconcileUserUnits: mutationPlan.systemdUserUnits,
+				staleSystemUnits: [],
+				staleUserUnits: [],
+			});
+			if (!prerequisite.applied) {
+				throw new Error("transparent-egress system prerequisites did not reach readiness");
+			}
+			egressPrerequisiteActivated = true;
+		}
+
+		const managedModelOverrides = resolveManagedGatewayModelOverrides(
+			manifest,
+			enabledRuntimes,
+			projectionHome,
+			workspaceRoot,
+			egressProfileBundlePath ? paths.egressSystemCaFile : null,
+			opts.managedGatewayModelListFetcher ?? fetchManagedGatewayModelList,
+		);
+		validateRuntimeProjectionPlan({
+			manifest,
+			paths,
+			workspaceRoot,
+			secretValues,
+			observations,
+			previousProjectedProviderIds,
+			managedModelOverrides,
+		});
 		const providerProjectionRevisions: Partial<Record<string, string | null>> = {};
 		for (const [name] of runtimeEntries) {
 			const observation = observations.get(name);
@@ -5266,7 +5337,6 @@ export function convergeRuntimeManifest(
 				managedModelOverrides,
 			);
 		}
-		const commonSystemdEnvironment = runtimeSystemdCommonEnvironment(paths);
 		try {
 			const codexProjection = withRuntimeUserFileAccess(() =>
 				applyHostedCodexManagedProviderProjection(manifest, projectionHome, codexCli),
@@ -5473,37 +5543,6 @@ export function convergeRuntimeManifest(
 			commonEnvironment: commonSystemdEnvironment,
 		});
 		staleSystemdFiles = systemdUnits.staleFiles;
-		const committedEgressSidecarSecretRevision = appliedState?.egressSidecarSecretRevision;
-		if (systemdUnits.egressSidecarActive) {
-			desiredEgressSidecarSecretRevision = egressSecretWrite.material.revision;
-			restartEgressSidecar =
-				egressSecretWrite.changed ||
-				committedEgressSidecarSecretRevision === undefined ||
-				committedEgressSidecarSecretRevision !== desiredEgressSidecarSecretRevision;
-			if (committedEgressSidecarSecretRevision === undefined) {
-				// Legacy applied state has no private egress revision. An exact
-				// applied content identity can still prove complete last-good material
-				// for rollback, but its absence must not block loading the desired
-				// material. If desired activation later fails, unverified live bytes
-				// must never be loaded by a rollback restart.
-				rollbackEgressSecretOverride =
-					verifiedCommittedEgressSecretMaterial(paths, applyContext) ?? undefined;
-				egressRollbackAuthorityVerified = rollbackEgressSecretOverride !== undefined;
-			} else if (
-				restartEgressSidecar &&
-				egressSecretWrite.previousRevision !== committedEgressSidecarSecretRevision
-			) {
-				if (desiredEgressSidecarSecretRevision === committedEgressSidecarSecretRevision) {
-					rollbackEgressSecretOverride = egressSecretWrite.material;
-				} else {
-					// A crash may have already advanced both the live file and last-good
-					// cache while the applied authority still describes the loaded secret.
-					// Do not require rollback material until activation actually fails:
-					// successfully restarting the desired material can safely commit it.
-					rollbackEgressSecretRevision = committedEgressSidecarSecretRevision;
-				}
-			}
-		}
 		const officialServicePlan = planOfficialRuntimeServices(
 			runtimeSystemdUserPrograms,
 			paths,
@@ -5528,6 +5567,7 @@ export function convergeRuntimeManifest(
 				(hermesDashboardArtifactPlan.program !== null &&
 					hermesDashboardArtifactPlan.target?.expectedCurrentRevision === null)) &&
 			systemdUnits.egressSidecarActive &&
+			!egressPrerequisiteActivated &&
 			opts.systemdApply
 		) {
 			const prerequisite = opts.systemdApply.activateEgressPrerequisite({
