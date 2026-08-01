@@ -52,8 +52,8 @@ describe("hosted channel instructions and gates", () => {
 		for (const agentType of ["openclaw", "hermes"]) {
 			expect(agentProviderHasSingleLinkLimit(agentType, "telegram")).toBe(true);
 			expect(agentProviderHasSingleLinkLimit(agentType, "discord")).toBe(true);
+			expect(agentProviderHasSingleLinkLimit(agentType, "whatsapp")).toBe(true);
 		}
-		expect(agentProviderHasSingleLinkLimit("openclaw", "whatsapp")).toBe(false);
 		expect(agentProviderHasSingleLinkLimit("codex", "telegram")).toBe(false);
 	});
 });
