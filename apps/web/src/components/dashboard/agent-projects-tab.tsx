@@ -1,11 +1,18 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Home, Layers, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { DetailPanel } from "@/components/detail/layout";
+import {
+	agentProjectBindingsQueryKey,
+	useAgentProjectBindings,
+} from "@/components/dashboard/agent-project-bindings-query";
+import {
+	type AgentProjectBinding,
+	orderedAgentProjectBindings,
+} from "@/components/dashboard/agent-project-scope";
 import { EmptyState } from "@/components/empty-state";
 import {
 	isCustomProject,
@@ -21,26 +28,6 @@ import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
-export type AgentProjectBinding = components["schemas"]["AgentProjectBindingResponse"];
-
-export function useAgentProjectBindings(
-	agentId: string | null | undefined,
-	{ enabled = true }: { enabled?: boolean } = {},
-) {
-	const api = useApi();
-	return useQuery({
-		queryKey: ["agent-project-bindings", agentId ?? ""],
-		queryFn: async (): Promise<AgentProjectBinding[]> => {
-			if (!agentId) throw new Error("Agent identity is not resolved");
-			return unwrap(
-				await api.GET("/v1/agents/{agent_id}/project-bindings", {
-					params: { path: { agent_id: agentId } },
-				}),
-			);
-		},
-		enabled: enabled && Boolean(agentId),
-	});
-}
 
 export function AgentProjectsTab({
 	agentId,
@@ -63,7 +50,7 @@ export function AgentProjectsTab({
 			agentId={agentId}
 			bindings={bindings.data ?? []}
 			projects={projects.data ?? []}
-			isLoading={bindings.isLoading}
+			isLoading={bindings.isLoading || projects.isLoading}
 			bindingsError={bindings.error}
 			onRetryBindings={() => {
 				void bindings.refetch();
@@ -73,7 +60,7 @@ export function AgentProjectsTab({
 				void projects.refetch();
 			}}
 			onChanged={() => {
-				void queryClient.invalidateQueries({ queryKey: ["agent-project-bindings", agentId] });
+				void queryClient.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(agentId) });
 				void queryClient.invalidateQueries({ queryKey: ["projects"] });
 			}}
 		/>
@@ -103,10 +90,10 @@ function AgentProjectsPanel({
 }) {
 	const api = useApi();
 	const [contextProjectId, setContextProjectId] = useState("");
-	const primary = bindings.find((binding) => binding.binding_type === "primary") ?? null;
-	const contexts = bindings
-		.filter((binding) => binding.binding_type === "context")
-		.sort((a, b) => a.priority - b.priority);
+	const orderedBindings = orderedAgentProjectBindings(bindings);
+	const primary = orderedBindings.find((binding) => binding.binding_type === "primary") ?? null;
+	const contexts = orderedBindings.filter((binding) => binding.binding_type === "context");
+	const effectiveBindings = primary ? [primary, ...contexts] : [];
 	const projectsById = useMemo(
 		() => new Map(projects.map((project) => [project.id, project])),
 		[projects],
@@ -175,7 +162,14 @@ function AgentProjectsPanel({
 		reorder.mutate(next.map((binding, idx) => ({ binding_id: binding.id, priority: idx + 1 })));
 	};
 
-	if (isLoading) return <Skeleton className="h-40 w-full" />;
+	if (isLoading) {
+		return (
+			<div className="space-y-3" data-testid="agent-projects-loading">
+				<Skeleton className="h-4 w-96 max-w-full" />
+				<Skeleton className="h-52 w-full rounded-lg" />
+			</div>
+		);
+	}
 
 	if (bindingsError) {
 		return (
@@ -198,155 +192,124 @@ function AgentProjectsPanel({
 	}
 
 	return (
-		<div className="space-y-4">
-			<DetailPanel>
-				<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,420px)] lg:items-start">
-					<div className="space-y-3">
-						<div className="flex items-center gap-2">
-							<Home className="size-4 text-muted-foreground" />
-							<h2 className="text-sm font-semibold">Agent Project</h2>
-						</div>
-						<p className="text-xs text-muted-foreground">
-							This Project is created with the agent and is always its writable default. It cannot
-							be replaced, shared, or removed from here.
-						</p>
-						{primary ? (
-							<ProjectUseLine binding={primary} project={projectsById.get(primary.project_id)} />
-						) : (
-							<EmptyState variant="inset" description="Agent Project is not loaded yet." />
-						)}
-					</div>
-					<div className="rounded-md border bg-background/60 p-3 text-xs text-muted-foreground">
-						Create Projects to share resources with teammates and across agents. This agent&apos;s
-						main Project stays private to this agent; other agents cannot see it.
-					</div>
-				</div>
-			</DetailPanel>
+		<div className="space-y-4" data-testid="agent-project-stack">
+			<section className="overflow-hidden rounded-lg border bg-card/60">
+				{effectiveBindings.length === 0 ? (
+					<EmptyState
+						variant="inset"
+						className="rounded-none border-0"
+						description="The Agent Project is not available yet."
+					/>
+				) : (
+					<ol className="divide-y" aria-label="Effective Project read order">
+						{effectiveBindings.map((binding, position) => {
+							const project = projectsById.get(binding.project_id);
+							const projectName = project?.name || binding.project_id;
+							const isRemoving = removeBinding.isPending && removeBinding.variables === binding.id;
+							const contextIndex = binding.binding_type === "context" ? position - 1 : -1;
+							return (
+								<li
+									key={binding.id}
+									className="grid gap-3 px-3 py-3 sm:px-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
+									data-binding-type={binding.binding_type}
+								>
+									<div className="flex min-w-0 items-start gap-3">
+										<div className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-semibold tabular-nums">
+											<span className="sr-only">Position </span>
+											{position + 1}
+										</div>
+										<ProjectUseLine binding={binding} project={project} />
+									</div>
+									{binding.binding_type === "context" ? (
+										<div className="flex items-center justify-end gap-1">
+											<Button
+												variant="ghost"
+												size="icon-sm"
+												disabled={contextIndex === 0 || reorder.isPending}
+												onClick={() => moveContext(binding.id, -1)}
+												title="Move up"
+												aria-label={`Move ${projectName} up`}
+											>
+												<ArrowUp className="size-3.5" />
+											</Button>
+											<Button
+												variant="ghost"
+												size="icon-sm"
+												disabled={contextIndex === contexts.length - 1 || reorder.isPending}
+												onClick={() => moveContext(binding.id, 1)}
+												title="Move down"
+												aria-label={`Move ${projectName} down`}
+											>
+												<ArrowDown className="size-3.5" />
+											</Button>
+											<ConfirmAction
+												title="Remove this Project?"
+												description={
+													<>
+														<p>{projectName} will no longer be available to this agent.</p>
+														<p>The Project and its resources are not deleted.</p>
+													</>
+												}
+												confirmLabel="Remove Project"
+												destructive
+												onConfirm={() => removeBinding.mutate(binding.id)}
+											>
+												<Button
+													variant="ghost"
+													size="icon-sm"
+													disabled={isRemoving}
+													title="Remove"
+													aria-label={`Remove ${projectName}`}
+												>
+													{isRemoving ? (
+														<Spinner className="size-3.5" />
+													) : (
+														<Trash2 className="size-3.5 text-destructive" />
+													)}
+												</Button>
+											</ConfirmAction>
+										</div>
+									) : null}
+								</li>
+							);
+						})}
+					</ol>
+				)}
 
-			<DetailPanel>
-				<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,420px)] lg:items-start">
+				<div
+					className="grid gap-3 border-t bg-background/40 p-3 sm:p-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end"
+					data-testid="agent-project-add"
+				>
 					<div className="space-y-2">
-						<div className="flex items-center gap-2">
-							<Layers className="size-4 text-muted-foreground" />
-							<h2 className="text-sm font-semibold">Added Projects</h2>
-						</div>
-						<p className="text-xs text-muted-foreground">
-							Added Projects are read after the Agent Project. Use the list below to adjust read
-							order after adding one.
-						</p>
-					</div>
-					<div className="grid gap-3">
 						<ProjectScopePicker
 							projects={contextChoices}
 							value={contextProjectId}
 							onValueChange={setContextProjectId}
-							label="Project to Add"
-							placeholder="Choose a Project…"
+							label="Add a Project"
+							placeholder="Choose a Custom or shared Project…"
 							layout="stacked"
-							disabled={contextChoices.length === 0}
+							disabled={!primary || contextChoices.length === 0}
 						/>
 						{contextChoices.length === 0 ? (
 							<p className="text-xs text-muted-foreground">
 								No Custom or shared Projects are available to add.
 							</p>
 						) : null}
-						<Button
-							size="sm"
-							disabled={!contextProjectId || addContext.isPending}
-							variant={contextProjectId ? "default" : "outline"}
-							onClick={() => addContext.mutate()}
-						>
-							{addContext.isPending ? (
-								<Spinner className="size-3.5" />
-							) : (
-								<Plus className="size-3.5" />
-							)}
-							Add Project
-						</Button>
 					</div>
+					<Button
+						size="sm"
+						disabled={!primary || !contextProjectId || addContext.isPending}
+						variant={contextProjectId ? "default" : "outline"}
+						onClick={() => addContext.mutate()}
+					>
+						{addContext.isPending ? (
+							<Spinner className="size-3.5" />
+						) : (
+							<Plus className="size-3.5" />
+						)}
+						Add Project
+					</Button>
 				</div>
-			</DetailPanel>
-
-			<section className="space-y-2">
-				<div className="flex items-center justify-between gap-2">
-					<h2 className="text-sm font-semibold">Added Project Order</h2>
-					<Badge variant="secondary">{contexts.length}</Badge>
-				</div>
-				{contexts.length === 0 ? (
-					<EmptyState
-						variant="inset"
-						description="No added Projects yet. Add a Custom or shared Project to make it available to this agent."
-					/>
-				) : (
-					<div className="divide-y rounded-lg border bg-card/60">
-						{contexts.map((binding, index) => {
-							const project = projectsById.get(binding.project_id);
-							const projectName = project?.name || binding.project_id;
-							const isRemoving = removeBinding.isPending && removeBinding.variables === binding.id;
-							return (
-								<div
-									key={binding.id}
-									className="grid gap-3 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
-								>
-									<div className="flex min-w-0 items-start gap-3">
-										<div className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-medium">
-											{index + 1}
-										</div>
-										<ProjectUseLine binding={binding} project={project} />
-									</div>
-									<div className="flex items-center justify-end gap-1">
-										<Button
-											variant="ghost"
-											size="icon-sm"
-											disabled={index === 0 || reorder.isPending}
-											onClick={() => moveContext(binding.id, -1)}
-											title="Move up"
-											aria-label="Move project up"
-										>
-											<ArrowUp className="size-3.5" />
-										</Button>
-										<Button
-											variant="ghost"
-											size="icon-sm"
-											disabled={index === contexts.length - 1 || reorder.isPending}
-											onClick={() => moveContext(binding.id, 1)}
-											title="Move down"
-											aria-label="Move project down"
-										>
-											<ArrowDown className="size-3.5" />
-										</Button>
-										<ConfirmAction
-											title="Remove this Project?"
-											description={
-												<>
-													<p>{projectName} will no longer be available to this agent.</p>
-													<p>The Project and its resources are not deleted.</p>
-												</>
-											}
-											confirmLabel="Remove Project"
-											destructive
-											onConfirm={() => removeBinding.mutate(binding.id)}
-										>
-											<Button
-												variant="ghost"
-												size="icon-sm"
-												disabled={isRemoving}
-												title="Remove"
-												aria-label={`Remove ${projectName}`}
-											>
-												{isRemoving ? (
-													<Spinner className="size-3.5" />
-												) : (
-													<Trash2 className="size-3.5 text-destructive" />
-												)}
-											</Button>
-										</ConfirmAction>
-									</div>
-								</div>
-							);
-						})}
-					</div>
-				)}
 			</section>
 		</div>
 	);
@@ -359,7 +322,11 @@ function ProjectUseLine({
 	binding: AgentProjectBinding;
 	project: ProjectRow | undefined;
 }) {
-	const bindingLabel = binding.binding_type === "primary" ? "Agent Project" : "Added";
+	const bindingLabel = binding.binding_type === "primary" ? "Primary" : "Added";
+	const resourceAccess =
+		binding.binding_type === "primary"
+			? "Default writes · Reads Skills and Vaults"
+			: "Read access · Skills and Vaults";
 	if (!project) {
 		return (
 			<div className="min-w-0">
@@ -368,10 +335,9 @@ function ProjectUseLine({
 					<Badge variant={binding.binding_type === "primary" ? "secondary" : "outline"}>
 						{bindingLabel}
 					</Badge>
+					<Badge variant="outline">Access unavailable</Badge>
 				</div>
-				{binding.binding_type === "context" ? (
-					<div className="mt-1 text-xs text-muted-foreground">Read order {binding.priority}</div>
-				) : null}
+				<div className="mt-1 text-xs text-muted-foreground">{resourceAccess}</div>
 			</div>
 		);
 	}
@@ -379,17 +345,16 @@ function ProjectUseLine({
 		<div className="min-w-0">
 			<ProjectIdentity
 				project={project}
-				showKind={false}
-				showAccess={false}
 				badges={
-					<Badge variant={binding.binding_type === "primary" ? "secondary" : "outline"}>
-						{bindingLabel}
-					</Badge>
+					<>
+						<Badge variant={binding.binding_type === "primary" ? "secondary" : "outline"}>
+							{bindingLabel}
+						</Badge>
+						{binding.binding_type === "primary" ? <Badge variant="outline">Fixed</Badge> : null}
+					</>
 				}
 			/>
-			{binding.binding_type === "context" ? (
-				<div className="mt-0.5 text-xs text-muted-foreground">Read order {binding.priority}</div>
-			) : null}
+			<div className="mt-0.5 text-xs text-muted-foreground">{resourceAccess}</div>
 		</div>
 	);
 }

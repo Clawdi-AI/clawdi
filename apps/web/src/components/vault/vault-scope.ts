@@ -1,7 +1,8 @@
 import { type FetchAllPagesOptions, fetchAllPages, type PaginatedPage } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 
-type AgentProjectBinding = components["schemas"]["AgentProjectBindingResponse"];
+export { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
+
 type VaultSummary = components["schemas"]["VaultResponse"];
 
 type FetchVaultPage = (
@@ -9,17 +10,6 @@ type FetchVaultPage = (
 	page: number,
 	pageSize: number,
 ) => Promise<PaginatedPage<VaultSummary>>;
-
-/** Primary first, followed by context Projects in the agent's effective read order. */
-export function effectiveAgentProjectIds(bindings: readonly AgentProjectBinding[]): string[] {
-	const ordered = [
-		...bindings.filter((binding) => binding.binding_type === "primary"),
-		...bindings
-			.filter((binding) => binding.binding_type === "context")
-			.sort((left, right) => left.priority - right.priority),
-	];
-	return Array.from(new Set(ordered.map((binding) => binding.project_id)));
-}
 
 /** Never return a Vault unless it is attached to at least one effective Agent Project. */
 export function vaultsForProjectIds(

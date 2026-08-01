@@ -1102,6 +1102,9 @@ function isStubResponse(value: unknown): value is StubResponse {
 
 type HostedApiStubOptions = {
 	aiProviders?: readonly unknown[];
+	agentProjectBindings?: readonly unknown[];
+	agentProjectBindingRequests?: string[];
+	agentProjects?: readonly unknown[];
 	agentResourceFixtures?: boolean;
 	agentOrderRequests?: string[];
 	autoReloadRequests?: string[];
@@ -1188,6 +1191,8 @@ type HostedApiStubOptions = {
 	runtimeUiRedemptionRequests?: string[];
 	runtimeUiRedemptionResponses?: StubResponse[];
 	runtimeUiResetRequests?: Array<{ idempotencyKey: string | null; ifMatch: string | null }>;
+	skillRequests?: string[];
+	skillsByProjectId?: Readonly<Record<string, readonly unknown[]>>;
 	resumeRequests?: string[];
 	subscriptionQuoteRequests?: string[];
 	subscriptionQuoteResponses?: unknown[];
@@ -1827,8 +1832,10 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			);
 		}
 		if (p.match(/^\/v1\/agents\/[^/]+\/project-bindings$/) && r.request().method() === "GET") {
-			if (!options.agentResourceFixtures) return fulfillJson(r, []);
 			const agentId = decodeURIComponent(p.split("/")[3] ?? "");
+			options.agentProjectBindingRequests?.push(r.request().url());
+			if (options.agentProjectBindings) return fulfillJson(r, options.agentProjectBindings);
+			if (!options.agentResourceFixtures) return fulfillJson(r, []);
 			return fulfillJson(r, [
 				{
 					id: `binding-${agentId}`,
@@ -2055,6 +2062,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			return fulfillJson(r, { items: [] });
 		}
 		if (p === "/v1/projects") {
+			if (options.agentProjects) return fulfillJson(r, options.agentProjects);
 			if (!options.agentResourceFixtures) return fulfillJson(r, []);
 			return fulfillJson(r, [
 				{
@@ -2070,6 +2078,20 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 					owner_handle: "hosted-user",
 				},
 			]);
+		}
+		if (p === "/v1/skills") {
+			options.skillRequests?.push(r.request().url());
+			const projectId = url.searchParams.get("project_id") ?? "";
+			const page = Number(url.searchParams.get("page") ?? "1");
+			const pageSize = Number(url.searchParams.get("page_size") ?? "25");
+			const projectSkills = options.skillsByProjectId?.[projectId] ?? [];
+			const start = (page - 1) * pageSize;
+			return fulfillJson(r, {
+				items: projectSkills.slice(start, start + pageSize),
+				total: projectSkills.length,
+				page,
+				page_size: pageSize,
+			});
 		}
 		if (p === "/v1/vault") {
 			if (!options.agentResourceFixtures) {
@@ -2796,22 +2818,90 @@ test("agent cards stay action-free and brand marks fill their tiles", async ({
 	});
 });
 
-test("hosted Skills hide private platform resources", async ({ page }) => {
+test("hosted Skills do not resolve Project scope before the agent projection", async ({ page }) => {
+	const agentProjectBindingRequests: string[] = [];
+	const skillRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [runningMissingProjectionDeployment],
+		cloudAgentNotFoundIds: [missingProjectionEnvironmentId],
+		agentProjectBindingRequests,
+		skillRequests,
+	});
+
+	await page.goto(
+		`/agents/${missingProjectionEnvironmentId}/skills?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+	);
+	await expect(page.locator("main").getByText("Skills unavailable", { exact: true })).toBeVisible();
+	expect(agentProjectBindingRequests).toEqual([]);
+	expect(skillRequests).toEqual([]);
+});
+
+test("hosted Hermes Skills include context Projects without exposing runtime infrastructure", async ({
+	page,
+}) => {
+	const skillRequests: string[] = [];
+	const contextProjectId = "project-hermes-context";
 	await stubHostedApi(page, {
 		deployments: [railHostedDeployment],
 		cloudAgents: [railHostedCloudAgent],
-	});
-	await page.route(`${CLOUD_API}/v1/skills**`, (route) =>
-		fulfillJson(route, {
-			items: [
+		agentProjectBindings: [
+			{
+				id: "binding-hermes-context",
+				agent_id: railHostedEnvironmentId,
+				project_id: contextProjectId,
+				binding_type: "context",
+				priority: 1,
+				default_write_enabled: false,
+				created_at: "2026-07-15T00:01:00Z",
+			},
+			{
+				id: "binding-hermes-primary",
+				agent_id: railHostedEnvironmentId,
+				project_id: "project-hosted",
+				binding_type: "primary",
+				priority: 0,
+				default_write_enabled: true,
+				created_at: "2026-07-15T00:00:00Z",
+			},
+		],
+		agentProjects: [
+			{
+				id: "project-hosted",
+				name: "Rail Cloud Agent Project",
+				slug: "rail-cloud-agent-project",
+				kind: "environment",
+				origin_environment_id: railHostedEnvironmentId,
+				archived_at: null,
+				created_at: "2026-07-15T00:00:00Z",
+				is_owner: true,
+				owner_display: "Hosted User",
+				owner_handle: "hosted-user",
+			},
+			{
+				id: contextProjectId,
+				name: "Hermes Shared Skills",
+				slug: "hermes-shared-skills",
+				kind: "workspace",
+				origin_environment_id: null,
+				archived_at: null,
+				created_at: "2026-07-15T00:00:00Z",
+				is_owner: false,
+				owner_display: "Platform Team",
+				owner_handle: "platform-team",
+			},
+		],
+		skillRequests,
+		skillsByProjectId: {
+			"project-hosted": [],
+			[contextProjectId]: [
 				{
-					id: "skill-filesystem-docs",
-					skill_key: "filesystem-docs",
-					name: "Filesystem docs",
-					description: "Projected from the Agent filesystem",
+					id: "skill-context-workflow",
+					skill_key: "context-workflow",
+					name: "Context workflow",
+					description: "Available through an added Project",
 					version: 3,
-					source: "agent_sync",
-					authority: "agent_sync",
+					source: "cloud",
+					authority: "cloud",
 					source_repo: null,
 					agent_types: ["hermes"],
 					file_count: 2,
@@ -2819,18 +2909,13 @@ test("hosted Skills hide private platform resources", async ({ page }) => {
 					is_active: true,
 					created_at: "2026-07-15T00:00:00Z",
 					updated_at: "2026-07-15T00:00:00Z",
-					project_id: "project-hosted",
-					project_name: "Rail Cloud Agent Project",
-					project_kind: "environment",
-					machine_name: "rail-cloud.local",
-					environment_id: railHostedEnvironmentId,
+					project_id: contextProjectId,
+					project_name: "Hermes Shared Skills",
+					project_kind: "workspace",
 				},
 			],
-			total: 1,
-			page: 1,
-			page_size: 200,
-		}),
-	);
+		},
+	});
 	await page.route(`${CLOUD_API}/v1/agents/${railHostedEnvironmentId}/runtime-observed`, (route) =>
 		fulfillJson(route, {
 			environment: { ...railHostedCloudAgent, hosted_managed: true },
@@ -2854,10 +2939,57 @@ test("hosted Skills hide private platform resources", async ({ page }) => {
 	const main = page.locator("main");
 	await expect(main.getByText("Clawdi", { exact: true })).toHaveCount(0);
 	await expect(main.getByText("Manifest", { exact: true })).toHaveCount(0);
-	await expect(main.getByText("Filesystem docs", { exact: true })).toBeVisible();
-	await expect(main.getByText("Agent synced · Read-only", { exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: /Send Filesystem docs/ })).toHaveCount(0);
+	await expect(main.getByText("Context workflow", { exact: true })).toBeVisible();
+	await expect(main.getByText("Hermes Shared Skills", { exact: true })).toBeVisible();
+	await expect(main.getByText("Shared · Read-only", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: /Send Context workflow/ })).toHaveCount(0);
 	await expect(page.getByRole("link", { name: "MCP", exact: true })).toHaveCount(0);
+	await expect.poll(() => skillRequests.length).toBe(2);
+	const requestedProjects = skillRequests.map((request) => {
+		const url = new URL(request);
+		expect(url.searchParams.get("page")).toBe("1");
+		expect(url.searchParams.get("page_size")).toBe("200");
+		return url.searchParams.get("project_id");
+	});
+	expect(requestedProjects).toEqual(["project-hosted", contextProjectId]);
+});
+
+test("hosted Skills empty state stays neutral and excludes infrastructure summaries", async ({
+	page,
+}) => {
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		agentProjectBindings: [
+			{
+				id: "binding-hermes-primary-empty",
+				agent_id: railHostedEnvironmentId,
+				project_id: "project-hosted",
+				binding_type: "primary",
+				priority: 0,
+				default_write_enabled: true,
+				created_at: "2026-07-15T00:00:00Z",
+			},
+		],
+		skillsByProjectId: { "project-hosted": [] },
+	});
+	await page.route(`${CLOUD_API}/v1/agents/${railHostedEnvironmentId}/runtime-observed`, (route) =>
+		fulfillJson(route, {
+			desired: { managed_skills: [{ id: "clawdi", enabled: true, version: 1 }] },
+			observed: null,
+		}),
+	);
+
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}/skills?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+	const main = page.locator("main");
+	await expect(
+		main.getByText("No user-visible Skills are available through this agent's Projects yet.", {
+			exact: true,
+		}),
+	).toBeVisible();
+	await expect(main.getByText("Clawdi", { exact: true })).toHaveCount(0);
 });
 
 test("transient inventory withholds connected tiles until membership resolves", async ({
@@ -5213,6 +5345,44 @@ test("deployment detail stays put, becomes running, and keeps manual Runtime UI 
 	await expect(
 		main.getByRole("button", { name: "Open Hermes Dashboard in new window" }),
 	).toBeVisible();
+});
+
+test("hosted Agent Interface and Terminal fill the available main width on desktop and mobile", async ({
+	page,
+}) => {
+	await stubHostedApi(page, { deployments: [runningMissingProjectionDeployment] });
+	const query = `?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`;
+	const liveSections = ["console", "terminal"] as const;
+
+	for (const viewport of [
+		{ width: 2000, height: 1000, minimumSurfaceWidth: 1281 },
+		{ width: 390, height: 844, minimumSurfaceWidth: 380 },
+	]) {
+		await page.setViewportSize(viewport);
+		for (const section of liveSections) {
+			await page.goto(`/agents/${missingProjectionEnvironmentId}/${section}${query}`);
+			const surface = page.getByTestId("hosted-agent-live-surface");
+			await expect(surface).toBeVisible();
+			const geometry = await surface.evaluate((element) => {
+				const surfaceRect = element.getBoundingClientRect();
+				const parentRect = element.parentElement?.getBoundingClientRect();
+				return {
+					left: surfaceRect.left,
+					right: surfaceRect.right,
+					width: surfaceRect.width,
+					parentLeft: parentRect?.left ?? -1,
+					parentWidth: parentRect?.width ?? -1,
+				};
+			});
+			expect(geometry.width, `${section} width at ${viewport.width}px`).toBeGreaterThanOrEqual(
+				viewport.minimumSurfaceWidth,
+			);
+			expect(geometry.width).toBeCloseTo(geometry.parentWidth, 0);
+			expect(geometry.left).toBeCloseTo(geometry.parentLeft, 0);
+			expect(geometry.left).toBeGreaterThanOrEqual(0);
+			expect(geometry.right).toBeLessThanOrEqual(viewport.width + 1);
+		}
+	}
 });
 
 test("Runtime UI Access shows Hermes username, masks password, and submits one declarative reset", async ({

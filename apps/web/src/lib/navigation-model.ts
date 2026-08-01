@@ -307,8 +307,8 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "skills",
 		...CANONICAL_NAVIGATION_IDENTITIES.skills,
 		tint: RESOURCE_TINT_CLASSES.skills,
-		description: "Skills synced from this agent's filesystem.",
-		tooltip: "Skills synced from this agent's filesystem",
+		description: "Skills available through this agent's Projects.",
+		tooltip: "View Skills available through this agent's Projects",
 		variants: ["connected", "hosted"],
 	},
 	projects: {

@@ -163,18 +163,28 @@ const sessions = {
 	page_size: 25,
 };
 
-async function fulfillJson(route: Route, body: unknown) {
+async function fulfillJson(route: Route, body: unknown, status = 200) {
 	await route.fulfill({
-		status: 200,
+		status,
 		contentType: "application/json",
 		body: JSON.stringify(body),
 	});
 }
 
+type DashboardApiStubOptions = {
+	projectBindings?: readonly unknown[];
+	projectBindingsError?: { status: number; detail: string };
+	projectBindingsGate?: Promise<void>;
+	projects?: readonly unknown[];
+	skillRequests?: string[];
+	skillsByProjectId?: Readonly<Record<string, readonly unknown[]>>;
+	vaultRequests?: string[];
+};
+
 async function stubDashboardApi(
 	page: Page,
 	agentOrderRequests: string[] = [],
-	options: { projectBindingsGate?: Promise<void>; vaultRequests?: string[] } = {},
+	options: DashboardApiStubOptions = {},
 ) {
 	await page.route("**/v1/**", async (route) => {
 		const url = new URL(route.request().url());
@@ -203,7 +213,15 @@ async function stubDashboardApi(
 		}
 		if (url.pathname === "/v1/agents/agent-smoke-1/project-bindings") {
 			await options.projectBindingsGate;
-			await fulfillJson(route, projectBindings);
+			if (options.projectBindingsError) {
+				await fulfillJson(
+					route,
+					{ detail: options.projectBindingsError.detail },
+					options.projectBindingsError.status,
+				);
+				return;
+			}
+			await fulfillJson(route, options.projectBindings ?? projectBindings);
 			return;
 		}
 		if (url.pathname === "/v1/dashboard/stats") {
@@ -211,7 +229,22 @@ async function stubDashboardApi(
 			return;
 		}
 		if (url.pathname === "/v1/projects") {
-			await fulfillJson(route, projects);
+			await fulfillJson(route, options.projects ?? projects);
+			return;
+		}
+		if (url.pathname === "/v1/skills") {
+			options.skillRequests?.push(route.request().url());
+			const projectId = url.searchParams.get("project_id") ?? "";
+			const pageNumber = Number(url.searchParams.get("page") ?? "1");
+			const pageSize = Number(url.searchParams.get("page_size") ?? "25");
+			const projectSkills = options.skillsByProjectId?.[projectId] ?? [];
+			const start = (pageNumber - 1) * pageSize;
+			await fulfillJson(route, {
+				items: projectSkills.slice(start, start + pageSize),
+				total: projectSkills.length,
+				page: pageNumber,
+				page_size: pageSize,
+			});
 			return;
 		}
 		if (url.pathname === "/v1/vault") {
@@ -362,7 +395,61 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 	page,
 }) => {
 	const vaultRequests: string[] = [];
-	await stubDashboardApi(page, [], { vaultRequests });
+	const projectAccessBindings = [
+		{
+			...projectBindings[0],
+		},
+		{
+			id: "binding-context-later",
+			agent_id: "agent-smoke-1",
+			project_id: "project-context-later",
+			binding_type: "context",
+			priority: 2,
+			default_write_enabled: false,
+			created_at: "2026-07-04T12:02:00.000Z",
+		},
+		{
+			id: "binding-context-first",
+			agent_id: "agent-smoke-1",
+			project_id: "project-context-first",
+			binding_type: "context",
+			priority: 1,
+			default_write_enabled: false,
+			created_at: "2026-07-04T12:01:00.000Z",
+		},
+	];
+	const projectAccessProjects = [
+		...projects,
+		{
+			id: "project-context-first",
+			name: "Team Knowledge",
+			slug: "team-knowledge",
+			kind: "workspace",
+			origin_environment_id: null,
+			archived_at: null,
+			created_at: now.toISOString(),
+			is_owner: false,
+			owner_display: "Teammate",
+			owner_handle: "teammate",
+		},
+		{
+			id: "project-context-later",
+			name: "Automation Library",
+			slug: "automation-library",
+			kind: "workspace",
+			origin_environment_id: null,
+			archived_at: null,
+			created_at: now.toISOString(),
+			is_owner: true,
+			owner_display: "Dev User",
+			owner_handle: "dev-user",
+		},
+	];
+	await stubDashboardApi(page, [], {
+		projectBindings: projectAccessBindings,
+		projects: projectAccessProjects,
+		vaultRequests,
+	});
 
 	await page.goto("/agents/agent-smoke-1/connectors?q=gmail&page=2");
 	const main = page.locator("main");
@@ -375,9 +462,34 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 	await expect(page).toHaveURL(/\/agents\/agent-smoke-1\/connectors\?q=gmail&page=2/);
 
 	await page.goto("/agents/agent-smoke-1/project-access");
-	await expect(main.getByRole("heading", { name: "Projects", level: 1 })).toBeVisible();
-	await expect(main.getByRole("heading", { name: "Agent Project", level: 2 })).toBeVisible();
-	await expect(main.getByText("Smoke Project", { exact: true })).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Projects", level: 1 })).toBeVisible({
+		timeout: 15_000,
+	});
+	const projectStack = main.getByTestId("agent-project-stack");
+	const projectRows = projectStack.locator('ol[aria-label="Effective Project read order"] > li');
+	await expect(projectRows).toHaveCount(3);
+	await expect(projectRows.nth(0)).toContainText("Smoke Project");
+	await expect(projectRows.nth(0)).toContainText("Fixed");
+	await expect(projectRows.nth(0)).toContainText("Default writes · Reads Skills and Vaults");
+	await expect(projectRows.nth(0).getByRole("button")).toHaveCount(0);
+	await expect(projectRows.nth(1)).toContainText("Team Knowledge");
+	await expect(projectRows.nth(1)).toContainText("Viewer");
+	await expect(projectRows.nth(1)).toContainText("Read access · Skills and Vaults");
+	await expect(projectRows.nth(2)).toContainText("Automation Library");
+	await expect(
+		projectRows.nth(1).getByRole("button", { name: "Move Team Knowledge up" }),
+	).toBeDisabled();
+	await expect(
+		projectRows.nth(1).getByRole("button", { name: "Remove Team Knowledge" }),
+	).toBeVisible();
+	await expect(projectStack.getByTestId("agent-project-add")).toBeVisible();
+	await expect(projectStack.getByLabel("Add a Project")).toBeVisible();
+
+	await page.setViewportSize({ width: 390, height: 844 });
+	await expect(projectRows.nth(2)).toBeVisible();
+	expect(
+		await projectStack.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+	).toBe(true);
 
 	await page.goto("/agents/agent-smoke-1/vaults");
 	await expect(main.getByRole("heading", { name: "Vaults", level: 1 })).toBeVisible();
@@ -421,6 +533,45 @@ test("agent Vaults wait for effective Project bindings before requesting invento
 	const vaultRequest = vaultRequests[0];
 	if (!vaultRequest) throw new Error("Agent Vault inventory was not requested after bindings");
 	expect(new URL(vaultRequest).searchParams.get("project_id")).toBe("project-smoke");
+});
+
+test("agent Skills wait for effective Project bindings and fail closed on binding errors", async ({
+	page,
+}) => {
+	let releaseBindings: (() => void) | undefined;
+	const projectBindingsGate = new Promise<void>((resolve) => {
+		releaseBindings = resolve;
+	});
+	const skillRequests: string[] = [];
+	await stubDashboardApi(page, [], { projectBindingsGate, skillRequests });
+
+	await page.goto("/agents/agent-smoke-1/skills");
+	const main = page.locator("main");
+	await expect(main.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible();
+	await expect(main.getByTestId("agent-skills-inventory")).toBeVisible();
+	expect(skillRequests).toEqual([]);
+	if (!releaseBindings) throw new Error("Project binding gate was not initialized");
+	releaseBindings();
+	await expect(
+		main.getByText("No Skills are available through this agent's Projects yet.", { exact: true }),
+	).toBeVisible();
+	expect(skillRequests).toHaveLength(1);
+
+	const errorPage = await page.context().newPage();
+	const errorSkillRequests: string[] = [];
+	try {
+		await stubDashboardApi(errorPage, [], {
+			projectBindingsError: { status: 503, detail: "bindings unavailable" },
+			skillRequests: errorSkillRequests,
+		});
+		await errorPage.goto("/agents/agent-smoke-1/skills");
+		await expect(
+			errorPage.locator("main").getByText("Couldn't load agent Skills", { exact: true }),
+		).toBeVisible({ timeout: 15_000 });
+		expect(errorSkillRequests).toEqual([]);
+	} finally {
+		await errorPage.close();
+	}
 });
 
 test("every agent rail tile button navigates on click", async ({ page }) => {
