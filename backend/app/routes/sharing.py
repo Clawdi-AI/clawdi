@@ -502,10 +502,17 @@ async def unshare_project(
     for link in active_links:
         link.revoked_at = now
 
-    invite_result = await db.execute(
-        sql_delete(ProjectInvitation).where(ProjectInvitation.project_id == project_id)
+    cancelled_invitation_ids = (
+        (
+            await db.execute(
+                sql_delete(ProjectInvitation)
+                .where(ProjectInvitation.project_id == project_id)
+                .returning(ProjectInvitation.id)
+            )
+        )
+        .scalars()
+        .all()
     )
-    invitations_cancelled = int(invite_result.rowcount or 0)
 
     members = (
         (
@@ -529,6 +536,6 @@ async def unshare_project(
     return UnshareResponse(
         links_revoked=len(active_links),
         members_removed=len(members),
-        invitations_cancelled=invitations_cancelled,
+        invitations_cancelled=len(cancelled_invitation_ids),
         agent_bindings_removed=agent_bindings_removed,
     )
