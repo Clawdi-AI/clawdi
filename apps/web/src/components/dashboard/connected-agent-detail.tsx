@@ -7,12 +7,16 @@ import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
 import {
 	AgentSourceBadgeForEnvironment,
 	agentDisplayName,
+	agentTypeLabel,
+	cleanMachineName,
 } from "@/components/dashboard/agent-label";
+import { AgentOverviewCapabilities } from "@/components/dashboard/agent-overview-capabilities";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { AgentSkillsTab, useAgentProjectSkills } from "@/components/dashboard/agent-skills-tab";
 import { AgentVaultsTab } from "@/components/dashboard/agent-vaults-tab";
+import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
 import { ENTITY_CARD_BASE } from "@/components/entity-card";
 import { MemoriesSurface } from "@/components/memories/memories-surface";
@@ -20,6 +24,7 @@ import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SessionFeed } from "@/components/sessions/session-feed";
 import { Skeleton } from "@/components/ui/skeleton";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
 import {
 	type AgentRouteSearch,
@@ -105,6 +110,15 @@ export function ConnectedAgentDetail({
 		? sessionsError
 		: null;
 	const sessionTotal = blockingSessionsError ? "—" : (sessionsPage?.total ?? 0);
+	const syncStatus = daemonStatusVisual(agent);
+	const syncTone =
+		syncStatus.kind === "live"
+			? "success"
+			: syncStatus.kind === "errored"
+				? "destructive"
+				: syncStatus.kind === "paused"
+					? "warning"
+					: "neutral";
 	const activeTabMeta = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeTabMeta.icon;
@@ -144,7 +158,24 @@ export function ConnectedAgentDetail({
 					/>
 
 					{activeTab === "overview" ? (
-						<div className="flex flex-col gap-4">
+						<div className="flex flex-col gap-5">
+							<DetailPanel className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+								<div className="min-w-0">
+									<div className="flex flex-wrap items-center gap-2">
+										<h2 className="truncate text-lg font-semibold tracking-tight">{agentTitle}</h2>
+										<StatusBadge status={syncTone} withDot>
+											{syncStatus.label}
+										</StatusBadge>
+									</div>
+									<p className="mt-1 text-sm text-muted-foreground">
+										{agentTypeLabel(agent.agent_type)} on {cleanMachineName(agent.machine_name)}
+									</p>
+								</div>
+								<div className="text-xs text-muted-foreground sm:text-right">
+									<p>{syncStatus.tooltip}</p>
+									<p className="mt-1">Runtime managed outside Clawdi</p>
+								</div>
+							</DetailPanel>
 							<div className="grid gap-3 sm:grid-cols-3">
 								<AgentStatPanel label="Sessions" value={sessionTotal} />
 								<AgentStatPanel
@@ -158,6 +189,11 @@ export function ConnectedAgentDetail({
 									value={blockingProjectBindingsError ? "—" : (projectBindings?.length ?? "—")}
 								/>
 							</div>
+							<AgentOverviewCapabilities
+								agentId={id}
+								variant="connected"
+								routeSearch={routeSearch}
+							/>
 							{blockingSkillsError ? (
 								<ApiErrorPanel
 									error={blockingSkillsError}
@@ -176,6 +212,10 @@ export function ConnectedAgentDetail({
 									title="Couldn't load agent Projects"
 								/>
 							) : null}
+							<div className="flex items-center justify-between gap-3">
+								<h2 className="text-sm font-medium">Recent sessions</h2>
+								<span className="text-xs text-muted-foreground">Latest synced activity</span>
+							</div>
 							{blockingSessionsError ? (
 								<ApiErrorPanel
 									error={blockingSessionsError}

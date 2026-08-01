@@ -34,6 +34,7 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
+import { AgentOverviewCapabilities } from "@/components/dashboard/agent-overview-capabilities";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { AgentSkillsTab } from "@/components/dashboard/agent-skills-tab";
@@ -571,6 +572,8 @@ export function HostedAgentDetail({
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
 					{deploymentStatus.known && activeTab === "overview" ? (
 						<OverviewTab
+							agentId={environmentId}
+							routeSearch={routeSearch}
 							deployment={deployment}
 							agent={isCloudEnvId(environmentId) ? agent : null}
 							isPerformance={isPerformance}
@@ -1088,6 +1091,8 @@ export function OverviewFailedPanel({
 }
 
 function OverviewTab({
+	agentId,
+	routeSearch,
 	deployment,
 	agent,
 	isPerformance,
@@ -1105,6 +1110,8 @@ function OverviewTab({
 	isCheckingDeployment,
 	onCheckDeploymentAgain,
 }: {
+	agentId: string;
+	routeSearch: AgentRouteSearch;
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
 	isPerformance: boolean;
@@ -1193,6 +1200,7 @@ function OverviewTab({
 					value={`${spec.resources.vcpu} vCPU · ${formatMemoryMib(spec.resources.memory_mib)} · ${spec.resources.disk_gib} GiB storage`}
 				/>
 			</div>
+			<AgentOverviewCapabilities agentId={agentId} variant="hosted" routeSearch={routeSearch} />
 			{projectionAvailable ? (
 				<div>
 					<div className="mb-2 text-sm font-medium">Recent sessions</div>
