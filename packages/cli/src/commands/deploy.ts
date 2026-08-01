@@ -1021,8 +1021,7 @@ export async function runDeployFlow(
 					: {
 							mode: "saved",
 							model,
-							primaryProviderId: selectedSavedProvider?.provider_id ?? "",
-							providerIds: selectedSavedProvider ? [selectedSavedProvider.provider_id] : [],
+							providerId: selectedSavedProvider?.provider_id ?? "",
 						},
 	});
 	const deployRequest: HostedDeployRequest = { ...built.request, ...aiFields };
