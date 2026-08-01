@@ -45,7 +45,7 @@ async def has_private_resolved_ip(hostname: str | None) -> bool:
         return True
     for info in infos:
         address = info[4][0]
-        if is_private_hostname(address):
+        if not isinstance(address, str) or is_private_hostname(address):
             return True
     return False
 

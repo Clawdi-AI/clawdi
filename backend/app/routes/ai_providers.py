@@ -679,10 +679,9 @@ async def patch_ai_provider(
         base_url=merged.base_url,
     )
     await _validate_runtime_env_unique(db, auth, merged, exclude_provider_id=provider.provider_id)
-    if "auth" in body.model_fields_set:
-        auth_ref, auth_metadata = merged.auth.persistence_fields()
     _apply_provider_body(provider, merged, apply_auth=False)
     if "auth" in body.model_fields_set:
+        auth_ref, auth_metadata = merged.auth.persistence_fields()
         try:
             transition = await transition_ai_provider_auth(
                 db,
@@ -804,18 +803,17 @@ async def import_ai_provider_auth(
     provider = await _get_provider_or_404_for_update(db, auth, provider_id)
     auth_import = body.root
     profile = _normalize_profile(auth_import.profile)
-    if auth_import.type == "agent_profile":
-        tool = _normalize_profile(auth_import.tool)
-        _validate_supported_agent_profile_tool(tool)
-        metadata = {
-            "tool": tool,
-            "profile": profile,
-        }
-    elif auth_import.type == "oauth_profile":
+    if auth_import.type == "oauth_profile":
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "oauth_profile import is not supported; use Codex OAuth connect",
         )
+    tool = _normalize_profile(auth_import.tool)
+    _validate_supported_agent_profile_tool(tool)
+    metadata = {
+        "tool": tool,
+        "profile": profile,
+    }
     try:
         await transition_ai_provider_auth(
             db,
@@ -1375,14 +1373,16 @@ async def resolve_ai_provider_auth(
             credential_revision=payload.credential_revision,
         )
     if provider.auth_type in {"agent_profile", "oauth_profile"}:
-        return AiProviderAuthResolveResponse(
-            provider_id=runtime_managed_provider_id(provider.provider_id),
-            auth_type=provider.auth_type,
-            payload=plaintext,
-            tool=metadata.get("tool"),
-            provider=metadata.get("provider"),
-            profile=profile,
-            credential_revision=payload.credential_revision,
+        return AiProviderAuthResolveResponse.model_validate(
+            {
+                "provider_id": runtime_managed_provider_id(provider.provider_id),
+                "auth_type": provider.auth_type,
+                "payload": plaintext,
+                "tool": metadata.get("tool"),
+                "provider": metadata.get("provider"),
+                "profile": profile,
+                "credential_revision": payload.credential_revision,
+            }
         )
     raise HTTPException(
         status.HTTP_409_CONFLICT,
@@ -1645,7 +1645,7 @@ async def _to_responses(
 def _provider_credential_material(
     provider: AiProvider,
     payload_keys: set[tuple[str, str, str]],
-) -> str:
+) -> CredentialMaterialState:
     active_profile = _active_auth_profile(provider)
     if active_profile is not None:
         if (provider.provider_id, active_profile, provider.auth_type) in payload_keys:
@@ -1675,31 +1675,33 @@ def _provider_consumer(
 def _build_response(
     provider: AiProvider,
     *,
-    credential_material: str,
+    credential_material: CredentialMaterialState,
     consumer: AiProviderConsumer | None = None,
 ) -> AiProviderResponse:
     readiness = provider_readiness(
         _provider_capability_input(provider),
         credential_material=credential_material,
     )
-    return AiProviderResponse(
-        id=str(provider.id),
-        provider_id=runtime_managed_provider_id(provider.provider_id),
-        scope=AI_PROVIDER_SCOPE,
-        type=provider.type,
-        label=provider.label,
-        base_url=provider.base_url,
-        api_mode=provider.api_mode,
-        auth=_to_auth(provider),
-        usable=credential_material != "missing",
-        readiness=readiness,
-        consumer=consumer,
-        managed_by=provider.managed_by,
-        runtime_env_name=provider.runtime_env_name,
-        capabilities=provider.capabilities,
-        models=provider.models,
-        created_at=provider.created_at,
-        updated_at=provider.updated_at,
+    return AiProviderResponse.model_validate(
+        {
+            "id": str(provider.id),
+            "provider_id": runtime_managed_provider_id(provider.provider_id),
+            "scope": AI_PROVIDER_SCOPE,
+            "type": provider.type,
+            "label": provider.label,
+            "base_url": provider.base_url,
+            "api_mode": provider.api_mode,
+            "auth": _to_auth(provider),
+            "usable": credential_material != "missing",
+            "readiness": readiness,
+            "consumer": consumer,
+            "managed_by": provider.managed_by,
+            "runtime_env_name": provider.runtime_env_name,
+            "capabilities": provider.capabilities,
+            "models": provider.models,
+            "created_at": provider.created_at,
+            "updated_at": provider.updated_at,
+        }
     )
 
 
