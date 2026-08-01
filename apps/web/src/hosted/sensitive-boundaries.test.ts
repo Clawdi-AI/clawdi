@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import { QueryClient } from "@tanstack/react-query";
 import type { WalletState } from "@/hosted/billing/contracts";
 import { walletSnapshotForCache } from "@/hosted/billing/wallet/wallet-cache";
-import { whatsappCredentialMetadataForCache } from "@/hosted/v2/channels/whatsapp-credential-cache";
 import { cacheValueContains } from "@/lib/sensitive-cache";
 import { executeSensitiveAction } from "@/lib/use-sensitive-action";
 import { memorySettingsForCache } from "@/pages/dashboard/memories/memory-settings-cache";
@@ -53,7 +52,6 @@ describe("structural secret boundaries without the denylist", () => {
 		const secrets = {
 			stripe: "pi_raw-query-client-secret",
 			walletFuture: "future-wallet-secret-with-an-unregistered-name",
-			whatsapp: "whatsapp-auth-material",
 			mem0: "mem0-raw-query-api-key",
 			settingsFuture: "future-settings-secret-with-an-unregistered-name",
 		};
@@ -75,27 +73,10 @@ describe("structural secret boundaries without the denylist", () => {
 			...wallet,
 			future_material: { value: secrets.walletFuture },
 		};
-		const whatsappMetadataWithSecrets = [
-			{
-				credential_id: "credential-id",
-				agent_link_id: "link-id",
-				agent_id: "agent-id",
-				jid: "15555550123@s.whatsapp.net",
-				identity_pub_key_hex: "public-key",
-				created_at: "2026-07-25T00:00:00Z",
-				creds: { material: secrets.whatsapp },
-				websocket_url: `wss://example.invalid?material=${secrets.whatsapp}`,
-			},
-		];
-
 		await Promise.all([
 			queryClient.prefetchQuery({
 				queryKey: ["billing", "wallet"],
 				queryFn: async () => walletSnapshotForCache(walletWithFutureSecret),
-			}),
-			queryClient.prefetchQuery({
-				queryKey: ["whatsapp-tenant-creds", "account-id"],
-				queryFn: async () => whatsappCredentialMetadataForCache(whatsappMetadataWithSecrets),
 			}),
 			queryClient.prefetchQuery({
 				queryKey: ["settings"],
@@ -143,7 +124,6 @@ describe("structural secret boundaries without the denylist", () => {
 			"Stripe subscription checkout",
 			"Stripe portal and payment fix",
 			"connector credentials and connect URL",
-			"WhatsApp credential create",
 			"project share token",
 			"CLI device code",
 			"Vault plaintext import",
@@ -172,7 +152,6 @@ describe("structural secret boundaries without the denylist", () => {
 				[
 					"export function useCreateChannel()",
 					"export function useCreatePairCode(",
-					"export function useCreateWhatsappTenantCred(accountId: string)",
 					"return useSensitiveAction",
 				],
 			],
@@ -219,7 +198,7 @@ describe("structural secret boundaries without the denylist", () => {
 		}
 		expect(
 			source("hosted/v2/channels/channels-hooks.ts").split("return useSensitiveAction"),
-		).toHaveLength(4);
+		).toHaveLength(3);
 		expect(
 			source("hosted/v2/ai-providers/ai-providers-hooks.ts").split("return useSensitiveAction"),
 		).toHaveLength(5);
@@ -240,9 +219,6 @@ describe("structural secret boundaries without the denylist", () => {
 		}
 		expect(source("hosted/billing/wallet/wallet-query.ts")).toContain(
 			"walletSnapshotForCache(await client.getWallet())",
-		);
-		expect(source("hosted/v2/channels/channels-hooks.ts")).toContain(
-			"whatsappCredentialMetadataForCache(",
 		);
 		expect(source("pages/dashboard/memories/page.tsx")).toContain(
 			"memorySettingsForCache(unwrap(await api.GET",

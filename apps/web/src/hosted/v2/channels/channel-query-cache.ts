@@ -8,7 +8,6 @@ export const channelKeys = {
 	agentLinks: (id: string) => ["channel-agent-links", id] as const,
 	bindings: (id: string) => ["channel-bindings", id] as const,
 	activity: (id: string) => ["channel-activity", id] as const,
-	whatsappCreds: (id: string) => ["whatsapp-tenant-creds", id] as const,
 };
 
 export async function invalidateCreatedChannelQueries(
@@ -37,7 +36,6 @@ export async function removeDeletedChannelQueries(
 	qc.removeQueries({ queryKey: channelKeys.agentLinks(channelId) });
 	qc.removeQueries({ queryKey: channelKeys.bindings(channelId) });
 	qc.removeQueries({ queryKey: channelKeys.activity(channelId) });
-	qc.removeQueries({ queryKey: channelKeys.whatsappCreds(channelId) });
 
 	await Promise.all([
 		qc.invalidateQueries({ queryKey: channelKeys.list }),
