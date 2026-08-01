@@ -386,22 +386,19 @@ async def ingest_runtime_observation(
                 )
             )
         ).scalar_one_or_none()
-        existing = existing_by_event or existing_by_sequence
-        exact_duplicate = (
-            existing is not None
-            and existing_by_event is not None
+        if (
+            existing_by_event is not None
             and existing_by_sequence is not None
             and existing_by_event.id == existing_by_sequence.id
-            and existing.environment_id == environment_id
-            and existing.boot_session_id == value.boot_session_id
-            and existing.sequence == value.sequence
-            and existing.event_id == value.event_id
-            and existing.payload_hash == payload_hash
-        )
-        if exact_duplicate:
+            and existing_by_event.environment_id == environment_id
+            and existing_by_event.boot_session_id == value.boot_session_id
+            and existing_by_event.sequence == value.sequence
+            and existing_by_event.event_id == value.event_id
+            and existing_by_event.payload_hash == payload_hash
+        ):
             return RuntimeObservationIngestResult(
-                event_id=existing.event_id,
-                stream_position=existing.id,
+                event_id=existing_by_event.event_id,
+                stream_position=existing_by_event.id,
                 duplicate=True,
                 outcome="duplicate_replay",
             )
@@ -1516,16 +1513,19 @@ async def expire_runtime_observation_payloads(
                         "session_high_water_marks": high_waters,
                     },
                 )
-        result = await db.execute(
-            update(V2RuntimeObservationInbox)
-            .where(
-                V2RuntimeObservationInbox.id.in_(ids),
-                V2RuntimeObservationInbox.received_at < replay_cutoff,
-                V2RuntimeObservationInbox.payload_purged_at.is_(None),
+        compacted_ids = (
+            await db.scalars(
+                update(V2RuntimeObservationInbox)
+                .where(
+                    V2RuntimeObservationInbox.id.in_(ids),
+                    V2RuntimeObservationInbox.received_at < replay_cutoff,
+                    V2RuntimeObservationInbox.payload_purged_at.is_(None),
+                )
+                .values(diagnostics={}, payload_purged_at=current)
+                .returning(V2RuntimeObservationInbox.id)
             )
-            .values(diagnostics={}, payload_purged_at=current)
-        )
-        compacted = result.rowcount or 0
+        ).all()
+        compacted = len(compacted_ids)
         if compacted:
             floor_position = max(ids)
             if floor_position > fence.replay_floor_stream_position:

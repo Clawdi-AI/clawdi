@@ -27,6 +27,7 @@ EXPECTED_CONFIG = {
         "app/services/embedding.py",
         "app/services/file_store.py",
         "app/services/memory_extraction.py",
+        "app/services/runtime_observation.py",
     ],
 }
 EXPECTED_VERSION = "1.39.9"
