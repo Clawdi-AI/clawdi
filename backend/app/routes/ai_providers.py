@@ -873,7 +873,6 @@ async def _build_codex_device_authorization(
         db,
         owner_user_id=auth.user_id,
         provider=provider,
-        oauth_provider=oauth_provider,
         profile=profile,
         flow_kind="device_code",
         expires_at=expires_at,
@@ -951,7 +950,6 @@ async def start_ai_provider_oauth(
         db,
         owner_user_id=auth.user_id,
         provider=provider,
-        oauth_provider=oauth_provider,
         profile=profile,
         flow_kind="authorization_code",
         expires_at=expires_at,
@@ -1023,10 +1021,10 @@ async def complete_ai_provider_oauth(
             "requested_redirect_uri": body.redirect_uri,
         },
     )
-    if begin.replay is not None:
-        return begin.replay
+    if isinstance(begin, AiProviderResponse):
+        return begin
     return await service.exchange_and_commit(
-        attempt_id=begin.attempt_id,
+        attempt_id=begin,
         owner_user_id=auth.user_id,
     )
 

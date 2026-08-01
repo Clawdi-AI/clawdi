@@ -3752,8 +3752,8 @@ async def test_stale_exchanging_oauth_attempt_resumes_from_durable_material(
                 "requested_redirect_uri": "https://cloud.example/oauth/callback",
             },
         )
-        attempt_id = begin.attempt_id
-        assert begin.replay is None
+        assert isinstance(begin, uuid.UUID)
+        attempt_id = begin
         assert decode_calls == 1
         attempt = await db_session.get(AiProviderOAuthAttempt, attempt_id)
         assert attempt is not None
@@ -3843,11 +3843,7 @@ async def test_stale_exchange_revoke_claim_fences_original_commit(
     async def blocking_payload_build(*args, **kwargs):
         payload_build_started.set()
         await release_payload_build.wait()
-        return (
-            _codex_oauth_envelope("stale-race-access", "stale-race-refresh"),
-            "agent_profile",
-            {"tool": "codex", "profile": "default", "source": "oauth_pkce"},
-        )
+        return _codex_oauth_envelope("stale-race-access", "stale-race-refresh")
 
     session_factory = async_sessionmaker(engine, expire_on_commit=True)
 
@@ -3864,7 +3860,7 @@ async def test_stale_exchange_revoke_claim_fences_original_commit(
     app.dependency_overrides[get_session] = _independent_session
     monkeypatch.setattr("app.services.ai_provider_oauth_attempt.httpx.AsyncClient", FakeOAuthClient)
     monkeypatch.setattr(
-        "app.services.ai_provider_oauth_attempt.oauth_payload_from_token_response",
+        "app.services.ai_provider_oauth_attempt._codex_auth_profile_payload",
         blocking_payload_build,
     )
     completion_task = None
@@ -4055,8 +4051,8 @@ async def test_oauth_commit_and_new_start_follow_provider_attempt_lock_order(
                 "requested_redirect_uri": "https://cloud.example/oauth/callback",
             },
         )
-        attempt_a_id = begin.attempt_id
-        assert begin.replay is None
+        assert isinstance(begin, uuid.UUID)
+        attempt_a_id = begin
         commit_task = asyncio.create_task(
             service.commit_attempt(
                 attempt_id=attempt_a_id,
@@ -4200,8 +4196,8 @@ async def test_post_exchange_commit_failure_leaves_durable_compensation(
                 "requested_redirect_uri": "https://cloud.example/oauth/callback",
             },
         )
-        attempt_id = begin.attempt_id
-        assert begin.replay is None
+        assert isinstance(begin, uuid.UUID)
+        attempt_id = begin
         with pytest.raises(RuntimeError, match="forced credential commit failure"):
             await service.exchange_and_commit(
                 attempt_id=attempt_id,
@@ -4327,7 +4323,8 @@ async def test_exchange_compensates_when_initial_tombstone_commit_fails(
                 "requested_redirect_uri": "https://cloud.example/oauth/callback",
             },
         )
-        attempt_id = begin.attempt_id
+        assert isinstance(begin, uuid.UUID)
+        attempt_id = begin
         original_persist = service._persist_compensation_once
         persist_calls = 0
 
@@ -4434,8 +4431,8 @@ async def test_post_exchange_provider_shape_change_fails_commit_and_keeps_compen
                 "requested_redirect_uri": "https://cloud.example/oauth/callback",
             },
         )
-        attempt_id = begin.attempt_id
-        assert begin.replay is None
+        assert isinstance(begin, uuid.UUID)
+        attempt_id = begin
         async with ai_provider_routes.async_session_factory() as compensation_db:
             compensation = await enqueue_oauth_revoke_tombstone(
                 compensation_db,
@@ -4535,7 +4532,6 @@ async def test_device_poll_reclaims_stale_lease_and_resumes_durable_success(
         db_session,
         owner_user_id=owner_user_id,
         provider=provider,
-        oauth_provider="codex",
         profile="default",
         flow_kind="device_code",
         expires_at=datetime.now(UTC) + timedelta(minutes=15),
@@ -4612,6 +4608,7 @@ async def test_device_poll_reclaims_stale_lease_and_resumes_durable_success(
         select(AiProviderOAuthAttempt).where(AiProviderOAuthAttempt.state_sha256 == attempt_hash)
     )
     assert attempt is not None
+    assert attempt.oauth_provider == oauth_attempt_service.CODEX_OAUTH_PROVIDER
     assert attempt.status == "pending"
     assert attempt.poll_claim_id is None
     assert attempt.exchange_started_at is None

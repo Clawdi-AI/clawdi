@@ -72,19 +72,12 @@ CODEX_OAUTH_CONFIG = {
         "originator": "codex_cli_rs",
     },
 }
-BUILTIN_OAUTH_CONFIGS = {CODEX_OAUTH_PROVIDER: CODEX_OAUTH_CONFIG}
 
 
 @dataclass(frozen=True, slots=True)
 class OAuthAttemptStateIdentity:
     flow_id: UUID
     state_sha256: str
-
-
-@dataclass(frozen=True, slots=True)
-class OAuthAttemptBegin:
-    attempt_id: UUID
-    replay: AiProviderResponse | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,11 +93,6 @@ class _DevicePollClaim:
     device_auth_id: str
     user_code: str
     retry_after_seconds: int
-
-
-@dataclass(frozen=True, slots=True)
-class _ResumeExchange:
-    attempt_id: UUID
 
 
 async def fail_active_oauth_attempts(
@@ -328,7 +316,6 @@ class AiProviderOAuthAttemptService:
         *,
         owner_user_id: UUID,
         provider: AiProvider,
-        oauth_provider: str,
         profile: str,
         flow_kind: OAuthFlowKind,
         expires_at: datetime,
@@ -380,7 +367,7 @@ class AiProviderOAuthAttemptService:
                 owner_user_id=owner_user_id,
                 provider_row_id=locked_provider.id,
                 provider_id=locked_provider.provider_id,
-                oauth_provider=oauth_provider,
+                oauth_provider=CODEX_OAUTH_PROVIDER,
                 auth_profile=profile,
                 flow_kind=flow_kind,
                 status="pending",
@@ -404,7 +391,7 @@ class AiProviderOAuthAttemptService:
         state_value: str,
         flow_kind: OAuthFlowKind,
         payload_updates: dict,
-    ) -> OAuthAttemptBegin:
+    ) -> UUID | AiProviderResponse:
         state_identity = oauth_attempt_state_identity(state_value)
         async with self._session_factory() as db:
             provider, attempt = await self._lock_attempt_for_state(
@@ -416,9 +403,8 @@ class AiProviderOAuthAttemptService:
             )
             replay = oauth_attempt_replay(attempt)
             if replay is not None:
-                attempt_id = attempt.id
                 await db.rollback()
-                return OAuthAttemptBegin(attempt_id, replay)
+                return replay
             if provider is None or provider.archived_at is not None:
                 terminal_oauth_attempt("failed").apply(attempt)
                 await db.commit()
@@ -432,7 +418,7 @@ class AiProviderOAuthAttemptService:
                 attempt_id = attempt.id
                 attempt.exchange_started_at = datetime.now(UTC)
                 await db.commit()
-                return OAuthAttemptBegin(attempt_id)
+                return attempt_id
             if attempt.status != "pending":
                 await db.rollback()
                 raise HTTPException(status.HTTP_409_CONFLICT, "OAuth completion is not pending")
@@ -467,7 +453,7 @@ class AiProviderOAuthAttemptService:
             attempt.poll_claim_id = None
             attempt_id = attempt.id
             await db.commit()
-            return OAuthAttemptBegin(attempt_id)
+            return attempt_id
 
     async def poll_device_attempt(
         self,
@@ -486,9 +472,9 @@ class AiProviderOAuthAttemptService:
             return claim
         if isinstance(claim, OAuthDevicePollPending):
             return claim
-        if isinstance(claim, _ResumeExchange):
+        if isinstance(claim, UUID):
             return await self.exchange_and_commit(
-                attempt_id=claim.attempt_id,
+                attempt_id=claim,
                 owner_user_id=owner_user_id,
             )
 
@@ -597,18 +583,9 @@ class AiProviderOAuthAttemptService:
                         attempt_id=attempt_id,
                         revocable=revocable,
                     )
-                (
-                    payload_text,
-                    provider_auth_type,
-                    metadata,
-                ) = await oauth_payload_from_token_response(
-                    client,
-                    oauth_provider,
-                    config,
-                    response,
-                    profile,
-                    source=source,
-                )
+                payload_text = await _codex_auth_profile_payload(client, config, response, profile)
+                provider_auth_type = "agent_profile"
+                metadata = {"tool": "codex", "profile": profile, "source": source}
         except CodexOAuthUpstreamError as exc:
             await self.fail_attempt(attempt_id)
             raise _codex_upstream_http_exception(exc) from exc
@@ -736,7 +713,7 @@ class AiProviderOAuthAttemptService:
         state_identity: OAuthAttemptStateIdentity,
         owner_user_id: UUID,
         provider_id: str,
-    ) -> _DevicePollClaim | _ResumeExchange | OAuthDevicePollPending | AiProviderResponse:
+    ) -> _DevicePollClaim | UUID | OAuthDevicePollPending | AiProviderResponse:
         async with self._session_factory() as db:
             provider, attempt = await self._lock_attempt_for_state(
                 db,
@@ -761,7 +738,7 @@ class AiProviderOAuthAttemptService:
                     attempt_id = attempt.id
                     attempt.exchange_started_at = datetime.now(UTC)
                     await db.commit()
-                    return _ResumeExchange(attempt_id)
+                    return attempt_id
                 await db.rollback()
                 return OAuthDevicePollPending(1)
             now = datetime.now(UTC)
@@ -1132,7 +1109,12 @@ def oauth_attempt_replay(attempt: AiProviderOAuthAttempt) -> AiProviderResponse 
 
 
 def oauth_config_for(oauth_provider: str) -> dict:
-    config: dict = dict(BUILTIN_OAUTH_CONFIGS.get(oauth_provider, {}))
+    if oauth_provider != CODEX_OAUTH_PROVIDER:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"AI Provider OAuth config not found for {oauth_provider}",
+        )
+    config: dict = dict(CODEX_OAUTH_CONFIG)
     raw = settings.ai_provider_oauth_config_json.strip()
     if raw:
         try:
@@ -1155,11 +1137,6 @@ def oauth_config_for(oauth_provider: str) -> dict:
             )
         if isinstance(configured, dict):
             config = merge_oauth_config(config, configured)
-    if not config:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            f"AI Provider OAuth config not found for {oauth_provider}",
-        )
     return config
 
 
@@ -1228,25 +1205,6 @@ def validate_redirect_uri(value: str) -> None:
     raise HTTPException(
         status.HTTP_422_UNPROCESSABLE_ENTITY,
         "redirect_uri must be https or loopback http",
-    )
-
-
-async def oauth_payload_from_token_response(
-    client: httpx.AsyncClient,
-    oauth_provider: str,
-    config: dict,
-    response: httpx.Response,
-    profile: str,
-    *,
-    source: str = "oauth_pkce",
-) -> tuple[str, str, dict]:
-    if oauth_provider == CODEX_OAUTH_PROVIDER:
-        payload = await _codex_auth_profile_payload(client, config, response, profile)
-        return payload, "agent_profile", {"tool": "codex", "profile": profile, "source": source}
-    return (
-        response.text,
-        "oauth_profile",
-        {"provider": oauth_provider, "profile": profile, "source": source},
     )
 
 
@@ -1457,7 +1415,6 @@ __all__ = [
     "AiProviderOAuthAttemptService",
     "CODEX_OAUTH_PROVIDER",
     "CODEX_OPENAI_BASE_URL",
-    "OAuthAttemptBegin",
     "OAuthDevicePollPending",
     "OAUTH_DEVICE_POLL_LEASE_SECONDS",
     "OAUTH_EXCHANGE_STALE_SECONDS",
