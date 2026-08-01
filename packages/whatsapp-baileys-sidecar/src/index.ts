@@ -8,7 +8,16 @@ const config = loadConfigFromEnv();
 const runtime = new BaileysSocketRuntime(config);
 const server = createSidecarServer(runtime, { apiToken: config.apiToken });
 
-await runtime.start();
+try {
+	await runtime.start();
+} catch (error: unknown) {
+	console.error(
+		JSON.stringify({
+			event: "clawdi_whatsapp_baileys_sidecar_start_fail_stop",
+			error: error instanceof Error ? error.name : "Error",
+		}),
+	);
+}
 
 server.listen(config.port, config.host, () => {
 	const address = server.address() as AddressInfo;

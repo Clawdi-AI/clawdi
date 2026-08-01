@@ -1,17 +1,16 @@
+import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
-import {
-	decodeBase64,
-	decodeJsonBytes,
-	encodeJsonBytes,
-	isRecord,
-	parseBinaryNode,
-	parseStringRecord,
-} from "./json-bytes.js";
+import { ContractValidationError, canonicalRequestHash, parseOperation } from "./contract.js";
+import { isE164Digits } from "./jid.js";
 import {
 	type BaileysRuntime,
-	type RelayMessageRequest,
+	MediaNotFoundError,
+	MediaTooLargeError,
+	OperationConflictError,
+	RuntimeFatalError,
 	RuntimeNotConnectedError,
+	VersionRecoveryRequiredError,
 } from "./types.js";
 
 export type ServerConfig = {
@@ -19,12 +18,10 @@ export type ServerConfig = {
 	maxBodyBytes?: number;
 };
 
-const DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024;
+const DEFAULT_MAX_BODY_BYTES = 12 * 1024 * 1024;
 
 export function createSidecarServer(runtime: BaileysRuntime, config: ServerConfig): Server {
-	if (!config.apiToken.trim()) {
-		throw new Error("apiToken is required");
-	}
+	if (!config.apiToken.trim()) throw new Error("apiToken is required");
 	const maxBodyBytes = config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
 	return createServer(async (request, response) => {
 		try {
@@ -38,25 +35,70 @@ export function createSidecarServer(runtime: BaileysRuntime, config: ServerConfi
 				writeJson(response, 200, runtime.health());
 				return;
 			}
-			if (method === "POST" && path === "/v1/relay-message") {
-				const body = await readJsonBody(request, maxBodyBytes);
-				const relayRequest = parseRelayMessageBody(body);
-				const messageId = await runtime.relayMessage(relayRequest);
-				writeJson(response, 200, { ok: true, messageId });
+			if (method === "GET" && path === "/v1/capabilities") {
+				writeJson(response, 200, runtime.capabilities());
 				return;
 			}
-			if (method === "POST" && path === "/v1/raw-node") {
-				const body = await readJsonBody(request, maxBodyBytes);
-				const node = parseNodeBody(body);
-				await runtime.sendNode(node);
+			if (method === "GET" && path === "/v1/pairing/status") {
+				writeJson(response, 200, runtime.pairingStatus());
+				return;
+			}
+			if (method === "POST" && path === "/v1/pairing/qr") {
+				writeJson(response, 200, await runtime.startQrPairing());
+				return;
+			}
+			if (method === "POST" && path === "/v1/pairing/code") {
+				const body = asRecord(await readJsonBody(request, maxBodyBytes));
+				if (typeof body.phoneNumber !== "string" || !isE164Digits(body.phoneNumber)) {
+					throw new HttpError(400, "phoneNumber_must_be_e164_digits");
+				}
+				writeJson(response, 200, await runtime.startCodePairing(body.phoneNumber));
+				return;
+			}
+			if (method === "POST" && path === "/v1/pairing/cancel") {
+				writeJson(response, 200, await runtime.cancelPairing());
+				return;
+			}
+			if (method === "POST" && path === "/v1/pairing/logout") {
+				writeJson(response, 200, await runtime.logout());
+				return;
+			}
+			if (method === "POST" && path === "/v1/recover") {
+				const body = asRecord(await readJsonBody(request, maxBodyBytes));
+				if (
+					body.acceptVersionChange !== undefined &&
+					typeof body.acceptVersionChange !== "boolean"
+				) {
+					throw new HttpError(400, "acceptVersionChange_must_be_boolean");
+				}
+				await runtime.recover(body.acceptVersionChange === true);
 				writeJson(response, 200, { ok: true });
 				return;
 			}
-			if (method === "POST" && path === "/v1/query-iq") {
-				const body = await readJsonBody(request, maxBodyBytes);
-				const { node, timeoutMs } = parseQueryBody(body);
-				const result = await runtime.query(node, timeoutMs);
-				writeJson(response, 200, { node: result === null ? null : encodeJsonBytes(result) });
+			if (method === "POST" && path === "/v1/operations") {
+				const operation = parseOperation(await readJsonBody(request, maxBodyBytes));
+				const result = await runtime.performOperation(operation, canonicalRequestHash(operation));
+				const status =
+					result.status === "ambiguous"
+						? 409
+						: result.status === "failed"
+							? result.error === "baileys_not_connected"
+								? 503
+								: 422
+							: 200;
+				writeJson(response, status, result);
+				return;
+			}
+			const mediaMatch =
+				method === "GET" ? /^\/v1\/media\/(media_[A-Za-z0-9_-]{43})$/.exec(path) : null;
+			if (mediaMatch?.[1]) {
+				const media = await runtime.downloadMedia(mediaMatch[1]);
+				response.writeHead(200, {
+					"cache-control": "no-store",
+					"content-type": media.contentType,
+					"content-length": String(media.data.byteLength),
+				});
+				response.end(media.data);
 				return;
 			}
 			writeJson(response, 404, { error: "not_found" });
@@ -68,7 +110,10 @@ export function createSidecarServer(runtime: BaileysRuntime, config: ServerConfi
 
 function authorized(request: IncomingMessage, token: string): boolean {
 	const header = request.headers.authorization;
-	return header === `Bearer ${token}`;
+	if (!header?.startsWith("Bearer ")) return false;
+	const provided = Buffer.from(header.slice(7));
+	const expected = Buffer.from(token);
+	return provided.length === expected.length && timingSafeEqual(provided, expected);
 }
 
 async function readJsonBody(request: IncomingMessage, maxBodyBytes: number): Promise<unknown> {
@@ -76,79 +121,23 @@ async function readJsonBody(request: IncomingMessage, maxBodyBytes: number): Pro
 	let total = 0;
 	for await (const chunk of request) {
 		const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-		total += buffer.length;
-		if (total > maxBodyBytes) {
-			throw new HttpError(413, "request_body_too_large");
-		}
+		total += buffer.byteLength;
+		if (total > maxBodyBytes) throw new HttpError(413, "request_body_too_large");
 		chunks.push(buffer);
 	}
-	const raw = Buffer.concat(chunks).toString("utf-8");
-	if (!raw) {
-		throw new HttpError(400, "json_body_required");
-	}
+	if (chunks.length === 0) throw new HttpError(400, "json_body_required");
 	try {
-		return JSON.parse(raw);
+		return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 	} catch {
 		throw new HttpError(400, "invalid_json");
 	}
 }
 
-function parseRelayMessageBody(body: unknown): RelayMessageRequest {
-	if (!isRecord(body)) {
+function asRecord(value: unknown): Record<string, unknown> {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
 		throw new HttpError(400, "body_must_be_object");
 	}
-	if (typeof body.jid !== "string" || !body.jid) {
-		throw new HttpError(400, "jid_required");
-	}
-	if (typeof body.messageId !== "string" || !body.messageId) {
-		throw new HttpError(400, "messageId_required");
-	}
-	if (typeof body.messageProtoBase64 !== "string") {
-		throw new HttpError(400, "messageProtoBase64_required");
-	}
-	try {
-		return {
-			jid: body.jid,
-			messageId: body.messageId,
-			messageProto: decodeBase64(body.messageProtoBase64, "messageProtoBase64"),
-			additionalAttributes: parseStringRecord(
-				body.additionalAttributes ?? {},
-				"additionalAttributes",
-			),
-		};
-	} catch (error: unknown) {
-		throw new HttpError(400, error instanceof Error ? error.message : "invalid_relay_message");
-	}
-}
-
-function parseNodeBody(body: unknown) {
-	if (!isRecord(body)) {
-		throw new HttpError(400, "body_must_be_object");
-	}
-	try {
-		return parseBinaryNode(decodeJsonBytes(body.node));
-	} catch (error: unknown) {
-		throw new HttpError(400, error instanceof Error ? error.message : "invalid_node");
-	}
-}
-
-function parseQueryBody(body: unknown) {
-	if (!isRecord(body)) {
-		throw new HttpError(400, "body_must_be_object");
-	}
-	const timeoutMs = body.timeoutMs;
-	if (
-		!Number.isInteger(timeoutMs) ||
-		typeof timeoutMs !== "number" ||
-		timeoutMs < 1 ||
-		timeoutMs > 120_000
-	) {
-		throw new HttpError(400, "timeoutMs_must_be_1_to_120000");
-	}
-	return {
-		node: parseNodeBody(body),
-		timeoutMs,
-	};
+	return value as Record<string, unknown>;
 }
 
 function writeError(response: ServerResponse, error: unknown): void {
@@ -156,17 +145,46 @@ function writeError(response: ServerResponse, error: unknown): void {
 		writeJson(response, error.status, { error: error.message });
 		return;
 	}
+	if (error instanceof ContractValidationError) {
+		writeJson(response, 400, { error: error.message });
+		return;
+	}
+	if (error instanceof OperationConflictError) {
+		writeJson(response, 409, { error: "operation_id_conflict" });
+		return;
+	}
+	if (error instanceof VersionRecoveryRequiredError) {
+		writeJson(response, 409, { error: "version_recovery_required" });
+		return;
+	}
 	if (error instanceof RuntimeNotConnectedError) {
 		writeJson(response, 503, { error: "baileys_not_connected" });
 		return;
 	}
-	writeJson(response, 500, {
-		error: error instanceof Error ? error.name : "internal_error",
-	});
+	if (error instanceof RuntimeFatalError) {
+		writeJson(response, 503, { error: "runtime_fail_stop" });
+		return;
+	}
+	if (error instanceof MediaNotFoundError) {
+		writeJson(response, 404, { error: "media_not_found" });
+		return;
+	}
+	if (error instanceof MediaTooLargeError) {
+		writeJson(response, 413, { error: "media_too_large" });
+		return;
+	}
+	if (error instanceof Error && error.message === "account_already_linked") {
+		writeJson(response, 409, { error: "account_already_linked" });
+		return;
+	}
+	writeJson(response, 500, { error: "internal_error" });
 }
 
 function writeJson(response: ServerResponse, status: number, body: unknown): void {
-	response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+	response.writeHead(status, {
+		"cache-control": "no-store",
+		"content-type": "application/json; charset=utf-8",
+	});
 	response.end(JSON.stringify(body));
 }
 

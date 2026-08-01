@@ -1,56 +1,73 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { AddressInfo } from "node:net";
-import type { BinaryNode } from "baileys";
 
+import { BAILEYS_RELEASE } from "./release.js";
 import { createSidecarServer } from "./server.js";
-import {
-	type BaileysRuntime,
-	type RelayMessageRequest,
-	RuntimeNotConnectedError,
+import type {
+	BaileysRuntime,
+	MediaDownload,
+	OperationResult,
+	PairingStatus,
+	SidecarOperation,
 } from "./types.js";
 
 class FakeRuntime implements BaileysRuntime {
-	connected = true;
-	relayRequests: RelayMessageRequest[] = [];
-	rawNodes: BinaryNode[] = [];
-	queries: Array<{ node: BinaryNode; timeoutMs: number }> = [];
+	operations: Array<{ operation: SidecarOperation; hash: string }> = [];
+	pairingSecret: string | undefined;
 
 	async start(): Promise<void> {}
 	async stop(): Promise<void> {}
-
 	health() {
 		return {
-			status: this.connected ? "connected" : "disconnected",
-			connected: this.connected,
+			status: "connected",
+			connected: true,
 			uptimeSeconds: 1,
+			accountId: "account-a",
+			advertisedRelease: BAILEYS_RELEASE,
+			versionRecoveryRequired: false,
+			registered: false,
+			callback: { enabled: true, pendingEvents: 0 },
 		} as const;
 	}
-
-	async relayMessage(request: RelayMessageRequest): Promise<string> {
-		if (!this.connected) {
-			throw new RuntimeNotConnectedError();
-		}
-		this.relayRequests.push(request);
-		return request.messageId;
-	}
-
-	async sendNode(node: BinaryNode): Promise<void> {
-		if (!this.connected) {
-			throw new RuntimeNotConnectedError();
-		}
-		this.rawNodes.push(node);
-	}
-
-	async query(node: BinaryNode, timeoutMs: number): Promise<BinaryNode> {
-		if (!this.connected) {
-			throw new RuntimeNotConnectedError();
-		}
-		this.queries.push({ node, timeoutMs });
+	capabilities() {
 		return {
-			tag: "iq",
-			attrs: { id: "response", type: "result" },
-			content: Buffer.from([1, 2]),
+			schemaVersion: "clawdi.whatsapp.sidecar-capabilities.v1",
+			operations: ["send", "edit", "delete", "reaction", "presence", "read"],
+			pairing: ["qr", "code", "cancel", "logout", "recover"],
+			mediaDownload: true,
+			callbackDelivery: true,
+			jidKinds: ["pn", "lid", "group"],
+			rawProviderAccess: false,
+		} as const;
+	}
+	pairingStatus(): PairingStatus {
+		return {
+			status: this.pairingSecret ? "pairing_code" : "starting",
+			registered: false,
+			...(this.pairingSecret ? { method: "code" as const, code: this.pairingSecret } : {}),
 		};
+	}
+	async startQrPairing(): Promise<PairingStatus> {
+		return { status: "pairing_qr", registered: false, method: "qr", qr: "QR-SECRET" };
+	}
+	async startCodePairing(_phoneNumber: string): Promise<PairingStatus> {
+		this.pairingSecret = "CODE-SECRET";
+		return this.pairingStatus();
+	}
+	async cancelPairing(): Promise<PairingStatus> {
+		this.pairingSecret = undefined;
+		return { status: "stopped", registered: false };
+	}
+	async logout(): Promise<PairingStatus> {
+		return { status: "stopped", registered: false };
+	}
+	async recover(_acceptVersionChange: boolean): Promise<void> {}
+	async performOperation(operation: SidecarOperation, hash: string): Promise<OperationResult> {
+		this.operations.push({ operation, hash });
+		return { operationId: operation.operationId, status: "completed", messageId: "BACKEND-M1" };
+	}
+	async downloadMedia(_mediaId: string): Promise<MediaDownload> {
+		return { data: Buffer.from([1, 2, 3]), contentType: "image/jpeg" };
 	}
 }
 
@@ -68,110 +85,118 @@ afterEach(async () => {
 });
 
 describe("sidecar HTTP contract", () => {
-	it("requires bearer auth for every endpoint", async () => {
+	it("requires bearer auth on health, pairing, operations, and media", async () => {
 		const { url } = await startTestServer(new FakeRuntime());
-
-		const response = await fetch(`${url}/v1/health`);
-
-		expect(response.status).toBe(401);
-		expect(await response.json()).toEqual({ error: "unauthorized" });
+		for (const [path, method] of [
+			["/v1/health", "GET"],
+			["/v1/pairing/status", "GET"],
+			["/v1/operations", "POST"],
+			[`/v1/media/media_${"a".repeat(43)}`, "GET"],
+		] as const) {
+			const response = await fetch(`${url}${path}`, { method });
+			expect(response.status).toBe(401);
+			expect(await response.json()).toEqual({ error: "unauthorized" });
+		}
 	});
 
-	it("reports health", async () => {
-		const { url } = await startTestServer(new FakeRuntime());
+	it("reports the pinned release and honest capabilities without pairing secrets", async () => {
+		const runtime = new FakeRuntime();
+		runtime.pairingSecret = "CODE-SECRET";
+		const { url } = await startTestServer(runtime);
+		const health = await authedFetch(`${url}/v1/health`);
+		const healthText = await health.text();
+		expect(healthText).toContain("7.0.0-rc13");
+		expect(healthText).not.toContain("CODE-SECRET");
+		const capabilities = await authedFetch(`${url}/v1/capabilities`);
+		expect(await capabilities.json()).toMatchObject({ rawProviderAccess: false });
+	});
 
-		const response = await authedFetch(`${url}/v1/health`);
-
+	it("accepts only the typed operation contract and preserves the stable send message id", async () => {
+		const runtime = new FakeRuntime();
+		const { url } = await startTestServer(runtime);
+		const response = await authedFetch(`${url}/v1/operations`, {
+			method: "POST",
+			body: JSON.stringify(sendBody()),
+		});
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual({
-			status: "connected",
-			connected: true,
-			uptimeSeconds: 1,
+			operationId: "op-1",
+			status: "completed",
+			messageId: "BACKEND-M1",
 		});
+		expect(runtime.operations[0]?.operation).toMatchObject({
+			type: "send",
+			messageId: "BACKEND-M1",
+			chatJid: "15550001111@s.whatsapp.net",
+		});
+		expect(runtime.operations[0]?.hash).toMatch(/^[0-9a-f]{64}$/);
 	});
 
-	it("relays outbound proto messages with preserved attrs", async () => {
+	it("denies hosted, broadcast, newsletter, global, raw, and proto operations", async () => {
 		const runtime = new FakeRuntime();
 		const { url } = await startTestServer(runtime);
+		for (const chatJid of [
+			"15550001111@hosted",
+			"15550001111@hosted.lid",
+			"status@broadcast",
+			"123@newsletter",
+			"@s.whatsapp.net",
+		]) {
+			const response = await authedFetch(`${url}/v1/operations`, {
+				method: "POST",
+				body: JSON.stringify({ ...sendBody(), chatJid }),
+			});
+			expect(response.status).toBe(400);
+		}
+		for (const path of ["/v1/relay-message", "/v1/raw-node", "/v1/query-iq", "/v1/proto"]) {
+			const response = await authedFetch(`${url}${path}`, { method: "POST", body: "{}" });
+			expect(response.status).toBe(404);
+		}
+		expect(runtime.operations).toHaveLength(0);
+	});
 
-		const response = await authedFetch(`${url}/v1/relay-message`, {
+	it("validates group/message alias conflicts and pairing E.164 boundaries", async () => {
+		const { url } = await startTestServer(new FakeRuntime());
+		const conflict = await authedFetch(`${url}/v1/operations`, {
 			method: "POST",
 			body: JSON.stringify({
-				jid: "15551114444@s.whatsapp.net",
-				messageId: "agent-edit-1",
-				messageProtoBase64: Buffer.from([10, 4, 101, 100, 105, 116]).toString("base64"),
-				additionalAttributes: {
-					edit: "8",
-					addressing_mode: "lid",
-				},
+				schemaVersion: "clawdi.whatsapp.operation.v1",
+				operationId: "op-read",
+				chatJid: "120363000000001@g.us",
+				type: "read",
+				messages: [
+					{
+						messageId: "M1",
+						fromMe: false,
+						chatJid: "120363000000001@g.us",
+						chatJidAlt: "15550001111@s.whatsapp.net",
+					},
+				],
 			}),
 		});
+		expect(conflict.status).toBe(400);
+		for (const phoneNumber of ["+15550001111", "01234567", "123456", "1234567890123456"]) {
+			const response = await authedFetch(`${url}/v1/pairing/code`, {
+				method: "POST",
+				body: JSON.stringify({ phoneNumber }),
+			});
+			expect(response.status).toBe(400);
+		}
+		const accepted = await authedFetch(`${url}/v1/pairing/code`, {
+			method: "POST",
+			body: JSON.stringify({ phoneNumber: "15550001111" }),
+		});
+		expect(await accepted.json()).toMatchObject({ code: "CODE-SECRET" });
+	});
 
+	it("serves only opaque persisted media ids with a bounded binary response", async () => {
+		const { url } = await startTestServer(new FakeRuntime());
+		const denied = await authedFetch(`${url}/v1/media/not-a-provider-id`);
+		expect(denied.status).toBe(404);
+		const response = await authedFetch(`${url}/v1/media/media_${"a".repeat(43)}`);
 		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual({ ok: true, messageId: "agent-edit-1" });
-		expect(runtime.relayRequests).toHaveLength(1);
-		expect(runtime.relayRequests[0]).toEqual({
-			jid: "15551114444@s.whatsapp.net",
-			messageId: "agent-edit-1",
-			messageProto: Buffer.from([10, 4, 101, 100, 105, 116]),
-			additionalAttributes: {
-				edit: "8",
-				addressing_mode: "lid",
-			},
-		});
-	});
-
-	it("decodes raw node bytes and encodes IQ response bytes", async () => {
-		const runtime = new FakeRuntime();
-		const { url } = await startTestServer(runtime);
-		const node = {
-			tag: "message",
-			attrs: { to: "15551114444@s.whatsapp.net" },
-			content: [{ tag: "enc", attrs: {}, content: { $type: "base64-bytes", base64: "AQID" } }],
-		};
-
-		const rawResponse = await authedFetch(`${url}/v1/raw-node`, {
-			method: "POST",
-			body: JSON.stringify({ node }),
-		});
-		const iqResponse = await authedFetch(`${url}/v1/query-iq`, {
-			method: "POST",
-			body: JSON.stringify({
-				node: { tag: "iq", attrs: { id: "q", type: "get" } },
-				timeoutMs: 15000,
-			}),
-		});
-
-		expect(rawResponse.status).toBe(200);
-		expect(runtime.rawNodes).toEqual([
-			{
-				tag: "message",
-				attrs: { to: "15551114444@s.whatsapp.net" },
-				content: [{ tag: "enc", attrs: {}, content: Buffer.from([1, 2, 3]) }],
-			},
-		]);
-		expect(iqResponse.status).toBe(200);
-		expect(await iqResponse.json()).toEqual({
-			node: {
-				tag: "iq",
-				attrs: { id: "response", type: "result" },
-				content: { $type: "base64-bytes", base64: "AQI=" },
-			},
-		});
-	});
-
-	it("maps disconnected runtime to 503", async () => {
-		const runtime = new FakeRuntime();
-		runtime.connected = false;
-		const { url } = await startTestServer(runtime);
-
-		const response = await authedFetch(`${url}/v1/raw-node`, {
-			method: "POST",
-			body: JSON.stringify({ node: { tag: "presence", attrs: {} } }),
-		});
-
-		expect(response.status).toBe(503);
-		expect(await response.json()).toEqual({ error: "baileys_not_connected" });
+		expect(response.headers.get("content-type")).toBe("image/jpeg");
+		expect(Buffer.from(await response.arrayBuffer())).toEqual(Buffer.from([1, 2, 3]));
 	});
 });
 
@@ -186,6 +211,17 @@ async function startTestServer(runtime: BaileysRuntime): Promise<{ url: string }
 function authedFetch(url: string, init: RequestInit = {}) {
 	const headers = new Headers(init.headers);
 	headers.set("authorization", "Bearer test-token");
-	headers.set("content-type", "application/json");
+	if (init.body) headers.set("content-type", "application/json");
 	return fetch(url, { ...init, headers });
+}
+
+function sendBody() {
+	return {
+		schemaVersion: "clawdi.whatsapp.operation.v1",
+		operationId: "op-1",
+		chatJid: "15550001111@s.whatsapp.net",
+		type: "send",
+		messageId: "BACKEND-M1",
+		content: { type: "text", text: "hello" },
+	};
 }
