@@ -6,7 +6,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import x25519
@@ -112,7 +112,7 @@ WhatsAppOutboundMessageCallback = Callable[
 ]
 WhatsAppOutboundRelayCallback = Callable[
     [BinaryNode, Callable[[str], str | None]],
-    Awaitable[None] | None,
+    Awaitable[object] | None,
 ]
 WhatsAppForwardIqCallback = Callable[
     [BinaryNode, str | None],
@@ -635,7 +635,7 @@ class WhatsAppNoiseEmulatorSession:
             )
             await self._emit_outbound_relay(node)
             return []
-        attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
+        attrs = _attrs(node)
         children = _child_tags(node)
         if attrs.get("xmlns") == "encrypt" and attrs.get("type") == "set":
             try:
@@ -702,7 +702,7 @@ class WhatsAppNoiseEmulatorSession:
         return [self._noise.encrypt_frame(encode_binary_node_minimal(response))]
 
     async def _extract_outbound_message(self, node: BinaryNode) -> WhatsAppOutboundMessage | None:
-        attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
+        attrs = _attrs(node)
         message_id = str(attrs.get("id") or "")
         to_jid = str(attrs.get("to") or "")
         if not message_id or not to_jid:
@@ -733,8 +733,8 @@ class WhatsAppNoiseEmulatorSession:
                 message_id=message_id,
             )
             return None
-        enc_attrs = enc.get("attrs") if isinstance(enc.get("attrs"), dict) else {}
-        enc_type = enc_attrs.get("type")
+        ciphertext = enc["content"]
+        enc_type = _attrs(enc).get("type")
         if enc_type not in {"pkmsg", "msg"}:
             await self._emit_outbound_drop(
                 reason="unsupported-enc-type",
@@ -743,6 +743,7 @@ class WhatsAppNoiseEmulatorSession:
                 message_id=message_id,
             )
             return None
+        envelope_type: Literal["pkmsg", "msg"] = "pkmsg" if enc_type == "pkmsg" else "msg"
         if self._agent_user is None:
             await self._emit_outbound_drop(
                 reason="missing-agent-identity",
@@ -765,8 +766,8 @@ class WhatsAppNoiseEmulatorSession:
                 self._agent_user,
                 self._agent_device,
                 EncryptedSignalEnvelope(
-                    type=enc_type,
-                    ciphertext=enc["content"],
+                    type=envelope_type,
+                    ciphertext=ciphertext,
                 ),
             )
         except Exception:
@@ -781,7 +782,7 @@ class WhatsAppNoiseEmulatorSession:
             to_jid=to_jid,
             message_id=message_id,
             message_proto=message_proto,
-            enc_type=enc_type,
+            enc_type=envelope_type,
             attrs={str(key): str(value) for key, value in attrs.items()},
             conversation=_proto_conversation_text(message_proto),
         )
@@ -837,7 +838,7 @@ class WhatsAppNoiseEmulatorSession:
                 message_id=message_id,
             )
             return None
-        attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
+        attrs = _attrs(node)
         return WhatsAppOutboundMessage(
             to_jid=group_jid,
             message_id=message_id,
@@ -867,14 +868,16 @@ class WhatsAppNoiseEmulatorSession:
             enc = next((child for child in _children(to_node) if child.get("tag") == "enc"), None)
             if enc is None or not isinstance(enc.get("content"), bytes):
                 continue
+            ciphertext = enc["content"]
             enc_type = _attrs(enc).get("type")
             if enc_type not in {"pkmsg", "msg"}:
                 continue
+            envelope_type: Literal["pkmsg", "msg"] = "pkmsg" if enc_type == "pkmsg" else "msg"
             try:
                 skdm_proto = sender.decrypt_from(
                     self._agent_user or "",
                     self._agent_device,
-                    EncryptedSignalEnvelope(type=enc_type, ciphertext=enc["content"]),
+                    EncryptedSignalEnvelope(type=envelope_type, ciphertext=ciphertext),
                 )
                 parsed = _parse_sender_key_distribution_message(skdm_proto)
             except Exception:

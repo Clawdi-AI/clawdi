@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import case, delete, func, or_, select, tuple_
+from sqlalchemy import case, delete, func, or_, select, true, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, require_user_auth, require_user_cli
@@ -578,10 +578,10 @@ def _is_env_bound(auth: AuthContext) -> bool:
 
 
 def _vault_visibility_clause(auth: AuthContext, project_ids: list[UUID], *, include_owned: bool):
-    clauses = [VaultProjectAttachment.project_id.in_(project_ids)]
+    project_clause = VaultProjectAttachment.project_id.in_(project_ids)
     if include_owned:
-        clauses.append(Vault.user_id == auth.user_id)
-    return or_(*clauses)
+        return or_(project_clause, Vault.user_id == auth.user_id)
+    return project_clause
 
 
 def _vault_project_slug_alias_condition():
@@ -1203,7 +1203,7 @@ async def resolve_vault(
         precedence: list[dict] = []
         winner: dict | None = None
         winner_item_id: UUID | None = None
-        conflicts: list[dict] = []
+        key_conflicts: list[dict] = []
         for entry in ordered:
             hit_vault, hit_item = await _first_vault_key_hit(
                 db,
@@ -1229,7 +1229,7 @@ async def resolve_vault(
                 entry_debug["reason"] = "same-vault"
             elif hit_item is not None and winner is not None:
                 entry_debug["reason"] = "conflict"
-                conflicts.append(
+                key_conflicts.append(
                     {
                         "project_id": str(entry["project_id"]),
                         "alias": entry["alias"],
@@ -1264,8 +1264,7 @@ async def resolve_vault(
                 detail={"code": "vault_key_not_found", "key": key, "precedence": precedence},
             )
 
-        if conflicts and not allow_conflicts:
-            assert winner is not None
+        if key_conflicts and not allow_conflicts:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 detail={
@@ -1285,7 +1284,7 @@ async def resolve_vault(
                         "section": winner["section"],
                         "item_name": winner["item_name"],
                     },
-                    "conflicts": conflicts,
+                    "conflicts": key_conflicts,
                     "precedence": precedence,
                 },
             )
@@ -1293,14 +1292,14 @@ async def resolve_vault(
         response = {"key": key, **winner}
         if debug:
             response["precedence"] = precedence
-        if conflicts:
-            response["conflicts"] = conflicts
+        if key_conflicts:
+            response["conflicts"] = key_conflicts
         return response
 
     if agent_id is not None:
-        env: dict[str, str] = {}
+        agent_env: dict[str, str] = {}
         seen: dict[str, dict] = {}
-        seen_item_ids: dict[str, UUID] = {}
+        agent_seen_item_ids: dict[str, UUID] = {}
         conflicts: list[dict] = []
         rows_by_project: dict[UUID, list[tuple[Vault, VaultItem]]] = {}
         for row_project_id, vault, item in await _vault_item_rows_for_projects(
@@ -1320,8 +1319,8 @@ async def resolve_vault(
                     "section": item.section,
                     "item_name": item.item_name,
                 }
-                if env_key in env:
-                    if seen_item_ids.get(env_key) == item.id:
+                if env_key in agent_env:
+                    if agent_seen_item_ids.get(env_key) == item.id:
                         continue
                     conflicts.append(
                         {
@@ -1331,9 +1330,9 @@ async def resolve_vault(
                         }
                     )
                     continue
-                env[env_key] = decrypt(item.encrypted_value, item.nonce)
+                agent_env[env_key] = decrypt(item.encrypted_value, item.nonce)
                 seen[env_key] = source
-                seen_item_ids[env_key] = item.id
+                agent_seen_item_ids[env_key] = item.id
         if conflicts and not allow_conflicts:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -1347,8 +1346,8 @@ async def resolve_vault(
                 },
             )
         if debug:
-            return {"env": env, "precedence": ordered, "conflicts": conflicts}
-        return env
+            return {"env": agent_env, "precedence": ordered, "conflicts": conflicts}
+        return agent_env
 
     env: dict[str, str] = {}
     seen_item_ids: dict[str, UUID] = {}
@@ -1400,7 +1399,7 @@ async def _get_vault_write(
             )
             .where(
                 Vault.user_id == auth.user_id,
-                Vault.id == vault_id if vault_id is not None else True,
+                Vault.id == vault_id if vault_id is not None else true(),
                 VaultProjectAttachment.project_id == project_id,
                 Vault.slug == slug if vault_id is not None else _vault_slug_or_alias_clause(slug),
             )
@@ -1419,7 +1418,7 @@ async def _get_vault_write(
             )
             .where(
                 Vault.user_id == auth.user_id,
-                Vault.id == vault_id if vault_id is not None else True,
+                Vault.id == vault_id if vault_id is not None else true(),
                 VaultProjectAttachment.project_id.in_(owned_project_ids),
                 Vault.slug == slug if vault_id is not None else _vault_slug_or_alias_clause(slug),
             )
@@ -1489,7 +1488,7 @@ async def _get_vault(
             )
             .where(
                 VaultProjectAttachment.project_id == project_id,
-                Vault.id == vault_id if vault_id is not None else True,
+                Vault.id == vault_id if vault_id is not None else true(),
                 Vault.slug == slug if vault_id is not None else _vault_slug_or_alias_clause(slug),
             )
             .distinct()

@@ -23,6 +23,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import UploadFile
 
 from app.core.config import settings
 from app.core.database import get_session
@@ -344,7 +345,7 @@ async def telegram_bot_api(
     request: Request,
     authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
+) -> dict[str, Any] | Response:
     agent, _agent_token = await _resolve_telegram_agent(
         db,
         routing_id=routing_id,
@@ -881,7 +882,7 @@ async def _telegram_duplicate_security_parameter(
     content_type = request.headers.get("content-type", "").lower()
     is_form = "application/x-www-form-urlencoded" in content_type
     is_multipart = "multipart/form-data" in content_type
-    values = list(request.query_params.multi_items())
+    values: list[tuple[str, str | UploadFile]] = list(request.query_params.multi_items())
     if request.method != "GET":
         if is_form or is_multipart:
             values.extend((await request.form()).multi_items())
@@ -1500,7 +1501,7 @@ async def _handle_telegram_profile_shadow(
     link: ChannelBotAgentLink,
     method_key: str,
     params: dict[str, Any],
-) -> dict[str, Any] | JSONResponse | None:
+) -> dict[str, Any] | Response | None:
     if method_key == "setchatmenubutton":
         return await _set_telegram_chat_menu_button(db, account, link, params)
     if method_key == "getchatmenubutton":
@@ -1547,7 +1548,7 @@ async def _set_telegram_chat_menu_button(
     account: ChannelAccount,
     link: ChannelBotAgentLink,
     params: dict[str, Any],
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any] | Response:
     raw_menu_button = params.get("menu_button", {"type": "default"})
     menu_button = _normalize_telegram_menu_button(raw_menu_button)
     if menu_button is None:

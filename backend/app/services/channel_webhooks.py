@@ -40,7 +40,7 @@ def bluebubbles_webhook_password(account: ChannelAccount) -> str | None:
 def bluebubbles_webhook_update(
     *,
     url: str,
-    events: list[Any],
+    events: list[object],
     password: str,
 ) -> dict[str, Any]:
     return {

@@ -426,7 +426,8 @@ async def whatsapp_baileys_agent_websocket(
 
     async def maybe_start_inbox_pump() -> None:
         nonlocal inbox_pump_task
-        if session.tenant is None or session.bundle is None:
+        tenant = session.tenant
+        if tenant is None or tenant.tenant_id is None or session.bundle is None:
             return
         if inbox_pump_task is not None and not inbox_pump_task.done():
             return
@@ -434,6 +435,7 @@ async def whatsapp_baileys_agent_websocket(
             _run_whatsapp_websocket_inbox_pump(
                 account_id=account.id,
                 bot_agent_link_id=current_bot_agent_link_id(),
+                tenant_id=tenant.tenant_id,
                 session=session,
                 websocket=websocket,
                 send_lock=send_lock,
@@ -487,6 +489,7 @@ async def _run_whatsapp_websocket_inbox_pump(
     *,
     account_id: UUID,
     bot_agent_link_id: UUID | None,
+    tenant_id: str,
     session: WhatsAppNoiseEmulatorSession,
     websocket: WebSocket,
     send_lock: asyncio.Lock,
@@ -528,7 +531,7 @@ async def _run_whatsapp_websocket_inbox_pump(
         return result
 
     pump = WhatsAppInboxPump(
-        tenant_id=session.tenant.tenant_id if session.tenant else str(account_id),
+        tenant_id=tenant_id,
         wait_for_events=wait_for_events,
         ack=ack,
         deliver=deliver,
