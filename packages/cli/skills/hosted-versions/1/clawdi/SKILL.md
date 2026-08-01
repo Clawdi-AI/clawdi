@@ -1,11 +1,27 @@
 ---
 name: clawdi
-description: "Find and read the user's past agent sessions across Claude Code, Codex, OpenClaw, and Hermes; use connected-service tools such as Gmail, GitHub, Notion, Drive, and Calendar; and read Clawdi share URLs (https://cloud.clawdi.ai/s/...) the user pastes."
+description: "Use the user's account-wide long-term memory and past agent sessions; inspect the current Hosted Project and safe Vault metadata; use connected services such as Gmail, GitHub, Notion, Drive, and Calendar; and read Clawdi share URLs."
 ---
 
 # Clawdi Cloud
 
-Use Clawdi Cloud tools through the `clawdi` MCP server.
+Use Clawdi Cloud tools through the `clawdi` MCP server. Treat the live tool schemas as authoritative.
+
+## Memory
+
+Memory is shared across the user's Hosted agents, not isolated to the current agent.
+
+- `memory_search` — Search durable memory by natural-language query.
+- `memory_add` — Save a durable fact, preference, pattern, decision, or project context.
+- `memory_extract` — Prepare memories from the current conversation. Follow its returned
+  review-and-confirm instructions and wait for user approval before calling `memory_add`.
+
+Search before answering questions about the user's preferences, projects, prior decisions,
+recurring workflows, or earlier bugs. Save useful non-obvious outcomes and explicit
+"remember this" requests as standalone statements with enough context for another agent.
+
+Never store plaintext tokens, API keys, bearer credentials, or private keys in memory. Store
+secrets in Vault and remember only an exact `clawdi://` reference when useful.
 
 ## Sessions
 
@@ -15,6 +31,26 @@ Use Clawdi Cloud tools through the `clawdi` MCP server.
 Call `session_read` when the user provides a Clawdi share URL. When the user refers to a
 past conversation without a UUID, call `session_search` first and then read the matching
 session. Do not use a generic web fetcher for Clawdi share URLs.
+
+## Projects
+
+- `project_current` — Read the runtime-bound Project.
+- `project_list` — List Projects visible to the caller.
+- `project_get` — Read one visible Project by UUID.
+
+A Hosted runtime is restricted to its bound Project. Treat not-found as an access boundary
+as well as a possible unknown UUID; do not try to bypass it through another tool.
+
+## Vault Metadata
+
+- `vault_list` — List attached Vaults and key counts for visible Projects.
+- `vault_get` — List key names, provenance, and exact references for an attached Vault.
+
+These tools never return plaintext secret values. Preserve exact references when passing
+them to an authorized runtime:
+
+- `clawdi://project/<project-id>/vault/<vault>/field/<field>`
+- `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`
 
 ## Connectors
 

@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 const cliRoot = resolve(import.meta.dir, "../..");
 const genericSkill = readFileSync(resolve(cliRoot, "skills/clawdi/SKILL.md"), "utf-8");
 const hostedSkill = readFileSync(
-	resolve(cliRoot, "skills/hosted-versions/2/clawdi/SKILL.md"),
+	resolve(cliRoot, "skills/hosted-versions/1/clawdi/SKILL.md"),
 	"utf-8",
 );
 

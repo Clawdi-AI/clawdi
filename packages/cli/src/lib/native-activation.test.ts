@@ -144,12 +144,10 @@ function fixtureRoot(): string {
 	mkdirSync(join(root, "egress-addon"), { recursive: true });
 	mkdirSync(join(root, "skills", "clawdi"), { recursive: true });
 	mkdirSync(join(root, "skills", "hosted-versions", "1", "clawdi"), { recursive: true });
-	mkdirSync(join(root, "skills", "hosted-versions", "2", "clawdi"), { recursive: true });
 	writeFileSync(join(root, "clawdi"), "native\n");
 	writeFileSync(join(root, "egress-addon", "clawdi_egress_addon.py"), "addon\n");
 	writeFileSync(join(root, "skills", "clawdi", "SKILL.md"), "# skill\n");
 	writeFileSync(join(root, "skills", "hosted-versions", "1", "clawdi", "SKILL.md"), "# hosted\n");
-	writeFileSync(join(root, "skills", "hosted-versions", "2", "clawdi", "SKILL.md"), "# hosted\n");
 	return root;
 }
 

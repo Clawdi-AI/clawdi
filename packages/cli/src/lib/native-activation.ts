@@ -48,7 +48,6 @@ const REQUIRED_NATIVE_FILES = [
 	"egress-addon/clawdi_egress_addon.py",
 	"skills/clawdi/SKILL.md",
 	"skills/hosted-versions/1/clawdi/SKILL.md",
-	"skills/hosted-versions/2/clawdi/SKILL.md",
 ] as const;
 const MAX_NATIVE_ARCHIVE_BYTES = 256 * 1024 * 1024;
 const MAX_NATIVE_ARCHIVE_ENTRIES = 20_000;

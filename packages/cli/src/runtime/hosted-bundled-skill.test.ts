@@ -27,7 +27,6 @@ import {
 
 const catalogEntry = resolveHostedBundledSkill("clawdi", 1);
 const bundledSourceDir = resolve(import.meta.dir, "../../skills/hosted-versions/1/clawdi");
-const bundledV2SourceDir = resolve(import.meta.dir, "../../skills/hosted-versions/2/clawdi");
 const originalRuntimeMode = process.env.CLAWDI_RUNTIME_MODE;
 const originalServiceStateDir = process.env.CLAWDI_SERVICE_STATE_DIR;
 
@@ -250,8 +249,8 @@ describe("hosted bundled skill reconciliation", () => {
 		expect(() => loadHostedBundledSkill("unknown", 1, bundledSourceDir)).toThrow(
 			"no bundled hosted skill is registered for unknown",
 		);
-		expect(() => loadHostedBundledSkill("clawdi", 3, bundledSourceDir)).toThrow(
-			"no bundled hosted skill clawdi version 3 is registered",
+		expect(() => loadHostedBundledSkill("clawdi", 2, bundledSourceDir)).toThrow(
+			"no bundled hosted skill clawdi version 2 is registered",
 		);
 
 		mkdirSync(targetDir, { recursive: true });
@@ -259,11 +258,5 @@ describe("hosted bundled skill reconciliation", () => {
 		expect(() => reconcile()).toThrow(`refusing to replace unmanaged clawdi skill at ${targetDir}`);
 		expect(readFileSync(join(targetDir, "SKILL.md"), "utf-8")).toBe("user owned\n");
 		expect(existsSync(join(targetDir, ".clawdi-managed.json"))).toBe(false);
-	});
-
-	it("loads v2 capability guidance from its immutable catalog asset", () => {
-		const bundle = loadHostedBundledSkill("clawdi", 2, bundledV2SourceDir);
-		expect(bundle.catalogEntry).toEqual(resolveHostedBundledSkill("clawdi", 2));
-		expect(bundle.files.map((file) => file.relativePath)).toEqual(["SKILL.md"]);
 	});
 });
