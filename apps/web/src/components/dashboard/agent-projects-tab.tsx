@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, FolderKanban, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -14,18 +14,18 @@ import {
 	orderedAgentProjectBindings,
 } from "@/components/dashboard/agent-project-scope";
 import { EmptyState } from "@/components/empty-state";
-import { HERO_CARD_BASE, HERO_GRID_CLASS, HeroCard } from "@/components/entity-card";
-import { IconChip } from "@/components/icon-chip";
+import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
 import {
 	displayProjectName,
 	isCustomProject,
-	isProjectOwner,
 	ProjectCompactPicker,
-	ProjectKindBadge,
-	projectAlias,
 } from "@/components/projects/project-metadata";
-import { Badge } from "@/components/ui/badge";
+import {
+	ProjectResourceCard,
+	ProjectResourceCardSkeleton,
+	UnavailableProjectResourceCard,
+} from "@/components/projects/project-resource-card";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
@@ -40,7 +40,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
-import { identityFor } from "@/lib/identity";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
 
@@ -187,12 +186,7 @@ function AgentProjectsPanel({
 				</div>
 				<div className={HERO_GRID_CLASS}>
 					{Array.from({ length: 3 }).map((_, index) => (
-						<div key={index} className={`${HERO_CARD_BASE} flex min-h-36 flex-col gap-3`}>
-							<Skeleton className="size-10 rounded-lg" />
-							<Skeleton className="h-4 w-36 max-w-full" />
-							<Skeleton className="h-3 w-28 max-w-full" />
-							<Skeleton className="mt-auto h-3 w-40 max-w-full" />
-						</div>
+						<ProjectResourceCardSkeleton key={index} />
 					))}
 				</div>
 			</div>
@@ -393,39 +387,12 @@ function AgentProjectCard({
 	];
 	if (!project) {
 		return (
-			<HeroCard
-				icon={
-					<IconChip tint="bg-muted text-muted-foreground">
-						<FolderKanban />
-					</IconChip>
-				}
-				title={binding.project_id}
-				badges={<Badge variant="outline">Access unavailable</Badge>}
+			<UnavailableProjectResourceCard
+				projectId={binding.project_id}
 				footer={footer}
 				actions={actions}
 			/>
 		);
 	}
-	const projectName = displayProjectName(project);
-	const identity = identityFor(projectName);
-	return (
-		<HeroCard
-			icon={
-				<IconChip tint={identity.colorClasses} className="text-xl">
-					{identity.emoji}
-				</IconChip>
-			}
-			title={projectName}
-			badges={
-				<>
-					<ProjectKindBadge kind={project.kind ?? "workspace"} />
-					{isProjectOwner(project) ? null : <Badge variant="outline">Viewer</Badge>}
-				</>
-			}
-			description={projectAlias(project)}
-			descriptionClassName="truncate font-mono"
-			footer={footer}
-			actions={actions}
-		/>
-	);
+	return <ProjectResourceCard project={project} footer={footer} actions={actions} />;
 }

@@ -1,24 +1,24 @@
 "use client";
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useRouter } from "@tanstack/react-router";
+import { useRouter } from "@tanstack/react-router";
 import { ChevronDown, Plus, Share2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { HERO_CARD_BASE, HERO_GRID_CLASS, HeroCard } from "@/components/entity-card";
-import { IconChip } from "@/components/icon-chip";
+import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	displayProjectName,
 	isCustomProject,
-	type ProjectAgentMetadata,
-	ProjectIdentity,
-	projectAgentFor,
 	projectKindSortRank,
 } from "@/components/projects/project-metadata";
+import {
+	ProjectResourceCard,
+	ProjectResourceCardSkeleton,
+} from "@/components/projects/project-resource-card";
 import { SectionLabel } from "@/components/section-label";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { Button } from "@/components/ui/button";
@@ -32,16 +32,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
-import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
-import { identityFor } from "@/lib/identity";
 import { getProjectResourceDefinition, projectDetailHref } from "@/lib/project-resource-model";
 import { cn, errorMessage } from "@/lib/utils";
 
-type Env = components["schemas"]["AgentResponse"];
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
@@ -66,15 +63,6 @@ export default function ProjectsPage() {
 	});
 
 	const rows = projects.data ?? [];
-	const environments = useQuery({
-		queryKey: ["agents"],
-		queryFn: async (): Promise<Env[]> => unwrap(await api.GET("/v1/agents")),
-		enabled: rows.some((project) => project.kind === "environment"),
-	});
-	const agentsById = useMemo(
-		() => new Map((environments.data ?? []).map((agent) => [agent.id, agent])),
-		[environments.data],
-	);
 
 	// Per-project resource counts for the cards. Shares the skills cache with
 	// the Skills page (same queryKey); vault list carries project_ids.
@@ -181,7 +169,7 @@ export default function ProjectsPage() {
 				<PageHeader title="Projects" description={PROJECTS_RESOURCE.managementDescription} />
 				<div className={HERO_GRID_CLASS}>
 					{Array.from({ length: 6 }).map((_, i) => (
-						<ProjectCardSkeleton key={i} />
+						<ProjectResourceCardSkeleton key={i} />
 					))}
 				</div>
 			</div>
@@ -293,14 +281,28 @@ export default function ProjectsPage() {
 						"transition-opacity",
 						projects.isFetching && !projects.isLoading ? "opacity-60" : "opacity-100",
 					)}
+					data-testid="project-grid"
 				>
 					{gridProjects.map(({ project, shared }) => (
-						<ProjectCard
+						<ProjectResourceCard
 							key={project.id}
 							project={project}
-							shared={shared}
-							skillCount={skills.error ? "unavailable" : (skillCounts.get(project.id) ?? 0)}
-							vaultCount={vaults.error ? "unavailable" : (vaultCounts.get(project.id) ?? 0)}
+							footer={[
+								formatCountLabel(
+									skills.error ? "unavailable" : (skillCounts.get(project.id) ?? 0),
+									"skill",
+								),
+								formatCountLabel(
+									vaults.error ? "unavailable" : (vaultCounts.get(project.id) ?? 0),
+									"vault",
+								),
+								shared && project.owner_display ? `by ${project.owner_display}` : null,
+							]}
+							actions={
+								!shared && isCustomProject(project) ? (
+									<ProjectShareAction project={project} />
+								) : null
+							}
 						/>
 					))}
 				</div>
@@ -311,31 +313,40 @@ export default function ProjectsPage() {
 					<button
 						type="button"
 						onClick={() => setSystemOpen((v) => !v)}
-						className="flex flex-wrap items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground"
+						className="flex w-full items-start gap-1.5 text-left text-muted-foreground transition-colors hover:text-foreground"
 						aria-expanded={systemOpen}
 					>
 						<ChevronDown
 							className={cn(
-								"size-4 transition-transform duration-150",
+								"mt-0.5 size-4 shrink-0 transition-transform duration-150",
 								!systemOpen && "-rotate-90",
 							)}
 						/>
-						<SectionLabel className="px-0" count={systemProjects.length}>
-							System projects
-						</SectionLabel>
-						<span className="ml-1 text-xs">
-							account default and one per connected agent — managed automatically
+						<span className="min-w-0">
+							<SectionLabel className="px-0" count={systemProjects.length}>
+								System projects
+							</SectionLabel>
+							<span className="block text-xs">
+								Account default and one per connected agent — managed automatically
+							</span>
 						</span>
 					</button>
 					{systemOpen ? (
-						<div className="divide-y overflow-hidden rounded-lg border bg-card">
+						<div className={HERO_GRID_CLASS}>
 							{systemProjects.map((project) => (
-								<SystemProjectRow
+								<ProjectResourceCard
 									key={project.id}
 									project={project}
-									agent={projectAgentFor(project, agentsById)}
-									skillCount={skills.error ? "unavailable" : (skillCounts.get(project.id) ?? 0)}
-									vaultCount={vaults.error ? "unavailable" : (vaultCounts.get(project.id) ?? 0)}
+									footer={[
+										formatCountLabel(
+											skills.error ? "unavailable" : (skillCounts.get(project.id) ?? 0),
+											"skill",
+										),
+										formatCountLabel(
+											vaults.error ? "unavailable" : (vaultCounts.get(project.id) ?? 0),
+											"vault",
+										),
+									]}
 								/>
 							))}
 						</div>
@@ -346,119 +357,19 @@ export default function ProjectsPage() {
 	);
 }
 
-function ProjectCard({
-	project,
-	shared,
-	skillCount,
-	vaultCount,
-}: {
-	project: ProjectRow;
-	shared: boolean;
-	skillCount: CountValue;
-	vaultCount: CountValue;
-}) {
+function ProjectShareAction({ project }: { project: ProjectRow }) {
 	const projectName = displayProjectName(project);
 	return (
-		<HeroCard
-			icon={
-				<IconChip tint={identityFor(projectName).colorClasses} className="text-xl">
-					{identityFor(projectName).emoji}
-				</IconChip>
-			}
-			title={projectName}
-			badges={shared ? <StatusChip>Shared with you</StatusChip> : null}
-			description={<span className="font-mono">{project.slug}</span>}
-			footer={[
-				formatCountLabel(skillCount, "skill"),
-				formatCountLabel(vaultCount, "vault"),
-				shared && project.owner_display ? `by ${project.owner_display}` : null,
-			]}
-			actions={
-				!shared && isCustomProject(project) ? (
-					<div className="opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
-						<ShareProjectDialog
-							projectId={project.id}
-							projectName={projectName}
-							projectKind={project.kind}
-						>
-							<Button variant="ghost" size="icon-sm" aria-label={`Share ${projectName}`}>
-								<Share2 className="size-3.5" />
-							</Button>
-						</ShareProjectDialog>
-					</div>
-				) : null
-			}
-			link={{ to: "/projects/$id", params: { id: project.id } }}
-			ariaLabel={`Open ${projectName}`}
-		/>
-	);
-}
-
-function ProjectCardSkeleton() {
-	return (
-		<div className={cn(HERO_CARD_BASE, "flex min-h-36 flex-col gap-3")}>
-			<Skeleton className="size-10 rounded-lg" />
-			<div className="min-w-0 space-y-2">
-				<Skeleton className="h-5 w-44 max-w-full" />
-				<Skeleton className="h-3 w-32" />
-			</div>
-			<div className="mt-auto flex items-center gap-3">
-				<Skeleton className="h-3 w-16" />
-				<Skeleton className="h-3 w-16" />
-			</div>
-		</div>
-	);
-}
-
-function StatusChip({ children }: { children: React.ReactNode }) {
-	return (
-		<span className="shrink-0 rounded-sm bg-info-muted px-1.5 py-0.5 text-2xs font-medium text-info-muted-foreground">
-			{children}
-		</span>
-	);
-}
-
-function SystemProjectRow({
-	project,
-	agent,
-	skillCount,
-	vaultCount,
-}: {
-	project: ProjectRow;
-	agent?: ProjectAgentMetadata | null;
-	skillCount: CountValue;
-	vaultCount: CountValue;
-}) {
-	const isGlobal = project.kind === "personal";
-	return (
-		<div className="group relative flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/50">
-			<span
-				className={cn(
-					"flex size-7 shrink-0 select-none items-center justify-center rounded-md text-sm leading-none",
-					identityFor(displayProjectName(project)).colorClasses,
-				)}
+		<div className="opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+			<ShareProjectDialog
+				projectId={project.id}
+				projectName={projectName}
+				projectKind={project.kind}
 			>
-				{isGlobal ? "🌐" : identityFor(displayProjectName(project)).emoji}
-			</span>
-			<div className="min-w-0 flex-1">
-				<ProjectIdentity
-					project={project}
-					agent={agent}
-					showOwner={false}
-					showAccess={false}
-					showIcon={false}
-				/>
-			</div>
-			<span className="hidden shrink-0 text-xs text-muted-foreground tabular-nums sm:inline">
-				{formatCountLabel(skillCount, "skill")} · {formatCountLabel(vaultCount, "vault")}
-			</span>
-			<Link
-				to="/projects/$id"
-				params={{ id: project.id }}
-				className="absolute inset-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-			>
-				<span className="sr-only">Open {displayProjectName(project)}</span>
-			</Link>
+				<Button variant="ghost" size="icon-sm" aria-label={`Share ${projectName}`}>
+					<Share2 className="size-3.5" />
+				</Button>
+			</ShareProjectDialog>
 		</div>
 	);
 }
