@@ -26,6 +26,8 @@ from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_DISCORD,
+    CHANNEL_VISIBILITY_PRIVATE,
+    CHANNEL_VISIBILITY_PUBLIC,
     ChannelAccount,
     ChannelBinding,
     ChannelBindingAlias,
@@ -90,20 +92,21 @@ _DISCORD_RESPONSE_HEADER_ALLOWLIST = (
 )
 
 
+def _channel_visibility(account: ChannelAccount) -> ChannelVisibility:
+    if account.visibility == CHANNEL_VISIBILITY_PRIVATE:
+        return "private"
+    if account.visibility == CHANNEL_VISIBILITY_PUBLIC:
+        return "public"
+    raise ValueError("invalid channel account visibility")
+
+
 def _account_response(account: ChannelAccount) -> ChannelAccountResponse:
-    visibility: ChannelVisibility
-    if account.visibility == "private":
-        visibility = "private"
-    elif account.visibility == "public":
-        visibility = "public"
-    else:
-        raise ValueError("invalid channel account visibility")
     return ChannelAccountResponse(
         id=account.id,
         provider=account.provider,
         name=account.name,
         status=account.status,
-        visibility=visibility,
+        visibility=_channel_visibility(account),
         has_provider_token=bool(account.encrypted_provider_token and account.provider_token_nonce),
         webhook_url=channel_webhook_url(account.id, account.provider),
         created_at=account.created_at,

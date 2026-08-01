@@ -51,6 +51,7 @@ from app.models.session import AgentEnvironment
 from app.routes.channel_routers.shared import (
     _account_response,
     _binding_response,
+    _channel_visibility,
     _discord_binding_guild_id,
     _message_response,
 )
@@ -1607,7 +1608,7 @@ async def _channel_health_item(
         account_id=account.id,
         provider=account.provider,
         name=account.name,
-        visibility=account.visibility,
+        visibility=_channel_visibility(account),
         channel_status=account.status,
         health_status=health_status,
         reasons=reasons,
