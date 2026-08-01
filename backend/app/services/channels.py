@@ -4425,12 +4425,10 @@ async def _discord_command_request(
             headers={"Retry-After": str(retry_after)} if retry_after is not None else None,
         )
     discord_rate_limiter.consume(method, path)
-    response = await client.request(
-        method,
-        url,
-        headers=headers,
-        **({"json": json_payload} if json_payload is not None else {}),
-    )
+    if json_payload is None:
+        response = await client.request(method, url, headers=headers)
+    else:
+        response = await client.request(method, url, headers=headers, json=json_payload)
     discord_rate_limiter.observe(
         method,
         path,

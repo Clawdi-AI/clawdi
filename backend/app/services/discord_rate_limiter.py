@@ -1,13 +1,8 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Protocol
-
-
-class HeaderReader(Protocol):
-    def get(self, key: str, default: str | None = None) -> str | None: ...
 
 
 @dataclass
@@ -84,7 +79,13 @@ class DiscordRateLimiter:
         if bucket and bucket.reset_at > now and bucket.remaining > 0:
             bucket.remaining -= 1
 
-    def observe(self, method: str, path: str, headers: HeaderReader, status_code: int) -> None:
+    def observe(
+        self,
+        method: str,
+        path: str,
+        headers: Mapping[str, str],
+        status_code: int,
+    ) -> None:
         now = self._now()
         reset_after = _float_header(headers, "x-ratelimit-reset-after")
         retry_after = _float_header(headers, "retry-after")
@@ -148,7 +149,7 @@ class DiscordRateLimiter:
         return self._buckets.get(self.route_key(method, path))
 
 
-def _float_header(headers: HeaderReader, key: str) -> float | None:
+def _float_header(headers: Mapping[str, str], key: str) -> float | None:
     raw = headers.get(key)
     if raw is None:
         return None
@@ -158,7 +159,7 @@ def _float_header(headers: HeaderReader, key: str) -> float | None:
         return None
 
 
-def _int_header(headers: HeaderReader, key: str) -> int | None:
+def _int_header(headers: Mapping[str, str], key: str) -> int | None:
     raw = headers.get(key)
     if raw is None:
         return None

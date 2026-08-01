@@ -841,12 +841,13 @@ def _discord_command_retry_state(
     result: _DiscordProviderResult | None,
 ) -> dict[str, Any]:
     previous_attempts = previous.get("attempts") if isinstance(previous, dict) else None
+    previous_fingerprint = previous.get("fingerprint") if isinstance(previous, dict) else None
     attempts = (
         previous_attempts + 1
         if isinstance(previous_attempts, int)
         and not isinstance(previous_attempts, bool)
         and previous_attempts >= 0
-        and previous.get("fingerprint") == fingerprint
+        and previous_fingerprint == fingerprint
         else 1
     )
     retry_after = _discord_retry_after_seconds(result) if result is not None else None
