@@ -25,6 +25,7 @@ export const AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY = "d";
 const AGENT_SECTION_SEGMENTS = {
 	overview: "",
 	sessions: "sessions",
+	memories: "memories",
 	skills: "skills",
 	projects: "project-access",
 	vaults: "vaults",
@@ -172,6 +173,7 @@ export function validateAgentRouteSearch(search: Record<string, unknown>): Agent
 const LEGACY_AGENT_TAB_SECTIONS: Readonly<Record<string, AgentSectionId>> = {
 	overview: "overview",
 	sessions: "sessions",
+	memories: "memories",
 	skills: "skills",
 	projects: "projects",
 	"project-access": "projects",

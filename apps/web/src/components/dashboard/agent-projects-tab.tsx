@@ -16,6 +16,7 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import {
 	isCustomProject,
+	isProjectOwner,
 	ProjectIdentity,
 	ProjectScopePicker,
 } from "@/components/projects/project-metadata";
@@ -322,22 +323,18 @@ function ProjectUseLine({
 	binding: AgentProjectBinding;
 	project: ProjectRow | undefined;
 }) {
-	const bindingLabel = binding.binding_type === "primary" ? "Primary" : "Added";
-	const resourceAccess =
-		binding.binding_type === "primary"
-			? "Default writes · Reads Skills and Vaults"
-			: "Read access · Skills and Vaults";
+	const defaultWriteBadge =
+		binding.binding_type === "primary" ? (
+			<Badge variant="secondary">Writes here by default</Badge>
+		) : null;
 	if (!project) {
 		return (
 			<div className="min-w-0">
 				<div className="flex flex-wrap items-center gap-2">
 					<span className="truncate text-sm font-medium">{binding.project_id}</span>
-					<Badge variant={binding.binding_type === "primary" ? "secondary" : "outline"}>
-						{bindingLabel}
-					</Badge>
+					{defaultWriteBadge}
 					<Badge variant="outline">Access unavailable</Badge>
 				</div>
-				<div className="mt-1 text-xs text-muted-foreground">{resourceAccess}</div>
 			</div>
 		);
 	}
@@ -345,16 +342,9 @@ function ProjectUseLine({
 		<div className="min-w-0">
 			<ProjectIdentity
 				project={project}
-				badges={
-					<>
-						<Badge variant={binding.binding_type === "primary" ? "secondary" : "outline"}>
-							{bindingLabel}
-						</Badge>
-						{binding.binding_type === "primary" ? <Badge variant="outline">Fixed</Badge> : null}
-					</>
-				}
+				badges={defaultWriteBadge}
+				showAccess={!isProjectOwner(project)}
 			/>
-			<div className="mt-0.5 text-xs text-muted-foreground">{resourceAccess}</div>
 		</div>
 	);
 }

@@ -93,14 +93,12 @@ export function AgentSkillsTab({
 	routeSearch,
 	isResolvingAgentProject = false,
 	projectionFence = agentId,
-	hosted = false,
 }: {
 	agentId: string;
 	agentProjectId: string | null | undefined;
 	routeSearch: AgentRouteSearch;
 	isResolvingAgentProject?: boolean;
 	projectionFence?: string;
-	hosted?: boolean;
 }) {
 	const api = useApi();
 	const {
@@ -141,10 +139,6 @@ export function AgentSkillsTab({
 
 	return (
 		<div className="space-y-4" data-testid="agent-skills-inventory">
-			<p className="text-sm text-muted-foreground">
-				Skills appear here through this agent&apos;s Agent Project and added Projects, in read
-				order. Open a Skill to manage it in its source Project when allowed.
-			</p>
 			{projects.error ? (
 				<ApiErrorPanel
 					error={projects.error}
@@ -157,11 +151,7 @@ export function AgentSkillsTab({
 			<SkillCardGrid
 				skills={skills ?? []}
 				isLoading={isResolvingAgentProject || skillsLoading}
-				emptyMessage={
-					hosted
-						? "No user-visible Skills are available through this agent's Projects yet."
-						: "No Skills are available through this agent's Projects yet."
-				}
+				emptyMessage="No Skills yet."
 				capabilitiesFor={(skill) =>
 					skillCapabilities(
 						skill,

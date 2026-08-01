@@ -143,12 +143,7 @@ export function VaultsSurface({
 			)}
 			data-testid="vaults-surface"
 		>
-			{embedded ? (
-				<p className="text-sm text-muted-foreground">
-					Vaults appear here through this agent&apos;s Agent Project and added Projects. Open a
-					Vault to manage it in the account-level Vaults area.
-				</p>
-			) : (
+			{embedded ? null : (
 				<PageHeader title="Vaults" description={VAULTS_RESOURCE.managementDescription} />
 			)}
 

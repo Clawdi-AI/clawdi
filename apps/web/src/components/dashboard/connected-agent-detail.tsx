@@ -15,6 +15,7 @@ import { AgentSkillsTab, useAgentProjectSkills } from "@/components/dashboard/ag
 import { AgentVaultsTab } from "@/components/dashboard/agent-vaults-tab";
 import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
 import { ENTITY_CARD_BASE } from "@/components/entity-card";
+import { MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SessionFeed } from "@/components/sessions/session-feed";
@@ -36,6 +37,7 @@ import { cn, errorMessage } from "@/lib/utils";
 type AgentTab =
 	| "overview"
 	| "sessions"
+	| "memories"
 	| "connectors"
 	| "projects"
 	| "skills"
@@ -206,6 +208,8 @@ export function ConnectedAgentDetail({
 							/>
 						)
 					) : null}
+
+					{activeTab === "memories" ? <MemoriesSurface /> : null}
 
 					{activeTab === "skills" ? (
 						<AgentSkillsTab
