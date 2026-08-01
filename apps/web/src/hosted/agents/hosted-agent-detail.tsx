@@ -112,6 +112,7 @@ import type {
 	DeploymentUpdateRequest,
 	HostedDeployment,
 } from "@/hosted/billing/contracts";
+import { navigateToAcceptedDeployment } from "@/hosted/billing/deploy/accepted-deployment-navigation";
 import {
 	fallbackTimezones,
 	LANGUAGE_OPTIONS,
@@ -2970,15 +2971,34 @@ function ComputeSettingsSections({
 	onDeleteAccepted: (deploymentId: string) => void;
 }) {
 	const router = useRouter();
+	const queryClient = useQueryClient();
+	const billingClient = useBillingClient();
 	const navigateCheckoutReturn = useCallback(
 		(checkoutDeploymentId: string): false | undefined => {
 			if (checkoutDeploymentId === deployment.resource.id) return false;
-			void router.navigate({
-				href: agentSectionHref(checkoutDeploymentId, "overview", "source=on-clawdi"),
-				replace: true,
-			});
+			const hydrateAndNavigate = async () => {
+				try {
+					await navigateToAcceptedDeployment({
+						deploymentId: checkoutDeploymentId,
+						getDeployment: billingClient.getDeployment,
+						navigate: (options) => router.navigate(options),
+						queryClient,
+						replace: true,
+					});
+				} catch {
+					toast.error("Deployment accepted; details couldn’t load", {
+						description: "Retrying only loads the accepted deployment. It won’t repeat checkout.",
+						duration: Number.POSITIVE_INFINITY,
+						action: {
+							label: "Retry",
+							onClick: () => void hydrateAndNavigate(),
+						},
+					});
+				}
+			};
+			void hydrateAndNavigate();
 		},
-		[deployment.resource.id, router],
+		[billingClient.getDeployment, deployment.resource.id, queryClient, router],
 	);
 	useCheckoutReturnHandler({
 		onCancelCopy: "You were not charged. Your compute plan is unchanged.",

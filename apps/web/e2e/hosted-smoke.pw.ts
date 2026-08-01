@@ -1150,6 +1150,9 @@ type HostedApiStubOptions = {
 	completedDeleteIds?: Set<string>;
 	failedDeleteRetryability?: Map<string, boolean>;
 	deleteResponses?: StubResponse[];
+	deploymentDetailRequests?: string[];
+	deploymentDetailResponses?: StubResponse[];
+	deploymentDetailResponseGates?: Array<Promise<void> | undefined>;
 	deploymentListRequests?: string[];
 	deploymentListResponses?: unknown[][];
 	deploymentListResponseGates?: Array<Promise<void> | undefined>;
@@ -1318,6 +1321,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	const plans = options.plans ?? [];
 	let currentWallet = options.walletState ?? walletState;
 	const deploymentRequests = new Map<string, DeploymentMutationFixture>();
+	const acceptedDeployments = new Map<string, DeploymentMutationFixture>();
 	// Deploy API (/me, /v2/*).
 	await page.route(`${DEPLOY_API}/**`, async (r) => {
 		const p = new URL(r.request().url()).pathname;
@@ -1422,20 +1426,32 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				idempotencyKey: r.request().headers()["idempotency-key"] ?? null,
 			});
 			const response = options.createDeploymentResponse;
-			if (response) return fulfillJson(r, response.body, response.status);
-			return fulfillJson(
-				r,
-				completedDeploymentOperation(
-					{
+			if (response) {
+				const operation = response.body as Partial<ReturnType<typeof completedDeploymentOperation>>;
+				const deploymentId = operation.metadata?.deploymentId;
+				if (
+					deploymentId &&
+					!deployments.some(
+						(candidate) => isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
+					)
+				) {
+					acceptedDeployments.set(deploymentId, {
 						...includedBasicDeployment,
-						id: "hdep_included_created",
+						id: deploymentId,
 						name: "Created included Basic",
-						status: "running",
-					},
-					"create",
-				),
-				202,
-			);
+						status: "creating",
+					});
+				}
+				return fulfillJson(r, response.body, response.status);
+			}
+			const createdDeployment: DeploymentMutationFixture = {
+				...includedBasicDeployment,
+				id: "hdep_included_created",
+				name: "Created included Basic",
+				status: "creating",
+			};
+			acceptedDeployments.set(createdDeployment.id, createdDeployment);
+			return fulfillJson(r, completedDeploymentOperation(createdDeployment, "create"), 202);
 		}
 		if (p.startsWith("/v2/deployments/by-request/") && r.request().method() === "GET") {
 			const deployRequestId = decodeURIComponent(p.slice("/v2/deployments/by-request/".length));
@@ -1461,10 +1477,21 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p.startsWith("/v2/deployments/") && r.request().method() === "GET") {
 			const deploymentId = decodeURIComponent(p.slice("/v2/deployments/".length));
-			const deployment = deployments.find(
-				(candidate): candidate is DeploymentMutationFixture =>
-					isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
-			);
+			options.deploymentDetailRequests?.push(deploymentId);
+			const response = options.deploymentDetailResponses?.shift();
+			const responseGate = options.deploymentDetailResponseGates?.shift();
+			await responseGate;
+			if (response) {
+				if (response.delayMs) {
+					await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+				}
+				return fulfillJson(r, readDeploymentFixture(response.body), response.status);
+			}
+			const deployment =
+				deployments.find(
+					(candidate): candidate is DeploymentMutationFixture =>
+						isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
+				) ?? acceptedDeployments.get(deploymentId);
 			return deployment
 				? fulfillJson(r, readDeploymentFixture(deployment))
 				: fulfillJson(r, { detail: "Deployment not found" }, 404);
@@ -3977,15 +4004,31 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 		id: "hdep_included_created",
 		name: "Created included Basic",
 		status: "creating",
+		config_info: {
+			...includedBasicDeployment.config_info,
+			runtime_configuration: {
+				providers: [
+					{
+						provider_id: "clawdi",
+						auth_kind: "managed" as const,
+						models: ["gpt-5.6-luna"],
+					},
+				],
+				primary_model: { provider_id: "clawdi", model: "gpt-5.6-luna" },
+				features: [],
+			},
+		},
 	};
 	const deploymentListRequests: string[] = [];
-	const acceptedInventoryGate = deferred();
+	const deploymentDetailRequests: string[] = [];
+	const acceptedDetailGate = deferred();
 	await stubHostedApi(page, {
 		plans: [basicPlan],
 		deployments: [startingDeployment],
-		deploymentListResponses: [[], [startingDeployment]],
-		deploymentListResponseGates: [undefined, acceptedInventoryGate.promise],
+		deploymentListResponses: [[]],
 		deploymentListRequests,
+		deploymentDetailRequests,
+		deploymentDetailResponseGates: [acceptedDetailGate.promise],
 		createDeploymentResponse: {
 			status: 202,
 			body: { ...acceptedCreate, done: false, response: null },
@@ -3995,22 +4038,24 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 	await page.goto("/deploy");
 
 	await page.getByRole("button", { name: "Deploy", exact: true }).click();
+	await expect.poll(() => deploymentDetailRequests).toEqual(["hdep_included_created"]);
+	await expect(page).toHaveURL(/\/deploy$/);
+	await expect(page.getByRole("button", { name: "Loading agent details…" })).toBeDisabled();
+	await expect(page.getByLabel("Agent ownership loading")).toHaveCount(0);
+	acceptedDetailGate.resolve();
 	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
-	await expect.poll(() => deploymentListRequests.length).toBeGreaterThanOrEqual(2);
 	expect(new URL(page.url()).searchParams.has("setup")).toBe(false);
-	try {
-		await expect(page.getByText("Agent not found", { exact: true })).toHaveCount(0);
-		await expect(page.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
-		await expect(page.getByLabel("Agent ownership loading")).toBeVisible();
-		await expect(page.locator('[data-hosted="true"] [data-slot="skeleton"]').first()).toBeVisible();
-	} finally {
-		acceptedInventoryGate.resolve();
-	}
+	await expect(page.getByText("Agent not found", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
+	await expect(page.getByLabel("Agent ownership loading")).toHaveCount(0);
+	await expect(page.locator('[data-hosted="true"] [data-slot="skeleton"]')).toHaveCount(0);
 	await expect(page.getByText("Starting your agent…", { exact: true })).toBeVisible();
+	await expect(page.locator("body")).toContainText("Created included Basic");
 	const detail = page.locator("main");
 	await expect(detail.getByText("Compute", { exact: true })).toBeVisible();
 	await expect(detail.getByText("Basic", { exact: true })).toBeVisible();
 	await expect(detail.getByText("Model", { exact: true })).toBeVisible();
+	await expect(detail.getByText("GPT-5.6 Luna", { exact: true })).toBeVisible();
 	await expect(detail.getByText("Resources", { exact: true })).toBeVisible();
 	await expect(detail.getByText("2 vCPU · 4 GiB", { exact: true })).toBeVisible();
 	await expect(detail.getByText("Some agent details are unavailable", { exact: true })).toHaveCount(
@@ -4038,6 +4083,95 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 			model: "gpt-5.6-luna",
 		},
 	});
+});
+
+test("accepted create retries deployment hydration without issuing another create", async ({
+	page,
+}) => {
+	const createDeploymentRequests: Array<{ body: string; idempotencyKey: string | null }> = [];
+	const deploymentDetailRequests: string[] = [];
+	const startingDeployment: DeploymentMutationFixture = {
+		...includedBasicDeployment,
+		id: "hdep_hydration_retry",
+		name: "Hydration retry agent",
+		status: "creating",
+	};
+	await stubHostedApi(page, {
+		plans: [basicPlan],
+		deployments: [startingDeployment],
+		deploymentListResponses: [[]],
+		deploymentDetailRequests,
+		deploymentDetailResponses: [
+			{
+				status: 503,
+				body: { detail: "internal deployment replica unavailable tenant=usr_secret" },
+			},
+			{ status: 200, body: startingDeployment },
+		],
+		createDeploymentResponse: {
+			status: 202,
+			body: {
+				...completedDeploymentOperation(startingDeployment, "create"),
+				done: false,
+				response: null,
+			},
+		},
+		createDeploymentRequests,
+	});
+	await page.goto("/deploy");
+
+	await page.getByRole("button", { name: "Deploy", exact: true }).click();
+	const recovery = page.getByTestId("accepted-deployment-hydration-error");
+	await expect(recovery).toBeVisible();
+	await expect(recovery).toContainText("Deployment accepted; details couldn’t load");
+	await expect(recovery).toContainText("It won’t create another agent.");
+	await expect(recovery).not.toContainText("usr_secret");
+	await expect(page).toHaveURL(/\/deploy$/);
+	await expect(page.getByRole("button", { name: "Deploy", exact: true })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Retry opening agent" })).toBeEnabled();
+	expect(createDeploymentRequests).toHaveLength(1);
+	expect(deploymentDetailRequests).toEqual(["hdep_hydration_retry"]);
+
+	await page.getByRole("button", { name: "Retry opening agent" }).click();
+	await expect(page).toHaveURL(/\/agents\/hdep_hydration_retry/);
+	await expect(page.getByText("Starting your agent…", { exact: true })).toBeVisible();
+	await expect(page.getByLabel("Agent ownership loading")).toHaveCount(0);
+	expect(deploymentDetailRequests).toEqual(["hdep_hydration_retry", "hdep_hydration_retry"]);
+	expect(createDeploymentRequests).toHaveLength(1);
+	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);
+});
+
+test("checkout return hydrates its accepted deployment before replacing the deploy route", async ({
+	page,
+}) => {
+	const deploymentListRequests: string[] = [];
+	const deploymentDetailRequests: string[] = [];
+	const acceptedDetailGate = deferred();
+	const startingDeployment: DeploymentMutationFixture = {
+		...includedBasicDeployment,
+		id: "hdep_checkout_return",
+		name: "Checkout return agent",
+		status: "creating",
+	};
+	await stubHostedApi(page, {
+		plans: [basicPlan],
+		deployments: [startingDeployment],
+		deploymentListRequests,
+		deploymentListResponses: [[]],
+		deploymentDetailRequests,
+		deploymentDetailResponseGates: [acceptedDetailGate.promise],
+	});
+
+	await page.goto("/deploy?session_id=cs_checkout_return&deployment_id=hdep_checkout_return");
+	await expect.poll(() => deploymentDetailRequests).toEqual(["hdep_checkout_return"]);
+	await expect(page).toHaveURL(/\/deploy\?/);
+	await expect(page.getByRole("button", { name: "Loading agent details…" })).toBeDisabled();
+	expect(deploymentListRequests).toEqual(["/v2/deployments"]);
+
+	acceptedDetailGate.resolve();
+	await expect(page).toHaveURL(/\/agents\/hdep_checkout_return/);
+	await expect(page.getByText("Starting your agent…", { exact: true })).toBeVisible();
+	await expect(page.getByLabel("Agent ownership loading")).toHaveCount(0);
 });
 
 test("paid checkout navigates on deployment acceptance without LRO convergence", async ({

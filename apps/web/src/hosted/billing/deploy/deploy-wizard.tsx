@@ -178,6 +178,11 @@ type NativeDeployCheckout = {
 	summary: StripeCheckoutSummary;
 	tierLabel: "Basic" | "Performance";
 };
+type AcceptedDeploymentHandoff = {
+	deploymentId: string;
+	replace: boolean;
+	error: string | null;
+};
 type PaidDeploySelection = {
 	billingTermMonths: number;
 	computePlanSlug: ComputePlanSlug;
@@ -301,20 +306,43 @@ function DeploySectionSkeleton() {
 export function DeployWizard() {
 	const router = useRouter();
 	const queryClient = useQueryClient();
+	const billingClient = useBillingClient();
+	const [acceptedDeploymentHandoff, setAcceptedDeploymentHandoff] =
+		useState<AcceptedDeploymentHandoff | null>(null);
 	const acceptDeployment = useCallback(
-		(deploymentId: string, replace = false): void => {
-			navigateToAcceptedDeployment({
-				deploymentId,
-				navigate: (options) => void router.navigate(options),
-				queryClient,
-				replace,
-			});
+		async (deploymentId: string, replace = false): Promise<boolean> => {
+			setAcceptedDeploymentHandoff({ deploymentId, replace, error: null });
+			setSubmitBusyLabel("Loading agent details…");
+			setSubmitTakingLongCopy(
+				"Your deployment was accepted. Keep this page open while we load its committed details.",
+			);
+			setSubmitTakingLong(false);
+			setSubmitting(true);
+			try {
+				await navigateToAcceptedDeployment({
+					deploymentId,
+					getDeployment: billingClient.getDeployment,
+					navigate: (options) => router.navigate(options),
+					queryClient,
+					replace,
+				});
+				return true;
+			} catch (error) {
+				setAcceptedDeploymentHandoff({
+					deploymentId,
+					replace,
+					error: normalizeBillingError(error),
+				});
+				setSubmitting(false);
+				setSubmitTakingLong(false);
+				return false;
+			}
 		},
-		[queryClient, router],
+		[billingClient.getDeployment, queryClient, router],
 	);
 	const navigateCheckoutReturn = useCallback(
 		(deploymentId: string): undefined => {
-			acceptDeployment(deploymentId, true);
+			void acceptDeployment(deploymentId, true);
 		},
 		[acceptDeployment],
 	);
@@ -326,8 +354,7 @@ export function DeployWizard() {
 	const deployments = useHostedDeployments();
 	const managedModelCatalog = useManagedModelCatalog();
 	const aiProviders = useUserAiProviders();
-	const createSubscription = useSensitiveCreateSubscription();
-	const billingClient = useBillingClient();
+	const createSubscription = useSensitiveCreateSubscription({ invalidateDeployments: false });
 	const resolveDeploymentRequest = useResolveDeploymentRequest();
 	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const runAction = useActionLock();
@@ -536,7 +563,11 @@ export function DeployWizard() {
 		}
 		return null;
 	})();
-	const canSubmit = !submitting && !postPaymentBlocked && submitBlockingReason === null;
+	const canSubmit =
+		!submitting &&
+		!postPaymentBlocked &&
+		acceptedDeploymentHandoff === null &&
+		submitBlockingReason === null;
 
 	function selectCreatedProvider(providerId: string) {
 		selectCreatedAiProvider(providerId);
@@ -661,9 +692,9 @@ export function DeployWizard() {
 		return false;
 	}
 
-	function navigateToReusedSubscription({ deploymentId }: { deploymentId: string }) {
+	async function navigateToReusedSubscription({ deploymentId }: { deploymentId: string }) {
 		setCheckoutSession(null);
-		acceptDeployment(deploymentId);
+		await acceptDeployment(deploymentId);
 	}
 	async function handleCheckoutComplete(
 		previousDeploymentIds: readonly string[],
@@ -687,7 +718,7 @@ export function DeployWizard() {
 					const resolved = await resolveDeploymentRequest.mutateAsync(request.idempotencyKey);
 					forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
 					checkoutAttemptRef.current = null;
-					acceptDeployment(resolved.deploymentId, true);
+					await acceptDeployment(resolved.deploymentId, true);
 					return;
 				} catch (error) {
 					if (error instanceof DeploymentRequestTerminalError) {
@@ -726,7 +757,7 @@ export function DeployWizard() {
 				forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
 				checkoutAttemptRef.current = null;
 			}
-			acceptDeployment(deploymentId, true);
+			await acceptDeployment(deploymentId, true);
 		} finally {
 			setSubmitting(false);
 			setSubmitTakingLong(false);
@@ -806,7 +837,7 @@ export function DeployWizard() {
 							? formatUsdExact(walletDebit.debitAmountUsd)
 							: formatCents(paidSelection.offer.price_cents),
 					);
-					acceptDeployment(outcome.deploymentId);
+					await acceptDeployment(outcome.deploymentId);
 					return;
 				}
 				const checkoutFingerprint = idempotencyFingerprint({ selection, target });
@@ -834,7 +865,7 @@ export function DeployWizard() {
 				if (outcome.flowType === "subscription_activation") {
 					forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
 					checkoutAttemptRef.current = null;
-					navigateToReusedSubscription(outcome);
+					await navigateToReusedSubscription(outcome);
 					return;
 				}
 				const result = outcome.checkout;
@@ -887,7 +918,7 @@ export function DeployWizard() {
 				});
 			forgetIdempotencyAttempt("deployment-create", fingerprint);
 			includedCreateAttemptRef.current = null;
-			acceptDeployment(created.deploymentId);
+			await acceptDeployment(created.deploymentId);
 		} catch (e) {
 			if (paymentMethod === "wallet") {
 				void subscriptionCreateQuote.refetch();
@@ -943,9 +974,12 @@ export function DeployWizard() {
 				: null;
 	const walletTopUpAction =
 		paidSelection !== null && paymentMethod === "wallet" && walletInsufficient;
-	const primaryActionDisabled = walletTopUpAction
-		? submitting || postPaymentBlocked || !wallet.data
-		: !canSubmit;
+	const acceptedDeploymentHydrationFailed = Boolean(acceptedDeploymentHandoff?.error);
+	const primaryActionDisabled = acceptedDeploymentHydrationFailed
+		? submitting
+		: walletTopUpAction
+			? submitting || postPaymentBlocked || !wallet.data
+			: !canSubmit;
 	const amountExplainsBlocking =
 		paidSelection !== null &&
 		paymentMethod === "wallet" &&
@@ -1402,6 +1436,20 @@ export function DeployWizard() {
 					data-testid="deploy-action-bar"
 					className="sticky bottom-0 z-10 -mx-4 border-t bg-background/90 px-4 pt-3 pb-[calc(--spacing(3)+env(safe-area-inset-bottom))] backdrop-blur lg:-mx-6 lg:px-6"
 				>
+					{acceptedDeploymentHydrationFailed ? (
+						<Alert
+							data-testid="accepted-deployment-hydration-error"
+							variant="destructive"
+							className="mb-3"
+						>
+							<TriangleAlert />
+							<AlertTitle>Deployment accepted; details couldn’t load</AlertTitle>
+							<AlertDescription>
+								Retrying only loads the accepted deployment and opens its page. It won’t create
+								another agent.
+							</AlertDescription>
+						</Alert>
+					) : null}
 					<div className="flex flex-col gap-2 @2xl/main:flex-row @2xl/main:items-center @2xl/main:justify-between">
 						<div
 							data-testid="deploy-configuration-summary"
@@ -1447,23 +1495,39 @@ export function DeployWizard() {
 							) : null}
 							<div className="flex min-w-0 flex-col gap-1 @2xl/main:items-end">
 								<Button
-									type={walletTopUpAction ? "button" : "submit"}
+									type={
+										acceptedDeploymentHydrationFailed || walletTopUpAction ? "button" : "submit"
+									}
 									size="lg"
 									disabled={primaryActionDisabled}
 									aria-describedby={
 										visibleSubmitBlockingReason ? "deploy-blocking-reason" : undefined
 									}
 									onClick={
-										walletTopUpAction ? () => walletTopUp.show(walletShortfallUsd) : undefined
+										acceptedDeploymentHydrationFailed && acceptedDeploymentHandoff
+											? () =>
+													void acceptDeployment(
+														acceptedDeploymentHandoff.deploymentId,
+														acceptedDeploymentHandoff.replace,
+													)
+											: walletTopUpAction
+												? () => walletTopUp.show(walletShortfallUsd)
+												: undefined
 									}
 									className="w-full shrink-0 @2xl/main:w-auto"
 								>
 									{submitting ? (
 										<Spinner data-icon="inline-start" />
+									) : acceptedDeploymentHydrationFailed ? (
+										<RefreshCw data-icon="inline-start" />
 									) : (
 										<Rocket data-icon="inline-start" />
 									)}
-									{submitting ? submitBusyLabel : deployLabel}
+									{submitting
+										? submitBusyLabel
+										: acceptedDeploymentHydrationFailed
+											? "Retry opening agent"
+											: deployLabel}
 								</Button>
 								{submitTakingLong ? (
 									<p
