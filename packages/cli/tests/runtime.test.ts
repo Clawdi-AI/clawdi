@@ -13656,8 +13656,9 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 			command: "user-owned",
 			args: ["keep"],
 		});
-		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
-			openclaw: initialServers,
+		expect(JSON.parse(readFileSync(ledgerPath, "utf-8"))).toEqual({
+			schemaVersion: "clawdi.hostedManagedMcpServers.v2",
+			runtimes: { openclaw: ["clawdi", "search-proxy"] },
 		});
 		expect(existsSync(join(openclawSkill, ".clawdi-managed.json"))).toBe(true);
 
@@ -13697,7 +13698,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		expect(hermesAfterSwitch.clawdi).toEqual(initialServers.clawdi);
 		expect(hermesAfterSwitch["search-proxy"]).toEqual(updatedServers["search-proxy"]);
 		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
-			hermes: updatedServers,
+			hermes: ["clawdi", "search-proxy"],
 		});
 		const hermesSkill = join(home, ".hermes", "skills", "clawdi");
 		expect(existsSync(join(hermesSkill, ".clawdi-managed.json"))).toBe(true);
@@ -13727,7 +13728,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 			args: ["keep"],
 		});
 		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
-			hermes: { clawdi: initialServers.clawdi },
+			hermes: ["clawdi"],
 		});
 		expect(existsSync(hermesSkill)).toBe(false);
 		mkdirSync(hermesSkill, { recursive: true });
@@ -13749,6 +13750,207 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 			"user-owned canonical skill\n",
 		);
 		expect(readFileSync(openclawCalls, "utf-8")).toContain("unset search-proxy");
+	});
+
+	it("migrates retained v1 MCP ownership without copying legacy config values", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "workspace");
+		const ledgerPath = join(state, "config", "projections", "managed-mcp-servers.json");
+		const hermesConfigPath = join(home, ".hermes", "config.yaml");
+		const legacySecretRef = "env://REDACTED_LEGACY_NAME";
+		const legacyPrefix = "Bearer ";
+		const legacyServer = {
+			url: "https://legacy.example.test/mcp",
+			transport: "streamable-http",
+			headers: {
+				Authorization: { secretRef: legacySecretRef, prefix: legacyPrefix },
+			},
+		};
+		const retainedV1Ledger = {
+			schemaVersion: "clawdi.hostedManagedMcpServers.v1",
+			runtimes: { hermes: { clawdi: legacyServer } },
+		};
+		writeHermesVersionBinary(home, "0.18.0");
+		mkdirSync(dirname(hermesConfigPath), { recursive: true });
+		writeFileSync(
+			hermesConfigPath,
+			`${JSON.stringify({ mcp_servers: { clawdi: legacyServer } }, null, 2)}\n`,
+		);
+		mkdirSync(dirname(ledgerPath), { recursive: true });
+		writeFileSync(ledgerPath, `${JSON.stringify(retainedV1Ledger, null, 2)}\n`);
+		expect(legacyPrefix).toHaveLength(7);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const load = (generation: number, includeServer: boolean): RuntimeManifestLoad => ({
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_mcp_ledger_migration",
+				environmentId: "env_mcp_ledger_migration",
+				instanceId: "iid_mcp_ledger_migration",
+				generation,
+				issuedAt: "2026-07-31T00:00:00Z",
+				workspaceRoot: workspace,
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					hermes: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://hermes-agent.nousresearch.com/install.sh",
+							home,
+							args: [],
+						},
+					},
+				},
+				projection: {
+					system: { home, workspace },
+					mcp: {
+						servers: includeServer
+							? {
+									clawdi: {
+										url: "https://current.example.test/mcp",
+										transport: "sse",
+										headers: { "X-Manifest": "current-only" },
+									},
+								}
+							: {},
+					},
+				},
+				recovery: {},
+			},
+			source: "remote-datasource",
+			sourcePath: `test://mcp-ledger-migration-${generation}`,
+			offline: false,
+			secretValues: {},
+		});
+
+		const migrated = convergeRuntimeManifest(load(1, true), getRuntimePaths());
+		expect(migrated.installErrors).toEqual([]);
+		expect(readHermesConfigYaml(home).mcp_servers).toEqual({
+			clawdi: {
+				url: "https://current.example.test/mcp",
+				transport: "sse",
+				headers: { "X-Manifest": "current-only" },
+			},
+		});
+		const migratedLedgerPayload = JSON.parse(readFileSync(ledgerPath, "utf-8"));
+		expect(migratedLedgerPayload).toEqual({
+			schemaVersion: "clawdi.hostedManagedMcpServers.v2",
+			runtimes: { hermes: ["clawdi"] },
+		});
+		const migratedNative = readFileSync(hermesConfigPath, "utf-8");
+		const migratedLedger = readFileSync(ledgerPath, "utf-8");
+		for (const legacyValue of [
+			legacyServer.url,
+			legacyServer.transport,
+			legacySecretRef,
+			legacyPrefix,
+		]) {
+			expect(migratedNative).not.toContain(legacyValue);
+			expect(migratedLedger).not.toContain(legacyValue);
+		}
+		expect(migratedLedger).not.toContain("env://");
+		expect(JSON.stringify(migratedLedgerPayload)).not.toContain(JSON.stringify(legacyServer));
+
+		const roundTripped = convergeRuntimeManifest(load(2, true), getRuntimePaths());
+		expect(roundTripped.installErrors).toEqual([]);
+		expect(readFileSync(hermesConfigPath, "utf-8")).toBe(migratedNative);
+		expect(readFileSync(ledgerPath, "utf-8")).toBe(migratedLedger);
+
+		const removed = convergeRuntimeManifest(load(3, false), getRuntimePaths());
+		expect(removed.installErrors).toEqual([]);
+		expect(readHermesConfigYaml(home).mcp_servers).toEqual({});
+		expect(JSON.parse(readFileSync(ledgerPath, "utf-8"))).toEqual({
+			schemaVersion: "clawdi.hostedManagedMcpServers.v2",
+			runtimes: {},
+		});
+	});
+
+	it.each([
+		[
+			"unsupported schema",
+			{ schemaVersion: "clawdi.hostedManagedMcpServers.v3", runtimes: {} },
+			"unsupported schema",
+		],
+		[
+			"unsupported runtime",
+			{ schemaVersion: "clawdi.hostedManagedMcpServers.v2", runtimes: { codex: ["clawdi"] } },
+			"invalid runtimes",
+		],
+		[
+			"invalid v1 server name",
+			{
+				schemaVersion: "clawdi.hostedManagedMcpServers.v1",
+				runtimes: {
+					hermes: {
+						"Invalid Name": {
+							url: "https://legacy.example.test/mcp",
+							transport: "streamable-http",
+							headers: {
+								Authorization: {
+									secretRef: "env://REDACTED_LEGACY_NAME",
+									prefix: "Bearer ",
+								},
+							},
+						},
+					},
+				},
+			},
+			"invalid hermes server name",
+		],
+		[
+			"invalid v2 server name",
+			{
+				schemaVersion: "clawdi.hostedManagedMcpServers.v2",
+				runtimes: { hermes: ["Invalid Name"] },
+			},
+			"invalid hermes server name",
+		],
+	] as const)("rejects an MCP ownership ledger with %s", (_case, ledger, expectedError) => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "workspace");
+		const ledgerPath = join(state, "config", "projections", "managed-mcp-servers.json");
+		const originalLedger = `${JSON.stringify(ledger, null, 2)}\n`;
+		mkdirSync(dirname(ledgerPath), { recursive: true });
+		writeFileSync(ledgerPath, originalLedger);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		expect(() =>
+			convergeRuntimeManifest(
+				{
+					manifest: {
+						schemaVersion: "clawdi.runtimeDesiredState.v1",
+						deploymentId: "dep_invalid_mcp_ledger",
+						environmentId: "env_invalid_mcp_ledger",
+						instanceId: "iid_invalid_mcp_ledger",
+						generation: 1,
+						issuedAt: "2026-07-31T00:00:00Z",
+						workspaceRoot: workspace,
+						controlPlane: { apiUrl: "https://cloud-api.test" },
+						runtimes: {},
+						projection: { system: { home, workspace }, mcp: { servers: {} } },
+						recovery: {},
+					},
+					source: "remote-datasource",
+					sourcePath: "test://invalid-mcp-ledger",
+					offline: false,
+					secretValues: {},
+				},
+				getRuntimePaths(),
+			),
+		).toThrow(expectedError);
+		expect(readFileSync(ledgerPath, "utf-8")).toBe(originalLedger);
 	});
 
 	it("claims MCP ownership only after successful mutations and retries failed cleanup", () => {
@@ -13851,7 +14053,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		);
 		expect(managed.installErrors).toEqual([]);
 		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
-			openclaw: { "owned-server": { command: "owned", args: ["serve"] } },
+			openclaw: ["owned-server"],
 		});
 		expect(readOpenClawMcpServers(home)["owned-server"]).toEqual({
 			command: "owned",
@@ -13861,7 +14063,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		const failedRemoval = convergeRuntimeManifest(load(5, {}), getRuntimePaths());
 		expect(failedRemoval.installErrors.join("\n")).toContain("runtime MCP projection failed");
 		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
-			openclaw: { "owned-server": { command: "owned", args: ["serve"] } },
+			openclaw: ["owned-server"],
 		});
 		expect(readOpenClawMcpServers(home)["owned-server"]).toEqual({
 			command: "owned",

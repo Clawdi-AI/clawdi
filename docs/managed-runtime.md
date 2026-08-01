@@ -860,7 +860,7 @@ outputs include:
 | `managed-cli/bin/clawdi` | Root-only active managed CLI link used by system services |
 | `npm/` | Root-only managed CLI package prefixes and active targets |
 | `config/projections/<runtime>.json` | Runtime projection payload |
-| `config/projections/managed-mcp-servers.json` | Canonical last-applied MCP server map per runtime, written atomically only after the full native-config apply succeeds |
+| `config/projections/managed-mcp-servers.json` | Canonical v2 managed MCP server-name ownership ledger per runtime, written atomically only after the full native-config apply succeeds |
 | `config/run/<runtime>.json`, `config/run/<runtime>+<service>.json` | `clawdi run` launch config for runtime main processes and internal runtime-owned services |
 | `$CLAWDI_RUN_DIR/secrets/*` | Short-lived token and secret files for the current runtime session |
 | `$CLAWDI_RUN_DIR/systemd/env/*.service.env` | Ephemeral env files for local systemd services, including short-lived runtime secrets |
@@ -883,10 +883,14 @@ a real, root-owned directory without group/world write permission before Apply
 begins.
 
 Generic MCP reconciliation compares desired servers, the previous managed
-last-applied map, and the current native map. OpenClaw current state is the
+server-name ownership ledger, and the current native map. The ledger never
+stores desired or native config values. A retained v1 ledger is migrated by
+strictly validating its schema, runtime keys, server-map boundaries, and server
+names, then discarding every legacy config value; all desired native config is
+derived from the current manifest. OpenClaw current state is the
 canonical `mcp.servers` object in `~/.openclaw/openclaw.json`; Hermes uses
 `mcp_servers` in `~/.hermes/config.yaml`. A desired name that already exists
-without last-applied ownership fails closed. Native absence already satisfies a
+without ledger ownership fails closed. Native absence already satisfies a
 managed deletion. The runtime apply snapshots both complete native configs and
 the ledger, preserves unrelated entries, writes the ledger last, and restores
 the exact previous files and metadata if any later mutation fails.

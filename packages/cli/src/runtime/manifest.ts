@@ -106,7 +106,6 @@ import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-
 import {
 	type HostedMcpServerDesiredState,
 	hostedMcpDesiredStateSchema,
-	hostedMcpServerDesiredStateSchema,
 } from "./manifest-resources";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
 
@@ -3380,14 +3379,14 @@ interface HostedMcpIntent {
 }
 
 const HOSTED_RUNTIME_TARGETS = ["openclaw", "hermes"] as const satisfies readonly RuntimeName[];
-const HOSTED_MCP_LEDGER_SCHEMA_VERSION = "clawdi.hostedManagedMcpServers.v1";
+const HOSTED_MCP_LEDGER_V1_SCHEMA_VERSION = "clawdi.hostedManagedMcpServers.v1";
+const HOSTED_MCP_LEDGER_SCHEMA_VERSION = "clawdi.hostedManagedMcpServers.v2";
 const HOSTED_MCP_LEDGER_FILE = "managed-mcp-servers.json";
+const HOSTED_MCP_SERVER_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 interface HostedMcpManagedLedger {
 	schemaVersion: typeof HOSTED_MCP_LEDGER_SCHEMA_VERSION;
-	runtimes: Partial<
-		Record<(typeof HOSTED_RUNTIME_TARGETS)[number], Record<string, HostedMcpServerDesiredState>>
-	>;
+	runtimes: Partial<Record<(typeof HOSTED_RUNTIME_TARGETS)[number], string[]>>;
 }
 
 function hostedMcpIntent(manifest: RuntimeManifest): HostedMcpIntent {
@@ -3415,8 +3414,19 @@ function readHostedMcpManagedLedger(paths: RuntimePaths): HostedMcpManagedLedger
 			}`,
 		);
 	}
-	if (!isPlainRecord(payload) || payload.schemaVersion !== HOSTED_MCP_LEDGER_SCHEMA_VERSION) {
+	if (
+		!isPlainRecord(payload) ||
+		(payload.schemaVersion !== HOSTED_MCP_LEDGER_V1_SCHEMA_VERSION &&
+			payload.schemaVersion !== HOSTED_MCP_LEDGER_SCHEMA_VERSION)
+	) {
 		throw new Error("hosted MCP last-applied ledger has an unsupported schema");
+	}
+	if (
+		Object.keys(payload).length !== 2 ||
+		!Object.hasOwn(payload, "schemaVersion") ||
+		!Object.hasOwn(payload, "runtimes")
+	) {
+		throw new Error("hosted MCP last-applied ledger has invalid fields");
 	}
 	const runtimes = recordValue(payload.runtimes);
 	if (
@@ -3427,23 +3437,31 @@ function readHostedMcpManagedLedger(paths: RuntimePaths): HostedMcpManagedLedger
 	}
 	const normalized: HostedMcpManagedLedger["runtimes"] = {};
 	for (const runtime of HOSTED_RUNTIME_TARGETS) {
-		const servers = runtimes[runtime];
-		if (servers === undefined) continue;
-		if (!isPlainRecord(servers)) {
+		const runtimeOwnership = runtimes[runtime];
+		if (runtimeOwnership === undefined) continue;
+		// V1 values are untrusted legacy desired state. Migrate ownership by name only.
+		const names =
+			payload.schemaVersion === HOSTED_MCP_LEDGER_V1_SCHEMA_VERSION
+				? isPlainRecord(runtimeOwnership)
+					? Object.keys(runtimeOwnership)
+					: null
+				: Array.isArray(runtimeOwnership)
+					? runtimeOwnership
+					: null;
+		if (!names) {
 			throw new Error(`hosted MCP last-applied ledger has invalid ${runtime} servers`);
 		}
-		const normalizedServers: Record<string, HostedMcpServerDesiredState> = {};
-		for (const [name, server] of Object.entries(servers).sort(([a], [b]) => a.localeCompare(b))) {
-			if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(name)) {
+		const normalizedNames = new Set<string>();
+		for (const name of names) {
+			if (typeof name !== "string" || !HOSTED_MCP_SERVER_NAME_PATTERN.test(name)) {
 				throw new Error(`hosted MCP last-applied ledger has invalid ${runtime} server name`);
 			}
-			const parsed = hostedMcpServerDesiredStateSchema.safeParse(server);
-			if (!parsed.success) {
-				throw new Error(`hosted MCP last-applied ledger has invalid ${runtime} server ${name}`);
+			if (normalizedNames.has(name)) {
+				throw new Error(`hosted MCP last-applied ledger has duplicate ${runtime} server name`);
 			}
-			normalizedServers[name] = parsed.data;
+			normalizedNames.add(name);
 		}
-		if (Object.keys(normalizedServers).length > 0) normalized[runtime] = normalizedServers;
+		if (normalizedNames.size > 0) normalized[runtime] = [...normalizedNames].sort();
 	}
 	return { schemaVersion: HOSTED_MCP_LEDGER_SCHEMA_VERSION, runtimes: normalized };
 }
@@ -3453,15 +3471,8 @@ function writeHostedMcpManagedLedger(paths: RuntimePaths, ledger: HostedMcpManag
 		schemaVersion: HOSTED_MCP_LEDGER_SCHEMA_VERSION,
 		runtimes: Object.fromEntries(
 			HOSTED_RUNTIME_TARGETS.flatMap((runtime) => {
-				const servers = ledger.runtimes[runtime];
-				return servers && Object.keys(servers).length > 0
-					? [
-							[
-								runtime,
-								Object.fromEntries(Object.entries(servers).sort(([a], [b]) => a.localeCompare(b))),
-							],
-						]
-					: [];
+				const names = ledger.runtimes[runtime];
+				return names && names.length > 0 ? [[runtime, [...names].sort()]] : [];
 			}),
 		),
 	});
@@ -3690,16 +3701,16 @@ function buildHostedMcpReconciliationPlan(
 	};
 	const runtimes = HOSTED_RUNTIME_TARGETS.map((name) => {
 		const desiredServers = manifest.runtimes[name]?.enabled === true ? intent.servers : {};
-		const previousServers = ledger.runtimes[name] ?? {};
+		const previousServerNames = new Set(ledger.runtimes[name] ?? []);
 		const native = readHostedMcpNativeState(name, home);
 		for (const serverName of Object.keys(desiredServers).sort()) {
-			if (Object.hasOwn(previousServers, serverName)) continue;
+			if (previousServerNames.has(serverName)) continue;
 			if (Object.hasOwn(native.servers, serverName)) {
 				throw new Error(`refusing to replace unmanaged ${name} MCP server ${serverName}`);
 			}
 		}
 		const mutations: HostedMcpMutation[] = [];
-		for (const serverName of Object.keys(previousServers).sort()) {
+		for (const serverName of [...previousServerNames].sort()) {
 			if (!Object.hasOwn(desiredServers, serverName) && Object.hasOwn(native.servers, serverName)) {
 				// The ledger owns this name even if its native value drifted. Native
 				// absence, however, already satisfies deletion and must not invoke an
@@ -3716,9 +3727,7 @@ function buildHostedMcpReconciliationPlan(
 			}
 		}
 		if (Object.keys(desiredServers).length > 0) {
-			nextLedger.runtimes[name] = Object.fromEntries(
-				Object.entries(desiredServers).sort(([a], [b]) => a.localeCompare(b)),
-			);
+			nextLedger.runtimes[name] = Object.keys(desiredServers).sort();
 		}
 		const observation = observations.get(name);
 		const hasSet = mutations.some((mutation) => mutation.kind === "set");
