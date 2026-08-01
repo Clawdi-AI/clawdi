@@ -2873,6 +2873,9 @@ test("hosted agent sidebar renders one Resources heading in canonical order", as
 	await expect(projectCards.nth(0)).toContainText("Read order 1");
 	await expect(projectCards.nth(0)).toContainText("Default write destination");
 	await expect(projectCards.nth(0)).not.toContainText("Owner");
+	await expect(
+		projectCards.nth(0).getByRole("link", { name: "Open Hosted Agent Project" }),
+	).toHaveAttribute("href", "/projects/project-hosted");
 	await expect(projectCards.nth(1)).toContainText("Hosted Shared Knowledge");
 	await expect(projectCards.nth(1)).toContainText("Read order 2");
 	await expect(projectCards.nth(1)).toContainText("Viewer");
@@ -2889,6 +2892,11 @@ test("hosted agent sidebar renders one Resources heading in canonical order", as
 		projectCards.nth(1).getByRole("button", { name: "Remove Hosted Shared Knowledge" }),
 	).toBeVisible();
 	await projectCards.nth(1).getByRole("button", { name: "Remove Hosted Shared Knowledge" }).click();
+	await expect(page).toHaveURL((url) => {
+		return (
+			url.pathname === `/agents/${railHostedEnvironmentId}/project-access` && url.search === query
+		);
+	});
 	const removeProjectDialog = page.getByRole("alertdialog", { name: "Remove this Project?" });
 	await expect(removeProjectDialog).toContainText(
 		"Hosted Shared Knowledge will no longer be available to this agent.",
@@ -2936,6 +2944,8 @@ test("hosted agent sidebar renders one Resources heading in canonical order", as
 			.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
 	).toBe(true);
 	await projectStack.screenshot({ path: testInfo.outputPath("hosted-agent-projects-mobile.png") });
+	await projectCards.nth(0).getByRole("link", { name: "Open Hosted Agent Project" }).click();
+	await expect(page).toHaveURL(/\/projects\/project-hosted$/);
 
 	await page.goto(`/agents/${railHostedEnvironmentId}/vaults${query}`);
 	await expect(main.getByRole("heading", { name: "Vaults", level: 1 })).toBeVisible();

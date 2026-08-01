@@ -9,12 +9,13 @@ describe("agent Projects presentation", () => {
 		expect(source).toContain('data-testid="agent-project-grid"');
 		expect(source).toContain('data-testid="agent-project-card"');
 		expect(source).toContain("className={HERO_GRID_CLASS}");
-		expect(source).toContain("<HeroCard");
-		expect(source).toContain("<IconChip");
-		expect(source).toContain("<ProjectKindBadge");
+		expect(source).toContain("<ProjectResourceCard");
+		expect(source).toContain("<ProjectResourceCardSkeleton");
+		expect(source).toContain("<UnavailableProjectResourceCard");
 		expect(source).toContain("Default write destination");
 		expect(source).toMatch(/Read order \$\{position \+ 1\}/);
-		expect(source).toContain('<Badge variant="outline">Viewer</Badge>');
+		expect(source).not.toContain("ProjectKindBadge");
+		expect(source).not.toContain('variant="outline">Viewer');
 		expect(source).toMatch(/aria-label=\{`Move \$\{projectName\} up`\}/);
 		expect(source).toMatch(/aria-label=\{`Move \$\{projectName\} down`\}/);
 		expect(source).toMatch(/aria-label=\{`Remove \$\{projectName\}`\}/);
@@ -24,6 +25,22 @@ describe("agent Projects presentation", () => {
 		expect(source).not.toContain("Default writes");
 		expect(source).not.toContain("Read access");
 		expect(source).not.toContain("Reads Skills and Vaults");
+	});
+
+	test("delegates canonical identity, access language, and navigation to the shared Project card", () => {
+		const source = readFileSync(
+			new URL("../projects/project-resource-card.tsx", import.meta.url),
+			"utf8",
+		);
+
+		expect(source).toContain("<ProjectKindBadge");
+		expect(source).toContain("const showViewer = !isProjectOwner(project)");
+		expect(source).toContain('showViewer ? <Badge variant="outline">Viewer</Badge> : null');
+		expect(source).toContain("showKind ? <ProjectKindBadge");
+		expect(source).toContain("description={projectAlias(project)}");
+		expect(source).toContain('to: "/projects/$id"');
+		expect(source).toContain("ariaLabel={");
+		expect(source).toContain("Open ");
 	});
 
 	test("keeps Project selection behind the compact toolbar dialog", () => {

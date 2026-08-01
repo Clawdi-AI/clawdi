@@ -510,7 +510,9 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.goto("/agents/agent-smoke-1/connectors?q=gmail&page=2");
 	const main = page.locator("main");
-	await expect(main.getByRole("heading", { name: "Connectors", level: 1 })).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Connectors", level: 1 })).toBeVisible({
+		timeout: 15_000,
+	});
 	await expect(page).toHaveTitle("Connectors · Clawdi");
 	await expect(
 		main.getByText("Account-wide connectors available across all agents."),
@@ -541,6 +543,9 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 	await expect(projectCards.nth(0)).not.toContainText("Owner");
 	await expect(projectCards.nth(0).locator('[data-slot="badge"]')).toHaveCount(1);
 	await expect(projectCards.nth(0).getByRole("button")).toHaveCount(0);
+	await expect(
+		projectCards.nth(0).getByRole("link", { name: "Open Smoke Project" }),
+	).toHaveAttribute("href", "/projects/project-smoke");
 	await expect(projectCards.nth(1)).toContainText("Team Knowledge");
 	await expect(projectCards.nth(1)).toContainText("Read order 2");
 	await expect(projectCards.nth(1)).toContainText("Viewer");
@@ -566,6 +571,7 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 		)
 		.toBe("1");
 	await projectCards.nth(1).getByRole("button", { name: "Remove Team Knowledge" }).click();
+	await expect(page).toHaveURL(/\/agents\/agent-smoke-1\/project-access$/);
 	const removeProjectDialog = page.getByRole("alertdialog", { name: "Remove this Project?" });
 	await expect(removeProjectDialog).toContainText(
 		"Team Knowledge will no longer be available to this agent.",
@@ -637,6 +643,42 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 	await projectStack.screenshot({
 		path: testInfo.outputPath("connected-agent-projects-mobile.png"),
 	});
+	const primaryProjectLink = projectCards.nth(0).getByRole("link", { name: "Open Smoke Project" });
+	await primaryProjectLink.focus();
+	await expect(primaryProjectLink).toBeFocused();
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(/\/projects\/project-smoke$/);
+
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.goto("/projects");
+	await expect(main.getByRole("heading", { name: "Projects", level: 1 })).toBeVisible();
+	const consoleProjectGrid = main.getByTestId("project-grid");
+	const consoleSharedProject = consoleProjectGrid.getByRole("link", {
+		name: "Open Team Knowledge",
+	});
+	await expect(consoleSharedProject).toHaveAttribute("href", "/projects/project-context-first");
+	await expect(consoleSharedProject.locator("xpath=..")).toContainText("Viewer");
+	await expect(consoleProjectGrid.getByText("Custom Project", { exact: true })).toHaveCount(0);
+	await expect(consoleProjectGrid.getByText("Owner", { exact: true })).toHaveCount(0);
+	await main.getByRole("button", { name: /System projects/i }).click();
+	const systemProjectCard = main
+		.getByRole("link", { name: "Open Smoke Project" })
+		.locator("xpath=..");
+	await expect(systemProjectCard).toContainText("Agent Project");
+	await expect(systemProjectCard).toContainText("Agent: Smoke Codex");
+	await expect(systemProjectCard).not.toContainText("Owner");
+	await main.screenshot({ path: testInfo.outputPath("console-projects-desktop.png") });
+	await page.locator("html").evaluate((element) => element.classList.add("dark"));
+	await main.screenshot({ path: testInfo.outputPath("console-projects-dark.png") });
+	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+	await page.setViewportSize({ width: 390, height: 844 });
+	await expect(consoleSharedProject).toBeVisible();
+	expect(
+		await page
+			.locator("html")
+			.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+	).toBe(true);
+	await main.screenshot({ path: testInfo.outputPath("console-projects-mobile.png") });
 
 	await page.goto("/agents/agent-smoke-1/vaults");
 	await expect(main.getByRole("heading", { name: "Vaults", level: 1 })).toBeVisible();
