@@ -232,7 +232,10 @@ class BuiltinProvider:
         so abstract queries against narrowly-phrased memories still surface
         something rather than a pure "not found".
         """
-        q_vec = await self.embedder.embed(query)
+        embedder = self.embedder
+        if embedder is None:
+            return []
+        q_vec = await embedder.embed(query)
         rows = await self._run_vector_search(
             user_id,
             q_vec,
@@ -367,9 +370,8 @@ class Mem0Provider:
     """Memory provider backed by Mem0 API."""
 
     def __init__(self, api_key: str):
-        from mem0 import MemoryClient
-
-        self.client = MemoryClient(api_key=api_key)
+        mem0 = __import__("mem0", fromlist=["MemoryClient"])
+        self.client = mem0.MemoryClient(api_key=api_key)
 
     async def add(
         self,
@@ -736,8 +738,7 @@ def mem0_available() -> bool:
     if cached is not None:
         return cached
     try:
-        import mem0  # noqa: F401  -- presence check, not used here
-
+        __import__("mem0")
         cached = True
     except ImportError:
         cached = False

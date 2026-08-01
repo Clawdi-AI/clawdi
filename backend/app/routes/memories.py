@@ -102,7 +102,7 @@ async def _attach_source_machines(
                 environment_id = UUID(str(raw_environment_id))
             except (TypeError, ValueError):
                 environment_id = None
-            if environment_id in machine_by_environment:
+            if environment_id is not None and environment_id in machine_by_environment:
                 d["source_environment_id"] = str(environment_id)
                 d["source_machine_name"] = machine_by_environment[environment_id]
                 continue
