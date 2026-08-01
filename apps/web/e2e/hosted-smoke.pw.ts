@@ -4007,6 +4007,20 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 		acceptedInventoryGate.resolve();
 	}
 	await expect(page.getByText("Starting your agent…", { exact: true })).toBeVisible();
+	const detail = page.locator("main");
+	await expect(detail.getByText("Compute", { exact: true })).toBeVisible();
+	await expect(detail.getByText("Basic", { exact: true })).toBeVisible();
+	await expect(detail.getByText("Model", { exact: true })).toBeVisible();
+	await expect(detail.getByText("Resources", { exact: true })).toBeVisible();
+	await expect(detail.getByText("2 vCPU · 4 GiB", { exact: true })).toBeVisible();
+	await expect(detail.getByText("Some agent details are unavailable", { exact: true })).toHaveCount(
+		0,
+	);
+	await expect(detail.getByText("Some agent details are not ready", { exact: true })).toHaveCount(
+		0,
+	);
+	await expect(detail.getByText("Sessions unavailable", { exact: true })).toHaveCount(0);
+	await expect(detail.getByText("Recent sessions", { exact: true })).toHaveCount(0);
 	await expect(page.getByText("Agent actions", { exact: true })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
 	await expect(page.getByText("Agent unavailable", { exact: true })).toHaveCount(0);
@@ -4745,7 +4759,8 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
 	const main = page.locator("main");
 	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe("hdep_failed_projection");
-	await expect(main.getByText("Some agent details are not ready", { exact: true })).toBeVisible();
+	await expect(main.getByText("Some agent details are not ready", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("Recent sessions", { exact: true })).toHaveCount(0);
 	await expect(main.getByText(missingProjectionFailureReason, { exact: true })).toHaveCount(0);
 	await expect(
 		main.getByText("The Clawdi service could not complete this request.", { exact: true }),
@@ -4757,7 +4772,7 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Check again", exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Check again", exact: true })).toHaveCount(0);
 
 	expect(restartRequests).toEqual([]);
 
@@ -4939,14 +4954,14 @@ test("missing live projection recovers on Check again without losing deployment 
 		},
 	});
 
-	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
+	await page.goto(`/agents/${missingProjectionEnvironmentId}/sessions?source=on-clawdi`);
 	const main = page.locator("main");
 	await expect(main.getByText("Some agent details are not ready", { exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
 	await main.getByRole("button", { name: "Check again", exact: true }).click();
 	await expect(main.getByText("Some agent details are not ready", { exact: true })).toHaveCount(0);
-	await expect(main.getByRole("heading", { name: "Overview" })).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Sessions" })).toBeVisible();
 });
 
 test("projection service errors stay visible while deployment tools remain available", async ({
@@ -4961,7 +4976,7 @@ test("projection service errors stay visible while deployment tools remain avail
 		},
 	});
 
-	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
+	await page.goto(`/agents/${missingProjectionEnvironmentId}/sessions?source=on-clawdi`);
 	const main = page.locator("main");
 	await expect(main.getByText("Couldn’t load all agent details", { exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();

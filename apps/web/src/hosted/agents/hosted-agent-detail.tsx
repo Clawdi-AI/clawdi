@@ -340,6 +340,11 @@ function parseHostedAgentTab(value: AgentSectionId | string | null): HostedAgent
 		: null;
 }
 
+/** Only surfaces whose primary content needs the cloud-agent projection own its notice. */
+export function shouldShowHostedProjectionNotice(section: AgentSectionId): boolean {
+	return section === "sessions" || section === "skills";
+}
+
 function LiveNote({ children }: { children: React.ReactNode }) {
 	return (
 		<p className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -574,7 +579,9 @@ export function HostedAgentDetail({
 						onRetry={onCheckDeploymentAgain}
 					/>
 				) : null}
-				{deploymentStatus.known && deploymentProjectionQueryable && activeTab !== "channels" ? (
+				{deploymentStatus.known &&
+				deploymentProjectionQueryable &&
+				shouldShowHostedProjectionNotice(activeTab) ? (
 					<HostedProjectionNotice
 						projection={projection}
 						isFetching={agentQuery.isFetching}
@@ -589,11 +596,7 @@ export function HostedAgentDetail({
 							deployment={deployment}
 							agent={isCloudEnvId(environmentId) ? agent : null}
 							isPerformance={isPerformance}
-							showDeploymentActions={
-								projection.status === "resolved" &&
-								!deploymentRunning &&
-								!isStartingStatus(deploymentStatus)
-							}
+							showDeploymentActions={!deploymentRunning && !isStartingStatus(deploymentStatus)}
 							onDeleteAccepted={onDeleteAccepted}
 							projectionAvailable={projection.status === "resolved"}
 							sessions={sessions.data?.items ?? []}
@@ -1199,31 +1202,27 @@ function OverviewTab({
 					value={`${spec.resources.vcpu} vCPU · ${formatMemoryMib(spec.resources.memory_mib)}`}
 				/>
 			</div>
-			<div>
-				<div className="mb-2 text-sm font-medium">Recent sessions</div>
-				{!projectionAvailable ? (
-					<EmptyState
-						variant="inset"
-						title="Sessions unavailable"
-						description="Sessions will appear when the rest of this agent is ready."
-					/>
-				) : sessionsError ? (
-					<ApiErrorPanel
-						error={sessionsError}
-						onRetry={onRetrySessions}
-						title="Couldn't load sessions"
-					/>
-				) : (
-					<SessionFeed
-						sessions={sessions}
-						isLoading={sessionsLoading}
-						emptyMessage={sessionsEmptyMessage}
-						emptyVariant="inset"
-						showAgent={false}
-						sessionLink={sessionLink}
-					/>
-				)}
-			</div>
+			{projectionAvailable ? (
+				<div>
+					<div className="mb-2 text-sm font-medium">Recent sessions</div>
+					{sessionsError ? (
+						<ApiErrorPanel
+							error={sessionsError}
+							onRetry={onRetrySessions}
+							title="Couldn't load sessions"
+						/>
+					) : (
+						<SessionFeed
+							sessions={sessions}
+							isLoading={sessionsLoading}
+							emptyMessage={sessionsEmptyMessage}
+							emptyVariant="inset"
+							showAgent={false}
+							sessionLink={sessionLink}
+						/>
+					)}
+				</div>
+			) : null}
 			{showDeploymentActions ? (
 				<OverviewDeploymentActions deployment={deployment} onDeleteAccepted={onDeleteAccepted} />
 			) : null}

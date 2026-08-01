@@ -24,11 +24,14 @@ type ProjectAcceptedDeploymentTransition =
 type OverviewReadinessPanel =
 	typeof import("@/hosted/agents/hosted-agent-detail").OverviewReadinessPanel;
 type OverviewFailedPanel = typeof import("@/hosted/agents/hosted-agent-detail").OverviewFailedPanel;
+type ShouldShowHostedProjectionNotice =
+	typeof import("@/hosted/agents/hosted-agent-detail").shouldShowHostedProjectionNotice;
 
 let invalidateSnapshots: InvalidateDeploymentSnapshots | null = null;
 let projectAcceptedTransition: ProjectAcceptedDeploymentTransition | null = null;
 let overviewReadinessPanel: OverviewReadinessPanel | null = null;
 let overviewFailedPanel: OverviewFailedPanel | null = null;
+let shouldShowProjectionNotice: ShouldShowHostedProjectionNotice | null = null;
 
 function requiredDeploymentStatus(
 	deployment: HostedDeployment | undefined,
@@ -49,6 +52,7 @@ beforeAll(async () => {
 	const detailModule = await import("@/hosted/agents/hosted-agent-detail");
 	overviewReadinessPanel = detailModule.OverviewReadinessPanel;
 	overviewFailedPanel = detailModule.OverviewFailedPanel;
+	shouldShowProjectionNotice = detailModule.shouldShowHostedProjectionNotice;
 });
 
 describe("deployment failure remediation rendering", () => {
@@ -132,16 +136,28 @@ describe("deployment failure remediation rendering", () => {
 });
 
 describe("deployment transition timeout rendering", () => {
-	test("keeps startup overview actions hidden until startup and projection resolve", () => {
+	test("keeps projection availability notices off the deployment-backed overview", () => {
+		if (!shouldShowProjectionNotice) throw new Error("agent detail was not loaded");
+
+		expect(shouldShowProjectionNotice("overview")).toBe(false);
+		expect(shouldShowProjectionNotice("console")).toBe(false);
+		expect(shouldShowProjectionNotice("terminal")).toBe(false);
+		expect(shouldShowProjectionNotice("ai")).toBe(false);
+		expect(shouldShowProjectionNotice("settings")).toBe(false);
+		expect(shouldShowProjectionNotice("sessions")).toBe(true);
+		expect(shouldShowProjectionNotice("skills")).toBe(true);
+	});
+
+	test("keeps overview actions status-authoritative when the projection is missing", () => {
 		const detailSource = readFileSync(
 			new URL("./hosted-agent-detail.tsx", import.meta.url),
 			"utf8",
 		);
-		expect(detailSource).toContain('projection.status === "resolved" &&');
-		expect(detailSource).toContain("!isStartingStatus(deploymentStatus)");
-		expect(detailSource).not.toContain(
-			'showDeploymentActions={projection.status !== "resolved" || !deploymentRunning}',
+		expect(detailSource).toContain(
+			"showDeploymentActions={!deploymentRunning && !isStartingStatus(deploymentStatus)}",
 		);
+		expect(detailSource).toContain("!isStartingStatus(deploymentStatus)");
+		expect(detailSource).not.toContain('projection.status === "resolved" &&');
 	});
 
 	test("keeps delayed startup copy truthful with automatic and manual checks", () => {
