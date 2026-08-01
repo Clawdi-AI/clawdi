@@ -7,6 +7,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from app.schemas.whatsapp_application import (
+    WhatsAppApplicationMessage,
     WhatsAppApplicationOperation,
     WhatsAppRecoverRequest,
 )
@@ -136,3 +137,28 @@ def test_recovery_reset_logged_out_is_explicit_and_defaults_false():
     assert explicit.reset_logged_out is True
     with pytest.raises(ValidationError):
         WhatsAppRecoverRequest.model_validate({"acceptVersionChange": False, "reset": True})
+
+
+def test_application_message_preserves_only_a_bounded_unsupported_marker():
+    message = WhatsAppApplicationMessage.model_validate(
+        {
+            "id": "message-1",
+            "text": "",
+            "timestamp": 1,
+            "unsupported": {"providerContentType": "futureMessage"},
+        }
+    )
+    assert message.unsupported is not None
+    assert message.unsupported.provider_content_type == "futureMessage"
+    with pytest.raises(ValidationError):
+        WhatsAppApplicationMessage.model_validate(
+            {
+                "id": "message-1",
+                "text": "",
+                "timestamp": 1,
+                "unsupported": {
+                    "providerContentType": "futureMessage",
+                    "rawProviderPayload": {"secret": "denied"},
+                },
+            }
+        )

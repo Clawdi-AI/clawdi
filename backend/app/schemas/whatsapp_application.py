@@ -66,6 +66,14 @@ class WhatsAppApplicationMedia(WhatsAppApplicationModel):
     ptt: Literal[True] | None = None
 
 
+class WhatsAppApplicationUnsupportedContent(WhatsAppApplicationModel):
+    provider_content_type: str = Field(
+        alias="providerContentType",
+        min_length=1,
+        max_length=80,
+    )
+
+
 class WhatsAppApplicationMessage(WhatsAppApplicationModel):
     id: str = Field(min_length=1, max_length=300)
     text: str = Field(max_length=16_384)
@@ -73,6 +81,7 @@ class WhatsAppApplicationMessage(WhatsAppApplicationModel):
     reply_to: str | None = Field(default=None, alias="replyTo", min_length=1, max_length=300)
     reaction: WhatsAppApplicationReaction | None = None
     media: list[WhatsAppApplicationMedia] = Field(default_factory=list, max_length=1)
+    unsupported: WhatsAppApplicationUnsupportedContent | None = None
 
 
 class WhatsAppInboxEvent(WhatsAppApplicationModel):

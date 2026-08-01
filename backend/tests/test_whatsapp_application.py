@@ -389,6 +389,7 @@ async def test_application_inbox_redelivery_single_ack_and_link_isolation(
         "replyTo": None,
         "reaction": None,
         "media": [],
+        "unsupported": None,
     }
     assert first.json()["cursor"].isdecimal()
     assert other.json()["events"][0]["binding"] == {"id": str(binding_b.id)}
@@ -412,6 +413,48 @@ async def test_application_inbox_redelivery_single_ack_and_link_isolation(
     assert acked.json() == {"id": event["id"], "acknowledged": True, "duplicate": False}
     assert duplicate_ack.json()["duplicate"] is True
     assert (await client.get(inbox_url, headers=headers_a)).json()["events"] == []
+
+
+@pytest.mark.asyncio
+async def test_application_inbox_preserves_bounded_unsupported_content_marker(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+    channel_agent: AgentEnvironment,
+):
+    account, _link, _binding, token = await _seed_authority(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+    )
+    callback = await client.post(
+        f"/v1/channels/whatsapp/{account.id}/sidecar/events",
+        headers={"Authorization": "Bearer ingress-secret"},
+        json=_event(
+            account.id,
+            message_id="unsupported-1",
+            content={
+                "type": "unknown",
+                "providerContentType": "futureMessage",
+            },
+        ),
+    )
+    assert callback.status_code == 200, callback.text
+
+    inbox = await client.get(
+        f"/v1/channels/whatsapp/application/{account.id}/inbox",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert inbox.status_code == 200, inbox.text
+    assert inbox.json()["events"][0]["message"] == {
+        "id": "unsupported-1",
+        "text": "",
+        "timestamp": 1_700_000_000,
+        "replyTo": None,
+        "reaction": None,
+        "media": [],
+        "unsupported": {"providerContentType": "futureMessage"},
+    }
 
 
 @pytest.mark.asyncio

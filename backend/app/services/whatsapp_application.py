@@ -324,6 +324,7 @@ def project_whatsapp_inbox_event(
     text = ""
     reaction: dict[str, object] | None = None
     media: list[dict[str, object]] = []
+    unsupported: dict[str, object] | None = None
     if content_type == "text" and isinstance(content.get("text"), str):
         text = content["text"]
     elif content_type == "media":
@@ -355,6 +356,11 @@ def project_whatsapp_inbox_event(
             "emoji": content.get("reaction") if isinstance(content.get("reaction"), str) else "",
             "messageId": target["messageId"],
         }
+    elif content_type == "unknown":
+        provider_content_type = content.get("providerContentType")
+        if not isinstance(provider_content_type, str):
+            raise ValueError("WhatsApp unsupported content marker is invalid")
+        unsupported = {"providerContentType": provider_content_type}
     reply_to = payload.get("replyTo")
     reply_to_message_id = (
         reply_to.get("messageId")
@@ -392,6 +398,7 @@ def project_whatsapp_inbox_event(
                 **({"replyTo": reply_to_message_id} if reply_to_message_id is not None else {}),
                 **({"reaction": reaction} if reaction is not None else {}),
                 "media": media,
+                **({"unsupported": unsupported} if unsupported is not None else {}),
             },
         }
     )
