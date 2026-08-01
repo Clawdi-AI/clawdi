@@ -4,15 +4,16 @@ import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { proto, type WAMessage } from "baileys";
+import { encodeSyncdPatch, newLTHashState, proto, type WAMessage } from "baileys";
 
 import { SQLITE_SCHEMA_VERSION, SQLiteBaileysState } from "./sqlite-state.js";
 
 const STORE_CONFIG = { maxMessages: 100, maxBytes: 1024 * 1024, ttlSeconds: 3600 };
 
 describe("SQLite Baileys state", () => {
-	it("round-trips full credentials and every representative Signal shape including app-state bytes", async () => {
-		usingTempDir(async (dir) => {
+	it("round-trips full credentials and expands a restarted app-state key through public Baileys", async () => {
+		await usingTempDir(async (dir) => {
+			const appStateKeyId = Buffer.from("fixture-app-state-key").toString("base64");
 			const first = new SQLiteBaileysState("account-a", dir, STORE_CONFIG);
 			first.state.creds.registered = true;
 			first.state.creds.routingInfo = Buffer.from([1, 2, 3]);
@@ -23,8 +24,8 @@ describe("SQLite Baileys state", () => {
 				"sender-key": { k1: Buffer.from([5, 6]) },
 				"sender-key-memory": { m1: { "1@s.whatsapp.net": true } },
 				"app-state-sync-key": {
-					a1: proto.Message.AppStateSyncKeyData.create({
-						keyData: Buffer.from([7, 8, 9]),
+					[appStateKeyId]: proto.Message.AppStateSyncKeyData.create({
+						keyData: Buffer.alloc(32, 7),
 						fingerprint: { rawId: 4, currentIndex: 2, deviceIndexes: [1, 3] },
 						timestamp: 123,
 					}),
@@ -44,9 +45,26 @@ describe("SQLite Baileys state", () => {
 			expect(reopened.state.creds.registered).toBe(true);
 			expect(reopened.state.creds.routingInfo).toEqual(Buffer.from([1, 2, 3]));
 			expect(reopened.state.creds.additionalData).toEqual({ nested: Buffer.from([4, 5]) });
-			const appState = await reopened.state.keys.get("app-state-sync-key", ["a1"]);
-			expect(appState.a1).toBeInstanceOf(proto.Message.AppStateSyncKeyData);
-			expect(appState.a1?.keyData).toEqual(Buffer.from([7, 8, 9]));
+			const appState = await reopened.state.keys.get("app-state-sync-key", [appStateKeyId]);
+			expect(appState[appStateKeyId]).toBeInstanceOf(proto.Message.AppStateSyncKeyData);
+			expect(appState[appStateKeyId]?.keyData).toEqual(Buffer.alloc(32, 7));
+			const encodedPatch = await encodeSyncdPatch(
+				{
+					type: "regular",
+					index: ["fixture"],
+					syncAction: proto.SyncActionValue.create({}),
+					apiVersion: 3,
+					operation: proto.SyncdMutation.SyncdOperation.SET,
+				},
+				appStateKeyId,
+				newLTHashState(),
+				async (keyId) => {
+					const stored = await reopened.state.keys.get("app-state-sync-key", [keyId]);
+					return stored[keyId];
+				},
+			);
+			expect(encodedPatch.state.version).toBe(1);
+			expect(encodedPatch.patch.mutations).toHaveLength(1);
 			const session = await reopened.state.keys.get("session", ["s1"]);
 			expect(session.s1).toEqual(Buffer.from([3, 4]));
 			const preKey = await reopened.state.keys.get("pre-key", ["p1"]);
@@ -70,7 +88,7 @@ describe("SQLite Baileys state", () => {
 	});
 
 	it("owns the database exclusively, rejects account mismatch, legacy JSON, and keeps private modes", async () => {
-		usingTempDir(async (dir) => {
+		await usingTempDir(async (dir) => {
 			const owner = new SQLiteBaileysState("account-a", dir, STORE_CONFIG);
 			expect(() => new SQLiteBaileysState("account-a", dir, STORE_CONFIG)).toThrow();
 			expect(statSync(join(dir, "baileys-state.sqlite")).mode & 0o777).toBe(0o600);
@@ -79,7 +97,7 @@ describe("SQLite Baileys state", () => {
 				"account mismatch",
 			);
 		});
-		usingTempDir(async (dir) => {
+		await usingTempDir(async (dir) => {
 			writeFileSync(join(dir, "creds.json"), "{}", { mode: 0o600 });
 			expect(() => new SQLiteBaileysState("account-a", dir, STORE_CONFIG)).toThrow(
 				"explicit migration",
@@ -88,7 +106,7 @@ describe("SQLite Baileys state", () => {
 	});
 
 	it("finds a restart retry when the receipt adds participant", async () => {
-		usingTempDir(async (dir) => {
+		await usingTempDir(async (dir) => {
 			const outbound = textMessage({
 				remoteJid: "15550001111@s.whatsapp.net",
 				id: "OUTBOUND-1",
@@ -126,7 +144,7 @@ describe("SQLite Baileys state", () => {
 	});
 
 	it("marks crash-left pending operations ambiguous and preserves completed idempotent results", async () => {
-		usingTempDir(async (dir) => {
+		await usingTempDir(async (dir) => {
 			const first = new SQLiteBaileysState("account-a", dir, STORE_CONFIG);
 			expect(first.reserveOperation("op-1", "hash-a")).toEqual({ action: "execute" });
 			first.close();
@@ -155,7 +173,7 @@ describe("SQLite Baileys state", () => {
 	});
 
 	it("migrates user_version transactionally and recovers committed WAL state after an abrupt process exit", async () => {
-		usingTempDir(async (dir) => {
+		await usingTempDir(async (dir) => {
 			createVersionOneDatabase(join(dir, "baileys-state.sqlite"));
 			const migrated = new SQLiteBaileysState("account-a", dir, STORE_CONFIG);
 			migrated.close();

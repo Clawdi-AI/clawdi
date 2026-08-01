@@ -21,6 +21,7 @@ import {
 	type SocketLike,
 	shouldReconnectAfterClose,
 } from "./runtime.js";
+import { SQLiteBaileysState } from "./sqlite-state.js";
 import type { SendOperation } from "./types.js";
 
 describe("single-socket runtime", () => {
@@ -68,6 +69,25 @@ describe("single-socket runtime", () => {
 		});
 	});
 
+	it("does not consume a new operation id while disconnected and safely retries it after connect", async () => {
+		await withRuntime(async (config) => {
+			const socket = new FakeSocket();
+			const runtime = new BaileysSocketRuntime(config, { makeSocket: () => socket });
+			await runtime.start();
+			const operation = sendOperation();
+			await expect(runtime.performOperation(operation, "hash-a")).rejects.toThrow("not connected");
+			expect(socket.sent).toHaveLength(0);
+			socket.emitConnection({ connection: "open" });
+			expect(await runtime.performOperation(operation, "hash-a")).toEqual({
+				operationId: "op-1",
+				status: "completed",
+				messageId: "BACKEND-M1",
+			});
+			expect(socket.sent).toHaveLength(1);
+			await runtime.stop();
+		});
+	});
+
 	it("reconnects only transient closures and fail-stops logged-out/non-transient closures", async () => {
 		expect(shouldReconnectAfterClose(false, 408)).toBe(true);
 		expect(shouldReconnectAfterClose(false, 515)).toBe(true);
@@ -98,23 +118,196 @@ describe("single-socket runtime", () => {
 		});
 	});
 
-	it("keeps pairing secrets out of health and clears linked auth on deliberate logout", async () => {
+	it("detaches a closed socket so its late credentials, messages, and close cannot affect the new owner", async () => {
 		await withRuntime(async (config) => {
-			const socket = new FakeSocket();
-			const runtime = new BaileysSocketRuntime(config, { makeSocket: () => socket });
+			const sockets: FakeSocket[] = [];
+			const socketConfigs: UserFacingSocketConfig[] = [];
+			const runtime = new BaileysSocketRuntime(config, {
+				makeSocket: (socketConfig) => {
+					socketConfigs.push(socketConfig);
+					const socket = new FakeSocket();
+					sockets.push(socket);
+					return socket;
+				},
+				setTimer: (callback) => setTimeout(callback, 0),
+			});
 			await runtime.start();
-			socket.emitConnection({ qr: "QR-SECRET" });
+			const firstSocket = sockets[0];
+			const firstConfig = socketConfigs[0];
+			if (!firstSocket || !firstConfig) throw new Error("first socket fixture was not created");
+			firstConfig.auth.creds.routingInfo = Buffer.from([1]);
+			firstSocket.emitCreds();
+			await Bun.sleep(0);
+			firstSocket.emitConnection({ connection: "open" });
+			firstSocket.emitConnection({
+				connection: "close",
+				lastDisconnect: providerError(408),
+			});
+			expect(firstSocket.listenerCount()).toBe(0);
+			await Bun.sleep(5);
+			const secondSocket = sockets[1];
+			if (!secondSocket) throw new Error("reconnect socket fixture was not created");
+			secondSocket.emitConnection({ connection: "open" });
+
+			firstConfig.auth.creds.routingInfo = Buffer.from([9]);
+			firstSocket.emitCreds();
+			const staleMessage: WAMessage = {
+				key: {
+					remoteJid: "15550001111@s.whatsapp.net",
+					id: "STALE-1",
+					fromMe: false,
+				},
+				message: { conversation: "stale" },
+			};
+			firstSocket.emitMessages({ type: "append", messages: [staleMessage] });
+			firstSocket.emitConnection({
+				connection: "close",
+				lastDisconnect: providerError(401),
+			});
+			expect(runtime.health().status).toBe("connected");
+			expect(sockets).toHaveLength(2);
+			await runtime.stop();
+
+			const reopened = new SQLiteBaileysState(
+				config.accountId,
+				config.sessionDir,
+				config.messageStore,
+			);
+			expect(reopened.state.creds.routingInfo).toEqual(Buffer.from([1]));
+			expect(await reopened.getMessage(staleMessage.key)).toBeUndefined();
+			reopened.close();
+		});
+	});
+
+	it("captures QR only after explicit QR pairing and keeps pairing secrets out of health", async () => {
+		await withRuntime(async (config) => {
+			const sockets: FakeSocket[] = [];
+			const runtime = new BaileysSocketRuntime(config, {
+				makeSocket: () => {
+					const socket = new FakeSocket();
+					sockets.push(socket);
+					return socket;
+				},
+			});
+			await runtime.start();
+			const startupSocket = sockets[0];
+			if (!startupSocket) throw new Error("startup socket fixture was not created");
+			startupSocket.emitConnection({ qr: "UNSOLICITED-QR" });
+			expect(runtime.pairingStatus().qr).toBeUndefined();
+			expect(runtime.pairingStatus().method).toBeUndefined();
+
+			await runtime.startQrPairing();
+			const pairingSocket = sockets[1];
+			if (!pairingSocket) throw new Error("pairing socket fixture was not created");
+			pairingSocket.emitConnection({ qr: "QR-SECRET" });
 			expect(runtime.pairingStatus().qr).toBe("QR-SECRET");
 			expect(JSON.stringify(runtime.health())).not.toContain("QR-SECRET");
 			const code = await runtime.startCodePairing("15550001111");
 			expect(code.code).toBe("CODE-SECRET");
 			expect(JSON.stringify(runtime.health())).not.toContain("CODE-SECRET");
+			await runtime.stop();
+		});
+	});
+
+	it("refuses logout without a connected current socket and preserves local auth", async () => {
+		await withRuntime(async (config) => {
+			const socket = new FakeSocket();
+			const runtime = new BaileysSocketRuntime(config, {
+				makeSocket: (socketConfig) => {
+					socketConfig.auth.creds.registered = true;
+					return socket;
+				},
+			});
+			await runtime.start();
+			socket.emitCreds();
+			await Bun.sleep(0);
+			await expect(runtime.logout()).rejects.toThrow("not connected");
+			expect(socket.logoutCount).toBe(0);
+			expect(runtime.health().registered).toBe(true);
+			await runtime.stop();
+
+			const reopened = new SQLiteBaileysState(
+				config.accountId,
+				config.sessionDir,
+				config.messageStore,
+			);
+			expect(reopened.state.creds.registered).toBe(true);
+			reopened.close();
+		});
+	});
+
+	it("fail-stops and preserves complete local auth when provider logout fails", async () => {
+		await withRuntime(async (config) => {
+			const socket = new FakeSocket();
+			socket.logoutError = new Error("fixture provider failure");
+			let authState: UserFacingSocketConfig["auth"] | undefined;
+			const runtime = new BaileysSocketRuntime(config, {
+				makeSocket: (socketConfig) => {
+					authState = socketConfig.auth;
+					socketConfig.auth.creds.registered = true;
+					return socket;
+				},
+			});
+			await runtime.start();
+			if (!authState) throw new Error("auth state fixture was not captured");
+			await authState.keys.set({ session: { "fixture-session": Buffer.from([4, 5]) } });
+			socket.emitCreds();
+			await Bun.sleep(0);
+			socket.emitConnection({ connection: "open" });
+			await expect(runtime.logout()).rejects.toThrow("linked auth was preserved");
+			expect(socket.logoutCount).toBe(1);
+			expect(runtime.health()).toMatchObject({
+				status: "fatal",
+				fatalReason: "logout_failed",
+				registered: true,
+			});
+			await runtime.stop();
+
+			const reopened = new SQLiteBaileysState(
+				config.accountId,
+				config.sessionDir,
+				config.messageStore,
+			);
+			expect(reopened.state.creds.registered).toBe(true);
+			expect(
+				(await reopened.state.keys.get("session", ["fixture-session"]))["fixture-session"],
+			).toEqual(Buffer.from([4, 5]));
+			reopened.close();
+		});
+	});
+
+	it("clears linked credentials and Signal state only after provider logout succeeds", async () => {
+		await withRuntime(async (config) => {
+			const socket = new FakeSocket();
+			let authState: UserFacingSocketConfig["auth"] | undefined;
+			const runtime = new BaileysSocketRuntime(config, {
+				makeSocket: (socketConfig) => {
+					authState = socketConfig.auth;
+					socketConfig.auth.creds.registered = true;
+					return socket;
+				},
+			});
+			await runtime.start();
+			if (!authState) throw new Error("auth state fixture was not captured");
+			await authState.keys.set({ session: { "fixture-session": Buffer.from([4, 5]) } });
+			socket.emitCreds();
+			await Bun.sleep(0);
 			socket.emitConnection({ connection: "open" });
 			await runtime.logout();
 			expect(socket.logoutCount).toBe(1);
-			expect(runtime.health().registered).toBe(false);
-			expect(runtime.health().status).toBe("stopped");
+			expect(runtime.health()).toMatchObject({ status: "stopped", registered: false });
 			await runtime.stop();
+
+			const reopened = new SQLiteBaileysState(
+				config.accountId,
+				config.sessionDir,
+				config.messageStore,
+			);
+			expect(reopened.state.creds.registered).toBe(false);
+			expect(
+				(await reopened.state.keys.get("session", ["fixture-session"]))["fixture-session"],
+			).toBeUndefined();
+			reopened.close();
 		});
 	});
 
@@ -205,6 +398,7 @@ class FakeSocket implements SocketLike {
 		options?: MiscMessageGenerationOptions;
 	}> = [];
 	logoutCount = 0;
+	logoutError: Error | undefined;
 
 	readonly ev = {
 		on: ((event: string, listener: (...args: never[]) => void) => {
@@ -246,6 +440,7 @@ class FakeSocket implements SocketLike {
 	}
 	async logout(): Promise<void> {
 		this.logoutCount += 1;
+		if (this.logoutError) throw this.logoutError;
 	}
 	end(_error?: Error): void {}
 	async updateMediaMessage(message: WAMessage): Promise<WAMessage> {
@@ -260,8 +455,18 @@ class FakeSocket implements SocketLike {
 		for (const listener of this.connectionListeners) listener(update);
 	}
 
+	emitCreds(): void {
+		for (const listener of this.credsListeners) listener();
+	}
+
 	emitMessages(upsert: { messages: WAMessage[]; type: "append" | "notify" }): void {
 		for (const listener of this.messageListeners) listener(upsert);
+	}
+
+	listenerCount(): number {
+		return (
+			this.credsListeners.length + this.connectionListeners.length + this.messageListeners.length
+		);
 	}
 }
 

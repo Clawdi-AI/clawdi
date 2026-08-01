@@ -53,6 +53,8 @@ export type OperationReservation =
 	| { action: "return"; result: OperationResult }
 	| { action: "pending" };
 
+export type ExistingOperationReservation = Exclude<OperationReservation, { action: "execute" }>;
+
 export class SQLiteBaileysState {
 	readonly state: AuthenticationState;
 	private readonly db: Database;
@@ -205,22 +207,29 @@ export class SQLiteBaileysState {
 			.run(providerEventId);
 	}
 
-	reserveOperation(operationId: string, requestHash: string): OperationReservation {
+	findOperation(
+		operationId: string,
+		requestHash: string,
+	): ExistingOperationReservation | undefined {
 		const existing = this.db
 			.query<StoredOperation, [string]>(
 				"SELECT request_hash, status, result FROM operations WHERE operation_id = ?",
 			)
 			.get(operationId);
-		if (existing) {
-			if (existing.request_hash !== requestHash) throw new OperationConflictError();
-			if (existing.status === "pending") return { action: "pending" };
-			return {
-				action: "return",
-				result: existing.result
-					? parseOperationResult(existing.result)
-					: { operationId, status: existing.status, error: `operation_${existing.status}` },
-			};
-		}
+		if (!existing) return undefined;
+		if (existing.request_hash !== requestHash) throw new OperationConflictError();
+		if (existing.status === "pending") return { action: "pending" };
+		return {
+			action: "return",
+			result: existing.result
+				? parseOperationResult(existing.result)
+				: { operationId, status: existing.status, error: `operation_${existing.status}` },
+		};
+	}
+
+	reserveOperation(operationId: string, requestHash: string): OperationReservation {
+		const existing = this.findOperation(operationId, requestHash);
+		if (existing) return existing;
 		this.db
 			.query(
 				`INSERT INTO operations

@@ -56,7 +56,7 @@ export type SocketLike = {
 		on(event: "creds.update", listener: () => void): void;
 		on(event: "connection.update", listener: (update: ConnectionUpdate) => void): void;
 		on(event: "messages.upsert", listener: (upsert: MessagesUpsert) => void): void;
-		removeAllListeners?(event: "creds.update" | "connection.update" | "messages.upsert"): void;
+		removeAllListeners(event: "creds.update" | "connection.update" | "messages.upsert"): void;
 	};
 	user?: { id: string; lid?: string; name?: string };
 	sendMessage(
@@ -219,22 +219,25 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	}
 
 	async logout(): Promise<PairingStatus> {
+		const socket = this.requireSocket();
 		this.clearReconnectTimer();
-		const socket = this.socket;
 		this.intentionalClose = true;
 		try {
-			if (socket) await socket.logout();
-		} finally {
-			if (this.socket === socket) this.endCurrentSocket("logout_local_auth_reset");
-			try {
-				await this.state.resetLinkedAuth();
-			} catch {
-				this.failPersistentState();
-			}
-			this.pairing = undefined;
-			this.status = "stopped";
+			await socket.logout();
+		} catch {
 			this.intentionalClose = false;
+			this.enterFatal("logout_failed");
+			throw new RuntimeFatalError("provider logout failed; linked auth was preserved");
 		}
+		this.intentionalClose = false;
+		if (this.socket === socket) this.endCurrentSocket("logout_local_auth_reset");
+		try {
+			await this.state.resetLinkedAuth();
+		} catch {
+			this.failPersistentState();
+		}
+		this.pairing = undefined;
+		this.status = "stopped";
 		return this.pairingStatus();
 	}
 
@@ -274,6 +277,22 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			if (active.hash !== requestHash) throw new OperationConflictError();
 			return await active.promise;
 		}
+		let existing: ReturnType<SQLiteBaileysState["findOperation"]>;
+		try {
+			existing = this.state.findOperation(operation.operationId, requestHash);
+		} catch (error: unknown) {
+			if (error instanceof OperationConflictError) throw error;
+			this.failPersistentState();
+		}
+		if (existing?.action === "return") return existing.result;
+		if (existing?.action === "pending") {
+			return {
+				operationId: operation.operationId,
+				status: "ambiguous",
+				error: "provider_outcome_unknown",
+			};
+		}
+		this.requireSocket();
 		let reservation: ReturnType<SQLiteBaileysState["reserveOperation"]>;
 		try {
 			reservation = this.state.reserveOperation(operation.operationId, requestHash);
@@ -329,19 +348,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		operation: SidecarOperation,
 		requestHash: string,
 	): Promise<OperationResult> {
-		let socket: SocketLike;
-		try {
-			socket = this.requireSocket();
-		} catch (error: unknown) {
-			if (error instanceof RuntimeNotConnectedError) {
-				return this.persistFailedOperation(
-					operation.operationId,
-					requestHash,
-					"baileys_not_connected",
-				);
-			}
-			throw error;
-		}
+		const socket = this.requireSocket();
 		if (operation.type === "presence") {
 			try {
 				await socket.sendPresenceUpdate(
@@ -504,6 +511,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 
 	private attachSocket(socket: SocketLike): void {
 		socket.ev.on("creds.update", () => {
+			if (this.socket !== socket || this.status === "fatal") return;
 			this.state.saveCreds().catch(() => this.enterFatal("persistent_state_failure"));
 		});
 		socket.ev.on("messages.upsert", (upsert) => {
@@ -532,7 +540,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		});
 		socket.ev.on("connection.update", (update) => {
 			if (this.socket !== socket) return;
-			if (update.qr && !this.state.state.creds.registered && this.pairing?.method !== "code") {
+			if (update.qr && !this.state.state.creds.registered && this.pairing?.method === "qr") {
 				this.pairing = { method: "qr", secret: update.qr };
 				this.status = "pairing_qr";
 			}
@@ -545,7 +553,8 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 				return;
 			}
 			if (update.connection !== "close") return;
-			if (this.socket === socket) this.socket = null;
+			this.detachSocketListeners(socket);
+			this.socket = null;
 			const reason = disconnectReason(update.lastDisconnect?.error);
 			this.lastDisconnectReason = reason === undefined ? "unknown" : String(reason);
 			if (this.intentionalClose) return;
@@ -592,11 +601,15 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		if (!socket) return;
 		this.intentionalClose = true;
 		this.socket = null;
-		socket.ev.removeAllListeners?.("creds.update");
-		socket.ev.removeAllListeners?.("connection.update");
-		socket.ev.removeAllListeners?.("messages.upsert");
+		this.detachSocketListeners(socket);
 		socket.end(new Error(reason));
 		this.intentionalClose = false;
+	}
+
+	private detachSocketListeners(socket: SocketLike): void {
+		socket.ev.removeAllListeners("creds.update");
+		socket.ev.removeAllListeners("connection.update");
+		socket.ev.removeAllListeners("messages.upsert");
 	}
 
 	private enterFatal(reason: string): void {
