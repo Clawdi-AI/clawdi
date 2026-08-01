@@ -92,11 +92,13 @@ export function parseOperation(value: unknown): SidecarOperation {
 			["schemaVersion", "operationId", "chatJid", "type", "messageId", "target", "text"],
 			"body",
 		);
+		const target = parseMessageReference(body.target, chat, "target");
+		if (!target.fromMe) fail("edit_target_must_be_owned");
 		return {
 			...base,
 			type,
 			messageId: identifier(body.messageId, "messageId", 200),
-			target: parseMessageReference(body.target, chat, "target"),
+			target,
 			text: contentText(body.text, "text", 4096),
 		};
 	}
@@ -106,11 +108,13 @@ export function parseOperation(value: unknown): SidecarOperation {
 			["schemaVersion", "operationId", "chatJid", "type", "messageId", "target"],
 			"body",
 		);
+		const target = parseMessageReference(body.target, chat, "target");
+		if (!target.fromMe) fail("delete_target_must_be_owned");
 		return {
 			...base,
 			type,
 			messageId: identifier(body.messageId, "messageId", 200),
-			target: parseMessageReference(body.target, chat, "target"),
+			target,
 		};
 	}
 	if (type === "reaction") {
@@ -173,6 +177,8 @@ function parseMessageReference(
 	);
 	const messageId = identifier(body.messageId, `${path}.messageId`, 200);
 	if (typeof body.fromMe !== "boolean") fail(`${path}.fromMe_must_be_boolean`);
+	const defaultNormalized = normalizeSupportedJid(defaultChat);
+	if (!defaultNormalized) fail(`${path}.default_chat_unsupported`);
 	const rawChat = optionalString(body.chatJid, `${path}.chatJid`, 100);
 	const rawChatAlt = optionalString(body.chatJidAlt, `${path}.chatJidAlt`, 100);
 	if (!rawChat && rawChatAlt) fail(`${path}.chatJid_required_with_alt`);
@@ -180,8 +186,7 @@ function parseMessageReference(
 	let chatJidAlt: string | undefined;
 	if (rawChat) {
 		const pair = normalizeChatPair(rawChat, rawChatAlt, path);
-		const defaultNormalized = normalizeSupportedJid(defaultChat);
-		if (!defaultNormalized || !new Set([pair.primary, pair.alt]).has(defaultNormalized.jid)) {
+		if (!new Set([pair.primary, pair.alt]).has(defaultNormalized.jid)) {
 			fail(`${path}.chat_conflicts_with_operation_chat`);
 		}
 		chatJid = pair.primary;
@@ -204,6 +209,10 @@ function parseMessageReference(
 		} catch (error: unknown) {
 			fail(error instanceof Error ? error.message : `${path}.participant_invalid`);
 		}
+	}
+	const effectiveChat = normalizeSupportedJid(chatJid ?? defaultNormalized.jid);
+	if (effectiveChat?.kind === "group" && body.fromMe === false && participantJid === undefined) {
+		fail(`${path}.participant_required_for_group_peer`);
 	}
 	return {
 		messageId,

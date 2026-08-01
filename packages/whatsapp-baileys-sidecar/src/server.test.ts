@@ -189,6 +189,59 @@ describe("sidecar HTTP contract", () => {
 		expect(await accepted.json()).toMatchObject({ code: "CODE-SECRET" });
 	});
 
+	it("allows mutations only for owned messages and requires group peer participants", async () => {
+		const runtime = new FakeRuntime();
+		const { url } = await startTestServer(runtime);
+		for (const type of ["edit", "delete"] as const) {
+			const response = await authedFetch(`${url}/v1/operations`, {
+				method: "POST",
+				body: JSON.stringify({
+					schemaVersion: "clawdi.whatsapp.operation.v1",
+					operationId: `op-${type}`,
+					chatJid: "15550001111@s.whatsapp.net",
+					type,
+					messageId: `M-${type}`,
+					target: { messageId: "PEER-1", fromMe: false },
+					...(type === "edit" ? { text: "edited" } : {}),
+				}),
+			});
+			expect(response.status).toBe(400);
+		}
+
+		const ambiguousGroupReaction = await authedFetch(`${url}/v1/operations`, {
+			method: "POST",
+			body: JSON.stringify({
+				schemaVersion: "clawdi.whatsapp.operation.v1",
+				operationId: "op-group-reaction",
+				chatJid: "120363000000001@g.us",
+				type: "reaction",
+				messageId: "REACTION-1",
+				target: { messageId: "PEER-1", fromMe: false },
+				reaction: "👍",
+			}),
+		});
+		expect(ambiguousGroupReaction.status).toBe(400);
+
+		const exactGroupReaction = await authedFetch(`${url}/v1/operations`, {
+			method: "POST",
+			body: JSON.stringify({
+				schemaVersion: "clawdi.whatsapp.operation.v1",
+				operationId: "op-group-reaction-exact",
+				chatJid: "120363000000001@g.us",
+				type: "reaction",
+				messageId: "REACTION-2",
+				target: {
+					messageId: "PEER-1",
+					fromMe: false,
+					participantJid: "15550001111@s.whatsapp.net",
+				},
+				reaction: "👍",
+			}),
+		});
+		expect(exactGroupReaction.status).toBe(200);
+		expect(runtime.operations).toHaveLength(1);
+	});
+
 	it("serves only opaque persisted media ids with a bounded binary response", async () => {
 		const { url } = await startTestServer(new FakeRuntime());
 		const denied = await authedFetch(`${url}/v1/media/not-a-provider-id`);
