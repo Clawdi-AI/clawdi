@@ -647,48 +647,6 @@ describe("hosted runtime bundle v2", () => {
 		).toThrow();
 	});
 
-	test("accepts only an explicitly managed WhatsApp Link shape while projection stays gated", () => {
-		const raw = z
-			.record(z.string(), z.unknown())
-			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
-		const capabilityRef =
-			"secret://channels/whatsapp/account/links/60000000-0000-4000-8000-000000000006/egress-capability";
-		const credentialRef =
-			"secret://channels/whatsapp/account/credentials/70000000-0000-4000-8000-000000000007/creds-json";
-		const binding = {
-			provider: "whatsapp",
-			managed: true,
-			accountId: "50000000-0000-4000-8000-000000000005",
-			accountKey: "clawdi_whatsapp_account",
-			linkId: "60000000-0000-4000-8000-000000000006",
-			generation: 3,
-			agentTokenSecretRef:
-				"secret://channels/whatsapp/account/links/60000000-0000-4000-8000-000000000006/agent-token",
-			capabilitySecretRef: capabilityRef,
-			capabilityExpiresAt: "2026-08-02T00:00:00Z",
-			credentialId: "70000000-0000-4000-8000-000000000007",
-			credentialSecretRef: credentialRef,
-		} as const;
-		const normalized = normalizeHostedRuntimeBundleV2({
-			...raw,
-			channelBindings: [binding],
-			secretValues: {
-				[binding.agentTokenSecretRef]: "agent-token",
-				[capabilityRef]: "link-capability",
-				[credentialRef]: JSON.stringify({ noiseKey: { private: "managed-only" } }),
-			},
-		});
-		const projected = applyRuntimeBundleChannelsToManifestLoad(normalized);
-
-		expect(projected.channelBindings).toEqual([]);
-		expect(projected.secretValues).toEqual({});
-		expect(projected.manifest.projection?.channels).toEqual({});
-		expect(projected.manifest.projection?.channelCredentials).toEqual([]);
-		expect(JSON.stringify(projected.manifest)).not.toContain("whatsapp");
-		expect(JSON.stringify(projected.manifest)).not.toContain("link-capability");
-		expect(JSON.stringify(projected.manifest)).not.toContain("managed-only");
-	});
-
 	test("requires the canonical MCP servers map", () => {
 		const raw = z
 			.record(z.string(), z.unknown())

@@ -35,7 +35,6 @@ import {
 	normalizeSecretValues,
 	runtimeSecretValue,
 } from "./secret-values";
-import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 
 export interface RuntimeManifestLoad {
 	manifest: RuntimeManifest;
@@ -55,56 +54,21 @@ export interface RuntimeManifestLoad {
 
 export const HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json";
 
-export interface RuntimeBundleStandardChannelBinding {
+export interface RuntimeBundleChannelBinding {
 	provider: "telegram" | "discord";
 	accountKey: string;
 	agentTokenSecretRef: string;
 	placeholderTokenSecretRef: string;
 }
 
-export interface RuntimeBundleManagedWhatsAppBinding {
-	provider: "whatsapp";
-	managed: true;
-	accountId: string;
-	accountKey: string;
-	linkId: string;
-	generation: number;
-	agentTokenSecretRef: string;
-	capabilitySecretRef: string;
-	capabilityExpiresAt: string;
-	credentialId: string;
-	credentialSecretRef: string;
-}
-
-export type RuntimeBundleChannelBinding =
-	| RuntimeBundleStandardChannelBinding
-	| RuntimeBundleManagedWhatsAppBinding;
-
-const runtimeBundleChannelBindingSchema = z.discriminatedUnion("provider", [
-	z
-		.object({
-			provider: z.enum(["telegram", "discord"]),
-			accountKey: z.string().min(1),
-			agentTokenSecretRef: canonicalSecretRefSchema,
-			placeholderTokenSecretRef: canonicalSecretRefSchema,
-		})
-		.strict(),
-	z
-		.object({
-			provider: z.literal("whatsapp"),
-			managed: z.literal(true),
-			accountId: z.string().uuid(),
-			accountKey: z.string().min(1),
-			linkId: z.string().uuid(),
-			generation: z.number().int().positive().safe(),
-			agentTokenSecretRef: canonicalSecretRefSchema,
-			capabilitySecretRef: canonicalSecretRefSchema,
-			capabilityExpiresAt: z.string().datetime({ offset: true }),
-			credentialId: z.string().uuid(),
-			credentialSecretRef: canonicalSecretRefSchema,
-		})
-		.strict(),
-]);
+const runtimeBundleChannelBindingSchema = z
+	.object({
+		provider: z.enum(["telegram", "discord"]),
+		accountKey: z.string().min(1),
+		agentTokenSecretRef: canonicalSecretRefSchema,
+		placeholderTokenSecretRef: canonicalSecretRefSchema,
+	})
+	.strict();
 
 const hostedRuntimeBundleV2Schema = z
 	.object({
@@ -972,30 +936,8 @@ export function manifestSecretRefs(manifest: RuntimeManifest): string[] {
 	}
 	if (hasEnabledRuntime) {
 		for (const ref of egressProfileSecretRefs(manifest.egressProfiles)) refs.add(ref);
-		if (WHATSAPP_UPSTREAM_READY) {
-			addWhatsAppCredentialSecretRefs(manifest.projection?.channelCredentials, refs);
-		}
 	}
 	return [...refs].sort();
-}
-
-function addWhatsAppCredentialSecretRefs(value: unknown, refs: Set<string>): void {
-	if (!Array.isArray(value)) return;
-	for (const credentialValue of value) {
-		const credential = plainRecord(credentialValue);
-		if (
-			credential?.provider !== "whatsapp" ||
-			credential.kind !== "whatsapp_baileys_auth_state" ||
-			!Array.isArray(credential.files)
-		) {
-			continue;
-		}
-		for (const fileValue of credential.files) {
-			const file = plainRecord(fileValue);
-			if (file?.path !== "creds.json" || typeof file.secretRef !== "string") continue;
-			refs.add(file.secretRef);
-		}
-	}
 }
 
 function manifestSecretRefsMissingValues(

@@ -6,11 +6,17 @@ type EgressProfile = EgressProfileInputBundle["profiles"][number];
 
 export interface ManagedWhatsAppEgressLink {
 	linkId: string;
+	// The backend still authenticates the active Link with this bearer.
 	agentTokenSecretRef: string;
+	// This marker only selects one local profile; it is not backend authentication.
 	capabilitySecretRef: string;
 	capabilityExpiresAt: string;
 }
 
+// Installing one of these profiles adds web.whatsapp.com to the proxy's SNI
+// interception set. The marker is visible only after TLS inspection, so an
+// unmarked connection is request-level passthrough to the official upstream,
+// not byte-for-byte or TLS untouched. Production gates currently install none.
 export function buildManagedWhatsAppEgressProfiles(input: {
 	cloudApiUrl: string;
 	links: ManagedWhatsAppEgressLink[];

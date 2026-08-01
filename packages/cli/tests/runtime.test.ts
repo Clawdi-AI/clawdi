@@ -12529,6 +12529,8 @@ exit 64
 		const credentialProjection = projected.manifest.projection?.channelCredentials as unknown[];
 		expect(credentialProjection).toEqual([]);
 		expect(JSON.stringify(projected.manifest)).not.toContain("wa-hermes-secret");
+		expect(JSON.stringify(projected)).not.toContain("CLAWDI_WHATSAPP_LINK_CAPABILITY");
+		expect(JSON.stringify(projected)).not.toContain("x-clawdi-whatsapp-link-capability");
 		expect(projected.secretValues?.[credentialSecretRef]).toBeUndefined();
 		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("wa-hermes-secret");
 
@@ -12558,6 +12560,7 @@ exit 64
 		expect(hermesEnv).not.toContain("WHATSAPP_MODE");
 		expect(hermesEnv).not.toContain("WHATSAPP_ALLOWED_USERS");
 		expect(hermesEnv).not.toContain("HERMES_WA_CREDS_JSON");
+		expect(hermesEnv).not.toContain("CLAWDI_WHATSAPP_LINK_CAPABILITY");
 		expect(hermesEnv).not.toContain("wa-hermes-secret");
 
 		const removed = convergeRuntimeManifest(
@@ -12724,7 +12727,7 @@ exit 64
 		expect(hermesEnv).toContain("WHATSAPP_ENABLED");
 	});
 
-	it("converges empty native channel projection with merge-patch deletes", () => {
+	it("does not emit an OpenClaw WhatsApp delete while the native gate is false", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");

@@ -5,6 +5,13 @@
 > backend Noise certificate because it has no `authCert` override; see
 > `packages/cli/src/runtime/whatsapp-upstream-contract.ts`.
 
+The replacement native-egress work is currently dormant. Its standalone
+profile contract can distinguish a managed request only after the proxy has
+inspected TLS for `web.whatsapp.com`: an unmarked user-owned connection remains
+request-level passthrough to the official upstream, but is not byte-for-byte or
+TLS untouched while such a profile is installed. All readiness gates remain
+false, so production runtime projection installs no such profile or marker.
+
 Status: superseded; retained as historical protocol-runtime context
 Date: 2026-06-07
 

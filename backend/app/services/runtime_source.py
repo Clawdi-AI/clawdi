@@ -69,15 +69,6 @@ _MANAGED_PROVIDER_RUNTIME_ENV = "OPENAI_API_KEY"
 _CODEX_TOOL_SECRET_REF = "secret://tool.codex.apiKey"
 _CODEX_TOOL_API_MODE = "openai_responses"
 _CODEX_PROVIDER_SOURCE_API_MODES = {"openai_chat", "openai_responses"}
-WHATSAPP_RUNTIME_SOURCE_READY = False
-
-
-def runtime_source_channel_providers() -> tuple[str, ...]:
-    if WHATSAPP_RUNTIME_SOURCE_READY:
-        raise RuntimeSourceError(
-            "WhatsApp runtime source cannot be enabled before managed Link material projection"
-        )
-    return (CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD)
 
 
 class RuntimeSourceError(ValueError):
@@ -180,7 +171,7 @@ async def load_runtime_source_batch(
                 ChannelBotAgentLink.archived_at.is_(None),
                 ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
                 ChannelAccount.archived_at.is_(None),
-                ChannelAccount.provider.in_(runtime_source_channel_providers()),
+                ChannelAccount.provider.in_((CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD)),
             )
             .order_by(
                 ChannelBotAgentLink.agent_id,

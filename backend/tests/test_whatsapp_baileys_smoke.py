@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import json
 import os
@@ -8,6 +9,7 @@ import socket
 import subprocess
 import tempfile
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -31,13 +33,54 @@ from app.models.project import PROJECT_KIND_PERSONAL, Project
 from app.models.session import AgentEnvironment  # noqa: F401 - register FK table
 from app.models.user import User
 from app.services.channels import hash_token
-from app.services.whatsapp_baileys import encode_buffer_json, mint_whatsapp_agent_credential
-
-pytestmark = pytest.mark.skip(
-    reason=("stock Baileys 7.0.0-rc13 has no authCert trust seam; keep native smoke disabled"),
+from app.services.whatsapp_baileys import (
+    encode_buffer_json,
+    load_or_create_whatsapp_auth_cert,
+    mint_whatsapp_agent_credential,
+    serialize_whatsapp_auth_cert,
 )
 
 
+def _baileys_smoke_gate(env: Mapping[str, str]) -> tuple[bool, str | None]:
+    if env.get("CLAWDI_RUN_BAILEYS_SMOKE") != "1":
+        return (
+            False,
+            "set CLAWDI_RUN_BAILEYS_SMOKE=1 after supplying the audited Baileys authCert seam",
+        )
+    if env.get("CLAWDI_BAILEYS_AUTH_CERT_SEAM_AVAILABLE") != "1":
+        return (
+            False,
+            "stock Baileys 7.0.0-rc13 has no authCert SocketConfig trust seam; "
+            "CLAWDI_BAILEYS_AUTH_CERT_SEAM_AVAILABLE=1 must only describe a supplied seam",
+        )
+    return True, None
+
+
+_SMOKE_ENABLED, _SMOKE_SKIP_REASON = _baileys_smoke_gate(os.environ)
+real_baileys_smoke = pytest.mark.skipif(
+    not _SMOKE_ENABLED,
+    reason=_SMOKE_SKIP_REASON or "real Baileys smoke enabled",
+)
+
+
+def test_real_baileys_smoke_gate_requires_opt_in_and_an_available_seam() -> None:
+    assert _baileys_smoke_gate({}) == (
+        False,
+        "set CLAWDI_RUN_BAILEYS_SMOKE=1 after supplying the audited Baileys authCert seam",
+    )
+    enabled, reason = _baileys_smoke_gate({"CLAWDI_RUN_BAILEYS_SMOKE": "1"})
+    assert enabled is False
+    assert reason is not None and "stock Baileys 7.0.0-rc13" in reason
+    assert _baileys_smoke_gate(
+        {
+            "CLAWDI_RUN_BAILEYS_SMOKE": "1",
+            "CLAWDI_BAILEYS_AUTH_CERT_SEAM_AVAILABLE": "1",
+        }
+    ) == (True, None)
+    assert "authCert: input.auth_cert" in _NODE_BAILEYS_OPEN_SMOKE
+
+
+@real_baileys_smoke
 @pytest.mark.asyncio
 async def test_whatsapp_baileys_websocket_reaches_open_with_real_baileys() -> None:
     baileys_cwd = _baileys_smoke_cwd()
@@ -56,6 +99,7 @@ async def test_whatsapp_baileys_websocket_reaches_open_with_real_baileys() -> No
         assert opened["user"]["id"] == seeded["jid"]
 
 
+@real_baileys_smoke
 @pytest.mark.asyncio
 async def test_whatsapp_baileys_websocket_delivers_inbox_to_real_baileys() -> None:
     baileys_cwd = _baileys_smoke_cwd()
@@ -77,6 +121,7 @@ async def test_whatsapp_baileys_websocket_delivers_inbox_to_real_baileys() -> No
         }
 
 
+@real_baileys_smoke
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("inbox_payload", "expected_conversation", "expected_message_hex"),
@@ -201,6 +246,7 @@ async def test_whatsapp_baileys_websocket_delivers_fixture_shapes_to_real_bailey
         assert opened["inbound"] == seeded["expected_inbound"]
 
 
+@real_baileys_smoke
 @pytest.mark.asyncio
 async def test_whatsapp_baileys_sidecar_reaches_open_with_fastapi_runtime() -> None:
     sidecar_cwd = Path(
@@ -223,6 +269,7 @@ async def test_whatsapp_baileys_sidecar_reaches_open_with_fastapi_runtime() -> N
                     port=sidecar_port,
                     token="sidecar-smoke-token",
                     ws_url=seeded["ws_url"],
+                    auth_cert=seeded["auth_cert"],
                 )
                 health = await _wait_for_sidecar_health(
                     port=sidecar_port,
@@ -288,20 +335,21 @@ def _assert_baileys_available(cwd: str) -> None:
         timeout=5,
         check=False,
     )
-    if result.returncode != 0:
-        pytest.skip(f"baileys package is not importable from {cwd}")
+    assert result.returncode == 0, (
+        f"Baileys smoke was activated but the package is not importable from {cwd}: {result.stderr}"
+    )
 
 
 def _baileys_smoke_cwd() -> str:
     cwd = os.getenv("CLAWDI_BAILEYS_SMOKE_CWD")
-    if not cwd:
-        pytest.skip("set CLAWDI_BAILEYS_SMOKE_CWD to a Baileys package checkout")
+    assert cwd, "Baileys smoke was activated without CLAWDI_BAILEYS_SMOKE_CWD"
     return cwd
 
 
 def _assert_sidecar_available(cwd: Path) -> None:
-    if not (cwd / "src/index.ts").exists():
-        pytest.skip(f"Baileys sidecar package is not available at {cwd}")
+    assert (cwd / "src/index.ts").exists(), (
+        f"Baileys smoke was activated but the sidecar package is not available at {cwd}"
+    )
     result = subprocess.run(
         ["bun", "--version"],
         cwd=cwd,
@@ -310,8 +358,9 @@ def _assert_sidecar_available(cwd: Path) -> None:
         timeout=5,
         check=False,
     )
-    if result.returncode != 0:
-        pytest.skip("bun is not available for the Baileys sidecar smoke")
+    assert result.returncode == 0, (
+        f"Baileys smoke was activated but Bun is unavailable: {result.stderr}"
+    )
 
 
 async def _seed_whatsapp_smoke_account(
@@ -365,6 +414,7 @@ async def _seed_whatsapp_smoke_account(
         )
         db.add(link)
         await db.flush()
+        auth_cert = await load_or_create_whatsapp_auth_cert(db, account=account)
         stored = await mint_whatsapp_agent_credential(
             db,
             account=account,
@@ -442,6 +492,7 @@ async def _seed_whatsapp_smoke_account(
             "account_id": str(account.id),
             "jid": stored.minted.jid,
             "creds": encode_buffer_json(stored.minted.creds),
+            "auth_cert": serialize_whatsapp_auth_cert(auth_cert),
         }
         if expected_inbound is not None:
             seeded["expected_inbound"] = expected_inbound
@@ -480,7 +531,9 @@ def _start_sidecar_smoke_process(
     port: int,
     token: str,
     ws_url: str,
+    auth_cert: dict[str, Any],
 ) -> subprocess.Popen[str]:
+    public_key = _buffer_json_to_bytes(auth_cert["PUBLIC_KEY"])
     env = {
         **os.environ,
         "CLAWDI_WA_SIDECAR_TOKEN": token,
@@ -488,6 +541,9 @@ def _start_sidecar_smoke_process(
         "CLAWDI_WA_SIDECAR_HOST": "127.0.0.1",
         "CLAWDI_WA_SIDECAR_PORT": str(port),
         "CLAWDI_WA_WEBSOCKET_URL": ws_url,
+        "CLAWDI_WA_AUTH_CERT_SERIAL": str(auth_cert["SERIAL"]),
+        "CLAWDI_WA_AUTH_CERT_ISSUER": str(auth_cert["ISSUER"]),
+        "CLAWDI_WA_AUTH_CERT_PUBKEY_BASE64": base64.b64encode(public_key).decode("ascii"),
         "CLAWDI_WA_SIDECAR_LOG_LEVEL": "silent",
     }
     return subprocess.Popen(
@@ -544,6 +600,17 @@ def _process_output(process: subprocess.Popen[str]) -> tuple[str, str]:
     if process.poll() is None:
         return ("", "")
     return process.communicate(timeout=2)
+
+
+def _buffer_json_to_bytes(value: Any) -> bytes:
+    if not isinstance(value, dict) or value.get("type") != "Buffer":
+        raise AssertionError(f"expected BufferJSON public key, got {value!r}")
+    data = value.get("data")
+    if isinstance(data, str):
+        return base64.b64decode(data)
+    if not isinstance(data, list):
+        raise AssertionError(f"expected BufferJSON data list or base64 string, got {value!r}")
+    return bytes(int(part) for part in data)
 
 
 def _free_port() -> int:
@@ -603,6 +670,7 @@ const sock = makeWASocket({
   browser: Browsers.appropriate("clawdi python smoke"),
   printQRInTerminal: false,
   waWebSocketUrl: input.ws_url,
+  authCert: input.auth_cert,
   syncFullHistory: false,
   connectTimeoutMs: 5000,
 });
