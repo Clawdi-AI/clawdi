@@ -388,7 +388,7 @@ function printPairCode(pairCode: ChannelPairCode): void {
 		console.log(`  Agent SDK token: ${pairCode.agent_token}`);
 	}
 	console.log(`  Expires at: ${pairCode.expires_at}`);
-	console.log(chalk.gray(`Send this in the external chat: /bot_pair ${pairCode.code}`));
+	console.log(chalk.gray(`Send this in the external chat: ${pairCode.pairing_command}`));
 }
 
 function printSentMessage(message: ChannelMessage): void {

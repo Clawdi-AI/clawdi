@@ -285,6 +285,7 @@ outputs:
 							agent_id: "agent-1",
 							code: "PAIR123",
 							expires_at: "2026-06-08T00:10:00Z",
+							pairing_command: "/bot_pair PAIR123",
 						},
 						201,
 					),
@@ -347,6 +348,9 @@ channels:
         agent_id: agent-1
         runtime:
           token_env: DISCORD_AGENT_TOKEN
+        pair_code:
+          ttl_seconds: 600
+          command_env: DISCORD_PAIR_COMMAND
 outputs:
   dotenv: .env.channels
 `);
@@ -387,6 +391,22 @@ outputs:
 						201,
 					),
 			},
+			{
+				method: "POST",
+				path: /^\/v1\/channels\/channel-public\/pair-codes$/,
+				response: () =>
+					jsonResponse(
+						{
+							id: "pair-discord",
+							agent_link_id: "link-1",
+							agent_id: "agent-1",
+							code: "PAIRDISCORD123",
+							expires_at: "2026-06-08T00:10:00Z",
+							pairing_command: "/clawdi_pair PAIRDISCORD123",
+						},
+						201,
+					),
+			},
 		]);
 
 		await captureStdout(() => runtimeApplyCommand({ file: manifestPath, json: true }));
@@ -396,6 +416,7 @@ outputs:
 		const dotenv = readFileSync(join(tmpHome, ".env.channels"), "utf-8");
 		expect(dotenv).toContain("DISCORD_AGENT_TOKEN=discord-token");
 		expect(dotenv).toContain("DISCORD_GATEWAY_URL=wss://api.test/v1/channels/discord/gateway");
+		expect(dotenv).toContain('DISCORD_PAIR_COMMAND="/clawdi_pair PAIRDISCORD123"');
 	});
 
 	it("does not rotate an existing link token unless explicitly requested", async () => {

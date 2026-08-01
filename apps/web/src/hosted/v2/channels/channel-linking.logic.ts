@@ -36,6 +36,11 @@ export function pairingCommand(code: string): string {
 	return `/bot_pair ${code}`;
 }
 
+export function verifiedDiscordPairingCommand(pairingCommand: string, code: string): string | null {
+	const expected = `/clawdi_pair ${code}`;
+	return pairingCommand === expected ? pairingCommand : null;
+}
+
 export function pairingActionLabel(provider: string): string {
 	return provider === "discord" ? "Pair Discord" : "Pair chat";
 }

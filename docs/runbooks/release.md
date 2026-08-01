@@ -115,6 +115,33 @@ releases.
      CLI publish workflow file. It publishes when the exact npm version is
      absent, or rebuilds and verifies that version to complete an unfinished
      GitHub Release.
+
+### Discord reserved-command cutover
+
+After deploying the release that renames Discord's reserved commands, run one
+controlled default command sync for every active Discord channel account. The
+sync uses Discord's bulk-overwrite endpoint, so it removes the old
+`bot_pair`/`bot_unpair` commands while installing only `clawdi_pair` and
+`clawdi_unpair`. Do not run this before the matching backend is deployed.
+The normal default-command scope is global. If an operator previously passed a
+`guild_id` to this endpoint, repeat the controlled sync for every such guild by
+sending `{"guild_id":"<discord-guild-id>"}`; bulk overwrite reconciles each
+Discord command scope independently.
+
+```bash
+CHANNEL_API_URL='https://api.example.test'
+CHANNEL_ACCOUNT_ID='<discord-channel-account-id>'
+curl -sS -X POST \
+  "$CHANNEL_API_URL/v1/admin/channels/$CHANNEL_ACCOUNT_ID/commands/sync" \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{}' \
+  | jq -e '.commands | map(.name) | sort == ["clawdi_pair", "clawdi_unpair"]'
+```
+
+Done: the command exits 0 for each account and the response contains exactly
+the two `clawdi_*` command names.
+
 3. For CLI releases, verify npm after the workflow succeeds:
 
    ```bash
