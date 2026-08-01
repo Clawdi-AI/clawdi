@@ -1,4 +1,4 @@
-import { lstatSync, mkdirSync, realpathSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 
 export type SidecarConfig = {
@@ -65,6 +65,7 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Sidecar
 	if (lstatSync(config.sessionDir).isSymbolicLink()) {
 		throw new Error("CLAWDI_WA_SIDECAR_SESSION_DIR must not be a symbolic link");
 	}
+	chmodSync(config.sessionDir, 0o700);
 	config.callback = parseCallback(env, config.sessionDir);
 	return config;
 }
@@ -107,6 +108,7 @@ function parseCallback(env: NodeJS.ProcessEnv, sessionDir: string): SidecarConfi
 	if (lstatSync(spoolDir).isSymbolicLink()) {
 		throw new Error("CLAWDI_WA_SIDECAR_CALLBACK_SPOOL_DIR must not be a symbolic link");
 	}
+	chmodSync(spoolDir, 0o700);
 	const canonicalSessionDir = realpathSync(sessionDir);
 	const canonicalSpoolDir = realpathSync(spoolDir);
 	if (

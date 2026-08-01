@@ -40,8 +40,9 @@ For the upstream manual pairing-code alternative, set an E.164 number without
 CLAWDI_WA_PAIRING_PHONE_NUMBER=15551112222
 ```
 
-The sidecar calls `requestPairingCode` and writes the copyable code to its
-terminal. The code and QR are ephemeral and are cleared on connection or
+After Baileys emits its first QR (which proves the websocket is ready), the
+sidecar calls `requestPairingCode` once for that socket and writes the copyable
+code to its terminal. The code and QR are ephemeral and are cleared on connection or
 disconnect; neither is persisted in the auth database or callback spool.
 
 Chat authorization remains separate from device pairing. A user generates the
@@ -63,8 +64,16 @@ The sidecar writes `baileys-state.sqlite` under
 - auth credentials use Baileys `BufferJSON` encoding;
 - Signal key batches update transactionally;
 - retry messages are keyed by account plus the complete `WAMessageKey`;
+- normalized callback handoff intent is committed in the same SQLite
+  transaction as its exact retry messages;
 - retry storage has count, byte, and TTL limits; and
 - a missing quoted message fails closed instead of fabricating content.
+
+The session database holds an exclusive SQLite lease, and the session/spool
+directories and state files are restricted to owner access. If legacy
+`useMultiFileAuthState` JSON is present, startup fails closed instead of
+silently generating a different identity; an explicit full-state migration is
+required before reuse.
 
 Normalized inbound `messages.upsert` events use `notify` only. History,
 replacement, self-sent, status, broadcast, newsletter, and unsupported
@@ -75,12 +84,20 @@ Before delivery, each normalized batch is atomically written to the separate
 callback spool configured by `CLAWDI_WA_SIDECAR_CALLBACK_SPOOL_DIR`. Recovery
 preserves monotonic file order. Events remain until the account-scoped backend
 endpoint returns 2xx. Capacity or persistence failure stops the provider socket
-in a sticky fatal state and requires operator restart.
+in a sticky fatal state and requires operator restart. If the file-spool
+handoff fails, the still-pending SQLite intent is replayed on restart, so the
+received batch does not depend on unproven provider redelivery. Permanent 4xx
+callback rejection also fails stop with the durable head retained.
 
 Transient connection closes create a fresh socket with exponential jittered
 backoff capped at 60 seconds. Logout, replaced connection, bad session,
 multi-device mismatch, forbidden, unknown, and fatal persistence closes remain
 stopped for explicit operator recovery.
+
+Provider event identities hash the complete chat/message/participant key, so
+opaque message IDs from different chats cannot collide within an account. The
+sidecar applies the backend's text and metadata limits before journaling, which
+prevents a permanently invalid event from poisoning the FIFO.
 
 The backend authenticates ingress with the configured account's independent
 `ingress_token`, deduplicates by `(account, provider event)`, resolves the

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -85,9 +86,10 @@ def _event(
     text: str,
     chat_jid_alt: str | None = None,
 ) -> dict[str, object]:
+    provider_event_id = f"message:{hashlib.sha256(event_id.encode()).hexdigest()}"
     return {
         "schemaVersion": "clawdi.whatsapp.sidecar-event.v1",
-        "providerEventId": event_id,
+        "providerEventId": provider_event_id,
         "messageId": message_id,
         "chatJid": chat_jid,
         **({"chatJidAlt": chat_jid_alt} if chat_jid_alt else {}),
@@ -215,7 +217,7 @@ async def test_sidecar_ingress_dedupes_and_routes_group_actor_to_link_inbox(
             await db_session.execute(
                 select(ChannelMessage).where(
                     ChannelMessage.account_id == account.id,
-                    ChannelMessage.provider_event_id == "message:group-in-1",
+                    ChannelMessage.provider_event_id == payload["providerEventId"],
                 )
             )
         ).scalars()

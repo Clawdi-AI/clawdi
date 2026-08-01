@@ -221,7 +221,11 @@ async def test_whatsapp_baileys_sidecar_reaches_open_with_fastapi_runtime() -> N
     sidecar_port = _free_port()
     process: subprocess.Popen[str] | None = None
     with tempfile.TemporaryDirectory(prefix="clawdi-wa-sidecar-smoke-") as session_dir:
-        Path(session_dir, "creds.json").write_text(json.dumps(seeded["creds"]), encoding="utf-8")
+        _seed_sidecar_sqlite_auth(
+            sidecar_cwd=sidecar_cwd,
+            session_dir=session_dir,
+            creds=seeded["creds"],
+        )
         async with _running_smoke_backend(seeded):
             try:
                 process = _start_sidecar_smoke_process(
@@ -513,6 +517,39 @@ def _start_sidecar_smoke_process(
         stderr=subprocess.PIPE,
         text=True,
     )
+
+
+def _seed_sidecar_sqlite_auth(
+    *,
+    sidecar_cwd: Path,
+    session_dir: str,
+    creds: dict[str, Any],
+) -> None:
+    script = r"""
+import { BufferJSON } from "baileys";
+import { SQLiteBaileysState } from "./src/sqlite-state.ts";
+const raw = await Bun.stdin.text();
+const creds = JSON.parse(raw, BufferJSON.reviver);
+const state = new SQLiteBaileysState(process.env.CLAWDI_TEST_SESSION_DIR, {
+  maxMessages: 10,
+  maxBytes: 1024 * 1024,
+  ttlSeconds: 3600,
+});
+Object.assign(state.state.creds, creds);
+await state.saveCreds();
+state.close();
+"""
+    result = subprocess.run(
+        ["bun", "-e", script],
+        cwd=sidecar_cwd,
+        env={**os.environ, "CLAWDI_TEST_SESSION_DIR": session_dir},
+        input=json.dumps(creds),
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
 
 
 async def _wait_for_sidecar_health(

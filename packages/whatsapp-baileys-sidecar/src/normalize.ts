@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { extractMessageContent, isJidGroup, type proto, type WAMessage } from "baileys";
 
 import { normalizeChatJid, normalizeUserJid } from "./jid.js";
@@ -8,8 +10,8 @@ export function normalizeInboundMessage(
 	metadata: { upsertType: string; requestId?: string },
 ): NormalizedInboundMessage | null {
 	if (metadata.upsertType !== "notify") return null;
-	const messageId = nonEmpty(message.key.id);
-	const rawChatJid = nonEmpty(message.key.remoteJid);
+	const messageId = boundedNonEmpty(message.key.id, 300);
+	const rawChatJid = boundedNonEmpty(message.key.remoteJid, 300);
 	const chatJid = rawChatJid ? normalizeChatJid(rawChatJid) : undefined;
 	if (!messageId || !chatJid || message.key.fromMe === true || !message.message) {
 		return null;
@@ -24,15 +26,16 @@ export function normalizeInboundMessage(
 	}
 	const content = extractMessageContent(message.message);
 	const text = messageText(content);
-	if (!text) return null;
+	if (!text || text.length > 4096) return null;
 	const timestamp = numericTimestamp(message.messageTimestamp);
 	const rawChatJidAlt = nonEmpty(message.key.remoteJidAlt);
 	const chatJidAlt = rawChatJidAlt ? normalizeUserJid(rawChatJidAlt) : undefined;
 	const rawActorJidAlt = nonEmpty(message.key.participantAlt);
 	const actorJidAlt = rawActorJidAlt ? normalizeUserJid(rawActorJidAlt) : undefined;
+	const pushName = boundedNonEmpty(message.pushName, 300);
 	return {
 		schemaVersion: "clawdi.whatsapp.sidecar-event.v1",
-		providerEventId: `message:${messageId}`,
+		providerEventId: providerEventId(chatJid, messageId, participantJid),
 		messageId,
 		chatJid,
 		...(chatJidAlt ? { chatJidAlt } : {}),
@@ -40,9 +43,14 @@ export function normalizeInboundMessage(
 		...(actorJidAlt ? { actorJidAlt } : {}),
 		fromMe: false,
 		text,
-		...(nonEmpty(message.pushName) ? { pushName: nonEmpty(message.pushName) } : {}),
+		...(pushName ? { pushName } : {}),
 		...(timestamp === undefined ? {} : { timestamp }),
 	};
+}
+
+function providerEventId(chatJid: string, messageId: string, participantJid?: string): string {
+	const identity = JSON.stringify([chatJid, messageId, false, participantJid ?? ""]);
+	return `message:${createHash("sha256").update(identity).digest("hex")}`;
 }
 
 function messageText(message: proto.IMessage | undefined): string | undefined {
@@ -80,4 +88,9 @@ function numericTimestamp(value: WAMessage["messageTimestamp"]): number | undefi
 function nonEmpty(value: string | null | undefined): string | undefined {
 	const text = value?.trim();
 	return text || undefined;
+}
+
+function boundedNonEmpty(value: string | null | undefined, maxLength: number): string | undefined {
+	const text = nonEmpty(value);
+	return text && text.length <= maxLength ? text : undefined;
 }

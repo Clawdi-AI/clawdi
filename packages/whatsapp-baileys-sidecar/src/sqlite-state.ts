@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { chmodSync, existsSync, lstatSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -13,10 +14,22 @@ import {
 	type WAMessageKey,
 } from "baileys";
 
+import type { NormalizedInboundMessage } from "./types.js";
+
 export type RetryMessageStoreConfig = {
 	maxMessages: number;
 	maxBytes: number;
 	ttlSeconds: number;
+};
+
+type RetryMessageInput = {
+	key: WAMessageKey;
+	message: proto.IMessage | null | undefined;
+};
+
+type PreparedRetryMessage = {
+	identity: [string, string, string, number, string];
+	encoded: Buffer;
 };
 
 export class SQLiteBaileysState {
@@ -28,13 +41,23 @@ export class SQLiteBaileysState {
 		sessionDir: string,
 		private readonly messageStoreConfig: RetryMessageStoreConfig,
 	) {
-		this.db = new Database(join(sessionDir, "baileys-state.sqlite"), {
+		const legacyEntries = readdirSync(sessionDir).filter((entry) => entry.endsWith(".json"));
+		if (legacyEntries.length > 0) {
+			throw new Error(
+				"legacy Baileys multi-file auth state requires explicit migration before SQLite startup",
+			);
+		}
+		const databasePath = join(sessionDir, "baileys-state.sqlite");
+		const db = new Database(databasePath, {
 			create: true,
 			strict: true,
 		});
-		this.db.exec("PRAGMA journal_mode = WAL");
-		this.db.exec("PRAGMA synchronous = FULL");
-		this.db.exec(`
+		try {
+			chmodSync(databasePath, 0o600);
+			db.exec("PRAGMA locking_mode = EXCLUSIVE");
+			db.exec("PRAGMA journal_mode = WAL");
+			db.exec("PRAGMA synchronous = FULL");
+			db.exec(`
 			CREATE TABLE IF NOT EXISTS auth_creds (
 				singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
 				value TEXT NOT NULL
@@ -65,7 +88,19 @@ export class SQLiteBaileysState {
 			);
 			CREATE INDEX IF NOT EXISTS retry_messages_age
 			ON retry_messages (accessed_at, created_at);
+			CREATE TABLE IF NOT EXISTS pending_inbound_events (
+				sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+				provider_event_id TEXT NOT NULL UNIQUE,
+				event TEXT NOT NULL,
+				created_at INTEGER NOT NULL
+			);
 		`);
+			secureStateFiles(sessionDir);
+		} catch (error: unknown) {
+			db.close();
+			throw error;
+		}
+		this.db = db;
 		this.creds = this.loadOrCreateCreds();
 		this.state = {
 			creds: this.creds,
@@ -125,59 +160,59 @@ export class SQLiteBaileysState {
 
 	storeMessages(
 		accountJid: string | undefined,
-		messages: ReadonlyArray<{
-			key: WAMessageKey;
-			message: proto.IMessage | null | undefined;
-		}>,
+		messages: ReadonlyArray<RetryMessageInput>,
 	): number {
-		const records = messages.map(({ key, message }) => {
-			const identity = retryMessageIdentity(accountJid, key);
-			if (!identity || !message) {
-				throw new Error("retry-message batch contains an incomplete message");
-			}
-			const encoded = Buffer.from(proto.Message.encode(message).finish());
-			if (encoded.byteLength > this.messageStoreConfig.maxBytes) {
-				throw new Error("retry-message batch contains a message above the byte cap");
-			}
-			return { identity, encoded };
-		});
+		const records = this.prepareRetryMessages(accountJid, messages);
 		if (records.length === 0) return 0;
-		if (records.length > this.messageStoreConfig.maxMessages) {
-			throw new Error("retry-message batch exceeds the message count cap");
-		}
-		const batchBytes = records.reduce((total, record) => total + record.encoded.byteLength, 0);
-		if (batchBytes > this.messageStoreConfig.maxBytes) {
-			throw new Error("retry-message batch exceeds the aggregate byte cap");
-		}
-		const identities = new Set(records.map(({ identity }) => JSON.stringify(identity)));
-		if (identities.size !== records.length) {
-			throw new Error("retry-message batch contains duplicate message identities");
+		const now = unixSeconds();
+		this.db.transaction(() => {
+			this.persistPreparedRetryMessages(records, now);
+		})();
+		return records.length;
+	}
+
+	storeInboundBatch(
+		accountJid: string | undefined,
+		items: ReadonlyArray<{ event: NormalizedInboundMessage; message: RetryMessageInput }>,
+	): number {
+		const records = this.prepareRetryMessages(
+			accountJid,
+			items.map(({ message }) => message),
+		);
+		if (records.length === 0) return 0;
+		const eventIds = new Set(items.map(({ event }) => event.providerEventId));
+		if (eventIds.size !== items.length) {
+			throw new Error("inbound batch contains duplicate provider event identities");
 		}
 		const now = unixSeconds();
 		this.db.transaction(() => {
-			this.deleteExpiredMessages(now);
+			this.persistPreparedRetryMessages(records, now);
 			const insert = this.db.query(
-				`INSERT OR REPLACE INTO retry_messages (
-					account_jid, remote_jid, message_id, from_me, participant_jid,
-					message, byte_count, created_at, accessed_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				`INSERT OR IGNORE INTO pending_inbound_events
+				 (provider_event_id, event, created_at) VALUES (?, ?, ?)`,
 			);
-			for (const { identity, encoded } of records) {
-				insert.run(...identity, encoded, encoded.byteLength, now, now);
-			}
-			this.enforceMessageStoreCapacity();
-			const contains = this.db.query<{ found: number }, [string, string, string, number, string]>(
-				`SELECT 1 AS found FROM retry_messages
-				 WHERE account_jid = ? AND remote_jid = ? AND message_id = ?
-				 AND from_me = ? AND participant_jid = ?`,
-			);
-			for (const { identity } of records) {
-				if (!contains.get(...identity)) {
-					throw new Error("retry-message capacity cleanup rejected part of the batch");
-				}
+			for (const { event } of items) {
+				insert.run(event.providerEventId, JSON.stringify(event), now);
 			}
 		})();
 		return records.length;
+	}
+
+	pendingInboundEvents(): NormalizedInboundMessage[] {
+		const rows = this.db
+			.query<{ event: string }, []>("SELECT event FROM pending_inbound_events ORDER BY sequence")
+			.all();
+		return rows.map(({ event }) => parsePendingInboundEvent(event));
+	}
+
+	markInboundEventsHandedOff(providerEventIds: readonly string[]): void {
+		if (providerEventIds.length === 0) return;
+		this.db.transaction(() => {
+			const remove = this.db.query(
+				"DELETE FROM pending_inbound_events WHERE provider_event_id = ?",
+			);
+			for (const providerEventId of providerEventIds) remove.run(providerEventId);
+		})();
 	}
 
 	close(): void {
@@ -194,6 +229,62 @@ export class SQLiteBaileysState {
 			.query("INSERT INTO auth_creds (singleton, value) VALUES (1, ?)")
 			.run(serializeJson(creds));
 		return creds;
+	}
+
+	private prepareRetryMessages(
+		accountJid: string | undefined,
+		messages: ReadonlyArray<RetryMessageInput>,
+	): PreparedRetryMessage[] {
+		const records = messages.map(({ key, message }) => {
+			const identity = retryMessageIdentity(accountJid, key);
+			if (!identity || !message) {
+				throw new Error("retry-message batch contains an incomplete message");
+			}
+			const encoded = Buffer.from(proto.Message.encode(message).finish());
+			if (encoded.byteLength > this.messageStoreConfig.maxBytes) {
+				throw new Error("retry-message batch contains a message above the byte cap");
+			}
+			return { identity, encoded };
+		});
+		if (records.length > this.messageStoreConfig.maxMessages) {
+			throw new Error("retry-message batch exceeds the message count cap");
+		}
+		const batchBytes = records.reduce((total, record) => total + record.encoded.byteLength, 0);
+		if (batchBytes > this.messageStoreConfig.maxBytes) {
+			throw new Error("retry-message batch exceeds the aggregate byte cap");
+		}
+		const identities = new Set(records.map(({ identity }) => JSON.stringify(identity)));
+		if (identities.size !== records.length) {
+			throw new Error("retry-message batch contains duplicate message identities");
+		}
+		return records;
+	}
+
+	private persistPreparedRetryMessages(
+		records: readonly PreparedRetryMessage[],
+		now: number,
+	): void {
+		this.deleteExpiredMessages(now);
+		const insert = this.db.query(
+			`INSERT OR REPLACE INTO retry_messages (
+				account_jid, remote_jid, message_id, from_me, participant_jid,
+				message, byte_count, created_at, accessed_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		);
+		for (const { identity, encoded } of records) {
+			insert.run(...identity, encoded, encoded.byteLength, now, now);
+		}
+		this.enforceMessageStoreCapacity();
+		const contains = this.db.query<{ found: number }, [string, string, string, number, string]>(
+			`SELECT 1 AS found FROM retry_messages
+			 WHERE account_jid = ? AND remote_jid = ? AND message_id = ?
+			 AND from_me = ? AND participant_jid = ?`,
+		);
+		for (const { identity } of records) {
+			if (!contains.get(...identity)) {
+				throw new Error("retry-message capacity cleanup rejected part of the batch");
+			}
+		}
 	}
 
 	private getSignalKeys<T extends keyof SignalDataTypeMap>(
@@ -302,6 +393,49 @@ function asRecord(value: unknown): Record<string, unknown> {
 		throw new Error("invalid app-state-sync-key value in SQLite auth store");
 	}
 	return Object.fromEntries(Object.entries(value));
+}
+
+function parsePendingInboundEvent(value: string): NormalizedInboundMessage {
+	const parsed = JSON.parse(value) as unknown;
+	if (
+		typeof parsed !== "object" ||
+		parsed === null ||
+		Array.isArray(parsed) ||
+		!("schemaVersion" in parsed) ||
+		parsed.schemaVersion !== "clawdi.whatsapp.sidecar-event.v1" ||
+		!("providerEventId" in parsed) ||
+		typeof parsed.providerEventId !== "string" ||
+		!/^message:[0-9a-f]{64}$/.test(parsed.providerEventId) ||
+		!("messageId" in parsed) ||
+		typeof parsed.messageId !== "string" ||
+		!("chatJid" in parsed) ||
+		typeof parsed.chatJid !== "string" ||
+		!("actorJid" in parsed) ||
+		typeof parsed.actorJid !== "string" ||
+		!("fromMe" in parsed) ||
+		parsed.fromMe !== false ||
+		!("text" in parsed) ||
+		typeof parsed.text !== "string"
+	) {
+		throw new Error("invalid pending WhatsApp inbound event in SQLite state");
+	}
+	return parsed as NormalizedInboundMessage;
+}
+
+function secureStateFiles(sessionDir: string): void {
+	for (const name of [
+		"baileys-state.sqlite",
+		"baileys-state.sqlite-wal",
+		"baileys-state.sqlite-shm",
+	]) {
+		const path = join(sessionDir, name);
+		if (!existsSync(path)) continue;
+		const stat = lstatSync(path);
+		if (!stat.isFile() || stat.isSymbolicLink()) {
+			throw new Error(`Baileys state path must be a regular file: ${name}`);
+		}
+		chmodSync(path, 0o600);
+	}
 }
 
 function unixSeconds(): number {

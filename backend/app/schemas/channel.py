@@ -349,7 +349,10 @@ class _WhatsAppSidecarModel(BaseModel):
 
 class WhatsAppSidecarEvent(_WhatsAppSidecarModel):
     schema_version: Literal["clawdi.whatsapp.sidecar-event.v1"] = Field(alias="schemaVersion")
-    provider_event_id: str = Field(alias="providerEventId", min_length=1, max_length=300)
+    provider_event_id: str = Field(
+        alias="providerEventId",
+        pattern=r"^message:[0-9a-f]{64}$",
+    )
     message_id: str = Field(alias="messageId", min_length=1, max_length=300)
     chat_jid: str = Field(alias="chatJid", min_length=3, max_length=300)
     chat_jid_alt: str | None = Field(
@@ -393,8 +396,6 @@ class WhatsAppSidecarEvent(_WhatsAppSidecarModel):
 
     @model_validator(mode="after")
     def _validate_normalized_identity(self) -> WhatsAppSidecarEvent:
-        if self.provider_event_id != f"message:{self.message_id}":
-            raise ValueError("providerEventId must be derived from messageId")
         if self.chat_jid.endswith("@g.us"):
             if self.actor_jid.endswith("@g.us") or not self.actor_jid.endswith(
                 ("@s.whatsapp.net", "@lid")

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -62,6 +62,8 @@ describe("sidecar config", () => {
 		const sessionDir = mkdtempSync(join(tmpdir(), "clawdi-wa-sidecar-"));
 		const spoolDir = mkdtempSync(join(tmpdir(), "clawdi-wa-spool-"));
 		try {
+			chmodSync(sessionDir, 0o755);
+			chmodSync(spoolDir, 0o755);
 			const config = loadConfigFromEnv({
 				CLAWDI_WA_SIDECAR_TOKEN: "outbound-secret",
 				CLAWDI_WA_SIDECAR_SESSION_DIR: sessionDir,
@@ -84,6 +86,8 @@ describe("sidecar config", () => {
 				maxBackoffMs: 5000,
 				requestTimeoutMs: 10000,
 			});
+			expect(statSync(sessionDir).mode & 0o777).toBe(0o700);
+			expect(statSync(spoolDir).mode & 0o777).toBe(0o700);
 		} finally {
 			rmSync(sessionDir, { recursive: true, force: true });
 			rmSync(spoolDir, { recursive: true, force: true });

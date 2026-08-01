@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,7 +23,7 @@ afterEach(() => {
 function event(id: string): NormalizedInboundMessage {
 	return {
 		schemaVersion: "clawdi.whatsapp.sidecar-event.v1",
-		providerEventId: `message:${id}`,
+		providerEventId: `message:${createHash("sha256").update(id).digest("hex")}`,
 		messageId: id,
 		chatJid: "15551114444@s.whatsapp.net",
 		actorJid: "15551114444@s.whatsapp.net",
@@ -127,6 +128,21 @@ describe("Clawdi durable callback delivery", () => {
 		expect(delivered).toEqual(["restart-1", "restart-2"]);
 		expect(readdirSync(directory)).toEqual([]);
 		expect(await recovered.stop()).toBe(0);
+	});
+
+	it("fails stop on permanent callback rejection without dropping the durable head", async () => {
+		const directory = spoolDir();
+		const queue = new ClawdiCallbackDeliveryQueue(config(directory), pino({ level: "silent" }), {
+			fetch: async () => new Response(null, { status: 422 }),
+			sleep: async () => {},
+		});
+		queue.enqueue(event("permanent-rejection"));
+
+		await expect(queue.waitForIdle()).rejects.toThrow("permanently rejected");
+		expect(queue.pendingCount()).toBe(1);
+		expect(queue.fatalError()).toBeDefined();
+		expect(readdirSync(directory)).toEqual(["batch-00000000000000000001.json"]);
+		expect(await queue.stop()).toBe(1);
 	});
 
 	it("uses recovered monotonic sequences to preserve multi-batch order", async () => {

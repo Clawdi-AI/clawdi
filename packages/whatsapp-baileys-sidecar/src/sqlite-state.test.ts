@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -54,7 +54,7 @@ describe("SQLite Baileys state", () => {
 
 	it("rolls back a multi-key update atomically on SQLite failure", async () => {
 		const directory = sessionDir();
-		const state = new SQLiteBaileysState(directory, messageStore);
+		new SQLiteBaileysState(directory, messageStore).close();
 		const inspector = new Database(join(directory, "baileys-state.sqlite"));
 		inspector.exec(`
 			CREATE TRIGGER reject_bad_signal_key
@@ -64,6 +64,8 @@ describe("SQLite Baileys state", () => {
 				SELECT RAISE(ABORT, 'forced transaction failure');
 			END;
 		`);
+		inspector.close();
+		const state = new SQLiteBaileysState(directory, messageStore);
 
 		await expect(
 			state.state.keys.set({
@@ -79,8 +81,63 @@ describe("SQLite Baileys state", () => {
 		const keys = await state.state.keys.get("pre-key", ["good"]);
 		expect(keys.good).toBeUndefined();
 
-		inspector.close();
 		state.close();
+	});
+
+	it("fails closed on legacy multi-file auth instead of silently replacing identity", () => {
+		const directory = sessionDir();
+		writeFileSync(join(directory, "creds.json"), "{}");
+
+		expect(() => new SQLiteBaileysState(directory, messageStore)).toThrow(
+			"requires explicit migration",
+		);
+		expect(() => statSync(join(directory, "baileys-state.sqlite"))).toThrow();
+	});
+
+	it("holds an exclusive session lease and protects state file permissions", () => {
+		const directory = sessionDir();
+		const first = new SQLiteBaileysState(directory, messageStore);
+		expect(statSync(join(directory, "baileys-state.sqlite")).mode & 0o777).toBe(0o600);
+		expect(() => new SQLiteBaileysState(directory, messageStore)).toThrow("database is locked");
+		first.close();
+
+		const recovered = new SQLiteBaileysState(directory, messageStore);
+		recovered.close();
+	});
+
+	it("recovers callback handoff intent with the exact retry message", async () => {
+		const directory = sessionDir();
+		const accountJid = "15550000000:1@s.whatsapp.net";
+		const key = {
+			remoteJid: "15551110001@s.whatsapp.net",
+			id: "inbound-durable-1",
+			fromMe: false,
+		};
+		const event = {
+			schemaVersion: "clawdi.whatsapp.sidecar-event.v1" as const,
+			providerEventId: `message:${"a".repeat(64)}`,
+			messageId: "inbound-durable-1",
+			chatJid: key.remoteJid,
+			actorJid: key.remoteJid,
+			fromMe: false as const,
+			text: "durable inbound",
+		};
+		const first = new SQLiteBaileysState(directory, messageStore);
+		expect(
+			first.storeInboundBatch(accountJid, [
+				{ event, message: { key, message: { conversation: "durable inbound" } } },
+			]),
+		).toBe(1);
+		first.close();
+
+		const recovered = new SQLiteBaileysState(directory, messageStore);
+		expect(recovered.pendingInboundEvents()).toEqual([event]);
+		expect(await recovered.getMessage(accountJid, key)).toEqual({
+			conversation: "durable inbound",
+		});
+		recovered.markInboundEventsHandedOff([event.providerEventId]);
+		expect(recovered.pendingInboundEvents()).toEqual([]);
+		recovered.close();
 	});
 
 	it("rejects an oversized retry-message batch without partially persisting it", async () => {

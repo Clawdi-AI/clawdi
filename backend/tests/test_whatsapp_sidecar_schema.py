@@ -5,11 +5,13 @@ from pydantic import ValidationError
 
 from app.schemas.channel import WhatsAppSidecarEvent
 
+_EVENT_ID = f"message:{'a' * 64}"
+
 
 def _event() -> dict[str, object]:
     return {
         "schemaVersion": "clawdi.whatsapp.sidecar-event.v1",
-        "providerEventId": "message:message-1",
+        "providerEventId": _EVENT_ID,
         "messageId": "message-1",
         "chatJid": "15551112222@s.whatsapp.net",
         "chatJidAlt": "7826185388106@lid",
@@ -23,7 +25,7 @@ def _event() -> dict[str, object]:
 @pytest.mark.parametrize(
     ("changes", "detail"),
     [
-        ({"providerEventId": "message:other"}, "derived from messageId"),
+        ({"providerEventId": "message:other"}, "String should match pattern"),
         (
             {
                 "chatJid": "120363000000000001@g.us",

@@ -24,9 +24,8 @@ describe("Baileys sidecar event normalization", () => {
 			requestId: "request-1",
 		});
 
-		expect(event).toEqual({
+		expect(event).toMatchObject({
 			schemaVersion: "clawdi.whatsapp.sidecar-event.v1",
-			providerEventId: "message:BAILEYS-INBOUND-1",
 			messageId: "BAILEYS-INBOUND-1",
 			chatJid: "120363012345678901@g.us",
 			actorJid: "15551114444@s.whatsapp.net",
@@ -36,6 +35,7 @@ describe("Baileys sidecar event normalization", () => {
 			timestamp: 1_700_000_000,
 			fromMe: false,
 		});
+		expect(event?.providerEventId).toMatch(/^message:[0-9a-f]{64}$/);
 	});
 
 	it("ignores messages sent by the physical account", () => {
@@ -66,6 +66,44 @@ describe("Baileys sidecar event normalization", () => {
 		);
 
 		expect(event?.text).toBe(text);
+	});
+
+	it("scopes opaque provider message ids to the complete chat key", () => {
+		const base = {
+			key: {
+				id: "OPAQUE-ID",
+				remoteJid: "15551114444@s.whatsapp.net",
+				fromMe: false,
+			},
+			message: { conversation: "hello" },
+		} satisfies WAMessage;
+		const first = normalizeInboundMessage(base, { upsertType: "notify" });
+		const replay = normalizeInboundMessage(base, { upsertType: "notify" });
+		const otherChat = normalizeInboundMessage(
+			{ ...base, key: { ...base.key, remoteJid: "15551115555@s.whatsapp.net" } },
+			{ upsertType: "notify" },
+		);
+
+		expect(first?.providerEventId).toBe(replay?.providerEventId);
+		expect(first?.providerEventId).not.toBe(otherChat?.providerEventId);
+	});
+
+	it("drops content and metadata that exceed the backend wire limits", () => {
+		const base = {
+			key: {
+				id: "LIMITS",
+				remoteJid: "15551114444@s.whatsapp.net",
+				fromMe: false,
+			},
+			message: { conversation: "x".repeat(4097) },
+		} satisfies WAMessage;
+		expect(normalizeInboundMessage(base, { upsertType: "notify" })).toBeNull();
+		expect(
+			normalizeInboundMessage(
+				{ ...base, message: { conversation: "ok" }, pushName: "x".repeat(301) },
+				{ upsertType: "notify" },
+			)?.pushName,
+		).toBeUndefined();
 	});
 
 	it("ignores history, replacements, unsupported entities, and media without text", () => {

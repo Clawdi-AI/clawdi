@@ -17,6 +17,7 @@ import { normalizeInboundMessage } from "./normalize.js";
 import { SQLiteBaileysState } from "./sqlite-state.js";
 import {
 	type BaileysRuntime,
+	type NormalizedInboundMessage,
 	QuotedMessageNotFoundError,
 	type RelayMessageRequest,
 	type RuntimeHealth,
@@ -45,6 +46,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	private readonly callbackQueue: ClawdiCallbackDeliveryQueue | null;
 	private readonly backpressuredSockets = new WeakSet<WASocket>();
 	private readonly fatalSockets = new WeakSet<WASocket>();
+	private readonly pairingCodeRequestedSockets = new WeakSet<WASocket>();
 	private readonly shutdown = new AbortController();
 	private readonly providerState: SQLiteBaileysState;
 	private fatalReason: string | undefined;
@@ -54,10 +56,17 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 
 	constructor(private readonly config: SidecarConfig) {
 		this.logger = pino({ level: config.logLevel });
-		this.callbackQueue = config.callback
-			? new ClawdiCallbackDeliveryQueue(config.callback, this.logger)
-			: null;
 		this.providerState = new SQLiteBaileysState(config.sessionDir, config.messageStore);
+		try {
+			this.callbackQueue = config.callback
+				? new ClawdiCallbackDeliveryQueue(config.callback, this.logger, undefined, (error) =>
+						this.markCallbackDeliveryFatal(error),
+					)
+				: null;
+		} catch (error: unknown) {
+			this.providerState.close();
+			throw error;
+		}
 	}
 
 	async start(): Promise<void> {
@@ -70,6 +79,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			return;
 		}
 		this.status = "starting";
+		this.handoffPendingInboundEvents();
 		await this.openSocket();
 	}
 
@@ -202,27 +212,33 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 				this.callbackQueue,
 				{
 					isActive: () => this.socket === socket,
-					persistRetryMessages: (messages) => {
+					persistInboundBatch: (items) => {
 						const accountJid = socket.user?.id ?? this.providerState.state.creds.me?.id;
 						if (!accountJid) {
 							throw new Error("WhatsApp account identity unavailable for retry store");
 						}
-						const persisted = this.providerState.storeMessages(
+						const persisted = this.providerState.storeInboundBatch(
 							accountJid,
-							messages.map((message) => ({ key: message.key, message: message.message })),
+							items.map(({ event, message }) => ({
+								event,
+								message: { key: message.key, message: message.message },
+							})),
 						);
-						if (persisted !== messages.length) {
-							throw new Error("WhatsApp retry store did not persist the complete batch");
+						if (persisted !== items.length) {
+							throw new Error("WhatsApp inbound store did not persist the complete batch");
 						}
 					},
-					onRetryStoreFailure: (error) => {
+					markInboundEventsHandedOff: (providerEventIds) => {
+						this.providerState.markInboundEventsHandedOff(providerEventIds);
+					},
+					onStateFailure: (error) => {
 						this.fatalSockets.add(socket);
 						this.status = "disconnected";
-						this.fatalReason = "retry_message_persistence_failed";
+						this.fatalReason = "inbound_state_persistence_failed";
 						this.lastDisconnectReason = this.fatalReason;
 						this.logger.fatal(
 							{ error },
-							"WhatsApp retry-message persistence failed; stopping provider socket",
+							"WhatsApp inbound durable state failed; stopping provider socket",
 						);
 						socket.end(error);
 					},
@@ -261,6 +277,9 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 				});
 				this.logger.warn("WhatsApp pairing QR rendered on the physical sidecar terminal");
 			}
+			if (qr && this.config.pairingPhoneNumber) {
+				this.requestPairingCode(socket, this.config.pairingPhoneNumber);
+			}
 			if (connection === "open") {
 				this.status = "connected";
 				this.lastDisconnectReason = undefined;
@@ -287,23 +306,32 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 				}
 			}
 		});
-		if (!this.providerState.state.creds.registered && this.config.pairingPhoneNumber) {
-			try {
-				const code = await socket.requestPairingCode(this.config.pairingPhoneNumber);
-				if (this.socket === socket) {
-					this.pairingCode = code;
-					this.pairingQr = undefined;
-					process.stderr.write(`\nWhatsApp pairing code: ${code}\n`);
-					this.logger.warn(
-						"WhatsApp manual pairing code rendered on the physical sidecar terminal",
-					);
-				}
-			} catch (error: unknown) {
-				if (this.socket === socket) this.socket = null;
-				socket.end(error instanceof Error ? error : new Error(String(error)));
-				throw error;
-			}
+	}
+
+	private requestPairingCode(socket: WASocket, phoneNumber: string): void {
+		if (this.providerState.state.creds.registered || this.pairingCodeRequestedSockets.has(socket)) {
+			return;
 		}
+		this.pairingCodeRequestedSockets.add(socket);
+		socket
+			.requestPairingCode(phoneNumber)
+			.then((code) => {
+				if (this.socket !== socket) return;
+				this.pairingCode = code;
+				this.pairingQr = undefined;
+				process.stderr.write(`\nWhatsApp pairing code: ${code}\n`);
+				this.logger.warn("WhatsApp manual pairing code rendered on the physical sidecar terminal");
+			})
+			.catch((error: unknown) => {
+				if (this.socket !== socket) return;
+				const failure = error instanceof Error ? error : new Error(String(error));
+				this.fatalSockets.add(socket);
+				this.fatalReason = "pairing_code_request_failed";
+				this.status = "disconnected";
+				this.lastDisconnectReason = this.fatalReason;
+				this.logger.fatal({ error: failure }, "WhatsApp pairing-code request failed");
+				socket.end(failure);
+			});
 	}
 
 	private scheduleReconnect(): void {
@@ -322,6 +350,16 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 				this.scheduleReconnect();
 			});
 		}, delayMs);
+	}
+
+	private handoffPendingInboundEvents(): void {
+		if (!this.callbackQueue) return;
+		const events = this.providerState.pendingInboundEvents();
+		if (events.length === 0) return;
+		this.callbackQueue.enqueueBatch(events);
+		this.providerState.markInboundEventsHandedOff(
+			events.map(({ providerEventId }) => providerEventId),
+		);
 	}
 
 	private requireSocket(): WASocket {
@@ -343,6 +381,17 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		this.status = "disconnected";
 		this.lastDisconnectReason = reason;
 		this.logger.fatal({ ...context, error }, message);
+		socket.end(error);
+	}
+
+	private markCallbackDeliveryFatal(error: Error): void {
+		if (this.fatalReason) return;
+		this.fatalReason = "callback_delivery_failed";
+		this.status = "disconnected";
+		this.lastDisconnectReason = this.fatalReason;
+		const socket = this.socket;
+		if (!socket) return;
+		this.fatalSockets.add(socket);
 		socket.end(error);
 	}
 }
@@ -423,8 +472,11 @@ export function registerBaileysInboundCallbackListener(
 	queue: ClawdiCallbackDeliveryQueue,
 	callbacks: {
 		isActive: () => boolean;
-		persistRetryMessages?: (messages: readonly WAMessage[]) => void;
-		onRetryStoreFailure?: (error: Error) => void;
+		persistInboundBatch?: (
+			items: ReadonlyArray<{ event: NormalizedInboundMessage; message: WAMessage }>,
+		) => void;
+		markInboundEventsHandedOff?: (providerEventIds: readonly string[]) => void;
+		onStateFailure?: (error: Error) => void;
 		onBackpressure: (error: Error, providerEventId: string | undefined, eventCount: number) => void;
 	},
 ): void {
@@ -440,14 +492,14 @@ export function registerBaileysInboundCallbackListener(
 		});
 		const events = normalized.map(({ event }) => event);
 		if (events.length === 0) return;
-		let retryStoreError: Error | undefined;
+		let stateError: Error | undefined;
 		try {
-			callbacks.persistRetryMessages?.(normalized.map(({ message }) => message));
+			callbacks.persistInboundBatch?.(normalized);
 		} catch (error: unknown) {
-			retryStoreError = error instanceof Error ? error : new Error(String(error));
+			stateError = error instanceof Error ? error : new Error(String(error));
 		}
-		if (retryStoreError) {
-			callbacks.onRetryStoreFailure?.(retryStoreError);
+		if (stateError) {
+			callbacks.onStateFailure?.(stateError);
 			return;
 		}
 		try {
@@ -459,6 +511,11 @@ export function registerBaileysInboundCallbackListener(
 				events.length,
 			);
 			return;
+		}
+		try {
+			callbacks.markInboundEventsHandedOff?.(events.map(({ providerEventId }) => providerEventId));
+		} catch (error: unknown) {
+			callbacks.onStateFailure?.(error instanceof Error ? error : new Error(String(error)));
 		}
 	});
 }

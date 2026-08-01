@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+	chmodSync,
 	closeSync,
 	existsSync,
 	fsyncSync,
@@ -58,6 +59,13 @@ export class CallbackSpoolCorruptionError extends Error {
 	}
 }
 
+export class CallbackPermanentDeliveryError extends Error {
+	constructor(readonly status: number) {
+		super(`callback permanently rejected the event with HTTP ${status}`);
+		this.name = "CallbackPermanentDeliveryError";
+	}
+}
+
 export class ClawdiCallbackDeliveryQueue {
 	private readonly batches: JournalBatch[];
 	private processing: Promise<void> | null = null;
@@ -67,6 +75,7 @@ export class ClawdiCallbackDeliveryQueue {
 	private pendingEvents = 0;
 	private pendingByteCount = 0;
 	private nextSequence: bigint;
+	private fatal: Error | undefined;
 
 	constructor(
 		private readonly config: CallbackDeliveryConfig,
@@ -75,6 +84,7 @@ export class ClawdiCallbackDeliveryQueue {
 			fetch,
 			sleep: abortableSleep,
 		},
+		private readonly onFatal: (error: Error) => void = () => {},
 	) {
 		const recovered = loadJournal(config);
 		this.batches = recovered.batches;
@@ -130,6 +140,7 @@ export class ClawdiCallbackDeliveryQueue {
 
 	async waitForIdle(): Promise<void> {
 		await this.processing;
+		if (this.fatal) throw this.fatal;
 	}
 
 	pendingCount(): number {
@@ -140,12 +151,30 @@ export class ClawdiCallbackDeliveryQueue {
 		return this.pendingByteCount;
 	}
 
+	fatalError(): Error | undefined {
+		return this.fatal;
+	}
+
 	private startProcessing(): void {
 		if (this.processing || this.stopping || this.batches.length === 0) return;
-		this.processing = this.processQueue().finally(() => {
-			this.processing = null;
-			if (this.batches.length > 0 && !this.stopping) this.startProcessing();
-		});
+		this.processing = this.processQueue()
+			.catch((error: unknown) => {
+				this.fatal = error instanceof Error ? error : new Error(String(error));
+				this.accepting = false;
+				this.logger.fatal(
+					{ error: this.fatal },
+					"WhatsApp callback delivery entered a fail-stop state",
+				);
+				try {
+					this.onFatal(this.fatal);
+				} catch (observerError: unknown) {
+					this.logger.fatal({ error: observerError }, "WhatsApp callback fatal observer failed");
+				}
+			})
+			.finally(() => {
+				this.processing = null;
+				if (this.batches.length > 0 && !this.stopping && !this.fatal) this.startProcessing();
+			});
 	}
 
 	private async processQueue(): Promise<void> {
@@ -186,6 +215,7 @@ export class ClawdiCallbackDeliveryQueue {
 				return true;
 			} catch (error: unknown) {
 				if (this.stopping) return false;
+				if (error instanceof CallbackPermanentDeliveryError) throw error;
 				const delay = Math.min(
 					this.config.maxBackoffMs,
 					this.config.initialBackoffMs * 2 ** (attempt - 1),
@@ -221,6 +251,13 @@ export class ClawdiCallbackDeliveryQueue {
 				signal: controller.signal,
 			});
 			if (!response.ok) {
+				if (
+					response.status >= 400 &&
+					response.status < 500 &&
+					!isRetryableStatus(response.status)
+				) {
+					throw new CallbackPermanentDeliveryError(response.status);
+				}
 				throw new Error(`callback returned HTTP ${response.status}`);
 			}
 		} finally {
@@ -239,6 +276,7 @@ function loadJournal(config: CallbackDeliveryConfig): {
 	if (!root.isDirectory() || root.isSymbolicLink()) {
 		throw new CallbackSpoolCorruptionError("callback spool root must be a real directory");
 	}
+	chmodSync(config.spoolDir, 0o700);
 	recoverAtomicWrites(config.spoolDir);
 	const batches: JournalBatch[] = [];
 	let eventCount = 0;
@@ -258,6 +296,7 @@ function loadJournal(config: CallbackDeliveryConfig): {
 				`callback spool entry is not a regular file: ${entry}`,
 			);
 		}
+		chmodSync(path, 0o600);
 		const raw = readFileSync(path);
 		const events = parseBatch(raw, entry);
 		eventCount += events.length;
@@ -340,14 +379,27 @@ function isNormalizedEvent(value: unknown): value is NormalizedInboundMessage {
 		isRecord(value) &&
 		value.schemaVersion === "clawdi.whatsapp.sidecar-event.v1" &&
 		typeof value.providerEventId === "string" &&
+		/^message:[0-9a-f]{64}$/.test(value.providerEventId) &&
 		typeof value.messageId === "string" &&
-		value.providerEventId === `message:${value.messageId}` &&
+		value.messageId.length > 0 &&
+		value.messageId.length <= 300 &&
 		typeof value.chatJid === "string" &&
+		value.chatJid.length > 0 &&
+		value.chatJid.length <= 300 &&
 		typeof value.actorJid === "string" &&
+		value.actorJid.length > 0 &&
+		value.actorJid.length <= 300 &&
 		value.fromMe === false &&
 		typeof value.text === "string" &&
-		value.text.length > 0
+		value.text.length > 0 &&
+		value.text.length <= 4096 &&
+		(value.pushName === undefined ||
+			(typeof value.pushName === "string" && value.pushName.length <= 300))
 	);
+}
+
+function isRetryableStatus(status: number): boolean {
+	return status === 408 || status === 409 || status === 425 || status === 429;
 }
 
 function atomicWrite(path: string, data: string): void {

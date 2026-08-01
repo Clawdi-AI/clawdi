@@ -110,7 +110,7 @@ describe("Baileys runtime callback boundary", () => {
 		const socket = new FakeBaileysInboundSocket();
 		registerBaileysInboundCallbackListener(socket, callbackQueue, {
 			isActive: () => true,
-			persistRetryMessages: (messages) => retryStored.push(...messages),
+			persistInboundBatch: (items) => retryStored.push(...items.map(({ message }) => message)),
 			onBackpressure: (error) => socket.end(error),
 		});
 
@@ -157,8 +157,11 @@ describe("Baileys runtime callback boundary", () => {
 	it("fails visibly without partially journaling a batch beyond the hard cap", async () => {
 		const callbackQueue = queue(spoolDir(), async () => new Response(null, { status: 200 }), 2);
 		const socket = new FakeBaileysInboundSocket();
+		const durablePending: string[] = [];
 		registerBaileysInboundCallbackListener(socket, callbackQueue, {
 			isActive: () => true,
+			persistInboundBatch: (items) =>
+				durablePending.push(...items.map(({ event }) => event.providerEventId)),
 			onBackpressure: (error) => socket.end(error),
 		});
 
@@ -166,6 +169,7 @@ describe("Baileys runtime callback boundary", () => {
 
 		expect(socket.endReasons).toHaveLength(1);
 		expect(callbackQueue.pendingCount()).toBe(0);
+		expect(durablePending).toHaveLength(3);
 		expect(shouldReconnectAfterClose(true, undefined)).toBe(false);
 		expect(await callbackQueue.stop()).toBe(0);
 	});
@@ -180,10 +184,10 @@ describe("Baileys runtime callback boundary", () => {
 		const retryStoreFailures: Error[] = [];
 		registerBaileysInboundCallbackListener(socket, callbackQueue, {
 			isActive: () => true,
-			persistRetryMessages: () => {
+			persistInboundBatch: () => {
 				throw new Error("retry store persisted only part of the batch");
 			},
-			onRetryStoreFailure: (error) => {
+			onStateFailure: (error) => {
 				retryStoreFailures.push(error);
 				socket.end(error);
 			},
