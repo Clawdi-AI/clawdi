@@ -126,6 +126,7 @@ def _discord_ready_config(
         "application_id": application_id,
         "public_key": DISCORD_TEST_PUBLIC_KEY,
         "discord_interactions_configured": True,
+        "discord_reserved_command_version": channel_service.DISCORD_RESERVED_COMMAND_VERSION,
     }
 
 
@@ -9159,6 +9160,9 @@ async def test_discord_pairing_replays_stored_global_commands_to_new_guild(
                     "application_id": DISCORD_TEST_APPLICATION_ID,
                     "public_key": DISCORD_TEST_PUBLIC_KEY,
                     "discord_interactions_configured": True,
+                    "discord_reserved_command_version": (
+                        channel_service.DISCORD_RESERVED_COMMAND_VERSION
+                    ),
                 },
             },
         )
@@ -16639,12 +16643,14 @@ async def test_discord_pair_preparation_configures_endpoint_then_global_commands
     pair_command, unpair_command = commands_call["json"]
     assert pair_command["default_member_permissions"] == "32"
     assert unpair_command["default_member_permissions"] == "32"
-    assert pair_command["integration_types"] == [0]
-    assert pair_command["contexts"] == [0]
-    assert pair_command["description"] == "Pair this server with Clawdi."
-    assert unpair_command["integration_types"] == [0]
-    assert unpair_command["contexts"] == [0]
-    assert unpair_command["description"] == ("Disconnect this server from Clawdi.")
+    assert pair_command["integration_types"] == [0, 1]
+    assert pair_command["contexts"] == [0, 1]
+    assert pair_command["description"] == "Pair this server or direct message with Clawdi."
+    assert unpair_command["integration_types"] == [0, 1]
+    assert unpair_command["contexts"] == [0, 1]
+    assert unpair_command["description"] == (
+        "Disconnect this server or direct message from Clawdi."
+    )
     install_url = pair.json()["discord_install_url"]
     assert install_url == (
         "https://discord.com/oauth2/authorize"
@@ -16655,10 +16661,125 @@ async def test_discord_pair_preparation_configures_endpoint_then_global_commands
     bot_permissions = int(parse_qs(urlparse(install_url).query)["permissions"][0])
     assert bot_permissions == sum(1 << bit for bit in (6, 10, 11, 14, 15, 16, 38))
     assert bot_permissions & ((1 << 3) | (1 << 5)) == 0
+    assert pair.json()["discord_user_install_url"] == (
+        "https://discord.com/oauth2/authorize"
+        f"?client_id={DISCORD_TEST_APPLICATION_ID}"
+        "&integration_type=1"
+        "&scope=applications.commands"
+    )
     assert pair.json()["pairing_command"] == f"/clawdi_pair {pair.json()['code']}"
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
     assert account.config["discord_interactions_configured"] is True
+    assert (
+        account.config["discord_reserved_command_version"]
+        == channel_service.DISCORD_RESERVED_COMMAND_VERSION
+    )
+
+
+@pytest.mark.asyncio
+async def test_discord_existing_account_reconciles_reserved_commands_before_pair_code(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _FakeProviderClient.calls = []
+    _FakeProviderClient.response_payload = [
+        {"id": "pair-command", "name": "clawdi_pair"},
+        {"id": "unpair-command", "name": "clawdi_unpair"},
+    ]
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    legacy_config = _discord_ready_config()
+    legacy_config.pop("discord_reserved_command_version")
+    legacy_config["guild_id"] = "legacy-guild-123"
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-existing-command-cutover",
+                "provider_token": "discord-provider-token",
+                "config": legacy_config,
+            },
+        )
+    ).json()
+
+    first_pair = await client.post(
+        f"/v1/channels/{created['id']}/pair-codes",
+        json={"ttl_seconds": 900},
+    )
+
+    assert first_pair.status_code == 201, first_pair.text
+    assert first_pair.json()["pairing_command"].startswith("/clawdi_pair ")
+    assert [call["method"] for call in _FakeProviderClient.calls] == ["PUT", "PUT"]
+    global_call, legacy_guild_call = _FakeProviderClient.calls
+    assert global_call["url"].endswith(f"/applications/{DISCORD_TEST_APPLICATION_ID}/commands")
+    assert legacy_guild_call["url"].endswith(
+        f"/applications/{DISCORD_TEST_APPLICATION_ID}/guilds/legacy-guild-123/commands"
+    )
+    assert [command["name"] for command in global_call["json"]] == [
+        "clawdi_pair",
+        "clawdi_unpair",
+    ]
+    assert [command["name"] for command in legacy_guild_call["json"]] == [
+        "clawdi_pair",
+        "clawdi_unpair",
+    ]
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    assert (
+        account.config["discord_reserved_command_version"]
+        == channel_service.DISCORD_RESERVED_COMMAND_VERSION
+    )
+
+    second_pair = await client.post(
+        f"/v1/channels/{created['id']}/pair-codes",
+        json={"ttl_seconds": 900},
+    )
+
+    assert second_pair.status_code == 201, second_pair.text
+    assert len(_FakeProviderClient.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_discord_reserved_command_reconciliation_failure_creates_no_pair_code(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _FailingProviderClient.calls = []
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FailingProviderClient)
+    stale_config = _discord_ready_config()
+    stale_config["discord_reserved_command_version"] = "1"
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-command-cutover-failure",
+                "provider_token": "discord-provider-token",
+                "config": stale_config,
+            },
+        )
+    ).json()
+
+    pair = await client.post(
+        f"/v1/channels/{created['id']}/pair-codes",
+        json={"ttl_seconds": 900},
+    )
+
+    assert pair.status_code == 502
+    assert pair.json()["detail"] == "discord api unreachable"
+    assert len(_FailingProviderClient.calls) == 1
+    assert _FailingProviderClient.calls[0]["method"] == "PUT"
+    pair_codes = list(
+        (
+            await db_session.execute(
+                select(ChannelPairCode).where(ChannelPairCode.account_id == UUID(created["id"]))
+            )
+        ).scalars()
+    )
+    assert pair_codes == []
 
 
 @pytest.mark.asyncio

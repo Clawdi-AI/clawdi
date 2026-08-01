@@ -121,7 +121,11 @@ DEFAULT_CHANNEL_COMMANDS: tuple[dict[str, Any], ...] = (
 DISCORD_ADMINISTRATOR_PERMISSION = 1 << 3
 DISCORD_MANAGE_GUILD_PERMISSION = 1 << 5
 DISCORD_GUILD_INSTALL = 0
+DISCORD_USER_INSTALL = 1
 DISCORD_GUILD_INTERACTION_CONTEXT = 0
+DISCORD_BOT_DM_INTERACTION_CONTEXT = 1
+DISCORD_RESERVED_COMMAND_VERSION = 1
+DISCORD_RESERVED_COMMAND_VERSION_CONFIG_KEY = "discord_reserved_command_version"
 # Discord API docs baseline b2f8adafc037242291b8f875d4cdf3adc4d48bb7.
 # ADD_REACTIONS, VIEW_CHANNEL, SEND_MESSAGES, EMBED_LINKS, ATTACH_FILES,
 # READ_MESSAGE_HISTORY, and SEND_MESSAGES_IN_THREADS. Never request
@@ -3397,6 +3401,41 @@ def discord_bot_install_url(account: ChannelAccount) -> str | None:
     )
 
 
+def discord_user_install_url(account: ChannelAccount) -> str | None:
+    if account.provider != CHANNEL_PROVIDER_DISCORD:
+        return None
+    application_id = _account_config_str(account, "application_id")
+    if application_id is None or not valid_discord_application_id(application_id):
+        return None
+    # USER_INSTALL supports applications.commands without the bot scope or
+    # guild bot permissions. The application owner must enable User Install in
+    # Discord's Installation settings for this authorize URL to succeed.
+    # https://discord.com/developers/docs/topics/oauth2#authorization-code-grant-authorization-url-example
+    return (
+        "https://discord.com/oauth2/authorize"
+        f"?client_id={application_id}"
+        "&integration_type=1"
+        "&scope=applications.commands"
+    )
+
+
+def discord_reserved_commands_are_current(account: ChannelAccount) -> bool:
+    if not isinstance(account.config, dict):
+        return False
+    version = account.config.get(DISCORD_RESERVED_COMMAND_VERSION_CONFIG_KEY)
+    return (
+        isinstance(version, int)
+        and not isinstance(version, bool)
+        and version == DISCORD_RESERVED_COMMAND_VERSION
+    )
+
+
+def mark_discord_reserved_commands_current(account: ChannelAccount) -> None:
+    config = dict(account.config) if isinstance(account.config, dict) else {}
+    config[DISCORD_RESERVED_COMMAND_VERSION_CONFIG_KEY] = DISCORD_RESERVED_COMMAND_VERSION
+    account.config = config
+
+
 async def _discord_application_request(
     *,
     method: str,
@@ -4941,22 +4980,27 @@ def _discord_command_payload(
         # Discord's provider-specific default keeps Telegram's command payload
         # byte-for-byte unchanged. Server-side interaction checks remain the
         # authority; this only makes Discord hide the commands by default from
-        # members without MANAGE_GUILD.
+        # guild members without MANAGE_GUILD.
         payload["default_member_permissions"] = str(DISCORD_MANAGE_GUILD_PERMISSION)
         payload["description"] = (
-            "Pair this server with Clawdi."
+            "Pair this server or direct message with Clawdi."
             if name == DISCORD_PAIR_COMMAND_NAME
-            else "Disconnect this server from Clawdi."
+            else "Disconnect this server or direct message from Clawdi."
         )
         if global_command:
-            # Clawdi does not verify that the application supports Discord User
-            # Install, so reserved commands must remain server-only. Contexts
-            # are global-command fields and are intentionally omitted from
-            # guild-scoped writes.
+            # The configured Discord application supports both Guild Install
+            # and User Install. BOT_DM is the user-installed app DM context;
+            # PRIVATE_CHANNEL is intentionally excluded because pairing does
+            # not need user-installed commands in other users' DMs.
+            # These are global-command fields and are intentionally omitted
+            # from guild-scoped writes.
             # https://discord.com/developers/docs/resources/application#application-object-application-integration-types
             # https://discord.com/developers/docs/interactions/receiving-and-responding#interaction-object-interaction-context-types
-            payload["integration_types"] = [DISCORD_GUILD_INSTALL]
-            payload["contexts"] = [DISCORD_GUILD_INTERACTION_CONTEXT]
+            payload["integration_types"] = [DISCORD_GUILD_INSTALL, DISCORD_USER_INSTALL]
+            payload["contexts"] = [
+                DISCORD_GUILD_INTERACTION_CONTEXT,
+                DISCORD_BOT_DM_INTERACTION_CONTEXT,
+            ]
     options = command.get("options")
     if isinstance(options, list):
         payload["options"] = [option for option in options if isinstance(option, dict)]

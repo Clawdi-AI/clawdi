@@ -220,6 +220,7 @@ export function useCreatePairCode(
 				deep_link: result.deep_link,
 				qr_payload: result.qr_payload,
 				discord_install_url: result.discord_install_url,
+				discord_user_install_url: result.discord_user_install_url,
 			};
 		} catch (error) {
 			if (toastOnError) toastApiError("Couldn't create pairing code")(error);

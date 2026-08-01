@@ -365,6 +365,10 @@ describe("channel commands", () => {
 							code: "PAIRDISCORD123",
 							expires_at: new Date().toISOString(),
 							pairing_command: "/clawdi_pair PAIRDISCORD123",
+							discord_install_url:
+								"https://discord.com/oauth2/authorize?client_id=123456789012345678&permissions=274878024768&scope=bot%20applications.commands",
+							discord_user_install_url:
+								"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
 						},
 						201,
 					),

@@ -403,6 +403,8 @@ outputs:
 							code: "PAIRDISCORD123",
 							expires_at: "2026-06-08T00:10:00Z",
 							pairing_command: "/clawdi_pair PAIRDISCORD123",
+							discord_user_install_url:
+								"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
 						},
 						201,
 					),

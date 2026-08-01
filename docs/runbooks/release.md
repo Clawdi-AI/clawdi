@@ -118,15 +118,18 @@ releases.
 
 ### Discord reserved-command cutover
 
-After deploying the release that renames Discord's reserved commands, run one
-controlled default command sync for every active Discord channel account. The
-sync uses Discord's bulk-overwrite endpoint, so it removes the old
-`bot_pair`/`bot_unpair` commands while installing only `clawdi_pair` and
-`clawdi_unpair`. Do not run this before the matching backend is deployed.
-The normal default-command scope is global. If an operator previously passed a
-`guild_id` to this endpoint, repeat the controlled sync for every such guild by
-sending `{"guild_id":"<discord-guild-id>"}`; bulk overwrite reconciles each
-Discord command scope independently.
+The pair-code endpoint owns the safe cutover. Before it can return instructions
+that mention `/clawdi_pair`, it checks a persisted reserved-command version and
+bulk-overwrites stale global commands with only `clawdi_pair` and
+`clawdi_unpair`. For an existing account with a configured legacy `guild_id`,
+the same request also reconciles that known guild scope. If Discord rejects or
+cannot complete either write, the endpoint returns an error without creating a
+pair code. This prevents the pairing UI from getting ahead of the registered
+commands during rollout.
+
+No operator sync is required before users can pair. To reconcile accounts
+proactively after deploying the matching backend, an operator may run the
+default command sync below. Do not run it before the backend is deployed.
 
 ```bash
 CHANNEL_API_URL='https://api.example.test'
@@ -141,6 +144,11 @@ curl -sS -X POST \
 
 Done: the command exits 0 for each account and the response contains exactly
 the two `clawdi_*` command names.
+
+Discord scopes are independent. If an operator previously used an explicit
+`guild_id` that is not the account's configured guild, that scope is not
+discoverable from account state and should be reconciled separately with
+`{"guild_id":"<discord-guild-id>"}` during the controlled cleanup.
 
 3. For CLI releases, verify npm after the workflow succeeds:
 

@@ -8392,6 +8392,8 @@ test("Telegram and Discord pairing acknowledge one newly active binding at 320px
 					pairing_command: "/clawdi_pair DISCORDSUCCESS123",
 					discord_install_url:
 						"https://discord.com/oauth2/authorize?client_id=123&scope=bot&permissions=274878024768",
+					discord_user_install_url:
+						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
 				},
 			},
 			telegramPairResponse,
@@ -8896,6 +8898,8 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 					pairing_command: "/bot_pair DISCORDLEGACY123",
 					discord_install_url:
 						"https://discord.com/oauth2/authorize?client_id=123456789012345678&permissions=274878024768&scope=bot%20applications.commands",
+					discord_user_install_url:
+						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
 				},
 			},
 			{
@@ -8909,6 +8913,8 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 					pairing_command: "/clawdi_pair DISCORDPAIR123",
 					discord_install_url:
 						"https://discord.com/oauth2/authorize?client_id=123456789012345678&permissions=274878024768&scope=bot%20applications.commands",
+					discord_user_install_url:
+						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
 				},
 			},
 			{
@@ -8922,6 +8928,8 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 					pairing_command: "/clawdi_pair DISCORDEXPIRED123",
 					discord_install_url:
 						"https://discord.com/oauth2/authorize?client_id=123456789012345678&permissions=274878024768&scope=bot%20applications.commands",
+					discord_user_install_url:
+						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
 				},
 			},
 			{
@@ -8934,6 +8942,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 					expires_at: validExpiry,
 					pairing_command: "/clawdi_pair DISCORDNEW123",
 					discord_install_url: null,
+					discord_user_install_url: null,
 				},
 			},
 		],
@@ -9493,15 +9502,18 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	await page.setViewportSize({ width: 1440, height: 1100 });
 	discordPairDialog = page.getByRole("dialog", { name: "Pair Discord" });
 	await expect(
-		discordPairDialog.getByText("Add the bot to a server, then pair that server.", {
+		discordPairDialog.getByText("Choose a server or direct message to pair.", {
 			exact: true,
 		}),
 	).toBeVisible();
 	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
-	await expect(
-		discordPairDialog.getByRole("tab", { name: "Direct message", exact: true }),
-	).toHaveCount(0);
-	await expect(discordPairDialog.locator('[data-discord-pair-path="dm"]')).toHaveCount(0);
+	const discordServerTab = discordPairDialog.getByRole("tab", { name: "Server", exact: true });
+	const discordDmTab = discordPairDialog.getByRole("tab", {
+		name: "Direct message",
+		exact: true,
+	});
+	await expect(discordServerTab).toHaveAttribute("aria-selected", "true");
+	await expect(discordDmTab).toBeEnabled();
 	await expect(discordPairDialog.getByText("DISCORDPAIR123", { exact: true })).toBeVisible();
 	const discordQr = discordPairDialog.getByRole("img", { name: "Discord server install QR code" });
 	await expect(discordQr).toBeVisible();
@@ -9517,6 +9529,37 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 		"href",
 		/permissions=274878024768/,
 	);
+	await discordDmTab.click();
+	await expect(discordPairDialog.locator('[data-discord-pair-path="dm"]')).toBeVisible();
+	const discordUserInstallQr = discordPairDialog.getByRole("img", {
+		name: "Discord User Install QR code",
+	});
+	await expect(discordUserInstallQr).toBeVisible();
+	await expect(
+		discordPairDialog.getByText("1. Install the app and choose Add to my apps in Discord.", {
+			exact: true,
+		}),
+	).toBeVisible();
+	await expect(
+		discordPairDialog.getByText("2. Open the app from Discord Direct Messages.", {
+			exact: true,
+		}),
+	).toBeVisible();
+	await expect(
+		discordPairDialog.getByText(/ask the bot owner to enable User Install/),
+	).toBeVisible();
+	const addDiscordToMyApps = discordPairDialog.getByRole("button", {
+		name: "Add to my apps",
+		exact: true,
+	});
+	await expect(addDiscordToMyApps).toHaveAttribute("href", /integration_type=1/);
+	await expect(addDiscordToMyApps).toHaveAttribute("href", /scope=applications\.commands/);
+	await expect(addDiscordToMyApps).not.toHaveAttribute("href", /permissions=/);
+	await expect(discordPairDialog.locator('a[href^="discord:"]')).toHaveCount(0);
+	await discordPairDialog.screenshot({
+		path: testInfo.outputPath("agent-discord-user-install-desktop.png"),
+	});
+	await discordServerTab.click();
 	await expectActionCenterUncovered(copyDiscordCodeButton);
 	await expectActionCenterUncovered(
 		discordPairDialog.getByRole("button", { name: "Add to server" }),
@@ -9529,10 +9572,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	await page.setViewportSize({ width: 320, height: 568 });
 	await expectNoHorizontalOverflow(page.locator("html"), "Discord pairing document at 320px");
 	await expectNoHorizontalOverflow(discordPairDialog, "Discord pairing Dialog at 320px");
-	await expect(
-		discordPairDialog.getByRole("tab", { name: "Direct message", exact: true }),
-	).toHaveCount(0);
-	await expect(discordPairDialog.locator('[data-discord-pair-path="dm"]')).toHaveCount(0);
+	await expect(discordDmTab).toBeEnabled();
 	const mobileDiscordQrBox = await discordQr.boundingBox();
 	expect(mobileDiscordQrBox?.width ?? 0).toBeLessThanOrEqual(192);
 	const mobileDiscordDialogBox = await discordPairDialog.boundingBox();
@@ -9566,6 +9606,30 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	await expectActionCenterUncovered(
 		discordPairDialog.getByRole("button", { name: "Add to server" }),
 	);
+	await discordDmTab.click();
+	await expect(discordUserInstallQr).toBeVisible();
+	await expectNoHorizontalOverflow(discordPairDialog, "Discord User Install Dialog at 320px");
+	const mobileDiscordUserQrBox = await discordUserInstallQr.boundingBox();
+	expect(mobileDiscordUserQrBox?.width ?? 0).toBeLessThanOrEqual(192);
+	const mobileAddDiscordToMyApps = discordPairDialog.getByRole("button", {
+		name: "Add to my apps",
+		exact: true,
+	});
+	await expectContainedInOwnerAndViewport(
+		page,
+		mobileAddDiscordToMyApps,
+		discordPairDialog,
+		"mobile Add Discord to my apps",
+	);
+	await expectControlsDoNotOverlap(
+		[copyDiscordCodeButton, mobileAddDiscordToMyApps],
+		"mobile Discord DM pairing actions",
+	);
+	await expectActionCenterUncovered(mobileAddDiscordToMyApps);
+	await discordPairDialog.screenshot({
+		path: testInfo.outputPath("agent-discord-user-install-320x568.png"),
+	});
+	await discordServerTab.click();
 	await discordPairDialog.screenshot({
 		path: testInfo.outputPath("agent-discord-pair-code-320x568.png"),
 	});
@@ -9609,13 +9673,30 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 		discordPairDialog.getByRole("img", { name: "Discord server install QR code" }),
 	).toHaveCount(0);
 	await expect(discordPairDialog.getByRole("button", { name: "Add to server" })).toHaveCount(0);
+	const unavailableDiscordDmTab = discordPairDialog.getByRole("tab", {
+		name: "Direct message",
+		exact: true,
+	});
+	await expect(unavailableDiscordDmTab).toBeDisabled();
 	await expect(
-		discordPairDialog.getByRole("tab", { name: "Direct message", exact: true }),
-	).toHaveCount(0);
+		discordPairDialog.getByText("Direct message pairing unavailable", { exact: true }),
+	).toBeVisible();
+	await expect(discordPairDialog.getByText(/Use Server pairing/)).toBeVisible();
+	await expect(discordPairDialog.getByText(/enable Discord User Install/)).toBeVisible();
 	await expect(discordPairDialog.locator('[data-discord-pair-path="dm"]')).toHaveCount(0);
+	await page.setViewportSize({ width: 320, height: 568 });
+	await expectNoHorizontalOverflow(discordPairDialog, "Discord no-User-Install Dialog at 320px");
+	await expectContainedInOwnerAndViewport(
+		page,
+		discordPairDialog.getByRole("button", { name: "Copy code", exact: true }),
+		discordPairDialog,
+		"mobile Discord fallback Copy code",
+	);
+	await discordPairDialog.screenshot({
+		path: testInfo.outputPath("agent-discord-user-install-unavailable-320x568.png"),
+	});
 	await page.keyboard.press("Escape");
 
-	await page.setViewportSize({ width: 320, height: 568 });
 	await telegramChatsTrigger.click();
 	pairedChatsPanel = page.getByRole("dialog", { name: "Paired chats", exact: true });
 	await expect(currentBindingRow).toBeVisible();
