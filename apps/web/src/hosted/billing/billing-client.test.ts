@@ -8,6 +8,7 @@ import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
 import type { DeploymentOperation } from "@/hosted/billing/contracts";
 import {
 	BillingApiError,
+	BillingNetworkError,
 	DEPLOYMENT_CONFLICT_MESSAGE,
 	DeploymentConflictError,
 	DeploymentRequestTerminalError,
@@ -254,6 +255,12 @@ describe("declarative deployment mutations", () => {
 			if (path === `/v2/deployments/by-request/${intentKey}`) {
 				requestStatusReads += 1;
 				if (requestStatusReads === 1) {
+					return jsonResponse({ detail: "Deploy request not visible yet" }, 404);
+				}
+				if (requestStatusReads === 2) {
+					return jsonResponse({ detail: "Temporary gateway failure" }, 503);
+				}
+				if (requestStatusReads === 3) {
 					return jsonResponse({
 						deploy_request_id: intentKey,
 						request_status: "ready",
@@ -313,7 +320,36 @@ describe("declarative deployment mutations", () => {
 			"/v2/subscription/checkout",
 			`/v2/deployments/by-request/${intentKey}`,
 			`/v2/deployments/by-request/${intentKey}`,
+			`/v2/deployments/by-request/${intentKey}`,
+			`/v2/deployments/by-request/${intentKey}`,
 		]);
+	});
+
+	it("bounds an initial by-request not-found race", async () => {
+		const requests: Request[] = [];
+		const deployRequestId = "checkout/race:stable";
+		let sleeps = 0;
+		const client = createBillingClient(async () => "test-token", {
+			fetch: async (request) => {
+				requests.push(request.clone());
+				return jsonResponse({ detail: "Deploy request not visible yet" }, 404);
+			},
+			operationPollLimit: 2,
+			sleep: async () => {
+				sleeps += 1;
+			},
+		});
+
+		await expect(client.waitForDeploymentRequest(deployRequestId)).rejects.toBeInstanceOf(
+			BillingNetworkError,
+		);
+		expect(requests.map((request) => new URL(request.url).pathname)).toEqual(
+			Array.from(
+				{ length: 3 },
+				() => `/v2/deployments/by-request/${encodeURIComponent(deployRequestId)}`,
+			),
+		);
+		expect(sleeps).toBe(2);
 	});
 
 	it("surfaces a checkout deployment request that fails before acceptance", async () => {

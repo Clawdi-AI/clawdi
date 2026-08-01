@@ -36,6 +36,7 @@ import {
 	BillingNetworkError,
 	DeploymentConflictError,
 	DeploymentRequestTerminalError,
+	isRetryableError,
 	PlanChangePendingError,
 	PlanChangeTerminalError,
 } from "@/hosted/billing/errors";
@@ -164,6 +165,14 @@ function terminalDeployRequestError(status: HostedDeployRequestStatus): BillingA
 			? "This agent creation was superseded by a newer attempt."
 			: "The agent could not be created.",
 		status,
+	);
+}
+
+function isTransientDeployRequestRead(error: unknown): boolean {
+	return (
+		isRetryableError(error) ||
+		(error instanceof BillingApiError &&
+			(error.status === 404 || error.status === 408 || error.status === 425))
 	);
 }
 
@@ -319,8 +328,18 @@ export function createBillingClient(
 		);
 
 	const waitForDeploymentRequest = async (deployRequestId: string) => {
+		let lastTransientError: unknown;
 		for (let poll = 0; poll <= pollLimit; poll += 1) {
-			const status = await getDeploymentByRequest(deployRequestId);
+			let status: HostedDeployRequestStatus;
+			try {
+				status = await getDeploymentByRequest(deployRequestId);
+			} catch (error) {
+				if (!isTransientDeployRequestRead(error)) throw error;
+				lastTransientError = error;
+				if (poll === pollLimit) break;
+				await sleep(pollIntervalMs);
+				continue;
+			}
 			const projection = projectHostedDeployRequest(status);
 			if (projection.kind === "terminal") {
 				throw terminalDeployRequestError(status);
@@ -346,10 +365,11 @@ export function createBillingClient(
 			if (projection.kind === "invalid_success") {
 				return acceptDeclarativeOperation({ deploymentId: null, operation: null });
 			}
+			lastTransientError = undefined;
 			if (poll === pollLimit) break;
 			await sleep(pollIntervalMs);
 		}
-		throw new BillingNetworkError("timeout");
+		throw new BillingNetworkError("timeout", { cause: lastTransientError });
 	};
 
 	const acceptDeploymentMutation = async (

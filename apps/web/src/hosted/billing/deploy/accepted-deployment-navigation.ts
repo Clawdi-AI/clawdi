@@ -8,6 +8,10 @@ export type AcceptedDeploymentNavigate = (options: {
 	replace: boolean;
 }) => void | Promise<void>;
 
+type AcceptedDeploymentRequestResolver = (
+	deployRequestId: string,
+) => Promise<{ deploymentId: string }>;
+
 function upsertAuthoritativeDeployment(
 	deployments: readonly HostedDeployment[] | undefined,
 	authoritative: HostedDeployment,
@@ -54,4 +58,17 @@ export async function navigateToAcceptedDeployment({
 		href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
 		replace,
 	});
+}
+
+/** Resolve the durable checkout lineage, then reuse the canonical deployment handoff. */
+export async function navigateToAcceptedDeploymentRequest({
+	deployRequestId,
+	resolveDeploymentRequest,
+	...navigation
+}: Omit<Parameters<typeof navigateToAcceptedDeployment>[0], "deploymentId"> & {
+	deployRequestId: string;
+	resolveDeploymentRequest: AcceptedDeploymentRequestResolver;
+}): Promise<void> {
+	const { deploymentId } = await resolveDeploymentRequest(deployRequestId);
+	await navigateToAcceptedDeployment({ ...navigation, deploymentId });
 }

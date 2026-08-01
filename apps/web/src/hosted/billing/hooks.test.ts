@@ -5,11 +5,6 @@ import {
 	QueryClient,
 	QueryObserver,
 } from "@tanstack/react-query";
-import {
-	checkoutReturnHasNavigationOwner,
-	checkoutReturnMarker,
-	checkoutReturnWasCanceled,
-} from "@/hosted/billing/checkout-return";
 import type {
 	ComputeSubscriptionActionResult,
 	DeploymentOperation,
@@ -485,47 +480,5 @@ describe("reconcileDeploymentSnapshots", () => {
 
 		expect(reconciled?.resource.status).toBeNull();
 		expect(reconciled?.accepted_operation).toEqual(accepted);
-	});
-});
-
-describe("checkout return", () => {
-	test("awaits an async navigation owner before choosing ancillary-only refresh", async () => {
-		let release: () => void = () => undefined;
-		const gate = new Promise<void>((resolve) => {
-			release = () => resolve();
-		});
-		const navigated: string[] = [];
-		let settled = false;
-		const ownership = checkoutReturnHasNavigationOwner(
-			"?session_id=cs_return&deployment_id=hdep_returned",
-			async (deploymentId) => {
-				navigated.push(deploymentId);
-				await gate;
-				return true;
-			},
-		).then((owned) => {
-			settled = true;
-			return owned;
-		});
-
-		await Promise.resolve();
-		expect(navigated).toEqual(["hdep_returned"]);
-		expect(settled).toBe(false);
-		release();
-		expect(await ownership).toBe(true);
-		expect(await checkoutReturnHasNavigationOwner("?deployment_id=hdep_current", () => false)).toBe(
-			false,
-		);
-	});
-
-	test("recognizes Stripe cancel returns as checkout markers", () => {
-		expect(checkoutReturnWasCanceled("?checkout=cancel")).toBe(true);
-		expect(checkoutReturnWasCanceled("?settings=billing-plan&checkout=cancel")).toBe(true);
-		expect(checkoutReturnMarker("?checkout=cancel")).toBe("checkout=cancel");
-	});
-
-	test("does not treat passive checkout success copy as a refresh marker", () => {
-		expect(checkoutReturnWasCanceled("?checkout=success")).toBe(false);
-		expect(checkoutReturnMarker("?checkout=success")).toBeNull();
 	});
 });

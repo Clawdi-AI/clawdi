@@ -102,7 +102,10 @@ import {
 } from "@/hosted/agents/runtime-ui-credentials";
 import { trackRuntimeWindow } from "@/hosted/agents/runtime-window-lifecycle";
 import { useBillingClient } from "@/hosted/billing/billing-client";
-import { useCheckoutReturnHandler } from "@/hosted/billing/checkout-return";
+import {
+	type CheckoutReturnNavigationTarget,
+	useCheckoutReturnHandler,
+} from "@/hosted/billing/checkout-return";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
 import type {
 	ComputePlanChangeQuoteRequest,
@@ -3113,7 +3116,9 @@ function ComputeSettingsSections({
 	const queryClient = useQueryClient();
 	const billingClient = useBillingClient();
 	const navigateCheckoutReturn = useCallback(
-		async (checkoutDeploymentId: string): Promise<boolean> => {
+		async (target: CheckoutReturnNavigationTarget): Promise<boolean> => {
+			if (target.kind !== "deployment") return false;
+			const checkoutDeploymentId = target.deploymentId;
 			if (checkoutDeploymentId === deployment.resource.id) return false;
 			const hydrateAndNavigate = async () => {
 				try {
