@@ -2392,13 +2392,8 @@ async def revoke_whatsapp_agent_credential(
     return True
 
 
-def whatsapp_agent_websocket_url(account_id: UUID | str | None = None) -> str:
-    path = (
-        f"/v1/channels/whatsapp/{account_id}/baileys"
-        if account_id is not None
-        else "/v1/channels/whatsapp/baileys"
-    )
-    return _public_ws_url(path)
+def whatsapp_agent_websocket_url() -> str:
+    return _public_ws_url("/v1/channels/whatsapp/baileys")
 
 
 def whatsapp_media_proxy_base_url() -> str:

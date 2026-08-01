@@ -646,7 +646,6 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             "match": {
                 "scheme": "wss",
                 "host": "web.whatsapp.com",
-                "path": {"type": "equals", "value": "/ws/chat"},
                 "headers": {capability_header: {"type": "exists"}},
             },
             "logging": {
@@ -726,6 +725,18 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             self.assertEqual(decision.action, "deny")
             self.assertEqual(stale.request.host, "web.whatsapp.com")
             self.assertIsNotNone(stale.response)
+
+        misplaced = Flow(
+            scheme="https",
+            host="web.whatsapp.com",
+            path="/not-the-baileys-endpoint",
+            headers={
+                "Upgrade": "websocket",
+                capability_header: "capability-generation-2",
+            },
+        )
+        self.assertEqual(egress.apply_to_flow(misplaced).action, "deny")
+        self.assertIsNotNone(misplaced.response)
 
         expired_profile = {
             **valid_profile,

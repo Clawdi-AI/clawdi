@@ -12541,9 +12541,7 @@ exit 64
 		const hermesConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(hermesConfig).not.toContain("whatsapp:");
 		expect(hermesConfig).not.toContain(`session_path: ${sessionDir}`);
-		expect(hermesConfig).not.toContain(
-			"/v1/channels/whatsapp/00000000-0000-0000-0000-000000000001/baileys",
-		);
+		expect(hermesConfig).not.toContain("/v1/channels/whatsapp/baileys");
 		expect(hermesConfig).not.toContain("wa-hermes-secret");
 
 		const runConfig = JSON.parse(
@@ -12969,7 +12967,7 @@ exit 64
 								accounts: {
 									[accountKey]: {
 										enabled: true,
-										wsUrl: `wss://cloud-api.test/v1/channels/whatsapp/${accountId}/baileys`,
+										wsUrl: "wss://cloud-api.test/v1/channels/whatsapp/baileys",
 										token: "wa-runtime-agent-token",
 										authDir,
 									},
@@ -13150,7 +13148,7 @@ exit 64
 							accounts: {
 								[accountKey]: {
 									enabled: true,
-									wsUrl: "wss://cloud-api.test/v1/channels/whatsapp/account/baileys",
+									wsUrl: "wss://cloud-api.test/v1/channels/whatsapp/baileys",
 									token: "wa-runtime-agent-token",
 									authDir,
 								},

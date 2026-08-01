@@ -340,7 +340,7 @@ It should write the Baileys auth state into the requested credential directory
 with private permissions and emit:
 
 ```dotenv
-WA_WEBSOCKET_URL=wss://channels.example.test/v1/channels/whatsapp/<account-id>/baileys
+WA_WEBSOCKET_URL=wss://channels.example.test/v1/channels/whatsapp/baileys
 CLAWDI_WHATSAPP_AUTH_DIR=.clawdi/whatsapp/default
 ```
 

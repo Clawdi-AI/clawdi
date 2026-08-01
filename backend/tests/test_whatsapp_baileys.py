@@ -1468,7 +1468,8 @@ async def test_whatsapp_tenant_creds_route_persists_auth_cert(
     assert len(first_body["identity_pub_key_hex"]) == 64
     assert first_body["creds"]["noiseKey"]["public"]["type"] == "Buffer"
     assert first_body["auth_cert"]["ISSUER"] == "clawdi"
-    assert first_body["websocket_url"].endswith(f"/v1/channels/whatsapp/{created['id']}/baileys")
+    assert first_body["websocket_url"].endswith("/v1/channels/whatsapp/baileys")
+    assert created["id"] not in first_body["websocket_url"]
     assert second_body["auth_cert"] == first_body["auth_cert"]
 
 

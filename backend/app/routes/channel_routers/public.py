@@ -252,7 +252,7 @@ async def _runtime_credentials_response(
     material: dict[str, Any] = {
         "schemaVersion": "clawdi.whatsappBaileysAuthState.v1",
         "creds": encode_buffer_json(creds),
-        "websocketUrl": whatsapp_agent_websocket_url(account.id),
+        "websocketUrl": whatsapp_agent_websocket_url(),
         "mediaProxyBaseUrl": whatsapp_media_proxy_base_url(),
     }
     if auth_cert is not None:

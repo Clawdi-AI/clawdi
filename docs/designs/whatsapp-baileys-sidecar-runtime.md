@@ -11,6 +11,11 @@ inspected TLS for `web.whatsapp.com`: an unmarked user-owned connection remains
 request-level passthrough to the official upstream, but is not byte-for-byte or
 TLS untouched while such a profile is installed. All readiness gates remain
 false, so production runtime projection installs no such profile or marker.
+The profile `notAfter` value gates new websocket upgrades only. Once a managed
+session exists, the backend independently revalidates its original Link bearer
+authority on every client frame and before inbox delivery or acknowledgement.
+A rotated or archived Link therefore closes with policy violation at the next
+client frame or inbox-pump boundary; this is not an idle-session revocation push.
 
 Status: superseded; retained as historical protocol-runtime context
 Date: 2026-06-07

@@ -19,7 +19,7 @@ const capabilitySecretRef = (link: string) =>
 	`secret://channels/whatsapp/account/links/${link}/egress-capability`;
 
 describe("native WhatsApp egress contract", () => {
-	it("routes only an exact per-Link capability and denies stale managed markers", () => {
+	it("gates new upgrades on an exact per-Link capability and denies stale markers", () => {
 		const profiles = buildManagedWhatsAppEgressProfiles({
 			cloudApiUrl: "https://cloud-api.test/base?ignored=true",
 			links: ["link-a", "link-b"].map((linkId) => ({
@@ -68,6 +68,7 @@ describe("native WhatsApp egress contract", () => {
 				},
 			},
 		});
+		expect(profiles.at(-1)?.match.path).toBeUndefined();
 	});
 
 	it("keeps every release, linking, runtime, and drill gate disabled", () => {

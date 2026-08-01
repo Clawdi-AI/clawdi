@@ -10,6 +10,8 @@ export interface ManagedWhatsAppEgressLink {
 	agentTokenSecretRef: string;
 	// This marker only selects one local profile; it is not backend authentication.
 	capabilitySecretRef: string;
+	// This bounds new websocket upgrades only. Established-session revocation is
+	// enforced independently by the backend Link bearer authority checks.
 	capabilityExpiresAt: string;
 }
 
@@ -72,7 +74,6 @@ export function buildManagedWhatsAppEgressProfiles(input: {
 		match: {
 			scheme: "wss",
 			host: "web.whatsapp.com",
-			path: { type: "equals", value: "/ws/chat" },
 			headers: {
 				[CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER]: { type: "exists" },
 			},
@@ -84,7 +85,7 @@ export function buildManagedWhatsAppEgressProfiles(input: {
 		},
 		priority: 49,
 		owner: "clawdi-native-whatsapp",
-		description: "Fail closed when a managed WhatsApp capability is stale or invalid.",
+		description: "Fail closed when a managed WhatsApp capability is misplaced, stale, or invalid.",
 	});
 	return profiles;
 }
