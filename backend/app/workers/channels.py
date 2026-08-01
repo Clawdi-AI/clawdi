@@ -12,6 +12,9 @@ from app.services.ai_provider_oauth_revoke_worker import AiProviderOAuthRevokeWo
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_message_retention_worker import ChannelMessageRetentionWorker
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
+from app.services.discord_command_reconciliation_worker import (
+    DiscordCommandReconciliationWorker,
+)
 from app.services.discord_gateway_worker import DiscordGatewayWorker
 from app.services.runtime_observation_retention_worker import RuntimeObservationRetentionWorker
 
@@ -114,6 +117,7 @@ def build_channel_workers() -> tuple[
     AiProviderOAuthRevokeWorker,
     ChannelDeliveryWorker,
     ChannelWebhookDeliveryWorker,
+    DiscordCommandReconciliationWorker,
     DiscordGatewayWorker,
     ChannelMessageRetentionWorker,
     RuntimeObservationRetentionWorker,
@@ -127,6 +131,7 @@ def build_channel_workers() -> tuple[
         AiProviderOAuthRevokeWorker(async_session_factory),
         ChannelDeliveryWorker(async_session_factory),
         ChannelWebhookDeliveryWorker(async_session_factory),
+        DiscordCommandReconciliationWorker(async_session_factory),
         DiscordGatewayWorker(async_session_factory, lock_engine=engine),
         ChannelMessageRetentionWorker(async_session_factory),
         RuntimeObservationRetentionWorker(async_session_factory),

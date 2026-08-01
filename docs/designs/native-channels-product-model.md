@@ -201,17 +201,54 @@ Pair flow:
    external actor id.
 8. The provider adapter sends a best-effort visible reply to the same external
    chat, such as `Paired! This chat is now connected to your agent.`.
-9. If the provider has persistent bot command menus, the adapter replays the
+9. If the provider has persistent bot command menus, the adapter reconciles the
    link's stored broad-scope command state onto the newly paired chat. Telegram
-   replays broad `setMyCommands` scopes to a per-chat scope. Discord replays
-   stored global application commands to the newly paired guild when the guild
-   is uncontested.
+   replays broad `setMyCommands` scopes to a per-chat scope. Discord stores the
+   Link shadow as desired state and materializes it only into uncontested Guild
+   bindings. A per-Guild fingerprint is written only after Discord accepts the
+   idempotent bulk overwrite; the channel worker retries missing or stale
+   fingerprints after transient failures and after the bot joins later.
 
 The visible reply is not part of the database transaction that claims the pair
 code. If the provider send fails, the claimed binding remains valid and the
 webhook still succeeds. This prevents a transient provider outage from rolling
-back a pairing operation that was already accepted by Clawdi. Command replay is
-also best-effort and must not roll back the binding.
+back a pairing operation that was already accepted by Clawdi. Discord command
+materialization does not roll back the binding, but it is not silent best
+effort: failed desired state remains pending for durable worker reconciliation
+and is not returned to the Agent as materialized state.
+
+Discord pairing claims fail closed on Discord-signed HTTP interactions or the
+backend's Discord Gateway `INTERACTION_CREATE` ingress. A server pair requires
+interaction context `0`, `authorizing_integration_owners["0"]` equal to the
+interaction `guild_id`, sufficient member permissions, and a successful
+bot-authenticated `GET /guilds/{guild_id}` membership check before the code is
+claimed. A direct-message pair requires interaction context `1` and
+`authorizing_integration_owners["1"]` equal to the invoking user. Context `2`
+(`PRIVATE_CHANNEL`), message-shaped payloads, and webhook-secret-only requests
+cannot claim pair codes.
+
+Normal unpair follows the same context and installation-owner checks; a Guild
+unpair with a valid owner also requires current Manage Server authority. If
+Discord has removed the required owner key after uninstall, a cleanup-only
+fallback is allowed for a verified application-command interaction only when
+an active binding exactly matches the scope and the invoker is the original
+pairing actor. That fallback does not require current Manage Server permission
+or bot membership. A present-but-mismatched owner never falls back.
+
+Agent-defined Discord commands are Guild-only. Discord's global User Install
+command namespace belongs to the shared application, so per-Link command menus
+cannot be safely materialized in DMs. User Install DMs support Clawdi's
+account-global reserved pair/unpair commands and routed messages only.
+
+The managed server install requests only Add Reactions, View Channels, Send
+Messages, Embed Links, Attach Files, Read Message History, and Send Messages in
+Threads (`274878024768`). Voice, moderation, event, expression, channel, role,
+pin, poll, sticker, and optional thread-tool actions are not granted by
+default. Managed OpenClaw projections explicitly gate those optional action
+surfaces; ordinary replies in existing threads continue through normal message
+sending. Managed Hermes projections leave user allowlists empty instead of
+writing a `"*"` username, so they do not accidentally request Server Members
+intent while preserving the adapter's documented allow-everyone behavior.
 
 Unpair flow:
 

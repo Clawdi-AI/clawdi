@@ -10,6 +10,7 @@ import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.lo
 import {
 	pairCodeExpired,
 	verifiedDiscordPairingCommand,
+	verifiedDiscordServerInstallUrl,
 	verifiedDiscordUserInstallUrl,
 } from "@/hosted/v2/channels/channel-linking.logic";
 import { usePairingSuccess } from "@/hosted/v2/channels/channel-pairing-success";
@@ -87,12 +88,18 @@ export function DiscordPairDialog({
 				if (pairingCommand === null) {
 					throw new Error("Discord pairing instructions are out of date. Refresh and try again.");
 				}
+				const serverInstallUrl = verifiedDiscordServerInstallUrl(data.discord_install_url);
+				if (serverInstallUrl === null) {
+					throw new Error(
+						"Discord server install settings are out of date. Refresh and try again.",
+					);
+				}
 				setNowMs(Date.now());
 				setResult({
 					code: data.code,
 					expires_at: data.expires_at,
 					pairing_command: pairingCommand,
-					discord_install_url: data.discord_install_url,
+					discord_install_url: serverInstallUrl,
 					discord_user_install_url: verifiedDiscordUserInstallUrl(data.discord_user_install_url),
 				});
 			} catch (error) {
@@ -240,6 +247,10 @@ export function DiscordPairDialog({
 											</div>
 											<CopyablePairingCode value={result.code} label="Discord pair code" />
 										</PairingInstructionPanel>
+										<p className="text-xs text-muted-foreground">
+											The default install grants only Clawdi&apos;s text, attachment, reaction, and
+											thread baseline. Voice and advanced server-management actions are not enabled.
+										</p>
 									</TabsContent>
 
 									{result.discord_user_install_url ? (
@@ -275,6 +286,10 @@ export function DiscordPairDialog({
 												/>
 												<span>in the Discord Developer Portal.</span>
 											</div>
+											<p className="text-xs text-muted-foreground">
+												Agent-defined slash commands are server-only. Direct messages support
+												pairing and message routing, not per-Agent command menus.
+											</p>
 										</TabsContent>
 									) : null}
 								</Tabs>

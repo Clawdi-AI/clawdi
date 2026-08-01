@@ -90,6 +90,9 @@ describe("channel IA boundary", () => {
 		);
 		expect(discordPairDialog).toContain("pairing_command: pairingCommand");
 		expect(discordPairDialog).toContain("discord_user_install_url: verifiedDiscordUserInstallUrl(");
+		expect(discordPairDialog).toContain(
+			"verifiedDiscordServerInstallUrl(data.discord_install_url)",
+		);
 		expect(discordPairDialog).toContain('result.pairing_command.split(" ", 1)[0]');
 		expect(discordPairDialog).toContain('data-discord-pair-path="server"');
 		expect(discordPairDialog).toContain('data-discord-pair-path="dm"');
@@ -103,6 +106,8 @@ describe("channel IA boundary", () => {
 		expect(discordPairDialog).toContain("Use Server pairing");
 		expect(discordPairDialog).toContain("enable User Install");
 		expect(discordPairDialog).toContain("applications.commands");
+		expect(discordPairDialog).toContain("Agent-defined slash commands are server-only");
+		expect(discordPairDialog).toContain("not per-Agent command menus");
 		expect(discordPairDialog).toContain("Manage");
 		expect(discordPairDialog).toContain("Add to server");
 		expect(discordPairDialog).toContain("value={result.discord_install_url}");

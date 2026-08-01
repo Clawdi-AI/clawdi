@@ -6631,7 +6631,27 @@ exit 64
 		).toBeUndefined();
 		expect(projected.manifest.projection?.channels).toMatchObject({
 			telegram: { enabled: true },
-			discord: { enabled: true },
+			discord: {
+				enabled: true,
+				accounts: {
+					clawdi_acctdiscord1: {
+						actions: {
+							stickers: false,
+							polls: false,
+							threads: false,
+							pins: false,
+							roles: false,
+							voiceStatus: false,
+							events: false,
+							moderation: false,
+							emojiUploads: false,
+							stickerUploads: false,
+							channels: false,
+							presence: false,
+						},
+					},
+				},
+			},
 		});
 		expect(JSON.stringify(projected.manifest.projection?.channels ?? {})).not.toContain("whatsapp");
 	});
@@ -12177,6 +12197,9 @@ exit 64
 				"custom_root: keep",
 				"streaming:",
 				"  enabled: false",
+				"discord:",
+				'  allow_from: ["*"]',
+				'  group_allow_from: ["*"]',
 				"display:",
 				"  theme: user-theme",
 				"  platforms:",
@@ -12304,6 +12327,8 @@ exit 64
 		expect(parsedHermesConfig.streaming).toEqual({ enabled: false });
 		expect(parsedHermesConfig.group_sessions_per_user).toBe(false);
 		expect(parsedHermesConfig.thread_sessions_per_user).toBe(false);
+		expect(parsedHermesConfig).not.toHaveProperty("discord.allow_from");
+		expect(parsedHermesConfig).not.toHaveProperty("discord.group_allow_from");
 		expect(parsedHermesConfig).not.toHaveProperty("streaming.transport");
 		expect(parsedHermesConfig).toMatchObject({
 			custom_root: "keep",

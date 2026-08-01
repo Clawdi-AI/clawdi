@@ -3285,8 +3285,6 @@ function hermesManagedChannelsPatch(
 					enabled: true,
 					dm_policy: "open",
 					group_policy: "open",
-					allow_from: ["*"],
-					group_allow_from: ["*"],
 					require_mention: false,
 					thread_require_mention: false,
 					bots_require_inline_mention: false,

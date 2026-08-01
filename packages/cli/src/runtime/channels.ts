@@ -224,6 +224,24 @@ function buildOpenClawChannelsProjection(
 				groupPolicy: "open",
 				allowFrom: ["*"],
 				guilds: { "*": { requireMention: false, users: ["*"] } },
+				// The managed invite grants the text/reaction/attachment baseline only.
+				// OpenClaw groups thread creation/list/reply behind one gate, so disable
+				// that optional tool surface while ordinary replies in existing threads
+				// continue through the normal message send path.
+				actions: {
+					stickers: false,
+					polls: false,
+					threads: false,
+					pins: false,
+					roles: false,
+					voiceStatus: false,
+					events: false,
+					moderation: false,
+					emojiUploads: false,
+					stickerUploads: false,
+					channels: false,
+					presence: false,
+				},
 			};
 			continue;
 		}

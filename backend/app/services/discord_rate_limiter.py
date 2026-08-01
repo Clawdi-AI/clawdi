@@ -1,13 +1,8 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Protocol
-
-
-class HeaderReader(Protocol):
-    def get(self, key: str, default: str | None = None) -> str | None: ...
 
 
 @dataclass
@@ -35,11 +30,19 @@ class DiscordRateLimiter:
         self._global_per_second = global_per_second
         self._global_window_started_at = 0.0
         self._global_count = 0
+        self._global_blocked_until = 0.0
         self._buckets: dict[str, DiscordBucketState] = {}
         self._now = now or time.monotonic
 
     def check(self, method: str, path: str) -> DiscordRateLimitDecision:
         now = self._now()
+        if self._global_blocked_until > now:
+            return DiscordRateLimitDecision(
+                allowed=False,
+                retry_after_seconds=self._global_blocked_until - now,
+                global_limit=True,
+            )
+        self._global_blocked_until = 0.0
         if now - self._global_window_started_at >= 1:
             self._global_window_started_at = now
             self._global_count = 0
@@ -76,7 +79,13 @@ class DiscordRateLimiter:
         if bucket and bucket.reset_at > now and bucket.remaining > 0:
             bucket.remaining -= 1
 
-    def observe(self, method: str, path: str, headers: HeaderReader, status_code: int) -> None:
+    def observe(
+        self,
+        method: str,
+        path: str,
+        headers: Mapping[str, str],
+        status_code: int,
+    ) -> None:
         now = self._now()
         reset_after = _float_header(headers, "x-ratelimit-reset-after")
         retry_after = _float_header(headers, "retry-after")
@@ -86,14 +95,21 @@ class DiscordRateLimiter:
         global_header = (headers.get("x-ratelimit-global") or "").lower() == "true"
 
         if status_code == 429 and global_header:
-            self._global_window_started_at = now
-            self._global_count = self._global_per_second
+            delay = retry_after if retry_after is not None else reset_after
+            if delay is not None:
+                self._global_blocked_until = max(
+                    self._global_blocked_until,
+                    now + max(0.0, delay),
+                )
             return
 
         if status_code == 429:
+            delay = retry_after if retry_after is not None else reset_after
+            if delay is None:
+                return
             self._buckets[self.route_key(method, path)] = DiscordBucketState(
                 remaining=0,
-                reset_at=now + (retry_after or reset_after or 1.0),
+                reset_at=now + max(0.0, delay),
                 limit=limit,
                 bucket_id=bucket_id,
             )
@@ -133,7 +149,7 @@ class DiscordRateLimiter:
         return self._buckets.get(self.route_key(method, path))
 
 
-def _float_header(headers: HeaderReader, key: str) -> float | None:
+def _float_header(headers: Mapping[str, str], key: str) -> float | None:
     raw = headers.get(key)
     if raw is None:
         return None
@@ -143,7 +159,7 @@ def _float_header(headers: HeaderReader, key: str) -> float | None:
         return None
 
 
-def _int_header(headers: HeaderReader, key: str) -> int | None:
+def _int_header(headers: Mapping[str, str], key: str) -> int | None:
     raw = headers.get(key)
     if raw is None:
         return None

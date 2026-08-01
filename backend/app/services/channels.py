@@ -125,16 +125,27 @@ DISCORD_GUILD_INSTALL = 0
 DISCORD_USER_INSTALL = 1
 DISCORD_GUILD_INTERACTION_CONTEXT = 0
 DISCORD_BOT_DM_INTERACTION_CONTEXT = 1
-DISCORD_RESERVED_COMMAND_VERSION = 2
+DISCORD_RESERVED_COMMAND_VERSION = 3
 DISCORD_RESERVED_COMMAND_VERSION_CONFIG_KEY = "discord_reserved_command_version"
-# Discord API docs baseline b2f8adafc037242291b8f875d4cdf3adc4d48bb7.
+DISCORD_INSTALL_CONFIG_VERSION = 1
+DISCORD_INSTALL_CONFIG_VERSION_CONFIG_KEY = "discord_install_config_version"
+DISCORD_USER_INSTALL_SUPPORTED_CONFIG_KEY = "discord_user_install_supported"
+# Discord API docs baseline 07c83a8f1c54accd8e8d13072a5e08d1b1be7ac3.
 # ADD_REACTIONS, VIEW_CHANNEL, SEND_MESSAGES, EMBED_LINKS, ATTACH_FILES,
 # READ_MESSAGE_HISTORY, and SEND_MESSAGES_IN_THREADS. Never request
 # ADMINISTRATOR or MANAGE_GUILD for the bot; pair mutation authority is the
-# invoking member's computed permissions.
+# invoking member's computed permissions. The managed OpenClaw projection
+# disables advanced actions that need excluded role permissions; Gateway
+# intents are a separate capability and never widen the bot role. The default
+# install deliberately excludes CONNECT, SPEAK, MANAGE_MESSAGES, MANAGE_EVENTS,
+# and MANAGE_GUILD_EXPRESSIONS.
 DISCORD_MINIMAL_BOT_PERMISSIONS = 274_878_024_768
 DISCORD_GUILD_PERMISSION_DENIED = "discord_guild_permission_denied"
 DISCORD_GUILD_USE_INTERACTION = "discord_guild_use_interaction"
+DISCORD_GUILD_INSTALL_REQUIRED = "discord_guild_install_required"
+DISCORD_USER_INSTALL_REQUIRED = "discord_user_install_required"
+DISCORD_BOT_GUILD_MEMBERSHIP_REQUIRED = "discord_bot_guild_membership_required"
+DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE = "discord_bot_guild_membership_unavailable"
 DISCORD_DM_CHAT_TYPES = frozenset({"dm", "direct_messages", "group_dm", "private"})
 DELIVERY_LINK_LOCK_CONTENTION_ERROR = "channel agent link is being updated"
 DELIVERY_LINK_LOCK_CONTENTION_MAX_DELAY_SECONDS = 30
@@ -636,7 +647,7 @@ async def bot_agent_link_allows_new_pairing(
                 AgentEnvironment.user_id == user_id,
             )
             .execution_options(populate_existing=True)
-            .with_for_update(of=V2RuntimeEnvironmentFence)
+            .with_for_update(of=(ChannelBotAgentLink, V2RuntimeEnvironmentFence))
         )
     ).one_or_none()
     if row is None:
@@ -1830,10 +1841,10 @@ def discord_guild_command_denied_reason(
     """Require Discord-computed guild permissions for pairing mutations.
 
     Discord interaction ``member.permissions`` is the authoritative computed
-    decimal-string bitfield. MESSAGE_CREATE does not normally include it, so
-    text commands fail closed unless a trusted ingress supplied the same
-    computed field. Discord API docs baseline:
-    b2f8adafc037242291b8f875d4cdf3adc4d48bb7.
+    decimal-string bitfield. The installation admission check separately
+    requires an application-command interaction, so MESSAGE_CREATE cannot
+    manufacture authority by copying this field. Discord API docs baseline:
+    07c83a8f1c54accd8e8d13072a5e08d1b1be7ac3.
     """
     if command is None or command.kind not in {"pair", "unpair"} or guild_id is None:
         return None
@@ -1851,6 +1862,194 @@ def discord_guild_command_denied_reason(
     if permissions & required:
         return None
     return DISCORD_GUILD_PERMISSION_DENIED
+
+
+def discord_pair_install_denied_reason(
+    payload: dict[str, Any],
+    *,
+    command: ChannelPairCommand | None,
+    guild_id: str | None,
+    external_user_id: str | None,
+    trusted_interaction: bool,
+) -> str | None:
+    """Require the Discord installation that owns a pairing mutation.
+
+    ``authorizing_integration_owners`` is Discord's authoritative mapping from
+    installation context to owner. Both pair and unpair require an authentic
+    application-command interaction in the matching context. For backward
+    compatible cleanup after an uninstall, unpair alone may proceed when the
+    required owner key is absent; the binding resolver still requires an exact
+    active scope and the original pairing actor. A present-but-mismatched owner
+    is never accepted.
+    """
+    denied_reason, _cleanup_owner_missing = _discord_pair_install_admission(
+        payload,
+        command=command,
+        guild_id=guild_id,
+        external_user_id=external_user_id,
+        trusted_interaction=trusted_interaction,
+    )
+    return denied_reason
+
+
+def _discord_pair_install_admission(
+    payload: dict[str, Any],
+    *,
+    command: ChannelPairCommand | None,
+    guild_id: str | None,
+    external_user_id: str | None,
+    trusted_interaction: bool,
+) -> tuple[str | None, bool]:
+    if command is None or command.kind not in {"pair", "unpair"}:
+        return None, False
+    data = _discord_event_data(payload)
+    interaction_type = data.get("type")
+    interaction_data = data.get("data")
+    is_http_interaction = data is payload
+    is_gateway_interaction = payload.get("t") == "INTERACTION_CREATE" and data is not payload
+    is_application_command = (
+        isinstance(interaction_type, int)
+        and not isinstance(interaction_type, bool)
+        and interaction_type == 2
+        and isinstance(interaction_data, dict)
+        and (is_http_interaction or is_gateway_interaction)
+    )
+    expected_context = (
+        DISCORD_GUILD_INTERACTION_CONTEXT
+        if guild_id is not None
+        else DISCORD_BOT_DM_INTERACTION_CONTEXT
+    )
+    raw_context = data.get("context")
+    if (
+        not trusted_interaction
+        or not is_application_command
+        or not isinstance(raw_context, int)
+        or isinstance(raw_context, bool)
+        or raw_context != expected_context
+    ):
+        return (
+            (
+                DISCORD_GUILD_INSTALL_REQUIRED
+                if guild_id is not None
+                else DISCORD_USER_INSTALL_REQUIRED
+            ),
+            False,
+        )
+    raw_owners = data.get("authorizing_integration_owners")
+    if raw_owners is None and "authorizing_integration_owners" not in data:
+        owners: dict[str, Any] = {}
+    elif isinstance(raw_owners, dict):
+        owners = raw_owners
+    else:
+        return (
+            (
+                DISCORD_GUILD_INSTALL_REQUIRED
+                if guild_id is not None
+                else DISCORD_USER_INSTALL_REQUIRED
+            ),
+            False,
+        )
+    if guild_id is not None:
+        owner_key = str(DISCORD_GUILD_INSTALL)
+        if owner_key not in owners:
+            return (
+                (None, True)
+                if command.kind == "unpair"
+                else (DISCORD_GUILD_INSTALL_REQUIRED, False)
+            )
+        raw_guild_owner = owners.get(owner_key)
+        guild_owner = raw_guild_owner.strip() if isinstance(raw_guild_owner, str) else None
+        return (None, False) if guild_owner == guild_id else (DISCORD_GUILD_INSTALL_REQUIRED, False)
+    owner_key = str(DISCORD_USER_INSTALL)
+    if owner_key not in owners:
+        return (None, True) if command.kind == "unpair" else (DISCORD_USER_INSTALL_REQUIRED, False)
+    raw_user_owner = owners.get(owner_key)
+    user_owner = raw_user_owner.strip() if isinstance(raw_user_owner, str) else None
+    if external_user_id is not None and user_owner == external_user_id:
+        return None, False
+    return DISCORD_USER_INSTALL_REQUIRED, False
+
+
+async def discord_bot_guild_membership_denied_reason(
+    account: ChannelAccount,
+    *,
+    guild_id: str,
+) -> str | None:
+    """Verify bot membership with Discord before a guild pair code is claimed."""
+    token = decrypt_provider_token(account)
+    base_url = (
+        _account_config_str(account, "api_base_url")
+        or settings.channel_discord_api_base_url.strip()
+    )
+    await _validate_provider_endpoint_url(
+        base_url,
+        channel=CHANNEL_PROVIDER_DISCORD,
+        method="GET",
+        label="discord api base url",
+    )
+    path = f"/guilds/{guild_id}"
+    decision = discord_rate_limiter.check("GET", path)
+    if not decision.allowed:
+        return DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE
+    try:
+        with track_proxy_latency(CHANNEL_PROVIDER_DISCORD, "GET"):
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                discord_rate_limiter.consume("GET", path)
+                response = await client.get(
+                    f"{base_url.rstrip('/')}{path}",
+                    headers={"Authorization": f"Bot {token}"},
+                )
+                discord_rate_limiter.observe(
+                    "GET",
+                    path,
+                    _discord_rate_limit_response_headers(response),
+                    response.status_code,
+                )
+    except httpx.HTTPError:
+        outbound_errors.labels(channel=CHANNEL_PROVIDER_DISCORD, method="GET").inc()
+        return DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE
+    outbound_messages.labels(channel=CHANNEL_PROVIDER_DISCORD, method="GET").inc()
+    if response.status_code in {status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND}:
+        outbound_errors.labels(channel=CHANNEL_PROVIDER_DISCORD, method="GET").inc()
+        return DISCORD_BOT_GUILD_MEMBERSHIP_REQUIRED
+    if not 200 <= response.status_code < 300:
+        outbound_errors.labels(channel=CHANNEL_PROVIDER_DISCORD, method="GET").inc()
+        return DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE
+    response_payload = _response_json_or_text(response)
+    if _read_optional_str(response_payload.get("id")) != guild_id:
+        return DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE
+    return None
+
+
+async def discord_pairing_command_denied_reason(
+    account: ChannelAccount,
+    payload: dict[str, Any],
+    *,
+    command: ChannelPairCommand | None,
+    guild_id: str | None,
+    external_user_id: str | None,
+    trusted_interaction: bool,
+) -> str | None:
+    install_reason, cleanup_owner_missing = _discord_pair_install_admission(
+        payload,
+        command=command,
+        guild_id=guild_id,
+        external_user_id=external_user_id,
+        trusted_interaction=trusted_interaction,
+    )
+    if install_reason is not None:
+        return install_reason
+    if not cleanup_owner_missing:
+        permission_reason = discord_guild_command_denied_reason(
+            payload,
+            command=command,
+            guild_id=guild_id,
+        )
+        if permission_reason is not None:
+            return permission_reason
+    if command is not None and command.kind == "pair" and guild_id is not None:
+        return await discord_bot_guild_membership_denied_reason(account, guild_id=guild_id)
+    return None
 
 
 def discord_pairing_reply_for_command(
@@ -1876,6 +2075,14 @@ def discord_pairing_reply_for_command(
         )
     if result.pair_failed_reason == DISCORD_GUILD_PERMISSION_DENIED:
         return "You need Manage Server permission to pair or unpair this server."
+    if result.pair_failed_reason == DISCORD_GUILD_INSTALL_REQUIRED:
+        return "Discord could not verify this app installation for this server command."
+    if result.pair_failed_reason == DISCORD_USER_INSTALL_REQUIRED:
+        return "Discord could not verify User Install for this direct-message command."
+    if result.pair_failed_reason == DISCORD_BOT_GUILD_MEMBERSHIP_REQUIRED:
+        return "Add the Discord bot to this server before pairing it."
+    if result.pair_failed_reason == DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE:
+        return "Discord could not verify that the bot is in this server. Try again."
     if result.pair_failed_reason == "forbidden":
         return f"Only the user who paired this {scope} can change its pairing."
     if result.pair_failed_reason == "already_paired":
@@ -2271,6 +2478,35 @@ async def find_existing_inbound_provider_event(
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def discord_pairing_command_event_was_handled(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    external_chat_id: str,
+    provider_event_id: str | None,
+    command: ChannelPairCommand | None,
+) -> bool:
+    """Serialize pairing mutations and reject a previously handled Discord event."""
+    if provider_event_id is None or command is None or command.kind not in {"pair", "unpair"}:
+        return False
+    # The same transaction-level scope lock is acquired again by
+    # resolve_inbound_binding. Taking it before the event lookup closes the
+    # replay race where a duplicate unpair waits behind a new pair and then
+    # archives the replacement binding.
+    await lock_channel_binding_identity(
+        db,
+        account_id=account.id,
+        external_chat_id=external_chat_id,
+    )
+    existing = await find_existing_inbound_provider_event(
+        db,
+        account=account,
+        external_chat_id=external_chat_id,
+        provider_event_id=provider_event_id,
+    )
+    return existing is not None
 
 
 async def record_inbound_messages_for_bindings(
@@ -3355,6 +3591,36 @@ async def configure_discord_application(account: ChannelAccount) -> dict[str, An
             detail="Discord application_id is required.",
         )
     token = decrypt_provider_token(account)
+    identity = await verify_discord_application_token_identity(
+        application_id=application_id,
+        provider_token=token,
+        config=account.config,
+    )
+    raw_integration_config = identity.get("integration_types_config")
+    integration_config = (
+        {
+            str(key): dict(value)
+            for key, value in raw_integration_config.items()
+            if isinstance(key, str) and isinstance(value, dict)
+        }
+        if isinstance(raw_integration_config, dict)
+        else {}
+    )
+    guild_install_params = {
+        "scopes": ["applications.commands", "bot"],
+        "permissions": str(DISCORD_MINIMAL_BOT_PERMISSIONS),
+    }
+    guild_install_config = dict(integration_config.get(str(DISCORD_GUILD_INSTALL), {}))
+    guild_install_config["oauth2_install_params"] = guild_install_params
+    integration_config[str(DISCORD_GUILD_INSTALL)] = guild_install_config
+    user_install_supported = str(DISCORD_USER_INSTALL) in integration_config
+    if user_install_supported:
+        user_install_config = dict(integration_config[str(DISCORD_USER_INSTALL)])
+        user_install_config["oauth2_install_params"] = {
+            "scopes": ["applications.commands"],
+            "permissions": "0",
+        }
+        integration_config[str(DISCORD_USER_INSTALL)] = user_install_config
     base_url = (
         _account_config_str(account, "api_base_url")
         or settings.channel_discord_api_base_url.strip()
@@ -3370,22 +3636,164 @@ async def configure_discord_application(account: ChannelAccount) -> dict[str, An
         "Authorization": f"Bot {token}",
         "Content-Type": "application/json",
     }
-    identity = await _discord_application_request(
-        method="GET",
-        url=url,
-        headers=headers,
-    )
-    _verify_discord_application_identity(identity, expected_application_id=application_id)
     configured = await _discord_application_request(
         method="PATCH",
         url=url,
         headers=headers,
         json_payload={
-            "interactions_endpoint_url": channel_webhook_url(account.id, account.provider)
+            "interactions_endpoint_url": channel_webhook_url(account.id, account.provider),
+            "install_params": guild_install_params,
+            "integration_types_config": integration_config,
         },
     )
     _verify_discord_application_identity(configured, expected_application_id=application_id)
+    verified_user_install = _verify_discord_install_configuration(configured)
+    config = dict(account.config) if isinstance(account.config, dict) else {}
+    config[DISCORD_INSTALL_CONFIG_VERSION_CONFIG_KEY] = DISCORD_INSTALL_CONFIG_VERSION
+    config[DISCORD_USER_INSTALL_SUPPORTED_CONFIG_KEY] = verified_user_install
+    account.config = config
     return configured
+
+
+def _verify_discord_install_configuration(payload: dict[str, Any]) -> bool:
+    """Verify the exact install defaults Discord persisted after PATCH."""
+    integration_types = payload.get("integration_types_config")
+    if not isinstance(integration_types, dict):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Discord returned an invalid Guild Install configuration.",
+        )
+    guild_config = integration_types.get(str(DISCORD_GUILD_INSTALL))
+    if not _discord_install_params_match(
+        guild_config,
+        expected_scopes={"applications.commands", "bot"},
+        expected_permissions=str(DISCORD_MINIMAL_BOT_PERMISSIONS),
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Discord returned an invalid Guild Install configuration.",
+        )
+    user_config = integration_types.get(str(DISCORD_USER_INSTALL))
+    if user_config is None:
+        return False
+    if not _discord_install_params_match(
+        user_config,
+        expected_scopes={"applications.commands"},
+        expected_permissions="0",
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Discord returned an invalid User Install configuration.",
+        )
+    return True
+
+
+def _discord_install_params_match(
+    config: Any,
+    *,
+    expected_scopes: set[str],
+    expected_permissions: str,
+) -> bool:
+    if not isinstance(config, dict):
+        return False
+    install_params = config.get("oauth2_install_params")
+    if not isinstance(install_params, dict):
+        return False
+    scopes = install_params.get("scopes")
+    return (
+        isinstance(scopes, list)
+        and len(scopes) == len(expected_scopes)
+        and all(isinstance(scope, str) for scope in scopes)
+        and set(scopes) == expected_scopes
+        and install_params.get("permissions") == expected_permissions
+    )
+
+
+async def verify_discord_application_token_identity(
+    *,
+    application_id: str,
+    provider_token: str,
+    config: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Verify a Discord credential without mutating the Developer Portal."""
+    raw_base_url = config.get("api_base_url") if isinstance(config, dict) else None
+    base_url = (
+        raw_base_url.strip()
+        if isinstance(raw_base_url, str) and raw_base_url.strip()
+        else settings.channel_discord_api_base_url.strip()
+    )
+    await _validate_provider_endpoint_url(
+        base_url,
+        channel=CHANNEL_PROVIDER_DISCORD,
+        method="application",
+        label="discord api base url",
+    )
+    identity = await _discord_application_request(
+        method="GET",
+        url=f"{base_url.rstrip('/')}/applications/@me",
+        headers={
+            "Authorization": f"Bot {provider_token}",
+            "Content-Type": "application/json",
+        },
+    )
+    _verify_discord_application_identity(identity, expected_application_id=application_id)
+    return identity
+
+
+def discord_application_id_from_config(config: dict[str, Any] | None) -> str | None:
+    if not isinstance(config, dict):
+        return None
+    return _read_optional_str(config.get("application_id")) or _read_optional_str(
+        config.get("app_id")
+    )
+
+
+def require_unchanged_discord_application_identity(
+    account: ChannelAccount,
+    config: dict[str, Any] | None,
+) -> None:
+    """Prevent replacing an identity whose old projections cannot be retired."""
+    current_application_id = discord_application_id_from_config(account.config)
+    replacement_application_id = discord_application_id_from_config(config)
+    if replacement_application_id != current_application_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Discord application identity cannot be changed in place; "
+                "recreate the channel instead."
+            ),
+        )
+
+
+async def ensure_discord_application_identity_available(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+) -> None:
+    """Fail closed if another verified account owns the same Discord app."""
+    application_id = discord_application_id_from_config(account.config)
+    if application_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Discord application_id is required.",
+        )
+    lock_name = f"discord-application-identity:{application_id}"
+    await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(lock_name, 0))))
+    result = await db.execute(
+        select(ChannelAccount).where(
+            ChannelAccount.provider == CHANNEL_PROVIDER_DISCORD,
+            ChannelAccount.id != account.id,
+            ChannelAccount.archived_at.is_(None),
+        )
+    )
+    for existing in result.scalars():
+        if discord_application_id_from_config(
+            existing.config
+        ) == application_id and discord_install_config_is_current(existing):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This Discord application is already connected to another channel.",
+            )
 
 
 def discord_bot_install_url(account: ChannelAccount) -> str | None:
@@ -3397,6 +3805,7 @@ def discord_bot_install_url(account: ChannelAccount) -> str | None:
     return (
         "https://discord.com/oauth2/authorize"
         f"?client_id={application_id}"
+        "&integration_type=0"
         f"&permissions={DISCORD_MINIMAL_BOT_PERMISSIONS}"
         "&scope=bot%20applications.commands"
     )
@@ -3408,6 +3817,8 @@ def discord_user_install_url(account: ChannelAccount) -> str | None:
     application_id = _account_config_str(account, "application_id")
     if application_id is None or not valid_discord_application_id(application_id):
         return None
+    if not discord_user_install_is_supported(account):
+        return None
     # USER_INSTALL supports applications.commands without the bot scope or
     # guild bot permissions. The application owner must enable User Install in
     # Discord's Installation settings for this authorize URL to succeed.
@@ -3418,6 +3829,75 @@ def discord_user_install_url(account: ChannelAccount) -> str | None:
         "&integration_type=1"
         "&scope=applications.commands"
     )
+
+
+def discord_install_config_is_current(account: ChannelAccount) -> bool:
+    if not isinstance(account.config, dict):
+        return False
+    version = account.config.get(DISCORD_INSTALL_CONFIG_VERSION_CONFIG_KEY)
+    return (
+        isinstance(version, int)
+        and not isinstance(version, bool)
+        and version == DISCORD_INSTALL_CONFIG_VERSION
+        and isinstance(
+            account.config.get(DISCORD_USER_INSTALL_SUPPORTED_CONFIG_KEY),
+            bool,
+        )
+    )
+
+
+def discord_user_install_is_supported(account: ChannelAccount) -> bool:
+    return (
+        discord_install_config_is_current(account)
+        and isinstance(account.config, dict)
+        and account.config.get(DISCORD_USER_INSTALL_SUPPORTED_CONFIG_KEY) is True
+    )
+
+
+def discord_config_without_unverified_install_state(
+    config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Remove Discord capability state that only provider verification may set."""
+    if not isinstance(config, dict):
+        return None
+    sanitized = dict(config)
+    sanitized.pop(DISCORD_INSTALL_CONFIG_VERSION_CONFIG_KEY, None)
+    sanitized.pop(DISCORD_USER_INSTALL_SUPPORTED_CONFIG_KEY, None)
+    return sanitized
+
+
+async def rearm_discord_command_reconciliation(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+) -> int:
+    """Make blocked command retries due after verified credential/setup repair."""
+    result = await db.execute(
+        select(ChannelBotAgentLink).where(ChannelBotAgentLink.account_id == account.id)
+    )
+    rearmed = 0
+    for link in result.scalars():
+        config = dict(link.config) if isinstance(link.config, dict) else {}
+        raw_retries = config.get("discord_command_retries")
+        if not isinstance(raw_retries, dict):
+            continue
+        retries = {
+            guild_id: dict(retry)
+            for guild_id, retry in raw_retries.items()
+            if isinstance(guild_id, str) and isinstance(retry, dict)
+        }
+        changed = False
+        for retry in retries.values():
+            if retry.get("blocked") is not True:
+                continue
+            retry["blocked"] = False
+            retry["next_retry_at"] = datetime.now(UTC).isoformat()
+            changed = True
+            rearmed += 1
+        if changed:
+            config["discord_command_retries"] = retries
+            link.config = config
+    return rearmed
 
 
 def discord_reserved_commands_are_current(account: ChannelAccount) -> bool:
@@ -3452,8 +3932,13 @@ async def _discord_application_request(
             scope="bot" if decision.global_limit else "route",
         ).inc()
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Discord could not validate the interactions endpoint. Try again.",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Discord application configuration is rate limited.",
+            headers=(
+                {"Retry-After": str(decision.retry_after_seconds)}
+                if decision.retry_after_seconds is not None
+                else None
+            ),
         )
     try:
         with track_proxy_latency(CHANNEL_PROVIDER_DISCORD, method):
@@ -3468,7 +3953,7 @@ async def _discord_application_request(
                 discord_rate_limiter.observe(
                     method,
                     path,
-                    response.headers,
+                    _discord_rate_limit_response_headers(response),
                     response.status_code,
                 )
     except httpx.HTTPError as exc:
@@ -3478,6 +3963,14 @@ async def _discord_application_request(
             detail="Discord could not validate the interactions endpoint. Try again.",
         ) from exc
     outbound_messages.labels(channel=CHANNEL_PROVIDER_DISCORD, method=method).inc()
+    if response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+        outbound_errors.labels(channel=CHANNEL_PROVIDER_DISCORD, method=method).inc()
+        retry_after = _discord_rate_limit_response_headers(response).get("retry-after")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Discord application configuration is rate limited.",
+            headers={"Retry-After": retry_after} if retry_after is not None else None,
+        )
     if response.status_code >= 400:
         outbound_errors.labels(channel=CHANNEL_PROVIDER_DISCORD, method=method).inc()
         raise HTTPException(
@@ -3794,6 +4287,7 @@ async def sync_discord_commands(
     command_payloads = [
         _discord_command_payload(
             command,
+            account=account,
             global_command=scoped_guild_id is None,
         )
         for command in commands
@@ -3816,7 +4310,13 @@ async def sync_discord_commands(
                     "Authorization": f"Bot {token}",
                     "Content-Type": "application/json",
                 }
-                response = await client.request("GET", url, headers=headers)
+                response = await _discord_command_request(
+                    client,
+                    method="GET",
+                    url=url,
+                    path=f"{path}/commands",
+                    headers=headers,
+                )
                 _raise_for_discord_command_sync_response(response)
                 existing_commands = _response_json_or_text(response).get("data")
                 if not isinstance(existing_commands, list) or not all(
@@ -3847,11 +4347,13 @@ async def sync_discord_commands(
                         )
                     legacy_command_ids.append(command_id)
                 for command_payload in command_payloads:
-                    response = await client.request(
-                        "POST",
-                        url,
+                    response = await _discord_command_request(
+                        client,
+                        method="POST",
+                        url=url,
+                        path=f"{path}/commands",
                         headers=headers,
-                        json=command_payload,
+                        json_payload=command_payload,
                     )
                     _raise_for_discord_command_sync_response(response)
                     synced_command = _response_json_or_text(response)
@@ -3868,9 +4370,11 @@ async def sync_discord_commands(
                         )
                     synced.append(synced_command)
                 for command_id in legacy_command_ids:
-                    response = await client.request(
-                        "DELETE",
-                        f"{url}/{command_id}",
+                    response = await _discord_command_request(
+                        client,
+                        method="DELETE",
+                        url=f"{url}/{command_id}",
+                        path=f"{path}/commands/{command_id}",
                         headers=headers,
                     )
                     # A concurrent reconciliation can delete the exact ID
@@ -3882,13 +4386,16 @@ async def sync_discord_commands(
                     )
                 return synced
             for command_payload in command_payloads:
-                response = await client.post(
-                    url,
+                response = await _discord_command_request(
+                    client,
+                    method="POST",
+                    url=url,
+                    path=f"{path}/commands",
                     headers={
                         "Authorization": f"Bot {token}",
                         "Content-Type": "application/json",
                     },
-                    json=command_payload,
+                    json_payload=command_payload,
                 )
                 _raise_for_discord_command_sync_response(response)
                 synced.append(_response_json_or_text(response))
@@ -3900,6 +4407,51 @@ async def sync_discord_commands(
     return synced
 
 
+async def _discord_command_request(
+    client: httpx.AsyncClient,
+    *,
+    method: str,
+    url: str,
+    path: str,
+    headers: dict[str, str],
+    json_payload: dict[str, Any] | None = None,
+) -> httpx.Response:
+    decision = discord_rate_limiter.check(method, path)
+    if not decision.allowed:
+        retry_after = decision.retry_after_seconds
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="discord command sync is rate limited",
+            headers={"Retry-After": str(retry_after)} if retry_after is not None else None,
+        )
+    discord_rate_limiter.consume(method, path)
+    if json_payload is None:
+        response = await client.request(method, url, headers=headers)
+    else:
+        response = await client.request(method, url, headers=headers, json=json_payload)
+    discord_rate_limiter.observe(
+        method,
+        path,
+        _discord_rate_limit_response_headers(response),
+        response.status_code,
+    )
+    return response
+
+
+def _discord_rate_limit_response_headers(response: httpx.Response) -> dict[str, str]:
+    headers = {str(key).lower(): str(value) for key, value in response.headers.items()}
+    if response.status_code != status.HTTP_429_TOO_MANY_REQUESTS or "retry-after" in headers:
+        return headers
+    raw_retry_after = _response_json_or_text(response).get("retry_after")
+    if (
+        isinstance(raw_retry_after, (int, float))
+        and not isinstance(raw_retry_after, bool)
+        and raw_retry_after >= 0
+    ):
+        headers["retry-after"] = str(raw_retry_after)
+    return headers
+
+
 def _raise_for_discord_command_sync_response(
     response: httpx.Response,
     *,
@@ -3908,9 +4460,11 @@ def _raise_for_discord_command_sync_response(
     if allow_not_found and response.status_code == status.HTTP_404_NOT_FOUND:
         return
     if response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+        retry_after = _discord_rate_limit_response_headers(response).get("retry-after")
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="discord command sync is temporarily rate limited",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="discord command sync is rate limited",
+            headers={"Retry-After": retry_after} if retry_after is not None else None,
         )
     if not status.HTTP_200_OK <= response.status_code < status.HTTP_300_MULTIPLE_CHOICES:
         raise HTTPException(
@@ -4520,19 +5074,32 @@ async def record_discord_dispatch(
     else:
         return False
     command = discord_pair_command_from_payload(frame)
+    provider_event_id = discord_message_id_from_payload(frame)
+    if await discord_pairing_command_event_was_handled(
+        db,
+        account=account,
+        external_chat_id=external_chat_id,
+        provider_event_id=provider_event_id,
+        command=command,
+    ):
+        return True
+    external_user_id = discord_external_user_id_from_payload(frame)
     binding_result = await resolve_inbound_binding(
         db,
         account=account,
         external_chat_id=external_chat_id,
         external_chat_type=external_chat_type,
         external_chat_name=external_chat_name,
-        external_user_id=discord_external_user_id_from_payload(frame),
+        external_user_id=external_user_id,
         text=discord_text_from_payload(frame),
         command=command,
-        command_denied_reason=discord_guild_command_denied_reason(
+        command_denied_reason=await discord_pairing_command_denied_reason(
+            account,
             frame,
             command=command,
             guild_id=guild_id,
+            external_user_id=external_user_id,
+            trusted_interaction=True,
         ),
         command_actor_required=True,
     )
@@ -4545,7 +5112,7 @@ async def record_discord_dispatch(
         account=account,
         binding_result=binding_result,
         external_chat_id=external_chat_id,
-        provider_message_id=_read_optional_str(data.get("id")) if isinstance(data, dict) else None,
+        provider_message_id=provider_event_id,
         text=_read_optional_str(data.get("content")) if isinstance(data, dict) else None,
         payload=payload,
     )
@@ -5036,6 +5603,7 @@ def _command_description(command: dict[str, Any]) -> str:
 def _discord_command_payload(
     command: dict[str, Any],
     *,
+    account: ChannelAccount,
     global_command: bool,
 ) -> dict[str, Any]:
     name = _command_name(command)
@@ -5050,25 +5618,31 @@ def _discord_command_payload(
         # authority; this only makes Discord hide the commands by default from
         # guild members without MANAGE_GUILD.
         payload["default_member_permissions"] = str(DISCORD_MANAGE_GUILD_PERMISSION)
-        payload["description"] = (
-            "Pair this server or direct message with Clawdi."
-            if name == DISCORD_PAIR_COMMAND_NAME
-            else "Disconnect this server or direct message from Clawdi."
-        )
+        if name == DISCORD_PAIR_COMMAND_NAME:
+            payload["description"] = (
+                "Pair this server or direct message with Clawdi."
+                if discord_user_install_is_supported(account)
+                else "Pair this server with Clawdi."
+            )
+        else:
+            payload["description"] = (
+                "Disconnect this server or direct message from Clawdi."
+                if discord_user_install_is_supported(account)
+                else "Disconnect this server from Clawdi."
+            )
         if global_command:
-            # The configured Discord application supports both Guild Install
-            # and User Install. BOT_DM is the user-installed app DM context;
-            # PRIVATE_CHANNEL is intentionally excluded because pairing does
-            # not need user-installed commands in other users' DMs.
+            # Guild Install is always configured. USER_INSTALL and BOT_DM are
+            # included only after /applications/@me verified that the app
+            # supports User Install. Unknown capability fails closed.
             # These are global-command fields and are intentionally omitted
             # from guild-scoped writes.
             # https://discord.com/developers/docs/resources/application#application-object-application-integration-types
             # https://discord.com/developers/docs/interactions/receiving-and-responding#interaction-object-interaction-context-types
-            payload["integration_types"] = [DISCORD_GUILD_INSTALL, DISCORD_USER_INSTALL]
-            payload["contexts"] = [
-                DISCORD_GUILD_INTERACTION_CONTEXT,
-                DISCORD_BOT_DM_INTERACTION_CONTEXT,
-            ]
+            payload["integration_types"] = [DISCORD_GUILD_INSTALL]
+            payload["contexts"] = [DISCORD_GUILD_INTERACTION_CONTEXT]
+            if discord_user_install_is_supported(account):
+                payload["integration_types"].append(DISCORD_USER_INSTALL)
+                payload["contexts"].append(DISCORD_BOT_DM_INTERACTION_CONTEXT)
     options = command.get("options")
     if isinstance(options, list):
         payload["options"] = [option for option in options if isinstance(option, dict)]

@@ -7,6 +7,7 @@ import {
 	pairingActionLabel,
 	pairingCommand,
 	verifiedDiscordPairingCommand,
+	verifiedDiscordServerInstallUrl,
 	verifiedDiscordUserInstallUrl,
 } from "./channel-linking.logic";
 
@@ -44,6 +45,22 @@ describe("hosted channel instructions and gates", () => {
 			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands&permissions=8",
 		]) {
 			expect(verifiedDiscordUserInstallUrl(unsupported)).toBeNull();
+		}
+	});
+
+	test("accepts only the explicit Discord Guild Install bot contract", () => {
+		const supported =
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=274878024768&scope=bot%20applications.commands";
+		expect(verifiedDiscordServerInstallUrl(supported)).toBe(supported);
+		for (const unsupported of [
+			null,
+			undefined,
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&permissions=274878024768&scope=bot%20applications.commands",
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&permissions=274878024768&scope=bot%20applications.commands",
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=0&scope=bot%20applications.commands",
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=274878024768&scope=applications.commands",
+		]) {
+			expect(verifiedDiscordServerInstallUrl(unsupported)).toBeNull();
 		}
 	});
 

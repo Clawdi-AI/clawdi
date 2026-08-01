@@ -115,6 +115,16 @@ def test_discord_limiter_honors_retry_after_on_429():
     assert blocked.retry_after_seconds == 5.0
 
 
+def test_discord_limiter_treats_zero_retry_after_as_immediately_due():
+    now = 0.0
+    limiter = DiscordRateLimiter(now=lambda: now)
+    path = "/channels/111111111111111111/messages"
+
+    limiter.observe("POST", path, _headers({"retry-after": "0"}), 429)
+
+    assert limiter.check("POST", path).allowed is True
+
+
 def test_discord_limiter_consume_decrements_remaining_for_in_flight_requests():
     now = 0.0
     limiter = DiscordRateLimiter(now=lambda: now)
@@ -160,6 +170,16 @@ def test_discord_limiter_upstream_global_429_clamps_window():
         429,
     )
     blocked = limiter.check("POST", "/channels/111111111111111111/messages")
+    now = 1.001
+    still_blocked = limiter.check("GET", "/applications/222222222222222222/commands")
+    now = 2.001
+    after = limiter.check("GET", "/applications/222222222222222222/commands")
 
     assert blocked.allowed is False
     assert blocked.global_limit is True
+    assert blocked.retry_after_seconds == 2.0
+    assert still_blocked.allowed is False
+    assert still_blocked.global_limit is True
+    assert still_blocked.retry_after_seconds is not None
+    assert 0.99 < still_blocked.retry_after_seconds < 1.0
+    assert after.allowed is True
