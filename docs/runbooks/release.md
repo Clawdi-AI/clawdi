@@ -120,12 +120,16 @@ releases.
 
 The pair-code endpoint owns the safe cutover. Before it can return instructions
 that mention `/clawdi_pair`, it checks a persisted reserved-command version and
-bulk-overwrites stale global commands with only `clawdi_pair` and
-`clawdi_unpair`. For an existing account with a configured legacy `guild_id`,
-the same request also reconciles that known guild scope. If Discord rejects or
-cannot complete either write, the endpoint returns an error without creating a
-pair code. This prevents the pairing UI from getting ahead of the registered
-commands during rollout.
+reconciles only the reserved command namespace in the global scope. It lists
+the existing commands, deletes the exact legacy `bot_pair` and `bot_unpair`
+chat-input command IDs, and upserts `clawdi_pair` and `clawdi_unpair`. Unrelated
+global commands are never deleted or resubmitted. For an existing account with
+a configured legacy `guild_id`, the same request performs the reserved-only
+reconciliation in that known guild scope while preserving unrelated guild
+commands. If Discord rejects, rate-limits, or cannot complete any required
+list, deletion, or upsert, the endpoint returns an error without creating a
+pair code or advancing the reserved-command version. This prevents the pairing
+UI from getting ahead of the registered commands during rollout.
 
 No operator sync is required before users can pair. To reconcile accounts
 proactively after deploying the matching backend, an operator may run the
@@ -143,7 +147,8 @@ curl -sS -X POST \
 ```
 
 Done: the command exits 0 for each account and the response contains exactly
-the two `clawdi_*` command names.
+the two upserted `clawdi_*` command names. This response is not the complete
+Discord command set; unrelated commands in the reconciled scope remain intact.
 
 Discord scopes are independent. If an operator previously used an explicit
 `guild_id` that is not the account's configured guild, that scope is not

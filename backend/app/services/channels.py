@@ -97,6 +97,7 @@ DISCORD_RESERVED_COMMAND_NAMES = frozenset(
         DISCORD_UNPAIR_COMMAND_NAME,
     }
 )
+DISCORD_LEGACY_RESERVED_COMMAND_NAMES = frozenset({"bot_pair", "bot_unpair"})
 PAIR_CODE_PATTERN = re.compile(r"^PAIR[A-Z0-9]{8,}$")
 TELEGRAM_BOT_USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{5,32}bot$", re.IGNORECASE)
 DEFAULT_CHANNEL_COMMANDS: tuple[dict[str, Any], ...] = (
@@ -124,7 +125,7 @@ DISCORD_GUILD_INSTALL = 0
 DISCORD_USER_INSTALL = 1
 DISCORD_GUILD_INTERACTION_CONTEXT = 0
 DISCORD_BOT_DM_INTERACTION_CONTEXT = 1
-DISCORD_RESERVED_COMMAND_VERSION = 1
+DISCORD_RESERVED_COMMAND_VERSION = 2
 DISCORD_RESERVED_COMMAND_VERSION_CONFIG_KEY = "discord_reserved_command_version"
 # Discord API docs baseline b2f8adafc037242291b8f875d4cdf3adc4d48bb7.
 # ADD_REACTIONS, VIEW_CHANNEL, SEND_MESSAGES, EMBED_LINKS, ATTACH_FILES,
@@ -3323,7 +3324,7 @@ async def sync_channel_commands(
             account=account,
             commands=command_specs,
             guild_id=guild_id,
-            replace_commands=using_default_commands,
+            reconcile_reserved_commands=using_default_commands,
             use_configured_guild=(
                 not using_default_commands
                 if use_configured_discord_guild is None
@@ -3758,7 +3759,7 @@ async def sync_discord_commands(
     account: ChannelAccount,
     commands: list[dict[str, Any]],
     guild_id: str | None,
-    replace_commands: bool = False,
+    reconcile_reserved_commands: bool = False,
     use_configured_guild: bool = True,
 ) -> list[dict[str, Any]]:
     if account.provider != CHANNEL_PROVIDER_DISCORD:
@@ -3800,34 +3801,75 @@ async def sync_discord_commands(
     synced: list[dict[str, Any]] = []
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            if replace_commands:
-                # Discord's bulk-overwrite contract is the clean cutover: the
-                # returned set becomes exactly clawdi_pair/clawdi_unpair, so
-                # legacy bot_pair/bot_unpair commands cannot remain visible.
-                # https://discord.com/developers/docs/interactions/application-commands#bulk-overwrite-global-application-commands
-                response = await client.request(
-                    "PUT",
-                    url,
-                    headers={
-                        "Authorization": f"Bot {token}",
-                        "Content-Type": "application/json",
-                    },
-                    json=command_payloads,
-                )
-                if response.status_code >= 400:
-                    raise HTTPException(
-                        status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail="discord api rejected commands",
-                    )
-                response_payload = _response_json_or_text(response).get("data")
-                if not isinstance(response_payload, list) or not all(
-                    isinstance(command, dict) for command in response_payload
+            if reconcile_reserved_commands:
+                # Reconcile only Clawdi's reserved namespace. Bulk overwrite
+                # would make these two commands the complete scope and delete
+                # unrelated application/runtime commands owned elsewhere.
+                # Discord POST is an upsert by command name; DELETE targets one
+                # command ID in the same global or Guild scope.
+                # https://discord.com/developers/docs/interactions/application-commands#get-global-application-commands
+                # https://discord.com/developers/docs/interactions/application-commands#delete-global-application-command
+                # https://discord.com/developers/docs/interactions/application-commands#create-global-application-command
+                headers = {
+                    "Authorization": f"Bot {token}",
+                    "Content-Type": "application/json",
+                }
+                response = await client.request("GET", url, headers=headers)
+                _raise_for_discord_command_sync_response(response)
+                existing_commands = _response_json_or_text(response).get("data")
+                if not isinstance(existing_commands, list) or not all(
+                    isinstance(command, dict) for command in existing_commands
                 ):
                     raise HTTPException(
                         status_code=status.HTTP_502_BAD_GATEWAY,
                         detail="discord api returned invalid commands",
                     )
-                return [command for command in response_payload if isinstance(command, dict)]
+                for existing_command in existing_commands:
+                    existing_name = _read_optional_str(existing_command.get("name"))
+                    if existing_name not in DISCORD_LEGACY_RESERVED_COMMAND_NAMES:
+                        continue
+                    existing_type = existing_command.get("type")
+                    if isinstance(existing_type, bool) or not isinstance(existing_type, int):
+                        raise HTTPException(
+                            status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="discord api returned invalid commands",
+                        )
+                    if existing_type != 1:
+                        continue
+                    command_id = _read_optional_str(existing_command.get("id"))
+                    if command_id is None or not valid_discord_application_id(command_id):
+                        raise HTTPException(
+                            status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="discord api returned invalid commands",
+                        )
+                    response = await client.request(
+                        "DELETE",
+                        f"{url}/{command_id}",
+                        headers=headers,
+                    )
+                    _raise_for_discord_command_sync_response(response)
+                for command_payload in command_payloads:
+                    response = await client.request(
+                        "POST",
+                        url,
+                        headers=headers,
+                        json=command_payload,
+                    )
+                    _raise_for_discord_command_sync_response(response)
+                    synced_command = _response_json_or_text(response)
+                    synced_command_id = _read_optional_str(synced_command.get("id"))
+                    if (
+                        _read_optional_str(synced_command.get("name")) != command_payload["name"]
+                        or synced_command.get("type") != 1
+                        or synced_command_id is None
+                        or not valid_discord_application_id(synced_command_id)
+                    ):
+                        raise HTTPException(
+                            status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="discord api returned invalid commands",
+                        )
+                    synced.append(synced_command)
+                return synced
             for command_payload in command_payloads:
                 response = await client.post(
                     url,
@@ -3837,11 +3879,7 @@ async def sync_discord_commands(
                     },
                     json=command_payload,
                 )
-                if response.status_code >= 400:
-                    raise HTTPException(
-                        status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail="discord api rejected commands",
-                    )
+                _raise_for_discord_command_sync_response(response)
                 synced.append(_response_json_or_text(response))
     except httpx.HTTPError as exc:
         raise HTTPException(
@@ -3849,6 +3887,19 @@ async def sync_discord_commands(
             detail="discord api unreachable",
         ) from exc
     return synced
+
+
+def _raise_for_discord_command_sync_response(response: httpx.Response) -> None:
+    if response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="discord command sync is temporarily rate limited",
+        )
+    if not status.HTTP_200_OK <= response.status_code < status.HTTP_300_MULTIPLE_CHOICES:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="discord api rejected commands",
+        )
 
 
 async def send_whatsapp_message(
