@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { CLAWDI_MANAGED_PROVIDER_ID } from "../packages/shared/src/ai-provider";
 import {
@@ -214,11 +214,13 @@ if (import.meta.main) {
 			"Usage: bun run scripts/generate-hosted-ai-provider-contract.ts <core-commit> [output]",
 		);
 	}
-	const commitCheck = spawnSync("git", ["cat-file", "-e", `${coreCommit}^{commit}`], {
-		stdio: "ignore",
-	});
-	if (commitCheck.status !== 0) {
-		throw new Error(`Core provenance commit does not exist: ${coreCommit}`);
+	if (existsSync(resolve(".git"))) {
+		const commitCheck = spawnSync("git", ["cat-file", "-e", `${coreCommit}^{commit}`], {
+			stdio: "ignore",
+		});
+		if (commitCheck.status !== 0) {
+			throw new Error(`Core provenance commit does not exist: ${coreCommit}`);
+		}
 	}
 	const outputPath = resolve(process.argv[3] ?? "test-fixtures/hosted-ai-provider-contract.json");
 	writeFileSync(outputPath, renderHostedAiProviderContractFixture(coreCommit), { mode: 0o644 });
