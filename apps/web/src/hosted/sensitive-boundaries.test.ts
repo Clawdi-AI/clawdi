@@ -171,7 +171,7 @@ describe("structural secret boundaries without the denylist", () => {
 				"hosted/v2/channels/channels-hooks.ts",
 				[
 					"export function useCreateChannel()",
-					"export function useCreatePairCode(accountId: string)",
+					"export function useCreatePairCode(",
 					"export function useCreateWhatsappTenantCred(accountId: string)",
 					"return useSensitiveAction",
 				],

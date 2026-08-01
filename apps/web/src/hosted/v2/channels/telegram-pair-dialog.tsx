@@ -40,19 +40,17 @@ export function TelegramPairDialog({
 	onOpenChange,
 	accountId,
 	agentLinkId,
-	agentName,
 	channelName,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	accountId: string;
 	agentLinkId: string;
-	agentName?: string;
 	channelName?: string;
 }) {
-	const pair = useCreatePairCode(accountId);
+	const pair = useCreatePairCode(accountId, { toastOnError: false });
 	const { copied, copy } = useCopyToClipboard({
-		success: "Telegram link copied",
+		success: false,
 		error: "Couldn't copy Telegram link",
 	});
 	const [result, setResult] = useState<TelegramPairResult | null>(null);
@@ -131,19 +129,28 @@ export function TelegramPairDialog({
 					code: result.code,
 				})
 			: null;
-	const context = [agentName, channelName].filter(Boolean).join(" · ");
+	const botIdentity = result?.bot_username
+		? `@${result.bot_username.replace(/^@/, "")}`
+		: channelName?.trim() || "this bot";
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent data-hosted="true" data-v2="true" className="sm:max-w-md">
+			<DialogContent
+				data-hosted="true"
+				data-v2="true"
+				className="h-[min(40rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:h-auto sm:max-w-md"
+			>
 				<DialogHeader>
 					<DialogTitle>Pair Telegram</DialogTitle>
 					<DialogDescription>
-						Scan the QR code or open Telegram{context ? ` for ${context}` : ""}.
+						Scan the QR code or open Telegram to pair with {botIdentity}.
 					</DialogDescription>
 				</DialogHeader>
 
-				<div data-telegram-pair-dialog-body className="min-h-64">
+				<div
+					data-telegram-pair-dialog-body
+					className="min-h-0 overflow-y-auto overscroll-contain pr-1"
+				>
 					{generating ? (
 						<div className="flex min-h-64 flex-col items-center justify-center gap-3 text-muted-foreground">
 							<Spinner className="size-5" />
@@ -159,7 +166,7 @@ export function TelegramPairDialog({
 						<div className="flex flex-col gap-4">
 							{validLink ? (
 								<div className="flex justify-center">
-									<div className="rounded-xl border bg-white p-3 shadow-sm">
+									<div className="rounded-md border bg-white p-3 shadow-sm">
 										<QRCodeSVG
 											value={validLink}
 											size={192}
@@ -187,12 +194,15 @@ export function TelegramPairDialog({
 							>
 								{pairCodeExpiryLabel(result.expires_at, nowMs)}
 							</p>
-							{!expired ? (
+							{!expired && result.bot_username ? (
 								<details className="rounded-md border bg-muted/20 px-3 py-2">
 									<summary className="cursor-pointer text-xs font-medium text-muted-foreground">
 										Pair a group manually
 									</summary>
-									<div className="mt-2">
+									<div className="mt-2 space-y-2">
+										<p className="text-sm">
+											Add @{result.bot_username.replace(/^@/, "")} to the group, then send:
+										</p>
 										<CopyInline value={result.pairing_command} label="pairing command" />
 									</div>
 								</details>

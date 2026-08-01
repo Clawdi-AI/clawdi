@@ -4124,6 +4124,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Last Message At */
+            last_message_at?: string | null;
         };
         /** ChannelBotPoolCapabilities */
         ChannelBotPoolCapabilities: {

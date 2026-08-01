@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -25,6 +26,8 @@ from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_DISCORD,
+    CHANNEL_VISIBILITY_PRIVATE,
+    CHANNEL_VISIBILITY_PUBLIC,
     ChannelAccount,
     ChannelBinding,
     ChannelBindingAlias,
@@ -89,20 +92,21 @@ _DISCORD_RESPONSE_HEADER_ALLOWLIST = (
 )
 
 
+def _channel_visibility(account: ChannelAccount) -> ChannelVisibility:
+    if account.visibility == CHANNEL_VISIBILITY_PRIVATE:
+        return "private"
+    if account.visibility == CHANNEL_VISIBILITY_PUBLIC:
+        return "public"
+    raise ValueError("invalid channel account visibility")
+
+
 def _account_response(account: ChannelAccount) -> ChannelAccountResponse:
-    visibility: ChannelVisibility
-    if account.visibility == "private":
-        visibility = "private"
-    elif account.visibility == "public":
-        visibility = "public"
-    else:
-        raise ValueError("invalid channel account visibility")
     return ChannelAccountResponse(
         id=account.id,
         provider=account.provider,
         name=account.name,
         status=account.status,
-        visibility=visibility,
+        visibility=_channel_visibility(account),
         has_provider_token=bool(account.encrypted_provider_token and account.provider_token_nonce),
         webhook_url=channel_webhook_url(account.id, account.provider),
         created_at=account.created_at,
@@ -1229,7 +1233,11 @@ def _whatsapp_graph_text(params: dict[str, Any]) -> str:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="text.body is required")
 
 
-def _binding_response(binding: ChannelBinding) -> ChannelBindingResponse:
+def _binding_response(
+    binding: ChannelBinding,
+    *,
+    last_message_at: datetime | None = None,
+) -> ChannelBindingResponse:
     return ChannelBindingResponse(
         id=binding.id,
         account_id=binding.account_id,
@@ -1239,6 +1247,7 @@ def _binding_response(binding: ChannelBinding) -> ChannelBindingResponse:
         external_chat_name=binding.external_chat_name,
         status=binding.status,
         created_at=binding.created_at,
+        last_message_at=last_message_at,
     )
 
 

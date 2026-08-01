@@ -192,6 +192,7 @@ class ChannelBindingResponse(BaseModel):
     external_chat_name: str | None
     status: str
     created_at: datetime
+    last_message_at: datetime | None = None
 
 
 class ChannelBindingDeleteResponse(BaseModel):

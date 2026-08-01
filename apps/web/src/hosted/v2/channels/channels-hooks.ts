@@ -194,7 +194,10 @@ export function useDeleteChannel() {
 	});
 }
 
-export function useCreatePairCode(accountId: string) {
+export function useCreatePairCode(
+	accountId: string,
+	{ toastOnError = true }: { toastOnError?: boolean } = {},
+) {
 	const api = useApi();
 	const qc = useQueryClient();
 	return useSensitiveAction(async (vars: { agent_link_id: string; ttl_seconds?: number }) => {
@@ -219,7 +222,7 @@ export function useCreatePairCode(accountId: string) {
 				discord_install_url: result.discord_install_url,
 			};
 		} catch (error) {
-			toastApiError("Couldn't create pairing code")(error);
+			if (toastOnError) toastApiError("Couldn't create pairing code")(error);
 			throw error;
 		}
 	});
