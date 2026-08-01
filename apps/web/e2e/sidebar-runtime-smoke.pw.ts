@@ -418,6 +418,31 @@ test("Console and connected agents use the scoped navigation grammar", async ({ 
 	]);
 });
 
+test("connected agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
+	await stubDashboardApi(page, [], {
+		skillsByProjectId: { "project-smoke": [] },
+	});
+	await page.goto("/agents/agent-smoke-1");
+
+	const overview = page.locator('[data-agent-overview="connected"]');
+	await expect(overview.getByRole("heading", { name: "Now", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
+	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveClass(/md:col-span-2/);
+	await expect(overview.locator('[data-overview-module="projects"]')).toHaveClass(/md:col-span-2/);
+	await expect(overview.locator('[data-overview-module="projects"]')).toContainText(
+		"Smoke Project",
+	);
+	await expect(overview.locator('[data-overview-module="live-sync"]')).toHaveClass(
+		/bg-identity-7-bg\/20/,
+	);
+	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
+	await page.setViewportSize({ width: 1280, height: 1400 });
+	await page.screenshot({
+		path: testInfo.outputPath("connected-agent-overview.png"),
+		fullPage: true,
+	});
+});
+
 test("connected agent Memories stays account-wide with canonical detail links", async ({
 	page,
 }) => {

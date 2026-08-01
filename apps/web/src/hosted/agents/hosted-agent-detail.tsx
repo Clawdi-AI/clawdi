@@ -35,9 +35,10 @@ import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
 import { AgentOverviewCapabilities } from "@/components/dashboard/agent-overview-capabilities";
+import { useAgentOverviewProjects } from "@/components/dashboard/agent-project-bindings-query";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
-import { AgentSkillsTab } from "@/components/dashboard/agent-skills-tab";
+import { AgentSkillsTab, useAgentProjectSkills } from "@/components/dashboard/agent-skills-tab";
 import { AgentVaultsTab } from "@/components/dashboard/agent-vaults-tab";
 import { EmptyState } from "@/components/empty-state";
 import {
@@ -200,7 +201,6 @@ import {
 	runtimeConsoleUrl,
 	runtimeDisplayName,
 } from "@/hosted/runtimes";
-import { hostedRuntimeStatusView } from "@/hosted/use-hosted-agent-tiles";
 import {
 	aiBindingBuildErrorCopy,
 	buildAiBindingFields,
@@ -839,49 +839,6 @@ function HostedAgentSessionsTab({
 
 // ── Overview ─────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value }: { label: string; value: React.ReactNode }) {
-	return (
-		<div className="rounded-lg border p-3">
-			<div className="text-sm font-medium">{value}</div>
-			<div className="text-xs text-muted-foreground">{label}</div>
-		</div>
-	);
-}
-
-function RuntimeStatusValue({
-	deployment,
-	agent,
-}: {
-	deployment: HostedDeployment;
-	agent: components["schemas"]["AgentResponse"] | null | undefined;
-}) {
-	const failure = deploymentFailurePresentation(deployment);
-	const status = hostedRuntimeStatusView(
-		deployment.resource.status,
-		agent,
-		failure?.failedVerb ? failure : null,
-	);
-	return (
-		<div className="flex min-w-0 flex-col gap-1">
-			<span
-				className={cn("inline-flex min-w-0 items-center gap-1.5", status.primary.textClass)}
-				title={`Agent status: ${status.primary.label}`}
-			>
-				<StatusDot status={status.primary.tone} />
-				<span className="truncate">{status.primary.label}</span>
-			</span>
-			{status.secondary ? (
-				<span
-					className={cn("truncate text-xs", status.secondary.textClass)}
-					title={status.secondary.tooltip}
-				>
-					{status.secondary.label}
-				</span>
-			) : null}
-		</div>
-	);
-}
-
 export function OverviewReadinessPanel({
 	deployment,
 	deploymentTransitionTimedOut,
@@ -1160,6 +1117,15 @@ function OverviewTab({
 	const sessionsEmptyMessage = deploymentRunning
 		? "No sessions from this agent yet."
 		: "Sessions appear once your agent is running.";
+	const overviewProjects = useAgentOverviewProjects(agentId, { enabled: Boolean(agent) });
+	const projectBindings = overviewProjects.bindings;
+	const skills = useAgentProjectSkills(
+		agentId,
+		agent?.default_project_id,
+		agentId,
+		false,
+		Boolean(agent),
+	);
 	return (
 		<div className="flex flex-col gap-5">
 			{showReadinessPanel ? (
@@ -1181,45 +1147,86 @@ function OverviewTab({
 			{deploymentStatus.kind === "stopped" ? (
 				<StoppedAgentState deployment={deployment} variant="inset" />
 			) : null}
-			<div
-				className={cn(
-					"grid gap-2 sm:grid-cols-2",
-					showReadinessPanel ? "lg:grid-cols-4" : "lg:grid-cols-5",
-				)}
-			>
-				{showReadinessPanel ? null : (
-					<StatCard
-						label="Status"
-						value={<RuntimeStatusValue deployment={deployment} agent={agent} />}
-					/>
-				)}
-				<StatCard label="Compute" value={isPerformance ? "Performance" : "Basic"} />
-				<StatCard label="Model" value={model} />
-				<StatCard
-					label="Resources"
-					value={`${spec.resources.vcpu} vCPU · ${formatMemoryMib(spec.resources.memory_mib)} · ${spec.resources.disk_gib} GiB storage`}
-				/>
-			</div>
-			<AgentOverviewCapabilities agentId={agentId} variant="hosted" routeSearch={routeSearch} />
-			{projectionAvailable ? (
+			<AgentOverviewCapabilities
+				agentId={agentId}
+				variant="hosted"
+				routeSearch={routeSearch}
+				content={{
+					sessions: {
+						value: projectionAvailable
+							? `${sessions.length} recent ${sessions.length === 1 ? "session" : "sessions"}`
+							: "Available when running",
+						detail: "Recent work from this managed agent.",
+						content:
+							projectionAvailable && !sessionsError ? (
+								<SessionFeed
+									sessions={sessions.slice(0, 3)}
+									isLoading={sessionsLoading}
+									emptyMessage={sessionsEmptyMessage}
+									emptyVariant="inset"
+									showAgent={false}
+									sessionLink={sessionLink}
+								/>
+							) : null,
+					},
+					"agent-interface": {
+						value: deploymentRunning ? "Ready to use" : deploymentStatusLabel(deploymentStatus),
+						detail: "Open the managed browser interface for this agent.",
+					},
+					projects: {
+						value: !agent
+							? "Details pending"
+							: projectBindings.isLoading
+								? "Loading…"
+								: projectBindings.error
+									? "Unavailable"
+									: `${projectBindings.data?.length ?? 0} ${projectBindings.data?.length === 1 ? "Project" : "Projects"}`,
+						detail: "Projects this agent reads for context and resources.",
+						items: overviewProjects.names,
+					},
+					skills: {
+						value: !agent
+							? "Details pending"
+							: skills.isLoading
+								? "Loading…"
+								: skills.error
+									? "Unavailable"
+									: `${skills.skills?.length ?? 0} available`,
+						detail: "Skills available through this agent's Projects.",
+					},
+					memories: {
+						value: "Shared context",
+						detail: "Account-wide memory available across agents.",
+					},
+					vaults: {
+						value: "Project access",
+						detail: "Vaults supplied safely through this agent's Projects.",
+					},
+					connectors: {
+						value: "Account connections",
+						detail: "External apps available across agents.",
+					},
+					"model-provider": {
+						value: model,
+						detail: "Primary model and credential source used by this agent.",
+					},
+					channels: {
+						value: "Messaging links",
+						detail: "Manage the channels linked to this agent.",
+					},
+					compute: {
+						value: isPerformance ? "Performance" : "Basic",
+						detail: `${spec.resources.vcpu} vCPU · ${formatMemoryMib(spec.resources.memory_mib)} · ${spec.resources.disk_gib} GiB storage`,
+					},
+				}}
+			/>
+			{projectionAvailable && sessionsError ? (
 				<div>
-					<div className="mb-2 text-sm font-medium">Recent sessions</div>
-					{sessionsError ? (
-						<ApiErrorPanel
-							error={sessionsError}
-							onRetry={onRetrySessions}
-							title="Couldn't load sessions"
-						/>
-					) : (
-						<SessionFeed
-							sessions={sessions}
-							isLoading={sessionsLoading}
-							emptyMessage={sessionsEmptyMessage}
-							emptyVariant="inset"
-							showAgent={false}
-							sessionLink={sessionLink}
-						/>
-					)}
+					<ApiErrorPanel
+						error={sessionsError}
+						onRetry={onRetrySessions}
+						title="Couldn't load sessions"
+					/>
 				</div>
 			) : null}
 			{showDeploymentActions ? (

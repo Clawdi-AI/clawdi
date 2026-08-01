@@ -1,68 +1,90 @@
 import type { AgentNavigationVariant, AgentSectionId } from "@/lib/navigation-model";
 
-export type AgentOverviewCapability = {
+export type AgentOverviewModuleId =
+	| "sessions"
+	| "live-sync"
+	| "agent-interface"
+	| "projects"
+	| "skills"
+	| "memories"
+	| "vaults"
+	| "connectors"
+	| "model-provider"
+	| "channels"
+	| "compute";
+
+export type AgentOverviewGroupId = "now" | "resources" | "operate";
+
+export type AgentOverviewModule = {
+	id: AgentOverviewModuleId;
 	section: AgentSectionId;
-	label: string;
-	description: string;
+	size: "standard" | "wide";
 };
 
-export type AgentCapabilities = {
-	variant: AgentNavigationVariant;
+export type AgentOverviewGroup = {
+	id: AgentOverviewGroupId;
 	label: string;
 	description: string;
-	management: string;
-	overviewCapabilities: readonly AgentOverviewCapability[];
+	modules: readonly AgentOverviewModule[];
 };
 
-const AGENT_CAPABILITIES = {
-	connected: {
-		variant: "connected",
-		label: "Connected agent",
-		description: "Runs on your machine or server and syncs its work to Clawdi.",
-		management: "Runtime controls stay on the machine where this agent runs.",
-		overviewCapabilities: [
-			{
-				section: "sessions",
-				label: "Synced activity",
-				description: "Review sessions reported by this agent.",
-			},
-			{
-				section: "projects",
-				label: "Project access",
-				description: "Control the Projects and resources this agent can use.",
-			},
-			{
-				section: "settings",
-				label: "Agent identity",
-				description: "Rename or disconnect this agent from Clawdi.",
-			},
-		],
-	},
-	hosted: {
-		variant: "hosted",
-		label: "Hosted agent",
-		description: "Runs in Clawdi Cloud with managed compute and runtime access.",
-		management: "Start, stop, configure, and open this agent directly from Clawdi.",
-		overviewCapabilities: [
-			{
-				section: "console",
-				label: "Agent interface",
-				description: "Open the agent's managed browser interface.",
-			},
-			{
-				section: "channels",
-				label: "Channel links",
-				description: "Connect messaging channels directly to this agent.",
-			},
-			{
-				section: "ai",
-				label: "Model & provider",
-				description: "Choose the AI provider and primary model it uses.",
-			},
-		],
-	},
-} as const satisfies Record<AgentNavigationVariant, AgentCapabilities>;
+const SHARED_RESOURCES = [
+	{ id: "projects", section: "projects", size: "wide" },
+	{ id: "skills", section: "skills", size: "standard" },
+	{ id: "memories", section: "memories", size: "standard" },
+	{ id: "vaults", section: "vaults", size: "standard" },
+	{ id: "connectors", section: "connectors", size: "standard" },
+] as const satisfies readonly AgentOverviewModule[];
 
-export function agentCapabilities(variant: AgentNavigationVariant): AgentCapabilities {
-	return AGENT_CAPABILITIES[variant];
+const AGENT_OVERVIEW_GROUPS = {
+	connected: [
+		{
+			id: "now",
+			label: "Now",
+			description: "Activity and current state",
+			modules: [
+				{ id: "sessions", section: "sessions", size: "wide" },
+				{ id: "live-sync", section: "settings", size: "standard" },
+			],
+		},
+		{
+			id: "resources",
+			label: "Resources",
+			description: "Context and tools available to this agent",
+			modules: SHARED_RESOURCES,
+		},
+	],
+	hosted: [
+		{
+			id: "now",
+			label: "Now",
+			description: "Activity and current state",
+			modules: [
+				{ id: "sessions", section: "sessions", size: "wide" },
+				{ id: "agent-interface", section: "console", size: "standard" },
+			],
+		},
+		{
+			id: "resources",
+			label: "Resources",
+			description: "Context and tools available to this agent",
+			modules: SHARED_RESOURCES,
+		},
+		{
+			id: "operate",
+			label: "Operate",
+			description: "Managed runtime and integrations",
+			modules: [
+				{ id: "model-provider", section: "ai", size: "standard" },
+				{ id: "channels", section: "channels", size: "standard" },
+				{ id: "compute", section: "settings", size: "standard" },
+			],
+		},
+	],
+} as const satisfies Record<AgentNavigationVariant, readonly AgentOverviewGroup[]>;
+
+export function agentOverviewGroups(
+	variant: AgentNavigationVariant,
+): readonly AgentOverviewGroup[] {
+	return AGENT_OVERVIEW_GROUPS[variant];
 }

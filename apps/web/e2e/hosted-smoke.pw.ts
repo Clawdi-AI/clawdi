@@ -2574,6 +2574,33 @@ test("returning users can deploy on Clawdi or connect another machine", async ({
 	await expect(page.getByRole("dialog", { name: "Add agent" })).toBeVisible();
 });
 
+test("hosted agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		agentResourceFixtures: true,
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+
+	const overview = page.locator('[data-agent-overview="hosted"]');
+	await expect(overview.getByRole("heading", { name: "Now", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Operate", exact: true })).toBeVisible();
+	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveClass(/md:col-span-2/);
+	await expect(overview.locator('[data-overview-module="projects"]')).toHaveClass(/md:col-span-2/);
+	await expect(overview.locator('[data-overview-module="projects"]')).toContainText(
+		"Hosted Agent Project",
+	);
+	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveClass(
+		/bg-identity-6-bg\/20/,
+	);
+	await expect(overview.locator('[data-overview-module="live-sync"]')).toHaveCount(0);
+	await page.setViewportSize({ width: 1280, height: 1600 });
+	await page.screenshot({ path: testInfo.outputPath("hosted-agent-overview.png"), fullPage: true });
+});
+
 test("empty accounts without deploy access only get the connected-agent path", async ({ page }) => {
 	await stubHostedApi(page, {
 		canCreateCloudAgents: false,

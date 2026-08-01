@@ -11,7 +11,7 @@ import {
 	cleanMachineName,
 } from "@/components/dashboard/agent-label";
 import { AgentOverviewCapabilities } from "@/components/dashboard/agent-overview-capabilities";
-import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
+import { useAgentOverviewProjects } from "@/components/dashboard/agent-project-bindings-query";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { AgentSkillsTab, useAgentProjectSkills } from "@/components/dashboard/agent-skills-tab";
@@ -75,11 +75,11 @@ export function ConnectedAgentDetail({
 		params: { path: { agent_id: id } },
 	});
 
-	const {
-		data: projectBindings,
-		error: projectBindingsError,
-		refetch: refetchProjectBindings,
-	} = useAgentProjectBindings(id, { enabled: !!agent });
+	const overviewProjects = useAgentOverviewProjects(id, { enabled: !!agent });
+	const projectBindings = overviewProjects.bindings.data;
+	const projectBindingsLoading = overviewProjects.isLoading;
+	const projectBindingsError = overviewProjects.bindings.error;
+	const refetchProjectBindings = overviewProjects.bindings.refetch;
 
 	const {
 		data: sessionsPage,
@@ -94,6 +94,7 @@ export function ConnectedAgentDetail({
 	const agentProjectId = agent?.default_project_id;
 	const {
 		skills: skillsForThisEnv,
+		isLoading: skillsLoading,
 		error: skillsError,
 		refetch: refetchSkills,
 	} = useAgentProjectSkills(id, agentProjectId, id, false, Boolean(agent));
@@ -176,23 +177,58 @@ export function ConnectedAgentDetail({
 									<p className="mt-1">Runtime managed outside Clawdi</p>
 								</div>
 							</DetailPanel>
-							<div className="grid gap-3 sm:grid-cols-3">
-								<AgentStatPanel label="Sessions" value={sessionTotal} />
-								<AgentStatPanel
-									label="Skills"
-									value={
-										blockingSkillsError ? "—" : skillsForThisEnv ? skillsForThisEnv.length : "—"
-									}
-								/>
-								<AgentStatPanel
-									label="Projects"
-									value={blockingProjectBindingsError ? "—" : (projectBindings?.length ?? "—")}
-								/>
-							</div>
 							<AgentOverviewCapabilities
 								agentId={id}
 								variant="connected"
 								routeSearch={routeSearch}
+								content={{
+									sessions: {
+										value: sessionsLoading
+											? "Loading…"
+											: `${sessionTotal} ${sessionTotal === 1 ? "session" : "sessions"}`,
+										detail: "Recent work synced from this agent.",
+										content: blockingSessionsError ? null : (
+											<SessionFeed
+												sessions={(sessionsPage?.items ?? []).slice(0, 3)}
+												isLoading={sessionsLoading}
+												emptyMessage="No sessions synced from this agent yet."
+												emptyVariant="inset"
+												showAgent={false}
+												sessionLink={(session) => scopedSessionLink(session.id)}
+											/>
+										),
+									},
+									"live-sync": { value: syncStatus.label, detail: syncStatus.tooltip },
+									projects: {
+										value: projectBindingsLoading
+											? "Loading…"
+											: projectBindingsError
+												? "Unavailable"
+												: `${projectBindings?.length ?? 0} ${projectBindings?.length === 1 ? "Project" : "Projects"}`,
+										detail: "Projects this agent reads for context and resources.",
+										items: overviewProjects.names,
+									},
+									skills: {
+										value: skillsLoading
+											? "Loading…"
+											: skillsError
+												? "Unavailable"
+												: `${skillsForThisEnv?.length ?? 0} available`,
+										detail: "Skills available through this agent's Projects.",
+									},
+									memories: {
+										value: "Shared context",
+										detail: "Account-wide memory available across agents.",
+									},
+									vaults: {
+										value: "Project access",
+										detail: "Vaults supplied safely through this agent's Projects.",
+									},
+									connectors: {
+										value: "Account connections",
+										detail: "External apps available across agents.",
+									},
+								}}
 							/>
 							{blockingSkillsError ? (
 								<ApiErrorPanel
@@ -212,10 +248,6 @@ export function ConnectedAgentDetail({
 									title="Couldn't load agent Projects"
 								/>
 							) : null}
-							<div className="flex items-center justify-between gap-3">
-								<h2 className="text-sm font-medium">Recent sessions</h2>
-								<span className="text-xs text-muted-foreground">Latest synced activity</span>
-							</div>
 							{blockingSessionsError ? (
 								<ApiErrorPanel
 									error={blockingSessionsError}
@@ -224,16 +256,7 @@ export function ConnectedAgentDetail({
 									}}
 									title="Couldn't load agent sessions"
 								/>
-							) : (
-								<SessionFeed
-									sessions={(sessionsPage?.items ?? []).slice(0, 5)}
-									isLoading={sessionsLoading}
-									emptyMessage="No sessions synced from this agent yet."
-									emptyVariant="inset"
-									showAgent={false}
-									sessionLink={(session) => scopedSessionLink(session.id)}
-								/>
-							)}
+							) : null}
 						</div>
 					) : null}
 
@@ -329,13 +352,4 @@ function parseAgentTab(value: AgentSectionId | string | null): AgentTab | null {
 	if (value === "overview") return "overview";
 	if (CONNECTED_AGENT_SECTION_IDS.includes(value as AgentTab)) return value as AgentTab;
 	return null;
-}
-
-function AgentStatPanel({ label, value }: { label: string; value: React.ReactNode }) {
-	return (
-		<DetailPanel className="p-3">
-			<div className="text-xl font-semibold tabular-nums">{value}</div>
-			<div className="text-xs text-muted-foreground">{label}</div>
-		</DetailPanel>
-	);
 }
