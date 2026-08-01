@@ -926,6 +926,17 @@ async def require_user_auth(auth: AuthContext = Depends(get_auth)) -> AuthContex
     return auth
 
 
+def require_clerk_id(auth: AuthContext) -> str:
+    """Return the Clerk id required by user-scoped integrations."""
+    clerk_id = auth.user.clerk_id
+    if not clerk_id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Clerk user authentication is required",
+        )
+    return clerk_id
+
+
 async def require_user_auth_unbound(
     auth: AuthContext = Depends(require_user_auth),
 ) -> AuthContext:

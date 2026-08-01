@@ -18,6 +18,7 @@ from app.core.auth import (
     _is_scoped_api_key,
     get_auth,
     is_runtime_deployment_principal,
+    require_clerk_id,
 )
 from app.core.database import get_session
 from app.core.query_utils import like_needle
@@ -417,19 +418,20 @@ async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
             _require_scope(auth, "connectors:read")
         except HTTPException:
             return []
+    clerk_id = require_clerk_id(auth)
     now = time.monotonic()
-    cached = _connector_tools_cache.get(auth.user.clerk_id)
+    cached = _connector_tools_cache.get(clerk_id)
     if cached and cached[0] > now:
         return cached[1]
     tools: list[dict[str, Any]] = []
     try:
-        session = await get_tool_router_mcp_session(auth.user.clerk_id)
+        session = await get_tool_router_mcp_session(clerk_id)
         result = await list_tool_router_mcp_tools(session)
         serialized = result.model_dump(by_alias=True, exclude_none=True)
         raw_tools = serialized.get("tools")
         if isinstance(raw_tools, list):
             tools = [tool for tool in raw_tools if isinstance(tool, dict)]
-        _connector_tools_cache[auth.user.clerk_id] = (
+        _connector_tools_cache[clerk_id] = (
             now + _CONNECTOR_TOOLS_CACHE_TTL_SECONDS,
             tools,
         )
@@ -661,7 +663,7 @@ async def _tool_connector_call(
         )
     if is_runtime_deployment_principal(auth):
         _require_scope(auth, "connectors:invoke")
-    session = await get_tool_router_mcp_session(auth.user.clerk_id)
+    session = await get_tool_router_mcp_session(require_clerk_id(auth))
     response = await call_tool_router_mcp_tool(session, name, arguments)
     result = response.model_dump(by_alias=True, exclude_none=True)
     if isinstance(result, dict):
