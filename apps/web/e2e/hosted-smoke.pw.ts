@@ -9710,10 +9710,12 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	await expect(discordPairDialog.locator("[data-pairing-qr-container]")).toBeVisible();
 	await expect(discordPairDialog.locator("[data-pairing-instruction-panel]")).toBeVisible();
 	await expect(discordPairDialog.locator("[data-pairing-dialog-footer]")).toBeVisible();
-	const copyDiscordCodeButton = discordPairDialog.getByRole("button", {
-		name: "Copy Discord pair code",
-		exact: true,
-	});
+	const discordServerPairCodeButton = () =>
+		discordPairDialog.locator('[data-discord-pair-path="server"]').getByRole("button", {
+			name: "Copy Discord pair code",
+			exact: true,
+		});
+	const copyDiscordCodeButton = discordServerPairCodeButton();
 	await expect(copyDiscordCodeButton).toBeVisible();
 	await expect(
 		discordPairDialog.getByRole("button", {
@@ -9825,6 +9827,15 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 		name: "Add to my apps",
 		exact: true,
 	});
+	const mobileDiscordDmPairCode = discordPairDialog
+		.locator('[data-discord-pair-path="dm"]')
+		.getByRole("button", { name: "Copy Discord pair code", exact: true });
+	await expectContainedInOwnerAndViewport(
+		page,
+		mobileDiscordDmPairCode,
+		discordPairDialog,
+		"mobile Discord DM pair code",
+	);
 	await expectContainedInOwnerAndViewport(
 		page,
 		mobileAddDiscordToMyApps,
@@ -9832,7 +9843,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 		"mobile Add Discord to my apps",
 	);
 	await expectControlsDoNotOverlap(
-		[copyDiscordCodeButton, mobileAddDiscordToMyApps],
+		[mobileDiscordDmPairCode, mobileAddDiscordToMyApps],
 		"mobile Discord DM pairing actions",
 	);
 	await expectActionCenterUncovered(mobileAddDiscordToMyApps);
@@ -9854,9 +9865,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	await expectActionCenterUncovered(
 		discordPairDialog.getByRole("button", { name: "Add to server" }),
 	);
-	await expect(
-		discordPairDialog.getByRole("button", { name: "Copy Discord pair code", exact: true }),
-	).toBeVisible({ timeout: 2_500 });
+	await expect(discordServerPairCodeButton()).toBeVisible({ timeout: 2_500 });
 	await expect(discordPairDialog.locator('a[href^="discord:"]')).toHaveCount(0);
 	await page.keyboard.press("Escape");
 	await page.setViewportSize({ width: 1440, height: 1100 });
@@ -9867,9 +9876,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	await expect(
 		discordPairDialog.getByText("This Discord pair code has expired", { exact: true }),
 	).toBeVisible();
-	await expect(
-		discordPairDialog.getByRole("button", { name: "Copy Discord pair code", exact: true }),
-	).toHaveCount(0);
+	await expect(discordServerPairCodeButton()).toHaveCount(0);
 	await discordPairDialog.getByRole("button", { name: "Generate new code", exact: true }).click();
 	await expect.poll(() => pairCodeRequests.length).toBe(10);
 	await expect(discordPairDialog.getByText("DISCORDNEW123", { exact: true })).toBeVisible();
@@ -9912,7 +9919,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	await expect(discordPairDialog.locator("[data-pairing-dialog-footer]")).toHaveCount(0);
 	await expectContainedInOwnerAndViewport(
 		page,
-		discordPairDialog.getByRole("button", { name: "Copy Discord pair code", exact: true }),
+		discordServerPairCodeButton(),
 		discordPairDialog,
 		"mobile Discord fallback pair code",
 	);
