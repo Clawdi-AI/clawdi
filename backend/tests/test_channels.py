@@ -19320,6 +19320,7 @@ async def test_discord_delete_tombstone_recovers_after_provider_failure(
     await db_session.rollback()
     link = await db_session.get(ChannelBotAgentLink, link_id)
     assert link is not None
+    await db_session.refresh(link)
     empty_fingerprint = shared_router._discord_guild_command_fingerprint(
         [],
         application_id=DISCORD_TEST_APPLICATION_ID,
