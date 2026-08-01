@@ -476,7 +476,12 @@ def apply_http_rewrite(flow: Any, profile: dict[str, Any], secrets: dict[str, st
     flow.request.port = parsed.port or default_port(parsed.scheme)
     header_set(flow.request.headers, "host", parsed.netloc)
     preserve_path = bool(rewrite.get("preservePath", True))
-    flow.request.path = combine_paths(parsed.path or "/", original_path if preserve_path else "")
+    if preserve_path:
+        flow.request.path = combine_paths(parsed.path or "/", original_path)
+    else:
+        original_query = urlsplit(original_path).query
+        target_path = parsed.path or "/"
+        flow.request.path = f"{target_path}?{original_query}" if original_query else target_path
     apply_rewrite_headers(flow, profile, secrets)
 
 

@@ -670,6 +670,12 @@ async def discord_agent_gateway(
         await websocket.close(code=4012)
         return
     raw_capability = path_capability or websocket.query_params.get("capability")
+    authorization = websocket.headers.get("authorization")
+    link_token = None
+    if authorization:
+        scheme, separator, credential = authorization.partition(" ")
+        if separator and scheme.lower() == "bearer" and credential and " " not in credential:
+            link_token = credential
     try:
         capability = _decode_discord_gateway_capability(raw_capability) if raw_capability else None
     except HTTPException:
@@ -773,13 +779,13 @@ async def discord_agent_gateway(
                 return
             async with async_session_factory() as db:
                 try:
-                    if capability is None:
+                    if capability is None and link_token is None:
                         resolved_agent = await resolve_channel_agent_by_token(
                             db,
                             provider=CHANNEL_PROVIDER_DISCORD,
                             token=token,
                         )
-                    else:
+                    elif capability is not None:
                         expected_placeholder = channel_runtime_placeholder_token(
                             CHANNEL_PROVIDER_DISCORD,
                             channel_runtime_account_key(capability.account_id),
@@ -796,6 +802,21 @@ async def discord_agent_gateway(
                             link_id=capability.link_id,
                             agent_token_hash=capability.agent_token_hash,
                         )
+                    else:
+                        resolved_agent = await resolve_channel_agent_by_token(
+                            db,
+                            provider=CHANNEL_PROVIDER_DISCORD,
+                            token=link_token,
+                        )
+                        expected_placeholder = channel_runtime_placeholder_token(
+                            CHANNEL_PROVIDER_DISCORD,
+                            channel_runtime_account_key(resolved_agent.account.id),
+                        )
+                        if not secrets.compare_digest(token, expected_placeholder):
+                            raise HTTPException(
+                                status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail="invalid discord gateway placeholder",
+                            )
                 except HTTPException:
                     if op == 6:
                         await send_gateway_frame({"op": 9, "d": False}, record=False)
@@ -888,7 +909,7 @@ async def discord_agent_gateway(
                             "session_id": session_id,
                             "resume_gateway_url": (
                                 _discord_gateway_url(resolved_agent)
-                                if capability is not None
+                                if capability is not None or link_token is not None
                                 else _public_ws_url("/v1/channels/discord/gateway")
                             ),
                             "user": _discord_bot_user(account),
