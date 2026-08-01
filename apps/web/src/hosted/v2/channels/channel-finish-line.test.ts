@@ -102,7 +102,7 @@ describe("hosted-agent channel finish line", () => {
 
 	test("describes channel setup without infrastructure vocabulary", () => {
 		const customerCopy = `${channelDetail}\n${channelHooks}`;
-		expect(customerCopy).toContain("Open the agent’s Channels page");
+		expect(customerCopy).toContain("Connect this bot from an Agent’s Channels page");
 		expect(channelDetail).not.toContain("Mint a device credential");
 		expect(channelDetail).not.toContain("The agent runtime uses");
 		expect(channelDetail).not.toContain("The runtime returned");
