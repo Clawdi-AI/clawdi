@@ -25,6 +25,7 @@ EXPECTED_CONFIG = {
         "app/routes/ai_providers.py",
         "app/routes/channel_routers/imessage_core.py",
         "app/routes/channel_routers/telegram.py",
+        "app/routes/channel_routers/whatsapp_callback.py",
         "app/routes/dashboard.py",
         "app/routes/sharing.py",
         "app/routes/vault.py",
@@ -42,6 +43,10 @@ EXPECTED_CONFIG = {
         "app/services/private_ip.py",
         "app/services/runtime_observation.py",
         "app/services/sync_events.py",
+        "app/schemas/whatsapp_callback.py",
+        "app/services/whatsapp_callback.py",
+        "app/services/whatsapp_sidecar_client.py",
+        "app/services/whatsapp_sidecar_registry.py",
     ],
     "strict": [
         "app/core/query_utils.py",

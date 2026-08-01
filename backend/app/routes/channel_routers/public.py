@@ -1682,8 +1682,12 @@ async def _last_delivery_error(
     return result.scalar_one_or_none()
 
 
-def _native_transport_health(_account: ChannelAccount) -> dict[str, Any] | None:
-    return None
+def _native_transport_health(account: ChannelAccount) -> dict[str, Any] | None:
+    if account.provider != CHANNEL_PROVIDER_WHATSAPP:
+        return None
+    from app.services.whatsapp_sidecar_registry import whatsapp_sidecar_status
+
+    return whatsapp_sidecar_status(account.id)
 
 
 def _telegram_bot_username(account: ChannelAccount) -> str | None:

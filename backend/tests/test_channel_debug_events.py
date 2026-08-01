@@ -153,3 +153,28 @@ async def test_channel_debug_health_reports_pending_inbox_and_last_error(
     assert health["pendingInbox"] == 1
     assert health["lastEvent"]["stage"] == "rest"
     assert health["lastError"]["error"] == "rate limited"
+
+
+@pytest.mark.asyncio
+async def test_channel_debug_health_reports_whatsapp_sidecar_status(
+    client: httpx.AsyncClient,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={"provider": "whatsapp", "name": "debug-whatsapp-native"},
+        )
+    ).json()
+
+    unavailable = await client.get("/v1/channels/debug/health")
+    assert unavailable.status_code == 200
+    health = next(
+        channel
+        for channel in unavailable.json()["channels"]
+        if channel["accountId"] == created["id"]
+    )
+    assert health["nativeTransport"] == {
+        "mode": "sidecar",
+        "configured": False,
+        "connected": None,
+    }

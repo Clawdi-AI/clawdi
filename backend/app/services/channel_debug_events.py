@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.channel import (
+    CHANNEL_PROVIDER_WHATSAPP,
     MESSAGE_DIRECTION_INBOUND,
     ChannelAccount,
     ChannelDebugEvent,
@@ -134,6 +135,10 @@ async def channel_debug_health(
                 await _last_event(db, account=account, error_only=True)
             ),
         }
+        if account.provider == CHANNEL_PROVIDER_WHATSAPP:
+            from app.services.whatsapp_sidecar_registry import whatsapp_sidecar_status
+
+            item["nativeTransport"] = whatsapp_sidecar_status(account.id)
         health.append(item)
     return health
 
