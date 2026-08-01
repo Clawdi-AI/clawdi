@@ -8,10 +8,8 @@ import {
 	AgentSourceBadgeForEnvironment,
 	agentDisplayName,
 } from "@/components/dashboard/agent-label";
-import {
-	AgentProjectsTab,
-	useAgentProjectBindings,
-} from "@/components/dashboard/agent-projects-tab";
+import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
+import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { AgentSkillsTab, useAgentProjectSkills } from "@/components/dashboard/agent-skills-tab";
 import { AgentVaultsTab } from "@/components/dashboard/agent-vaults-tab";
@@ -96,7 +94,7 @@ export function ConnectedAgentDetail({
 		skills: skillsForThisEnv,
 		error: skillsError,
 		refetch: refetchSkills,
-	} = useAgentProjectSkills(id, agentProjectId, id, false);
+	} = useAgentProjectSkills(id, agentProjectId, id, false, Boolean(agent));
 
 	const sessionTotal = sessionsError ? "—" : (sessionsPage?.total ?? 0);
 	const activeTabMeta = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];

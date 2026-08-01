@@ -525,11 +525,11 @@ export function HostedAgentDetail({
 	return (
 		<div
 			data-hosted="true"
+			data-testid={isLiveToolTab ? "hosted-agent-live-surface" : undefined}
 			className={cn(
-				CENTERED_PAGE_WIDTH_CLASS.page,
 				isLiveToolTab
-					? "-my-4 flex min-h-[calc(100svh-var(--header-height))] flex-col md:-my-5 md:min-h-[calc(100svh-var(--header-height)-1rem)]"
-					: "flex flex-col gap-6 px-4 lg:px-6",
+					? "-my-4 flex min-h-[calc(100svh-var(--header-height))] w-full flex-col md:-my-5 md:min-h-[calc(100svh-var(--header-height)-1rem)]"
+					: cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6"),
 			)}
 		>
 			{isLiveToolTab ? <h1 className="sr-only">{agentTitle}</h1> : null}
@@ -622,6 +622,7 @@ export function HostedAgentDetail({
 								agentProjectId={agent?.default_project_id}
 								routeSearch={routeSearch}
 								projectionFence={deployment.resource.metadata.resourceVersion}
+								hosted
 							/>
 						) : (
 							<ProjectionDependentUnavailable label="Skills" />

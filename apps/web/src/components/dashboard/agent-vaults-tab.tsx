@@ -1,9 +1,9 @@
 "use client";
 
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useAgentProjectBindings } from "@/components/dashboard/agent-projects-tab";
+import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
+import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
 import { Skeleton } from "@/components/ui/skeleton";
-import { effectiveAgentProjectIds } from "@/components/vault/vault-scope";
 import { VaultsSurface } from "@/components/vault/vaults-surface";
 
 export function AgentVaultsTab({ agentId }: { agentId: string }) {

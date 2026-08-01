@@ -13,14 +13,15 @@ export function agentSkillForegroundRefetchInterval(enabled: boolean): number | 
 
 export function agentProjectSkillsQueryKey(
 	agentId: string,
-	projectId: string | null | undefined,
+	projectIds: readonly string[],
 	projectionFence: string,
 ) {
-	return ["skills", "agent-project", agentId, projectId ?? "unavailable", projectionFence] as const;
+	return ["skills", "agent-projects", agentId, projectionFence, ...projectIds] as const;
 }
 
 export function agentProjectSkillsQueryEnabled(
-	projectId: string | null | undefined,
-): projectId is string {
-	return Boolean(projectId);
+	bindingsResolved: boolean,
+	projectIds: readonly string[],
+): boolean {
+	return bindingsResolved && projectIds.length > 0;
 }

@@ -26,7 +26,7 @@ describe("Agent Project Skills query lifecycle", () => {
 		] as const;
 		let calls = 0;
 		const observer = new QueryObserver(queryClient, {
-			queryKey: agentProjectSkillsQueryKey("agent-1", "project-1", "fence-1"),
+			queryKey: agentProjectSkillsQueryKey("agent-1", ["project-1"], "fence-1"),
 			queryFn: async () => {
 				const snapshot = snapshots[Math.min(calls, snapshots.length - 1)];
 				calls += 1;
@@ -60,9 +60,9 @@ describe("Agent Project Skills query lifecycle", () => {
 		}
 	});
 
-	test("partitions cached rows by Agent, Project, and projection fence", () => {
+	test("partitions cached rows by Agent, effective Project order, and projection fence", () => {
 		const queryClient = new QueryClient();
-		const currentKey = agentProjectSkillsQueryKey("agent-1", "project-1", "fence-1");
+		const currentKey = agentProjectSkillsQueryKey("agent-1", ["project-1", "project-2"], "fence-1");
 		queryClient.setQueryData<Array<{ skill_key: string; version: number }>>(currentKey, [
 			{ skill_key: "alpha", version: 1 },
 		]);
@@ -71,18 +71,25 @@ describe("Agent Project Skills query lifecycle", () => {
 			queryClient.getQueryData<Array<{ skill_key: string; version: number }>>(currentKey),
 		).toEqual([{ skill_key: "alpha", version: 1 }]);
 		expect(
-			queryClient.getQueryData(agentProjectSkillsQueryKey("agent-1", "project-2", "fence-1")),
+			queryClient.getQueryData(agentProjectSkillsQueryKey("agent-1", ["project-1"], "fence-1")),
 		).toBeUndefined();
 		expect(
-			queryClient.getQueryData(agentProjectSkillsQueryKey("agent-1", "project-1", "fence-2")),
+			queryClient.getQueryData(
+				agentProjectSkillsQueryKey("agent-1", ["project-2", "project-1"], "fence-1"),
+			),
 		).toBeUndefined();
 		expect(
-			queryClient.getQueryData(agentProjectSkillsQueryKey("agent-2", "project-1", "fence-1")),
+			queryClient.getQueryData(
+				agentProjectSkillsQueryKey("agent-1", ["project-1", "project-2"], "fence-2"),
+			),
 		).toBeUndefined();
 		expect(
-			queryClient.getQueryData(agentProjectSkillsQueryKey("agent-1", null, "fence-1")),
+			queryClient.getQueryData(
+				agentProjectSkillsQueryKey("agent-2", ["project-1", "project-2"], "fence-1"),
+			),
 		).toBeUndefined();
-		expect(agentProjectSkillsQueryEnabled("project-1")).toBe(true);
-		expect(agentProjectSkillsQueryEnabled(null)).toBe(false);
+		expect(agentProjectSkillsQueryEnabled(true, ["project-1"])).toBe(true);
+		expect(agentProjectSkillsQueryEnabled(false, ["project-1"])).toBe(false);
+		expect(agentProjectSkillsQueryEnabled(true, [])).toBe(false);
 	});
 });
