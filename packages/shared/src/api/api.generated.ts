@@ -581,25 +581,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/channels/whatsapp/{account_id}/tenant-creds": {
+    "/v1/channels/whatsapp/application/{account_id}/capabilities": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List Whatsapp Tenant Credentials */
-        get: operations["list_whatsapp_tenant_credentials_v1_channels_whatsapp__account_id__tenant_creds_get"];
+        /** Whatsapp Application Capabilities */
+        get: operations["whatsapp_application_capabilities_v1_channels_whatsapp_application__account_id__capabilities_get"];
         put?: never;
-        /** Create Whatsapp Tenant Credential */
-        post: operations["create_whatsapp_tenant_credential_v1_channels_whatsapp__account_id__tenant_creds_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v1/channels/whatsapp/{account_id}/tenant-creds/{credential_id}": {
+    "/v1/channels/whatsapp/application/{account_id}/inbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whatsapp Application Inbox */
+        get: operations["whatsapp_application_inbox_v1_channels_whatsapp_application__account_id__inbox_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/application/{account_id}/inbox/{event_id}/ack": {
         parameters: {
             query?: never;
             header?: never;
@@ -608,25 +624,144 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post?: never;
-        /** Delete Whatsapp Tenant Credential */
-        delete: operations["delete_whatsapp_tenant_credential_v1_channels_whatsapp__account_id__tenant_creds__credential_id__delete"];
+        /** Whatsapp Application Inbox Ack */
+        post: operations["whatsapp_application_inbox_ack_v1_channels_whatsapp_application__account_id__inbox__event_id__ack_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v1/channels/whatsapp/{account_id}/auth-cert": {
+    "/v1/channels/whatsapp/application/{account_id}/operations": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Whatsapp Auth Cert */
-        get: operations["get_whatsapp_auth_cert_v1_channels_whatsapp__account_id__auth_cert_get"];
+        get?: never;
+        put?: never;
+        /** Whatsapp Application Operation */
+        post: operations["whatsapp_application_operation_v1_channels_whatsapp_application__account_id__operations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/application/{account_id}/media/{media_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whatsapp Application Media */
+        get: operations["whatsapp_application_media_v1_channels_whatsapp_application__account_id__media__media_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/{account_id}/sidecar/pairing/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whatsapp Sidecar Pairing Status */
+        get: operations["whatsapp_sidecar_pairing_status_v1_channels_whatsapp__account_id__sidecar_pairing_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/{account_id}/sidecar/pairing/qr": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Whatsapp Sidecar Pair Qr */
+        post: operations["whatsapp_sidecar_pair_qr_v1_channels_whatsapp__account_id__sidecar_pairing_qr_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/{account_id}/sidecar/pairing/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Whatsapp Sidecar Pair Code */
+        post: operations["whatsapp_sidecar_pair_code_v1_channels_whatsapp__account_id__sidecar_pairing_code_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/{account_id}/sidecar/pairing/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Whatsapp Sidecar Pairing Cancel */
+        post: operations["whatsapp_sidecar_pairing_cancel_v1_channels_whatsapp__account_id__sidecar_pairing_cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/{account_id}/sidecar/pairing/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Whatsapp Sidecar Pairing Logout */
+        post: operations["whatsapp_sidecar_pairing_logout_v1_channels_whatsapp__account_id__sidecar_pairing_logout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/{account_id}/sidecar/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Whatsapp Sidecar Recover */
+        post: operations["whatsapp_sidecar_recover_v1_channels_whatsapp__account_id__sidecar_recover_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7476,97 +7611,318 @@ export interface components {
         VaultSectionsResponse: {
             [key: string]: string[];
         };
-        /** WhatsAppSelfIdentity */
-        WhatsAppSelfIdentity: {
+        /** WhatsAppApplicationBinding */
+        WhatsAppApplicationBinding: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
+        /** WhatsAppApplicationCapabilitiesResponse */
+        WhatsAppApplicationCapabilitiesResponse: {
+            /** Operations */
+            operations: ("send_text" | "send_media" | "reaction" | "typing" | "edit_message" | "delete_message" | "mark_read")[];
+            /** Typingstates */
+            typingStates: ("composing" | "recording" | "paused")[];
+            /**
+             * Maxinboxlimit
+             * @default 100
+             * @constant
+             */
+            maxInboxLimit: 100;
+            /**
+             * Maxlongpollseconds
+             * @default 30
+             * @constant
+             */
+            maxLongPollSeconds: 30;
+            /**
+             * Maxmediabytes
+             * @default 8388608
+             * @constant
+             */
+            maxMediaBytes: 8388608;
+        };
+        /** WhatsAppApplicationChat */
+        WhatsAppApplicationChat: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "direct" | "group";
+            /** Name */
+            name?: string | null;
+        };
+        /** WhatsAppApplicationMedia */
+        WhatsAppApplicationMedia: {
+            /** Url */
+            url: string;
+            /** Mimetype */
+            mimeType: string;
+            /** Filename */
+            fileName?: string | null;
+            /** Ptt */
+            ptt?: true | null;
+        };
+        /** WhatsAppApplicationMessage */
+        WhatsAppApplicationMessage: {
             /** Id */
             id: string;
-            /** Lid */
-            lid?: string | null;
+            /** Text */
+            text: string;
+            /** Timestamp */
+            timestamp: number;
+            /** Replyto */
+            replyTo?: string | null;
+            reaction?: components["schemas"]["WhatsAppApplicationReaction"] | null;
+            /** Media */
+            media?: components["schemas"]["WhatsAppApplicationMedia"][];
+        };
+        /** WhatsAppApplicationReaction */
+        WhatsAppApplicationReaction: {
+            /** Emoji */
+            emoji: string;
+            /** Messageid */
+            messageId: string;
+        };
+        /** WhatsAppApplicationSender */
+        WhatsAppApplicationSender: {
+            /** Id */
+            id: string;
             /** Name */
             name?: string | null;
         };
-        /** WhatsAppTenantCredentialCreate */
-        WhatsAppTenantCredentialCreate: {
-            /** Agent Id */
-            agent_id?: string | null;
-            /** Agent Link Id */
-            agent_link_id?: string | null;
-            /** Phone User */
-            phone_user?: string | null;
+        /** WhatsAppDeleteMessageOperation */
+        WhatsAppDeleteMessageOperation: {
+            /** Operationid */
+            operationId: string;
+            target: components["schemas"]["WhatsAppOperationTarget"];
             /**
-             * Device
-             * @default 1
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
              */
-            device: number;
-            /** Name */
-            name?: string | null;
-            self_identity?: components["schemas"]["WhatsAppSelfIdentity"] | null;
+            type: "delete_message";
+            /** Messageid */
+            messageId: string;
         };
-        /** WhatsAppTenantCredentialMetadata */
-        WhatsAppTenantCredentialMetadata: {
+        /** WhatsAppEditMessageOperation */
+        WhatsAppEditMessageOperation: {
+            /** Operationid */
+            operationId: string;
+            target: components["schemas"]["WhatsAppOperationTarget"];
             /**
-             * Credential Id
-             * Format: uuid
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
              */
-            credential_id: string;
-            /**
-             * Agent Link Id
-             * Format: uuid
-             */
-            agent_link_id: string;
-            /**
-             * Agent Id
-             * Format: uuid
-             */
-            agent_id: string;
-            /** Jid */
-            jid: string;
-            /** Identity Pub Key Hex */
-            identity_pub_key_hex: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
+            type: "edit_message";
+            /** Messageid */
+            messageId: string;
+            /** Text */
+            text: string;
         };
-        /** WhatsAppTenantCredentialResponse */
-        WhatsAppTenantCredentialResponse: {
+        /** WhatsAppInboxAckResponse */
+        WhatsAppInboxAckResponse: {
             /**
-             * Channel
-             * @default whatsapp
-             */
-            channel: string;
-            /**
-             * Credential Id
+             * Id
              * Format: uuid
              */
-            credential_id: string;
+            id: string;
             /**
-             * Agent Link Id
+             * Acknowledged
+             * @default true
+             * @constant
+             */
+            acknowledged: true;
+            /**
+             * Duplicate
+             * @default false
+             */
+            duplicate: boolean;
+        };
+        /** WhatsAppInboxEvent */
+        WhatsAppInboxEvent: {
+            /**
+             * Id
              * Format: uuid
              */
-            agent_link_id: string;
+            id: string;
+            binding: components["schemas"]["WhatsAppApplicationBinding"];
+            chat: components["schemas"]["WhatsAppApplicationChat"];
+            sender: components["schemas"]["WhatsAppApplicationSender"];
+            message: components["schemas"]["WhatsAppApplicationMessage"];
+        };
+        /** WhatsAppInboxResponse */
+        WhatsAppInboxResponse: {
+            /** Events */
+            events: components["schemas"]["WhatsAppInboxEvent"][];
+            /** Cursor */
+            cursor: string;
+        };
+        /** WhatsAppLifecycleResponse */
+        WhatsAppLifecycleResponse: {
             /**
-             * Agent Id
+             * Ok
+             * @default true
+             * @constant
+             */
+            ok: true;
+        };
+        /** WhatsAppManualCodeRequest */
+        WhatsAppManualCodeRequest: {
+            /** Phonenumber */
+            phoneNumber: string;
+        };
+        /** WhatsAppMarkReadOperation */
+        WhatsAppMarkReadOperation: {
+            /** Operationid */
+            operationId: string;
+            target: components["schemas"]["WhatsAppOperationTarget"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "mark_read";
+            /** Messageid */
+            messageId: string;
+        };
+        /** WhatsAppOperationResponse */
+        WhatsAppOperationResponse: {
+            /** Operationid */
+            operationId: string;
+            /** Messageid */
+            messageId?: string | null;
+            /**
+             * Status
+             * @constant
+             */
+            status: "completed";
+            /**
+             * Duplicate
+             * @default false
+             */
+            duplicate: boolean;
+        };
+        /** WhatsAppOperationTarget */
+        WhatsAppOperationTarget: {
+            /**
+             * Bindingid
              * Format: uuid
              */
-            agent_id: string;
-            /** Jid */
-            jid: string;
-            /** Identity Pub Key Hex */
-            identity_pub_key_hex: string;
-            /** Creds */
-            creds: {
-                [key: string]: unknown;
-            };
-            /** Auth Cert */
-            auth_cert: {
-                [key: string]: unknown;
-            };
-            /** Websocket Url */
-            websocket_url: string;
-            /** Media Proxy Base Url */
-            media_proxy_base_url: string;
+            bindingId: string;
+            /**
+             * Chatid
+             * Format: uuid
+             */
+            chatId: string;
+            /**
+             * Chattype
+             * @enum {string}
+             */
+            chatType: "direct" | "group";
+        };
+        /** WhatsAppOutboundMedia */
+        WhatsAppOutboundMedia: {
+            /** Relayurl */
+            relayUrl?: string | null;
+            /** Contentbase64 */
+            contentBase64?: string | null;
+            /** Kind */
+            kind?: ("image" | "video" | "audio" | "document") | null;
+            /** Filename */
+            fileName?: string | null;
+        };
+        /** WhatsAppPairingStatusResponse */
+        WhatsAppPairingStatusResponse: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "starting" | "pairing_qr" | "pairing_code" | "connected" | "disconnected" | "fatal" | "stopped";
+            /** Registered */
+            registered: boolean;
+            /** Method */
+            method?: ("qr" | "code") | null;
+            /** Qr */
+            qr?: string | null;
+            /** Code */
+            code?: string | null;
+        };
+        /** WhatsAppReactionOperation */
+        WhatsAppReactionOperation: {
+            /** Operationid */
+            operationId: string;
+            target: components["schemas"]["WhatsAppOperationTarget"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "reaction";
+            /** Messageid */
+            messageId: string;
+            /** Emoji */
+            emoji: string;
+        };
+        /** WhatsAppRecoverRequest */
+        WhatsAppRecoverRequest: {
+            /** Acceptversionchange */
+            acceptVersionChange: boolean;
+            /**
+             * Resetloggedout
+             * @default false
+             */
+            resetLoggedOut: boolean;
+        };
+        /** WhatsAppSendMediaOperation */
+        WhatsAppSendMediaOperation: {
+            /** Operationid */
+            operationId: string;
+            target: components["schemas"]["WhatsAppOperationTarget"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "send_media";
+            media: components["schemas"]["WhatsAppOutboundMedia"];
+            /** Text */
+            text?: string | null;
+            /** Replyto */
+            replyTo?: string | null;
+        };
+        /** WhatsAppSendTextOperation */
+        WhatsAppSendTextOperation: {
+            /** Operationid */
+            operationId: string;
+            target: components["schemas"]["WhatsAppOperationTarget"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "send_text";
+            /** Text */
+            text: string;
+            /** Replyto */
+            replyTo?: string | null;
+        };
+        /** WhatsAppTypingOperation */
+        WhatsAppTypingOperation: {
+            /** Operationid */
+            operationId: string;
+            target: components["schemas"]["WhatsAppOperationTarget"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "typing";
+            /** Active */
+            active?: boolean | null;
+            /** State */
+            state?: ("composing" | "recording" | "paused") | null;
         };
     };
     responses: never;
@@ -8832,7 +9188,182 @@ export interface operations {
             };
         };
     };
-    list_whatsapp_tenant_credentials_v1_channels_whatsapp__account_id__tenant_creds_get: {
+    whatsapp_application_capabilities_v1_channels_whatsapp_application__account_id__capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhatsAppApplicationCapabilitiesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    whatsapp_application_inbox_v1_channels_whatsapp_application__account_id__inbox_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                wait_seconds?: number;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhatsAppInboxResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    whatsapp_application_inbox_ack_v1_channels_whatsapp_application__account_id__inbox__event_id__ack_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                account_id: string;
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhatsAppInboxAckResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    whatsapp_application_operation_v1_channels_whatsapp_application__account_id__operations_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WhatsAppSendTextOperation"] | components["schemas"]["WhatsAppSendMediaOperation"] | components["schemas"]["WhatsAppReactionOperation"] | components["schemas"]["WhatsAppTypingOperation"] | components["schemas"]["WhatsAppEditMessageOperation"] | components["schemas"]["WhatsAppDeleteMessageOperation"] | components["schemas"]["WhatsAppMarkReadOperation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhatsAppOperationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    whatsapp_application_media_v1_channels_whatsapp_application__account_id__media__media_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                account_id: string;
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    whatsapp_sidecar_pairing_status_v1_channels_whatsapp__account_id__sidecar_pairing_status_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -8849,7 +9380,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WhatsAppTenantCredentialMetadata"][];
+                    "application/json": components["schemas"]["WhatsAppPairingStatusResponse"];
                 };
             };
             /** @description Validation Error */
@@ -8863,7 +9394,38 @@ export interface operations {
             };
         };
     };
-    create_whatsapp_tenant_credential_v1_channels_whatsapp__account_id__tenant_creds_post: {
+    whatsapp_sidecar_pair_qr_v1_channels_whatsapp__account_id__sidecar_pairing_qr_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhatsAppPairingStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    whatsapp_sidecar_pair_code_v1_channels_whatsapp__account_id__sidecar_pairing_code_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -8874,17 +9436,17 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WhatsAppTenantCredentialCreate"];
+                "application/json": components["schemas"]["WhatsAppManualCodeRequest"];
             };
         };
         responses: {
             /** @description Successful Response */
-            201: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WhatsAppTenantCredentialResponse"];
+                    "application/json": components["schemas"]["WhatsAppPairingStatusResponse"];
                 };
             };
             /** @description Validation Error */
@@ -8898,37 +9460,7 @@ export interface operations {
             };
         };
     };
-    delete_whatsapp_tenant_credential_v1_channels_whatsapp__account_id__tenant_creds__credential_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                account_id: string;
-                credential_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_whatsapp_auth_cert_v1_channels_whatsapp__account_id__auth_cert_get: {
+    whatsapp_sidecar_pairing_cancel_v1_channels_whatsapp__account_id__sidecar_pairing_cancel_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -8945,9 +9477,73 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["WhatsAppPairingStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    whatsapp_sidecar_pairing_logout_v1_channels_whatsapp__account_id__sidecar_pairing_logout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhatsAppPairingStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    whatsapp_sidecar_recover_v1_channels_whatsapp__account_id__sidecar_recover_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WhatsAppRecoverRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhatsAppLifecycleResponse"];
                 };
             };
             /** @description Validation Error */
