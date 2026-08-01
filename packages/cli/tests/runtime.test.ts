@@ -6458,6 +6458,26 @@ exit 64
 		expect(
 			projected.secretValues?.["secret://channels/discord/clawdi_acctdiscord1/placeholder-token"],
 		).toMatch(/^clawdi_[a-f0-9]{32}$/);
+		const discordGateway = projected.manifest.egressProfiles?.profiles.find(
+			(profile) => profile.id === "native-discord-clawdi_acctdiscord1-gateway-managed",
+		);
+		expect(discordGateway).toMatchObject({
+			kind: "websocket",
+			match: { scheme: "wss", host: "gateway.discord.gg", pathPrefix: "/" },
+			rewrite: {
+				upstreamBaseUrl: "wss://cloud-api.test/v1/channels/discord/gateway",
+				preservePath: false,
+				setHeaders: {
+					authorization: {
+						type: "secretRef",
+						secretRef:
+							"secret://channels/discord/clawdi_acctdiscord1/links/link-discord-1/agent-token",
+						prefix: "Bearer ",
+					},
+				},
+			},
+			logging: { redactHeaders: ["authorization"] },
+		});
 		expect(
 			projected.secretValues?.["secret://channels/whatsapp/clawdi_acctwhatsapp/agent-token"],
 		).toBeUndefined();
