@@ -1,17 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-	ArrowDown,
-	ArrowUp,
-	Home,
-	Layers,
-	MessageSquare,
-	Plus,
-	Settings,
-	Sparkles,
-	Trash2,
-} from "lucide-react";
+import { ArrowDown, ArrowUp, Home, Layers, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -22,7 +12,7 @@ import {
 } from "@/components/dashboard/agent-label";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { AgentSkillsTab, useAgentProjectSkills } from "@/components/dashboard/agent-skills-tab";
-import { DetailNotFound, DetailPanel, type DetailSectionMeta } from "@/components/detail/layout";
+import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_BASE } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
@@ -49,6 +39,7 @@ import {
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
+import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -56,29 +47,6 @@ type AgentTab = "overview" | "sessions" | "skills" | "projects" | "settings";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
 type ProjectBindingRow = components["schemas"]["AgentProjectBindingResponse"];
-
-const AGENT_DETAIL_NAV_META: Record<AgentTab, DetailSectionMeta> = {
-	overview: {
-		icon: Home,
-		description: "Status, inventory, and recent activity for this agent.",
-	},
-	sessions: {
-		icon: MessageSquare,
-		description: "History synced by this agent.",
-	},
-	skills: {
-		icon: Sparkles,
-		description: "Installed in this agent's Agent Project.",
-	},
-	projects: {
-		icon: Layers,
-		description: "Agent Project, added Projects, and read order.",
-	},
-	settings: {
-		icon: Settings,
-		description: "Name and avatar used across the dashboard.",
-	},
-};
 
 export function ConnectedAgentDetail({
 	environmentId,
@@ -155,7 +123,7 @@ export function ConnectedAgentDetail({
 	} = useAgentProjectSkills(id, agentProjectId, id, false);
 
 	const sessionTotal = sessionsError ? "—" : (sessionsPage?.total ?? 0);
-	const activeTabMeta = AGENT_DETAIL_NAV_META[activeTab];
+	const activeTabMeta = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeTabMeta.icon;
 	const ownershipKind = agent ? agentOwnershipKindFromId(agent.id, ownership) : "connected";

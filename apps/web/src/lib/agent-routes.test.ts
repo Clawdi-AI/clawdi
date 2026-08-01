@@ -149,13 +149,13 @@ describe("agent routes", () => {
 		expect(parseAgentSectionSegment("bad")).toBeNull();
 	});
 
-	it("keeps labels and URL segments in one route table", () => {
-		expect(agentSectionLabel("projects")).toBe("Project Access");
+	it("keeps canonical labels while preserving backward-compatible URL segments", () => {
+		expect(agentSectionLabel("projects")).toBe("Projects");
 		expect(agentSectionLabel("console")).toBe("Agent Interface");
 		expect(agentSectionLabel("channels")).toBe("Channels");
-		expect(agentSectionLabelFromSegment("project-access")).toBe("Project Access");
+		expect(agentSectionLabelFromSegment("project-access")).toBe("Projects");
 		expect(agentSectionLabelFromSegment("console")).toBe("Agent Interface");
-		expect(agentSectionLabelFromSegment("model-provider")).toBe("AI Providers");
+		expect(agentSectionLabelFromSegment("model-provider")).toBe("AI & Model");
 		expect(agentSectionLabelFromSegment("settings")).toBe("Settings");
 		expect(agentSectionLabelFromSegment("bad")).toBeNull();
 	});

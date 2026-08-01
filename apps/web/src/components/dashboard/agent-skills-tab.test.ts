@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { AGENT_SECTION_NAVIGATION_ITEMS, agentNavigationGroups } from "@/lib/navigation-model";
 
 describe("agent Skills resource boundary", () => {
 	test("keeps persisted Agent Project rows read-only without cleanup mutations", () => {
@@ -17,15 +18,16 @@ describe("agent Skills resource boundary", () => {
 	});
 
 	test("describes both Agent Skill surfaces as filesystem projections", () => {
-		const sidebar = readFileSync(new URL("../app-sidebar.tsx", import.meta.url), "utf8");
-		const hostedStart = sidebar.indexOf("const HOSTED_AGENT_SECTIONS");
-		expect(hostedStart).toBeGreaterThan(-1);
-		const connected = sidebar.slice(0, hostedStart);
-		const hosted = sidebar.slice(hostedStart);
+		const connectedSkills = agentNavigationGroups("connected").flatMap((group) => group.items);
+		const hostedSkills = agentNavigationGroups("hosted").flatMap((group) => group.items);
 
-		expect(connected).toContain("Skills synced from this Agent filesystem");
-		expect(connected).not.toContain("Manifest configuration");
-		expect(hosted).toContain("Skills synced from this Agent filesystem");
-		expect(hosted).not.toContain("Manifest configuration");
+		expect(connectedSkills).toContain(AGENT_SECTION_NAVIGATION_ITEMS.skills);
+		expect(hostedSkills).toContain(AGENT_SECTION_NAVIGATION_ITEMS.skills);
+		expect(AGENT_SECTION_NAVIGATION_ITEMS.skills.description).toBe(
+			"Skills synced from this agent's filesystem.",
+		);
+		expect(AGENT_SECTION_NAVIGATION_ITEMS.skills.description).not.toContain(
+			"Manifest configuration",
+		);
 	});
 });

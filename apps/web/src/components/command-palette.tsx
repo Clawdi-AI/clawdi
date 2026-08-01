@@ -2,18 +2,8 @@
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import {
-	Brain,
-	Key,
-	LayoutDashboard,
-	type LucideIcon,
-	MessageSquare,
-	MessagesSquare,
-	Settings,
-	Sparkles,
-} from "lucide-react";
+import { Brain, Key, type LucideIcon, MessageSquare, Settings, Sparkles } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import {
 	Command,
 	CommandDialog,
@@ -29,12 +19,7 @@ import { unwrap, useApi } from "@/lib/api";
 import type { SearchHit } from "@/lib/api-schemas";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
-import {
-	PROJECT_RESOURCE_GROUPS,
-	projectResourceDefinitionsForGroup,
-	projectResourcePathLabel,
-	projectResourceScopeLabel,
-} from "@/lib/project-resource-model";
+import { consoleCommandPaletteItems } from "@/lib/navigation-model";
 import type { SettingsSectionId } from "@/lib/settings-routes";
 import { useDebouncedValue } from "@/lib/use-debounced";
 
@@ -46,45 +31,6 @@ interface NavShortcut {
 	subtitle: string;
 	searchText: string;
 }
-
-const BASE_NAV_SHORTCUTS: NavShortcut[] = [
-	{
-		label: "Overview",
-		href: "/",
-		icon: LayoutDashboard,
-		subtitle: "Dashboard",
-		searchText: "overview dashboard",
-	},
-	...PROJECT_RESOURCE_GROUPS.flatMap((group) =>
-		projectResourceDefinitionsForGroup(group.id).map((definition) => ({
-			label: definition.navLabel,
-			href: definition.href,
-			icon: PROJECT_RESOURCE_ICONS[definition.id],
-			subtitle: projectResourcePathLabel(definition),
-			searchText: `${definition.navLabel} ${definition.label} ${group.label} ${projectResourceScopeLabel(
-				definition.projectScope,
-			)} ${projectResourcePathLabel(definition)}`,
-		})),
-	),
-];
-
-const CLOUD_NAV_SHORTCUTS: NavShortcut[] = [
-	{
-		label: "Channels",
-		href: "/channels",
-		icon: MessagesSquare,
-		subtitle: "Account resources",
-		searchText: "channels telegram discord whatsapp bots messaging",
-	},
-	{
-		label: "AI Providers",
-		href: "/ai-providers",
-		icon: Sparkles,
-		subtitle: "Account resources",
-		searchText:
-			"model providers ai providers models openai anthropic openrouter gemini mistral byok api key",
-	},
-];
 
 const TYPE_ICON: Record<SearchHit["type"], LucideIcon> = {
 	session: MessageSquare,
@@ -160,6 +106,13 @@ function CommandPalette({
 	const [query, setQuery] = useState("");
 	const debounced = useDebouncedValue(query, 180);
 	const navShortcuts = useMemo(() => {
+		const shortcuts: NavShortcut[] = consoleCommandPaletteItems(false).map((item) => ({
+			label: item.label,
+			href: item.href,
+			icon: item.icon,
+			subtitle: item.commandPalette.subtitle,
+			searchText: item.commandPalette.searchText,
+		}));
 		const settingsShortcut: NavShortcut = {
 			label: "Settings",
 			href: ".",
@@ -168,9 +121,19 @@ function CommandPalette({
 			subtitle: "General, Profile, API Keys",
 			searchText: "settings general profile api keys model providers billing preferences account",
 		};
-		const shortcuts = [...BASE_NAV_SHORTCUTS, settingsShortcut];
+		shortcuts.push(settingsShortcut);
 		if (IS_HOSTED && hostedAccess.canCreateCloudAgents) {
-			shortcuts.push(...CLOUD_NAV_SHORTCUTS);
+			shortcuts.push(
+				...consoleCommandPaletteItems(true)
+					.filter((item) => item.availability === "cloud")
+					.map((item) => ({
+						label: item.label,
+						href: item.href,
+						icon: item.icon,
+						subtitle: item.commandPalette.subtitle,
+						searchText: item.commandPalette.searchText,
+					})),
+			);
 		}
 		return shortcuts;
 	}, [hostedAccess.canCreateCloudAgents]);

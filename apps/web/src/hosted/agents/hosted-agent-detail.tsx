@@ -22,7 +22,6 @@ import {
 	QrCode,
 	RefreshCw,
 	Settings,
-	Sparkles,
 	TerminalSquare,
 	Trash2,
 	WalletCards,
@@ -36,7 +35,6 @@ import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { AgentSkillsTab } from "@/components/dashboard/agent-skills-tab";
-import type { DetailSectionMeta } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import {
 	ENTITY_CHOICE_GRID_CLASS,
@@ -278,6 +276,7 @@ import { ApiError, toastApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { settingsQueryHref } from "@/lib/settings-routes";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
@@ -293,54 +292,9 @@ type HostedAgentTab =
 	| "ai"
 	| "channels"
 	| "settings";
-const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
-	"overview",
-	"console",
-	"terminal",
-	"sessions",
-	"skills",
-	"ai",
-	"channels",
-	"settings",
-]);
-const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
-	overview: {
-		description: "Status, model, resources, and recent sessions.",
-		icon: Info,
-	},
-	console: {
-		description: "Open this agent's browser interface.",
-		icon: MonitorPlay,
-	},
-	terminal: {
-		description: "Open a terminal for this agent.",
-		icon: TerminalSquare,
-	},
-	sessions: {
-		description: "Conversation history from this agent.",
-		icon: RefreshCw,
-	},
-	skills: {
-		description: "Read-only projections from this Agent's filesystem.",
-		icon: Sparkles,
-	},
-	ai: {
-		description: "AI providers and the primary model used by this agent.",
-		icon: Zap,
-	},
-	channels: {
-		description: "Channels this Agent can use.",
-		icon: Link2,
-	},
-	settings: {
-		description: "Name, preferences, plan, and lifecycle controls.",
-		icon: Settings,
-	},
-};
 function parseHostedAgentTab(value: AgentSectionId | string | null): HostedAgentTab | null {
 	if (!value) return null;
-	return HOSTED_AGENT_SECTION_IDS.includes(value as HostedAgentTab) &&
-		HOSTED_AGENT_TABS.has(value as HostedAgentTab)
+	return HOSTED_AGENT_SECTION_IDS.includes(value as HostedAgentTab)
 		? (value as HostedAgentTab)
 		: null;
 }
@@ -553,7 +507,7 @@ export function HostedAgentDetail({
 		enabled: deploymentRunning && projection.status === "resolved",
 	});
 
-	const activeNavItem = HOSTED_AGENT_NAV_META[activeTab];
+	const activeNavItem = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
 	const isLiveToolTab = activeTab === "console" || activeTab === "terminal";
