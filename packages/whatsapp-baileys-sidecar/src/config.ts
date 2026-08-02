@@ -9,15 +9,12 @@ import { assertOwnedDirectory } from "./filesystem-security.js";
 
 const DEFAULT_PROVIDER_INBOX_MAX_EVENTS = 10_000;
 const DEFAULT_PROVIDER_INBOX_MAX_BYTES = 256 * 1024 * 1024;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 export type SidecarConfig = {
-	accountId: string;
 	host: string;
 	port: number;
 	socketPath?: string;
 	apiToken: string;
-	sessionDir: string;
+	stateRoot: string;
 	logLevel: string;
 	webVersion: WAVersion;
 	providerInbox: {
@@ -26,19 +23,21 @@ export type SidecarConfig = {
 	};
 };
 
+export type SidecarSessionConfig = Omit<SidecarConfig, "stateRoot"> & {
+	sessionId: string;
+	sessionDir: string;
+};
+
 export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConfig {
-	const accountId = parseAccountId(
-		readRequired(env.CLAWDI_WA_PROVIDER_ACCOUNT_ID, "CLAWDI_WA_PROVIDER_ACCOUNT_ID"),
-	);
 	const apiToken = parseApiToken(
-		readRequired(env.CLAWDI_WA_SIDECAR_TOKEN, "CLAWDI_WA_SIDECAR_TOKEN"),
+		readRequired(
+			env.CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN,
+			"CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN",
+		),
 	);
-	const sessionDir = readRequired(
-		env.CLAWDI_WA_SIDECAR_SESSION_DIR,
-		"CLAWDI_WA_SIDECAR_SESSION_DIR",
-	);
-	assertOwnedDirectory(sessionDir, 0o700, "provider session directory");
-	const socketPath = parseSocketPath(env.CLAWDI_WA_SIDECAR_SOCKET_PATH, accountId);
+	const stateRoot = readRequired(env.CLAWDI_WA_SIDECAR_STATE_ROOT, "CLAWDI_WA_SIDECAR_STATE_ROOT");
+	assertOwnedDirectory(stateRoot, 0o700, "provider state root");
+	const socketPath = parseSocketPath(env.CLAWDI_WA_SIDECAR_SOCKET_PATH);
 	if (socketPath) {
 		if (nonEmpty(env.CLAWDI_WA_SIDECAR_HOST) || nonEmpty(env.CLAWDI_WA_SIDECAR_PORT)) {
 			throw new Error("CLAWDI_WA_SIDECAR_SOCKET_PATH cannot be combined with host or port");
@@ -46,12 +45,11 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Sidecar
 		assertOwnedDirectory(dirname(socketPath), 0o770, "provider socket directory");
 	}
 	const config: SidecarConfig = {
-		accountId,
 		host: parseLoopbackHost(nonEmpty(env.CLAWDI_WA_SIDECAR_HOST) ?? "127.0.0.1"),
 		port: parsePort(env.CLAWDI_WA_SIDECAR_PORT ?? "8787"),
 		...(socketPath ? { socketPath } : {}),
 		apiToken,
-		sessionDir,
+		stateRoot,
 		logLevel: nonEmpty(env.CLAWDI_WA_SIDECAR_LOG_LEVEL) ?? "info",
 		webVersion: parseAuditedWhatsAppWebVersion(
 			nonEmpty(env.CLAWDI_WA_WEB_VERSION) ?? AUDITED_WHATSAPP_WEB_VERSION_TEXT,
@@ -74,33 +72,25 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Sidecar
 	return config;
 }
 
-function parseSocketPath(raw: string | undefined, accountId: string): string | undefined {
+function parseSocketPath(raw: string | undefined): string | undefined {
 	const value = nonEmpty(raw);
 	if (!value) return undefined;
 	if (
 		value.includes("\0") ||
 		resolve(value) !== value ||
 		Buffer.byteLength(value) > 103 ||
-		basename(value) !== "sidecar.sock" ||
-		basename(dirname(value)) !== accountId
+		basename(value) !== "sidecar.sock"
 	) {
-		throw new Error(
-			"CLAWDI_WA_SIDECAR_SOCKET_PATH must be a bounded account-scoped sidecar.sock path",
-		);
+		throw new Error("CLAWDI_WA_SIDECAR_SOCKET_PATH must be a bounded sidecar.sock path");
 	}
 	return value;
 }
 
-function parseAccountId(value: string): string {
-	if (!UUID_PATTERN.test(value)) {
-		throw new Error("CLAWDI_WA_PROVIDER_ACCOUNT_ID must be a canonical UUID");
-	}
-	return value.toLowerCase();
-}
-
 function parseApiToken(value: string): string {
 	if (Buffer.byteLength(value) > 4096 || !/^[\x21-\x7e]+$/.test(value)) {
-		throw new Error("CLAWDI_WA_SIDECAR_TOKEN must be a bounded printable ASCII bearer value");
+		throw new Error(
+			"CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN must be a bounded printable ASCII bearer value",
+		);
 	}
 	return value;
 }

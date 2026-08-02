@@ -13,7 +13,7 @@ import {
 import pino, { type Logger } from "pino";
 
 import { AUDITED_PROVIDER_RELEASE } from "./audited-version.js";
-import type { SidecarConfig } from "./config.js";
+import type { SidecarSessionConfig } from "./config.js";
 import {
 	type ProviderMessageEvent,
 	type ProviderMessageEventInput,
@@ -28,6 +28,7 @@ import {
 	type RuntimeHealth,
 	RuntimeNotConnectedError,
 	type RuntimeStatus,
+	SIDECAR_CAPABILITIES,
 } from "./types.js";
 
 const RECONNECT_DELAY_MS = 3_000;
@@ -108,7 +109,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	private lifecycleTail: Promise<void> = Promise.resolve();
 
 	constructor(
-		private readonly config: SidecarConfig,
+		private readonly config: SidecarSessionConfig,
 		dependencies: BaileysRuntimeDependencies = {},
 	) {
 		this.logger = pino({ level: config.logLevel });
@@ -120,7 +121,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			dependencies.providerState ??
 			new SQLiteProviderState(
 				config.sessionDir,
-				config.accountId,
+				config.sessionId,
 				config.webVersion,
 				config.providerInbox,
 				(operation, error) => this.markStateFatal(operation, error),
@@ -176,7 +177,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			status: this.status,
 			connected: this.status === "connected",
 			registered: this.providerState.state.creds.registered,
-			accountId: this.config.accountId,
+			sessionId: this.config.sessionId,
 			advertisedRelease: AUDITED_PROVIDER_RELEASE,
 			uptimeSeconds: Math.floor((Date.now() - this.startedAt) / 1000),
 			...(user ? { user } : {}),
@@ -185,11 +186,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	}
 
 	capabilities() {
-		return {
-			schemaVersion: "clawdi.whatsapp.sidecar-capabilities.v1",
-			pairing: ["qr", "code", "cancel", "logout", "retry"],
-			rawProviderAccess: false,
-		} as const;
+		return SIDECAR_CAPABILITIES;
 	}
 
 	pairingStatus(): PairingStatus {

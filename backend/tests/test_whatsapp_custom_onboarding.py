@@ -10,7 +10,6 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 import pytest_asyncio
-from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -43,7 +42,6 @@ from app.services.whatsapp_provider_bridge import (
 from app.services.whatsapp_sidecar_registry import (
     ConfiguredWhatsAppSidecarRegistry,
     get_active_whatsapp_sidecar_registry,
-    parse_whatsapp_custom_sidecar_registrations,
 )
 
 
@@ -81,11 +79,15 @@ class FakeCustomSidecar:
         self.provider_event_queue = []
         self.acknowledged_sequences: list[int] = []
         self.provider_acknowledged = asyncio.Event()
+        self.service_ready_result = True
         self.health_entered: asyncio.Event | None = None
         self.health_release: asyncio.Event | None = None
 
     async def aclose(self) -> None:
         return None
+
+    async def service_ready(self) -> bool:
+        return self.service_ready_result
 
     @property
     def connected(self) -> bool:
@@ -167,20 +169,19 @@ class FakeCustomSidecar:
 
 
 @pytest_asyncio.fixture
-async def custom_sidecar() -> AsyncIterator[tuple[UUID, FakeCustomSidecar]]:
+async def custom_sidecar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[tuple[UUID, FakeCustomSidecar]]:
     account_id = uuid4()
-    fake = FakeCustomSidecar()
-    raw_config = json.dumps(
-        {
-            str(account_id): {
-                "base_url": "http://127.0.0.1:43191",
-                "api_token": "test-internal-token",
-            }
-        }
+    session_ids = [account_id, *(uuid4() for _ in range(32))]
+    monkeypatch.setattr(
+        "app.services.whatsapp_device_onboarding.uuid4",
+        lambda: session_ids.pop(0),
     )
+    fake = FakeCustomSidecar()
     registry = ConfiguredWhatsAppSidecarRegistry(
-        "",
-        raw_config,
+        "test-internal-token",
+        base_url="http://127.0.0.1:43191",
         client_factory=lambda _config: fake,
     )
     await registry.start()
@@ -370,11 +371,12 @@ async def test_session_authorization_capacity_and_cancel_are_tenant_safe(
     assert created.status_code == 201
     session_id = created.json()["id"]
 
-    no_capacity = await client.post(
+    second = await client.post(
         "/v1/channels/whatsapp/onboarding/sessions",
         json={"request_id": str(uuid4()), "name": "Second phone"},
     )
-    assert no_capacity.status_code == 409
+    assert second.status_code == 201
+    assert second.json()["id"] != session_id
 
     other_user = await _create_user(db_session, "whatsapp-other")
     async with _client_for_user(db_session, other_user) as other_client:
@@ -398,13 +400,13 @@ async def test_session_authorization_capacity_and_cancel_are_tenant_safe(
 
 @pytest.mark.asyncio
 @pytest.mark.committed_db
-async def test_concurrent_cross_tenant_start_reserves_one_static_slot(
+async def test_concurrent_cross_tenant_start_allocates_isolated_sessions(
     db_session: AsyncSession,
     engine: AsyncEngine,
     seed_user: User,
     custom_sidecar: tuple[UUID, FakeCustomSidecar],
 ) -> None:
-    _slot_id, fake = custom_sidecar
+    _provider_session_id, fake = custom_sidecar
     other_user = await _create_user(db_session, "whatsapp-concurrent")
     registry = get_active_whatsapp_sidecar_registry()
     assert registry is not None
@@ -426,25 +428,42 @@ async def test_concurrent_cross_tenant_start_reserves_one_static_slot(
         return_exceptions=True,
     )
 
-    assert len([result for result in results if not isinstance(result, BaseException)]) == 1
-    failures = [result for result in results if isinstance(result, HTTPException)]
-    assert len(failures) == 1
-    assert failures[0].status_code == 409
-    assert fake.start_calls == 1
+    successes = [result for result in results if not isinstance(result, BaseException)]
+    assert len(successes) == 2
+    assert len({result.id for result in successes}) == 2
+    assert fake.start_calls == 2
     await db_session.delete(other_user)
     await db_session.commit()
 
 
 @pytest.mark.asyncio
+@pytest.mark.committed_db
 async def test_custom_bind_waits_for_in_process_ownership_reconciliation(
+    db_session: AsyncSession,
+    seed_user: User,
     custom_sidecar: tuple[UUID, FakeCustomSidecar],
 ) -> None:
-    slot_id, fake = custom_sidecar
+    provider_session_id, fake = custom_sidecar
     registry = get_active_whatsapp_sidecar_registry()
     assert registry is not None
-    revision = registry.custom_slot_revision(slot_id)
+    revision = registry.custom_session_revision(provider_session_id)
     assert revision is not None
     account_id = uuid4()
+    now = datetime.now(UTC)
+    db_session.add(
+        ChannelWhatsAppOnboardingSession(
+            sidecar_account_id=provider_session_id,
+            sidecar_config_revision=revision,
+            user_id=seed_user.id,
+            request_id=uuid4(),
+            name="Concurrent phone",
+            state="ready",
+            method="qr",
+            started_at=now,
+            expires_at=now + timedelta(minutes=5),
+        )
+    )
+    await db_session.commit()
     fake.health_entered = asyncio.Event()
     fake.health_release = asyncio.Event()
 
@@ -452,7 +471,7 @@ async def test_custom_bind_waits_for_in_process_ownership_reconciliation(
     await asyncio.wait_for(fake.health_entered.wait(), timeout=1)
     bind = asyncio.create_task(
         registry.bind_custom_account(
-            slot_id=slot_id,
+            session_id=provider_session_id,
             account_id=account_id,
             config_revision=revision,
         )
@@ -463,9 +482,9 @@ async def test_custom_bind_waits_for_in_process_ownership_reconciliation(
     fake.health_release.set()
     await reconcile
     assert await bind is True
-    assert registry.custom_binding(account_id) == slot_id
+    assert registry.custom_binding(account_id) == provider_session_id
     assert get_whatsapp_provider_transport(account_id) is not None
-    await registry.unbind_custom_account(slot_id=slot_id, account_id=account_id)
+    await registry.unbind_custom_account(session_id=provider_session_id, account_id=account_id)
 
 
 @pytest.mark.asyncio
@@ -475,23 +494,15 @@ async def test_backend_restart_rehydrates_durable_account_transport_and_pump(
     seed_user: User,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    slot_id = uuid4()
+    provider_session_id = uuid4()
     fake = FakeCustomSidecar()
     fake.current = WhatsAppSidecarPairingStatus(status="connected", registered=True)
-    raw_config = json.dumps(
-        {
-            str(slot_id): {
-                "base_url": "http://127.0.0.1:43192",
-                "api_token": "test-internal-token",
-            }
-        }
-    )
     registry = ConfiguredWhatsAppSidecarRegistry(
-        "",
-        raw_config,
+        "test-internal-token",
+        base_url="http://127.0.0.1:43192",
         client_factory=lambda _config: fake,
     )
-    revision = registry.custom_slot_revision(slot_id)
+    revision = registry.custom_session_revision(provider_session_id)
     assert revision is not None
     account = ChannelAccount(
         user_id=seed_user.id,
@@ -502,7 +513,7 @@ async def test_backend_restart_rehydrates_durable_account_transport_and_pump(
         webhook_secret_hash="test-webhook-secret-hash",
         config={
             "connection_mode": "baileys_custom",
-            "sidecar_account_id": str(slot_id),
+            "sidecar_account_id": str(provider_session_id),
             "sidecar_config_revision": revision,
         },
     )
@@ -510,7 +521,7 @@ async def test_backend_restart_rehydrates_durable_account_transport_and_pump(
     await db_session.flush()
     db_session.add(
         ChannelWhatsAppOnboardingSession(
-            sidecar_account_id=slot_id,
+            sidecar_account_id=provider_session_id,
             sidecar_config_revision=revision,
             channel_account_id=account.id,
             user_id=seed_user.id,
@@ -550,7 +561,8 @@ async def test_backend_restart_rehydrates_durable_account_transport_and_pump(
 
     await registry.start()
     try:
-        assert registry.custom_binding(account.id) == slot_id
+        await registry.reconcile_custom_ownership()
+        assert registry.custom_binding(account.id) == provider_session_id
         assert get_whatsapp_provider_transport(account.id) is not None
         assert whatsapp_provider_transport_status(account.id).available is True
         relayed_message_id, _details = await relay_whatsapp_provider_payload(
@@ -571,24 +583,16 @@ async def test_backend_restart_rehydrates_durable_account_transport_and_pump(
 
 @pytest.mark.asyncio
 @pytest.mark.committed_db
-async def test_restart_fails_closed_on_durable_slot_revision_drift(
+async def test_restart_fails_closed_on_durable_session_revision_drift(
     db_session: AsyncSession,
     seed_user: User,
 ) -> None:
-    slot_id = uuid4()
+    provider_session_id = uuid4()
     fake = FakeCustomSidecar()
     fake.current = WhatsAppSidecarPairingStatus(status="connected", registered=True)
-    raw_config = json.dumps(
-        {
-            str(slot_id): {
-                "base_url": "http://127.0.0.1:43193",
-                "api_token": "test-internal-token",
-            }
-        }
-    )
     registry = ConfiguredWhatsAppSidecarRegistry(
-        "",
-        raw_config,
+        "test-internal-token",
+        base_url="http://127.0.0.1:43193",
         client_factory=lambda _config: fake,
     )
     account = ChannelAccount(
@@ -600,7 +604,7 @@ async def test_restart_fails_closed_on_durable_slot_revision_drift(
         webhook_secret_hash="test-webhook-secret-hash",
         config={
             "connection_mode": "baileys_custom",
-            "sidecar_account_id": str(slot_id),
+            "sidecar_account_id": str(provider_session_id),
             "sidecar_config_revision": "0" * 64,
         },
     )
@@ -608,7 +612,7 @@ async def test_restart_fails_closed_on_durable_slot_revision_drift(
     await db_session.flush()
     db_session.add(
         ChannelWhatsAppOnboardingSession(
-            sidecar_account_id=slot_id,
+            sidecar_account_id=provider_session_id,
             sidecar_config_revision="0" * 64,
             channel_account_id=account.id,
             user_id=seed_user.id,
@@ -625,10 +629,11 @@ async def test_restart_fails_closed_on_durable_slot_revision_drift(
 
     await registry.start()
     try:
-        assert registry.custom_slot_is_blocked(slot_id) is True
+        await registry.reconcile_custom_ownership()
+        assert registry.custom_session_is_blocked(provider_session_id) is True
         assert registry.custom_binding(account.id) is None
         assert get_whatsapp_provider_transport(account.id) is None
-        assert registry.get_custom_client(slot_id) is None
+        assert registry.get_custom_client(provider_session_id) is None
     finally:
         await registry.stop()
 
@@ -639,7 +644,7 @@ async def test_connected_ingress_pump_uses_the_durable_channel_account_id(
     custom_sidecar: tuple[UUID, FakeCustomSidecar],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _slot_id, fake = custom_sidecar
+    _provider_session_id, fake = custom_sidecar
     persisted = asyncio.Event()
     persisted_account_ids: list[UUID] = []
 
@@ -691,7 +696,7 @@ async def test_connected_finalize_commit_failure_leaks_neither_account_nor_trans
     custom_sidecar: tuple[UUID, FakeCustomSidecar],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    slot_id, fake = custom_sidecar
+    provider_session_id, fake = custom_sidecar
     seed_user_id = seed_user.id
     created = await client.post(
         "/v1/channels/whatsapp/onboarding/sessions",
@@ -725,7 +730,7 @@ async def test_connected_finalize_commit_failure_leaks_neither_account_nor_trans
     )
     registry = get_active_whatsapp_sidecar_registry()
     assert registry is not None
-    assert registry.custom_account_for_slot(slot_id) is None
+    assert registry.custom_account_for_session(provider_session_id) is None
     row = await db_session.get(ChannelWhatsAppOnboardingSession, session_id)
     assert row is not None
     assert row.channel_account_id is None
@@ -925,7 +930,7 @@ async def test_failed_physical_logout_never_archives_or_unregisters_transport(
     db_session: AsyncSession,
     custom_sidecar: tuple[UUID, FakeCustomSidecar],
 ) -> None:
-    slot_id, fake = custom_sidecar
+    provider_session_id, fake = custom_sidecar
     created = await client.post(
         "/v1/channels/whatsapp/onboarding/sessions",
         json={"request_id": str(uuid4()), "name": "Logout guard phone"},
@@ -947,7 +952,7 @@ async def test_failed_physical_logout_never_archives_or_unregisters_transport(
     assert account.archived_at is None
     registry = get_active_whatsapp_sidecar_registry()
     assert registry is not None
-    assert registry.custom_binding(account_id) == slot_id
+    assert registry.custom_binding(account_id) == provider_session_id
     assert get_whatsapp_provider_transport(account_id) is not None
 
     fake.logout_result = WhatsAppSidecarPairingStatus(status="stopped", registered=False)
@@ -985,8 +990,7 @@ async def test_failed_cancel_does_not_release_socket_ownership(
     await db_session.refresh(seed_user)
 
     readiness = await client.get("/v1/channels/whatsapp/onboarding/readiness")
-    assert readiness.json()["available"] is False
-    assert readiness.json()["reason"] == "no_capacity"
+    assert readiness.json()["available"] is True
     assert row.channel_account_id is None
     assert (
         await db_session.scalar(
@@ -1016,6 +1020,7 @@ async def test_sidecar_client_accepts_only_the_pinned_narrow_pairing_contract() 
     account_id = uuid4()
     phone_number = "14155550123"
     api_token = "test-internal-token"
+    session_prefix = f"/v1/sessions/{account_id}"
     seen_paths: list[str] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -1025,7 +1030,22 @@ async def test_sidecar_client_accepts_only_the_pinned_narrow_pairing_contract() 
             return httpx.Response(
                 200,
                 json={
-                    "accountId": str(account_id),
+                    "schemaVersion": "clawdi.whatsapp.sidecar-health.v1",
+                    "ready": True,
+                    "activeSessions": 1,
+                    "advertisedRelease": {
+                        "packageName": "@whiskeysockets/baileys",
+                        "packageVersion": "7.0.0-rc14",
+                        "sourceCommit": "7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a",
+                        "version": [2, 3000, 1043857760],
+                    },
+                },
+            )
+        if request.url.path == f"{session_prefix}/health":
+            return httpx.Response(
+                200,
+                json={
+                    "sessionId": str(account_id),
                     "status": "stopped",
                     "connected": False,
                     "registered": False,
@@ -1046,9 +1066,9 @@ async def test_sidecar_client_accepts_only_the_pinned_narrow_pairing_contract() 
                     "rawProviderAccess": False,
                 },
             )
-        if request.url.path == "/v1/pairing/retry":
+        if request.url.path == f"{session_prefix}/pairing/retry":
             return httpx.Response(200, json={"status": "starting", "registered": True})
-        assert request.url.path == "/v1/pairing/code"
+        assert request.url.path == f"{session_prefix}/pairing/code"
         assert json.loads(request.content) == {"phoneNumber": phone_number}
         return httpx.Response(
             200,
@@ -1071,6 +1091,7 @@ async def test_sidecar_client_accepts_only_the_pinned_narrow_pairing_contract() 
         transport=httpx.MockTransport(handler),
     ) as http_client:
         sidecar = WhatsAppBaileysSidecarClient(config, http_client=http_client)
+        assert await sidecar.service_ready() is True
         assert (await sidecar.health()).registered is False
         assert "code" in (await sidecar.capabilities()).pairing
         pairing = await sidecar.pairing_code(phone_number)
@@ -1080,10 +1101,29 @@ async def test_sidecar_client_accepts_only_the_pinned_narrow_pairing_contract() 
     assert pairing.method == "code"
     assert seen_paths == [
         "/v1/health",
+        f"{session_prefix}/health",
         "/v1/capabilities",
-        "/v1/pairing/code",
-        "/v1/pairing/retry",
+        f"{session_prefix}/pairing/code",
+        f"{session_prefix}/pairing/retry",
     ]
+
+
+@pytest.mark.asyncio
+async def test_readiness_probes_the_global_service_without_creating_a_session(
+    client: httpx.AsyncClient,
+    custom_sidecar: tuple[UUID, FakeCustomSidecar],
+) -> None:
+    _session_id, fake = custom_sidecar
+    fake.service_ready_result = False
+
+    readiness = await client.get("/v1/channels/whatsapp/onboarding/readiness")
+
+    assert readiness.status_code == 200
+    assert readiness.json() == {
+        "available": False,
+        "manual_pairing_code_supported": False,
+        "reason": "temporarily_unavailable",
+    }
 
 
 @pytest.mark.asyncio
@@ -1091,7 +1131,7 @@ async def test_sidecar_client_fails_closed_on_identity_and_capability_drift() ->
     account_id = uuid4()
     responses = [
         {
-            "accountId": str(account_id),
+            "sessionId": str(account_id),
             "status": "stopped",
             "connected": False,
             "registered": False,
@@ -1128,58 +1168,9 @@ async def test_sidecar_client_fails_closed_on_identity_and_capability_drift() ->
             await sidecar.capabilities()
 
 
-def test_custom_sidecar_registry_rejects_duplicate_keys_and_urls() -> None:
-    account_id = uuid4()
-    duplicate_key = (
-        f'{{"{account_id}": {{"base_url": "https://sidecar.example", '
-        f'"api_token": "first"}}, "{account_id}": '
-        '{"base_url": "https://other.example", "api_token": "second"}}}'
-    )
-    with pytest.raises(ValueError, match="unique-key JSON"):
-        parse_whatsapp_custom_sidecar_registrations(duplicate_key)
-
-    other_account_id = uuid4()
-    duplicate_url = json.dumps(
-        {
-            str(account_id): {
-                "base_url": "https://sidecar.example",
-                "api_token": "first",
-            },
-            str(other_account_id): {
-                "base_url": "https://sidecar.example",
-                "api_token": "second",
-            },
-        }
-    )
-    with pytest.raises(ValueError, match="transport endpoint must be unique"):
-        parse_whatsapp_custom_sidecar_registrations(duplicate_url)
-
-    managed = json.dumps(
-        {
-            str(account_id): {
-                "base_url": "https://managed-sidecar.example",
-                "api_token": "managed",
-            }
-        }
-    )
-    with pytest.raises(ValueError, match="disjoint slot ids"):
-        ConfiguredWhatsAppSidecarRegistry(managed, managed)
-
-    custom_same_origin = json.dumps(
-        {
-            str(other_account_id): {
-                "base_url": "https://managed-sidecar.example",
-                "api_token": "custom",
-            }
-        }
-    )
-    with pytest.raises(ValueError, match="disjoint transport endpoints"):
-        ConfiguredWhatsAppSidecarRegistry(managed, custom_same_origin)
-
-
-def custom_sidecar_registry_revision(slot_id: UUID) -> str:
+def custom_sidecar_registry_revision(session_id: UUID) -> str:
     registry = get_active_whatsapp_sidecar_registry()
     assert registry is not None
-    revision = registry.custom_slot_revision(slot_id)
+    revision = registry.custom_session_revision(session_id)
     assert revision is not None
     return revision

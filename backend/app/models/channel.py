@@ -123,10 +123,10 @@ class ChannelAccount(Base, TimestampMixin):
 class ChannelWhatsAppOnboardingSession(Base, TimestampMixin):
     """Non-secret ownership and lifecycle metadata for a Custom device login.
 
-    ``sidecar_account_id`` is the configured one-socket sidecar slot. A separate
-    ChannelAccount is created only after Baileys reports an authenticated socket,
-    so pending/failed device sessions never appear in bot inventory and a logged-
-    out physical slot can be safely reused. QR values, pairing codes, phone
+    ``sidecar_account_id`` is the legacy column name for an opaque provider
+    session UUID. A separate ChannelAccount is created only after Baileys reports
+    an authenticated socket, so pending/failed device sessions never appear in
+    bot inventory. Session UUIDs are not reused. QR values, pairing codes, phone
     numbers, and provider auth state never enter this row.
     """
 

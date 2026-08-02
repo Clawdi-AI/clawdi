@@ -4,7 +4,7 @@ import asyncio
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, text
@@ -67,47 +67,21 @@ async def whatsapp_onboarding_readiness(
     *,
     registry: ConfiguredWhatsAppSidecarRegistry | None,
 ) -> ChannelWhatsAppOnboardingReadinessResponse:
-    if registry is None or not registry.custom_slot_ids:
+    if registry is None or not registry.enabled:
         return ChannelWhatsAppOnboardingReadinessResponse(
             available=False,
             manual_pairing_code_supported=False,
             reason="not_configured",
         )
-    candidates = await _free_account_ids(db, registry=registry)
-    if not candidates:
+    if not await registry.service_ready():
         return ChannelWhatsAppOnboardingReadinessResponse(
             available=False,
             manual_pairing_code_supported=False,
-            reason="no_capacity",
+            reason="temporarily_unavailable",
         )
-    saw_protocol_failure = False
-    saw_unavailable = False
-    for account_id in candidates:
-        client = registry.get_custom_client(account_id)
-        if client is None:
-            saw_unavailable = True
-            continue
-        try:
-            capabilities = await _pairable_sidecar(client)
-        except WhatsAppSidecarProtocolError:
-            saw_protocol_failure = True
-            continue
-        except WhatsAppSidecarError:
-            saw_unavailable = True
-            continue
-        if capabilities is not None:
-            return ChannelWhatsAppOnboardingReadinessResponse(
-                available=True,
-                manual_pairing_code_supported="code" in capabilities.pairing,
-            )
     return ChannelWhatsAppOnboardingReadinessResponse(
-        available=False,
-        manual_pairing_code_supported=False,
-        reason=(
-            "managed_sidecar_required"
-            if saw_protocol_failure and not saw_unavailable
-            else "temporarily_unavailable"
-        ),
+        available=True,
+        manual_pairing_code_supported=True,
     )
 
 
@@ -133,7 +107,7 @@ async def start_whatsapp_onboarding(
             session_id=existing.id,
             registry=registry,
         )
-    if registry is None or not registry.custom_slot_ids:
+    if registry is None or not registry.enabled:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="WhatsApp account connection is not configured",
@@ -184,17 +158,12 @@ async def start_whatsapp_onboarding(
             detail="A WhatsApp connection with this name is already in progress",
         )
 
-    sidecar_account_id = await _select_free_sidecar_slot(db, registry=registry)
-    if sidecar_account_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="No WhatsApp account connection slot is available",
-        )
-    sidecar_config_revision = registry.custom_slot_revision(sidecar_account_id)
+    sidecar_account_id = uuid4()
+    sidecar_config_revision = registry.custom_session_revision(sidecar_account_id)
     if sidecar_config_revision is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="WhatsApp account connection slot is unavailable",
+            detail="WhatsApp account connection is temporarily unavailable",
         )
     now = datetime.now(UTC)
     onboarding = ChannelWhatsAppOnboardingSession(
@@ -403,7 +372,7 @@ async def retry_whatsapp_onboarding(
             session_id=session_id,
             registry=registry,
         )
-    if registry is None or not registry.custom_slot_ids:
+    if registry is None or not registry.enabled:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="WhatsApp account connection is not configured",
@@ -420,22 +389,12 @@ async def retry_whatsapp_onboarding(
 
     await _lock_allocation(db)
     onboarding = await _owned_session(db, user_id=user_id, session_id=session_id)
-    sidecar_account_id = await _select_free_sidecar_slot(
-        db,
-        registry=registry,
-        exclude_session_id=onboarding.id,
-        preferred_account_id=onboarding.sidecar_account_id,
-    )
-    if sidecar_account_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="No WhatsApp account connection slot is available",
-        )
-    sidecar_config_revision = registry.custom_slot_revision(sidecar_account_id)
+    sidecar_account_id = onboarding.sidecar_account_id
+    sidecar_config_revision = registry.custom_session_revision(sidecar_account_id)
     if sidecar_config_revision is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="WhatsApp account connection slot is unavailable",
+            detail="WhatsApp account connection is temporarily unavailable",
         )
     now = datetime.now(UTC)
     onboarding.sidecar_account_id = sidecar_account_id
@@ -494,7 +453,7 @@ async def require_whatsapp_custom_logout_for_archive(
         )
     if (
         not isinstance(sidecar_config_revision, str)
-        or registry.custom_slot_revision(sidecar_account_id) != sidecar_config_revision
+        or registry.custom_session_revision(sidecar_account_id) != sidecar_config_revision
     ):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -514,7 +473,7 @@ async def require_whatsapp_custom_logout_for_archive(
         if current.registered:
             await _ensure_connected_transport_for_account(
                 account_id=account.id,
-                slot_id=sidecar_account_id,
+                session_id=sidecar_account_id,
                 config_revision=sidecar_config_revision,
                 registry=registry,
             )
@@ -530,7 +489,10 @@ async def require_whatsapp_custom_logout_for_archive(
             detail="WhatsApp disconnect could not be confirmed",
         )
     if registry.custom_binding(account.id) == sidecar_account_id:
-        await registry.unbind_custom_account(slot_id=sidecar_account_id, account_id=account.id)
+        await registry.unbind_custom_account(
+            session_id=sidecar_account_id,
+            account_id=account.id,
+        )
     onboarding = await db.scalar(
         select(ChannelWhatsAppOnboardingSession).where(
             ChannelWhatsAppOnboardingSession.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
@@ -618,70 +580,6 @@ async def _lock_allocation(db: AsyncSession) -> None:
     )
 
 
-async def _free_account_ids(
-    db: AsyncSession,
-    *,
-    registry: ConfiguredWhatsAppSidecarRegistry,
-    exclude_session_id: UUID | None = None,
-) -> list[UUID]:
-    configured = {
-        slot_id
-        for slot_id in registry.custom_slot_ids
-        if not registry.custom_slot_is_blocked(slot_id)
-        and registry.get_custom_client(slot_id) is not None
-    }
-    if not configured:
-        return []
-    session_query = select(ChannelWhatsAppOnboardingSession.sidecar_account_id).where(
-        ChannelWhatsAppOnboardingSession.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
-        ChannelWhatsAppOnboardingSession.sidecar_account_id.in_(configured),
-        ChannelWhatsAppOnboardingSession.state.in_(_UNRELEASED_SESSION_STATES),
-    )
-    if exclude_session_id is not None:
-        session_query = session_query.where(
-            ChannelWhatsAppOnboardingSession.id != exclude_session_id
-        )
-    reserved_ids = set((await db.scalars(session_query)).all())
-    return sorted(configured - reserved_ids, key=str)
-
-
-async def _select_free_sidecar_slot(
-    db: AsyncSession,
-    *,
-    registry: ConfiguredWhatsAppSidecarRegistry,
-    exclude_session_id: UUID | None = None,
-    preferred_account_id: UUID | None = None,
-) -> UUID | None:
-    candidates = await _free_account_ids(
-        db,
-        registry=registry,
-        exclude_session_id=exclude_session_id,
-    )
-    if preferred_account_id is not None and preferred_account_id in candidates:
-        candidates.remove(preferred_account_id)
-        candidates.insert(0, preferred_account_id)
-    return candidates[0] if candidates else None
-
-
-async def _pairable_sidecar(
-    client: WhatsAppSidecarClient,
-) -> WhatsAppSidecarCapabilities | None:
-    capabilities = await client.capabilities()
-    health = await client.health()
-    pairing = await client.pairing_status()
-    if health.registered != pairing.registered:
-        return None
-    if health.connected and not health.registered:
-        return None
-    if health.registered or pairing.registered:
-        return None
-    if health.status in {"pairing_qr", "pairing_code", "connected"}:
-        return None
-    if pairing.status in {"pairing_qr", "pairing_code", "connected"}:
-        return None
-    return capabilities
-
-
 async def _apply_pairing_status(
     db: AsyncSession,
     *,
@@ -747,13 +645,13 @@ async def _finalize_connected_account(
     onboarding: ChannelWhatsAppOnboardingSession,
     registry: ConfiguredWhatsAppSidecarRegistry,
 ) -> None:
-    slot_id = onboarding.sidecar_account_id
-    slot_revision = onboarding.sidecar_config_revision
+    session_id = onboarding.sidecar_account_id
+    session_revision = onboarding.sidecar_config_revision
     account_id: UUID | None = None
     newly_bound = False
     try:
-        configured_revision = registry.custom_slot_revision(slot_id)
-        if configured_revision != slot_revision:
+        configured_revision = registry.custom_session_revision(session_id)
+        if configured_revision != session_revision:
             raise WhatsAppSidecarProtocolError("custom sidecar revision mismatch")
         existing = (
             await db.get(ChannelAccount, onboarding.channel_account_id)
@@ -771,8 +669,8 @@ async def _finalize_connected_account(
                 webhook_secret_hash=hash_token(webhook_secret),
                 config={
                     "connection_mode": "baileys_custom",
-                    "sidecar_account_id": str(slot_id),
-                    "sidecar_config_revision": slot_revision,
+                    "sidecar_account_id": str(session_id),
+                    "sidecar_config_revision": session_revision,
                 },
             )
             db.add(existing)
@@ -786,15 +684,15 @@ async def _finalize_connected_account(
             or existing.archived_at is not None
             or not isinstance(existing.config, dict)
             or existing.config.get("connection_mode") != "baileys_custom"
-            or existing.config.get("sidecar_account_id") != str(slot_id)
-            or existing.config.get("sidecar_config_revision") != slot_revision
+            or existing.config.get("sidecar_account_id") != str(session_id)
+            or existing.config.get("sidecar_config_revision") != session_revision
         ):
             raise WhatsAppSidecarProtocolError("custom sidecar ownership conflict")
         account_id = existing.id
         newly_bound = await registry.bind_custom_account(
-            slot_id=slot_id,
+            session_id=session_id,
             account_id=account_id,
-            config_revision=slot_revision,
+            config_revision=session_revision,
         )
         onboarding.state = WHATSAPP_ONBOARDING_STATE_CONNECTED
         onboarding.completed_at = datetime.now(UTC)
@@ -806,10 +704,10 @@ async def _finalize_connected_account(
             if (
                 newly_bound
                 and account_id is not None
-                and registry.custom_binding(account_id) == slot_id
+                and registry.custom_binding(account_id) == session_id
             ):
                 await registry.unbind_custom_account(
-                    slot_id=slot_id,
+                    session_id=session_id,
                     account_id=account_id,
                 )
         raise
@@ -824,7 +722,7 @@ async def _ensure_connected_transport(
         raise WhatsAppSidecarProtocolError("connected WhatsApp session has no account")
     await _ensure_connected_transport_for_account(
         account_id=onboarding.channel_account_id,
-        slot_id=onboarding.sidecar_account_id,
+        session_id=onboarding.sidecar_account_id,
         config_revision=onboarding.sidecar_config_revision,
         registry=registry,
     )
@@ -833,25 +731,25 @@ async def _ensure_connected_transport(
 async def _ensure_connected_transport_for_account(
     *,
     account_id: UUID,
-    slot_id: UUID,
+    session_id: UUID,
     config_revision: str,
     registry: ConfiguredWhatsAppSidecarRegistry | None,
 ) -> None:
     if registry is None:
         raise WhatsAppSidecarProtocolError("custom Baileys registry is unavailable")
-    if registry.custom_slot_revision(slot_id) != config_revision:
-        raise WhatsAppSidecarProtocolError("custom Baileys slot revision mismatch")
-    if registry.custom_binding(account_id) == slot_id:
+    if registry.custom_session_revision(session_id) != config_revision:
+        raise WhatsAppSidecarProtocolError("custom Baileys session revision mismatch")
+    if registry.custom_binding(account_id) == session_id:
         return
-    client = registry.get_custom_client(slot_id)
+    client = registry.get_custom_client(session_id)
     if client is None:
-        raise WhatsAppSidecarProtocolError("custom Baileys slot is unavailable")
+        raise WhatsAppSidecarProtocolError("custom Baileys session is unavailable")
     health = await client.health()
     pairing = await client.pairing_status()
     if not health.registered or not pairing.registered:
         raise WhatsAppSidecarProtocolError("custom Baileys physical auth is unavailable")
     await registry.bind_custom_account(
-        slot_id=slot_id,
+        session_id=session_id,
         account_id=account_id,
         config_revision=config_revision,
     )

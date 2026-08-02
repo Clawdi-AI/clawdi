@@ -104,13 +104,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
     background: set[asyncio.Task[None]] = set()
     whatsapp_sidecars = ConfiguredWhatsAppSidecarRegistry(
-        settings.channel_whatsapp_baileys_sidecars_json.get_secret_value(),
-        settings.channel_whatsapp_custom_baileys_sidecars_json.get_secret_value(),
+        settings.channel_whatsapp_baileys_sidecar_token.get_secret_value(),
+        base_url=settings.channel_whatsapp_baileys_sidecar_url or None,
     )
     await start_postgres_listener()
     try:
         await whatsapp_sidecars.start()
-        if whatsapp_sidecars.managed_account_ids:
+        if whatsapp_sidecars.enabled:
+            await whatsapp_sidecars.reconcile_custom_ownership()
             await whatsapp_sidecars.reconcile_managed_ownership()
     except Exception:
         await whatsapp_sidecars.stop()
@@ -119,32 +120,28 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     await warm_clerk_jwks()
 
-    if whatsapp_sidecars.custom_slot_ids or whatsapp_sidecars.managed_account_ids:
+    if whatsapp_sidecars.enabled:
 
         async def _expire_whatsapp_onboarding() -> None:
             while True:
                 await asyncio.sleep(15)
                 try:
-                    if whatsapp_sidecars.custom_slot_ids:
-                        await whatsapp_sidecars.reconcile_custom_ownership()
-                    if whatsapp_sidecars.managed_account_ids:
-                        await whatsapp_sidecars.reconcile_managed_ownership()
+                    await whatsapp_sidecars.reconcile_custom_ownership()
+                    await whatsapp_sidecars.reconcile_managed_ownership()
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     log.exception("WhatsApp sidecar ownership reconciliation failed")
                 try:
                     async with async_session_factory() as db:
-                        if whatsapp_sidecars.custom_slot_ids:
-                            await expire_stale_whatsapp_onboarding_sessions(
-                                db,
-                                registry=whatsapp_sidecars,
-                            )
-                        if whatsapp_sidecars.managed_account_ids:
-                            await expire_stale_managed_whatsapp_onboarding_sessions(
-                                db,
-                                registry=whatsapp_sidecars,
-                            )
+                        await expire_stale_whatsapp_onboarding_sessions(
+                            db,
+                            registry=whatsapp_sidecars,
+                        )
+                        await expire_stale_managed_whatsapp_onboarding_sessions(
+                            db,
+                            registry=whatsapp_sidecars,
+                        )
                 except asyncio.CancelledError:
                     raise
                 except Exception:

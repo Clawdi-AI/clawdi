@@ -103,12 +103,12 @@ export class SQLiteProviderState {
 
 	constructor(
 		sessionDir: string,
-		accountId: string,
+		sessionId: string,
 		webVersion: WAVersion,
 		private readonly inboxConfig: ProviderInboxConfig,
 		private readonly onFailure?: ProviderStateFailureHandler,
 	) {
-		validateAccountId(accountId);
+		validateSessionId(sessionId);
 		validateInboxConfig(inboxConfig);
 		prepareSessionDirectory(sessionDir);
 		rejectLegacyState(sessionDir);
@@ -122,7 +122,7 @@ export class SQLiteProviderState {
 			db.transaction(() => {
 				createSchema(db);
 				validateOrBindMetadata(db, {
-					accountId,
+					sessionId,
 					webVersion,
 					databaseExisted,
 				});
@@ -628,14 +628,15 @@ function createSchema(db: Database): void {
 
 function validateOrBindMetadata(
 	db: Database,
-	input: { accountId: string; webVersion: WAVersion; databaseExisted: boolean },
+	input: { sessionId: string; webVersion: WAVersion; databaseExisted: boolean },
 ): void {
 	if (input.webVersion.join(".") !== AUDITED_WHATSAPP_WEB_VERSION_TEXT) {
 		throw new Error("provider state requires the audited WhatsApp Web version");
 	}
 	const expectedIdentity = new Map<string, string>([
 		["schema_version", STATE_SCHEMA_VERSION],
-		["account_id", input.accountId],
+		// Keep the durable key for compatibility; its value is an opaque session UUID.
+		["account_id", input.sessionId],
 	]);
 	const currentProvenance = [AUDITED_BAILEYS_RELEASE, input.webVersion.join(".")] as const;
 	if (!input.databaseExisted) {
@@ -804,9 +805,9 @@ function isByteArray(value: unknown): value is Uint8Array {
 	return value instanceof Uint8Array;
 }
 
-function validateAccountId(value: string): void {
+function validateSessionId(value: string): void {
 	if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) {
-		throw new Error("provider account id must be a canonical lowercase UUID");
+		throw new Error("provider session id must be a canonical lowercase UUID");
 	}
 }
 

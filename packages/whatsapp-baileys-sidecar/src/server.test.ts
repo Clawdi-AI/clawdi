@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { AddressInfo } from "node:net";
 import type { BinaryNode } from "baileys";
-import { createSidecarServer } from "./server.js";
+import { AUDITED_PROVIDER_RELEASE } from "./audited-version.js";
+import { createSidecarServer, type SidecarSessionService } from "./server.js";
 import type { ProviderMessageEvent } from "./sqlite-state.js";
 import {
 	type BaileysRuntime,
@@ -25,7 +26,7 @@ class FakeRuntime implements BaileysRuntime {
 			status: this.connected ? "connected" : "disconnected",
 			connected: this.connected,
 			registered: true,
-			accountId: "11111111-1111-4111-8111-111111111111",
+			sessionId: "11111111-1111-4111-8111-111111111111",
 			advertisedRelease: {
 				packageName: "@whiskeysockets/baileys",
 				packageVersion: "7.0.0-rc14",
@@ -110,6 +111,9 @@ class FakeRuntime implements BaileysRuntime {
 	}
 }
 
+const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
+const SESSION_PREFIX = `/v1/sessions/${ACCOUNT_ID}`;
+
 const servers: Array<{ close(callback: () => void): void }> = [];
 
 afterEach(async () => {
@@ -124,19 +128,51 @@ afterEach(async () => {
 });
 
 describe("sidecar HTTP contract", () => {
+	it("rejects unsupported session routes before starting a runtime", async () => {
+		const runtime = new FakeRuntime();
+		let sessionStarts = 0;
+		const supervisor: SidecarSessionService = {
+			health: () => ({
+				schemaVersion: "clawdi.whatsapp.sidecar-health.v1",
+				ready: true,
+				activeSessions: 0,
+				advertisedRelease: AUDITED_PROVIDER_RELEASE,
+			}),
+			capabilities: () => runtime.capabilities(),
+			async session() {
+				sessionStarts += 1;
+				return runtime;
+			},
+		};
+		const server = createSidecarServer(supervisor, { apiToken: "test-token" });
+		servers.push(server);
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address() as AddressInfo;
+		const url = `http://127.0.0.1:${address.port}`;
+
+		const wrongMethod = await authedFetch(`${url}${SESSION_PREFIX}/health`, {
+			method: "POST",
+		});
+		const unknownRoute = await authedFetch(`${url}${SESSION_PREFIX}/unknown`);
+
+		expect(wrongMethod.status).toBe(404);
+		expect(unknownRoute.status).toBe(404);
+		expect(sessionStarts).toBe(0);
+	});
+
 	it("requires bearer auth for every pairing endpoint", async () => {
 		const { url } = await startTestServer(new FakeRuntime());
 		const requests: Array<[string, RequestInit | undefined]> = [
 			["/v1/capabilities", undefined],
-			["/v1/pairing/status", undefined],
-			["/v1/pairing/qr", { method: "POST" }],
+			[`${SESSION_PREFIX}/pairing/status`, undefined],
+			[`${SESSION_PREFIX}/pairing/qr`, { method: "POST" }],
 			[
-				"/v1/pairing/code",
+				`${SESSION_PREFIX}/pairing/code`,
 				{ method: "POST", body: JSON.stringify({ phoneNumber: "15551234567" }) },
 			],
-			["/v1/pairing/cancel", { method: "POST" }],
-			["/v1/pairing/logout", { method: "POST" }],
-			["/v1/pairing/retry", { method: "POST" }],
+			[`${SESSION_PREFIX}/pairing/cancel`, { method: "POST" }],
+			[`${SESSION_PREFIX}/pairing/logout`, { method: "POST" }],
+			[`${SESSION_PREFIX}/pairing/retry`, { method: "POST" }],
 		];
 
 		for (const [path, init] of requests) {
@@ -150,15 +186,15 @@ describe("sidecar HTTP contract", () => {
 		const { url } = await startTestServer(new FakeRuntime());
 		const requests: Array<[string, RequestInit | undefined]> = [
 			["/v1/capabilities", undefined],
-			["/v1/pairing/status", undefined],
-			["/v1/pairing/qr", { method: "POST" }],
+			[`${SESSION_PREFIX}/pairing/status`, undefined],
+			[`${SESSION_PREFIX}/pairing/qr`, { method: "POST" }],
 			[
-				"/v1/pairing/code",
+				`${SESSION_PREFIX}/pairing/code`,
 				{ method: "POST", body: JSON.stringify({ phoneNumber: "15551234567" }) },
 			],
-			["/v1/pairing/cancel", { method: "POST" }],
-			["/v1/pairing/logout", { method: "POST" }],
-			["/v1/pairing/retry", { method: "POST" }],
+			[`${SESSION_PREFIX}/pairing/cancel`, { method: "POST" }],
+			[`${SESSION_PREFIX}/pairing/logout`, { method: "POST" }],
+			[`${SESSION_PREFIX}/pairing/retry`, { method: "POST" }],
 		];
 
 		for (const [path, init] of requests) {
@@ -173,7 +209,7 @@ describe("sidecar HTTP contract", () => {
 		const { url } = await startTestServer(new FakeRuntime());
 		const phoneNumber = "+1 (555) 123-4567";
 
-		const response = await authedFetch(`${url}/v1/pairing/code`, {
+		const response = await authedFetch(`${url}${SESSION_PREFIX}/pairing/code`, {
 			method: "POST",
 			body: JSON.stringify({ phoneNumber }),
 		});
@@ -188,14 +224,14 @@ describe("sidecar HTTP contract", () => {
 	it("reports health", async () => {
 		const { url } = await startTestServer(new FakeRuntime());
 
-		const response = await authedFetch(`${url}/v1/health`);
+		const response = await authedFetch(`${url}${SESSION_PREFIX}/health`);
 
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual({
 			status: "connected",
 			connected: true,
 			registered: true,
-			accountId: "11111111-1111-4111-8111-111111111111",
+			sessionId: "11111111-1111-4111-8111-111111111111",
 			advertisedRelease: {
 				packageName: "@whiskeysockets/baileys",
 				packageVersion: "7.0.0-rc14",
@@ -211,7 +247,7 @@ describe("sidecar HTTP contract", () => {
 		const runtime = new FakeRuntime();
 		const { url } = await startTestServer(runtime);
 
-		const response = await authedFetch(`${url}/v1/relay-message`, {
+		const response = await authedFetch(`${url}${SESSION_PREFIX}/relay-message`, {
 			method: "POST",
 			body: JSON.stringify({
 				jid: "15551114444@s.whatsapp.net",
@@ -248,7 +284,7 @@ describe("sidecar HTTP contract", () => {
 			[{ tag: "participants", attrs: {} }],
 			[{ tag: "device-identity", attrs: {} }],
 		]) {
-			const response = await authedFetch(`${url}/v1/relay-message`, {
+			const response = await authedFetch(`${url}${SESSION_PREFIX}/relay-message`, {
 				method: "POST",
 				body: JSON.stringify({
 					jid: "15551114444@s.whatsapp.net",
@@ -272,11 +308,11 @@ describe("sidecar HTTP contract", () => {
 			content: [{ tag: "enc", attrs: {}, content: { $type: "base64-bytes", base64: "AQID" } }],
 		};
 
-		const rawResponse = await authedFetch(`${url}/v1/raw-node`, {
+		const rawResponse = await authedFetch(`${url}${SESSION_PREFIX}/raw-node`, {
 			method: "POST",
 			body: JSON.stringify({ node }),
 		});
-		const iqResponse = await authedFetch(`${url}/v1/query-iq`, {
+		const iqResponse = await authedFetch(`${url}${SESSION_PREFIX}/query-iq`, {
 			method: "POST",
 			body: JSON.stringify({
 				node: { tag: "iq", attrs: { id: "q", type: "get" } },
@@ -307,7 +343,7 @@ describe("sidecar HTTP contract", () => {
 		runtime.connected = false;
 		const { url } = await startTestServer(runtime);
 
-		const response = await authedFetch(`${url}/v1/raw-node`, {
+		const response = await authedFetch(`${url}${SESSION_PREFIX}/raw-node`, {
 			method: "POST",
 			body: JSON.stringify({ node: { tag: "presence", attrs: {} } }),
 		});
@@ -330,9 +366,9 @@ describe("sidecar HTTP contract", () => {
 		];
 		const { url } = await startTestServer(runtime);
 
-		const listed = await authedFetch(`${url}/v1/provider-events?limit=10`);
+		const listed = await authedFetch(`${url}${SESSION_PREFIX}/provider-events?limit=10`);
 		const listedBody = await listed.json();
-		const acknowledged = await authedFetch(`${url}/v1/provider-events/ack`, {
+		const acknowledged = await authedFetch(`${url}${SESSION_PREFIX}/provider-events/ack`, {
 			method: "POST",
 			body: JSON.stringify({ throughSequence: 1 }),
 		});
@@ -357,7 +393,21 @@ describe("sidecar HTTP contract", () => {
 });
 
 async function startTestServer(runtime: BaileysRuntime): Promise<{ url: string }> {
-	const server = createSidecarServer(runtime, { apiToken: "test-token" });
+	const supervisor: SidecarSessionService = {
+		health: () => ({
+			schemaVersion: "clawdi.whatsapp.sidecar-health.v1",
+			ready: true,
+			activeSessions: 1,
+			advertisedRelease: AUDITED_PROVIDER_RELEASE,
+		}),
+		capabilities: () => runtime.capabilities(),
+		async session(sessionId) {
+			if (sessionId !== ACCOUNT_ID) throw new Error("unexpected test session");
+			await runtime.start();
+			return runtime;
+		},
+	};
+	const server = createSidecarServer(supervisor, { apiToken: "test-token" });
 	servers.push(server);
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const address = server.address() as AddressInfo;

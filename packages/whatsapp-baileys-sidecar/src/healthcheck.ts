@@ -1,12 +1,11 @@
 import { type RequestOptions, request } from "node:http";
-import { basename, dirname, resolve } from "node:path";
+import { basename, resolve } from "node:path";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 
 export async function checkSidecarHealth(env: NodeJS.ProcessEnv = process.env): Promise<void> {
-	const token = required(env.CLAWDI_WA_SIDECAR_TOKEN, "sidecar token");
-	const accountId = required(env.CLAWDI_WA_PROVIDER_ACCOUNT_ID, "account id");
-	const endpoint = healthEndpoint(env, accountId);
+	const token = required(env.CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN, "sidecar token");
+	const endpoint = healthEndpoint(env);
 
 	await new Promise<void>((resolveHealth, rejectHealth) => {
 		const healthRequest = request(
@@ -28,8 +27,10 @@ export async function checkSidecarHealth(env: NodeJS.ProcessEnv = process.env): 
 							response.statusCode !== 200 ||
 							typeof body !== "object" ||
 							body === null ||
-							!("accountId" in body) ||
-							body.accountId !== accountId
+							!("schemaVersion" in body) ||
+							body.schemaVersion !== "clawdi.whatsapp.sidecar-health.v1" ||
+							!("ready" in body) ||
+							body.ready !== true
 						) {
 							throw new Error("sidecar health identity mismatch");
 						}
@@ -46,7 +47,7 @@ export async function checkSidecarHealth(env: NodeJS.ProcessEnv = process.env): 
 	});
 }
 
-function healthEndpoint(env: NodeJS.ProcessEnv, accountId: string): RequestOptions {
+function healthEndpoint(env: NodeJS.ProcessEnv): RequestOptions {
 	const socketPath = nonEmpty(env.CLAWDI_WA_SIDECAR_SOCKET_PATH);
 	const explicitHost = nonEmpty(env.CLAWDI_WA_SIDECAR_HOST);
 	const explicitPort = nonEmpty(env.CLAWDI_WA_SIDECAR_PORT);
@@ -58,10 +59,9 @@ function healthEndpoint(env: NodeJS.ProcessEnv, accountId: string): RequestOptio
 			socketPath.includes("\0") ||
 			resolve(socketPath) !== socketPath ||
 			Buffer.byteLength(socketPath) > 103 ||
-			basename(socketPath) !== "sidecar.sock" ||
-			basename(dirname(socketPath)) !== accountId
+			basename(socketPath) !== "sidecar.sock"
 		) {
-			throw new Error("sidecar socket path must be an absolute account-scoped sidecar.sock path");
+			throw new Error("sidecar socket path must be an absolute sidecar.sock path");
 		}
 		return { socketPath };
 	}

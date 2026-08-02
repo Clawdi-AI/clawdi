@@ -7,37 +7,32 @@ This flow connects a user-owned WhatsApp account as a linked device. It extends
 the existing physical Baileys sidecar; it does not add an application adapter,
 a Meta Graph API facade, or a second Agent-side physical socket.
 
-## Static Beta Capacity
+## Dynamic physical sessions
 
-`CHANNEL_WHATSAPP_CUSTOM_BAILEYS_SIDECARS_JSON` is a static capacity map, not
-dynamic provisioning. Every key is one durable capacity-slot UUID, every
-origin is unique across the managed and Custom maps, and one sidecar owns
-exactly one physical socket. The managed and Custom maps must not share a slot
-UUID or origin.
+The backend generates an opaque provider session UUID inside the existing
+idempotency/name allocation transaction. One business-neutral sidecar service
+then creates `<state-root>/<session-id>/provider-state.sqlite` lazily. Each
+session has exactly one physical socket and isolated auth/Signal state, while
+all sessions share one internal endpoint and service bearer.
 
-A pending onboarding row reserves the slot in PostgreSQL before a slow sidecar
-call begins. Its partial unique index prevents another tenant or request from
-reserving the same slot while the state is `generating`, `ready`, `scanned`,
-`connected`, or `error`. Capacity becomes available again only after a
-confirmed cancel/logout and a terminal `canceled` or `expired` transition.
-
-The non-secret digest of the slot UUID and canonical sidecar origin is stored
-with both the reservation and the resulting `ChannelAccount`. Reusing a UUID
-for a different origin is a configuration revision mismatch and fails closed.
-Operators must use a new slot UUID for a replacement physical slot.
+PostgreSQL owns tenant identity, Custom/Shared classification, lifecycle, and
+capacity policy. The sidecar has no knowledge of those concepts. A pending
+onboarding row durably owns its session UUID until confirmed cancel/logout and
+a terminal transition. Session UUIDs are never reused for another physical
+account.
 
 ## Lifecycle and Restart
 
 The authenticated public lifecycle is:
 
-1. `GET /v1/channels/whatsapp/onboarding/readiness` reports verified static
-   capacity and whether the pinned sidecar supports a manual pairing code.
-2. `POST /v1/channels/whatsapp/onboarding/sessions` durably reserves a slot and
+1. `GET /v1/channels/whatsapp/onboarding/readiness` reports whether the provider
+   service is configured and supports a manual pairing code.
+2. `POST /v1/channels/whatsapp/onboarding/sessions` durably allocates a session and
    starts QR pairing. The user may request the secondary pairing-code path.
 3. Status remains `generating`, `ready`, or `scanned` until the sidecar socket
    owner reports both registered auth and an open connection.
 4. FastAPI creates the tenant-owned `ChannelAccount`, binds its durable id to
-   the slot's `WhatsAppProviderTransportAdapter`, starts provider ingress, and
+   the session's `WhatsAppProviderTransportAdapter`, starts provider ingress, and
    commits `connected`. A failed commit rolls back the account and unregisters
    the just-created transport/pump.
 5. Cancel stops an unfinished socket. Deleting the connected Custom account
@@ -45,8 +40,8 @@ The authenticated public lifecycle is:
    unregisters the transport, and only then archives the account.
 
 At backend startup and every reconciliation interval, each process rebuilds
-`ChannelAccount -> slot -> provider transport/pump` from active durable rows.
-It validates slot revision, sidecar account identity, the pinned Baileys rc14
+`ChannelAccount -> provider session -> transport/pump` from active durable rows.
+It validates session revision, sidecar session identity, the pinned Baileys rc14
 source and Web version, and registration agreement. Missing auth, config drift,
 duplicate ownership, or orphan physical state is blocked rather than exposed
 as available capacity.

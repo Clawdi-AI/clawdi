@@ -2888,7 +2888,8 @@ async def test_admin_managed_whatsapp_qr_promotes_only_after_connected_and_logou
     account_id = uuid.uuid4()
     fake = _ManagedOnboardingSidecar()
     registry = ConfiguredWhatsAppSidecarRegistry(
-        json.dumps({str(account_id): {"base_url": "http://127.0.0.1:43192", "api_token": "fake"}}),
+        "fake",
+        base_url="http://127.0.0.1:43192",
         client_factory=lambda _config: fake,
     )
     await registry.start()
@@ -2932,14 +2933,8 @@ async def test_admin_managed_whatsapp_qr_promotes_only_after_connected_and_logou
         assert session.ownership_kind == "managed"
         await registry.stop()
         registry = ConfiguredWhatsAppSidecarRegistry(
-            json.dumps(
-                {
-                    str(account_id): {
-                        "base_url": "http://127.0.0.1:43192",
-                        "api_token": "fake",
-                    }
-                }
-            ),
+            "fake",
+            base_url="http://127.0.0.1:43192",
             client_factory=lambda _config: fake,
         )
         await registry.start()
@@ -3001,14 +2996,8 @@ async def test_admin_managed_whatsapp_cancel_success_is_no_store(
     account_id = uuid.uuid4()
     fake = _ManagedOnboardingSidecar()
     registry = ConfiguredWhatsAppSidecarRegistry(
-        json.dumps(
-            {
-                str(account_id): {
-                    "base_url": "http://127.0.0.1:43194",
-                    "api_token": "fake",
-                }
-            }
-        ),
+        "fake",
+        base_url="http://127.0.0.1:43194",
         client_factory=lambda _config: fake,
     )
     await registry.start()

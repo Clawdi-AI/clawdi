@@ -75,13 +75,16 @@ and the rc13 poll-creation metadata node.
 
 ## Physical Provider Transport
 
-`BaileysSocketRuntime` calls `makeWASocket` once for one configured provider
-account. `CLAWDI_WA_PROVIDER_ACCOUNT_ID`, `CLAWDI_WA_SIDECAR_TOKEN`, and
-`CLAWDI_WA_SIDECAR_SESSION_DIR` are required. The historical
+The singleton sidecar lazily creates one `BaileysSocketRuntime` per opaque
+session UUID, and each runtime calls `makeWASocket` exactly once for its
+physical provider account. The service requires one state root and one
+`CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN`; session identity comes only from the
+authenticated session-scoped request path. The historical
 `CLAWDI_WA_WEBSOCKET_URL` override is intentionally unsupported: the physical
 socket always uses Baileys' official upstream URL.
 
-The session directory contains one `provider-state.sqlite` database for auth
+Each `/data/<session-uuid>` directory contains one `provider-state.sqlite`
+database for auth
 credentials, Signal keys, retry counters, exact retry message protos, immutable
 account/state-format provenance metadata, and the bounded provider ingress
 spool. It uses SQLite WAL, `synchronous=FULL`, transactional key batches, and
@@ -123,23 +126,23 @@ whose default is the same tuple. Reconciliation is deliberate: update the
 fixed package release, audited source/tuple, tests, and documentation together,
 then explicitly audit any newly accepted state-format provenance pair.
 
-FastAPI registers one provider transport per account through
-`CHANNEL_WHATSAPP_BAILEYS_SIDECARS_JSON`. Its bearer-authenticated HTTP contract
-is private. Every registration requires a non-empty, redacted `api_token`.
-The containing backend setting is also represented as a secret rather than
-rendering the registration JSON in process diagnostics.
+FastAPI registers one provider transport per opaque physical session through a
+single business-neutral service. Its bearer-authenticated HTTP contract is
+private. `CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN` is non-empty and redacted;
+account/session UUIDs live in PostgreSQL rather than deployment configuration.
 `base_url` must be an origin without userinfo, path, query, or fragment; plain
 HTTP is accepted only for exact loopback hosts and every non-loopback origin
 must use HTTPS.
 
 | Method | Path | Required native operation |
 | --- | --- | --- |
-| `GET` | `/v1/health` | Observe the configured physical socket. |
-| `POST` | `/v1/relay-message` | Relay an authorized Baileys message proto with its message id and attributes. |
-| `POST` | `/v1/raw-node` | Send an ownership-checked receipt or other allowed BinaryNode. |
-| `POST` | `/v1/query-iq` | Forward the bounded IQ subset required by the synthetic Noise session. |
-| `GET` | `/v1/provider-events` | Read ordered physical `messages.upsert` proto events after synchronous SQLite persistence. |
-| `POST` | `/v1/provider-events/ack` | Delete physical events only after FastAPI commits them. |
+| `GET` | `/v1/health` | Observe the provider service. |
+| `GET` | `/v1/sessions/{id}/health` | Observe one physical session. |
+| `POST` | `/v1/sessions/{id}/relay-message` | Relay an authorized Baileys message proto with its message id and attributes. |
+| `POST` | `/v1/sessions/{id}/raw-node` | Send an ownership-checked receipt or other allowed BinaryNode. |
+| `POST` | `/v1/sessions/{id}/query-iq` | Forward the bounded IQ subset required by the synthetic Noise session. |
+| `GET` | `/v1/sessions/{id}/provider-events` | Read ordered physical `messages.upsert` proto events after synchronous SQLite persistence. |
+| `POST` | `/v1/sessions/{id}/provider-events/ack` | Delete physical events only after FastAPI commits them. |
 
 These are provider-transport operations behind an internal bearer, not a
 public application relay API. Raw nodes and IQs remain because the native Noise
