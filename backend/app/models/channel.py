@@ -43,6 +43,8 @@ WHATSAPP_ONBOARDING_STATE_CONNECTED = "connected"
 WHATSAPP_ONBOARDING_STATE_EXPIRED = "expired"
 WHATSAPP_ONBOARDING_STATE_CANCELED = "canceled"
 WHATSAPP_ONBOARDING_STATE_ERROR = "error"
+WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM = "custom"
+WHATSAPP_ONBOARDING_OWNERSHIP_MANAGED = "managed"
 WHATSAPP_ONBOARDING_ACTIVE_STATES = (
     WHATSAPP_ONBOARDING_STATE_GENERATING,
     WHATSAPP_ONBOARDING_STATE_READY,
@@ -131,6 +133,12 @@ class ChannelWhatsAppOnboardingSession(Base, TimestampMixin):
     __tablename__ = "channel_whatsapp_onboarding_sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ownership_kind: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
+        server_default=WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
+    )
     sidecar_account_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), nullable=False, index=True
     )

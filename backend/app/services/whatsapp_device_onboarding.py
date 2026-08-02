@@ -15,6 +15,7 @@ from app.models.channel import (
     CHANNEL_STATUS_ACTIVE,
     CHANNEL_VISIBILITY_PRIVATE,
     WHATSAPP_ONBOARDING_ACTIVE_STATES,
+    WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
     WHATSAPP_ONBOARDING_STATE_CANCELED,
     WHATSAPP_ONBOARDING_STATE_CONNECTED,
     WHATSAPP_ONBOARDING_STATE_ERROR,
@@ -120,6 +121,7 @@ async def start_whatsapp_onboarding(
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     existing = await db.scalar(
         select(ChannelWhatsAppOnboardingSession).where(
+            ChannelWhatsAppOnboardingSession.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
             ChannelWhatsAppOnboardingSession.user_id == user_id,
             ChannelWhatsAppOnboardingSession.request_id == request_id,
         )
@@ -140,6 +142,7 @@ async def start_whatsapp_onboarding(
     await _lock_allocation(db)
     existing = await db.scalar(
         select(ChannelWhatsAppOnboardingSession).where(
+            ChannelWhatsAppOnboardingSession.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
             ChannelWhatsAppOnboardingSession.user_id == user_id,
             ChannelWhatsAppOnboardingSession.request_id == request_id,
         )
@@ -169,6 +172,7 @@ async def start_whatsapp_onboarding(
         )
     unfinished_name = await db.scalar(
         select(ChannelWhatsAppOnboardingSession.id).where(
+            ChannelWhatsAppOnboardingSession.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
             ChannelWhatsAppOnboardingSession.user_id == user_id,
             ChannelWhatsAppOnboardingSession.name == name,
             ChannelWhatsAppOnboardingSession.state.in_(_UNRELEASED_SESSION_STATES),
@@ -194,6 +198,7 @@ async def start_whatsapp_onboarding(
         )
     now = datetime.now(UTC)
     onboarding = ChannelWhatsAppOnboardingSession(
+        ownership_kind=WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
         sidecar_account_id=sidecar_account_id,
         sidecar_config_revision=sidecar_config_revision,
         user_id=user_id,
@@ -528,6 +533,7 @@ async def require_whatsapp_custom_logout_for_archive(
         await registry.unbind_custom_account(slot_id=sidecar_account_id, account_id=account.id)
     onboarding = await db.scalar(
         select(ChannelWhatsAppOnboardingSession).where(
+            ChannelWhatsAppOnboardingSession.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
             ChannelWhatsAppOnboardingSession.channel_account_id == account.id,
             ChannelWhatsAppOnboardingSession.user_id == account.user_id,
             ChannelWhatsAppOnboardingSession.state == WHATSAPP_ONBOARDING_STATE_CONNECTED,
@@ -557,6 +563,8 @@ async def expire_stale_whatsapp_onboarding_sessions(
         (
             await db.scalars(
                 select(ChannelWhatsAppOnboardingSession.id).where(
+                    ChannelWhatsAppOnboardingSession.ownership_kind
+                    == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
                     ChannelWhatsAppOnboardingSession.state.in_(stale_states),
                     ChannelWhatsAppOnboardingSession.expires_at <= deadline,
                 )
@@ -569,6 +577,8 @@ async def expire_stale_whatsapp_onboarding_sessions(
             select(ChannelWhatsAppOnboardingSession)
             .where(
                 ChannelWhatsAppOnboardingSession.id == session_id,
+                ChannelWhatsAppOnboardingSession.ownership_kind
+                == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
                 ChannelWhatsAppOnboardingSession.state.in_(stale_states),
                 ChannelWhatsAppOnboardingSession.expires_at <= deadline,
             )
@@ -591,6 +601,7 @@ async def _owned_session(
         select(ChannelWhatsAppOnboardingSession)
         .where(
             ChannelWhatsAppOnboardingSession.id == session_id,
+            ChannelWhatsAppOnboardingSession.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
             ChannelWhatsAppOnboardingSession.user_id == user_id,
         )
         .with_for_update()
@@ -622,6 +633,7 @@ async def _free_account_ids(
     if not configured:
         return []
     session_query = select(ChannelWhatsAppOnboardingSession.sidecar_account_id).where(
+        ChannelWhatsAppOnboardingSession.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
         ChannelWhatsAppOnboardingSession.sidecar_account_id.in_(configured),
         ChannelWhatsAppOnboardingSession.state.in_(_UNRELEASED_SESSION_STATES),
     )

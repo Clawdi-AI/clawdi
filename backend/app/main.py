@@ -107,6 +107,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await start_postgres_listener()
     try:
         await whatsapp_sidecars.start()
+        if whatsapp_sidecars.managed_account_ids:
+            await whatsapp_sidecars.reconcile_managed_ownership()
     except Exception:
         await whatsapp_sidecars.stop()
         await stop_postgres_listener()

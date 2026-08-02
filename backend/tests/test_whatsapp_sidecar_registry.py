@@ -125,7 +125,7 @@ def test_parse_whatsapp_sidecar_registrations_rejects_normalized_duplicate_accou
 
 
 @pytest.mark.asyncio
-async def test_configured_whatsapp_sidecar_registry_registers_and_closes_transport():
+async def test_configured_whatsapp_sidecar_registry_does_not_start_ingress_before_promotion():
     account_id = UUID("00000000-0000-0000-0000-000000000888")
     raw = json.dumps(
         {str(account_id): {"base_url": "https://sidecar.example.test", "api_token": "secret"}}
@@ -141,8 +141,7 @@ async def test_configured_whatsapp_sidecar_registry_registers_and_closes_transpo
     await registry.start()
     try:
         status = whatsapp_provider_transport_status(account_id)
-        assert status.available is True
-        assert status.mode == "sidecar"
+        assert status.available is False
         assert clients[0].config.base_url == "https://sidecar.example.test"
         assert clients[0].health_checks == 1
     finally:
@@ -153,7 +152,7 @@ async def test_configured_whatsapp_sidecar_registry_registers_and_closes_transpo
 
 
 @pytest.mark.asyncio
-async def test_configured_whatsapp_sidecar_registry_keeps_unhealthy_sidecar_visible():
+async def test_configured_whatsapp_sidecar_registry_keeps_unhealthy_sidecar_unbound():
     account_id = UUID("00000000-0000-0000-0000-000000000999")
     raw = json.dumps(
         {
@@ -175,8 +174,7 @@ async def test_configured_whatsapp_sidecar_registry_keeps_unhealthy_sidecar_visi
     try:
         status = whatsapp_provider_transport_status(account_id)
         assert status.available is False
-        assert status.mode == "sidecar"
-        assert status.reason == "provider-transport-disconnected"
+        assert status.reason == "provider-transport-unavailable"
     finally:
         await registry.stop()
 

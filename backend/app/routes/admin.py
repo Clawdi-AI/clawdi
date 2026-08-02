@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Never, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -75,12 +75,17 @@ from app.schemas.admin import (
     AdminEnvironmentCreate,
     AdminManagedAiProviderResponse,
     AdminManagedAiProviderUpsert,
+    AdminManagedWhatsAppOnboardingCreate,
     AdminRuntimeStateResponse,
     AdminRuntimeStateUpsert,
 )
 from app.schemas.ai_provider import AiProviderDeleteResponse, ai_provider_auth_from_persistence
 from app.schemas.api_key import ApiKeyCreated, ApiKeyRevokeResponse
-from app.schemas.channel import ChannelCommandSyncRequest, ChannelCommandSyncResponse
+from app.schemas.channel import (
+    ChannelCommandSyncRequest,
+    ChannelCommandSyncResponse,
+    ChannelWhatsAppOnboardingSessionResponse,
+)
 from app.schemas.platform import PlatformOwner
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.agent_environments import (
@@ -170,6 +175,12 @@ from app.services.user_provisioning import (
     lazy_create_user_with_personal_project,
 )
 from app.services.whatsapp_device_onboarding import require_whatsapp_custom_logout_for_archive
+from app.services.whatsapp_managed_onboarding import (
+    cancel_managed_whatsapp_onboarding,
+    get_managed_whatsapp_onboarding,
+    require_managed_whatsapp_logout_for_archive,
+    start_managed_whatsapp_onboarding,
+)
 from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_registry
 
 logger = logging.getLogger(__name__)
@@ -181,6 +192,11 @@ logger = logging.getLogger(__name__)
 # tell admin endpoints exist let alone what header they expect. The
 # routes themselves stay live — gating is `require_admin_api_key`.
 router = APIRouter(prefix="/admin", tags=["admin"], include_in_schema=False)
+
+
+def _no_store(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
 
 
 def _admin_app_setting_response(setting: AppSetting) -> AdminAppSettingResponse:
@@ -1168,6 +1184,97 @@ async def admin_create_channel(
     )
 
 
+@router.post(
+    "/channels/whatsapp/onboarding",
+    response_model=ChannelWhatsAppOnboardingSessionResponse,
+)
+async def admin_start_managed_whatsapp_onboarding(
+    body: AdminManagedWhatsAppOnboardingCreate,
+    response: Response,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> ChannelWhatsAppOnboardingSessionResponse:
+    _no_store(response)
+    target = await _resolve_or_create_user(db, body.target_clerk_id)
+    result = await start_managed_whatsapp_onboarding(
+        db,
+        account_id=body.account_id,
+        user_id=target.id,
+        request_id=body.request_id,
+        name=body.name,
+        registry=get_active_whatsapp_sidecar_registry(),
+    )
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="channel.whatsapp.onboarding.start",
+        resource_type="channel_whatsapp_onboarding",
+        resource_id=str(result.id),
+        channel_account_id=result.channel_account_id,
+        target_user_id=target.id,
+        source="api.admin",
+        details={"account_id": str(body.account_id), "state": result.state},
+    )
+    await db.commit()
+    return result
+
+
+@router.get(
+    "/channels/whatsapp/onboarding/{session_id}",
+    response_model=ChannelWhatsAppOnboardingSessionResponse,
+)
+async def admin_get_managed_whatsapp_onboarding(
+    session_id: UUID,
+    response: Response,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> ChannelWhatsAppOnboardingSessionResponse:
+    _no_store(response)
+    result = await get_managed_whatsapp_onboarding(
+        db, session_id=session_id, registry=get_active_whatsapp_sidecar_registry()
+    )
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="channel.whatsapp.onboarding.status",
+        resource_type="channel_whatsapp_onboarding",
+        resource_id=str(result.id),
+        channel_account_id=result.channel_account_id,
+        source="api.admin",
+        details={"state": result.state},
+    )
+    await db.commit()
+    return result
+
+
+@router.delete(
+    "/channels/whatsapp/onboarding/{session_id}",
+    response_model=ChannelWhatsAppOnboardingSessionResponse,
+)
+async def admin_cancel_managed_whatsapp_onboarding(
+    session_id: UUID,
+    response: Response,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> ChannelWhatsAppOnboardingSessionResponse:
+    _no_store(response)
+    result = await cancel_managed_whatsapp_onboarding(
+        db, session_id=session_id, registry=get_active_whatsapp_sidecar_registry()
+    )
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="channel.whatsapp.onboarding.cancel",
+        resource_type="channel_whatsapp_onboarding",
+        resource_id=str(result.id),
+        channel_account_id=result.channel_account_id,
+        source="api.admin",
+        details={"state": result.state},
+    )
+    await db.commit()
+    return result
+
+
 @router.get("/channels/{account_id}", response_model=AdminChannelResponse)
 async def admin_get_channel(
     account_id: UUID,
@@ -1396,6 +1503,10 @@ async def admin_delete_channel(
     )
     await require_whatsapp_custom_logout_for_archive(
         db,
+        account=account,
+        registry=get_active_whatsapp_sidecar_registry(),
+    )
+    await require_managed_whatsapp_logout_for_archive(
         account=account,
         registry=get_active_whatsapp_sidecar_registry(),
     )

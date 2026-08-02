@@ -278,6 +278,21 @@ class AdminChannelCreate(BaseModel):
         return _clean_channel_secret_values(value)
 
 
+class AdminManagedWhatsAppOnboardingCreate(BaseModel):
+    account_id: UUID
+    target_clerk_id: str = Field(min_length=1, max_length=255)
+    request_id: UUID
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("name cannot be blank")
+        return stripped
+
+
 class AdminChannelUpdate(BaseModel):
     """Patch provider bot metadata and credentials.
 
