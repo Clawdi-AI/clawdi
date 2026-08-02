@@ -24,7 +24,9 @@ describe("agent overview registry", () => {
 		]);
 		expect(hosted[0]?.modules).toEqual(connected[0]?.modules);
 		expect(hosted[1]?.modules.map((module) => module.id)).toEqual(["model-provider", "channels"]);
-		expect(connected[0]?.modules.find((module) => module.id === "connectors")?.size).toBe("wide");
+		expect(connected[0]?.modules.find((module) => module.id === "connectors")?.size).toBe(
+			"standard",
+		);
 		expect(connected[0]?.modules.find((module) => module.id === "projects")?.size).toBe("standard");
 	});
 });

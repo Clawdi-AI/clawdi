@@ -28,7 +28,7 @@ const SHARED_RESOURCES = [
 	{ id: "projects", section: "projects", size: "standard" },
 	{ id: "skills", section: "skills", size: "standard" },
 	{ id: "memories", section: "memories", size: "standard" },
-	{ id: "connectors", section: "connectors", size: "wide" },
+	{ id: "connectors", section: "connectors", size: "standard" },
 	{ id: "vaults", section: "vaults", size: "standard" },
 ] as const satisfies readonly AgentOverviewModule[];
 

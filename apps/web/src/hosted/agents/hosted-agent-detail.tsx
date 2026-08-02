@@ -1339,61 +1339,63 @@ function OverviewTab({
 	const projectionUnavailable = !deploymentStatus.known;
 	return (
 		<div className="flex flex-col gap-8">
-			<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
-				<section aria-labelledby="hosted-recent-sessions">
-					<h2 id="hosted-recent-sessions" className="mb-3 text-sm font-semibold">
-						Recent sessions
-					</h2>
-					{sessionsError ? (
-						<OverviewModuleError label="Sessions" onRetry={() => void onRetrySessions()} />
-					) : (
-						<OverviewSessionList
-							sessions={sessions}
-							isLoading={sessionsLoading}
-							emptyMessage={sessionsEmptyMessage}
-							sessionLink={sessionLink}
-						/>
-					)}
-				</section>
-				<AgentOverviewStatusCard
-					agentId={agentId}
-					section="settings"
-					routeSearch={routeSearch}
-					title="Compute"
-					icon={Cpu}
-					tint="bg-identity-4-bg text-identity-4-fg"
-				>
-					<div className="space-y-3">
-						<p className="inline-flex items-center gap-2 text-lg font-semibold">
-							<StatusDot status={deploymentStatusTone(deploymentStatus)} />
-							{deploymentStatusLabel(deploymentStatus)}
-						</p>
-						<OverviewMetrics
-							columns={2}
-							items={[
-								{ label: "Plan", value: isPerformance ? "Performance" : "Basic" },
-								{ label: "CPU", value: `${spec.resources.vcpu} vCPU` },
-								{ label: "Memory", value: formatMemoryMib(spec.resources.memory_mib) },
-								{ label: "Storage", value: `${spec.resources.disk_gib} GiB` },
-							]}
-						/>
-						{deploymentRunning ? null : (
-							<div className="border-t pt-3">
-								<OverviewComputeStatus
-									deployment={deployment}
-									failure={deploymentFailure}
-									showActions={showDeploymentActions}
-									planChangeHref={planChangeHref}
-									providerSettingsHref={providerSettingsHref}
-									onDeleteAccepted={onDeleteAccepted}
-									deploymentTransitionTimedOut={deploymentTransitionTimedOut}
-									isCheckingDeployment={isCheckingDeployment}
-									onCheckDeploymentAgain={onCheckDeploymentAgain}
-								/>
-							</div>
+			<div>
+				<h2 id="hosted-recent-sessions" className="mb-3 text-sm font-semibold">
+					Recent sessions
+				</h2>
+				<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
+					<section aria-labelledby="hosted-recent-sessions" className="min-h-40 lg:min-h-52">
+						{sessionsError ? (
+							<OverviewModuleError label="Sessions" onRetry={() => void onRetrySessions()} />
+						) : (
+							<OverviewSessionList
+								sessions={sessions}
+								isLoading={sessionsLoading}
+								emptyMessage={sessionsEmptyMessage}
+								sessionLink={sessionLink}
+							/>
 						)}
-					</div>
-				</AgentOverviewStatusCard>
+					</section>
+					<AgentOverviewStatusCard
+						agentId={agentId}
+						section="settings"
+						routeSearch={routeSearch}
+						title="Compute"
+						icon={Cpu}
+						tint="bg-identity-4-bg text-identity-4-fg"
+					>
+						<div className="flex h-full flex-col justify-between gap-4">
+							<p className="inline-flex items-center gap-2 text-lg font-semibold">
+								<StatusDot status={deploymentStatusTone(deploymentStatus)} />
+								{deploymentStatusLabel(deploymentStatus)}
+							</p>
+							<OverviewMetrics
+								columns={2}
+								items={[
+									{ label: "Plan", value: isPerformance ? "Performance" : "Basic" },
+									{ label: "CPU", value: `${spec.resources.vcpu} vCPU` },
+									{ label: "Memory", value: formatMemoryMib(spec.resources.memory_mib) },
+									{ label: "Storage", value: `${spec.resources.disk_gib} GiB` },
+								]}
+							/>
+							{deploymentRunning ? null : (
+								<div className="border-t pt-3">
+									<OverviewComputeStatus
+										deployment={deployment}
+										failure={deploymentFailure}
+										showActions={showDeploymentActions}
+										planChangeHref={planChangeHref}
+										providerSettingsHref={providerSettingsHref}
+										onDeleteAccepted={onDeleteAccepted}
+										deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+										isCheckingDeployment={isCheckingDeployment}
+										onCheckDeploymentAgain={onCheckDeploymentAgain}
+									/>
+								</div>
+							)}
+						</div>
+					</AgentOverviewStatusCard>
+				</div>
 			</div>
 			<AgentOverviewCapabilities
 				agentId={agentId}

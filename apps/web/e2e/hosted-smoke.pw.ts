@@ -2643,9 +2643,9 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 				models_used: ["gpt-5"],
 				summary: [
 					"Prepare launch brief",
-					"Research customer feedback",
-					"Update project plan",
-					"Review release risks",
+					"Research customer feedback before the product planning review",
+					"Investigate a long-running customer issue across several projects and write a detailed plan for the next release",
+					"Review risks",
 					"Fifth hosted session",
 				][index],
 				tags: [],
@@ -2722,6 +2722,35 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const recentSessions = page.getByRole("region", { name: "Recent sessions" });
 	await expect(recentSessions.locator("article")).toHaveCount(4);
 	await expect(recentSessions).not.toContainText("Fifth hosted session");
+	const sessionBoxes = await recentSessions.locator("article").evaluateAll((cards) =>
+		cards.map((card) => {
+			const rect = card.getBoundingClientRect();
+			return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+		}),
+	);
+	expect(
+		Math.max(...sessionBoxes.map((box) => box.height)) -
+			Math.min(...sessionBoxes.map((box) => box.height)),
+	).toBeLessThanOrEqual(2);
+	for (let index = 1; index < sessionBoxes.length; index += 1) {
+		expect(Math.abs(sessionBoxes[index].x - sessionBoxes[0].x)).toBeLessThanOrEqual(1);
+		expect(Math.abs(sessionBoxes[index].width - sessionBoxes[0].width)).toBeLessThanOrEqual(1);
+		expect(sessionBoxes[index].y).toBeGreaterThanOrEqual(
+			sessionBoxes[index - 1].y + sessionBoxes[index - 1].height,
+		);
+	}
+	const [recentSessionsBox, computeBox] = await Promise.all([
+		recentSessions.boundingBox(),
+		page.locator('[data-overview-status="compute"]').boundingBox(),
+	]);
+	expect(Math.abs((computeBox?.y ?? 0) - (recentSessionsBox?.y ?? 0))).toBeLessThanOrEqual(2);
+	expect(
+		Math.abs(
+			(computeBox?.y ?? 0) +
+				(computeBox?.height ?? 0) -
+				((recentSessionsBox?.y ?? 0) + (recentSessionsBox?.height ?? 0)),
+		),
+	).toBeLessThanOrEqual(2);
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Open Agent Interface" })).toHaveAttribute(
 		"href",
@@ -2747,11 +2776,14 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toBeVisible();
 	}
 	const connectors = overview.locator('[data-overview-module="connectors"]');
-	await expect(connectors).toContainText("2 connected apps");
-	await expect(connectors.getByRole("link", { name: "Connected: Github" })).toBeVisible();
-	await expect(connectors.getByRole("link", { name: "Connected: Slack" })).toBeVisible();
-	await expect(connectors.getByRole("link", { name: "Popular: Gmail" })).toBeVisible();
-	await expect(connectors.getByRole("link", { name: "Popular: Github" })).toHaveCount(0);
+	await expect(connectors).not.toHaveClass(/md:col-span-2/);
+	await expect(connectors).toContainText("2 connected");
+	const connectorLinks = connectors.getByTestId("overview-connector-rail").getByRole("link");
+	await expect(connectorLinks).toHaveCount(5);
+	await expect(connectorLinks.nth(0)).toHaveAccessibleName("Connected app: Github");
+	await expect(connectorLinks.nth(1)).toHaveAccessibleName("Connected app: Slack");
+	await expect(connectorLinks.nth(2)).toHaveAccessibleName("Suggested app: Gmail");
+	await expect(connectors.getByRole("link", { name: "Suggested app: Github" })).toHaveCount(0);
 	const sidebar = page.getByTestId("app-sidebar");
 	for (const section of ["Memories", "Vaults", "Connectors"]) {
 		await expect(sidebar.getByRole("link", { name: section, exact: true })).toBeVisible();

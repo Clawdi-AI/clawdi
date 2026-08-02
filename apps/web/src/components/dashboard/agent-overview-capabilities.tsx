@@ -36,7 +36,7 @@ export function AgentOverviewStatusCard({
 	return (
 		<article
 			data-overview-status={title.toLowerCase().replaceAll(" ", "-")}
-			className="rounded-lg border bg-muted/20"
+			className="flex h-full flex-col rounded-lg border bg-muted/20"
 		>
 			<Link
 				{...agentSectionLink(agentId, section, routeSearch)}
@@ -48,7 +48,7 @@ export function AgentOverviewStatusCard({
 				<h2 className="min-w-0 flex-1 text-sm font-semibold">{title}</h2>
 				<ArrowRight className="size-4 text-muted-foreground" />
 			</Link>
-			<div className="px-4 pb-4">{children}</div>
+			<div className="flex flex-1 flex-col px-4 pb-4">{children}</div>
 		</article>
 	);
 }

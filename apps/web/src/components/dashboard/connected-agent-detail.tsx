@@ -173,42 +173,50 @@ export function ConnectedAgentDetail({
 
 					{activeTab === "overview" ? (
 						<div className="flex flex-col gap-8">
-							<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
-								<section aria-labelledby="connected-recent-sessions">
-									<h2 id="connected-recent-sessions" className="mb-3 text-sm font-semibold">
-										Recent sessions
-									</h2>
+							<div>
+								<h2 id="connected-recent-sessions" className="mb-3 text-sm font-semibold">
+									Recent sessions
+								</h2>
+								<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
+									<section
+										aria-labelledby="connected-recent-sessions"
+										className="min-h-40 lg:min-h-52"
+									>
 									{blockingSessionsError ? (
-										<OverviewModuleError label="Sessions" onRetry={() => void refetchSessions()} />
-									) : (
-										<OverviewSessionList
-											sessions={sessionsPage?.items ?? []}
-											isLoading={sessionsLoading}
-											emptyMessage="No recent sessions"
-											sessionLink={(session) => scopedSessionLink(session.id)}
-										/>
-									)}
-								</section>
-								<AgentOverviewStatusCard
-									agentId={id}
-									section="settings"
-									routeSearch={routeSearch}
-									title="Live Sync"
-									icon={Laptop}
-									tint="bg-identity-7-bg text-identity-7-fg"
-								>
-									<div className="space-y-3">
-										<p className="inline-flex items-center gap-2 text-lg font-semibold">
-											<StatusDot status={syncTone} /> {syncStatus.label}
-										</p>
-										<OverviewMetadata
-											items={[
-												{ label: "Machine", value: agent.machine_name },
-												{ label: "Last seen", value: relativeTime(agent.last_seen_at) },
-											]}
-										/>
-									</div>
-								</AgentOverviewStatusCard>
+											<OverviewModuleError
+												label="Sessions"
+												onRetry={() => void refetchSessions()}
+											/>
+										) : (
+											<OverviewSessionList
+												sessions={sessionsPage?.items ?? []}
+												isLoading={sessionsLoading}
+												emptyMessage="No recent sessions"
+												sessionLink={(session) => scopedSessionLink(session.id)}
+											/>
+										)}
+									</section>
+									<AgentOverviewStatusCard
+										agentId={id}
+										section="settings"
+										routeSearch={routeSearch}
+										title="Live Sync"
+										icon={Laptop}
+										tint="bg-identity-7-bg text-identity-7-fg"
+									>
+										<div className="flex h-full flex-col justify-between gap-4">
+											<p className="inline-flex items-center gap-2 text-lg font-semibold">
+												<StatusDot status={syncTone} /> {syncStatus.label}
+											</p>
+											<OverviewMetadata
+												items={[
+													{ label: "Machine", value: agent.machine_name },
+													{ label: "Last seen", value: relativeTime(agent.last_seen_at) },
+												]}
+											/>
+										</div>
+									</AgentOverviewStatusCard>
+								</div>
 							</div>
 							<AgentOverviewCapabilities
 								agentId={id}

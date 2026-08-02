@@ -207,6 +207,8 @@ export function useConnectedAppCards() {
 
 	const data = useMemo(() => lookup.flatMap((q) => (q.data ? [q.data] : [])), [lookup]);
 	const isLoading = connectionsQ.isLoading || lookup.some((q) => q.isLoading);
+	const connectionsLoading = connectionsQ.isLoading;
+	const metadataLoading = lookup.some((q) => q.isLoading);
 	const connectionsError = connectionsQ.error;
 	const metadataError = lookup.find((q) => q.error)?.error ?? null;
 	const error = connectionsError ?? metadataError;
@@ -222,6 +224,8 @@ export function useConnectedAppCards() {
 		data,
 		hasData,
 		isLoading,
+		connectionsLoading,
+		metadataLoading,
 		error,
 		connectionsError,
 		metadataError,

@@ -170,14 +170,14 @@ const overviewSessions = {
 		local_session_id: `local-overview-${index + 1}`,
 		summary: [
 			"Plan release",
-			"Review customer notes",
-			"Fix sync health",
-			"Draft weekly update",
+			"Review customer notes before the quarterly planning meeting",
+			"Investigate a very long synchronization issue affecting several workspaces and prepare a clear remediation plan for the team",
+			"Draft update",
 			"Fifth hidden session",
 		][index],
 		message_count: index + 2,
-		input_tokens: 100 * (index + 1),
-		output_tokens: 50 * (index + 1),
+		input_tokens: [8, 1200, 18_500, 420][index],
+		output_tokens: [4, 340, 9200, 80][index],
 		last_activity_at: new Date(now.getTime() - index * 60 * 60 * 1000).toISOString(),
 	})),
 	total: 5,
@@ -550,22 +550,65 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	const recentSessions = page.getByRole("region", { name: "Recent sessions" });
 	await expect(recentSessions.locator("article")).toHaveCount(4);
 	await expect(recentSessions).not.toContainText("Fifth hidden session");
+	const sessionBoxes = await recentSessions.locator("article").evaluateAll((cards) =>
+		cards.map((card) => {
+			const rect = card.getBoundingClientRect();
+			return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+		}),
+	);
+	expect(
+		Math.max(...sessionBoxes.map((box) => box.height)) -
+			Math.min(...sessionBoxes.map((box) => box.height)),
+	).toBeLessThanOrEqual(2);
+	for (let index = 1; index < sessionBoxes.length; index += 1) {
+		expect(Math.abs(sessionBoxes[index].x - sessionBoxes[0].x)).toBeLessThanOrEqual(1);
+		expect(Math.abs(sessionBoxes[index].width - sessionBoxes[0].width)).toBeLessThanOrEqual(1);
+		expect(sessionBoxes[index].y).toBeGreaterThanOrEqual(
+			sessionBoxes[index - 1].y + sessionBoxes[index - 1].height,
+		);
+	}
+	const [recentSessionsBox, liveSyncBox] = await Promise.all([
+		recentSessions.boundingBox(),
+		page.locator('[data-overview-status="live-sync"]').boundingBox(),
+	]);
+	expect(Math.abs((liveSyncBox?.y ?? 0) - (recentSessionsBox?.y ?? 0))).toBeLessThanOrEqual(2);
+	expect(
+		Math.abs(
+			(liveSyncBox?.y ?? 0) +
+				(liveSyncBox?.height ?? 0) -
+				((recentSessionsBox?.y ?? 0) + (recentSessionsBox?.height ?? 0)),
+		),
+	).toBeLessThanOrEqual(2);
 	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("Research");
 	for (const moduleId of ["memories", "vaults", "connectors"]) {
 		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toBeVisible();
 	}
 	const connectors = overview.locator('[data-overview-module="connectors"]');
-	await expect(connectors).toContainText("2 connected apps");
-	await expect(connectors.getByRole("link", { name: "Connected: Github" })).toBeVisible();
-	await expect(connectors.getByRole("link", { name: "Connected: Slack" })).toBeVisible();
-	await expect(connectors.getByRole("link", { name: "Popular: Gmail" })).toBeVisible();
-	await expect(connectors.getByRole("link", { name: "Popular: Github" })).toHaveCount(0);
+	await expect(connectors).not.toHaveClass(/md:col-span-2/);
+	await expect(connectors).toContainText("2 connected");
+	const connectorLinks = connectors.getByTestId("overview-connector-rail").getByRole("link");
+	await expect(connectorLinks).toHaveCount(5);
+	await expect(connectorLinks.nth(0)).toHaveAccessibleName("Connected app: Github");
+	await expect(connectorLinks.nth(1)).toHaveAccessibleName("Connected app: Slack");
+	await expect(connectorLinks.nth(2)).toHaveAccessibleName("Suggested app: Gmail");
+	await expect(connectors.getByRole("link", { name: "Suggested app: Github" })).toHaveCount(0);
 	const sidebar = page.getByTestId("app-sidebar");
 	for (const section of ["Memories", "Vaults", "Connectors"]) {
 		await expect(sidebar.getByRole("link", { name: section, exact: true })).toBeVisible();
 	}
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
+	await page.setViewportSize({ width: 390, height: 844 });
+	const mobileSessionBoxes = await recentSessions
+		.locator("article")
+		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
+	expect(mobileSessionBoxes).toHaveLength(4);
+	for (let index = 1; index < mobileSessionBoxes.length; index += 1) {
+		expect(Math.abs(mobileSessionBoxes[index].x - mobileSessionBoxes[0].x)).toBeLessThanOrEqual(1);
+		expect(mobileSessionBoxes[index].y).toBeGreaterThanOrEqual(
+			mobileSessionBoxes[index - 1].y + mobileSessionBoxes[index - 1].height,
+		);
+	}
 	await page.setViewportSize({ width: 1280, height: 1400 });
 	await page.screenshot({
 		path: testInfo.outputPath("connected-agent-overview.png"),
@@ -591,7 +634,7 @@ test("connected overview keeps connector and catalog states independent", async 
 	await page.goto("/agents/agent-smoke-1");
 	const card = page.locator('[data-overview-module="connectors"]');
 	await expect(card.getByLabel("Loading connected apps")).toBeVisible();
-	await expect(card.getByRole("link", { name: "Popular: Gmail" })).toBeVisible();
+	await expect(card.getByRole("link", { name: "Available app: Gmail" })).toBeVisible();
 	await expect(card).not.toContainText("No apps connected");
 });
 
@@ -604,8 +647,7 @@ test("connected overview reports connector errors without a false empty state", 
 	});
 	await page.goto("/agents/agent-smoke-1");
 	const card = page.locator('[data-overview-module="connectors"]');
-	await expect(card).toContainText("Can’t load connected apps", { timeout: 12_000 });
-	await expect(card).toContainText("Can’t load popular apps");
+	await expect(card).toContainText("Can’t load apps", { timeout: 12_000 });
 	await expect(card).not.toContainText("No apps connected");
 });
 
@@ -627,8 +669,8 @@ test("connected overview preserves active count while popular apps load", async 
 	});
 	await page.goto("/agents/agent-smoke-1");
 	const card = page.locator('[data-overview-module="connectors"]');
-	await expect(card).toContainText("1 connected app");
-	await expect(card.getByLabel("Loading popular apps")).toBeVisible();
+	await expect(card).toContainText("1 connected");
+	await expect(card.getByLabel("Loading app").first()).toBeVisible();
 });
 
 test("connected overview keeps project count when names fail", async ({ page }) => {
