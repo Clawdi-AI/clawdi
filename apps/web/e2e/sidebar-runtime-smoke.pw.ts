@@ -536,9 +536,6 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	});
 	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
 	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveCount(0);
-	await expect(overview.locator('[data-overview-module="projects"]')).not.toHaveClass(
-		/md:col-span-2/,
-	);
 	await expect(overview.locator('[data-overview-module="projects"]')).toContainText(
 		"Smoke Project",
 	);
@@ -607,7 +604,6 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toBeVisible();
 	}
 	const connectors = overview.locator('[data-overview-module="connectors"]');
-	await expect(connectors).not.toHaveClass(/md:col-span-2/);
 	await expect(connectors).toContainText("2 connected");
 	const connectorLinks = connectors.getByTestId("overview-connector-rail").getByRole("link");
 	await expect(connectorLinks).toHaveCount(5);
@@ -616,11 +612,35 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(connectorLinks.nth(2)).toHaveAccessibleName("Suggested app: Gmail");
 	await expect(connectors.getByRole("link", { name: "Suggested app: Github" })).toHaveCount(0);
 	const sidebar = page.getByTestId("app-sidebar");
+	await expect(sidebar.getByText("Paused", { exact: true })).toBeVisible();
+	await expect(sidebar.getByText(/last seen/i)).toBeVisible();
 	for (const section of ["Memories", "Vaults", "Connectors"]) {
 		await expect(sidebar.getByRole("link", { name: section, exact: true })).toBeVisible();
 	}
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
+	const resourceGrid = overview.locator('[data-overview-layout="balanced-five"]');
+	const resourceGeometry = await resourceGrid
+		.locator("article")
+		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
+	expect(resourceGeometry).toHaveLength(5);
+	expect(
+		Math.max(...resourceGeometry.map((box) => box.width)) -
+			Math.min(...resourceGeometry.map((box) => box.width)),
+	).toBeLessThanOrEqual(2);
+	expect(Math.abs(resourceGeometry[0].y - resourceGeometry[1].y)).toBeLessThanOrEqual(2);
+	expect(Math.abs(resourceGeometry[1].y - resourceGeometry[2].y)).toBeLessThanOrEqual(2);
+	expect(Math.abs(resourceGeometry[3].y - resourceGeometry[4].y)).toBeLessThanOrEqual(2);
+	const resourceGridBox = await resourceGrid.boundingBox();
+	expect(
+		Math.abs(
+			resourceGeometry[3].x -
+				(resourceGridBox?.x ?? 0) -
+				((resourceGridBox?.x ?? 0) +
+					(resourceGridBox?.width ?? 0) -
+					(resourceGeometry[4].x + resourceGeometry[4].width)),
+		),
+	).toBeLessThanOrEqual(2);
 	await page.setViewportSize({ width: 390, height: 844 });
 	const mobileSessionBoxes = await recentSessions
 		.locator("article")

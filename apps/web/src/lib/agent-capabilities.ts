@@ -20,7 +20,7 @@ export type AgentOverviewModule = {
 export type AgentOverviewGroup = {
 	id: AgentOverviewGroupId;
 	label: string;
-	columns: 2 | 3;
+	layout: "balanced-five" | "two-column";
 	modules: readonly AgentOverviewModule[];
 };
 
@@ -37,7 +37,7 @@ const AGENT_OVERVIEW_GROUPS = {
 		{
 			id: "resources",
 			label: "Resources",
-			columns: 3,
+			layout: "balanced-five",
 			modules: SHARED_RESOURCES,
 		},
 	],
@@ -45,13 +45,13 @@ const AGENT_OVERVIEW_GROUPS = {
 		{
 			id: "resources",
 			label: "Resources",
-			columns: 3,
+			layout: "balanced-five",
 			modules: SHARED_RESOURCES,
 		},
 		{
 			id: "operate",
 			label: "Tools",
-			columns: 2,
+			layout: "two-column",
 			modules: [
 				{ id: "model-provider", section: "ai", size: "standard" },
 				{ id: "channels", section: "channels", size: "standard" },

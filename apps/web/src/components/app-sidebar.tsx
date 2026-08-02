@@ -51,6 +51,7 @@ import {
 	LegacyAgentBadge,
 } from "@/components/dashboard/agent-label";
 import {
+	type AgentCardStatusProjection,
 	type AgentTile,
 	agentTileMatchesRouteId,
 	compareAgentTiles,
@@ -1006,7 +1007,15 @@ export function focusHeaderSyncSource(
 	hasEnvironment: boolean,
 ): DaemonStatusSource | null {
 	if (!hasEnvironment || kind === "unresolved") return null;
+	if (kind === "cloud") return null;
 	return kind === "connected" ? "self-managed" : "on-clawdi";
+}
+
+export function focusHeaderComputeStatus(
+	kind: AgentChromeKind,
+	tile: AgentTile | null,
+): AgentCardStatusProjection["visual"] | null {
+	return kind === "cloud" ? (tile?.cardStatus?.visual ?? null) : null;
 }
 
 function FocusHeader({
@@ -1056,13 +1065,15 @@ function FocusHeader({
 		activeAgentTile?.name ?? (activeAgent ? agentDisplayName(activeAgent) : "Clawdi Cloud agent");
 	const displayName = displayMachineName(name);
 	const meta = activeAgent ? agentHeaderMeta(activeAgent, activeAgentKind) : null;
-	const activityLabel = meta?.activityLabel ?? "Agent details unavailable";
+	const activityLabel =
+		activeAgentKind === "cloud" ? null : (meta?.activityLabel ?? "Agent details unavailable");
 	const visibleLabel = meta?.visibleLabel;
 	const detailLabel = meta?.detailLabel;
 	const title = [name, detailLabel, activityLabel].filter(Boolean).join(" · ");
 	const manageHref =
 		activeAgentKind === "legacy" ? (legacyHostedDashboardUrl() ?? undefined) : undefined;
 	const syncSource = focusHeaderSyncSource(activeAgentKind, Boolean(activeAgent));
+	const computeStatus = focusHeaderComputeStatus(activeAgentKind, activeAgentTile);
 	return (
 		<div className="min-w-0 text-left">
 			<div className="flex min-w-0 items-center gap-2" title={title}>
@@ -1086,7 +1097,15 @@ function FocusHeader({
 					{visibleLabel}
 				</div>
 			) : null}
-			{activeAgent && syncSource ? (
+			{computeStatus ? (
+				<div
+					className="mt-2 flex min-w-0 items-center gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/45 px-2 py-1 text-xs leading-4"
+					title={computeStatus.tooltip}
+				>
+					<StatusDot className={computeStatus.dotClass} />
+					<span className="truncate font-medium">{computeStatus.label}</span>
+				</div>
+			) : activeAgent && syncSource ? (
 				<div className="mt-2 flex min-w-0 items-center justify-between gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/45 px-2 py-1 text-xs leading-4">
 					{/* Cloud and legacy agents use supervised-runtime copy. Legacy
 					 * remediation stays in v1 when that dashboard is configured. */}
@@ -1097,7 +1116,10 @@ function FocusHeader({
 						compact
 						tooltipDetail={detailLabel}
 					/>
-					<span className="min-w-0 truncate text-muted-foreground" title={activityLabel}>
+					<span
+						className="min-w-0 truncate text-muted-foreground"
+						title={activityLabel ?? undefined}
+					>
 						{activityLabel}
 					</span>
 				</div>

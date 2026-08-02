@@ -193,9 +193,13 @@ export function AgentOverviewCapabilities({
 						</h2>
 					</div>
 					<div
-						className={cn("grid gap-3", group.columns === 3 ? "md:grid-cols-3" : "md:grid-cols-2")}
+						data-overview-layout={group.layout}
+						className={cn(
+							"grid items-start gap-3",
+							group.layout === "balanced-five" ? "md:grid-cols-6" : "md:grid-cols-2",
+						)}
 					>
-						{group.modules.map((module) => {
+						{group.modules.map((module, moduleIndex) => {
 							const item = AGENT_SECTION_NAVIGATION_ITEMS[module.section];
 							const presentation = MODULE_PRESENTATION[module.id];
 							const moduleContent = content[module.id];
@@ -207,6 +211,8 @@ export function AgentOverviewCapabilities({
 									data-overview-module={module.id}
 									className={cn(
 										"min-w-0 overflow-hidden rounded-lg border bg-card",
+										group.layout === "balanced-five" && "md:col-span-2",
+										group.layout === "balanced-five" && moduleIndex === 3 && "md:col-start-2",
 										presentation.source && "bg-muted/20",
 										module.size === "wide" && "md:col-span-2",
 									)}

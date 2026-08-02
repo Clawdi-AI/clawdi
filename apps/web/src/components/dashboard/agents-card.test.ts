@@ -9,16 +9,19 @@ import {
 } from "@/components/dashboard/agents-card";
 
 type FocusHeaderSyncSource = typeof import("@/components/app-sidebar").focusHeaderSyncSource;
+type FocusHeaderComputeStatus = typeof import("@/components/app-sidebar").focusHeaderComputeStatus;
 
 type Env = components["schemas"]["AgentResponse"];
 
 let getFocusHeaderSyncSource: FocusHeaderSyncSource | null = null;
+let getFocusHeaderComputeStatus: FocusHeaderComputeStatus | null = null;
 
 beforeAll(async () => {
 	process.env.VITE_CLAWDI_API_URL = "http://localhost:8000";
 	process.env.VITE_CLERK_PUBLISHABLE_KEY = "pk_test_dummy";
 	const sidebar = await import("@/components/app-sidebar");
 	getFocusHeaderSyncSource = sidebar.focusHeaderSyncSource;
+	getFocusHeaderComputeStatus = sidebar.focusHeaderComputeStatus;
 });
 
 function env(overrides: Partial<Env> = {}): Env {
@@ -149,12 +152,27 @@ describe("agentTileCardProjection", () => {
 	});
 });
 
-describe("focused sidebar sync projection", () => {
-	it("shows Cloud sync only after the environment projection exists", () => {
+describe("focused sidebar status projection", () => {
+	it("uses compute status for hosted agents and never reclassifies it from sync", () => {
 		if (!getFocusHeaderSyncSource) throw new Error("focusHeaderSyncSource was not loaded");
+		if (!getFocusHeaderComputeStatus) throw new Error("focusHeaderComputeStatus was not loaded");
+		const hosted: AgentTile = {
+			id: "hosted",
+			source: "on-clawdi",
+			name: "Hosted agent",
+			agentType: "hermes",
+			href: "/agents/hosted",
+			env: env({ sync_enabled: true, last_sync_at: "2020-01-01T00:00:00Z" }),
+			cardStatus: {
+				visual: { label: "Running", tooltip: "Compute status: Running.", dotClass: "dot" },
+				labels: ["Running"],
+			},
+		};
 
-		expect(getFocusHeaderSyncSource("cloud", true)).toBe("on-clawdi");
+		expect(getFocusHeaderSyncSource("cloud", true)).toBeNull();
 		expect(getFocusHeaderSyncSource("cloud", false)).toBeNull();
+		expect(getFocusHeaderComputeStatus("cloud", hosted)?.label).toBe("Running");
+		expect(getFocusHeaderComputeStatus("cloud", { ...hosted, cardStatus: undefined })).toBeNull();
 	});
 
 	it("preserves connected and legacy status copy", () => {
@@ -162,6 +180,8 @@ describe("focused sidebar sync projection", () => {
 
 		expect(getFocusHeaderSyncSource("connected", true)).toBe("self-managed");
 		expect(getFocusHeaderSyncSource("legacy", true)).toBe("on-clawdi");
+		if (!getFocusHeaderComputeStatus) throw new Error("focusHeaderComputeStatus was not loaded");
+		expect(getFocusHeaderComputeStatus("connected", null)).toBeNull();
 	});
 });
 

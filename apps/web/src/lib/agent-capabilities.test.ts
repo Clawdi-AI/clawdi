@@ -24,6 +24,8 @@ describe("agent overview registry", () => {
 		]);
 		expect(hosted[0]?.modules).toEqual(connected[0]?.modules);
 		expect(hosted[1]?.modules.map((module) => module.id)).toEqual(["model-provider", "channels"]);
+		expect(connected[0]?.layout).toBe("balanced-five");
+		expect(hosted[1]?.layout).toBe("two-column");
 		expect(connected[0]?.modules.find((module) => module.id === "connectors")?.size).toBe(
 			"standard",
 		);
