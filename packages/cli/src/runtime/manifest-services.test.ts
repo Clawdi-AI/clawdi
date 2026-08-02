@@ -1845,6 +1845,30 @@ describe("runtime manifest services", () => {
 		expect(harness.receipt()).toBeDefined();
 	});
 
+	test.each(
+		installGateHarnesses,
+	)("restores the prior %s receipt when replacement authority fails", (_name, createHarness) => {
+		const harness = createHarness();
+		expect(harness.converge().installErrors).toEqual([]);
+		const previousReceipt = harness.receipt();
+		expect(previousReceipt).toBeDefined();
+
+		harness.revise();
+		const failed = harness.converge(() => {
+			throw new Error("replacement authority rejected");
+		});
+
+		expect(failed.installErrors.join("\n")).toContain("replacement authority rejected");
+		expect(harness.installCount()).toBe(2);
+		expect(harness.receipt()).toEqual(previousReceipt);
+
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(3);
+		expect(harness.receipt()).not.toEqual(previousReceipt);
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(3);
+	});
+
 	test.each(installGateHarnesses)("does not bless post-commit %s drift", (_name, createHarness) => {
 		const harness = createHarness();
 		expect(harness.converge(harness.drift).installErrors).toEqual([]);

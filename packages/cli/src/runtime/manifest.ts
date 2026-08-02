@@ -97,6 +97,7 @@ import {
 	type RuntimeInstallReceiptEntry,
 	type RuntimeInstallReceipts,
 	readRuntimeInstallReceipts,
+	runtimeInstallReceiptsPath,
 	writeRuntimeInstallReceipts,
 } from "./install-receipts";
 import {
@@ -5022,6 +5023,7 @@ function runtimeManagedMutationPlan(input: {
 	systemdUserUnits: string[];
 } {
 	const rootTargets = new Set(runtimeRootLiveMutationTargets(input.manifest, input.paths));
+	rootTargets.add(runtimeInstallReceiptsPath(input.paths));
 	const rootMetadataTargets = new Set<string>();
 	if (
 		hostedCodexManagedProvider(input.manifest) ||
