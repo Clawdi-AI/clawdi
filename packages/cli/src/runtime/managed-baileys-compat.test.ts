@@ -21,8 +21,12 @@ import {
 	type ManagedBaileysRuntime,
 	managedBaileysCompatMutationTargets,
 	managedBaileysCompatReceiptPath,
+	managedBaileysCompatSnapshotRuntimes,
 	reconcileManagedBaileysCompatibility,
 } from "./managed-baileys-compat";
+import { runtimeUserMutationTargets } from "./manifest";
+import type { RuntimeManifest } from "./manifest-contract";
+import { getRuntimePaths } from "./paths";
 
 const repositoryRoot = join(import.meta.dir, "../../../..");
 const pristineBaileysRoot = join(
@@ -89,6 +93,20 @@ describe.each(["openclaw", "hermes"] as const)("managed Baileys %s compatibility
 		expect(result.status).toBe("inert");
 		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
 		assertTargetHunkState(fixture, "before");
+	});
+
+	it("does not inspect a user-owned alias without a managed receipt", () => {
+		const fixture = createArtifactFixture(runtime, "8.0.0");
+		const target = artifactTargets(fixture)[0];
+		if (!target) throw new Error("missing user-owned alias fixture");
+		writeFileSync(target.path, `${readFileSync(target.path, "utf8")}\n// user-owned-drift\n`);
+		const unchanged = readFileSync(target.path);
+
+		const result = rollback(fixture);
+
+		expect(result.status).toBe("inert");
+		expect(readFileSync(target.path)).toEqual(unchanged);
+		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
 	});
 
 	it("applies exact before hunks and records actual file hashes plus owned hunk identity", () => {
@@ -224,6 +242,89 @@ describe.each(["openclaw", "hermes"] as const)("managed Baileys %s compatibility
 		expect(rollback(fixture).status).toBe("rolled-back");
 		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
 	});
+});
+
+it.each([
+	"openclaw",
+	"hermes",
+] as const)("patches and rolls back only the selected %s alias", (selectedRuntime) => {
+	const fixture = createArtifactFixture(selectedRuntime);
+	const otherRuntime = selectedRuntime === "openclaw" ? "hermes" : "openclaw";
+	const otherRoot = installArtifactAlias(fixture.home, otherRuntime);
+	const otherTargets = artifactTargetsAt(otherRoot);
+	const otherBefore = otherTargets.map(({ path }) => readFileSync(path));
+
+	expect(reconcile(fixture).status).toBe("applied");
+	assertTargetHunkState(fixture, "after");
+	otherTargets.forEach(({ target, path }, index) => {
+		expect(readFileSync(path)).toEqual(otherBefore[index]);
+		for (const hunk of target.hunks) {
+			expect(exactMatchCount(readFileSync(path, "utf8"), hunk.before)).toBe(1);
+		}
+	});
+
+	expect(rollback(fixture).status).toBe("rolled-back");
+	assertTargetHunkState(fixture, "before");
+	otherTargets.forEach(({ path }, index) => {
+		expect(readFileSync(path)).toEqual(otherBefore[index]);
+	});
+});
+
+it("scopes snapshot targets to the desired and receipt-owned aliases only", () => {
+	const fixture = createArtifactFixture("openclaw");
+	expect(managedBaileysCompatSnapshotRuntimes({ desiredRuntime: null, paths: fixture })).toEqual(
+		[],
+	);
+	reconcile(fixture);
+	expect(managedBaileysCompatSnapshotRuntimes({ desiredRuntime: null, paths: fixture })).toEqual([
+		"openclaw",
+	]);
+	expect(
+		managedBaileysCompatSnapshotRuntimes({ desiredRuntime: "hermes", paths: fixture }),
+	).toEqual(["hermes", "openclaw"]);
+
+	const paths = {
+		...getRuntimePaths(),
+		userHome: fixture.home,
+		installInventory: fixture.installInventory,
+		localEnvironments: join(fixture.root, "environments"),
+	};
+	const manifest: RuntimeManifest = {
+		schemaVersion: "clawdi.runtimeDesiredState.v1",
+		runtime: "hermes",
+		deploymentId: "dep-receipt-snapshot",
+		environmentId: "env-receipt-snapshot",
+		instanceId: "iid-receipt-snapshot",
+		generation: 1,
+		issuedAt: "2026-08-02T00:00:00Z",
+		controlPlane: { apiUrl: "https://cloud-api.test" },
+		runtimes: { hermes: { enabled: true, services: {} } },
+		projection: { system: { home: fixture.home, workspace: fixture.home } },
+		recovery: {},
+	};
+	const targets = runtimeUserMutationTargets(manifest, paths, fixture.home, new Map());
+	for (const { path } of artifactTargets(fixture)) expect(targets).toContain(path);
+	expect(
+		targets.some((target) =>
+			target.startsWith(
+				join(
+					fixture.home,
+					".hermes",
+					"hermes-agent",
+					"scripts",
+					"whatsapp-bridge",
+					"node_modules",
+					"@whiskeysockets",
+					"baileys",
+				),
+			),
+		),
+	).toBe(false);
+
+	writeJson(managedBaileysCompatReceiptPath(fixture), { schemaVersion: "unknown" });
+	expect(managedBaileysCompatSnapshotRuntimes({ desiredRuntime: null, paths: fixture })).toEqual(
+		[],
+	);
 });
 
 it.each([
@@ -703,22 +804,34 @@ function createArtifactFixture(
 	const installInventory = join(root, "state", "install-inventory");
 	const appRoot =
 		runtime === "openclaw" ? join(home, ".openclaw") : join(home, ".hermes", "hermes-agent");
-	const bridgeRoot = join(appRoot, "scripts", "whatsapp-bridge");
+	const baileysRoot = installArtifactAlias(home, runtime, version);
+	return { runtime, root, home, appRoot, baileysRoot, installInventory };
+}
+
+function installArtifactAlias(
+	home: string,
+	runtime: ManagedBaileysRuntime,
+	version = "7.0.0-rc13",
+): string {
+	const bridgeRoot = join(home, ".hermes", "hermes-agent", "scripts", "whatsapp-bridge");
 	const baileysRoot =
 		runtime === "openclaw"
-			? join(appRoot, "extensions", "whatsapp", "node_modules", "baileys")
+			? join(home, ".openclaw", "extensions", "whatsapp", "node_modules", "baileys")
 			: join(bridgeRoot, "node_modules", "@whiskeysockets", "baileys");
 	for (const target of MANAGED_BAILEYS_STATIC_PATCH_TARGETS) {
 		const destination = join(baileysRoot, target.relativePath);
 		mkdirSync(dirname(destination), { recursive: true });
 		copyFileSync(join(pristineBaileysRoot, target.relativePath), destination);
 	}
-	writeBaileysIdentity({ runtime, root, home, appRoot, baileysRoot, installInventory }, version);
+	writeJson(join(baileysRoot, "package.json"), {
+		name: runtime === "openclaw" ? "baileys" : "@whiskeysockets/baileys",
+		version,
+	});
 	if (runtime === "hermes") {
 		writeJson(join(bridgeRoot, "package.json"), { name: "hermes-whatsapp-bridge" });
 		writeJson(join(bridgeRoot, "package-lock.json"), { lockfileVersion: 3 });
 	}
-	return { runtime, root, home, appRoot, baileysRoot, installInventory };
+	return baileysRoot;
 }
 
 function writeBaileysIdentity(fixture: ArtifactFixture, version: string): void {
@@ -729,9 +842,13 @@ function writeBaileysIdentity(fixture: ArtifactFixture, version: string): void {
 }
 
 function artifactTargets(fixture: ArtifactFixture) {
+	return artifactTargetsAt(fixture.baileysRoot);
+}
+
+function artifactTargetsAt(baileysRoot: string) {
 	return MANAGED_BAILEYS_STATIC_PATCH_TARGETS.map((target) => ({
 		target,
-		path: join(fixture.baileysRoot, target.relativePath),
+		path: join(baileysRoot, target.relativePath),
 	}));
 }
 

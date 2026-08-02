@@ -6577,7 +6577,12 @@ exit 64
 		};
 
 		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
+		const withoutDormantWhatsApp = applyRuntimeChannelsToManifestLoad(loaded, {
+			...channels,
+			channels: channels.channels.filter((account) => account.provider !== "whatsapp"),
+		});
 
+		expect(projected).toEqual(withoutDormantWhatsApp);
 		expect(projected.secretValues).toMatchObject({
 			"secret://provider.default.apiKey": "sk-provider",
 			"secret://channels/telegram/clawdi_accttelegram/links/link-telegram-1/agent-token":
@@ -6594,7 +6599,7 @@ exit 64
 		).toBe("telegram-agent-token");
 		expect(
 			projected.secretValues?.["secret://channels/telegram/clawdi_accttelegram/placeholder-token"],
-		).toMatch(/^999999999:[a-f0-9]{32}$/);
+		).toBe("999999999:877c68b5e40fa4531f180a6a4842a8bf");
 		expect(
 			projected.secretValues?.[
 				"secret://channels/discord/clawdi_acctdiscord1/links/link-discord-1/agent-token"
@@ -6602,7 +6607,7 @@ exit 64
 		).toBe("discord-agent-token");
 		expect(
 			projected.secretValues?.["secret://channels/discord/clawdi_acctdiscord1/placeholder-token"],
-		).toMatch(/^clawdi_[a-f0-9]{32}$/);
+		).toBe("clawdi_5e99010fed052f9ee65e2764748fd451");
 		const discordGateway = projected.manifest.egressProfiles?.profiles.find(
 			(profile) => profile.id === "native-discord-clawdi_acctdiscord1-gateway-managed",
 		);

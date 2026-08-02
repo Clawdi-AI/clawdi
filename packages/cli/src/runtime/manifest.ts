@@ -109,7 +109,7 @@ import {
 import {
 	type ManagedBaileysRuntime,
 	managedBaileysCompatMutationTargets,
-	managedBaileysCompatReceiptPath,
+	managedBaileysCompatSnapshotRuntimes,
 	reconcileManagedBaileysCompatibility,
 } from "./managed-baileys-compat";
 import { buildManagedModelsEndpoint, extractManagedLiveModels } from "./managed-model-resolution";
@@ -4940,11 +4940,10 @@ export function runtimeUserMutationTargets(
 			targets.add(commandPath);
 		}
 	}
-	const compatibilityRuntimes: ManagedBaileysRuntime[] = managedWhatsAppRuntime
-		? [managedWhatsAppRuntime]
-		: existsSync(managedBaileysCompatReceiptPath(paths))
-			? ["openclaw", "hermes"]
-			: [];
+	const compatibilityRuntimes = managedBaileysCompatSnapshotRuntimes({
+		desiredRuntime: managedWhatsAppRuntime,
+		paths,
+	});
 	for (const runtime of compatibilityRuntimes) {
 		const appRoot = runtimeAppRoot(runtime, home);
 		if (!appRoot) continue;

@@ -234,6 +234,22 @@ export function managedBaileysCompatReceiptPath(
 	return join(paths.installInventory, RECEIPT_FILE);
 }
 
+export function managedBaileysCompatSnapshotRuntimes(input: {
+	desiredRuntime: ManagedBaileysRuntime | null;
+	paths: Pick<RuntimePaths, "installInventory">;
+}): ManagedBaileysRuntime[] {
+	const runtimes = new Set<ManagedBaileysRuntime>();
+	if (input.desiredRuntime) runtimes.add(input.desiredRuntime);
+	try {
+		const receipt = readReceipt(managedBaileysCompatReceiptPath(input.paths));
+		if (receipt) runtimes.add(receipt.artifact.runtime);
+	} catch {
+		// Snapshot selection is not receipt authority. Reconcile validates the
+		// receipt and fails the managed operation before touching an artifact.
+	}
+	return [...runtimes];
+}
+
 export function managedBaileysCompatMutationTargets(input: {
 	runtime: ManagedBaileysRuntime;
 	home: string;

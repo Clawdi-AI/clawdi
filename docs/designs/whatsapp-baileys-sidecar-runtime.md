@@ -266,6 +266,10 @@ The receipt is
    of risking future removal of upstream-owned code.
 6. Before mutation, the durable receipt records each target's actual observed
    whole-file hash before and predicted hash after, plus its owned hunk IDs.
+   The outer snapshot includes only the desired alias and, during cleanup or a
+   runtime switch, the distinct alias named by a valid receipt. With neither a
+   managed Link nor a receipt, it includes no Baileys target and performs no
+   Baileys package inspection.
    Replacements are staged, every target and package identity hash is rechecked
    for TOCTOU, then each file is renamed and its directory fsynced. Each rename
    is atomic, but the three-file change is recoverable convergence rather than
