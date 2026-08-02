@@ -1,7 +1,8 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, type LucideIcon, RefreshCw } from "lucide-react";
+import { ArrowRight, CircleCheck, type LucideIcon, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { IconChip } from "@/components/icon-chip";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -117,34 +118,73 @@ export function OverviewMetadata({
 	);
 }
 
-export function OverviewSummaryRows({ items, empty }: { items: readonly string[]; empty: string }) {
-	return items.length ? (
-		<ul className="space-y-1 text-sm" data-testid="overview-summary-list">
-			{items.slice(0, 3).map((item) => (
-				<li key={item} className="truncate leading-5">
-					{item}
-				</li>
-			))}
-		</ul>
-	) : (
-		<p className="text-sm text-muted-foreground">{empty}</p>
+export function OverviewResourceSummary({
+	primary,
+	items,
+	children,
+}: {
+	primary: ReactNode;
+	items?: readonly string[];
+	children?: ReactNode;
+}) {
+	return (
+		<div className="space-y-3" data-testid="overview-resource-summary">
+			<p data-overview-primary-value className="text-base font-semibold">
+				{primary}
+			</p>
+			{items?.length ? (
+				<ul className="flex min-w-0 flex-wrap gap-1.5" data-testid="overview-resource-badges">
+					{items.slice(0, 3).map((item, index) => (
+						<li key={`${item}-${index}`} className="min-w-0 max-w-full">
+							<Badge
+								variant="secondary"
+								className="max-w-full min-w-0"
+								aria-label={item}
+								title={item}
+							>
+								<span className="truncate">{item}</span>
+							</Badge>
+						</li>
+					))}
+				</ul>
+			) : null}
+			{children}
+		</div>
 	);
 }
 
-export function OverviewChips({ items, empty }: { items: readonly string[]; empty: string }) {
-	return items.length ? (
-		<ul className="flex flex-wrap gap-1.5">
-			{items.slice(0, 3).map((item) => (
-				<li
-					key={item}
-					className="max-w-full truncate rounded-full bg-muted px-2.5 py-1 text-xs font-medium"
-				>
-					{item}
-				</li>
-			))}
+export function OverviewIdentityIconRail({
+	label,
+	testId,
+	children,
+}: {
+	label: string;
+	testId: string;
+	children: ReactNode;
+}) {
+	return (
+		<ul aria-label={label} className="flex flex-wrap gap-2" data-testid={testId}>
+			{children}
 		</ul>
-	) : (
-		<p className="text-sm text-muted-foreground">{empty}</p>
+	);
+}
+
+export function OverviewIdentityIconItem({
+	connected = false,
+	children,
+}: {
+	connected?: boolean;
+	children: ReactNode;
+}) {
+	return (
+		<li className="relative w-fit">
+			{children}
+			{connected ? (
+				<span className="pointer-events-none absolute -right-1 -bottom-1 rounded-full bg-background text-primary">
+					<CircleCheck className="size-4 fill-background" aria-hidden="true" />
+				</span>
+			) : null}
+		</li>
 	);
 }
 
