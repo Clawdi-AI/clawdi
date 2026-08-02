@@ -813,7 +813,7 @@ async def admin_upsert_clawdi_managed_ai_provider(
                 capabilities=body.capabilities,
             )
         except ValueError as e:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(e)) from e
 
         record_control_plane_audit(
             db,

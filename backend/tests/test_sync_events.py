@@ -297,18 +297,18 @@ async def test_stream_cancellation_awaits_internal_wait_tasks(
 
     original_create_task = asyncio.create_task
     internal_tasks: list[asyncio.Task] = []
+    internal_tasks_created = asyncio.Event()
 
     def _track_create_task(coro):
         task = original_create_task(coro)
         internal_tasks.append(task)
+        if len(internal_tasks) == 2:
+            internal_tasks_created.set()
         return task
 
     monkeypatch.setattr(sync_route.asyncio, "create_task", _track_create_task)
     next_chunk = original_create_task(gen.__anext__())
-    for _ in range(10):
-        if len(internal_tasks) == 2:
-            break
-        await asyncio.sleep(0)
+    await asyncio.wait_for(internal_tasks_created.wait(), timeout=1)
     assert len(internal_tasks) == 2
 
     next_chunk.cancel()
@@ -317,6 +317,51 @@ async def test_stream_cancellation_awaits_internal_wait_tasks(
 
     assert all(task.done() for task in internal_tasks)
     assert all(task.cancelled() for task in internal_tasks)
+
+
+@pytest.mark.asyncio
+async def test_cancel_and_wait_collects_pending_sibling_before_surfacing_failure():
+    """Only real failures raise, after every sibling has been awaited."""
+    from app.routes import sync as sync_route
+
+    for cancel_and_wait in (sync_route._cancel_and_wait, sync_events._cancel_and_wait):
+        failure_started = asyncio.Event()
+        sibling_started = asyncio.Event()
+        sibling_cleaned = asyncio.Event()
+        release_sibling = asyncio.Event()
+
+        async def fail() -> None:
+            failure_started.set()
+            raise RuntimeError("child failed")
+
+        async def return_exception() -> RuntimeError:
+            return RuntimeError("returned as a value")
+
+        async def wait_for_release() -> None:
+            sibling_started.set()
+            try:
+                await release_sibling.wait()
+            finally:
+                sibling_cleaned.set()
+
+        returned_exception_task = asyncio.create_task(return_exception())
+        returned_exception = await asyncio.wait_for(
+            asyncio.shield(returned_exception_task),
+            timeout=1,
+        )
+        assert str(returned_exception) == "returned as a value"
+        failed_task = asyncio.create_task(fail())
+        sibling_task = asyncio.create_task(wait_for_release())
+        await asyncio.wait_for(failure_started.wait(), timeout=1)
+        await asyncio.wait_for(sibling_started.wait(), timeout=1)
+
+        with pytest.raises(RuntimeError, match="child failed"):
+            await cancel_and_wait(returned_exception_task, failed_task, sibling_task)
+
+        assert returned_exception_task.exception() is None
+        assert sibling_task.done()
+        assert sibling_task.cancelled()
+        assert sibling_cleaned.is_set()
 
 
 @pytest.mark.asyncio
@@ -425,6 +470,34 @@ async def test_broadcast_filters_by_visible_project():
     finally:
         sync_events.unsubscribe(user_id, q_a)
         sync_events.unsubscribe(user_id, q_both)
+
+
+def test_broadcast_gives_each_subscriber_an_owned_payload():
+    user_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    first_queue = sync_events.subscribe(user_id, frozenset({project_id}))
+    second_queue = sync_events.subscribe(user_id, frozenset({project_id}))
+    payload = {
+        "type": "skill_changed",
+        "skill_key": "owned",
+        "project_id": str(project_id),
+        "skills_revision": 1,
+    }
+    try:
+        sync_events._broadcast(user_id, payload)
+
+        first = first_queue.get_nowait()
+        second = second_queue.get_nowait()
+        assert first is not payload
+        assert second is not payload
+        assert first is not second
+
+        first["skill_key"] = "consumer-mutated"
+        assert second["skill_key"] == "owned"
+        assert payload["skill_key"] == "owned"
+    finally:
+        sync_events.unsubscribe(user_id, first_queue)
+        sync_events.unsubscribe(user_id, second_queue)
 
 
 @pytest.mark.asyncio
@@ -606,6 +679,30 @@ async def test_postgres_listener_delivers_remote_process_event(
     finally:
         await sync_events.stop_postgres_listener()
         sync_events.unsubscribe(seed_user.id, queue)
+
+
+@pytest.mark.asyncio
+async def test_stop_postgres_listener_surfaces_unexpected_task_failure():
+    """The lifecycle owner clears state but preserves listener failures."""
+    assert sync_events._listener_task is None
+    started = asyncio.Event()
+
+    async def fail() -> None:
+        started.set()
+        raise RuntimeError("listener failed")
+
+    failed_task = asyncio.create_task(fail())
+    await asyncio.wait_for(started.wait(), timeout=1)
+    sync_events._listener_task = failed_task
+    sync_events._listener_stop = asyncio.Event()
+    try:
+        with pytest.raises(RuntimeError, match="listener failed"):
+            await sync_events.stop_postgres_listener()
+        assert sync_events._listener_task is None
+        assert sync_events._listener_stop is None
+    finally:
+        sync_events._listener_task = None
+        sync_events._listener_stop = None
 
 
 @pytest.mark.asyncio

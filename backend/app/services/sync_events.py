@@ -62,7 +62,6 @@ import logging
 import os
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -100,6 +99,11 @@ _POSTGRES_PAYLOAD_LIMIT_BYTES = 7900
 AGENT_SKILL_CHANGED_EVENT = "agent_skill_changed"
 AGENT_SKILL_DELETED_EVENT = "agent_skill_deleted"
 
+type SyncEventValue = str | int
+type SyncEventPayload = dict[str, SyncEventValue]
+type SyncEventQueue = asyncio.Queue[SyncEventPayload]
+type _PendingEvent = tuple[UUID, SyncEventPayload]
+
 
 @dataclass
 class _Subscriber:
@@ -117,7 +121,7 @@ class _Subscriber:
     project until the connection drops.
     """
 
-    queue: asyncio.Queue[dict[str, Any]] = field(default_factory=lambda: asyncio.Queue(maxsize=64))
+    queue: SyncEventQueue = field(default_factory=lambda: asyncio.Queue(maxsize=64))
     # `None` means "no filter" (admin / future server-internal use).
     # Empty set means "no events at all" — useful for a subscriber
     # whose visible-project query returned empty (rare).
@@ -152,7 +156,7 @@ async def try_subscribe(
     is_env_bound: bool = False,
     environment_id: UUID | None = None,
     max_per_key: int = 3,
-) -> tuple[asyncio.Queue[dict[str, Any]], _Subscriber] | None:
+) -> tuple[SyncEventQueue, _Subscriber] | None:
     """Atomic check-and-subscribe. Returns `(queue, subscriber)` on
     success, `None` if EITHER the per-user OR the per-key cap is
     at limit. The subscriber handle is exposed so the SSE route
@@ -196,7 +200,7 @@ def subscribe(
     visible_project_ids: frozenset[UUID],
     *,
     environment_id: UUID | None = None,
-) -> asyncio.Queue[dict[str, Any]]:
+) -> SyncEventQueue:
     """Non-atomic subscribe — exposed for tests and callers that
     don't need to enforce a cap. Production SSE callers use
     `try_subscribe` for atomic cap-and-subscribe."""
@@ -208,7 +212,7 @@ def subscribe(
     return sub.queue
 
 
-def unsubscribe(user_id: UUID, q: asyncio.Queue[dict[str, Any]]) -> None:
+def unsubscribe(user_id: UUID, q: SyncEventQueue) -> None:
     """Remove the subscriber whose queue is `q`. Idempotent."""
     subs = _subscribers.get(user_id)
     if not subs:
@@ -224,7 +228,7 @@ def connection_count(user_id: UUID) -> int:
     return len(_subscribers.get(user_id, []))
 
 
-def _broadcast(user_id: UUID, event_payload: dict[str, Any]) -> None:
+def _broadcast(user_id: UUID, event_payload: SyncEventPayload) -> None:
     """Push an event to authorized subscribers for `user_id`.
 
     Skill events use project visibility; runtime events use the exact bound
@@ -258,7 +262,10 @@ def _broadcast(user_id: UUID, event_payload: dict[str, Any]) -> None:
                 # which N-1 are filtered.
                 continue
         try:
-            sub.queue.put_nowait(event_payload)
+            # Each connection owns its queued copy. A future consumer that
+            # annotates or normalizes its payload cannot affect sibling
+            # subscribers waiting on the same broadcast.
+            sub.queue.put_nowait(event_payload.copy())
         except asyncio.QueueFull:
             # Subscriber is too slow or stalled. The daemon's periodic,
             # revision-fenced complete inventory catch-up handles missed
@@ -285,7 +292,7 @@ def queue_runtime_manifest_changed(
     environment_id: UUID,
 ) -> None:
     """Queue a signal-only runtime manifest invalidation for commit."""
-    payload = {
+    payload: SyncEventPayload = {
         "type": "runtime_manifest_changed",
         "environment_id": str(environment_id),
     }
@@ -418,7 +425,7 @@ async def bump_skills_revision(
     )
     new_revision = result.scalar_one()
 
-    payload: dict[str, Any] = {
+    payload: SyncEventPayload = {
         "type": event_type,
         "skill_key": skill_key,
         "project_id": str(project_id),
@@ -454,16 +461,17 @@ _PENDING_KEY = "_clawdi_pending_sse_events"
 def _queue_for_commit(
     db: AsyncSession,
     user_id: UUID,
-    event_payload: dict[str, Any],
+    event_payload: SyncEventPayload,
     *,
     deduplicate: bool = False,
 ) -> None:
     """Stash an event on the session, to be delivered on commit."""
     sync_session = db.sync_session
-    pending: list[tuple[UUID, dict[str, Any]]] = sync_session.info.setdefault(_PENDING_KEY, [])
-    if deduplicate and (user_id, event_payload) in pending:
+    pending: list[_PendingEvent] = sync_session.info.setdefault(_PENDING_KEY, [])
+    owned_payload = event_payload.copy()
+    if deduplicate and (user_id, owned_payload) in pending:
         return
-    pending.append((user_id, event_payload))
+    pending.append((user_id, owned_payload))
     # Idempotent listener registration — calling listen() twice on
     # the same target is a no-op in SQLAlchemy, so we don't need a
     # registration flag. Each session's sync_session is unique per
@@ -476,7 +484,7 @@ def _queue_for_commit(
 
 def _on_session_before_commit(sync_session) -> None:
     """Publish pending events transactionally for other API processes."""
-    pending: list[tuple[UUID, dict[str, Any]]] | None = sync_session.info.get(_PENDING_KEY)
+    pending: list[_PendingEvent] | None = sync_session.info.get(_PENDING_KEY)
     if not pending:
         return
     for user_id, payload in pending:
@@ -503,7 +511,7 @@ def _on_session_commit(sync_session) -> None:
     in-memory queues so it doesn't need the event loop. The
     daemon SSE consumer poll-loops on its own queue, so a
     cross-thread put_nowait is fine."""
-    pending: list[tuple[UUID, dict[str, Any]]] | None = sync_session.info.pop(_PENDING_KEY, None)
+    pending: list[_PendingEvent] | None = sync_session.info.pop(_PENDING_KEY, None)
     if not pending:
         return
     for user_id, payload in pending:
@@ -520,6 +528,20 @@ _listener_task: asyncio.Task[None] | None = None
 _listener_stop: asyncio.Event | None = None
 
 
+async def _cancel_and_wait(*tasks: asyncio.Task[object]) -> None:
+    """Cancel and collect every child before surfacing the first failure."""
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    for task in tasks:
+        if task.cancelled():
+            continue
+        failure = task.exception()
+        if failure is not None:
+            raise failure
+
+
 async def start_postgres_listener() -> None:
     """Start the process-local PostgreSQL listener and await first connect."""
     global _listener_stop, _listener_task
@@ -534,10 +556,12 @@ async def start_postgres_listener() -> None:
     )
     try:
         await ready
-    except Exception:
-        await asyncio.gather(_listener_task, return_exceptions=True)
-        _listener_task = None
-        _listener_stop = None
+    except BaseException:
+        try:
+            await _cancel_and_wait(_listener_task)
+        finally:
+            _listener_task = None
+            _listener_stop = None
         raise
 
 
@@ -548,9 +572,11 @@ async def stop_postgres_listener() -> None:
         return
     if _listener_stop is not None:
         _listener_stop.set()
-    await asyncio.gather(_listener_task, return_exceptions=True)
-    _listener_task = None
-    _listener_stop = None
+    try:
+        await _listener_task
+    finally:
+        _listener_task = None
+        _listener_stop = None
 
 
 async def _postgres_listener_loop(
@@ -571,13 +597,13 @@ async def _postgres_listener_loop(
             reconnect_delay = 1.0
             stop_task = asyncio.create_task(stop.wait())
             terminated_task = asyncio.create_task(terminated.wait())
-            _, pending = await asyncio.wait(
-                {stop_task, terminated_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
+            try:
+                await asyncio.wait(
+                    {stop_task, terminated_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
+                await _cancel_and_wait(stop_task, terminated_task)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - listener reconnects after startup
