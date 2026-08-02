@@ -59,7 +59,7 @@ from app.services.channels import (
     TELEGRAM_REF_FILE_PATH,
     TELEGRAM_REF_MESSAGE_ID,
     ChannelAgentContext,
-    ChannelPairCommand,
+    ChannelControlCommand,
     InboundBindingResult,
     binding_is_controlled_by_actor,
     bot_agent_link_has_provider_cardinality_capability,
@@ -74,7 +74,7 @@ from app.services.channels import (
     find_existing_inbound_provider_event,
     get_active_channel_account,
     lock_channel_binding_identity,
-    parse_pair_command,
+    parse_channel_control_command,
     pending_channel_inbox_count,
     record_channel_agent_reference,
     record_inactive_bot_agent_link_event,
@@ -82,7 +82,7 @@ from app.services.channels import (
     record_telegram_update_references,
     resolve_channel_agent_by_token,
     resolve_inbound_binding,
-    send_pairing_command_reply,
+    send_control_command_reply,
     send_telegram_message,
     telegram_chat_from_update,
     telegram_direct_messages_topic_id_from_update,
@@ -697,7 +697,7 @@ async def telegram_webhook(
 
     external_chat_id, external_chat_type, external_chat_name = chat
     text = telegram_text_from_update(payload)
-    command = parse_pair_command(text)
+    command = parse_channel_control_command(text)
     provider_event_id = telegram_event_id_from_update(payload)
     provider_event_scope = telegram_event_scope_from_update(payload)
     external_user_id = telegram_external_user_id_from_update(payload)
@@ -783,7 +783,7 @@ async def telegram_webhook(
             payload=payload,
         )
     await db.commit()
-    reply = await send_pairing_command_reply(
+    reply = await send_control_command_reply(
         db,
         account=account,
         external_chat_id=external_chat_id,
@@ -843,7 +843,7 @@ async def _send_telegram_unpaired_tutorial(
     external_chat_type: str | None,
     external_user_id: str | None,
     payload: dict[str, Any],
-    command: ChannelPairCommand | None,
+    command: ChannelControlCommand | None,
     binding_result: InboundBindingResult,
 ) -> ChannelMessage | None:
     message = payload.get("message")

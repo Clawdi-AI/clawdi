@@ -14,13 +14,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.channel import (
-    BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_ACTIVE,
     PROVIDER_EVENT_SCOPE_ACCOUNT,
     ChannelAccount,
     ChannelBinding,
-    ChannelBotAgentLink,
 )
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channels import (
@@ -29,10 +27,11 @@ from app.services.channels import (
     find_binding,
     find_existing_inbound_provider_event,
     lock_active_binding_authority,
-    parse_pair_command,
+    lock_active_link_authority,
+    parse_channel_control_command,
     record_inbound_messages_for_bindings,
     resolve_inbound_binding,
-    send_pairing_command_reply,
+    send_control_command_reply,
 )
 from app.services.whatsapp_baileys import (
     BinaryNode,
@@ -437,7 +436,7 @@ async def persist_whatsapp_provider_event(
         external_chat_type = existing_binding.external_chat_type
         external_chat_name = existing_binding.external_chat_name
     text = whatsapp_text_from_message_proto(event.message_proto)
-    command = parse_pair_command(text)
+    command = parse_channel_control_command(text)
     if await channel_control_command_event_was_handled(
         db,
         account=account,
@@ -480,7 +479,7 @@ async def persist_whatsapp_provider_event(
                 alt_jid=alt_jid,
             )
     await db.commit()
-    reply = await send_pairing_command_reply(
+    reply = await send_control_command_reply(
         db,
         account=account,
         external_chat_id=external_chat_id,
@@ -517,16 +516,13 @@ async def _active_link_owns_account(
     account_id: UUID,
     bot_agent_link_id: UUID,
 ) -> bool:
+    account = await db.get(ChannelAccount, account_id)
     return (
-        await db.scalar(
-            select(ChannelBotAgentLink.id)
-            .where(
-                ChannelBotAgentLink.id == bot_agent_link_id,
-                ChannelBotAgentLink.account_id == account_id,
-                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
-                ChannelBotAgentLink.archived_at.is_(None),
-            )
-            .with_for_update(read=True, of=ChannelBotAgentLink)
+        account is not None
+        and await lock_active_link_authority(
+            db,
+            account=account,
+            bot_agent_link_id=bot_agent_link_id,
         )
         is not None
     )
@@ -692,6 +688,7 @@ async def _build_bound_jid_resolver(
     node: BinaryNode,
     bot_agent_link_id: UUID,
 ) -> Callable[[str], str | None]:
+    candidate_bindings: dict[str, ChannelBinding | None] = {}
     bindings: dict[UUID, ChannelBinding] = {}
     candidates = _node_target_jids(node)
     for candidate in candidates:
@@ -703,6 +700,7 @@ async def _build_bound_jid_resolver(
         )
         if binding is not None:
             bindings[binding.id] = binding
+        candidate_bindings[candidate] = binding
     authorized: dict[UUID, ChannelBinding] = {}
     for binding_id in sorted(bindings, key=str):
         binding = bindings[binding_id]
@@ -715,13 +713,7 @@ async def _build_bound_jid_resolver(
         if leased is not None:
             authorized[binding_id] = leased
     resolved: dict[str, str | None] = {}
-    for candidate in candidates:
-        binding = await find_binding(
-            db,
-            account=account,
-            external_chat_id=candidate,
-            bot_agent_link_id=bot_agent_link_id,
-        )
+    for candidate, binding in candidate_bindings.items():
         resolved[candidate] = (
             authorized[binding.id].external_chat_id
             if binding is not None and binding.id in authorized

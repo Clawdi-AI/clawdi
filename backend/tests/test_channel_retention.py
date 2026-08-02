@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.channel import (
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_TELEGRAM,
+    CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_DISABLED,
     DELIVERY_STATUS_FAILED,
     DELIVERY_STATUS_SUCCEEDED,
@@ -47,6 +48,7 @@ from app.services.channels import (
     prune_channel_retention_batch,
     send_discord_message,
     send_telegram_message,
+    send_whatsapp_message,
 )
 from app.services.metrics import render_metrics
 
@@ -114,7 +116,7 @@ async def _add_message(
 
 
 @pytest.mark.asyncio
-async def test_synchronous_telegram_and_discord_outbound_are_terminal_on_record(
+async def test_synchronous_retained_provider_outbound_is_terminal_on_record(
     db_session: AsyncSession,
     seed_user: User,
     channel_agent: AgentEnvironment,
@@ -134,6 +136,13 @@ async def test_synchronous_telegram_and_discord_outbound_are_terminal_on_record(
         provider=CHANNEL_PROVIDER_DISCORD,
         chat_id="discord-sync",
     )
+    whatsapp, _whatsapp_link, _whatsapp_binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_WHATSAPP,
+        chat_id="whatsapp-sync",
+    )
 
     async def fake_telegram_send(**_kwargs):
         return "telegram-provider-message", {"ok": True}
@@ -141,8 +150,12 @@ async def test_synchronous_telegram_and_discord_outbound_are_terminal_on_record(
     async def fake_discord_send(**_kwargs):
         return "discord-provider-message", {"id": "discord-provider-message"}
 
+    async def fake_whatsapp_send(**_kwargs):
+        return "whatsapp-provider-message", {"secret": "must-not-be-retained"}
+
     monkeypatch.setattr(channel_service, "_send_telegram_provider_payload", fake_telegram_send)
     monkeypatch.setattr(channel_service, "_send_discord_provider_payload", fake_discord_send)
+    monkeypatch.setattr(channel_service, "_send_whatsapp_provider_payload", fake_whatsapp_send)
 
     telegram_message = await send_telegram_message(
         db_session,
@@ -156,6 +169,13 @@ async def test_synchronous_telegram_and_discord_outbound_are_terminal_on_record(
         account=discord,
         external_chat_id="discord-sync",
         text="discord delivered",
+        bind_to_existing=False,
+    )
+    whatsapp_message = await send_whatsapp_message(
+        db_session,
+        account=whatsapp,
+        external_chat_id="whatsapp-sync",
+        text="whatsapp delivered",
         bind_to_existing=False,
     )
     recorded_discord_message = await channel_service.record_discord_outbound_message(
@@ -172,6 +192,12 @@ async def test_synchronous_telegram_and_discord_outbound_are_terminal_on_record(
 
     assert telegram_message.delivered_at is not None
     assert discord_message.delivered_at is not None
+    assert whatsapp_message.delivered_at is not None
+    assert whatsapp_message.payload == {
+        "provider": "whatsapp",
+        "accepted": True,
+        "provider_message_id": "whatsapp-provider-message",
+    }
     assert recorded_discord_message.delivered_at is not None
 
 
@@ -186,7 +212,7 @@ async def test_queued_success_and_terminal_failure_prune_with_delivery_cascade(
         db_session,
         user=seed_user,
         agent=channel_agent,
-        provider=CHANNEL_PROVIDER_TELEGRAM,
+        provider=CHANNEL_PROVIDER_WHATSAPP,
         chat_id="bound-chat",
     )
     succeeded_message, succeeded_delivery = await enqueue_channel_outbound_message(

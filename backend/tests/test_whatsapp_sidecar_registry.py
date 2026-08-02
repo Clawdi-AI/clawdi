@@ -13,6 +13,7 @@ from app.services.whatsapp_native_transport import (
 )
 from app.services.whatsapp_provider_bridge import (
     WhatsAppProviderAccountRetired,
+    unregister_whatsapp_provider_transport,
     whatsapp_provider_transport_status,
 )
 from app.services.whatsapp_sidecar_registry import (
@@ -326,7 +327,11 @@ async def test_provider_ingress_ack_waits_until_persistence_returns(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_provider_ingress_stops_without_ack_when_account_is_retired(monkeypatch):
+@pytest.mark.parametrize("ownership_kind", ["managed", "custom"])
+async def test_provider_ingress_terminal_exit_releases_owner_and_can_reattach_once(
+    monkeypatch,
+    ownership_kind,
+):
     account_id = UUID("00000000-0000-0000-0000-000000000904")
     event = WhatsAppProviderMessageEvent(
         sequence=8,
@@ -340,6 +345,8 @@ async def test_provider_ingress_stops_without_ack_when_account_is_retired(monkey
         message_proto=b"\x0a\x05hello",
     )
     acknowledgements: list[int] = []
+    attempts = 0
+    reattached = asyncio.Event()
 
     class SessionContext:
         async def __aenter__(self):
@@ -349,7 +356,12 @@ async def test_provider_ingress_stops_without_ack_when_account_is_retired(monkey
             return False
 
     async def retired(_db, *, account_id, event):
-        raise WhatsAppProviderAccountRetired
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise WhatsAppProviderAccountRetired
+        reattached.set()
+        await asyncio.Future()
 
     class PumpClient:
         async def provider_events(self, *, limit=100):
@@ -361,9 +373,36 @@ async def test_provider_ingress_stops_without_ack_when_account_is_retired(monkey
     monkeypatch.setattr(sidecar_registry_module, "async_session_factory", lambda: SessionContext())
     monkeypatch.setattr(sidecar_registry_module, "persist_whatsapp_provider_event", retired)
 
-    await ConfiguredWhatsAppSidecarRegistry("")._pump_provider_ingress(account_id, PumpClient())
+    registry = ConfiguredWhatsAppSidecarRegistry("")
+    client = PumpClient()
+    registry._register_transport(account_id, client)
+    if ownership_kind == "managed":
+        registry._bound_managed_accounts.add(account_id)
+    else:
+        slot_id = UUID("00000000-0000-0000-0000-000000000944")
+        registry._custom_slot_to_account[slot_id] = account_id
+        registry._custom_account_to_slot[account_id] = slot_id
+    first_task = registry._ingress_tasks[account_id]
+    await asyncio.wait_for(first_task, timeout=1)
 
     assert acknowledgements == []
+    assert account_id not in registry._ingress_tasks
+    assert whatsapp_provider_transport_status(account_id).available is False
+    assert account_id not in registry._bound_managed_accounts
+    assert account_id not in registry._custom_account_to_slot
+
+    registry._register_transport(account_id, client)
+    second_task = registry._ingress_tasks[account_id]
+    try:
+        await asyncio.wait_for(reattached.wait(), timeout=1)
+        assert second_task is registry._ingress_tasks[account_id]
+        assert second_task is not first_task
+        assert attempts == 2
+    finally:
+        second_task.cancel()
+        await asyncio.gather(second_task, return_exceptions=True)
+        registry._ingress_tasks.clear()
+        unregister_whatsapp_provider_transport(account_id)
 
 
 @pytest.mark.asyncio

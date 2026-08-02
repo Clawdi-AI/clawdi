@@ -85,15 +85,15 @@ from app.services.channels import (
     channel_runtime_account_key,
     channel_runtime_placeholder_token,
     decrypt_agent_link_token,
-    discord_pair_command_from_payload,
-    discord_pairing_reply_for_command,
+    discord_control_command_from_payload,
+    discord_control_reply_for_command,
     encrypt_optional_token,
     extract_discord_routing_key,
     generate_agent_token,
     generate_pair_code,
     hash_token,
     normalize_telegram_bot_username,
-    parse_pair_command,
+    parse_channel_control_command,
     record_discord_dispatch,
     send_provider_outbound_payload,
     telegram_direct_messages_topic_id_from_update,
@@ -14103,29 +14103,29 @@ async def test_telegram_webhook_rejects_invalid_secret(client: httpx.AsyncClient
     assert response.status_code == 401
 
 
-def test_parse_pair_command_matches_strict_canonical_shapes():
-    assert parse_pair_command("/clawdi_pair ABCDEF1234").code == "ABCDEF1234"
-    assert parse_pair_command("/clawdi_pair@shared_bot ABC123").code == "ABC123"
-    assert parse_pair_command("/clawdi_pair ABC123 thanks").code == ""
-    assert parse_pair_command("/clawdi_pair ABC123\n•").code == ""
-    assert parse_pair_command("/clawdi_pair").code == ""
-    assert parse_pair_command("/clawdi_unpair").kind == "unpair"
-    assert parse_pair_command("/clawdi_unpair@shared_bot").kind == "unpair"
-    assert parse_pair_command("/clawdi_unpair now").kind == "unknown"
-    assert parse_pair_command("/clawdi_help").kind == "help"
-    assert parse_pair_command("/clawdi_help@shared_bot").kind == "help"
-    assert parse_pair_command("/clawdi_help now").kind == "unknown"
-    assert parse_pair_command("/start BCDFGHJKLM").code == "BCDFGHJKLM"
-    assert parse_pair_command("/start@shared_bot BCDFGHJKLM").code == "BCDFGHJKLM"
+def test_parse_channel_control_command_matches_strict_canonical_shapes():
+    assert parse_channel_control_command("/clawdi_pair ABCDEF1234").code == "ABCDEF1234"
+    assert parse_channel_control_command("/clawdi_pair@shared_bot ABC123").code == "ABC123"
+    assert parse_channel_control_command("/clawdi_pair ABC123 thanks").code == ""
+    assert parse_channel_control_command("/clawdi_pair ABC123\n•").code == ""
+    assert parse_channel_control_command("/clawdi_pair").code == ""
+    assert parse_channel_control_command("/clawdi_unpair").kind == "unpair"
+    assert parse_channel_control_command("/clawdi_unpair@shared_bot").kind == "unpair"
+    assert parse_channel_control_command("/clawdi_unpair now").kind == "unknown"
+    assert parse_channel_control_command("/clawdi_help").kind == "help"
+    assert parse_channel_control_command("/clawdi_help@shared_bot").kind == "help"
+    assert parse_channel_control_command("/clawdi_help now").kind == "unknown"
+    assert parse_channel_control_command("/start BCDFGHJKLM").code == "BCDFGHJKLM"
+    assert parse_channel_control_command("/start@shared_bot BCDFGHJKLM").code == "BCDFGHJKLM"
     # Pending codes issued before the shorter-code rollout remain claimable
     # through Telegram deep links until their stored expiry.
-    assert parse_pair_command("/start PAIRABCDEF1234").code == "PAIRABCDEF1234"
-    assert parse_pair_command("/start PAIRABCDEF1234 thanks") is None
-    assert parse_pair_command("/start OLD_PAIR_CODE") is None
-    assert parse_pair_command("/start") is None
-    assert parse_pair_command("hello world") is None
+    assert parse_channel_control_command("/start PAIRABCDEF1234").code == "PAIRABCDEF1234"
+    assert parse_channel_control_command("/start PAIRABCDEF1234 thanks") is None
+    assert parse_channel_control_command("/start OLD_PAIR_CODE") is None
+    assert parse_channel_control_command("/start") is None
+    assert parse_channel_control_command("hello world") is None
 
-    unknown = parse_pair_command("/clawdi_foo bar")
+    unknown = parse_channel_control_command("/clawdi_foo bar")
     assert unknown is not None
     assert unknown.kind == "unknown"
     assert unknown.command == "/clawdi_foo"
@@ -14140,13 +14140,13 @@ def test_channel_control_help_reply_is_shared_safe_plain_text(monkeypatch):
         "3. Send /clawdi_pair <code> here.\n\n"
         "To disconnect this chat, send /clawdi_unpair."
     )
-    command = channel_service.ChannelPairCommand(kind="help")
+    command = channel_service.ChannelControlCommand(kind="help")
     result = channel_service.InboundBindingResult(binding=None, command_handled=True)
 
     assert channel_service.channel_control_help_reply() == expected
     assert channel_service.pairing_reply_for_command(command, result) == expected
-    assert discord_pairing_reply_for_command(command, result, guild_id=None) == expected
-    assert discord_pairing_reply_for_command(command, result, guild_id="guild") == expected
+    assert discord_control_reply_for_command(command, result, guild_id=None) == expected
+    assert discord_control_reply_for_command(command, result, guild_id="guild") == expected
 
 
 @pytest.mark.parametrize(
@@ -14158,8 +14158,8 @@ def test_channel_control_help_reply_is_shared_safe_plain_text(monkeypatch):
         "/bot_unpair@shared_bot",
     ],
 )
-def test_parse_pair_command_rejects_legacy_aliases(text: str):
-    assert parse_pair_command(text) is None
+def test_parse_channel_control_command_rejects_legacy_aliases(text: str):
+    assert parse_channel_control_command(text) is None
 
 
 def test_generate_pair_code_uses_unambiguous_50_bit_shape_and_varies():
@@ -14371,7 +14371,7 @@ def test_discord_interaction_parser_accepts_current_reserved_commands(
     name: str,
     expected_kind: str,
 ):
-    command = discord_pair_command_from_payload(
+    command = discord_control_command_from_payload(
         {
             "type": 2,
             "data": {
@@ -14391,7 +14391,7 @@ def test_discord_interaction_parser_accepts_current_reserved_commands(
 @pytest.mark.parametrize("name", ["bot_pair", "bot_unpair", "pair", "unpair"])
 def test_discord_interaction_parser_rejects_legacy_and_generic_commands(name: str):
     assert (
-        discord_pair_command_from_payload(
+        discord_control_command_from_payload(
             {
                 "type": 2,
                 "data": {
@@ -14406,27 +14406,29 @@ def test_discord_interaction_parser_rejects_legacy_and_generic_commands(name: st
 
 @pytest.mark.parametrize("content", ["/bot_pair BCDFGHJKLM", "/bot_unpair"])
 def test_discord_message_parser_rejects_legacy_text_commands(content: str):
-    assert discord_pair_command_from_payload({"d": {"content": content}}) is None
+    assert discord_control_command_from_payload({"d": {"content": content}}) is None
 
 
 def test_discord_message_parser_requires_slash_for_current_commands():
-    current = discord_pair_command_from_payload({"d": {"content": "/clawdi_pair BCDFGHJKLM"}})
+    current = discord_control_command_from_payload({"d": {"content": "/clawdi_pair BCDFGHJKLM"}})
 
     assert current is not None
     assert current.kind == "pair"
     assert current.code == "BCDFGHJKLM"
-    assert discord_pair_command_from_payload({"d": {"content": "clawdi_pair BCDFGHJKLM"}}) is None
-    assert discord_pair_command_from_payload({"d": {"content": "clawdi_unpair"}}) is None
+    assert (
+        discord_control_command_from_payload({"d": {"content": "clawdi_pair BCDFGHJKLM"}}) is None
+    )
+    assert discord_control_command_from_payload({"d": {"content": "clawdi_unpair"}}) is None
 
 
 def test_discord_unknown_command_reply_uses_only_current_reserved_commands():
-    reply = discord_pairing_reply_for_command(
-        channel_service.ChannelPairCommand(kind="unknown", command="/clawdi_unpair"),
+    reply = discord_control_reply_for_command(
+        channel_service.ChannelControlCommand(kind="unknown", command="/clawdi_unpair"),
         channel_service.InboundBindingResult(binding=None, command_handled=True),
         guild_id="guild-1",
     )
 
-    assert reply == ("Unknown command: /clawdi_unpair. Use /clawdi_pair <code> or /clawdi_unpair.")
+    assert reply == "Unknown command: /clawdi_unpair. Use /clawdi_help for instructions."
     assert "/bot_" not in reply
 
 
@@ -20246,7 +20248,7 @@ def test_discord_pair_install_contract_requires_matching_context_and_owner(
     external_user_id: str,
     expected: str | None,
 ) -> None:
-    command = channel_service.ChannelPairCommand(kind="pair", code="BCDFGHJKLM")
+    command = channel_service.ChannelControlCommand(kind="pair", code="BCDFGHJKLM")
 
     assert (
         channel_service.discord_pair_install_denied_reason(

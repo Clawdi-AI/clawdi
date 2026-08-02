@@ -224,7 +224,11 @@ TELEGRAM_REF_FILE_PATH = "telegram_file_path"
 TELEGRAM_REF_MESSAGE_ID = "telegram_message_id"
 DISCORD_REF_INTERACTION_ID_TOKEN = "discord_interaction_id_token"
 DISCORD_REF_INTERACTION_TOKEN = "discord_interaction_token"
-CHANNEL_RETENTION_PROVIDERS = (CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD)
+CHANNEL_RETENTION_PROVIDERS = (
+    CHANNEL_PROVIDER_TELEGRAM,
+    CHANNEL_PROVIDER_DISCORD,
+    CHANNEL_PROVIDER_WHATSAPP,
+)
 DISCORD_EPHEMERAL_REFERENCE_KINDS = (
     DISCORD_REF_INTERACTION_ID_TOKEN,
     DISCORD_REF_INTERACTION_TOKEN,
@@ -301,7 +305,7 @@ class DiscordPairingCommandAdmission:
 
 
 @dataclass(frozen=True)
-class ChannelPairCommand:
+class ChannelControlCommand:
     kind: str
     code: str | None = None
     command: str | None = None
@@ -1870,30 +1874,76 @@ async def lock_active_binding_authority(
     binding: ChannelBinding,
     bot_agent_link_id: UUID,
 ) -> ChannelBinding | None:
-    """Hold current binding authority through the caller's transaction."""
-    return (
+    """Lock Account -> Link -> Binding authority through the caller's transaction."""
+    locked_account = (
         await db.execute(
-            select(ChannelBinding)
-            .join(
-                ChannelBotAgentLink,
-                and_(
-                    ChannelBotAgentLink.id == ChannelBinding.bot_agent_link_id,
-                    ChannelBotAgentLink.account_id == ChannelBinding.account_id,
-                ),
-            )
-            .join(ChannelAccount, ChannelAccount.id == ChannelBinding.account_id)
+            select(ChannelAccount)
             .where(
-                ChannelBinding.id == binding.id,
-                ChannelBinding.account_id == account.id,
-                ChannelBinding.bot_agent_link_id == bot_agent_link_id,
-                ChannelBinding.status == BINDING_STATUS_ACTIVE,
-                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
-                ChannelBotAgentLink.archived_at.is_(None),
+                ChannelAccount.id == account.id,
                 ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
                 ChannelAccount.archived_at.is_(None),
             )
             .execution_options(populate_existing=True)
+            .with_for_update(read=True, of=ChannelAccount)
+        )
+    ).scalar_one_or_none()
+    if locked_account is None:
+        return None
+    link = await lock_active_link_authority(
+        db,
+        account=locked_account,
+        bot_agent_link_id=bot_agent_link_id,
+    )
+    if link is None or binding.user_id != link.user_id:
+        return None
+    return (
+        await db.execute(
+            select(ChannelBinding)
+            .where(
+                ChannelBinding.id == binding.id,
+                ChannelBinding.account_id == locked_account.id,
+                ChannelBinding.bot_agent_link_id == link.id,
+                ChannelBinding.user_id == link.user_id,
+                ChannelBinding.status == BINDING_STATUS_ACTIVE,
+            )
+            .execution_options(populate_existing=True)
             .with_for_update(read=True, of=ChannelBinding)
+        )
+    ).scalar_one_or_none()
+
+
+async def lock_active_link_authority(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    bot_agent_link_id: UUID,
+) -> ChannelBotAgentLink | None:
+    """Hold Account -> Link authority through the caller's transaction."""
+    locked_account = (
+        await db.execute(
+            select(ChannelAccount)
+            .where(
+                ChannelAccount.id == account.id,
+                ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                ChannelAccount.archived_at.is_(None),
+            )
+            .execution_options(populate_existing=True)
+            .with_for_update(read=True, of=ChannelAccount)
+        )
+    ).scalar_one_or_none()
+    if locked_account is None:
+        return None
+    return (
+        await db.execute(
+            select(ChannelBotAgentLink)
+            .where(
+                ChannelBotAgentLink.id == bot_agent_link_id,
+                ChannelBotAgentLink.account_id == locked_account.id,
+                ChannelBotAgentLink.user_id == locked_account.user_id,
+                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                ChannelBotAgentLink.archived_at.is_(None),
+            )
+            .with_for_update(read=True, of=ChannelBotAgentLink)
         )
     ).scalar_one_or_none()
 
@@ -1907,11 +1957,11 @@ async def resolve_inbound_binding(
     external_chat_name: str | None,
     external_user_id: str | None,
     text: str | None,
-    command: ChannelPairCommand | None = None,
+    command: ChannelControlCommand | None = None,
     command_denied_reason: str | None = None,
     command_actor_required: bool = False,
 ) -> InboundBindingResult:
-    parsed = command if command is not None else parse_pair_command(text)
+    parsed = command if command is not None else parse_channel_control_command(text)
     pairing_mutation = parsed is not None and parsed.kind in {"pair", "unpair"}
     if pairing_mutation:
         await lock_channel_binding_identity(
@@ -2067,7 +2117,7 @@ def pairing_command_requires_actor(external_chat_type: str | None) -> bool:
     return external_chat_type.lower() not in {"private", "dm"}
 
 
-def parse_pair_command(text: str | None) -> ChannelPairCommand | None:
+def parse_channel_control_command(text: str | None) -> ChannelControlCommand | None:
     if not text:
         return None
     trimmed = text.lstrip()
@@ -2078,7 +2128,7 @@ def parse_pair_command(text: str | None) -> ChannelPairCommand | None:
             return None
         code = _single_command_arg(rest)
         if code is not None and PAIR_CODE_PATTERN.fullmatch(code):
-            return ChannelPairCommand(kind="pair", code=code)
+            return ChannelControlCommand(kind="pair", code=code)
         return None
     if not trimmed.startswith("/clawdi_"):
         return None
@@ -2088,16 +2138,16 @@ def parse_pair_command(text: str | None) -> ChannelPairCommand | None:
         code = _single_command_arg(rest) if separator else ""
         if code is None:
             code = ""
-        return ChannelPairCommand(kind="pair", code=code)
+        return ChannelControlCommand(kind="pair", code=code)
     if command == UNPAIR_COMMAND:
         if separator and rest.strip():
-            return ChannelPairCommand(kind="unknown", command=command)
-        return ChannelPairCommand(kind="unpair")
+            return ChannelControlCommand(kind="unknown", command=command)
+        return ChannelControlCommand(kind="unpair")
     if command == HELP_COMMAND:
         if separator and rest.strip():
-            return ChannelPairCommand(kind="unknown", command=command)
-        return ChannelPairCommand(kind="help")
-    return ChannelPairCommand(kind="unknown", command=command)
+            return ChannelControlCommand(kind="unknown", command=command)
+        return ChannelControlCommand(kind="help")
+    return ChannelControlCommand(kind="unknown", command=command)
 
 
 def _single_command_arg(rest: str) -> str | None:
@@ -2111,7 +2161,7 @@ def _single_command_arg(rest: str) -> str | None:
 
 
 def pairing_reply_for_command(
-    command: ChannelPairCommand | None,
+    command: ChannelControlCommand | None,
     result: InboundBindingResult,
     *,
     pair_command: str = PAIR_COMMAND,
@@ -2137,7 +2187,7 @@ def pairing_reply_for_command(
     if command.kind == "help":
         return channel_control_help_reply()
     if command.kind == "unknown" and command.command:
-        return f"Unknown command: {command.command}. Use {pair_command} <code> or {unpair_command}."
+        return f"Unknown command: {command.command}. Use {HELP_COMMAND} for instructions."
     return "Message received."
 
 
@@ -2150,7 +2200,7 @@ def channel_control_help_reply() -> str:
 def discord_guild_command_denied_reason(
     payload: dict[str, Any],
     *,
-    command: ChannelPairCommand | None,
+    command: ChannelControlCommand | None,
     guild_id: str | None,
 ) -> str | None:
     """Require Discord-computed guild permissions for pairing mutations.
@@ -2182,7 +2232,7 @@ def discord_guild_command_denied_reason(
 def discord_pair_install_denied_reason(
     payload: dict[str, Any],
     *,
-    command: ChannelPairCommand | None,
+    command: ChannelControlCommand | None,
     guild_id: str | None,
     external_user_id: str | None,
     trusted_interaction: bool,
@@ -2210,7 +2260,7 @@ def discord_pair_install_denied_reason(
 def _discord_pair_install_admission(
     payload: dict[str, Any],
     *,
-    command: ChannelPairCommand | None,
+    command: ChannelControlCommand | None,
     guild_id: str | None,
     external_user_id: str | None,
     trusted_interaction: bool,
@@ -2340,11 +2390,11 @@ async def discord_bot_guild_membership_check(
     )
 
 
-async def discord_pairing_command_admission(
+async def discord_control_command_admission(
     account: ChannelAccount,
     payload: dict[str, Any],
     *,
-    command: ChannelPairCommand | None,
+    command: ChannelControlCommand | None,
     guild_id: str | None,
     external_user_id: str | None,
     trusted_interaction: bool,
@@ -2382,8 +2432,8 @@ async def discord_pairing_command_admission(
     return DiscordPairingCommandAdmission()
 
 
-def discord_pairing_reply_for_command(
-    command: ChannelPairCommand | None,
+def discord_control_reply_for_command(
+    command: ChannelControlCommand | None,
     result: InboundBindingResult,
     *,
     guild_id: str | None,
@@ -2422,16 +2472,16 @@ def discord_pairing_reply_for_command(
     if command is not None and command.kind == "pair" and result.pair_failed_reason == "usage":
         return "Usage: /clawdi_pair <code>"
     if command is not None and command.kind == "unknown" and command.command:
-        return f"Unknown command: {command.command}. Use /clawdi_pair <code> or /clawdi_unpair."
+        return f"Unknown command: {command.command}. Use {HELP_COMMAND} for instructions."
     return pairing_reply_for_command(command, result)
 
 
 def extract_pair_code(text: str | None) -> str | None:
-    command = parse_pair_command(text)
+    command = parse_channel_control_command(text)
     return command.code if command is not None and command.kind == "pair" else None
 
 
-async def send_pairing_command_reply(
+async def send_control_command_reply(
     db: AsyncSession,
     *,
     account: ChannelAccount,
@@ -2439,7 +2489,7 @@ async def send_pairing_command_reply(
     send_external_chat_id: str | None = None,
     telegram_message_thread_id: int | None = None,
     telegram_direct_messages_topic_id: int | None = None,
-    command: ChannelPairCommand | None,
+    command: ChannelControlCommand | None,
     binding_result: InboundBindingResult,
     reply: str | None = None,
 ) -> ChannelMessage | None:
@@ -2825,7 +2875,7 @@ async def channel_control_command_event_was_handled(
     external_chat_id: str,
     provider_event_id: str | None,
     provider_event_scope: str = PROVIDER_EVENT_SCOPE_CHAT,
-    command: ChannelPairCommand | None,
+    command: ChannelControlCommand | None,
 ) -> bool:
     """Serialize control commands and reject a previously handled provider event."""
     if (
@@ -5709,7 +5759,7 @@ async def send_whatsapp_message(
     provider_external_chat_id = (
         binding.external_chat_id if binding is not None else external_chat_id
     )
-    provider_message_id, response_payload = await _send_whatsapp_provider_payload(
+    provider_message_id, _response_payload = await _send_whatsapp_provider_payload(
         account=account,
         external_chat_id=provider_external_chat_id,
         text=text,
@@ -5721,7 +5771,11 @@ async def send_whatsapp_message(
         external_chat_id=provider_external_chat_id,
         provider_message_id=provider_message_id,
         text=text,
-        payload=response_payload,
+        payload=_safe_delivery_provider_response(
+            provider=CHANNEL_PROVIDER_WHATSAPP,
+            provider_message_id=provider_message_id,
+        ),
+        delivered_at=datetime.now(UTC),
     )
 
 
@@ -6033,13 +6087,13 @@ def discord_text_from_payload(payload: dict[str, Any]) -> str | None:
 
 
 def discord_pair_code_from_payload(payload: dict[str, Any]) -> str | None:
-    command = discord_pair_command_from_payload(payload)
+    command = discord_control_command_from_payload(payload)
     return command.code if command is not None and command.kind == "pair" else None
 
 
-def discord_pair_command_from_payload(payload: dict[str, Any]) -> ChannelPairCommand | None:
+def discord_control_command_from_payload(payload: dict[str, Any]) -> ChannelControlCommand | None:
     data = _discord_event_data(payload)
-    text_command = _parse_discord_pair_command(_read_optional_str(data.get("content")))
+    text_command = _parse_discord_control_command(_read_optional_str(data.get("content")))
     if text_command is not None:
         return text_command
     interaction_command = data.get("data")
@@ -6047,26 +6101,26 @@ def discord_pair_command_from_payload(payload: dict[str, Any]) -> ChannelPairCom
         return None
     name = interaction_command.get("name")
     if name == DISCORD_UNPAIR_COMMAND_NAME:
-        return ChannelPairCommand(kind="unpair")
+        return ChannelControlCommand(kind="unpair")
     if name == DISCORD_HELP_COMMAND_NAME:
         options = interaction_command.get("options")
         if isinstance(options, list) and options:
-            return ChannelPairCommand(kind="unknown", command=HELP_COMMAND)
-        return ChannelPairCommand(kind="help")
+            return ChannelControlCommand(kind="unknown", command=HELP_COMMAND)
+        return ChannelControlCommand(kind="help")
     if name != DISCORD_PAIR_COMMAND_NAME:
         return None
     options = interaction_command.get("options")
     if not isinstance(options, list):
-        return ChannelPairCommand(kind="pair", code="")
+        return ChannelControlCommand(kind="pair", code="")
     for option in options:
         if not isinstance(option, dict):
             continue
         if option.get("name") in {"code", "pair_code"}:
-            return ChannelPairCommand(kind="pair", code=_read_optional_str(option.get("value")))
-    return ChannelPairCommand(kind="pair", code="")
+            return ChannelControlCommand(kind="pair", code=_read_optional_str(option.get("value")))
+    return ChannelControlCommand(kind="pair", code="")
 
 
-def _parse_discord_pair_command(text: str | None) -> ChannelPairCommand | None:
+def _parse_discord_control_command(text: str | None) -> ChannelControlCommand | None:
     if not text:
         return None
     trimmed = text.lstrip()
@@ -6076,16 +6130,16 @@ def _parse_discord_pair_command(text: str | None) -> ChannelPairCommand | None:
     name = head.split("@", 1)[0].removeprefix("/")
     if name == DISCORD_UNPAIR_COMMAND_NAME:
         if separator and rest.strip():
-            return ChannelPairCommand(kind="unknown", command=f"/{name}")
-        return ChannelPairCommand(kind="unpair")
+            return ChannelControlCommand(kind="unknown", command=f"/{name}")
+        return ChannelControlCommand(kind="unpair")
     if name == DISCORD_HELP_COMMAND_NAME:
         if separator and rest.strip():
-            return ChannelPairCommand(kind="unknown", command=HELP_COMMAND)
-        return ChannelPairCommand(kind="help")
+            return ChannelControlCommand(kind="unknown", command=HELP_COMMAND)
+        return ChannelControlCommand(kind="help")
     if name != DISCORD_PAIR_COMMAND_NAME:
         return None
     code = _single_command_arg(rest) if separator else ""
-    return ChannelPairCommand(kind="pair", code=code or "")
+    return ChannelControlCommand(kind="pair", code=code or "")
 
 
 def discord_message_id_from_payload(payload: dict[str, Any]) -> str | None:
@@ -6239,7 +6293,7 @@ async def record_discord_dispatch(
         guild_id = discord_channel_scope_from_payload(frame)[1]
     else:
         return False
-    command = discord_pair_command_from_payload(frame)
+    command = discord_control_command_from_payload(frame)
     provider_event_id = discord_message_id_from_payload(frame)
     if await channel_control_command_event_was_handled(
         db,
@@ -6260,7 +6314,7 @@ async def record_discord_dispatch(
     )
     if trusted_dm_name is not None:
         external_chat_name = trusted_dm_name
-    admission = await discord_pairing_command_admission(
+    admission = await discord_control_command_admission(
         account,
         frame,
         command=command,
@@ -6336,8 +6390,8 @@ async def record_discord_dispatch(
         )
         await record_inactive_bot_agent_link_event(db, account=account, binding=binding)
     if binding_result.command_handled:
-        reply = discord_pairing_reply_for_command(command, binding_result, guild_id=guild_id)
-        await send_pairing_command_reply(
+        reply = discord_control_reply_for_command(command, binding_result, guild_id=guild_id)
+        await send_control_command_reply(
             db,
             account=account,
             external_chat_id=external_chat_id,

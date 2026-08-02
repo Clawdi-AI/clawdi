@@ -26,6 +26,7 @@ from app.models.channel import (
 )
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channels import (
+    archive_bot_agent_link,
     channel_control_help_reply,
     enqueue_channel_outbound_message,
     generate_agent_token,
@@ -603,6 +604,226 @@ async def test_whatsapp_replacement_binding_refreshes_alias_authority_before_io(
         remote_jid=alias_jid,
     )
     assert drifted.binding is None
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_direct_outbound_holds_authority_until_provider_io_finishes(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    account, link, binding = await _seed_whatsapp_link_and_binding(
+        client, db_session, channel_agent, name="wa-direct-authority-barrier"
+    )
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    io_started = asyncio.Event()
+    release_io = asyncio.Event()
+
+    async def blocked_provider(**_kwargs):
+        io_started.set()
+        await release_io.wait()
+        return "provider-message", {}
+
+    monkeypatch.setattr(
+        "app.services.channels._send_whatsapp_provider_payload",
+        blocked_provider,
+    )
+
+    async def send() -> None:
+        async with sessionmaker() as db:
+            current_account = await db.get(ChannelAccount, account.id)
+            assert current_account is not None
+            await send_whatsapp_message(
+                db,
+                account=current_account,
+                external_chat_id=binding.external_chat_id,
+                text="leased",
+                bot_agent_link_id=link.id,
+            )
+            await db.commit()
+
+    async def archive() -> None:
+        async with sessionmaker() as db:
+            current_account = (
+                await db.execute(
+                    select(ChannelAccount).where(ChannelAccount.id == account.id).with_for_update()
+                )
+            ).scalar_one()
+            current_link = (
+                await db.execute(
+                    select(ChannelBotAgentLink)
+                    .where(ChannelBotAgentLink.id == link.id)
+                    .with_for_update()
+                )
+            ).scalar_one()
+            await archive_bot_agent_link(db, link=current_link, account=current_account)
+            await db.commit()
+
+    send_task = asyncio.create_task(send())
+    await asyncio.wait_for(io_started.wait(), timeout=1)
+    archive_task = asyncio.create_task(archive())
+    await asyncio.sleep(0.05)
+    assert archive_task.done() is False
+    release_io.set()
+    await asyncio.gather(send_task, archive_task)
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_link_retirement_wins_before_direct_io_and_provider_is_not_called(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    account, link, binding = await _seed_whatsapp_link_and_binding(
+        client, db_session, channel_agent, name="wa-retirement-wins-barrier"
+    )
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    provider_calls = 0
+
+    async def provider(**_kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        return "provider-message", {}
+
+    monkeypatch.setattr("app.services.channels._send_whatsapp_provider_payload", provider)
+    async with sessionmaker() as mutation_db:
+        current_account = (
+            await mutation_db.execute(
+                select(ChannelAccount).where(ChannelAccount.id == account.id).with_for_update()
+            )
+        ).scalar_one()
+        current_link = (
+            await mutation_db.execute(
+                select(ChannelBotAgentLink)
+                .where(ChannelBotAgentLink.id == link.id)
+                .with_for_update()
+            )
+        ).scalar_one()
+        await archive_bot_agent_link(
+            mutation_db,
+            link=current_link,
+            account=current_account,
+        )
+
+        async def send() -> None:
+            async with sessionmaker() as send_db:
+                stale_account = await send_db.get(ChannelAccount, account.id)
+                assert stale_account is not None
+                await send_whatsapp_message(
+                    send_db,
+                    account=stale_account,
+                    external_chat_id=binding.external_chat_id,
+                    text="denied",
+                    bot_agent_link_id=link.id,
+                )
+
+        send_task = asyncio.create_task(send())
+        await asyncio.sleep(0.05)
+        assert provider_calls == 0
+        await mutation_db.commit()
+        with pytest.raises(HTTPException, match="not paired"):
+            await send_task
+    assert provider_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["raw", "iq", "service_iq"])
+async def test_whatsapp_protocol_io_holds_binding_authority_lease(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    operation: str,
+):
+    account, link, binding = await _seed_whatsapp_link_and_binding(
+        client, db_session, channel_agent, name=f"wa-{operation}-authority-barrier"
+    )
+    io_started = asyncio.Event()
+    release_io = asyncio.Event()
+
+    class BlockingTransport(_FakeProviderTransport):
+        async def relay_raw_node(self, node):
+            io_started.set()
+            await release_io.wait()
+            await super().relay_raw_node(node)
+
+        async def query_iq(self, node, timeout_ms):
+            io_started.set()
+            await release_io.wait()
+            return await super().query_iq(node, timeout_ms)
+
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    bridge = WhatsAppProviderBridge(
+        sessionmaker,
+        account_id=account.id,
+        transport=BlockingTransport(),
+    )
+
+    async def perform_io() -> None:
+        if operation == "raw":
+            result = await bridge.relay_raw_node(
+                {"tag": "presence", "attrs": {"to": binding.external_chat_id}},
+                lambda _id: None,
+                bot_agent_link_id=link.id,
+            )
+            assert result.outcome == "relayed"
+        elif operation == "iq":
+            result = await bridge.forward_iq(
+                {
+                    "tag": "iq",
+                    "attrs": {
+                        "id": "leased-iq",
+                        "xmlns": "w",
+                        "type": "get",
+                        "to": binding.external_chat_id,
+                    },
+                },
+                tenant_id=str(link.id),
+                bot_agent_link_id=link.id,
+            )
+            assert result is not None
+        else:
+            result = await bridge.forward_iq(
+                {
+                    "tag": "iq",
+                    "attrs": {
+                        "id": "leased-service-iq",
+                        "xmlns": "privacy",
+                        "type": "get",
+                        "to": "s.whatsapp.net",
+                    },
+                    "content": [{"tag": "privacy", "attrs": {}}],
+                },
+                tenant_id=str(link.id),
+                bot_agent_link_id=link.id,
+            )
+            assert result is not None
+
+    async def archive() -> None:
+        async with sessionmaker() as db:
+            current_account = (
+                await db.execute(
+                    select(ChannelAccount).where(ChannelAccount.id == account.id).with_for_update()
+                )
+            ).scalar_one()
+            current_link = (
+                await db.execute(
+                    select(ChannelBotAgentLink)
+                    .where(ChannelBotAgentLink.id == link.id)
+                    .with_for_update()
+                )
+            ).scalar_one()
+            await archive_bot_agent_link(db, link=current_link, account=current_account)
+            await db.commit()
+
+    io_task = asyncio.create_task(perform_io())
+    await asyncio.wait_for(io_started.wait(), timeout=1)
+    archive_task = asyncio.create_task(archive())
+    await asyncio.sleep(0.05)
+    assert archive_task.done() is False
+    release_io.set()
+    await asyncio.gather(io_task, archive_task)
 
 
 @pytest.mark.asyncio
