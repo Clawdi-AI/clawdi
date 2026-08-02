@@ -5,9 +5,10 @@ import logging
 import signal
 
 from app.core.database import async_session_factory, engine
+from app.core.logging_config import configure_application_logging
 from app.services.discord_gateway_worker import DiscordGatewayWorker
 
-logging.basicConfig(level=logging.INFO)
+configure_application_logging()
 log = logging.getLogger(__name__)
 
 

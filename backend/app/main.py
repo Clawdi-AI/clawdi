@@ -19,6 +19,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.core.auth import warm_clerk_jwks
 from app.core.config import settings
 from app.core.database import get_session
+from app.core.logging_config import configure_application_logging
 from app.core.sentry import init_sentry
 from app.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.middleware.request_id import RequestIDMiddleware
@@ -67,9 +68,7 @@ from app.services.embedding import LocalEmbedder
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
 from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegistry
 
-logging.basicConfig(level=logging.INFO)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
+configure_application_logging()
 log = logging.getLogger(__name__)
 init_sentry()
 
