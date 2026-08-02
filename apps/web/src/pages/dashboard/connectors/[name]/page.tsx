@@ -30,6 +30,7 @@ import {
 	useConnectorTools,
 	useDisconnect,
 } from "@/lib/connectors-data";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -258,7 +259,7 @@ function ConnectorDetail({ name }: { name: string }) {
 	// thrown 404 from the hosted catalog adapter) and outright network
 	// failures. Surface it so the user sees what's wrong instead of a
 	// silently-broken connect page.
-	if (appQ.error) {
+	if (isApiNotFoundError(appQ.error) || shouldBlockQueryError(appQ.error, appQ.data)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
 				{isApiNotFoundError(appQ.error) ? (
@@ -335,7 +336,7 @@ function ConnectorDetail({ name }: { name: string }) {
 					}
 				/>
 				<div className="p-4">
-					{!usesNoAuth && connectionsQ.error ? (
+					{!usesNoAuth && shouldBlockQueryError(connectionsQ.error, connectionsQ.data) ? (
 						// Without this, a failed connections fetch silently renders
 						// the "No connected accounts yet" empty state — the user
 						// would think they have nothing connected when really we
@@ -437,7 +438,7 @@ function ConnectorDetail({ name }: { name: string }) {
 			<ConnectorToolsList
 				tools={tools ?? []}
 				isLoading={isToolsLoading}
-				error={toolsQ.error}
+				error={shouldBlockQueryError(toolsQ.error, toolsQ.data) ? toolsQ.error : null}
 				onRetry={() => {
 					void toolsQ.refetch();
 				}}

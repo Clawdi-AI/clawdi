@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { useOpenApi } from "@/lib/api";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { shouldBlockQueryError } from "@/lib/query-state";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
@@ -48,6 +49,7 @@ export default function AgentsIndexPage() {
 
 	const selfManagedTiles = useMemo(() => selfManagedAgentTiles(environments), [environments]);
 	const selfManagedCount = selfManagedTiles.length;
+	const blockingEnvsError = shouldBlockQueryError(envsError, environments) ? envsError : null;
 	const hostedAccessLoading = Boolean(HostedAgentsByCompute && hostedAccess.isLoading);
 	const cloudDeploymentManagementEnabled = Boolean(HostedAgentsByCompute);
 	const legacyHostedAgentsEnabled = Boolean(
@@ -64,7 +66,7 @@ export default function AgentsIndexPage() {
 				<Suspense fallback={<AgentsCard agents={selfManagedTiles} isLoading />}>
 					<HostedAgentsByCompute
 						envsLoading={envsLoading}
-						selfManagedError={envsError}
+						selfManagedError={blockingEnvsError}
 						onRetrySelfManaged={() => {
 							void refetchEnvs();
 						}}
@@ -79,7 +81,7 @@ export default function AgentsIndexPage() {
 				<AgentsCard
 					agents={selfManagedTiles}
 					isLoading={envsLoading}
-					error={envsError}
+					error={blockingEnvsError}
 					onRetry={() => {
 						void refetchEnvs();
 					}}

@@ -56,6 +56,7 @@ import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn, errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
@@ -130,6 +131,15 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 			names.map((name) => ({ section, name })),
 		);
 	}, [keys.data]);
+	const blockingVaultDetailError =
+		isApiNotFoundError(vaultDetail.error) ||
+		shouldBlockQueryError(vaultDetail.error, vaultDetail.data)
+			? vaultDetail.error
+			: null;
+	const blockingKeysError = shouldBlockQueryError(keys.error, keys.data) ? keys.error : null;
+	const blockingProjectsError = shouldBlockQueryError(projects.error, projects.data)
+		? projects.error
+		: null;
 
 	// Curation toolkit for grab-bag vaults (the default vault holds
 	// hundreds of keys): search by name, batch-select, then copy/move
@@ -283,7 +293,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 		);
 	}
 
-	if (vaultDetail.error) {
+	if (blockingVaultDetailError) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<Button
@@ -296,14 +306,14 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 					<ArrowLeft className="mr-1.5 size-4" />
 					Vaults
 				</Button>
-				{isApiNotFoundError(vaultDetail.error) ? (
+				{isApiNotFoundError(blockingVaultDetailError) ? (
 					<DetailNotFound
 						title="Vault not found"
 						message="This vault may have been removed, or your account no longer has access."
 					/>
 				) : (
 					<ApiErrorPanel
-						error={vaultDetail.error}
+						error={blockingVaultDetailError}
 						onRetry={() => {
 							void vaultDetail.refetch();
 						}}
@@ -411,7 +421,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 					<div className="min-w-0">
 						<div className="flex items-center gap-2">
 							<h2 className="text-sm font-semibold">Keys</h2>
-							{keys.error ? (
+							{blockingKeysError ? (
 								<Badge variant="secondary" className="tabular-nums">
 									—
 								</Badge>
@@ -503,9 +513,9 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 
 				{keys.isLoading ? (
 					<Skeleton className="h-32 w-full rounded-lg" />
-				) : keys.error ? (
+				) : blockingKeysError ? (
 					<ApiErrorPanel
-						error={keys.error}
+						error={blockingKeysError}
 						onRetry={() => {
 							void keys.refetch();
 						}}
@@ -644,7 +654,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 							<h2 className="text-sm font-semibold">Projects</h2>
 							{projects.isLoading ? null : (
 								<Badge variant="secondary" className="tabular-nums">
-									{projects.error ? "—" : attachedProjects.length}
+									{blockingProjectsError ? "—" : attachedProjects.length}
 								</Badge>
 							)}
 						</div>
@@ -653,7 +663,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 							Projects resolve the keys at runtime.
 						</p>
 					</div>
-					{isOwner && !projects.error ? (
+					{isOwner && !blockingProjectsError ? (
 						<AttachProjectPicker
 							projects={(projects.data ?? []).filter(
 								(p) => p.is_owner !== false && !(vault.project_ids ?? []).includes(p.id),
@@ -665,9 +675,9 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 				</div>
 				{projects.isLoading ? (
 					<Skeleton className="h-16 w-full" />
-				) : projects.error ? (
+				) : blockingProjectsError ? (
 					<ApiErrorPanel
-						error={projects.error}
+						error={blockingProjectsError}
 						onRetry={() => {
 							void projects.refetch();
 						}}

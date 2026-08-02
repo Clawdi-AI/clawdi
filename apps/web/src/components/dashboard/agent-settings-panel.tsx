@@ -27,6 +27,7 @@ import {
 } from "@/lib/agent-ownership";
 import { toastApiError, unwrap, useAgentAvatarUploader, useApi, useOpenApi } from "@/lib/api";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn, errorMessage } from "@/lib/utils";
 
 type Environment = components["schemas"]["AgentResponse"];
@@ -175,7 +176,7 @@ export function AgentSettingsPanel({
 		);
 	}
 
-	if (error || !agent) {
+	if (shouldBlockQueryError(error, agent) || !agent) {
 		return (
 			<div className={cn("flex flex-col gap-1 rounded-md border p-4", className)}>
 				<div className="text-sm font-semibold">Settings unavailable</div>

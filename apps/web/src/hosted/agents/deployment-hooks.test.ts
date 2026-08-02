@@ -221,8 +221,10 @@ describe("deployment transition timeout rendering", () => {
 
 		expect(source).toContain("deploymentTransitionTimedOut,");
 		expect(source).toContain("deploymentTransitionTimedOut={deploymentTransitionTimedOut}");
-		expect(source).toContain("onCheckDeploymentAgain={handleCheckAgain}");
-		expect(source).toContain("void refetch();");
+		expect(source).toContain("const [manualChecking, setManualChecking] = useState(false);");
+		expect(source).toContain("await refetch();");
+		expect(source).toContain("isCheckingDeployment={manualChecking}");
+		expect(source).toContain("onCheckDeploymentAgain={() => void handleCheckAgain()}");
 	});
 });
 

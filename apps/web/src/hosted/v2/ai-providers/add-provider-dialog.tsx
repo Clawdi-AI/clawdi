@@ -137,7 +137,7 @@ export function AddProviderDialog({
 	const providerLabel = identity.label ?? (providerId || meta.label);
 	const runtimeEnv = form.runtimeEnv.trim() || meta.defaultRuntimeEnv;
 	const presetCatalog = selectedPreset ? presetCatalogToProviderModels(selectedPreset) : [];
-	const providerListReady = providerListAllowsSubmit(isEdit, providers.isSuccess);
+	const providerListReady = providerListAllowsSubmit(isEdit, providers.data !== undefined);
 	const savedCredentialAvailable = editing != null && editing.auth.type !== "none";
 	const customNameProvided =
 		meta.custom !== true || selectedPreset !== null || Boolean(form.label.trim());

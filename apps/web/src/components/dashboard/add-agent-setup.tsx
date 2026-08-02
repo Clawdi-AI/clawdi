@@ -89,19 +89,24 @@ export function AddAgentSetup() {
 	const api = useOpenApi();
 	const origin = useOrigin();
 	const prompt = `Set up Clawdi on this machine. Fetch ${origin}/skill.md, and follow the skills to set it up. Finally, confirm the installation with \`clawdi doctor\`.`;
+	const baseline = useRef<Set<string> | null>(null);
 
 	// Live success detection: snapshot the env ids on first load, then poll
-	// while mounted. Anything new is "your agent just connected".
+	// while mounted until a new Agent appears. Anything new is "your agent
+	// just connected"; once that terminal state is reached, polling stops.
 	const envs = api.useQuery(
 		"get",
 		"/v1/agents",
 		{},
 		{
-			refetchInterval: 5_000,
+			refetchInterval: (query) => {
+				const current = query.state.data;
+				if (!current || !baseline.current) return 5_000;
+				return current.some((agent) => !baseline.current?.has(agent.id)) ? false : 5_000;
+			},
 			refetchIntervalInBackground: false,
 		},
 	);
-	const baseline = useRef<Set<string> | null>(null);
 	useEffect(() => {
 		if (envs.data && baseline.current === null) {
 			baseline.current = new Set(envs.data.map((e) => e.id));

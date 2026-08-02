@@ -92,10 +92,7 @@ import {
 	useResetRuntimeUiAccess,
 	useUpdateDeployment,
 } from "@/hosted/agents/deployment-hooks";
-import {
-	HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
-	shouldBlockHostedSessionsError,
-} from "@/hosted/agents/hosted-agent-session-query";
+import { HOSTED_AGENT_SESSIONS_REFRESH_POLICY } from "@/hosted/agents/hosted-agent-session-query";
 import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
@@ -282,6 +279,7 @@ import type { SessionListItem } from "@/lib/api-schemas";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { settingsQueryHref } from "@/lib/settings-routes";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
@@ -464,6 +462,7 @@ export function HostedAgentDetail({
 	onCheckDeploymentAgain: () => void;
 }) {
 	const $api = useOpenApi();
+	const [isCheckingProjection, setIsCheckingProjection] = useState(false);
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
 	const deploymentProjectionQueryable = canQueryDeploymentProjection(deploymentStatus);
@@ -491,6 +490,15 @@ export function HostedAgentDetail({
 		error: agentQuery.error,
 		isPending: agentQuery.isPending,
 	});
+	const checkProjectionAgain = async () => {
+		if (isCheckingProjection) return;
+		setIsCheckingProjection(true);
+		try {
+			await agentQuery.refetch();
+		} finally {
+			setIsCheckingProjection(false);
+		}
+	};
 	const agent = projection.status === "resolved" ? projection.data : null;
 	const name = agent
 		? deploymentDisplayName(agentDisplayName(agent), runtime)
@@ -554,9 +562,9 @@ export function HostedAgentDetail({
 				shouldShowHostedProjectionNotice(activeTab) ? (
 					<HostedProjectionNotice
 						projection={projection}
-						isFetching={agentQuery.isFetching}
+						isFetching={isCheckingProjection}
 						onRetry={() => {
-							void agentQuery.refetch();
+							void checkProjectionAgain();
 						}}
 					/>
 				) : null}
@@ -571,7 +579,9 @@ export function HostedAgentDetail({
 							projectionAvailable={projection.status === "resolved"}
 							sessions={sessions.data?.items ?? []}
 							sessionsLoading={sessions.isLoading}
-							sessionsError={sessions.error}
+							sessionsError={
+								shouldBlockQueryError(sessions.error, sessions.data) ? sessions.error : null
+							}
 							onRetrySessions={() => sessions.refetch()}
 							sessionLink={(session) => scopedSessionLink(session.id)}
 							planChangeHref={planChangeHref}
@@ -649,10 +659,10 @@ export function HostedAgentDetail({
 							<ChannelsTab environmentId={environmentId} agentType={runtime} agentName={name} />
 						) : (
 							<ChannelsSyncState
-								isChecking={isCheckingDeployment || agentQuery.isFetching}
+								isChecking={isCheckingDeployment || isCheckingProjection}
 								onCheckAgain={() => {
 									onCheckDeploymentAgain();
-									if (cloudEnvironmentId) void agentQuery.refetch();
+									if (cloudEnvironmentId) void checkProjectionAgain();
 								}}
 							/>
 						)
@@ -788,7 +798,7 @@ function HostedAgentSessionsTab({
 		if (sessions.data && page > pageCount) setPage(pageCount);
 	}, [page, pageCount, sessions.data]);
 
-	if (shouldBlockHostedSessionsError(sessions.error, sessions.data !== undefined)) {
+	if (shouldBlockQueryError(sessions.error, sessions.data)) {
 		return (
 			<ApiErrorPanel
 				error={sessions.error}
@@ -799,12 +809,7 @@ function HostedAgentSessionsTab({
 	}
 
 	return (
-		<div
-			className={cn(
-				"space-y-4 transition-opacity",
-				sessions.isFetching && !sessions.isLoading ? "opacity-60" : "opacity-100",
-			)}
-		>
+		<div className="space-y-4">
 			<SessionFeed
 				sessions={sessions.data?.items ?? []}
 				isLoading={sessions.isLoading && !sessions.data}
@@ -2075,7 +2080,7 @@ function AiProviderTab({
 			primaryProviderChoice: initialPrimaryChoice,
 			primaryModel: currentModel,
 		},
-		managedCatalogReady: managedModelCatalog.isSuccess,
+		managedCatalogReady: managedModelCatalog.data !== undefined,
 		managedModels,
 		operationMode: "update",
 		providers: list,
@@ -2130,7 +2135,7 @@ function AiProviderTab({
 					badge={bindingMode === "unmanaged" ? <Badge variant="secondary">Current</Badge> : null}
 				/>
 				{providers.isLoading ? <EntityCardSkeleton titleBadge trailingBadge /> : null}
-				{providers.error ? (
+				{shouldBlockQueryError(providers.error, providers.data) ? (
 					<div className="@2xl/main:col-span-2">
 						<ApiErrorPanel
 							normalizer={billingErrorNormalizer}
@@ -2554,7 +2559,7 @@ function ChannelsTab({
 				description="Clawdi-managed bots available to your account."
 				bots={cardGroups.clawdiBots}
 				isLoading={botPool.isLoading}
-				error={botPool.error}
+				error={shouldBlockQueryError(botPool.error, botPool.data) ? botPool.error : null}
 				onRetry={() => void botPool.refetch()}
 				emptyTitle="No Clawdi bots available"
 				renderBot={renderBot}
@@ -2566,7 +2571,7 @@ function ChannelsTab({
 				description="Bots whose provider credentials you manage."
 				bots={cardGroups.customBots}
 				isLoading={channels.isLoading}
-				error={channels.error}
+				error={shouldBlockQueryError(channels.error, channels.data) ? channels.error : null}
 				onRetry={() => void channels.refetch()}
 				emptyTitle="No custom bots yet"
 				action={
@@ -2585,7 +2590,7 @@ function ChannelsTab({
 				renderBot={renderBot}
 			/>
 
-			{linked.error ? (
+			{shouldBlockQueryError(linked.error, linked.data) ? (
 				<ApiErrorPanel
 					error={linked.error}
 					onRetry={() => linked.refetch()}
@@ -3223,6 +3228,7 @@ function ComputeSettingsSections({
 	const walletTopUp = useWalletTopUpDialog(PLAN_CHANGE_WALLET_FUNDING_ERROR_COPY);
 	const basicPlan = useMemo(() => resolveBasicPlan(plans.data), [plans.data]);
 	const perfPlan = useMemo(() => resolvePerformancePlan(plans.data), [plans.data]);
+	const blockingPlansError = shouldBlockQueryError(plans.error, plans.data) ? plans.error : null;
 	const currentPaidPlan =
 		computePlanSlug === COMPUTE_BASIC_SLUG
 			? basicPlan
@@ -3515,11 +3521,11 @@ function ComputeSettingsSections({
 						id="compute-plan-controls"
 						className="flex w-full scroll-mt-6 flex-col gap-2 lg:w-auto lg:min-w-64 lg:items-end"
 					>
-						{(hasTerminalFallback || isIncludedBasic) && plans.error ? (
+						{(hasTerminalFallback || isIncludedBasic) && blockingPlansError ? (
 							<div className="w-full lg:w-72">
 								<ApiErrorPanel
 									normalizer={billingErrorNormalizer}
-									error={plans.error}
+									error={blockingPlansError}
 									onRetry={() => void plans.refetch()}
 									title="Couldn’t check paid compute availability"
 								/>

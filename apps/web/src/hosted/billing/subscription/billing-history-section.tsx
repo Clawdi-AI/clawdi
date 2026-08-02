@@ -22,6 +22,7 @@ import { useComputeBillingHistory } from "@/hosted/billing/hooks";
 import { billingHistoryFundingLabel } from "@/hosted/billing/subscription/billing-history.logic";
 import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
 import { formatShortDate } from "@/lib/format";
+import { shouldBlockQueryError } from "@/lib/query-state";
 
 function statusLabel(status: string): string {
 	const known: Record<string, string> = {
@@ -110,7 +111,7 @@ export function BillingHistorySection() {
 						</div>
 					))}
 				</div>
-			) : history.error && rows.length === 0 ? (
+			) : shouldBlockQueryError(history.error, history.data) ? (
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
 					error={history.error}

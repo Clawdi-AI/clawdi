@@ -28,6 +28,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { ensureBlob, unwrap, useApi, useOpenApi, useSkillArchiveUploader } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { skillCapabilities } from "@/lib/skill-authority";
 import { errorMessage } from "@/lib/utils";
 
@@ -68,7 +69,9 @@ export function SendSkillDialog({
 		},
 	);
 	const projects = projectsQuery.data;
-	const destinationLoadError = projectsQuery.error;
+	const destinationLoadError = shouldBlockQueryError(projectsQuery.error, projectsQuery.data)
+		? projectsQuery.error
+		: null;
 
 	// Target value encodes a Cloud-owned destination Project id. Environment
 	// Projects are filesystem projections and are deliberately excluded.

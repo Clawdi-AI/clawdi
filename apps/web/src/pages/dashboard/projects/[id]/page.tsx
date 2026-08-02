@@ -84,6 +84,7 @@ import type { components } from "@/lib/api-schemas";
 import { formatShortDate } from "@/lib/format";
 import { identityFor } from "@/lib/identity";
 import { projectDetailHref, projectResourceHref } from "@/lib/project-resource-model";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -271,7 +272,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 		);
 	}
 
-	if (projects.error) {
+	if (shouldBlockQueryError(projects.error, projects.data)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<Button
@@ -323,19 +324,36 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 		);
 	}
 
-	const skillCount: CountValue | undefined = skills.error
+	const blockingSkillsError = shouldBlockQueryError(skills.error, skills.data)
+		? skills.error
+		: null;
+	const blockingVaultsError = shouldBlockQueryError(vaults.error, vaults.data)
+		? vaults.error
+		: null;
+	const blockingMembersError = shouldBlockQueryError(members.error, members.data)
+		? members.error
+		: null;
+	const blockingEnvironmentsError = shouldBlockQueryError(environments.error, environments.data)
+		? environments.error
+		: null;
+	const blockingBoundAgentsError = shouldBlockQueryError(boundAgents.error, boundAgents.data)
+		? boundAgents.error
+		: null;
+	const skillCount: CountValue | undefined = blockingSkillsError
 		? "unavailable"
 		: skills.data?.items.length;
-	const vaultCount: CountValue | undefined = vaults.error
+	const vaultCount: CountValue | undefined = blockingVaultsError
 		? "unavailable"
 		: vaults.data?.items.length;
-	const peopleCount: CountValue | undefined = members.error
+	const peopleCount: CountValue | undefined = blockingMembersError
 		? "unavailable"
 		: members.data
 			? members.data.length + 1
 			: undefined; // +1 = owner
 	const agentCount: CountValue | undefined =
-		environments.error || boundAgents.error ? "unavailable" : boundAgents.data?.length;
+		blockingEnvironmentsError || blockingBoundAgentsError
+			? "unavailable"
+			: boundAgents.data?.length;
 
 	const addToAgentDialog = (trigger: ReactElement) => (
 		<UseProjectWithAgentDialog
@@ -461,9 +479,9 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 				{canManageSkills && showInstallSkill ? (
 					<InstallSkillInProjectForm projectId={project.id} onChanged={refresh} />
 				) : null}
-				{skills.error ? (
+				{blockingSkillsError ? (
 					<ApiErrorPanel
-						error={skills.error}
+						error={blockingSkillsError}
 						onRetry={() => {
 							void skills.refetch();
 						}}
@@ -508,9 +526,9 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 				) : null}
 				{vaults.isLoading ? (
 					<Skeleton className="h-24 w-full" />
-				) : vaults.error ? (
+				) : blockingVaultsError ? (
 					<ApiErrorPanel
-						error={vaults.error}
+						error={blockingVaultsError}
 						onRetry={() => {
 							void vaults.refetch();
 						}}
@@ -548,9 +566,9 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 				>
 					{members.isLoading ? (
 						<Skeleton className="h-16 w-full" />
-					) : members.error ? (
+					) : blockingMembersError ? (
 						<ApiErrorPanel
-							error={members.error}
+							error={blockingMembersError}
 							onRetry={() => {
 								void members.refetch();
 							}}
@@ -611,17 +629,17 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 			>
 				{boundAgents.isLoading || environments.isLoading ? (
 					<Skeleton className="h-16 w-full" />
-				) : environments.error ? (
+				) : blockingEnvironmentsError ? (
 					<ApiErrorPanel
-						error={environments.error}
+						error={blockingEnvironmentsError}
 						onRetry={() => {
 							void environments.refetch();
 						}}
 						title="Couldn't load agents"
 					/>
-				) : boundAgents.error ? (
+				) : blockingBoundAgentsError ? (
 					<ApiErrorPanel
-						error={boundAgents.error}
+						error={blockingBoundAgentsError}
 						onRetry={() => {
 							void boundAgents.refetch();
 						}}
@@ -883,6 +901,10 @@ function UseProjectWithAgentDialog({
 	const selectedEnv = orderedEnvironments.find((env) => env.id === selectedAgentId) ?? null;
 	const projectIsHome = selectedEnv?.default_project_id === project.id;
 	const selectedBindings = useAgentProjectBindings(selectedAgentId, { enabled: open });
+	const blockingSelectedBindingsError = shouldBlockQueryError(
+		selectedBindings.error,
+		selectedBindings.data,
+	);
 	const existingBinding =
 		selectedBindings.data?.find((binding) => binding.project_id === project.id) ?? null;
 	const projectIsAlreadyAvailable = projectIsHome || !!existingBinding;
@@ -1044,7 +1066,7 @@ function UseProjectWithAgentDialog({
 							)}
 						</div>
 
-						{selectedBindings.error ? (
+						{blockingSelectedBindingsError ? (
 							<ApiErrorPanel
 								error={selectedBindings.error}
 								onRetry={() => {
@@ -1077,7 +1099,7 @@ function UseProjectWithAgentDialog({
 										!selectedAgentId ||
 										addProjectToAgent.isPending ||
 										selectedBindings.isLoading ||
-										selectedBindings.isError ||
+										blockingSelectedBindingsError ||
 										projectIsAlreadyAvailable
 									}
 								>

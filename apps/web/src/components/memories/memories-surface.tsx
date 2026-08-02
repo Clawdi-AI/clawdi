@@ -40,9 +40,10 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { unwrap, useApi } from "@/lib/api";
+import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { Memory } from "@/lib/api-schemas";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
@@ -64,6 +65,7 @@ const ADD_CATEGORY_ITEMS = CATEGORIES.filter((category) => category.value !== AL
 
 export function MemoriesSurface() {
 	const api = useApi();
+	const $api = useOpenApi();
 	const queryClient = useQueryClient();
 	const [search, setSearch] = useState("");
 	const [category, setCategory] = useState<string>(ALL);
@@ -89,7 +91,7 @@ export function MemoriesSurface() {
 			),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["settings"] });
-			queryClient.invalidateQueries({ queryKey: ["memories"] });
+			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
 		},
 		onError: (e) => toast.error("Couldn't update settings", { description: errorMessage(e) }),
 	});
@@ -99,7 +101,7 @@ export function MemoriesSurface() {
 				await api.PATCH("/v1/settings", { body: { settings: { mem0_api_key: key } } }),
 			);
 			queryClient.invalidateQueries({ queryKey: ["settings"] });
-			queryClient.invalidateQueries({ queryKey: ["memories"] });
+			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
 			return result;
 		} catch (error) {
 			toast.error("Couldn't update settings", { description: errorMessage(error) });
@@ -107,39 +109,34 @@ export function MemoriesSurface() {
 		}
 	});
 
-	const { data, isLoading, isFetching, error, refetch } = useQuery({
-		queryKey: ["memories", debouncedSearch, apiCategory, pagination.pageIndex, pagination.pageSize],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/memories", {
-					params: {
-						query: {
-							page: pagination.pageIndex + 1,
-							page_size: pagination.pageSize,
-							q: debouncedSearch || undefined,
-							category: apiCategory || undefined,
-						},
-					},
-				}),
-			),
-		placeholderData: keepPreviousData,
-	});
+	const { data, isLoading, error, refetch } = $api.useQuery(
+		"get",
+		"/v1/memories",
+		{
+			params: {
+				query: {
+					page: pagination.pageIndex + 1,
+					page_size: pagination.pageSize,
+					q: debouncedSearch || undefined,
+					category: apiCategory || undefined,
+				},
+			},
+		},
+		{ placeholderData: keepPreviousData },
+	);
 
 	const memories = data?.items;
 	const total = data?.total ?? 0;
 
-	const deleteMemory = useMutation({
-		mutationFn: async (id: string) =>
-			unwrap(
-				await api.DELETE("/v1/memories/{memory_id}", {
-					params: { path: { memory_id: id } },
-				}),
-			),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["memories"] }),
+	const deleteMemory = $api.useMutation("delete", "/v1/memories/{memory_id}", {
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] }),
 		onError: (e) => toast.error("Couldn't delete memory", { description: errorMessage(e) }),
 	});
 
-	const requestDeleteMemory = useCallback((id: string) => deleteMemory.mutate(id), [deleteMemory]);
+	const requestDeleteMemory = useCallback(
+		(id: string) => deleteMemory.mutate({ params: { path: { memory_id: id } } }),
+		[deleteMemory],
+	);
 
 	const emptyMessage =
 		debouncedSearch || apiCategory
@@ -220,7 +217,7 @@ export function MemoriesSurface() {
 				}
 			/>
 
-			{error ? (
+			{shouldBlockQueryError(error, data) ? (
 				<ApiErrorPanel
 					error={error}
 					onRetry={() => {
@@ -229,12 +226,7 @@ export function MemoriesSurface() {
 					title="Couldn't load memories"
 				/>
 			) : (
-				<div
-					className={cn(
-						"space-y-6 transition-opacity",
-						isFetching && !isLoading ? "opacity-60" : "opacity-100",
-					)}
-				>
+				<div className="space-y-6">
 					<MemoryNotesGrid
 						memories={memories ?? []}
 						isLoading={isLoading}
@@ -416,23 +408,17 @@ function Mem0KeyForm({
 }
 
 function AddMemoryForm() {
-	const api = useApi();
+	const api = useOpenApi();
 	const queryClient = useQueryClient();
 	const [open, setOpen] = useState(false);
 	const [content, setContent] = useState("");
 	const [addCategory, setAddCategory] = useState("fact");
 	const secretFinding = findLikelySecret(content);
 
-	const createMemory = useMutation({
-		mutationFn: async () =>
-			unwrap(
-				await api.POST("/v1/memories", {
-					body: { content, category: addCategory, source: "web" },
-				}),
-			),
+	const createMemory = api.useMutation("post", "/v1/memories", {
 		onSuccess: () => {
 			setOpen(false);
-			queryClient.invalidateQueries({ queryKey: ["memories"] });
+			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
 		},
 		onError: (e) => toast.error("Couldn't add memory", { description: errorMessage(e) }),
 	});
@@ -503,7 +489,12 @@ function AddMemoryForm() {
 							</Select>
 						</div>
 						<Button
-							onClick={() => content.trim() && createMemory.mutate()}
+							onClick={() =>
+								content.trim() &&
+								createMemory.mutate({
+									body: { content, category: addCategory, source: "web" },
+								})
+							}
 							disabled={!content.trim() || !!secretFinding || createMemory.isPending}
 						>
 							{createMemory.isPending ? <Spinner /> : <Plus />}

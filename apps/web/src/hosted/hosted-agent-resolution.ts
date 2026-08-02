@@ -151,17 +151,20 @@ export function resolveHostedInventory({
 	}
 
 	const deployments = data === undefined ? null : hostedDeploymentMembers(data);
+	// TanStack Query retains the last successful data when a later refetch
+	// fails. That snapshot remains the authoritative membership view; the
+	// refresh error must not turn a resolved list (including an empty list)
+	// back into a blocking inventory state.
+	if (deployments !== null) {
+		return { status: "resolved", deployments, hasSnapshot: true, error: null };
+	}
 	if (error) {
 		return {
 			status: isNetworkError(error) ? "unavailable" : "error",
-			deployments,
-			hasSnapshot: deployments !== null,
+			deployments: null,
+			hasSnapshot: false,
 			error,
 		};
-	}
-
-	if (deployments !== null) {
-		return { status: "resolved", deployments, hasSnapshot: true, error: null };
 	}
 
 	return {

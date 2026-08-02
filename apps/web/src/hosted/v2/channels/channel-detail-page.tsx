@@ -53,6 +53,8 @@ import {
 	useSyncCommands,
 } from "@/hosted/v2/channels/channels-hooks";
 import { agentSectionLink } from "@/lib/agent-routes";
+import { isApiNotFoundError } from "@/lib/api-errors";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn, relativeTime } from "@/lib/utils";
 
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
@@ -205,7 +207,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 		);
 	}
 
-	if (channel.error) {
+	if (isApiNotFoundError(channel.error) || shouldBlockQueryError(channel.error, channel.data)) {
 		return (
 			<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
 				<ApiErrorPanel
@@ -323,7 +325,7 @@ function AgentsTab({ accountId }: { accountId: string }) {
 	const envs = useEnvironments();
 
 	if (links.isLoading) return <Skeleton className="h-24 w-full rounded-lg" />;
-	if (links.error) {
+	if (shouldBlockQueryError(links.error, links.data)) {
 		return (
 			<ApiErrorPanel
 				error={links.error}
@@ -336,7 +338,7 @@ function AgentsTab({ accountId }: { accountId: string }) {
 
 	return (
 		<div className="flex flex-col gap-3">
-			{envs.error ? (
+			{shouldBlockQueryError(envs.error, envs.data) ? (
 				<ApiErrorPanel
 					error={envs.error}
 					onRetry={() => envs.refetch()}
@@ -390,7 +392,7 @@ function AgentsTab({ accountId }: { accountId: string }) {
 function ActivityTab({ accountId }: { accountId: string }) {
 	const activity = useChannelActivity(accountId);
 	if (activity.isLoading) return <Skeleton className="h-32 w-full rounded-lg" />;
-	if (activity.error) {
+	if (shouldBlockQueryError(activity.error, activity.data)) {
 		return (
 			<ApiErrorPanel
 				error={activity.error}
@@ -462,7 +464,7 @@ function ActivityRow({ item }: { item: ChannelActivityItem }) {
 function HealthTab({ accountId }: { accountId: string }) {
 	const health = useChannelHealth();
 	if (health.isLoading) return <Skeleton className="h-32 w-full rounded-lg" />;
-	if (health.error) {
+	if (shouldBlockQueryError(health.error, health.data)) {
 		return (
 			<ApiErrorPanel
 				error={health.error}

@@ -25,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn } from "@/lib/utils";
 
@@ -150,6 +151,14 @@ export default function DashboardPage() {
 	);
 	const sessions = sessionsPage?.items.slice(0, RECENT_SESSIONS_LIMIT);
 	const contribution = stats?.contribution;
+	const blockingStatsError = shouldBlockQueryError(statsError, stats) ? statsError : null;
+	const blockingProjectsError = shouldBlockQueryError(projectsError, projects)
+		? projectsError
+		: null;
+	const blockingEnvsError = shouldBlockQueryError(envsError, environments) ? envsError : null;
+	const blockingSessionsError = shouldBlockQueryError(sessionsError, sessionsPage)
+		? sessionsError
+		: null;
 
 	const selfManagedTiles = useMemo(() => selfManagedAgentTiles(environments), [environments]);
 	const selfManagedFleetSummary = useMemo(
@@ -164,8 +173,8 @@ export default function DashboardPage() {
 	// `<HostedAgentsSection>` so this page doesn't need the hosted
 	// counts at all.
 	const selfManagedCount = selfManagedTiles.length;
-	const hasAgents = !envsLoading && !envsError && selfManagedCount > 0;
-	const ossIsEmptyState = !envsLoading && !envsError && selfManagedCount === 0;
+	const hasAgents = !envsLoading && !blockingEnvsError && selfManagedCount > 0;
+	const ossIsEmptyState = !envsLoading && !blockingEnvsError && selfManagedCount === 0;
 	const projectTypeCounts = useMemo(
 		() => (projects ? countProjectTypes(projects) : undefined),
 		[projects],
@@ -179,7 +188,7 @@ export default function DashboardPage() {
 	const greetingState: AgentGreetingState =
 		hostedAccessLoading || envsLoading
 			? "loading"
-			: envsError || hostedAccess.isError
+			: blockingEnvsError || hostedAccess.isError
 				? "error"
 				: "resolved";
 	const greeting = renderGreeting(selfManagedFleetSummary, { state: greetingState });
@@ -199,7 +208,7 @@ export default function DashboardPage() {
 						{(summary, state) =>
 							renderGreeting(summary, {
 								state:
-									envsError || hostedAccess.isError || state.error
+									blockingEnvsError || hostedAccess.isError || state.error
 										? "error"
 										: envsLoading || state.isLoading || !state.membershipResolved
 											? "loading"
@@ -226,7 +235,7 @@ export default function DashboardPage() {
 						<Suspense fallback={<AgentsCard agents={selfManagedTiles} isLoading />}>
 							<HostedAgentsSection
 								envsLoading={envsLoading}
-								selfManagedError={envsError}
+								selfManagedError={blockingEnvsError}
 								onRetrySelfManaged={() => {
 									void refetchEnvs();
 								}}
@@ -243,7 +252,7 @@ export default function DashboardPage() {
 						<AgentsCard
 							agents={selfManagedTiles}
 							isLoading={envsLoading}
-							error={envsError}
+							error={blockingEnvsError}
 							onRetry={() => {
 								void refetchEnvs();
 							}}
@@ -256,9 +265,9 @@ export default function DashboardPage() {
 							<CardDescription>Sessions per day in the last 12 months</CardDescription>
 						</CardHeader>
 						<CardContent>
-							{statsError ? (
+							{blockingStatsError ? (
 								<ApiErrorPanel
-									error={statsError}
+									error={blockingStatsError}
 									onRetry={() => {
 										void refetchStats();
 									}}
@@ -286,9 +295,9 @@ export default function DashboardPage() {
 								<ArrowRight />
 							</Button>
 						</div>
-						{sessionsError ? (
+						{blockingSessionsError ? (
 							<ApiErrorPanel
-								error={sessionsError}
+								error={blockingSessionsError}
 								onRetry={() => {
 									void refetchSessions();
 								}}
@@ -328,21 +337,21 @@ export default function DashboardPage() {
 					) : null}
 					<ResourcesCard
 						stats={stats}
-						statsError={statsError}
+						statsError={blockingStatsError}
 						onRetryStats={() => {
 							void refetchStats();
 						}}
 						projectCount={projects?.length}
 						projectTypeCounts={projectTypeCounts}
 						projectCountLoading={projectsLoading}
-						projectCountError={projectsError}
+						projectCountError={blockingProjectsError}
 						onRetryProjectCount={() => {
 							void refetchProjects();
 						}}
 					/>
 					<ThisWeekCard
 						stats={stats}
-						error={statsError}
+						error={blockingStatsError}
 						onRetry={() => {
 							void refetchStats();
 						}}

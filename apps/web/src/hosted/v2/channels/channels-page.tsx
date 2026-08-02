@@ -38,6 +38,7 @@ import {
 	sharedBotsFromPool,
 } from "@/hosted/v2/channels/channels-page.logic";
 import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Manage Custom bots and discover Clawdi bots for your Agents.";
@@ -52,14 +53,19 @@ export function ChannelsPage() {
 
 	const channelItems = channels.data ?? [];
 	const sharedItems = sharedBotsFromPool(botPool.data?.providers);
+	const channelsError = shouldBlockQueryError(channels.error, channels.data)
+		? channels.error
+		: null;
+	const botPoolError = shouldBlockQueryError(botPool.error, botPool.data) ? botPool.error : null;
+	const healthError = shouldBlockQueryError(health.error, health.data) ? health.error : null;
 	const counts = providerCounts([...channelItems, ...sharedItems]);
 	const visibleProviders = providersWithBots(counts);
 	const totalCount = channelItems.length + sharedItems.length;
 	const inventoryEmpty =
 		!channels.isLoading &&
 		!botPool.isLoading &&
-		!channels.error &&
-		!botPool.error &&
+		!channelsError &&
+		!botPoolError &&
 		totalCount === 0;
 
 	return (
@@ -104,10 +110,10 @@ export function ChannelsPage() {
 					<OwnedBotsSection
 						channels={channelItems}
 						isLoading={channels.isLoading}
-						error={channels.error}
+						error={channelsError}
 						onRetry={() => channels.refetch()}
 						healthItems={health.data?.items ?? []}
-						healthError={health.error}
+						healthError={healthError}
 						onRetryHealth={() => health.refetch()}
 						filter={filter}
 					/>
@@ -115,7 +121,7 @@ export function ChannelsPage() {
 					<SharedBotsSection
 						bots={sharedItems}
 						isLoading={botPool.isLoading}
-						error={botPool.error}
+						error={botPoolError}
 						onRetry={() => botPool.refetch()}
 						filter={filter}
 					/>

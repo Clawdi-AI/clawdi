@@ -168,8 +168,7 @@ export function SettingsDialog({
 		IS_HOSTED_BUILD &&
 		(hostedAccess.canCreateCloudAgents ||
 			hasExistingCloudAgents ||
-			(requestedBillingSection &&
-				(!mounted || hostedAccess.isLoading || Boolean(hostedAccess.error))));
+			(requestedBillingSection && (!mounted || hostedAccess.isLoading || hostedAccess.isError)));
 	const items = SETTINGS_NAV.filter((item) => !item.cloudOnly || showBilling);
 	const activeSection = items.some((item) => item.id === section)
 		? section
@@ -180,7 +179,7 @@ export function SettingsDialog({
 		requestedBillingSection &&
 		IS_HOSTED_BUILD &&
 		mounted &&
-		Boolean(hostedAccess.error) &&
+		hostedAccess.isError &&
 		!hostedAccess.canCreateCloudAgents &&
 		!hasExistingCloudAgents;
 

@@ -1,8 +1,9 @@
 "use client";
 
+import { focusManager } from "@tanstack/react-query";
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import { AlertCircle, ChevronRight, RefreshCw } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
@@ -83,6 +84,7 @@ export function AgentHome({
 	const shouldAutoRefetchUnresolvedHostedAgent =
 		unresolvedHostedAgent && (requestedFromCloudRedirect || isCloudEnvironmentId);
 	const isFetchingRef = useRef(isFetching);
+	const [manualChecking, setManualChecking] = useState(false);
 	const ownsCurrentSection = agentRouteOwnsSection(pathname, environmentId, section);
 	const hostedSection = HOSTED_AGENT_SECTION_IDS.some((candidate) => candidate === section);
 	const connectedSection = CONNECTED_AGENT_SECTION_IDS.some((candidate) => candidate === section);
@@ -154,7 +156,7 @@ export function AgentHome({
 
 		let attempts = 0;
 		const intervalId = window.setInterval(() => {
-			if (isFetchingRef.current) return;
+			if (!focusManager.isFocused() || isFetchingRef.current) return;
 
 			attempts += 1;
 			void refetch();
@@ -169,9 +171,14 @@ export function AgentHome({
 		};
 	}, [refetch, shouldAutoRefetchUnresolvedHostedAgent]);
 
-	const handleCheckAgain = () => {
-		if (isFetchingRef.current) return;
-		void refetch();
+	const handleCheckAgain = async () => {
+		if (isFetchingRef.current || manualChecking) return;
+		setManualChecking(true);
+		try {
+			await refetch();
+		} finally {
+			setManualChecking(false);
+		}
 	};
 
 	// No route may be classified as connected until deployment membership has
@@ -200,7 +207,7 @@ export function AgentHome({
 
 	// Hold a skeleton until the deployment lookup settles, so a hosted agent
 	// doesn't flash the connected detail (and fire its queries) first.
-	if (isLoading || (requestedHostedAgent && !deployment && isFetching)) {
+	if (isLoading) {
 		return <ConnectedAgentDetailSkeleton hosted />;
 	}
 
@@ -229,8 +236,8 @@ export function AgentHome({
 				section={section}
 				routeSearch={routeSearch}
 				matches={ambiguousMatches}
-				isFetching={isFetching}
-				onRetry={handleCheckAgain}
+				isFetching={manualChecking}
+				onRetry={() => void handleCheckAgain()}
 			/>
 		);
 	}
@@ -252,8 +259,8 @@ export function AgentHome({
 				routeSearch={deploymentRouteSearch}
 				onDeleteAccepted={() => router.navigate({ href: "/", replace: true })}
 				deploymentTransitionTimedOut={deploymentTransitionTimedOut}
-				isCheckingDeployment={isFetching}
-				onCheckDeploymentAgain={handleCheckAgain}
+				isCheckingDeployment={manualChecking}
+				onCheckDeploymentAgain={() => void handleCheckAgain()}
 			/>
 		);
 	}
@@ -268,8 +275,14 @@ export function AgentHome({
 					title="Clawdi Cloud agent not found"
 					description="This Clawdi Cloud agent may still be starting or may have been removed."
 					action={
-						<Button type="button" variant="outline" size="sm" onClick={handleCheckAgain}>
-							<RefreshCw /> Check again
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							disabled={manualChecking}
+							onClick={() => void handleCheckAgain()}
+						>
+							{manualChecking ? <Spinner className="size-3.5" /> : <RefreshCw />} Check again
 						</Button>
 					}
 				/>

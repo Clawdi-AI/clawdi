@@ -6,10 +6,10 @@ import {
 	QueryClient,
 	QueryObserver,
 } from "@tanstack/react-query";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	HOSTED_AGENT_SESSIONS_REFETCH_INTERVAL_MS,
 	HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
-	shouldBlockHostedSessionsError,
 } from "./hosted-agent-session-query";
 
 const detailSource = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
@@ -50,8 +50,8 @@ describe("hosted agent sessions refresh", () => {
 			expect(second.data).toEqual(cachedData);
 			expect(second.error).toBe(error);
 			expect(second.isRefetchError).toBe(true);
-			expect(shouldBlockHostedSessionsError(second.error, second.data !== undefined)).toBe(false);
-			expect(shouldBlockHostedSessionsError(error, false)).toBe(true);
+			expect(shouldBlockQueryError(second.error, second.data)).toBe(false);
+			expect(shouldBlockQueryError(error, undefined)).toBe(true);
 		} finally {
 			unsubscribe();
 			queryClient.clear();

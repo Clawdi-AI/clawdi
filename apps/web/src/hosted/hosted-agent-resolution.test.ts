@@ -116,8 +116,9 @@ describe("hosted inventory resolution matrix", () => {
 			isPending: false,
 		});
 
-		expect(result.status).toBe("error");
+		expect(result.status).toBe("resolved");
 		expect(result.hasSnapshot).toBe(true);
+		expect(result.error).toBeNull();
 		expect(result.deployments?.map((item) => item.resource.id)).toEqual([running.resource.id]);
 		expect(hostedDeploymentMembers([deleted])).toEqual([]);
 	});

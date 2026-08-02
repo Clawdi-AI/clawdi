@@ -21,6 +21,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import { projectDetailHref } from "@/lib/project-resource-model";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn, errorMessage } from "@/lib/utils";
 import {
 	type AcceptInvitationResponse,
@@ -147,7 +148,9 @@ export function NotificationCenter() {
 				<NotificationCenterContent
 					invitations={items}
 					isLoading={invitations.isLoading}
-					error={invitations.error}
+					error={
+						shouldBlockQueryError(invitations.error, invitations.data) ? invitations.error : null
+					}
 					onRetry={() => invitations.refetch()}
 					acceptInvitation={(invitation) =>
 						accept.mutate({ id: invitation.id, projectName: invitation.project_name })

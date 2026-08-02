@@ -16,6 +16,7 @@ import { SkillCardGrid } from "@/components/skills/skill-card";
 import { type AgentRouteSearch, agentSkillDetailLink } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { identityFor } from "@/lib/identity";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { skillCapabilities } from "@/lib/skill-authority";
 
 export function useAgentProjectSkills(
@@ -38,8 +39,9 @@ export function useAgentProjectSkills(
 			return { projectIds: [], error };
 		}
 	}, [agentProjectId, bindings.data]);
+	const bindingsResolved = bindings.data !== undefined;
 	const queryEnabled =
-		enabled && agentProjectSkillsQueryEnabled(bindings.isSuccess, scope.projectIds) && !scope.error;
+		enabled && agentProjectSkillsQueryEnabled(bindingsResolved, scope.projectIds) && !scope.error;
 
 	// Bindings are resolved before any Skill request. Each effective Project is
 	// server-filtered and fully paginated, then rows remain in Project read order.
@@ -69,13 +71,16 @@ export function useAgentProjectSkills(
 	});
 
 	const skills = query.data;
-	const error = bindings.error ?? scope.error ?? query.error;
+	const blockingBindingsError = shouldBlockQueryError(bindings.error, bindings.data)
+		? bindings.error
+		: null;
+	const error = blockingBindingsError ?? scope.error ?? query.error;
 	const isLoading =
 		enabled &&
 		(bindings.isLoading ||
-			(bindings.isSuccess && !scope.error && scope.projectIds.length > 0 && query.isLoading));
+			(bindingsResolved && !scope.error && scope.projectIds.length > 0 && query.isLoading));
 	const refetch = async () => {
-		if (!bindings.data || bindings.error || scope.error) {
+		if (!bindings.data || blockingBindingsError || scope.error) {
 			await bindings.refetch();
 			return;
 		}
@@ -123,7 +128,7 @@ export function AgentSkillsTab({
 		[projects.data],
 	);
 
-	if (skillsError) {
+	if (shouldBlockQueryError(skillsError, skills)) {
 		return (
 			<div>
 				<ApiErrorPanel
@@ -139,7 +144,7 @@ export function AgentSkillsTab({
 
 	return (
 		<div className="space-y-4" data-testid="agent-skills-inventory">
-			{projects.error ? (
+			{shouldBlockQueryError(projects.error, projects.data) ? (
 				<ApiErrorPanel
 					error={projects.error}
 					onRetry={() => {

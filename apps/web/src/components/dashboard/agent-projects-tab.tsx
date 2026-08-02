@@ -40,6 +40,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
+import { shouldBlockQueryError } from "@/lib/query-state";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
 
@@ -68,11 +69,11 @@ export function AgentProjectsTab({
 			bindings={bindings.data ?? []}
 			projects={projects.data ?? []}
 			isLoading={bindings.isLoading || projects.isLoading}
-			bindingsError={bindings.error}
+			bindingsError={shouldBlockQueryError(bindings.error, bindings.data) ? bindings.error : null}
 			onRetryBindings={() => {
 				void bindings.refetch();
 			}}
-			projectsError={projects.error}
+			projectsError={shouldBlockQueryError(projects.error, projects.data) ? projects.error : null}
 			onRetryProjects={() => {
 				void projects.refetch();
 			}}

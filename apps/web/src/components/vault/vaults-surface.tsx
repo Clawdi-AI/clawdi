@@ -37,6 +37,7 @@ import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn, errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
@@ -95,6 +96,7 @@ export function VaultsSurface({
 		() => new Map((projects.data ?? []).map((p) => [p.id, p.name])),
 		[projects.data],
 	);
+	const projectNamesUnavailable = shouldBlockQueryError(projects.error, projects.data);
 
 	const items =
 		agentProjectIds === undefined ? (accountVaults.data?.items ?? []) : (agentVaults.data ?? []);
@@ -191,7 +193,7 @@ export function VaultsSurface({
 				}
 			/>
 
-			{vaultsQuery.error ? (
+			{shouldBlockQueryError(vaultsQuery.error, vaultsQuery.data) ? (
 				<ApiErrorPanel
 					error={vaultsQuery.error}
 					onRetry={() => {
@@ -230,7 +232,7 @@ export function VaultsSurface({
 				/>
 			) : (
 				<>
-					{projects.error ? (
+					{projectNamesUnavailable ? (
 						<ApiErrorPanel
 							error={projects.error}
 							onRetry={() => {
@@ -239,19 +241,13 @@ export function VaultsSurface({
 							title="Couldn't load Project names"
 						/>
 					) : null}
-					<div
-						className={cn(
-							HERO_GRID_CLASS,
-							"transition-opacity",
-							vaultsQuery.isFetching && !vaultsQuery.isLoading ? "opacity-60" : "opacity-100",
-						)}
-					>
+					<div className={HERO_GRID_CLASS}>
 						{mine.map((vault) => (
 							<VaultCard
 								key={vault.id}
 								vault={vault}
 								projectNameById={projectNameById}
-								projectNamesUnavailable={!!projects.error}
+								projectNamesUnavailable={projectNamesUnavailable}
 								visibleProjectIds={visibleProjectIds}
 							/>
 						))}
@@ -268,7 +264,7 @@ export function VaultsSurface({
 										key={vault.id}
 										vault={vault}
 										projectNameById={projectNameById}
-										projectNamesUnavailable={!!projects.error}
+										projectNamesUnavailable={projectNamesUnavailable}
 										visibleProjectIds={visibleProjectIds}
 										shared
 									/>

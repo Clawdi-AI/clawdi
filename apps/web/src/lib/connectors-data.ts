@@ -208,12 +208,14 @@ export function useConnectedAppCards() {
 	const data = useMemo(() => lookup.flatMap((q) => (q.data ? [q.data] : [])), [lookup]);
 	const isLoading = connectionsQ.isLoading || lookup.some((q) => q.isLoading);
 	const error = connectionsQ.error ?? lookup.find((q) => q.error)?.error ?? null;
+	const hasData =
+		connectionsQ.data !== undefined && lookup.every((query) => query.data !== undefined);
 	const refetch = () => {
 		void connectionsQ.refetch();
 		for (const q of lookup) void q.refetch();
 	};
 
-	return { activeConnections, data, isLoading, error, refetch };
+	return { activeConnections, data, hasData, isLoading, error, refetch };
 }
 
 // ─────────────────────────────────────────────────────────────────────

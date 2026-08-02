@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { useHostedUser } from "@/hosted/billing/hooks";
+import { shouldBlockQueryError } from "@/lib/query-state";
 
 /**
  * x402 self-funding block. Agents can top up their own wallet on-chain via the
@@ -32,7 +33,7 @@ export function X402Card() {
 			<CardContent>
 				{me.isLoading ? (
 					<Skeleton className="h-9 w-full rounded-md" />
-				) : me.error ? (
+				) : shouldBlockQueryError(me.error, me.data) ? (
 					<ApiErrorPanel
 						normalizer={billingErrorNormalizer}
 						error={me.error}

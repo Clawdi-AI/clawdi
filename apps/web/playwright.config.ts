@@ -6,7 +6,7 @@ const serverPort = new URL(baseURL).port || "3200";
 export default defineConfig({
 	testDir: "./e2e",
 	testMatch: "**/*.pw.ts",
-	testIgnore: "**/hosted-smoke.pw.ts",
+	testIgnore: ["**/hosted-smoke.pw.ts", "**/query-refresh-hosted.pw.ts"],
 	timeout: 30_000,
 	expect: {
 		timeout: 5_000,

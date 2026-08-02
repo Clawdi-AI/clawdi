@@ -170,6 +170,7 @@ import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picke
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 import { env } from "@/lib/env";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
 type Compute = "basic" | "performance";
@@ -392,7 +393,21 @@ export function DeployWizard() {
 		"Agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
 	);
 	const [paymentMethod, setPaymentMethod] = useState<DeployPaymentMethod>("card");
+	const [checkingDeployments, setCheckingDeployments] = useState(false);
 	const walletTopUp = useWalletTopUpDialog(SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY);
+	const deploymentsResolved = deployments.data !== undefined;
+	const blockingDeploymentsError = shouldBlockQueryError(deployments.error, deployments.data)
+		? deployments.error
+		: null;
+	const checkDeploymentsAgain = async () => {
+		if (checkingDeployments) return;
+		setCheckingDeployments(true);
+		try {
+			await deployments.refetch();
+		} finally {
+			setCheckingDeployments(false);
+		}
+	};
 
 	// Keep the first client render on the same deterministic fallback as SSR,
 	// then adopt runtime IANA data and best-effort browser defaults after mount.
@@ -418,8 +433,8 @@ export function DeployWizard() {
 		[basicPlan, term],
 	);
 	const activeIncludedBasicSlot = useMemo(
-		() => (deployments.isSuccess ? usesActiveIncludedBasicSlot(deployments.data) : null),
-		[deployments.data, deployments.isSuccess],
+		() => (deploymentsResolved ? usesActiveIncludedBasicSlot(deployments.data ?? []) : null),
+		[deployments.data, deploymentsResolved],
 	);
 	const basicSelection = useMemo(
 		() =>
@@ -444,7 +459,7 @@ export function DeployWizard() {
 		? computePricePresentation(basicOffer, basicOffers)
 		: null;
 	const perfPricePresentation = perfOffer ? computePricePresentation(perfOffer, perfOffers) : null;
-	const paidSelection: PaidDeploySelection | null = !deployments.isSuccess
+	const paidSelection: PaidDeploySelection | null = !deploymentsResolved
 		? null
 		: compute === "performance" && perfPlan && perfOfferSelection
 			? {
@@ -500,6 +515,8 @@ export function DeployWizard() {
 	const availabilityContext = { runtime, environmentId: null };
 	const providerList = usableProviders(savedProviderList, availabilityContext);
 	const managedModels = managedModelCatalog.data?.models ?? [];
+	const managedModelCatalogResolved = managedModelCatalog.data !== undefined;
+	const plansResolved = plans.data !== undefined;
 	const {
 		draft: aiBindingDraft,
 		managedPrimaryModelReady,
@@ -513,7 +530,7 @@ export function DeployWizard() {
 			primaryProviderChoice: DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE,
 			primaryModel: DEFAULT_DEPLOY_PRIMARY_MODEL,
 		},
-		managedCatalogReady: managedModelCatalog.isSuccess,
+		managedCatalogReady: managedModelCatalogResolved,
 		managedModels,
 		operationMode: "create",
 		providers: providerList,
@@ -524,7 +541,7 @@ export function DeployWizard() {
 	const managedModelsNeedRetry =
 		managedProviderSelected &&
 		managedModels.length === 0 &&
-		(Boolean(managedModelCatalog.error) || managedModelCatalog.isSuccess);
+		(Boolean(managedModelCatalog.error) || managedModelCatalogResolved);
 	const managedModelsLoading =
 		managedProviderSelected && managedModels.length === 0 && !managedModelsNeedRetry;
 	const computePlanReady =
@@ -549,9 +566,9 @@ export function DeployWizard() {
 	const submitBlockingReason = (() => {
 		if (submitting) return null;
 		if (personaError) return personaError;
-		if (!plans.isSuccess) return "Waiting for compute plans.";
-		if (!deployments.isSuccess) {
-			return deployments.error
+		if (!plansResolved) return "Waiting for compute plans.";
+		if (!deploymentsResolved) {
+			return blockingDeploymentsError
 				? "Retry the agent availability check above."
 				: "Checking your free Basic agent availability.";
 		}
@@ -562,7 +579,7 @@ export function DeployWizard() {
 			return "Choose an available primary model.";
 		}
 		if (paidSelection && paymentMethod === "wallet") {
-			if (!wallet.isSuccess || !wallet.data) {
+			if (!wallet.data) {
 				return wallet.error
 					? "Retry loading your Wallet balance above."
 					: "Loading your Wallet balance.";
@@ -593,9 +610,9 @@ export function DeployWizard() {
 	}
 
 	useEffect(() => {
-		if (compute !== "performance" || !plans.isSuccess || perfPlan) return;
+		if (compute !== "performance" || !plansResolved || perfPlan) return;
 		setCompute("basic");
-	}, [compute, plans.isSuccess, perfPlan]);
+	}, [compute, perfPlan, plansResolved]);
 
 	useEffect(() => {
 		const selectedOffer = compute === "performance" ? perfOfferSelection : basicOfferSelection;
@@ -950,8 +967,8 @@ export function DeployWizard() {
 		.join(" · ");
 
 	const plansLoadError =
-		plans.error ??
-		(plans.isSuccess && !basicPlan && !perfPlan
+		(shouldBlockQueryError(plans.error, plans.data) ? plans.error : null) ??
+		(plansResolved && !basicPlan && !perfPlan
 			? new Error("The billing service returned no compute plans. Try loading plans again.")
 			: null);
 
@@ -1042,7 +1059,7 @@ export function DeployWizard() {
 							/>
 							{aiProviders.isLoading ? (
 								<Skeleton className="h-[74px] w-full rounded-lg" />
-							) : aiProviders.error ? (
+							) : shouldBlockQueryError(aiProviders.error, aiProviders.data) ? (
 								<div className="@2xl/main:col-span-2">
 									<ApiErrorPanel
 										title="Couldn't load providers"
@@ -1104,11 +1121,11 @@ export function DeployWizard() {
 
 				<SettingsSection title="Compute">
 					<div className="flex flex-col gap-3">
-						{!deployments.isSuccess ? (
-							deployments.error ? (
+						{!deploymentsResolved ? (
+							blockingDeploymentsError ? (
 								<ApiErrorPanel
 									normalizer={billingErrorNormalizer}
-									error={deployments.error}
+									error={blockingDeploymentsError}
 									onRetry={() => void deployments.refetch()}
 									title="Couldn't check existing agents"
 								/>
@@ -1118,7 +1135,7 @@ export function DeployWizard() {
 								</p>
 							)
 						) : null}
-						{deployments.isSuccess && activeIncludedBasicSlot === null ? (
+						{deploymentsResolved && activeIncludedBasicSlot === null ? (
 							<Alert data-hosted="true">
 								<TriangleAlert />
 								<AlertTitle>Free Basic agent availability is unknown</AlertTitle>
@@ -1131,10 +1148,10 @@ export function DeployWizard() {
 										type="button"
 										variant="outline"
 										size="sm"
-										disabled={deployments.isFetching}
-										onClick={() => void deployments.refetch()}
+										disabled={checkingDeployments}
+										onClick={() => void checkDeploymentsAgain()}
 									>
-										{deployments.isFetching ? (
+										{checkingDeployments ? (
 											<Spinner className="size-3.5" />
 										) : (
 											<RefreshCw className="size-3.5" />
@@ -1158,7 +1175,7 @@ export function DeployWizard() {
 							<EntityChoiceCard
 								selected={compute === "basic"}
 								onClick={
-									deployments.isSuccess && !basicUnavailable
+									deploymentsResolved && !basicUnavailable
 										? () => setComputeTier("basic")
 										: undefined
 								}
@@ -1169,9 +1186,9 @@ export function DeployWizard() {
 								}
 								title="Basic"
 								description={
-									!deployments.isSuccess ? (
+									!deploymentsResolved ? (
 										<span className="text-xs">
-											{deployments.error
+											{blockingDeploymentsError
 												? "Basic availability couldn't be checked"
 												: "Checking free Basic slot availability"}
 										</span>
@@ -1188,7 +1205,7 @@ export function DeployWizard() {
 								}
 								detailsPlacement="trailing"
 								details={
-									deployments.isSuccess && basicSelection.mode === "included" ? (
+									deploymentsResolved && basicSelection.mode === "included" ? (
 										<ComputePriceBlock
 											testId="basic-compute-price"
 											presentation={{
@@ -1197,7 +1214,7 @@ export function DeployWizard() {
 												savings: null,
 											}}
 										/>
-									) : deployments.isSuccess && basicPricePresentation ? (
+									) : deploymentsResolved && basicPricePresentation ? (
 										<ComputePriceBlock
 											testId="basic-compute-price"
 											presentation={basicPricePresentation}
@@ -1205,21 +1222,21 @@ export function DeployWizard() {
 									) : null
 								}
 								badge={
-									!deployments.isSuccess ? (
+									!deploymentsResolved ? (
 										<Badge variant="secondary">
-											{deployments.error ? "Unavailable" : "Checking…"}
+											{blockingDeploymentsError ? "Unavailable" : "Checking…"}
 										</Badge>
 									) : basicSelection.mode === "unavailable" ? (
 										<Badge variant="secondary">Unavailable</Badge>
 									) : null
 								}
-								disabled={!deployments.isSuccess || basicUnavailable}
+								disabled={!deploymentsResolved || basicUnavailable}
 								className="items-center p-3"
 							/>
 							<EntityChoiceCard
 								selected={compute === "performance"}
 								onClick={
-									deployments.isSuccess && perfPlan && perfOfferSelection
+									deploymentsResolved && perfPlan && perfOfferSelection
 										? () => setComputeTier("performance")
 										: undefined
 								}
@@ -1251,7 +1268,7 @@ export function DeployWizard() {
 									) : null
 								}
 								badge={perfPricePresentation ? null : <Badge>Unavailable</Badge>}
-								disabled={!deployments.isSuccess || !perfPlan || !perfOfferSelection}
+								disabled={!deploymentsResolved || !perfPlan || !perfOfferSelection}
 								className="items-center p-3"
 							/>
 						</div>
@@ -1433,7 +1450,10 @@ export function DeployWizard() {
 												variant="link"
 												size="sm"
 												className="h-auto p-0"
-												disabled={wallet.isFetching || subscriptionCreateQuote.isFetching}
+												disabled={
+													(wallet.isFetching && wallet.data === undefined) ||
+													subscriptionCreateQuote.isFetching
+												}
 												onClick={() => void retryWalletQuote()}
 											>
 												Retry

@@ -65,6 +65,7 @@ import {
 } from "@/hosted/billing/wallet/wallet-funding";
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { shouldBlockQueryError } from "@/lib/query-state";
 
 const PLAN_ITEMS = [
 	{ value: "compute_basic", label: "Basic" },
@@ -129,6 +130,9 @@ export function SubscriptionCreateDialog({
 		enabled: open && hostedAccess.canCreateCloudAgents && fundingSource === "wallet",
 	});
 	const walletDebit = createQuote.data?.walletDebit ?? null;
+	const blockingCreateQuoteError = shouldBlockQueryError(createQuote.error, createQuote.data)
+		? createQuote.error
+		: null;
 	const walletShortfallUsd = walletDebitShortfallUsd(walletDebit);
 	const walletInsufficient = walletShortfallUsd !== null;
 	const isPending = createSubscription.isPending;
@@ -246,7 +250,7 @@ export function SubscriptionCreateDialog({
 		!createSelection ||
 		isPending ||
 		(fundingSource === "wallet" &&
-			(!walletDebit || createQuote.isFetching || !!createQuote.error || walletInsufficient));
+			(!walletDebit || blockingCreateQuoteError !== null || walletInsufficient));
 
 	return (
 		<>
@@ -341,10 +345,10 @@ export function SubscriptionCreateDialog({
 								<p className="text-sm text-muted-foreground" role="status">
 									Getting the exact wallet debit…
 								</p>
-							) : createQuote.error ? (
+							) : blockingCreateQuoteError ? (
 								<ApiErrorPanel
 									normalizer={billingErrorNormalizer}
-									error={createQuote.error}
+									error={blockingCreateQuoteError}
 									onRetry={() => void createQuote.refetch()}
 									title="Couldn’t get subscription quote"
 								/>

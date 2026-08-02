@@ -347,13 +347,16 @@ describe("AI provider usability gate", () => {
 });
 
 describe("billing-read gates", () => {
-	test("keeps deploy disabled until inventory succeeds and offers retries", () => {
-		expect(wizardSource).toContain("deployments.isSuccess &&");
+	test("keeps deploy disabled until inventory resolves and offers scoped retries", () => {
+		expect(wizardSource).toContain("const deploymentsResolved = deployments.data !== undefined;");
+		expect(wizardSource).toContain("shouldBlockQueryError(deployments.error, deployments.data)");
 		expect(wizardSource).toContain("activeIncludedBasicSlot === null");
 		expect(wizardSource).toContain("Free Basic agent availability is unknown");
 		expect(wizardSource).toContain("No free agent is assumed.");
 		expect(wizardSource).toContain('title="Couldn\'t check existing agents"');
 		expect(wizardSource).toContain("onRetry={() => void deployments.refetch()}");
+		expect(wizardSource).toContain("disabled={checkingDeployments}");
+		expect(wizardSource).toContain("onClick={() => void checkDeploymentsAgain()}");
 		expect(wizardSource).toContain('title="Couldn\'t load compute plans"');
 		expect(wizardSource).toContain("async function retryWalletQuote()");
 		expect(wizardSource).toContain('toast.error("Couldn’t refresh Wallet quote"');

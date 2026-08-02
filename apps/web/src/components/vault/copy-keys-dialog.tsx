@@ -28,6 +28,7 @@ import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
@@ -114,14 +115,21 @@ export function CopyKeysDialog({
 		[projectsQuery.data],
 	);
 	const newVaultPending = creatingNewVault && (vaultsQuery.isLoading || projectsQuery.isLoading);
+	const blockingVaultsError = shouldBlockQueryError(vaultsQuery.error, vaultsQuery.data)
+		? vaultsQuery.error
+		: null;
+	const blockingProjectsError = shouldBlockQueryError(projectsQuery.error, projectsQuery.data)
+		? projectsQuery.error
+		: null;
 	const newVaultUnavailable =
 		creatingNewVault &&
 		!projectsQuery.isLoading &&
 		!vaultsQuery.isLoading &&
-		!projectsQuery.error &&
-		!vaultsQuery.error &&
+		!blockingProjectsError &&
+		!blockingVaultsError &&
 		writableProject === undefined;
-	const destinationLoadError = vaultsQuery.error ?? (creatingNewVault ? projectsQuery.error : null);
+	const destinationLoadError =
+		blockingVaultsError ?? (creatingNewVault ? blockingProjectsError : null);
 	const canRun =
 		keys.length > 0 &&
 		!destinationLoadError &&

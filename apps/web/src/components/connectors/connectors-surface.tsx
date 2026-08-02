@@ -24,6 +24,7 @@ import {
 	useConnectedAppCards,
 } from "@/lib/connectors-data";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn } from "@/lib/utils";
 
@@ -128,8 +129,13 @@ function ConnectorsList({ embedded }: { embedded: boolean }) {
 	});
 	const pageData = catalogQ.data;
 	const isCatalogLoading = catalogQ.isLoading;
-	const isCatalogFetching = catalogQ.isFetching;
-	const catalogError = catalogQ.error;
+	const catalogError = shouldBlockQueryError(catalogQ.error, pageData) ? catalogQ.error : null;
+	const connectedError = shouldBlockQueryError(
+		connected.error,
+		connected.hasData ? connected.data : undefined,
+	)
+		? connected.error
+		: null;
 
 	const connectedNames = useMemo(
 		() => new Set(connected.activeConnections.map((c) => c.app_name)),
@@ -158,7 +164,7 @@ function ConnectorsList({ embedded }: { embedded: boolean }) {
 	// disappear and the user has no signal anything went wrong.
 	const showConnectedRail =
 		!debouncedQuery &&
-		(connected.isLoading || connected.activeConnections.length > 0 || !!connected.error);
+		(connected.isLoading || connected.activeConnections.length > 0 || !!connectedError);
 	const headerStatus =
 		total > 0 || connected.activeConnections.length > 0 ? (
 			<div className="flex flex-wrap items-center gap-2">
@@ -194,7 +200,7 @@ function ConnectorsList({ embedded }: { embedded: boolean }) {
 					apps={connected.data}
 					activeCount={connected.activeConnections.length}
 					isLoading={connected.isLoading}
-					error={connected.error}
+					error={connectedError}
 					onRetry={connected.refetch}
 				/>
 			) : null}
@@ -206,7 +212,6 @@ function ConnectorsList({ embedded }: { embedded: boolean }) {
 				totalPages={totalPages}
 				connectedNames={connectedNames}
 				isLoading={isCatalogLoading}
-				isFetching={isCatalogFetching}
 				error={catalogError}
 				query={query}
 				onRetry={() => {
@@ -271,7 +276,6 @@ function CatalogSection({
 	totalPages,
 	connectedNames,
 	isLoading,
-	isFetching,
 	error,
 	query,
 	onRetry,
@@ -284,7 +288,6 @@ function CatalogSection({
 	totalPages: number;
 	connectedNames: Set<string>;
 	isLoading: boolean;
-	isFetching: boolean;
 	error: Error | null;
 	query: string;
 	onRetry: () => void;
@@ -318,7 +321,7 @@ function CatalogSection({
 	} else {
 		content = (
 			<>
-				<div className={cn(CONNECTOR_GRID_CLASS, isFetching && "opacity-60 transition-opacity")}>
+				<div className={CONNECTOR_GRID_CLASS}>
 					{items.map((app) => (
 						<ConnectorCard key={app.name} app={app} isConnected={connectedNames.has(app.name)} />
 					))}

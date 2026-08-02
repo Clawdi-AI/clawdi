@@ -28,6 +28,7 @@ import { LEDGER_MAX_ROWS, LEDGER_PAGE_SIZE } from "@/hosted/billing/wallet/walle
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { X402Card } from "@/hosted/billing/wallet/x402-card";
 import { env } from "@/lib/env";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "One balance for Clawdi AI, wallet-funded compute, top-ups, and auto-reload.";
@@ -142,7 +143,7 @@ export function WalletPage() {
 		);
 	}
 
-	if (wallet.error || !wallet.data) {
+	if (shouldBlockQueryError(wallet.error, wallet.data) || !wallet.data) {
 		return (
 			<div data-hosted="true" className={WALLET_PAGE_CLASS}>
 				<PageHeader title="Wallet" description={DESCRIPTION} />
@@ -203,14 +204,14 @@ export function WalletPage() {
 							isLoading={ledger.isLoading}
 							hasMore={ledgerData?.has_more ?? false}
 							atCap={ledgerLimit >= LEDGER_MAX_ROWS && (ledgerData?.has_more ?? false)}
-							isFetchingMore={ledger.isFetching}
+							isFetchingMore={ledger.isPlaceholderData && ledger.isFetching}
 							onShowMore={
-								ledger.error
+								ledger.error && ledger.data === undefined
 									? undefined
 									: () => setLedgerLimit((n) => Math.min(n + LEDGER_PAGE_SIZE, LEDGER_MAX_ROWS))
 							}
 						/>
-						{ledger.error ? (
+						{ledger.error && ledger.data === undefined ? (
 							<ApiErrorPanel
 								normalizer={billingErrorNormalizer}
 								error={ledger.error}
