@@ -137,7 +137,7 @@ export function AgentSettingsPanel({
 			),
 		onSuccess: () => {
 			toast.success("Agent disconnected", {
-				description: "Sessions, Skills, and Projects are retained until it reconnects.",
+				description: "Data is retained. Run `clawdi setup` on this installation to reconnect.",
 			});
 			queryClient.invalidateQueries({
 				predicate: (q) => {
@@ -193,8 +193,8 @@ export function AgentSettingsPanel({
 	const nameChanged = normalizedDraftName !== currentCustomName;
 	const hasCustomAvatar = Boolean(agent.avatar_url);
 	const ownershipKind = agentOwnershipKindFromId(agent.id, ownership);
-	// Disconnect deregisters the environment — destructive, so it must wait
-	// for RESOLVED ownership (`ownership !== null`). While the hosted sensor
+	// Disconnect archives the active Agent and Project, so it must wait for
+	// RESOLVED ownership (`ownership !== null`). While the hosted sensor
 	// is still resolving, a live hosted/legacy agent would otherwise briefly
 	// classify as connected and expose a working Disconnect.
 	const disconnectUnavailable = agentDisconnectUnavailable({
@@ -367,20 +367,19 @@ export function AgentSettingsPanel({
 			{!disconnectUnavailable ? (
 				<SettingsSection
 					title="Disconnect"
-					description="Remove this connected agent from your dashboard."
+					description="Stop this installation while keeping its Clawdi data."
 					variant="destructive"
 				>
 					<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
 						<p className="max-w-md text-sm text-muted-foreground">
-							The agent stops syncing here. Existing sessions, skills, and Projects stay in your
-							account.
+							Sync stops and retained Sessions, Skills, files, and Projects stay in your account.
 						</p>
 						<ConfirmAction
 							title="Disconnect this agent?"
 							description={
 								<p>
-									Sync stops and the Agent leaves active views. Sessions, Skills, and Projects are
-									retained and return when it reconnects.
+									Disconnect stops this installation and removes it from active views. Run{" "}
+									<code>clawdi setup</code> on it to reconnect with the same retained data.
 								</p>
 							}
 							confirmLabel="Disconnect agent"

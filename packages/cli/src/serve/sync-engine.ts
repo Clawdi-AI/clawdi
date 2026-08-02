@@ -395,6 +395,24 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			opts.abortController.abort();
 			return;
 		}
+		// This 404 is meaningful only at this exact startup boundary: the
+		// daemon looked up its persisted Agent id through the canonical Agent
+		// route, whose active-only lookup hides a user-disconnected identity.
+		// Do not broaden this to other 404s; Skill and unrelated resource
+		// misses retain their existing retry/failure behavior.
+		if (e instanceof ApiError && e.status === 404) {
+			log.error("engine.agent_disconnected", {
+				environment_id: opts.environmentId,
+				hint: "This installation is disconnected. Run `clawdi setup` to reconnect it with retained data.",
+			});
+			// Reuse the supervisor's established no-restart outcome. On macOS,
+			// KeepAlive requires the same best-effort self-unload used for an
+			// unrecoverable authentication stop.
+			process.exitCode = 2;
+			removeLaunchdDaemonSupervision(opts.adapter.agentType);
+			opts.abortController.abort();
+			return;
+		}
 		throw e;
 	}
 	log.info("engine.project_resolved", { default_project_id: defaultProjectId });

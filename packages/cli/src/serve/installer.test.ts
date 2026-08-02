@@ -277,6 +277,8 @@ describe("installer.install (Linux systemd)", () => {
 			expect(content).toContain('Environment="CLAWDI_DAEMON_RPC_HOST=0.0.0.0"');
 			expect(content).toContain('Environment="CLAWDI_DAEMON_RPC_PORT=17654"');
 			expect(content).toContain('Environment="CLAWDI_DAEMON_RPC_ALLOW_REMOTE=1"');
+			expect(content).toContain("Restart=always");
+			expect(content).toContain("RestartPreventExitStatus=2");
 		} finally {
 			process.env.PATH = oldPath;
 		}

@@ -38,6 +38,7 @@ import {
 	reconcileAgentSkillProjectionListing,
 	reconcileDelayMs,
 	resolveOwningSkillKey,
+	runSyncEngine,
 	SyncHealth,
 	skillInvalidationKey,
 	staleSkillProjectionProjectIds,
@@ -840,6 +841,95 @@ describe("isAuthFailure", () => {
 		expect(isAuthFailure(undefined)).toBe(false);
 		expect(isAuthFailure("401")).toBe(false);
 		expect(isAuthFailure({ status: 401 })).toBe(false);
+	});
+});
+
+describe("daemon startup Agent lookup", () => {
+	async function withStartupCase(
+		fetchImpl: (request: Request) => Promise<Response>,
+		run: (fixture: { abortController: AbortController; requests: Request[] }) => Promise<void>,
+	): Promise<void> {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-daemon-startup-"));
+		const originalFetch = globalThis.fetch;
+		const originalHome = process.env.CLAWDI_HOME;
+		const originalState = process.env.CLAWDI_STATE_DIR;
+		const originalApiUrl = process.env.CLAWDI_API_URL;
+		const originalAuthToken = process.env.CLAWDI_AUTH_TOKEN;
+		const originalAuthOrigin = process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+		const originalExitCode = process.exitCode;
+		const requests: Request[] = [];
+		try {
+			process.env.CLAWDI_HOME = join(root, "home");
+			process.env.CLAWDI_STATE_DIR = join(root, "serve");
+			process.env.CLAWDI_API_URL = "https://cloud.example.test";
+			process.env.CLAWDI_AUTH_TOKEN = "clawdi_test_token";
+			process.env.CLAWDI_AUTH_TOKEN_ORIGIN = "https://cloud.example.test";
+			process.exitCode = 0;
+			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+				const request = input instanceof Request ? input : new Request(input, init);
+				requests.push(request);
+				return fetchImpl(request);
+			}) as typeof fetch;
+			await run({ abortController: new AbortController(), requests });
+		} finally {
+			globalThis.fetch = originalFetch;
+			if (originalHome === undefined) delete process.env.CLAWDI_HOME;
+			else process.env.CLAWDI_HOME = originalHome;
+			if (originalState === undefined) delete process.env.CLAWDI_STATE_DIR;
+			else process.env.CLAWDI_STATE_DIR = originalState;
+			if (originalApiUrl === undefined) delete process.env.CLAWDI_API_URL;
+			else process.env.CLAWDI_API_URL = originalApiUrl;
+			if (originalAuthToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = originalAuthToken;
+			if (originalAuthOrigin === undefined) delete process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+			else process.env.CLAWDI_AUTH_TOKEN_ORIGIN = originalAuthOrigin;
+			process.exitCode = originalExitCode ?? 0;
+			rmSync(root, { recursive: true, force: true });
+		}
+	}
+
+	it("maps the persisted canonical Agent 404 to a clean no-restart stop", async () => {
+		await withStartupCase(
+			async () => new Response('{"detail":"Agent not found"}', { status: 404 }),
+			async ({ abortController, requests }) => {
+				await runSyncEngine({
+					environmentId: "agent-disconnected",
+					adapter: adapterRegistry.hermes.create(),
+					abort: abortController.signal,
+					abortController,
+					forcePollWatcher: true,
+				});
+
+				expect(requests).toHaveLength(1);
+				expect(new URL(requests[0].url).pathname).toBe("/v1/agents/agent-disconnected");
+				expect(process.exitCode).toBe(2);
+				expect(abortController.signal.aborted).toBe(true);
+			},
+		);
+	});
+
+	it("keeps server failures on the ordinary retry and fatal path", async () => {
+		await withStartupCase(
+			async () => new Response("offline", { status: 503 }),
+			async ({ abortController, requests }) => {
+				await expect(
+					runSyncEngine({
+						environmentId: "agent-offline",
+						adapter: adapterRegistry.hermes.create(),
+						abort: abortController.signal,
+						abortController,
+						forcePollWatcher: true,
+					}),
+				).rejects.toThrow(/503/);
+
+				expect(requests).toHaveLength(3);
+				expect(
+					requests.every((request) => new URL(request.url).pathname === "/v1/agents/agent-offline"),
+				).toBe(true);
+				expect(process.exitCode).toBe(0);
+				expect(abortController.signal.aborted).toBe(false);
+			},
+		);
 	});
 });
 

@@ -520,8 +520,8 @@ function installSystemd(opts: InstallOpts): {
 	// silently dies until the user logs in again. macOS launchd
 	// already does the right thing here; align Linux to match.
 	// `RestartPreventExitStatus=2` reserves a one-shot abort code
-	// for genuinely-broken configs (auth revoked, schema older
-	// than this binary expects) so we can opt out of restart
+	// for non-retryable states (auth revoked, Agent disconnected,
+	// schema older than this binary expects) so we can opt out of restart
 	// without flipping the whole policy.
 	// `WantedBy=default.target` is the systemd --user equivalent
 	// of "start at user login"; requires `loginctl enable-linger
