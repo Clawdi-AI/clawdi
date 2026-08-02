@@ -296,8 +296,14 @@ Threads, and Send Messages in Threads (`309237763136`). Create Public Threads
 supports Hermes' public `/thread`, auto-thread, and forum-post behavior plus the
 transparent transport's public thread-create contract. Create Private Threads
 and Manage Threads remain excluded: Clawdi does not create private threads or
-archive, lock, rename, or delete threads. Managed OpenClaw projections gate its
-optional thread-management tool surface; ordinary replies in existing threads
+archive, lock, or delete threads. Hermes supplies names in its thread-create
+requests and does not rename existing threads. OpenClaw can asynchronously
+replace an auto-thread's provisional name with a generated title, but it PATCHes
+only the thread ID returned by that same bot create request; Discord permits a
+thread creator to change `name`, `archived`, and `auto_archive_duration` without
+Manage Threads. Managed OpenClaw projections also set `actions.channels` and
+`actions.threads` to false, blocking arbitrary `sendMessage.threadName` renames
+and the optional thread action tool; ordinary replies in existing threads
 continue through normal message sending. Managed Hermes projections leave user
 allowlists empty instead of writing a `"*"` username, so they do not accidentally
 request Server Members intent while preserving the adapter's documented
