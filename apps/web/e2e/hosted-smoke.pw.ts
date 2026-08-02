@@ -2820,10 +2820,18 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			sessionBoxes[index - 1].y + sessionBoxes[index - 1].height,
 		);
 	}
-	const [recentSessionsBox, computeBox] = await Promise.all([
+	const [recentSessionsBox, computeBox, viewAllBox] = await Promise.all([
 		recentSessions.boundingBox(),
 		page.locator('[data-overview-status="compute"]').boundingBox(),
+		viewAllSessions.boundingBox(),
 	]);
+	expect(
+		Math.abs(
+			(viewAllBox?.x ?? 0) +
+				(viewAllBox?.width ?? 0) -
+				((recentSessionsBox?.x ?? 0) + (recentSessionsBox?.width ?? 0)),
+		),
+	).toBeLessThanOrEqual(2);
 	expect(Math.abs((computeBox?.y ?? 0) - (recentSessionsBox?.y ?? 0))).toBeLessThanOrEqual(2);
 	expect(
 		Math.abs(
@@ -2920,6 +2928,20 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await page.setViewportSize({ width: 390, height: 1200 });
 	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
 	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
+	const [mobileSessionsBox, mobileViewAllBox] = await Promise.all([
+		recentSessions.boundingBox(),
+		viewAllSessions.boundingBox(),
+	]);
+	expect((mobileViewAllBox?.y ?? 0) + (mobileViewAllBox?.height ?? 0)).toBeLessThanOrEqual(
+		(mobileSessionsBox?.y ?? 0) + 1,
+	);
+	expect(
+		Math.abs(
+			(mobileViewAllBox?.x ?? 0) +
+				(mobileViewAllBox?.width ?? 0) -
+				((mobileSessionsBox?.x ?? 0) + (mobileSessionsBox?.width ?? 0)),
+		),
+	).toBeLessThanOrEqual(2);
 	await page.setViewportSize({ width: 1280, height: 1600 });
 	await page.screenshot({ path: testInfo.outputPath("hosted-agent-overview.png"), fullPage: true });
 });
@@ -3159,42 +3181,65 @@ test("hosted overview keeps project count while names load", async ({ page }) =>
 	await expect(page.locator('[data-overview-module="vaults"]')).toBeVisible();
 });
 
-test("hosted provisioning stays focused on Compute", async ({ page }, testInfo) => {
-	const startingDeployment = { ...railHostedDeployment, status: "starting" };
-	const sessionRequests: string[] = [];
-	await stubHostedApi(page, {
-		sessionRequests,
-		deployments: [startingDeployment],
-		cloudAgents: [railHostedCloudAgent],
-		cloudAgentNotFoundIds: [railHostedEnvironmentId],
-	});
-	await page.goto(`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${startingDeployment.id}`);
+for (const deploymentStatus of ["creating", "starting"] as const) {
+	test(`hosted initial ${deploymentStatus} stays concise and status-grounded`, async ({
+		page,
+	}, testInfo) => {
+		const deployment = { ...railHostedDeployment, status: deploymentStatus };
+		const sessionRequests: string[] = [];
+		await stubHostedApi(page, {
+			sessionRequests,
+			deployments: [deployment],
+			cloudAgents: [railHostedCloudAgent],
+			cloudAgentNotFoundIds: [railHostedEnvironmentId],
+		});
+		await page.goto(`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${deployment.id}`);
 
-	const main = page.locator("main");
-	const panel = main.getByTestId("hosted-initial-deployment-panel");
-	await expect(panel).toContainText("Starting your agent");
-	await expect(panel).toContainText("Current status");
-	await expect(panel).toContainText("Starting");
-	await expect(panel).toContainText("This page updates automatically while your agent starts.");
-	await expect(panel.getByRole("status", { name: "Loading" })).toBeVisible();
-	for (const detail of ["Plan", "CPU", "Memory", "Storage"])
-		await expect(panel.getByText(detail, { exact: true })).toHaveCount(0);
-	await expect(main.locator('[data-agent-overview="hosted"]')).toHaveCount(0);
-	await expect(main.getByRole("button", { name: "Open Agent Interface" })).toHaveCount(0);
-	await expect(main.getByRole("heading", { name: "Resources", exact: true })).toHaveCount(0);
-	await expect(main.getByRole("heading", { name: "Tools", exact: true })).toHaveCount(0);
-	await expect(main.locator('[data-overview-module="sessions"]')).toHaveCount(0);
-	expect(sessionRequests).toEqual([]);
-	const sidebar = page.getByTestId("app-sidebar");
-	await expect(sidebar.getByText("Starting", { exact: true })).toBeVisible();
-	await expect(sidebar.getByText("Paused", { exact: true })).toHaveCount(0);
-	await expect(sidebar.getByText(/last seen/i)).toHaveCount(0);
-	await page.setViewportSize({ width: 1280, height: 1000 });
-	await page.screenshot({
-		path: testInfo.outputPath("hosted-agent-overview-provisioning.png"),
-		fullPage: true,
+		const main = page.locator("main");
+		const panel = main.getByTestId("hosted-initial-deployment-panel");
+		const activeLabel =
+			deploymentStatus === "creating" ? "Preparing your environment" : "Installing Hermes";
+		const stepLabel = deploymentStatus === "creating" ? "Step 1 of 3" : "Step 2 of 3";
+		const expectedStates =
+			deploymentStatus === "creating"
+				? { creating: "active", starting: "pending", running: "pending" }
+				: { creating: "completed", starting: "active", running: "pending" };
+		await expect(panel.getByRole("heading", { name: "Setting up Hermes" })).toBeVisible();
+		await expect(panel).not.toContainText("Current status");
+		await expect(panel).toContainText("This page updates automatically as setup progresses.");
+		await expect(panel.getByText(stepLabel, { exact: true })).toBeVisible();
+		const progress = panel.getByRole("list", { name: "Deployment progress" });
+		await expect(progress).toBeVisible();
+		for (const shortLabel of ["Environment", "Install", "Ready"])
+			await expect(progress.getByText(shortLabel, { exact: true })).toBeVisible();
+		await expect(progress).not.toContainText("Preparing your environment");
+		await expect(progress).not.toContainText("Installing Hermes");
+		await expect(panel.getByRole("status").filter({ hasText: activeLabel })).toHaveCount(1);
+		for (const [stage, state] of Object.entries(expectedStates)) {
+			const segment = panel.locator(`[data-deployment-stage="${stage}"]`);
+			await expect(segment).toHaveAttribute("data-stage-state", state);
+			if (state === "active") await expect(segment).toHaveAttribute("aria-current", "step");
+		}
+		await expect(panel.locator('[data-slot="spinner"]')).toHaveCount(0);
+		for (const detail of ["Plan", "CPU", "Memory", "Storage"])
+			await expect(panel.getByText(detail, { exact: true })).toHaveCount(0);
+		await expect(main.locator('[data-agent-overview="hosted"]')).toHaveCount(0);
+		await expect(main.getByRole("button", { name: "Open Agent Interface" })).toHaveCount(0);
+		await expect(main.getByRole("heading", { name: "Resources", exact: true })).toHaveCount(0);
+		await expect(main.getByRole("heading", { name: "Tools", exact: true })).toHaveCount(0);
+		await expect(main.locator('[data-overview-module="sessions"]')).toHaveCount(0);
+		expect(sessionRequests).toEqual([]);
+		const sidebar = page.getByTestId("app-sidebar");
+		await expect(sidebar.getByText("Starting", { exact: true })).toBeVisible();
+		await expect(sidebar.getByText("Paused", { exact: true })).toHaveCount(0);
+		await expect(sidebar.getByText(/last seen/i)).toHaveCount(0);
+		await page.setViewportSize({ width: 1280, height: 1000 });
+		await page.screenshot({
+			path: testInfo.outputPath(`hosted-agent-overview-initial-${deploymentStatus}.png`),
+			fullPage: true,
+		});
 	});
-});
+}
 
 test("starting with an existing projection keeps lifecycle status in Compute", async ({ page }) => {
 	const restartingDeployment = { ...railHostedDeployment, status: "starting" };
@@ -5332,7 +5377,7 @@ test("free Basic Deploy recovers hydration before authoritative first frame", as
 	expect(new URL(page.url()).searchParams.has("setup")).toBe(false);
 	await expect(page.getByLabel("Agent ownership loading")).toHaveCount(0);
 	await expect(page.locator('[data-hosted="true"] [data-slot="skeleton"]')).toHaveCount(0);
-	await expect(page.getByText("Starting your agent…", { exact: true })).toBeVisible();
+	await expect(page.getByText("Setting up Hermes", { exact: true })).toBeVisible();
 	const detail = page.locator("main");
 	await expect(detail.getByText("Basic", { exact: true })).toBeVisible();
 	await expect(detail.getByText("GPT-5.6 Luna", { exact: true })).toBeVisible();
@@ -5397,7 +5442,7 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	await checkoutDialog.getByRole("button", { name: "Subscribe", exact: true }).click();
 
 	await expect(page).toHaveURL(/\/agents\/hdep_created/);
-	await expect(page.getByText("Starting your agent…", { exact: true })).toBeVisible();
+	await expect(page.getByText("Setting up Hermes", { exact: true })).toBeVisible();
 	await expect(
 		page.getByText("This step should finish within five minutes.", { exact: false }),
 	).toBeVisible();
@@ -6262,7 +6307,7 @@ test("terminal provider failure replaces Starting with provider recovery", async
 			exact: true,
 		}),
 	).toBeVisible();
-	await expect(main.getByText("Starting your agent…", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("Setting up Hermes", { exact: true })).toHaveCount(0);
 	await main.getByRole("button", { name: "Fix provider", exact: true }).click();
 	await expect(page).toHaveURL(new RegExp(`/agents/${starting.id}/model-provider`));
 });
@@ -6342,7 +6387,7 @@ test("deployment detail stays put, becomes running, and keeps manual Runtime UI 
 
 	await page.goto(`/agents/${pendingRuntimeUiDeployment.id}?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect(main.getByText("Starting your agent…", { exact: true })).toBeVisible();
+	await expect(main.getByText("Setting up Hermes", { exact: true })).toBeVisible();
 	await expect(page).toHaveURL(
 		(url) => url.pathname === `/agents/${pendingRuntimeUiDeployment.id}`,
 	);

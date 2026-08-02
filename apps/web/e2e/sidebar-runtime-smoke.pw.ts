@@ -588,12 +588,11 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	);
 	await expect(page.locator('[data-overview-status="live-sync"]')).toContainText("Machine");
 	await expect(page.locator('[data-overview-status="live-sync"]')).toContainText("Last seen");
-	await expect(
-		page.locator("#connected-recent-sessions").locator("..").getByRole("button", {
-			name: "View all",
-			exact: true,
-		}),
-	).toHaveAttribute("href", "/agents/agent-smoke-1/sessions");
+	const viewAllSessions = page
+		.locator("#connected-recent-sessions")
+		.locator("..")
+		.getByRole("button", { name: "View all", exact: true });
+	await expect(viewAllSessions).toHaveAttribute("href", "/agents/agent-smoke-1/sessions");
 	const recentSessions = page.getByRole("region", { name: "Recent sessions" });
 	await expect(recentSessions.locator("article")).toHaveCount(3);
 	await expect(recentSessions).not.toContainText("Draft update");
@@ -637,10 +636,18 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 			sessionBoxes[index - 1].y + sessionBoxes[index - 1].height,
 		);
 	}
-	const [recentSessionsBox, liveSyncBox] = await Promise.all([
+	const [recentSessionsBox, liveSyncBox, viewAllBox] = await Promise.all([
 		recentSessions.boundingBox(),
 		page.locator('[data-overview-status="live-sync"]').boundingBox(),
+		viewAllSessions.boundingBox(),
 	]);
+	expect(
+		Math.abs(
+			(viewAllBox?.x ?? 0) +
+				(viewAllBox?.width ?? 0) -
+				((recentSessionsBox?.x ?? 0) + (recentSessionsBox?.width ?? 0)),
+		),
+	).toBeLessThanOrEqual(2);
 	expect(Math.abs((liveSyncBox?.y ?? 0) - (recentSessionsBox?.y ?? 0))).toBeLessThanOrEqual(2);
 	expect(
 		Math.abs(
@@ -706,6 +713,20 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 			mobileSessionBoxes[index - 1].y + mobileSessionBoxes[index - 1].height,
 		);
 	}
+	const [mobileSessionsBox, mobileViewAllBox] = await Promise.all([
+		recentSessions.boundingBox(),
+		viewAllSessions.boundingBox(),
+	]);
+	expect((mobileViewAllBox?.y ?? 0) + (mobileViewAllBox?.height ?? 0)).toBeLessThanOrEqual(
+		(mobileSessionsBox?.y ?? 0) + 1,
+	);
+	expect(
+		Math.abs(
+			(mobileViewAllBox?.x ?? 0) +
+				(mobileViewAllBox?.width ?? 0) -
+				((mobileSessionsBox?.x ?? 0) + (mobileSessionsBox?.width ?? 0)),
+		),
+	).toBeLessThanOrEqual(2);
 	await page.setViewportSize({ width: 1280, height: 1400 });
 	await page.screenshot({
 		path: testInfo.outputPath("connected-agent-overview.png"),

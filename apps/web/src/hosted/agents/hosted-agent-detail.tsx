@@ -1052,60 +1052,112 @@ export function InitialDeploymentPage({
 	onCheckDeploymentAgain: () => void;
 }) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
+	const runtimeLabel = runtimeDisplayName(deployment.resource.spec.runtime);
+	const stages = [
+		{ status: "creating", label: "Environment" },
+		{ status: "starting", label: "Install" },
+		{ status: "running", label: "Ready" },
+	] as const;
+	const activeStageIndex = status.kind === "starting" ? 1 : status.kind === "running" ? 2 : 0;
+	const activeStageLabel =
+		activeStageIndex === 0
+			? "Preparing your environment"
+			: activeStageIndex === 1
+				? `Installing ${runtimeLabel}`
+				: "Ready";
 	return (
 		<DetailPanel
 			className={cn(
 				"p-6 md:p-8",
-				deploymentTransitionTimedOut
-					? "border-warning/30 bg-warning-muted"
-					: "border-info-muted bg-info-muted",
+				deploymentTransitionTimedOut && "border-warning/30 bg-warning-muted",
 			)}
 		>
 			<div
 				data-testid="hosted-initial-deployment-panel"
 				role={deploymentTransitionTimedOut ? "alert" : undefined}
-				className="space-y-5"
+				className="space-y-6"
 			>
-				<div className="flex gap-4">
-					<div className="flex size-12 shrink-0 items-center justify-center rounded-lg border bg-background">
-						{deploymentTransitionTimedOut ? (
-							<AlertCircle className="size-6" />
-						) : (
-							<Spinner className="size-6" />
-						)}
-					</div>
-					<div className="min-w-0">
-						<h2 className="text-xl font-semibold">
-							{deploymentTransitionTimedOut
-								? "Setup is taking longer than expected"
-								: "Starting your agent…"}
-						</h2>
-						<p className="mt-2 text-sm text-muted-foreground">
-							{deploymentTransitionTimedOut
-								? "Your agent may still be starting. We’ll keep checking automatically, or you can check again now."
-								: "This usually takes a few minutes. This page updates automatically while your agent starts."}
-						</p>
-						<dl className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-							<dt className="text-muted-foreground">Current status</dt>
-							<dd className="inline-flex items-center gap-2 font-medium">
-								<StatusDot status={deploymentStatusTone(status)} />
-								{deploymentStatusLabel(status)}
-							</dd>
-						</dl>
-						{deploymentTransitionTimedOut ? (
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								className="mt-4"
-								disabled={isCheckingDeployment}
-								onClick={onCheckDeploymentAgain}
-							>
-								{isCheckingDeployment ? <Spinner className="size-3.5" /> : <RefreshCw />}Check again
-							</Button>
-						) : null}
-					</div>
+				<div>
+					<h2 className="flex items-center gap-2 text-lg font-semibold">
+						{deploymentTransitionTimedOut ? <AlertCircle className="size-5" /> : null}
+						{deploymentTransitionTimedOut
+							? "Setup is taking longer than expected"
+							: `Setting up ${runtimeLabel}`}
+					</h2>
+					<p className="mt-1 text-sm text-muted-foreground">
+						{deploymentTransitionTimedOut
+							? "Your agent may still be starting. We’ll keep checking automatically."
+							: "This page updates automatically as setup progresses."}
+					</p>
 				</div>
+				<div>
+					<div className="flex items-baseline justify-between gap-4">
+						<p
+							className="text-base font-semibold"
+							role="status"
+							aria-live="polite"
+							aria-atomic="true"
+						>
+							{activeStageLabel}
+						</p>
+						<p className="shrink-0 text-xs font-medium text-muted-foreground">
+							Step {activeStageIndex + 1} of {stages.length}
+						</p>
+					</div>
+					<ol aria-label="Deployment progress" className="mt-4 grid w-full grid-cols-3 gap-2">
+						{stages.map((stage, index) => {
+							const stageState =
+								status.kind === "running" || index < activeStageIndex
+									? "completed"
+									: index === activeStageIndex
+										? "active"
+										: "pending";
+							return (
+								<li
+									key={stage.status}
+									data-deployment-stage={stage.status}
+									data-stage-state={stageState}
+									aria-current={index === activeStageIndex ? "step" : undefined}
+									aria-label={`${stage.label}, ${stageState}`}
+								>
+									<div
+										aria-hidden="true"
+										className={cn(
+											"h-2 rounded-full",
+											stageState === "active"
+												? "bg-primary"
+												: stageState === "completed"
+													? "bg-primary/50"
+													: "bg-muted",
+										)}
+									/>
+									<p
+										aria-hidden="true"
+										className={cn(
+											"mt-2 text-xs",
+											stageState === "pending"
+												? "text-muted-foreground"
+												: "font-medium text-foreground",
+										)}
+									>
+										{stage.label}
+									</p>
+								</li>
+							);
+						})}
+					</ol>
+				</div>
+				{deploymentTransitionTimedOut ? (
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						disabled={isCheckingDeployment}
+						onClick={onCheckDeploymentAgain}
+					>
+						{isCheckingDeployment ? <Spinner className="size-3.5" /> : <RefreshCw />}Check again
+					</Button>
+				) : null}
 			</div>
 		</DetailPanel>
 	);
@@ -1221,23 +1273,23 @@ function OverviewTab({
 	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
 	return (
 		<div className="flex flex-col gap-8">
-			<div>
-				<div className="mb-3 flex items-center justify-between">
-					<h2 id="hosted-recent-sessions" className="text-sm font-semibold">
-						Recent sessions
-					</h2>
-					<Button
-						render={<Link {...agentSectionLink(agentId, "sessions", routeSearch)} />}
-						nativeButton={false}
-						variant="ghost"
-						size="sm"
-						className="text-muted-foreground"
-					>
-						View all
-						<ArrowRight />
-					</Button>
-				</div>
-				<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
+			<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
+				<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
+					<div className="flex items-center justify-between">
+						<h2 id="hosted-recent-sessions" className="text-sm font-semibold">
+							Recent sessions
+						</h2>
+						<Button
+							render={<Link {...agentSectionLink(agentId, "sessions", routeSearch)} />}
+							nativeButton={false}
+							variant="ghost"
+							size="sm"
+							className="text-muted-foreground"
+						>
+							View all
+							<ArrowRight />
+						</Button>
+					</div>
 					<section
 						aria-labelledby="hosted-recent-sessions"
 						className="min-h-40 min-w-0 @3xl/main:min-h-52"
@@ -1258,6 +1310,8 @@ function OverviewTab({
 							/>
 						)}
 					</section>
+				</div>
+				<div className="@3xl/main:row-start-2">
 					<AgentOverviewStatusCard
 						agentId={agentId}
 						section="settings"

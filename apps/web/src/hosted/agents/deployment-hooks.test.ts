@@ -132,24 +132,72 @@ describe("deployment failure remediation rendering", () => {
 });
 
 describe("deployment transition timeout rendering", () => {
-	test("shows only real lifecycle progress during initial startup", () => {
+	test("maps creating, starting, and running onto three concise semantic stages", () => {
 		if (!initialDeploymentPage) throw new Error("agent detail was not loaded");
-		const markup = renderToStaticMarkup(
-			createElement(initialDeploymentPage, {
-				deployment: hostedDeploymentFixture({ status: "starting" }),
-				deploymentTransitionTimedOut: false,
-				isCheckingDeployment: false,
-				onCheckDeploymentAgain: () => undefined,
-			}),
-		);
+		for (const fixture of [
+			{
+				status: "creating",
+				runtime: "hermes",
+				title: "Setting up Hermes",
+				activeLabel: "Preparing your environment",
+				step: "Step 1 of 3",
+				currentStage: "creating",
+				states: { creating: "active", starting: "pending", running: "pending" },
+			},
+			{
+				status: "starting",
+				runtime: "openclaw",
+				title: "Setting up OpenClaw",
+				activeLabel: "Installing OpenClaw",
+				step: "Step 2 of 3",
+				currentStage: "starting",
+				states: { creating: "completed", starting: "active", running: "pending" },
+			},
+			{
+				status: "running",
+				runtime: "hermes",
+				title: "Setting up Hermes",
+				activeLabel: "Ready",
+				step: "Step 3 of 3",
+				currentStage: "running",
+				states: { creating: "completed", starting: "completed", running: "completed" },
+			},
+		] as const) {
+			const markup = renderToStaticMarkup(
+				createElement(initialDeploymentPage, {
+					deployment: hostedDeploymentFixture({
+						status: fixture.status,
+						runtime: fixture.runtime,
+					}),
+					deploymentTransitionTimedOut: false,
+					isCheckingDeployment: false,
+					onCheckDeploymentAgain: () => undefined,
+				}),
+			);
 
-		expect(markup).toContain("Starting your agent…");
-		expect(markup).toContain("Current status");
-		expect(markup).toContain("Starting");
-		expect(markup).toContain("updates automatically");
-		expect(markup).toContain('data-slot="spinner"');
-		for (const configurationLabel of ["Plan", "CPU", "Memory", "Storage"])
-			expect(markup).not.toContain(`>${configurationLabel}<`);
+			expect(markup).toContain(fixture.title);
+			expect(markup).not.toContain("Deploying your agent");
+			expect(markup).not.toContain("Current status");
+			expect(markup).toContain(`>${fixture.activeLabel}</p>`);
+			expect(markup).toContain(fixture.step);
+			expect(markup).toContain('aria-label="Deployment progress"');
+			for (const [stage, state] of Object.entries(fixture.states)) {
+				expect(markup).toMatch(
+					new RegExp(
+						`data-deployment-stage="${stage}" data-stage-state="${state}"${stage === fixture.currentStage ? ' aria-current="step"' : ""}`,
+					),
+				);
+			}
+			for (const shortLabel of ["Environment", "Install", "Ready"])
+				expect(markup).toContain(`>${shortLabel}</p>`);
+			expect(markup).toContain("updates automatically");
+			expect(markup).not.toContain('data-slot="spinner"');
+			expect(markup).not.toContain("aria-valuenow");
+			expect(markup).not.toContain("RuntimeNotReady");
+			expect(markup).not.toContain("DriverApplying");
+			for (const configurationLabel of ["Plan", "CPU", "Memory", "Storage"])
+				expect(markup).not.toContain(`>${configurationLabel}<`);
+		}
 	});
 
 	test("keeps the delayed-start retry accessible", () => {
@@ -166,8 +214,10 @@ describe("deployment transition timeout rendering", () => {
 		expect(markup).toContain('role="alert"');
 		expect(markup).toContain("Setup is taking longer than expected");
 		expect(markup).toContain("Check again");
-		expect(markup).toContain("Current status");
-		expect(markup).toContain("Starting");
+		expect(markup).not.toContain("Current status");
+		expect(markup).toContain(">Installing OpenClaw</p>");
+		expect(markup).toContain("Step 2 of 3");
+		expect(markup).toContain('data-deployment-stage="starting" data-stage-state="active"');
 	});
 
 	test("keeps projection availability notices off the deployment-backed overview", () => {
@@ -272,7 +322,7 @@ describe("deployment transition timeout rendering", () => {
 });
 
 describe("hosted agent customer language", () => {
-	test("uses Starting and Running as lifecycle state vocabulary across surfaces", () => {
+	test("uses grounded deployment language across hosted surfaces", () => {
 		const detailSource = readFileSync(
 			new URL("./hosted-agent-detail.tsx", import.meta.url),
 			"utf8",
@@ -298,7 +348,7 @@ describe("hosted agent customer language", () => {
 		]) {
 			expect(customerCopy).not.toContain(staleLifecycleCopy);
 		}
-		expect(detailSource).toContain("Starting your agent…");
+		expect(detailSource).toMatch(/Setting up \$\{runtimeLabel\}/);
 		expect(detailSource).toContain("Your agent is running");
 		expect(wizardSource).not.toContain("After your agent is running");
 	});

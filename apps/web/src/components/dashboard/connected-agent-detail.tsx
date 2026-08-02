@@ -191,23 +191,23 @@ export function ConnectedAgentDetail({
 
 					{activeTab === "overview" ? (
 						<div className="flex flex-col gap-8">
-							<div>
-								<div className="mb-3 flex items-center justify-between">
-									<h2 id="connected-recent-sessions" className="text-sm font-semibold">
-										Recent sessions
-									</h2>
-									<Button
-										render={<Link {...agentSectionLink(id, "sessions", routeSearch)} />}
-										nativeButton={false}
-										variant="ghost"
-										size="sm"
-										className="text-muted-foreground"
-									>
-										View all
-										<ArrowRight />
-									</Button>
-								</div>
-								<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
+							<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
+								<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
+									<div className="flex items-center justify-between">
+										<h2 id="connected-recent-sessions" className="text-sm font-semibold">
+											Recent sessions
+										</h2>
+										<Button
+											render={<Link {...agentSectionLink(id, "sessions", routeSearch)} />}
+											nativeButton={false}
+											variant="ghost"
+											size="sm"
+											className="text-muted-foreground"
+										>
+											View all
+											<ArrowRight />
+										</Button>
+									</div>
 									<section
 										aria-labelledby="connected-recent-sessions"
 										className="min-h-40 min-w-0 @3xl/main:min-h-52"
@@ -226,6 +226,8 @@ export function ConnectedAgentDetail({
 											/>
 										)}
 									</section>
+								</div>
+								<div className="@3xl/main:row-start-2">
 									<AgentOverviewStatusCard
 										agentId={id}
 										section="settings"
