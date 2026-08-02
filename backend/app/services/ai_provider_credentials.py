@@ -67,6 +67,7 @@ async def environment_binds_provider(
             .where(
                 AgentEnvironment.id == environment_id,
                 AgentEnvironment.user_id == owner_user_id,
+                AgentEnvironment.archived_at.is_(None),
             )
         )
     ).one_or_none()
@@ -92,6 +93,7 @@ async def environment_matches_runtime(
                 AgentEnvironment.id == environment_id,
                 AgentEnvironment.user_id == owner_user_id,
                 AgentEnvironment.agent_type == runtime,
+                AgentEnvironment.archived_at.is_(None),
             )
         )
     ) is not None
@@ -152,7 +154,10 @@ async def validate_prospective_bound_runtime_auth(
                 HostedRuntimeState,
                 HostedRuntimeState.environment_id == AgentEnvironment.id,
             )
-            .where(AgentEnvironment.user_id == owner_user_id)
+            .where(
+                AgentEnvironment.user_id == owner_user_id,
+                AgentEnvironment.archived_at.is_(None),
+            )
             .order_by(AgentEnvironment.id)
         )
     ).all()
@@ -182,7 +187,10 @@ async def provider_has_hosted_runtime_consumer(
                 AgentEnvironment,
                 AgentEnvironment.id == HostedRuntimeState.environment_id,
             )
-            .where(AgentEnvironment.user_id == owner_user_id)
+            .where(
+                AgentEnvironment.user_id == owner_user_id,
+                AgentEnvironment.archived_at.is_(None),
+            )
             .order_by(HostedRuntimeState.environment_id)
         )
     ).scalars()

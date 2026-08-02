@@ -4,7 +4,6 @@ import {
 	availableBotProvidersForAgent,
 	channelProviderLinkingReady,
 	pairCodeExpired,
-	pairingActionLabel,
 	pairingCommand,
 	verifiedDiscordPairingCommand,
 	verifiedDiscordServerInstallUrl,
@@ -13,21 +12,16 @@ import {
 
 describe("hosted channel instructions and gates", () => {
 	test("renders the exact command accepted by the channel backend", () => {
-		expect(pairingCommand("PAIRABC123")).toBe("/bot_pair PAIRABC123");
-	});
-
-	test("uses one discoverable Discord server pairing action", () => {
-		expect(pairingActionLabel("discord")).toBe("Pair Discord");
-		expect(pairingActionLabel("imessage")).toBe("Pair chat");
+		expect(pairingCommand("BCDFGHJKLM")).toBe("/clawdi_pair BCDFGHJKLM");
 	});
 
 	test("accepts only the current authoritative Discord pairing command", () => {
-		expect(verifiedDiscordPairingCommand("/clawdi_pair PAIRABC123", "PAIRABC123")).toBe(
-			"/clawdi_pair PAIRABC123",
+		expect(verifiedDiscordPairingCommand("/clawdi_pair BCDFGHJKLM", "BCDFGHJKLM")).toBe(
+			"/clawdi_pair BCDFGHJKLM",
 		);
-		expect(verifiedDiscordPairingCommand("/bot_pair PAIRABC123", "PAIRABC123")).toBeNull();
-		expect(verifiedDiscordPairingCommand("/clawdi_pair OTHER", "PAIRABC123")).toBeNull();
-		expect(verifiedDiscordPairingCommand(" /clawdi_pair PAIRABC123", "PAIRABC123")).toBeNull();
+		expect(verifiedDiscordPairingCommand("/bot_pair BCDFGHJKLM", "BCDFGHJKLM")).toBeNull();
+		expect(verifiedDiscordPairingCommand("/clawdi_pair OTHER", "BCDFGHJKLM")).toBeNull();
+		expect(verifiedDiscordPairingCommand(" /clawdi_pair BCDFGHJKLM", "BCDFGHJKLM")).toBeNull();
 	});
 
 	test("accepts only the official Discord User Install authorize contract", () => {

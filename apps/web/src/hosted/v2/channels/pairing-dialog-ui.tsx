@@ -6,7 +6,6 @@ import type { ComponentProps, ReactNode } from "react";
 import {
 	DialogContent,
 	DialogDescription,
-	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
@@ -25,7 +24,7 @@ export function PairingDialogContent({
 			data-v2="true"
 			data-pairing-dialog
 			className={cn(
-				"h-[min(40rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-4 overflow-hidden sm:h-auto sm:max-w-md",
+				"h-[min(40rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)] gap-4 overflow-hidden sm:h-auto sm:max-w-md",
 				className,
 			)}
 			{...props}
@@ -39,12 +38,10 @@ export function PairingDialogHeader({
 	title,
 	identity,
 	description,
-	scope,
 }: {
 	title: string;
 	identity: string;
 	description: string;
-	scope?: string;
 }) {
 	return (
 		<DialogHeader>
@@ -52,10 +49,7 @@ export function PairingDialogHeader({
 			<p className="min-w-0 truncate text-sm font-medium" title={identity}>
 				{identity}
 			</p>
-			<DialogDescription>
-				{scope ? <span className="block font-medium text-foreground">{scope}</span> : null}
-				<span className={scope ? "mt-1 block" : undefined}>{description}</span>
-			</DialogDescription>
+			<DialogDescription>{description}</DialogDescription>
 		</DialogHeader>
 	);
 }
@@ -72,11 +66,11 @@ export function PairingDialogBody({ className, ...props }: ComponentProps<"div">
 	);
 }
 
-export function PairingDialogFooter({ className, ...props }: ComponentProps<typeof DialogFooter>) {
+export function PairingDialogActions({ className, ...props }: ComponentProps<"div">) {
 	return (
-		<DialogFooter
-			data-pairing-dialog-footer
-			className={cn("border-t pt-4", className)}
+		<div
+			data-pairing-dialog-actions
+			className={cn("grid gap-2 sm:grid-cols-2", className)}
 			{...props}
 		/>
 	);

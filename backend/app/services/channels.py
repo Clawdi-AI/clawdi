@@ -87,8 +87,8 @@ from app.services.vault_crypto import decrypt, encrypt
 
 log = logging.getLogger(__name__)
 
-PAIR_COMMAND = "/bot_pair"
-UNPAIR_COMMAND = "/bot_unpair"
+PAIR_COMMAND = "/clawdi_pair"
+UNPAIR_COMMAND = "/clawdi_unpair"
 DISCORD_PAIR_COMMAND_NAME = "clawdi_pair"
 DISCORD_UNPAIR_COMMAND_NAME = "clawdi_unpair"
 DISCORD_RESERVED_COMMAND_NAMES = frozenset(
@@ -98,11 +98,16 @@ DISCORD_RESERVED_COMMAND_NAMES = frozenset(
     }
 )
 DISCORD_LEGACY_RESERVED_COMMAND_NAMES = frozenset({"bot_pair", "bot_unpair"})
-PAIR_CODE_PATTERN = re.compile(r"^PAIR[A-Z0-9]{8,}$")
+PAIR_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+PAIR_CODE_LENGTH = 10
+PAIR_CODE_GENERATION_ATTEMPTS = 5
+PAIR_CODE_PATTERN = re.compile(
+    rf"^(?:[{PAIR_CODE_ALPHABET}]{{{PAIR_CODE_LENGTH}}}|PAIR[A-Z0-9]{{8,}})$"
+)
 TELEGRAM_BOT_USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{5,32}bot$", re.IGNORECASE)
 DEFAULT_CHANNEL_COMMANDS: tuple[dict[str, Any], ...] = (
     {
-        "name": "bot_pair",
+        "name": "clawdi_pair",
         "description": "Pair this chat with Clawdi.",
         "options": [
             {
@@ -114,7 +119,7 @@ DEFAULT_CHANNEL_COMMANDS: tuple[dict[str, Any], ...] = (
         ],
     },
     {
-        "name": "bot_unpair",
+        "name": "clawdi_unpair",
         "description": "Disconnect this chat from Clawdi.",
         "options": [],
     },
@@ -191,6 +196,18 @@ class DiscordRoutingKey:
 
 
 @dataclass(frozen=True)
+class DiscordGuildMembershipCheck:
+    denied_reason: str | None = None
+    guild_name: str | None = None
+
+
+@dataclass(frozen=True)
+class DiscordPairingCommandAdmission:
+    denied_reason: str | None = None
+    external_chat_name: str | None = None
+
+
+@dataclass(frozen=True)
 class ChannelPairCommand:
     kind: str
     code: str | None = None
@@ -230,7 +247,6 @@ class ChannelAgentContext:
 PAIRING_REPLY_PAIRED = "Paired! This chat is now connected to your agent."
 PAIRING_REPLY_UNPAIRED = "Unpaired. This chat is no longer connected to an agent."
 PAIRING_REPLY_NOT_PAIRED = "This chat is not paired."
-PAIRING_REPLY_USAGE_BOT_PAIR = "Usage: /bot_pair <code>"
 PAIRING_REPLY_FORBIDDEN = "Only the user who paired this chat can change its pairing."
 
 
@@ -266,7 +282,7 @@ def generate_webhook_secret() -> str:
 
 
 def generate_pair_code() -> str:
-    return "PAIR" + secrets.token_urlsafe(18).replace("-", "").replace("_", "")[:24].upper()
+    return "".join(secrets.choice(PAIR_CODE_ALPHABET) for _ in range(PAIR_CODE_LENGTH))
 
 
 def generate_agent_token(provider: str) -> str:
@@ -488,6 +504,7 @@ async def get_or_create_bot_agent_link(
             .where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == link_user_id,
+                AgentEnvironment.archived_at.is_(None),
             )
             .execution_options(populate_existing=True)
             .with_for_update(of=(AgentEnvironment, V2RuntimeEnvironmentFence))
@@ -592,6 +609,7 @@ async def get_strict_v2_hosted_channel_agent_or_409(
         .where(
             AgentEnvironment.id == agent_id,
             AgentEnvironment.user_id == user_id,
+            AgentEnvironment.archived_at.is_(None),
         )
         .execution_options(populate_existing=True)
     )
@@ -645,6 +663,7 @@ async def bot_agent_link_allows_new_pairing(
                 ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
                 ChannelAccount.archived_at.is_(None),
                 AgentEnvironment.user_id == user_id,
+                AgentEnvironment.archived_at.is_(None),
             )
             .execution_options(populate_existing=True)
             .with_for_update(of=(ChannelBotAgentLink, V2RuntimeEnvironmentFence))
@@ -781,7 +800,10 @@ async def list_strict_v2_hosted_channel_agent_ids(
                 V2RuntimeEnvironmentFence,
                 V2RuntimeEnvironmentFence.environment_id == AgentEnvironment.id,
             )
-            .where(AgentEnvironment.user_id == user_id)
+            .where(
+                AgentEnvironment.user_id == user_id,
+                AgentEnvironment.archived_at.is_(None),
+            )
             .order_by(AgentEnvironment.created_at, AgentEnvironment.id)
         )
     ).all()
@@ -817,6 +839,7 @@ async def ensure_hosted_agent_provider_link_available(
             .where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == user_id,
+                AgentEnvironment.archived_at.is_(None),
             )
             .with_for_update()
         )
@@ -908,21 +931,33 @@ async def create_pair_code(
     ttl_seconds: int,
     agent_token: str | None = None,
 ) -> PairCodeCreateResult:
-    raw_code = generate_pair_code()
-    pair_code = ChannelPairCode(
-        account_id=account.id,
-        bot_agent_link_id=link.id,
-        user_id=link.user_id,
-        code_hash=hash_token(raw_code),
-        expires_at=datetime.now(UTC) + timedelta(seconds=ttl_seconds),
-    )
-    db.add(pair_code)
-    await db.flush()
-    return PairCodeCreateResult(
-        pair_code=pair_code,
-        code=raw_code,
-        link=link,
-        agent_token=agent_token,
+    expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
+    for _ in range(PAIR_CODE_GENERATION_ATTEMPTS):
+        raw_code = generate_pair_code()
+        statement = (
+            postgresql_insert(ChannelPairCode)
+            .values(
+                id=uuid4(),
+                account_id=account.id,
+                bot_agent_link_id=link.id,
+                user_id=link.user_id,
+                code_hash=hash_token(raw_code),
+                expires_at=expires_at,
+            )
+            .on_conflict_do_nothing(constraint="uq_channel_pair_codes_code_hash")
+            .returning(ChannelPairCode)
+        )
+        pair_code = (await db.execute(statement)).scalar_one_or_none()
+        if pair_code is not None:
+            return PairCodeCreateResult(
+                pair_code=pair_code,
+                code=raw_code,
+                link=link,
+                agent_token=agent_token,
+            )
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="could not allocate a unique pair code",
     )
 
 
@@ -1261,6 +1296,7 @@ async def resolve_channel_agent_by_token(
             ChannelAccount.archived_at.is_(None),
             ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
             AgentEnvironment.user_id == ChannelBotAgentLink.user_id,
+            AgentEnvironment.archived_at.is_(None),
         )
         .execution_options(populate_existing=True)
     )
@@ -1307,6 +1343,7 @@ async def resolve_channel_agent_by_identity(
             ChannelAccount.archived_at.is_(None),
             ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
             AgentEnvironment.user_id == ChannelBotAgentLink.user_id,
+            AgentEnvironment.archived_at.is_(None),
         )
         .execution_options(populate_existing=True)
     )
@@ -1437,7 +1474,9 @@ async def get_or_create_binding(
         binding.bot_agent_link_id = bot_agent_link_id
         binding.user_id = user_id
         binding.external_chat_type = external_chat_type
-        binding.external_chat_name = external_chat_name
+        candidate_name = _read_optional_display_name(external_chat_name)
+        if candidate_name is not None and candidate_name != external_chat_id:
+            binding.external_chat_name = candidate_name
         binding.paired_external_user_id = external_user_id
         binding.status = BINDING_STATUS_ACTIVE
         return binding
@@ -1780,7 +1819,7 @@ def parse_pair_command(text: str | None) -> ChannelPairCommand | None:
         if code is not None and PAIR_CODE_PATTERN.fullmatch(code):
             return ChannelPairCommand(kind="pair", code=code)
         return None
-    if not trimmed.startswith("/bot_"):
+    if not trimmed.startswith("/clawdi_"):
         return None
     head, separator, rest = trimmed.partition(" ")
     command = head.split("@", 1)[0]
@@ -1809,6 +1848,9 @@ def _single_command_arg(rest: str) -> str | None:
 def pairing_reply_for_command(
     command: ChannelPairCommand | None,
     result: InboundBindingResult,
+    *,
+    pair_command: str = PAIR_COMMAND,
+    unpair_command: str = UNPAIR_COMMAND,
 ) -> str:
     if result.paired:
         return PAIRING_REPLY_PAIRED
@@ -1818,7 +1860,7 @@ def pairing_reply_for_command(
         return "Message received."
     if command.kind == "pair":
         if result.pair_failed_reason == "usage":
-            return PAIRING_REPLY_USAGE_BOT_PAIR
+            return f"Usage: {pair_command} <code>"
         if result.pair_failed_reason == "forbidden":
             return PAIRING_REPLY_FORBIDDEN
         reason = result.pair_failed_reason or "invalid"
@@ -1828,7 +1870,7 @@ def pairing_reply_for_command(
             return PAIRING_REPLY_FORBIDDEN
         return PAIRING_REPLY_NOT_PAIRED
     if command.kind == "unknown" and command.command:
-        return f"Unknown command: {command.command}. Use /bot_pair <code> or /bot_unpair."
+        return f"Unknown command: {command.command}. Use {pair_command} <code> or {unpair_command}."
     return "Message received."
 
 
@@ -1970,12 +2012,12 @@ def _discord_pair_install_admission(
     return DISCORD_USER_INSTALL_REQUIRED, False
 
 
-async def discord_bot_guild_membership_denied_reason(
+async def discord_bot_guild_membership_check(
     account: ChannelAccount,
     *,
     guild_id: str,
-) -> str | None:
-    """Verify bot membership with Discord before a guild pair code is claimed."""
+) -> DiscordGuildMembershipCheck:
+    """Verify bot membership and return Discord-owned guild display metadata."""
     token = decrypt_provider_token(account)
     base_url = (
         _account_config_str(account, "api_base_url")
@@ -1990,7 +2032,7 @@ async def discord_bot_guild_membership_denied_reason(
     path = f"/guilds/{guild_id}"
     decision = discord_rate_limiter.check("GET", path)
     if not decision.allowed:
-        return DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE
+        return DiscordGuildMembershipCheck(denied_reason=DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE)
     try:
         with track_proxy_latency(CHANNEL_PROVIDER_DISCORD, "GET"):
             async with httpx.AsyncClient(timeout=20.0) as client:
@@ -2007,21 +2049,23 @@ async def discord_bot_guild_membership_denied_reason(
                 )
     except httpx.HTTPError:
         outbound_errors.labels(channel=CHANNEL_PROVIDER_DISCORD, method="GET").inc()
-        return DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE
+        return DiscordGuildMembershipCheck(denied_reason=DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE)
     outbound_messages.labels(channel=CHANNEL_PROVIDER_DISCORD, method="GET").inc()
     if response.status_code in {status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND}:
         outbound_errors.labels(channel=CHANNEL_PROVIDER_DISCORD, method="GET").inc()
-        return DISCORD_BOT_GUILD_MEMBERSHIP_REQUIRED
+        return DiscordGuildMembershipCheck(denied_reason=DISCORD_BOT_GUILD_MEMBERSHIP_REQUIRED)
     if not 200 <= response.status_code < 300:
         outbound_errors.labels(channel=CHANNEL_PROVIDER_DISCORD, method="GET").inc()
-        return DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE
+        return DiscordGuildMembershipCheck(denied_reason=DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE)
     response_payload = _response_json_or_text(response)
     if _read_optional_str(response_payload.get("id")) != guild_id:
-        return DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE
-    return None
+        return DiscordGuildMembershipCheck(denied_reason=DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE)
+    return DiscordGuildMembershipCheck(
+        guild_name=_read_optional_display_name(response_payload.get("name"))
+    )
 
 
-async def discord_pairing_command_denied_reason(
+async def discord_pairing_command_admission(
     account: ChannelAccount,
     payload: dict[str, Any],
     *,
@@ -2029,7 +2073,7 @@ async def discord_pairing_command_denied_reason(
     guild_id: str | None,
     external_user_id: str | None,
     trusted_interaction: bool,
-) -> str | None:
+) -> DiscordPairingCommandAdmission:
     install_reason, cleanup_owner_missing = _discord_pair_install_admission(
         payload,
         command=command,
@@ -2038,7 +2082,7 @@ async def discord_pairing_command_denied_reason(
         trusted_interaction=trusted_interaction,
     )
     if install_reason is not None:
-        return install_reason
+        return DiscordPairingCommandAdmission(denied_reason=install_reason)
     if not cleanup_owner_missing:
         permission_reason = discord_guild_command_denied_reason(
             payload,
@@ -2046,10 +2090,21 @@ async def discord_pairing_command_denied_reason(
             guild_id=guild_id,
         )
         if permission_reason is not None:
-            return permission_reason
+            return DiscordPairingCommandAdmission(denied_reason=permission_reason)
     if command is not None and command.kind == "pair" and guild_id is not None:
-        return await discord_bot_guild_membership_denied_reason(account, guild_id=guild_id)
-    return None
+        membership = await discord_bot_guild_membership_check(account, guild_id=guild_id)
+        return DiscordPairingCommandAdmission(
+            denied_reason=membership.denied_reason,
+            external_chat_name=membership.guild_name,
+        )
+    if trusted_interaction and command is not None and command.kind == "pair" and guild_id is None:
+        return DiscordPairingCommandAdmission(
+            external_chat_name=discord_user_display_name_from_payload(
+                payload,
+                external_user_id=external_user_id,
+            )
+        )
+    return DiscordPairingCommandAdmission()
 
 
 def discord_pairing_reply_for_command(
@@ -2115,7 +2170,10 @@ async def send_pairing_command_reply(
 ) -> ChannelMessage | None:
     if not binding_result.command_handled:
         return None
-    reply_text = reply or pairing_reply_for_command(command, binding_result)
+    reply_text = reply or pairing_reply_for_command(
+        command,
+        binding_result,
+    )
     reply_link_id = (
         binding_result.binding.bot_agent_link_id
         if binding_result.binding is not None and (binding_result.paired or binding_result.unpaired)
@@ -3533,22 +3591,7 @@ async def sync_channel_commands(
     if account.provider == CHANNEL_PROVIDER_TELEGRAM:
         return await sync_telegram_commands(account=account, commands=command_specs)
     if account.provider == CHANNEL_PROVIDER_DISCORD:
-        if using_default_commands:
-            discord_names = {
-                "bot_pair": DISCORD_PAIR_COMMAND_NAME,
-                "bot_unpair": DISCORD_UNPAIR_COMMAND_NAME,
-            }
-            command_specs = [
-                {
-                    **command,
-                    "name": discord_names.get(
-                        _command_name(command),
-                        _command_name(command),
-                    ),
-                }
-                for command in command_specs
-            ]
-        else:
+        if not using_default_commands:
             for command in command_specs:
                 name = _command_name(command)
                 if name.startswith("bot_") or name in DISCORD_RESERVED_COMMAND_NAMES:
@@ -4751,7 +4794,10 @@ def discord_chat_from_payload(payload: dict[str, Any]) -> tuple[str, str | None,
             channel_id = channel.get("id")
     guild_id = _read_optional_str(data.get("guild_id"))
     if guild_id is not None:
-        return (guild_id, "guild_text", guild_id)
+        # A guild binding is keyed by the guild ID. Its display name comes
+        # from the bot-authenticated membership preflight, not interaction
+        # payload metadata or a duplicate numeric ID.
+        return (guild_id, "guild", None)
     if channel_id is None:
         return None
     channel = data.get("channel")
@@ -4839,6 +4885,70 @@ def discord_external_user_id_from_payload(payload: dict[str, Any]) -> str | None
     )
 
 
+def discord_user_display_name_from_payload(
+    payload: dict[str, Any],
+    *,
+    external_user_id: str | None,
+) -> str | None:
+    if external_user_id is None:
+        return None
+    data = _discord_event_data(payload)
+    member = data.get("member")
+    candidates = [
+        data.get("user"),
+        member.get("user") if isinstance(member, dict) else None,
+        data.get("author"),
+    ]
+    for candidate in candidates:
+        if not isinstance(candidate, dict) or _dict_identifier(candidate, "id") != external_user_id:
+            continue
+        return _read_optional_display_name(
+            candidate.get("global_name")
+        ) or _read_optional_display_name(candidate.get("username"))
+    return None
+
+
+def update_discord_binding_display_name_from_trusted_event(
+    binding: ChannelBinding,
+    *,
+    external_chat_id: str,
+    external_chat_type: str | None,
+    external_chat_name: str | None,
+    external_user_id: str | None,
+) -> bool:
+    """Apply trusted Discord display metadata without changing routing authority."""
+    if binding.external_chat_id != external_chat_id or not discord_binding_matches_chat_type(
+        binding,
+        external_chat_type=external_chat_type,
+    ):
+        return False
+    incoming_is_dm = (external_chat_type or "").lower() in DISCORD_DM_CHAT_TYPES
+    if incoming_is_dm and not binding_is_controlled_by_actor(
+        binding,
+        external_user_id=external_user_id,
+    ):
+        return False
+
+    changed = False
+    if (
+        not incoming_is_dm
+        and external_chat_type == "guild"
+        and binding.external_chat_type != "guild"
+    ):
+        # Legacy guild rows used guild_text while already keying external_chat_id
+        # by the immutable guild ID. Normalize the type before storing a real
+        # display name so command reconciliation never mistakes that name for ID.
+        binding.external_chat_type = "guild"
+        changed = True
+    candidate = _read_optional_display_name(external_chat_name)
+    if candidate is None or candidate == external_chat_id:
+        return changed
+    if binding.external_chat_name != candidate:
+        binding.external_chat_name = candidate
+        changed = True
+    return changed
+
+
 def discord_channel_scope_from_payload(payload: dict[str, Any]) -> tuple[str | None, str | None]:
     data = _discord_event_data(payload)
     channel_id = _read_optional_str(data.get("channel_id"))
@@ -4899,7 +5009,7 @@ async def record_discord_dispatch(
     chat = discord_chat_from_payload(frame)
     if key is not None:
         external_chat_id = key.chat_id
-        external_chat_type = key.chat_type
+        external_chat_type = "guild" if key.scope_id is not None else key.chat_type
         external_chat_name = chat[2] if chat is not None else key.scope_id
         guild_id = key.scope_id
     elif chat is not None:
@@ -4920,6 +5030,26 @@ async def record_discord_dispatch(
     ):
         return True
     external_user_id = discord_external_user_id_from_payload(frame)
+    trusted_dm_name = (
+        discord_user_display_name_from_payload(
+            frame,
+            external_user_id=external_user_id,
+        )
+        if guild_id is None
+        else None
+    )
+    if trusted_dm_name is not None:
+        external_chat_name = trusted_dm_name
+    admission = await discord_pairing_command_admission(
+        account,
+        frame,
+        command=command,
+        guild_id=guild_id,
+        external_user_id=external_user_id,
+        trusted_interaction=True,
+    )
+    if admission.external_chat_name is not None:
+        external_chat_name = admission.external_chat_name
     binding_result = await resolve_inbound_binding(
         db,
         account=account,
@@ -4929,16 +5059,18 @@ async def record_discord_dispatch(
         external_user_id=external_user_id,
         text=discord_text_from_payload(frame),
         command=command,
-        command_denied_reason=await discord_pairing_command_denied_reason(
-            account,
-            frame,
-            command=command,
-            guild_id=guild_id,
-            external_user_id=external_user_id,
-            trusted_interaction=True,
-        ),
+        command_denied_reason=admission.denied_reason,
         command_actor_required=True,
     )
+    if guild_id is None:
+        for binding in binding_result.bindings:
+            update_discord_binding_display_name_from_trusted_event(
+                binding,
+                external_chat_id=external_chat_id,
+                external_chat_type=external_chat_type,
+                external_chat_name=trusted_dm_name,
+                external_user_id=external_user_id,
+            )
     if binding_result.binding is None and not binding_result.command_handled:
         return False
     data = frame.get("d")
@@ -5344,6 +5476,13 @@ def _require_account_config_str(account: ChannelAccount, key: str) -> str:
 
 def _read_optional_str(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _read_optional_display_name(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def _read_optional_identifier(value: Any) -> str | None:

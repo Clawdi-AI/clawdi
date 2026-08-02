@@ -247,22 +247,18 @@ import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client"
 import {
 	agentProviderHasSingleLinkLimit,
 	channelProviderLinkingReady,
-	pairingActionLabel,
 } from "@/hosted/v2/channels/channel-linking.logic";
 import type { ChannelBinding } from "@/hosted/v2/channels/channel-types";
 import {
 	CHANNEL_DESTRUCTIVE_ACTION_CLASS,
 	ChannelStatusBadge,
 	CopyInline,
-	HealthBadge,
-	isNormalChannelHealth,
 	isNormalChannelStatus,
 } from "@/hosted/v2/channels/channel-ui";
 import {
 	useAgentChannelLinks,
 	useBotPool,
 	useChannelBindingsForAccounts,
-	useChannelHealth,
 	useChannels,
 	useCreatePairCode,
 	useUnlinkAgentChannel,
@@ -2248,7 +2244,9 @@ const AGENT_CHANNEL_PAIR_ACTIONS_CLASS =
 const AGENT_CHANNEL_CARD_HEADER_CLASS =
 	"h-[7.5rem] flex-none grid-rows-[2.75rem_2rem] xl:h-20 xl:grid-rows-1";
 
-function AgentChannelCard({ headerClassName, ...props }: ComponentProps<typeof ChannelCard>) {
+type AgentChannelCardProps = ComponentProps<typeof ChannelCard>;
+
+function AgentChannelCard({ headerClassName, ...props }: AgentChannelCardProps) {
 	return (
 		<ChannelCard
 			{...props}
@@ -2292,7 +2290,6 @@ function ChannelsTab({
 	const qc = useQueryClient();
 	const channels = useChannels();
 	const botPool = useBotPool();
-	const health = useChannelHealth();
 	const linked = useAgentChannelLinks(environmentId, isCloudEnvId(environmentId));
 	const unlink = useUnlinkAgentChannel(environmentId);
 	const [recentLinks, setRecentLinks] = useState<ReadonlyMap<string, AgentChannelLink>>(
@@ -2302,11 +2299,13 @@ function ChannelsTab({
 		accountId: string;
 		agentLinkId: string;
 		channelName: string;
+		open: boolean;
 	} | null>(null);
 	const [discordPair, setDiscordPair] = useState<{
 		accountId: string;
 		agentLinkId: string;
 		channelName: string;
+		open: boolean;
 	} | null>(null);
 	const [customBotDialogOpen, setCustomBotDialogOpen] = useState(false);
 	const linkingAccountIdsRef = useRef<Set<string>>(new Set());
@@ -2390,11 +2389,6 @@ function ChannelsTab({
 		}
 		return providers;
 	}, [accountSummaries, visibleActiveLinks]);
-	const healthByAccount = useMemo(
-		() => new Map((health.data?.items ?? []).map((item) => [item.account_id, item])),
-		[health.data],
-	);
-
 	const link = useSensitiveAction(async (channelId: string) =>
 		unwrap(
 			await api.POST("/v1/channels/{account_id}/agent-links", {
@@ -2411,12 +2405,14 @@ function ChannelsTab({
 				accountId: nextLink.account_id,
 				agentLinkId: nextLink.id,
 				channelName: account.name,
+				open: true,
 			});
 		} else if (account?.provider === "discord") {
 			setDiscordPair({
 				accountId: nextLink.account_id,
 				agentLinkId: nextLink.id,
 				channelName: account.name,
+				open: true,
 			});
 		} else {
 			toast.success("Channel linked", {
@@ -2515,7 +2511,6 @@ function ChannelsTab({
 				bindingsLoading={Boolean(bindingQuery?.isFetching)}
 				bindingsError={Boolean(bindingQuery?.error)}
 				onBindingsRetry={() => void bindingQuery?.refetch()}
-				health={healthByAccount.get(bot.id)}
 				agentName={agentName}
 				agentType={agentType}
 				linkedProviders={linkedProviders}
@@ -2575,14 +2570,6 @@ function ChannelsTab({
 					title="Couldn't refresh every linked bot"
 				/>
 			) : null}
-			{health.error && visibleActiveLinks.length > 0 ? (
-				<ApiErrorPanel
-					error={health.error}
-					onRetry={() => void health.refetch()}
-					title="Couldn't refresh channel health"
-				/>
-			) : null}
-
 			<ConnectBotDialog
 				open={customBotDialogOpen}
 				onOpenChange={setCustomBotDialogOpen}
@@ -2604,6 +2591,7 @@ function ChannelsTab({
 							accountId: bot.id,
 							agentLinkId: bot.agentLinkId,
 							channelName: bot.name,
+							open: true,
 						});
 						return;
 					}
@@ -2612,15 +2600,19 @@ function ChannelsTab({
 							accountId: bot.id,
 							agentLinkId: bot.agentLinkId,
 							channelName: bot.name,
+							open: true,
 						});
 					}
 				}}
 			/>
 			{telegramPair ? (
 				<TelegramPairDialog
-					open
+					open={telegramPair.open}
 					onOpenChange={(open) => {
-						if (!open) setTelegramPair(null);
+						setTelegramPair((current) => (current ? { ...current, open } : current));
+					}}
+					onCloseComplete={() => {
+						setTelegramPair((current) => (current?.open === false ? null : current));
 					}}
 					accountId={telegramPair.accountId}
 					agentLinkId={telegramPair.agentLinkId}
@@ -2630,9 +2622,12 @@ function ChannelsTab({
 			) : null}
 			{discordPair ? (
 				<DiscordPairDialog
-					open
+					open={discordPair.open}
 					onOpenChange={(open) => {
-						if (!open) setDiscordPair(null);
+						setDiscordPair((current) => (current ? { ...current, open } : current));
+					}}
+					onCloseComplete={() => {
+						setDiscordPair((current) => (current?.open === false ? null : current));
 					}}
 					accountId={discordPair.accountId}
 					agentLinkId={discordPair.agentLinkId}
@@ -2711,7 +2706,6 @@ function AgentChannelBotCard({
 	bindingsLoading,
 	bindingsError,
 	onBindingsRetry,
-	health,
 	agentName,
 	agentType,
 	linkedProviders,
@@ -2726,7 +2720,6 @@ function AgentChannelBotCard({
 	bindingsLoading: boolean;
 	bindingsError: boolean;
 	onBindingsRetry: () => void;
-	health?: components["schemas"]["ChannelHealthItemResponse"];
 	agentName: string;
 	agentType: HostedRuntime;
 	linkedProviders: ReadonlySet<string>;
@@ -2751,7 +2744,6 @@ function AgentChannelBotCard({
 						name: bot.name,
 						visibility: bot.visibility,
 					}}
-					health={health}
 					agentName={agentName}
 					unlinking={unlinking}
 					onUnlink={onUnlink}
@@ -2773,14 +2765,7 @@ function AgentChannelBotCard({
 							{linking ? "Linking…" : "Link"}
 						</Button>
 					}
-				>
-					<p
-						data-agent-channel-link-guidance
-						className="flex h-10 min-h-10 max-h-10 min-w-0 items-center px-4 text-sm text-muted-foreground"
-					>
-						<span className="min-w-0 truncate">Link to start pairing chats</span>
-					</p>
-				</AgentChannelCard>
+				/>
 			)}
 		</div>
 	);
@@ -2796,7 +2781,6 @@ function ConnectedChannelGroup({
 	onUnlink,
 	unlinking,
 	fallbackAccount,
-	health,
 	agentName,
 }: {
 	link: AgentChannelLink;
@@ -2808,7 +2792,6 @@ function ConnectedChannelGroup({
 	onUnlink: () => void;
 	unlinking: boolean;
 	fallbackAccount?: ChannelAccountSummary;
-	health?: components["schemas"]["ChannelHealthItemResponse"];
 	agentName: string;
 }) {
 	const provider = link.account?.provider ?? fallbackAccount?.provider ?? "";
@@ -2819,22 +2802,22 @@ function ConnectedChannelGroup({
 			<LinkedChannelRow
 				link={link}
 				fallbackAccount={fallbackAccount}
-				health={health}
 				agentName={agentName}
 				bindings={bindings}
 				unlinking={unlinking}
 				onUnlink={onUnlink}
-			>
-				<PairedChatsDialog
-					linkId={link.id}
-					channelName={channelName}
-					provider={provider}
-					pairedChats={pairedChats}
-					bindingsLoading={bindingsLoading}
-					bindingsError={bindingsError}
-					onBindingsRetry={onBindingsRetry}
-				/>
-			</LinkedChannelRow>
+				pairedChatsControl={
+					<PairedChatsDialog
+						linkId={link.id}
+						channelName={channelName}
+						provider={provider}
+						pairedChats={pairedChats}
+						bindingsLoading={bindingsLoading}
+						bindingsError={bindingsError}
+						onBindingsRetry={onBindingsRetry}
+					/>
+				}
+			/>
 		</div>
 	);
 }
@@ -2850,19 +2833,17 @@ function LinkedChannelRow({
 	onUnlink,
 	unlinking,
 	fallbackAccount,
-	health,
 	agentName,
 	bindings,
-	children,
+	pairedChatsControl,
 }: {
 	link: AgentChannelLink;
 	onUnlink: () => void;
 	unlinking: boolean;
 	fallbackAccount?: ChannelAccountSummary;
-	health?: components["schemas"]["ChannelHealthItemResponse"];
 	agentName: string;
 	bindings: readonly ChannelBinding[] | undefined;
-	children?: React.ReactNode;
+	pairedChatsControl: React.ReactNode;
 }) {
 	const pair = useCreatePairCode(link.account_id);
 	const [code, setCode] = useState<AgentPairCodeResult | null>(null);
@@ -2903,13 +2884,9 @@ function LinkedChannelRow({
 		}
 	}
 	const relationshipState = [
-		isNormalChannelStatus(link.status) ? (
-			"Linked"
-		) : (
+		pairedChatsControl,
+		!isNormalChannelStatus(link.status) ? (
 			<ChannelStatusBadge key="status" status={link.status} />
-		),
-		health && !isNormalChannelHealth(health.health_status) ? (
-			<HealthBadge key="health" health={health} />
 		) : null,
 		provider !== "telegram" && !isDiscord && pair.error ? (
 			<span key="pair-error" className="font-medium text-destructive">
@@ -2949,13 +2926,7 @@ function LinkedChannelRow({
 								) : (
 									<QrCode className="size-3.5" />
 								)}
-								{creatingPairCode
-									? "Generating…"
-									: provider === "telegram"
-										? "Pair Telegram"
-										: pair.error
-											? "Retry pairing"
-											: pairingActionLabel(provider)}
+								{creatingPairCode ? "Generating…" : "Pair"}
 							</Button>
 							<ConfirmAction
 								title={`Unlink ${name}?`}
@@ -2986,9 +2957,7 @@ function LinkedChannelRow({
 							</ConfirmAction>
 						</div>
 					}
-				>
-					{children}
-				</AgentChannelCard>
+				/>
 			</div>
 			{provider === "telegram" ? (
 				<TelegramPairDialog

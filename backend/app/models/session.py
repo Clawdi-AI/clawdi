@@ -45,6 +45,10 @@ class AgentEnvironment(Base, TimestampMixin):
     agent_version: Mapped[str | None] = mapped_column(String(50))
     os: Mapped[str] = mapped_column(String(50), nullable=False)
     registration_key: Mapped[str | None] = mapped_column(String(300))
+    # Archived agents retain their stable identity and every relationship.
+    # Operational/query boundaries treat only NULL as active; registration
+    # may reactivate the row in place.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Agent identity labels. `default_name` is assigned by Cloud API for
     # explicit hosted identities; `display_name` is the user's dashboard override.

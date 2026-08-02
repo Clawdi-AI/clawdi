@@ -90,7 +90,7 @@ from app.services.channel_config import (
     validate_required_discord_interactions_config,
 )
 from app.services.channels import (
-    DISCORD_PAIR_COMMAND_NAME,
+    PAIR_COMMAND,
     archive_bot_agent_link,
     archive_channel_account,
     bot_agent_link_has_strict_v2_authority,
@@ -525,6 +525,7 @@ async def _runtime_channels_environment_id(
             select(AgentEnvironment.id).where(
                 AgentEnvironment.id == requested_environment_id,
                 AgentEnvironment.user_id == auth.user_id,
+                AgentEnvironment.archived_at.is_(None),
             )
         )
     ).scalar_one_or_none()
@@ -909,10 +910,7 @@ async def create_channel_pair_code(
     )
     await db.commit()
     await db.refresh(created.pair_code)
-    pairing_command_name = (
-        DISCORD_PAIR_COMMAND_NAME if account.provider == CHANNEL_PROVIDER_DISCORD else "bot_pair"
-    )
-    pairing_command = f"/{pairing_command_name} {created.code}"
+    pairing_command = f"{PAIR_COMMAND} {created.code}"
     bot_username = _telegram_bot_username(account)
     deep_link = (
         f"https://t.me/{bot_username}?start={quote(created.code, safe='')}"

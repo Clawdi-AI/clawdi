@@ -918,6 +918,7 @@ async def _agent_sync_project(
         .where(
             AgentEnvironment.id == agent_id,
             AgentEnvironment.user_id == auth.user_id,
+            AgentEnvironment.archived_at.is_(None),
             Project.user_id == auth.user_id,
             Project.kind == PROJECT_KIND_ENVIRONMENT,
             Project.origin_environment_id == agent_id,

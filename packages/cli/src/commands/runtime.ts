@@ -146,7 +146,7 @@ const linkSchema = z
 			.strict(),
 		pair_code: z
 			.object({
-				ttl_seconds: z.number().int().min(60).max(86_400).default(900),
+				ttl_seconds: z.number().int().min(60).max(86_400).default(300),
 				command_env: envNameSchema.optional(),
 			})
 			.strict()

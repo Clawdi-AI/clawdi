@@ -9,41 +9,41 @@ describe("telegramPairDeepLink", () => {
 	test("accepts only the server-provided bot start link for this code", () => {
 		expect(
 			telegramPairDeepLink({
-				deepLink: "https://t.me/ClawdiBot?start=PAIR123",
-				qrPayload: "https://t.me/ClawdiBot?start=PAIR123",
+				deepLink: "https://t.me/ClawdiBot?start=BCDFGHJKLM",
+				qrPayload: "https://t.me/ClawdiBot?start=BCDFGHJKLM",
 				botUsername: "ClawdiBot",
-				code: "PAIR123",
+				code: "BCDFGHJKLM",
 			}),
-		).toBe("https://t.me/ClawdiBot?start=PAIR123");
+		).toBe("https://t.me/ClawdiBot?start=BCDFGHJKLM");
 		expect(
 			telegramPairDeepLink({
-				deepLink: "https://t.me/ClawdiBot?start=PAIR123",
-				qrPayload: "https://t.me/ClawdiBot?start=PAIR123",
+				deepLink: "https://t.me/ClawdiBot?start=BCDFGHJKLM",
+				qrPayload: "https://t.me/ClawdiBot?start=BCDFGHJKLM",
 				botUsername: null,
-				code: "PAIR123",
+				code: "BCDFGHJKLM",
 			}),
-		).toBe("https://t.me/ClawdiBot?start=PAIR123");
+		).toBe("https://t.me/ClawdiBot?start=BCDFGHJKLM");
 	});
 
 	test("fails closed for missing, malformed, mismatched, or expanded links", () => {
 		const input = {
 			botUsername: "ClawdiBot",
-			code: "PAIR123",
-			qrPayload: "https://t.me/ClawdiBot?start=PAIR123",
+			code: "BCDFGHJKLM",
+			qrPayload: "https://t.me/ClawdiBot?start=BCDFGHJKLM",
 		};
 		expect(telegramPairDeepLink({ ...input, deepLink: null })).toBeNull();
 		expect(
 			telegramPairDeepLink({
 				...input,
-				deepLink: "https://t.me/ClawdiBot?start=PAIR123",
+				deepLink: "https://t.me/ClawdiBot?start=BCDFGHJKLM",
 				qrPayload: null,
 			}),
 		).toBeNull();
 		expect(
 			telegramPairDeepLink({
 				...input,
-				deepLink: "https://t.me/ClawdiBot?start=PAIR123",
-				qrPayload: "https://t.me/ClawdiBot?start=DIFFERENT",
+				deepLink: "https://t.me/ClawdiBot?start=BCDFGHJKLM",
+				qrPayload: "https://t.me/ClawdiBot?start=NPQRSTVWXY",
 			}),
 		).toBeNull();
 		expect(
@@ -56,22 +56,22 @@ describe("telegramPairDeepLink", () => {
 		expect(
 			telegramPairDeepLink({
 				...input,
-				deepLink: "https://t.me/OtherBot?start=PAIR123",
-				qrPayload: "https://t.me/OtherBot?start=PAIR123",
+				deepLink: "https://t.me/OtherBot?start=BCDFGHJKLM",
+				qrPayload: "https://t.me/OtherBot?start=BCDFGHJKLM",
 			}),
 		).toBeNull();
 		expect(
 			telegramPairDeepLink({
 				...input,
-				deepLink: "https://t.me/ClawdiBot?start=OTHER",
-				qrPayload: "https://t.me/ClawdiBot?start=OTHER",
+				deepLink: "https://t.me/ClawdiBot?start=QRSTVWXYZ2",
+				qrPayload: "https://t.me/ClawdiBot?start=QRSTVWXYZ2",
 			}),
 		).toBeNull();
 		expect(
 			telegramPairDeepLink({
 				...input,
-				deepLink: "https://t.me/ClawdiBot?start=PAIR123&admin=true",
-				qrPayload: "https://t.me/ClawdiBot?start=PAIR123&admin=true",
+				deepLink: "https://t.me/ClawdiBot?start=BCDFGHJKLM&admin=true",
+				qrPayload: "https://t.me/ClawdiBot?start=BCDFGHJKLM&admin=true",
 			}),
 		).toBeNull();
 	});

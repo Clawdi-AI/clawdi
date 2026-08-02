@@ -185,6 +185,7 @@ async def provision_runtime_environment_fence(
             .where(
                 AgentEnvironment.id == environment_id,
                 AgentEnvironment.user_id == owner_id,
+                AgentEnvironment.archived_at.is_(None),
             )
             .with_for_update()
         )

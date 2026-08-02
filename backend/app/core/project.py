@@ -104,6 +104,7 @@ async def resolve_default_write_project(
             select(AgentEnvironment.default_project_id).where(
                 AgentEnvironment.id == bound_env_id,
                 AgentEnvironment.user_id == auth.user_id,
+                AgentEnvironment.archived_at.is_(None),
             )
         )
         project_id = result.scalar_one_or_none()
@@ -123,7 +124,10 @@ async def resolve_default_write_project(
     # data.
     result = await db.execute(
         select(AgentEnvironment.default_project_id)
-        .where(AgentEnvironment.user_id == auth.user_id)
+        .where(
+            AgentEnvironment.user_id == auth.user_id,
+            AgentEnvironment.archived_at.is_(None),
+        )
         .order_by(
             AgentEnvironment.last_seen_at.desc().nulls_last(),
             AgentEnvironment.id.desc(),
@@ -174,6 +178,7 @@ async def validate_project_for_caller(
         select(Project.id).where(
             Project.user_id == auth.user_id,
             Project.id == project_id,
+            Project.archived_at.is_(None),
         )
     )
     if project_owner.scalar_one_or_none() is None:
@@ -188,6 +193,7 @@ async def validate_project_for_caller(
             select(AgentEnvironment.default_project_id).where(
                 AgentEnvironment.id == bound_env_id,
                 AgentEnvironment.user_id == auth.user_id,
+                AgentEnvironment.archived_at.is_(None),
             )
         )
         bound_project = bound_project_result.scalar_one_or_none()
@@ -260,7 +266,12 @@ async def project_ids_owned_by_user(
     materialization. Runtime Vault plaintext reads use the broader readable
     set because viewer membership is a read grant for Vault values too.
     """
-    rows = await db.execute(select(Project.id).where(Project.user_id == user_id))
+    rows = await db.execute(
+        select(Project.id).where(
+            Project.user_id == user_id,
+            Project.archived_at.is_(None),
+        )
+    )
     return list(rows.scalars().all())
 
 
@@ -280,8 +291,11 @@ async def project_ids_readable_by_user(
     shared_ids = list(
         (
             await db.execute(
-                select(ProjectMembership.project_id).where(
-                    ProjectMembership.member_user_id == user_id
+                select(ProjectMembership.project_id)
+                .join(Project, Project.id == ProjectMembership.project_id)
+                .where(
+                    ProjectMembership.member_user_id == user_id,
+                    Project.archived_at.is_(None),
                 )
             )
         )

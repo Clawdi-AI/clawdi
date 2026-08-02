@@ -1,6 +1,7 @@
 "use client";
 
 import { Link, useLocation } from "@tanstack/react-router";
+import { Fragment } from "react";
 import { useBreadcrumbSegmentTitles, useBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
 	Breadcrumb,
@@ -119,8 +120,8 @@ export function AppBreadcrumb() {
 						const label = segmentLabel(segments, i, href, overrideTitle, segmentTitles);
 						const agentLink = agentBreadcrumbLink(agentRoute, i, routeSearch);
 						return (
-							<span key={href} className="contents">
-								<BreadcrumbItem>
+							<Fragment key={href}>
+								<BreadcrumbItem className={isLast ? undefined : "hidden sm:inline-flex"}>
 									{isLast ? (
 										<BreadcrumbPage className="max-w-[calc(100vw-6rem)] truncate sm:max-w-[420px]">
 											{label}
@@ -135,8 +136,8 @@ export function AppBreadcrumb() {
 										</BreadcrumbLink>
 									)}
 								</BreadcrumbItem>
-								{!isLast ? <BreadcrumbSeparator /> : null}
-							</span>
+								{!isLast ? <BreadcrumbSeparator className="hidden sm:block" /> : null}
+							</Fragment>
 						);
 					})}
 			</BreadcrumbList>

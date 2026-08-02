@@ -22,11 +22,17 @@ from websockets.exceptions import ConnectionClosed
 
 from app.core.config import settings
 from app.models.channel import (
+    BINDING_STATUS_ACTIVE,
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_STATUS_ACTIVE,
     ChannelAccount,
+    ChannelBinding,
 )
-from app.services.channels import decrypt_provider_token, record_discord_dispatch
+from app.services.channels import (
+    decrypt_provider_token,
+    record_discord_dispatch,
+    update_discord_binding_display_name_from_trusted_event,
+)
 from app.services.discord_command_reconciliation_worker import (
     reconcile_discord_guild_commands,
     reconcile_discord_guild_departure,
@@ -411,8 +417,13 @@ async def record_discord_gateway_dispatch(
                 ),
             )
             return True
+        display_name_healed = await _heal_discord_guild_binding_display_name(
+            db,
+            account=account,
+            frame=frame,
+        )
         recorded = await record_discord_dispatch(db, account=account, frame=frame)
-        if recorded:
+        if recorded or display_name_healed:
             await db.commit()
         else:
             await db.rollback()
@@ -432,6 +443,38 @@ async def record_discord_gateway_dispatch(
                     guild_id,
                 )
         return recorded
+
+
+async def _heal_discord_guild_binding_display_name(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    frame: GatewayFrame,
+) -> bool:
+    """Backfill a bound guild name from one bot-authenticated Gateway event."""
+    guild_id = _discord_available_guild_id(frame)
+    if guild_id is None:
+        return False
+    data = frame.get("d")
+    guild_name = data.get("name") if isinstance(data, dict) else None
+    result = await db.execute(
+        select(ChannelBinding).where(
+            ChannelBinding.account_id == account.id,
+            ChannelBinding.external_chat_id == guild_id,
+            ChannelBinding.status == BINDING_STATUS_ACTIVE,
+        )
+    )
+    changed = False
+    for binding in result.scalars().all():
+        if update_discord_binding_display_name_from_trusted_event(
+            binding,
+            external_chat_id=guild_id,
+            external_chat_type="guild",
+            external_chat_name=guild_name if isinstance(guild_name, str) else None,
+            external_user_id=None,
+        ):
+            changed = True
+    return changed
 
 
 def _discord_available_guild_id(frame: GatewayFrame) -> str | None:

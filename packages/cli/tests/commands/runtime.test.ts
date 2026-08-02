@@ -222,7 +222,6 @@ channels:
         runtime:
           token_env: TELEGRAM_AGENT_TOKEN
         pair_code:
-          ttl_seconds: 600
           command_env: TELEGRAM_PAIR_COMMAND
     commands:
       sync: true
@@ -284,9 +283,9 @@ outputs:
 							id: "pair-1",
 							agent_link_id: "link-1",
 							agent_id: "agent-1",
-							code: "PAIR123",
+							code: "BCDFGHJKLM",
 							expires_at: "2026-06-08T00:10:00Z",
-							pairing_command: "/bot_pair PAIR123",
+							pairing_command: "/clawdi_pair BCDFGHJKLM",
 						},
 						201,
 					),
@@ -297,7 +296,7 @@ outputs:
 				response: () =>
 					jsonResponse({
 						provider: "telegram",
-						commands: [{ command: "bot_pair", description: "Pair chat" }],
+						commands: [{ command: "clawdi_pair", description: "Pair chat" }],
 					}),
 			},
 		]);
@@ -322,12 +321,12 @@ outputs:
 		});
 		expect(captured[4]?.body).toMatchObject({
 			agent_link_id: "link-1",
-			ttl_seconds: 600,
+			ttl_seconds: 300,
 		});
 		const dotenv = readFileSync(join(tmpHome, ".env.channels"), "utf-8");
 		expect(dotenv).toContain("TELEGRAM_AGENT_TOKEN=agent-token");
 		expect(dotenv).toContain("TELEGRAM_BOT_API_BASE_URL=https://api.test/v1/channels/telegram");
-		expect(dotenv).toContain('TELEGRAM_PAIR_COMMAND="/bot_pair PAIR123"');
+		expect(dotenv).toContain('TELEGRAM_PAIR_COMMAND="/clawdi_pair BCDFGHJKLM"');
 		expect(dotenv).toContain("# >>> clawdi channel runtime >>>");
 		expect(dotenv).toContain("# <<< clawdi channel runtime <<<");
 		expect(
@@ -401,9 +400,9 @@ outputs:
 							id: "pair-discord",
 							agent_link_id: "link-1",
 							agent_id: "agent-1",
-							code: "PAIRDISCORD123",
+							code: "NPQRSTVWXY",
 							expires_at: "2026-06-08T00:10:00Z",
-							pairing_command: "/clawdi_pair PAIRDISCORD123",
+							pairing_command: "/clawdi_pair NPQRSTVWXY",
 							discord_user_install_url:
 								"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
 						},
@@ -419,7 +418,7 @@ outputs:
 		const dotenv = readFileSync(join(tmpHome, ".env.channels"), "utf-8");
 		expect(dotenv).toContain("DISCORD_AGENT_TOKEN=discord-token");
 		expect(dotenv).toContain("DISCORD_GATEWAY_URL=wss://api.test/v1/channels/discord/gateway");
-		expect(dotenv).toContain('DISCORD_PAIR_COMMAND="/clawdi_pair PAIRDISCORD123"');
+		expect(dotenv).toContain('DISCORD_PAIR_COMMAND="/clawdi_pair NPQRSTVWXY"');
 	});
 
 	it("does not rotate an existing link token unless explicitly requested", async () => {

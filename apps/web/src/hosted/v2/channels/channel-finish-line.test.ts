@@ -17,8 +17,8 @@ const channelsTab = agentChannels.slice(
 );
 
 describe("hosted-agent channel finish line", () => {
-	test("keeps diagnosis compact inside shared equal-height channel cards", () => {
-		expect(channelsTab).toContain("const health = useChannelHealth()");
+	test("keeps actionable state compact inside shared equal-height channel cards", () => {
+		expect(channelsTab).not.toContain("useChannelHealth");
 		expect(channelsTab).toContain("CHANNEL_CARD_GRID_CLASS");
 		expect(channelsTab).toContain("<AgentChannelCard");
 		expect(channelsTab).not.toContain("AGENT_CHANNEL_LIST_CLASS");
@@ -27,15 +27,13 @@ describe("hosted-agent channel finish line", () => {
 		expect(channelsTab).not.toContain("Last activity");
 		expect(channelsTab).not.toContain("No activity yet");
 		expect(channelsTab).not.toContain("Checking activity");
-		expect(channelsTab).toContain("health.error && visibleActiveLinks.length > 0");
-		expect(channelsTab).toContain('title="Couldn\'t refresh channel health"');
-		expect(channelsTab).toContain("onRetry={() => void health.refetch()}");
 		expect(channelsTab).toContain('<ChannelStatusBadge key="status" status={link.status} />');
-		expect(channelsTab).toContain('<HealthBadge key="health" health={health} />');
-		expect(channelsTab).not.toContain("status={health.health_status}");
+		expect(channelsTab).not.toContain("HealthBadge");
+		expect(channelsTab).not.toContain("channel health");
 		expect(channelsTab).toContain('state={unavailableReason ?? "Available"}');
-		expect(channelsTab).toContain('isNormalChannelStatus(link.status) ? (\n\t\t\t"Linked"');
-		expect(channelsTab).toContain("Link to start pairing chats");
+		expect(channelsTab).toContain("!isNormalChannelStatus(link.status)");
+		expect(channelsTab).toContain("pairedChatsControl");
+		expect(channelsTab).not.toContain("Link to start pairing chats");
 		expect(channelsTab).not.toContain('key="paired"');
 		expect(channelsTab).not.toContain("pairedChatCount");
 		expect(channelsTab).not.toContain('1 ? "chat" : "chats"');
@@ -46,8 +44,9 @@ describe("hosted-agent channel finish line", () => {
 	test("separates linking a bot from pairing a chat on one stable card", () => {
 		expect(channelsTab).toContain('linking ? "Linking…" : "Link"');
 		expect(channelsTab).toContain("data-agent-channel-account-id={bot.id}");
-		expect(channelsTab).toContain("Pair Telegram");
-		expect(channelsTab).toContain("pairingActionLabel(provider)");
+		expect(channelsTab).toContain('creatingPairCode ? "Generating…" : "Pair"');
+		expect(channelsTab).not.toContain("Pair Telegram");
+		expect(channelsTab).not.toContain("Pair Discord");
 		expect(channelsTab).toContain("<TelegramPairDialog");
 		expect(channelsTab).toContain("<DiscordPairDialog");
 		expect(channelsTab).toContain("agentLinkId={link.id}");
@@ -82,8 +81,9 @@ describe("hosted-agent channel finish line", () => {
 		expect(channelsTab).not.toContain("Fastest: use a ready-to-go bot");
 		expect(channelsTab).not.toContain("Use your own bot (advanced)");
 		expect(pairedChatsDialog).toContain("pairedChats.map");
-		expect(pairedChatsDialog).toContain("Manage paired chats ·");
-		expect(pairedChatsDialog).toContain("h-10 min-h-10 max-h-10");
+		expect(pairedChatsDialog).toContain("pairedChats.length === 1");
+		expect(pairedChatsDialog).toContain('"chat" : "chats"');
+		expect(channelsTab).not.toContain("Link to start pairing chats");
 		expect(pairedChatsDialog).toContain("overflow-y-auto");
 		expect(pairedChatsDialog).toContain("<Dialog");
 		expect(pairedChatsDialog).toContain("<Sheet");

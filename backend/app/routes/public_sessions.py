@@ -80,6 +80,8 @@ async def _resolve_session_for_view(
         sign-in CTA).
       - 403 if authed but no matching grant exists.
     """
+    # Public Session history retains archived Agent type. Visibility comes
+    # solely from Session ownership/share grants, never Agent authority.
     stmt = (
         select(Session, AgentEnvironment.agent_type, User)
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)

@@ -1187,10 +1187,10 @@ async def _discord_guild_owner_principals(
 
 def _discord_binding_guild_id(binding: ChannelBinding) -> str | None:
     chat_type = (binding.external_chat_type or "").lower()
-    if binding.external_chat_name and ("guild" in chat_type or "thread" in chat_type):
-        return binding.external_chat_name
     if binding.external_chat_id and chat_type == "guild":
         return binding.external_chat_id
+    if binding.external_chat_name and ("guild" in chat_type or "thread" in chat_type):
+        return binding.external_chat_name
     return None
 
 
@@ -1497,6 +1497,8 @@ async def _materialize_discord_command_scope(
     # physical global command set or DMs; only materialize them into this
     # Link's Guild bindings. Built-in reserved commands use the separate
     # account-level sync path and remain physical global commands.
+    # TODO(discord): If Discord adds a per-install or per-DM command namespace,
+    # project Link shadows there and retire this Guild-only boundary.
     target_guild_ids = await _discord_uncontested_guilds_for_link(
         db,
         account=account,

@@ -454,7 +454,7 @@ function parseProvider(value: string): ChannelProvider {
 }
 
 function parseTtl(raw: string | undefined): number {
-	if (raw === undefined) return 900;
+	if (raw === undefined) return 300;
 	const ttl = Number(raw);
 	if (!Number.isInteger(ttl) || ttl < 60 || ttl > 86_400) {
 		throw new Error("--ttl must be an integer number of seconds between 60 and 86400.");
