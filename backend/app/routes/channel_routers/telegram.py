@@ -5,7 +5,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import unquote_plus
 from uuid import UUID
@@ -32,9 +32,12 @@ from app.models.channel import (
     BINDING_STATUS_ARCHIVED,
     BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_TELEGRAM,
+    CHANNEL_STATUS_ACTIVE,
+    MESSAGE_DIRECTION_OUTBOUND,
     ChannelAccount,
     ChannelBinding,
     ChannelBotAgentLink,
+    ChannelMessage,
 )
 from app.routes.channel_routers.shared import (
     _allowed_updates,
@@ -56,6 +59,9 @@ from app.services.channels import (
     TELEGRAM_REF_FILE_PATH,
     TELEGRAM_REF_MESSAGE_ID,
     ChannelAgentContext,
+    ChannelPairCommand,
+    InboundBindingResult,
+    binding_is_controlled_by_actor,
     bot_agent_link_has_provider_cardinality_capability,
     bot_agent_link_has_strict_v2_authority,
     channel_agent_reference_exists,
@@ -67,6 +73,7 @@ from app.services.channels import (
     find_existing_inbound_provider_event,
     get_active_channel_account,
     lock_channel_binding_identity,
+    pairing_command_event_was_handled,
     parse_pair_command,
     pending_channel_inbox_count,
     record_channel_agent_reference,
@@ -76,6 +83,7 @@ from app.services.channels import (
     resolve_channel_agent_by_token,
     resolve_inbound_binding,
     send_pairing_command_reply,
+    send_telegram_message,
     telegram_chat_from_update,
     telegram_direct_messages_topic_id_from_update,
     telegram_event_id_from_update,
@@ -100,6 +108,13 @@ from app.services.url_security import UnsafeOutboundUrlError, validate_channel_h
 
 router = APIRouter(prefix="/channels/telegram", tags=["channels"])
 log = logging.getLogger(__name__)
+
+TELEGRAM_UNPAIRED_TUTORIAL = (
+    "This chat isn't paired yet. In Clawdi, open your agent, choose Pair Telegram, "
+    "then use the generated link or send /clawdi_pair <code> here."
+)
+TELEGRAM_UNPAIRED_TUTORIAL_COOLDOWN = timedelta(minutes=10)
+_TELEGRAM_UNPAIRED_TUTORIAL_KIND = "telegram_unpaired_tutorial"
 
 
 # Keep this list explicit. Telegram ignores parameters it doesn't use, so the
@@ -685,6 +700,26 @@ async def telegram_webhook(
     command = parse_pair_command(text)
     provider_event_id = telegram_event_id_from_update(payload)
     provider_event_scope = telegram_event_scope_from_update(payload)
+    external_user_id = telegram_external_user_id_from_update(payload)
+    if await pairing_command_event_was_handled(
+        db,
+        account=account,
+        external_chat_id=external_chat_id,
+        provider_event_id=provider_event_id,
+        provider_event_scope=provider_event_scope,
+        command=command,
+    ):
+        existing = await find_existing_inbound_provider_event(
+            db,
+            account=account,
+            external_chat_id=external_chat_id,
+            provider_event_id=provider_event_id,
+            provider_event_scope=provider_event_scope,
+        )
+        return TelegramWebhookResponse(
+            ok=True,
+            binding_id=existing.binding_id if existing is not None else None,
+        )
     previous_link_id: UUID | None = None
     if command is not None and command.kind in {"pair", "unpair"}:
         previous_binding = (
@@ -703,37 +738,16 @@ async def telegram_webhook(
         ).scalar_one_or_none()
         if previous_binding is not None:
             previous_link_id = previous_binding.bot_agent_link_id
-    if command is not None:
-        existing = await find_existing_inbound_provider_event(
-            db,
-            account=account,
-            external_chat_id=external_chat_id,
-            provider_event_id=provider_event_id,
-            provider_event_scope=provider_event_scope,
-        )
-        if existing is not None:
-            return TelegramWebhookResponse(ok=True, binding_id=existing.binding_id)
     binding_result = await resolve_inbound_binding(
         db,
         account=account,
         external_chat_id=external_chat_id,
         external_chat_type=external_chat_type,
         external_chat_name=external_chat_name,
-        external_user_id=telegram_external_user_id_from_update(payload),
+        external_user_id=external_user_id,
         text=text,
         command=command,
     )
-    if command is not None:
-        existing = await find_existing_inbound_provider_event(
-            db,
-            account=account,
-            external_chat_id=external_chat_id,
-            provider_event_id=provider_event_id,
-            provider_event_scope=provider_event_scope,
-        )
-        if existing is not None:
-            return TelegramWebhookResponse(ok=True, binding_id=existing.binding_id)
-
     messages = await record_inbound_messages_for_bindings(
         db,
         account=account,
@@ -777,6 +791,17 @@ async def telegram_webhook(
         command=command,
         binding_result=binding_result,
     )
+    if reply is None:
+        reply = await _send_telegram_unpaired_tutorial(
+            db,
+            account=account,
+            external_chat_id=external_chat_id,
+            external_chat_type=external_chat_type,
+            external_user_id=external_user_id,
+            payload=payload,
+            command=command,
+            binding_result=binding_result,
+        )
     if reply is not None:
         await db.commit()
     if binding_result.paired or binding_result.unpaired:
@@ -809,6 +834,105 @@ async def telegram_webhook(
     )
 
 
+async def _send_telegram_unpaired_tutorial(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    external_chat_id: str,
+    external_chat_type: str | None,
+    external_user_id: str | None,
+    payload: dict[str, Any],
+    command: ChannelPairCommand | None,
+    binding_result: InboundBindingResult,
+) -> ChannelMessage | None:
+    message = payload.get("message")
+    if (
+        not isinstance(message, dict)
+        or command is not None
+        or binding_result.binding is not None
+        or binding_result.bindings
+    ):
+        return None
+    sender = message.get("from")
+    if isinstance(sender, dict) and sender.get("is_bot") is True:
+        return None
+
+    direct_messages_topic_id = telegram_direct_messages_topic_id_from_update(payload)
+    if external_chat_type == "private":
+        cooldown_scope = f"private:{external_chat_id}"
+    elif external_chat_type == "direct_messages" and direct_messages_topic_id is not None:
+        cooldown_scope = f"direct_messages:{external_chat_id}:{direct_messages_topic_id}"
+    else:
+        return None
+
+    marker = {
+        "kind": _TELEGRAM_UNPAIRED_TUTORIAL_KIND,
+        "scope": cooldown_scope,
+    }
+    try:
+        async with db.begin_nested():
+            await lock_channel_binding_identity(
+                db,
+                account_id=account.id,
+                external_chat_id=external_chat_id,
+            )
+            active_binding = await find_binding(
+                db,
+                account=account,
+                external_chat_id=external_chat_id,
+            )
+            if active_binding is not None and (
+                external_chat_type != "direct_messages"
+                or binding_is_controlled_by_actor(
+                    active_binding,
+                    external_user_id=external_user_id,
+                )
+            ):
+                return None
+            recent_tutorial = await db.scalar(
+                select(ChannelMessage.id)
+                .where(
+                    ChannelMessage.account_id == account.id,
+                    ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
+                    ChannelMessage.external_chat_id == external_chat_id,
+                    ChannelMessage.created_at
+                    >= datetime.now(UTC) - TELEGRAM_UNPAIRED_TUTORIAL_COOLDOWN,
+                    ChannelMessage.payload.contains({"clawdi_system": marker}),
+                )
+                .limit(1)
+            )
+            if recent_tutorial is not None:
+                return None
+            tutorial = await send_telegram_message(
+                db,
+                account=account,
+                external_chat_id=external_chat_id,
+                text=TELEGRAM_UNPAIRED_TUTORIAL,
+                bind_to_existing=False,
+                message_thread_id=telegram_message_thread_id_from_update(payload),
+                direct_messages_topic_id=direct_messages_topic_id,
+            )
+            tutorial_payload = dict(tutorial.payload) if isinstance(tutorial.payload, dict) else {}
+            tutorial_payload["clawdi_system"] = marker
+            tutorial.payload = tutorial_payload
+            await db.flush()
+            return tutorial
+    except HTTPException as exc:
+        log.warning(
+            "telegram_unpaired_tutorial_failed account_id=%s chat_id=%s status=%s",
+            account.id,
+            external_chat_id,
+            exc.status_code,
+        )
+    except Exception:
+        log.exception(
+            "telegram_unpaired_tutorial_failed account_id=%s chat_id=%s",
+            account.id,
+            external_chat_id,
+        )
+    return None
+
+
 def _telegram_error_response(description: str, error_code: int) -> JSONResponse:
     return JSONResponse(
         status_code=error_code,
@@ -819,13 +943,44 @@ def _telegram_error_response(description: str, error_code: int) -> JSONResponse:
 async def _deliver_telegram_agent_webhook_for_binding(
     db: AsyncSession,
     *,
-    account: Any,
+    account: ChannelAccount,
     binding: ChannelBinding | None,
     payload: dict[str, Any],
 ) -> bool:
     if binding is None or binding.bot_agent_link_id is None:
         return False
-    link = await db.get(ChannelBotAgentLink, binding.bot_agent_link_id)
+    authority = (
+        await db.execute(
+            select(ChannelBinding, ChannelAccount, ChannelBotAgentLink)
+            .join(
+                ChannelAccount,
+                ChannelAccount.id == ChannelBinding.account_id,
+            )
+            .join(
+                ChannelBotAgentLink,
+                ChannelBotAgentLink.id == ChannelBinding.bot_agent_link_id,
+            )
+            .where(
+                ChannelBinding.id == binding.id,
+                ChannelBinding.account_id == account.id,
+                ChannelBotAgentLink.account_id == account.id,
+            )
+            .execution_options(populate_existing=True)
+            # The binding row is the data-plane fence. Account and Link
+            # retirement archive this row in the same transaction, while
+            # locking either parent here would invert the retirement order.
+            .with_for_update(of=ChannelBinding)
+        )
+    ).one_or_none()
+    if authority is None:
+        return False
+    binding, account, link = authority
+    if (
+        binding.status != BINDING_STATUS_ACTIVE
+        or account.status != CHANNEL_STATUS_ACTIVE
+        or account.archived_at is not None
+    ):
+        return False
     if link is None or link.status != BOT_AGENT_LINK_STATUS_ACTIVE or link.archived_at is not None:
         await record_inactive_bot_agent_link_event(
             db,

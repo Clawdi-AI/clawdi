@@ -1077,8 +1077,10 @@ async def archive_bot_agent_link(
             ChannelBinding.status == BINDING_STATUS_ACTIVE,
         )
     )
-    for binding in bindings_result.scalars().all():
+    archived_bindings = list(bindings_result.scalars().all())
+    for binding in archived_bindings:
         binding.status = BINDING_STATUS_ARCHIVED
+    await consume_pending_inbound_messages_for_bindings(db, bindings=archived_bindings)
 
     pair_codes_result = await db.execute(
         select(ChannelPairCode).where(
@@ -1235,8 +1237,10 @@ async def archive_channel_account(db: AsyncSession, *, account: ChannelAccount) 
             ChannelBinding.status == BINDING_STATUS_ACTIVE,
         )
     )
-    for binding in bindings_result.scalars().all():
+    archived_bindings = list(bindings_result.scalars().all())
+    for binding in archived_bindings:
         binding.status = BINDING_STATUS_ARCHIVED
+    await consume_pending_inbound_messages_for_bindings(db, bindings=archived_bindings)
 
     pair_codes_result = await db.execute(
         select(ChannelPairCode).where(
@@ -1797,6 +1801,10 @@ async def resolve_inbound_binding(
             )
         for active_binding in authorized_bindings:
             active_binding.status = BINDING_STATUS_ARCHIVED
+        await consume_pending_inbound_messages_for_bindings(
+            db,
+            bindings=authorized_bindings,
+        )
         return InboundBindingResult(
             binding=binding,
             bindings=tuple(authorized_bindings),
@@ -2274,6 +2282,11 @@ def telegram_message_thread_id_from_update(payload: dict[str, Any]) -> int | Non
     if chat_type == "private":
         return message_thread_id
     if chat_type in {"group", "supergroup"} and chat.get("is_forum") is True:
+        # Telegram's General forum topic uses thread id 1, but normal sends to
+        # that topic omit message_thread_id. Preserve the original update for
+        # runtimes; this helper only selects the target for core replies.
+        if message_thread_id == 1:
+            return None
         return message_thread_id
     return None
 
@@ -2544,15 +2557,16 @@ async def find_existing_inbound_provider_event(
     return result.scalar_one_or_none()
 
 
-async def discord_pairing_command_event_was_handled(
+async def pairing_command_event_was_handled(
     db: AsyncSession,
     *,
     account: ChannelAccount,
     external_chat_id: str,
     provider_event_id: str | None,
+    provider_event_scope: str = PROVIDER_EVENT_SCOPE_CHAT,
     command: ChannelPairCommand | None,
 ) -> bool:
-    """Serialize pairing mutations and reject a previously handled Discord event."""
+    """Serialize pairing mutations and reject a previously handled provider event."""
     if provider_event_id is None or command is None or command.kind not in {"pair", "unpair"}:
         return False
     # The same transaction-level scope lock is acquired again by
@@ -2569,8 +2583,35 @@ async def discord_pairing_command_event_was_handled(
         account=account,
         external_chat_id=external_chat_id,
         provider_event_id=provider_event_id,
+        provider_event_scope=provider_event_scope,
     )
     return existing is not None
+
+
+async def consume_pending_inbound_messages_for_bindings(
+    db: AsyncSession,
+    *,
+    bindings: list[ChannelBinding],
+) -> int:
+    """Revoke queued adapter delivery when binding authority is archived."""
+    binding_ids = {binding.id for binding in bindings}
+    if not binding_ids:
+        return 0
+    result = await db.execute(
+        select(ChannelMessage)
+        .where(
+            ChannelMessage.binding_id.in_(binding_ids),
+            ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+            ChannelMessage.delivered_at.is_(None),
+        )
+        .with_for_update()
+    )
+    messages = list(result.scalars().all())
+    delivered_at = datetime.now(UTC)
+    for message in messages:
+        message.delivered_at = delivered_at
+    await db.flush()
+    return len(messages)
 
 
 async def record_inbound_messages_for_bindings(
@@ -3042,9 +3083,36 @@ async def dequeue_telegram_updates(
         filters.append(ChannelMessage.bot_agent_link_id == bot_agent_link_id)
     result = await db.execute(
         select(ChannelMessage)
+        .join(
+            ChannelBinding,
+            and_(
+                ChannelBinding.id == ChannelMessage.binding_id,
+                ChannelBinding.account_id == ChannelMessage.account_id,
+                ChannelBinding.bot_agent_link_id == ChannelMessage.bot_agent_link_id,
+            ),
+        )
+        .join(
+            ChannelBotAgentLink,
+            and_(
+                ChannelBotAgentLink.id == ChannelMessage.bot_agent_link_id,
+                ChannelBotAgentLink.account_id == ChannelMessage.account_id,
+            ),
+        )
+        .join(ChannelAccount, ChannelAccount.id == ChannelMessage.account_id)
         .where(*filters)
+        .where(
+            ChannelBinding.status == BINDING_STATUS_ACTIVE,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+            ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+            ChannelAccount.archived_at.is_(None),
+        )
         .order_by(ChannelMessage.inbox_sequence, ChannelMessage.created_at)
         .limit(max(limit * 4, limit))
+        .with_for_update(
+            read=True,
+            of=ChannelBinding,
+        )
     )
     updates: list[dict[str, Any]] = []
     now = datetime.now(UTC)
@@ -3255,7 +3323,33 @@ async def pending_channel_inbox_count(
     ]
     if bot_agent_link_id is not None:
         filters.append(ChannelMessage.bot_agent_link_id == bot_agent_link_id)
-    result = await db.execute(select(ChannelMessage.id).where(*filters))
+    result = await db.execute(
+        select(ChannelMessage.id)
+        .join(
+            ChannelBinding,
+            and_(
+                ChannelBinding.id == ChannelMessage.binding_id,
+                ChannelBinding.account_id == ChannelMessage.account_id,
+                ChannelBinding.bot_agent_link_id == ChannelMessage.bot_agent_link_id,
+            ),
+        )
+        .join(
+            ChannelBotAgentLink,
+            and_(
+                ChannelBotAgentLink.id == ChannelMessage.bot_agent_link_id,
+                ChannelBotAgentLink.account_id == ChannelMessage.account_id,
+            ),
+        )
+        .join(ChannelAccount, ChannelAccount.id == ChannelMessage.account_id)
+        .where(*filters)
+        .where(
+            ChannelBinding.status == BINDING_STATUS_ACTIVE,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+            ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+            ChannelAccount.archived_at.is_(None),
+        )
+    )
     return len(result.scalars().all())
 
 
@@ -5041,7 +5135,7 @@ async def record_discord_dispatch(
         return False
     command = discord_pair_command_from_payload(frame)
     provider_event_id = discord_message_id_from_payload(frame)
-    if await discord_pairing_command_event_was_handled(
+    if await pairing_command_event_was_handled(
         db,
         account=account,
         external_chat_id=external_chat_id,

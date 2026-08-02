@@ -10,11 +10,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.channel import (
+    BINDING_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_STATUS_ACTIVE,
     MESSAGE_DIRECTION_INBOUND,
     ChannelAccount,
+    ChannelBinding,
     ChannelBotAgentLink,
     ChannelMessage,
 )
@@ -90,7 +92,14 @@ class ChannelWebhookDeliveryWorker:
     ) -> tuple[ChannelMessage, ChannelAccount, ChannelBotAgentLink] | None:
         result = await db.execute(
             select(ChannelMessage, ChannelAccount, ChannelBotAgentLink)
-            .join(ChannelAccount, ChannelAccount.id == ChannelMessage.account_id)
+            .join(
+                ChannelBinding,
+                ChannelBinding.id == ChannelMessage.binding_id,
+            )
+            .join(
+                ChannelAccount,
+                ChannelAccount.id == ChannelMessage.account_id,
+            )
             .join(
                 ChannelBotAgentLink,
                 ChannelBotAgentLink.id == ChannelMessage.bot_agent_link_id,
@@ -99,6 +108,9 @@ class ChannelWebhookDeliveryWorker:
                 ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
                 ChannelMessage.binding_id.is_not(None),
                 ChannelMessage.delivered_at.is_(None),
+                ChannelBinding.account_id == ChannelMessage.account_id,
+                ChannelBinding.bot_agent_link_id == ChannelMessage.bot_agent_link_id,
+                ChannelBinding.status == BINDING_STATUS_ACTIVE,
                 ChannelAccount.provider == CHANNEL_PROVIDER_TELEGRAM,
                 ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
                 ChannelAccount.archived_at.is_(None),
@@ -120,7 +132,10 @@ class ChannelWebhookDeliveryWorker:
             )
             .order_by(ChannelMessage.inbox_sequence, ChannelMessage.created_at)
             .limit(1)
-            .with_for_update(skip_locked=True)
+            .with_for_update(
+                skip_locked=True,
+                of=ChannelBinding,
+            )
         )
         row = result.first()
         if row is None:

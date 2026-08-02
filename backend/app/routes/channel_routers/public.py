@@ -98,6 +98,7 @@ from app.services.channels import (
     channel_webhook_url,
     configure_discord_application,
     configure_telegram_provider_webhook,
+    consume_pending_inbound_messages_for_bindings,
     create_pair_code,
     decrypt_agent_link_token,
     discord_bot_install_url,
@@ -1236,6 +1237,7 @@ async def delete_channel_binding(
         )
 
     binding.status = BINDING_STATUS_ARCHIVED
+    await consume_pending_inbound_messages_for_bindings(db, bindings=[binding])
     record_control_plane_audit(
         db,
         actor_type="user",

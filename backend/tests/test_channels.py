@@ -62,6 +62,7 @@ from app.routes import admin as admin_router
 from app.routes.channel_routers import discord as discord_router
 from app.routes.channel_routers import public as public_router
 from app.routes.channel_routers import shared as shared_router
+from app.routes.channel_routers import telegram as telegram_router
 from app.routes.channel_routers.discord import (
     _DISCORD_GATEWAY_SESSIONS,
     _discord_bound_guild_channels,
@@ -7818,6 +7819,93 @@ async def test_telegram_webhook_worker_retries_failed_agent_delivery(
 
 
 @pytest.mark.asyncio
+async def test_telegram_webhook_worker_does_not_retry_after_unpair(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _reset_sequenced_provider_client([503])
+    monkeypatch.setattr(
+        "app.services.channel_webhooks.httpx.AsyncClient",
+        _SequencedProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-agent-webhook-unpair-revokes-retry",
+        provider_token=None,
+    )
+    assert (
+        await client.post(
+            _telegram_bot_path(created, "setWebhook"),
+            headers=_telegram_agent_headers(created),
+            json={"url": "https://agent.example/agent-hook"},
+        )
+    ).status_code == 200
+    inbound = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 9_021,
+            "message": {
+                "message_id": 9_021,
+                "text": "must not retry after unpair",
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 4242, "is_bot": False},
+            },
+        },
+    )
+    message = (
+        await db_session.execute(
+            select(ChannelMessage).where(ChannelMessage.provider_event_id == "update:9021")
+        )
+    ).scalar_one()
+    assert inbound.status_code == 200
+    assert message.delivered_at is None
+    assert len(_SequencedProviderClient.calls) == 1
+
+    unpaired = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 9_022,
+            "message": {
+                "message_id": 9_022,
+                "text": "/clawdi_unpair",
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 4242, "is_bot": False},
+            },
+        },
+    )
+    assert unpaired.status_code == 200
+    assert unpaired.json()["unpaired"] is True
+    await db_session.refresh(message)
+    assert message.delivered_at is not None
+
+    # Historical rows can predate revocation consumption. Even if one remains
+    # pending, the worker must treat current binding authority as the fence.
+    message.delivered_at = None
+    await db_session.commit()
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    assert await channel_service.pending_channel_inbox_count(db_session, account=account) == 0
+    binding = await db_session.get(ChannelBinding, message.binding_id)
+    assert binding is not None
+    assert (
+        await telegram_router._deliver_telegram_agent_webhook_for_binding(
+            db_session,
+            account=account,
+            binding=binding,
+            payload={"update_id": 9_021},
+        )
+        is False
+    )
+
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    assert await ChannelWebhookDeliveryWorker(sessionmaker).run_once() is None
+    assert len(_SequencedProviderClient.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_telegram_webhook_worker_skips_non_webhook_queue_head(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -11928,6 +12016,62 @@ async def test_telegram_webhook_pair_code_sends_user_reply(
 
 
 @pytest.mark.asyncio
+async def test_telegram_general_forum_pairing_reply_omits_thread_id(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 109}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-general-forum-pair-reply",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+    _clear_fake_provider_calls()
+
+    paired = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 7_601,
+            "message": {
+                "message_id": 7_601,
+                "message_thread_id": 1,
+                "is_topic_message": True,
+                "text": f"/clawdi_pair {pair['code']}",
+                "chat": {
+                    "id": -1007601,
+                    "type": "supergroup",
+                    "is_forum": True,
+                },
+                "from": {"id": 7601, "is_bot": False},
+            },
+        },
+    )
+
+    assert paired.status_code == 200
+    assert paired.json()["paired"] is True
+    pairing_reply = next(
+        call for call in _FakeProviderClient.calls if call["url"].endswith("/sendMessage")
+    )
+    assert pairing_reply["json"] == {
+        "chat_id": "-1007601",
+        "text": "Paired! This chat is now connected to your agent.",
+    }
+
+
+@pytest.mark.asyncio
 async def test_telegram_webhook_pair_command_sends_failure_replies(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -12318,6 +12462,11 @@ async def test_telegram_channel_direct_message_pairing_replies_stay_in_originati
         },
         {
             "chat_id": "-100987654326",
+            "direct_messages_topic_id": 9999,
+            "text": telegram_router.TELEGRAM_UNPAIRED_TUTORIAL,
+        },
+        {
+            "chat_id": "-100987654326",
             "direct_messages_topic_id": 4242,
             "text": "Unpaired. This chat is no longer connected to an agent.",
         },
@@ -12423,6 +12572,361 @@ async def test_telegram_webhook_unpair_redelivery_does_not_duplicate_reply(
     replies = [call for call in _FakeProviderClient.calls if call["url"].endswith("/sendMessage")]
     assert [call["json"]["text"] for call in replies] == [
         "Unpaired. This chat is no longer connected to an agent."
+    ]
+
+
+@pytest.mark.asyncio
+async def test_telegram_concurrent_replayed_unpair_cannot_archive_replacement_binding(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 105}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    chat_id = "987654399"
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-concurrent-replayed-unpair",
+        chat_id=chat_id,
+    )
+    replacement_pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+    original_unpair = {
+        "update_id": 7_603,
+        "message": {
+            "message_id": 7_603,
+            "text": "/clawdi_unpair",
+            "chat": {"id": int(chat_id), "type": "private"},
+            "from": {"id": 4242, "is_bot": False},
+        },
+    }
+    replacement_pair_update = {
+        "update_id": 7_604,
+        "message": {
+            "message_id": 7_604,
+            "text": f"/clawdi_pair {replacement_pair['code']}",
+            "chat": {"id": int(chat_id), "type": "private"},
+            "from": {"id": 4242, "is_bot": False},
+        },
+    }
+    original_record = telegram_router.record_inbound_messages_for_bindings
+    unpair_before_event_commit = asyncio.Event()
+    release_unpair_commit = asyncio.Event()
+    paused = False
+
+    async def pause_first_unpair_before_event_commit(*args: Any, **kwargs: Any):
+        nonlocal paused
+        binding_result = kwargs["binding_result"]
+        if binding_result.unpaired and not paused:
+            paused = True
+            unpair_before_event_commit.set()
+            await release_unpair_commit.wait()
+        return await original_record(*args, **kwargs)
+
+    monkeypatch.setattr(
+        telegram_router,
+        "record_inbound_messages_for_bindings",
+        pause_first_unpair_before_event_commit,
+    )
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    previous_session_override = app.dependency_overrides[get_session]
+
+    async def independent_request_session() -> AsyncIterator[AsyncSession]:
+        async with sessionmaker() as request_db:
+            yield request_db
+
+    await db_session.rollback()
+    app.dependency_overrides[get_session] = independent_request_session
+
+    async def post_update(payload: dict[str, Any]) -> httpx.Response:
+        return await client.post(
+            f"/v1/channels/telegram/{created['id']}/webhook",
+            headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+            json=payload,
+        )
+
+    try:
+        first_unpair_task = asyncio.create_task(post_update(original_unpair))
+        await asyncio.wait_for(unpair_before_event_commit.wait(), timeout=2)
+        replacement_pair_task = asyncio.create_task(post_update(replacement_pair_update))
+        await asyncio.sleep(0.05)
+        replay_task = asyncio.create_task(post_update(original_unpair))
+        await asyncio.sleep(0.05)
+        release_unpair_commit.set()
+        first_unpair, repaired, replay = await asyncio.gather(
+            first_unpair_task,
+            replacement_pair_task,
+            replay_task,
+        )
+    finally:
+        app.dependency_overrides[get_session] = previous_session_override
+
+    assert first_unpair.json()["unpaired"] is True
+    assert repaired.json()["paired"] is True
+    assert replay.json()["unpaired"] is False
+    async with sessionmaker() as verification_db:
+        active_bindings = list(
+            (
+                await verification_db.execute(
+                    select(ChannelBinding).where(
+                        ChannelBinding.account_id == UUID(created["id"]),
+                        ChannelBinding.status == BINDING_STATUS_ACTIVE,
+                    )
+                )
+            ).scalars()
+        )
+    assert len(active_bindings) == 1
+    assert active_bindings[0].external_chat_id == chat_id
+    replies = [call for call in _FakeProviderClient.calls if call["url"].endswith("/sendMessage")]
+    assert [call["json"]["text"] for call in replies].count(
+        "Unpaired. This chat is no longer connected to an agent."
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_telegram_unpaired_private_tutorial_is_idempotent_cooled_down_and_non_authoritative(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 106}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-unpaired-private-tutorial",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+    _clear_fake_provider_calls()
+    webhook_url = f"/v1/channels/telegram/{created['id']}/webhook"
+    headers = {"x-telegram-bot-api-secret-token": created["webhook_secret"]}
+    first_update = {
+        "update_id": 7_610,
+        "message": {
+            "message_id": 7_610,
+            "text": "/start",
+            "chat": {"id": 987654410, "type": "private"},
+            "from": {"id": 987654410, "is_bot": False},
+        },
+    }
+
+    first = await client.post(webhook_url, headers=headers, json=first_update)
+    replay = await client.post(webhook_url, headers=headers, json=first_update)
+    cooled_down = await client.post(
+        webhook_url,
+        headers=headers,
+        json={
+            "update_id": 7_611,
+            "message": {
+                "message_id": 7_611,
+                "text": "hello?",
+                "chat": {"id": 987654410, "type": "private"},
+                "from": {"id": 987654410, "is_bot": False},
+            },
+        },
+    )
+
+    assert first.status_code == 200
+    assert replay.status_code == 200
+    assert cooled_down.status_code == 200
+    tutorial_calls = [
+        call for call in _FakeProviderClient.calls if call["url"].endswith("/sendMessage")
+    ]
+    assert [call["json"] for call in tutorial_calls] == [
+        {
+            "chat_id": "987654410",
+            "text": telegram_router.TELEGRAM_UNPAIRED_TUTORIAL,
+        }
+    ]
+    assert (await client.get(f"/v1/channels/{created['id']}/bindings")).json() == []
+    pair_row = await db_session.get(ChannelPairCode, UUID(pair["id"]))
+    assert pair_row is not None
+    assert pair_row.status == PAIR_CODE_STATUS_PENDING
+    tutorial_message = (
+        await db_session.execute(
+            select(ChannelMessage).where(
+                ChannelMessage.account_id == UUID(created["id"]),
+                ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
+                ChannelMessage.text == telegram_router.TELEGRAM_UNPAIRED_TUTORIAL,
+            )
+        )
+    ).scalar_one()
+    tutorial_message.created_at = (
+        datetime.now(UTC)
+        - telegram_router.TELEGRAM_UNPAIRED_TUTORIAL_COOLDOWN
+        - timedelta(seconds=1)
+    )
+    await db_session.commit()
+
+    after_cooldown = await client.post(
+        webhook_url,
+        headers=headers,
+        json={
+            "update_id": 7_612,
+            "message": {
+                "message_id": 7_612,
+                "text": "still there?",
+                "chat": {"id": 987654410, "type": "private"},
+                "from": {"id": 987654410, "is_bot": False},
+            },
+        },
+    )
+    assert after_cooldown.status_code == 200
+    assert (
+        len([call for call in _FakeProviderClient.calls if call["url"].endswith("/sendMessage")])
+        == 2
+    )
+
+
+@pytest.mark.asyncio
+async def test_telegram_unpaired_tutorial_failure_does_not_expose_internal_error(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 110}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-unpaired-tutorial-provider-failure",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    _FailingProviderClient.calls = []
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FailingProviderClient)
+
+    response = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 7_613,
+            "message": {
+                "message_id": 7_613,
+                "text": "help me pair",
+                "chat": {"id": 987654413, "type": "private"},
+                "from": {"id": 987654413, "is_bot": False},
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "paired": False,
+        "unpaired": False,
+        "binding_id": None,
+    }
+    assert len(_FailingProviderClient.calls) == 1
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(ChannelMessage)
+            .where(
+                ChannelMessage.account_id == UUID(created["id"]),
+                ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
+            )
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_telegram_unpaired_tutorial_avoids_groups_and_scopes_channel_dm_cooldown(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 107}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-unpaired-tutorial-scopes",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    _clear_fake_provider_calls()
+    webhook_url = f"/v1/channels/telegram/{created['id']}/webhook"
+    headers = {"x-telegram-bot-api-secret-token": created["webhook_secret"]}
+
+    for update_id, chat in (
+        (7_620, {"id": -1007620, "type": "group"}),
+        (7_621, {"id": -1007621, "type": "supergroup", "is_forum": True}),
+    ):
+        response = await client.post(
+            webhook_url,
+            headers=headers,
+            json={
+                "update_id": update_id,
+                "message": {
+                    "message_id": update_id,
+                    "message_thread_id": 77,
+                    "is_topic_message": True,
+                    "text": "ordinary group message",
+                    "chat": chat,
+                    "from": {"id": 77, "is_bot": False},
+                },
+            },
+        )
+        assert response.status_code == 200
+
+    direct_chat = {
+        "id": -1007622,
+        "type": "supergroup",
+        "is_direct_messages": True,
+    }
+    for update_id, topic_id in ((7_622, 81), (7_623, 81), (7_624, 82)):
+        response = await client.post(
+            webhook_url,
+            headers=headers,
+            json={
+                "update_id": update_id,
+                "message": {
+                    "message_id": update_id,
+                    "direct_messages_topic": {"topic_id": topic_id},
+                    "is_topic_message": True,
+                    "text": "ordinary channel DM",
+                    "chat": direct_chat,
+                    "from": {"id": topic_id, "is_bot": False},
+                },
+            },
+        )
+        assert response.status_code == 200
+
+    tutorial_calls = [
+        call for call in _FakeProviderClient.calls if call["url"].endswith("/sendMessage")
+    ]
+    assert [call["json"] for call in tutorial_calls] == [
+        {
+            "chat_id": "-1007622",
+            "direct_messages_topic_id": 81,
+            "text": telegram_router.TELEGRAM_UNPAIRED_TUTORIAL,
+        },
+        {
+            "chat_id": "-1007622",
+            "direct_messages_topic_id": 82,
+            "text": telegram_router.TELEGRAM_UNPAIRED_TUTORIAL,
+        },
     ]
 
 
@@ -12642,6 +13146,104 @@ async def test_delete_binding_unpairs_exactly_one_chat_and_cleans_telegram_proje
 
 
 @pytest.mark.asyncio
+async def test_telegram_ui_unpair_revokes_pending_polling_update_across_repair(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 108}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-ui-unpair-revokes-polling",
+        chat_id="441",
+        chat_type="private",
+    )
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(
+                ChannelBinding.account_id == account.id,
+                ChannelBinding.external_chat_id == "441",
+            )
+        )
+    ).scalar_one()
+    inbound = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 7_641,
+            "message": {
+                "message_id": 7_641,
+                "text": "queued before unpair",
+                "chat": {"id": 441, "type": "private"},
+                "from": {"id": 4242, "is_bot": False},
+            },
+        },
+    )
+    assert inbound.status_code == 200
+    queued = (
+        await db_session.execute(
+            select(ChannelMessage).where(ChannelMessage.provider_event_id == "update:7641")
+        )
+    ).scalar_one()
+    assert queued.delivered_at is None
+    assert await channel_service.pending_channel_inbox_count(db_session, account=account) == 1
+
+    deleted = await client.delete(f"/v1/channels/{created['id']}/bindings/{binding.id}")
+    assert deleted.status_code == 200
+    assert deleted.json()["unpaired"] is True
+    await db_session.refresh(queued)
+    assert queued.delivered_at is not None
+    assert await channel_service.pending_channel_inbox_count(db_session, account=account) == 0
+
+    replacement_pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+    repaired = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 7_642,
+            "message": {
+                "message_id": 7_642,
+                "text": f"/clawdi_pair {replacement_pair['code']}",
+                "chat": {"id": 441, "type": "private"},
+                "from": {"id": 4242, "is_bot": False},
+            },
+        },
+    )
+    assert repaired.status_code == 200
+    assert repaired.json()["paired"] is True
+    active_binding = (
+        await db_session.execute(
+            select(ChannelBinding)
+            .where(
+                ChannelBinding.account_id == account.id,
+                ChannelBinding.status == BINDING_STATUS_ACTIVE,
+            )
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert active_binding.id == binding.id
+    updates = await client.post(
+        _telegram_bot_path(created, "getUpdates"),
+        headers=_telegram_agent_headers(created),
+        json={},
+    )
+    assert updates.status_code == 200
+    assert updates.json()["result"] == []
+
+
+@pytest.mark.asyncio
 async def test_delete_binding_keeps_unpair_durable_when_telegram_notification_fails(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -12832,26 +13434,6 @@ async def test_telegram_start_claims_explicit_agent_link_and_redelivery_is_idemp
     }
     webhook_url = f"/v1/channels/telegram/{created['id']}/webhook"
     headers = {"x-telegram-bot-api-secret-token": created["webhook_secret"]}
-    from app.routes.channel_routers import telegram as telegram_router
-
-    original_find = telegram_router.find_existing_inbound_provider_event
-    precheck_count = 0
-    both_prechecks_started = asyncio.Event()
-
-    async def synchronized_find(*args, **kwargs):
-        nonlocal precheck_count
-        precheck_count += 1
-        if precheck_count <= 2:
-            if precheck_count == 2:
-                both_prechecks_started.set()
-            await both_prechecks_started.wait()
-        return await original_find(*args, **kwargs)
-
-    monkeypatch.setattr(
-        telegram_router,
-        "find_existing_inbound_provider_event",
-        synchronized_find,
-    )
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
 
     async def independent_session():
@@ -13291,6 +13873,9 @@ def test_telegram_reply_thread_requires_a_true_private_or_forum_topic():
         )
         == 77
     )
+    general_topic = update(chat_type="supergroup", is_topic=True, is_forum=True)
+    general_topic["message"]["message_thread_id"] = 1
+    assert telegram_message_thread_id_from_update(general_topic) is None
     assert (
         telegram_message_thread_id_from_update(update(chat_type="private", is_topic=False)) is None
     )
