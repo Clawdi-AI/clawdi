@@ -108,6 +108,22 @@ releases.
 
 1. Merge the PR into `main` after required checks are green.
 2. Watch Actions for these workflows:
+   - `Backend CI` is the sole automatic backend-image change gate. Its
+     `push.main.paths` filter includes every backend image/release input, and
+     main concurrency may cancel an older run in favor of the newest cumulative
+     commit. A push outside that path filter does not start a backend image
+     release.
+   - Every successful main `Backend CI` run builds and deploys its exact
+     `workflow_run.head_sha`. `Clawdi Image Release` must not narrow that trusted
+     signal with a single-commit diff: a preceding backend run may have been
+     canceled after its changes became ancestors of the successful SHA. Release
+     runs use GitHub Actions' non-canceling `queue: max` concurrency so
+     consecutive successful SHAs remain FIFO and cannot deploy an older image
+     last. Manual dispatches always build their resolved ref. This follows the
+     official GitHub [`workflow_run` conclusion/data
+     contract](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#running-a-workflow-based-on-the-conclusion-of-another-workflow)
+     and [concurrency queue
+     semantics](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#concurrency).
    - `.github/workflows/clawdi-release.yml` is manual-only. Run `Release Clawdi`
      only after the deployed commit should get public app/backend/web release
      notes.
@@ -115,6 +131,9 @@ releases.
      CLI publish workflow file. It publishes when the exact npm version is
      absent, or rebuilds and verifies that version to complete an unfinished
      GitHub Release.
+
+   Done: `bun test packages/cli/tests/clawdi-image-release-workflow.test.ts`
+   exits 0 and the backend image release workflow contract passes.
 
 ### Discord reserved-command cutover
 
