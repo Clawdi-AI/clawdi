@@ -3,6 +3,7 @@ import { ArrowRight, type LucideIcon, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type AgentOverviewModuleId, agentOverviewGroups } from "@/lib/agent-capabilities";
 import { type AgentRouteSearch, agentSectionLink } from "@/lib/agent-routes";
@@ -34,22 +35,26 @@ export function AgentOverviewStatusCard({
 	children: ReactNode;
 }) {
 	return (
-		<article
+		<Card
+			size="sm"
+			role="article"
 			data-overview-status={title.toLowerCase().replaceAll(" ", "-")}
-			className="flex h-full flex-col rounded-lg border bg-muted/20"
+			className="h-full gap-0 bg-muted/20 py-0"
 		>
-			<Link
-				{...agentSectionLink(agentId, section, routeSearch)}
-				className="group flex items-center gap-3 p-4 pb-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-			>
-				<IconChip size="sm" tint={tint}>
-					<Icon />
-				</IconChip>
-				<h2 className="min-w-0 flex-1 text-sm font-semibold">{title}</h2>
-				<ArrowRight className="size-4 text-muted-foreground" />
-			</Link>
-			<div className="flex flex-1 flex-col px-4 pb-4">{children}</div>
-		</article>
+			<CardHeader className="p-0">
+				<Link
+					{...agentSectionLink(agentId, section, routeSearch)}
+					className="group flex items-center gap-3 px-4 pt-4 pb-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+				>
+					<IconChip size="sm" tint={tint}>
+						<Icon />
+					</IconChip>
+					<h2 className="min-w-0 flex-1 text-sm font-semibold">{title}</h2>
+					<ArrowRight className="size-4 text-muted-foreground" />
+				</Link>
+			</CardHeader>
+			<CardContent className="flex flex-1 flex-col px-4 pb-4">{children}</CardContent>
+		</Card>
 	);
 }
 
@@ -187,44 +192,41 @@ export function AgentOverviewCapabilities({
 						data-overview-layout={group.layout}
 						className={cn(
 							"grid gap-3",
-							group.layout === "balanced-five"
-								? "@2xl/main:grid-cols-4 @4xl/main:grid-cols-6"
+							group.layout === "three-column"
+								? "@2xl/main:grid-cols-2 @4xl/main:grid-cols-3"
 								: "@2xl/main:grid-cols-2",
 						)}
 					>
-						{group.modules.map((module, moduleIndex) => {
+						{group.modules.map((module) => {
 							const item = AGENT_SECTION_NAVIGATION_ITEMS[module.section];
 							const moduleContent = content[module.id];
 							if (!moduleContent) return null;
 							const Icon = item.icon;
 							const title = module.id === "model-provider" ? "Model & Provider" : item.label;
 							return (
-								<article
+								<Card
+									size="sm"
+									role="article"
 									key={module.id}
 									data-overview-module={module.id}
-									className={cn(
-										"flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card",
-										group.layout === "balanced-five" && "@2xl/main:col-span-2",
-										group.layout === "balanced-five" &&
-											moduleIndex === 4 &&
-											"@2xl/main:col-start-2 @4xl/main:col-start-auto",
-										group.layout === "balanced-five" &&
-											moduleIndex === 3 &&
-											"@4xl/main:col-start-2",
-									)}
+									className="min-w-0 gap-0 py-0"
 								>
-									<Link
-										{...agentSectionLink(agentId, module.section, routeSearch)}
-										className="group flex shrink-0 items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-									>
-										<IconChip size="sm" tint={item.tint}>
-											<Icon />
-										</IconChip>
-										<h3 className="min-w-0 flex-1 text-sm font-semibold">{title}</h3>
-										<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-									</Link>
-									<div className="flex flex-1 flex-col px-4 pb-4">{moduleContent.body}</div>
-								</article>
+									<CardHeader className="p-0">
+										<Link
+											{...agentSectionLink(agentId, module.section, routeSearch)}
+											className="group flex items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+										>
+											<IconChip size="sm" tint={item.tint}>
+												<Icon />
+											</IconChip>
+											<h3 className="min-w-0 flex-1 text-sm font-semibold">{title}</h3>
+											<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+										</Link>
+									</CardHeader>
+									<CardContent className="flex flex-1 flex-col px-4 pb-4">
+										{moduleContent.body}
+									</CardContent>
+								</Card>
 							);
 						})}
 					</div>

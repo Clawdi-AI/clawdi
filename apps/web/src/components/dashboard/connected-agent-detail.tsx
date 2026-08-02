@@ -365,16 +365,9 @@ function AgentDetailContentSkeleton() {
 			</div>
 			<div>
 				<Skeleton className="mb-3 h-4 w-20" />
-				<div className="grid gap-3 @2xl/main:grid-cols-4 @4xl/main:grid-cols-6">
+				<div className="grid gap-3 @2xl/main:grid-cols-2 @4xl/main:grid-cols-3">
 					{Array.from({ length: 5 }).map((_, index) => (
-						<Skeleton
-							key={index}
-							className={cn(
-								"h-40 rounded-lg @2xl/main:col-span-2",
-								index === 4 && "@2xl/main:col-start-2 @4xl/main:col-start-auto",
-								index === 3 && "@4xl/main:col-start-2",
-							)}
-						/>
+						<Skeleton key={index} className="h-40 rounded-xl" />
 					))}
 				</div>
 			</div>

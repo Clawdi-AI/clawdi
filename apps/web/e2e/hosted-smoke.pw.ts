@@ -19,7 +19,7 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 	const [gridBox, cards] = await Promise.all([
 		grid.boundingBox(),
 		grid
-			.locator("article")
+			.locator("[data-overview-module]")
 			.evaluateAll((elements) =>
 				elements.map((element) => element.getBoundingClientRect().toJSON()),
 			),
@@ -42,11 +42,13 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 		expect(card.x + card.width).toBeLessThanOrEqual((gridBox?.x ?? 0) + (gridBox?.width ?? 0) + 1);
 	}
 	const finalRow = rows.at(-1) ?? [];
-	const finalLeft = Math.min(...finalRow.map((card) => card.x));
-	const finalRight = Math.max(...finalRow.map((card) => card.x + card.width));
-	expect(
-		Math.abs((finalLeft + finalRight) / 2 - ((gridBox?.x ?? 0) + (gridBox?.width ?? 0) / 2)),
-	).toBeLessThanOrEqual(2);
+	expect(finalRow).not.toHaveLength(0);
+	expect(Math.abs((finalRow[0]?.x ?? 0) - (gridBox?.x ?? 0))).toBeLessThanOrEqual(2);
+	const overflow = await grid.evaluate((element) => ({
+		clientWidth: element.clientWidth,
+		scrollWidth: element.scrollWidth,
+	}));
+	expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
 }
 
 // HOSTED (Clawdi Cloud) smoke against the vite dev server with dev-auth-bypass
@@ -2867,9 +2869,9 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.getByText("Managed", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="live-sync"]')).toHaveCount(0);
-	const resourceGrid = overview.locator('[data-overview-layout="balanced-five"]');
+	const resourceGrid = overview.locator('[data-overview-layout="three-column"]');
 	const resourceGeometry = await resourceGrid
-		.locator("article")
+		.locator("[data-overview-module]")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
 	expect(resourceGeometry).toHaveLength(5);
 	expect(
@@ -2884,7 +2886,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	}
 	expect(
 		await resourceGrid
-			.locator("article")
+			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
 	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
 	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
