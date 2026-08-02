@@ -5,14 +5,17 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 from fastapi import HTTPException, status
+from pydantic import TypeAdapter, ValidationError
 
 from app.models.channel import ChannelAccount, ChannelBotAgentLink
 from app.services.metrics import webhook_deliveries
 from app.services.url_security import UnsafeOutboundUrlError, validate_outbound_url
 from app.services.vault_crypto import decrypt_field, encrypt_field
 
+_CONFIG_OBJECT_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
 
-def _optional_str(value: Any) -> str | None:
+
+def _optional_str(value: object) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):
@@ -21,13 +24,21 @@ def _optional_str(value: Any) -> str | None:
     return str(value)
 
 
-def _account_config(account: ChannelAccount) -> dict[str, Any]:
-    return account.config if isinstance(account.config, dict) else {}
+def _config_object(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    try:
+        return _CONFIG_OBJECT_ADAPTER.validate_python(value, strict=True)
+    except ValidationError:
+        return {}
 
 
-def bluebubbles_webhook_config(account: ChannelAccount) -> dict[str, Any]:
-    webhook = _account_config(account).get("bluebubbles_webhook")
-    return webhook if isinstance(webhook, dict) else {}
+def _account_config(account: ChannelAccount) -> dict[str, object]:
+    return _config_object(account.config)
+
+
+def bluebubbles_webhook_config(account: ChannelAccount) -> dict[str, object]:
+    return _config_object(_account_config(account).get("bluebubbles_webhook"))
 
 
 def bluebubbles_webhook_password(account: ChannelAccount) -> str | None:
@@ -42,7 +53,7 @@ def bluebubbles_webhook_update(
     url: str,
     events: list[object],
     password: str,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     return {
         "url": url,
         "events": events,
@@ -50,10 +61,9 @@ def bluebubbles_webhook_update(
     }
 
 
-def telegram_link_webhook_config(link: ChannelBotAgentLink) -> dict[str, Any]:
-    config = link.config if isinstance(link.config, dict) else {}
-    webhook = config.get("telegram_webhook")
-    return webhook if isinstance(webhook, dict) else {}
+def telegram_link_webhook_config(link: ChannelBotAgentLink) -> dict[str, object]:
+    config = _config_object(link.config)
+    return _config_object(config.get("telegram_webhook"))
 
 
 def telegram_link_webhook_url(link: ChannelBotAgentLink) -> str | None:

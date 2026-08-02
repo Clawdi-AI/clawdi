@@ -11,6 +11,7 @@ from typing import Any
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +35,7 @@ from app.services.audit import record_control_plane_audit
 
 _CURSOR_PREFIX = "clawdi-ro-v1"
 _MAX_SAFE_INTEGER = 9_007_199_254_740_991
+_CURSOR_CLAIMS_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
 
 
 @dataclass
@@ -140,9 +142,7 @@ def decode_runtime_observation_cursor(value: str) -> DecodedRuntimeObservationCu
             protected[12:],
             _CURSOR_PREFIX.encode("ascii"),
         )
-        claims = json.loads(claims_raw)
-        if not isinstance(claims, dict):
-            raise ValueError("cursor claims are invalid")
+        claims = _CURSOR_CLAIMS_ADAPTER.validate_json(claims_raw)
         stream_position = claims["streamPosition"]
         if (
             isinstance(stream_position, bool)
@@ -154,15 +154,19 @@ def decode_runtime_observation_cursor(value: str) -> DecodedRuntimeObservationCu
         consumer_id = claims["consumerId"]
         if not isinstance(consumer_id, str) or not consumer_id:
             raise ValueError("cursor consumer is invalid")
+        environment_id = claims["environmentId"]
+        cursor_epoch = claims["cursorEpoch"]
+        if not isinstance(environment_id, str) or not isinstance(cursor_epoch, str):
+            raise ValueError("cursor identity is invalid")
         return DecodedRuntimeObservationCursor(
-            environment_id=uuid.UUID(claims["environmentId"]),
+            environment_id=uuid.UUID(environment_id),
             consumer_id=consumer_id,
-            cursor_epoch=uuid.UUID(claims["cursorEpoch"]),
+            cursor_epoch=uuid.UUID(cursor_epoch),
             stream_position=stream_position,
         )
     except RuntimeObservationProtocolError:
         raise
-    except (InvalidTag, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (InvalidTag, KeyError, TypeError, ValueError, ValidationError) as exc:
         raise RuntimeObservationProtocolError(
             410,
             "observation_cursor_expired",

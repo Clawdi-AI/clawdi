@@ -50,7 +50,7 @@ _SESSION_RESET_CLOSE_CODES = {4007, 4009}
 
 type GatewayFrame = dict[str, JsonValue]
 
-_GATEWAY_JSON_ADAPTER = TypeAdapter(JsonValue)
+_GATEWAY_JSON_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
 class _GatewayConnection(Protocol):
@@ -228,8 +228,7 @@ class DiscordGatewayWorker:
         try:
             token = decrypt_provider_token(account)
         except HTTPException as exc:
-            detail = exc.detail if isinstance(exc.detail, str) else "provider token unavailable"
-            raise RuntimeError(detail) from exc
+            raise RuntimeError(_provider_token_error_detail(exc.detail)) from exc
 
         can_resume = state.can_resume()
         gateway_url = state.resume_gateway_url
@@ -591,6 +590,10 @@ def discord_gateway_enabled(account: ChannelAccount) -> bool:
 def parse_gateway_frame(raw_frame: str | bytes) -> GatewayFrame | None:
     payload = _GATEWAY_JSON_ADAPTER.validate_json(raw_frame)
     return payload if isinstance(payload, dict) else None
+
+
+def _provider_token_error_detail(detail: object) -> str:
+    return detail if isinstance(detail, str) else "provider token unavailable"
 
 
 def _update_gateway_session_state(state: _GatewayState, frame: GatewayFrame) -> None:
