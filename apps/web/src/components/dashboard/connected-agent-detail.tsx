@@ -180,7 +180,7 @@ export function ConnectedAgentDetail({
 								<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
 									<section
 										aria-labelledby="connected-recent-sessions"
-										className="min-h-40 lg:min-h-52"
+										className="min-h-40 min-w-0 lg:min-h-52"
 									>
 									{blockingSessionsError ? (
 											<OverviewModuleError

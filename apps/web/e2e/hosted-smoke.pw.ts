@@ -2644,7 +2644,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 				summary: [
 					"Prepare launch brief",
 					"Research customer feedback before the product planning review",
-					"Investigate a long-running customer issue across several projects and write a detailed plan for the next release",
+					"Investigate a long-running customer issue across several projects and write a detailed plan for the next release review with every regional owner and support lead",
 					"Review risks",
 					"Fifth hosted session",
 				][index],
@@ -2725,13 +2725,36 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const sessionBoxes = await recentSessions.locator("article").evaluateAll((cards) =>
 		cards.map((card) => {
 			const rect = card.getBoundingClientRect();
-			return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+			const title = card.querySelector<HTMLElement>('[data-testid="overview-session-title"]');
+			const meta = card.querySelector<HTMLElement>('[data-testid="overview-session-meta"]');
+			const titleStyle = title ? getComputedStyle(title) : null;
+			return {
+				x: rect.x,
+				y: rect.y,
+				width: rect.width,
+				height: rect.height,
+				metaOffset: (meta?.getBoundingClientRect().y ?? rect.y) - rect.y,
+				titleWhiteSpace: titleStyle?.whiteSpace,
+				titleOverflow: titleStyle?.overflow,
+				titleTextOverflow: titleStyle?.textOverflow,
+				titleClipped: (title?.scrollWidth ?? 0) > (title?.clientWidth ?? 0),
+			};
 		}),
 	);
 	expect(
 		Math.max(...sessionBoxes.map((box) => box.height)) -
 			Math.min(...sessionBoxes.map((box) => box.height)),
 	).toBeLessThanOrEqual(2);
+	expect(Math.min(...sessionBoxes.map((box) => box.height))).toBeGreaterThanOrEqual(64);
+	expect(Math.max(...sessionBoxes.map((box) => box.height))).toBeLessThanOrEqual(72);
+	expect(sessionBoxes[2]?.titleWhiteSpace).toBe("nowrap");
+	expect(sessionBoxes[2]?.titleOverflow).toBe("hidden");
+	expect(sessionBoxes[2]?.titleTextOverflow).toBe("ellipsis");
+	expect(sessionBoxes[2]?.titleClipped).toBe(true);
+	expect(
+		Math.max(...sessionBoxes.map((box) => box.metaOffset)) -
+			Math.min(...sessionBoxes.map((box) => box.metaOffset)),
+	).toBeLessThanOrEqual(1);
 	for (let index = 1; index < sessionBoxes.length; index += 1) {
 		expect(Math.abs(sessionBoxes[index].x - sessionBoxes[0].x)).toBeLessThanOrEqual(1);
 		expect(Math.abs(sessionBoxes[index].width - sessionBoxes[0].width)).toBeLessThanOrEqual(1);

@@ -36,9 +36,9 @@ export function OverviewSessionList({
 		return (
 			<div className="grid gap-2" aria-label="Loading recent sessions" role="status">
 				{Array.from({ length: 4 }).map((_, index) => (
-					<div key={index} className={cn(ENTITY_CARD_BASE, "h-full min-h-28")}>
+					<div key={index} className={cn(ENTITY_CARD_BASE, "px-4 py-3")}>
 						<Skeleton className="h-4 w-4/5" />
-						<Skeleton className="mt-3 h-3 w-1/2" />
+						<Skeleton className="mt-1.5 h-3 w-1/2" />
 					</div>
 				))}
 			</div>
@@ -184,24 +184,28 @@ function SessionFeedCard({
 				className={cn(
 					ENTITY_CARD_BASE,
 					"transition-colors group-hover:bg-muted/50",
-					compact && "min-h-28",
+					compact && "px-4 py-3",
 					isAutomated && "bg-muted/30",
 				)}
 			>
 				{compact ? (
 					<div className="flex min-w-0 items-start gap-3">
 						<AgentIcon agent={session.agent_type} size="lg" />
-						<div className="grid min-w-0 flex-1 grid-rows-[2.5rem_auto]">
-							<p className="line-clamp-2 text-sm leading-5 font-semibold">{title}</p>
-							<div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground sm:grid-cols-[auto_auto_1fr]">
+						<div className="w-0 min-w-0 flex-1 overflow-hidden">
+							<p data-testid="overview-session-title" className="truncate text-sm font-semibold">
+								{title}
+							</p>
+							<div
+								data-testid="overview-session-meta"
+								className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground"
+							>
 								<span>
 									{session.message_count} {session.message_count === 1 ? "message" : "messages"}
 								</span>
+								<span aria-hidden="true">·</span>
 								<span>{formatNumber(totalTokens)} tokens</span>
-								<span
-									className="col-span-2 sm:col-span-1 sm:text-right"
-									title={formatAbsoluteTooltip(session.last_activity_at)}
-								>
+								<span aria-hidden="true">·</span>
+								<span title={formatAbsoluteTooltip(session.last_activity_at)}>
 									{relativeTime(session.last_activity_at)}
 								</span>
 							</div>
