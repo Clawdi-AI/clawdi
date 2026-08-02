@@ -80,8 +80,12 @@ export function OverviewVaultsBody({
 }
 
 export function OverviewConnectorsBody() {
-	const connected = useConnectedAppCards();
 	const catalog = useAvailableApps({ page: 1, pageSize: 8 });
+	const connected = useConnectedAppCards({
+		apps: catalog.data?.items,
+		isLoading: catalog.isLoading,
+		error: catalog.error,
+	});
 	const connectedNames = new Set(
 		connected.activeConnections.flatMap((connection) =>
 			connection.app_name ? [connection.app_name] : [],

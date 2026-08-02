@@ -264,8 +264,8 @@ import {
 	agentProviderHasSingleLinkLimit,
 	channelProviderLinkingReady,
 } from "@/hosted/v2/channels/channel-linking.logic";
-import { channelKeys } from "@/hosted/v2/channels/channel-query-cache";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
+import { channelKeys } from "@/hosted/v2/channels/channel-query-cache";
 import type { ChannelBinding } from "@/hosted/v2/channels/channel-types";
 import {
 	CHANNEL_DESTRUCTIVE_ACTION_CLASS,
@@ -542,8 +542,8 @@ export function HostedAgentDetail({
 	});
 
 	const sessions = useQuery({
-		...sessionListQueryOptions($api, { environment_id: environmentId, page_size: 20 }),
-		enabled: deploymentRunning && projection.status === "resolved",
+		...sessionListQueryOptions($api, { environment_id: environmentId, page_size: 4 }),
+		enabled: activeTab === "overview" && deploymentRunning && projection.status === "resolved",
 	});
 
 	const activeNavItem = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];

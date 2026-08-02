@@ -212,6 +212,7 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 
 type DashboardApiStubOptions = {
 	sessionsPage?: unknown;
+	sessionRequests?: string[];
 	connectorConnections?: readonly unknown[];
 	connectorConnectionsGate?: Promise<void>;
 	connectorConnectionsResponse?: { body: unknown; status: number };
@@ -226,6 +227,9 @@ type DashboardApiStubOptions = {
 	}[];
 	connectorCatalogGate?: Promise<void>;
 	connectorCatalogResponse?: { body: unknown; status: number };
+	connectorMetadataRequests?: string[];
+	projectBindingRequests?: string[];
+	projectRequests?: string[];
 	projectBindings?: readonly unknown[];
 	projectBindingsError?: { status: number; detail: string };
 	projectBindingsGate?: Promise<void>;
@@ -268,6 +272,7 @@ async function stubDashboardApi(
 			return;
 		}
 		if (url.pathname === "/v1/agents/agent-smoke-1/project-bindings") {
+			options.projectBindingRequests?.push(route.request().url());
 			await options.projectBindingsGate;
 			if (options.projectBindingsError) {
 				await fulfillJson(
@@ -285,6 +290,7 @@ async function stubDashboardApi(
 			return;
 		}
 		if (url.pathname === "/v1/projects") {
+			options.projectRequests?.push(route.request().url());
 			await options.projectsGate;
 			if (options.projectsResponse) {
 				await fulfillJson(route, options.projectsResponse.body, options.projectsResponse.status);
@@ -338,6 +344,7 @@ async function stubDashboardApi(
 		}
 		const connectorAppMatch = url.pathname.match(/^\/v1\/connectors\/available\/([^/]+)$/);
 		if (connectorAppMatch) {
+			options.connectorMetadataRequests?.push(route.request().url());
 			const app = options.connectorCatalog?.find(
 				(item) => item.name === decodeURIComponent(connectorAppMatch[1]),
 			);
@@ -373,6 +380,7 @@ async function stubDashboardApi(
 			return;
 		}
 		if (url.pathname === "/v1/sessions") {
+			options.sessionRequests?.push(route.request().url());
 			await fulfillJson(route, options.sessionsPage ?? sessions);
 			return;
 		}
@@ -657,6 +665,74 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		path: testInfo.outputPath("connected-agent-overview.png"),
 		fullPage: true,
 	});
+});
+
+test("connected detail only requests overview data on Overview", async ({ page }) => {
+	const sessionRequests: string[] = [];
+	const projectBindingRequests: string[] = [];
+	const projectRequests: string[] = [];
+	const skillRequests: string[] = [];
+	await stubDashboardApi(page, [], {
+		sessionRequests,
+		projectBindingRequests,
+		projectRequests,
+		skillRequests,
+	});
+
+	await page.goto("/agents/agent-smoke-1/settings");
+	await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+	await page.waitForTimeout(100);
+	expect(sessionRequests).toEqual([]);
+	expect(projectBindingRequests).toEqual([]);
+	expect(projectRequests).toEqual([]);
+	expect(skillRequests).toEqual([]);
+
+	await page.goto("/agents/agent-smoke-1/sessions");
+	await expect(page.getByRole("heading", { name: "Sessions", level: 1 })).toBeVisible();
+	await expect.poll(() => sessionRequests.length).toBe(1);
+	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("50");
+	expect(projectBindingRequests).toEqual([]);
+	expect(projectRequests).toEqual([]);
+	expect(skillRequests).toEqual([]);
+});
+
+test("connected Overview requests four recent sessions", async ({ page }) => {
+	const sessionRequests: string[] = [];
+	await stubDashboardApi(page, [], { sessionRequests });
+	await page.goto("/agents/agent-smoke-1");
+	await expect(page.getByRole("heading", { name: "Recent sessions", exact: true })).toBeVisible();
+	await expect.poll(() => sessionRequests.length).toBe(1);
+	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("4");
+});
+
+test("connected Overview resolves connector metadata from catalog before fan-out", async ({
+	page,
+}) => {
+	const connectorMetadataRequests: string[] = [];
+	const catalogApp = (name: string) => ({
+		name,
+		display_name: name,
+		logo: "",
+		description: `${name} connector`,
+		auth_type: "oauth",
+		connect_disabled: false,
+		connect_disabled_reason: null,
+	});
+	await stubDashboardApi(page, [], {
+		connectorMetadataRequests,
+		connectorConnections: [
+			{ id: "conn-github", app_name: "github", status: "ACTIVE" },
+			{ id: "conn-slack", app_name: "slack", status: "ACTIVE" },
+		],
+		connectorCatalog: [catalogApp("github"), catalogApp("gmail")],
+	});
+
+	await page.goto("/agents/agent-smoke-1");
+	await expect(page.locator('[data-overview-module="connectors"]')).toContainText("2 connected");
+	await expect.poll(() => connectorMetadataRequests.length).toBe(1);
+	expect(new URL(connectorMetadataRequests[0] ?? "http://invalid").pathname).toBe(
+		"/v1/connectors/available/slack",
+	);
 });
 
 test("connected overview keeps connector and catalog states independent", async ({ page }) => {

@@ -88,12 +88,23 @@ export function ConnectedAgentDetail({
 		params: { path: { agent_id: id } },
 	});
 
-	const overviewProjects = useAgentOverviewProjects(id, { enabled: !!agent });
+	const overviewEnabled = activeTab === "overview" && Boolean(agent);
+	const overviewProjects = useAgentOverviewProjects(id, { enabled: overviewEnabled });
 	const projectBindings = overviewProjects.bindings.data;
 	const projectBindingsLoading = overviewProjects.bindings.isLoading;
 	const projectBindingsError = overviewProjects.bindings.error;
 	const refetchProjectBindings = overviewProjects.bindings.refetch;
 	const projectNames = overviewProjects.nameResolution;
+
+	const {
+		data: overviewSessionsPage,
+		isLoading: overviewSessionsLoading,
+		error: overviewSessionsError,
+		refetch: refetchOverviewSessions,
+	} = useQuery({
+		...sessionListQueryOptions($api, { environment_id: id, page_size: 4 }),
+		enabled: overviewEnabled,
+	});
 
 	const {
 		data: sessionsPage,
@@ -102,7 +113,7 @@ export function ConnectedAgentDetail({
 		refetch: refetchSessions,
 	} = useQuery({
 		...sessionListQueryOptions($api, { environment_id: id, page_size: 50 }),
-		enabled: !!agent,
+		enabled: activeTab === "sessions" && Boolean(agent),
 	});
 
 	const agentProjectId = agent?.default_project_id;
@@ -111,7 +122,7 @@ export function ConnectedAgentDetail({
 		isLoading: skillsLoading,
 		error: skillsError,
 		refetch: refetchSkills,
-	} = useAgentProjectSkills(id, agentProjectId, id, false, Boolean(agent));
+	} = useAgentProjectSkills(id, agentProjectId, id, false, overviewEnabled);
 
 	const blockingAgentError =
 		isApiNotFoundError(error) || shouldBlockQueryError(error, agent) ? error : null;
@@ -120,6 +131,12 @@ export function ConnectedAgentDetail({
 		: null;
 	const blockingProjectBindingsError = shouldBlockQueryError(projectBindingsError, projectBindings)
 		? projectBindingsError
+		: null;
+	const blockingOverviewSessionsError = shouldBlockQueryError(
+		overviewSessionsError,
+		overviewSessionsPage,
+	)
+		? overviewSessionsError
 		: null;
 	const blockingSessionsError = shouldBlockQueryError(sessionsError, sessionsPage)
 		? sessionsError
@@ -182,15 +199,15 @@ export function ConnectedAgentDetail({
 										aria-labelledby="connected-recent-sessions"
 										className="min-h-40 min-w-0 lg:min-h-52"
 									>
-									{blockingSessionsError ? (
+										{blockingOverviewSessionsError ? (
 											<OverviewModuleError
 												label="Sessions"
-												onRetry={() => void refetchSessions()}
+												onRetry={() => void refetchOverviewSessions()}
 											/>
 										) : (
 											<OverviewSessionList
-												sessions={sessionsPage?.items ?? []}
-												isLoading={sessionsLoading}
+												sessions={overviewSessionsPage?.items ?? []}
+												isLoading={overviewSessionsLoading}
 												emptyMessage="No recent sessions"
 												sessionLink={(session) => scopedSessionLink(session.id)}
 											/>

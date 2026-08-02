@@ -1120,6 +1120,7 @@ function isStubResponse(value: unknown): value is StubResponse {
 
 type HostedApiStubOptions = {
 	sessionsPage?: unknown;
+	sessionRequests?: string[];
 	connectorConnections?: readonly unknown[];
 	connectorCatalog?: readonly {
 		name: string;
@@ -2210,7 +2211,10 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				page_size: 24,
 			});
 		}
-		if (p === "/v1/sessions") return fulfillJson(r, options.sessionsPage ?? emptyPage);
+		if (p === "/v1/sessions") {
+			options.sessionRequests?.push(r.request().url());
+			return fulfillJson(r, options.sessionsPage ?? emptyPage);
+		}
 		if (p === "/v1/memories") return fulfillJson(r, hostedMemories);
 		if (p === "/v1/settings") {
 			return fulfillJson(r, { memory_provider: "builtin", mem0_api_key: null });
@@ -2609,6 +2613,7 @@ test("returning users can deploy on Clawdi or connect another machine", async ({
 });
 
 test("hosted agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
+	const sessionRequests: string[] = [];
 	const telegramAccount = {
 		id: "channel-overview-telegram",
 		provider: "telegram",
@@ -2617,6 +2622,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		created_at: "2026-07-15T00:00:00Z",
 	};
 	await stubHostedApi(page, {
+		sessionRequests,
 		deployments: [railHostedDeployment],
 		cloudAgents: [railHostedCloudAgent],
 		agentResourceFixtures: true,
@@ -2708,6 +2714,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await page.goto(
 		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
 	);
+	await expect.poll(() => sessionRequests.length).toBe(1);
+	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("4");
 
 	const overview = page.locator('[data-agent-overview="hosted"]');
 	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
@@ -2855,6 +2863,23 @@ test("hosted projection loading uses module skeletons", async ({ page }, testInf
 	});
 });
 
+test("hosted Sessions tab uses its own pagination without the Overview request", async ({
+	page,
+}) => {
+	const sessionRequests: string[] = [];
+	await stubHostedApi(page, {
+		sessionRequests,
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}/sessions?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+	await expect(page.getByRole("heading", { name: "Sessions", level: 1 })).toBeVisible();
+	await expect.poll(() => sessionRequests.length).toBe(1);
+	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("20");
+});
+
 test("hosted overview distinguishes empty skills and channels from loading", async ({ page }) => {
 	await stubHostedApi(page, {
 		deployments: [railHostedDeployment],
@@ -2931,7 +2956,9 @@ test("hosted overview keeps project count while names load", async ({ page }) =>
 
 test("hosted provisioning stays focused on Compute", async ({ page }, testInfo) => {
 	const startingDeployment = { ...railHostedDeployment, status: "starting" };
+	const sessionRequests: string[] = [];
 	await stubHostedApi(page, {
+		sessionRequests,
 		deployments: [startingDeployment],
 		cloudAgents: [railHostedCloudAgent],
 		cloudAgentNotFoundIds: [railHostedEnvironmentId],
@@ -2948,6 +2975,7 @@ test("hosted provisioning stays focused on Compute", async ({ page }, testInfo) 
 	await expect(main.getByRole("heading", { name: "Resources", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Tools", exact: true })).toHaveCount(0);
 	await expect(main.locator('[data-overview-module="sessions"]')).toHaveCount(0);
+	expect(sessionRequests).toEqual([]);
 	const sidebar = page.getByTestId("app-sidebar");
 	await expect(sidebar.getByText("Starting", { exact: true })).toBeVisible();
 	await expect(sidebar.getByText("Paused", { exact: true })).toHaveCount(0);
@@ -2960,12 +2988,14 @@ test("hosted provisioning stays focused on Compute", async ({ page }, testInfo) 
 });
 
 test("hosted unavailable status stays inside Compute", async ({ page }, testInfo) => {
+	const sessionRequests: string[] = [];
 	const runningRead = mutationDeploymentReadFixture(railHostedDeployment);
 	const unavailableDeployment = {
 		...runningRead,
 		resource: { ...runningRead.resource, status: null },
 	};
 	await stubHostedApi(page, {
+		sessionRequests,
 		deployments: [unavailableDeployment],
 		deploymentDetailResponses: [{ body: unavailableDeployment, status: 200 }],
 		cloudAgents: [railHostedCloudAgent],
@@ -2983,6 +3013,7 @@ test("hosted unavailable status stays inside Compute", async ({ page }, testInfo
 	await expect(compute).toContainText("Clawdi cannot confirm the current compute status.");
 	await expect(compute.getByRole("button", { name: "Check again", exact: true })).toBeVisible();
 	await expect(main.getByTestId("deployment-status-unavailable")).toHaveCount(0);
+	expect(sessionRequests).toEqual([]);
 	await page.setViewportSize({ width: 1280, height: 1600 });
 	await page.screenshot({
 		path: testInfo.outputPath("hosted-agent-overview-unavailable.png"),
