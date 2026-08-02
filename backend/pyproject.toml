@@ -107,9 +107,13 @@ strict = [
     "app/routes/sharing.py",
     "app/routes/sync.py",
     "app/services/agent_bindings.py",
+    "app/services/channel_webhooks.py",
+    "app/services/discord_gateway_worker.py",
     "app/services/embedding.py",
     "app/services/imessage_routing.py",
     "app/services/memory_extraction.py",
+    "app/services/private_ip.py",
+    "app/services/runtime_observation.py",
     "app/services/tar_utils.py",
 ]
 
