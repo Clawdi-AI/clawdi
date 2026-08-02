@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import builtins
+import sys
 import uuid
+from types import ModuleType
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +21,9 @@ from app.services.vault_crypto import encrypt_field
 
 @pytest.mark.asyncio
 async def test_get_memory_provider_falls_back_to_builtin_when_mem0_missing(
-    db_session: AsyncSession, seed_user: User, monkeypatch
+    db_session: AsyncSession,
+    seed_user: User,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     # Defense-in-depth: pre-existing `memory_provider=mem0` settings must
     # not 500 if `mem0` becomes unimportable (e.g. operator uninstalled
@@ -36,10 +40,16 @@ async def test_get_memory_provider_falls_back_to_builtin_when_mem0_missing(
 
     real_import = builtins.__import__
 
-    def fake_import(name, *args, **kwargs):
+    def fake_import(
+        name: str,
+        globals: dict[str, object] | None = None,
+        locals: dict[str, object] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> ModuleType:
         if name == "mem0":
             raise ImportError("No module named 'mem0'")
-        return real_import(name, *args, **kwargs)
+        return real_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
     import app.services.memory_provider as mp
@@ -54,9 +64,10 @@ async def test_get_memory_provider_falls_back_to_builtin_when_mem0_missing(
 
 @pytest.mark.asyncio
 async def test_get_memory_provider_uses_mem0_when_installed_and_configured(
-    db_session: AsyncSession, seed_user: User, monkeypatch
+    db_session: AsyncSession,
+    seed_user: User,
+    monkeypatch: pytest.MonkeyPatch,
 ):
-    # Happy path: stub Mem0Provider.__init__ so we don't need mem0ai installed.
     setting = UserSetting(
         user_id=seed_user.id,
         settings={
@@ -67,15 +78,19 @@ async def test_get_memory_provider_uses_mem0_when_installed_and_configured(
     db_session.add(setting)
     await db_session.commit()
 
-    constructed: list = []
+    constructed: list[str] = []
 
-    def fake_init(self, api_key):
-        constructed.append(api_key)
+    class RecordingMemoryClient:
+        def __init__(self, *, api_key: str) -> None:
+            constructed.append(api_key)
 
-    monkeypatch.setattr(Mem0Provider, "__init__", fake_init)
+    mem0_module = ModuleType("mem0")
+    mem0_module.MemoryClient = RecordingMemoryClient
+    monkeypatch.setitem(sys.modules, "mem0", mem0_module)
 
     provider = await get_memory_provider(str(seed_user.id), db_session)
     assert isinstance(provider, Mem0Provider)
+    assert isinstance(provider.client, RecordingMemoryClient)
     assert constructed == ["mock-api-key"]
 
 
@@ -95,7 +110,7 @@ async def test_get_memory_provider_handles_unknown_user_id(db_session: AsyncSess
 
 
 @pytest.mark.asyncio
-async def test_mem0_available_caches_first_probe(monkeypatch):
+async def test_mem0_available_caches_first_probe(monkeypatch: pytest.MonkeyPatch):
     import builtins
 
     import app.services.memory_provider as mp
@@ -105,11 +120,17 @@ async def test_mem0_available_caches_first_probe(monkeypatch):
     call_count = {"n": 0}
     real_import = builtins.__import__
 
-    def counting(name, *args, **kwargs):
+    def counting(
+        name: str,
+        globals: dict[str, object] | None = None,
+        locals: dict[str, object] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> ModuleType:
         if name == "mem0":
             call_count["n"] += 1
             raise ImportError("simulated for test")
-        return real_import(name, *args, **kwargs)
+        return real_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", counting)
 

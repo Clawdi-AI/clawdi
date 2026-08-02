@@ -24,9 +24,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.types import Message
 
 from app.core.skill_sync_protocol import (
     SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V0,
@@ -46,6 +47,13 @@ from app.services.managed_ai_provider import (
 )
 
 pytestmark = pytest.mark.committed_db
+
+
+def _connected_request() -> Request:
+    async def receive() -> Message:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    return Request({"type": "http"}, receive)
 
 
 @pytest.mark.parametrize(
@@ -179,8 +187,6 @@ async def test_oauth_cli_sse_expiry_rechecks_clock_at_heartbeat_cadence():
 async def test_oauth_cli_sse_without_protocol_header_subscribes_then_closes_at_expiry(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    from unittest.mock import Mock
-
     from fastapi import HTTPException
 
     import app.routes.sync as sync_route
@@ -200,12 +206,7 @@ async def test_oauth_cli_sse_without_protocol_header_subscribes_then_closes_at_e
     monkeypatch.setattr(sync_route, "project_ids_visible_to", visible_projects)
     monkeypatch.setattr(sync_route, "OAUTH_ACCESS_EXPIRY_SKEW", timedelta(0))
 
-    request = Mock()
-
-    async def not_disconnected():
-        return False
-
-    request.is_disconnected = not_disconnected
+    request = _connected_request()
     user = User(id=uuid.uuid4(), clerk_id="oauth-sse-route")
     expired = AuthContext(
         user=user,
@@ -251,18 +252,11 @@ async def test_stream_returns_when_revoked_event_set():
     daemon turns the latter into local file deletions) for as
     long as the TCP stream stayed alive — possibly hours past
     the revoke."""
-    from unittest.mock import Mock
-
     from app.routes.sync import _stream
 
     queue: asyncio.Queue = asyncio.Queue()
     revoked = asyncio.Event()
-    request = Mock()
-
-    async def _not_disconnected():
-        return False
-
-    request.is_disconnected = _not_disconnected
+    request = _connected_request()
 
     # Start the generator. First yield should be the connect
     # comment; second iteration sees `revoked` set and returns.
@@ -280,18 +274,11 @@ async def test_stream_cancellation_awaits_internal_wait_tasks(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """Disconnect cancellation must not orphan Queue/Event wait tasks."""
-    from unittest.mock import Mock
-
     from app.routes import sync as sync_route
 
     queue: asyncio.Queue = asyncio.Queue()
     revoked = asyncio.Event()
-    request = Mock()
-
-    async def _not_disconnected():
-        return False
-
-    request.is_disconnected = _not_disconnected
+    request = _connected_request()
     gen = sync_route._stream(queue, request, revoked)
     assert await gen.__anext__() == b": connected\n\n"
 
@@ -374,18 +361,11 @@ async def test_stream_drops_event_queued_before_revoke():
     an Agent-authoritative local rescan rather than mutating local files, but
     work must still stop at revocation. Verify the second `__anext__` returns
     (closes the generator) instead of yielding the event."""
-    from unittest.mock import Mock
-
     from app.routes.sync import _stream
 
     queue: asyncio.Queue = asyncio.Queue()
     revoked = asyncio.Event()
-    request = Mock()
-
-    async def _not_disconnected():
-        return False
-
-    request.is_disconnected = _not_disconnected
+    request = _connected_request()
 
     gen = _stream(queue, request, revoked)
     first = await gen.__anext__()

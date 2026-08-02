@@ -4,7 +4,6 @@ import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -409,10 +408,23 @@ async def test_environment_bound_mem0_delete_uses_account_scope(
         machine_name="MCP Parity Mem0 Delete",
         agent_type="openclaw",
     )
-    provider = Mem0Provider.__new__(Mem0Provider)
-    provider.client = MagicMock()
     memory_id = uuid.uuid4()
-    provider.client.get.return_value = {"id": str(memory_id), "user_id": str(seed_user.id)}
+
+    class Mem0DeleteClient:
+        def __init__(self) -> None:
+            self.get_calls: list[str] = []
+            self.delete_calls: list[str] = []
+
+        def get(self, requested_memory_id: str) -> dict[str, str]:
+            self.get_calls.append(requested_memory_id)
+            return {"id": str(memory_id), "user_id": str(seed_user.id)}
+
+        def delete(self, requested_memory_id: str) -> None:
+            self.delete_calls.append(requested_memory_id)
+
+    mem0_client = Mem0DeleteClient()
+    provider = Mem0Provider.__new__(Mem0Provider)
+    provider.client = mem0_client
 
     async def override_session():
         yield db_session
@@ -435,8 +447,8 @@ async def test_environment_bound_mem0_delete_uses_account_scope(
         app.dependency_overrides.pop(get_auth, None)
 
     assert response.status_code == 200
-    provider.client.get.assert_called_once_with(str(memory_id))
-    provider.client.delete.assert_called_once()
+    assert mem0_client.get_calls == [str(memory_id)]
+    assert mem0_client.delete_calls == [str(memory_id)]
 
 
 @pytest.mark.asyncio

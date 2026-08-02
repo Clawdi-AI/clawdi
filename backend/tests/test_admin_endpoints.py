@@ -10,7 +10,7 @@ import json
 import logging
 import uuid
 from collections import Counter
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from uuid import UUID
 
@@ -554,8 +554,6 @@ async def test_admin_mint_lazy_create_handles_race(db_session):
     flush attempt and verifying the rollback+re-query path returns
     the row that the "winner" (separately seeded) wrote.
     """
-    from unittest.mock import AsyncMock
-
     from sqlalchemy.exc import IntegrityError
 
     from app.models.user import User
@@ -576,13 +574,16 @@ async def test_admin_mint_lazy_create_handles_race(db_session):
     real_flush = db_session.flush
     flush_calls = {"count": 0}
 
-    async def mock_flush(*args, **kwargs):
+    async def mock_flush(objects: Sequence[object] | None = None) -> None:
         flush_calls["count"] += 1
         if flush_calls["count"] == 1:
             raise IntegrityError("simulated race", None, Exception())
-        return await real_flush(*args, **kwargs)
+        if objects is None:
+            await real_flush()
+        else:
+            await real_flush(objects)
 
-    db_session.flush = AsyncMock(side_effect=mock_flush)
+    db_session.flush = mock_flush
 
     try:
         result = await _resolve_or_create_user(db_session, clerk_id)
@@ -609,8 +610,6 @@ async def test_admin_mint_lazy_create_500s_when_winner_disappears(db_session):
     surface as 500 rather than 404 so the SaaS caller sees this is
     an operational anomaly, not a wrong-clerk_id payload.
     """
-    from unittest.mock import AsyncMock
-
     from fastapi import HTTPException
     from sqlalchemy.exc import IntegrityError
 
@@ -621,10 +620,10 @@ async def test_admin_mint_lazy_create_500s_when_winner_disappears(db_session):
     # No row pre-seeded — re-query after rollback will find nothing.
     real_flush = db_session.flush
 
-    async def mock_flush(*args, **kwargs):
+    async def mock_flush(_objects: Sequence[object] | None = None) -> None:
         raise IntegrityError("simulated race", None, Exception())
 
-    db_session.flush = AsyncMock(side_effect=mock_flush)
+    db_session.flush = mock_flush
 
     try:
         with pytest.raises(HTTPException) as exc_info:

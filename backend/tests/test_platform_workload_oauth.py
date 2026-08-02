@@ -504,55 +504,62 @@ async def test_oauth_storage_failures_are_503(
     async def unavailable_client(*args, **kwargs):
         raise SQLAlchemyError("client storage unavailable")
 
-    monkeypatch.setattr(
-        platform_workload_auth,
-        "load_platform_workload_client",
-        unavailable_client,
-    )
-    client_failure = await _token_response(workload_harness, scope="platform:agents:create")
-    assert client_failure.status_code == 503, client_failure.text
-    assert client_failure.json()["error"] == "temporarily_unavailable"
-
-    monkeypatch.undo()
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            platform_workload_auth,
+            "load_platform_workload_client",
+            unavailable_client,
+        )
+        client_failure = await _token_response(
+            workload_harness,
+            scope="platform:agents:create",
+        )
+        assert client_failure.status_code == 503, client_failure.text
+        assert client_failure.json()["error"] == "temporarily_unavailable"
 
     async def unavailable_replay(*args, **kwargs):
         raise SQLAlchemyError("replay storage unavailable")
 
-    monkeypatch.setattr(
-        platform_workload_auth,
-        "store_platform_workload_assertion_replay",
-        unavailable_replay,
-    )
-    replay_failure = await _token_response(workload_harness, scope="platform:agents:create")
-    assert replay_failure.status_code == 503, replay_failure.text
-    assert replay_failure.json()["error"] == "temporarily_unavailable"
-
-    monkeypatch.undo()
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            platform_workload_auth,
+            "store_platform_workload_assertion_replay",
+            unavailable_replay,
+        )
+        replay_failure = await _token_response(
+            workload_harness,
+            scope="platform:agents:create",
+        )
+        assert replay_failure.status_code == 503, replay_failure.text
+        assert replay_failure.json()["error"] == "temporarily_unavailable"
 
     async def unavailable_signing_key(*args, **kwargs):
         raise SQLAlchemyError("issuer key storage unavailable")
 
-    monkeypatch.setattr(
-        platform_workload_auth,
-        "load_platform_workload_signing_key_for_issue",
-        unavailable_signing_key,
-    )
-    signing_key_failure = await _token_response(
-        workload_harness,
-        scope="platform:agents:create",
-    )
-    assert signing_key_failure.status_code == 503, signing_key_failure.text
-    assert signing_key_failure.json()["error"] == "temporarily_unavailable"
-
-    monkeypatch.undo()
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            platform_workload_auth,
+            "load_platform_workload_signing_key_for_issue",
+            unavailable_signing_key,
+        )
+        signing_key_failure = await _token_response(
+            workload_harness,
+            scope="platform:agents:create",
+        )
+        assert signing_key_failure.status_code == 503, signing_key_failure.text
+        assert signing_key_failure.json()["error"] == "temporarily_unavailable"
 
     async def unavailable_signer(**kwargs):
         raise PlatformWorkloadKeyUnavailable("signer unavailable")
 
-    monkeypatch.setattr(workload_harness.resolver, "sign_jwt", unavailable_signer)
-    signer_failure = await _token_response(workload_harness, scope="platform:agents:create")
-    assert signer_failure.status_code == 503, signer_failure.text
-    assert signer_failure.json()["error"] == "temporarily_unavailable"
+    with monkeypatch.context() as scoped:
+        scoped.setattr(workload_harness.resolver, "sign_jwt", unavailable_signer)
+        signer_failure = await _token_response(
+            workload_harness,
+            scope="platform:agents:create",
+        )
+        assert signer_failure.status_code == 503, signer_failure.text
+        assert signer_failure.json()["error"] == "temporarily_unavailable"
 
 
 @pytest.mark.asyncio
@@ -1238,51 +1245,50 @@ async def test_workload_resource_storage_failure_is_503_without_admin_fallback(
     async def unavailable_client(*args, **kwargs):
         raise SQLAlchemyError("status storage unavailable")
 
-    monkeypatch.setattr(
-        platform_workload_auth,
-        "load_platform_workload_client",
-        unavailable_client,
-    )
-    response = await workload_harness.client.post(
-        "/v1/platform/agents",
-        headers=_workload_headers(token, "workload-status-unavailable"),
-        json=_agent_body(owner, uuid.uuid4()),
-    )
-    assert response.status_code == 503, response.text
-
-    monkeypatch.undo()
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            platform_workload_auth,
+            "load_platform_workload_client",
+            unavailable_client,
+        )
+        response = await workload_harness.client.post(
+            "/v1/platform/agents",
+            headers=_workload_headers(token, "workload-status-unavailable"),
+            json=_agent_body(owner, uuid.uuid4()),
+        )
+        assert response.status_code == 503, response.text
 
     async def unavailable_signing_key(*args, **kwargs):
         raise SQLAlchemyError("issuer key status storage unavailable")
 
-    monkeypatch.setattr(
-        platform_workload_auth,
-        "load_platform_workload_signing_key",
-        unavailable_signing_key,
-    )
-    signing_key_failure = await workload_harness.client.post(
-        "/v1/platform/agents",
-        headers=_workload_headers(token, "workload-signing-key-unavailable"),
-        json=_agent_body(owner, uuid.uuid4()),
-    )
-    assert signing_key_failure.status_code == 503, signing_key_failure.text
-
-    monkeypatch.undo()
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            platform_workload_auth,
+            "load_platform_workload_signing_key",
+            unavailable_signing_key,
+        )
+        signing_key_failure = await workload_harness.client.post(
+            "/v1/platform/agents",
+            headers=_workload_headers(token, "workload-signing-key-unavailable"),
+            json=_agent_body(owner, uuid.uuid4()),
+        )
+        assert signing_key_failure.status_code == 503, signing_key_failure.text
 
     async def unavailable_verifier(**kwargs):
         raise PlatformWorkloadKeyUnavailable("verification key unavailable")
 
-    monkeypatch.setattr(
-        workload_harness.resolver,
-        "resolve_verification_key",
-        unavailable_verifier,
-    )
-    verifier_failure = await workload_harness.client.post(
-        "/v1/platform/agents",
-        headers=_workload_headers(token, "workload-verifier-unavailable"),
-        json=_agent_body(owner, uuid.uuid4()),
-    )
-    assert verifier_failure.status_code == 503, verifier_failure.text
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            workload_harness.resolver,
+            "resolve_verification_key",
+            unavailable_verifier,
+        )
+        verifier_failure = await workload_harness.client.post(
+            "/v1/platform/agents",
+            headers=_workload_headers(token, "workload-verifier-unavailable"),
+            json=_agent_body(owner, uuid.uuid4()),
+        )
+        assert verifier_failure.status_code == 503, verifier_failure.text
 
 
 @pytest.mark.asyncio

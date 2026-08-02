@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TypeGuard
 from uuid import UUID
 
+from pydantic import JsonValue
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,7 +51,7 @@ async def record_channel_debug_event(
     request_id: str | None = None,
     status_code: int | None = None,
     error: str | None = None,
-    details: dict[str, Any] | None = None,
+    details: Mapping[str, object] | None = None,
 ) -> ChannelDebugEvent | None:
     try:
         now = datetime.now(UTC)
@@ -104,7 +106,7 @@ async def channel_debug_health(
     db: AsyncSession,
     *,
     user_id: UUID,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, JsonValue]]:
     accounts = (
         (
             await db.execute(
@@ -119,9 +121,9 @@ async def channel_debug_health(
         .scalars()
         .all()
     )
-    health: list[dict[str, Any]] = []
+    health: list[dict[str, JsonValue]] = []
     for account in accounts:
-        item = {
+        item: dict[str, JsonValue] = {
             "accountId": str(account.id),
             "provider": account.provider,
             "name": account.name,
@@ -143,11 +145,11 @@ async def channel_debug_health(
     return health
 
 
-def channel_debug_event_response(event: ChannelDebugEvent) -> dict[str, Any]:
+def channel_debug_event_response(event: ChannelDebugEvent) -> dict[str, JsonValue]:
     return _debug_event_response(event) or {}
 
 
-def _debug_event_response(event: ChannelDebugEvent | None) -> dict[str, Any] | None:
+def _debug_event_response(event: ChannelDebugEvent | None) -> dict[str, JsonValue] | None:
     if event is None:
         return None
     return {
@@ -162,7 +164,7 @@ def _debug_event_response(event: ChannelDebugEvent | None) -> dict[str, Any] | N
         "requestId": event.request_id,
         "status": event.status_code,
         "error": event.error,
-        "details": event.details,
+        "details": _sanitize_details(event.details),
     }
 
 
@@ -191,17 +193,17 @@ async def _last_event(
     return result.scalar_one_or_none()
 
 
-def _sanitize_details(value: Any, *, depth: int = 0) -> Any:
+def _sanitize_details(value: object, *, depth: int = 0) -> JsonValue:
     if depth > 4:
         return "[truncated]"
     if value is None or isinstance(value, (int, float, bool)):
         return value
     if isinstance(value, str):
         return _truncate(value, MAX_DEBUG_STRING)
-    if isinstance(value, list):
+    if _is_object_list(value):
         return [_sanitize_details(item, depth=depth + 1) for item in value[:20]]
-    if isinstance(value, dict):
-        out: dict[str, Any] = {}
+    if _is_object_mapping(value):
+        out: dict[str, JsonValue] = {}
         for key, child in list(value.items())[:40]:
             key_str = str(key)
             out[key_str] = (
@@ -211,6 +213,14 @@ def _sanitize_details(value: Any, *, depth: int = 0) -> Any:
             )
         return out
     return _truncate(str(value), MAX_DEBUG_STRING)
+
+
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
+def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
+    return isinstance(value, Mapping)
 
 
 def _normalize(value: str) -> str:
