@@ -44,13 +44,13 @@ export function AgentOverviewStatusCard({
 			<CardHeader className="p-0">
 				<Link
 					{...agentSectionLink(agentId, section, routeSearch)}
-					className="group flex items-center gap-3 px-4 pt-4 pb-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+					className="group flex items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
 				>
 					<IconChip size="sm" tint={tint}>
 						<Icon />
 					</IconChip>
 					<h2 className="min-w-0 flex-1 text-sm font-semibold">{title}</h2>
-					<ArrowRight className="size-4 text-muted-foreground" />
+					<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 				</Link>
 			</CardHeader>
 			<CardContent className="flex flex-1 flex-col px-4 pb-4">{children}</CardContent>
@@ -172,7 +172,7 @@ export function AgentOverviewCapabilities({
 					<div
 						data-overview-layout={group.layout}
 						className={cn(
-							"grid gap-3",
+							"grid items-stretch gap-3",
 							group.layout === "three-column"
 								? "@2xl/main:grid-cols-2 @4xl/main:grid-cols-3"
 								: "@2xl/main:grid-cols-2",
@@ -190,7 +190,7 @@ export function AgentOverviewCapabilities({
 									role="article"
 									key={module.id}
 									data-overview-module={module.id}
-									className="min-w-0 gap-0 py-0"
+									className="h-full min-w-0 gap-0 py-0"
 								>
 									<CardHeader className="p-0">
 										<Link

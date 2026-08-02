@@ -421,7 +421,7 @@ describe("reconcileDeploymentSnapshots", () => {
 		expect(afterCancellation?.accepted_operation).toEqual(laterStartOperation);
 	});
 
-	test("lets a failed server snapshot override optimistic pending state and retain its verb", () => {
+	test("lets a failed server snapshot override optimistic pending state without reusing its verb", () => {
 		const optimistic = hostedDeploymentFixture({
 			id: "hdep_failure",
 			status: "updating",
@@ -457,7 +457,7 @@ describe("reconcileDeploymentSnapshots", () => {
 		expect(deploymentFailureProjection(reconciled)).toEqual({
 			reason:
 				"The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.",
-			failedVerb: "plan_change",
+			failedVerb: null,
 			retryable: false,
 			code: "operation_aborted",
 		});

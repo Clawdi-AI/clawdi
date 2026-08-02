@@ -208,10 +208,7 @@ export function ConnectedAgentDetail({
 											<ArrowRight />
 										</Button>
 									</div>
-									<section
-										aria-labelledby="connected-recent-sessions"
-										className="min-w-0 self-start"
-									>
+									<section aria-labelledby="connected-recent-sessions" className="min-w-0">
 										{blockingOverviewSessionsError ? (
 											<OverviewModuleError
 												label="Sessions"

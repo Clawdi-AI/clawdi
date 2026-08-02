@@ -477,7 +477,7 @@ describe("hostedRuntimeStatusView", () => {
 		expect(creating.secondary).toBeNull();
 	});
 
-	test("shows failed deployment reason as secondary status", () => {
+	test("shows a safe runtime failure summary without exposing internal details", () => {
 		const view = hostedRuntimeStatusView(
 			"failed",
 			null,
@@ -487,9 +487,11 @@ describe("hostedRuntimeStatusView", () => {
 		expect(view.primary.label).toBe("Failed");
 		expect(view.secondary).toEqual({
 			kind: "failure_reason",
-			label: "Failure: The Clawdi service could not complete this request.",
-			tooltip: "The Clawdi service could not complete this request.",
+			label: "Failure: Clawdi is checking the runtime. Open Compute settings for details.",
+			tooltip: "Clawdi is checking the runtime. Open Compute settings for details.",
 			textClass: "text-destructive-muted-foreground font-medium",
 		});
+		expect(view.secondary?.label).not.toContain("startup_probe_failing");
+		expect(view.secondary?.tooltip).not.toContain("restart_count");
 	});
 });

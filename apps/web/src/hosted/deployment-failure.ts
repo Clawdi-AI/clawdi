@@ -11,6 +11,8 @@ const DEFAULT_FAILURE_REASON_MAX_LENGTH = 96;
 const PLAN_CHANGE_FAILURE_REASON =
 	"The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.";
 const DEFAULT_SERVICE_FAILURE_REASON = "The Clawdi service could not complete this request.";
+const RUNTIME_UNAVAILABLE_REASON =
+	"Clawdi is checking the runtime. Open Compute settings for details.";
 
 const CUSTOMER_FAILURE_REASONS_BY_CODE = new Map<string, string>([
 	["provider_not_found", "The selected provider is no longer available in your Clawdi account."],
@@ -55,6 +57,14 @@ const WALLET_FUNDING_CODES = new Set([
 	"open_refund_debt",
 ]);
 const PROVIDER_CONFIGURATION_CODES = new Set(["provider_not_found", "invalid_managed_provider_id"]);
+const RUNTIME_FAILURE_CODES = new Set(["runtime_readiness_timeout"]);
+const RUNTIME_FAILURE_PHASES = new Set(["reconcile", "runtime"]);
+
+function isRuntimeStatusFailure(failure: { code?: string; phase?: string | null }): boolean {
+	return (
+		RUNTIME_FAILURE_CODES.has(failure.code ?? "") || RUNTIME_FAILURE_PHASES.has(failure.phase ?? "")
+	);
+}
 
 /** Customer-safe copy for declarative agent mutations handled by the deploy API. */
 export function deploymentMutationErrorMessage(error: unknown): string {
@@ -135,6 +145,30 @@ export function deploymentFailurePresentation(
 	const operationLabel = deploymentOperationLabel(failure.failedVerb);
 	const operationName = operationLabel.toLocaleLowerCase();
 	const requiresWalletTopUp = deploymentFailureNeedsWalletTopUp(failure);
+	const statusFailure =
+		deployment?.resource.status?.summary_state === "failed"
+			? deployment.resource.status.failure
+			: null;
+	if (failure.failedVerb === null && statusFailure && isRuntimeStatusFailure(statusFailure)) {
+		return {
+			...failure,
+			title: "Agent temporarily unavailable",
+			description: RUNTIME_UNAVAILABLE_REASON,
+			remediation: { kind: "none", label: null, requiresWalletTopUp: false },
+		};
+	}
+	if (failure.failedVerb === null && statusFailure?.phase === "plan_change") {
+		return {
+			...failure,
+			title: "Plan change failed",
+			description: "Get a fresh quote and confirm the price before trying again.",
+			remediation: {
+				kind: "review_plan_change",
+				label: "Get fresh quote",
+				requiresWalletTopUp,
+			},
+		};
+	}
 	if (PROVIDER_CONFIGURATION_CODES.has(failure.code)) {
 		return {
 			...failure,
@@ -239,6 +273,7 @@ export function deploymentFailureReason(
 	if (failedVerb === "plan_change" || failure.phase === "plan_change") {
 		return PLAN_CHANGE_FAILURE_REASON;
 	}
+	if (isRuntimeStatusFailure(failure)) return RUNTIME_UNAVAILABLE_REASON;
 	return CUSTOMER_FAILURE_REASONS_BY_CODE.get(failure.code ?? "") ?? DEFAULT_SERVICE_FAILURE_REASON;
 }
 
@@ -250,14 +285,15 @@ export function deploymentFailureProjection(
 	const status = deployment.resource.status;
 	const operation = deployment.accepted_operation;
 	const operationFailed = operation?.done === true && operation.error != null;
-	const failure =
-		status?.summary_state === "failed" && status.failure
-			? status.failure
-			: operationFailed
-				? operation.error?.details[0]
-				: null;
+	const operationFailure = operationFailed ? operation.error?.details[0] : null;
+	const statusFailure =
+		status?.summary_state === "failed" && status.failure ? status.failure : null;
+	const failure = operationFailure ?? statusFailure;
 	if (!failure && !operationFailed) return null;
-	const failedVerb = operation?.metadata.verb ?? null;
+	// A completed operation can remain attached to later status snapshots. Its
+	// verb only names a failure when that operation itself terminated with an
+	// error; otherwise a later runtime/reconcile failure is a separate event.
+	const failedVerb = operationFailed ? operation.metadata.verb : null;
 	const reason = failure
 		? deploymentFailureReason({ failure }, failedVerb)
 		: DEFAULT_SERVICE_FAILURE_REASON;
