@@ -2522,6 +2522,7 @@ function ChannelsTab({
 				agent_id: data.agent_id,
 				status: data.status,
 				created_at: data.created_at,
+				binding_count: 0,
 			});
 			return true;
 		} catch (error) {
@@ -2670,6 +2671,7 @@ function ChannelsTab({
 							agent_id: environmentId,
 							status: "active",
 							created_at: new Date().toISOString(),
+							binding_count: 0,
 						}),
 					);
 					if (bot.provider === "telegram") {

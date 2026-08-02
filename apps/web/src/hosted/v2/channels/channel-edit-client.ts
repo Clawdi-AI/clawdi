@@ -1,14 +1,10 @@
 "use client";
 
-import type { components } from "@clawdi/shared/api";
 import { useMemo } from "react";
 import { unwrap, useApi } from "@/lib/api";
+import { normalizeAgentChannelLinks } from "./channel-edit-client.logic";
 
-type GeneratedAgentChannelLink = components["schemas"]["ChannelAgentLinkWithAccountResponse"];
-
-export type AgentChannelLink = Omit<GeneratedAgentChannelLink, "account"> & {
-	account?: components["schemas"]["ChannelAccountResponse"] | null;
-};
+export type { AgentChannelLink } from "./channel-edit-client.logic";
 
 /**
  * Small facade over the generated cloud-api client for agent-link edit routes.
@@ -21,10 +17,12 @@ export function useChannelEditApi() {
 		return {
 			/** GET /api/channels/agent-links?agent_id={id} — links for one agent. */
 			listAgentLinks: async (agentId: string) =>
-				unwrap(
-					await api.GET("/v1/channels/agent-links", {
-						params: { query: { agent_id: agentId } },
-					}),
+				normalizeAgentChannelLinks(
+					unwrap(
+						await api.GET("/v1/channels/agent-links", {
+							params: { query: { agent_id: agentId } },
+						}),
+					),
 				),
 			/** DELETE /api/channels/{accountId}/agent-links/{linkId} — unlink. */
 			unlinkAgent: async (accountId: string, linkId: string) =>
