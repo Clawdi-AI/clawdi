@@ -52,6 +52,7 @@ function link(
 		status: "active",
 		created_at: createdAt,
 		...overrides,
+		binding_count: overrides.binding_count ?? 0,
 	};
 }
 

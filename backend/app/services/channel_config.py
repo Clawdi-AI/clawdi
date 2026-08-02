@@ -65,8 +65,18 @@ async def validate_channel_account_config_urls(
     if not isinstance(config, dict):
         return
     if provider == CHANNEL_PROVIDER_DISCORD:
-        await _validate_optional_http_config(config, "api_base_url", "discord api_base_url")
-        await _validate_optional_websocket_config(config, "gateway_url", "discord gateway_url")
+        await _validate_optional_http_config(
+            config,
+            "api_base_url",
+            "discord api_base_url",
+            unsafe_detail="discord api_base_url must be a public https URL",
+        )
+        await _validate_optional_websocket_config(
+            config,
+            "gateway_url",
+            "discord gateway_url",
+            unsafe_detail="discord gateway_url must be a public wss URL",
+        )
     if provider == CHANNEL_PROVIDER_IMESSAGE:
         await _validate_optional_http_config(config, "server_url", "imessage server_url")
 
@@ -75,6 +85,8 @@ async def _validate_optional_http_config(
     config: dict[str, Any],
     key: str,
     label: str,
+    *,
+    unsafe_detail: str | None = None,
 ) -> None:
     value = _optional_url_config(config, key, label)
     if value is None:
@@ -84,7 +96,7 @@ async def _validate_optional_http_config(
     except UnsafeOutboundUrlError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail=unsafe_detail or str(exc),
         ) from exc
 
 
@@ -92,6 +104,8 @@ async def _validate_optional_websocket_config(
     config: dict[str, Any],
     key: str,
     label: str,
+    *,
+    unsafe_detail: str | None = None,
 ) -> None:
     value = _optional_url_config(config, key, label)
     if value is None:
@@ -101,7 +115,7 @@ async def _validate_optional_websocket_config(
     except UnsafeOutboundUrlError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail=unsafe_detail or str(exc),
         ) from exc
 
 

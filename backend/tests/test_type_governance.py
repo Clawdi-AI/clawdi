@@ -168,6 +168,26 @@ def test_gate_rejects_diagnostics(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         type_governance.analyze(["app/core/query_utils.py"], gating=True)
 
 
+def test_gate_reports_stdout_diagnostics_for_exit_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = analysis(
+        files=1,
+        errors=1,
+        diagnostics=[{"severity": "error", "message": "typed failure"}],
+    )
+    install_analyzer(tmp_path, monkeypatch, payload=payload, exit_code=1)
+
+    with pytest.raises(ValueError) as exc_info:
+        type_governance.analyze(["app/core/query_utils.py"], gating=True)
+
+    message = str(exc_info.value)
+    assert "analyzer exited 1 with diagnostics" in message
+    assert "typed failure" in message
+    assert '"errorCount": 1' in message
+    assert "no stderr" not in message
+
+
 def test_gate_rejects_nonzero_exit_without_diagnostics(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

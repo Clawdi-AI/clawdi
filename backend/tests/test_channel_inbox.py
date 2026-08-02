@@ -570,6 +570,52 @@ async def test_telegram_inbox_uses_update_id_offset_and_drains_filtered_updates(
 
 
 @pytest.mark.asyncio
+async def test_telegram_inbox_terminally_consumes_updates_older_than_official_retention(
+    db_session: AsyncSession,
+    seed_user: User,
+    channel_agent: AgentEnvironment,
+):
+    # https://core.telegram.org/bots/api#getting-updates: incoming updates
+    # are not kept longer than 24 hours by Telegram's hosted Bot API.
+    account, binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        chat_id="telegram-retention-chat",
+    )
+    expired = await _add_message(
+        db_session,
+        account=account,
+        binding=binding,
+        text="expired",
+        payload={"update_id": 201, "message": {"text": "expired"}},
+    )
+    current = await _add_message(
+        db_session,
+        account=account,
+        binding=binding,
+        text="current",
+        payload={"update_id": 202, "message": {"text": "current"}},
+    )
+    expired.created_at = datetime.now(UTC) - timedelta(hours=24, seconds=1)
+    await db_session.commit()
+
+    updates = await dequeue_telegram_updates(
+        db_session,
+        account=account,
+        offset=None,
+        limit=100,
+    )
+    await db_session.refresh(expired)
+    await db_session.refresh(current)
+
+    assert [update["update_id"] for update in updates] == [202]
+    assert expired.delivered_at is not None
+    assert current.delivered_at is None
+
+
+@pytest.mark.asyncio
 async def test_channel_inbox_wait_polls_until_new_committed_event(
     db_session: AsyncSession,
     seed_user: User,

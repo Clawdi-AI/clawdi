@@ -18,6 +18,7 @@ function link(id: string, status = "active"): AgentChannelLink {
 		agent_id: "55555555-5555-4555-8555-555555555555",
 		status,
 		created_at: "2026-07-31T00:00:00Z",
+		binding_count: 0,
 	};
 }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
@@ -17,7 +18,7 @@ import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import HTTPException, status
-from sqlalchemy import and_, delete, exists, func, or_, select, union_all
+from sqlalchemy import and_, delete, exists, func, or_, select, union_all, update
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
@@ -165,6 +166,17 @@ DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE = "discord_bot_guild_membership_unavail
 DISCORD_DM_CHAT_TYPES = frozenset({"dm", "direct_messages", "group_dm", "private"})
 DELIVERY_LINK_LOCK_CONTENTION_ERROR = "channel agent link is being updated"
 DELIVERY_LINK_LOCK_CONTENTION_MAX_DELAY_SECONDS = 30
+DELIVERY_ERROR_ACCOUNT_INACTIVE = "channel_account_inactive"
+DELIVERY_ERROR_BINDING_INACTIVE = "channel_binding_inactive"
+DELIVERY_ERROR_FAILED = "channel_delivery_failed"
+DELIVERY_ERROR_LINK_ARCHIVED = "channel_agent_link_archived"
+DELIVERY_ERROR_LINK_AUTHORITY = "channel_agent_link_authority_missing"
+DELIVERY_ERROR_LINK_CONTENTION = "channel_agent_link_update_contended"
+DELIVERY_ERROR_MESSAGE_MISSING = "channel_message_missing"
+DELIVERY_ERROR_PROVIDER_CREDENTIAL = "channel_provider_credential_unavailable"
+DELIVERY_ERROR_PROVIDER_RATE_LIMITED = "channel_provider_rate_limited"
+DELIVERY_ERROR_PROVIDER_REJECTED = "channel_provider_rejected"
+DELIVERY_ERROR_PROVIDER_UNREACHABLE = "channel_provider_unreachable"
 HERMES_AGENT_TYPE = "hermes"
 OPENCLAW_AGENT_TYPE = "openclaw"
 HOSTED_RUNTIME_AGENT_TYPES = frozenset({HERMES_AGENT_TYPE, OPENCLAW_AGENT_TYPE})
@@ -175,6 +187,7 @@ STRICT_V2_AGENT_LINK_DETAIL = "Only Cloud Agents can be linked or paired with ch
 WHATSAPP_COMING_SOON_DETAIL = (
     "WhatsApp channels are coming soon for hosted agents. Telegram and Discord are available now."
 )
+TELEGRAM_UPDATE_RETENTION = timedelta(hours=24)
 
 
 def hosted_agent_provider_link_limit_detail(provider: str, *, duplicate: bool = False) -> str:
@@ -219,6 +232,7 @@ class ChannelQueueSnapshot:
 
 @dataclass(frozen=True)
 class ChannelRetentionBatch:
+    telegram_delivery_expirations: int = 0
     messages: int = 0
     debug_events: int = 0
     pair_codes: int = 0
@@ -228,7 +242,8 @@ class ChannelRetentionBatch:
     @property
     def total(self) -> int:
         return (
-            self.messages
+            self.telegram_delivery_expirations
+            + self.messages
             + self.debug_events
             + self.pair_codes
             + self.agent_references
@@ -239,6 +254,7 @@ class ChannelRetentionBatch:
         return tuple(
             kind
             for kind, count in (
+                ("telegram_delivery_expirations", self.telegram_delivery_expirations),
                 ("messages", self.messages),
                 ("debug_events", self.debug_events),
                 ("pair_codes", self.pair_codes),
@@ -597,7 +613,7 @@ async def get_or_create_bot_agent_link(
             # Older rows can carry an archived status without archived_at even
             # though the partial unique index keys only on archived_at. Finish
             # that interrupted archive before inserting its replacement.
-            await archive_bot_agent_link(db, link=link)
+            await archive_bot_agent_link(db, link=link, account=account)
         else:
             if not await bot_agent_link_has_strict_v2_authority(db, link=link):
                 raise HTTPException(
@@ -1069,10 +1085,40 @@ async def list_owned_active_bot_agent_links_for_agent(
     *,
     user_id: UUID,
     agent_id: UUID,
-) -> list[tuple[ChannelBotAgentLink, ChannelAccount]]:
+) -> list[tuple[ChannelBotAgentLink, ChannelAccount, int]]:
+    active_binding_counts = (
+        select(
+            ChannelBinding.account_id.label("account_id"),
+            ChannelBinding.bot_agent_link_id.label("bot_agent_link_id"),
+            ChannelBinding.user_id.label("user_id"),
+            func.count(ChannelBinding.id).label("binding_count"),
+        )
+        .where(
+            ChannelBinding.status == BINDING_STATUS_ACTIVE,
+            ChannelBinding.user_id == user_id,
+        )
+        .group_by(
+            ChannelBinding.account_id,
+            ChannelBinding.bot_agent_link_id,
+            ChannelBinding.user_id,
+        )
+        .subquery()
+    )
     result = await db.execute(
-        select(ChannelBotAgentLink, ChannelAccount)
+        select(
+            ChannelBotAgentLink,
+            ChannelAccount,
+            func.coalesce(active_binding_counts.c.binding_count, 0),
+        )
         .join(ChannelAccount, ChannelAccount.id == ChannelBotAgentLink.account_id)
+        .outerjoin(
+            active_binding_counts,
+            and_(
+                active_binding_counts.c.account_id == ChannelBotAgentLink.account_id,
+                active_binding_counts.c.bot_agent_link_id == ChannelBotAgentLink.id,
+                active_binding_counts.c.user_id == ChannelBotAgentLink.user_id,
+            ),
+        )
         .where(
             ChannelBotAgentLink.user_id == user_id,
             ChannelBotAgentLink.agent_id == agent_id,
@@ -1089,7 +1135,7 @@ async def list_owned_active_bot_agent_links_for_agent(
             ChannelBotAgentLink.created_at,
         )
     )
-    return [(link, account) for link, account in result.all()]
+    return [(link, account, int(binding_count)) for link, account, binding_count in result.all()]
 
 
 async def rotate_bot_agent_link_token(
@@ -1121,6 +1167,7 @@ async def archive_bot_agent_link(
     db: AsyncSession,
     *,
     link: ChannelBotAgentLink,
+    account: ChannelAccount | None = None,
 ) -> None:
     now = datetime.now(UTC)
     link.status = BOT_AGENT_LINK_STATUS_ARCHIVED
@@ -1168,7 +1215,14 @@ async def archive_bot_agent_link(
         )
     )
     for delivery in deliveries_result.scalars().all():
-        _fail_delivery(delivery, "channel agent link archived")
+        _fail_delivery(
+            delivery,
+            "channel agent link archived",
+            use_safe_diagnostics=(
+                account is not None
+                and account.provider in {CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD}
+            ),
+        )
 
     await db.flush()
 
@@ -1328,7 +1382,12 @@ async def archive_channel_account(db: AsyncSession, *, account: ChannelAccount) 
         )
     )
     for delivery in deliveries_result.scalars().all():
-        _fail_delivery(delivery, "channel account archived")
+        _fail_delivery(
+            delivery,
+            "channel account archived",
+            use_safe_diagnostics=account.provider
+            in {CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD},
+        )
 
     await db.flush()
 
@@ -2159,18 +2218,20 @@ async def discord_bot_guild_membership_check(
         label="discord api base url",
     )
     path = f"/guilds/{guild_id}"
-    decision = discord_rate_limiter.check("GET", path)
+    account_scope = str(account.id)
+    decision = discord_rate_limiter.check(account_scope, "GET", path)
     if not decision.allowed:
         return DiscordGuildMembershipCheck(denied_reason=DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE)
     try:
         with track_proxy_latency(CHANNEL_PROVIDER_DISCORD, "GET"):
             async with httpx.AsyncClient(timeout=20.0) as client:
-                discord_rate_limiter.consume("GET", path)
+                discord_rate_limiter.consume(account_scope, "GET", path)
                 response = await client.get(
                     f"{base_url.rstrip('/')}{path}",
                     headers={"Authorization": f"Bot {token}"},
                 )
                 discord_rate_limiter.observe(
+                    account_scope,
                     "GET",
                     path,
                     _discord_rate_limit_response_headers(response),
@@ -3258,6 +3319,7 @@ async def dequeue_telegram_updates(
     limit: int,
     allowed_updates: set[str] | None = None,
 ) -> list[dict[str, Any]]:
+    now = datetime.now(UTC)
     filters = [
         ChannelMessage.account_id == account.id,
         ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
@@ -3266,6 +3328,18 @@ async def dequeue_telegram_updates(
     ]
     if bot_agent_link_id is not None:
         filters.append(ChannelMessage.bot_agent_link_id == bot_agent_link_id)
+    # Telegram's hosted Bot API retains incoming updates for no longer than
+    # 24 hours. A managed polling client must not see a more durable history
+    # merely because Clawdi stores its inbox in PostgreSQL.
+    await db.execute(
+        update(ChannelMessage)
+        .where(
+            *filters,
+            ChannelMessage.created_at < now - TELEGRAM_UPDATE_RETENTION,
+        )
+        .values(delivered_at=now)
+        .execution_options(synchronize_session=False)
+    )
     result = await db.execute(
         select(ChannelMessage)
         .join(
@@ -3301,17 +3375,19 @@ async def dequeue_telegram_updates(
         )
     )
     updates: list[dict[str, Any]] = []
-    now = datetime.now(UTC)
     for message in result.scalars().all():
-        update = telegram_update_payload(message)
+        update_payload = telegram_update_payload(message)
         update_id = telegram_update_id(message)
         if offset is not None and update_id < offset:
             message.delivered_at = now
             continue
-        if allowed_updates and not _telegram_update_allowed(update, allowed_updates):
+        if allowed_updates and not _telegram_update_allowed(
+            update_payload,
+            allowed_updates,
+        ):
             message.delivered_at = now
             continue
-        updates.append(update)
+        updates.append(update_payload)
         if len(updates) >= limit:
             break
     await db.flush()
@@ -3393,6 +3469,35 @@ async def ack_channel_inbox_events(
     now = datetime.now(UTC)
     for message in messages:
         message.delivered_at = now
+    await db.flush()
+    return len(messages)
+
+
+async def ack_discord_gateway_messages(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    bot_agent_link_id: UUID,
+    message_ids: list[UUID],
+) -> int:
+    """Acknowledge only durable messages dispatched by one Gateway session."""
+    if not message_ids:
+        return 0
+    result = await db.execute(
+        select(ChannelMessage)
+        .where(
+            ChannelMessage.id.in_(message_ids),
+            ChannelMessage.account_id == account_id,
+            ChannelMessage.bot_agent_link_id == bot_agent_link_id,
+            ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+            ChannelMessage.delivered_at.is_(None),
+        )
+        .with_for_update(of=ChannelMessage)
+    )
+    messages = list(result.scalars().all())
+    delivered_at = datetime.now(UTC)
+    for message in messages:
+        message.delivered_at = delivered_at
     await db.flush()
     return len(messages)
 
@@ -3513,6 +3618,49 @@ async def prune_channel_messages(
     messages = list(result.scalars().all())
     for message in messages:
         await db.delete(message)
+    await db.flush()
+    return len(messages)
+
+
+async def expire_stale_telegram_inbox_messages(
+    db: AsyncSession,
+    *,
+    now: datetime | None = None,
+    retention: timedelta | None = None,
+    limit: int | None = None,
+) -> int:
+    """Terminally consume Telegram updates outside the provider replay horizon.
+
+    This is delivery expiry, not physical retention deletion. Rows remain
+    available for the ordinary delivered-message retention horizon.
+    """
+    batch_limit = max(
+        0,
+        settings.channel_message_cleanup_batch_size if limit is None else limit,
+    )
+    if batch_limit == 0:
+        return 0
+    current_time = now or datetime.now(UTC)
+    cutoff = current_time - (retention or TELEGRAM_UPDATE_RETENTION)
+    result = await db.execute(
+        select(ChannelMessage)
+        .join(ChannelAccount, ChannelAccount.id == ChannelMessage.account_id)
+        .where(
+            ChannelAccount.provider == CHANNEL_PROVIDER_TELEGRAM,
+            ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+            ChannelAccount.archived_at.is_(None),
+            ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+            ChannelMessage.binding_id.is_not(None),
+            ChannelMessage.delivered_at.is_(None),
+            ChannelMessage.created_at < cutoff,
+        )
+        .order_by(ChannelMessage.created_at, ChannelMessage.id)
+        .limit(batch_limit)
+        .with_for_update(skip_locked=True, of=ChannelMessage)
+    )
+    messages = list(result.scalars().all())
+    for message in messages:
+        message.delivered_at = current_time
     await db.flush()
     return len(messages)
 
@@ -3812,6 +3960,11 @@ async def prune_channel_retention_batch(
 ) -> ChannelRetentionBatch:
     current_time = now or datetime.now(UTC)
     return ChannelRetentionBatch(
+        telegram_delivery_expirations=await expire_stale_telegram_inbox_messages(
+            db,
+            now=current_time,
+            limit=limit,
+        ),
         messages=await prune_channel_messages(db, now=current_time, limit=limit),
         debug_events=await prune_channel_debug_events(db, now=current_time, limit=limit),
         pair_codes=await prune_channel_pair_codes(db, now=current_time, limit=limit),
@@ -3994,6 +4147,22 @@ async def pending_channel_inbox_count(
     bot_agent_link_id: UUID | None = None,
     user_id: UUID | None = None,
 ) -> int:
+    count, _oldest_pending_at = await pending_channel_inbox_stats(
+        db,
+        account=account,
+        bot_agent_link_id=bot_agent_link_id,
+        user_id=user_id,
+    )
+    return count
+
+
+async def pending_channel_inbox_stats(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    bot_agent_link_id: UUID | None = None,
+    user_id: UUID | None = None,
+) -> tuple[int, datetime | None]:
     filters = [
         ChannelMessage.account_id == account.id,
         ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
@@ -4005,7 +4174,7 @@ async def pending_channel_inbox_count(
     if user_id is not None:
         filters.append(ChannelMessage.user_id == user_id)
     result = await db.execute(
-        select(ChannelMessage.id)
+        select(func.count(ChannelMessage.id), func.min(ChannelMessage.created_at))
         .join(
             ChannelBinding,
             and_(
@@ -4032,7 +4201,8 @@ async def pending_channel_inbox_count(
             ChannelAccount.archived_at.is_(None),
         )
     )
-    return len(result.scalars().all())
+    count, oldest_pending_at = result.one()
+    return int(count), oldest_pending_at
 
 
 async def drop_pending_telegram_updates(
@@ -4193,6 +4363,7 @@ async def deliver_channel_delivery(
     *,
     delivery: ChannelDelivery,
 ) -> ChannelDelivery:
+    account: ChannelAccount | None = None
     try:
         account = await _delivery_account(db, delivery)
         link = await _lock_active_delivery_link(db, delivery)
@@ -4216,32 +4387,75 @@ async def deliver_channel_delivery(
                 )
         message = await _delivery_message(db, delivery)
         await _lock_active_delivery_binding(db, delivery=delivery, message=message)
-        provider_message_id, provider_response = await send_provider_outbound_payload(
+        provider_message_id, _provider_response = await send_provider_outbound_payload(
             account=account,
             external_chat_id=message.external_chat_id,
             text=message.text or "",
             provider_payload=_channel_message_provider_payload(message),
+            discord_nonce=(
+                _discord_delivery_nonce(message.id)
+                if account.provider == CHANNEL_PROVIDER_DISCORD
+                else None
+            ),
         )
     except HTTPException as exc:
         error = _http_exception_detail(exc)
-        if _is_delivery_link_lock_contention(exc, error=error):
-            _schedule_delivery_link_contention_retry(delivery, error)
+        delivery_provider = (
+            account.provider
+            if account is not None
+            else await db.scalar(
+                select(ChannelAccount.provider).where(ChannelAccount.id == delivery.account_id)
+            )
+        )
+        use_safe_diagnostics = delivery_provider in {
+            CHANNEL_PROVIDER_TELEGRAM,
+            CHANNEL_PROVIDER_DISCORD,
+        }
+        if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+            _schedule_delivery_retry(
+                delivery,
+                error,
+                use_safe_diagnostics=use_safe_diagnostics,
+                retry_after_seconds=_http_retry_after_seconds(exc),
+            )
+        elif _is_delivery_link_lock_contention(exc, error=error):
+            _schedule_delivery_link_contention_retry(
+                delivery,
+                error,
+                use_safe_diagnostics=use_safe_diagnostics,
+            )
         elif exc.status_code < status.HTTP_500_INTERNAL_SERVER_ERROR:
-            _fail_delivery(delivery, error)
+            _fail_delivery(
+                delivery,
+                error,
+                use_safe_diagnostics=use_safe_diagnostics,
+            )
         else:
-            _schedule_delivery_retry(delivery, error)
+            _schedule_delivery_retry(
+                delivery,
+                error,
+                use_safe_diagnostics=use_safe_diagnostics,
+            )
         await db.flush()
         return delivery
 
+    stored_provider_response = (
+        _safe_delivery_provider_response(
+            provider=account.provider,
+            provider_message_id=provider_message_id,
+        )
+        if account.provider in {CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD}
+        else _provider_response
+    )
     message.provider_message_id = provider_message_id
-    message.payload = _delivery_success_payload(message.payload, provider_response)
+    message.payload = _delivery_success_payload(message.payload, stored_provider_response)
     if account.provider in CHANNEL_RETENTION_PROVIDERS:
         message.delivered_at = datetime.now(UTC)
     delivery.status = DELIVERY_STATUS_SUCCEEDED
     delivery.locked_at = None
     delivery.locked_by = None
     delivery.last_error = None
-    delivery.provider_response = provider_response
+    delivery.provider_response = stored_provider_response
     await db.flush()
     return delivery
 
@@ -4276,6 +4490,7 @@ async def send_provider_outbound_payload(
     external_chat_id: str,
     text: str,
     provider_payload: dict[str, Any] | None = None,
+    discord_nonce: str | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
     if account.provider == CHANNEL_PROVIDER_TELEGRAM:
         return await _send_telegram_provider_payload(
@@ -4288,6 +4503,7 @@ async def send_provider_outbound_payload(
             account=account,
             external_chat_id=external_chat_id,
             text=text,
+            nonce=discord_nonce,
         )
     if account.provider == CHANNEL_PROVIDER_WHATSAPP:
         return await _send_whatsapp_provider_payload(
@@ -4422,6 +4638,7 @@ async def configure_discord_application(account: ChannelAccount) -> dict[str, An
         application_id=application_id,
         provider_token=token,
         config=account.config,
+        rate_limit_scope=str(account.id),
     )
     _require_discord_message_content_intent(identity)
     raw_integration_config = identity.get("integration_types_config")
@@ -4465,6 +4682,7 @@ async def configure_discord_application(account: ChannelAccount) -> dict[str, An
         "Content-Type": "application/json",
     }
     configured = await _discord_application_request(
+        account_scope=str(account.id),
         method="PATCH",
         url=url,
         headers=headers,
@@ -4542,6 +4760,7 @@ async def verify_discord_application_token_identity(
     application_id: str,
     provider_token: str,
     config: dict[str, Any] | None,
+    rate_limit_scope: str | None = None,
 ) -> dict[str, Any]:
     """Verify a Discord credential without mutating the Developer Portal."""
     raw_base_url = config.get("api_base_url") if isinstance(config, dict) else None
@@ -4557,6 +4776,7 @@ async def verify_discord_application_token_identity(
         label="discord api base url",
     )
     identity = await _discord_application_request(
+        account_scope=rate_limit_scope or f"application:{application_id}",
         method="GET",
         url=f"{base_url.rstrip('/')}/applications/@me",
         headers={
@@ -4747,13 +4967,14 @@ def mark_discord_reserved_commands_current(account: ChannelAccount) -> None:
 
 async def _discord_application_request(
     *,
+    account_scope: str,
     method: str,
     url: str,
     headers: dict[str, str],
     json_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     path = "/applications/@me"
-    decision = discord_rate_limiter.check(method, path)
+    decision = discord_rate_limiter.check(account_scope, method, path)
     if not decision.allowed:
         rate_limit_rejects.labels(
             channel=CHANNEL_PROVIDER_DISCORD,
@@ -4771,7 +4992,7 @@ async def _discord_application_request(
     try:
         with track_proxy_latency(CHANNEL_PROVIDER_DISCORD, method):
             async with httpx.AsyncClient(timeout=20.0) as client:
-                discord_rate_limiter.consume(method, path)
+                discord_rate_limiter.consume(account_scope, method, path)
                 response = await client.request(
                     method,
                     url,
@@ -4779,6 +5000,7 @@ async def _discord_application_request(
                     json=json_payload,
                 )
                 discord_rate_limiter.observe(
+                    account_scope,
                     method,
                     path,
                     _discord_rate_limit_response_headers(response),
@@ -4860,7 +5082,7 @@ async def send_telegram_message(
     direct_messages_topic_id: int | None = None,
 ) -> ChannelMessage:
     _require_channel_provider(account, CHANNEL_PROVIDER_TELEGRAM)
-    provider_message_id, payload = await _send_telegram_provider_payload(
+    provider_message_id, _provider_payload = await _send_telegram_provider_payload(
         account=account,
         external_chat_id=external_chat_id,
         text=text,
@@ -4884,7 +5106,10 @@ async def send_telegram_message(
         external_chat_id=external_chat_id,
         provider_message_id=provider_message_id,
         text=text,
-        payload=payload if isinstance(payload, dict) else None,
+        payload=_safe_delivery_provider_response(
+            provider=account.provider,
+            provider_message_id=provider_message_id,
+        ),
         delivered_at=datetime.now(UTC),
     )
 
@@ -4972,7 +5197,7 @@ async def send_discord_message(
     bind_to_existing: bool = True,
 ) -> ChannelMessage:
     _require_channel_provider(account, CHANNEL_PROVIDER_DISCORD)
-    provider_message_id, response_payload = await _send_discord_provider_payload(
+    provider_message_id, _response_payload = await _send_discord_provider_payload(
         account=account,
         external_chat_id=external_chat_id,
         text=text,
@@ -4994,7 +5219,10 @@ async def send_discord_message(
         external_chat_id=external_chat_id,
         provider_message_id=provider_message_id,
         text=text,
-        payload=response_payload,
+        payload=_safe_delivery_provider_response(
+            provider=account.provider,
+            provider_message_id=provider_message_id,
+        ),
         delivered_at=datetime.now(UTC),
     )
 
@@ -5032,6 +5260,7 @@ async def _send_discord_provider_payload(
     account: ChannelAccount,
     external_chat_id: str,
     text: str,
+    nonce: str | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
     token = decrypt_provider_token(account)
     base_url = (
@@ -5050,7 +5279,11 @@ async def _send_discord_provider_payload(
         "content": text,
         "allowed_mentions": {"parse": []},
     }
-    decision = discord_rate_limiter.check("POST", path)
+    if nonce is not None:
+        payload["nonce"] = nonce
+        payload["enforce_nonce"] = True
+    account_scope = str(account.id)
+    decision = discord_rate_limiter.check(account_scope, "POST", path)
     if not decision.allowed:
         rate_limit_rejects.labels(
             channel=CHANNEL_PROVIDER_DISCORD,
@@ -5058,22 +5291,29 @@ async def _send_discord_provider_payload(
         ).inc()
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail={
-                "message": "discord route is rate limited",
-                "retry_after": decision.retry_after_seconds,
-                "global": decision.global_limit,
-            },
+            detail="discord api rate limited",
+            headers={
+                "Retry-After": str(decision.retry_after_seconds),
+            }
+            if decision.retry_after_seconds is not None
+            else None,
         )
     try:
         with track_proxy_latency(CHANNEL_PROVIDER_DISCORD, "POST"):
             async with httpx.AsyncClient(timeout=20.0) as client:
-                discord_rate_limiter.consume("POST", path)
+                discord_rate_limiter.consume(account_scope, "POST", path)
                 response = await client.post(
                     url,
                     headers={"Authorization": f"Bot {token}"},
                     json=payload,
                 )
-                discord_rate_limiter.observe("POST", path, response.headers, response.status_code)
+                discord_rate_limiter.observe(
+                    account_scope,
+                    "POST",
+                    path,
+                    response.headers,
+                    response.status_code,
+                )
     except httpx.HTTPError as exc:
         outbound_errors.labels(channel=CHANNEL_PROVIDER_DISCORD, method="POST").inc()
         raise HTTPException(
@@ -5081,6 +5321,14 @@ async def _send_discord_provider_payload(
             detail="discord api unreachable",
         ) from exc
     outbound_messages.labels(channel=CHANNEL_PROVIDER_DISCORD, method="POST").inc()
+    if response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+        outbound_errors.labels(channel=CHANNEL_PROVIDER_DISCORD, method="POST").inc()
+        retry_after = _discord_rate_limit_response_headers(response).get("retry-after")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="discord api rate limited",
+            headers={"Retry-After": retry_after} if retry_after is not None else None,
+        )
     if response.status_code >= 400:
         outbound_errors.labels(channel=CHANNEL_PROVIDER_DISCORD, method="POST").inc()
         raise HTTPException(
@@ -5156,6 +5404,7 @@ async def sync_discord_commands(
                 }
                 response = await _discord_command_request(
                     client,
+                    account_scope=str(account.id),
                     method="GET",
                     url=url,
                     path=f"{path}/commands",
@@ -5193,6 +5442,7 @@ async def sync_discord_commands(
                 for command_payload in command_payloads:
                     response = await _discord_command_request(
                         client,
+                        account_scope=str(account.id),
                         method="POST",
                         url=url,
                         path=f"{path}/commands",
@@ -5216,6 +5466,7 @@ async def sync_discord_commands(
                 for command_id in legacy_command_ids:
                     response = await _discord_command_request(
                         client,
+                        account_scope=str(account.id),
                         method="DELETE",
                         url=f"{url}/{command_id}",
                         path=f"{path}/commands/{command_id}",
@@ -5232,6 +5483,7 @@ async def sync_discord_commands(
             for command_payload in command_payloads:
                 response = await _discord_command_request(
                     client,
+                    account_scope=str(account.id),
                     method="POST",
                     url=url,
                     path=f"{path}/commands",
@@ -5254,13 +5506,14 @@ async def sync_discord_commands(
 async def _discord_command_request(
     client: httpx.AsyncClient,
     *,
+    account_scope: str,
     method: str,
     url: str,
     path: str,
     headers: dict[str, str],
     json_payload: dict[str, Any] | None = None,
 ) -> httpx.Response:
-    decision = discord_rate_limiter.check(method, path)
+    decision = discord_rate_limiter.check(account_scope, method, path)
     if not decision.allowed:
         retry_after = decision.retry_after_seconds
         raise HTTPException(
@@ -5268,12 +5521,13 @@ async def _discord_command_request(
             detail="discord command sync is rate limited",
             headers={"Retry-After": str(retry_after)} if retry_after is not None else None,
         )
-    discord_rate_limiter.consume(method, path)
+    discord_rate_limiter.consume(account_scope, method, path)
     if json_payload is None:
         response = await client.request(method, url, headers=headers)
     else:
         response = await client.request(method, url, headers=headers, json=json_payload)
     discord_rate_limiter.observe(
+        account_scope,
         method,
         path,
         _discord_rate_limit_response_headers(response),
@@ -5532,13 +5786,44 @@ async def _post_provider_json(
             detail=unreachable_detail,
         ) from exc
     outbound_messages.labels(channel=channel, method=method).inc()
+    response_payload = _response_json_or_text(response)
+    if (
+        channel == CHANNEL_PROVIDER_TELEGRAM
+        and response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+    ):
+        outbound_errors.labels(channel=channel, method=method).inc()
+        retry_after = _telegram_retry_after_seconds(response, response_payload)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="telegram api rate limited",
+            headers={"Retry-After": str(retry_after)} if retry_after is not None else None,
+        )
     if response.status_code >= 400:
         outbound_errors.labels(channel=channel, method=method).inc()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=rejected_detail,
         )
-    return _response_json_or_text(response)
+    return response_payload
+
+
+def _telegram_retry_after_seconds(
+    response: httpx.Response,
+    payload: dict[str, Any],
+) -> float | None:
+    raw_header = response.headers.get("retry-after")
+    parameters = payload.get("parameters")
+    raw_parameter = parameters.get("retry_after") if isinstance(parameters, dict) else None
+    for value in (raw_header, raw_parameter):
+        if value is None:
+            continue
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError):
+            continue
+        if seconds >= 0:
+            return seconds
+    return None
 
 
 async def _validate_provider_endpoint_url(
@@ -5552,9 +5837,14 @@ async def _validate_provider_endpoint_url(
         await validate_channel_http_url(url, label=label)
     except UnsafeOutboundUrlError as exc:
         outbound_errors.labels(channel=channel, method=method).inc()
+        if channel in {CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD}:
+            detail = f"{channel} provider url must be a public https URL"
+        else:
+            # Paused provider behavior is intentionally unchanged.
+            detail = str(exc)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail=detail,
         ) from exc
 
 
@@ -6290,19 +6580,34 @@ async def _lock_active_delivery_binding(
     return binding
 
 
-def _schedule_delivery_retry(delivery: ChannelDelivery, error: str) -> None:
+def _schedule_delivery_retry(
+    delivery: ChannelDelivery,
+    error: str,
+    *,
+    use_safe_diagnostics: bool = False,
+    retry_after_seconds: float | None = None,
+) -> None:
     delivery.locked_at = None
     delivery.locked_by = None
-    delivery.last_error = error[:1000]
+    delivery.last_error = _delivery_error_code(error) if use_safe_diagnostics else error[:1000]
     if delivery.attempts >= delivery.max_attempts:
         delivery.status = DELIVERY_STATUS_FAILED
         return
-    delay_seconds = min(2 ** max(delivery.attempts - 1, 0), 300)
+    delay_seconds = (
+        min(max(retry_after_seconds, 0.1), 3600)
+        if retry_after_seconds is not None
+        else min(2 ** max(delivery.attempts - 1, 0), 300)
+    )
     delivery.status = DELIVERY_STATUS_PENDING
     delivery.next_attempt_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
 
 
-def _schedule_delivery_link_contention_retry(delivery: ChannelDelivery, error: str) -> None:
+def _schedule_delivery_link_contention_retry(
+    delivery: ChannelDelivery,
+    error: str,
+    *,
+    use_safe_diagnostics: bool = False,
+) -> None:
     refunded_attempts = max(delivery.attempts - 1, 0)
     delay_seconds = min(
         2 ** max(refunded_attempts, 0),
@@ -6311,15 +6616,20 @@ def _schedule_delivery_link_contention_retry(delivery: ChannelDelivery, error: s
     delivery.attempts = refunded_attempts
     delivery.locked_at = None
     delivery.locked_by = None
-    delivery.last_error = error[:1000]
+    delivery.last_error = _delivery_error_code(error) if use_safe_diagnostics else error[:1000]
     delivery.status = DELIVERY_STATUS_PENDING
     delivery.next_attempt_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
 
 
-def _fail_delivery(delivery: ChannelDelivery, error: str) -> None:
+def _fail_delivery(
+    delivery: ChannelDelivery,
+    error: str,
+    *,
+    use_safe_diagnostics: bool = False,
+) -> None:
     delivery.locked_at = None
     delivery.locked_by = None
-    delivery.last_error = error[:1000]
+    delivery.last_error = _delivery_error_code(error) if use_safe_diagnostics else error[:1000]
     delivery.status = DELIVERY_STATUS_FAILED
 
 
@@ -6332,6 +6642,64 @@ def _is_delivery_link_lock_contention(exc: HTTPException, *, error: str) -> bool
 
 def _http_exception_detail(exc: HTTPException) -> str:
     return exc.detail if isinstance(exc.detail, str) else "channel delivery failed"
+
+
+def _http_retry_after_seconds(exc: HTTPException) -> float | None:
+    raw = (exc.headers or {}).get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def _delivery_error_code(error: str) -> str:
+    codes = {
+        "channel account archived": DELIVERY_ERROR_ACCOUNT_INACTIVE,
+        "channel account is not active": DELIVERY_ERROR_ACCOUNT_INACTIVE,
+        "channel agent link archived": DELIVERY_ERROR_LINK_ARCHIVED,
+        "channel agent link has no managed runtime authority": DELIVERY_ERROR_LINK_AUTHORITY,
+        DELIVERY_LINK_LOCK_CONTENTION_ERROR: DELIVERY_ERROR_LINK_CONTENTION,
+        "channel binding archived": DELIVERY_ERROR_BINDING_INACTIVE,
+        "channel delivery has no active binding": DELIVERY_ERROR_BINDING_INACTIVE,
+        "channel message not found": DELIVERY_ERROR_MESSAGE_MISSING,
+        "channel account has no provider token configured": DELIVERY_ERROR_PROVIDER_CREDENTIAL,
+        "telegram api unreachable": DELIVERY_ERROR_PROVIDER_UNREACHABLE,
+        "discord api unreachable": DELIVERY_ERROR_PROVIDER_UNREACHABLE,
+        "telegram api rate limited": DELIVERY_ERROR_PROVIDER_RATE_LIMITED,
+        "discord api rate limited": DELIVERY_ERROR_PROVIDER_RATE_LIMITED,
+        "telegram api rejected message": DELIVERY_ERROR_PROVIDER_REJECTED,
+        "discord api rejected message": DELIVERY_ERROR_PROVIDER_REJECTED,
+        "channel delivery failed": DELIVERY_ERROR_FAILED,
+        hosted_agent_provider_link_limit_detail(
+            CHANNEL_PROVIDER_TELEGRAM,
+            duplicate=True,
+        ): DELIVERY_ERROR_LINK_AUTHORITY,
+        hosted_agent_provider_link_limit_detail(
+            CHANNEL_PROVIDER_DISCORD,
+            duplicate=True,
+        ): DELIVERY_ERROR_LINK_AUTHORITY,
+    }
+    return codes.get(error, DELIVERY_ERROR_FAILED)
+
+
+def _safe_delivery_provider_response(
+    *,
+    provider: str,
+    provider_message_id: str | None,
+) -> dict[str, Any]:
+    response: dict[str, Any] = {"provider": provider, "accepted": True}
+    if provider_message_id is not None:
+        response["provider_message_id"] = provider_message_id[:300]
+    return response
+
+
+def _discord_delivery_nonce(message_id: UUID) -> str:
+    # Discord accepts at most 25 characters. A UUID is non-secret durable
+    # identity; base64url preserves all 128 bits in 22 characters.
+    return base64.urlsafe_b64encode(message_id.bytes).rstrip(b"=").decode("ascii")
 
 
 def _command_name(command: dict[str, Any]) -> str:

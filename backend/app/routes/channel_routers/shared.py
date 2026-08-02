@@ -1613,7 +1613,8 @@ async def _request_discord_provider(
         "Content-Type": content_type,
     }
     headers.update(_discord_request_headers(request_headers))
-    decision = discord_rate_limiter.check(method, normalized_path)
+    account_scope = str(account.id)
+    decision = discord_rate_limiter.check(account_scope, method, normalized_path)
     if not decision.allowed:
         rate_limit_rejects.labels(
             channel="discord",
@@ -1634,7 +1635,7 @@ async def _request_discord_provider(
     try:
         with track_proxy_latency("discord", method):
             async with httpx.AsyncClient(timeout=20.0) as client:
-                discord_rate_limiter.consume(method, normalized_path)
+                discord_rate_limiter.consume(account_scope, method, normalized_path)
                 response = await client.request(
                     method,
                     url,
@@ -1643,6 +1644,7 @@ async def _request_discord_provider(
                     params=query_params,
                 )
                 discord_rate_limiter.observe(
+                    account_scope,
                     method,
                     normalized_path,
                     _discord_rate_limit_response_headers(response),
@@ -1724,7 +1726,7 @@ async def _validate_discord_provider_base_url(base_url: str) -> None:
         outbound_errors.labels(channel="discord", method="provider_url").inc()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail="discord api base url must be a public https URL",
         ) from exc
 
 

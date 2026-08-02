@@ -224,6 +224,14 @@ def analyze(paths: Sequence[str], *, gating: bool) -> Analysis:
         text=True,
     )
     analysis = parse_analysis(completed.stdout, len(paths))
+    if gating and completed.returncode == 1:
+        diagnostic_report = {
+            "generalDiagnostics": analysis["generalDiagnostics"],
+            "summary": analysis["summary"],
+        }
+        raise ValueError(
+            f"analyzer exited 1 with diagnostics: {json.dumps(diagnostic_report, sort_keys=True)}"
+        )
     if completed.returncode not in ({0} if gating else {0, 1}):
         raise ValueError(
             f"analyzer exited {completed.returncode}: {completed.stderr.strip() or 'no stderr'}"

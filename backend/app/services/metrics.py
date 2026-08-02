@@ -92,6 +92,12 @@ channel_retention_deletions = Counter(
     ["record_kind"],
     registry=registry,
 )
+channel_retention_delivery_expirations = Counter(
+    "msg_router_channel_retention_delivery_expirations_total",
+    "Pending channel deliveries terminally consumed at a provider retention horizon",
+    ["provider"],
+    registry=registry,
+)
 channel_retention_secret_scrubs = Counter(
     "msg_router_channel_retention_secret_scrubs_total",
     "Expired provider credential fields removed from retained channel payloads",

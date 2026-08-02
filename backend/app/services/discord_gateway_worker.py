@@ -316,8 +316,6 @@ class DiscordGatewayWorker:
         if frame is None:
             return
         sequence = frame.get("s")
-        if isinstance(sequence, int):
-            state.sequence = sequence
         op = frame.get("op")
         if op == 0:
             _update_gateway_session_state(state, frame)
@@ -327,6 +325,11 @@ class DiscordGatewayWorker:
                 frame,
                 gateway_session_id=state.session_id,
             )
+            # A RESUME sequence acknowledges every Dispatch through this value.
+            # Advance it only after the event's durable admission succeeds, or
+            # a reconnect could skip the failed event permanently.
+            if isinstance(sequence, int) and not isinstance(sequence, bool):
+                state.sequence = sequence
         elif op == 1:
             await _send_heartbeat(websocket, state)
         elif op == 7:

@@ -2576,7 +2576,7 @@ async def _validate_telegram_provider_base_url(base_url: str) -> None:
         outbound_errors.labels(channel="telegram", method="provider_url").inc()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail="telegram api base url must be a public https URL",
         ) from exc
 
 

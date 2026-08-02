@@ -430,6 +430,57 @@ Provider-wide state stays account-scoped:
 - Admin-managed command sync.
 - Provider-side credentials and extra encrypted secrets.
 
+## Delivery, Replay, And Diagnostic Boundaries
+
+Telegram polling follows the Bot API's upstream retention contract. The
+official Bot API says updates [are not kept longer than 24
+hours](https://core.telegram.org/bots/api#getting-updates). A bounded retention
+worker phase terminally consumes enabled Telegram bound inbox rows older than
+that horizon even when a polling runtime is offline and no Link webhook is
+configured. This sets the delivery acknowledgement timestamp; it does not
+physically delete the message. The row remains until the normal delivered-row
+retention horizon. Pending rows inside 24 hours are durable, but they are not
+count-bounded: a safe capacity bound still needs atomic database admission that
+can backpressure webhook and polling ingress without silently deleting
+authenticated updates.
+
+The synthetic Discord Gateway treats PostgreSQL, not its process-local Resume
+buffer, as delivery authority. A socket send leaves the exact
+`channel_messages` row pending. The client's next opcode 1 heartbeat sequence
+or opcode 6 Resume sequence acknowledges only message rows mapped at or below
+that received dispatch sequence, matching Discord's [Gateway sequence and
+Resume contract](https://discord.com/developers/docs/events/gateway#resuming).
+Disconnected Resume sessions use a bounded, expiring in-memory replay cache;
+active sessions are never evicted. An unknown or expired session receives
+opcode 9 with `d=false`, and the following Identify replays still-pending DB
+messages. The per-connection unacknowledged window backpressures one live
+socket, but durable Discord pending rows are also not globally count-bounded.
+
+Queued Discord Create Message retries use one stable UUID-derived `nonce` with
+`enforce_nonce=true`, following Discord's [Create Message
+contract](https://discord.com/developers/docs/resources/message#create-message-jsonform-params).
+Telegram exposes no equivalent idempotency primitive, so an HTTP timeout after
+provider acceptance can still duplicate a retried Telegram send.
+
+Discord REST limiter state is scoped by a stable, non-secret Clawdi account or
+Discord application identifier. It never uses the provider token as a key and
+never shares route or global 429 state across unrelated bot authentication
+identities, matching Discord's [authentication-scoped rate-limit
+contract](https://discord.com/developers/docs/topics/rate-limits).
+
+User-authenticated activity, health, and debug APIs never return raw provider
+or exception strings. `delivery_last_error` and health `last_error` preserve an
+allowlisted `channel_*` delivery code or fall back to
+`channel_delivery_failed`; debug event `error` uses
+`channel_operation_failed`, and debug `details` retains only bounded structural
+values. Telegram and Discord debug/delivery write paths persist the same stable
+codes and safe provider-message metadata. Full exception context belongs only
+in already-redacted internal logs.
+
+Done: with a migrated throwaway PostgreSQL configured as `DATABASE_URL`,
+`cd backend && uv run pytest -q tests/test_channel_inbox.py tests/test_channel_debug_events.py`
+exits 0.
+
 ## Outbound URL Security
 
 Channel accounts can carry public provider endpoint overrides, such as

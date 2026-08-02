@@ -41,6 +41,7 @@ from app.services.channels import (
     channel_queue_snapshots,
     deliver_channel_delivery,
     enqueue_channel_outbound_message,
+    expire_stale_telegram_inbox_messages,
     prune_channel_messages,
     prune_channel_pair_codes,
     prune_channel_retention_batch,
@@ -297,6 +298,177 @@ async def test_retention_horizons_are_strict_and_pending_bound_is_not_deleted(
     assert await db_session.get(ChannelMessage, boundary_delivered.id) is not None
     assert await db_session.get(ChannelMessage, boundary_unbound.id) is not None
     assert await db_session.get(ChannelMessage, pending_bound.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_stale_telegram_delivery_expiry_handles_offline_links_and_strict_cutoff(
+    db_session: AsyncSession,
+    seed_user: User,
+    channel_agent: AgentEnvironment,
+):
+    telegram, telegram_link, telegram_binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        chat_id="offline-polling-no-webhook",
+    )
+    assert telegram_link.config is None
+    discord, _discord_link, discord_binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_DISCORD,
+        chat_id="discord-no-silent-expiry",
+    )
+    disabled, _disabled_link, disabled_binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        chat_id="disabled-telegram",
+    )
+    disabled.status = CHANNEL_STATUS_DISABLED
+    now = datetime(2026, 8, 2, tzinfo=UTC)
+    cutoff = now - timedelta(hours=24)
+    expired = await _add_message(
+        db_session,
+        account=telegram,
+        binding=telegram_binding,
+        text="expired offline update",
+    )
+    expired.created_at = cutoff - timedelta(microseconds=1)
+    boundary = await _add_message(
+        db_session,
+        account=telegram,
+        binding=telegram_binding,
+        text="strict boundary",
+    )
+    boundary.created_at = cutoff
+    active = await _add_message(
+        db_session,
+        account=telegram,
+        binding=telegram_binding,
+        text="still within provider horizon",
+    )
+    active.created_at = cutoff + timedelta(microseconds=1)
+    old_discord = await _add_message(
+        db_session,
+        account=discord,
+        binding=discord_binding,
+        text="discord remains pending",
+    )
+    old_discord.created_at = cutoff - timedelta(days=30)
+    old_disabled = await _add_message(
+        db_session,
+        account=disabled,
+        binding=disabled_binding,
+        text="disabled telegram remains pending",
+    )
+    old_disabled.created_at = cutoff - timedelta(days=30)
+    await db_session.flush()
+
+    expired_count = await expire_stale_telegram_inbox_messages(
+        db_session,
+        now=now,
+        limit=10,
+    )
+
+    assert expired_count == 1
+    assert expired.delivered_at == now
+    assert boundary.delivered_at is None
+    assert active.delivered_at is None
+    assert old_discord.delivered_at is None
+    assert old_disabled.delivered_at is None
+    assert await db_session.get(ChannelMessage, expired.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_telegram_delivery_expiry_cleaners_skip_locked_rows(
+    engine,
+    db_session: AsyncSession,
+    seed_user: User,
+    channel_agent: AgentEnvironment,
+):
+    account, _link, binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        chat_id="concurrent-telegram-expiry",
+    )
+    now = datetime(2026, 8, 2, tzinfo=UTC)
+    for index in range(5):
+        message = await _add_message(
+            db_session,
+            account=account,
+            binding=binding,
+            text=f"stale-pending-{index}",
+        )
+        message.created_at = now - timedelta(hours=25)
+    await db_session.commit()
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as first, session_factory() as second:
+        first_expired = await expire_stale_telegram_inbox_messages(first, now=now, limit=2)
+        second_expired = await expire_stale_telegram_inbox_messages(second, now=now, limit=2)
+        await first.commit()
+        await second.commit()
+
+    delivered = await db_session.scalar(
+        select(func.count(ChannelMessage.id)).where(
+            ChannelMessage.account_id == account.id,
+            ChannelMessage.delivered_at.is_not(None),
+        )
+    )
+    total = await db_session.scalar(
+        select(func.count(ChannelMessage.id)).where(ChannelMessage.account_id == account.id)
+    )
+    assert first_expired == 2
+    assert second_expired == 2
+    assert delivered == 4
+    assert total == 5
+
+
+@pytest.mark.asyncio
+async def test_expired_telegram_delivery_becomes_ordinary_retention_eligible(
+    db_session: AsyncSession,
+    seed_user: User,
+    channel_agent: AgentEnvironment,
+):
+    account, _link, binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        chat_id="eventual-physical-retention",
+    )
+    now = datetime(2026, 8, 2, tzinfo=UTC)
+    message = await _add_message(
+        db_session,
+        account=account,
+        binding=binding,
+        text="expire then retain",
+    )
+    message.created_at = now - timedelta(hours=25)
+    await db_session.flush()
+
+    assert await expire_stale_telegram_inbox_messages(db_session, now=now, limit=1) == 1
+    assert message.delivered_at == now
+    await prune_channel_messages(
+        db_session,
+        now=now + timedelta(days=30),
+        delivered_retention=timedelta(days=30),
+        limit=10_000,
+    )
+    assert await db_session.get(ChannelMessage, message.id) is not None
+    await prune_channel_messages(
+        db_session,
+        now=now + timedelta(days=30, microseconds=1),
+        delivered_retention=timedelta(days=30),
+        limit=10_000,
+    )
+    assert await db_session.get(ChannelMessage, message.id) is None
 
 
 @pytest.mark.asyncio
@@ -823,11 +995,12 @@ async def test_queue_snapshots_report_provider_specific_stuck_pending(
     with caplog.at_level(logging.WARNING):
         await worker.run_once()
     metrics = render_metrics().decode("utf-8")
-    assert 'msg_router_channel_queue_pending{provider="telegram",queue="inbox"} 2.0' in metrics
+    assert 'msg_router_channel_queue_pending{provider="telegram",queue="inbox"} 1.0' in metrics
     assert (
-        'msg_router_channel_queue_stuck_pending{provider="telegram",queue="inbox"} 1.0' in metrics
+        'msg_router_channel_queue_stuck_pending{provider="telegram",queue="inbox"} 0.0' in metrics
     )
-    assert "provider=telegram queue=inbox" in caplog.text
+    assert 'msg_router_channel_retention_delivery_expirations_total{provider="telegram"}' in metrics
+    assert "provider=telegram queue=inbox" not in caplog.text
     assert "provider=discord queue=outbox" in caplog.text
 
 
@@ -1001,7 +1174,6 @@ async def test_retention_worker_drains_multiple_bounded_batches(
             text=f"bounded-{index}",
         )
         message.created_at = old
-        message.delivered_at = old
     await db_session.commit()
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     worker = ChannelMessageRetentionWorker(
@@ -1012,14 +1184,24 @@ async def test_retention_worker_drains_multiple_bounded_batches(
     )
 
     with caplog.at_level(logging.WARNING):
-        deleted = await worker.run_once()
+        processed = await worker.run_once()
 
-    remaining = await db_session.scalar(
-        select(func.count(ChannelMessage.id)).where(ChannelMessage.account_id == account.id)
+    remaining_pending = await db_session.scalar(
+        select(func.count(ChannelMessage.id)).where(
+            ChannelMessage.account_id == account.id,
+            ChannelMessage.delivered_at.is_(None),
+        )
     )
-    assert deleted == 4
-    assert remaining == 1
+    retained_rows = await db_session.scalar(
+        select(func.count(ChannelMessage.id)).where(
+            ChannelMessage.account_id == account.id,
+        )
+    )
+    assert processed == 4
+    assert remaining_pending == 1
+    assert retained_rows == 5
     assert "channel retention batch budget exhausted" in caplog.text
+    assert "telegram_delivery_expirations" in caplog.text
 
 
 @pytest.mark.asyncio

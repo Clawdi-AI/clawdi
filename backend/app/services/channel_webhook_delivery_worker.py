@@ -22,6 +22,7 @@ from app.models.channel import (
 )
 from app.services.channel_webhooks import deliver_telegram_agent_webhook
 from app.services.channels import (
+    TELEGRAM_UPDATE_RETENTION,
     bot_agent_link_has_provider_cardinality_capability,
     bot_agent_link_has_strict_v2_authority,
     telegram_update_payload,
@@ -46,7 +47,7 @@ class ChannelWebhookDeliveryWorker:
         poll_interval_seconds: float = 1.0,
         backoff_base_seconds: float = 1.0,
         backoff_cap_seconds: float = 60.0,
-        ttl_seconds: int = 24 * 60 * 60,
+        ttl_seconds: int = int(TELEGRAM_UPDATE_RETENTION.total_seconds()),
     ) -> None:
         self._sessionmaker = sessionmaker
         self._poll_interval_seconds = poll_interval_seconds
