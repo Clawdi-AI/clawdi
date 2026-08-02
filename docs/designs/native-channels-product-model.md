@@ -520,7 +520,7 @@ Provider ingress:
 - `/v1/channels/whatsapp/{id}/webhook`
 - `/v1/channels/imessage/{id}/webhook`
 - `/v1/channels/discord/gateway` for agent-facing replay
-- `/v1/channels/whatsapp/{id}/baileys` for Baileys-compatible WhatsApp Web
+- `/v1/channels/whatsapp/baileys` for Link-bearer-authenticated Baileys-compatible WhatsApp Web
   runtime ingress
 
 Agent SDK emulation:

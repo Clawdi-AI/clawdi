@@ -64,6 +64,12 @@ const headerMatcherSchema = z
 			secretRef: secretRefSchema,
 			prefix: z.string().optional(),
 		}),
+		z.object({
+			type: z.literal("secretRefPrefix"),
+			secretRef: secretRefSchema,
+			prefix: z.string().default(""),
+			suffix: z.string().default(""),
+		}),
 	])
 	.describe(
 		"Header matchers must never inline secret values unless type=equals is intentionally public.",
@@ -118,6 +124,7 @@ const pathReplaceSchema = z.object({
 const egressProfileMatchSchema = z.object({
 	scheme: z.enum(["http", "https", "ws", "wss"]).optional(),
 	host: z.string().min(1),
+	notAfter: z.string().datetime({ offset: true }).optional(),
 	pathPrefix: z
 		.string()
 		.min(1)
@@ -140,6 +147,7 @@ const egressProfileRewriteSchema = z.object({
 		.optional(),
 	preservePath: z.boolean().default(true),
 	pathReplace: pathReplaceSchema.optional(),
+	removeHeaders: z.array(headerNameSchema).optional(),
 	setHeaders: z.record(headerNameSchema, headerSetterSchema).default({}),
 });
 

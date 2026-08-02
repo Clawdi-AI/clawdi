@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -63,6 +64,7 @@ from app.services.channels import (
     list_owned_active_bot_agent_links,
     parse_pair_command,
     record_inbound_messages_for_bindings,
+    resolve_channel_agent_by_identity,
     resolve_channel_agent_by_token,
     resolve_inbound_binding,
     send_channel_outbound_message,
@@ -158,7 +160,7 @@ async def create_whatsapp_tenant_credential(
         identity_pub_key_hex=stored.minted.identity_pub_key.hex(),
         creds=encode_buffer_json(stored.minted.creds),
         auth_cert=serialize_whatsapp_auth_cert(auth_cert),
-        websocket_url=whatsapp_agent_websocket_url(account.id),
+        websocket_url=whatsapp_agent_websocket_url(),
         media_proxy_base_url=whatsapp_media_proxy_base_url(),
     )
 
@@ -288,10 +290,42 @@ async def get_whatsapp_auth_cert(
     return serialize_whatsapp_auth_cert(auth_cert)
 
 
-@router.websocket("/{account_id}/baileys")
-async def whatsapp_baileys_agent_websocket(
+@router.websocket("/baileys")
+async def whatsapp_baileys_managed_websocket(websocket: WebSocket) -> None:
+    token = _extract_bearer_token(websocket.headers.get("authorization"))
+    if token is None:
+        await websocket.close(code=1008)
+        return
+    async with async_session_factory() as db:
+        try:
+            agent = await resolve_channel_agent_by_token(
+                db,
+                provider=CHANNEL_PROVIDER_WHATSAPP,
+                token=token,
+            )
+        except HTTPException:
+            await websocket.close(code=1008)
+            return
+        account_id = agent.account.id
+        bot_agent_link_id = agent.link.id
+        agent_token_hash = agent.link.agent_token_hash
+        if agent_token_hash is None:
+            await websocket.close(code=1008)
+            return
+    await _run_whatsapp_baileys_websocket(
+        websocket,
+        account_id=account_id,
+        bot_agent_link_id=bot_agent_link_id,
+        agent_token_hash=agent_token_hash,
+    )
+
+
+async def _run_whatsapp_baileys_websocket(
     websocket: WebSocket,
+    *,
     account_id: UUID,
+    bot_agent_link_id: UUID,
+    agent_token_hash: str,
 ) -> None:
     async with async_session_factory() as db:
         try:
@@ -306,13 +340,45 @@ async def whatsapp_baileys_agent_websocket(
         await db.commit()
         account_user_id = account.user_id
 
+    session_revoked = asyncio.Event()
+    session_revocation_lock = asyncio.Lock()
+
+    async def revoke_session() -> None:
+        async with session_revocation_lock:
+            if session_revoked.is_set():
+                return
+            session_revoked.set()
+            with contextlib.suppress(Exception):
+                await websocket.close(code=1008)
+
+    async def require_session_authority() -> None:
+        async with async_session_factory() as db:
+            try:
+                agent = await resolve_channel_agent_by_identity(
+                    db,
+                    provider=CHANNEL_PROVIDER_WHATSAPP,
+                    account_id=account_id,
+                    link_id=bot_agent_link_id,
+                    agent_token_hash=agent_token_hash,
+                )
+            except HTTPException:
+                await revoke_session()
+                raise _WhatsAppSessionAuthorityRevoked from None
+            if agent.account.id != account_id or agent.link.id != bot_agent_link_id:
+                await revoke_session()
+                raise _WhatsAppSessionAuthorityRevoked
+
     async def resolve_client(identity_public_key: bytes) -> WhatsAppNoiseTenant | None:
         async with async_session_factory() as db:
             credential = await resolve_whatsapp_credential_by_identity(
                 db,
                 identity_public_key=identity_public_key,
             )
-            if credential is None or credential.account_id != account_id:
+            if (
+                credential is None
+                or credential.account_id != account_id
+                or credential.bot_agent_link_id != bot_agent_link_id
+            ):
                 return None
             bundle = whatsapp_agent_bundle_from_config(credential.config)
             signal_senders = whatsapp_signal_senders_from_config(credential.config)
@@ -331,6 +397,7 @@ async def whatsapp_baileys_agent_websocket(
             )
 
     async def record_runtime_event(event: WhatsAppNoiseRuntimeEvent) -> None:
+        await require_session_authority()
         details = {"runtime": "baileys_websocket", **_whatsapp_runtime_debug_details(event.details)}
         if event.external_chat_id is not None:
             details["jidDescription"] = describe_whatsapp_jid_for_log(event.external_chat_id)
@@ -398,19 +465,20 @@ async def whatsapp_baileys_agent_websocket(
         transport=get_whatsapp_shared_bot_transport(account_id),
     )
 
-    def current_bot_agent_link_id() -> UUID | None:
-        if session.tenant is None or session.tenant.bot_agent_link_id is None:
-            return None
-        try:
-            return UUID(session.tenant.bot_agent_link_id)
-        except ValueError:
-            return None
-
     async def relay_outbound_message(message) -> None:
+        await require_session_authority()
         await shared_runtime.store_outbound_message(
             message,
-            bot_agent_link_id=current_bot_agent_link_id(),
+            bot_agent_link_id=bot_agent_link_id,
         )
+
+    async def relay_outbound_node(node: Any, lookup_inbound_sender: Any) -> None:
+        await require_session_authority()
+        await shared_runtime.relay_raw_node(node, lookup_inbound_sender)
+
+    async def forward_iq(node: Any, tenant_id: str | None) -> Any:
+        await require_session_authority()
+        return await shared_runtime.forward_iq(node, tenant_id)
 
     session = WhatsAppNoiseEmulatorSession(
         auth_cert=auth_cert,
@@ -418,8 +486,8 @@ async def whatsapp_baileys_agent_websocket(
         resolve_client=resolve_client,
         on_event=record_runtime_event,
         on_outbound_message=relay_outbound_message,
-        on_outbound_relay=shared_runtime.relay_raw_node,
-        forward_iq=shared_runtime.forward_iq,
+        on_outbound_relay=relay_outbound_node,
+        forward_iq=forward_iq,
     )
     send_lock = asyncio.Lock()
     inbox_pump_task: asyncio.Task[None] | None = None
@@ -434,27 +502,37 @@ async def whatsapp_baileys_agent_websocket(
         inbox_pump_task = asyncio.create_task(
             _run_whatsapp_websocket_inbox_pump(
                 account_id=account.id,
-                bot_agent_link_id=current_bot_agent_link_id(),
+                bot_agent_link_id=bot_agent_link_id,
                 tenant_id=tenant.tenant_id,
                 session=session,
                 websocket=websocket,
                 send_lock=send_lock,
+                require_session_authority=require_session_authority,
             )
         )
 
     await websocket.accept()
     try:
         while True:
-            chunk = await websocket.receive_bytes()
+            chunk = await _receive_websocket_bytes_or_revocation(websocket, session_revoked)
+            if chunk is None:
+                return
+            try:
+                await require_session_authority()
+            except _WhatsAppSessionAuthorityRevoked:
+                return
             async with send_lock:
                 frames = await session.handle_inbound(chunk)
                 for frame in frames:
+                    await require_session_authority()
                     await websocket.send_bytes(frame)
             await maybe_start_inbox_pump()
             if session.rejected:
                 await websocket.close(code=1008)
                 return
     except WebSocketDisconnect:
+        return
+    except _WhatsAppSessionAuthorityRevoked:
         return
     except Exception as exc:  # noqa: BLE001 - close malformed agent sockets without leaking internals.
         with contextlib.suppress(Exception):
@@ -473,8 +551,38 @@ async def whatsapp_baileys_agent_websocket(
     finally:
         if inbox_pump_task is not None:
             inbox_pump_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            with contextlib.suppress(
+                asyncio.CancelledError,
+                _WhatsAppSessionAuthorityRevoked,
+            ):
                 await inbox_pump_task
+
+
+class _WhatsAppSessionAuthorityRevoked(RuntimeError):
+    pass
+
+
+async def _receive_websocket_bytes_or_revocation(
+    websocket: WebSocket,
+    session_revoked: asyncio.Event,
+) -> bytes | None:
+    receive_task = asyncio.create_task(websocket.receive_bytes())
+    revocation_task = asyncio.create_task(session_revoked.wait())
+    try:
+        done, _pending = await asyncio.wait(
+            {receive_task, revocation_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if revocation_task in done:
+            return None
+        return receive_task.result()
+    finally:
+        for task in (receive_task, revocation_task):
+            if task.done():
+                continue
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 def _whatsapp_runtime_debug_details(details: dict[str, Any]) -> dict[str, Any]:
@@ -488,25 +596,30 @@ def _whatsapp_runtime_debug_details(details: dict[str, Any]) -> dict[str, Any]:
 async def _run_whatsapp_websocket_inbox_pump(
     *,
     account_id: UUID,
-    bot_agent_link_id: UUID | None,
+    bot_agent_link_id: UUID,
     tenant_id: str,
     session: WhatsAppNoiseEmulatorSession,
     websocket: WebSocket,
     send_lock: asyncio.Lock,
+    require_session_authority: Callable[[], Awaitable[None]],
 ) -> None:
     async def wait_for_events(
         _tenant_id: str,
         after_sequence: int,
         limit: int,
     ) -> list[WhatsAppInboxPumpEvent]:
-        return await _wait_whatsapp_websocket_inbox(
+        await require_session_authority()
+        events = await _wait_whatsapp_websocket_inbox(
             account_id=account_id,
             bot_agent_link_id=bot_agent_link_id,
             after_sequence=after_sequence,
             limit=limit,
         )
+        await require_session_authority()
+        return events
 
     async def ack(_tenant_id: str, through_sequence: int) -> None:
+        await require_session_authority()
         await _ack_whatsapp_websocket_inbox(
             account_id=account_id,
             bot_agent_link_id=bot_agent_link_id,
@@ -515,6 +628,7 @@ async def _run_whatsapp_websocket_inbox_pump(
 
     async def deliver(prepared):
         async with send_lock:
+            await require_session_authority()
             frame, result = await session.push_inbound_message(
                 from_jid=prepared.from_jid,
                 message_id=prepared.message_id,
@@ -527,6 +641,7 @@ async def _run_whatsapp_websocket_inbox_pump(
                 participant_lid_jid=prepared.participant_lid_jid,
                 participant_pn_jid=prepared.participant_pn_jid,
             )
+            await require_session_authority()
             await websocket.send_bytes(frame)
         return result
 
@@ -535,16 +650,26 @@ async def _run_whatsapp_websocket_inbox_pump(
         wait_for_events=wait_for_events,
         ack=ack,
         deliver=deliver,
-        debug_events=_WhatsAppWebsocketInboxDebugEvents(account_id),
+        debug_events=_WhatsAppWebsocketInboxDebugEvents(
+            account_id,
+            require_session_authority=require_session_authority,
+        ),
     )
     await pump.run(stop_when_idle=False)
 
 
 class _WhatsAppWebsocketInboxDebugEvents:
-    def __init__(self, account_id: UUID) -> None:
+    def __init__(
+        self,
+        account_id: UUID,
+        *,
+        require_session_authority: Callable[[], Awaitable[None]],
+    ) -> None:
         self._account_id = account_id
+        self._require_session_authority = require_session_authority
 
     async def record(self, payload: dict[str, Any]) -> None:
+        await self._require_session_authority()
         async with async_session_factory() as db:
             account = await get_active_channel_account(db, account_id=self._account_id)
             await record_channel_debug_event(
@@ -564,7 +689,7 @@ class _WhatsAppWebsocketInboxDebugEvents:
 async def _wait_whatsapp_websocket_inbox(
     *,
     account_id: UUID,
-    bot_agent_link_id: UUID | None,
+    bot_agent_link_id: UUID,
     after_sequence: int,
     limit: int = 100,
 ) -> list[WhatsAppInboxPumpEvent]:
@@ -609,7 +734,7 @@ async def _wait_whatsapp_websocket_inbox(
 async def _ack_whatsapp_websocket_inbox(
     *,
     account_id: UUID,
-    bot_agent_link_id: UUID | None,
+    bot_agent_link_id: UUID,
     through_sequence: int,
 ) -> None:
     async with async_session_factory() as db:

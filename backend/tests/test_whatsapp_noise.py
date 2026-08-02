@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -17,6 +18,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.core.database import async_session_factory
 from app.models.channel import (
+    BOT_AGENT_LINK_STATUS_ARCHIVED,
     MESSAGE_DIRECTION_INBOUND,
     MESSAGE_DIRECTION_OUTBOUND,
     ChannelAccount,
@@ -27,7 +29,8 @@ from app.models.channel import (
     ChannelDelivery,
     ChannelMessage,
 )
-from app.routes.channel_routers.whatsapp import whatsapp_baileys_agent_websocket
+from app.routes.channel_routers.whatsapp import router as whatsapp_router
+from app.routes.channel_routers.whatsapp import whatsapp_baileys_managed_websocket
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channels import generate_agent_token, store_agent_link_token
 from app.services.whatsapp_baileys import (
@@ -111,12 +114,14 @@ async def _create_whatsapp_channel_with_existing_link(
         user_id=channel_agent.user_id,
         agent_id=channel_agent.id,
     )
-    store_agent_link_token(link, generate_agent_token("whatsapp"))
+    agent_token = generate_agent_token("whatsapp")
+    store_agent_link_token(link, agent_token)
     db_session.add(link)
     await db_session.commit()
     await db_session.refresh(link)
     created["agent_id"] = str(link.agent_id)
     created["agent_link_id"] = str(link.id)
+    created["agent_token"] = agent_token
     return created
 
 
@@ -1043,17 +1048,16 @@ def test_whatsapp_noise_emulator_session_restores_signal_sender_snapshots():
 async def test_whatsapp_baileys_websocket_closes_and_records_malformed_noise(
     client,
     db_session,
+    channel_agent,
 ):
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-runtime-error"},
-        )
-    ).json()
-    websocket = _BinaryWebSocketProbe()
-    route_task = asyncio.create_task(
-        whatsapp_baileys_agent_websocket(websocket, UUID(created["id"]))
+    created = await _create_whatsapp_channel_with_existing_link(
+        client,
+        db_session,
+        channel_agent,
+        name="wa-runtime-error",
     )
+    websocket = _BinaryWebSocketProbe(headers={"authorization": f"Bearer {created['agent_token']}"})
+    route_task = asyncio.create_task(whatsapp_baileys_managed_websocket(websocket))
 
     websocket.inbound.put_nowait(b"not-a-noise-header")
     await asyncio.wait_for(route_task, timeout=1)
@@ -1069,6 +1073,318 @@ async def test_whatsapp_baileys_websocket_closes_and_records_malformed_noise(
     stages = [(event.stage, event.outcome) for event in result.scalars().all()]
     assert ("noise_intro", "failure") in stages
     assert ("websocket", "error") in stages
+
+
+def test_whatsapp_baileys_exposes_no_unauthenticated_account_id_websocket() -> None:
+    route_paths = {getattr(route, "path", None) for route in whatsapp_router.routes}
+
+    assert "/channels/whatsapp/baileys" in route_paths
+    assert "/channels/whatsapp/{account_id}/baileys" not in route_paths
+
+
+@pytest.mark.asyncio
+async def test_managed_whatsapp_websocket_auth_fails_closed_and_revalidates_rotation(
+    client,
+    db_session,
+    channel_agent,
+):
+    created = await _create_whatsapp_channel_with_existing_link(
+        client,
+        db_session,
+        channel_agent,
+        name="wa-managed-upgrade-auth",
+    )
+
+    for authorization in [
+        None,
+        "Bearer wrong-link-token",
+        "Bearer capability-marker-is-not-a-backend-bearer",
+        "Basic ignored",
+    ]:
+        websocket = _BinaryWebSocketProbe(
+            headers={"authorization": authorization} if authorization else {}
+        )
+        await whatsapp_baileys_managed_websocket(websocket)
+        assert websocket.accepted is False
+        assert websocket.closed == [1008]
+
+    valid = _BinaryWebSocketProbe(headers={"authorization": f"Bearer {created['agent_token']}"})
+    valid.inbound.put_nowait(WebSocketDisconnect(code=1000))
+    await whatsapp_baileys_managed_websocket(valid)
+    assert valid.accepted is True
+    assert valid.closed == []
+
+    await db_session.rollback()
+    link = await db_session.get(ChannelBotAgentLink, UUID(created["agent_link_id"]))
+    assert link is not None
+    rotated_token = generate_agent_token("whatsapp")
+    store_agent_link_token(link, rotated_token)
+    await db_session.commit()
+
+    stale = _BinaryWebSocketProbe(headers={"authorization": f"Bearer {created['agent_token']}"})
+    await whatsapp_baileys_managed_websocket(stale)
+    assert stale.accepted is False
+    assert stale.closed == [1008]
+
+    rotated = _BinaryWebSocketProbe(headers={"authorization": f"Bearer {rotated_token}"})
+    rotated.inbound.put_nowait(WebSocketDisconnect(code=1000))
+    await whatsapp_baileys_managed_websocket(rotated)
+    assert rotated.accepted is True
+    assert rotated.closed == []
+
+    await db_session.rollback()
+    link = await db_session.get(ChannelBotAgentLink, UUID(created["agent_link_id"]))
+    assert link is not None
+    link.status = BOT_AGENT_LINK_STATUS_ARCHIVED
+    link.archived_at = datetime.now(UTC)
+    await db_session.commit()
+
+    archived = _BinaryWebSocketProbe(headers={"authorization": f"Bearer {rotated_token}"})
+    await whatsapp_baileys_managed_websocket(archived)
+    assert archived.accepted is False
+    assert archived.closed == [1008]
+
+
+@pytest.mark.asyncio
+async def test_managed_whatsapp_websocket_revokes_established_session_after_token_rotation(
+    client,
+    db_session,
+    channel_agent,
+):
+    created = await _create_whatsapp_channel_with_existing_link(
+        client,
+        db_session,
+        channel_agent,
+        name="wa-managed-session-token-rotation",
+    )
+    minted = (
+        await client.post(
+            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
+            json={},
+        )
+    ).json()
+    creds = decode_buffer_json(minted["creds"])
+    client_noise = _MiniNoiseClient(
+        static=KeyPair(
+            private=creds["noiseKey"]["private"],
+            public=creds["noiseKey"]["public"],
+        )
+    )
+    websocket, route_task = await _connect_whatsapp_managed_route(
+        agent_token=created["agent_token"],
+        client_noise=client_noise,
+    )
+    assert client_noise.transport is not None
+    sent_before_rotation = len(websocket.sent)
+
+    await db_session.rollback()
+    link = await db_session.get(ChannelBotAgentLink, UUID(created["agent_link_id"]))
+    assert link is not None
+    store_agent_link_token(link, generate_agent_token("whatsapp"))
+    await db_session.commit()
+
+    count_query = encode_binary_node_minimal(
+        {
+            "tag": "iq",
+            "attrs": {"id": "after-token-rotation", "xmlns": "encrypt", "type": "get"},
+            "content": [{"tag": "count", "attrs": {}}],
+        }
+    )
+    websocket.inbound.put_nowait(pack_frame(client_noise.transport.encrypt(count_query)))
+    await asyncio.wait_for(route_task, timeout=1)
+
+    assert websocket.closed == [1008]
+    assert len(websocket.sent) == sent_before_rotation
+
+
+@pytest.mark.asyncio
+async def test_managed_whatsapp_websocket_revokes_before_delivery_after_link_archive(
+    client,
+    db_session,
+    channel_agent,
+):
+    created = await _create_whatsapp_channel_with_existing_link(
+        client,
+        db_session,
+        channel_agent,
+        name="wa-managed-session-link-archive",
+    )
+    minted = (
+        await client.post(
+            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
+            json={},
+        )
+    ).json()
+    creds = decode_buffer_json(minted["creds"])
+    client_noise = _MiniNoiseClient(
+        static=KeyPair(
+            private=creds["noiseKey"]["private"],
+            public=creds["noiseKey"]["public"],
+        )
+    )
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    account_id = account.id
+    account_user_id = account.user_id
+    binding = ChannelBinding(
+        account_id=account_id,
+        bot_agent_link_id=UUID(created["agent_link_id"]),
+        user_id=account_user_id,
+        external_chat_id="15551114444@s.whatsapp.net",
+        external_chat_type="private",
+        external_chat_name="Archived Link Sender",
+    )
+    db_session.add(binding)
+    await db_session.flush()
+    binding_id = binding.id
+    await db_session.commit()
+
+    websocket, route_task = await _connect_whatsapp_managed_route(
+        agent_token=created["agent_token"],
+        client_noise=client_noise,
+    )
+    assert client_noise.transport is not None
+    websocket.inbound.put_nowait(
+        pack_frame(client_noise.transport.encrypt(_agent_bundle_upload_node("before-link-archive")))
+    )
+    await websocket.wait_for_sent(4)
+    sent_before_archive = len(websocket.sent)
+
+    await db_session.rollback()
+    link = await db_session.get(ChannelBotAgentLink, UUID(created["agent_link_id"]))
+    assert link is not None
+    link.status = BOT_AGENT_LINK_STATUS_ARCHIVED
+    link.archived_at = datetime.now(UTC)
+    pending = ChannelMessage(
+        account_id=account_id,
+        bot_agent_link_id=link.id,
+        binding_id=binding_id,
+        user_id=account_user_id,
+        direction=MESSAGE_DIRECTION_INBOUND,
+        external_chat_id=binding.external_chat_id,
+        provider_message_id="after-link-archive",
+        text="must not reach the archived session",
+        payload={
+            "key": {"remoteJid": binding.external_chat_id, "id": "after-link-archive"},
+            "message": {"conversation": "must not reach the archived session"},
+        },
+    )
+    db_session.add(pending)
+    await db_session.flush()
+    pending_id = pending.id
+    await db_session.commit()
+
+    await websocket.wait_for_closed()
+    await asyncio.wait_for(route_task, timeout=1)
+    assert websocket.closed == [1008]
+    assert len(websocket.sent) == sent_before_archive
+
+    await db_session.rollback()
+    stored_pending = await db_session.get(ChannelMessage, pending_id)
+    assert stored_pending is not None
+    assert stored_pending.delivered_at is None
+
+
+@pytest.mark.asyncio
+async def test_managed_whatsapp_noise_identity_is_bound_to_authenticated_link(
+    client,
+    db_session,
+    channel_agent,
+    second_channel_agent,
+):
+    created = await _create_whatsapp_channel_with_existing_link(
+        client,
+        db_session,
+        channel_agent,
+        name="wa-managed-link-scope",
+    )
+    second_token = generate_agent_token("whatsapp")
+    second_link = ChannelBotAgentLink(
+        account_id=UUID(created["id"]),
+        user_id=second_channel_agent.user_id,
+        agent_id=second_channel_agent.id,
+    )
+    store_agent_link_token(second_link, second_token)
+    db_session.add(second_link)
+    await db_session.commit()
+    await db_session.refresh(second_link)
+    second_link_id = second_link.id
+    minted = (
+        await client.post(
+            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
+            json={"agent_link_id": str(second_link.id)},
+        )
+    ).json()
+    creds = decode_buffer_json(minted["creds"])
+    static = KeyPair(
+        private=creds["noiseKey"]["private"],
+        public=creds["noiseKey"]["public"],
+    )
+
+    wrong_link_noise = _MiniNoiseClient(static=static)
+    wrong_link_websocket = _BinaryWebSocketProbe(
+        headers={"authorization": f"Bearer {created['agent_token']}"}
+    )
+    wrong_link_task = asyncio.create_task(whatsapp_baileys_managed_websocket(wrong_link_websocket))
+    wrong_link_websocket.inbound.put_nowait(
+        NOISE_WA_HEADER
+        + pack_frame(
+            encode_handshake_message(
+                HandshakeMessage(
+                    client_hello=ClientHello(ephemeral=wrong_link_noise.ephemeral.public)
+                )
+            )
+        )
+    )
+    await wrong_link_websocket.wait_for_sent(1)
+    server_hello, rest = unpack_frame(wrong_link_websocket.sent[0]) or (b"", b"")
+    assert rest == b""
+    wrong_link_websocket.inbound.put_nowait(
+        pack_frame(wrong_link_noise.process_server_hello(server_hello, payload=b""))
+    )
+    await asyncio.wait_for(wrong_link_task, timeout=1)
+    assert wrong_link_websocket.accepted is True
+    assert wrong_link_websocket.closed == [1008]
+
+    matching_noise = _MiniNoiseClient(static=static)
+    matching_websocket, matching_task = await _connect_whatsapp_managed_route(
+        agent_token=second_token,
+        client_noise=matching_noise,
+    )
+    assert matching_noise.transport is not None
+    assert matching_websocket.accepted is True
+    await _disconnect_whatsapp_route(matching_websocket, matching_task)
+
+    archived_noise = _MiniNoiseClient(static=static)
+    archived_websocket = _BinaryWebSocketProbe(headers={"authorization": f"Bearer {second_token}"})
+    archived_task = asyncio.create_task(whatsapp_baileys_managed_websocket(archived_websocket))
+    archived_websocket.inbound.put_nowait(
+        NOISE_WA_HEADER
+        + pack_frame(
+            encode_handshake_message(
+                HandshakeMessage(
+                    client_hello=ClientHello(ephemeral=archived_noise.ephemeral.public)
+                )
+            )
+        )
+    )
+    await archived_websocket.wait_for_sent(1)
+    server_hello, rest = unpack_frame(archived_websocket.sent[0]) or (b"", b"")
+    assert rest == b""
+
+    await db_session.rollback()
+    archived_link = await db_session.get(ChannelBotAgentLink, second_link_id)
+    assert archived_link is not None
+    archived_link.status = BOT_AGENT_LINK_STATUS_ARCHIVED
+    archived_link.archived_at = datetime.now(UTC)
+    await db_session.commit()
+
+    archived_websocket.inbound.put_nowait(
+        pack_frame(archived_noise.process_server_hello(server_hello, payload=b""))
+    )
+    await asyncio.wait_for(archived_task, timeout=1)
+    assert archived_websocket.accepted is True
+    assert archived_websocket.closed == [1008]
 
 
 @pytest.mark.asyncio
@@ -1937,8 +2253,8 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     await db_session.commit()
 
     client_noise = _MiniNoiseClient(static=static)
-    websocket, route_task = await _connect_whatsapp_route(
-        account_id=UUID(created["id"]),
+    websocket, route_task = await _connect_whatsapp_managed_route(
+        agent_token=created["agent_token"],
         client_noise=client_noise,
     )
 
@@ -2004,8 +2320,8 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     assert "15551112222:0@s.whatsapp.net" in credential.config["signal_senders"]
 
     reconnect_noise = _MiniNoiseClient(static=static)
-    reconnect_websocket, reconnect_task = await _connect_whatsapp_route(
-        account_id=UUID(created["id"]),
+    reconnect_websocket, reconnect_task = await _connect_whatsapp_managed_route(
+        agent_token=created["agent_token"],
         client_noise=reconnect_noise,
     )
     assert reconnect_noise.transport is not None
@@ -2140,8 +2456,8 @@ async def test_whatsapp_baileys_websocket_uses_registered_native_transport_for_r
     route_task: asyncio.Task[None] | None = None
     try:
         client_noise = _MiniNoiseClient(static=static)
-        websocket, route_task = await _connect_whatsapp_route(
-            account_id=account_id,
+        websocket, route_task = await _connect_whatsapp_managed_route(
+            agent_token=created["agent_token"],
             client_noise=client_noise,
         )
         assert client_noise.transport is not None
@@ -2208,13 +2524,13 @@ async def test_whatsapp_baileys_websocket_uses_registered_native_transport_for_r
             await _disconnect_whatsapp_route(websocket, route_task)
 
 
-async def _connect_whatsapp_route(
+async def _connect_whatsapp_managed_route(
     *,
-    account_id: UUID,
+    agent_token: str,
     client_noise: _MiniNoiseClient,
 ) -> tuple[_BinaryWebSocketProbe, asyncio.Task[None]]:
-    websocket = _BinaryWebSocketProbe()
-    route_task = asyncio.create_task(whatsapp_baileys_agent_websocket(websocket, account_id))
+    websocket = _BinaryWebSocketProbe(headers={"authorization": f"Bearer {agent_token}"})
+    route_task = asyncio.create_task(whatsapp_baileys_managed_websocket(websocket))
     websocket.inbound.put_nowait(
         NOISE_WA_HEADER
         + pack_frame(
@@ -2321,12 +2637,14 @@ def _agent_bundle_upload_node(iq_id: str) -> bytes:
 
 
 class _BinaryWebSocketProbe:
-    def __init__(self) -> None:
+    def __init__(self, *, headers: dict[str, str] | None = None) -> None:
         self.inbound: asyncio.Queue[bytes | WebSocketDisconnect] = asyncio.Queue()
         self.sent: list[bytes] = []
         self.accepted = False
         self.closed: list[int] = []
         self._sent = asyncio.Event()
+        self._closed = asyncio.Event()
+        self.headers = headers or {}
 
     async def accept(self) -> None:
         self.accepted = True
@@ -2343,11 +2661,15 @@ class _BinaryWebSocketProbe:
 
     async def close(self, code: int = 1000) -> None:
         self.closed.append(code)
+        self._closed.set()
 
     async def wait_for_sent(self, count: int) -> None:
         while len(self.sent) < count:
             self._sent.clear()
             await asyncio.wait_for(self._sent.wait(), timeout=1)
+
+    async def wait_for_closed(self) -> None:
+        await asyncio.wait_for(self._closed.wait(), timeout=1)
 
 
 class _MiniNoiseClient:

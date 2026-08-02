@@ -14,7 +14,8 @@ server.listen(config.port, config.host, () => {
 	const address = server.address() as AddressInfo;
 	console.log(
 		JSON.stringify({
-			event: "clawdi_whatsapp_baileys_sidecar_started",
+			event: "clawdi_whatsapp_provider_transport_started",
+			accountId: config.accountId,
 			host: address.address,
 			port: address.port,
 			sessionDir: config.sessionDir,

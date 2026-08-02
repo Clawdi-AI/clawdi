@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import {
 	type BinaryNode,
 	DisconnectReason,
@@ -10,6 +11,8 @@ import {
 import pino, { type Logger } from "pino";
 
 import type { SidecarConfig } from "./config.js";
+import { DurableJsonCache } from "./durable-cache.js";
+import { acquireProviderAccountOwnerLock, type ProviderAccountOwnerLock } from "./owner-lock.js";
 import {
 	type BaileysRuntime,
 	type RelayMessageRequest,
@@ -23,19 +26,38 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	private status: RuntimeStatus = "stopped";
 	private lastDisconnectReason: string | undefined;
 	private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+	private ownerLock: ProviderAccountOwnerLock | undefined;
 	private readonly startedAt = Date.now();
 	private readonly logger: Logger;
+	private readonly retryCounterCache: DurableJsonCache;
 
 	constructor(private readonly config: SidecarConfig) {
 		this.logger = pino({ level: config.logLevel });
+		this.retryCounterCache = new DurableJsonCache(
+			join(config.sessionDir, "retry-counters.json"),
+			3600,
+		);
 	}
 
 	async start(): Promise<void> {
+		if (this.ownerLock) return;
 		if (this.status === "connected" || this.status === "connecting" || this.status === "starting") {
 			return;
 		}
 		this.status = "starting";
-		await this.openSocket();
+		const ownerLock = acquireProviderAccountOwnerLock(
+			this.config.sessionDir,
+			this.config.accountId,
+		);
+		this.ownerLock = ownerLock;
+		try {
+			await this.openSocket();
+		} catch (error: unknown) {
+			ownerLock.release();
+			this.ownerLock = undefined;
+			this.status = "stopped";
+			throw error;
+		}
 	}
 
 	async stop(): Promise<void> {
@@ -47,8 +69,10 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		this.socket = null;
 		this.status = "stopped";
 		if (socket) {
-			socket.end(new Error("Clawdi Baileys sidecar stopped"));
+			socket.end(new Error("Clawdi WhatsApp provider transport stopped"));
 		}
+		this.ownerLock?.release();
+		this.ownerLock = undefined;
 	}
 
 	health(): RuntimeHealth {
@@ -99,9 +123,8 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			printQRInTerminal: false,
 			syncFullHistory: false,
 			markOnlineOnConnect: false,
+			msgRetryCounterCache: this.retryCounterCache,
 			getMessage: async () => ({ conversation: "" }),
-			...(this.config.waWebSocketUrl ? { waWebSocketUrl: this.config.waWebSocketUrl } : {}),
-			...(this.config.authCert ? { authCert: this.config.authCert } : {}),
 		});
 		this.socket = socket;
 		socket.ev.on("creds.update", saveCreds);
@@ -117,6 +140,8 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 				return;
 			}
 			if (connection === "close") {
+				if (this.socket === socket) this.socket = null;
+				if (this.status === "stopped") return;
 				this.status = "disconnected";
 				const reason = disconnectReason(lastDisconnect?.error);
 				this.lastDisconnectReason = reason ? String(reason) : undefined;

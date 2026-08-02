@@ -21,15 +21,14 @@ const HERMES_MANAGED_CHANNEL_ENV = [
 	"TELEGRAM_ALLOW_ALL_USERS",
 	"DISCORD_ALLOW_ALL_USERS",
 	"HERMES_TELEGRAM_DISABLE_FALLBACK_IPS",
+] as const;
+const HERMES_MANAGED_WHATSAPP_ENV = [
 	"WHATSAPP_ENABLED",
 	"WHATSAPP_MODE",
 	"WHATSAPP_ALLOWED_USERS",
 ] as const;
-const HERMES_MANAGED_CHANNEL_SECRET_ENV = [
-	"TELEGRAM_BOT_TOKEN",
-	"DISCORD_BOT_TOKEN",
-	"HERMES_WA_CREDS_JSON",
-] as const;
+const HERMES_MANAGED_CHANNEL_SECRET_ENV = ["TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN"] as const;
+const HERMES_MANAGED_WHATSAPP_SECRET_ENV = ["HERMES_WA_CREDS_JSON"] as const;
 const OPENCLAW_CHANNEL_TOKEN_ENV_PREFIX = "CLAWDI_CHANNEL_";
 const OPENCLAW_CHANNEL_TOKEN_ENV_SUFFIX = "_AGENT_TOKEN";
 
@@ -184,7 +183,7 @@ function applyRuntimeChannelProjection(
 		...manifest,
 		projection: {
 			...(manifest.projection ?? {}),
-			channels: buildOpenClawChannelsProjection(links, manifest.controlPlane.apiUrl, runtimeHome),
+			channels: buildOpenClawChannelsProjection(links, runtimeHome),
 			channelCredentials,
 		},
 		egressProfiles: mergeEgressProfiles(manifest.egressProfiles, managedProfiles),
@@ -197,7 +196,6 @@ function applyRuntimeChannelProjection(
 
 function buildOpenClawChannelsProjection(
 	links: ManagedChannelLink[],
-	cloudApiUrl: string,
 	runtimeHome: string,
 ): Record<string, unknown> {
 	const channels: Record<string, unknown> = {};
@@ -255,8 +253,6 @@ function buildOpenClawChannelsProjection(
 			});
 			channel.accounts[link.accountKey] = {
 				enabled: true,
-				wsUrl: `${toWebSocketUrl(stripTrailingSlash(cloudApiUrl))}/v1/channels/whatsapp/${link.account.id}/baileys`,
-				token: openClawChannelPlaceholderTokenSecretRef(link),
 				...(credential ? { authDir: credential.authDir } : {}),
 			};
 		}
@@ -327,8 +323,14 @@ function applyHermesRuntimeChannelSettings(
 		(credential) => whatsappCredentialCreds(credential) !== null,
 	);
 	const existingRun = hermes.run ?? { env: {}, prependPath: [] };
-	const env = omitKeys(existingRun.env ?? {}, HERMES_MANAGED_CHANNEL_ENV);
-	const secretEnv = omitKeys(existingRun.secretEnv ?? {}, HERMES_MANAGED_CHANNEL_SECRET_ENV);
+	const env = omitKeys(existingRun.env ?? {}, [
+		...HERMES_MANAGED_CHANNEL_ENV,
+		...(WHATSAPP_UPSTREAM_READY ? HERMES_MANAGED_WHATSAPP_ENV : []),
+	]);
+	const secretEnv = omitKeys(existingRun.secretEnv ?? {}, [
+		...HERMES_MANAGED_CHANNEL_SECRET_ENV,
+		...(WHATSAPP_UPSTREAM_READY ? HERMES_MANAGED_WHATSAPP_SECRET_ENV : []),
+	]);
 
 	if (telegram) {
 		env.TELEGRAM_ALLOW_ALL_USERS = "true";
@@ -568,40 +570,6 @@ function buildManagedChannelEgressProfiles(
 				},
 				logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
 				priority: 201,
-				owner: "clawdi-native-channels",
-			});
-		}
-		if (link.account.provider === "whatsapp") {
-			profiles.push({
-				id: `native-${idSuffix}-graph-managed`,
-				enabled: true,
-				kind: "http",
-				match: {
-					scheme: "https",
-					host: "graph.facebook.com",
-					pathPrefix: "/v",
-					headers: {
-						authorization: {
-							type: "secretRefEquals",
-							secretRef: link.placeholderSecretRef,
-							prefix: "Bearer ",
-						},
-					},
-					query: {},
-				},
-				rewrite: {
-					upstreamBaseUrl: `${baseUrl}/v1/channels/whatsapp/graph`,
-					preservePath: true,
-					setHeaders: {
-						authorization: {
-							type: "secretRef",
-							secretRef: link.secretRef,
-							prefix: "Bearer ",
-						},
-					},
-				},
-				logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
-				priority: 102,
 				owner: "clawdi-native-channels",
 			});
 		}

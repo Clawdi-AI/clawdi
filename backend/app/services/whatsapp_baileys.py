@@ -24,11 +24,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
+    BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_WHATSAPP,
+    CHANNEL_STATUS_ACTIVE,
     ChannelAccount,
     ChannelAgentCredential,
     ChannelBinding,
     ChannelBindingAlias,
+    ChannelBotAgentLink,
     ChannelWhatsAppAuthCert,
 )
 from app.services.vault_crypto import decrypt, encrypt
@@ -2347,11 +2350,24 @@ async def resolve_whatsapp_credential_by_identity(
     identity_public_key: bytes,
 ) -> ChannelAgentCredential | None:
     result = await db.execute(
-        select(ChannelAgentCredential).where(
+        select(ChannelAgentCredential)
+        .join(
+            ChannelBotAgentLink,
+            ChannelBotAgentLink.id == ChannelAgentCredential.bot_agent_link_id,
+        )
+        .join(ChannelAccount, ChannelAccount.id == ChannelAgentCredential.account_id)
+        .where(
             ChannelAgentCredential.provider == CHANNEL_PROVIDER_WHATSAPP,
             ChannelAgentCredential.identity_pub_key_hash
             == hashlib.sha256(identity_public_key).hexdigest(),
             ChannelAgentCredential.revoked_at.is_(None),
+            ChannelBotAgentLink.account_id == ChannelAgentCredential.account_id,
+            ChannelBotAgentLink.user_id == ChannelAgentCredential.user_id,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+            ChannelAccount.user_id == ChannelAgentCredential.user_id,
+            ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+            ChannelAccount.archived_at.is_(None),
         )
     )
     return result.scalar_one_or_none()
@@ -2376,13 +2392,8 @@ async def revoke_whatsapp_agent_credential(
     return True
 
 
-def whatsapp_agent_websocket_url(account_id: UUID | str | None = None) -> str:
-    path = (
-        f"/v1/channels/whatsapp/{account_id}/baileys"
-        if account_id is not None
-        else "/v1/channels/whatsapp/baileys"
-    )
-    return _public_ws_url(path)
+def whatsapp_agent_websocket_url() -> str:
+    return _public_ws_url("/v1/channels/whatsapp/baileys")
 
 
 def whatsapp_media_proxy_base_url() -> str:

@@ -603,7 +603,7 @@ async function applyLink(
 	}
 
 	if (token && !runtimeOutputGated) {
-		addRuntimeEnv(ctx, channel.provider, account.id, linkManifest, token);
+		addRuntimeEnv(ctx, channel.provider, linkManifest, token);
 		tokenWritten = true;
 	} else if (!runtimeOutputGated) {
 		const existingToken = readDotenvValue(
@@ -612,7 +612,7 @@ async function applyLink(
 			linkManifest.runtime.token_env,
 		);
 		if (existingToken) {
-			addRuntimeEnv(ctx, channel.provider, account.id, linkManifest, existingToken);
+			addRuntimeEnv(ctx, channel.provider, linkManifest, existingToken);
 			tokenWritten = true;
 		} else {
 			ctx.warnings.push(
@@ -729,7 +729,6 @@ async function writeWhatsAppCredentials(
 function addRuntimeEnv(
 	ctx: ApplyContext,
 	provider: ChannelProvider,
-	accountId: string,
 	link: RuntimeLink,
 	token: string,
 ): void {
@@ -763,7 +762,7 @@ function addRuntimeEnv(
 		setRuntimeEnv(
 			ctx,
 			runtimeEnvName(link, "websocket_url", "WA_WEBSOCKET_URL"),
-			`${toWebSocketUrl(baseUrl)}/v1/channels/whatsapp/${accountId}/baileys`,
+			`${toWebSocketUrl(baseUrl)}/v1/channels/whatsapp/baileys`,
 		);
 	}
 	if (provider === "imessage") {
