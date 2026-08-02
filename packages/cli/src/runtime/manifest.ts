@@ -189,6 +189,8 @@ import {
 	runRuntimeUserCommand,
 	runtimeEgressGid,
 	runtimeEgressUid,
+	runtimeUserGid,
+	runtimeUserUid,
 	spawnRuntimeUserCommand,
 	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
@@ -4799,6 +4801,26 @@ export function runtimeUserMutationTargets(
 		...installerTargets,
 		...hostedChannelCredentialMutationTargets(manifest, home),
 	]);
+	for (const name of HOSTED_RUNTIME_TARGETS) {
+		if (manifest.runtimes[name]?.enabled !== true) continue;
+		const commandPath = runtimeCommandPath(name, home);
+		if (
+			commandPath &&
+			!installerTargets.some((target) => {
+				const candidate = relative(resolve(target), resolve(commandPath));
+				return candidate === "" || (!candidate.startsWith("..") && !isAbsolute(candidate));
+			})
+		) {
+			// The command itself is an ownership mutation even when no runtime
+			// install is pending. Root bootstrap images can otherwise leave a
+			// private root-owned executable that root observes as present but the
+			// official runtime user cannot execute. OpenClaw's official installer
+			// defaults to ~/.openclaw and writes the CLI under its bin directory:
+			// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/scripts/install-cli.sh#L64-L66
+			// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/scripts/install-cli.sh#L1122-L1129
+			targets.add(commandPath);
+		}
+	}
 	if (
 		manifest.runtimes.hermes?.enabled &&
 		manifest.runtimes.hermes.services?.dashboard &&
@@ -4860,6 +4882,7 @@ function runtimeManagedMutationPlan(input: {
 	observations: ReadonlyMap<string, RuntimeInstallObservation>;
 }): {
 	snapshot: RuntimeManagedMutationPlan;
+	runtimeUserOwnershipTargets: string[];
 	staleOfficialUnits: string[];
 	systemdUserUnits: string[];
 } {
@@ -4900,13 +4923,38 @@ function runtimeManagedMutationPlan(input: {
 		]),
 	].sort();
 	const rootTargetsList = [...rootTargets].sort();
+	const projectionHome = hostedRuntimeProjectionHome(input.manifest, input.paths);
+	const runtimeCommandTargets = HOSTED_RUNTIME_TARGETS.flatMap((name) => {
+		if (input.manifest.runtimes[name]?.enabled !== true) return [];
+		const commandPath = runtimeCommandPath(name, projectionHome);
+		return commandPath ? [commandPath] : [];
+	});
+	const runtimeUserMetadataTargets = [
+		...new Set([
+			...systemd.metadataTargets,
+			input.paths.userHome,
+			input.paths.clawdiHome,
+			...mutationAncestorMetadataTargets(runtimeUserTargets, [
+				input.paths.userHome,
+				input.paths.clawdiHome,
+			]),
+		]),
+	].sort();
+	const runtimeUserOwnershipTargets = [
+		...new Set([...runtimeUserTargets, ...runtimeUserMetadataTargets, ...runtimeCommandTargets]),
+	].sort((left, right) => left.length - right.length || left.localeCompare(right));
 	return {
 		snapshot: {
 			rootTargets: rootTargetsList,
 			trustedRootDirectories: runtimeRootLiveMutationDirectories(input.manifest, input.paths),
 			runtimeUserTargets,
 			runtimeUserTrustedRoots: [input.paths.clawdiHome, input.paths.userHome],
-			runtimeUserSymlinkTargets: systemd.symlinkTargets,
+			runtimeUserSymlinkTargets: [
+				...new Set([
+					...systemd.symlinkTargets,
+					...runtimeCommandTargets.filter((target) => runtimeUserTargets.includes(target)),
+				]),
+			].sort(),
 			metadataTargets: [
 				...new Set([
 					...rootMetadataTargets,
@@ -4919,18 +4967,37 @@ function runtimeManagedMutationPlan(input: {
 						input.paths.runRoot,
 						input.paths.systemdSystemRoot,
 					]),
-					input.paths.userHome,
-					input.paths.clawdiHome,
-					...mutationAncestorMetadataTargets(runtimeUserTargets, [
-						input.paths.userHome,
-						input.paths.clawdiHome,
-					]),
+					...runtimeUserMetadataTargets,
 				]),
 			].sort(),
 		},
+		runtimeUserOwnershipTargets,
 		staleOfficialUnits: systemd.staleOfficialUnits,
 		systemdUserUnits: systemd.unitNames,
 	};
+}
+
+function ensureRuntimeUserOwnershipBoundaries(targets: readonly string[]): void {
+	if (!runningAsRoot()) return;
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
+	if (!runtimeUser || runtimeUser === "root" || runtimeUser === "0") return;
+	const uid = runtimeUserUid(runtimeUser);
+	const gid = runtimeUserGid(runtimeUser);
+	if (uid === 0 || gid === 0) {
+		throw new Error(`runtime user ${runtimeUser} resolved to a root filesystem identity`);
+	}
+	for (const path of targets) {
+		let node: ReturnType<typeof lstatSync>;
+		try {
+			node = lstatSync(path);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+			throw error;
+		}
+		if (node.uid === uid && node.gid === gid) continue;
+		if (node.isSymbolicLink()) lchownSync(path, uid, gid);
+		else chownSync(path, uid, gid);
+	}
 }
 
 export function convergeRuntimeManifest(
@@ -5054,6 +5121,11 @@ export function convergeRuntimeManifest(
 		userUnits: [],
 	};
 	try {
+		// Runtime-user targets and their ancestor metadata are already in the
+		// exact pre-image snapshot. Establish their positive ownership boundary
+		// before any official installer or CLI command drops privilege. Modes are
+		// intentionally preserved, so private runtime state stays private.
+		ensureRuntimeUserOwnershipBoundaries(mutationPlan.runtimeUserOwnershipTargets);
 		observations.clear();
 		for (const [name, runtime] of runtimeEntries) {
 			const observation = observeRuntimeInstall(name, runtime, projectionHome);

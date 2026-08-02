@@ -1041,6 +1041,17 @@ export function planRuntimeSystemdUserMutations(
 		targets.add(enablementPath);
 		symlinkTargets.add(enablementPath);
 		if (officialRuntimeServiceInstallArgs(program)) {
+			if (program.runtime === "openclaw") {
+				// OpenClaw's official Linux installer writes the base unit in place and
+				// preserves the previous unit beside it. Both are official-user
+				// transaction mutations:
+				// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/daemon/systemd.ts#L985-L1004
+				targets.add(`${unitPath}.bak`);
+				// The same installer may write its owner-only environment file under
+				// the OpenClaw state directory:
+				// https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/daemon/systemd.ts#L1099-L1170
+				targets.add(join(paths.userHome, ".openclaw", "gateway.systemd.env"));
+			}
 			const dropInPath = systemdDropInFilePath(paths, name);
 			targets.add(dropInPath);
 			metadataTargets.add(dirname(dropInPath));

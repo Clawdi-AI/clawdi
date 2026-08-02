@@ -4385,6 +4385,195 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toEqual([join(home, ".openclaw", "bin"), join(home, ".openclaw", "tools")].sort());
 	});
 
+	test("accepts an installed runtime command symlink as an exact transaction target", () => {
+		const paths = tempRuntimePaths();
+		const appRoot = join(paths.userHome, ".openclaw");
+		const commandPath = join(appRoot, "bin", "openclaw");
+		const commandTarget = join(appRoot, "openclaw-entrypoint");
+		mkdirSync(dirname(commandPath), { recursive: true });
+		writeFileSync(commandTarget, "#!/bin/sh\nexit 0\n");
+		chmodSync(commandTarget, 0o755);
+		symlinkSync(commandTarget, commandPath);
+		const manifest = baseManifest(paths, {
+			openclaw: {
+				enabled: true,
+				install: {
+					authority: "official",
+					method: "official-installer",
+					url: OFFICIAL_INSTALL_URLS.openclaw,
+					home: paths.userHome,
+					args: [...OFFICIAL_INSTALL_ARGS.openclaw],
+				},
+				run: runSettings(commandPath, ["gateway", "run"]),
+				services: {},
+			},
+		});
+
+		const result = convergeRuntimeManifest(manifestLoad(manifest, "symlinked-openclaw"), paths);
+		expect(result.installErrors).toEqual([]);
+		expect(readlinkSync(commandPath)).toBe(commandTarget);
+	});
+
+	test("repairs root bootstrap ownership for the UID 10001 official OpenClaw service path", () => {
+		if (process.geteuid?.() !== 0 || !existsSync("/usr/bin/setpriv")) return;
+		const paths = tempRuntimePaths();
+		const fixtureRoot = dirname(paths.serviceStateRoot);
+		const runtimeUid = 10_001;
+		const runtimeGid = 10_001;
+		const appRoot = join(paths.userHome, ".openclaw");
+		const binDir = join(appRoot, "bin");
+		const commandPath = join(binDir, "openclaw");
+		const gatewayEnvironment = join(appRoot, "gateway.systemd.env");
+		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
+		const unitBackupPath = `${unitPath}.bak`;
+		const runtimeOwnedPaths = [
+			appRoot,
+			binDir,
+			commandPath,
+			dirname(dirname(paths.systemdUserRoot)),
+			dirname(paths.systemdUserRoot),
+			paths.systemdUserRoot,
+			unitPath,
+			unitBackupPath,
+			gatewayEnvironment,
+		];
+
+		chmodSync(fixtureRoot, 0o755);
+		mkdirSync(paths.userHome, { recursive: true });
+		chownSync(paths.userHome, runtimeUid, runtimeGid);
+		chmodSync(paths.userHome, 0o700);
+		mkdirSync(paths.clawdiHome, { recursive: true });
+		chownSync(paths.clawdiHome, runtimeUid, runtimeGid);
+		chmodSync(paths.clawdiHome, 0o700);
+		mkdirSync(binDir, { recursive: true });
+		mkdirSync(dirname(unitPath), { recursive: true });
+		writeFileSync(
+			commandPath,
+			`#!/usr/bin/env bash
+set -euo pipefail
+test "$(id -u)" = "10001"
+test "$*" = "gateway install --force --json"
+unit="$HOME/.config/systemd/user/\${OPENCLAW_SYSTEMD_UNIT:-openclaw-gateway.service}"
+cp "$unit" "$unit.bak"
+printf '%s\\n' '[Unit]' '[Service]' 'ExecStart=openclaw gateway run' > "$unit"
+printf '%s\\n' 'OPENCLAW_OFFICIAL_USER_STATE=1' > "$HOME/.openclaw/gateway.systemd.env"
+chmod 0600 "$HOME/.openclaw/gateway.systemd.env"
+printf '{"ok":true}\\n'
+`,
+		);
+		writeFileSync(unitPath, "[Unit]\nDescription=previous official unit\n");
+		writeFileSync(unitBackupPath, "previous official backup\n");
+		writeFileSync(gatewayEnvironment, "PREVIOUS_OFFICIAL_STATE=1\n");
+		for (const path of [appRoot, binDir]) {
+			chownSync(path, 0, 0);
+			chmodSync(path, 0o700);
+		}
+		for (const path of [commandPath, unitPath, unitBackupPath, gatewayEnvironment]) {
+			chownSync(path, 0, 0);
+			chmodSync(path, 0o700);
+		}
+		chmodSync(unitPath, 0o600);
+		chmodSync(unitBackupPath, 0o600);
+		chmodSync(gatewayEnvironment, 0o600);
+
+		process.env.CLAWDI_RUNTIME_USER = "clawdi";
+		process.env.CLAWDI_RUNTIME_UID = String(runtimeUid);
+		process.env.CLAWDI_RUNTIME_GID = String(runtimeGid);
+		const manifest = baseManifest(paths, {
+			openclaw: {
+				enabled: true,
+				install: {
+					authority: "official",
+					method: "official-installer",
+					url: OFFICIAL_INSTALL_URLS.openclaw,
+					home: paths.userHome,
+					args: [...OFFICIAL_INSTALL_ARGS.openclaw],
+				},
+				run: runSettings(commandPath, ["gateway", "run"]),
+				services: {},
+			},
+		});
+
+		const result = convergeRuntimeManifest(
+			manifestLoad(manifest, "root-openclaw-ownership"),
+			paths,
+			{
+				executeOfficialServiceInstallers: false,
+			},
+		);
+		expect(result.installErrors).toEqual([]);
+		for (const path of runtimeOwnedPaths) {
+			const node = statSync(path);
+			expect([node.uid, node.gid]).toEqual([runtimeUid, runtimeGid]);
+		}
+		expect(statSync(appRoot).mode & 0o777).toBe(0o700);
+		expect(statSync(commandPath).mode & 0o777).toBe(0o700);
+		expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
+		expect([statSync(paths.daemonAuthToken).uid, statSync(paths.daemonAuthToken).gid]).toEqual([
+			0, 0,
+		]);
+		expect(statSync(paths.daemonAuthToken).mode & 0o777).toBe(0o600);
+
+		const installed = execFileSync(
+			"/usr/bin/setpriv",
+			[
+				`--reuid=${runtimeUid}`,
+				`--regid=${runtimeGid}`,
+				"--clear-groups",
+				"env",
+				`HOME=${paths.userHome}`,
+				"OPENCLAW_SYSTEMD_UNIT=openclaw-gateway.service",
+				commandPath,
+				"gateway",
+				"install",
+				"--force",
+				"--json",
+			],
+			{ cwd: paths.userHome, encoding: "utf8" },
+		);
+		expect(JSON.parse(installed)).toEqual({ ok: true });
+		expect(statSync(unitPath).uid).toBe(runtimeUid);
+		expect(statSync(unitBackupPath).uid).toBe(runtimeUid);
+		expect(statSync(gatewayEnvironment).uid).toBe(runtimeUid);
+		expect(statSync(gatewayEnvironment).mode & 0o777).toBe(0o600);
+
+		for (const path of runtimeOwnedPaths) chownSync(path, 0, 0);
+		const beforeRollback = new Map(
+			runtimeOwnedPaths.map(
+				(path) =>
+					[
+						path,
+						{
+							content: statSync(path).isFile() ? readFileSync(path) : null,
+							mode: statSync(path).mode & 0o777,
+						},
+					] as const,
+			),
+		);
+		const failed = convergeRuntimeManifest(
+			manifestLoad({ ...manifest, generation: 2 }, "root-openclaw-ownership-rollback"),
+			paths,
+			{
+				cacheLastGood: false,
+				commitAuthority: () => {
+					throw new Error("injected ownership commit failure");
+				},
+				executeOfficialServiceInstallers: false,
+			},
+		);
+		expect(failed.installErrors.join("\n")).toContain("injected ownership commit failure");
+		for (const [path, previous] of beforeRollback) {
+			const node = statSync(path);
+			expect([node.uid, node.gid]).toEqual([0, 0]);
+			expect(node.mode & 0o777).toBe(previous.mode);
+			if (previous.content) expect(readFileSync(path)).toEqual(previous.content);
+		}
+		expect([statSync(paths.daemonAuthToken).uid, statSync(paths.daemonAuthToken).gid]).toEqual([
+			0, 0,
+		]);
+		expect(statSync(paths.daemonAuthToken).mode & 0o777).toBe(0o600);
+	});
+
 	test("restores exact installer targets and reconciles the planned units after installer failure", () => {
 		const paths = tempRuntimePaths();
 		const home = paths.userHome;
