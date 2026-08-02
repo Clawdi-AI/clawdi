@@ -34,6 +34,10 @@ class TarValidationError(ValueError):
     """Raised when a tar archive fails validation."""
 
 
+class SkillTextValidationError(ValueError):
+    """Raised when SKILL.md text cannot be stored safely."""
+
+
 def validate_tar(data: bytes) -> int:
     """Validate a tar.gz archive. Returns file count.
 
@@ -157,6 +161,14 @@ def parse_frontmatter(content: str) -> dict[str, str]:
     """
     import yaml
 
+    # PostgreSQL text values cannot contain NUL. Check the full document as
+    # well as decoded YAML values below: a literal NUL can live in the body,
+    # while a quoted YAML escape (for example ``"bad\0name"``) materializes
+    # only after ``safe_load``. Rejecting at the document boundary keeps an
+    # invalid Skill from reaching an ORM autoflush as an opaque 500.
+    if "\x00" in content:
+        raise SkillTextValidationError("SKILL.md must not contain NUL characters")
+
     match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
     if not match:
         return {}
@@ -195,12 +207,17 @@ def parse_frontmatter(content: str) -> dict[str, str]:
             continue
         cap = _per_key_caps.get(key, _default_cap)
         if isinstance(value, str):
-            fm[key] = value.strip()[:cap]
+            normalized = value.strip()[:cap]
         elif isinstance(value, bool):
             # Match YAML wire form ("true"/"false") not Python's "True"/"False".
             # Callers comparing against literal "true" wouldn't expect Python
             # capitalization to leak through.
-            fm[key] = "true" if value else "false"
+            normalized = "true" if value else "false"
         elif isinstance(value, (int, float)):
-            fm[key] = str(value)[:cap]
+            normalized = str(value)[:cap]
+        else:
+            continue
+        if "\x00" in key or "\x00" in normalized:
+            raise SkillTextValidationError("Skill frontmatter must not contain NUL characters")
+        fm[key] = normalized
     return fm

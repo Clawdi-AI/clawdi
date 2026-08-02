@@ -77,6 +77,7 @@ from app.services.sync_events import (
     get_skills_revision,
 )
 from app.services.tar_utils import (
+    SkillTextValidationError,
     TarValidationError,
     extract_skill_md,
     parse_frontmatter,
@@ -1225,7 +1226,16 @@ async def _do_upload_skill(
     if not skill_md:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Archive must contain a SKILL.md")
 
-    fm = parse_frontmatter(skill_md)
+    try:
+        fm = parse_frontmatter(skill_md)
+    except SkillTextValidationError:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "invalid_skill_text",
+                "message": "SKILL.md must not contain NUL characters.",
+            },
+        ) from None
     name = fm.get("name", skill_key)
     description = fm.get("description", "")
 
