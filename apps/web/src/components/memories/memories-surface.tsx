@@ -431,7 +431,6 @@ function AddMemoryForm() {
 				}),
 			),
 		onSuccess: () => {
-			setContent("");
 			setOpen(false);
 			queryClient.invalidateQueries({ queryKey: ["memories"] });
 		},
@@ -441,8 +440,8 @@ function AddMemoryForm() {
 	return (
 		<Dialog
 			open={open}
-			onOpenChange={(next) => {
-				setOpen(next);
+			onOpenChange={setOpen}
+			onOpenChangeComplete={(next) => {
 				if (!next) setContent("");
 			}}
 		>

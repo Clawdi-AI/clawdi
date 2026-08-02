@@ -316,8 +316,8 @@ function AgentProjectsPanel({
 
 			<Dialog
 				open={addOpen}
-				onOpenChange={(open) => {
-					setAddOpen(open);
+				onOpenChange={setAddOpen}
+				onOpenChangeComplete={(open) => {
 					if (!open) setContextProjectId("");
 				}}
 			>

@@ -137,7 +137,6 @@ export function TopUpDialog({
 
 	function close(next: boolean) {
 		if (!next && (topUp.isPending || paymentSubmitting)) return;
-		if (!next) reset();
 		onOpenChange(next);
 	}
 
@@ -167,7 +166,6 @@ export function TopUpDialog({
 				// Successful completion is not a dismiss attempt. Close directly so the
 				// in-flight guard cannot leave a completed payment flow stranded open.
 				closeDialog: () => {
-					reset();
 					onOpenChange(false);
 				},
 				toastInfo: toast.info,
@@ -191,8 +189,6 @@ export function TopUpDialog({
 	// inline by StripePaymentForm, which keeps the payment flow open until it settles
 	// rather than closing on an unconfirmed payment.
 	function onPaid(status: PaymentOutcome) {
-		setClientSecret(null);
-		setStep("amount");
 		setPaymentSubmitting(false);
 		completeTopup(status === "succeeded" ? "succeeded" : "processing", {
 			queryClient: qc,
@@ -311,7 +307,13 @@ export function TopUpDialog({
 	}
 
 	return (
-		<Dialog open={open} onOpenChange={close}>
+		<Dialog
+			open={open}
+			onOpenChange={close}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen) reset();
+			}}
+		>
 			<DialogContent
 				className="sm:max-w-md"
 				data-hosted="true"

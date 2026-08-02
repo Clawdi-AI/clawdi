@@ -19,7 +19,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import { useAuthFields } from "@/lib/connectors-data";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
-import { errorMessage } from "@/lib/utils";
 import { buildCredentialPayload, getVisibleCredentialFields } from "./credentials-dialog.logic";
 
 /**
@@ -77,6 +76,7 @@ export function ConnectorCredentialsDialog({
 	// pattern as the OAuth/disconnect handlers in the detail page.
 	const inflightSubmitRef = useRef(false);
 	useEffect(() => {
+		if (!open) return;
 		openGenRef.current += 1;
 		setValues({});
 		setSubmitError(null);
@@ -103,16 +103,28 @@ export function ConnectorCredentialsDialog({
 			setValues({});
 			toast.success(`${displayName} connected`);
 			onOpenChange(false);
-		} catch (e) {
+		} catch {
 			if (gen !== openGenRef.current) return;
-			setSubmitError(errorMessage(e));
+			setSubmitError("The credentials couldn’t be saved. Check the values and try again.");
 		} finally {
 			inflightSubmitRef.current = false;
 		}
 	}
 
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
+		<Dialog
+			open={open}
+			onOpenChange={(nextOpen) => {
+				if (!nextOpen) openGenRef.current += 1;
+				onOpenChange(nextOpen);
+			}}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen) {
+					setValues({});
+					setSubmitError(null);
+				}
+			}}
+		>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
 					<DialogTitle>Connect {displayName}</DialogTitle>

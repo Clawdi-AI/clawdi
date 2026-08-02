@@ -206,20 +206,24 @@ function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage
 	function changeOpen(next: boolean) {
 		if (del.isPending) return;
 		setOpen(next);
-		if (!next) setAcknowledged(false);
 	}
 
 	function removeProvider() {
 		del.mutate(provider.provider_id, {
 			onSuccess: () => {
 				setOpen(false);
-				setAcknowledged(false);
 			},
 		});
 	}
 
 	return (
-		<AlertDialog open={open} onOpenChange={changeOpen}>
+		<AlertDialog
+			open={open}
+			onOpenChange={changeOpen}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen) setAcknowledged(false);
+			}}
+		>
 			<AlertDialogTrigger
 				render={
 					<Button

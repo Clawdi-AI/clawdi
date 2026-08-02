@@ -138,13 +138,6 @@ function CommandPalette({
 		return shortcuts;
 	}, [hostedAccess.canCreateCloudAgents]);
 
-	// Reset the input when the palette closes so reopening is a fresh state
-	// — otherwise stale results from the previous query briefly flash before
-	// a new debounce cycle fires.
-	useEffect(() => {
-		if (!open) setQuery("");
-	}, [open]);
-
 	const { data, isFetching } = useQuery({
 		queryKey: ["command-search", debounced],
 		queryFn: async () =>
@@ -220,6 +213,9 @@ function CommandPalette({
 		<CommandDialog
 			open={open}
 			onOpenChange={onOpenChange}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen) setQuery("");
+			}}
 			title="Search"
 			description="Open a page or search sessions, memories, skills, and vaults. Use the Search button in the sidebar or Cmd/Ctrl+K."
 		>

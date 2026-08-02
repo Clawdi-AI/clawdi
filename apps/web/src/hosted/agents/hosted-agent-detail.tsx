@@ -83,6 +83,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusDot, type StatusTone } from "@/components/ui/status-badge";
+import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
@@ -1483,6 +1484,8 @@ function RuntimeUiAccessDialog({
 	const loadedIdentityRef = useRef<string | null>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
 	const [accessHintOpen, setAccessHintOpen] = useState(false);
+	const credentialExit = useDialogExitLifecycle({ open, value: credentials, emptyValue: null });
+	const renderedCredentials = credentialExit.renderedValue;
 	const identity = `${deployment.resource.id}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${endpointUrl}`;
 	const accessHintStorageKey = hermesAccessHintStorageKey(deployment.resource.id);
 
@@ -1527,10 +1530,11 @@ function RuntimeUiAccessDialog({
 	useEffect(() => {
 		if (loadedIdentityRef.current === identity) return;
 		loadedIdentityRef.current = identity;
+		if (open) credentialExit.beginClose();
 		clearSensitiveState();
 		setOpen(false);
 		if (runtime === "openclaw") void loadCredentials();
-	}, [clearSensitiveState, identity, loadCredentials, runtime]);
+	}, [clearSensitiveState, credentialExit.beginClose, identity, loadCredentials, open, runtime]);
 
 	useEffect(() => {
 		if (runtime !== "hermes") {
@@ -1546,11 +1550,21 @@ function RuntimeUiAccessDialog({
 
 	const handleOpenChange = useCallback(
 		(nextOpen: boolean) => {
+			if (nextOpen) credentialExit.beginOpen();
+			else credentialExit.beginClose();
 			setOpen(nextOpen);
 			if (nextOpen && runtime === "hermes") dismissAccessHint();
 			if (nextOpen && !credentials && !isLoading) void loadCredentials();
 		},
-		[credentials, dismissAccessHint, isLoading, loadCredentials, runtime],
+		[
+			credentialExit.beginClose,
+			credentialExit.beginOpen,
+			credentials,
+			dismissAccessHint,
+			isLoading,
+			loadCredentials,
+			runtime,
+		],
 	);
 
 	const openRuntime = useCallback(async () => {
@@ -1596,12 +1610,19 @@ function RuntimeUiAccessDialog({
 
 	const acceptReset = useCallback(async () => {
 		await reset.mutateAsync({ id: deployment.resource.id });
+		credentialExit.beginClose();
 		clearSensitiveState();
 		setOpen(false);
-	}, [clearSensitiveState, deployment.resource.id, reset]);
+	}, [clearSensitiveState, credentialExit.beginClose, deployment.resource.id, reset]);
 
 	return (
-		<Dialog open={open} onOpenChange={handleOpenChange}>
+		<Dialog
+			open={open}
+			onOpenChange={handleOpenChange}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen) credentialExit.completeClose();
+			}}
+		>
 			<div className="flex items-center gap-1.5">
 				<Popover
 					open={runtime === "hermes" && accessHintOpen}
@@ -1651,7 +1672,7 @@ function RuntimeUiAccessDialog({
 					onClick={() => void openRuntime()}
 					aria-label={`Open ${label} in new window`}
 				>
-					{isLoading && !credentials ? (
+					{isLoading && !renderedCredentials ? (
 						<Spinner className="size-3.5" />
 					) : (
 						<ExternalLink className="size-3.5" />
@@ -1693,17 +1714,17 @@ function RuntimeUiAccessDialog({
 					/>
 				) : null}
 
-				{credentials?.runtime === "hermes" ? (
+				{renderedCredentials?.runtime === "hermes" ? (
 					<div className="overflow-hidden rounded-lg border bg-card/60">
-						<RuntimeUiCredentialRow label="Username" value={credentials.username} />
+						<RuntimeUiCredentialRow label="Username" value={renderedCredentials.username} />
 						<Separator />
-						<RuntimeUiCredentialRow label="Password" value={credentials.password} secret />
+						<RuntimeUiCredentialRow label="Password" value={renderedCredentials.password} secret />
 					</div>
 				) : null}
 
-				{credentials?.runtime === "openclaw" ? (
+				{renderedCredentials?.runtime === "openclaw" ? (
 					<div className="overflow-hidden rounded-lg border bg-card/60">
-						<RuntimeUiCredentialRow label="Token" value={credentials.token} secret />
+						<RuntimeUiCredentialRow label="Token" value={renderedCredentials.token} secret />
 					</div>
 				) : null}
 
@@ -3285,16 +3306,12 @@ function ComputeSettingsSections({
 		if (hostedAccess.isLoading || hostedAccess.canCreateCloudAgents) return;
 		setSubscriptionCreateOpen(false);
 		setPlanChangeOpen(false);
-		setPlanChangeQuote(null);
 		setPendingPlanChangeName(null);
 		walletTopUp.reset();
 	}, [hostedAccess.canCreateCloudAgents, hostedAccess.isLoading, walletTopUp.reset]);
 
 	function setPlanChangeDialogOpen(open: boolean) {
 		setPlanChangeOpen(open);
-		if (!open && pendingPlanChangeName === null) {
-			setPlanChangeQuote(null);
-		}
 	}
 
 	async function requestPlanChangeQuote(selection: PlanChangeSelection) {
@@ -3346,7 +3363,6 @@ function ComputeSettingsSections({
 				});
 			}
 			setPendingPlanChangeName(null);
-			setPlanChangeQuote(null);
 			setPlanChangeDialogOpen(false);
 		} catch (error) {
 			if (error instanceof PlanChangePendingError) {
@@ -3435,6 +3451,9 @@ function ComputeSettingsSections({
 					onQuote={requestPlanChangeQuote}
 					onConfirm={confirmPlanChange}
 					onTopUp={() => walletTopUp.show()}
+					onExitComplete={() => {
+						if (pendingPlanChangeName === null) setPlanChangeQuote(null);
+					}}
 				/>
 			) : null}
 
