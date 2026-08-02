@@ -177,12 +177,12 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
         raise AssertionError(f"unexpected path {request.url.path}")
 
     http_client = httpx.AsyncClient(
-        base_url="http://baileys-sidecar.internal",
+        base_url="https://baileys-sidecar.internal",
         transport=httpx.MockTransport(handler),
     )
     client = WhatsAppBaileysSidecarClient(
         WhatsAppBaileysSidecarConfig(
-            base_url="http://baileys-sidecar.internal",
+            base_url="https://baileys-sidecar.internal",
             api_token="sidecar-secret",
         ),
         http_client=http_client,
@@ -244,7 +244,10 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
 async def test_whatsapp_provider_transport_health_reports_sidecar_mode():
     account_id = UUID("00000000-0000-0000-0000-000000000456")
     client = WhatsAppBaileysSidecarClient(
-        WhatsAppBaileysSidecarConfig(base_url="http://baileys-sidecar.internal")
+        WhatsAppBaileysSidecarConfig(
+            base_url="https://baileys-sidecar.internal",
+            api_token="sidecar-secret",
+        )
     )
     client._connected = True
     transport = WhatsAppProviderTransportAdapter(client)
@@ -260,6 +263,49 @@ async def test_whatsapp_provider_transport_health_reports_sidecar_mode():
     assert status.supports_outbound_messages is True
     assert status.supports_raw_relay is True
     assert status.supports_iq_queries is True
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://sidecar.internal",
+        "ftp://127.0.0.1:8787",
+        "https://user:pass@sidecar.internal",
+        "https://sidecar.internal/path",
+        "https://sidecar.internal?query=yes",
+        "https://sidecar.internal#fragment",
+        "https://sidecar.internal?",
+        "https://sidecar.internal#",
+        "https://sidecar.internal:",
+        "https://sidecar%2Einternal",
+        "https://sidecar.internal\\@127.0.0.1",
+    ],
+)
+def test_whatsapp_sidecar_config_rejects_unsafe_base_url(base_url: str):
+    with pytest.raises(ValueError):
+        WhatsAppBaileysSidecarConfig(base_url=base_url, api_token="sidecar-secret")
+
+
+@pytest.mark.parametrize(
+    "base_url", ["http://localhost:8787", "http://127.0.0.1:8787", "http://[::1]:8787"]
+)
+def test_whatsapp_sidecar_config_allows_exact_loopback_http(base_url: str):
+    config = WhatsAppBaileysSidecarConfig(base_url=base_url, api_token="sidecar-secret")
+
+    assert config.base_url == base_url
+
+
+def test_whatsapp_sidecar_config_requires_and_redacts_api_token():
+    with pytest.raises(TypeError):
+        WhatsAppBaileysSidecarConfig(**{"base_url": "https://sidecar.internal"})
+    with pytest.raises(ValueError, match="non-empty printable ASCII bearer"):
+        WhatsAppBaileysSidecarConfig(base_url="https://sidecar.internal", api_token="  ")
+
+    config = WhatsAppBaileysSidecarConfig(
+        base_url="https://sidecar.internal",
+        api_token="must-not-appear",
+    )
+    assert "must-not-appear" not in repr(config)
 
 
 def _json_body(request: httpx.Request) -> dict[str, Any]:

@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { AddressInfo } from "node:net";
 import type { BinaryNode } from "baileys";
-import type { ProviderMessageEvent } from "./provider-inbox.js";
-
 import { createSidecarServer } from "./server.js";
+import type { ProviderMessageEvent } from "./sqlite-state.js";
 import {
 	type BaileysRuntime,
 	type RelayMessageRequest,

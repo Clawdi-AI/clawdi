@@ -1,5 +1,5 @@
 import type { BinaryNode } from "baileys";
-import type { ProviderMessageEvent } from "./provider-inbox.js";
+import type { ProviderMessageEvent } from "./sqlite-state.js";
 
 export type RuntimeStatus = "starting" | "connecting" | "connected" | "disconnected" | "stopped";
 

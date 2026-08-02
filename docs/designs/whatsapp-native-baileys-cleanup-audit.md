@@ -1,7 +1,7 @@
 # WhatsApp Native Baileys Cleanup Audit
 
 Status: review record for PR #719 and its dependent cleanup
-Date: 2026-08-01
+Date: 2026-08-02
 
 This audit compares `origin/main` at `f43542eab` with PR #719 at `58060d7ba`
 and the dependent cleanup worktree. It covers files whose path contains
@@ -20,7 +20,7 @@ rg --hidden -l -i 'whatsapp' --glob '!.git' \
 ```
 
 Done: the origin reference inventory reports 85 non-generated files and 40
-dedicated WhatsApp/egress paths. The cleanup worktree reports 86
+dedicated WhatsApp/egress paths. The cleanup worktree reports 90
 non-generated references without the deleted compatibility files.
 
 Decision labels:
@@ -49,7 +49,7 @@ Decision labels:
 | `packages/cli/egress-addon/clawdi_egress_addon.py` | A | Single provider-neutral matcher/rewrite engine. Source invariant rejects provider constants. |
 | `packages/cli/src/runtime/egress-env.ts`, `egress-profiles.ts`, `hosted-egress-profiles.ts`, `transparent-egress.ts` and their tests | A | Generic schema, secret references, redirect, and profile materialization shared by all providers. No WhatsApp branch is added. |
 | `packages/cli/src/runtime/whatsapp-egress.ts`, `whatsapp-upstream-contract.ts`, `whatsapp-gate.ts` | A | Provider-only profile builder, exact marker contract, pinned upstream evidence, and false gates. The builder has no runtime producer while the external seam is absent. |
-| `packages/whatsapp-baileys-sidecar/**` | A/C | Package name retained for build stability and documented as the one physical-provider transport. `runtime.ts` is the only production `makeWASocket`; config, durable retry cache, exclusive owner lock, durable provider inbox, byte-safe node codec, and private bearer HTTP operations remain. |
+| `packages/whatsapp-baileys-sidecar/**` | A/C | Package name retained for build stability and documented as the one physical-provider transport. `runtime.ts` is the only production `makeWASocket`; a single WAL/FULL SQLite store holds auth/Signal/retry/inbox state and immutable account metadata under an exclusive OS lock, rejecting symlinked state paths before open. The private bearer HTTP operations and byte-safe node codec remain. Demo multi-file auth, mutable version discovery, PID locking, and JSON spool/cache files are absent from production. |
 | `docs/designs/whatsapp-baileys-sidecar-runtime.md` | C | Current topology and exact upstream proposal. |
 | `docs/egress-channel-transport-architecture.md` | C | Replaced stale proxy/Graph research with the current generic engine and three provider builders. |
 
@@ -206,20 +206,18 @@ second physical socket nor install a custom WhatsApp adapter.
 ```text
 packages/whatsapp-baileys-sidecar/package.json
 packages/whatsapp-baileys-sidecar/tsconfig.json
+packages/whatsapp-baileys-sidecar/src/audited-version.ts
 packages/whatsapp-baileys-sidecar/src/config.ts
 packages/whatsapp-baileys-sidecar/src/config.test.ts
-packages/whatsapp-baileys-sidecar/src/durable-cache.ts
-packages/whatsapp-baileys-sidecar/src/durable-cache.test.ts
 packages/whatsapp-baileys-sidecar/src/index.ts
 packages/whatsapp-baileys-sidecar/src/json-bytes.ts
 packages/whatsapp-baileys-sidecar/src/json-bytes.test.ts
-packages/whatsapp-baileys-sidecar/src/owner-lock.ts
-packages/whatsapp-baileys-sidecar/src/owner-lock.test.ts
-packages/whatsapp-baileys-sidecar/src/provider-inbox.ts
-packages/whatsapp-baileys-sidecar/src/provider-inbox.test.ts
 packages/whatsapp-baileys-sidecar/src/runtime.ts
+packages/whatsapp-baileys-sidecar/src/runtime.test.ts
 packages/whatsapp-baileys-sidecar/src/server.ts
 packages/whatsapp-baileys-sidecar/src/server.test.ts
+packages/whatsapp-baileys-sidecar/src/sqlite-state.ts
+packages/whatsapp-baileys-sidecar/src/sqlite-state.test.ts
 packages/whatsapp-baileys-sidecar/src/types.ts
 ```
 
@@ -256,10 +254,15 @@ Done:
 bun test packages/cli/tests/runtime-whatsapp-egress.test.ts \
   packages/cli/tests/runtime-egress-profiles.test.ts
 python3 -m unittest packages/cli/tests/egress_addon/clawdi_egress_addon_test.py
-bun test packages/whatsapp-baileys-sidecar/src/provider-inbox.test.ts \
-  packages/whatsapp-baileys-sidecar/src/owner-lock.test.ts
+bun run --cwd packages/whatsapp-baileys-sidecar typecheck
+bun test packages/whatsapp-baileys-sidecar/src
+cd backend && uv run pytest -q tests/test_whatsapp_native_transport.py \
+  tests/test_whatsapp_sidecar_registry.py
 ```
 
-All commands exit 0; the source invariants report one production physical
-socket owner, no legacy application connector, no hosted Graph/Cloud WhatsApp
-surface, no provider constants in the generic addon, and false gates.
+The repair-specific sidecar suite reports 28 passing tests and the focused
+backend transport/registry suite reports 30 passing tests. The source
+invariants report one production physical socket owner, no demo multi-file
+auth or dynamic Web-version fetch, no legacy application connector, no hosted
+Graph/Cloud WhatsApp surface, no provider constants in the generic addon, and
+false gates.

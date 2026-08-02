@@ -5,15 +5,17 @@ import { join } from "node:path";
 
 import { loadConfigFromEnv } from "./config.js";
 
+const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
+
 describe("sidecar config", () => {
 	it("requires explicit token and session dir", () => {
 		expect(() => loadConfigFromEnv({})).toThrow("CLAWDI_WA_PROVIDER_ACCOUNT_ID is required");
-		expect(() => loadConfigFromEnv({ CLAWDI_WA_PROVIDER_ACCOUNT_ID: "account-a" })).toThrow(
+		expect(() => loadConfigFromEnv({ CLAWDI_WA_PROVIDER_ACCOUNT_ID: ACCOUNT_ID })).toThrow(
 			"CLAWDI_WA_SIDECAR_TOKEN is required",
 		);
 		expect(() =>
 			loadConfigFromEnv({
-				CLAWDI_WA_PROVIDER_ACCOUNT_ID: "account-a",
+				CLAWDI_WA_PROVIDER_ACCOUNT_ID: ACCOUNT_ID,
 				CLAWDI_WA_SIDECAR_TOKEN: "secret",
 			}),
 		).toThrow("CLAWDI_WA_SIDECAR_SESSION_DIR is required");
@@ -23,16 +25,49 @@ describe("sidecar config", () => {
 		const sessionDir = mkdtempSync(join(tmpdir(), "clawdi-wa-sidecar-"));
 		try {
 			const config = loadConfigFromEnv({
-				CLAWDI_WA_PROVIDER_ACCOUNT_ID: "account-a",
+				CLAWDI_WA_PROVIDER_ACCOUNT_ID: ACCOUNT_ID,
 				CLAWDI_WA_SIDECAR_TOKEN: "secret",
 				CLAWDI_WA_SIDECAR_SESSION_DIR: sessionDir,
 				CLAWDI_WA_SIDECAR_PORT: "9876",
 			});
 
-			expect(config.accountId).toBe("account-a");
+			expect(config.accountId).toBe(ACCOUNT_ID);
 			expect(config.port).toBe(9876);
 			expect(config.sessionDir).toBe(sessionDir);
+			expect(config.webVersion).toEqual([2, 3000, 1_035_194_821]);
+			expect(config.providerInbox).toEqual({
+				maxEvents: 10_000,
+				maxBytes: 256 * 1024 * 1024,
+			});
 			expect(config).not.toHaveProperty("waWebSocketUrl");
+		} finally {
+			rmSync(sessionDir, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects malformed account, version, and inbox capacity settings", () => {
+		const sessionDir = mkdtempSync(join(tmpdir(), "clawdi-wa-sidecar-"));
+		const base = {
+			CLAWDI_WA_PROVIDER_ACCOUNT_ID: ACCOUNT_ID,
+			CLAWDI_WA_SIDECAR_TOKEN: "secret",
+			CLAWDI_WA_SIDECAR_SESSION_DIR: sessionDir,
+		};
+		try {
+			expect(() =>
+				loadConfigFromEnv({ ...base, CLAWDI_WA_PROVIDER_ACCOUNT_ID: "account-a" }),
+			).toThrow("canonical UUID");
+			expect(() => loadConfigFromEnv({ ...base, CLAWDI_WA_WEB_VERSION: "2.3000.999" })).toThrow(
+				"not audited",
+			);
+			expect(() =>
+				loadConfigFromEnv({ ...base, CLAWDI_WA_PROVIDER_INBOX_MAX_EVENTS: "0" }),
+			).toThrow("must be an integer between 1");
+			expect(() =>
+				loadConfigFromEnv({ ...base, CLAWDI_WA_PROVIDER_INBOX_MAX_BYTES: "1.5" }),
+			).toThrow("must be an integer between 1");
+			expect(() =>
+				loadConfigFromEnv({ ...base, CLAWDI_WA_SIDECAR_TOKEN: "secret with spaces" }),
+			).toThrow("printable ASCII");
 		} finally {
 			rmSync(sessionDir, { recursive: true, force: true });
 		}

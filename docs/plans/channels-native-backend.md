@@ -118,7 +118,8 @@ accepted substitute.
 ## Acceptance Evidence
 
 - one `makeWASocket` production owner and no legacy connector source;
-- sidecar owner-lock, retry cache, provider inbox, HTTP contract, and typecheck;
+- physical-provider SQLite auth/Signal/retry/inbox state, exclusive ownership,
+  HTTP contract, and typecheck;
 - provider ingress persistence, alias resolution, durable outbound delivery,
   raw-node policy, bounded IQ forwarding, and Link revocation tests;
 - managed/unmarked/invalid marker tests through the generic egress engine;

@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import {
@@ -80,7 +81,10 @@ export function createSidecarServer(runtime: BaileysRuntime, config: ServerConfi
 
 function authorized(request: IncomingMessage, token: string): boolean {
 	const header = request.headers.authorization;
-	return header === `Bearer ${token}`;
+	if (typeof header !== "string") return false;
+	const actual = createHash("sha256").update(header).digest();
+	const expected = createHash("sha256").update(`Bearer ${token}`).digest();
+	return timingSafeEqual(actual, expected);
 }
 
 async function readJsonBody(request: IncomingMessage, maxBodyBytes: number): Promise<unknown> {

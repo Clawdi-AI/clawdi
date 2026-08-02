@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import base64
+import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -43,8 +45,14 @@ class WhatsAppProviderMessageEvent:
 @dataclass(frozen=True)
 class WhatsAppBaileysSidecarConfig:
     base_url: str
-    api_token: str | None = None
+    api_token: str = field(repr=False)
     timeout_seconds: float = 10.0
+
+    def __post_init__(self) -> None:
+        validate_whatsapp_sidecar_base_url(self.base_url)
+        validate_whatsapp_sidecar_api_token(self.api_token)
+        if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
+            raise ValueError("baileys sidecar timeout_seconds must be positive and finite")
 
 
 class WhatsAppNativeUpstreamClient(Protocol):
@@ -110,10 +118,10 @@ class WhatsAppBaileysSidecarClient:
         *,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        base_url = config.base_url.rstrip("/")
-        if not base_url:
-            raise ValueError("baileys sidecar base_url is required")
+        base_url = validate_whatsapp_sidecar_base_url(config.base_url)
+        api_token = validate_whatsapp_sidecar_api_token(config.api_token)
         self._config = config
+        self._api_token = api_token
         self._connected = False
         self._owns_client = http_client is None
         self._client = http_client or httpx.AsyncClient(
@@ -195,11 +203,63 @@ class WhatsAppBaileysSidecarClient:
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         headers = dict(kwargs.pop("headers", {}) or {})
-        if self._config.api_token:
-            headers["Authorization"] = f"Bearer {self._config.api_token}"
+        headers["Authorization"] = f"Bearer {self._api_token}"
         response = await self._client.request(method, path, headers=headers, **kwargs)
         response.raise_for_status()
         return response
+
+
+def validate_whatsapp_sidecar_base_url(value: str) -> str:
+    """Return a canonical internal sidecar origin or fail closed."""
+
+    candidate = value.strip()
+    try:
+        parsed = urlsplit(candidate)
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("baileys sidecar base_url must be a valid HTTP(S) origin") from exc
+    hostname = parsed.hostname
+    if (
+        not candidate
+        or candidate != value
+        or parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.netloc
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or "?" in candidate
+        or "#" in candidate
+        or any(character.isspace() for character in candidate)
+        or "\\" in candidate
+        or ";" in parsed.netloc
+        or "%" in parsed.netloc
+        or parsed.netloc.endswith(":")
+    ):
+        raise ValueError("baileys sidecar base_url must be an HTTP(S) origin without userinfo")
+    if parsed.scheme.lower() == "http" and hostname.lower() not in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }:
+        raise ValueError("baileys sidecar base_url requires HTTPS except for exact loopback hosts")
+    return candidate.rstrip("/")
+
+
+def validate_whatsapp_sidecar_api_token(value: str) -> str:
+    token = value.strip()
+    if (
+        not token
+        or token != value
+        or len(token) > 4096
+        or any(ord(character) < 0x21 or ord(character) > 0x7E for character in token)
+    ):
+        raise ValueError(
+            "baileys sidecar api_token must be a non-empty printable ASCII bearer value"
+        )
+    return token
 
 
 def _sidecar_health_connected(data: Any) -> bool:
