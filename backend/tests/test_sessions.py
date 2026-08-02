@@ -1507,13 +1507,21 @@ async def test_disconnect_archives_identity_and_preserves_session_link(
     client: httpx.AsyncClient, db_session: AsyncSession, seed_user
 ):
     """Disconnect keeps the stable Agent identity attached to history."""
-    machine_id = f"delete-oauth-claim-{uuid.uuid4().hex}"
+    machine_id = f"disconnect-oauth-claim-{uuid.uuid4().hex}"
     env_id = await _register_env_named(client, machine_id, agent_type="codex")
 
     from app.models.ai_provider import AiProviderAuthPayload
+    from app.models.project import Project
+    from app.models.session import AgentEnvironment
     from app.services.ai_provider_credentials import environment_matches_runtime
     from app.services.runtime_source import load_runtime_source_batch
     from app.services.vault_crypto import encrypt
+
+    agent = await db_session.get(AgentEnvironment, uuid.UUID(env_id))
+    assert agent is not None
+    project_id = agent.default_project_id
+    project = await db_session.get(Project, project_id)
+    assert project is not None
 
     encrypted, nonce = encrypt('{"kind":"oauth-test"}')
     claimed_payload = AiProviderAuthPayload(
@@ -1545,7 +1553,7 @@ async def test_disconnect_archives_identity_and_preserves_session_link(
                     "local_session_id": "keep-me",
                     "started_at": started,
                     "message_count": 1,
-                    "summary": "should survive deletion",
+                    "summary": "should survive disconnect",
                 }
             ]
         },
@@ -1564,12 +1572,8 @@ async def test_disconnect_archives_identity_and_preserves_session_link(
     assert item["agent_type"] == "codex"
     assert item["machine_name"] == f"mac-{machine_id}"
 
-    # The decisive check: after the DELETE, the session's environment_id
-    # column is NULL (not the deleted UUID). This only happens because the
-    # FK has ON DELETE SET NULL — without the constraint, the column would
-    # still hold the now-dangling reference. Filter by the deleted env_id
-    # so prior test runs (the test DB doesn't fully clean between runs)
-    # don't pollute the count.
+    # The decisive check: Disconnect archives in place, so the Session keeps
+    # its stable environment_id. No hard delete or FK cascade runs here.
     row = (
         await db_session.execute(
             text(
@@ -1581,6 +1585,10 @@ async def test_disconnect_archives_identity_and_preserves_session_link(
         )
     ).one()
     assert str(row.environment_id) == env_id
+    await db_session.refresh(agent)
+    await db_session.refresh(project)
+    assert agent.archived_at is not None
+    assert project.archived_at is not None
     await db_session.refresh(claimed_payload)
     assert str(claimed_payload.consumer_environment_id) == env_id
     assert claimed_payload.consumer_runtime == "codex"
@@ -1598,7 +1606,9 @@ async def test_disconnect_archives_identity_and_preserves_session_link(
     assert uuid.UUID(env_id) not in archived_source.rows
 
     assert (await client.get("/v1/agents")).json() == []
-    assert (await client.get(f"/v1/agents/{env_id}")).status_code == 404
+    archived_detail = await client.get(f"/v1/agents/{env_id}")
+    assert archived_detail.status_code == 403
+    assert archived_detail.json()["detail"]["code"] == "agent_disconnected"
 
     reconnected = await _register_env_named(
         client,
@@ -1609,6 +1619,12 @@ async def test_disconnect_archives_identity_and_preserves_session_link(
     # registration above already used the same generated value.
     assert reconnected == env_id
     assert (await client.get(f"/v1/agents/{env_id}")).status_code == 200
+    await db_session.refresh(agent)
+    await db_session.refresh(project)
+    assert agent.default_project_id == project_id
+    assert agent.archived_at is None
+    assert project.id == project_id
+    assert project.archived_at is None
     assert await environment_matches_runtime(
         db_session,
         owner_user_id=seed_user.id,

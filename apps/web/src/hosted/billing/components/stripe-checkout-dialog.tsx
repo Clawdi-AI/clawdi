@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
+import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
 import { getStripe, resetStripeCache } from "@/hosted/billing/stripe";
 import type { CheckoutSessionClientSecret } from "@/hosted/billing/stripe-client-secret";
 import { env } from "@/lib/env";
@@ -41,6 +42,10 @@ type StripeCheckoutDialogProps = {
 };
 
 type DialogState = "loading" | "ready" | "error";
+type RetainedCheckout = Pick<
+	StripeCheckoutDialogProps,
+	"clientSecret" | "description" | "summary" | "title"
+>;
 type CheckoutAppearance = NonNullable<
 	NonNullable<StripeCheckoutElementsSdkOptions["elementsOptions"]>["appearance"]
 >;
@@ -291,6 +296,12 @@ export function StripeCheckoutDialog({
 	const [message, setMessage] = useState<string | null>(null);
 	const [attempt, setAttempt] = useState(0);
 	const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
+	const checkout = { clientSecret, description, summary, title } satisfies RetainedCheckout;
+	const exit = useDialogExitLifecycle({
+		open,
+		value: checkout,
+		emptyValue: { clientSecret: null, description: "", summary: null, title: "" },
+	});
 	const appearance = useCheckoutAppearance(open);
 	const onCompleteRef = useRef(onComplete);
 
@@ -298,9 +309,13 @@ export function StripeCheckoutDialog({
 		onCompleteRef.current = onComplete;
 	}, [onComplete]);
 
+	const renderedCheckout = exit.renderedValue;
+	const renderedClientSecret = renderedCheckout.clientSecret;
+
 	const completeCheckout = useCallback(() => {
+		exit.beginClose();
 		onCompleteRef.current();
-	}, []);
+	}, [exit.beginClose]);
 
 	const handleProviderLoadError = useCallback(() => {
 		setState("error");
@@ -308,7 +323,7 @@ export function StripeCheckoutDialog({
 	}, []);
 
 	useEffect(() => {
-		if (!open || !clientSecret) return;
+		if (!open || !renderedClientSecret) return;
 		let cancelled = false;
 		setCheckoutSubmitting(false);
 		setStripe(null);
@@ -341,12 +356,12 @@ export function StripeCheckoutDialog({
 		return () => {
 			cancelled = true;
 		};
-	}, [attempt, clientSecret, key, open]);
+	}, [attempt, key, open, renderedClientSecret]);
 
 	const providerOptions = useMemo<StripeCheckoutElementsSdkOptions | null>(() => {
-		if (!clientSecret) return null;
+		if (!renderedClientSecret) return null;
 		return {
-			clientSecret,
+			clientSecret: renderedClientSecret,
 			elementsOptions: {
 				appearance,
 				loader: "auto",
@@ -356,29 +371,43 @@ export function StripeCheckoutDialog({
 				},
 			},
 		};
-	}, [appearance, clientSecret]);
+	}, [appearance, renderedClientSecret]);
 
 	function requestOpenChange(nextOpen: boolean) {
 		if (!nextOpen && checkoutSubmitting) return;
+		if (nextOpen) exit.beginOpen();
+		else exit.beginClose();
 		onOpenChange(nextOpen);
 	}
 
 	return (
-		<Dialog open={open} onOpenChange={requestOpenChange}>
+		<Dialog
+			open={open}
+			onOpenChange={requestOpenChange}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen) {
+					exit.completeClose();
+					setStripe(null);
+					setMessage(null);
+					setState("loading");
+					setCheckoutSubmitting(false);
+				}
+			}}
+		>
 			<DialogContent
 				className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
 				data-hosted="true"
 				showCloseButton={!checkoutSubmitting}
 			>
 				<DialogHeader>
-					<DialogTitle>{title}</DialogTitle>
-					<DialogDescription>{description}</DialogDescription>
+					<DialogTitle>{renderedCheckout.title}</DialogTitle>
+					<DialogDescription>{renderedCheckout.description}</DialogDescription>
 				</DialogHeader>
-				<CheckoutSummaryPanel summary={summary} />
+				<CheckoutSummaryPanel summary={renderedCheckout.summary} />
 				<Separator />
 				{state === "ready" && stripe && providerOptions ? (
 					<CheckoutElementsProvider
-						key={`${clientSecret}:${attempt}`}
+						key={`${renderedClientSecret}:${attempt}`}
 						stripe={stripe}
 						options={providerOptions}
 					>

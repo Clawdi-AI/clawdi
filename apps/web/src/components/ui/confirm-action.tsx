@@ -44,6 +44,7 @@ export function ConfirmAction({
 	// a sub-frame window where a fast double-click (or Enter repeat) could fire
 	// the destructive action twice before React repaints.
 	const locked = useRef(false);
+	const closingAfterSuccess = useRef(false);
 
 	async function runConfirm() {
 		if (locked.current) return;
@@ -51,15 +52,28 @@ export function ConfirmAction({
 		setPending(true);
 		try {
 			await onConfirm();
+			closingAfterSuccess.current = true;
 			setOpen(false);
 		} finally {
-			setPending(false);
-			locked.current = false;
+			if (!closingAfterSuccess.current) {
+				setPending(false);
+				locked.current = false;
+			}
 		}
 	}
 
 	return (
-		<AlertDialog open={open} onOpenChange={(next) => !pending && setOpen(next)}>
+		<AlertDialog
+			open={open}
+			onOpenChange={(next) => !pending && setOpen(next)}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen && closingAfterSuccess.current) {
+					closingAfterSuccess.current = false;
+					setPending(false);
+					locked.current = false;
+				}
+			}}
+		>
 			<AlertDialogTrigger render={children} />
 			<AlertDialogContent>
 				<AlertDialogHeader>

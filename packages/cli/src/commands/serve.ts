@@ -294,10 +294,9 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 		}
 	}
 
-	// Preserve any non-zero exitCode the engine set (e.g. auth
-	// failure → 1). A naked `process.exit(0)` would otherwise mask
-	// the failure and supervisors would stop restarting on a
-	// revoked deploy-key.
+	// Preserve any supervisor control outcome the engine set (for example,
+	// auth/disconnect no-restart → 2). A naked `process.exit(0)` would mask it
+	// and defeat the supervisor contract; status 2 does not imply a crash.
 	const code = process.exitCode ?? 0;
 	log.info("serve.exit", { code });
 	process.exit(code);

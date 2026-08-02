@@ -15,9 +15,18 @@ import {
 import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
 import { TimeTooltip } from "@/components/time-tooltip";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTable } from "@/components/ui/data-table";
 import {
 	Dialog,
@@ -39,6 +48,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { ApiKey } from "@/lib/api-schemas";
@@ -60,6 +70,14 @@ export function ApiKeysPanel() {
 	const [newLabel, setNewLabel] = useState("");
 	const [createdKey, setCreatedKey] = useState<string | null>(null);
 	const [secretAcknowledged, setSecretAcknowledged] = useState(false);
+	const [revokeOpen, setRevokeOpen] = useState(false);
+	const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null);
+	const revokeExit = useDialogExitLifecycle({
+		open: revokeOpen,
+		value: revokeTarget,
+		emptyValue: null,
+	});
+	const renderedRevokeTarget = revokeExit.renderedValue;
 	const normalizedNewLabel = newLabel.trim();
 	const { copied, copy } = useCopyToClipboard({
 		success: "API key copied to clipboard",
@@ -110,6 +128,8 @@ export function ApiKeysPanel() {
 			return { removedKey };
 		},
 		onSuccess: () => {
+			revokeExit.beginClose();
+			setRevokeOpen(false);
 			toast.success("API key revoked");
 		},
 		onError: (mutationError, _keyId, context) => {
@@ -130,10 +150,10 @@ export function ApiKeysPanel() {
 		},
 	});
 
-	const handleRevoke = useCallback(
-		(keyId: string) => revokeKey.mutateAsync(keyId),
-		[revokeKey.mutateAsync],
-	);
+	const handleRevoke = useCallback((key: ApiKey) => {
+		setRevokeTarget(key);
+		setRevokeOpen(true);
+	}, []);
 	const showExpiration = keys.some((key) => key.expires_at !== null);
 	const columns = useMemo(
 		() => apiKeyColumns({ showExpiration, onRevoke: handleRevoke }),
@@ -150,19 +170,20 @@ export function ApiKeysPanel() {
 
 	function handleCreateDialogOpenChange(nextOpen: boolean) {
 		if (!nextOpen && (createKey.isPending || createdKey !== null)) return;
-		if (!nextOpen) {
-			createKey.reset();
-			setNewLabel("");
-			setSecretAcknowledged(false);
-		}
 		setCreateDialogOpen(nextOpen);
 	}
 
 	function finishSecretReveal() {
 		if (!secretAcknowledged) return;
-		setCreatedKey(null);
-		setSecretAcknowledged(false);
 		setCreateDialogOpen(false);
+	}
+
+	function handleCreateDialogOpenChangeComplete(nextOpen: boolean) {
+		if (nextOpen) return;
+		createKey.reset();
+		setCreatedKey(null);
+		setNewLabel("");
+		setSecretAcknowledged(false);
 	}
 
 	return (
@@ -210,7 +231,11 @@ export function ApiKeysPanel() {
 				</>
 			)}
 
-			<Dialog open={createDialogOpen} onOpenChange={handleCreateDialogOpenChange}>
+			<Dialog
+				open={createDialogOpen}
+				onOpenChange={handleCreateDialogOpenChange}
+				onOpenChangeComplete={handleCreateDialogOpenChangeComplete}
+			>
 				<DialogContent
 					showCloseButton={!createKey.isPending && createdKey === null}
 					className="sm:max-w-lg"
@@ -327,6 +352,48 @@ export function ApiKeysPanel() {
 					)}
 				</DialogContent>
 			</Dialog>
+			<AlertDialog
+				open={revokeOpen}
+				onOpenChange={(nextOpen) => {
+					if (revokeKey.isPending) return;
+					if (nextOpen) revokeExit.beginOpen();
+					else revokeExit.beginClose();
+					setRevokeOpen(nextOpen);
+				}}
+				onOpenChangeComplete={(nextOpen) => {
+					if (!nextOpen) {
+						revokeExit.completeClose();
+						setRevokeTarget(null);
+					}
+				}}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							Revoke “{renderedRevokeTarget?.label ?? "API key"}”?
+						</AlertDialogTitle>
+						<AlertDialogDescription>
+							Requests using this key will stop working. This can’t be undone; create and install a
+							new key to reconnect the client.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel disabled={revokeKey.isPending}>Cancel</AlertDialogCancel>
+						<AlertDialogAction
+							variant="destructive"
+							disabled={!renderedRevokeTarget || revokeKey.isPending}
+							onClick={(event) => {
+								event.preventDefault();
+								if (renderedRevokeTarget && !revokeKey.isPending)
+									revokeKey.mutate(renderedRevokeTarget.id);
+							}}
+						>
+							{revokeKey.isPending ? <Spinner /> : null}
+							Revoke key
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</div>
 	);
 }
@@ -336,7 +403,7 @@ function apiKeyColumns({
 	onRevoke,
 }: {
 	showExpiration: boolean;
-	onRevoke: (keyId: string) => Promise<unknown>;
+	onRevoke: (key: ApiKey) => void;
 }): ColumnDef<ApiKey>[] {
 	const columns: ColumnDef<ApiKey>[] = [
 		{
@@ -415,32 +482,20 @@ function RevokeApiKeyAction({
 	onRevoke,
 }: {
 	apiKey: ApiKey;
-	onRevoke: (keyId: string) => Promise<unknown>;
+	onRevoke: (key: ApiKey) => void;
 }) {
 	return (
-		<ConfirmAction
-			title={`Revoke “${apiKey.label}”?`}
-			description={
-				<p>
-					Requests using this key will stop working. This can’t be undone; create and install a new
-					key to reconnect the client.
-				</p>
-			}
-			confirmLabel="Revoke key"
-			destructive
-			onConfirm={() => onRevoke(apiKey.id)}
+		<Button
+			type="button"
+			variant="ghost"
+			size="sm"
+			aria-label={`Revoke ${apiKey.label}`}
+			className="text-muted-foreground hover:text-destructive"
+			onClick={() => onRevoke(apiKey)}
 		>
-			<Button
-				type="button"
-				variant="ghost"
-				size="sm"
-				aria-label={`Revoke ${apiKey.label}`}
-				className="text-muted-foreground hover:text-destructive"
-			>
-				<Trash2 aria-hidden="true" />
-				Revoke
-			</Button>
-		</ConfirmAction>
+			<Trash2 aria-hidden="true" />
+			Revoke
+		</Button>
 	);
 }
 
@@ -489,7 +544,7 @@ function ApiKeysMobileList({
 	onRevoke,
 }: {
 	keys: ApiKey[];
-	onRevoke: (keyId: string) => Promise<unknown>;
+	onRevoke: (key: ApiKey) => void;
 }) {
 	return (
 		<div className="flex flex-col gap-3">

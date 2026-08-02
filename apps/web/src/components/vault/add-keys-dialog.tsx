@@ -204,7 +204,6 @@ export function AddKeysDialog({
 						? `${summary.created} new, ${summary.updated} updated, ${summary.skipped} skipped in vault://${slug}.`
 						: `In vault://${slug}. Agents read them through the CLI at runtime.`,
 			});
-			setText("");
 			setOpen(false);
 		} catch (error) {
 			toast.error("Couldn't save keys", { description: errorMessage(error) });
@@ -213,6 +212,7 @@ export function AddKeysDialog({
 	});
 
 	useEffect(() => {
+		if (!open) return;
 		setText("");
 		setNewVaultName("");
 		setVaultChoice(vaultId ?? "");
@@ -227,7 +227,18 @@ export function AddKeysDialog({
 	);
 
 	return (
-		<Dialog open={open} onOpenChange={setOpen}>
+		<Dialog
+			open={open}
+			onOpenChange={setOpen}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen) {
+					setText("");
+					setNewVaultName("");
+					setVaultChoice(vaultId ?? "");
+					setUpdateExisting(false);
+				}
+			}}
+		>
 			<DialogTrigger render={trigger} />
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>

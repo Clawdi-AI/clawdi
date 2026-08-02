@@ -162,9 +162,12 @@ export function ConnectBotDialog({
 		if (!nextOpen) {
 			dialogSessionRef.current += 1;
 			setToken("");
-			setCreated(null);
 		}
 		onOpenChange(nextOpen);
+	}
+
+	function handleOpenChangeComplete(nextOpen: boolean) {
+		if (!nextOpen) setCreated(null);
 	}
 
 	const providerChoices = (
@@ -192,7 +195,11 @@ export function ConnectBotDialog({
 	);
 
 	return (
-		<Dialog open={open} onOpenChange={handleOpenChange}>
+		<Dialog
+			open={open}
+			onOpenChange={handleOpenChange}
+			onOpenChangeComplete={handleOpenChangeComplete}
+		>
 			<DialogContent
 				data-hosted="true"
 				data-v2="true"

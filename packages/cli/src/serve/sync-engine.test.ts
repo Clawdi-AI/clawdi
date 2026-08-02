@@ -38,6 +38,7 @@ import {
 	reconcileAgentSkillProjectionListing,
 	reconcileDelayMs,
 	resolveOwningSkillKey,
+	runSyncEngine,
 	SyncHealth,
 	skillInvalidationKey,
 	staleSkillProjectionProjectIds,
@@ -840,6 +841,185 @@ describe("isAuthFailure", () => {
 		expect(isAuthFailure(undefined)).toBe(false);
 		expect(isAuthFailure("401")).toBe(false);
 		expect(isAuthFailure({ status: 401 })).toBe(false);
+	});
+});
+
+describe("daemon startup Agent lookup", () => {
+	async function withStartupCase(
+		fetchImpl: (request: Request) => Promise<Response>,
+		run: (fixture: {
+			abortController: AbortController;
+			requests: Request[];
+			logs: string[];
+		}) => Promise<void>,
+	): Promise<void> {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-daemon-startup-"));
+		const originalFetch = globalThis.fetch;
+		const originalStderrWrite = process.stderr.write;
+		const originalHome = process.env.CLAWDI_HOME;
+		const originalState = process.env.CLAWDI_STATE_DIR;
+		const originalApiUrl = process.env.CLAWDI_API_URL;
+		const originalAuthToken = process.env.CLAWDI_AUTH_TOKEN;
+		const originalAuthOrigin = process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+		const originalExitCode = process.exitCode;
+		const requests: Request[] = [];
+		const logs: string[] = [];
+		try {
+			process.env.CLAWDI_HOME = join(root, "home");
+			process.env.CLAWDI_STATE_DIR = join(root, "serve");
+			process.env.CLAWDI_API_URL = "https://cloud.example.test";
+			process.env.CLAWDI_AUTH_TOKEN = "clawdi_test_token";
+			process.env.CLAWDI_AUTH_TOKEN_ORIGIN = "https://cloud.example.test";
+			process.exitCode = 0;
+			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+				const request = input instanceof Request ? input : new Request(input, init);
+				requests.push(request);
+				return fetchImpl(request);
+			}) as typeof fetch;
+			process.stderr.write = ((chunk: string | Uint8Array) => {
+				logs.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+				return true;
+			}) as typeof process.stderr.write;
+			await run({ abortController: new AbortController(), requests, logs });
+		} finally {
+			globalThis.fetch = originalFetch;
+			process.stderr.write = originalStderrWrite;
+			if (originalHome === undefined) delete process.env.CLAWDI_HOME;
+			else process.env.CLAWDI_HOME = originalHome;
+			if (originalState === undefined) delete process.env.CLAWDI_STATE_DIR;
+			else process.env.CLAWDI_STATE_DIR = originalState;
+			if (originalApiUrl === undefined) delete process.env.CLAWDI_API_URL;
+			else process.env.CLAWDI_API_URL = originalApiUrl;
+			if (originalAuthToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = originalAuthToken;
+			if (originalAuthOrigin === undefined) delete process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+			else process.env.CLAWDI_AUTH_TOKEN_ORIGIN = originalAuthOrigin;
+			process.exitCode = originalExitCode ?? 0;
+			rmSync(root, { recursive: true, force: true });
+		}
+	}
+
+	it("maps the stable archived-Agent 403 to disconnected guidance and a no-restart stop", async () => {
+		await withStartupCase(
+			async () =>
+				new Response('{"detail":{"code":"agent_disconnected","message":"Agent is disconnected"}}', {
+					status: 403,
+					headers: { "content-type": "application/json" },
+				}),
+			async ({ abortController, requests, logs }) => {
+				await runSyncEngine({
+					environmentId: "agent-disconnected",
+					adapter: adapterRegistry.hermes.create(),
+					abort: abortController.signal,
+					abortController,
+					forcePollWatcher: true,
+				});
+
+				expect(requests).toHaveLength(1);
+				expect(new URL(requests[0].url).pathname).toBe("/v1/agents/agent-disconnected");
+				expect(process.exitCode).toBe(2);
+				expect(abortController.signal.aborted).toBe(true);
+				expect(logs.join("")).toContain('"level":"info","event":"engine.agent_disconnected"');
+				expect(logs.join("")).toContain("This installation is disconnected");
+				expect(logs.join("")).toContain("retained data");
+				expect(logs.join("")).not.toContain('"event":"engine.auth_failed"');
+			},
+		);
+	});
+
+	it("keeps an ambiguous 404 on a safe legacy-compatible stop path", async () => {
+		await withStartupCase(
+			async () => new Response('{"detail":"Agent not found"}', { status: 404 }),
+			async ({ abortController, requests, logs }) => {
+				await runSyncEngine({
+					environmentId: "agent-disconnected",
+					adapter: adapterRegistry.hermes.create(),
+					abort: abortController.signal,
+					abortController,
+					forcePollWatcher: true,
+				});
+
+				expect(requests).toHaveLength(1);
+				expect(new URL(requests[0].url).pathname).toBe("/v1/agents/agent-disconnected");
+				expect(process.exitCode).toBe(2);
+				expect(abortController.signal.aborted).toBe(true);
+				expect(logs.join("")).toContain('"level":"info","event":"engine.agent_disconnected"');
+				expect(logs.join("")).toContain("Agent was not found");
+				expect(logs.join("")).not.toContain("retained data");
+				expect(logs.join("")).not.toContain('"level":"error","event":"engine.agent_disconnected"');
+			},
+		);
+	});
+
+	it("keeps an unrelated 403 on the established auth-failure stop path", async () => {
+		await withStartupCase(
+			async () =>
+				new Response('{"detail":"Forbidden"}', {
+					status: 403,
+					headers: { "content-type": "application/json" },
+				}),
+			async ({ abortController, logs }) => {
+				await runSyncEngine({
+					environmentId: "agent-forbidden",
+					adapter: adapterRegistry.hermes.create(),
+					abort: abortController.signal,
+					abortController,
+					forcePollWatcher: true,
+				});
+
+				expect(process.exitCode).toBe(2);
+				expect(abortController.signal.aborted).toBe(true);
+				expect(logs.join("")).toContain('"level":"error","event":"engine.auth_failed"');
+				expect(logs.join("")).not.toContain('"event":"engine.agent_disconnected"');
+			},
+		);
+	});
+
+	it("keeps server failures on the ordinary retry and fatal path", async () => {
+		await withStartupCase(
+			async () => new Response("offline", { status: 503 }),
+			async ({ abortController, requests }) => {
+				await expect(
+					runSyncEngine({
+						environmentId: "agent-offline",
+						adapter: adapterRegistry.hermes.create(),
+						abort: abortController.signal,
+						abortController,
+						forcePollWatcher: true,
+					}),
+				).rejects.toThrow(/503/);
+
+				expect(requests).toHaveLength(3);
+				expect(
+					requests.every((request) => new URL(request.url).pathname === "/v1/agents/agent-offline"),
+				).toBe(true);
+				expect(process.exitCode).toBe(0);
+				expect(abortController.signal.aborted).toBe(false);
+			},
+		);
+	});
+
+	it("keeps network failures on the ordinary retry and fatal path", async () => {
+		await withStartupCase(
+			async () => {
+				throw new TypeError("fetch failed");
+			},
+			async ({ abortController, requests }) => {
+				await expect(
+					runSyncEngine({
+						environmentId: "agent-network-offline",
+						adapter: adapterRegistry.hermes.create(),
+						abort: abortController.signal,
+						abortController,
+						forcePollWatcher: true,
+					}),
+				).rejects.toMatchObject({ status: 0, isNetwork: true });
+
+				expect(requests).toHaveLength(3);
+				expect(process.exitCode).toBe(0);
+				expect(abortController.signal.aborted).toBe(false);
+			},
+		);
 	});
 });
 

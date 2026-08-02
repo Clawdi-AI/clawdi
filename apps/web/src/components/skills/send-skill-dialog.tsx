@@ -192,7 +192,16 @@ export function SendSkillDialog({
 	);
 
 	return (
-		<Dialog open={open} onOpenChange={setOpen}>
+		<Dialog
+			open={open}
+			onOpenChange={setOpen}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen) {
+					setTarget("");
+					setRemoveFromSource(false);
+				}
+			}}
+		>
 			<DialogTrigger render={trigger} />
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>

@@ -193,7 +193,15 @@ test("API key settings protects secrets and reconciles optimistic revokes", asyn
 	});
 
 	await page.getByRole("button", { name: "Create API key", exact: true }).first().click();
-	const createDialog = page.getByRole("dialog", { name: "Create API key" });
+	let createDialog = page.getByRole("dialog", { name: "Create API key" });
+	await createDialog.getByLabel("Key name").fill("Retained through exit");
+	await page.keyboard.press("Escape");
+	await expect(createDialog.getByLabel("Key name")).toHaveValue("Retained through exit");
+	await expect(createDialog).toHaveCount(0);
+
+	await page.getByRole("button", { name: "Create API key", exact: true }).first().click();
+	createDialog = page.getByRole("dialog", { name: "Create API key" });
+	await expect(createDialog.getByLabel("Key name")).toHaveValue("");
 	await createDialog.getByLabel("Key name").fill("Backup container");
 	await createDialog.getByRole("button", { name: "Create API key", exact: true }).click();
 
@@ -220,18 +228,25 @@ test("API key settings protects secrets and reconciles optimistic revokes", asyn
 	await page.getByRole("button", { name: "Revoke CI runner" }).click();
 	await page.getByRole("button", { name: "Revoke key", exact: true }).click();
 	await expect(page.getByText("CI runner", { exact: true })).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Revoke Backup container" })).toBeEnabled();
+	const retainedRevoke = page.getByRole("alertdialog", { name: "Revoke “CI runner”?" });
+	await expect(retainedRevoke).toBeVisible();
+	await expect(retainedRevoke.getByRole("button", { name: "Revoke key" })).toBeDisabled();
 	await expect.poll(() => api.deleteRequests).toContain("active-short");
 	successfulDelete.resolve();
+	await expect(retainedRevoke).toHaveCount(0);
 	await expect(page.getByText("API key revoked", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Revoke Backup container" })).toBeEnabled();
 
 	const failedDelete = api.setNextDelete(true);
 	await page.getByRole("button", { name: "Revoke Backup container" }).click();
 	await page.getByRole("button", { name: "Revoke key", exact: true }).click();
 	await expect(page.getByText("Backup container", { exact: true })).toHaveCount(0);
 	failedDelete.resolve();
-	await expect(desktopTable.getByText("Backup container", { exact: true })).toBeVisible();
 	await expect(page.getByText("Couldn’t revoke API key", { exact: true })).toBeVisible();
+	const failedRevoke = page.getByRole("alertdialog", { name: "Revoke “Backup container”?" });
+	await expect(failedRevoke).toBeVisible();
+	await failedRevoke.getByRole("button", { name: "Cancel" }).click();
+	await expect(desktopTable.getByText("Backup container", { exact: true })).toBeVisible();
 
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.reload();

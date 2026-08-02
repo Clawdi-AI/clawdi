@@ -154,8 +154,6 @@ export default function ProjectsPage() {
 			return unwrap(await api.POST("/v1/projects", { body: payload }));
 		},
 		onSuccess: (project) => {
-			setNewProjectName("");
-			setNewProjectSlug("");
 			setCreateOpen(false);
 			qc.invalidateQueries({ queryKey: ["projects"] });
 			toast.success("Project created", {
@@ -215,8 +213,8 @@ export default function ProjectsPage() {
 
 			<Dialog
 				open={createOpen}
-				onOpenChange={(open) => {
-					setCreateOpen(open);
+				onOpenChange={setCreateOpen}
+				onOpenChangeComplete={(open) => {
 					if (!open) {
 						setNewProjectName("");
 						setNewProjectSlug("");

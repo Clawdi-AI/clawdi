@@ -13,6 +13,7 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
+import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
@@ -94,10 +95,12 @@ export function AddProviderDialog({
 		null,
 	);
 	const acceptAttemptRef = useRef<AcceptAttempt | null>(null);
+	const dialogSessionRef = useRef(0);
 	const {
 		session: oauth,
 		issue: oauthIssue,
-		cancel: cancelOAuth,
+		invalidate: invalidateOAuth,
+		clear: clearOAuth,
 		transition: transitionOAuth,
 	} = useProviderOAuthDeviceFlow({
 		poll: (session) =>
@@ -105,9 +108,16 @@ export function AddProviderDialog({
 		onReady: (session) => {
 			toast.success("Signed in with ChatGPT");
 			if (session.mode === "accept") onCreated?.(session.providerId);
-			onOpenChange(false);
+			requestClose(false);
 		},
 	});
+	const oauthExit = useDialogExitLifecycle({
+		open,
+		value: { session: oauth, issue: oauthIssue },
+		emptyValue: { session: null, issue: null },
+	});
+	const renderedOAuth = oauthExit.renderedValue.session;
+	const renderedOAuthIssue = oauthExit.renderedValue.issue;
 
 	const selectedPreset = providerPresetById(form.presetId);
 	const selectedRegion = selectedPreset
@@ -139,8 +149,10 @@ export function AddProviderDialog({
 		(form.authMethod === "oauth" || savedCredentialAvailable || Boolean(form.apiKey.trim()));
 
 	useEffect(() => {
-		cancelOAuth();
 		if (!open) return;
+		oauthExit.beginOpen();
+		invalidateOAuth();
+		clearOAuth();
 		setDraftTestResult(null);
 		acceptAttemptRef.current = null;
 
@@ -188,7 +200,7 @@ export function AddProviderDialog({
 			regionId: null,
 		});
 		setStep("choose");
-	}, [cancelOAuth, open, editing, resetForm]);
+	}, [clearOAuth, editing, invalidateOAuth, oauthExit.beginOpen, open, resetForm]);
 
 	function selectProvider(choice: ProviderChoice) {
 		acceptAttemptRef.current = null;
@@ -354,9 +366,8 @@ export function AddProviderDialog({
 					})
 					.catch(() => null);
 				if (result?.status !== "ready") return;
-				updateForm({ apiKey: "" });
 				toast.success("Provider updated");
-				onOpenChange(false);
+				requestClose(false);
 				return;
 			}
 			const patch = {
@@ -376,7 +387,7 @@ export function AddProviderDialog({
 				.catch(() => null);
 			if (!saved) return;
 			toast.success("Provider settings updated");
-			onOpenChange(false);
+			requestClose(false);
 			return;
 		}
 
@@ -398,15 +409,15 @@ export function AddProviderDialog({
 			.catch(() => null);
 		if (result?.status !== "ready") return;
 		toast.success("Provider added");
-		updateForm({ apiKey: "" });
 		onCreated?.(result.provider.provider_id);
-		onOpenChange(false);
+		requestClose(false);
 	}
 
 	async function testDraftConnection() {
 		const credential = form.apiKey.trim();
 		if (!credential || form.authMethod !== "api_key") return;
 		setDraftTestResult(null);
+		const dialogSession = dialogSessionRef.current;
 		const result = await testDraft
 			.execute({
 				provider: providerBody(),
@@ -414,17 +425,27 @@ export function AddProviderDialog({
 				model: modelsFromText(form.modelsText, editing?.models, presetCatalog)?.[0]?.id ?? null,
 			})
 			.catch(() => null);
-		if (!result) return;
+		if (!result || dialogSession !== dialogSessionRef.current) return;
 		setDraftTestResult(result);
 		if (result.ok) toast.success("Connection verified");
 	}
 
 	function requestClose(next: boolean) {
 		if (!next) {
-			cancelOAuth();
-			updateForm({ apiKey: "" });
+			oauthExit.beginClose();
+			dialogSessionRef.current += 1;
+			invalidateOAuth();
 		}
 		onOpenChange(next);
+	}
+
+	function completeOpenChange(next: boolean) {
+		if (next) return;
+		clearOAuth();
+		oauthExit.completeClose();
+		updateForm({ apiKey: "" });
+		setDraftTestResult(null);
+		acceptAttemptRef.current = null;
 	}
 
 	async function restartOAuth() {
@@ -442,7 +463,7 @@ export function AddProviderDialog({
 		oauthDevicePoll.isPending;
 
 	return (
-		<Dialog open={open} onOpenChange={requestClose}>
+		<Dialog open={open} onOpenChange={requestClose} onOpenChangeComplete={completeOpenChange}>
 			<DialogContent
 				data-hosted="true"
 				data-v2="true"
@@ -450,7 +471,7 @@ export function AddProviderDialog({
 			>
 				<DialogHeader className="shrink-0 px-5 pt-5 pr-14 sm:px-6 sm:pt-6 sm:pr-14">
 					<DialogTitle>
-						{oauth
+						{renderedOAuth
 							? "Sign in with ChatGPT"
 							: isEdit
 								? (editing?.readiness?.deployable ?? editing?.usable) &&
@@ -462,7 +483,7 @@ export function AddProviderDialog({
 									: `Set up ${providerLabel}`}
 					</DialogTitle>
 					<DialogDescription>
-						{oauth
+						{renderedOAuth
 							? "Open ChatGPT, enter the one-time code, and this page will finish automatically."
 							: isOAuthEdit
 								? "Subscription access is ready. Reconnect only to change or repair the account."
@@ -482,11 +503,11 @@ export function AddProviderDialog({
 					data-testid="provider-dialog-body"
 					className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6"
 				>
-					{oauth ? (
+					{renderedOAuth ? (
 						<ProviderOAuthFlow
-							issue={oauthIssue}
-							verificationUrl={oauth.verificationUrl}
-							userCode={oauth.userCode}
+							issue={renderedOAuthIssue}
+							verificationUrl={renderedOAuth.verificationUrl}
+							userCode={renderedOAuth.userCode}
 							starting={acceptProvider.isPending || oauthDeviceStart.isPending}
 							polling={oauthDevicePoll.isPending}
 							onRestart={() => void runAction(restartOAuth)}
@@ -544,9 +565,9 @@ export function AddProviderDialog({
 					)}
 				</div>
 
-				{step === "choose" && !isEdit && !oauth ? null : (
+				{step === "choose" && !isEdit && !renderedOAuth ? null : (
 					<DialogFooter className="shrink-0 border-t bg-popover px-5 py-3 sm:px-6 sm:py-4">
-						{oauth ? (
+						{renderedOAuth ? (
 							<Button variant="outline" onClick={() => requestClose(false)} disabled={busy}>
 								Cancel
 							</Button>
