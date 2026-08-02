@@ -302,6 +302,23 @@ def public_channel_debug_details(
     return "[redacted]"
 
 
+def public_channel_debug_details_response(
+    value: Mapping[str, object] | None,
+) -> dict[str, object] | None:
+    """Return user-safe object details for typed public response schemas."""
+    if value is None:
+        return None
+    details: dict[str, object] = {}
+    for child_key, child in list(value.items())[:40]:
+        key = str(child_key)
+        details[key] = (
+            "[redacted]"
+            if SECRET_KEY_RE.search(key)
+            else public_channel_debug_details(child, key=key, depth=1)
+        )
+    return details
+
+
 async def _pending_inbox_stats_by_account(
     db: AsyncSession,
     *,

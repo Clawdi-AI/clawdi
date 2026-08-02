@@ -5815,6 +5815,8 @@ def _telegram_retry_after_seconds(
     parameters = payload.get("parameters")
     raw_parameter = parameters.get("retry_after") if isinstance(parameters, dict) else None
     for value in (raw_header, raw_parameter):
+        if value is None:
+            continue
         try:
             seconds = float(value)
         except (TypeError, ValueError):
@@ -6644,6 +6646,8 @@ def _http_exception_detail(exc: HTTPException) -> str:
 
 def _http_retry_after_seconds(exc: HTTPException) -> float | None:
     raw = (exc.headers or {}).get("Retry-After")
+    if raw is None:
+        return None
     try:
         value = float(raw)
     except (TypeError, ValueError):

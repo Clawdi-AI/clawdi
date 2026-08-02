@@ -91,7 +91,7 @@ from app.services.channel_config import (
     validate_required_discord_interactions_config,
 )
 from app.services.channel_debug_events import (
-    public_channel_debug_details,
+    public_channel_debug_details_response,
     public_channel_delivery_error,
     public_channel_operation_error,
 )
@@ -346,7 +346,7 @@ def _activity_debug_event_response(
         outcome=event.outcome,
         status_code=event.status_code,
         error=public_channel_operation_error(event.error),
-        details=public_channel_debug_details(event.details),
+        details=public_channel_debug_details_response(event.details),
         created_at=event.created_at,
         updated_at=event.updated_at,
     )
@@ -1711,7 +1711,9 @@ async def _channel_health_items(
         )
         .group_by(ChannelMessage.account_id)
     )
-    last_message_by_account = dict(message_rows.all())
+    last_message_by_account: dict[UUID, datetime] = {
+        account_id: timestamp for account_id, timestamp in message_rows.tuples().all()
+    }
 
     event_rows = await db.execute(
         select(ChannelDebugEvent.account_id, func.max(ChannelDebugEvent.created_at))
@@ -1721,7 +1723,11 @@ async def _channel_health_items(
         )
         .group_by(ChannelDebugEvent.account_id)
     )
-    last_event_by_account = dict(event_rows.all())
+    last_event_by_account: dict[UUID, datetime] = {
+        account_id: timestamp
+        for account_id, timestamp in event_rows.tuples().all()
+        if account_id is not None
+    }
 
     debug_error_ranked = (
         select(
