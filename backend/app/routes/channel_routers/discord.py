@@ -76,10 +76,11 @@ from app.services.channels import (
     discord_external_user_id_from_payload,
     discord_message_id_from_payload,
     discord_pair_command_from_payload,
-    discord_pairing_command_denied_reason,
+    discord_pairing_command_admission,
     discord_pairing_command_event_was_handled,
     discord_pairing_reply_for_command,
     discord_text_from_payload,
+    discord_user_display_name_from_payload,
     get_active_channel_account,
     get_channel_agent_reference,
     record_discord_interaction_references,
@@ -90,6 +91,7 @@ from app.services.channels import (
     resolve_channel_agent_by_token,
     resolve_inbound_binding,
     send_pairing_command_reply,
+    update_discord_binding_display_name_from_trusted_event,
     upsert_binding_alias,
     verify_discord_signature,
     verify_webhook_secret,
@@ -1047,6 +1049,26 @@ async def discord_webhook(
             }
         return {"ok": True}
     external_user_id = discord_external_user_id_from_payload(payload)
+    trusted_dm_name = (
+        discord_user_display_name_from_payload(
+            payload,
+            external_user_id=external_user_id,
+        )
+        if signature_verified and guild_id is None
+        else None
+    )
+    if trusted_dm_name is not None:
+        external_chat_name = trusted_dm_name
+    admission = await discord_pairing_command_admission(
+        account,
+        payload,
+        command=command,
+        guild_id=guild_id,
+        external_user_id=external_user_id,
+        trusted_interaction=signature_verified,
+    )
+    if admission.external_chat_name is not None:
+        external_chat_name = admission.external_chat_name
     binding_result = await resolve_inbound_binding(
         db,
         account=account,
@@ -1056,16 +1078,18 @@ async def discord_webhook(
         external_user_id=external_user_id,
         text=discord_text_from_payload(payload),
         command=command,
-        command_denied_reason=await discord_pairing_command_denied_reason(
-            account,
-            payload,
-            command=command,
-            guild_id=guild_id,
-            external_user_id=external_user_id,
-            trusted_interaction=signature_verified,
-        ),
+        command_denied_reason=admission.denied_reason,
         command_actor_required=True,
     )
+    if signature_verified and guild_id is None:
+        for binding in binding_result.bindings:
+            update_discord_binding_display_name_from_trusted_event(
+                binding,
+                external_chat_id=external_chat_id,
+                external_chat_type=external_chat_type,
+                external_chat_name=trusted_dm_name,
+                external_user_id=external_user_id,
+            )
 
     messages = await record_inbound_messages_for_bindings(
         db,
@@ -1370,10 +1394,10 @@ async def _discord_bound_guilds(
     guilds: set[str] = set()
     for binding in result.scalars().all():
         chat_type = (binding.external_chat_type or "").lower()
-        if binding.external_chat_name and ("guild" in chat_type or "thread" in chat_type):
-            guilds.add(binding.external_chat_name)
-        elif binding.external_chat_id and chat_type == "guild":
+        if binding.external_chat_id and chat_type == "guild":
             guilds.add(binding.external_chat_id)
+        elif binding.external_chat_name and ("guild" in chat_type or "thread" in chat_type):
+            guilds.add(binding.external_chat_name)
     return sorted(guilds)
 
 
@@ -1413,6 +1437,8 @@ async def _discord_bound_guild_channels(
 
 def _discord_binding_guild_id(binding: ChannelBinding) -> str | None:
     chat_type = (binding.external_chat_type or "").lower()
+    if binding.external_chat_id and chat_type == "guild":
+        return binding.external_chat_id
     if binding.external_chat_name and ("guild" in chat_type or "thread" in chat_type):
         return binding.external_chat_name
     if binding.external_chat_id and ("guild" in chat_type or "thread" in chat_type):

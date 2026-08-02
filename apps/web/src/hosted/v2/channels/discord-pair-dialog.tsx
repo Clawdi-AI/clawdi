@@ -1,11 +1,12 @@
 "use client";
 
-import { ExternalLink, MessageCircle, RefreshCw, Server } from "lucide-react";
+import { Check, Copy, ExternalLink, MessageCircle, RefreshCw, Server } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
 import {
 	pairCodeExpired,
@@ -18,9 +19,9 @@ import type { ChannelBinding, ChannelPairCode } from "@/hosted/v2/channels/chann
 import { useCreatePairCode } from "@/hosted/v2/channels/channels-hooks";
 import {
 	CopyablePairingCode,
+	PairingDialogActions,
 	PairingDialogBody,
 	PairingDialogContent,
-	PairingDialogFooter,
 	PairingDialogHeader,
 	PairingExpiry,
 	PairingInstructionPanel,
@@ -29,7 +30,7 @@ import {
 	PairingQrCode,
 } from "@/hosted/v2/channels/pairing-dialog-ui";
 
-const DISCORD_PAIR_TTL_SECONDS = 900;
+const DISCORD_PAIR_TTL_SECONDS = 300;
 
 type DiscordPairResult = Pick<
 	ChannelPairCode,
@@ -39,6 +40,7 @@ type DiscordPairResult = Pick<
 export function DiscordPairDialog({
 	open,
 	onOpenChange,
+	onCloseComplete,
 	accountId,
 	agentLinkId,
 	channelName,
@@ -46,12 +48,17 @@ export function DiscordPairDialog({
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	onCloseComplete?: () => void;
 	accountId: string;
 	agentLinkId: string;
 	channelName?: string;
 	bindings?: readonly ChannelBinding[];
 }) {
 	const pair = useCreatePairCode(accountId, { toastOnError: false });
+	const { copied: installLinkCopied, copy: copyInstallLink } = useCopyToClipboard({
+		success: false,
+		error: "Couldn't copy Discord install link",
+	});
 	const [result, setResult] = useState<DiscordPairResult | null>(null);
 	const [requestError, setRequestError] = useState<unknown>(null);
 	const [preparing, setPreparing] = useState(false);
@@ -88,8 +95,15 @@ export function DiscordPairDialog({
 				if (pairingCommand === null) {
 					throw new Error("Discord pairing instructions are out of date. Refresh and try again.");
 				}
-				const serverInstallUrl = verifiedDiscordServerInstallUrl(data.discord_install_url);
-				if (serverInstallUrl === null) {
+				const serverInstallUrl =
+					data.discord_install_url === null || data.discord_install_url === undefined
+						? null
+						: verifiedDiscordServerInstallUrl(data.discord_install_url);
+				if (
+					data.discord_install_url !== null &&
+					data.discord_install_url !== undefined &&
+					serverInstallUrl === null
+				) {
 					throw new Error(
 						"Discord server install settings are out of date. Refresh and try again.",
 					);
@@ -118,10 +132,6 @@ export function DiscordPairDialog({
 			openKeyRef.current = null;
 			sessionRef.current += 1;
 			lockedSessionRef.current = null;
-			setPath("server");
-			setPreparing(false);
-			setRequestError(null);
-			setResult(null);
 			return;
 		}
 		if (openKeyRef.current === openKey) return;
@@ -141,20 +151,24 @@ export function DiscordPairDialog({
 
 	const expired = result ? pairCodeExpired(result.expires_at, nowMs) : false;
 	const botIdentity = channelName?.trim() || "this bot";
-	const installAction =
-		result && path === "server" && result.discord_install_url
-			? { url: result.discord_install_url, label: "Add to server" }
-			: result && path === "dm" && result.discord_user_install_url
-				? { url: result.discord_user_install_url, label: "Add to my apps" }
-				: null;
-
 	return (
-		<Dialog open={open} onOpenChange={handlePairingOpenChange}>
+		<Dialog
+			open={open}
+			onOpenChange={handlePairingOpenChange}
+			onOpenChangeComplete={(nextOpen) => {
+				if (nextOpen) return;
+				setPath("server");
+				setPreparing(false);
+				setRequestError(null);
+				setResult(null);
+				onCloseComplete?.();
+			}}
+		>
 			<PairingDialogContent data-hosted="true" data-v2="true">
 				<PairingDialogHeader
 					title="Pair Discord"
 					identity={botIdentity}
-					description="Choose a server or direct message to pair."
+					description="Install the app, then enter the one-time code."
 				/>
 
 				<PairingDialogBody data-discord-pair-dialog-body>
@@ -168,9 +182,20 @@ export function DiscordPairDialog({
 						/>
 					) : result ? (
 						expired ? (
-							<PairingNotice title="This Discord pair code has expired">
-								Create a new code before pairing Discord.
-							</PairingNotice>
+							<div className="space-y-4">
+								<PairingNotice title="This Discord pair code has expired">
+									Create a new code before pairing Discord.
+								</PairingNotice>
+								<PairingDialogActions className="sm:grid-cols-1">
+									<Button
+										className="w-full min-w-0 whitespace-normal"
+										onClick={() => void prepare()}
+									>
+										<RefreshCw className="size-4" />
+										Generate new code
+									</Button>
+								</PairingDialogActions>
+							</div>
 						) : (
 							<div className="space-y-4">
 								<Tabs
@@ -213,21 +238,50 @@ export function DiscordPairDialog({
 											</PairingNotice>
 										)}
 										<PairingExpiry>{pairCodeExpiryLabel(result.expires_at, nowMs)}</PairingExpiry>
+										{result.discord_install_url ? (
+											<PairingDialogActions>
+												<Button
+													render={
+														<a
+															href={result.discord_install_url}
+															target="_blank"
+															rel="noopener noreferrer"
+														/>
+													}
+													nativeButton={false}
+													className="w-full min-w-0 whitespace-normal"
+												>
+													Add to server
+													<ExternalLink className="size-4" />
+												</Button>
+												<Button
+													variant="outline"
+													className="w-full min-w-0 whitespace-normal"
+													onClick={() => {
+														if (result.discord_install_url) {
+															void copyInstallLink(result.discord_install_url);
+														}
+													}}
+													aria-label={
+														installLinkCopied
+															? "Discord install link copied"
+															: "Copy Discord install link"
+													}
+													aria-live="polite"
+												>
+													{installLinkCopied ? (
+														<Check className="size-4" />
+													) : (
+														<Copy className="size-4" />
+													)}
+													{installLinkCopied ? "Link copied" : "Copy link"}
+												</Button>
+											</PairingDialogActions>
+										) : null}
 										{!result.discord_user_install_url ? (
 											<PairingInstructionPanel role="status">
 												<p className="text-sm font-medium">Direct message pairing unavailable</p>
-												<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-													<span>
-														Use Server pairing. The bot owner can enable Discord User Install with
-														the
-													</span>
-													<CopyablePairingCode
-														value="applications.commands"
-														label="Discord application commands scope"
-														variant="inline"
-													/>
-													<span>scope to add direct message pairing.</span>
-												</div>
+												<p className="text-xs text-muted-foreground">Use Server pairing.</p>
 											</PairingInstructionPanel>
 										) : null}
 										<PairingInstructionPanel>
@@ -247,10 +301,6 @@ export function DiscordPairDialog({
 											</div>
 											<CopyablePairingCode value={result.code} label="Discord pair code" />
 										</PairingInstructionPanel>
-										<p className="text-xs text-muted-foreground">
-											The default install grants only Clawdi&apos;s text, attachment, reaction, and
-											thread baseline. Voice and advanced server-management actions are not enabled.
-										</p>
 									</TabsContent>
 
 									{result.discord_user_install_url ? (
@@ -260,6 +310,44 @@ export function DiscordPairDialog({
 												label="Discord User Install QR code"
 											/>
 											<PairingExpiry>{pairCodeExpiryLabel(result.expires_at, nowMs)}</PairingExpiry>
+											<PairingDialogActions>
+												<Button
+													render={
+														<a
+															href={result.discord_user_install_url}
+															target="_blank"
+															rel="noopener noreferrer"
+														/>
+													}
+													nativeButton={false}
+													className="w-full min-w-0 whitespace-normal"
+												>
+													Add to my apps
+													<ExternalLink className="size-4" />
+												</Button>
+												<Button
+													variant="outline"
+													className="w-full min-w-0 whitespace-normal"
+													onClick={() => {
+														if (result.discord_user_install_url) {
+															void copyInstallLink(result.discord_user_install_url);
+														}
+													}}
+													aria-label={
+														installLinkCopied
+															? "Discord install link copied"
+															: "Copy Discord install link"
+													}
+													aria-live="polite"
+												>
+													{installLinkCopied ? (
+														<Check className="size-4" />
+													) : (
+														<Copy className="size-4" />
+													)}
+													{installLinkCopied ? "Link copied" : "Copy link"}
+												</Button>
+											</PairingDialogActions>
 											<PairingInstructionPanel>
 												<p>1. Install the app and choose Add to my apps in Discord.</p>
 												<p>2. Open the app from Discord Direct Messages.</p>
@@ -274,22 +362,6 @@ export function DiscordPairDialog({
 												</div>
 												<CopyablePairingCode value={result.code} label="Discord pair code" />
 											</PairingInstructionPanel>
-											<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-												<span>
-													If Discord rejects the install, ask the bot owner to enable User Install
-													with
-												</span>
-												<CopyablePairingCode
-													value="applications.commands"
-													label="Discord application commands scope"
-													variant="inline"
-												/>
-												<span>in the Discord Developer Portal.</span>
-											</div>
-											<p className="text-xs text-muted-foreground">
-												Agent-defined slash commands are server-only. Direct messages support
-												pairing and message routing, not per-Agent command menus.
-											</p>
 										</TabsContent>
 									) : null}
 								</Tabs>
@@ -297,29 +369,6 @@ export function DiscordPairDialog({
 						)
 					) : null}
 				</PairingDialogBody>
-
-				{result && !expired && installAction ? (
-					<PairingDialogFooter>
-						<Button
-							render={<a href={installAction.url} target="_blank" rel="noopener noreferrer" />}
-							nativeButton={false}
-							className="w-full min-w-0 whitespace-normal sm:w-auto"
-						>
-							{installAction.label}
-							<ExternalLink className="size-4" />
-						</Button>
-					</PairingDialogFooter>
-				) : result && expired ? (
-					<PairingDialogFooter>
-						<Button
-							className="w-full min-w-0 whitespace-normal sm:w-auto"
-							onClick={() => void prepare()}
-						>
-							<RefreshCw className="size-4" />
-							Generate new code
-						</Button>
-					</PairingDialogFooter>
-				) : null}
 			</PairingDialogContent>
 		</Dialog>
 	);

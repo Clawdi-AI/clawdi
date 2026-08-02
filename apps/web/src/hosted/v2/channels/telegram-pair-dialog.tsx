@@ -16,9 +16,9 @@ import type { ChannelBinding } from "@/hosted/v2/channels/channel-types";
 import { useCreatePairCode } from "@/hosted/v2/channels/channels-hooks";
 import {
 	CopyablePairingCode,
+	PairingDialogActions,
 	PairingDialogBody,
 	PairingDialogContent,
-	PairingDialogFooter,
 	PairingDialogHeader,
 	PairingExpiry,
 	PairingInstructionPanel,
@@ -27,7 +27,7 @@ import {
 	PairingQrCode,
 } from "@/hosted/v2/channels/pairing-dialog-ui";
 
-const TELEGRAM_PAIR_TTL_SECONDS = 900;
+const TELEGRAM_PAIR_TTL_SECONDS = 300;
 
 type TelegramPairResult = {
 	code: string;
@@ -41,6 +41,7 @@ type TelegramPairResult = {
 export function TelegramPairDialog({
 	open,
 	onOpenChange,
+	onCloseComplete,
 	accountId,
 	agentLinkId,
 	channelName,
@@ -48,6 +49,7 @@ export function TelegramPairDialog({
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	onCloseComplete?: () => void;
 	accountId: string;
 	agentLinkId: string;
 	channelName?: string;
@@ -112,9 +114,6 @@ export function TelegramPairDialog({
 			openKeyRef.current = null;
 			sessionRef.current += 1;
 			lockedSessionRef.current = null;
-			setGenerating(false);
-			setRequestError(null);
-			setResult(null);
 			return;
 		}
 		if (openKeyRef.current === openKey) return;
@@ -147,13 +146,22 @@ export function TelegramPairDialog({
 		: channelName?.trim() || "this bot";
 
 	return (
-		<Dialog open={open} onOpenChange={handlePairingOpenChange}>
+		<Dialog
+			open={open}
+			onOpenChange={handlePairingOpenChange}
+			onOpenChangeComplete={(nextOpen) => {
+				if (nextOpen) return;
+				setGenerating(false);
+				setRequestError(null);
+				setResult(null);
+				onCloseComplete?.();
+			}}
+		>
 			<PairingDialogContent data-hosted="true" data-v2="true">
 				<PairingDialogHeader
 					title="Pair Telegram"
 					identity={botIdentity}
-					scope="Private chat"
-					description="Scan the QR code or open Telegram to pair a private chat."
+					description="Use the link or pairing command to connect a chat."
 				/>
 
 				<PairingDialogBody data-telegram-pair-dialog-body>
@@ -179,17 +187,57 @@ export function TelegramPairDialog({
 							<PairingExpiry expired={expired}>
 								{pairCodeExpiryLabel(result.expires_at, nowMs)}
 							</PairingExpiry>
+							{validLink ? (
+								<PairingDialogActions>
+									<Button
+										render={<a href={validLink} target="_blank" rel="noopener noreferrer" />}
+										nativeButton={false}
+										className="w-full min-w-0 whitespace-normal"
+									>
+										Open Telegram
+										<ExternalLink className="size-4" />
+									</Button>
+									<Button
+										variant="outline"
+										className="w-full min-w-0 whitespace-normal"
+										onClick={() => void copy(validLink)}
+										aria-label={copied ? "Telegram link copied" : "Copy Telegram link"}
+										aria-live="polite"
+									>
+										{copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+										{copied ? "Link copied" : "Copy link"}
+									</Button>
+								</PairingDialogActions>
+							) : (
+								<PairingDialogActions className="sm:grid-cols-1">
+									<Button
+										className="w-full min-w-0 whitespace-normal"
+										onClick={() => void generate()}
+									>
+										<QrCode className="size-4" />
+										{expired ? "Generate new link" : "Try again"}
+									</Button>
+								</PairingDialogActions>
+							)}
 							{!expired && result.bot_username ? (
 								<PairingInstructionPanel>
 									<details>
 										<summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-											Pair a group manually
+											Pair manually
 										</summary>
 										<div className="mt-3 space-y-3">
-											<p>Add @{result.bot_username.replace(/^@/, "")} to the group, then send:</p>
+											<div className="flex flex-wrap items-center gap-1.5">
+												<span>Send this to</span>
+												<CopyablePairingCode
+													value={botIdentity}
+													label="Telegram bot handle"
+													variant="inline"
+												/>
+												<span>:</span>
+											</div>
 											<CopyablePairingCode
 												value={result.pairing_command}
-												label="Telegram group pairing command"
+												label="Telegram pairing command"
 											/>
 										</div>
 									</details>
@@ -198,39 +246,6 @@ export function TelegramPairDialog({
 						</div>
 					) : null}
 				</PairingDialogBody>
-
-				{validLink ? (
-					<PairingDialogFooter>
-						<Button
-							variant="outline"
-							className="w-full min-w-0 whitespace-normal sm:w-auto"
-							onClick={() => void copy(validLink)}
-							aria-label={copied ? "Link copied" : "Copy link"}
-							aria-live="polite"
-						>
-							{copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-							{copied ? "Link copied" : "Copy link"}
-						</Button>
-						<Button
-							render={<a href={validLink} target="_blank" rel="noopener noreferrer" />}
-							nativeButton={false}
-							className="w-full min-w-0 whitespace-normal sm:w-auto"
-						>
-							Open Telegram
-							<ExternalLink className="size-4" />
-						</Button>
-					</PairingDialogFooter>
-				) : result && !generating ? (
-					<PairingDialogFooter>
-						<Button
-							className="w-full min-w-0 whitespace-normal sm:w-auto"
-							onClick={() => void generate()}
-						>
-							<QrCode className="size-4" />
-							{expired ? "Generate new link" : "Try again"}
-						</Button>
-					</PairingDialogFooter>
-				) : null}
 			</PairingDialogContent>
 		</Dialog>
 	);

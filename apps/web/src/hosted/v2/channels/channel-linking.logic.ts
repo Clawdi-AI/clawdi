@@ -33,7 +33,7 @@ export function availableBotProvidersForAgent(
 }
 
 export function pairingCommand(code: string): string {
-	return `/bot_pair ${code}`;
+	return `/clawdi_pair ${code}`;
 }
 
 export function verifiedDiscordPairingCommand(pairingCommand: string, code: string): string | null {
@@ -99,10 +99,6 @@ export function verifiedDiscordUserInstallUrl(value: string | null | undefined):
 	} catch {
 		return null;
 	}
-}
-
-export function pairingActionLabel(provider: string): string {
-	return provider === "discord" ? "Pair Discord" : "Pair chat";
 }
 
 export function pairCodeExpired(expiresAt: string, nowMs: number): boolean {

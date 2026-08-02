@@ -52,8 +52,9 @@ describe("channel mutation feedback", () => {
 		expect(detail).toContain("creatingPairCode ? (");
 		expect(detail).toContain('<Spinner className="size-3.5" />');
 		expect(detail).toContain('"Generating…"');
-		expect(detail).toContain('"Pair Telegram"');
-		expect(detail).toContain("pairingActionLabel(provider)");
+		expect(detail).toContain('creatingPairCode ? "Generating…" : "Pair"');
+		expect(detail).not.toContain('"Pair Telegram"');
+		expect(detail).not.toContain('"Pair Discord"');
 		expect(pairDialog).toContain("Creating a secure Telegram link…");
 		expect(pairDialog).toContain("useCreatePairCode(accountId, { toastOnError: false })");
 		expectFeedbackBeforeRequest(discordPairDialog, "setPreparing(true)", "await pair.execute");

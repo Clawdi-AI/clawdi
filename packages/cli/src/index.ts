@@ -634,7 +634,7 @@ channelCmd
 	.description("Create a one-time code to pair an external chat to an agent link")
 	.option("--agent <agent-id>", "Create or reuse a link for this agent")
 	.option("--link <link-id>", "Use an existing bot-agent link")
-	.option("--ttl <seconds>", "Pair code TTL in seconds", "900")
+	.option("--ttl <seconds>", "Pair code TTL in seconds", "300")
 	.option("--json", "Emit machine-readable JSON")
 	.addHelpText(
 		"after",
@@ -674,7 +674,7 @@ channelCmd
 	.command("sync-commands <channel-id>")
 	.description("Sync provider slash commands for one of your private bots")
 	.option("--guild <guild-id>", "Discord guild id for guild-scoped command sync")
-	.option("--commands <json>", "Command spec JSON array; defaults to bot_pair and bot_unpair")
+	.option("--commands <json>", "Command spec JSON array; defaults to clawdi_pair and clawdi_unpair")
 	.option("--json", "Emit machine-readable JSON")
 	.addHelpText(
 		"after",

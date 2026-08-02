@@ -1083,8 +1083,8 @@ def _get_telegram_commands(
     if isinstance(commands, list):
         return [command for command in commands if isinstance(command, dict)]
     return [
-        {"command": "bot_pair", "description": "Pair this chat with Clawdi."},
-        {"command": "bot_unpair", "description": "Disconnect this chat from Clawdi."},
+        {"command": "clawdi_pair", "description": "Pair this chat with Clawdi."},
+        {"command": "clawdi_unpair", "description": "Disconnect this chat from Clawdi."},
     ]
 
 
