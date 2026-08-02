@@ -210,12 +210,12 @@ describe("native WhatsApp egress contract", () => {
 		expect(auditedVersion).toContain('AUDITED_WHATSAPP_WEB_VERSION_TEXT = "2.3000.1035194821"');
 		expect(release.noiseTrustSeam).toMatchObject({
 			available: true,
-			providedBy: "clawdi.managedBaileysCompat.v2",
+			providedBy: "clawdi.managedBaileysCompat.v3",
 			backwardCompatibleDefault: "WA_CERT_DETAILS",
 		});
 		expect(release.webSocketUpgradeHeaderSeam).toMatchObject({
 			available: true,
-			providedBy: "clawdi.managedBaileysCompat.v2",
+			providedBy: "clawdi.managedBaileysCompat.v3",
 		});
 		expect(WHATSAPP_UPSTREAM_AUDIT.openclaw.stockAuthStatePersistenceCompatibility).toEqual({
 			available: true,

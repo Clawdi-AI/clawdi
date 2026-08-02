@@ -83,13 +83,15 @@ emulator. See
 The audited Baileys release lacks managed credential metadata and a safe
 WebSocket-only header seam. The CLI owns a static compatibility patch for the
 two installed Baileys aliases, gated by expected package name, rigorously parsed
-SemVer major 7, and exact target preimage/postimage hashes. OpenClaw and Hermes
-source is not patched: their stock auth persistence carries the namespaced
-`creds.additionalData` value through initial construction and reconnect. Valid
-managed metadata forces Baileys' official WebSocket URL, adds the marker only
-to a derived upgrade config, and supplies the Noise trust; absent metadata
-preserves consumer URL/options and official trust. This is a downstream CLI
-capability, not a native upstream managed capability.
+SemVer major 7, and unique exact before/after context for every audited hunk
+with fuzz zero. Whole-file rc13 hashes are audit fixtures rather than
+compatibility gates, so unrelated changes outside those hunks are preserved.
+OpenClaw and Hermes source is not patched: their stock auth persistence carries
+the namespaced `creds.additionalData` value through initial construction and
+reconnect. Valid managed metadata forces Baileys' official WebSocket URL, adds
+the marker only to a derived upgrade config, and supplies the Noise trust;
+absent metadata preserves consumer URL/options and official trust. This is a
+downstream CLI capability, not a native upstream managed capability.
 Executable seam tests are not native-plugin E2E, and live-account drills remain
 unproven, so the aggregate WhatsApp linking, runtime, and upstream gates remain
 false. Current production convergence therefore installs no WhatsApp

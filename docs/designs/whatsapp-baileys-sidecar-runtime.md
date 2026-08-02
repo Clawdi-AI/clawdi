@@ -179,13 +179,23 @@ and release assumptions are intentionally absent.
 Pinned Baileys `7.0.0-rc13` already passes `SocketConfig.options.headers` to
 `ws`, but the same `RequestInit` is also used for provider HTTP/media fetches.
 It is therefore not a safe dedicated marker seam. Revision
-`clawdi.managedBaileysCompat.v2` changes only three Baileys files:
+`clawdi.managedBaileysCompat.v3` changes only three Baileys files through nine
+stable strict-context hunks:
 
-| Target | Pristine SHA-256 | Patched SHA-256 |
-| --- | --- | --- |
-| `lib/Socket/socket.js` | `ab9b68888e123ad683dbc26555fc928400c1526c93ec6b66853f2ba30f8177a9` | `0bc910c7fa0cb8fbd1ea757452254764ab2e0e8629cddee9f81c172402498852` |
-| `lib/Utils/noise-handler.js` | `970f9526ce0e5a6bebf937328b3d835966a9282c0d232f31b5c0bb283531afe8` | `be9d357b337b20f2d678c68d1c989091187a8fa6f767af92645dba05b827f206` |
-| `lib/Utils/noise-handler.d.ts` | `a556ca0b67c3448769ad5ed0d59acbf566a21115fa107cd582b1dcb28c4fd516` | `34197090723b4b197b36062d8283f86ada1f8d5863a58efab446b8bf87f2e28e` |
+| Target | rc13 pristine audit SHA-256 | Hunks |
+| --- | --- | ---: |
+| `lib/Socket/socket.js` | `ab9b68888e123ad683dbc26555fc928400c1526c93ec6b66853f2ba30f8177a9` | 5 |
+| `lib/Utils/noise-handler.js` | `970f9526ce0e5a6bebf937328b3d835966a9282c0d232f31b5c0bb283531afe8` | 2 |
+| `lib/Utils/noise-handler.d.ts` | `a556ca0b67c3448769ad5ed0d59acbf566a21115fa107cd582b1dcb28c4fd516` | 2 |
+
+Those whole-file hashes anchor fixtures and audit evidence only. They are not
+compatibility or rollback gates. Each hunk has a stable identity and complete
+before/after byte strings. Exactly one before and zero after matches, or zero
+before and exactly one after matches, is required. This is unified/context-diff
+fuzz-zero behavior without an external `git` or `patch` process. Missing,
+duplicated, ambiguous, partially changed, or simultaneously present forms fail
+closed before any target mutation. Arbitrary bytes outside the hunk ranges are
+preserved.
 
 The CLI embeds validated Link metadata under
 `creds.additionalData["clawdi.managedWhatsAppSocket"]`. Patched `makeSocket`
@@ -232,46 +242,48 @@ The receipt is
 `<installInventory>/managed-baileys-compat.json`. Reconciliation is:
 
 1. With no managed Link, no receipt means inert. A matching receipt triggers a
-   full rollback preflight; exact postimages return to exact preimages and the
-   receipt is removed. An entirely absent audited artifact root means the
-   package was uninstalled and its receipt can be forgotten. If the root still
-   exists, every package identity and target must exist and match an audited
-   preimage or postimage; a missing target, symlink, identity mismatch, or
-   unknown hash refuses the entire rollback before any target mutation and
-   preserves the receipt.
+   full rollback preflight. Only receipt-owned exact after-hunks are reversed;
+   unrelated edits and verified unowned/native-equivalent hunks remain. An
+   entirely absent audited artifact root means the package was uninstalled and
+   its receipt can be forgotten. If the root still exists, a missing target,
+   symlink, identity mismatch, or unrecognized hunk refuses the entire rollback
+   before mutation and preserves the receipt.
 2. With a managed Link, Hermes first restores lockfile-pinned local bridge
    dependencies when Baileys is absent. The live-state transaction snapshots
    the whole `node_modules` tree whenever that `npm ci` may run.
 3. The reconciler verifies the real, non-symlinked Baileys package root, the
-   expected alias package name, a rigorously parsed SemVer major 7, and every
-   target's exact pristine or patched SHA-256. A different valid 7.x version is
-   accepted only when all audited target bytes still match. Major 8, other
-   majors, malformed versions, missing targets, and source drift fail closed.
-   It does not claim registry/tarball integrity verification: npm integrity is
-   not present in installed `package.json` and is not receipt authority.
-4. Exact patched files plus a matching receipt are a no-op. Exact patched files
-   without a receipt recover the receipt. A compatible 7.x version transition
-   updates the observed version in the receipt without rollback. Pristine or
-   mixed recognized files write and fsync the receipt, stage all replacements,
-   recheck every source hash, then rename each target and fsync its directory.
-   Each rename is an atomic file replacement, but the three-file change is not
-   a global atomic transaction. A crash can leave a recognized
-   preimage/postimage mixture; the durable receipt makes the next reconcile
-   converge it safely.
-5. An installer restore to recognized pristine files reapplies the patch.
-   Manifest convergence failure restores the exact pre-apply live snapshot.
-   Rollback also preflights every target before changing any file. A crash
-   during rollback leaves the receipt until every target is restored, so the
-   next rollback converges a recognized mixed state.
+   expected alias package name, a rigorously parsed SemVer major 7, and unique
+   exact context for every before/after hunk. Major 8, other majors, malformed
+   versions, missing targets, changed semantics, duplicates, and ambiguity fail
+   closed. It does not claim registry/tarball integrity verification.
+4. Without a receipt, all-before hunks are patched and owned; all-after hunks
+   are accepted as compatible without creating rollback ownership. Any mixed
+   before/after state is refused because its provenance is unknown.
+5. With a matching receipt at the same version, recognized mixed states from a
+   crash converge. On a valid 7.x installer transition, before-hunks are
+   reapplied and newly owned, while already-after hunks are treated as unowned
+   native equivalents. An all-after transition retires the old receipt instead
+   of risking future removal of upstream-owned code.
+6. Before mutation, the durable receipt records each target's actual observed
+   whole-file hash before and predicted hash after, plus its owned hunk IDs.
+   Replacements are staged, every target and package identity hash is rechecked
+   for TOCTOU, then each file is renamed and its directory fsynced. Each rename
+   is atomic, but the three-file change is recoverable convergence rather than
+   a global atomic transaction.
+7. Installer restoration to exact before-hunks reapplies the patch. Rollback
+   stages only owned inverse hunks and preserves unrelated bytes. A crash leaves
+   the receipt in place, so recognized mixed rollback state converges on retry.
+   Manifest convergence failure still restores the exact outer live snapshot.
 
 The receipt contains only its schema, patch revision, audited Baileys package
 root, runtime/alias, observed compatible version, compatible major, relative
-target paths, and pre/post SHA-256 values. The reconciler remains larger than
-the 35 net added upstream lines because it retains package-layout recovery,
-strict SemVer/name checks, symlink checks, TOCTOU rechecks, durable staging,
-receipt/version-transition recovery, rollback preflight, Hermes reinstall
-handling, and caller snapshot compatibility. Consumer patch definitions,
-consumer identities, sidecar config state, timestamp and unverifiable integrity
-fields, multi-artifact receipt state, and duplicate commit code are absent.
+target paths, actual observed before/after file SHA-256 values, and owned hunk
+IDs. The 986-line reconciler remains larger than the 35 net added upstream
+lines because it embeds the exact patch bytes and retains two package layouts,
+strict SemVer/name and receipt validation, unique hunk classification,
+per-hunk ownership, symlink checks, TOCTOU rechecks, durable staging, crash and
+version-transition recovery, rollback preflight, Hermes reinstall handling,
+and caller snapshot compatibility. It adds no generic diff/AST framework or
+external patch-process dependency.
 
 Done: `bun test --isolate packages/cli/src/runtime/managed-baileys-compat.test.ts packages/cli/tests/managed-whatsapp-projection.test.ts packages/cli/tests/runtime-whatsapp-egress.test.ts` exits 0 and reports no failures.

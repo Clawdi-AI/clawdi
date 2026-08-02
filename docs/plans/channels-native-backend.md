@@ -107,12 +107,14 @@ binding, alias, and relay policy.
 The managed WhatsApp path is not usable yet. The pinned `7.0.0-rc13` artifacts
 `baileys` and `@whiskeysockets/baileys` lack the required configurable Noise
 trust authority and a WebSocket-only managed marker header, so the CLI owns an
-expected-name, SemVer-major-7, and exact-target-hash-gated static compatibility
-patch for those two Baileys aliases. It reads strictly validated namespaced
-metadata from stock `creds.additionalData`; no OpenClaw or Hermes source is
-patched. These are explicitly downstream CLI patch capabilities, not native
-upstream managed capabilities. Executable rc13 seam and stock auth-persistence
-tests do not replace OpenClaw/Hermes native-plugin E2E proof or a live drill.
+expected-name and SemVer-major-7 static compatibility patch for those two
+Baileys aliases. Every audited before/after context hunk must match uniquely and
+exactly with fuzz zero; unrelated bytes outside those hunks are preserved. It
+reads strictly validated namespaced metadata from stock `creds.additionalData`;
+no OpenClaw or Hermes source is patched. These are explicitly downstream CLI
+patch capabilities, not native upstream managed capabilities. Executable rc13
+seam and stock auth-persistence tests do not replace OpenClaw/Hermes
+native-plugin E2E proof or a live drill.
 
 The isolated artifact-seam evidence is true, but the aggregate constants in
 `packages/cli/src/runtime/whatsapp-upstream-contract.ts` remain false. Runtime

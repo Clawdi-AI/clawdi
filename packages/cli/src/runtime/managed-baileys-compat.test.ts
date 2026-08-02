@@ -62,12 +62,18 @@ it("defines exactly the three audited Baileys targets and no consumer target", (
 		"lib/Utils/noise-handler.d.ts",
 	]);
 	const socketPatch = MANAGED_BAILEYS_STATIC_PATCH_TARGETS[0];
-	expect(socketPatch?.replacements.map((replacement) => replacement.after).join("\n")).toContain(
+	expect(socketPatch?.hunks.map((hunk) => hunk.after).join("\n")).toContain(
 		"DEFAULT_CONNECTION_CONFIG.waWebSocketUrl",
 	);
-	expect(
-		socketPatch?.replacements.map((replacement) => replacement.after).join("\n"),
-	).not.toContain("wss://web.whatsapp.com/ws/chat");
+	expect(socketPatch?.hunks.map((hunk) => hunk.after).join("\n")).not.toContain(
+		"wss://web.whatsapp.com/ws/chat",
+	);
+	for (const target of MANAGED_BAILEYS_STATIC_PATCH_TARGETS) {
+		expect(sha256File(join(pristineBaileysRoot, target.relativePath))).toBe(
+			target.auditPristineSha256,
+		);
+		expect(new Set(target.hunks.map((hunk) => hunk.id)).size).toBe(target.hunks.length);
+	}
 });
 
 describe.each(["openclaw", "hermes"] as const)("managed Baileys %s compatibility", (runtime) => {
@@ -82,18 +88,21 @@ describe.each(["openclaw", "hermes"] as const)("managed Baileys %s compatibility
 
 		expect(result.status).toBe("inert");
 		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
-		assertTargetState(fixture, "preimage");
+		assertTargetHunkState(fixture, "before");
 	});
 
-	it("applies only audited preimages and records the observed compatible identity", () => {
+	it("applies exact before hunks and records actual file hashes plus owned hunk identity", () => {
 		const fixture = createArtifactFixture(runtime);
+		const observedBefore = new Map<string, string>(
+			artifactTargets(fixture).map(({ target, path }) => [target.relativePath, sha256File(path)]),
+		);
 		const result = reconcile(fixture);
 
 		expect(result.status).toBe("applied");
-		assertTargetState(fixture, "postimage");
+		assertTargetHunkState(fixture, "after");
 		const receipt = readReceipt(fixture);
 		expect(receipt).toMatchObject({
-			schemaVersion: "clawdi.managedBaileysPatchReceipt.v3",
+			schemaVersion: "clawdi.managedBaileysPatchReceipt.v4",
 			patchRevision: MANAGED_BAILEYS_PATCH_REVISION,
 			artifact: {
 				runtime,
@@ -103,18 +112,24 @@ describe.each(["openclaw", "hermes"] as const)("managed Baileys %s compatibility
 					observedVersion: "7.0.0-rc13",
 					compatibleMajor: 7,
 				},
-				targets: artifactTargets(fixture).map(({ target }) => ({
-					relativePath: target.relativePath,
-					preimageSha256: target.preimageSha256,
-					postimageSha256: target.postimageSha256,
-				})),
 			},
 		});
+		for (const targetReceipt of receipt.artifact.targets) {
+			const target = artifactTargets(fixture).find(
+				(entry) => entry.target.relativePath === targetReceipt.relativePath,
+			);
+			if (!target) throw new Error("receipt target fixture is missing");
+			const beforeSha256 = observedBefore.get(targetReceipt.relativePath);
+			if (!beforeSha256) throw new Error("receipt before hash fixture is missing");
+			expect(targetReceipt.observedBeforeSha256).toBe(beforeSha256);
+			expect(targetReceipt.observedAfterSha256).toBe(sha256File(target.path));
+			expect(targetReceipt.ownedHunkIds).toEqual(target.target.hunks.map((hunk) => hunk.id));
+		}
 		expect(JSON.stringify(receipt)).not.toContain("integrity");
 		expect(receipt).not.toHaveProperty("appliedAt");
 	});
 
-	it("is a no-op after receipt and postimages converge", () => {
+	it("is a no-op after receipt and all exact after-hunks converge", () => {
 		const fixture = createArtifactFixture(runtime);
 		reconcile(fixture);
 		const receiptPath = managedBaileysCompatReceiptPath(fixture);
@@ -128,34 +143,54 @@ describe.each(["openclaw", "hermes"] as const)("managed Baileys %s compatibility
 		});
 	});
 
-	it("recovers recognized pristine, mixed, and missing-receipt states", () => {
+	it("converges recognized mixed before/after hunks only with its durable receipt", () => {
 		const fixture = createArtifactFixture(runtime);
 		reconcile(fixture);
 		const targets = artifactTargets(fixture);
-		restorePristineTarget(targets[0]);
-		restorePristineTarget(targets.at(-1));
+		setHunkState(targets[0], targets[0]?.target.hunks[2]?.id, "before");
+		setHunkState(targets.at(-1), targets.at(-1)?.target.hunks[0]?.id, "before");
 
 		expect(reconcile(fixture).status).toBe("applied");
-		assertTargetState(fixture, "postimage");
-
-		rmSync(managedBaileysCompatReceiptPath(fixture));
-		expect(reconcile(fixture).status).toBe("receipt-recovered");
-		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(true);
+		assertTargetHunkState(fixture, "after");
 	});
 
-	it("preflights all targets before rollback and refuses drift with zero other mutation", () => {
+	it("preserves an unrelated external edit outside owned hunks during rollback", () => {
+		const fixture = createArtifactFixture(runtime);
+		reconcile(fixture);
+		const targets = artifactTargets(fixture);
+		const edited = targets[0];
+		if (!edited) throw new Error("missing external edit target");
+		writeFileSync(edited.path, `${readFileSync(edited.path, "utf8")}\n// external-tail\n`);
+
+		expect(rollback(fixture).status).toBe("rolled-back");
+
+		assertTargetHunkState(fixture, "before");
+		expect(readFileSync(edited.path, "utf8")).toEndWith("\n// external-tail\n");
+		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
+	});
+
+	it("refuses a changed owned after-hunk before mutating any rollback target", () => {
 		const fixture = createArtifactFixture(runtime);
 		reconcile(fixture);
 		const targets = artifactTargets(fixture);
 		const drifted = targets[0];
-		if (!drifted) throw new Error("missing drift target");
-		writeFileSync(drifted.path, `${readFileSync(drifted.path, "utf8")}\n// drift\n`);
-		const unchanged = targets.slice(1).map(({ path }) => readFileSync(path));
+		const hunk = drifted?.target.hunks.find(
+			(candidate) => candidate.id === "socket.managed-default-url.v1",
+		);
+		if (!drifted || !hunk) throw new Error("missing owned rollback hunk fixture");
+		writeFileSync(
+			drifted.path,
+			readFileSync(drifted.path, "utf8").replace(
+				hunk.after,
+				hunk.after.replace("DEFAULT_CONNECTION_CONFIG", "DRIFTED_CONNECTION_CONFIG"),
+			),
+		);
+		const unchanged = targets.map(({ path }) => readFileSync(path));
 
-		const refused = rollback(fixture);
+		const result = rollback(fixture);
 
-		expect(refused.status).toBe("rollback-refused");
-		targets.slice(1).forEach(({ path }, index) => {
+		expect(result.status).toBe("rollback-refused");
+		targets.forEach(({ path }, index) => {
 			expect(readFileSync(path)).toEqual(unchanged[index]);
 		});
 		expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(true);
@@ -194,33 +229,162 @@ describe.each(["openclaw", "hermes"] as const)("managed Baileys %s compatibility
 it.each([
 	["openclaw", "7.1.2"],
 	["hermes", "7.0.0-rc14"],
-] as const)("accepts %s alias at alternate exact-hash %s", (runtime, version) => {
+] as const)("accepts %s alias at alternate exact-hunk %s", (runtime, version) => {
 	const fixture = createArtifactFixture(runtime, version);
 
 	expect(reconcile(fixture).status).toBe("applied");
 	expect(readReceipt(fixture).artifact.baileys.observedVersion).toBe(version);
-	assertTargetState(fixture, "postimage");
+	assertTargetHunkState(fixture, "after");
 });
 
-it("rejects alternate 7.x target drift with zero mutation", () => {
+it("applies with unrelated prefix, suffix, other-function, line-offset, import, and comment edits", () => {
+	const fixture = createArtifactFixture("openclaw", "7.8.1");
+	const targets = artifactTargets(fixture);
+	const socket = targets[0];
+	const noise = targets[1];
+	if (!socket || !noise) throw new Error("missing unrelated-change fixtures");
+	writeFileSync(
+		socket.path,
+		`import './unrelated-side-effect.js';\n// unrelated import comment\n${readFileSync(socket.path, "utf8")}\nexport const unrelatedHelper = () => 7;\n`,
+	);
+	writeFileSync(
+		noise.path,
+		`// unrelated prefix changes line offsets\n${readFileSync(noise.path, "utf8")}\n// unrelated suffix\n`,
+	);
+
+	expect(reconcile(fixture).status).toBe("applied");
+	assertTargetHunkState(fixture, "after");
+	expect(readFileSync(socket.path, "utf8")).toStartWith(
+		"import './unrelated-side-effect.js';\n// unrelated import comment\n",
+	);
+	expect(readFileSync(socket.path, "utf8")).toEndWith(
+		"\nexport const unrelatedHelper = () => 7;\n",
+	);
+	expect(readFileSync(noise.path, "utf8")).toEndWith("\n// unrelated suffix\n");
+});
+
+it("rejects changed target semantics before mutating any target", () => {
 	const fixture = createArtifactFixture("openclaw", "7.9.0-beta.1");
 	const targets = artifactTargets(fixture);
-	const drifted = targets[1];
+	const drifted = targets[0];
 	if (!drifted) throw new Error("missing drift target");
-	writeFileSync(drifted.path, `${readFileSync(drifted.path, "utf8")}\n`);
+	const urlHunk = drifted.target.hunks.find((hunk) => hunk.id === "socket.managed-default-url.v1");
+	if (!urlHunk) throw new Error("missing URL hunk");
+	writeFileSync(
+		drifted.path,
+		readFileSync(drifted.path, "utf8").replace(
+			urlHunk.before,
+			"    const url = resolveConsumerSocketUrl(waWebSocketUrl);\n",
+		),
+	);
 	const unchanged = targets.map(({ path }) => readFileSync(path));
 
-	expect(() => reconcile(fixture)).toThrow("refused drifted openclaw artifacts");
+	expect(() => reconcile(fixture)).toThrow("refused non-unique or changed openclaw hunks");
 	targets.forEach(({ path }, index) => {
 		expect(readFileSync(path)).toEqual(unchanged[index]);
 	});
 	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
 });
 
+it.each([
+	"duplicate-before",
+	"both-forms",
+] as const)("rejects %s ambiguous hunk context with zero mutation", (mode) => {
+	const fixture = createArtifactFixture("openclaw");
+	const targets = artifactTargets(fixture);
+	const target = targets[0];
+	const hunk = target?.target.hunks[0];
+	if (!target || !hunk) throw new Error("missing ambiguous hunk fixture");
+	writeFileSync(
+		target.path,
+		`${mode === "duplicate-before" ? hunk.before : hunk.after}${readFileSync(target.path, "utf8")}`,
+	);
+	const unchanged = targets.map(({ path }) => readFileSync(path));
+
+	expect(() => reconcile(fixture)).toThrow("refused non-unique or changed openclaw hunks");
+	targets.forEach(({ path }, index) => {
+		expect(readFileSync(path)).toEqual(unchanged[index]);
+	});
+	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
+});
+
+it("rejects recognized mixed before/after hunks without a receipt", () => {
+	const fixture = createArtifactFixture("openclaw");
+	const target = artifactTargets(fixture)[0];
+	setHunkState(target, target?.target.hunks[0]?.id, "after");
+	const unchanged = artifactTargets(fixture).map(({ path }) => readFileSync(path));
+
+	expect(() => reconcile(fixture)).toThrow("mixed before/after hunks without an ownership receipt");
+	artifactTargets(fixture).forEach(({ path }, index) => {
+		expect(readFileSync(path)).toEqual(unchanged[index]);
+	});
+	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
+});
+
+it("treats all after-hunks without a receipt as compatible and never claims rollback ownership", () => {
+	const fixture = createArtifactFixture("openclaw");
+	reconcile(fixture);
+	rmSync(managedBaileysCompatReceiptPath(fixture));
+	const patched = artifactTargets(fixture).map(({ path }) => readFileSync(path));
+
+	expect(reconcile(fixture).status).toBe("compatible");
+	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
+	expect(rollback(fixture).status).toBe("inert");
+	artifactTargets(fixture).forEach(({ path }, index) => {
+		expect(readFileSync(path)).toEqual(patched[index]);
+	});
+});
+
+it("retires old ownership instead of reversing after-equivalent hunks on a 7.x version change", () => {
+	const fixture = createArtifactFixture("openclaw");
+	reconcile(fixture);
+	writeBaileysIdentity(fixture, "7.6.0");
+	const patched = artifactTargets(fixture).map(({ path }) => readFileSync(path));
+
+	expect(reconcile(fixture).status).toBe("compatible");
+	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
+	expect(rollback(fixture).status).toBe("inert");
+	artifactTargets(fixture).forEach(({ path }, index) => {
+		expect(readFileSync(path)).toEqual(patched[index]);
+	});
+});
+
+it("owns only newly applied before-hunks across a mixed 7.x version transition", () => {
+	const fixture = createArtifactFixture("openclaw");
+	reconcile(fixture);
+	writeBaileysIdentity(fixture, "7.7.0");
+	const socket = artifactTargets(fixture)[0];
+	const newlyAppliedId = socket?.target.hunks[0]?.id;
+	if (!socket || !newlyAppliedId) throw new Error("missing mixed transition fixture");
+	setHunkState(socket, newlyAppliedId, "before");
+
+	expect(reconcile(fixture).status).toBe("applied");
+	const receipt = readReceipt(fixture);
+	const socketReceipt = receipt.artifact.targets.find(
+		(target) => target.relativePath === socket?.target.relativePath,
+	);
+	expect(socketReceipt?.ownedHunkIds).toEqual([newlyAppliedId]);
+	expect(
+		receipt.artifact.targets
+			.filter((target) => target.relativePath !== socket?.target.relativePath)
+			.flatMap((target) => target.ownedHunkIds),
+	).toEqual([]);
+
+	expect(rollback(fixture).status).toBe("rolled-back");
+	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
+	const socketContent = readFileSync(socket.path, "utf8");
+	for (const hunk of socket.target.hunks) {
+		expect(
+			exactMatchCount(socketContent, hunk[hunk.id === newlyAppliedId ? "before" : "after"]),
+		).toBe(1);
+	}
+	expect(() => reconcile(fixture)).toThrow("mixed before/after hunks without an ownership receipt");
+});
+
 it.each(["8.0.0", "6.9.9"])("rejects incompatible Baileys major %s", (version) => {
 	const fixture = createArtifactFixture("openclaw", version);
 	expect(() => reconcile(fixture)).toThrow("requires valid Baileys SemVer major 7");
-	assertTargetState(fixture, "preimage");
+	assertTargetHunkState(fixture, "before");
 	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
 });
 
@@ -234,19 +398,24 @@ it.each([
 ])("rejects malformed Baileys version %s", (version) => {
 	const fixture = createArtifactFixture("hermes", version);
 	expect(() => reconcile(fixture)).toThrow("requires valid Baileys SemVer major 7");
-	assertTargetState(fixture, "preimage");
+	assertTargetHunkState(fixture, "before");
 	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
 });
 
-it("updates a compatible 7.x receipt transition and still rolls back safely", () => {
+it("reapplies after a compatible 7.x installer replacement and updates receipt ownership", () => {
 	const fixture = createArtifactFixture("openclaw");
 	reconcile(fixture);
+	for (const target of artifactTargets(fixture)) restorePristineTarget(target);
+	const socket = artifactTargets(fixture)[0];
+	if (!socket) throw new Error("missing installer replacement fixture");
+	writeFileSync(socket.path, `${readFileSync(socket.path, "utf8")}\n// installer-7.4-tail\n`);
 	writeBaileysIdentity(fixture, "7.4.1-rc.2");
 
-	expect(reconcile(fixture).status).toBe("receipt-recovered");
+	expect(reconcile(fixture).status).toBe("applied");
 	expect(readReceipt(fixture).artifact.baileys.observedVersion).toBe("7.4.1-rc.2");
 	expect(rollback(fixture).status).toBe("rolled-back");
-	assertTargetState(fixture, "preimage");
+	assertTargetHunkState(fixture, "before");
+	expect(readFileSync(socket.path, "utf8")).toEndWith("\n// installer-7.4-tail\n");
 });
 
 it("refuses an unknown receipt revision without touching pristine targets", () => {
@@ -257,7 +426,22 @@ it("refuses an unknown receipt revision without touching pristine targets", () =
 	});
 
 	expect(() => reconcile(fixture)).toThrow("receipt is invalid");
-	assertTargetState(fixture, "preimage");
+	assertTargetHunkState(fixture, "before");
+});
+
+it("refuses a malformed current receipt without changing owned after-hunks", () => {
+	const fixture = createArtifactFixture("openclaw");
+	reconcile(fixture);
+	const receipt = readReceipt(fixture);
+	const malformed = { ...receipt, unexpected: true };
+	writeJson(managedBaileysCompatReceiptPath(fixture), malformed);
+	const unchanged = artifactTargets(fixture).map(({ path }) => readFileSync(path));
+
+	expect(() => rollback(fixture)).toThrow("receipt is invalid");
+	artifactTargets(fixture).forEach(({ path }, index) => {
+		expect(readFileSync(path)).toEqual(unchanged[index]);
+	});
+	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(true);
 });
 
 it("rejects the wrong alias package name and symlinked package identity", () => {
@@ -267,7 +451,7 @@ it("rejects the wrong alias package name and symlinked package identity", () => 
 		version: "7.0.0-rc13",
 	});
 	expect(() => reconcile(wrongName)).toThrow("requires package baileys");
-	assertTargetState(wrongName, "preimage");
+	assertTargetHunkState(wrongName, "before");
 
 	const symlinked = createArtifactFixture("hermes");
 	const packagePath = join(symlinked.baileysRoot, "package.json");
@@ -276,7 +460,7 @@ it("rejects the wrong alias package name and symlinked package identity", () => 
 	rmSync(packagePath);
 	symlinkSync(redirected, packagePath);
 	expect(() => reconcile(symlinked)).toThrow("target must be a real file");
-	assertTargetState(symlinked, "preimage");
+	assertTargetHunkState(symlinked, "before");
 });
 
 it("refuses a symlinked patch target before mutating any audited file", () => {
@@ -343,7 +527,7 @@ writeFileSync(join(process.cwd(), "npm-invoked"), process.argv.slice(2).join(" "
 	expect(readFileSync(join(bridgeRoot, "npm-invoked"), "utf8")).toBe(
 		"ci --ignore-scripts --silent",
 	);
-	assertTargetState(fixture, "postimage");
+	assertTargetHunkState(fixture, "after");
 });
 
 it("executes patched socket routing without mutating consumer HTTP options", () => {
@@ -551,12 +735,45 @@ function artifactTargets(fixture: ArtifactFixture) {
 	}));
 }
 
-function assertTargetState(fixture: ArtifactFixture, state: "preimage" | "postimage"): void {
+function assertTargetHunkState(fixture: ArtifactFixture, state: "before" | "after"): void {
 	for (const { target, path } of artifactTargets(fixture)) {
-		expect(sha256File(path)).toBe(
-			state === "preimage" ? target.preimageSha256 : target.postimageSha256,
-		);
+		const content = readFileSync(path, "utf8");
+		for (const hunk of target.hunks) {
+			expect(exactMatchCount(content, hunk[state])).toBe(1);
+			expect(exactMatchCount(content, hunk[state === "before" ? "after" : "before"])).toBe(0);
+		}
 	}
+}
+
+function setHunkState(
+	entry: ReturnType<typeof artifactTargets>[number] | undefined,
+	hunkId: string | undefined,
+	desired: "before" | "after",
+): void {
+	if (!entry || !hunkId) throw new Error("missing hunk fixture");
+	const hunk = entry.target.hunks.find((candidate) => candidate.id === hunkId);
+	if (!hunk) throw new Error(`unknown fixture hunk ${hunkId}`);
+	const content = readFileSync(entry.path, "utf8");
+	const current = desired === "after" ? hunk.before : hunk.after;
+	if (exactMatchCount(content, hunk[desired]) === 1 && exactMatchCount(content, current) === 0) {
+		return;
+	}
+	if (exactMatchCount(content, current) !== 1 || exactMatchCount(content, hunk[desired]) !== 0) {
+		throw new Error(`fixture hunk ${hunkId} is not uniquely reversible`);
+	}
+	writeFileSync(entry.path, content.replace(current, hunk[desired]));
+}
+
+function exactMatchCount(content: string, needle: string): number {
+	let count = 0;
+	let offset = 0;
+	while (offset <= content.length - needle.length) {
+		const match = content.indexOf(needle, offset);
+		if (match < 0) break;
+		count += 1;
+		offset = match + 1;
+	}
+	return count;
 }
 
 function restorePristineTarget(
@@ -566,9 +783,23 @@ function restorePristineTarget(
 	copyFileSync(join(pristineBaileysRoot, entry.target.relativePath), entry.path);
 }
 
-function readReceipt(fixture: ArtifactFixture): {
-	artifact: { baileys: { observedVersion: string } };
-} & Record<string, unknown> {
+interface TestPatchReceipt {
+	schemaVersion: string;
+	patchRevision: string;
+	artifact: {
+		runtime: ManagedBaileysRuntime;
+		artifactRoot: string;
+		baileys: { name: string; observedVersion: string; compatibleMajor: number };
+		targets: Array<{
+			relativePath: string;
+			observedBeforeSha256: string;
+			observedAfterSha256: string;
+			ownedHunkIds: string[];
+		}>;
+	};
+}
+
+function readReceipt(fixture: ArtifactFixture): TestPatchReceipt {
 	return JSON.parse(readFileSync(managedBaileysCompatReceiptPath(fixture), "utf8"));
 }
 

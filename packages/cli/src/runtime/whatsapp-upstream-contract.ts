@@ -72,8 +72,9 @@ function isCanonicalBase64Bytes(value: string, byteLength: number): boolean {
 }
 
 // Audit evidence is intentionally centralized with the readiness requirements.
-// This records the pristine audit anchor. Compatibility acceptance still
-// requires the expected alias, valid SemVer major 7, and exact target hashes;
+// This records the pristine audit anchor. Compatibility acceptance requires
+// the expected alias, valid SemVer major 7, and unique exact before/after
+// context for every audited hunk. Whole-file hashes are evidence, not gates;
 // changing this audit record alone must not enable runtime projection.
 export const WHATSAPP_UPSTREAM_AUDIT = {
 	auditedAt: "2026-08-02",
@@ -104,14 +105,14 @@ export const WHATSAPP_UPSTREAM_AUDIT = {
 			requiredCredentialMetadata: CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY,
 			scope: "Noise intermediate certificate public key and serial verification",
 			available: true,
-			providedBy: "clawdi.managedBaileysCompat.v2",
+			providedBy: "clawdi.managedBaileysCompat.v3",
 			backwardCompatibleDefault: "WA_CERT_DETAILS",
 		},
 		webSocketUpgradeHeaderSeam: {
 			requiredCredentialMetadata: CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY,
 			scope: "WebSocket upgrade only; excluded from fetch and media HTTP",
 			available: true,
-			providedBy: "clawdi.managedBaileysCompat.v2",
+			providedBy: "clawdi.managedBaileysCompat.v3",
 		},
 	},
 	openclaw: {

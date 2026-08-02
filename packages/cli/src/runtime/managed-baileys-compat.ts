@@ -20,24 +20,24 @@ import { isValidSemver } from "../lib/semver";
 import type { RuntimePaths } from "./paths";
 import { makeRuntimeUserOwned, spawnRuntimeUserCommand } from "./runtime-user-command";
 
-export const MANAGED_BAILEYS_PATCH_REVISION = "clawdi.managedBaileysCompat.v2";
+export const MANAGED_BAILEYS_PATCH_REVISION = "clawdi.managedBaileysCompat.v3";
 
 const BAILEYS_COMPATIBLE_MAJOR = 7;
 const RECEIPT_FILE = "managed-baileys-compat.json";
-const RECEIPT_SCHEMA = "clawdi.managedBaileysPatchReceipt.v3";
+const RECEIPT_SCHEMA = "clawdi.managedBaileysPatchReceipt.v4";
 
 export type ManagedBaileysRuntime = "openclaw" | "hermes";
 
-interface StrictReplacement {
+interface StrictContextHunk {
+	id: string;
 	before: string;
 	after: string;
 }
 
 interface StaticPatchTarget {
 	relativePath: string;
-	preimageSha256: string;
-	postimageSha256: string;
-	replacements: readonly StrictReplacement[];
+	auditPristineSha256: string;
+	hunks: readonly StrictContextHunk[];
 }
 
 interface ManagedBaileysArtifact {
@@ -48,10 +48,17 @@ interface ManagedBaileysArtifact {
 	hermesBridgeRoot?: string;
 }
 
+interface VerifiedPackageIdentity {
+	version: string;
+	path: string;
+	sha256: string;
+}
+
 interface ManagedBaileysPatchReceiptTarget {
 	relativePath: string;
-	preimageSha256: string;
-	postimageSha256: string;
+	observedBeforeSha256: string;
+	observedAfterSha256: string;
+	ownedHunkIds: string[];
 }
 
 interface ManagedBaileysPatchReceiptArtifact {
@@ -73,8 +80,8 @@ interface ManagedBaileysPatchReceipt {
 
 type ManagedBaileysReconcileResult =
 	| { status: "inert"; receiptPath: string }
+	| { status: "compatible"; receiptPath: string }
 	| { status: "already-patched"; receiptPath: string }
-	| { status: "receipt-recovered"; receiptPath: string }
 	| { status: "applied"; receiptPath: string }
 	| { status: "rolled-back"; receiptPath: string }
 	| { status: "rollback-refused"; receiptPath: string; errors: string[] };
@@ -82,17 +89,21 @@ type ManagedBaileysReconcileResult =
 const BAILEYS_TARGETS = [
 	{
 		relativePath: "lib/Socket/socket.js",
-		preimageSha256: "ab9b68888e123ad683dbc26555fc928400c1526c93ec6b66853f2ba30f8177a9",
-		postimageSha256: "0bc910c7fa0cb8fbd1ea757452254764ab2e0e8629cddee9f81c172402498852",
-		replacements: [
+		auditPristineSha256: "ab9b68888e123ad683dbc26555fc928400c1526c93ec6b66853f2ba30f8177a9",
+		hunks: [
 			{
+				id: "socket.default-connection-config-import.v1",
 				before:
 					"import { DEF_CALLBACK_PREFIX, DEF_TAG_PREFIX, INITIAL_PREKEY_COUNT, MIN_PREKEY_COUNT, NOISE_WA_HEADER, PROCESSABLE_HISTORY_TYPES, TimeMs, UPLOAD_TIMEOUT } from '../Defaults/index.js';\n",
 				after:
 					"import { DEFAULT_CONNECTION_CONFIG, DEF_CALLBACK_PREFIX, DEF_TAG_PREFIX, INITIAL_PREKEY_COUNT, MIN_PREKEY_COUNT, NOISE_WA_HEADER, PROCESSABLE_HISTORY_TYPES, TimeMs, UPLOAD_TIMEOUT } from '../Defaults/index.js';\n",
 			},
 			{
-				before: "import { executeWMexQuery } from './mex.js';\n",
+				id: "socket.managed-metadata-validator.v1",
+				before:
+					"import { executeWMexQuery } from './mex.js';\n" +
+					"/**\n" +
+					" * Connects to WA servers and performs:\n",
 				after:
 					"import { executeWMexQuery } from './mex.js';\n" +
 					"const CLAWDI_MANAGED_SOCKET_KEY = 'clawdi.managedWhatsAppSocket';\n" +
@@ -110,16 +121,22 @@ const BAILEYS_TARGETS = [
 					"        throw new Error('Invalid Clawdi managed WhatsApp socket metadata');\n" +
 					"    }\n" +
 					"    return value;\n" +
-					"};\n",
+					"};\n" +
+					"/**\n" +
+					" * Connects to WA servers and performs:\n",
 			},
 			{
+				id: "socket.managed-metadata-read.v1",
 				before:
-					"    const { waWebSocketUrl, connectTimeoutMs, logger, keepAliveIntervalMs, browser, auth: authState, printQRInTerminal, defaultQueryTimeoutMs, transactionOpts, qrTimeout, makeSignalRepository } = config;\n",
+					"    const { waWebSocketUrl, connectTimeoutMs, logger, keepAliveIntervalMs, browser, auth: authState, printQRInTerminal, defaultQueryTimeoutMs, transactionOpts, qrTimeout, makeSignalRepository } = config;\n" +
+					"    const publicWAMBuffer = new BinaryInfo();\n",
 				after:
 					"    const { waWebSocketUrl, connectTimeoutMs, logger, keepAliveIntervalMs, browser, auth: authState, printQRInTerminal, defaultQueryTimeoutMs, transactionOpts, qrTimeout, makeSignalRepository } = config;\n" +
-					"    const managedMetadata = managedSocketMetadata(authState?.creds);\n",
+					"    const managedMetadata = managedSocketMetadata(authState?.creds);\n" +
+					"    const publicWAMBuffer = new BinaryInfo();\n",
 			},
 			{
+				id: "socket.managed-default-url.v1",
 				before:
 					"    const url = typeof waWebSocketUrl === 'string' ? new URL(waWebSocketUrl) : waWebSocketUrl;\n",
 				after:
@@ -127,14 +144,15 @@ const BAILEYS_TARGETS = [
 					"    const url = typeof effectiveWebSocketUrl === 'string' ? new URL(effectiveWebSocketUrl) : effectiveWebSocketUrl;\n",
 			},
 			{
-				before: "        routingInfo: authState?.creds?.routingInfo\n",
+				id: "socket.managed-noise-and-upgrade.v1",
+				before:
+					"        routingInfo: authState?.creds?.routingInfo\n" +
+					"    });\n" +
+					"    const ws = new WebSocketClient(url, config);\n",
 				after:
 					"        routingInfo: authState?.creds?.routingInfo,\n" +
-					"        authCert: managedMetadata?.authCert\n",
-			},
-			{
-				before: "    const ws = new WebSocketClient(url, config);\n",
-				after:
+					"        authCert: managedMetadata?.authCert\n" +
+					"    });\n" +
 					"    const webSocketConfig = managedMetadata ? {\n" +
 					"        ...config,\n" +
 					"        options: {\n" +
@@ -151,47 +169,60 @@ const BAILEYS_TARGETS = [
 	},
 	{
 		relativePath: "lib/Utils/noise-handler.js",
-		preimageSha256: "970f9526ce0e5a6bebf937328b3d835966a9282c0d232f31b5c0bb283531afe8",
-		postimageSha256: "be9d357b337b20f2d678c68d1c989091187a8fa6f767af92645dba05b827f206",
-		replacements: [
+		auditPristineSha256: "970f9526ce0e5a6bebf937328b3d835966a9282c0d232f31b5c0bb283531afe8",
+		hunks: [
 			{
+				id: "noise.configurable-trust.v1",
 				before:
 					"export const makeNoiseHandler = ({ keyPair: { private: privateKey, public: publicKey }, NOISE_HEADER, logger, routingInfo }) => {\n    logger = logger.child({ class: 'ns' });\n",
 				after:
 					"export const makeNoiseHandler = ({ keyPair: { private: privateKey, public: publicKey }, NOISE_HEADER, logger, routingInfo, authCert }) => {\n    const trustedCert = authCert ?? WA_CERT_DETAILS;\n    logger = logger.child({ class: 'ns' });\n",
 			},
 			{
-				before: "            if (issuerSerial !== WA_CERT_DETAILS.SERIAL) {\n",
-				after: "            if (issuerSerial !== trustedCert.SERIAL) {\n",
-			},
-			{
+				id: "noise.verify-configured-trust.v1",
 				before:
-					"            const verifyIntermediate = Curve.verify(WA_CERT_DETAILS.PUBLIC_KEY, certIntermediate.details, certIntermediate.signature);\n",
+					"            const verifyIntermediate = Curve.verify(WA_CERT_DETAILS.PUBLIC_KEY, certIntermediate.details, certIntermediate.signature);\n" +
+					"            if (!verify) {\n" +
+					"                throw new Boom('noise certificate signature invalid', { statusCode: 400 });\n" +
+					"            }\n" +
+					"            if (!verifyIntermediate) {\n" +
+					"                throw new Boom('noise intermediate certificate signature invalid', { statusCode: 400 });\n" +
+					"            }\n" +
+					"            if (issuerSerial !== WA_CERT_DETAILS.SERIAL) {\n",
 				after:
-					"            const verifyIntermediate = Curve.verify(trustedCert.PUBLIC_KEY, certIntermediate.details, certIntermediate.signature);\n",
+					"            const verifyIntermediate = Curve.verify(trustedCert.PUBLIC_KEY, certIntermediate.details, certIntermediate.signature);\n" +
+					"            if (!verify) {\n" +
+					"                throw new Boom('noise certificate signature invalid', { statusCode: 400 });\n" +
+					"            }\n" +
+					"            if (!verifyIntermediate) {\n" +
+					"                throw new Boom('noise intermediate certificate signature invalid', { statusCode: 400 });\n" +
+					"            }\n" +
+					"            if (issuerSerial !== trustedCert.SERIAL) {\n",
 			},
 		],
 	},
 	{
 		relativePath: "lib/Utils/noise-handler.d.ts",
-		preimageSha256: "a556ca0b67c3448769ad5ed0d59acbf566a21115fa107cd582b1dcb28c4fd516",
-		postimageSha256: "34197090723b4b197b36062d8283f86ada1f8d5863a58efab446b8bf87f2e28e",
-		replacements: [
+		auditPristineSha256: "a556ca0b67c3448769ad5ed0d59acbf566a21115fa107cd582b1dcb28c4fd516",
+		hunks: [
 			{
+				id: "noise.types-configurable-trust.v1",
 				before:
 					"export declare const makeNoiseHandler: ({ keyPair: { private: privateKey, public: publicKey }, NOISE_HEADER, logger, routingInfo }: {\n",
 				after:
 					"export declare const makeNoiseHandler: ({ keyPair: { private: privateKey, public: publicKey }, NOISE_HEADER, logger, routingInfo, authCert }: {\n",
 			},
 			{
-				before: "    routingInfo?: Buffer | undefined;\n",
+				id: "noise.types-auth-cert.v1",
+				before: "    routingInfo?: Buffer | undefined;\n" + "}) => {\n",
 				after:
 					"    routingInfo?: Buffer | undefined;\n" +
 					"    authCert?: {\n" +
 					"        SERIAL: number;\n" +
 					"        ISSUER: string;\n" +
 					"        PUBLIC_KEY: Uint8Array;\n" +
-					"    };\n",
+					"    };\n" +
+					"}) => {\n",
 			},
 		],
 	},
@@ -238,16 +269,10 @@ export function reconcileManagedBaileysCompatibility(input: {
 		home: input.home,
 		appRoot: input.appRoot,
 	});
-	const observedVersion = verifyArtifactIdentity(artifact);
+	const packageIdentity = verifyArtifactIdentity(artifact);
+	const observedVersion = packageIdentity.version;
 	const targetStates = artifact.targets.map((target) => classifyTarget(artifact, target));
-	const unknown = targetStates.filter((state) => state.state === "unknown");
-	if (unknown.length > 0) {
-		throw new Error(
-			`managed WhatsApp compatibility patch refused drifted ${artifact.runtime} artifacts: ${unknown
-				.map((state) => `${state.path} (${state.sha256})`)
-				.join(", ")}`,
-		);
-	}
+	assertRecognizedTargets(artifact, targetStates);
 
 	let existingReceipt = readReceipt(receiptPath);
 	if (existingReceipt && !receiptLayoutMatches(existingReceipt.artifact, artifact)) {
@@ -260,16 +285,52 @@ export function reconcileManagedBaileysCompatibility(input: {
 		existingReceipt = null;
 	}
 
-	const receipt = buildReceipt(artifact, observedVersion);
-	const receiptMatches = existingReceipt ? receiptsEqual(existingReceipt, receipt) : false;
-	const requiresPatch = targetStates.some((state) => state.state === "preimage");
-	if (requiresPatch || !receiptMatches) writeReceiptDurable(receiptPath, receipt);
-	if (requiresPatch) applyArtifactTargets(artifact, targetStates);
+	const allHunks = targetStates.flatMap((target) => target.hunks);
+	if (!existingReceipt) {
+		if (allHunks.every((hunk) => hunk.state === "after")) {
+			if (artifact.runtime === "hermes") {
+				writeHermesDependencyStamp(assertHermesBridgeRoot(artifact));
+			}
+			return { status: "compatible", receiptPath };
+		}
+		if (!allHunks.every((hunk) => hunk.state === "before")) {
+			throw new Error(
+				`managed WhatsApp compatibility refused mixed before/after hunks without an ownership receipt for ${artifact.runtime}`,
+			);
+		}
+	}
+
+	const versionChanged = existingReceipt
+		? existingReceipt.artifact.baileys.observedVersion !== observedVersion
+		: false;
+	const beforeHunks = allHunks.filter((hunk) => hunk.state === "before");
+	if (existingReceipt && versionChanged && beforeHunks.length === 0) {
+		removeReceiptDurable(receiptPath);
+		if (artifact.runtime === "hermes") {
+			writeHermesDependencyStamp(assertHermesBridgeRoot(artifact));
+		}
+		return { status: "compatible", receiptPath };
+	}
+	if (existingReceipt && beforeHunks.length === 0) {
+		if (artifact.runtime === "hermes") {
+			writeHermesDependencyStamp(assertHermesBridgeRoot(artifact));
+		}
+		return { status: "already-patched", receiptPath };
+	}
+
+	const ownedHunks = ownedHunksForApply(targetStates, existingReceipt, versionChanged);
+	const plans = targetStates.map((state) =>
+		planTargetHunkMutation(
+			state,
+			new Set(state.hunks.filter((hunk) => hunk.state === "before").map((hunk) => hunk.hunk.id)),
+			"after",
+		),
+	);
+	const receipt = buildReceipt(artifact, observedVersion, plans, ownedHunks);
+	writeReceiptDurable(receiptPath, receipt);
+	applyTargetPlans(plans, [{ path: packageIdentity.path, expectedSha256: packageIdentity.sha256 }]);
 	if (artifact.runtime === "hermes") writeHermesDependencyStamp(assertHermesBridgeRoot(artifact));
-	return {
-		status: requiresPatch ? "applied" : receiptMatches ? "already-patched" : "receipt-recovered",
-		receiptPath,
-	};
+	return { status: "applied", receiptPath };
 }
 
 function rollbackManagedBaileysCompatibility(
@@ -283,47 +344,45 @@ function rollbackManagedBaileysCompatibility(
 	if (!receiptLayoutMatches(receipt.artifact, artifact)) {
 		errors.push("managed WhatsApp compatibility receipt does not match the audited artifact");
 	} else if (directoryEntryExists(artifact.root)) {
+		let packageIdentity: VerifiedPackageIdentity | null = null;
 		try {
-			verifyArtifactIdentity(artifact);
+			packageIdentity = verifyArtifactIdentity(artifact);
 		} catch (error) {
 			errors.push(String(error));
 		}
-		const rollbackEntries: Array<{ path: string; expectedSha256: string; content: string }> = [];
-		const auditedStates: Array<{ path: string; expectedSha256: string }> = [];
+		const targetStates: ClassifiedTarget[] = [];
 		if (errors.length === 0) {
 			for (const target of artifact.targets) {
 				try {
-					const state = classifyTarget(artifact, target);
-					auditedStates.push({ path: state.path, expectedSha256: state.sha256 });
-					if (state.state === "preimage") continue;
-					if (state.state === "unknown") {
-						errors.push(`${state.path} has unknown hash ${state.sha256}`);
-						continue;
-					}
-					const pristine = applyReplacements(
-						readFileSync(state.path, "utf8"),
-						target.replacements,
-						true,
-					);
-					if (sha256String(pristine) !== target.preimageSha256) {
-						errors.push(`${state.path} inverse patch did not reproduce the audited preimage`);
-						continue;
-					}
-					rollbackEntries.push({
-						path: state.path,
-						expectedSha256: state.sha256,
-						content: pristine,
-					});
+					targetStates.push(classifyTarget(artifact, target));
 				} catch (error) {
 					errors.push(String(error));
 				}
 			}
 		}
+		if (errors.length === 0) {
+			try {
+				assertRecognizedTargets(artifact, targetStates);
+			} catch (error) {
+				errors.push(String(error));
+			}
+		}
 		if (errors.length > 0) return { status: "rollback-refused", receiptPath, errors };
-		replaceTargetContents(rollbackEntries, auditedStates);
+		if (packageIdentity?.version === receipt.artifact.baileys.observedVersion) {
+			const receiptTargets = new Map(
+				receipt.artifact.targets.map((target) => [target.relativePath, target]),
+			);
+			const plans = targetStates.map((state) => {
+				const receiptTarget = receiptTargets.get(state.target.relativePath);
+				if (!receiptTarget) throw new Error("managed WhatsApp receipt target is missing");
+				return planTargetHunkMutation(state, new Set(receiptTarget.ownedHunkIds), "before");
+			});
+			applyTargetPlans(plans, [
+				{ path: packageIdentity.path, expectedSha256: packageIdentity.sha256 },
+			]);
+		}
 	}
-	rmSync(receiptPath, { force: true });
-	fsyncDirectory(dirname(receiptPath));
+	removeReceiptDurable(receiptPath);
 	return { status: "rolled-back", receiptPath };
 }
 
@@ -425,13 +484,14 @@ function assertHermesBridgeRoot(artifact: ManagedBaileysArtifact): string {
 	return artifact.hermesBridgeRoot;
 }
 
-function verifyArtifactIdentity(artifact: ManagedBaileysArtifact): string {
+function verifyArtifactIdentity(artifact: ManagedBaileysArtifact): VerifiedPackageIdentity {
 	assertTrustedRealDirectory(artifact.root);
 	const packagePath = join(artifact.root, "package.json");
 	assertTrustedRealFile(artifact.root, packagePath);
+	const packageContent = readFileSync(packagePath, "utf8");
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(readFileSync(packagePath, "utf8"));
+		parsed = JSON.parse(packageContent);
 	} catch (error) {
 		throw new Error(
 			`managed WhatsApp compatibility could not read ${packagePath}: ${String(error)}`,
@@ -450,69 +510,199 @@ function verifyArtifactIdentity(artifact: ManagedBaileysArtifact): string {
 			`managed WhatsApp compatibility requires valid Baileys SemVer major 7; found ${String(version)}`,
 		);
 	}
-	return version;
+	return { version, path: packagePath, sha256: sha256String(packageContent) };
 }
 
-function classifyTarget(artifact: ManagedBaileysArtifact, target: StaticPatchTarget) {
+type HunkState = "before" | "after" | "unknown";
+
+interface ClassifiedHunk {
+	hunk: StrictContextHunk;
+	state: HunkState;
+	beforeMatches: number[];
+	afterMatches: number[];
+}
+
+interface ClassifiedTarget {
+	target: StaticPatchTarget;
+	path: string;
+	content: string;
+	sha256: string;
+	hunks: ClassifiedHunk[];
+}
+
+interface TargetMutationPlan {
+	state: ClassifiedTarget;
+	content: string;
+	observedBeforeSha256: string;
+	observedAfterSha256: string;
+}
+
+function classifyTarget(
+	artifact: ManagedBaileysArtifact,
+	target: StaticPatchTarget,
+): ClassifiedTarget {
 	const path = join(artifact.root, target.relativePath);
 	if (!existsSync(path)) {
 		throw new Error(`managed WhatsApp compatibility artifact is missing ${path}`);
 	}
 	assertTrustedRealFile(artifact.root, path);
-	const sha256 = sha256File(path);
+	const content = readFileSync(path, "utf8");
 	return {
-		path,
-		sha256,
-		state:
-			sha256 === target.preimageSha256
-				? ("preimage" as const)
-				: sha256 === target.postimageSha256
-					? ("postimage" as const)
-					: ("unknown" as const),
 		target,
+		path,
+		content,
+		sha256: sha256String(content),
+		hunks: target.hunks.map((hunk) => classifyHunk(content, hunk)),
 	};
 }
 
-function applyArtifactTargets(
+function classifyHunk(content: string, hunk: StrictContextHunk): ClassifiedHunk {
+	const beforeMatches = exactMatchOffsets(content, hunk.before);
+	const afterMatches = exactMatchOffsets(content, hunk.after);
+	return {
+		hunk,
+		beforeMatches,
+		afterMatches,
+		state:
+			beforeMatches.length === 1 && afterMatches.length === 0
+				? "before"
+				: beforeMatches.length === 0 && afterMatches.length === 1
+					? "after"
+					: "unknown",
+	};
+}
+
+function exactMatchOffsets(content: string, needle: string): number[] {
+	const offsets: number[] = [];
+	let offset = 0;
+	while (offset <= content.length - needle.length) {
+		const match = content.indexOf(needle, offset);
+		if (match < 0) break;
+		offsets.push(match);
+		offset = match + 1;
+	}
+	return offsets;
+}
+
+function assertRecognizedTargets(
 	artifact: ManagedBaileysArtifact,
-	states: ReturnType<typeof classifyTarget>[],
+	states: ClassifiedTarget[],
 ): void {
-	const replacements = states.flatMap((state) => {
-		if (state.state !== "preimage") return [];
-		const content = applyReplacements(readFileSync(state.path, "utf8"), state.target.replacements);
-		if (sha256String(content) !== state.target.postimageSha256) {
-			throw new Error(`static managed WhatsApp patch postimage mismatch for ${state.path}`);
-		}
-		return [{ path: state.path, expectedSha256: state.sha256, content }];
-	});
-	replaceTargetContents(
-		replacements,
-		states.map((state) => ({ path: state.path, expectedSha256: state.sha256 })),
+	const unknown = states.flatMap((target) =>
+		target.hunks.flatMap((hunk) =>
+			hunk.state === "unknown"
+				? [
+						`${target.path}#${hunk.hunk.id} (before=${hunk.beforeMatches.length}, after=${hunk.afterMatches.length})`,
+					]
+				: [],
+		),
 	);
-	for (const target of artifact.targets) {
-		const path = join(artifact.root, target.relativePath);
-		if (sha256File(path) !== target.postimageSha256) {
-			throw new Error(`managed WhatsApp compatibility verification failed for ${path}`);
-		}
+	if (unknown.length > 0) {
+		throw new Error(
+			`managed WhatsApp compatibility patch refused non-unique or changed ${artifact.runtime} hunks: ${unknown.join(", ")}`,
+		);
 	}
 }
 
-function applyReplacements(
-	source: string,
-	replacements: readonly StrictReplacement[],
-	inverse = false,
-): string {
-	let output = source;
-	for (const replacement of inverse ? [...replacements].reverse() : replacements) {
-		const before = inverse ? replacement.after : replacement.before;
-		const after = inverse ? replacement.before : replacement.after;
-		const first = output.indexOf(before);
-		if (first < 0 || output.indexOf(before, first + before.length) >= 0) {
-			throw new Error("static managed WhatsApp patch requires exactly one audited match");
-		}
-		output = `${output.slice(0, first)}${after}${output.slice(first + before.length)}`;
+function ownedHunksForApply(
+	states: ClassifiedTarget[],
+	existingReceipt: ManagedBaileysPatchReceipt | null,
+	versionChanged: boolean,
+): Map<string, Set<string>> {
+	const receiptTargets = new Map(
+		(existingReceipt?.artifact.targets ?? []).map((target) => [target.relativePath, target]),
+	);
+	return new Map(
+		states.map((state) => {
+			const owned = new Set<string>();
+			if (!versionChanged) {
+				for (const id of receiptTargets.get(state.target.relativePath)?.ownedHunkIds ?? []) {
+					owned.add(id);
+				}
+			}
+			for (const hunk of state.hunks) {
+				if (hunk.state === "before") owned.add(hunk.hunk.id);
+			}
+			return [state.target.relativePath, owned];
+		}),
+	);
+}
+
+function planTargetHunkMutation(
+	state: ClassifiedTarget,
+	selectedHunkIds: ReadonlySet<string>,
+	desired: Exclude<HunkState, "unknown">,
+): TargetMutationPlan {
+	const knownIds = new Set(state.hunks.map((hunk) => hunk.hunk.id));
+	for (const id of selectedHunkIds) {
+		if (!knownIds.has(id)) throw new Error(`managed WhatsApp patch references unknown hunk ${id}`);
 	}
-	return output;
+	const edits = state.hunks.flatMap((hunk) => {
+		if (!selectedHunkIds.has(hunk.hunk.id) || hunk.state === desired) return [];
+		if (hunk.state === "unknown") {
+			throw new Error(`managed WhatsApp patch cannot mutate unknown hunk ${hunk.hunk.id}`);
+		}
+		const source = hunk.state === "before" ? hunk.hunk.before : hunk.hunk.after;
+		const replacement = desired === "after" ? hunk.hunk.after : hunk.hunk.before;
+		const offsets = hunk.state === "before" ? hunk.beforeMatches : hunk.afterMatches;
+		const offset = offsets[0];
+		if (offset === undefined) throw new Error(`managed WhatsApp hunk ${hunk.hunk.id} is missing`);
+		return [{ id: hunk.hunk.id, offset, source, replacement }];
+	});
+	const ordered = [...edits].sort((left, right) => left.offset - right.offset);
+	for (let index = 1; index < ordered.length; index += 1) {
+		const previous = ordered[index - 1];
+		const current = ordered[index];
+		if (previous && current && previous.offset + previous.source.length > current.offset) {
+			throw new Error(`managed WhatsApp patch hunks overlap: ${previous.id} and ${current.id}`);
+		}
+	}
+	let content = state.content;
+	for (const edit of ordered.reverse()) {
+		content = `${content.slice(0, edit.offset)}${edit.replacement}${content.slice(edit.offset + edit.source.length)}`;
+	}
+	for (const hunk of state.hunks) {
+		const result = classifyHunk(content, hunk.hunk);
+		const expected = selectedHunkIds.has(hunk.hunk.id) ? desired : hunk.state;
+		if (result.state !== expected) {
+			throw new Error(`managed WhatsApp hunk mutation verification failed for ${hunk.hunk.id}`);
+		}
+	}
+	return {
+		state,
+		content,
+		observedBeforeSha256: state.sha256,
+		observedAfterSha256: sha256String(content),
+	};
+}
+
+function applyTargetPlans(
+	plans: TargetMutationPlan[],
+	additionalAuditedStates: readonly { path: string; expectedSha256: string }[] = [],
+): void {
+	const entries = plans.flatMap((plan) =>
+		plan.content === plan.state.content
+			? []
+			: [
+					{
+						path: plan.state.path,
+						expectedSha256: plan.observedBeforeSha256,
+						content: plan.content,
+					},
+				],
+	);
+	replaceTargetContents(entries, [
+		...additionalAuditedStates,
+		...plans.map((plan) => ({
+			path: plan.state.path,
+			expectedSha256: plan.observedBeforeSha256,
+		})),
+	]);
+	for (const plan of plans) {
+		if (sha256File(plan.state.path) !== plan.observedAfterSha256) {
+			throw new Error(`managed WhatsApp compatibility verification failed for ${plan.state.path}`);
+		}
+	}
 }
 
 function stageReplacement(path: string, content: string): string {
@@ -618,7 +808,10 @@ function assertTrustedRealFile(root: string, path: string): void {
 function buildReceipt(
 	artifact: ManagedBaileysArtifact,
 	observedVersion: string,
+	plans: TargetMutationPlan[],
+	ownedHunks: ReadonlyMap<string, ReadonlySet<string>>,
 ): ManagedBaileysPatchReceipt {
+	const planByPath = new Map(plans.map((plan) => [plan.state.target.relativePath, plan]));
 	return {
 		schemaVersion: RECEIPT_SCHEMA,
 		patchRevision: MANAGED_BAILEYS_PATCH_REVISION,
@@ -630,11 +823,17 @@ function buildReceipt(
 				observedVersion,
 				compatibleMajor: BAILEYS_COMPATIBLE_MAJOR,
 			},
-			targets: artifact.targets.map(({ relativePath, preimageSha256, postimageSha256 }) => ({
-				relativePath,
-				preimageSha256,
-				postimageSha256,
-			})),
+			targets: artifact.targets.map((target) => {
+				const plan = planByPath.get(target.relativePath);
+				if (!plan) throw new Error(`managed WhatsApp patch plan is missing ${target.relativePath}`);
+				const owned = ownedHunks.get(target.relativePath) ?? new Set<string>();
+				return {
+					relativePath: target.relativePath,
+					observedBeforeSha256: plan.observedBeforeSha256,
+					observedAfterSha256: plan.observedAfterSha256,
+					ownedHunkIds: target.hunks.map((hunk) => hunk.id).filter((id) => owned.has(id)),
+				};
+			}),
 		},
 	};
 }
@@ -652,57 +851,106 @@ function receiptLayoutMatches(
 	) {
 		return false;
 	}
-	const targets = artifact.targets.map(({ relativePath, preimageSha256, postimageSha256 }) => ({
-		relativePath,
-		preimageSha256,
-		postimageSha256,
-	}));
-	return JSON.stringify(receipt.targets) === JSON.stringify(targets);
-}
-
-function receiptsEqual(
-	left: ManagedBaileysPatchReceipt,
-	right: ManagedBaileysPatchReceipt,
-): boolean {
-	return JSON.stringify(left) === JSON.stringify(right);
+	if (receipt.targets.length !== artifact.targets.length) return false;
+	return receipt.targets.every((target, index) => {
+		const expected = artifact.targets[index];
+		if (!expected || target.relativePath !== expected.relativePath) return false;
+		const knownHunks = new Set(expected.hunks.map((hunk) => hunk.id));
+		return target.ownedHunkIds.every((id) => knownHunks.has(id));
+	});
 }
 
 function readReceipt(path: string): ManagedBaileysPatchReceipt | null {
 	if (!existsSync(path)) return null;
 	try {
+		if (!lstatSync(path).isFile() || realpathSync(path) !== resolve(path)) {
+			throw new Error("receipt must be a real file");
+		}
 		const value = JSON.parse(readFileSync(path, "utf8")) as unknown;
+		const record = recordValue(value);
+		if (!record || !hasExactKeys(record, ["artifact", "patchRevision", "schemaVersion"])) {
+			throw new Error("receipt root is invalid");
+		}
 		if (
-			!value ||
-			typeof value !== "object" ||
-			Array.isArray(value) ||
-			Reflect.get(value, "schemaVersion") !== RECEIPT_SCHEMA ||
-			Reflect.get(value, "patchRevision") !== MANAGED_BAILEYS_PATCH_REVISION
+			record.schemaVersion !== RECEIPT_SCHEMA ||
+			record.patchRevision !== MANAGED_BAILEYS_PATCH_REVISION
 		) {
 			throw new Error("unknown receipt schema or patch revision");
 		}
-		const receipt = value as ManagedBaileysPatchReceipt;
-		const artifact = receipt.artifact;
+		const artifact = recordValue(record.artifact);
+		const baileys = recordValue(artifact?.baileys);
+		const targets = artifact?.targets;
 		if (
 			!artifact ||
+			!hasExactKeys(artifact, ["artifactRoot", "baileys", "runtime", "targets"]) ||
 			(artifact.runtime !== "openclaw" && artifact.runtime !== "hermes") ||
 			typeof artifact.artifactRoot !== "string" ||
-			typeof artifact.baileys?.name !== "string" ||
-			typeof artifact.baileys.observedVersion !== "string" ||
-			artifact.baileys.compatibleMajor !== BAILEYS_COMPATIBLE_MAJOR ||
-			!Array.isArray(artifact.targets) ||
-			artifact.targets.some(
-				(target) =>
-					typeof target.relativePath !== "string" ||
-					typeof target.preimageSha256 !== "string" ||
-					typeof target.postimageSha256 !== "string",
-			)
+			!baileys ||
+			!hasExactKeys(baileys, ["compatibleMajor", "name", "observedVersion"]) ||
+			typeof baileys.name !== "string" ||
+			typeof baileys.observedVersion !== "string" ||
+			!isValidSemver(baileys.observedVersion) ||
+			!baileys.observedVersion.startsWith("7.") ||
+			baileys.compatibleMajor !== BAILEYS_COMPATIBLE_MAJOR ||
+			!Array.isArray(targets) ||
+			targets.length === 0
 		) {
 			throw new Error("receipt artifact set is invalid");
 		}
-		return receipt;
+		let ownsAnyHunk = false;
+		const relativePaths = new Set<string>();
+		for (const targetValue of targets) {
+			const target = recordValue(targetValue);
+			if (
+				!target ||
+				!hasExactKeys(target, [
+					"observedAfterSha256",
+					"observedBeforeSha256",
+					"ownedHunkIds",
+					"relativePath",
+				]) ||
+				typeof target.relativePath !== "string" ||
+				relativePaths.has(target.relativePath) ||
+				!isSha256(target.observedBeforeSha256) ||
+				!isSha256(target.observedAfterSha256) ||
+				!Array.isArray(target.ownedHunkIds)
+			) {
+				throw new Error("receipt target is invalid");
+			}
+			relativePaths.add(target.relativePath);
+			const hunkIds = new Set<string>();
+			for (const hunkId of target.ownedHunkIds) {
+				if (typeof hunkId !== "string" || !hunkId || hunkIds.has(hunkId)) {
+					throw new Error("receipt owned hunk id is invalid");
+				}
+				hunkIds.add(hunkId);
+				ownsAnyHunk = true;
+			}
+		}
+		if (!ownsAnyHunk) throw new Error("receipt owns no compatibility hunks");
+		return value as ManagedBaileysPatchReceipt;
 	} catch (error) {
 		throw new Error(`managed WhatsApp compatibility receipt is invalid: ${String(error)}`);
 	}
+}
+
+function removeReceiptDurable(path: string): void {
+	rmSync(path, { force: true });
+	fsyncDirectory(dirname(path));
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+	return value && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+	return Object.keys(value).sort().join("\0") === [...keys].sort().join("\0");
+}
+
+function isSha256(value: unknown): value is string {
+	return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 }
 
 function directoryEntryExists(path: string): boolean {

@@ -336,12 +336,14 @@ The Baileys aliases receive the dedicated WebSocket-only header and `authCert`
 seams through the CLI-owned static compatibility reconciler. OpenClaw and
 Hermes source remains stock: both already persist the full Baileys auth state,
 including `additionalData`, on initial construction and reconnect. The
-reconciler accepts only rigorously parsed SemVer major 7 packages whose three
-targets match exact audited preimages or postimages, and remains inert without
-a projected managed Link. The aggregate upstream gate is still false because
-OpenClaw and Hermes native-plugin E2E and the live-account drill are not
-complete; runtime convergence therefore currently installs neither WhatsApp
-auth state nor a WhatsApp egress profile.
+reconciler accepts only rigorously parsed SemVer major 7 packages whose audited
+before/after context hunks each match uniquely and exactly with fuzz zero.
+Unrelated bytes outside those hunks are allowed, while missing, duplicated,
+mixed-without-ownership, or changed hunk semantics fail closed. It remains
+inert without a projected managed Link. The aggregate upstream gate is still
+false because OpenClaw and Hermes native-plugin E2E and the live-account drill
+are not complete; runtime convergence therefore currently installs neither
+WhatsApp auth state nor a WhatsApp egress profile.
 
 ## CLI Commands
 
