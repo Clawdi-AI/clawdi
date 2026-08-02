@@ -511,6 +511,7 @@ type DashboardApiStubOptions = {
 	connectorCatalogGate?: Promise<void>;
 	connectorCatalogResponse?: { body: unknown; status: number };
 	connectorMetadataRequests?: string[];
+	connectorMetadataGate?: Promise<void>;
 	projectBindingRequests?: string[];
 	projectRequests?: string[];
 	projectBindings?: readonly unknown[];
@@ -628,6 +629,7 @@ async function stubDashboardApi(
 		const connectorAppMatch = url.pathname.match(/^\/v1\/connectors\/available\/([^/]+)$/);
 		if (connectorAppMatch) {
 			options.connectorMetadataRequests?.push(route.request().url());
+			await options.connectorMetadataGate;
 			const app = options.connectorCatalog?.find(
 				(item) => item.name === decodeURIComponent(connectorAppMatch[1]),
 			);
@@ -935,11 +937,16 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	const connectors = overview.locator('[data-overview-module="connectors"]');
 	await expect(connectors).toContainText("2 connected");
 	const connectorLinks = connectors.getByTestId("overview-connector-rail").getByRole("link");
-	await expect(connectorLinks).toHaveCount(5);
+	await expect(connectorLinks).toHaveCount(2);
 	await expect(connectorLinks.nth(0)).toHaveAccessibleName("Connected app: Github");
 	await expect(connectorLinks.nth(1)).toHaveAccessibleName("Connected app: Slack");
-	await expect(connectorLinks.nth(2)).toHaveAccessibleName("Suggested app: Gmail");
-	await expect(connectors.getByRole("link", { name: "Suggested app: Github" })).toHaveCount(0);
+	await expect(connectors.getByRole("link", { name: /Gmail/ })).toHaveCount(0);
+	await expect(connectorLinks.locator("svg")).toHaveCount(0);
+	for (const link of await connectorLinks.all()) {
+		const box = await link.locator("div").boundingBox();
+		expect(box?.width).toBe(24);
+		expect(box?.height).toBe(24);
+	}
 	const sidebar = page.getByTestId("app-sidebar");
 	await expect(sidebar.getByText("Paused", { exact: true })).toBeVisible();
 	await expect(sidebar.getByText(/last seen/i)).toBeVisible();
@@ -968,8 +975,8 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		Math.max(...resourceGeometry.map((box) => box.height)) -
 			Math.min(...resourceGeometry.map((box) => box.height)),
 	).toBeLessThanOrEqual(2);
-	expect(new Set(resourceGeometry.map((box) => Math.round(box.height)))).toEqual(new Set([128]));
-	expect(Math.max(...resourceGeometry.map((box) => box.height))).toBeLessThan(144);
+	expect(new Set(resourceGeometry.map((box) => Math.round(box.height)))).toEqual(new Set([112]));
+	expect(Math.max(...resourceGeometry.map((box) => box.height))).toBeLessThan(128);
 	expect(
 		await resourceGrid
 			.locator("[data-overview-module]")
@@ -1169,10 +1176,15 @@ test("connected Overview keeps a three-row accessible session slot for zero thro
 	expect(Math.max(...measurements) - Math.min(...measurements)).toBeLessThanOrEqual(2);
 });
 
-test("connected Overview resolves connector metadata from catalog before fan-out", async ({
+test("connected Overview limits detail metadata without requesting the popular catalog", async ({
 	page,
 }) => {
 	const connectorMetadataRequests: string[] = [];
+	const catalogRequests: string[] = [];
+	page.on("request", (request) => {
+		if (new URL(request.url()).pathname === "/v1/connectors/available")
+			catalogRequests.push(request.url());
+	});
 	const catalogApp = (name: string) => ({
 		name,
 		display_name: name,
@@ -1187,19 +1199,31 @@ test("connected Overview resolves connector metadata from catalog before fan-out
 		connectorConnections: [
 			{ id: "conn-github", app_name: "github", status: "ACTIVE" },
 			{ id: "conn-slack", app_name: "slack", status: "ACTIVE" },
+			{ id: "conn-gmail", app_name: "gmail", status: "ACTIVE" },
+			{ id: "conn-notion", app_name: "notion", status: "ACTIVE" },
+			{ id: "conn-linear", app_name: "linear", status: "ACTIVE" },
+			{ id: "conn-github-duplicate", app_name: "github", status: "ACTIVE" },
 		],
-		connectorCatalog: [catalogApp("github"), catalogApp("gmail")],
+		connectorCatalog: ["github", "slack", "gmail", "notion", "linear"].map(catalogApp),
 	});
 
 	await page.goto("/agents/agent-smoke-1");
-	await expect(page.locator('[data-overview-module="connectors"]')).toContainText("2 connected");
-	await expect.poll(() => connectorMetadataRequests.length).toBe(1);
-	expect(new URL(connectorMetadataRequests[0] ?? "http://invalid").pathname).toBe(
+	const card = page.locator('[data-overview-module="connectors"]');
+	await expect(card).toContainText("5 connected");
+	await expect(card.getByTestId("overview-connector-rail").getByRole("link")).toHaveCount(4);
+	await expect.poll(() => connectorMetadataRequests.length).toBe(4);
+	expect(connectorMetadataRequests.map((request) => new URL(request).pathname)).toEqual([
+		"/v1/connectors/available/github",
 		"/v1/connectors/available/slack",
-	);
+		"/v1/connectors/available/gmail",
+		"/v1/connectors/available/notion",
+	]);
+	expect(catalogRequests).toEqual([]);
 });
 
-test("connected overview keeps connector and catalog states independent", async ({ page }) => {
+test("connected overview does not render an empty rail while connections load", async ({
+	page,
+}) => {
 	await stubDashboardApi(page, [], {
 		connectorConnectionsGate: new Promise<void>(() => {}),
 		connectorCatalog: [
@@ -1217,7 +1241,8 @@ test("connected overview keeps connector and catalog states independent", async 
 	await page.goto("/agents/agent-smoke-1");
 	const card = page.locator('[data-overview-module="connectors"]');
 	await expect(card.getByLabel("Loading connected apps")).toBeVisible();
-	await expect(card.getByRole("link", { name: "Available app: Gmail" })).toBeVisible();
+	await expect(card.getByRole("link")).toHaveCount(1);
+	await expect(card.getByTestId("overview-connector-rail").getByRole("link")).toHaveCount(0);
 	await expect(card).not.toContainText("No apps connected");
 });
 
@@ -1234,10 +1259,10 @@ test("connected overview reports connector errors without a false empty state", 
 	await expect(card).not.toContainText("No apps connected");
 });
 
-test("connected overview preserves active count while popular apps load", async ({ page }) => {
+test("connected overview preserves active count while icon metadata loads", async ({ page }) => {
 	await stubDashboardApi(page, [], {
 		connectorConnections: [{ id: "conn-github", app_name: "github", status: "ACTIVE" }],
-		connectorCatalogGate: new Promise<void>(() => {}),
+		connectorMetadataGate: new Promise<void>(() => {}),
 		connectorCatalog: [
 			{
 				name: "github",

@@ -6,6 +6,7 @@ import { RefreshCw } from "lucide-react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import {
 	type AgentOverviewModuleContent,
+	OVERVIEW_IDENTITY_RAIL_LIMIT,
 	OverviewDescriptionSkeleton,
 	OverviewIdentityIconItem,
 	OverviewIdentityIconRail,
@@ -17,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAgentProjectVaults } from "@/components/vault/agent-vaults-query";
 import { unwrap, useApi } from "@/lib/api";
-import { useAvailableApps, useConnectedAppCards } from "@/lib/connectors-data";
+import { useConnectedAppCards } from "@/lib/connectors-data";
 
 type SummaryState = {
 	isLoading: boolean;
@@ -157,39 +158,24 @@ export function useOverviewConnectorsModule({
 }: {
 	enabled?: boolean;
 } = {}): AgentOverviewModuleContent {
-	const catalog = useAvailableApps({ page: 1, pageSize: 8, enabled });
-	const connected = useConnectedAppCards(
-		{
-			apps: catalog.data?.items,
-			isLoading: catalog.isLoading,
-			error: catalog.error,
-		},
-		{ enabled },
-	);
+	const connected = useConnectedAppCards(undefined, {
+		enabled,
+		limit: OVERVIEW_IDENTITY_RAIL_LIMIT,
+	});
 	const connectedNames = new Set(
 		connected.activeConnections.flatMap((connection) =>
 			connection.app_name ? [connection.app_name] : [],
 		),
 	);
 	const connectedAppCount = connectedNames.size;
-	const connectedApps = connected.data.slice(0, 5).map((app) => ({ app, connected: true }));
-	const connectionsResolved = !connected.connectionsLoading && !connected.connectionsError;
-	const popularApps = (catalog.data?.items ?? [])
-		.filter((app) => !connectedNames.has(app.name))
-		.slice(0, Math.max(0, 5 - connectedApps.length))
-		.map((app) => ({ app, state: connectionsResolved ? "suggested" : "available" }) as const);
-	const apps = [
-		...connectedApps.map(({ app }) => ({ app, state: "connected" }) as const),
-		...popularApps,
-	];
+	const apps = connected.data;
 	const connectionsUnavailable = Boolean(connected.connectionsError);
-	const catalogUnavailable = Boolean(catalog.error);
-	const allUnavailable = connectionsUnavailable && catalogUnavailable && apps.length === 0;
+	const allUnavailable = connectionsUnavailable && apps.length === 0;
 	const loadingSlots = Math.max(
 		0,
 		Math.min(
-			5 - apps.length,
-			connected.connectionsLoading || connected.metadataLoading || catalog.isLoading ? 3 : 0,
+			OVERVIEW_IDENTITY_RAIL_LIMIT - apps.length,
+			connected.connectionsLoading || connected.metadataLoading ? 3 : 0,
 		),
 	);
 	const description = connected.connectionsLoading ? (
@@ -201,16 +187,17 @@ export function useOverviewConnectorsModule({
 	) : (
 		"No apps connected"
 	);
+	const hasBody =
+		allUnavailable || apps.length > 0 || loadingSlots > 0 || Boolean(connected.metadataError);
 	return {
 		description,
-		body: (
+		body: hasBody ? (
 			<div className="space-y-3">
 				{allUnavailable ? (
 					<OverviewModuleError
 						label="Apps"
 						onRetry={() => {
 							connected.refetch();
-							void catalog.refetch();
 						}}
 					/>
 				) : apps.length || loadingSlots ? (
@@ -226,14 +213,8 @@ export function useOverviewConnectorsModule({
 						onRetry={connected.refetch}
 					/>
 				) : null}
-				{!allUnavailable && catalogUnavailable ? (
-					<ConnectorRetry
-						label="Can’t load suggested apps"
-						onRetry={() => void catalog.refetch()}
-					/>
-				) : null}
 			</div>
-		),
+		) : undefined,
 	};
 }
 
@@ -253,21 +234,18 @@ function ConnectorRail({
 	apps,
 	loadingSlots,
 }: {
-	apps: readonly {
-		app: { name: string; display_name: string; logo: string };
-		state: "connected" | "suggested" | "available";
-	}[];
+	apps: readonly { name: string; display_name: string; logo: string }[];
 	loadingSlots: number;
 }) {
 	return (
 		<OverviewIdentityIconRail label="Connector apps" testId="overview-connector-rail">
-			{apps.map(({ app, state }) => (
-				<OverviewIdentityIconItem key={app.name} connected={state === "connected"}>
+			{apps.map((app) => (
+				<OverviewIdentityIconItem key={app.name}>
 					<Link
 						to="/connectors/$name"
 						params={{ name: app.name }}
-						aria-label={`${state[0]?.toUpperCase()}${state.slice(1)} app: ${app.display_name}`}
-						title={`${app.display_name}${state === "connected" ? " (connected)" : ""}`}
+						aria-label={`Connected app: ${app.display_name}`}
+						title={`${app.display_name} (connected)`}
 						className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 					>
 						<ConnectorIcon name={app.display_name} logo={app.logo} size="sm" />
@@ -276,7 +254,7 @@ function ConnectorRail({
 			))}
 			{Array.from({ length: loadingSlots }).map((_, index) => (
 				<li key={index}>
-					<Skeleton className="size-9 rounded-lg" aria-label="Loading app" />
+					<Skeleton className="size-6 rounded-md" aria-label="Loading app" />
 				</li>
 			))}
 		</OverviewIdentityIconRail>

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { type ConnectorAvailableApp, resolveConnectedAppMetadataPlan } from "./connectors-data";
+import {
+	type ConnectorAvailableApp,
+	limitConnectedAppMetadataNames,
+	resolveConnectedAppMetadataPlan,
+} from "./connectors-data";
 
 function catalogApp(name: string): ConnectorAvailableApp {
 	return {
@@ -14,6 +18,19 @@ function catalogApp(name: string): ConnectorAvailableApp {
 }
 
 describe("connected app metadata planning", () => {
+	it("limits Overview metadata lookups without changing the full stable app order", () => {
+		const names = ["github", "slack", "gmail", "notion", "linear"];
+
+		expect(limitConnectedAppMetadataNames(names, 4)).toEqual([
+			"github",
+			"slack",
+			"gmail",
+			"notion",
+		]);
+		expect(limitConnectedAppMetadataNames(names)).toBe(names);
+		expect(limitConnectedAppMetadataNames(names, 0)).toEqual([]);
+	});
+
 	it("uses catalog metadata and only requests active apps missing from the catalog", () => {
 		const github = catalogApp("github");
 		const plan = resolveConnectedAppMetadataPlan(["github", "slack"], {

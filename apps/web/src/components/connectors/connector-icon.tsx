@@ -4,7 +4,7 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 
 const SIZES = {
-	sm: { box: "size-9", pad: "p-1", text: "text-sm", radius: "rounded-lg" },
+	sm: { box: "size-6", pad: "p-0.5", text: "text-xs", radius: "rounded-md" },
 	md: { box: "size-10", pad: "p-1.5", text: "text-base", radius: "rounded-lg" },
 	lg: { box: "size-14", pad: "p-2", text: "text-2xl", radius: "rounded-xl" },
 } as const;

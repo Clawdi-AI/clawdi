@@ -35,6 +35,7 @@ import { agentDisplayName } from "@/components/dashboard/agent-label";
 import {
 	AgentOverviewCapabilities,
 	AgentOverviewStatusCard,
+	OVERVIEW_IDENTITY_RAIL_LIMIT,
 	OverviewDescriptionSkeleton,
 	OverviewIdentityIconItem,
 	OverviewIdentityIconRail,
@@ -1165,8 +1166,12 @@ function OverviewTab({
 	);
 	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
 	const linkedChannelCount = channelLinks.data?.length ?? 0;
-	const linkedChannels = (channelLinks.data ?? []).flatMap((link) =>
-		link.account ? [link.account] : [],
+	const linkedChannels = Array.from(
+		new Map(
+			(channelLinks.data ?? []).flatMap((link) =>
+				link.account ? [[link.account.id, link.account] as const] : [],
+			),
+		).values(),
 	);
 	const projectionLoading = projectionStatus === "loading";
 	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
@@ -1331,10 +1336,10 @@ function OverviewTab({
 						) : linkedChannels.length > 0 ? (
 							<div data-overview-tool-summary="channels">
 								<OverviewIdentityIconRail label="Connected channels" testId="overview-channel-rail">
-									{linkedChannels.slice(0, 5).map((channel) => {
+									{linkedChannels.slice(0, OVERVIEW_IDENTITY_RAIL_LIMIT).map((channel) => {
 										const provider = providerMeta(channel.provider).label;
 										return (
-											<OverviewIdentityIconItem key={channel.id} connected>
+											<OverviewIdentityIconItem key={channel.id}>
 												<Link
 													to="/channels/$id"
 													params={{ id: channel.id }}
@@ -1342,7 +1347,7 @@ function OverviewTab({
 													title={`${provider}: ${channel.name} (connected)`}
 													className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 												>
-													<ProviderChip provider={channel.provider} size="md" className="size-9" />
+													<ProviderChip provider={channel.provider} size="sm" />
 												</Link>
 											</OverviewIdentityIconItem>
 										);

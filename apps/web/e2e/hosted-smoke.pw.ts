@@ -2972,6 +2972,11 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const sessionRequests: string[] = [];
 	const aiProviderRequests: string[] = [];
 	const managedModelRequests: string[] = [];
+	const overviewConnectorRequests: string[] = [];
+	page.on("request", (request) => {
+		const path = new URL(request.url()).pathname;
+		if (path.startsWith("/v1/connectors/available")) overviewConnectorRequests.push(path);
+	});
 	const telegramAccount = {
 		id: "channel-overview-telegram",
 		provider: "telegram",
@@ -3201,11 +3206,28 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const connectors = overview.locator('[data-overview-module="connectors"]');
 	await expect(connectors).toContainText("2 connected");
 	const connectorLinks = connectors.getByTestId("overview-connector-rail").getByRole("link");
-	await expect(connectorLinks).toHaveCount(5);
+	await expect(connectorLinks).toHaveCount(2);
 	await expect(connectorLinks.nth(0)).toHaveAccessibleName("Connected app: Github");
 	await expect(connectorLinks.nth(1)).toHaveAccessibleName("Connected app: Slack");
-	await expect(connectorLinks.nth(2)).toHaveAccessibleName("Suggested app: Gmail");
-	await expect(connectors.getByRole("link", { name: "Suggested app: Github" })).toHaveCount(0);
+	await expect(connectors.getByRole("link", { name: /Gmail/ })).toHaveCount(0);
+	await expect(connectorLinks.locator("svg")).toHaveCount(0);
+	expect(overviewConnectorRequests).toEqual([
+		"/v1/connectors/available/github",
+		"/v1/connectors/available/slack",
+	]);
+	const connectorIconBoxes = await connectorLinks
+		.locator("div")
+		.evaluateAll((icons) => icons.map((icon) => icon.getBoundingClientRect().toJSON()));
+	const channelIconBoxes = await channelRail
+		.locator("img")
+		.evaluateAll((icons) => icons.map((icon) => icon.getBoundingClientRect().toJSON()));
+	expect(
+		[...connectorIconBoxes, ...channelIconBoxes].map((box) => [box.width, box.height]),
+	).toEqual([
+		[24, 24],
+		[24, 24],
+		[24, 24],
+	]);
 	const sidebar = page.getByTestId("app-sidebar");
 	await expect(sidebar.getByText("Running", { exact: true })).toBeVisible();
 	await expectInlineSidebarStatus(sidebar, "hosted");
@@ -3260,8 +3282,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	}
 	const moduleHeights = [...resourceGeometry, ...toolGeometry].map((box) => box.height);
 	expect(Math.max(...moduleHeights) - Math.min(...moduleHeights)).toBeLessThanOrEqual(2);
-	expect(new Set(moduleHeights.map((height) => Math.round(height)))).toEqual(new Set([128]));
-	expect(Math.max(...moduleHeights)).toBeLessThan(144);
+	expect(new Set(moduleHeights.map((height) => Math.round(height)))).toEqual(new Set([112]));
+	expect(Math.max(...moduleHeights)).toBeLessThan(128);
 	expect((toolGeometry[1]?.x ?? 0) + (toolGeometry[1]?.width ?? 0)).toBeLessThan(
 		(resourceGeometry[2]?.x ?? 0) + 1,
 	);
@@ -3683,6 +3705,21 @@ test("hosted Tools channels preserve zero, singular, plural, error, and loading 
 	await expect(channelLinks.nth(1)).toHaveAccessibleName(
 		"Connected channel: Discord, Team Discord",
 	);
+
+	options.channelAgentLinksResponse = {
+		body: [
+			channelLink(1, "telegram"),
+			channelLink(2, "discord"),
+			channelLink(3, "telegram"),
+			channelLink(4, "discord"),
+			channelLink(5, "telegram"),
+			channelLink(1, "telegram"),
+		],
+		status: 200,
+	};
+	await page.reload();
+	await expect(channels.getByText("6 connected channels", { exact: true })).toBeVisible();
+	await expect(channels.getByTestId("overview-channel-rail").getByRole("link")).toHaveCount(4);
 
 	options.channelAgentLinksResponse = {
 		body: { detail: "channel service unavailable" },
