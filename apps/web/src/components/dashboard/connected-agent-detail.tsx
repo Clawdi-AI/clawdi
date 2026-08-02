@@ -284,28 +284,6 @@ export function ConnectedAgentDetail({
 											</div>
 										),
 									},
-									memories: {
-										body: <p className="text-sm font-medium">Shared with all your agents</p>,
-									},
-									vaults: {
-										body: projectBindingsLoading ? (
-											<OverviewModuleSkeleton label="vault sources" rows={2} />
-										) : blockingProjectBindingsError ? (
-											<OverviewModuleError
-												label="Vault sources"
-												onRetry={() => void refetchProjectBindings()}
-											/>
-										) : (
-											<p className="text-sm font-medium">
-												{projectBindings?.length
-													? `Available through ${projectBindings.length} ${projectBindings.length === 1 ? "project" : "projects"}`
-													: "Add a project to use vaults"}
-											</p>
-										),
-									},
-									connectors: {
-										body: <p className="text-sm font-medium">Shared with all your agents</p>,
-									},
 								}}
 							/>
 						</div>

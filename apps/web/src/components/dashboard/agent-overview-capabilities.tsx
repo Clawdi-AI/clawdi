@@ -140,9 +140,6 @@ const MODULE_PRESENTATION: Record<
 	},
 	projects: {},
 	skills: {},
-	memories: {},
-	vaults: {},
-	connectors: {},
 	"model-provider": { label: "Model & Provider" },
 	channels: {},
 	compute: {

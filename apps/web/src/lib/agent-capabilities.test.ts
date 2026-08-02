@@ -24,7 +24,21 @@ describe("agent capabilities", () => {
 			"compute",
 		]);
 		expect(connected[1]?.modules).toEqual(hosted[1]?.modules);
+		expect(connected[1]?.modules.map((module) => module.id)).toEqual(["projects", "skills"]);
 		expect(hosted[2]?.modules.map((module) => module.id)).toEqual(["model-provider", "channels"]);
+	});
+
+	test("keeps navigation capabilities independent from overview summaries", () => {
+		for (const variant of ["connected", "hosted"] as const) {
+			const navigation = agentNavigationSectionIds(variant);
+			const overview = agentOverviewGroups(variant).flatMap((group) =>
+				group.modules.map((module) => module.section),
+			);
+			for (const section of ["memories", "vaults", "connectors"] as const) {
+				expect(navigation).toContain(section);
+				expect(overview).not.toContain(section);
+			}
+		}
 	});
 
 	test("gives Sessions and Projects the dominant module width", () => {

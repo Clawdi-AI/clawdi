@@ -2668,6 +2668,13 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("CPU");
 	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Memory");
 	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Storage");
+	for (const moduleId of ["memories", "vaults", "connectors"]) {
+		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toHaveCount(0);
+	}
+	const sidebar = page.getByTestId("app-sidebar");
+	for (const section of ["Memories", "Vaults", "Connectors"]) {
+		await expect(sidebar.getByRole("link", { name: section, exact: true })).toBeVisible();
+	}
 	await expect(overview.getByText("Scope", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Access", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Managed", { exact: true })).toHaveCount(0);
@@ -2691,7 +2698,7 @@ test("hosted projection loading uses module skeletons", async ({ page }, testInf
 
 	const overview = page.locator('[data-agent-overview="hosted"]');
 	await expect(overview.getByTestId("overview-module-skeleton").first()).toBeVisible();
-	await expect(overview.getByTestId("overview-module-skeleton")).toHaveCount(5);
+	await expect(overview.getByTestId("overview-module-skeleton")).toHaveCount(4);
 	await expect(overview.getByText("Details pending", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Loading…", { exact: true })).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1600 });
@@ -2755,9 +2762,7 @@ test("hosted overview keeps project count when names fail", async ({ page }) => 
 	await expect(projectsCard).toContainText("Can’t load project names");
 	await expect(projectsCard.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
 	await expect(projectsCard).not.toContainText("No projects added");
-	await expect(page.locator('[data-overview-module="vaults"]')).toContainText(
-		"Available through 1 project",
-	);
+	await expect(page.locator('[data-overview-module="vaults"]')).toHaveCount(0);
 });
 
 test("hosted overview keeps project count while names load", async ({ page }) => {
@@ -2774,9 +2779,7 @@ test("hosted overview keeps project count while names load", async ({ page }) =>
 	const projectsCard = page.locator('[data-overview-module="projects"]');
 	await expect(projectsCard).toContainText("1 project");
 	await expect(projectsCard.getByLabel("Loading project names summary")).toBeVisible();
-	await expect(page.locator('[data-overview-module="vaults"]')).toContainText(
-		"Available through 1 project",
-	);
+	await expect(page.locator('[data-overview-module="vaults"]')).toHaveCount(0);
 });
 
 test("hosted provisioning stays focused on Compute", async ({ page }, testInfo) => {

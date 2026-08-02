@@ -1371,34 +1371,6 @@ function OverviewTab({
 							</div>
 						),
 					},
-					memories: {
-						body: <p className="text-sm font-medium">Shared with all your agents</p>,
-					},
-					vaults: {
-						body: !agent ? (
-							projectionUnavailable ? (
-								<OverviewModuleError label="Vault sources" />
-							) : (
-								<OverviewModuleSkeleton label="vault sources" rows={2} />
-							)
-						) : projectBindings.isLoading ? (
-							<OverviewModuleSkeleton label="vault sources" rows={2} />
-						) : projectBindings.error ? (
-							<OverviewModuleError
-								label="Vault sources"
-								onRetry={() => void projectBindings.refetch()}
-							/>
-						) : (
-							<p className="text-sm font-medium">
-								{projectBindings.data?.length
-									? `Available through ${projectBindings.data.length} ${projectBindings.data.length === 1 ? "project" : "projects"}`
-									: "Add a project to use vaults"}
-							</p>
-						),
-					},
-					connectors: {
-						body: <p className="text-sm font-medium">Shared with all your agents</p>,
-					},
 					"model-provider": {
 						body: (
 							<OverviewMetadata

@@ -6,9 +6,6 @@ export type AgentOverviewModuleId =
 	| "agent-interface"
 	| "projects"
 	| "skills"
-	| "memories"
-	| "vaults"
-	| "connectors"
 	| "model-provider"
 	| "channels"
 	| "compute";
@@ -31,9 +28,6 @@ export type AgentOverviewGroup = {
 const SHARED_RESOURCES = [
 	{ id: "projects", section: "projects", size: "wide" },
 	{ id: "skills", section: "skills", size: "standard" },
-	{ id: "memories", section: "memories", size: "standard" },
-	{ id: "vaults", section: "vaults", size: "standard" },
-	{ id: "connectors", section: "connectors", size: "standard" },
 ] as const satisfies readonly AgentOverviewModule[];
 
 const AGENT_OVERVIEW_GROUPS = {
