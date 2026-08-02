@@ -48,13 +48,13 @@ interface ManagedBaileysArtifact {
 	hermesBridgeRoot?: string;
 }
 
-export interface ManagedBaileysPatchReceiptTarget {
+interface ManagedBaileysPatchReceiptTarget {
 	relativePath: string;
 	preimageSha256: string;
 	postimageSha256: string;
 }
 
-export interface ManagedBaileysPatchReceiptArtifact {
+interface ManagedBaileysPatchReceiptArtifact {
 	runtime: ManagedBaileysRuntime;
 	artifactRoot: string;
 	baileys: {
@@ -65,13 +65,13 @@ export interface ManagedBaileysPatchReceiptArtifact {
 	targets: ManagedBaileysPatchReceiptTarget[];
 }
 
-export interface ManagedBaileysPatchReceipt {
+interface ManagedBaileysPatchReceipt {
 	schemaVersion: typeof RECEIPT_SCHEMA;
 	patchRevision: typeof MANAGED_BAILEYS_PATCH_REVISION;
 	artifact: ManagedBaileysPatchReceiptArtifact;
 }
 
-export type ManagedBaileysReconcileResult =
+type ManagedBaileysReconcileResult =
 	| { status: "inert"; receiptPath: string }
 	| { status: "already-patched"; receiptPath: string }
 	| { status: "receipt-recovered"; receiptPath: string }
@@ -212,10 +212,6 @@ export function managedBaileysCompatMutationTargets(input: {
 		targets.push(join(assertHermesBridgeRoot(artifact), "node_modules", ".hermes-pkg-hash"));
 	}
 	return targets;
-}
-
-export function hermesManagedBaileysPackageRoot(appRoot: string): string {
-	return join(appRoot, "scripts", "whatsapp-bridge", "node_modules", "@whiskeysockets", "baileys");
 }
 
 export function reconcileManagedBaileysCompatibility(input: {

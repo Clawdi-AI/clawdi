@@ -28,9 +28,10 @@ or Hermes channel connector and not a second agent runtime.
   account connection. The physical provider socket and Link-scoped synthetic
   sockets are intentionally distinct.
 
-The four isolated, compatibility-patch-provided artifact-seam audit fields are
-true; none is described as a native upstream capability. The aggregate
-WhatsApp linking, runtime, and upstream readiness constants remain false in
+The two downstream patch seams and two stock consumer auth-persistence audit
+fields are true. Only the persistence fields are native upstream behavior; none
+claims a native upstream managed identity capability. The aggregate WhatsApp
+linking, runtime, and upstream readiness constants remain false in
 `packages/cli/src/runtime/whatsapp-upstream-contract.ts`. Native-plugin E2E and
 the live-account drill are still unproven. No managed marker, compatibility
 patch, credential projection, or interception profile is installed in
