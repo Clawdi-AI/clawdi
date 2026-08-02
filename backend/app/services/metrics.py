@@ -92,6 +92,12 @@ channel_retention_deletions = Counter(
     ["record_kind"],
     registry=registry,
 )
+channel_retention_secret_scrubs = Counter(
+    "msg_router_channel_retention_secret_scrubs_total",
+    "Expired provider credential fields removed from retained channel payloads",
+    ["provider", "secret_kind"],
+    registry=registry,
+)
 channel_retention_budget_exhaustions = Counter(
     "msg_router_channel_retention_budget_exhaustions_total",
     "Channel retention runs that exhausted their configured batch budget",

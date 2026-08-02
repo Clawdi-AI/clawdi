@@ -17,7 +17,8 @@ import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import HTTPException, status
-from sqlalchemy import and_, delete, exists, func, or_, select
+from sqlalchemy import and_, delete, exists, func, or_, select, union_all
+from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -200,6 +201,11 @@ DISCORD_EPHEMERAL_REFERENCE_KINDS = (
     DISCORD_REF_INTERACTION_ID_TOKEN,
     DISCORD_REF_INTERACTION_TOKEN,
 )
+# Discord interaction tokens are valid for 15 minutes. Keep a five-minute
+# grace period for clock skew and in-flight follow-ups, then remove the exact
+# credential fields independently of the message retention horizon.
+DISCORD_INTERACTION_SECRET_RETENTION = timedelta(minutes=20)
+CHANNEL_RETENTION_CANDIDATE_MULTIPLIER = 2
 
 
 @dataclass(frozen=True)
@@ -217,10 +223,17 @@ class ChannelRetentionBatch:
     debug_events: int = 0
     pair_codes: int = 0
     agent_references: int = 0
+    discord_interaction_payloads: int = 0
 
     @property
     def total(self) -> int:
-        return self.messages + self.debug_events + self.pair_codes + self.agent_references
+        return (
+            self.messages
+            + self.debug_events
+            + self.pair_codes
+            + self.agent_references
+            + self.discord_interaction_payloads
+        )
 
     def saturated_kinds(self, limit: int) -> tuple[str, ...]:
         return tuple(
@@ -230,6 +243,7 @@ class ChannelRetentionBatch:
                 ("debug_events", self.debug_events),
                 ("pair_codes", self.pair_codes),
                 ("agent_references", self.agent_references),
+                ("discord_interaction_payloads", self.discord_interaction_payloads),
             )
             if count == limit
         )
@@ -3429,40 +3443,70 @@ async def prune_channel_messages(
         if unbound_retention is not None
         else timedelta(hours=settings.channel_unbound_message_retention_hours)
     )
-    enabled_account = exists(
-        select(ChannelAccount.id).where(
-            ChannelAccount.id == ChannelMessage.account_id,
-            ChannelAccount.provider.in_(CHANNEL_RETENTION_PROVIDERS),
+    candidate_limit = batch_limit * CHANNEL_RETENTION_CANDIDATE_MULTIPLIER
+    unbound_candidates = (
+        select(
+            ChannelMessage.id.label("message_id"),
+            ChannelMessage.created_at.label("retained_at"),
         )
+        .where(
+            sql_text("direction = 'inbound' AND binding_id IS NULL"),
+            ChannelMessage.created_at < unbound_cutoff,
+        )
+        .order_by(ChannelMessage.created_at, ChannelMessage.id)
+        .limit(candidate_limit)
     )
-    terminal_delivery = exists(
-        select(ChannelDelivery.id).where(
-            ChannelDelivery.message_id == ChannelMessage.id,
-            ChannelDelivery.status.in_((DELIVERY_STATUS_SUCCEEDED, DELIVERY_STATUS_FAILED)),
+    delivered_candidates = (
+        select(
+            ChannelMessage.id.label("message_id"),
+            ChannelMessage.delivered_at.label("retained_at"),
+        )
+        .where(
+            ChannelMessage.delivered_at.is_not(None),
+            ChannelMessage.delivered_at < delivered_cutoff,
+            ~and_(
+                ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+                ChannelMessage.binding_id.is_(None),
+            ),
+        )
+        .order_by(ChannelMessage.delivered_at, ChannelMessage.id)
+        .limit(candidate_limit)
+    )
+    terminal_outbound_candidates = (
+        select(
+            ChannelMessage.id.label("message_id"),
+            ChannelDelivery.updated_at.label("retained_at"),
+        )
+        .select_from(ChannelDelivery)
+        .join(ChannelAccount, ChannelAccount.id == ChannelDelivery.account_id)
+        .join(ChannelMessage, ChannelMessage.id == ChannelDelivery.message_id)
+        .where(
+            ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
+            ChannelMessage.delivered_at.is_(None),
+            ChannelAccount.provider.in_(CHANNEL_RETENTION_PROVIDERS),
+            sql_text("channel_deliveries.status IN ('succeeded', 'failed')"),
             ChannelDelivery.updated_at < delivered_cutoff,
         )
+        .order_by(ChannelDelivery.updated_at, ChannelDelivery.id)
+        .limit(candidate_limit)
+    )
+    candidate_rows = union_all(
+        unbound_candidates,
+        delivered_candidates,
+        terminal_outbound_candidates,
+    ).subquery()
+    candidates = (
+        select(
+            candidate_rows.c.message_id,
+            func.min(candidate_rows.c.retained_at).label("retained_at"),
+        )
+        .group_by(candidate_rows.c.message_id)
+        .subquery()
     )
     result = await db.execute(
         select(ChannelMessage)
-        .where(
-            or_(
-                and_(
-                    ChannelMessage.delivered_at.is_not(None),
-                    ChannelMessage.delivered_at < delivered_cutoff,
-                ),
-                and_(
-                    ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
-                    ChannelMessage.binding_id.is_(None),
-                    ChannelMessage.created_at < unbound_cutoff,
-                ),
-                and_(
-                    ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
-                    enabled_account,
-                    terminal_delivery,
-                ),
-            )
-        )
-        .order_by(ChannelMessage.created_at, ChannelMessage.id)
+        .join(candidates, candidates.c.message_id == ChannelMessage.id)
+        .order_by(candidates.c.retained_at, ChannelMessage.id)
         .limit(batch_limit)
         .with_for_update(skip_locked=True, of=ChannelMessage)
     )
@@ -3495,7 +3539,7 @@ async def prune_channel_debug_events(
     result = await db.execute(
         select(ChannelDebugEvent)
         .where(
-            ChannelDebugEvent.provider.in_(CHANNEL_RETENTION_PROVIDERS),
+            sql_text("channel_debug_events.provider IN ('telegram', 'discord')"),
             ChannelDebugEvent.created_at < cutoff,
         )
         .order_by(ChannelDebugEvent.created_at, ChannelDebugEvent.id)
@@ -3526,27 +3570,52 @@ async def prune_channel_pair_codes(
     cutoff = current_time - (
         retention
         if retention is not None
-        else timedelta(days=settings.channel_message_retention_days)
+        else timedelta(hours=settings.channel_unbound_message_retention_hours)
     )
-    result = await db.execute(
-        select(ChannelPairCode)
+    candidate_limit = batch_limit * CHANNEL_RETENTION_CANDIDATE_MULTIPLIER
+    terminal_candidates = (
+        select(
+            ChannelPairCode.id.label("pair_code_id"),
+            ChannelPairCode.updated_at.label("retained_at"),
+        )
+        .select_from(ChannelPairCode)
         .join(ChannelAccount, ChannelAccount.id == ChannelPairCode.account_id)
         .where(
             ChannelAccount.provider.in_(CHANNEL_RETENTION_PROVIDERS),
-            or_(
-                and_(
-                    ChannelPairCode.status.in_(
-                        (PAIR_CODE_STATUS_CLAIMED, PAIR_CODE_STATUS_REVOKED)
-                    ),
-                    ChannelPairCode.updated_at < cutoff,
-                ),
-                and_(
-                    ChannelPairCode.status == PAIR_CODE_STATUS_PENDING,
-                    ChannelPairCode.expires_at < cutoff,
-                ),
-            ),
+            sql_text("channel_pair_codes.status IN ('claimed', 'revoked')"),
+            ChannelPairCode.updated_at < cutoff,
         )
-        .order_by(ChannelPairCode.created_at, ChannelPairCode.id)
+        .order_by(ChannelPairCode.updated_at, ChannelPairCode.id)
+        .limit(candidate_limit)
+    )
+    expired_candidates = (
+        select(
+            ChannelPairCode.id.label("pair_code_id"),
+            ChannelPairCode.expires_at.label("retained_at"),
+        )
+        .select_from(ChannelPairCode)
+        .join(ChannelAccount, ChannelAccount.id == ChannelPairCode.account_id)
+        .where(
+            ChannelAccount.provider.in_(CHANNEL_RETENTION_PROVIDERS),
+            sql_text("channel_pair_codes.status = 'pending'"),
+            ChannelPairCode.expires_at < cutoff,
+        )
+        .order_by(ChannelPairCode.expires_at, ChannelPairCode.id)
+        .limit(candidate_limit)
+    )
+    candidate_rows = union_all(terminal_candidates, expired_candidates).subquery()
+    candidates = (
+        select(
+            candidate_rows.c.pair_code_id,
+            func.min(candidate_rows.c.retained_at).label("retained_at"),
+        )
+        .group_by(candidate_rows.c.pair_code_id)
+        .subquery()
+    )
+    result = await db.execute(
+        select(ChannelPairCode)
+        .join(candidates, candidates.c.pair_code_id == ChannelPairCode.id)
+        .order_by(candidates.c.retained_at, ChannelPairCode.id)
         .limit(batch_limit)
         .with_for_update(skip_locked=True, of=ChannelPairCode)
     )
@@ -3571,32 +3640,97 @@ async def prune_channel_agent_references(
     if batch_limit == 0:
         return 0
     current_time = now or datetime.now(UTC)
-    cutoff = current_time - (
+    inactive_cutoff = current_time - (
         retention
         if retention is not None
         else timedelta(days=settings.channel_message_retention_days)
     )
-    active_link = exists(
-        select(ChannelBotAgentLink.id).where(
-            ChannelBotAgentLink.id == ChannelAgentReference.bot_agent_link_id,
-            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
-            ChannelBotAgentLink.archived_at.is_(None),
+    secret_cutoff = current_time - DISCORD_INTERACTION_SECRET_RETENTION
+    candidate_limit = batch_limit * CHANNEL_RETENTION_CANDIDATE_MULTIPLIER
+    inactive_link_has_expired_reference = exists(
+        select(ChannelAgentReference.id).where(
+            ChannelAgentReference.bot_agent_link_id == ChannelBotAgentLink.id,
+            sql_text("channel_agent_references.provider IN ('telegram', 'discord')"),
+            ChannelAgentReference.updated_at < inactive_cutoff,
         )
+    )
+    inactive_link_ids = tuple(
+        (
+            await db.scalars(
+                select(ChannelBotAgentLink.id)
+                .where(
+                    sql_text("status <> 'active' OR archived_at IS NOT NULL"),
+                    inactive_link_has_expired_reference,
+                )
+                .order_by(ChannelBotAgentLink.id)
+                .limit(candidate_limit)
+            )
+        ).all()
+    )
+    secret_candidates = (
+        select(
+            ChannelAgentReference.id.label("reference_id"),
+            ChannelAgentReference.created_at.label("retained_at"),
+        )
+        .where(
+            sql_text(
+                "channel_agent_references.provider = 'discord' AND "
+                "channel_agent_references.ref_kind IN "
+                "('discord_interaction_id_token', 'discord_interaction_token')"
+            ),
+            ChannelAgentReference.created_at < secret_cutoff,
+        )
+        .order_by(ChannelAgentReference.created_at, ChannelAgentReference.id)
+        .limit(candidate_limit)
+    )
+    orphaned_candidates = (
+        select(
+            ChannelAgentReference.id.label("reference_id"),
+            ChannelAgentReference.updated_at.label("retained_at"),
+        )
+        .where(
+            sql_text(
+                "channel_agent_references.provider IN ('telegram', 'discord') AND "
+                "channel_agent_references.bot_agent_link_id IS NULL"
+            ),
+            ChannelAgentReference.updated_at < inactive_cutoff,
+        )
+        .order_by(ChannelAgentReference.updated_at, ChannelAgentReference.id)
+        .limit(candidate_limit)
+    )
+    inactive_link_candidates = (
+        select(
+            ChannelAgentReference.id.label("reference_id"),
+            ChannelAgentReference.updated_at.label("retained_at"),
+        )
+        .where(
+            sql_text(
+                "channel_agent_references.provider IN ('telegram', 'discord') AND "
+                "channel_agent_references.bot_agent_link_id IS NOT NULL"
+            ),
+            ChannelAgentReference.bot_agent_link_id.in_(inactive_link_ids),
+            ChannelAgentReference.updated_at < inactive_cutoff,
+        )
+        .order_by(ChannelAgentReference.updated_at, ChannelAgentReference.id)
+        .limit(candidate_limit)
+    )
+    candidate_rows = union_all(
+        secret_candidates,
+        orphaned_candidates,
+        inactive_link_candidates,
+    ).subquery()
+    candidates = (
+        select(
+            candidate_rows.c.reference_id,
+            func.min(candidate_rows.c.retained_at).label("retained_at"),
+        )
+        .group_by(candidate_rows.c.reference_id)
+        .subquery()
     )
     result = await db.execute(
         select(ChannelAgentReference)
-        .where(
-            ChannelAgentReference.provider.in_(CHANNEL_RETENTION_PROVIDERS),
-            ChannelAgentReference.updated_at < cutoff,
-            or_(
-                ~active_link,
-                and_(
-                    ChannelAgentReference.provider == CHANNEL_PROVIDER_DISCORD,
-                    ChannelAgentReference.ref_kind.in_(DISCORD_EPHEMERAL_REFERENCE_KINDS),
-                ),
-            ),
-        )
-        .order_by(ChannelAgentReference.updated_at, ChannelAgentReference.id)
+        .join(candidates, candidates.c.reference_id == ChannelAgentReference.id)
+        .order_by(candidates.c.retained_at, ChannelAgentReference.id)
         .limit(batch_limit)
         .with_for_update(skip_locked=True, of=ChannelAgentReference)
     )
@@ -3605,6 +3739,69 @@ async def prune_channel_agent_references(
         await db.delete(reference)
     await db.flush()
     return len(references)
+
+
+async def scrub_discord_interaction_payload_tokens(
+    db: AsyncSession,
+    *,
+    now: datetime | None = None,
+    retention: timedelta | None = None,
+    limit: int | None = None,
+) -> int:
+    batch_limit = max(
+        0,
+        settings.channel_message_cleanup_batch_size if limit is None else limit,
+    )
+    if batch_limit == 0:
+        return 0
+    current_time = now or datetime.now(UTC)
+    cutoff = current_time - (
+        retention if retention is not None else DISCORD_INTERACTION_SECRET_RETENTION
+    )
+    result = await db.execute(
+        select(ChannelMessage)
+        .join(ChannelAccount, ChannelAccount.id == ChannelMessage.account_id)
+        .where(
+            ChannelAccount.provider == CHANNEL_PROVIDER_DISCORD,
+            ChannelMessage.created_at < cutoff,
+            sql_text(
+                "((payload ? 'token' AND payload ? 'application_id') OR "
+                "(payload ->> 't' = 'INTERACTION_CREATE' AND (payload -> 'd') ? 'token'))"
+            ),
+        )
+        .order_by(ChannelMessage.created_at, ChannelMessage.id)
+        .limit(batch_limit)
+        .with_for_update(skip_locked=True, of=ChannelMessage)
+    )
+    messages = list(result.scalars().all())
+    scrubbed = 0
+    for message in messages:
+        payload = message.payload
+        if not isinstance(payload, dict):
+            continue
+        scrubbed_payload = _without_discord_interaction_token(payload)
+        if scrubbed_payload is payload:
+            continue
+        message.payload = scrubbed_payload
+        scrubbed += 1
+    await db.flush()
+    return scrubbed
+
+
+def _without_discord_interaction_token(payload: dict[str, Any]) -> dict[str, Any]:
+    scrubbed_payload: dict[str, Any] | None = None
+    if "token" in payload and "application_id" in payload:
+        scrubbed_payload = dict(payload)
+        scrubbed_payload.pop("token", None)
+
+    data = payload.get("d")
+    if payload.get("t") == "INTERACTION_CREATE" and isinstance(data, dict) and "token" in data:
+        if scrubbed_payload is None:
+            scrubbed_payload = dict(payload)
+        scrubbed_data = dict(data)
+        scrubbed_data.pop("token", None)
+        scrubbed_payload["d"] = scrubbed_data
+    return payload if scrubbed_payload is None else scrubbed_payload
 
 
 async def prune_channel_retention_batch(
@@ -3618,6 +3815,9 @@ async def prune_channel_retention_batch(
         messages=await prune_channel_messages(db, now=current_time, limit=limit),
         debug_events=await prune_channel_debug_events(db, now=current_time, limit=limit),
         pair_codes=await prune_channel_pair_codes(db, now=current_time, limit=limit),
+        discord_interaction_payloads=await scrub_discord_interaction_payload_tokens(
+            db, now=current_time, limit=limit
+        ),
         agent_references=await prune_channel_agent_references(db, now=current_time, limit=limit),
     )
 
@@ -3643,9 +3843,32 @@ async def channel_queue_snapshots(
                     func.count(ChannelMessage.id).filter(ChannelMessage.created_at < stuck_cutoff),
                     func.min(ChannelMessage.created_at),
                 )
+                .join(
+                    ChannelBinding,
+                    and_(
+                        ChannelBinding.id == ChannelMessage.binding_id,
+                        ChannelBinding.account_id == ChannelMessage.account_id,
+                        ChannelBinding.bot_agent_link_id == ChannelMessage.bot_agent_link_id,
+                        ChannelBinding.user_id == ChannelMessage.user_id,
+                        ChannelBinding.external_chat_id == ChannelMessage.external_chat_id,
+                    ),
+                )
+                .join(
+                    ChannelBotAgentLink,
+                    and_(
+                        ChannelBotAgentLink.id == ChannelMessage.bot_agent_link_id,
+                        ChannelBotAgentLink.account_id == ChannelMessage.account_id,
+                        ChannelBotAgentLink.user_id == ChannelMessage.user_id,
+                    ),
+                )
                 .join(ChannelAccount, ChannelAccount.id == ChannelMessage.account_id)
                 .where(
                     ChannelAccount.provider == provider,
+                    ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                    ChannelAccount.archived_at.is_(None),
+                    ChannelBinding.status == BINDING_STATUS_ACTIVE,
+                    ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                    ChannelBotAgentLink.archived_at.is_(None),
                     ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
                     ChannelMessage.binding_id.is_not(None),
                     ChannelMessage.delivered_at.is_(None),
@@ -3670,10 +3893,54 @@ async def channel_queue_snapshots(
                     ),
                     func.min(ChannelDelivery.created_at),
                 )
+                .join(
+                    ChannelMessage,
+                    and_(
+                        ChannelMessage.id == ChannelDelivery.message_id,
+                        ChannelMessage.account_id == ChannelDelivery.account_id,
+                        ChannelMessage.user_id == ChannelDelivery.user_id,
+                    ),
+                )
                 .join(ChannelAccount, ChannelAccount.id == ChannelDelivery.account_id)
+                .outerjoin(
+                    ChannelBotAgentLink,
+                    and_(
+                        ChannelBotAgentLink.id == ChannelDelivery.bot_agent_link_id,
+                        ChannelBotAgentLink.account_id == ChannelDelivery.account_id,
+                        ChannelBotAgentLink.user_id == ChannelDelivery.user_id,
+                    ),
+                )
+                .outerjoin(
+                    ChannelBinding,
+                    and_(
+                        ChannelBinding.id == ChannelMessage.binding_id,
+                        ChannelBinding.account_id == ChannelDelivery.account_id,
+                        ChannelBinding.bot_agent_link_id == ChannelDelivery.bot_agent_link_id,
+                        ChannelBinding.user_id == ChannelDelivery.user_id,
+                        ChannelBinding.external_chat_id == ChannelMessage.external_chat_id,
+                    ),
+                )
                 .where(
                     ChannelAccount.provider == provider,
+                    ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                    ChannelAccount.archived_at.is_(None),
                     ChannelDelivery.status == DELIVERY_STATUS_PENDING,
+                    ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
+                    or_(
+                        and_(
+                            ChannelDelivery.bot_agent_link_id.is_(None),
+                            ChannelMessage.bot_agent_link_id.is_(None),
+                            ChannelMessage.binding_id.is_(None),
+                        ),
+                        and_(
+                            ChannelDelivery.bot_agent_link_id.is_not(None),
+                            ChannelMessage.bot_agent_link_id == ChannelDelivery.bot_agent_link_id,
+                            ChannelMessage.binding_id.is_not(None),
+                            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                            ChannelBotAgentLink.archived_at.is_(None),
+                            ChannelBinding.status == BINDING_STATUS_ACTIVE,
+                        ),
+                    ),
                 )
             )
         ).one()

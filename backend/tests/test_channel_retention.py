@@ -6,17 +6,19 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.channel import (
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_TELEGRAM,
+    CHANNEL_STATUS_DISABLED,
     DELIVERY_STATUS_FAILED,
     DELIVERY_STATUS_SUCCEEDED,
     MESSAGE_DIRECTION_INBOUND,
     PAIR_CODE_STATUS_CLAIMED,
     PAIR_CODE_STATUS_PENDING,
+    PAIR_CODE_STATUS_REVOKED,
     ChannelAccount,
     ChannelAgentReference,
     ChannelBinding,
@@ -32,6 +34,7 @@ from app.models.user import User
 from app.services import channels as channel_service
 from app.services.channel_message_retention_worker import ChannelMessageRetentionWorker
 from app.services.channels import (
+    DISCORD_REF_INTERACTION_ID_TOKEN,
     DISCORD_REF_INTERACTION_TOKEN,
     TELEGRAM_REF_FILE_ID,
     ChannelRetentionBatch,
@@ -39,6 +42,7 @@ from app.services.channels import (
     deliver_channel_delivery,
     enqueue_channel_outbound_message,
     prune_channel_messages,
+    prune_channel_pair_codes,
     prune_channel_retention_batch,
     send_discord_message,
     send_telegram_message,
@@ -505,6 +509,254 @@ async def test_operational_retention_preserves_live_authority_and_pending_work(
 
 
 @pytest.mark.asyncio
+async def test_pair_code_retention_uses_short_unbound_horizon_and_preserves_boundary(
+    db_session: AsyncSession,
+    seed_user: User,
+    channel_agent: AgentEnvironment,
+):
+    account, link, _binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        chat_id="pair-retention-horizon",
+    )
+    now = datetime(2026, 8, 2, tzinfo=UTC)
+    cutoff = now - timedelta(hours=24)
+    expired_terminal = ChannelPairCode(
+        account_id=account.id,
+        bot_agent_link_id=link.id,
+        user_id=seed_user.id,
+        code_hash=uuid4().hex,
+        status=PAIR_CODE_STATUS_CLAIMED,
+        expires_at=cutoff,
+        claimed_at=cutoff,
+        created_at=cutoff - timedelta(days=1),
+        updated_at=cutoff - timedelta(microseconds=1),
+    )
+    expired_pending = ChannelPairCode(
+        account_id=account.id,
+        bot_agent_link_id=link.id,
+        user_id=seed_user.id,
+        code_hash=uuid4().hex,
+        status=PAIR_CODE_STATUS_PENDING,
+        expires_at=cutoff - timedelta(microseconds=1),
+        created_at=cutoff - timedelta(days=1),
+        updated_at=cutoff,
+    )
+    boundary_terminal = ChannelPairCode(
+        account_id=account.id,
+        bot_agent_link_id=link.id,
+        user_id=seed_user.id,
+        code_hash=uuid4().hex,
+        status=PAIR_CODE_STATUS_REVOKED,
+        expires_at=cutoff,
+        created_at=cutoff - timedelta(hours=1),
+        updated_at=cutoff,
+    )
+    boundary_pending = ChannelPairCode(
+        account_id=account.id,
+        bot_agent_link_id=link.id,
+        user_id=seed_user.id,
+        code_hash=uuid4().hex,
+        status=PAIR_CODE_STATUS_PENDING,
+        expires_at=cutoff,
+        created_at=cutoff - timedelta(hours=1),
+        updated_at=cutoff,
+    )
+    live_pending = ChannelPairCode(
+        account_id=account.id,
+        bot_agent_link_id=link.id,
+        user_id=seed_user.id,
+        code_hash=uuid4().hex,
+        status=PAIR_CODE_STATUS_PENDING,
+        expires_at=now + timedelta(minutes=5),
+    )
+    db_session.add_all(
+        [
+            expired_terminal,
+            expired_pending,
+            boundary_terminal,
+            boundary_pending,
+            live_pending,
+        ]
+    )
+    await db_session.flush()
+
+    deleted = await prune_channel_pair_codes(db_session, now=now, limit=10)
+
+    assert deleted == 2
+    assert await db_session.get(ChannelPairCode, expired_terminal.id) is None
+    assert await db_session.get(ChannelPairCode, expired_pending.id) is None
+    assert await db_session.get(ChannelPairCode, boundary_terminal.id) is not None
+    assert await db_session.get(ChannelPairCode, boundary_pending.id) is not None
+    assert await db_session.get(ChannelPairCode, live_pending.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_discord_interaction_secrets_expire_without_deleting_pending_content(
+    db_session: AsyncSession,
+    seed_user: User,
+    channel_agent: AgentEnvironment,
+):
+    discord, link, binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_DISCORD,
+        chat_id="discord-secret-retention",
+    )
+    telegram, _telegram_link, telegram_binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        chat_id="telegram-secret-control",
+    )
+    now = datetime(2026, 8, 2, tzinfo=UTC)
+    expired = now - timedelta(minutes=20, microseconds=1)
+    boundary = now - timedelta(minutes=20)
+
+    webhook_message = await _add_message(
+        db_session,
+        account=discord,
+        binding=binding,
+        text="keep webhook content",
+    )
+    webhook_message.created_at = expired
+    webhook_message.payload = {
+        "type": 2,
+        "id": "interaction-webhook",
+        "token": "expired-webhook-secret",
+        "application_id": "discord-application",
+        "context": 0,
+        "data": {"name": "agent_status", "options": [{"name": "detail", "value": 1}]},
+    }
+    gateway_message = await _add_message(
+        db_session,
+        account=discord,
+        binding=binding,
+        text="keep gateway content",
+    )
+    gateway_message.created_at = expired
+    gateway_message.payload = {
+        "op": 0,
+        "t": "INTERACTION_CREATE",
+        "s": 42,
+        "d": {
+            "id": "interaction-gateway",
+            "token": "expired-gateway-secret",
+            "application_id": "discord-application",
+            "content": "keep event content",
+            "context": 1,
+        },
+    }
+    recent_message = await _add_message(
+        db_session,
+        account=discord,
+        binding=binding,
+        text="recent interaction",
+    )
+    recent_message.created_at = boundary
+    recent_message.payload = {
+        "type": 2,
+        "id": "interaction-recent",
+        "token": "recent-secret",
+        "application_id": "discord-application",
+        "context": 0,
+        "data": {"name": "agent_status"},
+    }
+    telegram_control = await _add_message(
+        db_session,
+        account=telegram,
+        binding=telegram_binding,
+        text="telegram token-shaped payload",
+    )
+    telegram_control.created_at = expired
+    telegram_control.payload = {
+        "id": "telegram-control",
+        "token": "telegram-secret-shaped-value",
+        "application_id": "not-discord",
+        "message": {"text": "keep telegram payload"},
+    }
+    expired_references = [
+        ChannelAgentReference(
+            account_id=discord.id,
+            bot_agent_link_id=link.id,
+            binding_id=binding.id,
+            message_id=webhook_message.id,
+            user_id=seed_user.id,
+            provider=CHANNEL_PROVIDER_DISCORD,
+            ref_kind=DISCORD_REF_INTERACTION_ID_TOKEN,
+            ref_value="interaction-webhook:expired-webhook-secret",
+            created_at=expired,
+            updated_at=expired,
+        ),
+        ChannelAgentReference(
+            account_id=discord.id,
+            bot_agent_link_id=link.id,
+            binding_id=binding.id,
+            message_id=gateway_message.id,
+            user_id=seed_user.id,
+            provider=CHANNEL_PROVIDER_DISCORD,
+            ref_kind=DISCORD_REF_INTERACTION_TOKEN,
+            ref_value="expired-gateway-secret",
+            created_at=expired,
+            updated_at=expired,
+        ),
+    ]
+    recent_reference = ChannelAgentReference(
+        account_id=discord.id,
+        bot_agent_link_id=link.id,
+        binding_id=binding.id,
+        message_id=recent_message.id,
+        user_id=seed_user.id,
+        provider=CHANNEL_PROVIDER_DISCORD,
+        ref_kind=DISCORD_REF_INTERACTION_TOKEN,
+        ref_value="recent-secret",
+        created_at=boundary,
+        updated_at=boundary,
+    )
+    db_session.add_all([*expired_references, recent_reference])
+    await db_session.flush()
+
+    batch = await prune_channel_retention_batch(db_session, now=now, limit=20)
+
+    assert batch.messages == 0
+    assert batch.discord_interaction_payloads == 2
+    assert batch.agent_references == 2
+    await db_session.refresh(webhook_message)
+    await db_session.refresh(gateway_message)
+    await db_session.refresh(recent_message)
+    await db_session.refresh(telegram_control)
+    assert webhook_message.payload == {
+        "type": 2,
+        "id": "interaction-webhook",
+        "application_id": "discord-application",
+        "context": 0,
+        "data": {"name": "agent_status", "options": [{"name": "detail", "value": 1}]},
+    }
+    assert gateway_message.payload == {
+        "op": 0,
+        "t": "INTERACTION_CREATE",
+        "s": 42,
+        "d": {
+            "id": "interaction-gateway",
+            "application_id": "discord-application",
+            "content": "keep event content",
+            "context": 1,
+        },
+    }
+    assert recent_message.payload is not None
+    assert recent_message.payload["token"] == "recent-secret"
+    assert telegram_control.payload is not None
+    assert telegram_control.payload["token"] == "telegram-secret-shaped-value"
+    for reference in expired_references:
+        assert await db_session.get(ChannelAgentReference, reference.id) is None
+    assert await db_session.get(ChannelAgentReference, recent_reference.id) is not None
+
+
+@pytest.mark.asyncio
 async def test_queue_snapshots_report_provider_specific_stuck_pending(
     engine,
     db_session: AsyncSession,
@@ -580,6 +832,152 @@ async def test_queue_snapshots_report_provider_specific_stuck_pending(
 
 
 @pytest.mark.asyncio
+async def test_queue_snapshots_ignore_historical_inactive_authority_and_identity_mismatches(
+    db_session: AsyncSession,
+    seed_user: User,
+    channel_agent: AgentEnvironment,
+):
+    active, _active_link, active_binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        chat_id="snapshot-active",
+    )
+    (
+        archived_account,
+        _archived_account_link,
+        archived_account_binding,
+    ) = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        chat_id="snapshot-archived-account",
+    )
+    (
+        disabled_account,
+        _disabled_account_link,
+        disabled_account_binding,
+    ) = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        chat_id="snapshot-disabled-account",
+    )
+    archived_binding_account, _binding_link, archived_binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        chat_id="snapshot-archived-binding",
+    )
+    archived_link_account, archived_link, archived_link_binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        chat_id="snapshot-archived-link",
+    )
+    mismatch_account, mismatch_link, mismatch_binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        chat_id="snapshot-mismatch",
+    )
+    now = datetime(2026, 8, 2, tzinfo=UTC)
+    old = now - timedelta(hours=25)
+
+    valid_inbox = await _add_message(
+        db_session,
+        account=active,
+        binding=active_binding,
+        text="valid inbox",
+    )
+    valid_inbox.created_at = old
+    valid_outbox_message, valid_outbox = await enqueue_channel_outbound_message(
+        db_session,
+        account=active,
+        external_chat_id=active_binding.external_chat_id,
+        text="valid linked outbox",
+    )
+    account_outbox_message, account_outbox = await enqueue_channel_outbound_message(
+        db_session,
+        account=active,
+        external_chat_id="snapshot-account-scoped",
+        text="valid account outbox",
+    )
+    for row in (valid_outbox_message, valid_outbox, account_outbox_message, account_outbox):
+        row.created_at = old
+
+    historical_authorities = (
+        (archived_account, archived_account_binding),
+        (disabled_account, disabled_account_binding),
+        (archived_binding_account, archived_binding),
+        (archived_link_account, archived_link_binding),
+    )
+    for account, binding in historical_authorities:
+        inbox = await _add_message(
+            db_session,
+            account=account,
+            binding=binding,
+            text="historical inbox",
+        )
+        inbox.created_at = old
+        outbox_message, outbox = await enqueue_channel_outbound_message(
+            db_session,
+            account=account,
+            external_chat_id=binding.external_chat_id,
+            text="historical outbox",
+        )
+        outbox_message.created_at = old
+        outbox.created_at = old
+
+    mismatch_inbox = await _add_message(
+        db_session,
+        account=mismatch_account,
+        binding=mismatch_binding,
+        text="mismatched inbox identity",
+    )
+    mismatch_inbox.created_at = old
+    mismatch_inbox.bot_agent_link_id = active_binding.bot_agent_link_id
+    mismatch_outbox_message, mismatch_outbox = await enqueue_channel_outbound_message(
+        db_session,
+        account=mismatch_account,
+        external_chat_id=mismatch_binding.external_chat_id,
+        text="mismatched outbox identity",
+    )
+    mismatch_outbox_message.created_at = old
+    mismatch_outbox.created_at = old
+    mismatch_outbox.bot_agent_link_id = active_binding.bot_agent_link_id
+
+    archived_account.archived_at = now
+    disabled_account.status = CHANNEL_STATUS_DISABLED
+    archived_binding.status = "archived"
+    archived_link.archived_at = now
+    await db_session.flush()
+
+    snapshots = await channel_queue_snapshots(
+        db_session,
+        now=now,
+        stuck_after=timedelta(hours=24),
+    )
+    by_key = {(snapshot.provider, snapshot.queue): snapshot for snapshot in snapshots}
+
+    telegram_inbox = by_key[(CHANNEL_PROVIDER_TELEGRAM, "inbox")]
+    telegram_outbox = by_key[(CHANNEL_PROVIDER_TELEGRAM, "outbox")]
+    assert telegram_inbox.pending_count == 1
+    assert telegram_inbox.stuck_count == 1
+    assert telegram_inbox.oldest_pending_at == old
+    assert telegram_outbox.pending_count == 2
+    assert telegram_outbox.stuck_count == 2
+    assert telegram_outbox.oldest_pending_at == old
+    assert mismatch_link.archived_at is None
+
+
+@pytest.mark.asyncio
 async def test_retention_worker_drains_multiple_bounded_batches(
     engine,
     db_session: AsyncSession,
@@ -622,3 +1020,36 @@ async def test_retention_worker_drains_multiple_bounded_batches(
     assert deleted == 4
     assert remaining == 1
     assert "channel retention batch budget exhausted" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_channel_retention_indexes_match_oldest_first_query_contract(engine):
+    expected = {
+        "ix_channel_bot_agent_links_retention_inactive": "(id)",
+        "ix_channel_debug_events_retention_created": "(created_at, id)",
+        "ix_channel_pair_codes_retention_terminal": "(updated_at, id)",
+        "ix_channel_pair_codes_retention_expired": "(expires_at, id)",
+        "ix_channel_agent_references_retention_orphaned": "(updated_at, id)",
+        "ix_channel_agent_references_link_retention": "(bot_agent_link_id, updated_at, id)",
+        "ix_channel_agent_references_discord_interaction": "(created_at, id)",
+        "ix_channel_messages_retention_delivered": "(delivered_at, id)",
+        "ix_channel_messages_retention_unbound": "(created_at, id)",
+        "ix_channel_messages_discord_interaction_token": "(created_at, id)",
+        "ix_channel_deliveries_retention_terminal": "(updated_at, id)",
+    }
+    async with engine.connect() as connection:
+        rows = await connection.execute(
+            text(
+                "SELECT indexname, indexdef FROM pg_indexes "
+                "WHERE schemaname = current_schema() AND ("
+                "indexname LIKE 'ix_channel_%retention%' OR "
+                "indexname = 'ix_channel_messages_discord_interaction_token' OR "
+                "indexname = 'ix_channel_agent_references_discord_interaction')"
+            )
+        )
+    definitions = {row.indexname: row.indexdef for row in rows}
+
+    assert expected.keys() <= definitions.keys()
+    for index_name, ordered_columns in expected.items():
+        assert ordered_columns in definitions[index_name]
+        assert " WHERE " in definitions[index_name]

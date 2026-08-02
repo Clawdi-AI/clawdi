@@ -146,6 +146,11 @@ class ChannelBotAgentLink(Base, TimestampMixin):
             unique=True,
             postgresql_where=sql_text("archived_at IS NULL"),
         ),
+        Index(
+            "ix_channel_bot_agent_links_retention_inactive",
+            "id",
+            postgresql_where=sql_text("status <> 'active' OR archived_at IS NOT NULL"),
+        ),
     )
 
 
@@ -301,6 +306,23 @@ class ChannelPairCode(Base, TimestampMixin):
     claimed_external_chat_id: Mapped[str | None] = mapped_column(String(300))
     claimed_external_user_id: Mapped[str | None] = mapped_column(String(300))
 
+    __table_args__ = (
+        Index(
+            "ix_channel_pair_codes_retention_terminal",
+            "updated_at",
+            "id",
+            postgresql_include=("account_id",),
+            postgresql_where=sql_text("status IN ('claimed', 'revoked')"),
+        ),
+        Index(
+            "ix_channel_pair_codes_retention_expired",
+            "expires_at",
+            "id",
+            postgresql_include=("account_id",),
+            postgresql_where=sql_text("status = 'pending'"),
+        ),
+    )
+
 
 class ChannelMessage(Base, TimestampMixin):
     __tablename__ = "channel_messages"
@@ -357,6 +379,27 @@ class ChannelMessage(Base, TimestampMixin):
             "inbox_sequence",
         ),
         Index(
+            "ix_channel_messages_retention_delivered",
+            "delivered_at",
+            "id",
+            postgresql_where=sql_text("delivered_at IS NOT NULL"),
+        ),
+        Index(
+            "ix_channel_messages_retention_unbound",
+            "created_at",
+            "id",
+            postgresql_where=sql_text("direction = 'inbound' AND binding_id IS NULL"),
+        ),
+        Index(
+            "ix_channel_messages_discord_interaction_token",
+            "created_at",
+            "id",
+            postgresql_where=sql_text(
+                "(payload ? 'token' AND payload ? 'application_id') OR "
+                "(payload ->> 't' = 'INTERACTION_CREATE' AND (payload -> 'd') ? 'token')"
+            ),
+        ),
+        Index(
             "ux_channel_messages_inbound_provider_event_account",
             "account_id",
             "provider_event_id",
@@ -404,6 +447,15 @@ class ChannelDebugEvent(Base, TimestampMixin):
     status_code: Mapped[int | None] = mapped_column(Integer)
     error: Mapped[str | None] = mapped_column(String(500))
     details: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+
+    __table_args__ = (
+        Index(
+            "ix_channel_debug_events_retention_created",
+            "created_at",
+            "id",
+            postgresql_where=sql_text("provider IN ('telegram', 'discord')"),
+        ),
+    )
 
 
 class ChannelAttachmentUpload(Base, TimestampMixin):
@@ -525,6 +577,32 @@ class ChannelAgentReference(Base, TimestampMixin):
             "ref_value",
             name="uq_channel_agent_references_account_link_kind_value",
         ),
+        Index(
+            "ix_channel_agent_references_retention_orphaned",
+            "updated_at",
+            "id",
+            postgresql_where=sql_text(
+                "provider IN ('telegram', 'discord') AND bot_agent_link_id IS NULL"
+            ),
+        ),
+        Index(
+            "ix_channel_agent_references_link_retention",
+            "bot_agent_link_id",
+            "updated_at",
+            "id",
+            postgresql_where=sql_text(
+                "provider IN ('telegram', 'discord') AND bot_agent_link_id IS NOT NULL"
+            ),
+        ),
+        Index(
+            "ix_channel_agent_references_discord_interaction",
+            "created_at",
+            "id",
+            postgresql_where=sql_text(
+                "provider = 'discord' AND ref_kind IN "
+                "('discord_interaction_id_token', 'discord_interaction_token')"
+            ),
+        ),
     )
 
 
@@ -581,6 +659,13 @@ class ChannelDelivery(Base, TimestampMixin):
             "status",
             "next_attempt_at",
             "created_at",
+        ),
+        Index(
+            "ix_channel_deliveries_retention_terminal",
+            "updated_at",
+            "id",
+            postgresql_include=("message_id", "account_id"),
+            postgresql_where=sql_text("status IN ('succeeded', 'failed')"),
         ),
     )
 

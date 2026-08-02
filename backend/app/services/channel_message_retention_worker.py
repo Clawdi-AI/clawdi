@@ -14,6 +14,7 @@ from app.services.metrics import (
     channel_queue_stuck_pending,
     channel_retention_budget_exhaustions,
     channel_retention_deletions,
+    channel_retention_secret_scrubs,
 )
 
 log = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ class ChannelMessageRetentionWorker:
     async def run_once(self, stop: asyncio.Event | None = None) -> int:
         stop_event = stop or asyncio.Event()
         current_time = datetime.now(UTC)
-        deleted_total = 0
+        processed_total = 0
         last_saturated: tuple[str, ...] = ()
         batches = 0
         while batches < self._max_batches and not stop_event.is_set():
@@ -64,7 +65,7 @@ class ChannelMessageRetentionWorker:
                 )
                 await db.commit()
             batches += 1
-            deleted_total += batch.total
+            processed_total += batch.total
             for record_kind, deleted in (
                 ("messages", batch.messages),
                 ("debug_events", batch.debug_events),
@@ -73,6 +74,11 @@ class ChannelMessageRetentionWorker:
             ):
                 if deleted:
                     channel_retention_deletions.labels(record_kind=record_kind).inc(deleted)
+            if batch.discord_interaction_payloads:
+                channel_retention_secret_scrubs.labels(
+                    provider="discord",
+                    secret_kind="interaction_token",
+                ).inc(batch.discord_interaction_payloads)
             last_saturated = batch.saturated_kinds(self._batch_size)
             if not last_saturated:
                 break
@@ -83,21 +89,21 @@ class ChannelMessageRetentionWorker:
                 channel_retention_budget_exhaustions.labels(record_kind=record_kind).inc()
             log.warning(
                 "channel retention batch budget exhausted: record_kinds=%s batches=%s "
-                "batch_size=%s deleted=%s",
+                "batch_size=%s processed=%s",
                 ",".join(last_saturated),
                 batches,
                 self._batch_size,
-                deleted_total,
+                processed_total,
             )
         if not stop_event.is_set():
             await self._observe_queues(now=datetime.now(UTC))
-        if deleted_total:
+        if processed_total:
             log.info(
-                "channel retention completed: deleted=%s batches=%s",
-                deleted_total,
+                "channel retention completed: processed=%s batches=%s",
+                processed_total,
                 batches,
             )
-        return deleted_total
+        return processed_total
 
     async def _observe_queues(self, *, now: datetime) -> None:
         async with self._sessionmaker() as db:

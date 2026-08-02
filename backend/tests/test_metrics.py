@@ -51,6 +51,7 @@ def test_metrics_exports_all_expected_metrics() -> None:
     assert "msg_router_channel_queue_stuck_pending" in text
     assert "msg_router_channel_queue_oldest_pending_age_seconds" in text
     assert "msg_router_channel_retention_deletions_total" in text
+    assert "msg_router_channel_retention_secret_scrubs_total" in text
     assert "msg_router_channel_retention_budget_exhaustions_total" in text
 
 
