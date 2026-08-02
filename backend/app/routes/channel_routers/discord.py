@@ -994,12 +994,17 @@ async def discord_agent_gateway(
                     if channels.get(channel_id) is not None:
                         await send_channel(channel)
 
+        if bot_agent_link_id is None:
+            await websocket.close(code=4004)
+            return
+        active_link_id = bot_agent_link_id
+
         while True:
             async with async_session_factory() as db:
                 events = await dequeue_discord_gateway_events(
                     db,
                     account=account,
-                    bot_agent_link_id=bot_agent_link_id,
+                    bot_agent_link_id=active_link_id,
                     after_sequence=last_inbox_sequence,
                     limit=100,
                 )
@@ -1011,7 +1016,7 @@ async def discord_agent_gateway(
                         guilds, channels = await _discord_gateway_authority(
                             db,
                             account=account,
-                            bot_agent_link_id=bot_agent_link_id,
+                            bot_agent_link_id=active_link_id,
                             priority_channel_id=channel_id,
                         )
                     for removed_guild_id in projected_guilds - set(guilds):
@@ -1105,7 +1110,7 @@ async def discord_agent_gateway(
 
                     sent = await _send_discord_gateway_message(
                         account_id=account.id,
-                        bot_agent_link_id=bot_agent_link_id,
+                        bot_agent_link_id=active_link_id,
                         message=message,
                         send=(
                             send_message
