@@ -4,7 +4,11 @@ import asyncio
 import json
 import logging
 import secrets
+import threading
 import zlib
+from collections import OrderedDict
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email import policy
@@ -28,7 +32,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -72,6 +76,7 @@ from app.services.channels import (
     DISCORD_REF_INTERACTION_ID_TOKEN,
     DISCORD_REF_INTERACTION_TOKEN,
     ChannelAgentContext,
+    ack_discord_gateway_messages,
     channel_runtime_account_key,
     channel_runtime_placeholder_token,
     dequeue_discord_gateway_events,
@@ -107,7 +112,8 @@ log = logging.getLogger(__name__)
 
 _DISCORD_GATEWAY_RESUME_BUFFER_SIZE = 100
 _DISCORD_GATEWAY_MAX_CHANNELS = 256
-_DISCORD_GATEWAY_SESSIONS: dict[str, dict[str, Any]] = {}
+_DISCORD_GATEWAY_MAX_SESSIONS = 256
+_DISCORD_GATEWAY_SESSION_TTL_SECONDS = 5 * 60.0
 _DISCORD_GATEWAY_CAPABILITY_SUBJECT = "clawdi_discord_gateway"
 _DISCORD_GATEWAY_CAPABILITY_AUDIENCE = "clawdi_discord_gateway"
 
@@ -129,6 +135,139 @@ class _DiscordChannelAuthorization:
 class _DiscordMessageReferenceIdentity:
     guild_id: str | None
     channel_id: str | None
+
+
+@dataclass
+class _DiscordGatewaySessionEntry:
+    state: dict[str, Any]
+    touched_at: float
+    connection_count: int
+
+
+class _DiscordGatewaySessionStore:
+    """Process-local Resume optimization with a bounded disconnected cache."""
+
+    def __init__(
+        self,
+        *,
+        max_sessions: int,
+        ttl_seconds: float,
+        now: Callable[[], float] = monotonic,
+    ) -> None:
+        if max_sessions <= 0 or ttl_seconds <= 0:
+            raise ValueError("discord gateway session bounds must be positive")
+        self._max_sessions = max_sessions
+        self._ttl_seconds = ttl_seconds
+        self._now = now
+        self._entries: OrderedDict[str, _DiscordGatewaySessionEntry] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def put(self, session_id: str, state: dict[str, Any]) -> None:
+        now = self._now()
+        with self._lock:
+            self._prune(now)
+            self._entries[session_id] = _DiscordGatewaySessionEntry(
+                state=state,
+                touched_at=now,
+                connection_count=1,
+            )
+            self._entries.move_to_end(session_id)
+
+    def connect(self, session_id: str) -> dict[str, Any] | None:
+        """Claim a disconnected Resume session for one live connection."""
+        now = self._now()
+        with self._lock:
+            self._prune(now)
+            entry = self._entries.get(session_id)
+            if entry is None:
+                return None
+            entry.connection_count += 1
+            entry.touched_at = now
+            self._entries.move_to_end(session_id)
+            return entry.state
+
+    def disconnect(self, session_id: str) -> None:
+        now = self._now()
+        with self._lock:
+            entry = self._entries.get(session_id)
+            if entry is None:
+                return
+            entry.connection_count = max(0, entry.connection_count - 1)
+            if entry.connection_count:
+                return
+            entry.touched_at = now
+            self._entries.move_to_end(session_id)
+            self._prune(now)
+            self._enforce_bound()
+
+    def get(self, session_id: str) -> dict[str, Any] | None:
+        now = self._now()
+        with self._lock:
+            self._prune(now)
+            entry = self._entries.get(session_id)
+            if entry is None:
+                return None
+            entry.touched_at = now
+            self._entries.move_to_end(session_id)
+            return entry.state
+
+    def touch(self, session_id: str) -> bool:
+        now = self._now()
+        with self._lock:
+            self._prune(now)
+            entry = self._entries.get(session_id)
+            if entry is None:
+                return False
+            entry.touched_at = now
+            self._entries.move_to_end(session_id)
+            return True
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+    def discard(self, session_id: str) -> None:
+        with self._lock:
+            self._entries.pop(session_id, None)
+
+    def __len__(self) -> int:
+        now = self._now()
+        with self._lock:
+            self._prune(now)
+            return len(self._entries)
+
+    def session_ids(self) -> tuple[str, ...]:
+        now = self._now()
+        with self._lock:
+            self._prune(now)
+            return tuple(self._entries)
+
+    def _prune(self, now: float) -> None:
+        expired = [
+            session_id
+            for session_id, entry in self._entries.items()
+            if entry.connection_count == 0 and entry.touched_at + self._ttl_seconds <= now
+        ]
+        for session_id in expired:
+            self._entries.pop(session_id, None)
+
+    def _enforce_bound(self) -> None:
+        disconnected = sum(entry.connection_count == 0 for entry in self._entries.values())
+        if disconnected <= self._max_sessions:
+            return
+        for session_id, entry in tuple(self._entries.items()):
+            if entry.connection_count:
+                continue
+            self._entries.pop(session_id, None)
+            disconnected -= 1
+            if disconnected <= self._max_sessions:
+                break
+
+
+_DISCORD_GATEWAY_SESSIONS = _DiscordGatewaySessionStore(
+    max_sessions=_DISCORD_GATEWAY_MAX_SESSIONS,
+    ttl_seconds=_DISCORD_GATEWAY_SESSION_TTL_SECONDS,
+)
 
 
 class _DiscordCreateMessageParseError(ValueError):
@@ -718,8 +857,29 @@ async def discord_agent_gateway(
     projected_guilds: set[str] = set()
     projected_channels: dict[str, dict[str, Any]] = {}
     deferred_channels: dict[str, float] = {}
+    consumer_lease: AbstractAsyncContextManager[bool] | None = None
+    consumer_lease_entered = False
+    owns_session_entry = False
 
-    async def send_gateway_frame(payload: dict[str, Any], *, record: bool = True) -> None:
+    async def send_gateway_frame(
+        payload: dict[str, Any],
+        *,
+        record: bool = True,
+        message_checkpoint: tuple[UUID, int] | None = None,
+    ) -> None:
+        if session_state is not None and payload.get("op") == 0:
+            session_state["last_sequence"] = payload["s"]
+            if record:
+                frames = session_state.setdefault("frames", [])
+                frames.append(payload)
+                if message_checkpoint is not None:
+                    checkpoints = session_state.get("message_checkpoints")
+                    if isinstance(checkpoints, OrderedDict):
+                        checkpoints[payload["s"]] = message_checkpoint
+                if len(frames) > _DISCORD_GATEWAY_RESUME_BUFFER_SIZE:
+                    dropped = frames[:-_DISCORD_GATEWAY_RESUME_BUFFER_SIZE]
+                    del frames[:-_DISCORD_GATEWAY_RESUME_BUFFER_SIZE]
+                    session_state["dropped_through_sequence"] = dropped[-1]["s"]
         if compressor is None:
             await websocket.send_json(payload)
         else:
@@ -727,27 +887,63 @@ async def discord_agent_gateway(
             await websocket.send_bytes(
                 compressor.compress(raw) + compressor.flush(zlib.Z_SYNC_FLUSH)
             )
-        if record and session_state is not None and payload.get("op") == 0:
-            frames = session_state.setdefault("frames", [])
-            frames.append(payload)
-            if len(frames) > _DISCORD_GATEWAY_RESUME_BUFFER_SIZE:
-                del frames[:-_DISCORD_GATEWAY_RESUME_BUFFER_SIZE]
-                session_state["dropped_before_sequence"] = frames[0]["s"]
+        if session_state is not None:
+            _DISCORD_GATEWAY_SESSIONS.touch(session_id)
 
     async def send_dispatch(
         event_type: str,
         data: dict[str, Any],
         *,
         record: bool = True,
-    ) -> None:
+        message_checkpoint: tuple[UUID, int] | None = None,
+    ) -> int:
         nonlocal gateway_sequence
         gateway_sequence += 1
         await send_gateway_frame(
             {"op": 0, "t": event_type, "s": gateway_sequence, "d": data},
             record=record,
+            message_checkpoint=message_checkpoint,
         )
-        if session_state is not None:
-            session_state["last_sequence"] = gateway_sequence
+        return gateway_sequence
+
+    async def acknowledge_gateway_sequence(sequence: int | None) -> None:
+        if (
+            sequence is None
+            or sequence < 0
+            or session_state is None
+            or account is None
+            or bot_agent_link_id is None
+        ):
+            return
+        last_sequence = session_state.get("last_sequence", 0)
+        if not isinstance(last_sequence, int) or sequence > last_sequence:
+            return
+        checkpoints = session_state.get("message_checkpoints")
+        if not isinstance(checkpoints, OrderedDict):
+            return
+        acknowledged_sequences = [
+            gateway_sequence for gateway_sequence in checkpoints if gateway_sequence <= sequence
+        ]
+        message_ids = [
+            checkpoint[0]
+            for gateway_sequence in acknowledged_sequences
+            if (
+                isinstance((checkpoint := checkpoints.get(gateway_sequence)), tuple)
+                and len(checkpoint) == 2
+                and isinstance(checkpoint[0], UUID)
+            )
+        ]
+        if message_ids:
+            async with async_session_factory() as db:
+                await ack_discord_gateway_messages(
+                    db,
+                    account_id=account.id,
+                    bot_agent_link_id=bot_agent_link_id,
+                    message_ids=message_ids,
+                )
+                await db.commit()
+        for gateway_sequence in acknowledged_sequences:
+            checkpoints.pop(gateway_sequence, None)
 
     async def send_guild(guild_id: str, guild_name: str) -> None:
         payload = _discord_guild_create_payload(
@@ -847,13 +1043,32 @@ async def discord_agent_gateway(
                 if resume_session_id is None:
                     await send_gateway_frame({"op": 9, "d": False}, record=False)
                     continue
-                resume_state = _DISCORD_GATEWAY_SESSIONS.get(resume_session_id)
-                if resume_state is None or (
+                resume_state = _DISCORD_GATEWAY_SESSIONS.connect(resume_session_id)
+                if resume_state is None:
+                    await send_gateway_frame({"op": 9, "d": False}, record=False)
+                    continue
+                if (
                     resume_state.get("account_id") != resolved_account.id
                     or resume_state.get("bot_agent_link_id") != resolved_link_id
                 ):
+                    _DISCORD_GATEWAY_SESSIONS.disconnect(resume_session_id)
                     await send_gateway_frame({"op": 9, "d": False}, record=False)
                     continue
+                owns_session_entry = True
+                consumer_lease = _discord_gateway_consumer_lease(
+                    account_id=resolved_account.id,
+                    bot_agent_link_id=resolved_link_id,
+                )
+                lease_acquired = await consumer_lease.__aenter__()
+                consumer_lease_entered = True
+                if not lease_acquired:
+                    await consumer_lease.__aexit__(None, None, None)
+                    consumer_lease = None
+                    consumer_lease_entered = False
+                    _DISCORD_GATEWAY_SESSIONS.disconnect(resume_session_id)
+                    owns_session_entry = False
+                    await websocket.close(code=4008)
+                    return
                 account = resolved_account
                 bot_agent_link_id = resolved_link_id
                 session_id = resume_session_id
@@ -868,29 +1083,73 @@ async def discord_agent_gateway(
                     max((retained["s"] for retained in frames), default=0),
                     session_state.get("last_sequence", 0),
                 )
-                dropped_before_sequence = session_state.get("dropped_before_sequence")
+                dropped_through_sequence = session_state.get("dropped_through_sequence")
                 if (
                     resume_sequence is None
                     or resume_sequence < 0
                     or resume_sequence > latest_sequence
-                    or not any(retained.get("t") == "READY" for retained in frames)
+                    or session_state.get("identified") is not True
                     or (
-                        isinstance(dropped_before_sequence, int)
-                        and resume_sequence < dropped_before_sequence
+                        isinstance(dropped_through_sequence, int)
+                        and resume_sequence < dropped_through_sequence
                     )
                 ):
                     await send_gateway_frame({"op": 9, "d": False}, record=False)
+                    _DISCORD_GATEWAY_SESSIONS.discard(session_id)
+                    await consumer_lease.__aexit__(None, None, None)
+                    consumer_lease = None
+                    consumer_lease_entered = False
                     account = None
                     bot_agent_link_id = None
                     session_state = None
+                    owns_session_entry = False
+                    session_id = secrets.token_urlsafe(18)
                     continue
+                await acknowledge_gateway_sequence(resume_sequence)
                 gateway_sequence = latest_sequence
+                stored_inbox_sequence = session_state.get("last_inbox_sequence", 0)
+                last_inbox_sequence = (
+                    stored_inbox_sequence if isinstance(stored_inbox_sequence, int) else 0
+                )
+                remaining_checkpoints = session_state.get("message_checkpoints")
+                if isinstance(remaining_checkpoints, OrderedDict):
+                    last_inbox_sequence = max(
+                        (
+                            last_inbox_sequence,
+                            *(
+                                checkpoint[1]
+                                for checkpoint in remaining_checkpoints.values()
+                                if (
+                                    isinstance(checkpoint, tuple)
+                                    and len(checkpoint) == 2
+                                    and isinstance(checkpoint[1], int)
+                                )
+                            ),
+                        )
+                    )
+                stored_guilds = session_state.get("projected_guilds")
+                if isinstance(stored_guilds, set):
+                    projected_guilds.update(
+                        guild_id for guild_id in stored_guilds if isinstance(guild_id, str)
+                    )
+                stored_channels = session_state.get("projected_channels")
+                if isinstance(stored_channels, dict):
+                    projected_channels.update(
+                        {
+                            channel_id: dict(channel)
+                            for channel_id, channel in stored_channels.items()
+                            if isinstance(channel_id, str) and isinstance(channel, dict)
+                        }
+                    )
                 async with async_session_factory() as db:
                     resume_guilds, resume_channels = await _discord_gateway_authority(
                         db,
                         account=account,
                         bot_agent_link_id=bot_agent_link_id,
                     )
+                projected_guilds.intersection_update(resume_guilds)
+                for projected_channel_id in set(projected_channels) - set(resume_channels):
+                    projected_channels.pop(projected_channel_id, None)
                 for retained in frames:
                     event_type = retained.get("t")
                     event_data = retained.get("d")
@@ -932,16 +1191,37 @@ async def discord_agent_gateway(
                     if replayed["s"] <= resume_sequence:
                         continue
                     await send_gateway_frame(replayed, record=False)
+                session_state["projected_guilds"] = projected_guilds
+                session_state["projected_channels"] = projected_channels
                 await send_dispatch("RESUMED", {}, record=False)
             else:
+                consumer_lease = _discord_gateway_consumer_lease(
+                    account_id=resolved_account.id,
+                    bot_agent_link_id=resolved_link_id,
+                )
+                lease_acquired = await consumer_lease.__aenter__()
+                consumer_lease_entered = True
+                if not lease_acquired:
+                    await consumer_lease.__aexit__(None, None, None)
+                    consumer_lease = None
+                    consumer_lease_entered = False
+                    await websocket.close(code=4008)
+                    return
                 account = resolved_account
                 bot_agent_link_id = resolved_link_id
+                owns_session_entry = True
+                last_inbox_sequence = 0
                 session_state = {
                     "account_id": account.id,
                     "bot_agent_link_id": bot_agent_link_id,
                     "frames": [],
+                    "identified": True,
+                    "projected_guilds": projected_guilds,
+                    "projected_channels": projected_channels,
+                    "message_checkpoints": OrderedDict(),
+                    "last_inbox_sequence": 0,
                 }
-                _DISCORD_GATEWAY_SESSIONS[session_id] = session_state
+                _DISCORD_GATEWAY_SESSIONS.put(session_id, session_state)
                 async with async_session_factory() as db:
                     guilds, channels = await _discord_gateway_authority(
                         db,
@@ -1000,14 +1280,20 @@ async def discord_agent_gateway(
         active_link_id = bot_agent_link_id
 
         while True:
-            async with async_session_factory() as db:
-                events = await dequeue_discord_gateway_events(
-                    db,
-                    account=account,
-                    bot_agent_link_id=active_link_id,
-                    after_sequence=last_inbox_sequence,
-                    limit=100,
-                )
+            checkpoints = (
+                session_state.get("message_checkpoints") if session_state is not None else None
+            )
+            checkpoint_count = len(checkpoints) if isinstance(checkpoints, OrderedDict) else 0
+            events: list[ChannelMessage] = []
+            if checkpoint_count < _DISCORD_GATEWAY_RESUME_BUFFER_SIZE:
+                async with async_session_factory() as db:
+                    events = await dequeue_discord_gateway_events(
+                        db,
+                        account=account,
+                        bot_agent_link_id=active_link_id,
+                        after_sequence=last_inbox_sequence,
+                        limit=_DISCORD_GATEWAY_RESUME_BUFFER_SIZE - checkpoint_count,
+                    )
             if events:
                 for message in events:
                     payload = _discord_gateway_dispatch(message)
@@ -1097,7 +1383,7 @@ async def discord_agent_gateway(
                             if projected is not None:
                                 deferred_channels.pop(channel_id, None)
 
-                    async def send_message() -> None:
+                    async def send_message() -> int:
                         if guild_id is not None and guild_id not in projected_guilds:
                             await send_guild(guild_id, guilds[guild_id])
                         if channel_id is not None and projected is not None:
@@ -1106,9 +1392,17 @@ async def discord_agent_gateway(
                             projected_channels[channel_id] = projected
                         data = payload.get("d")
                         if event_type is not None and isinstance(data, dict):
-                            await send_dispatch(event_type, data)
+                            return await send_dispatch(
+                                event_type,
+                                data,
+                                message_checkpoint=(
+                                    message.id,
+                                    int(message.inbox_sequence),
+                                ),
+                            )
+                        raise RuntimeError("discord gateway message has no dispatch payload")
 
-                    sent = await _send_discord_gateway_message(
+                    sent, _dispatched_sequence = await _send_discord_gateway_message(
                         account_id=account.id,
                         bot_agent_link_id=active_link_id,
                         message=message,
@@ -1119,6 +1413,8 @@ async def discord_agent_gateway(
                         ),
                     )
                     last_inbox_sequence = int(message.inbox_sequence)
+                    if session_state is not None:
+                        session_state["last_inbox_sequence"] = last_inbox_sequence
                     if sent == "sent" and lifecycle and channel_id is not None:
                         data = payload.get("d")
                         if event_type in {"CHANNEL_DELETE", "THREAD_DELETE"}:
@@ -1142,11 +1438,17 @@ async def discord_agent_gateway(
                     timeout=max(0.001, settings.discord_gateway_poll_interval_seconds),
                 )
                 if isinstance(frame, dict) and frame.get("op") == 1:
+                    await acknowledge_gateway_sequence(_optional_int_param(frame.get("d")))
                     await send_gateway_frame({"op": 11, "d": None}, record=False)
             except TimeoutError:
                 pass
     except WebSocketDisconnect:
         return
+    finally:
+        if consumer_lease is not None and consumer_lease_entered:
+            await consumer_lease.__aexit__(None, None, None)
+        if owns_session_entry:
+            _DISCORD_GATEWAY_SESSIONS.disconnect(session_id)
 
 
 @router.post(
@@ -1711,10 +2013,10 @@ async def _send_discord_gateway_message(
     account_id: UUID,
     bot_agent_link_id: UUID,
     message: ChannelMessage,
-    send: Any | None,
-) -> str:
+    send: Callable[[], Awaitable[int]] | None,
+) -> tuple[str, int | None]:
     if message.binding_id is None:
-        return "dropped"
+        return "dropped", None
     async with async_session_factory() as db:
         binding = await lock_active_discord_binding_lease(
             db,
@@ -1731,13 +2033,37 @@ async def _send_discord_gateway_message(
                     ChannelMessage.account_id == account_id,
                     ChannelMessage.bot_agent_link_id == bot_agent_link_id,
                 )
-                .with_for_update(of=ChannelMessage)
+                .with_for_update(of=ChannelMessage, skip_locked=True)
             )
         ).scalar_one_or_none()
         if current is None or current.delivered_at is not None:
-            return "consumed"
+            return "consumed", None
         if binding is not None and send is not None:
-            await send()
+            dispatched_sequence = await send()
+            # The downstream heartbeat/Resume sequence, not socket.send(), is
+            # the durable receipt acknowledgement for synthetic Gateway data.
+            await db.commit()
+            return "sent", dispatched_sequence
         current.delivered_at = datetime.now(UTC)
         await db.commit()
-        return "sent" if binding is not None and send is not None else "dropped"
+        return "dropped", None
+
+
+@asynccontextmanager
+async def _discord_gateway_consumer_lease(
+    *,
+    account_id: UUID,
+    bot_agent_link_id: UUID,
+):
+    """Allow one synthetic shard consumer per AgentLink across processes."""
+    lock_name = f"discord-agent-gateway:{account_id}:{bot_agent_link_id}"
+    async with async_session_factory() as db:
+        acquired = bool(
+            await db.scalar(
+                select(func.pg_try_advisory_xact_lock(func.hashtextextended(lock_name, 0)))
+            )
+        )
+        try:
+            yield acquired
+        finally:
+            await db.rollback()

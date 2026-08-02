@@ -17,6 +17,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -73,6 +74,7 @@ from app.routes.channel_routers.discord import (
     cleanup_discord_guild_commands_after_authority_revoked,
 )
 from app.routes.channel_routers.shared import _discord_gateway_dispatch
+from app.services import channel_config as channel_config_service
 from app.services import channels as channel_service
 from app.services.bluebubbles_socket import BlueBubblesSocketManager
 from app.services.channel_debug_events import record_channel_debug_event
@@ -106,6 +108,7 @@ from app.services.discord_gateway_worker import (
     DISCORD_DEFAULT_INTENTS,
     DiscordGatewayWorker,
     _GatewayState,
+    _send_heartbeat,
     discord_gateway_advisory_lock_key,
     discord_gateway_intents,
     discord_gateway_uri,
@@ -116,6 +119,7 @@ from app.services.discord_gateway_worker import (
 from app.services.discord_rate_limiter import DiscordRateLimiter
 from app.services.runtime_observation import retire_runtime_environment
 from app.services.telegram_rate_limiter import telegram_rate_limiter
+from app.services.url_security import UnsafeOutboundUrlError
 from app.services.whatsapp_baileys import (
     load_or_create_whatsapp_auth_cert,
     mint_whatsapp_agent_credential,
@@ -580,6 +584,20 @@ class _SequencedProviderClient(_FakeProviderClient):
         self.calls.append({"url": url, **kwargs})
         status_code = self.status_codes.pop(0) if self.status_codes else 200
         return _FakeProviderResponse({}, status_code=status_code)
+
+
+class _AmbiguousDiscordCreateMessageClient(_FakeProviderClient):
+    attempts = 0
+
+    async def post(self, url, **kwargs):
+        self.calls.append({"url": url, **kwargs})
+        self.__class__.attempts += 1
+        if self.attempts == 1:
+            raise httpx.ReadTimeout(
+                "response was lost after provider acceptance",
+                request=httpx.Request("POST", str(url)),
+            )
+        return _FakeProviderResponse({"id": "123456789012345679"})
 
 
 class _DiscordPreparationProviderClient(_FakeProviderClient):
@@ -1414,7 +1432,7 @@ async def test_channel_activity_lists_messages_deliveries_and_debug_events_safel
     assert outbound_item["delivery_id"] == outbound["delivery_id"]
     assert outbound_item["delivery_status"] == DELIVERY_STATUS_FAILED
     assert outbound_item["delivery_attempts"] == 2
-    assert outbound_item["delivery_last_error"] == "provider timed out"
+    assert outbound_item["delivery_last_error"] == "channel_delivery_failed"
     inbound_item = next(item for item in items if item["text"] == "activity inbound")
     assert inbound_item["direction"] == MESSAGE_DIRECTION_INBOUND
     assert inbound_item["provider_message_id"] == "provider-message-1"
@@ -1422,6 +1440,7 @@ async def test_channel_activity_lists_messages_deliveries_and_debug_events_safel
     assert debug_item["stage"] == "delivery"
     assert debug_item["outcome"] == "failure"
     assert debug_item["status_code"] == 503
+    assert debug_item["error"] == "channel_operation_failed"
     assert debug_item["details"]["providerToken"] == "[redacted]"
     assert debug_item["details"]["nested"]["authorization"] == "[redacted]"
     assert provider_token not in response.text
@@ -1576,12 +1595,57 @@ async def test_channel_health_summarizes_delivery_and_debug_state(
     assert "pending_inbox" in health["reasons"]
     assert "recent_error" in health["reasons"]
     assert health["pending_inbox"] == 1
+    assert health["oldest_pending_inbox_at"] is not None
     assert health["pending_deliveries"] == 1
     assert health["failed_deliveries"] == 1
-    assert health["last_error"] in {"rate limited", "provider rejected request"}
+    assert health["last_error"] in {
+        "channel_operation_failed",
+        "channel_delivery_failed",
+    }
     assert health["last_error_stage"] in {"delivery", None}
     assert health["last_message_at"] is not None
     assert health["last_event_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_channel_health_select_count_is_constant_across_accounts(
+    client: httpx.AsyncClient,
+    engine,
+):
+    async def create_account(index: int) -> None:
+        response = await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": f"health-query-count-{index}-{uuid4().hex}",
+            },
+        )
+        assert response.status_code == 201, response.text
+
+    async def health_select_count() -> int:
+        select_count = 0
+
+        def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+            nonlocal select_count
+            if statement.lstrip().upper().startswith("SELECT"):
+                select_count += 1
+
+        sqlalchemy_event.listen(engine.sync_engine, "before_cursor_execute", count_selects)
+        try:
+            response = await client.get("/v1/channels/health")
+        finally:
+            sqlalchemy_event.remove(engine.sync_engine, "before_cursor_execute", count_selects)
+        assert response.status_code == 200, response.text
+        return select_count
+
+    await create_account(0)
+    one_account_count = await health_select_count()
+    for index in range(1, 5):
+        await create_account(index)
+    five_account_count = await health_select_count()
+
+    assert one_account_count == 7
+    assert five_account_count == one_account_count
 
 
 @pytest.mark.asyncio
@@ -3352,11 +3416,11 @@ async def test_delete_channel_agent_link_cleans_only_link_scoped_runtime_state(
     assert target_binding.status == BINDING_STATUS_ARCHIVED
     assert sibling_binding.status == BINDING_STATUS_ACTIVE
     assert target_pending_delivery.status == DELIVERY_STATUS_FAILED
-    assert target_pending_delivery.last_error == "channel agent link archived"
+    assert target_pending_delivery.last_error == "channel_agent_link_archived"
     assert target_in_progress_delivery.status == DELIVERY_STATUS_FAILED
     assert target_in_progress_delivery.locked_at is None
     assert target_in_progress_delivery.locked_by is None
-    assert target_in_progress_delivery.last_error == "channel agent link archived"
+    assert target_in_progress_delivery.last_error == "channel_agent_link_archived"
     assert sibling_delivery.status == DELIVERY_STATUS_PENDING
     assert sibling_delivery.last_error is None
 
@@ -3365,6 +3429,7 @@ async def test_delete_channel_agent_link_cleans_only_link_scoped_runtime_state(
 async def test_list_channel_agent_links_by_agent_returns_linked_channel_summaries(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
+    engine,
     seed_user,
     channel_agent,
     second_channel_agent,
@@ -3422,10 +3487,55 @@ async def test_list_channel_agent_links_by_agent_returns_linked_channel_summarie
         )
     assert other_user_link.status_code == 201, other_user_link.text
 
-    listed = await client.get(
-        "/v1/channels/agent-links",
-        params={"agent_id": str(channel_agent.id)},
+    db_session.add_all(
+        [
+            ChannelBinding(
+                account_id=UUID(private["id"]),
+                bot_agent_link_id=UUID(private["agent_link_id"]),
+                user_id=seed_user.id,
+                external_chat_id="agent-links-private-active",
+                status=BINDING_STATUS_ACTIVE,
+            ),
+            ChannelBinding(
+                account_id=UUID(public_body["id"]),
+                bot_agent_link_id=UUID(public_link.json()["id"]),
+                user_id=seed_user.id,
+                external_chat_id="agent-links-public-active",
+                status=BINDING_STATUS_ACTIVE,
+            ),
+            ChannelBinding(
+                account_id=UUID(public_body["id"]),
+                bot_agent_link_id=UUID(public_link.json()["id"]),
+                user_id=seed_user.id,
+                external_chat_id="agent-links-public-archived",
+                status=BINDING_STATUS_ARCHIVED,
+            ),
+            ChannelBinding(
+                account_id=UUID(public_body["id"]),
+                bot_agent_link_id=UUID(other_user_link.json()["id"]),
+                user_id=other_user.id,
+                external_chat_id="agent-links-other-user-active",
+                status=BINDING_STATUS_ACTIVE,
+            ),
+        ]
     )
+    await db_session.commit()
+
+    select_count = 0
+
+    def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        nonlocal select_count
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_count += 1
+
+    sqlalchemy_event.listen(engine.sync_engine, "before_cursor_execute", count_selects)
+    try:
+        listed = await client.get(
+            "/v1/channels/agent-links",
+            params={"agent_id": str(channel_agent.id)},
+        )
+    finally:
+        sqlalchemy_event.remove(engine.sync_engine, "before_cursor_execute", count_selects)
 
     assert listed.status_code == 200, listed.text
     body = listed.json()
@@ -3440,11 +3550,14 @@ async def test_list_channel_agent_links_by_agent_returns_linked_channel_summarie
     assert private_item["account"]["id"] == private["id"]
     assert private_item["account"]["name"] == private["name"]
     assert private_item["account"]["visibility"] == "private"
+    assert private_item["binding_count"] == 1
     assert public_item["id"] == public_link.json()["id"]
     assert public_item["account"]["id"] == public_body["id"]
     assert public_item["account"]["visibility"] == "public"
+    assert public_item["binding_count"] == 1
     assert other_private["id"] not in by_account_id
     assert other_user_listing.status_code == 404
+    assert select_count == 2
 
 
 @pytest.mark.asyncio
@@ -5350,7 +5463,42 @@ async def test_user_channel_config_rejects_insecure_discord_gateway_url(
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "discord gateway_url must use wss"
+    assert response.json()["detail"] == "discord gateway_url must be a public wss URL"
+
+
+@pytest.mark.asyncio
+async def test_discord_account_config_url_error_does_not_leak_validator_detail(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    marker = "internal-host.invalid Authorization: Bot validator-secret"
+
+    async def reject_sensitive_url(_url: str, *, label: str) -> None:
+        assert label == "discord api_base_url"
+        raise UnsafeOutboundUrlError(marker)
+
+    monkeypatch.setattr(
+        channel_config_service,
+        "validate_channel_http_url",
+        reject_sensitive_url,
+    )
+
+    response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": "discord",
+            "name": "discord-sensitive-config-error",
+            "provider_token": "discord-token",
+            "config": {
+                **_discord_ready_config(),
+                "api_base_url": "https://discord-provider.example/api/v10",
+            },
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "discord api_base_url must be a public https URL"}
+    assert marker not in response.text
 
 
 @pytest.mark.asyncio
@@ -5376,7 +5524,7 @@ async def test_provider_send_rejects_existing_private_config_url(monkeypatch):
         )
 
     assert exc.value.status_code == 400
-    assert "private host" in str(exc.value.detail)
+    assert exc.value.detail == "discord provider url must be a public https URL"
     assert _FakeProviderClient.calls == []
 
 
@@ -5399,8 +5547,107 @@ async def test_telegram_command_sync_rejects_private_provider_base_url(monkeypat
         await channel_service.sync_telegram_commands(account=account, commands=[])
 
     assert exc.value.status_code == 400
-    assert "private host" in str(exc.value.detail)
+    assert exc.value.detail == "telegram provider url must be a public https URL"
     assert _FakeProviderClient.calls == []
+
+
+@pytest.mark.asyncio
+async def test_channel_command_sync_url_error_does_not_leak_validator_detail(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={"provider": "telegram", "name": "telegram-sensitive-service-url-error"},
+        )
+    ).json()
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    ciphertext, nonce = encrypt_optional_token("telegram-provider-token")
+    account.encrypted_provider_token = ciphertext
+    account.provider_token_nonce = nonce
+    await db_session.commit()
+    marker = "10.0.0.9 postgresql://user:password@db.internal/app"
+
+    async def reject_sensitive_url(_url: str, *, label: str) -> None:
+        assert label == "telegram api base url"
+        raise UnsafeOutboundUrlError(marker)
+
+    monkeypatch.setattr(channel_service, "validate_channel_http_url", reject_sensitive_url)
+
+    response = await client.post(f"/v1/channels/{created['id']}/commands/sync", json={})
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "telegram provider url must be a public https URL"}
+    assert marker not in response.text
+
+
+@pytest.mark.asyncio
+async def test_telegram_proxy_url_error_does_not_leak_validator_detail(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={"provider": "telegram", "name": "telegram-sensitive-proxy-url-error"},
+        )
+    ).json()
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    ciphertext, nonce = encrypt_optional_token("telegram-provider-token")
+    account.encrypted_provider_token = ciphertext
+    account.provider_token_nonce = nonce
+    await db_session.commit()
+    marker = "169.254.169.254 Authorization: Bot proxy-secret"
+
+    async def reject_sensitive_url(_url: str, *, label: str) -> None:
+        assert label == "telegram api base url"
+        raise UnsafeOutboundUrlError(marker)
+
+    monkeypatch.setattr(telegram_router, "validate_channel_http_url", reject_sensitive_url)
+
+    response = await client.post(
+        _telegram_bot_path(created, "getMe"),
+        headers=_telegram_agent_headers(created),
+        json={},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "telegram api base url must be a public https URL"}
+    assert marker not in response.text
+
+
+@pytest.mark.asyncio
+async def test_discord_proxy_url_error_does_not_leak_validator_detail(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = await _create_paired_discord_channel(
+        client,
+        name="discord-sensitive-proxy-url-error",
+        channel_id="discord-sensitive-channel",
+        guild_id="discord-sensitive-guild",
+    )
+    marker = "127.0.0.1 signed_url=https://internal.invalid/?signature=secret"
+
+    async def reject_sensitive_url(_url: str, *, label: str) -> None:
+        assert label == "discord api base url"
+        raise UnsafeOutboundUrlError(marker)
+
+    monkeypatch.setattr(shared_router, "validate_channel_http_url", reject_sensitive_url)
+
+    response = await client.get(
+        "/v1/channels/discord/v10/guilds/discord-sensitive-guild",
+        headers={"Authorization": f"Bot {created['agent_token']}"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "discord api base url must be a public https URL"}
+    assert marker not in response.text
 
 
 @pytest.mark.asyncio
@@ -7658,7 +7905,7 @@ async def test_telegram_agent_webhook_inactive_link_records_debug_health(
     assert "pending_inbox" not in health["reasons"]
     assert "recent_error" in health["reasons"]
     assert health["pending_inbox"] == 0
-    assert health["last_error"] == "bot agent link inactive"
+    assert health["last_error"] == "channel_operation_failed"
     assert health["last_error_stage"] == "agent_webhook"
     assert health["last_error_outcome"] == "failure"
     assert activity_response.status_code == 200, activity_response.text
@@ -7667,7 +7914,7 @@ async def test_telegram_agent_webhook_inactive_link_records_debug_health(
     )
     assert debug_item["stage"] == "agent_webhook"
     assert debug_item["outcome"] == "failure"
-    assert debug_item["error"] == "bot agent link inactive"
+    assert debug_item["error"] == "channel_operation_failed"
     assert debug_item["details"]["reason"] == "link_archived"
     assert debug_item["details"]["bot_agent_link_id"] == created["agent_link_id"]
     assert debug_item["details"]["bot_agent_link_status"] == "archived"
@@ -11634,9 +11881,23 @@ def test_discord_rate_limiter_blocks_exhausted_route_bucket():
         "x-ratelimit-bucket": "bucket-1",
     }
 
-    limiter.observe("POST", "/channels/123456789012345678/messages", headers, 200)
-    decision = limiter.check("POST", "/channels/123456789012345678/messages")
-    other = limiter.check("POST", "/channels/987654321098765432/messages")
+    limiter.observe(
+        "account-a",
+        "POST",
+        "/channels/123456789012345678/messages",
+        headers,
+        200,
+    )
+    decision = limiter.check(
+        "account-a",
+        "POST",
+        "/channels/123456789012345678/messages",
+    )
+    other = limiter.check(
+        "account-a",
+        "POST",
+        "/channels/987654321098765432/messages",
+    )
 
     assert decision.allowed is False
     assert decision.retry_after_seconds is not None
@@ -14406,6 +14667,130 @@ async def test_discord_gateway_worker_resumes_and_falls_back_after_invalid_sessi
 
 
 @pytest.mark.asyncio
+async def test_discord_gateway_worker_resumes_from_last_durably_committed_dispatch(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": f"discord-worker-durable-sequence-{uuid4().hex}",
+                "provider_token": "discord-provider-token",
+                "config": _discord_ready_config(),
+            },
+        )
+    ).json()
+    account_id = UUID(created["id"])
+    persist_started = asyncio.Event()
+    allow_failure = asyncio.Event()
+    failed_once = False
+    committed_event_ids: set[str] = set()
+    observed_sequences: list[int] = []
+
+    async def record_with_one_failure(
+        _sessionmaker,
+        _account_id: UUID,
+        frame: dict[str, Any],
+        *,
+        gateway_session_id: str | None = None,
+    ) -> bool:
+        nonlocal failed_once
+        sequence = frame.get("s")
+        assert isinstance(sequence, int)
+        observed_sequences.append(sequence)
+        event_id = str(frame.get("d", {}).get("id", frame.get("t")))
+        if sequence == 12 and not failed_once:
+            failed_once = True
+            persist_started.set()
+            await allow_failure.wait()
+            raise SQLAlchemyError("simulated durable admission failure")
+        if event_id in committed_event_ids:
+            return False
+        committed_event_ids.add(event_id)
+        return True
+
+    monkeypatch.setattr(
+        "app.services.discord_gateway_worker.record_discord_gateway_dispatch",
+        record_with_one_failure,
+    )
+    first_stop = asyncio.Event()
+    resume_stop = asyncio.Event()
+    first_socket = _FakeDiscordGatewaySocket(
+        [
+            {"op": 10, "d": {"heartbeat_interval": 60_000}},
+            {
+                "op": 0,
+                "t": "READY",
+                "s": 11,
+                "d": {
+                    "session_id": "durable-sequence-session",
+                    "resume_gateway_url": "wss://gateway.discord.gg/resume",
+                },
+            },
+            {
+                "op": 0,
+                "t": "MESSAGE_CREATE",
+                "s": 12,
+                "d": {"id": "durable-message-12", "channel_id": "channel-1"},
+            },
+        ],
+        first_stop,
+    )
+    resume_socket = _FakeDiscordGatewaySocket(
+        [
+            {"op": 10, "d": {"heartbeat_interval": 60_000}},
+            {
+                "op": 0,
+                "t": "MESSAGE_CREATE",
+                "s": 12,
+                "d": {"id": "durable-message-12", "channel_id": "channel-1"},
+            },
+            {
+                "op": 0,
+                "t": "MESSAGE_CREATE",
+                "s": 12,
+                "d": {"id": "durable-message-12", "channel_id": "channel-1"},
+            },
+        ],
+        resume_stop,
+    )
+    worker = DiscordGatewayWorker(
+        async_sessionmaker(db_session.bind, expire_on_commit=False),
+        connect_factory=_FakeDiscordGatewayConnect([first_socket, resume_socket]),
+    )
+    state = _GatewayState()
+
+    first_connection = asyncio.create_task(
+        worker._connect_and_record(account_id, first_stop, state)
+    )
+    await persist_started.wait()
+    assert state.sequence == 11
+    await _send_heartbeat(first_socket, state)
+    assert first_socket.sent[-1] == {"op": 1, "d": 11}
+    allow_failure.set()
+    with pytest.raises(SQLAlchemyError, match="durable admission failure"):
+        await first_connection
+
+    assert state.sequence == 11
+    await worker._connect_and_record(account_id, resume_stop, state)
+
+    assert resume_socket.sent[0] == {
+        "op": 6,
+        "d": {
+            "token": "discord-provider-token",
+            "session_id": "durable-sequence-session",
+            "seq": 11,
+        },
+    }
+    assert state.sequence == 12
+    assert observed_sequences == [11, 12, 12, 12]
+    assert committed_event_ids == {"READY", "durable-message-12"}
+
+
+@pytest.mark.asyncio
 async def test_discord_gateway_projection_uses_active_aliases_and_minimal_guild(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -14558,12 +14943,27 @@ def _install_discord_gateway_protocol_fakes(
         bot_agent_link_id: UUID,
         message: ChannelMessage,
         send,
-    ) -> str:
-        event_queue.remove(message)
+    ) -> tuple[str, int | None]:
         if send is None:
-            return "dropped"
-        await send()
-        return "sent"
+            event_queue.remove(message)
+            return "dropped", None
+        dispatched_sequence = await send()
+        return "sent", dispatched_sequence
+
+    async def fake_ack_messages(
+        db,
+        *,
+        account_id: UUID,
+        bot_agent_link_id: UUID,
+        message_ids: list[UUID],
+    ) -> int:
+        before = len(event_queue)
+        event_queue[:] = [event for event in event_queue if event.id not in message_ids]
+        return before - len(event_queue)
+
+    @asynccontextmanager
+    async def fake_consumer_lease(**_kwargs):
+        yield True
 
     monkeypatch.setattr(
         "app.routes.channel_routers.discord.resolve_channel_agent_by_token",
@@ -14588,6 +14988,14 @@ def _install_discord_gateway_protocol_fakes(
     monkeypatch.setattr(
         "app.routes.channel_routers.discord._send_discord_gateway_message",
         fake_send_message,
+    )
+    monkeypatch.setattr(
+        "app.routes.channel_routers.discord._discord_gateway_consumer_lease",
+        fake_consumer_lease,
+    )
+    monkeypatch.setattr(
+        "app.routes.channel_routers.discord.ack_discord_gateway_messages",
+        fake_ack_messages,
     )
     return provider_paths
 
@@ -14761,6 +15169,219 @@ def test_discord_gateway_resume_replays_buffered_dispatches(monkeypatch):
     assert resumed["t"] == "RESUMED"
     assert resumed_again["t"] == "RESUMED"
     assert resumed_again["s"] > resumed["s"]
+
+
+@pytest.mark.asyncio
+async def test_discord_gateway_new_identify_replays_unacknowledged_db_message_after_restart(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _DISCORD_GATEWAY_SESSIONS.clear()
+    channel_id = "restart-replay-channel"
+    guild_id = "restart-replay-guild"
+    created = await _create_paired_discord_channel(
+        client,
+        name=f"discord-restart-replay-{uuid4().hex}",
+        channel_id=channel_id,
+        guild_id=guild_id,
+    )
+    account_id = UUID(created["id"])
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(ChannelBinding.account_id == account_id)
+        )
+    ).scalar_one()
+    message = ChannelMessage(
+        account_id=account_id,
+        bot_agent_link_id=UUID(created["agent_link_id"]),
+        binding_id=binding.id,
+        user_id=binding.user_id,
+        direction=MESSAGE_DIRECTION_INBOUND,
+        external_chat_id=binding.external_chat_id,
+        provider_message_id="restart-replay-message",
+        text="replay after restart",
+        payload={
+            "t": "MESSAGE_CREATE",
+            "d": {
+                "id": "restart-replay-message",
+                "channel_id": channel_id,
+                "guild_id": guild_id,
+                "content": "replay after restart",
+                "author": {"id": "restart-user"},
+            },
+        },
+    )
+    db_session.add(message)
+    await db_session.commit()
+
+    async def fake_provider_request(*, account, method: str, path: str, **_kwargs):
+        assert path == f"channels/{channel_id}"
+        return shared_router._DiscordProviderResult(
+            content=json.dumps(
+                {"id": channel_id, "guild_id": guild_id, "type": 0, "name": "restart"}
+            ).encode(),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    monkeypatch.setattr(discord_router, "_request_discord_provider", fake_provider_request)
+    _install_discord_gateway_test_session_factory(monkeypatch)
+
+    with TestClient(app) as sync_client:
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
+            assert websocket.receive_json()["op"] == 10
+            websocket.send_json({"op": 2, "d": {"token": created["agent_token"], "intents": 0}})
+            ready = websocket.receive_json()
+            assert websocket.receive_json()["t"] == "GUILD_CREATE"
+            assert websocket.receive_json()["t"] == "CHANNEL_CREATE"
+            first_dispatch = websocket.receive_json()
+            assert first_dispatch["d"]["id"] == "restart-replay-message"
+
+    await db_session.refresh(message)
+    assert message.delivered_at is None
+
+    # Process-local Resume state is gone, but the durable pending row remains.
+    _DISCORD_GATEWAY_SESSIONS.clear()
+    with TestClient(app) as sync_client:
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
+            assert websocket.receive_json()["op"] == 10
+            websocket.send_json(
+                {
+                    "op": 6,
+                    "d": {
+                        "token": created["agent_token"],
+                        "session_id": ready["d"]["session_id"],
+                        "seq": first_dispatch["s"],
+                    },
+                }
+            )
+            assert websocket.receive_json() == {"op": 9, "d": False}
+            websocket.send_json({"op": 2, "d": {"token": created["agent_token"], "intents": 0}})
+            assert websocket.receive_json()["t"] == "READY"
+            assert websocket.receive_json()["t"] == "GUILD_CREATE"
+            assert websocket.receive_json()["t"] == "CHANNEL_CREATE"
+            replayed = websocket.receive_json()
+            assert replayed["d"]["id"] == "restart-replay-message"
+            websocket.send_json({"op": 1, "d": replayed["s"]})
+            assert websocket.receive_json() == {"op": 11, "d": None}
+
+    await db_session.refresh(message)
+    assert message.delivered_at is not None
+
+
+@pytest.mark.asyncio
+async def test_discord_gateway_resume_sequence_acks_and_replays_exact_db_message(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _DISCORD_GATEWAY_SESSIONS.clear()
+    channel_id = "resume-ack-channel"
+    guild_id = "resume-ack-guild"
+    created = await _create_paired_discord_channel(
+        client,
+        name=f"discord-resume-ack-{uuid4().hex}",
+        channel_id=channel_id,
+        guild_id=guild_id,
+    )
+    account_id = UUID(created["id"])
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(ChannelBinding.account_id == account_id)
+        )
+    ).scalar_one()
+    message = ChannelMessage(
+        account_id=account_id,
+        bot_agent_link_id=UUID(created["agent_link_id"]),
+        binding_id=binding.id,
+        user_id=binding.user_id,
+        direction=MESSAGE_DIRECTION_INBOUND,
+        external_chat_id=binding.external_chat_id,
+        provider_message_id="resume-ack-message",
+        payload={
+            "t": "MESSAGE_CREATE",
+            "d": {
+                "id": "resume-ack-message",
+                "channel_id": channel_id,
+                "guild_id": guild_id,
+                "content": "resume me",
+                "author": {"id": "resume-user"},
+            },
+        },
+    )
+    db_session.add(message)
+    await db_session.commit()
+
+    async def fake_provider_request(*, account, method: str, path: str, **_kwargs):
+        return shared_router._DiscordProviderResult(
+            content=json.dumps(
+                {"id": channel_id, "guild_id": guild_id, "type": 0, "name": "resume"}
+            ).encode(),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    monkeypatch.setattr(discord_router, "_request_discord_provider", fake_provider_request)
+    _install_discord_gateway_test_session_factory(monkeypatch)
+
+    with TestClient(app) as sync_client:
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
+            assert websocket.receive_json()["op"] == 10
+            websocket.send_json({"op": 2, "d": {"token": created["agent_token"], "intents": 0}})
+            ready = websocket.receive_json()
+            assert websocket.receive_json()["t"] == "GUILD_CREATE"
+            channel = websocket.receive_json()
+            dispatch = websocket.receive_json()
+
+    # Model cancellation after the frame/checkpoint was registered and sent but
+    # before the connection-local durable inbox cursor was advanced.
+    session_state = _DISCORD_GATEWAY_SESSIONS.get(ready["d"]["session_id"])
+    assert session_state is not None
+    session_state["last_inbox_sequence"] = 0
+
+    with TestClient(app) as sync_client:
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
+            assert websocket.receive_json()["op"] == 10
+            websocket.send_json(
+                {
+                    "op": 6,
+                    "d": {
+                        "token": created["agent_token"],
+                        "session_id": ready["d"]["session_id"],
+                        "seq": channel["s"],
+                    },
+                }
+            )
+            replayed = websocket.receive_json()
+            assert replayed == dispatch
+            resumed = websocket.receive_json()
+            assert resumed["t"] == "RESUMED"
+            websocket.send_json({"op": 1, "d": channel["s"]})
+            # The pending DB row is already represented by the replayed
+            # checkpoint, so it must not be dequeued a second time here.
+            assert websocket.receive_json() == {"op": 11, "d": None}
+
+    await db_session.refresh(message)
+    assert message.delivered_at is None
+
+    with TestClient(app) as sync_client:
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
+            assert websocket.receive_json()["op"] == 10
+            websocket.send_json(
+                {
+                    "op": 6,
+                    "d": {
+                        "token": created["agent_token"],
+                        "session_id": ready["d"]["session_id"],
+                        "seq": replayed["s"],
+                    },
+                }
+            )
+            assert websocket.receive_json()["t"] == "RESUMED"
+
+    await db_session.refresh(message)
+    assert message.delivered_at is not None
 
 
 def test_discord_gateway_thread_only_alias_is_hydrated_before_message(monkeypatch):
@@ -15088,10 +15709,11 @@ async def test_discord_gateway_send_and_unpair_are_linearized(
     allow_send = asyncio.Event()
     frames: list[str] = []
 
-    async def send() -> None:
+    async def send() -> int:
         frames.append("frame")
         send_started.set()
         await allow_send.wait()
+        return 42
 
     send_task = asyncio.create_task(
         discord_router._send_discord_gateway_message(
@@ -15114,9 +15736,25 @@ async def test_discord_gateway_send_and_unpair_are_linearized(
     assert not unpair_task.done()
     allow_send.set()
 
-    assert await send_task == "sent"
+    assert await send_task == ("sent", 42)
     await unpair_task
     assert frames == ["frame"]
+    await db_session.refresh(message)
+    assert message.delivered_at is None
+
+    async with sessionmaker() as ack_db:
+        assert (
+            await channel_service.ack_discord_gateway_messages(
+                ack_db,
+                account_id=account_id,
+                bot_agent_link_id=link_id,
+                message_ids=[message.id],
+            )
+            == 1
+        )
+        await ack_db.commit()
+    await db_session.refresh(message)
+    assert message.delivered_at is not None
 
     second = ChannelMessage(
         account_id=account_id,
@@ -15131,15 +15769,12 @@ async def test_discord_gateway_send_and_unpair_are_linearized(
     db_session.add(second)
     await db_session.commit()
     await db_session.refresh(second)
-    assert (
-        await discord_router._send_discord_gateway_message(
-            account_id=account_id,
-            bot_agent_link_id=link_id,
-            message=second,
-            send=lambda: frames.append("leaked"),
-        )
-        == "dropped"
-    )
+    assert await discord_router._send_discord_gateway_message(
+        account_id=account_id,
+        bot_agent_link_id=link_id,
+        message=second,
+        send=lambda: frames.append("leaked"),
+    ) == ("dropped", None)
     assert frames == ["frame"]
 
 
@@ -15176,10 +15811,11 @@ async def test_discord_gateway_multiple_connections_send_each_event_once(
     await db_session.refresh(message)
     sends = 0
 
-    async def send() -> None:
+    async def send() -> int:
         nonlocal sends
         sends += 1
         await asyncio.sleep(0.05)
+        return 42
 
     results = await asyncio.gather(
         *(
@@ -15193,7 +15829,7 @@ async def test_discord_gateway_multiple_connections_send_each_event_once(
         )
     )
 
-    assert sorted(results) == ["consumed", "sent"]
+    assert sorted(results) == [("consumed", None), ("sent", 42)]
     assert sends == 1
 
 
@@ -15479,6 +16115,8 @@ def test_discord_gateway_resume_rejects_sequence_older_than_buffer(monkeypatch):
             assert websocket.receive_json()["t"] == "GUILD_CREATE"
             assert websocket.receive_json()["t"] == "CHANNEL_CREATE"
             assert websocket.receive_json()["d"]["content"] == "event one"
+            websocket.send_json({"op": 1, "d": 4})
+            assert websocket.receive_json() == {"op": 11, "d": None}
             assert websocket.receive_json()["d"]["content"] == "event two"
 
         with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
@@ -15494,6 +16132,35 @@ def test_discord_gateway_resume_rejects_sequence_older_than_buffer(monkeypatch):
                 }
             )
             assert websocket.receive_json() == {"op": 9, "d": False}
+
+
+def test_discord_gateway_resume_accepts_latest_sequence_after_ready_eviction(monkeypatch):
+    monkeypatch.setattr("app.routes.channel_routers.discord._DISCORD_GATEWAY_RESUME_BUFFER_SIZE", 1)
+    _install_discord_gateway_protocol_fakes(monkeypatch)
+
+    with TestClient(app) as sync_client:
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
+            assert websocket.receive_json()["op"] == 10
+            websocket.send_json({"op": 2, "d": {"token": "valid-discord-token", "intents": 0}})
+            ready = websocket.receive_json()
+            assert ready["t"] == "READY"
+            assert websocket.receive_json()["t"] == "GUILD_CREATE"
+            latest = websocket.receive_json()
+            assert latest["t"] == "CHANNEL_CREATE"
+
+        with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
+            assert websocket.receive_json()["op"] == 10
+            websocket.send_json(
+                {
+                    "op": 6,
+                    "d": {
+                        "token": "valid-discord-token",
+                        "session_id": ready["d"]["session_id"],
+                        "seq": latest["s"],
+                    },
+                }
+            )
+            assert websocket.receive_json()["t"] == "RESUMED"
 
 
 @pytest.mark.asyncio
@@ -15895,7 +16562,7 @@ async def test_discord_webhook_inactive_link_records_debug_health(
     assert "pending_inbox" not in health["reasons"]
     assert "recent_error" in health["reasons"]
     assert health["pending_inbox"] == 0
-    assert health["last_error"] == "bot agent link inactive"
+    assert health["last_error"] == "channel_operation_failed"
     assert health["last_error_stage"] == "agent_webhook"
     assert health["last_error_outcome"] == "failure"
     assert activity_response.status_code == 200, activity_response.text
@@ -15904,7 +16571,7 @@ async def test_discord_webhook_inactive_link_records_debug_health(
     )
     assert debug_item["stage"] == "agent_webhook"
     assert debug_item["outcome"] == "failure"
-    assert debug_item["error"] == "bot agent link inactive"
+    assert debug_item["error"] == "channel_operation_failed"
     assert debug_item["details"]["reason"] == "link_archived"
     assert debug_item["details"]["bot_agent_link_id"] == created["agent_link_id"]
     assert debug_item["details"]["bot_agent_link_status"] == "archived"
@@ -17589,7 +18256,7 @@ async def test_delete_channel_fails_pending_outbound_deliveries(
     assert delivery.status == DELIVERY_STATUS_FAILED
     assert delivery.locked_at is None
     assert delivery.locked_by is None
-    assert delivery.last_error == "channel account archived"
+    assert delivery.last_error == "channel_account_inactive"
     account = await db_session.get(ChannelAccount, UUID(created["id"]), populate_existing=True)
     assert account is not None
     assert account.encrypted_provider_token is None
@@ -17638,7 +18305,295 @@ async def test_channel_delivery_worker_retries_provider_failures(
     ).scalar_one()
     assert delivery.status == "pending"
     assert delivery.attempts == 1
-    assert delivery.last_error == "telegram api unreachable"
+    assert delivery.last_error == "channel_provider_unreachable"
+
+
+@pytest.mark.asyncio
+async def test_channel_delivery_does_not_persist_provider_response_secrets(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    marker = "delivery-provider-secret-marker"
+
+    async def provider_response_with_secrets(**_kwargs):
+        return "702", {
+            "ok": True,
+            "result": {
+                "message_id": 702,
+                "authorization": f"Bot {marker}",
+                "document": {
+                    "file_url": f"https://cdn.example/file?signature={marker}",
+                },
+                "text": marker,
+            },
+        }
+
+    monkeypatch.setattr(
+        channel_service,
+        "send_provider_outbound_payload",
+        provider_response_with_secrets,
+    )
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": f"telegram-safe-provider-response-{uuid4().hex}",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    sent = await client.post(
+        f"/v1/channels/{created['id']}/messages",
+        json={"external_chat_id": "111", "text": "persist safe metadata only"},
+    )
+
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    delivered_id = await ChannelDeliveryWorker(sessionmaker).run_once()
+
+    assert delivered_id == UUID(sent.json()["delivery_id"])
+    delivery = (
+        await db_session.execute(
+            select(ChannelDelivery)
+            .where(ChannelDelivery.id == delivered_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    message = await db_session.get(
+        ChannelMessage,
+        UUID(sent.json()["id"]),
+        populate_existing=True,
+    )
+    assert message is not None
+    assert delivery.provider_response == {
+        "provider": "telegram",
+        "accepted": True,
+        "provider_message_id": "702",
+    }
+    assert marker not in str(delivery.provider_response)
+    assert marker not in str(message.payload)
+
+
+@pytest.mark.asyncio
+async def test_discord_delivery_retry_reuses_official_enforced_nonce(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # https://discord.com/developers/docs/resources/message#create-message
+    # documents a <=25 character nonce plus enforce_nonce duplicate return.
+    _AmbiguousDiscordCreateMessageClient.calls = []
+    _AmbiguousDiscordCreateMessageClient.attempts = 0
+    monkeypatch.setattr(
+        channel_service.httpx,
+        "AsyncClient",
+        _AmbiguousDiscordCreateMessageClient,
+    )
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": f"discord-durable-nonce-{uuid4().hex}",
+                "provider_token": "discord-provider-token",
+                "config": _discord_ready_config(),
+            },
+        )
+    ).json()
+    sent = await client.post(
+        f"/v1/channels/{created['id']}/messages",
+        json={"external_chat_id": "123456789012345678", "text": "send once"},
+    )
+    delivery_id = UUID(sent.json()["delivery_id"])
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    worker = ChannelDeliveryWorker(sessionmaker)
+
+    assert await worker.run_once() == delivery_id
+    delivery = await db_session.get(ChannelDelivery, delivery_id, populate_existing=True)
+    assert delivery is not None
+    assert delivery.status == DELIVERY_STATUS_PENDING
+    assert delivery.last_error == "channel_provider_unreachable"
+    delivery.next_attempt_at = datetime(2000, 1, 1, tzinfo=UTC)
+    await db_session.commit()
+
+    assert await worker.run_once() == delivery_id
+    await db_session.refresh(delivery)
+
+    assert delivery.status == "succeeded"
+    assert len(_AmbiguousDiscordCreateMessageClient.calls) == 2
+    first_payload = _AmbiguousDiscordCreateMessageClient.calls[0]["json"]
+    second_payload = _AmbiguousDiscordCreateMessageClient.calls[1]["json"]
+    assert first_payload == second_payload
+    assert first_payload["content"] == "send once"
+    assert first_payload["allowed_mentions"] == {"parse": []}
+    assert first_payload["enforce_nonce"] is True
+    assert len(first_payload["nonce"]) == 22
+
+
+@pytest.mark.asyncio
+async def test_discord_delivery_429_remains_pending_until_retry_after(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def rate_limited_provider(**_kwargs):
+        raise HTTPException(
+            status_code=429,
+            detail="discord api rate limited",
+            headers={"Retry-After": "7.5"},
+        )
+
+    monkeypatch.setattr(
+        channel_service,
+        "send_provider_outbound_payload",
+        rate_limited_provider,
+    )
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": f"discord-delivery-429-{uuid4().hex}",
+                "provider_token": "discord-provider-token",
+                "config": _discord_ready_config(),
+            },
+        )
+    ).json()
+    sent = await client.post(
+        f"/v1/channels/{created['id']}/messages",
+        json={"external_chat_id": "123456789012345678", "text": "retry after"},
+    )
+    delivery_id = UUID(sent.json()["delivery_id"])
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    started_at = datetime.now(UTC)
+
+    assert await ChannelDeliveryWorker(sessionmaker).run_once() == delivery_id
+
+    delivery = await db_session.get(ChannelDelivery, delivery_id, populate_existing=True)
+    assert delivery is not None
+    assert delivery.status == DELIVERY_STATUS_PENDING
+    assert delivery.last_error == "channel_provider_rate_limited"
+    assert delivery.next_attempt_at >= started_at + timedelta(seconds=7)
+    activity = await client.get(f"/v1/channels/{created['id']}/activity")
+    health = await client.get("/v1/channels/health")
+    activity_delivery = next(
+        item for item in activity.json()["items"] if item["delivery_id"] == str(delivery_id)
+    )
+    health_item = next(
+        item for item in health.json()["items"] if item["account_id"] == created["id"]
+    )
+    assert activity_delivery["delivery_last_error"] == "channel_provider_rate_limited"
+    assert health_item["last_error"] == "channel_provider_rate_limited"
+
+
+@pytest.mark.asyncio
+async def test_telegram_provider_429_preserves_official_retry_after(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class RateLimitedTelegramClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return httpx.Response(
+                429,
+                json={
+                    "ok": False,
+                    "error_code": 429,
+                    "parameters": {"retry_after": 12},
+                },
+            )
+
+    async def allow_test_url(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(channel_service.httpx, "AsyncClient", RateLimitedTelegramClient)
+    monkeypatch.setattr(channel_service, "validate_channel_http_url", allow_test_url)
+
+    with pytest.raises(HTTPException) as caught:
+        await channel_service._post_provider_json(
+            channel=CHANNEL_PROVIDER_TELEGRAM,
+            method="sendMessage",
+            url="https://api.telegram.org/bot-placeholder/sendMessage",
+            json_payload={"chat_id": "1", "text": "rate limit"},
+            timeout_seconds=20,
+            unreachable_detail="telegram api unreachable",
+            rejected_detail="telegram api rejected message",
+        )
+
+    assert caught.value.status_code == 429
+    assert caught.value.detail == "telegram api rate limited"
+    assert caught.value.headers == {"Retry-After": "12.0"}
+
+
+@pytest.mark.asyncio
+async def test_channel_delivery_unknown_exception_detail_is_stored_and_returned_as_code(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    marker = "delivery-error-secret-marker"
+
+    async def provider_failure_with_secret(**_kwargs):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Authorization: Bot {marker} postgresql://user:pass@db.example/app",
+        )
+
+    monkeypatch.setattr(
+        channel_service,
+        "send_provider_outbound_payload",
+        provider_failure_with_secret,
+    )
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": f"discord-safe-delivery-error-{uuid4().hex}",
+                "provider_token": "discord-provider-token",
+                "config": _discord_ready_config(),
+            },
+        )
+    ).json()
+    sent_response = await client.post(
+        f"/v1/channels/{created['id']}/messages",
+        json={"external_chat_id": "123456789012345678", "text": "fail safely"},
+    )
+    assert sent_response.status_code == 201, sent_response.text
+
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    delivered_id = await ChannelDeliveryWorker(sessionmaker).run_once()
+    activity = await client.get(f"/v1/channels/{created['id']}/activity")
+    health = await client.get("/v1/channels/health")
+
+    delivery = (
+        await db_session.execute(
+            select(ChannelDelivery)
+            .where(ChannelDelivery.id == delivered_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert delivery.last_error == "channel_delivery_failed"
+    assert marker not in str(delivery.last_error)
+    assert activity.status_code == 200
+    activity_item = next(
+        item for item in activity.json()["items"] if item["delivery_id"] == str(delivered_id)
+    )
+    assert activity_item["delivery_last_error"] == "channel_delivery_failed"
+    health_item = next(
+        item for item in health.json()["items"] if item["account_id"] == created["id"]
+    )
+    assert health_item["last_error"] == "channel_delivery_failed"
+    assert marker not in activity.text
+    assert marker not in health.text
 
 
 @pytest.mark.asyncio
@@ -17713,7 +18668,7 @@ async def test_channel_delivery_does_not_send_after_claimed_link_is_archived(
     assert delivery.status == DELIVERY_STATUS_FAILED
     assert delivery.locked_at is None
     assert delivery.locked_by is None
-    assert delivery.last_error == "channel agent link archived"
+    assert delivery.last_error == "channel_agent_link_archived"
 
 
 @pytest.mark.asyncio
@@ -17779,7 +18734,7 @@ async def test_channel_delivery_does_not_send_after_runtime_is_retired(
         )
     ).scalar_one()
     assert delivery.status == DELIVERY_STATUS_FAILED
-    assert delivery.last_error == "channel agent link has no managed runtime authority"
+    assert delivery.last_error == "channel_agent_link_authority_missing"
 
 
 @pytest.mark.asyncio
@@ -17838,7 +18793,7 @@ async def test_channel_delivery_does_not_send_after_binding_is_unpaired(
         )
     ).scalar_one()
     assert delivery.status == DELIVERY_STATUS_FAILED
-    assert delivery.last_error == "channel binding archived"
+    assert delivery.last_error == "channel_binding_inactive"
 
 
 @pytest.mark.asyncio
@@ -17982,7 +18937,7 @@ async def test_channel_delivery_link_lock_contention_does_not_exhaust_attempts(
     assert contended_delivery.attempts == 1
     assert contended_delivery.locked_at is None
     assert contended_delivery.locked_by is None
-    assert contended_delivery.last_error == channel_service.DELIVERY_LINK_LOCK_CONTENTION_ERROR
+    assert contended_delivery.last_error == "channel_agent_link_update_contended"
     assert _FakeProviderClient.calls == []
 
     contended_delivery.next_attempt_at = datetime(2000, 1, 1, tzinfo=UTC)
@@ -19816,7 +20771,11 @@ async def test_discord_membership_helper_classifies_real_provider_responses(
     assert result.guild_name == (expected_guild_name or None)
     assert len(MembershipClient.calls) == 1
     if status_code == 429:
-        decision = limiter.check("GET", "/guilds/membership-real-guild")
+        decision = limiter.check(
+            str(account.id),
+            "GET",
+            "/guilds/membership-real-guild",
+        )
         assert decision.allowed is False
         assert decision.retry_after_seconds == pytest.approx(17.0)
 

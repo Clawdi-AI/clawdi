@@ -177,6 +177,7 @@ class ChannelAgentLinkResponse(BaseModel):
 
 class ChannelAgentLinkWithAccountResponse(ChannelAgentLinkResponse):
     account: ChannelAccountResponse
+    binding_count: int = 0
 
 
 class ChannelPairCodeCreate(BaseModel):
@@ -317,6 +318,7 @@ class ChannelHealthItemResponse(BaseModel):
     health_status: ChannelHealthStatus
     reasons: list[str] = Field(default_factory=list)
     pending_inbox: int = 0
+    oldest_pending_inbox_at: datetime | None = None
     pending_deliveries: int = 0
     in_progress_deliveries: int = 0
     failed_deliveries: int = 0

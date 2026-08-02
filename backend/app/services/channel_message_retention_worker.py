@@ -14,6 +14,7 @@ from app.services.metrics import (
     channel_queue_stuck_pending,
     channel_retention_budget_exhaustions,
     channel_retention_deletions,
+    channel_retention_delivery_expirations,
     channel_retention_secret_scrubs,
 )
 
@@ -66,6 +67,10 @@ class ChannelMessageRetentionWorker:
                 await db.commit()
             batches += 1
             processed_total += batch.total
+            if batch.telegram_delivery_expirations:
+                channel_retention_delivery_expirations.labels(provider="telegram").inc(
+                    batch.telegram_delivery_expirations
+                )
             for record_kind, deleted in (
                 ("messages", batch.messages),
                 ("debug_events", batch.debug_events),

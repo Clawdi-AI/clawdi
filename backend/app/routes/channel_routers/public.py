@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from urllib.parse import quote
 from uuid import UUID
@@ -89,6 +90,11 @@ from app.services.channel_config import (
     validate_channel_account_config_urls,
     validate_required_discord_interactions_config,
 )
+from app.services.channel_debug_events import (
+    public_channel_debug_details,
+    public_channel_delivery_error,
+    public_channel_operation_error,
+)
 from app.services.channels import (
     PAIR_COMMAND,
     archive_bot_agent_link,
@@ -126,7 +132,6 @@ from app.services.channels import (
     lock_channel_binding_identity,
     mark_discord_reserved_commands_current,
     normalize_telegram_bot_username,
-    pending_channel_inbox_count,
     rearm_discord_command_reconciliation,
     rotate_bot_agent_link_token,
     store_channel_secrets,
@@ -152,19 +157,6 @@ RUNTIME_CHANNEL_PROVIDERS = (
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_WHATSAPP,
-)
-
-SECRETISH_ACTIVITY_DETAIL_KEYS = (
-    "secret",
-    "token",
-    "password",
-    "authorization",
-    "auth",
-    "api_key",
-    "apikey",
-    "key",
-    "credential",
-    "cookie",
 )
 
 
@@ -301,10 +293,13 @@ async def _runtime_credentials_response(
 def _agent_link_with_account_response(
     link: ChannelBotAgentLink,
     account: ChannelAccount,
+    *,
+    binding_count: int = 0,
 ) -> ChannelAgentLinkWithAccountResponse:
     return ChannelAgentLinkWithAccountResponse(
         **_agent_link_response(link).model_dump(),
         account=_account_response(account),
+        binding_count=binding_count,
     )
 
 
@@ -326,7 +321,9 @@ def _activity_message_response(
         delivery_attempts=delivery.attempts if delivery is not None else None,
         delivery_max_attempts=delivery.max_attempts if delivery is not None else None,
         delivery_next_attempt_at=delivery.next_attempt_at if delivery is not None else None,
-        delivery_last_error=delivery.last_error if delivery is not None else None,
+        delivery_last_error=(
+            public_channel_delivery_error(delivery.last_error) if delivery is not None else None
+        ),
         provider_message_id=message.provider_message_id,
         text=message.text,
         created_at=message.created_at,
@@ -348,8 +345,8 @@ def _activity_debug_event_response(
         stage=event.stage,
         outcome=event.outcome,
         status_code=event.status_code,
-        error=event.error,
-        details=_sanitize_activity_details(event.details),
+        error=public_channel_operation_error(event.error),
+        details=public_channel_debug_details(event.details),
         created_at=event.created_at,
         updated_at=event.updated_at,
     )
@@ -592,10 +589,11 @@ async def list_channel_health(
 ) -> ChannelHealthListResponse:
     accounts = await _health_accounts(db, user_id=auth.user_id)
     return ChannelHealthListResponse(
-        items=[
-            await _channel_health_item(db, account=account, user_id=auth.user_id)
-            for account in accounts
-        ],
+        items=await _channel_health_items(
+            db,
+            accounts=accounts,
+            user_id=auth.user_id,
+        ),
     )
 
 
@@ -732,7 +730,14 @@ async def list_agent_channel_links(
         user_id=auth.user_id,
         agent_id=agent_id,
     )
-    return [_agent_link_with_account_response(link, account) for link, account in rows]
+    return [
+        _agent_link_with_account_response(
+            link,
+            account,
+            binding_count=binding_count,
+        )
+        for link, account, binding_count in rows
+    ]
 
 
 @router.get("/{account_id}/activity")
@@ -1080,7 +1085,7 @@ async def delete_channel_agent_link(
             account_id=account.id,
             external_chat_id=binding.external_chat_id,
         )
-    await archive_bot_agent_link(db, link=link)
+    await archive_bot_agent_link(db, link=link, account=account)
     await _queue_agent_link_runtime_changed(db, account=account, link=link)
     record_control_plane_audit(
         db,
@@ -1622,54 +1627,207 @@ async def _health_accounts(
     return accounts
 
 
-async def _channel_health_item(
+async def _channel_health_items(
     db: AsyncSession,
     *,
-    account: ChannelAccount,
+    accounts: list[ChannelAccount],
     user_id: UUID,
+) -> list[ChannelHealthItemResponse]:
+    if not accounts:
+        return []
+    account_ids = [account.id for account in accounts]
+
+    pending_inbox_rows = await db.execute(
+        select(
+            ChannelMessage.account_id,
+            func.count(ChannelMessage.id),
+            func.min(ChannelMessage.created_at),
+        )
+        .join(
+            ChannelBinding,
+            and_(
+                ChannelBinding.id == ChannelMessage.binding_id,
+                ChannelBinding.account_id == ChannelMessage.account_id,
+                ChannelBinding.bot_agent_link_id == ChannelMessage.bot_agent_link_id,
+                ChannelBinding.user_id == ChannelMessage.user_id,
+            ),
+        )
+        .join(
+            ChannelBotAgentLink,
+            and_(
+                ChannelBotAgentLink.id == ChannelMessage.bot_agent_link_id,
+                ChannelBotAgentLink.account_id == ChannelMessage.account_id,
+            ),
+        )
+        .join(ChannelAccount, ChannelAccount.id == ChannelMessage.account_id)
+        .where(
+            ChannelMessage.account_id.in_(account_ids),
+            ChannelMessage.user_id == user_id,
+            ChannelMessage.direction == "inbound",
+            ChannelMessage.binding_id.is_not(None),
+            ChannelMessage.delivered_at.is_(None),
+            ChannelBinding.status == BINDING_STATUS_ACTIVE,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+            ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+            ChannelAccount.archived_at.is_(None),
+        )
+        .group_by(ChannelMessage.account_id)
+    )
+    pending_inbox_by_account = {
+        account_id: (int(count), oldest_pending_at)
+        for account_id, count, oldest_pending_at in pending_inbox_rows.all()
+    }
+
+    delivery_rows = await db.execute(
+        select(
+            ChannelDelivery.account_id,
+            func.count(ChannelDelivery.id)
+            .filter(ChannelDelivery.status == DELIVERY_STATUS_PENDING)
+            .label("pending_count"),
+            func.count(ChannelDelivery.id)
+            .filter(ChannelDelivery.status == DELIVERY_STATUS_IN_PROGRESS)
+            .label("in_progress_count"),
+            func.count(ChannelDelivery.id)
+            .filter(ChannelDelivery.status == DELIVERY_STATUS_FAILED)
+            .label("failed_count"),
+        )
+        .where(
+            ChannelDelivery.account_id.in_(account_ids),
+            ChannelDelivery.user_id == user_id,
+        )
+        .group_by(ChannelDelivery.account_id)
+    )
+    delivery_counts_by_account = {
+        account_id: (int(pending), int(in_progress), int(failed))
+        for account_id, pending, in_progress, failed in delivery_rows.all()
+    }
+
+    message_rows = await db.execute(
+        select(ChannelMessage.account_id, func.max(ChannelMessage.created_at))
+        .where(
+            ChannelMessage.account_id.in_(account_ids),
+            ChannelMessage.user_id == user_id,
+        )
+        .group_by(ChannelMessage.account_id)
+    )
+    last_message_by_account = dict(message_rows.all())
+
+    event_rows = await db.execute(
+        select(ChannelDebugEvent.account_id, func.max(ChannelDebugEvent.created_at))
+        .where(
+            ChannelDebugEvent.account_id.in_(account_ids),
+            ChannelDebugEvent.user_id == user_id,
+        )
+        .group_by(ChannelDebugEvent.account_id)
+    )
+    last_event_by_account = dict(event_rows.all())
+
+    debug_error_ranked = (
+        select(
+            ChannelDebugEvent.account_id,
+            ChannelDebugEvent.created_at,
+            ChannelDebugEvent.stage,
+            ChannelDebugEvent.outcome,
+            ChannelDebugEvent.error,
+            func.row_number()
+            .over(
+                partition_by=ChannelDebugEvent.account_id,
+                order_by=(ChannelDebugEvent.created_at.desc(), ChannelDebugEvent.id.desc()),
+            )
+            .label("row_number"),
+        )
+        .where(
+            ChannelDebugEvent.account_id.in_(account_ids),
+            ChannelDebugEvent.user_id == user_id,
+            or_(
+                ChannelDebugEvent.outcome == "failure",
+                ChannelDebugEvent.error.is_not(None),
+            ),
+        )
+        .subquery()
+    )
+    debug_error_rows = await db.execute(
+        select(
+            debug_error_ranked.c.account_id,
+            debug_error_ranked.c.created_at,
+            debug_error_ranked.c.stage,
+            debug_error_ranked.c.outcome,
+            debug_error_ranked.c.error,
+        ).where(debug_error_ranked.c.row_number == 1)
+    )
+    debug_error_by_account = {
+        account_id: (created_at, stage, outcome, error)
+        for account_id, created_at, stage, outcome, error in debug_error_rows.all()
+    }
+
+    delivery_error_ranked = (
+        select(
+            ChannelDelivery.account_id,
+            ChannelDelivery.updated_at,
+            ChannelDelivery.last_error,
+            func.row_number()
+            .over(
+                partition_by=ChannelDelivery.account_id,
+                order_by=(ChannelDelivery.updated_at.desc(), ChannelDelivery.id.desc()),
+            )
+            .label("row_number"),
+        )
+        .where(
+            ChannelDelivery.account_id.in_(account_ids),
+            ChannelDelivery.user_id == user_id,
+            ChannelDelivery.last_error.is_not(None),
+        )
+        .subquery()
+    )
+    delivery_error_rows = await db.execute(
+        select(
+            delivery_error_ranked.c.account_id,
+            delivery_error_ranked.c.updated_at,
+            delivery_error_ranked.c.last_error,
+        ).where(delivery_error_ranked.c.row_number == 1)
+    )
+    delivery_error_by_account = {
+        account_id: (updated_at, last_error)
+        for account_id, updated_at, last_error in delivery_error_rows.all()
+    }
+
+    return [
+        _channel_health_item(
+            account=account,
+            pending_inbox_stats=pending_inbox_by_account.get(account.id, (0, None)),
+            delivery_counts=delivery_counts_by_account.get(account.id, (0, 0, 0)),
+            last_message_at=last_message_by_account.get(account.id),
+            last_event_at=last_event_by_account.get(account.id),
+            debug_error=debug_error_by_account.get(account.id),
+            delivery_error=delivery_error_by_account.get(account.id),
+        )
+        for account in accounts
+    ]
+
+
+def _channel_health_item(
+    *,
+    account: ChannelAccount,
+    pending_inbox_stats: tuple[int, datetime | None],
+    delivery_counts: tuple[int, int, int],
+    last_message_at: datetime | None,
+    last_event_at: datetime | None,
+    debug_error: tuple[datetime, str, str, str | None] | None,
+    delivery_error: tuple[datetime, str] | None,
 ) -> ChannelHealthItemResponse:
-    pending_inbox = await _count_pending_inbox(db, account=account, user_id=user_id)
-    pending_deliveries = await _count_deliveries(
-        db,
-        account=account,
-        user_id=user_id,
-        status_value=DELIVERY_STATUS_PENDING,
-    )
-    in_progress_deliveries = await _count_deliveries(
-        db,
-        account=account,
-        user_id=user_id,
-        status_value=DELIVERY_STATUS_IN_PROGRESS,
-    )
-    failed_deliveries = await _count_deliveries(
-        db,
-        account=account,
-        user_id=user_id,
-        status_value=DELIVERY_STATUS_FAILED,
-    )
-    last_message_at = await _last_message_at(db, account=account, user_id=user_id)
-    last_event = await _last_debug_event(db, account=account, user_id=user_id, error_only=False)
-    last_debug_error = await _last_debug_event(
-        db,
-        account=account,
-        user_id=user_id,
-        error_only=True,
-    )
-    last_delivery_error = await _last_delivery_error(db, account=account, user_id=user_id)
+    pending_inbox, oldest_pending_inbox_at = pending_inbox_stats
+    pending_deliveries, in_progress_deliveries, failed_deliveries = delivery_counts
     last_error_at = None
     last_error = None
     last_error_stage = None
     last_error_outcome = None
-    if last_debug_error is not None:
-        last_error_at = last_debug_error.created_at
-        last_error = last_debug_error.error
-        last_error_stage = last_debug_error.stage
-        last_error_outcome = last_debug_error.outcome
-    if last_delivery_error is not None and (
-        last_error_at is None or last_delivery_error.updated_at > last_error_at
-    ):
-        last_error_at = last_delivery_error.updated_at
-        last_error = last_delivery_error.last_error
+    if debug_error is not None:
+        last_error_at, last_error_stage, last_error_outcome, raw_error = debug_error
+        last_error = public_channel_operation_error(raw_error)
+    if delivery_error is not None and (last_error_at is None or delivery_error[0] > last_error_at):
+        last_error_at = delivery_error[0]
+        last_error = public_channel_delivery_error(delivery_error[1])
         last_error_stage = "delivery"
         last_error_outcome = "failure"
 
@@ -1703,107 +1861,18 @@ async def _channel_health_item(
         health_status=health_status,
         reasons=reasons,
         pending_inbox=pending_inbox,
+        oldest_pending_inbox_at=oldest_pending_inbox_at,
         pending_deliveries=pending_deliveries,
         in_progress_deliveries=in_progress_deliveries,
         failed_deliveries=failed_deliveries,
         last_message_at=last_message_at,
-        last_event_at=last_event.created_at if last_event is not None else None,
+        last_event_at=last_event_at,
         last_error_at=last_error_at,
         last_error=last_error,
         last_error_stage=last_error_stage,
         last_error_outcome=last_error_outcome,
         native_transport=_native_transport_health(account),
     )
-
-
-async def _count_pending_inbox(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    user_id: UUID,
-) -> int:
-    return await pending_channel_inbox_count(
-        db,
-        account=account,
-        user_id=user_id,
-    )
-
-
-async def _count_deliveries(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    user_id: UUID,
-    status_value: str,
-) -> int:
-    result = await db.execute(
-        select(func.count())
-        .select_from(ChannelDelivery)
-        .where(
-            ChannelDelivery.account_id == account.id,
-            ChannelDelivery.user_id == user_id,
-            ChannelDelivery.status == status_value,
-        )
-    )
-    return int(result.scalar_one())
-
-
-async def _last_message_at(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    user_id: UUID,
-):
-    result = await db.execute(
-        select(ChannelMessage.created_at)
-        .where(
-            ChannelMessage.account_id == account.id,
-            ChannelMessage.user_id == user_id,
-        )
-        .order_by(ChannelMessage.created_at.desc(), ChannelMessage.id.desc())
-        .limit(1)
-    )
-    return result.scalar_one_or_none()
-
-
-async def _last_debug_event(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    user_id: UUID,
-    error_only: bool,
-) -> ChannelDebugEvent | None:
-    query = select(ChannelDebugEvent).where(
-        ChannelDebugEvent.account_id == account.id,
-        ChannelDebugEvent.user_id == user_id,
-    )
-    if error_only:
-        query = query.where(
-            (ChannelDebugEvent.outcome == "failure") | ChannelDebugEvent.error.is_not(None)
-        )
-    result = await db.execute(
-        query.order_by(ChannelDebugEvent.created_at.desc(), ChannelDebugEvent.id.desc()).limit(1)
-    )
-    return result.scalar_one_or_none()
-
-
-async def _last_delivery_error(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    user_id: UUID,
-) -> ChannelDelivery | None:
-    result = await db.execute(
-        select(ChannelDelivery)
-        .where(
-            ChannelDelivery.account_id == account.id,
-            ChannelDelivery.user_id == user_id,
-            ChannelDelivery.last_error.is_not(None),
-        )
-        .order_by(ChannelDelivery.updated_at.desc(), ChannelDelivery.id.desc())
-        .limit(1)
-    )
-    return result.scalar_one_or_none()
 
 
 def _native_transport_health(account: ChannelAccount) -> dict[str, Any] | None:
@@ -1821,29 +1890,3 @@ def _telegram_bot_username(account: ChannelAccount) -> str | None:
     if not isinstance(value, str):
         return None
     return normalize_telegram_bot_username(value)
-
-
-def _sanitize_activity_details(value: Any, *, depth: int = 0) -> Any:
-    if depth > 4:
-        return "[truncated]"
-    if value is None or isinstance(value, (bool, int, float)):
-        return value
-    if isinstance(value, str):
-        return value[:500]
-    if isinstance(value, list):
-        return [_sanitize_activity_details(item, depth=depth + 1) for item in value[:20]]
-    if isinstance(value, dict):
-        result: dict[str, Any] = {}
-        for key, item in list(value.items())[:40]:
-            safe_key = str(key)
-            if _is_secretish_activity_key(safe_key):
-                result[safe_key] = "[redacted]"
-            else:
-                result[safe_key] = _sanitize_activity_details(item, depth=depth + 1)
-        return result
-    return str(value)[:500]
-
-
-def _is_secretish_activity_key(key: str) -> bool:
-    normalized = key.lower().replace("-", "_")
-    return any(part in normalized for part in SECRETISH_ACTIVITY_DETAIL_KEYS)

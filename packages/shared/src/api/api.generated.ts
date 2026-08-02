@@ -4127,6 +4127,11 @@ export interface components {
             /** Agent Token */
             agent_token?: string | null;
             account: components["schemas"]["ChannelAccountResponse"];
+            /**
+             * Binding Count
+             * @default 0
+             */
+            binding_count: number;
         };
         /** ChannelBindingDeleteResponse */
         ChannelBindingDeleteResponse: {
@@ -4304,6 +4309,8 @@ export interface components {
              * @default 0
              */
             pending_inbox: number;
+            /** Oldest Pending Inbox At */
+            oldest_pending_inbox_at?: string | null;
             /**
              * Pending Deliveries
              * @default 0
