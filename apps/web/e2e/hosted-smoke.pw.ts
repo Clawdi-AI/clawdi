@@ -2636,6 +2636,9 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toContainText(
 		"UI ready",
 	);
+	await expect(overview.locator('[data-overview-module="agent-interface"]')).toContainText(
+		"Managed interface available",
+	);
 	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Running");
 	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Basic");
 	await expect(page.getByText("Your agent is running", { exact: true })).toHaveCount(0);
@@ -2643,6 +2646,11 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.locator('[data-overview-module="channels"]')).toContainText(
 		"Research Telegram",
 	);
+	await expect(overview.locator('[data-overview-module="channels"]')).toContainText("Telegram");
+	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText(
+		"Managed by Clawdi",
+	);
+	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="live-sync"]')).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1600 });
 	await page.screenshot({ path: testInfo.outputPath("hosted-agent-overview.png"), fullPage: true });
@@ -2665,6 +2673,38 @@ test("hosted starting status and actions stay inside Compute", async ({ page }) 
 	await expect(
 		compute.getByText("Startup is still in progress.", { exact: false }),
 	).toHaveAttribute("role", "status");
+});
+
+test("hosted unavailable status stays inside Compute", async ({ page }, testInfo) => {
+	const runningRead = mutationDeploymentReadFixture(railHostedDeployment);
+	const unavailableDeployment = {
+		...runningRead,
+		resource: { ...runningRead.resource, status: null },
+	};
+	await stubHostedApi(page, {
+		deployments: [unavailableDeployment],
+		deploymentDetailResponses: [{ body: unavailableDeployment, status: 200 }],
+		cloudAgents: [railHostedCloudAgent],
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${unavailableDeployment.resource.id}`,
+	);
+
+	const main = page.locator("main");
+	const overview = main.locator('[data-agent-overview="hosted"]');
+	const compute = overview.locator('[data-overview-module="compute"]');
+	await expect(overview.getByRole("heading", { name: "Now", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Operate", exact: true })).toBeVisible();
+	await expect(compute).toContainText("Status unavailable");
+	await expect(compute).toContainText("Clawdi cannot confirm the current compute status.");
+	await expect(compute.getByRole("button", { name: "Check again", exact: true })).toBeVisible();
+	await expect(main.getByTestId("deployment-status-unavailable")).toHaveCount(0);
+	await page.setViewportSize({ width: 1280, height: 1600 });
+	await page.screenshot({
+		path: testInfo.outputPath("hosted-agent-overview-unavailable.png"),
+		fullPage: true,
+	});
 });
 
 test("empty accounts without deploy access only get the connected-agent path", async ({ page }) => {

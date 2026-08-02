@@ -24,7 +24,6 @@ export type AgentOverviewModule = {
 export type AgentOverviewGroup = {
 	id: AgentOverviewGroupId;
 	label: string;
-	description: string;
 	columns: 3 | 4;
 	modules: readonly AgentOverviewModule[];
 };
@@ -42,7 +41,6 @@ const AGENT_OVERVIEW_GROUPS = {
 		{
 			id: "now",
 			label: "Now",
-			description: "Activity and current state",
 			columns: 3,
 			modules: [
 				{ id: "sessions", section: "sessions", size: "wide" },
@@ -52,7 +50,6 @@ const AGENT_OVERVIEW_GROUPS = {
 		{
 			id: "resources",
 			label: "Resources",
-			description: "Context and tools available to this agent",
 			columns: 3,
 			modules: SHARED_RESOURCES,
 		},
@@ -61,7 +58,6 @@ const AGENT_OVERVIEW_GROUPS = {
 		{
 			id: "now",
 			label: "Now",
-			description: "Activity and current state",
 			columns: 4,
 			modules: [
 				{ id: "sessions", section: "sessions", size: "wide" },
@@ -72,14 +68,12 @@ const AGENT_OVERVIEW_GROUPS = {
 		{
 			id: "resources",
 			label: "Resources",
-			description: "Context and tools available to this agent",
 			columns: 3,
 			modules: SHARED_RESOURCES,
 		},
 		{
 			id: "operate",
 			label: "Operate",
-			description: "Managed runtime and integrations",
 			columns: 3,
 			modules: [
 				{ id: "model-provider", section: "ai", size: "standard" },

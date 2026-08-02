@@ -249,6 +249,7 @@ import {
 	channelProviderLinkingReady,
 } from "@/hosted/v2/channels/channel-linking.logic";
 import { channelKeys } from "@/hosted/v2/channels/channel-query-cache";
+import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelBinding } from "@/hosted/v2/channels/channel-types";
 import {
 	CHANNEL_DESTRUCTIVE_ACTION_CLASS,
@@ -552,7 +553,7 @@ export function HostedAgentDetail({
 					/>
 				)}
 				{isLiveToolTab ? null : <ComputeDunningBanner deployment={deployment} />}
-				{!deploymentStatus.known ? (
+				{!deploymentStatus.known && activeTab !== "overview" ? (
 					<DeploymentStatusUnavailableState
 						deployment={deployment}
 						isRetrying={isCheckingDeployment}
@@ -571,7 +572,7 @@ export function HostedAgentDetail({
 					/>
 				) : null}
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
-					{deploymentStatus.known && activeTab === "overview" ? (
+					{activeTab === "overview" ? (
 						<OverviewTab
 							agentId={environmentId}
 							routeSearch={routeSearch}
@@ -1223,6 +1224,13 @@ function OverviewTab({
 		Boolean(agent),
 	);
 	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
+	const linkedChannelProviders = Array.from(
+		new Set(
+			(channelLinks.data ?? []).flatMap((link) =>
+				link.account?.provider ? [providerMeta(link.account.provider).label] : [],
+			),
+		),
+	);
 	const consoleUrl = runtimeConsoleUrl(deployment, spec.runtime);
 	const consoleLocation = runtimeConsoleLocation(consoleUrl);
 	const providerId = primaryModelProviderId(primaryModel) ?? bindingProvider?.provider_id;
@@ -1254,7 +1262,9 @@ function OverviewTab({
 						value: deploymentRunning
 							? `${runtimeDisplayName(spec.runtime)} UI ready`
 							: "Unavailable",
-						detail: consoleLocation ?? "Available after compute is running.",
+						detail: deploymentRunning
+							? (consoleLocation ?? "Managed interface available")
+							: "Available after compute is running.",
 					},
 					projects: {
 						value: !agent
@@ -1294,7 +1304,7 @@ function OverviewTab({
 					},
 					"model-provider": {
 						value: model,
-						detail: providerId ? `Provider: ${providerId}` : "Provider configuration pending.",
+						detail: providerId ? `Provider: ${providerId}` : "Managed by Clawdi",
 					},
 					channels: {
 						value: channelLinks.isLoading
@@ -1302,7 +1312,10 @@ function OverviewTab({
 							: channelLinks.error
 								? "Unavailable"
 								: `${channelLinks.data?.length ?? 0} linked`,
-						detail: "Telegram, Discord, WhatsApp, and iMessage links.",
+						detail:
+							(channelLinks.data?.length ?? 0) === 0
+								? "No channels linked"
+								: linkedChannelProviders.join(" · ") || "Linked account details available",
 						items: (channelLinks.data ?? []).flatMap((link) =>
 							link.account?.name ? [link.account.name] : [],
 						),

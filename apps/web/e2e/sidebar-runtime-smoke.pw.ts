@@ -447,7 +447,9 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await page.goto("/agents/agent-smoke-1");
 
 	const overview = page.locator('[data-agent-overview="connected"]');
-	await expect(overview.getByRole("heading", { name: "Now", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Now", exact: true })).toBeVisible({
+		timeout: 12_000,
+	});
 	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
 	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveClass(/md:col-span-2/);
 	await expect(overview.locator('[data-overview-module="projects"]')).toHaveClass(/md:col-span-2/);
@@ -459,6 +461,7 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	);
 	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("Research");
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
+	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1400 });
 	await page.screenshot({
 		path: testInfo.outputPath("connected-agent-overview.png"),

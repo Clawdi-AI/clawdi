@@ -63,11 +63,10 @@ export function AgentOverviewCapabilities({
 		<div className="flex flex-col gap-8" data-agent-overview={variant}>
 			{agentOverviewGroups(variant).map((group) => (
 				<section key={group.id} aria-labelledby={`agent-overview-${group.id}`}>
-					<div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+					<div className="mb-3">
 						<h2 id={`agent-overview-${group.id}`} className="text-sm font-semibold">
 							{group.label}
 						</h2>
-						<p className="text-xs text-muted-foreground">{group.description}</p>
 					</div>
 					<div
 						className={cn("grid gap-3", group.columns === 4 ? "md:grid-cols-4" : "md:grid-cols-3")}
