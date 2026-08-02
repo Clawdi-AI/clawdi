@@ -84,6 +84,31 @@ def test_parse_whatsapp_sidecar_registrations_accepts_account_map():
     assert sidecar.timeout_seconds == 2.5
 
 
+def test_parse_whatsapp_sidecar_registrations_accepts_disjoint_unix_sockets():
+    first_id = UUID("11111111-1111-4111-8111-111111111111")
+    second_id = UUID("22222222-2222-4222-8222-222222222222")
+    registrations = parse_whatsapp_sidecar_registrations(
+        json.dumps(
+            {
+                str(first_id): {
+                    "unix_socket_path": f"/run/clawdi-whatsapp/{first_id}/sidecar.sock",
+                    "api_token": "first-token",
+                },
+                str(second_id): {
+                    "unix_socket_path": f"/run/clawdi-whatsapp/{second_id}/sidecar.sock",
+                    "api_token": "second-token",
+                },
+            }
+        )
+    )
+
+    assert registrations[first_id].base_url is None
+    assert registrations[first_id].unix_socket_path == (
+        f"/run/clawdi-whatsapp/{first_id}/sidecar.sock"
+    )
+    assert registrations[first_id].endpoint_identity != registrations[second_id].endpoint_identity
+
+
 @pytest.mark.parametrize(
     "raw",
     [
@@ -104,6 +129,15 @@ def test_parse_whatsapp_sidecar_registrations_accepts_account_map():
         (
             '{"00000000-0000-0000-0000-000000000777": '
             '{"base_url": "http://sidecar", "timeout_seconds": 0}}'
+        ),
+        (
+            '{"00000000-0000-0000-0000-000000000777": '
+            '{"base_url": "https://sidecar.test", '
+            '"unix_socket_path": "/run/sidecar.sock", "api_token": "secret"}}'
+        ),
+        (
+            '{"00000000-0000-0000-0000-000000000777": '
+            '{"unix_socket_path": "relative/sidecar.sock", "api_token": "secret"}}'
         ),
     ],
 )

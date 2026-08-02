@@ -50,3 +50,6 @@ data/
 backend/scripts/seed_demo.py
 backend/pdm.lock
 .kamal/secrets
+.kamal/secrets.tmp
+.kamal/whatsapp-sidecars.json
+.kamal/whatsapp-sidecars.json.tmp

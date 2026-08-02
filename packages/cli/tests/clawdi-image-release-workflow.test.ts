@@ -68,6 +68,7 @@ describe("backend image release workflow contract", () => {
 		expect(backendCi.on?.push?.paths).toEqual(
 			expect.arrayContaining([
 				"backend/**",
+				"scripts/whatsapp-sidecar-container-preflight.ts",
 				".dockerignore",
 				"packages/shared/src/api/api.generated.ts",
 				"package.json",

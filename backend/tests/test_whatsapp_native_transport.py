@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import base64
+import json
+import os
+import tempfile
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -12,6 +17,7 @@ from app.services.whatsapp_native_transport import (
     WhatsAppBaileysSidecarConfig,
     WhatsAppNativeRelayRequest,
     WhatsAppProviderTransportAdapter,
+    WhatsAppSidecarUnavailableError,
 )
 from app.services.whatsapp_provider_bridge import (
     register_whatsapp_provider_transport,
@@ -349,6 +355,99 @@ def test_whatsapp_sidecar_config_requires_and_redacts_api_token():
         api_token="must-not-appear",
     )
     assert "must-not-appear" not in repr(config)
+
+
+def test_whatsapp_sidecar_config_selects_strict_unix_socket_without_weakening_https():
+    socket_path = "/run/clawdi-whatsapp/11111111-1111-4111-8111-111111111111/sidecar.sock"
+    config = WhatsAppBaileysSidecarConfig(
+        account_id=UUID("11111111-1111-4111-8111-111111111111"),
+        unix_socket_path=socket_path,
+        api_token="must-not-appear",
+    )
+
+    assert config.base_url is None
+    assert config.unix_socket_path == socket_path
+    assert config.endpoint_identity == f"unix:{socket_path}"
+    assert "must-not-appear" not in repr(config)
+    with pytest.raises(ValueError, match="exactly one transport endpoint"):
+        WhatsAppBaileysSidecarConfig(
+            base_url="https://sidecar.internal",
+            unix_socket_path=socket_path,
+            api_token="secret",
+        )
+    with pytest.raises(ValueError, match="exactly one transport endpoint"):
+        WhatsAppBaileysSidecarConfig(api_token="secret")
+    with pytest.raises(ValueError, match="sidecar.sock path"):
+        WhatsAppBaileysSidecarConfig(
+            account_id=UUID("11111111-1111-4111-8111-111111111111"),
+            unix_socket_path="/run/clawdi-whatsapp/provider.sock",
+            api_token="secret",
+        )
+    with pytest.raises(ValueError, match="requires account_id"):
+        WhatsAppBaileysSidecarConfig(unix_socket_path=socket_path, api_token="secret")
+    with pytest.raises(ValueError, match="requires HTTPS"):
+        WhatsAppBaileysSidecarConfig(base_url="http://sidecar.internal", api_token="secret")
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_sidecar_client_uses_authenticated_strict_unix_socket() -> None:
+    account_id = UUID("11111111-1111-4111-8111-111111111111")
+    token = "uds-test-token"
+    temporary_root = tempfile.TemporaryDirectory(prefix="w", dir="/tmp")
+    socket_directory = Path(temporary_root.name) / str(account_id)
+    socket_directory.mkdir(mode=0o770)
+    os.chmod(socket_directory, 0o770)
+    socket_path = socket_directory / "sidecar.sock"
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        request = await reader.readuntil(b"\r\n\r\n")
+        assert b"GET /v1/health HTTP/1.1" in request
+        assert f"authorization: bearer {token}\r\n".encode() in request.lower()
+        body = json.dumps(
+            {
+                "accountId": str(account_id),
+                "status": "connected",
+                "connected": True,
+                "registered": True,
+                "advertisedRelease": {
+                    "packageName": "@whiskeysockets/baileys",
+                    "packageVersion": "7.0.0-rc14",
+                    "sourceCommit": "7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a",
+                    "version": [2, 3000, 1043857760],
+                },
+            }
+        ).encode()
+        writer.write(
+            b"HTTP/1.1 200 OK\r\n"
+            + f"Content-Length: {len(body)}\r\n".encode()
+            + b"Content-Type: application/json\r\nConnection: close\r\n\r\n"
+            + body
+        )
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_unix_server(handle, path=socket_path)
+    os.chmod(socket_path, 0o660)
+    client = WhatsAppBaileysSidecarClient(
+        WhatsAppBaileysSidecarConfig(
+            account_id=account_id,
+            unix_socket_path=str(socket_path),
+            api_token=token,
+        )
+    )
+    try:
+        health = await client.health()
+        assert health.connected is True
+        assert health.registered is True
+        os.chmod(socket_path, 0o666)
+        with pytest.raises(WhatsAppSidecarUnavailableError, match="sidecar unavailable"):
+            await client.health()
+        assert client.connected is False
+    finally:
+        await client.aclose()
+        server.close()
+        await server.wait_closed()
+        temporary_root.cleanup()
 
 
 def _json_body(request: httpx.Request) -> dict[str, Any]:

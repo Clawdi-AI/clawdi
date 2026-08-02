@@ -184,6 +184,7 @@ host-local workspace loop. Done: command output reports passing tests/typechecks
 - Managed runtime: [`docs/managed-runtime.md`](docs/managed-runtime.md)
 - Daemon testing: [`docs/clawdi-daemon-test-guide.md`](docs/clawdi-daemon-test-guide.md)
 - Releases: [`docs/runbooks/release.md`](docs/runbooks/release.md)
+- Managed WhatsApp sidecars: [`docs/runbooks/whatsapp-baileys-sidecars.md`](docs/runbooks/whatsapp-baileys-sidecars.md)
 
 ## Compatibility Rules
 

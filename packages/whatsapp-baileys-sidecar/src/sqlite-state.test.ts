@@ -1,6 +1,14 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { proto } from "baileys";
@@ -371,6 +379,14 @@ describe("SQLite provider state", () => {
 		expect(statSync(directory).mode & 0o777).toBe(0o700);
 		expect(statSync(state.databasePath).mode & 0o777).toBe(0o600);
 		state.close();
+	});
+
+	it("rejects an unsafe state-directory mode without repairing it", () => {
+		const directory = makeDirectory();
+		chmodSync(directory, 0o755);
+		expect(() => makeState(directory)).toThrow("provider session directory must have mode 700");
+		expect(statSync(directory).mode & 0o777).toBe(0o755);
+		chmodSync(directory, 0o700);
 	});
 
 	it("rejects a symlinked database before opening provider state", () => {

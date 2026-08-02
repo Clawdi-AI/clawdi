@@ -1031,9 +1031,9 @@ async def test_sidecar_client_accepts_only_the_pinned_narrow_pairing_contract() 
                     "registered": False,
                     "advertisedRelease": {
                         "packageName": "@whiskeysockets/baileys",
-                        "packageVersion": "7.0.0-rc13",
-                        "sourceCommit": "8053b086ecc97ec3f78299561de11959bab05d39",
-                        "version": [2, 3000, 1035194821],
+                        "packageVersion": "7.0.0-rc14",
+                        "sourceCommit": "7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a",
+                        "version": [2, 3000, 1043857760],
                     },
                 },
             )
@@ -1151,7 +1151,7 @@ def test_custom_sidecar_registry_rejects_duplicate_keys_and_urls() -> None:
             },
         }
     )
-    with pytest.raises(ValueError, match="base_url must be unique"):
+    with pytest.raises(ValueError, match="transport endpoint must be unique"):
         parse_whatsapp_custom_sidecar_registrations(duplicate_url)
 
     managed = json.dumps(
@@ -1173,7 +1173,7 @@ def test_custom_sidecar_registry_rejects_duplicate_keys_and_urls() -> None:
             }
         }
     )
-    with pytest.raises(ValueError, match="disjoint origins"):
+    with pytest.raises(ValueError, match="disjoint transport endpoints"):
         ConfiguredWhatsAppSidecarRegistry(managed, custom_same_origin)
 
 

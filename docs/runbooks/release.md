@@ -274,6 +274,16 @@ discoverable from account state and should be reconciled separately with
 
 ## Production Deployment Checks
 
+Managed physical WhatsApp accounts use exact-SHA Kamal accessories and an
+explicit fail-closed remote container preflight before the app deploy and a
+serial reconcile after it. Configure, scan, rotate, back up, restore, retire,
+or roll them back only through
+[`whatsapp-baileys-sidecars.md`](whatsapp-baileys-sidecars.md). Kamal does not
+update accessories as part of `kamal deploy`; the workflow's accessory reboot
+and authenticated readiness loop are required release steps. Any unexpected
+running or stopped Clawdi WhatsApp service label aborts the release without
+stopping the container or deleting its state.
+
 ### Production values
 
 [`config/deploy.yml`](../../config/deploy.yml) keeps the Kamal structure public
@@ -292,6 +302,19 @@ barrier](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/app/boot.r
 [Docker health polling](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/healthcheck/poller.rb),
 and [automatic deploy lock](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/base.rb)
 source.
+
+For accessories specifically, the audited v2.12.0
+[`reboot`](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/accessory.rb#L78-L89)
+sequence is prepare, pull, stop, remove-container, then boot. Its
+[`stop`](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/accessory.rb#L108-L123)
+tolerates a nonzero exit, and the subsequent
+[`remove_container`](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/commands/accessory.rb#L102-L117)
+uses the exact accessory service-label filter for stopped-container pruning
+before boot. Because stop's nonzero status is tolerated, the workflow
+exact-inspects the resulting container image and requires the intended full-SHA
+tag before authenticated readiness. It deliberately calls this reconcile
+because a normal `kamal deploy` does not update accessories; it never calls the
+broader `kamal accessory remove`, which also removes image/data resources.
 
 The Kamal `web` primary role runs the image's default API process. That API
 entrypoint alone runs `alembic upgrade head`, and it starts Uvicorn only after
