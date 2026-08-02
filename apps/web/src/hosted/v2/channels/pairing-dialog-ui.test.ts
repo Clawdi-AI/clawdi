@@ -7,16 +7,16 @@ describe("pairing dialog primitives", () => {
 	test("renders a semantic click-to-copy code control", () => {
 		const markup = renderToStaticMarkup(
 			createElement(CopyablePairingCode, {
-				value: "/bot_pair PAIRABC123",
-				label: "Telegram group pairing command",
+				value: "/clawdi_pair BCDFGHJKLM",
+				label: "Telegram pairing command",
 			}),
 		);
 
 		expect(markup).toContain("<button");
-		expect(markup).toContain('aria-label="Copy Telegram group pairing command"');
-		expect(markup).toContain('title="Copy Telegram group pairing command"');
+		expect(markup).toContain('aria-label="Copy Telegram pairing command"');
+		expect(markup).toContain('title="Copy Telegram pairing command"');
 		expect(markup).toContain("<code");
-		expect(markup).toContain("/bot_pair PAIRABC123");
+		expect(markup).toContain("/clawdi_pair BCDFGHJKLM");
 		expect(markup).toContain('aria-live="polite"');
 		expect(markup).toContain(">Copy<");
 	});

@@ -1907,7 +1907,7 @@ async def test_whatsapp_lid_pairing_remembers_alias(
         json={
             "message": {
                 "key": {"remoteJid": lid_jid, "remoteJidAlt": phone_jid, "id": "PAIR"},
-                "message": {"conversation": f"/bot_pair {pair['code']}"},
+                "message": {"conversation": f"/clawdi_pair {pair['code']}"},
             }
         },
     )
@@ -1969,7 +1969,7 @@ async def test_whatsapp_lid_alias_unpair_archives_phone_binding(
         json={
             "message": {
                 "key": {"remoteJid": lid_jid, "remoteJidAlt": phone_jid, "id": "PAIR"},
-                "message": {"conversation": f"/bot_pair {pair['code']}"},
+                "message": {"conversation": f"/clawdi_pair {pair['code']}"},
             }
         },
     )
@@ -1979,7 +1979,7 @@ async def test_whatsapp_lid_alias_unpair_archives_phone_binding(
         json={
             "message": {
                 "key": {"remoteJid": lid_jid, "id": "UNPAIR"},
-                "message": {"conversation": "/bot_unpair"},
+                "message": {"conversation": "/clawdi_unpair"},
             }
         },
     )

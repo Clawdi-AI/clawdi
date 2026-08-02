@@ -327,9 +327,9 @@ describe("channel commands", () => {
 							agent_link_id: "link-1",
 							agent_id: "agent-1",
 							agent_token: null,
-							code: "PAIR12345678",
+							code: "BCDFGHJKLM",
 							expires_at: new Date().toISOString(),
-							pairing_command: "/bot_pair PAIR12345678",
+							pairing_command: "/clawdi_pair BCDFGHJKLM",
 						},
 						201,
 					),
@@ -346,7 +346,38 @@ describe("channel commands", () => {
 			body: { agent_id: null, agent_link_id: "link-1", ttl_seconds: 600 },
 		});
 		expect(JSON.parse(out)).toMatchObject({
-			pair_code: { code: "PAIR12345678", agent_link_id: "link-1" },
+			pair_code: { code: "BCDFGHJKLM", agent_link_id: "link-1" },
+		});
+	});
+
+	it("uses the five-minute pair-code TTL by default", async () => {
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/v1/channels/channel-1/pair-codes",
+				response: () =>
+					jsonResponse(
+						{
+							id: "pair-default-ttl",
+							agent_link_id: "link-1",
+							agent_id: "agent-1",
+							agent_token: null,
+							code: "BCDFGHJKLM",
+							expires_at: new Date().toISOString(),
+							pairing_command: "/clawdi_pair BCDFGHJKLM",
+						},
+						201,
+					),
+			},
+		]);
+
+		await captureStdout(() => channelPairCodeCommand("channel-1", { link: "link-1", json: true }));
+		restore();
+
+		expect(captured[0]?.body).toMatchObject({
+			agent_id: null,
+			agent_link_id: "link-1",
+			ttl_seconds: 300,
 		});
 	});
 
@@ -362,9 +393,9 @@ describe("channel commands", () => {
 							agent_link_id: "link-discord",
 							agent_id: "agent-1",
 							agent_token: null,
-							code: "PAIRDISCORD123",
+							code: "NPQRSTVWXY",
 							expires_at: new Date().toISOString(),
-							pairing_command: "/clawdi_pair PAIRDISCORD123",
+							pairing_command: "/clawdi_pair NPQRSTVWXY",
 							discord_install_url:
 								"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=274878024768&scope=bot%20applications.commands",
 							discord_user_install_url:
@@ -379,7 +410,7 @@ describe("channel commands", () => {
 		);
 		restore();
 
-		expect(out).toContain("Send this in the external chat: /clawdi_pair PAIRDISCORD123");
+		expect(out).toContain("Send this in the external chat: /clawdi_pair NPQRSTVWXY");
 		expect(out).not.toContain("/bot_pair");
 	});
 
@@ -470,14 +501,14 @@ describe("channel commands", () => {
 				response: () =>
 					jsonResponse({
 						provider: "discord",
-						commands: [{ name: "bot_pair", description: "Pair this chat with Clawdi." }],
+						commands: [{ name: "clawdi_pair", description: "Pair this chat with Clawdi." }],
 					}),
 			},
 		]);
 		const out = await captureStdout(() =>
 			channelSyncCommandsCommand("channel-1", {
 				guild: "guild-1",
-				commands: '[{"name":"bot_pair","description":"Pair"}]',
+				commands: '[{"name":"clawdi_pair","description":"Pair"}]',
 				json: true,
 			}),
 		);
@@ -488,7 +519,7 @@ describe("channel commands", () => {
 			path: "/v1/channels/channel-1/commands/sync",
 			body: {
 				guild_id: "guild-1",
-				commands: [{ name: "bot_pair", description: "Pair" }],
+				commands: [{ name: "clawdi_pair", description: "Pair" }],
 			},
 		});
 		expect(JSON.parse(out)).toMatchObject({ sync: { provider: "discord" } });

@@ -129,7 +129,7 @@ class ChannelAgentLinkWithAccountResponse(ChannelAgentLinkResponse):
 class ChannelPairCodeCreate(BaseModel):
     agent_id: UUID | None = None
     agent_link_id: UUID | None = None
-    ttl_seconds: int = Field(default=900, ge=60, le=86_400)
+    ttl_seconds: int = Field(default=300, ge=60, le=86_400)
 
 
 class ChannelPairCodeResponse(BaseModel):

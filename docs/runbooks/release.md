@@ -123,10 +123,11 @@ that mention `/clawdi_pair`, it checks a persisted reserved-command version and
 reconciles only the reserved command namespace in the global scope. It lists
 the existing commands, upserts and validates both `clawdi_pair` and
 `clawdi_unpair`, and only then deletes the exact legacy `bot_pair` and
-`bot_unpair` chat-input command IDs. This order keeps the legacy commands
-available if either new-command upsert fails. A DELETE 404 for an exact ID from
-the preceding list is an idempotent success because another reconciliation has
-already removed it. Unrelated global commands are never deleted or resubmitted.
+`bot_unpair` chat-input command IDs. This ordering avoids a destructive partial
+provider update if either new-command upsert fails; it does not make the legacy
+names accepted input aliases. A DELETE 404 for an exact ID from the preceding
+list is an idempotent success because another reconciliation has already
+removed it. Unrelated global commands are never deleted or resubmitted.
 For an existing account with a configured legacy `guild_id`, the same request
 performs the reserved-only reconciliation in that known guild scope while
 preserving unrelated guild commands. If Discord rejects, rate-limits, or cannot

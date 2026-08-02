@@ -4324,7 +4324,7 @@ export interface components {
             agent_link_id?: string | null;
             /**
              * Ttl Seconds
-             * @default 900
+             * @default 300
              */
             ttl_seconds: number;
         };

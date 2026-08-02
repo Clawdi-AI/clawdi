@@ -1,8 +1,8 @@
 "use client";
 
-import { AlertCircle, ChevronRight, RefreshCw } from "lucide-react";
+import { AlertCircle, RefreshCw } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
 	Dialog,
 	DialogContent,
@@ -24,6 +24,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { AgentPairedChatItem } from "@/hosted/v2/channels/agent-channel-bindings.logic";
 import { PairedChatRow } from "@/hosted/v2/channels/paired-chat-row";
+import { cn } from "@/lib/utils";
 
 export function PairedChatsDialog({
 	linkId,
@@ -45,32 +46,39 @@ export function PairedChatsDialog({
 	const [open, setOpen] = useState(false);
 	const isMobile = useIsMobile();
 	const panelId = `paired-chats-${linkId}`;
-	const label =
-		pairedChats.length > 0 ? `Manage paired chats · ${pairedChats.length}` : "Manage paired chats";
+	const statusId = `${panelId}-status`;
+	const label = `${pairedChats.length} paired ${pairedChats.length === 1 ? "chat" : "chats"}`;
 	const description = `${pairedChats.length} ${pairedChats.length === 1 ? "chat" : "chats"} connected through this channel. Unpairing affects only the selected chat.`;
 	const trigger = (
 		<button
 			type="button"
 			data-agent-paired-chats-trigger={linkId}
-			className="flex h-10 min-h-10 max-h-10 w-full items-center gap-2 px-4 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+			className={cn(
+				buttonVariants({ variant: bindingsError ? "destructive" : "outline", size: "xs" }),
+				"max-w-full justify-start",
+			)}
 			aria-controls={panelId}
+			aria-describedby={bindingsLoading || bindingsError ? statusId : undefined}
 		>
-			<span className="min-w-0 flex-1 truncate">{label}</span>
-			{bindingsLoading ? (
-				<span role="status" className="inline-flex shrink-0">
-					<Spinner className="size-3.5" />
-					<span className="sr-only">Loading paired chats</span>
-				</span>
-			) : null}
 			{bindingsError ? (
-				<span className="inline-flex shrink-0 text-destructive">
-					<AlertCircle className="size-3.5" />
-					<span className="sr-only">Couldn’t load paired chats</span>
-				</span>
+				<AlertCircle className="size-3" aria-hidden="true" />
+			) : bindingsLoading ? (
+				<Spinner className="size-3" aria-hidden="true" />
 			) : null}
-			<ChevronRight className="size-4 shrink-0" aria-hidden="true" />
+			<span data-agent-paired-chats-label className="whitespace-nowrap">
+				{label}
+			</span>
 		</button>
 	);
+	const assistiveStatus = bindingsError ? (
+		<span id={statusId} role="alert" className="sr-only">
+			Couldn’t load paired chats
+		</span>
+	) : bindingsLoading ? (
+		<span id={statusId} role="status" className="sr-only">
+			Loading paired chats
+		</span>
+	) : null;
 	const list = (
 		<PairedChatsList
 			linkId={linkId}
@@ -86,6 +94,7 @@ export function PairedChatsDialog({
 		return (
 			<Sheet open={open} onOpenChange={setOpen}>
 				<SheetTrigger render={trigger} />
+				{assistiveStatus}
 				<SheetContent
 					id={panelId}
 					data-hosted="true"
@@ -121,6 +130,7 @@ export function PairedChatsDialog({
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger render={trigger} />
+			{assistiveStatus}
 			<DialogContent
 				id={panelId}
 				data-hosted="true"
