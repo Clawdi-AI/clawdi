@@ -4,7 +4,7 @@ import logging
 import mimetypes
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal, cast, overload
 from uuid import UUID, uuid4
 
 from fastapi import (
@@ -25,7 +25,13 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, get_auth, require_scope, require_web_auth
+from app.core.auth import (
+    AuthContext,
+    get_auth,
+    invalidate_api_key_auth_cache,
+    require_scope,
+    require_web_auth,
+)
 from app.core.config import settings
 from app.core.database import get_session, runtime_snapshot_session
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
@@ -84,12 +90,11 @@ from app.services.agent_environments import (
     local_machine_registration_key,
     register_agent_environment,
 )
-from app.services.agent_skill_projection import (
-    AgentSkillProjectionBoundaryError,
-    delete_agent_project_skill_rows,
-    delete_agent_skill_files_best_effort,
+from app.services.agent_lifecycle import (
+    AgentLifecycleBoundaryError,
+    active_agent_filter,
+    archive_agent_and_project,
 )
-from app.services.ai_provider_credentials import release_runtime_oauth_claims
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.memory_extraction import extract_memories_from_session
@@ -274,6 +279,28 @@ async def register_environment(
     return await _register_agent_identity(body, auth, db)
 
 
+@overload
+async def _list_agent_identities(
+    request: Request,
+    response: Response,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[True],
+) -> list[AgentResponse] | Response: ...
+
+
+@overload
+async def _list_agent_identities(
+    request: Request,
+    response: Response,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[False],
+) -> list[EnvironmentResponse] | Response: ...
+
+
 async def _list_agent_identities(
     request: Request,
     response: Response,
@@ -291,7 +318,7 @@ async def _list_agent_identities(
     bound_env = _bound_env_id(auth)
     stmt = (
         select(AgentEnvironment)
-        .where(AgentEnvironment.user_id == auth.user_id)
+        .where(AgentEnvironment.user_id == auth.user_id, active_agent_filter())
         .order_by(
             AgentEnvironment.sort_order.asc(),
             AgentEnvironment.created_at.asc(),
@@ -362,6 +389,30 @@ async def list_environments(
     return await _list_agent_identities(request, response, auth, db, agent_response=False)
 
 
+@overload
+async def _get_agent_identity(
+    agent_id: UUID,
+    request: Request,
+    response: Response,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[True],
+) -> AgentResponse | Response: ...
+
+
+@overload
+async def _get_agent_identity(
+    agent_id: UUID,
+    request: Request,
+    response: Response,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[False],
+) -> EnvironmentResponse | Response: ...
+
+
 async def _get_agent_identity(
     agent_id: UUID,
     request: Request,
@@ -384,6 +435,7 @@ async def _get_agent_identity(
             .where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).first()
@@ -410,7 +462,7 @@ async def list_environment_runtime_observed(
     db: AsyncSession = Depends(get_session),
 ) -> RuntimeObservedSummaryResponse:
     bound_env = _bound_env_id(auth)
-    filters = [AgentEnvironment.user_id == auth.user_id]
+    filters = [AgentEnvironment.user_id == auth.user_id, active_agent_filter()]
     if bound_env is not None:
         filters.append(AgentEnvironment.id == bound_env)
 
@@ -444,7 +496,9 @@ async def list_environment_runtime_observed(
                 owner_user_id=auth.user_id,
             )
             states_by_env = {
-                environment_id: row.state for environment_id, row in source_batch.rows.items()
+                environment_id: row.state
+                for environment_id, row in source_batch.rows.items()
+                if row.state is not None
             }
             key_identity = vault_key_identity(settings.vault_encryption_key)
             for environment_id in source_batch.rows:
@@ -508,6 +562,22 @@ async def list_environment_runtime_observed(
     return RuntimeObservedSummaryResponse(counts=counts, items=items)
 
 
+@overload
+async def _reorder_agent_identities(
+    requested_ids: list[UUID], auth: AuthContext, db: AsyncSession, *, agent_response: Literal[True]
+) -> list[AgentResponse]: ...
+
+
+@overload
+async def _reorder_agent_identities(
+    requested_ids: list[UUID],
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[False],
+) -> list[EnvironmentResponse]: ...
+
+
 async def _reorder_agent_identities(
     requested_ids: list[UUID],
     auth: AuthContext,
@@ -524,6 +594,7 @@ async def _reorder_agent_identities(
             await db.execute(
                 select(AgentEnvironment)
                 .where(AgentEnvironment.user_id == auth.user_id)
+                .where(active_agent_filter())
                 .order_by(
                     AgentEnvironment.sort_order.asc(),
                     AgentEnvironment.created_at.asc(),
@@ -632,6 +703,28 @@ async def get_environment(
     )
 
 
+@overload
+async def _update_agent_identity(
+    agent_id: UUID,
+    body: EnvironmentUpdate,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[True],
+) -> AgentResponse: ...
+
+
+@overload
+async def _update_agent_identity(
+    agent_id: UUID,
+    body: EnvironmentUpdate,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[False],
+) -> EnvironmentResponse: ...
+
+
 async def _update_agent_identity(
     agent_id: UUID,
     body: EnvironmentUpdate,
@@ -645,6 +738,7 @@ async def _update_agent_identity(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -688,6 +782,18 @@ async def update_environment(
     return await _update_agent_identity(environment_id, body, auth, db, agent_response=False)
 
 
+@overload
+async def _clear_agent_avatar(
+    agent_id: UUID, auth: AuthContext, db: AsyncSession, *, agent_response: Literal[True]
+) -> AgentResponse: ...
+
+
+@overload
+async def _clear_agent_avatar(
+    agent_id: UUID, auth: AuthContext, db: AsyncSession, *, agent_response: Literal[False]
+) -> EnvironmentResponse: ...
+
+
 async def _clear_agent_avatar(
     agent_id: UUID,
     auth: AuthContext,
@@ -700,6 +806,7 @@ async def _clear_agent_avatar(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -742,6 +849,28 @@ async def clear_environment_avatar(
     return await _clear_agent_avatar(environment_id, auth, db, agent_response=False)
 
 
+@overload
+async def _upload_agent_avatar(
+    agent_id: UUID,
+    file: UploadFile,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[True],
+) -> AgentResponse: ...
+
+
+@overload
+async def _upload_agent_avatar(
+    agent_id: UUID,
+    file: UploadFile,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    agent_response: Literal[False],
+) -> EnvironmentResponse: ...
+
+
 async def _upload_agent_avatar(
     agent_id: UUID,
     file: UploadFile,
@@ -755,6 +884,7 @@ async def _upload_agent_avatar(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -835,6 +965,7 @@ async def get_environment_runtime_observed(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == environment_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -958,6 +1089,7 @@ async def get_agent_mcp_inventory(
             .where(
                 HostedRuntimeState.environment_id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -1075,6 +1207,21 @@ def _agent_to_response(env: AgentEnvironment) -> AgentResponse:
         # response is built, so we always have a value here.
         default_project_id=str(env.default_project_id),
     )
+
+
+@overload
+def _identity_response(
+    env: AgentEnvironment, hosted_state: HostedRuntimeState | None, *, agent_response: Literal[True]
+) -> AgentResponse: ...
+
+
+@overload
+def _identity_response(
+    env: AgentEnvironment,
+    hosted_state: HostedRuntimeState | None,
+    *,
+    agent_response: Literal[False],
+) -> EnvironmentResponse: ...
 
 
 def _identity_response(
@@ -1415,7 +1562,7 @@ def _runtime_desired_provider_binding(
 
 def _runtime_observed_provider_status(
     observed: HostedRuntimeObservedProviderPayload | None,
-) -> str:
+) -> Literal["ok", "error", "unknown", "not_configured"]:
     if observed is None:
         return "unknown"
     payload = observed.root
@@ -1515,13 +1662,12 @@ async def _delete_agent_identity(
     auth: AuthContext,
     db: AsyncSession,
 ) -> None:
-    """Delete an agent environment. Existing sessions remain (orphaned)
-    so users don't lose history when removing a machine. The session
-    list query uses an outer-join so orphaned rows still render."""
+    """Archive an Agent and its exclusive Project without breaking identity."""
     result = await db.execute(
         select(AgentEnvironment).where(
             AgentEnvironment.id == agent_id,
             AgentEnvironment.user_id == auth.user_id,
+            active_agent_filter(),
         )
     )
     env = result.scalar_one_or_none()
@@ -1532,22 +1678,18 @@ async def _delete_agent_identity(
             status.HTTP_409_CONFLICT,
             "This agent uses an explicit identity and cannot be disconnected here",
         )
+    await queue_environment_runtime_manifest_changed(db, auth.user_id, agent_id)
     try:
-        skill_file_keys = await delete_agent_project_skill_rows(db, agent=env)
-    except AgentSkillProjectionBoundaryError:
+        revoked_key_ids = await archive_agent_and_project(db, agent=env)
+    except AgentLifecycleBoundaryError:
+        await db.rollback()
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "Agent Project ownership could not be proven; no resources were deleted.",
+            "Agent Project ownership could not be proven; no resources were archived.",
         ) from None
-    await release_runtime_oauth_claims(
-        db,
-        owner_user_id=auth.user_id,
-        environment_id=agent_id,
-    )
-    await queue_environment_runtime_manifest_changed(db, auth.user_id, agent_id)
-    await db.delete(env)
     await db.commit()
-    await delete_agent_skill_files_best_effort(skill_file_keys, agent_id=agent_id)
+    for key_id in revoked_key_ids:
+        invalidate_api_key_auth_cache(key_id)
 
 
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1696,6 +1838,7 @@ async def sync_heartbeat(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -1887,6 +2030,7 @@ async def batch_create_sessions(
                 select(AgentEnvironment.id).where(
                     AgentEnvironment.id.in_(requested_env_ids),
                     AgentEnvironment.user_id == auth.user_id,
+                    active_agent_filter(),
                 )
             )
         )
@@ -2322,13 +2466,14 @@ async def list_sessions(
     # ANY of summary / project / id wins, and the strongest match
     # drives the rank. NULL-safe via COALESCE — sessions with NULL
     # summary still match if their project_path or id does.
+    relevance_expr: Any | None
     if q:
         sim_summary = func.similarity(func.coalesce(Session.summary, ""), q)
         sim_project = func.similarity(func.coalesce(Session.project_path, ""), q)
         sim_local = func.similarity(Session.local_session_id, q)
         relevance_expr = func.greatest(sim_summary, sim_project, sim_local)
     else:
-        relevance_expr = None  # type: ignore[assignment]
+        relevance_expr = None
 
     base = select(
         Session,
@@ -2338,7 +2483,7 @@ async def list_sessions(
         AgentEnvironment.machine_name,
         is_shared_subq,
     ).outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
-    session_filters = [Session.user_id == auth.user_id]
+    session_filters: list[Any] = [Session.user_id == auth.user_id]
     agent_filter = AgentEnvironment.agent_type == agent if agent else None
     if bound_env is not None:
         session_filters.append(Session.environment_id == bound_env)
@@ -2405,6 +2550,7 @@ async def list_sessions(
         # for the typical few-thousand-rows-per-user. If a power user
         # ever hits real latency here, swap to `WHERE summary % :q`
         # plus a GIN index. Threshold tuned for "type to filter" UX.
+        assert relevance_expr is not None
         session_filters.append(relevance_expr >= _TRGM_THRESHOLD)
 
     base = base.where(*session_filters)
@@ -3129,10 +3275,10 @@ def _link_is_shared_subq():
 def _permission_to_response(p: SessionPermission) -> SessionPermissionResponse:
     return SessionPermissionResponse(
         id=str(p.id),
-        kind=p.kind,
+        kind=cast(Literal["link", "user", "email"], p.kind),
         user_id=str(p.user_id) if p.user_id else None,
         email=p.email,
-        role=p.role,
+        role=cast(Literal["viewer"], p.role),
         invited_by=str(p.invited_by) if p.invited_by else None,
         accepted_at=p.accepted_at,
         expires_at=p.expires_at,

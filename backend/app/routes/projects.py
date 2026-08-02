@@ -20,6 +20,7 @@ from app.core.project import project_ids_visible_to, resolve_default_write_proje
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_membership import ProjectMembership
 from app.models.user import User
+from app.services.agent_lifecycle import active_project_filter
 from app.services.sharing import safe_owner_display, safe_owner_handle
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -203,6 +204,7 @@ async def list_projects(
         select(Project, User, ProjectMembership)
         .outerjoin(User, User.id == Project.user_id)
         .outerjoin(ProjectMembership, membership_join)
+        .where(active_project_filter())
         .order_by(Project.created_at.desc())
     )
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
@@ -246,7 +248,7 @@ async def get_project(
     if project_uuid not in visible_project_ids:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
     project = (
-        await db.execute(select(Project).where(Project.id == project_uuid))
+        await db.execute(select(Project).where(Project.id == project_uuid, active_project_filter()))
     ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")

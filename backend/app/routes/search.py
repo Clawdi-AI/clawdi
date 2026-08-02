@@ -63,6 +63,8 @@ TYPE_LIMIT = 5
 
 async def _search_sessions(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
     needle = like_needle(query)
+    # Historical search retains archived Agent labels; this join grants no
+    # operational Agent authority.
     stmt = (
         select(Session, AgentEnvironment.agent_type)
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)

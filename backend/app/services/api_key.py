@@ -90,6 +90,7 @@ async def mint_api_key(
             select(AgentEnvironment.id).where(
                 AgentEnvironment.id == environment_id,
                 AgentEnvironment.user_id == user_id,
+                AgentEnvironment.archived_at.is_(None),
             )
         )
         if owner_check.scalar_one_or_none() is None:

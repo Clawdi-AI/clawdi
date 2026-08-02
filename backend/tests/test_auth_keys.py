@@ -113,6 +113,53 @@ async def test_revoked_api_key_is_rejected(db_session, seed_user):
 
 
 @pytest.mark.asyncio
+async def test_agent_key_is_not_cached_and_disconnect_revokes_after_commit(
+    client: httpx.AsyncClient, db_session, seed_user
+):
+    import hashlib
+    import uuid
+
+    from fastapi import HTTPException
+
+    from app.core.auth import _api_key_auth_cache, _auth_via_api_key
+    from app.services.agent_environments import (
+        local_machine_registration_key,
+        register_agent_environment,
+    )
+    from app.services.api_key import mint_api_key
+
+    machine_id = f"cached-key-{uuid.uuid4().hex}"
+    registered = await register_agent_environment(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=machine_id,
+        machine_name="Cached key Agent",
+        agent_type="codex",
+        agent_version="1.0.0",
+        os_name="linux",
+        sort_order=0,
+        registration_key=local_machine_registration_key(machine_id, "codex"),
+    )
+    minted = await mint_api_key(
+        db_session,
+        user_id=seed_user.id,
+        label="cached Agent key",
+        environment_id=registered.env.id,
+    )
+    assert await _auth_via_api_key(minted.raw_key, db_session) is not None
+    assert await _auth_via_api_key(minted.raw_key, db_session) is not None
+    key_hash = hashlib.sha256(minted.raw_key.encode()).hexdigest()
+    assert key_hash not in _api_key_auth_cache
+
+    disconnected = await client.delete(f"/v1/agents/{registered.env.id}")
+    assert disconnected.status_code == 204, disconnected.text
+    with pytest.raises(HTTPException) as exc_info:
+        await _auth_via_api_key(minted.raw_key, db_session)
+    assert exc_info.value.status_code == 401
+    assert "revoked" in str(exc_info.value.detail).lower()
+
+
+@pytest.mark.asyncio
 async def test_me_reflects_clerk_auth(client: httpx.AsyncClient):
     body = (await client.get("/v1/auth/me")).json()
     assert body["auth_type"] == "clerk"
