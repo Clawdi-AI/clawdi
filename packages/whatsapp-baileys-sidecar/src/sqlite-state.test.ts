@@ -34,7 +34,11 @@ describe("SQLite provider state", () => {
 	it("round-trips creds, Signal keys, app-state proto, retries, and clears across restart", async () => {
 		const directory = makeDirectory();
 		const first = makeState(directory);
-		first.saveCreds({ registered: true, routingInfo: Buffer.from([1, 2, 3]) });
+		first.saveCreds({
+			registered: true,
+			registrationId: 0,
+			routingInfo: Buffer.from([1, 2, 3]),
+		});
 		const appStateKey = proto.Message.AppStateSyncKeyData.create({
 			keyData: Buffer.from([9, 8, 7]),
 			fingerprint: { rawId: 4, currentIndex: 2, deviceIndexes: [0, 1] },
@@ -52,6 +56,7 @@ describe("SQLite provider state", () => {
 		first.close();
 
 		const second = makeState(directory);
+		expect(second.state.creds.registrationId).toBe(0);
 		expect(second.state.creds.registered).toBe(true);
 		expect(second.state.creds.routingInfo).toEqual(Buffer.from([1, 2, 3]));
 		expect(await second.state.keys.get("pre-key", ["one"])).toEqual({
