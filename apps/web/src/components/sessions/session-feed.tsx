@@ -35,8 +35,12 @@ export function OverviewSessionList({
 	if (isLoading) {
 		return (
 			<div className="grid gap-2" aria-label="Loading recent sessions" role="status">
-				{Array.from({ length: 4 }).map((_, index) => (
-					<div key={index} className={cn(ENTITY_CARD_BASE, "px-4 py-3")}>
+				{Array.from({ length: 3 }).map((_, index) => (
+					<div
+						key={index}
+						data-testid="overview-session-skeleton-row"
+						className={cn(ENTITY_CARD_BASE, "px-4 py-3")}
+					>
 						<Skeleton className="h-4 w-4/5" />
 						<Skeleton className="mt-1.5 h-3 w-1/2" />
 					</div>
@@ -49,7 +53,7 @@ export function OverviewSessionList({
 	}
 	return (
 		<div data-testid="overview-session-grid" className="grid gap-2">
-			{sessions.slice(0, 4).map((session) => (
+			{sessions.slice(0, 3).map((session) => (
 				<SessionFeedCard
 					key={session.id}
 					session={session}

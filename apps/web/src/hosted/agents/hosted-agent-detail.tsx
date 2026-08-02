@@ -5,6 +5,7 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { Link, useRouter } from "@tanstack/react-router";
 import {
 	AlertCircle,
+	ArrowRight,
 	Check,
 	Copy,
 	Cpu,
@@ -542,7 +543,7 @@ export function HostedAgentDetail({
 	});
 
 	const sessions = useQuery({
-		...sessionListQueryOptions($api, { environment_id: environmentId, page_size: 4 }),
+		...sessionListQueryOptions($api, { environment_id: environmentId, page_size: 3 }),
 		enabled: activeTab === "overview" && deploymentRunning && projection.status === "resolved",
 	});
 
@@ -1039,7 +1040,7 @@ export function OverviewComputeStatus({
 	);
 }
 
-function InitialDeploymentPage({
+export function InitialDeploymentPage({
 	deployment,
 	deploymentTransitionTimedOut,
 	isCheckingDeployment,
@@ -1050,7 +1051,7 @@ function InitialDeploymentPage({
 	isCheckingDeployment: boolean;
 	onCheckDeploymentAgain: () => void;
 }) {
-	const spec = deployment.resource.spec;
+	const status = deploymentStatusFromResource(deployment.resource.status);
 	return (
 		<DetailPanel
 			className={cn(
@@ -1060,7 +1061,11 @@ function InitialDeploymentPage({
 					: "border-info-muted bg-info-muted",
 			)}
 		>
-			<div data-testid="hosted-initial-deployment-panel" className="space-y-6">
+			<div
+				data-testid="hosted-initial-deployment-panel"
+				role={deploymentTransitionTimedOut ? "alert" : undefined}
+				className="space-y-5"
+			>
 				<div className="flex gap-4">
 					<div className="flex size-12 shrink-0 items-center justify-center rounded-lg border bg-background">
 						{deploymentTransitionTimedOut ? (
@@ -1069,7 +1074,7 @@ function InitialDeploymentPage({
 							<Spinner className="size-6" />
 						)}
 					</div>
-					<div>
+					<div className="min-w-0">
 						<h2 className="text-xl font-semibold">
 							{deploymentTransitionTimedOut
 								? "Setup is taking longer than expected"
@@ -1077,9 +1082,16 @@ function InitialDeploymentPage({
 						</h2>
 						<p className="mt-2 text-sm text-muted-foreground">
 							{deploymentTransitionTimedOut
-								? "Your agent may still be starting. Check again now, or come back later."
-								: "This usually takes a few minutes. You can leave this page and come back later."}
+								? "Your agent may still be starting. We’ll keep checking automatically, or you can check again now."
+								: "This usually takes a few minutes. This page updates automatically while your agent starts."}
 						</p>
+						<dl className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+							<dt className="text-muted-foreground">Current status</dt>
+							<dd className="inline-flex items-center gap-2 font-medium">
+								<StatusDot status={deploymentStatusTone(status)} />
+								{deploymentStatusLabel(status)}
+							</dd>
+						</dl>
 						{deploymentTransitionTimedOut ? (
 							<Button
 								type="button"
@@ -1094,19 +1106,6 @@ function InitialDeploymentPage({
 						) : null}
 					</div>
 				</div>
-				<OverviewMetrics
-					columns={2}
-					items={[
-						{
-							label: "Plan",
-							value:
-								deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG ? "Performance" : "Basic",
-						},
-						{ label: "CPU", value: `${spec.resources.vcpu} vCPU` },
-						{ label: "Memory", value: formatMemoryMib(spec.resources.memory_mib) },
-						{ label: "Storage", value: `${spec.resources.disk_gib} GiB` },
-					]}
-				/>
 			</div>
 		</DetailPanel>
 	);
@@ -1223,9 +1222,21 @@ function OverviewTab({
 	return (
 		<div className="flex flex-col gap-8">
 			<div>
-				<h2 id="hosted-recent-sessions" className="mb-3 text-sm font-semibold">
-					Recent sessions
-				</h2>
+				<div className="mb-3 flex items-center justify-between">
+					<h2 id="hosted-recent-sessions" className="text-sm font-semibold">
+						Recent sessions
+					</h2>
+					<Button
+						render={<Link {...agentSectionLink(agentId, "sessions", routeSearch)} />}
+						nativeButton={false}
+						variant="ghost"
+						size="sm"
+						className="text-muted-foreground"
+					>
+						View all
+						<ArrowRight />
+					</Button>
+				</div>
 				<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
 					<section
 						aria-labelledby="hosted-recent-sessions"

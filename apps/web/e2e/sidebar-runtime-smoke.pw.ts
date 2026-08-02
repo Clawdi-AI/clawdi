@@ -216,6 +216,7 @@ const overviewSessions = {
 		last_activity_at: new Date(now.getTime() - index * 60 * 60 * 1000).toISOString(),
 	})),
 	total: 5,
+	page_size: 3,
 };
 
 const memories = {
@@ -587,9 +588,15 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	);
 	await expect(page.locator('[data-overview-status="live-sync"]')).toContainText("Machine");
 	await expect(page.locator('[data-overview-status="live-sync"]')).toContainText("Last seen");
+	await expect(
+		page.locator("#connected-recent-sessions").locator("..").getByRole("button", {
+			name: "View all",
+			exact: true,
+		}),
+	).toHaveAttribute("href", "/agents/agent-smoke-1/sessions");
 	const recentSessions = page.getByRole("region", { name: "Recent sessions" });
-	await expect(recentSessions.locator("article")).toHaveCount(4);
-	await expect(recentSessions).not.toContainText("Fifth hidden session");
+	await expect(recentSessions.locator("article")).toHaveCount(3);
+	await expect(recentSessions).not.toContainText("Draft update");
 	const sessionBoxes = await recentSessions.locator("article").evaluateAll((cards) =>
 		cards.map((card) => {
 			const rect = card.getBoundingClientRect();
@@ -692,7 +699,7 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	const mobileSessionBoxes = await recentSessions
 		.locator("article")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(mobileSessionBoxes).toHaveLength(4);
+	expect(mobileSessionBoxes).toHaveLength(3);
 	for (let index = 1; index < mobileSessionBoxes.length; index += 1) {
 		expect(Math.abs(mobileSessionBoxes[index].x - mobileSessionBoxes[0].x)).toBeLessThanOrEqual(1);
 		expect(mobileSessionBoxes[index].y).toBeGreaterThanOrEqual(
@@ -735,13 +742,14 @@ test("connected detail only requests overview data on Overview", async ({ page }
 	expect(skillRequests).toEqual([]);
 });
 
-test("connected Overview requests four recent sessions", async ({ page }) => {
+test("connected Overview requests and renders three recent sessions", async ({ page }) => {
 	const sessionRequests: string[] = [];
-	await stubDashboardApi(page, [], { sessionRequests });
+	await stubDashboardApi(page, [], { sessionRequests, sessionsPage: overviewSessions });
 	await page.goto("/agents/agent-smoke-1");
 	await expect(page.getByRole("heading", { name: "Recent sessions", exact: true })).toBeVisible();
 	await expect.poll(() => sessionRequests.length).toBe(1);
-	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("4");
+	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("3");
+	await expect(page.getByTestId("overview-session-grid").locator("article")).toHaveCount(3);
 });
 
 test("connected Overview resolves connector metadata from catalog before fan-out", async ({

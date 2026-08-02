@@ -1,7 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Laptop } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { ArrowRight, Laptop } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
@@ -34,6 +35,7 @@ import { MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { OverviewSessionList, SessionFeed } from "@/components/sessions/session-feed";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusDot } from "@/components/ui/status-badge";
 import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
@@ -41,6 +43,7 @@ import {
 	type AgentRouteSearch,
 	type AgentSectionId,
 	agentSectionLabel,
+	agentSectionLink,
 	agentSessionDetailLink,
 	CONNECTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
@@ -100,7 +103,7 @@ export function ConnectedAgentDetail({
 		error: overviewSessionsError,
 		refetch: refetchOverviewSessions,
 	} = useQuery({
-		...sessionListQueryOptions($api, { environment_id: id, page_size: 4 }),
+		...sessionListQueryOptions($api, { environment_id: id, page_size: 3 }),
 		enabled: overviewEnabled,
 	});
 
@@ -189,9 +192,21 @@ export function ConnectedAgentDetail({
 					{activeTab === "overview" ? (
 						<div className="flex flex-col gap-8">
 							<div>
-								<h2 id="connected-recent-sessions" className="mb-3 text-sm font-semibold">
-									Recent sessions
-								</h2>
+								<div className="mb-3 flex items-center justify-between">
+									<h2 id="connected-recent-sessions" className="text-sm font-semibold">
+										Recent sessions
+									</h2>
+									<Button
+										render={<Link {...agentSectionLink(id, "sessions", routeSearch)} />}
+										nativeButton={false}
+										variant="ghost"
+										size="sm"
+										className="text-muted-foreground"
+									>
+										View all
+										<ArrowRight />
+									</Button>
+								</div>
 								<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
 									<section
 										aria-labelledby="connected-recent-sessions"
@@ -356,7 +371,7 @@ function AgentDetailContentSkeleton() {
 				<Skeleton className="mb-3 h-4 w-28" />
 				<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
 					<div className="grid min-h-52 gap-2">
-						{Array.from({ length: 4 }).map((_, index) => (
+						{Array.from({ length: 3 }).map((_, index) => (
 							<Skeleton key={index} className="h-11 rounded-lg" />
 						))}
 					</div>

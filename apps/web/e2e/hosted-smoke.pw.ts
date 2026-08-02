@@ -25,7 +25,7 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 			),
 	]);
 	expect(gridBox).not.toBeNull();
-	expect(cards).toHaveLength(5);
+	expect(cards).toHaveLength(expectedRows.reduce((total, count) => total + count, 0));
 	const rowYs = [...new Set(cards.map((card) => Math.round(card.y)))];
 	const rows = rowYs.map((rowY) => cards.filter((card) => Math.abs(card.y - rowY) <= 2));
 	expect(rows.map((row) => row.length)).toEqual(expectedRows);
@@ -2704,7 +2704,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			})),
 			total: 5,
 			page: 1,
-			page_size: 20,
+			page_size: 3,
 		},
 		connectorConnections: [
 			{ id: "hosted-conn-github", app_name: "github", status: "ACTIVE" },
@@ -2759,7 +2759,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
 	);
 	await expect.poll(() => sessionRequests.length).toBe(1);
-	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("4");
+	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("3");
 
 	const overview = page.locator('[data-agent-overview="hosted"]');
 	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
@@ -2768,9 +2768,18 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.locator('[data-overview-module="projects"]')).toContainText(
 		"Hosted Agent Project",
 	);
+	const viewAllSessions = page
+		.locator("#hosted-recent-sessions")
+		.locator("..")
+		.getByRole("button", { name: "View all", exact: true });
+	const viewAllHref = await viewAllSessions.getAttribute("href");
+	const viewAllUrl = new URL(viewAllHref ?? "", page.url());
+	expect(viewAllUrl.pathname).toBe(`/agents/${railHostedEnvironmentId}/sessions`);
+	expect(viewAllUrl.searchParams.get("source")).toBe("on-clawdi");
+	expect(viewAllUrl.searchParams.get("d")).toBe(railHostedDeployment.id);
 	const recentSessions = page.getByRole("region", { name: "Recent sessions" });
-	await expect(recentSessions.locator("article")).toHaveCount(4);
-	await expect(recentSessions).not.toContainText("Fifth hosted session");
+	await expect(recentSessions.locator("article")).toHaveCount(3);
+	await expect(recentSessions).not.toContainText("Review risks");
 	const sessionBoxes = await recentSessions.locator("article").evaluateAll((cards) =>
 		cards.map((card) => {
 			const rect = card.getBoundingClientRect();
@@ -2869,7 +2878,12 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.getByText("Managed", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="live-sync"]')).toHaveCount(0);
-	const resourceGrid = overview.locator('[data-overview-layout="three-column"]');
+	const resourceGrid = overview.locator(
+		'section[aria-labelledby="agent-overview-resources"] [data-overview-layout="three-column"]',
+	);
+	const toolsGrid = overview.locator(
+		'section[aria-labelledby="agent-overview-operate"] [data-overview-layout="three-column"]',
+	);
 	const resourceGeometry = await resourceGrid
 		.locator("[data-overview-module]")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
@@ -2890,12 +2904,22 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
 	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
 	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
+	await expectOverviewResourceGeometry(toolsGrid, [2]);
+	expect(
+		Math.abs(
+			(resourceGeometry[0]?.width ?? 0) -
+				((await toolsGrid.locator("[data-overview-module]").first().boundingBox())?.width ?? 0),
+		),
+	).toBeLessThanOrEqual(2);
 	await page.setViewportSize({ width: 1024, height: 1200 });
 	await expectOverviewResourceGeometry(resourceGrid, [2, 2, 1]);
+	await expectOverviewResourceGeometry(toolsGrid, [2]);
 	await page.setViewportSize({ width: 768, height: 1200 });
 	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
+	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
 	await page.setViewportSize({ width: 390, height: 1200 });
 	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
+	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
 	await page.setViewportSize({ width: 1280, height: 1600 });
 	await page.screenshot({ path: testInfo.outputPath("hosted-agent-overview.png"), fullPage: true });
 });
@@ -3149,8 +3173,12 @@ test("hosted provisioning stays focused on Compute", async ({ page }, testInfo) 
 	const main = page.locator("main");
 	const panel = main.getByTestId("hosted-initial-deployment-panel");
 	await expect(panel).toContainText("Starting your agent");
-	for (const detail of ["Starting", "Plan", "CPU", "Memory", "Storage"])
-		await expect(panel).toContainText(detail);
+	await expect(panel).toContainText("Current status");
+	await expect(panel).toContainText("Starting");
+	await expect(panel).toContainText("This page updates automatically while your agent starts.");
+	await expect(panel.getByRole("status", { name: "Loading" })).toBeVisible();
+	for (const detail of ["Plan", "CPU", "Memory", "Storage"])
+		await expect(panel.getByText(detail, { exact: true })).toHaveCount(0);
 	await expect(main.locator('[data-agent-overview="hosted"]')).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Open Agent Interface" })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Resources", exact: true })).toHaveCount(0);

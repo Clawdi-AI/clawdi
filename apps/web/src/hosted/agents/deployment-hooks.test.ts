@@ -32,6 +32,8 @@ type OverviewFailureAction =
 	typeof import("@/hosted/agents/hosted-agent-detail").OverviewFailureAction;
 type OverviewComputeStatus =
 	typeof import("@/hosted/agents/hosted-agent-detail").OverviewComputeStatus;
+type InitialDeploymentPage =
+	typeof import("@/hosted/agents/hosted-agent-detail").InitialDeploymentPage;
 
 let invalidateSnapshots: InvalidateDeploymentSnapshots | null = null;
 let projectAcceptedTransition: ProjectAcceptedDeploymentTransition | null = null;
@@ -39,6 +41,7 @@ let shouldShowProjectionNotice: ShouldShowHostedProjectionNotice | null = null;
 let runManualDeploymentRefetch: RunManualDeploymentRefetch | null = null;
 let overviewFailureAction: OverviewFailureAction | null = null;
 let overviewComputeStatus: OverviewComputeStatus | null = null;
+let initialDeploymentPage: InitialDeploymentPage | null = null;
 
 function requiredDeploymentStatus(
 	deployment: HostedDeployment | undefined,
@@ -62,6 +65,7 @@ beforeAll(async () => {
 	shouldShowProjectionNotice = detailModule.shouldShowHostedProjectionNotice;
 	overviewFailureAction = detailModule.OverviewFailureAction;
 	overviewComputeStatus = detailModule.OverviewComputeStatus;
+	initialDeploymentPage = detailModule.InitialDeploymentPage;
 });
 
 describe("deployment failure remediation rendering", () => {
@@ -128,6 +132,44 @@ describe("deployment failure remediation rendering", () => {
 });
 
 describe("deployment transition timeout rendering", () => {
+	test("shows only real lifecycle progress during initial startup", () => {
+		if (!initialDeploymentPage) throw new Error("agent detail was not loaded");
+		const markup = renderToStaticMarkup(
+			createElement(initialDeploymentPage, {
+				deployment: hostedDeploymentFixture({ status: "starting" }),
+				deploymentTransitionTimedOut: false,
+				isCheckingDeployment: false,
+				onCheckDeploymentAgain: () => undefined,
+			}),
+		);
+
+		expect(markup).toContain("Starting your agent…");
+		expect(markup).toContain("Current status");
+		expect(markup).toContain("Starting");
+		expect(markup).toContain("updates automatically");
+		expect(markup).toContain('data-slot="spinner"');
+		for (const configurationLabel of ["Plan", "CPU", "Memory", "Storage"])
+			expect(markup).not.toContain(`>${configurationLabel}<`);
+	});
+
+	test("keeps the delayed-start retry accessible", () => {
+		if (!initialDeploymentPage) throw new Error("agent detail was not loaded");
+		const markup = renderToStaticMarkup(
+			createElement(initialDeploymentPage, {
+				deployment: hostedDeploymentFixture({ status: "starting" }),
+				deploymentTransitionTimedOut: true,
+				isCheckingDeployment: false,
+				onCheckDeploymentAgain: () => undefined,
+			}),
+		);
+
+		expect(markup).toContain('role="alert"');
+		expect(markup).toContain("Setup is taking longer than expected");
+		expect(markup).toContain("Check again");
+		expect(markup).toContain("Current status");
+		expect(markup).toContain("Starting");
+	});
+
 	test("keeps projection availability notices off the deployment-backed overview", () => {
 		if (!shouldShowProjectionNotice) throw new Error("agent detail was not loaded");
 
