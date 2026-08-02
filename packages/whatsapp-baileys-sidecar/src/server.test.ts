@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { AddressInfo } from "node:net";
 import type { BinaryNode } from "baileys";
+import type { ProviderMessageEvent } from "./provider-inbox.js";
 
 import { createSidecarServer } from "./server.js";
 import {
@@ -14,6 +15,7 @@ class FakeRuntime implements BaileysRuntime {
 	relayRequests: RelayMessageRequest[] = [];
 	rawNodes: BinaryNode[] = [];
 	queries: Array<{ node: BinaryNode; timeoutMs: number }> = [];
+	providerInbox: ProviderMessageEvent[] = [];
 
 	async start(): Promise<void> {}
 	async stop(): Promise<void> {}
@@ -51,6 +53,14 @@ class FakeRuntime implements BaileysRuntime {
 			attrs: { id: "response", type: "result" },
 			content: Buffer.from([1, 2]),
 		};
+	}
+
+	providerEvents(limit: number): ProviderMessageEvent[] {
+		return this.providerInbox.slice(0, limit);
+	}
+
+	acknowledgeProviderEvents(throughSequence: number): void {
+		this.providerInbox = this.providerInbox.filter((event) => event.sequence > throughSequence);
 	}
 }
 
@@ -172,6 +182,45 @@ describe("sidecar HTTP contract", () => {
 
 		expect(response.status).toBe(503);
 		expect(await response.json()).toEqual({ error: "baileys_not_connected" });
+	});
+
+	it("lists and acknowledges durable provider events", async () => {
+		const runtime = new FakeRuntime();
+		runtime.providerInbox = [
+			{
+				sequence: 1,
+				eventType: "messages.upsert",
+				messageId: "provider-1",
+				remoteJid: "15551114444@s.whatsapp.net",
+				fromMe: false,
+				messageProtoBase64: "CgVoZWxsbw==",
+			},
+		];
+		const { url } = await startTestServer(runtime);
+
+		const listed = await authedFetch(`${url}/v1/provider-events?limit=10`);
+		const listedBody = await listed.json();
+		const acknowledged = await authedFetch(`${url}/v1/provider-events/ack`, {
+			method: "POST",
+			body: JSON.stringify({ throughSequence: 1 }),
+		});
+
+		expect(listed.status).toBe(200);
+		expect(listedBody).toEqual({
+			events: [
+				{
+					sequence: 1,
+					eventType: "messages.upsert",
+					messageId: "provider-1",
+					remoteJid: "15551114444@s.whatsapp.net",
+					fromMe: false,
+					messageProtoBase64: "CgVoZWxsbw==",
+				},
+			],
+		});
+		expect(acknowledged.status).toBe(200);
+		expect(await acknowledged.json()).toEqual({ ok: true, throughSequence: 1 });
+		expect(runtime.providerInbox).toEqual([]);
 	});
 });
 

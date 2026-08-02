@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
-import hmac
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 import pytest
-from cryptography.hazmat.primitives import hashes, padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker
 from starlette.websockets import WebSocketDisconnect
 
 from app.core.database import async_session_factory
@@ -26,20 +22,19 @@ from app.models.channel import (
     ChannelBinding,
     ChannelBotAgentLink,
     ChannelDebugEvent,
-    ChannelDelivery,
     ChannelMessage,
 )
 from app.routes.channel_routers.whatsapp import router as whatsapp_router
 from app.routes.channel_routers.whatsapp import whatsapp_baileys_managed_websocket
-from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channels import generate_agent_token, store_agent_link_token
 from app.services.whatsapp_baileys import (
     SignalSender,
+    StoredWhatsAppCredential,
     WhatsAppAuthCert,
-    decode_buffer_json,
     encrypt_whatsapp_group_message_for_sender_key,
-    whatsapp_message_proto_bytes,
+    mint_whatsapp_agent_credential,
     whatsapp_signal_senders_from_config,
+    whatsapp_text_message_proto,
 )
 from app.services.whatsapp_noise import (
     NOISE_MODE,
@@ -70,26 +65,8 @@ from app.services.whatsapp_noise import (
     pack_frame,
     unpack_frame,
 )
-from app.services.whatsapp_shared_runtime import (
-    WhatsAppClawdiOutboxSharedBotRuntime,
-    register_whatsapp_shared_bot_transport,
-    unregister_whatsapp_shared_bot_transport,
-)
 
 pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
-
-
-@pytest.fixture(autouse=True)
-def _exercise_whatsapp_protocol_behind_hosted_gate(monkeypatch):
-    """These tests cover the protocol behind the current hosted coming-soon gate."""
-
-    async def allow_existing_link(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr(
-        "app.routes.channel_routers.whatsapp.ensure_hosted_agent_provider_link_available",
-        allow_existing_link,
-    )
 
 
 async def _create_whatsapp_channel_with_existing_link(
@@ -98,14 +75,8 @@ async def _create_whatsapp_channel_with_existing_link(
     channel_agent,
     *,
     name: str,
-    provider_token: str | None = None,
-    config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {"provider": "whatsapp", "name": name}
-    if provider_token is not None:
-        payload["provider_token"] = provider_token
-    if config is not None:
-        payload["config"] = config
     response = await client.post("/v1/channels", json=payload)
     assert response.status_code == 201, response.text
     created = response.json()
@@ -125,92 +96,27 @@ async def _create_whatsapp_channel_with_existing_link(
     return created
 
 
-class _FakeWhatsAppMediaUploadResponse:
-    status_code = 200
-    headers: dict[str, str] = {}
-
-    def json(self):
-        return {"id": "uploaded-media-id"}
-
-
-class _FakeWhatsAppMediaDownloadResponse:
-    status_code = 200
-
-    def __init__(self, content: bytes):
-        self._content = content
-        self.headers = {"content-length": str(len(content))}
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return None
-
-    async def aiter_bytes(self):
-        midpoint = max(1, len(self._content) // 2)
-        yield self._content[:midpoint]
-        yield self._content[midpoint:]
-
-
-class _FakeWhatsAppMediaReuploadClient:
-    encrypted_media = b""
-    calls: list[dict[str, Any]] = []
-    message_calls: list[dict[str, Any]] = []
-
-    def __init__(self, *args, **kwargs):
-        self.args = args
-        self.kwargs = kwargs
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return None
-
-    def stream(self, method: str, url: str):
-        self.calls.append({"method": method, "url": url, "kind": "download"})
-        return _FakeWhatsAppMediaDownloadResponse(self.encrypted_media)
-
-    async def post(self, url: str, **kwargs):
-        if url.endswith("/messages"):
-            self.message_calls.append({"url": url, **kwargs})
-            return _FakeWhatsAppCloudMessagesResponse()
-        self.calls.append({"method": "POST", "url": url, "kind": "upload", **kwargs})
-        return _FakeWhatsAppMediaUploadResponse()
-
-
-class _FakeWhatsAppCloudMessagesResponse:
-    status_code = 200
-
-    def json(self):
-        return {"messages": [{"id": "wamid.reuploaded"}]}
-
-
-def _encrypt_whatsapp_media(
+async def _mint_synthetic_credential(
+    db_session,
+    created: dict[str, Any],
     *,
-    kind: str,
-    media_key: bytes,
-    plaintext: bytes,
-) -> bytes:
-    info = {
-        "image": b"WhatsApp Image Keys",
-        "audio": b"WhatsApp Audio Keys",
-    }[kind]
-    expanded = HKDF(
-        algorithm=hashes.SHA256(),
-        length=112,
-        salt=None,
-        info=info,
-    ).derive(media_key)
-    iv = expanded[:16]
-    cipher_key = expanded[16:48]
-    mac_key = expanded[48:80]
-    padder = padding.PKCS7(128).padder()
-    padded = padder.update(plaintext) + padder.finalize()
-    encryptor = Cipher(algorithms.AES(cipher_key), modes.CBC(iv)).encryptor()
-    ciphertext = encryptor.update(padded) + encryptor.finalize()
-    mac = hmac.new(mac_key, iv + ciphertext, hashlib.sha256).digest()[:10]
-    return ciphertext + mac
+    link_id: UUID | None = None,
+    self_identity: dict[str, str | None] | None = None,
+) -> StoredWhatsAppCredential:
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    selected_link_id = link_id or UUID(created["agent_link_id"])
+    link = await db_session.get(ChannelBotAgentLink, selected_link_id)
+    assert account is not None
+    assert link is not None
+    stored = await mint_whatsapp_agent_credential(
+        db_session,
+        account=account,
+        bot_agent_link_id=selected_link_id,
+        user_id=link.user_id,
+        self_identity=self_identity,
+    )
+    await db_session.commit()
+    return stored
 
 
 def test_whatsapp_noise_pack_unpack_round_trips_partial_frames():
@@ -1157,13 +1063,8 @@ async def test_managed_whatsapp_websocket_revokes_established_session_after_toke
         channel_agent,
         name="wa-managed-session-token-rotation",
     )
-    minted = (
-        await client.post(
-            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-            json={},
-        )
-    ).json()
-    creds = decode_buffer_json(minted["creds"])
+    synthetic = await _mint_synthetic_credential(db_session, created)
+    creds = synthetic.minted.creds
     client_noise = _MiniNoiseClient(
         static=KeyPair(
             private=creds["noiseKey"]["private"],
@@ -1209,13 +1110,8 @@ async def test_managed_whatsapp_websocket_revokes_before_delivery_after_link_arc
         channel_agent,
         name="wa-managed-session-link-archive",
     )
-    minted = (
-        await client.post(
-            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-            json={},
-        )
-    ).json()
-    creds = decode_buffer_json(minted["creds"])
+    synthetic = await _mint_synthetic_credential(db_session, created)
+    creds = synthetic.minted.creds
     client_noise = _MiniNoiseClient(
         static=KeyPair(
             private=creds["noiseKey"]["private"],
@@ -1265,8 +1161,15 @@ async def test_managed_whatsapp_websocket_revokes_before_delivery_after_link_arc
         provider_message_id="after-link-archive",
         text="must not reach the archived session",
         payload={
-            "key": {"remoteJid": binding.external_chat_id, "id": "after-link-archive"},
-            "message": {"conversation": "must not reach the archived session"},
+            "schemaVersion": "clawdi.whatsappBaileysProviderEvent.v1",
+            "key": {
+                "remoteJid": binding.external_chat_id,
+                "id": "after-link-archive",
+                "fromMe": False,
+            },
+            "messageProtoBase64": base64.b64encode(
+                whatsapp_text_message_proto("must not reach the archived session")
+            ).decode("ascii"),
         },
     )
     db_session.add(pending)
@@ -1309,13 +1212,12 @@ async def test_managed_whatsapp_noise_identity_is_bound_to_authenticated_link(
     await db_session.commit()
     await db_session.refresh(second_link)
     second_link_id = second_link.id
-    minted = (
-        await client.post(
-            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-            json={"agent_link_id": str(second_link.id)},
-        )
-    ).json()
-    creds = decode_buffer_json(minted["creds"])
+    synthetic = await _mint_synthetic_credential(
+        db_session,
+        created,
+        link_id=second_link.id,
+    )
+    creds = synthetic.minted.creds
     static = KeyPair(
         private=creds["noiseKey"]["private"],
         public=creds["noiseKey"]["public"],
@@ -1388,427 +1290,7 @@ async def test_managed_whatsapp_noise_identity_is_bound_to_authenticated_link(
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_shared_runtime_queues_cloud_sendable_proto_and_records_native_gap(
-    client,
-    db_session,
-    channel_agent,
-):
-    created = await _create_whatsapp_channel_with_existing_link(
-        client, db_session, channel_agent, name="wa-shared-runtime"
-    )
-    await db_session.rollback()
-    account = await db_session.get(ChannelAccount, UUID(created["id"]))
-    assert account is not None
-    binding = ChannelBinding(
-        account_id=account.id,
-        bot_agent_link_id=UUID(created["agent_link_id"]),
-        user_id=account.user_id,
-        external_chat_id="15551114444@s.whatsapp.net",
-        external_chat_type="private",
-        external_chat_name="Alice",
-    )
-    db_session.add(binding)
-    await db_session.commit()
-
-    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    runtime = WhatsAppClawdiOutboxSharedBotRuntime(
-        sessionmaker,
-        account_id=account.id,
-    )
-
-    queued = await runtime.store_outbound_message(
-        WhatsAppOutboundMessage(
-            to_jid="15551114444@s.whatsapp.net",
-            message_id="agent-text-1",
-            message_proto=_bytes_field(1, b"shared runtime text"),
-            enc_type="msg",
-            attrs={},
-            conversation="shared runtime text",
-        )
-    )
-
-    assert queued.outcome == "queued"
-    assert queued.channel_message_id is not None
-    assert queued.delivery_id is not None
-    quoted = await runtime.store_outbound_message(
-        WhatsAppOutboundMessage(
-            to_jid="15551114444@s.whatsapp.net",
-            message_id="agent-quoted-1",
-            message_proto=whatsapp_message_proto_bytes(
-                {
-                    "message": {
-                        "extendedTextMessage": {
-                            "text": "reply with quote",
-                            "contextInfo": {"stanzaId": "wamid.original"},
-                        }
-                    }
-                },
-                text=None,
-            ),
-            enc_type="msg",
-            attrs={},
-            conversation=None,
-        )
-    )
-    encrypted_image = await runtime.store_outbound_message(
-        WhatsAppOutboundMessage(
-            to_jid="15551114444@s.whatsapp.net",
-            message_id="agent-media-1",
-            message_proto=whatsapp_message_proto_bytes(
-                {
-                    "message": {
-                        "imageMessage": {
-                            "url": "https://mmg.whatsapp.net/o1/v/test",
-                            "caption": "tiny red dot",
-                            "mediaKey": "8N6ORZLxSd3MHhbHAnsVAeX4ss4495v05BrZG1scD68=",
-                            "directPath": "/o1/v/test",
-                        }
-                    }
-                },
-                text=None,
-            ),
-            enc_type="msg",
-            attrs={},
-            conversation=None,
-        )
-    )
-
-    assert quoted.outcome == "queued"
-    assert quoted.channel_message_id is not None
-    assert quoted.delivery_id is not None
-    assert encrypted_image.outcome == "unsupported"
-    assert encrypted_image.reason == "media-reupload-required"
-
-    await db_session.rollback()
-    channel_message = await db_session.get(ChannelMessage, queued.channel_message_id)
-    assert channel_message is not None
-    assert channel_message.direction == MESSAGE_DIRECTION_OUTBOUND
-    assert channel_message.binding_id == binding.id
-    assert channel_message.text == "shared runtime text"
-    assert channel_message.payload["source"] == "baileys_websocket"
-    assert channel_message.payload["sharedRuntime"] == "clawdi_outbox"
-    assert channel_message.payload["providerMessageId"] == "agent-text-1"
-    assert channel_message.payload["providerPayload"] == {
-        "type": "text",
-        "text": {"body": "shared runtime text"},
-    }
-
-    quoted_message = await db_session.get(ChannelMessage, quoted.channel_message_id)
-    assert quoted_message is not None
-    assert quoted_message.text == "reply with quote"
-    assert quoted_message.payload["protoKind"] == "extended_text"
-    assert quoted_message.payload["providerPayload"] == {
-        "type": "text",
-        "text": {"body": "reply with quote"},
-        "context": {"message_id": "wamid.original"},
-    }
-
-    result = await db_session.execute(
-        select(ChannelDebugEvent)
-        .where(ChannelDebugEvent.account_id == account.id)
-        .order_by(ChannelDebugEvent.created_at.asc(), ChannelDebugEvent.id.asc())
-    )
-    events = list(result.scalars().all())
-    assert [(event.stage, event.outcome) for event in events] == [
-        ("outbound_delivery", "queued"),
-        ("outbound_delivery", "queued"),
-        ("outbound_delivery", "unsupported"),
-    ]
-    assert events[0].details["sharedRuntime"] == "clawdi_outbox"
-    assert events[1].details["protoKind"] == "extended_text"
-    assert events[2].details["reason"] == "media-reupload-required"
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_shared_runtime_reuploads_encrypted_image_media(
-    client,
-    db_session,
-    monkeypatch,
-):
-    media_key = bytes(range(32))
-    plaintext = b"\x89PNG\r\n\x1a\nclawdi-whatsapp-media"
-    encrypted = _encrypt_whatsapp_media(
-        kind="image",
-        media_key=media_key,
-        plaintext=plaintext,
-    )
-    _FakeWhatsAppMediaReuploadClient.encrypted_media = encrypted
-    _FakeWhatsAppMediaReuploadClient.calls = []
-    _FakeWhatsAppMediaReuploadClient.message_calls = []
-    monkeypatch.setattr(
-        "app.services.whatsapp_media_reupload.httpx.AsyncClient",
-        _FakeWhatsAppMediaReuploadClient,
-    )
-    monkeypatch.setattr(
-        "app.services.channels.httpx.AsyncClient",
-        _FakeWhatsAppMediaReuploadClient,
-    )
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={
-                "provider": "whatsapp",
-                "name": "wa-shared-runtime-media-reupload",
-                "provider_token": "wa-access-token",
-                "config": {
-                    "phone_number_id": "phone-123",
-                    "graph_api_base_url": "https://graph.example.test/v20.0",
-                },
-            },
-        )
-    ).json()
-    await db_session.rollback()
-    account_id = UUID(created["id"])
-    account = await db_session.get(ChannelAccount, account_id)
-    assert account is not None
-
-    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    runtime = WhatsAppClawdiOutboxSharedBotRuntime(
-        sessionmaker,
-        account_id=account_id,
-    )
-
-    queued = await runtime.store_outbound_message(
-        WhatsAppOutboundMessage(
-            to_jid="15551114444@s.whatsapp.net",
-            message_id="agent-media-reupload-1",
-            message_proto=whatsapp_message_proto_bytes(
-                {
-                    "message": {
-                        "imageMessage": {
-                            "url": "https://mmg.whatsapp.net/o1/v/test",
-                            "mimetype": "image/png",
-                            "caption": "tiny red dot",
-                            "mediaKey": media_key,
-                            "fileSha256": hashlib.sha256(plaintext).digest(),
-                            "fileEncSha256": hashlib.sha256(encrypted).digest(),
-                            "directPath": "/o1/v/test",
-                        }
-                    }
-                },
-                text=None,
-            ),
-            enc_type="msg",
-            attrs={},
-            conversation=None,
-        )
-    )
-
-    assert queued.outcome == "queued"
-    assert queued.channel_message_id is not None
-    assert queued.delivery_id is not None
-    assert _FakeWhatsAppMediaReuploadClient.calls[0] == {
-        "method": "GET",
-        "url": "https://mmg.whatsapp.net/o1/v/test",
-        "kind": "download",
-    }
-    upload_call = _FakeWhatsAppMediaReuploadClient.calls[1]
-    assert upload_call["url"] == "https://graph.example.test/v20.0/phone-123/media"
-    assert upload_call["headers"] == {"Authorization": "Bearer wa-access-token"}
-    assert upload_call["data"] == {"messaging_product": "whatsapp", "type": "image/png"}
-    assert upload_call["files"]["file"] == ("whatsapp-image.png", plaintext, "image/png")
-
-    await db_session.rollback()
-    channel_message = await db_session.get(ChannelMessage, queued.channel_message_id)
-    assert channel_message is not None
-    assert channel_message.direction == MESSAGE_DIRECTION_OUTBOUND
-    assert channel_message.text == "tiny red dot"
-    assert channel_message.payload["providerPayload"] == {
-        "type": "image",
-        "image": {"id": "uploaded-media-id", "caption": "tiny red dot"},
-    }
-    assert "link" not in channel_message.payload["providerPayload"]["image"]
-
-    event = (
-        await db_session.execute(
-            select(ChannelDebugEvent).where(ChannelDebugEvent.account_id == account_id)
-        )
-    ).scalar_one()
-    assert event.stage == "outbound_delivery"
-    assert event.outcome == "queued"
-    assert event.details["reason"] == "media-reupload-required"
-    assert event.details["mediaKind"] == "image"
-    assert event.details["mediaReupload"] == "uploaded"
-
-    delivered_id = await ChannelDeliveryWorker(sessionmaker).run_once()
-    assert delivered_id == queued.delivery_id
-
-    await db_session.rollback()
-    delivery = (
-        await db_session.execute(
-            select(ChannelDelivery)
-            .where(ChannelDelivery.id == queued.delivery_id)
-            .execution_options(populate_existing=True)
-        )
-    ).scalar_one()
-    assert delivery.status == "succeeded"
-    assert _FakeWhatsAppMediaReuploadClient.message_calls[0]["url"] == (
-        "https://graph.example.test/v20.0/phone-123/messages"
-    )
-    assert _FakeWhatsAppMediaReuploadClient.message_calls[0]["json"] == {
-        "messaging_product": "whatsapp",
-        "to": "15551114444",
-        "type": "image",
-        "image": {"id": "uploaded-media-id", "caption": "tiny red dot"},
-    }
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_shared_runtime_relays_native_required_proto_when_transport_exists(
-    client,
-    db_session,
-):
-    class FakeNativeTransport:
-        def __init__(self):
-            self.outbound_messages: list[WhatsAppOutboundMessage] = []
-
-        async def relay_outbound_message(self, message):
-            self.outbound_messages.append(message)
-
-        async def relay_raw_node(self, node):
-            raise AssertionError("raw relay should not be used")
-
-        async def query_iq(self, node, timeout_ms):
-            raise AssertionError("iq forwarding should not be used")
-
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-shared-runtime-native"},
-        )
-    ).json()
-    await db_session.rollback()
-    account = await db_session.get(ChannelAccount, UUID(created["id"]))
-    assert account is not None
-    account_id = account.id
-
-    transport = FakeNativeTransport()
-    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    runtime = WhatsAppClawdiOutboxSharedBotRuntime(
-        sessionmaker,
-        account_id=account_id,
-        transport=transport,
-    )
-
-    relayed = await runtime.store_outbound_message(
-        WhatsAppOutboundMessage(
-            to_jid="15551114444@s.whatsapp.net",
-            message_id="agent-media-native-1",
-            message_proto=whatsapp_message_proto_bytes(
-                {
-                    "message": {
-                        "imageMessage": {
-                            "url": "https://mmg.whatsapp.net/o1/v/test",
-                            "caption": "tiny red dot",
-                            "mediaKey": "8N6ORZLxSd3MHhbHAnsVAeX4ss4495v05BrZG1scD68=",
-                            "directPath": "/o1/v/test",
-                        }
-                    }
-                },
-                text=None,
-            ),
-            enc_type="msg",
-            attrs={},
-            conversation=None,
-        )
-    )
-
-    assert relayed.outcome == "relayed"
-    assert transport.outbound_messages[0].message_id == "agent-media-native-1"
-
-    await db_session.rollback()
-    result = await db_session.execute(
-        select(ChannelDebugEvent)
-        .where(ChannelDebugEvent.account_id == account_id)
-        .order_by(ChannelDebugEvent.created_at.asc(), ChannelDebugEvent.id.asc())
-    )
-    event = result.scalar_one()
-    assert event.stage == "outbound_delivery"
-    assert event.outcome == "relayed"
-    assert event.details["reason"] == "media-reupload-required"
-    assert event.details["nativeTransport"] == "relayed"
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_shared_runtime_preserves_baileys_relay_attrs_via_native_transport(
-    client,
-    db_session,
-):
-    class FakeNativeTransport:
-        def __init__(self):
-            self.outbound_messages: list[WhatsAppOutboundMessage] = []
-
-        async def relay_outbound_message(self, message):
-            self.outbound_messages.append(message)
-
-        async def relay_raw_node(self, node):
-            raise AssertionError("raw relay should not be used")
-
-        async def query_iq(self, node, timeout_ms):
-            raise AssertionError("iq forwarding should not be used")
-
-    created = (
-        await client.post(
-            "/v1/channels",
-            json={"provider": "whatsapp", "name": "wa-shared-runtime-native-attrs"},
-        )
-    ).json()
-    await db_session.rollback()
-    account = await db_session.get(ChannelAccount, UUID(created["id"]))
-    assert account is not None
-    account_id = account.id
-
-    transport = FakeNativeTransport()
-    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    runtime = WhatsAppClawdiOutboxSharedBotRuntime(
-        sessionmaker,
-        account_id=account_id,
-        transport=transport,
-    )
-
-    relayed = await runtime.store_outbound_message(
-        WhatsAppOutboundMessage(
-            to_jid="15551114444@s.whatsapp.net",
-            message_id="agent-edit-1",
-            message_proto=_bytes_field(1, b"edited text"),
-            enc_type="msg",
-            attrs={
-                "id": "agent-edit-1",
-                "to": "15551114444@s.whatsapp.net",
-                "type": "text",
-                "edit": "8",
-                "addressing_mode": "lid",
-                "category": "peer",
-            },
-            conversation="edited text",
-        )
-    )
-
-    assert relayed.outcome == "relayed"
-    assert transport.outbound_messages[0].attrs == {
-        "id": "agent-edit-1",
-        "to": "15551114444@s.whatsapp.net",
-        "type": "text",
-        "edit": "8",
-        "addressing_mode": "lid",
-        "category": "peer",
-    }
-
-    await db_session.rollback()
-    result = await db_session.execute(
-        select(ChannelDebugEvent)
-        .where(ChannelDebugEvent.account_id == account_id)
-        .order_by(ChannelDebugEvent.created_at.asc(), ChannelDebugEvent.id.asc())
-    )
-    event = result.scalar_one()
-    assert event.stage == "outbound_delivery"
-    assert event.outcome == "relayed"
-    assert event.details["reason"] == "baileys-relay-attrs-required"
-    assert event.details["nativeTransport"] == "relayed"
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_noise_session_surfaces_raw_transport_nodes_for_shared_runtime():
+async def test_whatsapp_noise_session_surfaces_raw_transport_nodes_for_provider_bridge():
     relayed: list[dict[str, object]] = []
     events: list[WhatsAppNoiseRuntimeEvent] = []
 
@@ -1852,353 +1334,6 @@ async def test_whatsapp_noise_session_surfaces_raw_transport_nodes_for_shared_ru
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_shared_runtime_relays_raw_nodes_and_forwards_iq(
-    client,
-    db_session,
-    channel_agent,
-):
-    class FakeSharedBotTransport:
-        def __init__(self):
-            self.raw_nodes: list[dict[str, object]] = []
-            self.iq_queries: list[tuple[dict[str, object], int]] = []
-
-        async def relay_raw_node(self, node):
-            self.raw_nodes.append(node)
-
-        async def query_iq(self, node, timeout_ms):
-            self.iq_queries.append((node, timeout_ms))
-            return {
-                "tag": "iq",
-                "attrs": {"id": "upstream-id", "type": "result", "from": "s.whatsapp.net"},
-                "content": [{"tag": "props", "attrs": {"hash": "abc"}}],
-            }
-
-    created = await _create_whatsapp_channel_with_existing_link(
-        client, db_session, channel_agent, name="wa-shared-runtime-raw"
-    )
-    await db_session.rollback()
-    account = await db_session.get(ChannelAccount, UUID(created["id"]))
-    assert account is not None
-    binding = ChannelBinding(
-        account_id=account.id,
-        bot_agent_link_id=UUID(created["agent_link_id"]),
-        user_id=account.user_id,
-        external_chat_id="15551114444@s.whatsapp.net",
-        external_chat_type="private",
-        external_chat_name="Alice",
-    )
-    db_session.add(binding)
-    await db_session.commit()
-
-    transport = FakeSharedBotTransport()
-    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    runtime = WhatsAppClawdiOutboxSharedBotRuntime(
-        sessionmaker,
-        account_id=account.id,
-        transport=transport,
-    )
-    relayed = await runtime.relay_raw_node(
-        {
-            "tag": "chatstate",
-            "attrs": {
-                "to": "15551114444@s.whatsapp.net",
-                "from": "spoof@s.whatsapp.net",
-                "name": "spoof",
-            },
-            "content": [{"tag": "composing", "attrs": {"name": "nested-spoof"}}],
-        },
-        lambda _message_id: None,
-    )
-    dropped = await runtime.relay_raw_node(
-        {"tag": "presence", "attrs": {"to": "15559999999@s.whatsapp.net"}},
-        lambda _message_id: None,
-    )
-    forwarded = await runtime.forward_iq(
-        {
-            "tag": "iq",
-            "attrs": {"id": "agent-q-1", "xmlns": "w", "type": "get", "to": "s.whatsapp.net"},
-            "content": [{"tag": "props", "attrs": {}}],
-        },
-        created["agent_link_id"],
-    )
-
-    assert relayed.outcome == "relayed"
-    assert dropped.outcome == "dropped"
-    assert dropped.reason == "unbound-jid"
-    assert transport.raw_nodes == [
-        {
-            "tag": "chatstate",
-            "attrs": {"to": "15551114444@s.whatsapp.net"},
-            "content": [{"tag": "composing", "attrs": {}}],
-        }
-    ]
-    assert transport.iq_queries[0][0]["attrs"].get("id") is None
-    assert transport.iq_queries[0][1] == 15_000
-    assert forwarded is not None
-    assert forwarded["attrs"]["id"] == "agent-q-1"
-    assert forwarded["content"] == [{"tag": "props", "attrs": {"hash": "abc"}}]
-
-    await db_session.rollback()
-    result = await db_session.execute(
-        select(ChannelDebugEvent)
-        .where(ChannelDebugEvent.account_id == account.id)
-        .order_by(ChannelDebugEvent.created_at.asc(), ChannelDebugEvent.id.asc())
-    )
-    events = list(result.scalars().all())
-    assert [(event.stage, event.outcome) for event in events] == [
-        ("outbound_relay", "relayed"),
-        ("outbound_relay", "dropped"),
-    ]
-    assert events[0].details["tag"] == "chatstate"
-    assert events[1].details["reason"] == "unbound-jid"
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_shared_runtime_relays_read_receipt_via_cloud_api_without_native_transport(
-    client,
-    db_session,
-    monkeypatch,
-    channel_agent,
-):
-    class FakeCloudResponse:
-        status_code = 200
-
-    class FakeCloudClient:
-        calls: list[dict[str, object]] = []
-
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, url, *, headers=None, json=None):
-            self.calls.append({"url": url, "headers": headers, "json": json})
-            return FakeCloudResponse()
-
-    monkeypatch.setattr("app.services.whatsapp_shared_runtime.httpx.AsyncClient", FakeCloudClient)
-    created = await _create_whatsapp_channel_with_existing_link(
-        client,
-        db_session,
-        channel_agent,
-        name="wa-cloud-read-relay",
-        provider_token="wa-access-token",
-        config={"phone_number_id": "phone-cloud"},
-    )
-    await db_session.rollback()
-    account = await db_session.get(ChannelAccount, UUID(created["id"]))
-    assert account is not None
-    binding = ChannelBinding(
-        account_id=account.id,
-        bot_agent_link_id=UUID(created["agent_link_id"]),
-        user_id=account.user_id,
-        external_chat_id="15551114444@s.whatsapp.net",
-        external_chat_type="private",
-        external_chat_name="Alice",
-    )
-    db_session.add(binding)
-    await db_session.commit()
-
-    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    runtime = WhatsAppClawdiOutboxSharedBotRuntime(
-        sessionmaker,
-        account_id=account.id,
-    )
-    relayed = await runtime.relay_raw_node(
-        {
-            "tag": "receipt",
-            "attrs": {
-                "type": "read",
-                "to": "15551114444@s.whatsapp.net",
-                "id": "wamid.root",
-            },
-            "content": [
-                {
-                    "tag": "list",
-                    "attrs": {},
-                    "content": [{"tag": "item", "attrs": {"id": "wamid.extra"}}],
-                }
-            ],
-        },
-        lambda _message_id: None,
-    )
-
-    assert relayed.outcome == "relayed"
-    assert [call["json"] for call in FakeCloudClient.calls] == [
-        {
-            "messaging_product": "whatsapp",
-            "status": "read",
-            "message_id": "wamid.root",
-        },
-        {
-            "messaging_product": "whatsapp",
-            "status": "read",
-            "message_id": "wamid.extra",
-        },
-    ]
-    assert FakeCloudClient.calls[0]["url"].endswith("/phone-cloud/messages")
-    assert FakeCloudClient.calls[0]["headers"]["Authorization"] == "Bearer wa-access-token"
-
-    await db_session.rollback()
-    result = await db_session.execute(
-        select(ChannelDebugEvent)
-        .where(ChannelDebugEvent.account_id == account.id)
-        .order_by(ChannelDebugEvent.created_at.asc(), ChannelDebugEvent.id.asc())
-    )
-    event = result.scalar_one()
-    assert event.stage == "outbound_relay"
-    assert event.outcome == "relayed"
-    assert event.details["cloudTransport"] == "relayed"
-    assert event.details["cloudPayloadKind"] == "receipt_read"
-    assert event.details["cloudPayloadCount"] == 2
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_shared_runtime_relays_typing_indicator_via_cloud_api(
-    client,
-    db_session,
-    monkeypatch,
-    channel_agent,
-):
-    class FakeCloudResponse:
-        status_code = 200
-
-    class FakeCloudClient:
-        calls: list[dict[str, object]] = []
-
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, url, *, headers=None, json=None):
-            self.calls.append({"url": url, "headers": headers, "json": json})
-            return FakeCloudResponse()
-
-    monkeypatch.setattr("app.services.whatsapp_shared_runtime.httpx.AsyncClient", FakeCloudClient)
-    created = await _create_whatsapp_channel_with_existing_link(
-        client,
-        db_session,
-        channel_agent,
-        name="wa-cloud-typing-relay",
-        provider_token="wa-access-token",
-        config={"phone_number_id": "phone-cloud"},
-    )
-    await db_session.rollback()
-    account = await db_session.get(ChannelAccount, UUID(created["id"]))
-    assert account is not None
-    binding = ChannelBinding(
-        account_id=account.id,
-        bot_agent_link_id=UUID(created["agent_link_id"]),
-        user_id=account.user_id,
-        external_chat_id="15551114444@s.whatsapp.net",
-        external_chat_type="private",
-        external_chat_name="Alice",
-    )
-    db_session.add(binding)
-    await db_session.flush()
-    db_session.add(
-        ChannelMessage(
-            account_id=account.id,
-            bot_agent_link_id=UUID(created["agent_link_id"]),
-            binding_id=binding.id,
-            user_id=account.user_id,
-            direction=MESSAGE_DIRECTION_INBOUND,
-            external_chat_id=binding.external_chat_id,
-            provider_message_id="wamid.latest",
-            text="incoming",
-            payload={"message": {"conversation": "incoming"}},
-        )
-    )
-    await db_session.commit()
-
-    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    runtime = WhatsAppClawdiOutboxSharedBotRuntime(
-        sessionmaker,
-        account_id=account.id,
-    )
-    relayed = await runtime.relay_raw_node(
-        {
-            "tag": "chatstate",
-            "attrs": {"to": "15551114444@s.whatsapp.net"},
-            "content": [{"tag": "composing", "attrs": {}}],
-        },
-        lambda _message_id: None,
-    )
-
-    assert relayed.outcome == "relayed"
-    assert FakeCloudClient.calls[0]["json"] == {
-        "messaging_product": "whatsapp",
-        "status": "read",
-        "message_id": "wamid.latest",
-        "typing_indicator": {"type": "text"},
-    }
-    assert FakeCloudClient.calls[0]["url"].endswith("/phone-cloud/messages")
-
-    await db_session.rollback()
-    result = await db_session.execute(
-        select(ChannelDebugEvent)
-        .where(ChannelDebugEvent.account_id == account.id)
-        .order_by(ChannelDebugEvent.created_at.asc(), ChannelDebugEvent.id.asc())
-    )
-    event = result.scalar_one()
-    assert event.stage == "outbound_relay"
-    assert event.outcome == "relayed"
-    assert event.details["cloudTransport"] == "relayed"
-    assert event.details["cloudPayloadKind"] == "typing_indicator"
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_shared_runtime_forward_iq_caps_inflight_queries(db_session):
-    class SlowTransport:
-        def __init__(self):
-            self.started = 0
-            self.started_event = asyncio.Event()
-            self.release_event = asyncio.Event()
-
-        async def relay_raw_node(self, node):
-            raise AssertionError("raw relay should not be used")
-
-        async def query_iq(self, node, timeout_ms):
-            self.started += 1
-            if self.started == 5:
-                self.started_event.set()
-            await self.release_event.wait()
-            return {"tag": "iq", "attrs": {"type": "result"}}
-
-    transport = SlowTransport()
-    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    runtime = WhatsAppClawdiOutboxSharedBotRuntime(
-        sessionmaker,
-        account_id=UUID("00000000-0000-0000-0000-000000000001"),
-        transport=transport,
-    )
-    node = {"tag": "iq", "attrs": {"id": "q", "xmlns": "w", "type": "get"}}
-
-    tasks = [asyncio.create_task(runtime.forward_iq(node, None)) for _ in range(5)]
-    await asyncio.wait_for(transport.started_event.wait(), timeout=1)
-
-    capped = await runtime.forward_iq(node, None)
-    assert capped is None
-
-    transport.release_event.set()
-    assert [response is not None for response in await asyncio.gather(*tasks)] == [
-        True,
-        True,
-        True,
-        True,
-        True,
-    ]
-
-
-@pytest.mark.asyncio
 async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     client,
     db_session,
@@ -2207,18 +1342,16 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     created = await _create_whatsapp_channel_with_existing_link(
         client, db_session, channel_agent, name="wa-runtime-debug"
     )
-    minted = (
-        await client.post(
-            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-            json={
-                "self_identity": {
-                    "id": "16693773518:2@s.whatsapp.net",
-                    "lid": "117901482786828:2@lid",
-                },
-            },
-        )
-    ).json()
-    creds = decode_buffer_json(minted["creds"])
+    synthetic = await _mint_synthetic_credential(
+        db_session,
+        created,
+        self_identity={
+            "id": "16693773518:2@s.whatsapp.net",
+            "lid": "117901482786828:2@lid",
+        },
+    )
+    credential_id = synthetic.credential.id
+    creds = synthetic.minted.creds
     static = KeyPair(
         private=creds["noiseKey"]["private"],
         public=creds["noiseKey"]["public"],
@@ -2227,7 +1360,7 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     assert account is not None
     binding = ChannelBinding(
         account_id=account.id,
-        bot_agent_link_id=UUID(minted["agent_link_id"]),
+        bot_agent_link_id=UUID(created["agent_link_id"]),
         user_id=account.user_id,
         external_chat_id="15551112222@s.whatsapp.net",
         external_chat_type="private",
@@ -2237,7 +1370,7 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     await db_session.flush()
     inbox_message = ChannelMessage(
         account_id=account.id,
-        bot_agent_link_id=UUID(minted["agent_link_id"]),
+        bot_agent_link_id=UUID(created["agent_link_id"]),
         binding_id=binding.id,
         user_id=account.user_id,
         direction=MESSAGE_DIRECTION_INBOUND,
@@ -2245,8 +1378,11 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
         provider_message_id="push-1",
         text="hello from provider",
         payload={
-            "key": {"remoteJid": binding.external_chat_id, "id": "push-1"},
-            "message": {"conversation": "hello from provider"},
+            "schemaVersion": "clawdi.whatsappBaileysProviderEvent.v1",
+            "key": {"remoteJid": binding.external_chat_id, "id": "push-1", "fromMe": False},
+            "messageProtoBase64": base64.b64encode(
+                whatsapp_text_message_proto("hello from provider")
+            ).decode("ascii"),
         },
     )
     db_session.add(inbox_message)
@@ -2286,7 +1422,11 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     await _wait_for_delivered_message(db_session, inbox_message.id)
 
     await db_session.rollback()
-    active_credential = await db_session.get(ChannelAgentCredential, UUID(minted["credential_id"]))
+    active_credential = await db_session.get(
+        ChannelAgentCredential,
+        credential_id,
+        populate_existing=True,
+    )
     assert active_credential is not None
     snapshots = whatsapp_signal_senders_from_config(active_credential.config)
     reply_sender = SignalSender(snapshots["15551112222:0@s.whatsapp.net"])
@@ -2312,7 +1452,11 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     await _disconnect_whatsapp_route(websocket, route_task)
 
     await db_session.rollback()
-    credential = await db_session.get(ChannelAgentCredential, UUID(minted["credential_id"]))
+    credential = await db_session.get(
+        ChannelAgentCredential,
+        credential_id,
+        populate_existing=True,
+    )
     assert credential is not None
     assert credential.config is not None
     assert credential.config["agent_bundle"]["registrationId"] == 12345
@@ -2365,11 +1509,12 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     assert bootstrap.external_chat_id == "16693773518:2@s.whatsapp.net"
     assert bootstrap.details["runtime"] == "baileys_websocket"
     assert bootstrap.details["jidDescription"] == "server=s.whatsapp.net device=true"
-    assert minted["identity_pub_key_hex"] not in repr([event.details for event in events])
+    identity_pub_key_hex = synthetic.minted.identity_pub_key.hex()
+    assert identity_pub_key_hex not in repr([event.details for event in events])
     tenant_event = next(event for event in events if event.stage == "tenant_resolution")
     assert (
         tenant_event.details["clientStaticSha256"]
-        == hashlib.sha256(bytes.fromhex(minted["identity_pub_key_hex"])).hexdigest()
+        == hashlib.sha256(synthetic.minted.identity_pub_key).hexdigest()
     )
     restored_event = next(
         event for event in events if event.stage == "agent_bundle" and event.outcome == "restored"
@@ -2379,149 +1524,6 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
         event for event in events if event.stage == "signal_state" and event.outcome == "restored"
     )
     assert signal_state_event.details["senderCount"] == 1
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_baileys_websocket_uses_registered_native_transport_for_relay_attrs(
-    client,
-    db_session,
-    channel_agent,
-):
-    class FakeNativeTransport:
-        def __init__(self):
-            self.outbound_messages: list[WhatsAppOutboundMessage] = []
-
-        async def relay_outbound_message(self, message):
-            self.outbound_messages.append(message)
-
-        async def relay_raw_node(self, node):
-            raise AssertionError("raw relay should not be used")
-
-        async def query_iq(self, node, timeout_ms):
-            raise AssertionError("iq forwarding should not be used")
-
-    created = await _create_whatsapp_channel_with_existing_link(
-        client, db_session, channel_agent, name="wa-route-native-registry"
-    )
-    minted = (
-        await client.post(
-            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-            json={
-                "self_identity": {
-                    "id": "16693773518:2@s.whatsapp.net",
-                    "lid": "117901482786828:2@lid",
-                },
-            },
-        )
-    ).json()
-    creds = decode_buffer_json(minted["creds"])
-    static = KeyPair(
-        private=creds["noiseKey"]["private"],
-        public=creds["noiseKey"]["public"],
-    )
-    account = await db_session.get(ChannelAccount, UUID(created["id"]))
-    assert account is not None
-    binding = ChannelBinding(
-        account_id=account.id,
-        bot_agent_link_id=UUID(minted["agent_link_id"]),
-        user_id=account.user_id,
-        external_chat_id="15551113333@s.whatsapp.net",
-        external_chat_type="private",
-        external_chat_name="Alice",
-    )
-    db_session.add(binding)
-    await db_session.flush()
-    db_session.add(
-        ChannelMessage(
-            account_id=account.id,
-            bot_agent_link_id=UUID(minted["agent_link_id"]),
-            binding_id=binding.id,
-            user_id=account.user_id,
-            direction=MESSAGE_DIRECTION_INBOUND,
-            external_chat_id=binding.external_chat_id,
-            provider_message_id="native-push-1",
-            text="seed signal session",
-            payload={
-                "key": {"remoteJid": binding.external_chat_id, "id": "native-push-1"},
-                "message": {"conversation": "seed signal session"},
-            },
-        )
-    )
-    await db_session.commit()
-
-    transport = FakeNativeTransport()
-    account_id = UUID(created["id"])
-    register_whatsapp_shared_bot_transport(account_id, transport)
-    websocket: _BinaryWebSocketProbe | None = None
-    route_task: asyncio.Task[None] | None = None
-    try:
-        client_noise = _MiniNoiseClient(static=static)
-        websocket, route_task = await _connect_whatsapp_managed_route(
-            agent_token=created["agent_token"],
-            client_noise=client_noise,
-        )
-        assert client_noise.transport is not None
-        websocket.inbound.put_nowait(
-            pack_frame(client_noise.transport.encrypt(_agent_bundle_upload_node("upload-native")))
-        )
-        await websocket.wait_for_sent(5)
-
-        await db_session.rollback()
-        credential = await db_session.get(ChannelAgentCredential, UUID(minted["credential_id"]))
-        assert credential is not None
-        snapshots = whatsapp_signal_senders_from_config(credential.config)
-        reply_sender = SignalSender(snapshots["15551113333:0@s.whatsapp.net"])
-        reply_proto = _bytes_field(1, b"edited text")
-        reply = reply_sender.encrypt_from_established_session("16693773518", 2, reply_proto)
-        reply_node = encode_binary_node_minimal(
-            {
-                "tag": "message",
-                "attrs": {
-                    "id": "agent-native-edit-1",
-                    "to": "15551113333@s.whatsapp.net",
-                    "edit": "8",
-                    "addressing_mode": "lid",
-                },
-                "content": [
-                    {
-                        "tag": "enc",
-                        "attrs": {"type": reply.type},
-                        "content": reply.ciphertext,
-                    }
-                ],
-            }
-        )
-        websocket.inbound.put_nowait(pack_frame(client_noise.transport.encrypt(reply_node)))
-        await websocket.wait_for_sent(6)
-        for _ in range(50):
-            if transport.outbound_messages:
-                break
-            await asyncio.sleep(0.01)
-
-        assert len(transport.outbound_messages) == 1
-        relayed = transport.outbound_messages[0]
-        assert relayed.message_id == "agent-native-edit-1"
-        assert relayed.attrs["edit"] == "8"
-        assert relayed.attrs["addressing_mode"] == "lid"
-
-        await db_session.rollback()
-        result = await db_session.execute(
-            select(ChannelDebugEvent)
-            .where(ChannelDebugEvent.account_id == account_id)
-            .order_by(ChannelDebugEvent.created_at.asc(), ChannelDebugEvent.id.asc())
-        )
-        events = list(result.scalars().all())
-        native_event = next(
-            event
-            for event in events
-            if event.stage == "outbound_delivery" and event.outcome == "relayed"
-        )
-        assert native_event.details["reason"] == "baileys-relay-attrs-required"
-        assert native_event.details["nativeTransport"] == "relayed"
-    finally:
-        unregister_whatsapp_shared_bot_transport(account_id)
-        if websocket is not None and route_task is not None and not route_task.done():
-            await _disconnect_whatsapp_route(websocket, route_task)
 
 
 async def _connect_whatsapp_managed_route(

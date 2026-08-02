@@ -6,7 +6,7 @@ from uuid import UUID
 import pytest
 
 from app.services.whatsapp_native_transport import WhatsAppBaileysSidecarConfig
-from app.services.whatsapp_shared_runtime import whatsapp_shared_bot_transport_status
+from app.services.whatsapp_provider_bridge import whatsapp_provider_transport_status
 from app.services.whatsapp_sidecar_registry import (
     ConfiguredWhatsAppSidecarRegistry,
     parse_whatsapp_sidecar_registrations,
@@ -48,6 +48,13 @@ class _FakeSidecarClient:
 
     async def query(self, node, timeout_ms):  # pragma: no cover - adapter protocol only
         raise AssertionError((node, timeout_ms))
+
+    async def provider_events(self, *, limit: int = 100):
+        assert limit == 100
+        return []
+
+    async def acknowledge_provider_events(self, *, through_sequence: int):  # pragma: no cover
+        raise AssertionError(through_sequence)
 
 
 def test_parse_whatsapp_sidecar_registrations_accepts_account_map():
@@ -104,7 +111,7 @@ async def test_configured_whatsapp_sidecar_registry_registers_and_closes_transpo
     registry = ConfiguredWhatsAppSidecarRegistry(raw, client_factory=factory)
     await registry.start()
     try:
-        status = whatsapp_shared_bot_transport_status(account_id)
+        status = whatsapp_provider_transport_status(account_id)
         assert status.available is True
         assert status.mode == "sidecar"
         assert clients[0].config.base_url == "http://sidecar.local"
@@ -113,10 +120,7 @@ async def test_configured_whatsapp_sidecar_registry_registers_and_closes_transpo
         await registry.stop()
 
     assert clients[0].closed is True
-    assert (
-        whatsapp_shared_bot_transport_status(account_id).reason
-        == "shared-bot-transport-unavailable"
-    )
+    assert whatsapp_provider_transport_status(account_id).reason == "provider-transport-unavailable"
 
 
 @pytest.mark.asyncio
@@ -130,10 +134,10 @@ async def test_configured_whatsapp_sidecar_registry_keeps_unhealthy_sidecar_visi
     registry = ConfiguredWhatsAppSidecarRegistry(raw, client_factory=lambda _config: client)
     await registry.start()
     try:
-        status = whatsapp_shared_bot_transport_status(account_id)
+        status = whatsapp_provider_transport_status(account_id)
         assert status.available is False
         assert status.mode == "sidecar"
-        assert status.reason == "shared-bot-transport-disconnected"
+        assert status.reason == "provider-transport-disconnected"
     finally:
         await registry.stop()
 

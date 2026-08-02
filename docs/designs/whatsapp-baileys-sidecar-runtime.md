@@ -52,7 +52,9 @@ stock native plugin Baileys
   -> managed marker selected by a provider profile
   -> generic egress rewrite injects AgentLink bearer
   -> FastAPI validates Link + synthetic Noise identity + binding ownership
-  -> authorized proto/node/IQ operation
+  -> messages enter durable channel_messages/channel_deliveries
+  -> the delivery worker relays the exact provider proto
+  -> receipts and bounded key/group IQs use narrow authorized operations
   -> the account's sole physical Baileys socket
 ```
 
@@ -74,7 +76,8 @@ the same account state while the owner is live. Reconnects retain the lock;
 clean shutdown releases it.
 
 FastAPI registers one provider transport per account through
-`CHANNEL_WHATSAPP_BAILEYS_SIDECARS_JSON`. Its loopback HTTP contract is private:
+`CHANNEL_WHATSAPP_BAILEYS_SIDECARS_JSON`. Its bearer-authenticated HTTP contract
+is private:
 
 | Method | Path | Required native operation |
 | --- | --- | --- |
@@ -82,6 +85,8 @@ FastAPI registers one provider transport per account through
 | `POST` | `/v1/relay-message` | Relay an authorized Baileys message proto with its message id and attributes. |
 | `POST` | `/v1/raw-node` | Send an ownership-checked receipt or other allowed BinaryNode. |
 | `POST` | `/v1/query-iq` | Forward the bounded IQ subset required by the synthetic Noise session. |
+| `GET` | `/v1/provider-events` | Read ordered physical `messages.upsert` proto events after disk persistence. |
+| `POST` | `/v1/provider-events/ack` | Delete physical events only after FastAPI commits them. |
 
 These are provider-transport operations behind an internal bearer, not a
 public application relay API. Raw nodes and IQs remain because the native Noise

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from typing import Any
 from uuid import UUID
@@ -10,12 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.channel import (
-    BINDING_STATUS_ARCHIVED,
     MESSAGE_DIRECTION_INBOUND,
     ChannelAccount,
-    ChannelAgentCredential,
     ChannelBinding,
-    ChannelBindingAlias,
     ChannelBotAgentLink,
     ChannelMessage,
 )
@@ -24,7 +22,6 @@ from app.routes.channel_routers.whatsapp import (
     _wait_whatsapp_websocket_inbox,
 )
 from app.services.channels import generate_agent_token, store_agent_link_token
-from app.services.vault_crypto import decrypt
 from app.services.whatsapp_baileys import (
     MAX_NODE_COUNT,
     MAX_NODE_DEPTH,
@@ -44,36 +41,50 @@ from app.services.whatsapp_baileys import (
     encode_buffer_json,
     encrypt_whatsapp_group_message_for_sender_key,
     forward_iq_over,
-    mint_tenant_creds,
+    mint_whatsapp_synthetic_creds,
     parse_agent_bundle,
     prepare_whatsapp_inbound_delivery,
     relay_outbound_extra_attrs,
-    resolve_whatsapp_credential_by_identity,
     respond_to_iq,
-    rewrite_whatsapp_media_to_proxy_url,
-    rewrite_whatsapp_media_to_upstream_url,
     serialize_creds,
     strip_whatsapp_device,
-    whatsapp_cloud_outbound_payload_from_proto,
     whatsapp_jid_candidates,
-    whatsapp_media_reupload_candidate_from_proto,
     whatsapp_message_proto_bytes,
+    whatsapp_text_from_message_proto,
+    whatsapp_text_message_proto,
 )
 
 pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
 
 
-@pytest.fixture(autouse=True)
-def _exercise_whatsapp_protocol_behind_hosted_gate(monkeypatch):
-    """These tests cover the protocol behind the current hosted coming-soon gate."""
-
-    async def allow_existing_link(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr(
-        "app.routes.channel_routers.whatsapp.ensure_hosted_agent_provider_link_available",
-        allow_existing_link,
-    )
+def _physical_provider_event_payload(
+    *,
+    remote_jid: str,
+    message_id: str,
+    text: str,
+    remote_jid_alt: str | None = None,
+    participant: str | None = None,
+    participant_alt: str | None = None,
+    push_name: str | None = None,
+    message_timestamp: int | None = None,
+) -> dict[str, Any]:
+    key: dict[str, Any] = {"remoteJid": remote_jid, "id": message_id, "fromMe": False}
+    if remote_jid_alt:
+        key["remoteJidAlt"] = remote_jid_alt
+    if participant:
+        key["participant"] = participant
+    if participant_alt:
+        key["participantAlt"] = participant_alt
+    payload: dict[str, Any] = {
+        "schemaVersion": "clawdi.whatsappBaileysProviderEvent.v1",
+        "key": key,
+        "messageProtoBase64": base64.b64encode(whatsapp_text_message_proto(text)).decode("ascii"),
+    }
+    if push_name:
+        payload["pushName"] = push_name
+    if message_timestamp:
+        payload["messageTimestamp"] = message_timestamp
+    return payload
 
 
 async def _create_whatsapp_channel_with_existing_links(
@@ -109,38 +120,8 @@ async def _create_whatsapp_channel_with_existing_links(
     return created, links
 
 
-class _FakeMediaResponse:
-    status_code = 206
-    content = b"encrypted-media"
-    headers = {
-        "content-type": "application/octet-stream",
-        "content-length": "15",
-        "content-range": "bytes 0-14/99",
-        "accept-ranges": "bytes",
-        "x-private": "drop",
-    }
-
-
-class _FakeMediaClient:
-    calls: list[dict[str, Any]] = []
-
-    def __init__(self, *, timeout: float, follow_redirects: bool):
-        self.timeout = timeout
-        self.follow_redirects = follow_redirects
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return None
-
-    async def request(self, method: str, url: str, **kwargs):
-        self.calls.append({"method": method, "url": url, **kwargs})
-        return _FakeMediaResponse()
-
-
-def test_whatsapp_tenant_creds_are_baileys_json_compatible():
-    minted = mint_tenant_creds(tenant_id="tenant-alpha")
+def test_whatsapp_synthetic_creds_are_baileys_json_compatible_and_provider_secret_free():
+    minted = mint_whatsapp_synthetic_creds(tenant_id="tenant-alpha")
     encoded = encode_buffer_json(minted.creds)
     serialized = serialize_creds(minted.creds)
 
@@ -149,6 +130,8 @@ def test_whatsapp_tenant_creds_are_baileys_json_compatible():
     assert encoded["noiseKey"]["public"]["type"] == "Buffer"
     assert encoded["me"]["id"] == minted.jid
     assert '"type":"Buffer"' in serialized
+    assert "providerToken" not in serialized
+    assert "physicalAuthState" not in serialized
 
 
 def test_whatsapp_jid_helpers_resolve_lid_and_device_aliases():
@@ -336,14 +319,22 @@ async def test_whatsapp_inbox_pump_keeps_failed_delivery_unacked():
             external_chat_id="15551234567@s.whatsapp.net",
             provider_message_id="wamid-1",
             text="hello-1",
-            payload={"message": {"conversation": "hello-1"}},
+            payload=_physical_provider_event_payload(
+                remote_jid="15551234567@s.whatsapp.net",
+                message_id="wamid-1",
+                text="hello-1",
+            ),
         ),
         WhatsAppInboxPumpEvent(
             sequence=2,
             external_chat_id="15551234567@s.whatsapp.net",
             provider_message_id="wamid-2",
             text="hello-2",
-            payload={"message": {"conversation": "hello-2"}},
+            payload=_physical_provider_event_payload(
+                remote_jid="15551234567@s.whatsapp.net",
+                message_id="wamid-2",
+                text="hello-2",
+            ),
         ),
     ]
     acked: list[int] = []
@@ -383,7 +374,11 @@ async def test_whatsapp_inbox_pump_retries_transient_delivery_failure():
         external_chat_id="15551234567@s.whatsapp.net",
         provider_message_id="wamid-retry",
         text="hello retry",
-        payload={"message": {"conversation": "hello retry"}},
+        payload=_physical_provider_event_payload(
+            remote_jid="15551234567@s.whatsapp.net",
+            message_id="wamid-retry",
+            text="hello retry",
+        ),
     )
     acked: list[int] = []
     attempts = 0
@@ -454,14 +449,18 @@ async def test_whatsapp_inbox_pump_acks_malformed_rows_without_blocking():
         WhatsAppInboxPumpEvent(
             sequence=1,
             external_chat_id="15551234567@s.whatsapp.net",
-            payload={"message": {"conversation": "missing id"}},
+            payload={"schemaVersion": "invalid"},
         ),
         WhatsAppInboxPumpEvent(
             sequence=2,
             external_chat_id="15551234567@s.whatsapp.net",
             provider_message_id="wamid-good",
             text="hello good",
-            payload={"message": {"conversation": "hello good"}},
+            payload=_physical_provider_event_payload(
+                remote_jid="15551234567@s.whatsapp.net",
+                message_id="wamid-good",
+                text="hello good",
+            ),
         ),
     ]
     acked: list[int] = []
@@ -515,12 +514,14 @@ async def test_whatsapp_inbox_pump_records_safe_debug_and_prepares_lid_alias():
         external_chat_id="184207372460253@lid",
         provider_message_id="wamid-lid",
         text="hello secret",
-        payload={
-            "message": {"conversation": "hello secret"},
-            "messageTimestamp": "1700000000",
-            "pushName": "Alice",
-            "senderPnJid": "15551234567@s.whatsapp.net",
-        },
+        payload=_physical_provider_event_payload(
+            remote_jid="184207372460253@lid",
+            remote_jid_alt="15551234567@s.whatsapp.net",
+            message_id="wamid-lid",
+            text="hello secret",
+            push_name="Alice",
+            message_timestamp=1_700_000_000,
+        ),
     )
     debug_events = DebugEvents()
     pushed: list[WhatsAppPreparedInboundDelivery] = []
@@ -562,7 +563,7 @@ async def test_whatsapp_inbox_pump_records_safe_debug_and_prepares_lid_alias():
     assert pushed[0].push_name == "Alice"
     assert pushed[0].timestamp == 1_700_000_000
     assert debug_events.records[0]["stage"] == "inbox_delivery_prepare"
-    assert debug_events.records[0]["details"]["message"]["topLevelKinds"] == ["conversation"]
+    assert debug_events.records[0]["details"]["message"]["protoBytes"] > 0
     assert debug_events.records[0]["details"]["message"]["textLength"] == len("hello secret")
     assert "textSha256" in debug_events.records[0]["details"]["message"]
     assert debug_events.records[1]["details"]["encType"] == "pkmsg"
@@ -570,23 +571,22 @@ async def test_whatsapp_inbox_pump_records_safe_debug_and_prepares_lid_alias():
 
 
 def test_prepare_whatsapp_inbound_delivery_preserves_group_participant():
+    message_proto = whatsapp_text_message_proto("hello group")
     prepared = prepare_whatsapp_inbound_delivery(
         WhatsAppInboxPumpEvent(
             sequence=14,
             external_chat_id="199900000000000001@g.us",
             provider_message_id="group-1",
             text="hello group",
-            payload={
-                "key": {
-                    "remoteJid": "199900000000000001@g.us",
-                    "participant": "10000000001@s.whatsapp.net",
-                    "id": "group-1",
-                },
-                "message": {"extendedTextMessage": {"text": "hello group"}},
-                "participantLidJid": "184207372460253@lid",
-                "pushName": "Alice",
-                "messageTimestamp": 1_700_000_001,
-            },
+            payload=_physical_provider_event_payload(
+                remote_jid="199900000000000001@g.us",
+                message_id="group-1",
+                text="hello group",
+                participant="10000000001@s.whatsapp.net",
+                participant_alt="184207372460253@lid",
+                push_name="Alice",
+                message_timestamp=1_700_000_001,
+            ),
         )
     )
 
@@ -595,316 +595,15 @@ def test_prepare_whatsapp_inbound_delivery_preserves_group_participant():
     assert prepared.participant_lid_jid == "184207372460253@lid"
     assert prepared.push_name == "Alice"
     assert prepared.timestamp == 1_700_000_001
+    assert whatsapp_message_proto_bytes(prepared.payload, prepared.text) == message_proto
+    assert whatsapp_text_from_message_proto(message_proto) == "hello group"
 
 
-def test_whatsapp_message_proto_bytes_encodes_common_text_shapes():
-    assert (
-        whatsapp_message_proto_bytes(
-            {"message": {"conversation": "hello"}},
-            text=None,
-        )
-        == b"\x0a\x05hello"
-    )
-    assert (
-        whatsapp_message_proto_bytes(
-            {"message": {"extendedTextMessage": {"text": "hi"}}},
-            text=None,
-        )
-        == b"\x32\x04\x0a\x02hi"
-    )
-    assert whatsapp_message_proto_bytes({}, text="fallback") == b"\x0a\x08fallback"
-
-
-def test_whatsapp_message_proto_bytes_preserves_quoted_reply_fixture_shape():
-    payload = {
-        "message": {
-            "extendedTextMessage": {
-                "text": "reply that quotes the base",
-                "contextInfo": {
-                    "stanzaId": "3EB0CA8C2FE5219FEA4DF0",
-                    "participant": "10000000001@s.whatsapp.net",
-                    "quotedMessage": {"extendedTextMessage": {"text": "quoted base message"}},
-                },
-            },
-            "messageContextInfo": {
-                "messageSecret": "vKvmc0ZE06OymNK0bXCMwEiS8jo/wWvZsjvfIkPbN5w=",
-            },
-        },
-    }
-
-    assert (
-        whatsapp_message_proto_bytes(payload, text=None).hex()
-        == "326c0a1a7265706c7920746861742071756f746573207468652062617365"
-        "8a014d0a1633454230434138433246453532313946454134444630121a31"
-        "3030303030303030303140732e77686174736170702e6e65741a1732150a"
-        "1371756f7465642062617365206d6573736167659a02221a20bcabe67346"
-        "44d3a3b298d2b46d708cc04892f23a3fc16bd9b23bdf2243db379c"
-    )
-
-
-def test_whatsapp_message_proto_bytes_preserves_image_fixture_shape():
-    payload = {
-        "message": {
-            "imageMessage": {
-                "url": "https://mmg.whatsapp.net/o1/v/test",
-                "mimetype": "image/jpeg",
-                "caption": "tiny red dot",
-                "fileSha256": "KdcSnkLwicTqmqTyKjnU8Qfj5AxI6GMpYYddPdftzFk=",
-                "fileLength": "70",
-                "mediaKey": "8N6ORZLxSd3MHhbHAnsVAeX4ss4495v05BrZG1scD68=",
-                "fileEncSha256": "R5OoBhcXEODfbD2lAkxWLsp2r4NBfE3oFE9kfF1h0NU=",
-                "directPath": "/o1/v/test",
-                "mediaKeyTimestamp": "1776548383",
-            },
-            "messageContextInfo": {
-                "messageSecret": "z48qzbAvo2C1mkyj8C5YlQcKC28Zk8XoygQ+1ikI5Xc=",
-            },
-        },
-    }
-
-    assert (
-        whatsapp_message_proto_bytes(payload, text=None).hex()
-        == "1ab8010a2268747470733a2f2f6d6d672e77686174736170702e6e65742f"
-        "6f312f762f74657374120a696d6167652f6a7065671a0c74696e79207265"
-        "6420646f74222029d7129e42f089c4ea9aa4f22a39d4f107e3e40c48e86"
-        "32961875d3dd7edcc5928464220f0de8e4592f149ddcc1e16c7027b1501"
-        "e5f8b2ce38f79bf4e41ad91b5b1c0faf4a204793a806171710e0df6c3d"
-        "a5024c562eca76af83417c4de8144f647c5d61d0d55a0a2f6f312f762f74"
-        "657374609ff48fcf069a02221a20cf8f2acdb02fa360b59a4ca3f02e58"
-        "95070a0b6f1993c5e8ca043ed62908e577"
-    )
-
-
-def test_whatsapp_message_proto_bytes_preserves_audio_fixture_shape():
-    payload = {
-        "message": {
-            "audioMessage": {
-                "mimetype": "audio/ogg; codecs=opus",
-                "url": "https://mmg.whatsapp.net/o1/voice",
-                "directPath": "/v/t62.7117-24/voice",
-                "mediaKey": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=",
-                "fileSha256": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=",
-                "fileEncSha256": "BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=",
-                "fileLength": 4,
-                "seconds": 1,
-                "ptt": True,
-            },
-        },
-    }
-
-    expected = (
-        "42bd010a2168747470733a2f2f6d6d672e77686174736170702e6e65742f6f312f766f6963651216"
-        "617564696f2f6f67673b20636f646563733d6f7075731a2005050505050505050505050505050505"
-        "050505050505050505050505050505052004280130013a2004040404040404040404040404040404"
-        "04040404040404040404040404040404422006060606060606060606060606060606060606060606"
-        "060606060606060606064a142f762f7436322e373131372d32342f766f696365"
-    )
-
-    assert whatsapp_message_proto_bytes(payload, text=None).hex() == expected
-
-
-def test_whatsapp_message_proto_bytes_preserves_group_sender_key_fixture_shape():
-    payload = {
-        "message": {
-            "senderKeyDistributionMessage": {
-                "groupId": "199900000000000001@g.us",
-                "axolotlSenderKeyDistributionMessage": (
-                    "Mwjx7K+7BRAAGiCmflaKkWoXIi3uwdEz6NS3ILO9YvGs6EY4mFDEVpQ"
-                    "BsCIhBa0TbC8zpFxWFBky2egVLSS8+BwXKemF4AZFGlj5ihsU="
-                ),
-            },
-            "extendedTextMessage": {
-                "text": "scenario 08 group from alice [1/2]",
-            },
-            "messageContextInfo": {
-                "messageSecret": "GatUnpb8euwrXMEgWQfXdPod+T6z3F0YtfyDcOLU/jw=",
-            },
-        },
-    }
-
-    assert (
-        whatsapp_message_proto_bytes(payload, text=None).hex()
-        == "12690a1731393939303030303030303030303030303140672e7573124e33"
-        "08f1ecafbb0510001a20a67e568a916a17222deec1d133e8d4b720b3bd"
-        "62f1ace846389850c4569401b0222105ad136c2f33a45c56141932d9e8"
-        "152d24bcf81c1729e985e006451a58f98a1b1432240a227363656e6172"
-        "696f2030382067726f75702066726f6d20616c696365205b312f325d9a"
-        "02221a2019ab549e96fc7aec2b5cc1205907d774fa1df93eb3dc5d18b"
-        "5fc8370e2d4fe3c"
-    )
-
-
-def test_whatsapp_cloud_outbound_payload_maps_quoted_reply_context():
-    proto = whatsapp_message_proto_bytes(
-        {
-            "message": {
-                "extendedTextMessage": {
-                    "text": "reply that quotes the base",
-                    "contextInfo": {
-                        "stanzaId": "3EB0CA8C2FE5219FEA4DF0",
-                        "participant": "10000000001@s.whatsapp.net",
-                    },
-                }
-            }
-        },
-        text=None,
-    )
-
-    result = whatsapp_cloud_outbound_payload_from_proto(proto)
-
-    assert result.outcome == "sendable"
-    assert result.kind == "extended_text"
-    assert result.text == "reply that quotes the base"
-    assert result.provider_payload == {
-        "type": "text",
-        "text": {"body": "reply that quotes the base"},
-        "context": {"message_id": "3EB0CA8C2FE5219FEA4DF0"},
-    }
-
-
-def test_whatsapp_cloud_outbound_payload_maps_public_image_link():
-    proto = whatsapp_message_proto_bytes(
-        {
-            "message": {
-                "imageMessage": {
-                    "url": "https://cdn.example.test/red-dot.jpg",
-                    "mimetype": "image/jpeg",
-                    "caption": "tiny red dot",
-                }
-            }
-        },
-        text=None,
-    )
-
-    result = whatsapp_cloud_outbound_payload_from_proto(proto)
-
-    assert result.outcome == "sendable"
-    assert result.kind == "image"
-    assert result.text == "tiny red dot"
-    assert result.provider_payload == {
-        "type": "image",
-        "image": {
-            "link": "https://cdn.example.test/red-dot.jpg",
-            "caption": "tiny red dot",
-        },
-    }
-
-
-def test_whatsapp_cloud_outbound_payload_requires_native_for_encrypted_image():
-    media_key = bytes(range(32))
-    proto = whatsapp_message_proto_bytes(
-        {
-            "message": {
-                "imageMessage": {
-                    "url": "https://mmg.whatsapp.net/o1/v/test",
-                    "mimetype": "image/png",
-                    "caption": "tiny red dot",
-                    "mediaKey": media_key,
-                    "fileSha256": b"plain-sha",
-                    "fileEncSha256": b"encrypted-sha",
-                    "directPath": "/o1/v/test",
-                }
-            }
-        },
-        text=None,
-    )
-
-    result = whatsapp_cloud_outbound_payload_from_proto(proto)
-
-    assert result.outcome == "native_required"
-    assert result.kind == "image"
-    assert result.text == "tiny red dot"
-    assert result.reason == "media-reupload-required"
-
-    candidate = whatsapp_media_reupload_candidate_from_proto(proto)
-    assert candidate is not None
-    assert candidate.kind == "image"
-    assert candidate.source_url == "https://mmg.whatsapp.net/o1/v/test"
-    assert candidate.mimetype == "image/png"
-    assert candidate.media_key == media_key
-    assert candidate.file_sha256 == b"plain-sha"
-    assert candidate.file_enc_sha256 == b"encrypted-sha"
-    assert candidate.text == "tiny red dot"
-
-
-def test_whatsapp_cloud_outbound_payload_maps_public_audio_link():
-    proto = whatsapp_message_proto_bytes(
-        {
-            "message": {
-                "audioMessage": {
-                    "url": "https://cdn.example.test/voice.ogg",
-                    "mimetype": "audio/ogg; codecs=opus",
-                }
-            }
-        },
-        text=None,
-    )
-
-    result = whatsapp_cloud_outbound_payload_from_proto(proto)
-
-    assert result.outcome == "sendable"
-    assert result.kind == "audio"
-    assert result.provider_payload == {
-        "type": "audio",
-        "audio": {"link": "https://cdn.example.test/voice.ogg"},
-    }
-
-
-def test_whatsapp_media_reupload_candidate_maps_encrypted_audio():
-    media_key = bytes(range(32, 64))
-    proto = whatsapp_message_proto_bytes(
-        {
-            "message": {
-                "audioMessage": {
-                    "url": "https://mmg.whatsapp.net/o1/audio",
-                    "directPath": "/v/t62.7117-24/audio",
-                    "mediaKey": media_key,
-                    "fileSha256": b"plain-audio-sha",
-                    "fileEncSha256": b"encrypted-audio-sha",
-                    "mimetype": "audio/ogg; codecs=opus",
-                    "ptt": False,
-                }
-            }
-        },
-        text=None,
-    )
-
-    result = whatsapp_cloud_outbound_payload_from_proto(proto)
-    candidate = whatsapp_media_reupload_candidate_from_proto(proto)
-
-    assert result.outcome == "native_required"
-    assert result.kind == "audio"
-    assert result.reason == "media-reupload-required"
-    assert candidate is not None
-    assert candidate.kind == "audio"
-    assert candidate.source_url == "https://mmg.whatsapp.net/o1/audio"
-    assert candidate.mimetype == "audio/ogg; codecs=opus"
-    assert candidate.media_key == media_key
-    assert candidate.file_sha256 == b"plain-audio-sha"
-    assert candidate.file_enc_sha256 == b"encrypted-audio-sha"
-
-
-def test_whatsapp_cloud_outbound_payload_requires_native_for_voice_note():
-    proto = whatsapp_message_proto_bytes(
-        {
-            "message": {
-                "audioMessage": {
-                    "url": "https://mmg.whatsapp.net/o1/voice",
-                    "directPath": "/v/t62.7117-24/voice",
-                    "mediaKey": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=",
-                    "mimetype": "audio/ogg; codecs=opus",
-                    "ptt": True,
-                }
-            }
-        },
-        text=None,
-    )
-
-    result = whatsapp_cloud_outbound_payload_from_proto(proto)
-
-    assert result.outcome == "native_required"
-    assert result.kind == "audio"
-    assert result.reason == "audio-ptt-native-required"
+def test_whatsapp_inbox_requires_exact_provider_proto():
+    with pytest.raises(ValueError, match="missing exact message proto"):
+        whatsapp_message_proto_bytes({"message": {"conversation": "reconstruct me"}}, "fallback")
+    with pytest.raises(ValueError, match="invalid message proto"):
+        whatsapp_message_proto_bytes({"messageProtoBase64": "not-base64"}, None)
 
 
 @pytest.mark.asyncio
@@ -1396,395 +1095,6 @@ async def test_respond_to_iq_refuses_missing_id():
         )
 
 
-def test_whatsapp_media_url_rewrites():
-    upstream = rewrite_whatsapp_media_to_upstream_url(
-        "http://clawdi.local/v1/channels/whatsapp/media/v/t62/blob.enc?ccb=11-4&oh=abc"
-    )
-    assert upstream == "https://mmg.whatsapp.net/v/t62/blob.enc?ccb=11-4&oh=abc"
-    # Proxy URLs minted before the /v1 migration are persisted in message
-    # payloads and must keep parsing.
-    legacy = rewrite_whatsapp_media_to_upstream_url(
-        "http://clawdi.local/api/channels/whatsapp/media/v/t62/blob.enc?ccb=11-4&oh=abc"
-    )
-    assert legacy == "https://mmg.whatsapp.net/v/t62/blob.enc?ccb=11-4&oh=abc"
-    assert (
-        rewrite_whatsapp_media_to_upstream_url(
-            "http://clawdi.local/api/channels/whatsapp/media/v/t62/blob.enc",
-            upstream_host="regional.mmg.whatsapp.net",
-        )
-        == "https://regional.mmg.whatsapp.net/v/t62/blob.enc"
-    )
-    assert rewrite_whatsapp_media_to_upstream_url("http://clawdi.local/other") is None
-    assert (
-        rewrite_whatsapp_media_to_proxy_url(
-            "https://mmg.whatsapp.net/v/t62/blob.enc?ccb=11-4",
-            "https://clawdi.example",
-        )
-        == "https://clawdi.example/v1/channels/whatsapp/media/v/t62/blob.enc?ccb=11-4"
-    )
-    with pytest.raises(ValueError, match="non-WA url"):
-        rewrite_whatsapp_media_to_proxy_url("https://evil.example/v/t62/blob.enc", "https://proxy")
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_media_proxy_forwards_head_without_body(
-    client: httpx.AsyncClient,
-    monkeypatch,
-):
-    _FakeMediaClient.calls = []
-    monkeypatch.setattr("app.routes.channel_routers.whatsapp.httpx.AsyncClient", _FakeMediaClient)
-
-    response = await client.head(
-        "/v1/channels/whatsapp/media/v/t62/blob.enc",
-        params={"ccb": "11-4"},
-        headers={"Range": "bytes=0-14"},
-    )
-
-    assert response.status_code == 206
-    assert response.content == b""
-    assert response.headers["content-range"] == "bytes 0-14/99"
-    assert _FakeMediaClient.calls[0]["method"] == "HEAD"
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_tenant_creds_route_persists_auth_cert(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    channel_agent,
-):
-    created, _links = await _create_whatsapp_channel_with_existing_links(
-        client, db_session, name="wa-baileys", agents=(channel_agent,)
-    )
-
-    first = await client.post(f"/v1/channels/whatsapp/{created['id']}/tenant-creds", json={})
-    second = await client.post(f"/v1/channels/whatsapp/{created['id']}/tenant-creds", json={})
-
-    assert first.status_code == 201
-    assert second.status_code == 201
-    first_body = first.json()
-    second_body = second.json()
-    assert first_body["channel"] == "whatsapp"
-    assert first_body["jid"].endswith("@s.whatsapp.net")
-    assert len(first_body["identity_pub_key_hex"]) == 64
-    assert first_body["creds"]["noiseKey"]["public"]["type"] == "Buffer"
-    assert first_body["auth_cert"]["ISSUER"] == "clawdi"
-    assert first_body["websocket_url"].endswith("/v1/channels/whatsapp/baileys")
-    assert created["id"] not in first_body["websocket_url"]
-    assert second_body["auth_cert"] == first_body["auth_cert"]
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_tenant_creds_route_lists_metadata_and_resolves_identity(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    channel_agent,
-    second_channel_agent,
-):
-    created, links = await _create_whatsapp_channel_with_existing_links(
-        client,
-        db_session,
-        name="wa-creds-metadata",
-        agents=(channel_agent, second_channel_agent),
-    )
-    shared_self = {
-        "id": "16693773518:2@s.whatsapp.net",
-        "lid": "117901482786828:2@lid",
-    }
-
-    minted_response = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-        json={
-            "agent_link_id": str(links[1].id),
-            "phone_user": "15550007777",
-            "device": 2,
-            "name": "Shared WA",
-            "self_identity": shared_self,
-        },
-    )
-
-    assert minted_response.status_code == 201
-    minted = minted_response.json()
-    assert minted["jid"] == shared_self["id"]
-    assert minted["creds"]["me"]["id"] == shared_self["id"]
-    assert minted["creds"]["me"]["lid"] == shared_self["lid"]
-
-    credential = (
-        await db_session.execute(
-            select(ChannelAgentCredential).where(
-                ChannelAgentCredential.id == UUID(minted["credential_id"])
-            )
-        )
-    ).scalar_one()
-    assert str(credential.bot_agent_link_id) == minted["agent_link_id"]
-    assert credential.synthetic_jid == shared_self["id"]
-    assert credential.identity_public_key.hex() == minted["identity_pub_key_hex"]
-    assert credential.identity_pub_key_hash != minted["identity_pub_key_hex"]
-    decrypted_creds = decrypt(credential.encrypted_credentials, credential.credential_nonce)
-    assert '"noiseKey"' in decrypted_creds
-    assert credential.encrypted_credentials != decrypted_creds.encode()
-
-    found = await resolve_whatsapp_credential_by_identity(
-        db_session,
-        identity_public_key=bytes.fromhex(minted["identity_pub_key_hex"]),
-    )
-    assert found is not None
-    assert found.id == credential.id
-
-    listed_response = await client.get(f"/v1/channels/whatsapp/{created['id']}/tenant-creds")
-    assert listed_response.status_code == 200
-    listed = listed_response.json()
-    assert listed == [
-        {
-            "credential_id": minted["credential_id"],
-            "agent_link_id": minted["agent_link_id"],
-            "agent_id": str(second_channel_agent.id),
-            "jid": shared_self["id"],
-            "identity_pub_key_hex": minted["identity_pub_key_hex"],
-            "created_at": listed[0]["created_at"],
-        }
-    ]
-    assert "creds" not in listed[0]
-    assert "auth_cert" not in listed[0]
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_tenant_creds_route_resolves_same_self_jid_by_noise_identity(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    channel_agent,
-):
-    created, _links = await _create_whatsapp_channel_with_existing_links(
-        client, db_session, name="wa-shared-self-identity", agents=(channel_agent,)
-    )
-    shared_self = {
-        "id": "16693773518:2@s.whatsapp.net",
-        "lid": "117901482786828:2@lid",
-    }
-
-    first_response = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-        json={"name": "tenant-a", "self_identity": shared_self},
-    )
-    second_response = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-        json={"name": "tenant-b", "self_identity": shared_self},
-    )
-
-    assert first_response.status_code == 201
-    assert second_response.status_code == 201
-    first = first_response.json()
-    second = second_response.json()
-    assert first["jid"] == second["jid"] == shared_self["id"]
-    assert first["identity_pub_key_hex"] != second["identity_pub_key_hex"]
-
-    first_found = await resolve_whatsapp_credential_by_identity(
-        db_session,
-        identity_public_key=bytes.fromhex(first["identity_pub_key_hex"]),
-    )
-    second_found = await resolve_whatsapp_credential_by_identity(
-        db_session,
-        identity_public_key=bytes.fromhex(second["identity_pub_key_hex"]),
-    )
-    assert first_found is not None
-    assert second_found is not None
-    assert first_found.id == UUID(first["credential_id"])
-    assert second_found.id == UUID(second["credential_id"])
-
-    listed = (await client.get(f"/v1/channels/whatsapp/{created['id']}/tenant-creds")).json()
-    assert {item["identity_pub_key_hex"] for item in listed} == {
-        first["identity_pub_key_hex"],
-        second["identity_pub_key_hex"],
-    }
-    assert {item["jid"] for item in listed} == {shared_self["id"]}
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_tenant_creds_remint_replaces_same_link_name_and_target_only(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    channel_agent,
-):
-    created, _links = await _create_whatsapp_channel_with_existing_links(
-        client, db_session, name="wa-remint-replacement-key", agents=(channel_agent,)
-    )
-    shared_self = {
-        "id": "16693773518:2@s.whatsapp.net",
-        "lid": "117901482786828:2@lid",
-    }
-
-    first_response = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-        json={"name": "tenant-a", "self_identity": shared_self},
-    )
-    replacement_response = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-        json={"name": "tenant-a", "self_identity": shared_self},
-    )
-    sibling_response = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-        json={"name": "tenant-b", "self_identity": shared_self},
-    )
-
-    assert first_response.status_code == 201
-    assert replacement_response.status_code == 201
-    assert sibling_response.status_code == 201
-    first = first_response.json()
-    replacement = replacement_response.json()
-    sibling = sibling_response.json()
-
-    first_credential = await db_session.get(ChannelAgentCredential, UUID(first["credential_id"]))
-    replacement_credential = await db_session.get(
-        ChannelAgentCredential, UUID(replacement["credential_id"])
-    )
-    sibling_credential = await db_session.get(
-        ChannelAgentCredential, UUID(sibling["credential_id"])
-    )
-    assert first_credential is not None
-    assert replacement_credential is not None
-    assert sibling_credential is not None
-    assert first_credential.revoked_at is not None
-    assert replacement_credential.revoked_at is None
-    assert sibling_credential.revoked_at is None
-
-    assert (
-        await resolve_whatsapp_credential_by_identity(
-            db_session,
-            identity_public_key=bytes.fromhex(first["identity_pub_key_hex"]),
-        )
-        is None
-    )
-    replacement_found = await resolve_whatsapp_credential_by_identity(
-        db_session,
-        identity_public_key=bytes.fromhex(replacement["identity_pub_key_hex"]),
-    )
-    sibling_found = await resolve_whatsapp_credential_by_identity(
-        db_session,
-        identity_public_key=bytes.fromhex(sibling["identity_pub_key_hex"]),
-    )
-    assert replacement_found is not None
-    assert sibling_found is not None
-    assert replacement_found.id == UUID(replacement["credential_id"])
-    assert sibling_found.id == UUID(sibling["credential_id"])
-
-    listed = (await client.get(f"/v1/channels/whatsapp/{created['id']}/tenant-creds")).json()
-    assert {item["credential_id"] for item in listed} == {
-        replacement["credential_id"],
-        sibling["credential_id"],
-    }
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_tenant_creds_revoke_removes_identity_lookup_and_allows_remint(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    channel_agent,
-):
-    created, _links = await _create_whatsapp_channel_with_existing_links(
-        client, db_session, name="wa-creds-revoke", agents=(channel_agent,)
-    )
-    first_response = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-        json={},
-    )
-    assert first_response.status_code == 201
-    first = first_response.json()
-
-    deleted = await client.delete(
-        f"/v1/channels/whatsapp/{created['id']}/tenant-creds/{first['credential_id']}"
-    )
-    assert deleted.status_code == 204
-    credential = await db_session.get(ChannelAgentCredential, UUID(first["credential_id"]))
-    assert credential is not None
-    assert credential.revoked_at is not None
-    assert (
-        await resolve_whatsapp_credential_by_identity(
-            db_session,
-            identity_public_key=bytes.fromhex(first["identity_pub_key_hex"]),
-        )
-        is None
-    )
-
-    listed = await client.get(f"/v1/channels/whatsapp/{created['id']}/tenant-creds")
-    second_delete = await client.delete(
-        f"/v1/channels/whatsapp/{created['id']}/tenant-creds/{first['credential_id']}"
-    )
-    second_response = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-        json={},
-    )
-
-    assert listed.status_code == 200
-    assert listed.json() == []
-    assert second_delete.status_code == 404
-    assert second_response.status_code == 201
-    second = second_response.json()
-    assert second["identity_pub_key_hex"] != first["identity_pub_key_hex"]
-
-
-@pytest.mark.asyncio
-async def test_channel_delete_revokes_whatsapp_tenant_credentials(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    channel_agent,
-):
-    created, _links = await _create_whatsapp_channel_with_existing_links(
-        client, db_session, name="wa-creds-channel-delete", agents=(channel_agent,)
-    )
-    minted = (
-        await client.post(
-            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-            json={},
-        )
-    ).json()
-
-    deleted = await client.delete(f"/v1/channels/{created['id']}")
-
-    credential = await db_session.get(ChannelAgentCredential, UUID(minted["credential_id"]))
-    assert deleted.status_code == 204
-    assert credential is not None
-    assert credential.revoked_at is not None
-    assert (
-        await resolve_whatsapp_credential_by_identity(
-            db_session,
-            identity_public_key=bytes.fromhex(minted["identity_pub_key_hex"]),
-        )
-        is None
-    )
-
-
-@pytest.mark.asyncio
-async def test_channel_agent_link_delete_revokes_whatsapp_tenant_credentials(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    channel_agent,
-):
-    created, _links = await _create_whatsapp_channel_with_existing_links(
-        client, db_session, name="wa-creds-link-delete", agents=(channel_agent,)
-    )
-    minted = (
-        await client.post(
-            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-            json={},
-        )
-    ).json()
-
-    deleted = await client.delete(
-        f"/v1/channels/{created['id']}/agent-links/{minted['agent_link_id']}"
-    )
-
-    credential = await db_session.get(ChannelAgentCredential, UUID(minted["credential_id"]))
-    assert deleted.status_code == 204
-    assert credential is not None
-    assert credential.revoked_at is not None
-    assert (
-        await resolve_whatsapp_credential_by_identity(
-            db_session,
-            identity_public_key=bytes.fromhex(minted["identity_pub_key_hex"]),
-        )
-        is None
-    )
-
-
 @pytest.mark.asyncio
 async def test_whatsapp_websocket_inbox_is_scoped_to_agent_link(
     client: httpx.AsyncClient,
@@ -1798,27 +1108,15 @@ async def test_whatsapp_websocket_inbox_is_scoped_to_agent_link(
         name="wa-link-scoped-inbox",
         agents=(channel_agent, second_channel_agent),
     )
-    default_credential = (
-        await client.post(
-            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-            json={"agent_link_id": str(links[0].id), "name": "default"},
-        )
-    ).json()
-    workspace_credential = (
-        await client.post(
-            f"/v1/channels/whatsapp/{created['id']}/tenant-creds",
-            json={"agent_link_id": str(links[1].id), "name": "workspace"},
-        )
-    ).json()
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
 
     messages: list[ChannelMessage] = []
-    for credential, chat_id, text in (
-        (default_credential, "15551110000@s.whatsapp.net", "default message"),
-        (workspace_credential, "15551110001@s.whatsapp.net", "workspace message"),
+    for link, chat_id, text in (
+        (links[0], "15551110000@s.whatsapp.net", "default message"),
+        (links[1], "15551110001@s.whatsapp.net", "workspace message"),
     ):
-        link_id = UUID(credential["agent_link_id"])
+        link_id = link.id
         binding = ChannelBinding(
             account_id=account.id,
             bot_agent_link_id=link_id,
@@ -1838,7 +1136,11 @@ async def test_whatsapp_websocket_inbox_is_scoped_to_agent_link(
             external_chat_id=binding.external_chat_id,
             provider_message_id=f"msg-{link_id}",
             text=text,
-            payload={"key": {"remoteJid": binding.external_chat_id, "id": f"msg-{link_id}"}},
+            payload=_physical_provider_event_payload(
+                remote_jid=binding.external_chat_id,
+                message_id=f"msg-{link_id}",
+                text=text,
+            ),
         )
         db_session.add(message)
         messages.append(message)
@@ -1846,13 +1148,13 @@ async def test_whatsapp_websocket_inbox_is_scoped_to_agent_link(
 
     default_events = await _wait_whatsapp_websocket_inbox(
         account_id=account.id,
-        bot_agent_link_id=UUID(default_credential["agent_link_id"]),
+        bot_agent_link_id=links[0].id,
         after_sequence=0,
         limit=10,
     )
     workspace_events = await _wait_whatsapp_websocket_inbox(
         account_id=account.id,
-        bot_agent_link_id=UUID(workspace_credential["agent_link_id"]),
+        bot_agent_link_id=links[1].id,
         after_sequence=0,
         limit=10,
     )
@@ -1862,7 +1164,7 @@ async def test_whatsapp_websocket_inbox_is_scoped_to_agent_link(
 
     await _ack_whatsapp_websocket_inbox(
         account_id=account.id,
-        bot_agent_link_id=UUID(default_credential["agent_link_id"]),
+        bot_agent_link_id=links[0].id,
         through_sequence=messages[0].inbox_sequence,
     )
     await db_session.rollback()
@@ -1882,212 +1184,3 @@ async def test_whatsapp_websocket_inbox_is_scoped_to_agent_link(
     ).scalar_one()
     assert default_message is not None and default_message.delivered_at is not None
     assert workspace_message is not None and workspace_message.delivered_at is None
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_lid_pairing_remembers_alias(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    channel_agent,
-):
-    created, _links = await _create_whatsapp_channel_with_existing_links(
-        client, db_session, name="wa-lid-alias", agents=(channel_agent,)
-    )
-    pair = (
-        await client.post(
-            f"/v1/channels/{created['id']}/pair-codes",
-            json={"ttl_seconds": 900},
-        )
-    ).json()
-    lid_jid = "7826185388106@lid"
-    phone_jid = "15551112222@s.whatsapp.net"
-
-    paired = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/webhook",
-        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
-        json={
-            "message": {
-                "key": {"remoteJid": lid_jid, "remoteJidAlt": phone_jid, "id": "PAIR"},
-                "message": {"conversation": f"/bot_pair {pair['code']}"},
-            }
-        },
-    )
-    assert paired.status_code == 200
-
-    inbound = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/webhook",
-        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
-        json={
-            "message": {
-                "key": {"remoteJid": lid_jid, "id": "MSG1"},
-                "message": {"conversation": "hello via lid"},
-            }
-        },
-    )
-    assert inbound.status_code == 200
-
-    binding = (
-        await db_session.execute(
-            select(ChannelBinding).where(ChannelBinding.external_chat_id == phone_jid)
-        )
-    ).scalar_one()
-    alias = (
-        await db_session.execute(
-            select(ChannelBindingAlias).where(ChannelBindingAlias.alias_external_chat_id == lid_jid)
-        )
-    ).scalar_one()
-    message = (
-        await db_session.execute(
-            select(ChannelMessage).where(ChannelMessage.provider_message_id == "MSG1")
-        )
-    ).scalar_one()
-    assert alias.binding_id == binding.id
-    assert message.binding_id == binding.id
-    assert message.external_chat_id == phone_jid
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_lid_alias_unpair_archives_phone_binding(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    channel_agent,
-):
-    created, _links = await _create_whatsapp_channel_with_existing_links(
-        client, db_session, name="wa-lid-unpair", agents=(channel_agent,)
-    )
-    pair = (
-        await client.post(
-            f"/v1/channels/{created['id']}/pair-codes",
-            json={"ttl_seconds": 900},
-        )
-    ).json()
-    lid_jid = "7826185388106@lid"
-    phone_jid = "15551112222@s.whatsapp.net"
-
-    await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/webhook",
-        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
-        json={
-            "message": {
-                "key": {"remoteJid": lid_jid, "remoteJidAlt": phone_jid, "id": "PAIR"},
-                "message": {"conversation": f"/bot_pair {pair['code']}"},
-            }
-        },
-    )
-    unpaired = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/webhook",
-        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
-        json={
-            "message": {
-                "key": {"remoteJid": lid_jid, "id": "UNPAIR"},
-                "message": {"conversation": "/bot_unpair"},
-            }
-        },
-    )
-    after_unpair = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/webhook",
-        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
-        json={
-            "message": {
-                "key": {"remoteJid": lid_jid, "id": "AFTER"},
-                "message": {"conversation": "should not route"},
-            }
-        },
-    )
-
-    binding = (
-        await db_session.execute(
-            select(ChannelBinding).where(ChannelBinding.external_chat_id == phone_jid)
-        )
-    ).scalar_one()
-    routed_after = (
-        await db_session.execute(
-            select(ChannelMessage).where(ChannelMessage.provider_message_id == "AFTER")
-        )
-    ).scalar_one()
-    assert unpaired.status_code == 200
-    assert unpaired.json()["unpaired"] is True
-    assert after_unpair.status_code == 200
-    assert binding.status == BINDING_STATUS_ARCHIVED
-    assert routed_after.binding_id is None
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_lid_phone_conflicts_across_agent_links_drop_inbound(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    channel_agent,
-    second_channel_agent,
-):
-    created, links = await _create_whatsapp_channel_with_existing_links(
-        client,
-        db_session,
-        name="wa-lid-conflict",
-        agents=(channel_agent, second_channel_agent),
-    )
-    account = (
-        await db_session.execute(
-            select(ChannelAccount).where(ChannelAccount.id == UUID(created["id"]))
-        )
-    ).scalar_one()
-    lid_jid = "7826185388106@lid"
-    phone_jid = "15551112222@s.whatsapp.net"
-    db_session.add(
-        ChannelBinding(
-            account_id=account.id,
-            bot_agent_link_id=UUID(created["agent_link_id"]),
-            user_id=account.user_id,
-            external_chat_id=lid_jid,
-            external_chat_type="dm",
-        )
-    )
-    db_session.add(
-        ChannelBinding(
-            account_id=account.id,
-            bot_agent_link_id=links[1].id,
-            user_id=account.user_id,
-            external_chat_id=phone_jid,
-            external_chat_type="dm",
-        )
-    )
-    await db_session.commit()
-
-    inbound = await client.post(
-        f"/v1/channels/whatsapp/{created['id']}/webhook",
-        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
-        json={
-            "message": {
-                "key": {"remoteJid": lid_jid, "remoteJidAlt": phone_jid, "id": "CONFLICT"},
-                "message": {"conversation": "must not leak"},
-            }
-        },
-    )
-
-    assert inbound.status_code == 200
-    message = (
-        await db_session.execute(
-            select(ChannelMessage).where(ChannelMessage.provider_message_id == "CONFLICT")
-        )
-    ).scalar_one_or_none()
-    assert message is None
-
-
-@pytest.mark.asyncio
-async def test_whatsapp_media_proxy_forwards_range(
-    client: httpx.AsyncClient,
-    monkeypatch,
-):
-    _FakeMediaClient.calls = []
-    monkeypatch.setattr("app.routes.channel_routers.whatsapp.httpx.AsyncClient", _FakeMediaClient)
-
-    response = await client.get(
-        "/v1/channels/whatsapp/media/v/t62/blob.enc",
-        params={"ccb": "11-4"},
-        headers={"Range": "bytes=0-14"},
-    )
-
-    assert response.status_code == 206
-    assert response.content == b"encrypted-media"
-    assert response.headers["content-range"] == "bytes 0-14/99"
-    assert _FakeMediaClient.calls[0]["url"] == "https://mmg.whatsapp.net/v/t62/blob.enc?ccb=11-4"
-    assert _FakeMediaClient.calls[0]["headers"]["Range"] == "bytes=0-14"

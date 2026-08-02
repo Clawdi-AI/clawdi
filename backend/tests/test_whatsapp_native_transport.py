@@ -11,14 +11,14 @@ from app.services.whatsapp_native_transport import (
     WhatsAppBaileysSidecarClient,
     WhatsAppBaileysSidecarConfig,
     WhatsAppNativeRelayRequest,
-    WhatsAppNativeTransportAdapter,
+    WhatsAppProviderTransportAdapter,
+)
+from app.services.whatsapp_provider_bridge import (
+    register_whatsapp_provider_transport,
+    unregister_whatsapp_provider_transport,
+    whatsapp_provider_transport_status,
 )
 from app.services.whatsapp_runtime_types import WhatsAppOutboundMessage
-from app.services.whatsapp_shared_runtime import (
-    register_whatsapp_shared_bot_transport,
-    unregister_whatsapp_shared_bot_transport,
-    whatsapp_shared_bot_transport_status,
-)
 
 
 class _FakeNativeUpstreamClient:
@@ -28,8 +28,9 @@ class _FakeNativeUpstreamClient:
         self.raw_nodes: list[dict[str, Any]] = []
         self.queries: list[tuple[dict[str, Any], int]] = []
 
-    async def relay_message(self, request: WhatsAppNativeRelayRequest) -> None:
+    async def relay_message(self, request: WhatsAppNativeRelayRequest) -> str | None:
         self.relay_requests.append(request)
+        return request.message_id
 
     async def send_node(self, node: dict[str, Any]) -> None:
         self.raw_nodes.append(node)
@@ -40,11 +41,11 @@ class _FakeNativeUpstreamClient:
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_native_transport_adapter_relays_message_attrs():
+async def test_whatsapp_provider_transport_adapter_relays_message_attrs():
     client = _FakeNativeUpstreamClient()
-    transport = WhatsAppNativeTransportAdapter(client)
+    transport = WhatsAppProviderTransportAdapter(client)
 
-    await transport.relay_outbound_message(
+    relayed_message_id = await transport.relay_outbound_message(
         WhatsAppOutboundMessage(
             to_jid="15551114444@s.whatsapp.net",
             message_id="agent-edit-1",
@@ -74,12 +75,13 @@ async def test_whatsapp_native_transport_adapter_relays_message_attrs():
             },
         )
     ]
+    assert relayed_message_id == "agent-edit-1"
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_native_transport_adapter_relays_raw_and_iq_nodes():
+async def test_whatsapp_provider_transport_adapter_relays_raw_and_iq_nodes():
     client = _FakeNativeUpstreamClient()
-    transport = WhatsAppNativeTransportAdapter(client)
+    transport = WhatsAppProviderTransportAdapter(client)
     raw = {"tag": "chatstate", "attrs": {"to": "15551114444@s.whatsapp.net"}}
     iq = {"tag": "iq", "attrs": {"id": "q", "type": "get"}}
 
@@ -91,17 +93,17 @@ async def test_whatsapp_native_transport_adapter_relays_raw_and_iq_nodes():
     assert response == {"tag": "iq", "attrs": {"id": "response", "type": "result"}}
 
 
-def test_whatsapp_native_transport_health_reports_disconnected_adapter():
+def test_whatsapp_provider_transport_health_reports_disconnected_adapter():
     account_id = UUID("00000000-0000-0000-0000-000000000123")
-    transport = WhatsAppNativeTransportAdapter(_FakeNativeUpstreamClient(connected=False))
-    register_whatsapp_shared_bot_transport(account_id, transport)
+    transport = WhatsAppProviderTransportAdapter(_FakeNativeUpstreamClient(connected=False))
+    register_whatsapp_provider_transport(account_id, transport)
     try:
-        status = whatsapp_shared_bot_transport_status(account_id)
+        status = whatsapp_provider_transport_status(account_id)
     finally:
-        unregister_whatsapp_shared_bot_transport(account_id)
+        unregister_whatsapp_provider_transport(account_id)
 
     assert status.available is False
-    assert status.reason == "shared-bot-transport-disconnected"
+    assert status.reason == "provider-transport-disconnected"
     assert status.supports_outbound_messages is True
     assert status.supports_raw_relay is True
     assert status.supports_iq_queries is True
@@ -124,7 +126,7 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
                 "messageProtoBase64": base64.b64encode(b"\x0a\x06native").decode("ascii"),
                 "additionalAttributes": {"edit": "8"},
             }
-            return httpx.Response(200, json={"ok": True})
+            return httpx.Response(200, json={"ok": True, "messageId": "provider-native-1"})
         if request.url.path == "/v1/raw-node":
             body = _json_body(request)
             assert body["node"]["content"][0]["content"] == {
@@ -145,6 +147,33 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
                     }
                 },
             )
+        if request.url.path == "/v1/provider-events":
+            assert dict(request.url.params) == {"limit": "25"}
+            return httpx.Response(
+                200,
+                json={
+                    "events": [
+                        {
+                            "sequence": 7,
+                            "eventType": "messages.upsert",
+                            "fromMe": False,
+                            "messageId": "provider-inbound-1",
+                            "remoteJid": "15551112222@s.whatsapp.net",
+                            "remoteJidAlt": "15551112222@lid",
+                            "participant": None,
+                            "participantAlt": None,
+                            "pushName": "Alice",
+                            "messageTimestamp": 1_722_000_000,
+                            "messageProtoBase64": base64.b64encode(b"\x0a\x07inbound").decode(
+                                "ascii"
+                            ),
+                        }
+                    ]
+                },
+            )
+        if request.url.path == "/v1/provider-events/ack":
+            assert _json_body(request) == {"throughSequence": 7}
+            return httpx.Response(200, json={"ok": True})
         raise AssertionError(f"unexpected path {request.url.path}")
 
     http_client = httpx.AsyncClient(
@@ -158,12 +187,12 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
         ),
         http_client=http_client,
     )
-    transport = WhatsAppNativeTransportAdapter(client)
+    transport = WhatsAppProviderTransportAdapter(client)
 
     assert await client.refresh_health() is True
     assert client.connected is True
 
-    await transport.relay_outbound_message(
+    relayed_message_id = await transport.relay_outbound_message(
         WhatsAppOutboundMessage(
             to_jid="15551114444@s.whatsapp.net",
             message_id="agent-native-1",
@@ -187,6 +216,8 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
         {"tag": "iq", "attrs": {"id": "query", "type": "get"}},
         15_000,
     )
+    events = await client.provider_events(limit=25)
+    await client.acknowledge_provider_events(through_sequence=events[0].sequence)
 
     await http_client.aclose()
 
@@ -195,7 +226,13 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
         "/v1/relay-message",
         "/v1/raw-node",
         "/v1/query-iq",
+        "/v1/provider-events",
+        "/v1/provider-events/ack",
     ]
+    assert relayed_message_id == "provider-native-1"
+    assert events[0].message_id == "provider-inbound-1"
+    assert events[0].remote_jid_alt == "15551112222@lid"
+    assert events[0].message_proto == b"\x0a\x07inbound"
     assert response == {
         "tag": "iq",
         "attrs": {"id": "response", "type": "result"},
@@ -204,18 +241,18 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_native_transport_health_reports_sidecar_mode():
+async def test_whatsapp_provider_transport_health_reports_sidecar_mode():
     account_id = UUID("00000000-0000-0000-0000-000000000456")
     client = WhatsAppBaileysSidecarClient(
         WhatsAppBaileysSidecarConfig(base_url="http://baileys-sidecar.internal")
     )
     client._connected = True
-    transport = WhatsAppNativeTransportAdapter(client)
-    register_whatsapp_shared_bot_transport(account_id, transport)
+    transport = WhatsAppProviderTransportAdapter(client)
+    register_whatsapp_provider_transport(account_id, transport)
     try:
-        status = whatsapp_shared_bot_transport_status(account_id)
+        status = whatsapp_provider_transport_status(account_id)
     finally:
-        unregister_whatsapp_shared_bot_transport(account_id)
+        unregister_whatsapp_provider_transport(account_id)
         await client.aclose()
 
     assert status.available is True

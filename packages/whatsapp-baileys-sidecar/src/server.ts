@@ -59,6 +59,18 @@ export function createSidecarServer(runtime: BaileysRuntime, config: ServerConfi
 				writeJson(response, 200, { node: result === null ? null : encodeJsonBytes(result) });
 				return;
 			}
+			if (method === "GET" && path === "/v1/provider-events") {
+				const limit = parseEventLimit(request.url);
+				writeJson(response, 200, { events: runtime.providerEvents(limit) });
+				return;
+			}
+			if (method === "POST" && path === "/v1/provider-events/ack") {
+				const body = await readJsonBody(request, maxBodyBytes);
+				const throughSequence = parseEventAckBody(body);
+				runtime.acknowledgeProviderEvents(throughSequence);
+				writeJson(response, 200, { ok: true, throughSequence });
+				return;
+			}
 			writeJson(response, 404, { error: "not_found" });
 		} catch (error: unknown) {
 			writeError(response, error);
@@ -149,6 +161,28 @@ function parseQueryBody(body: unknown) {
 		node: parseNodeBody(body),
 		timeoutMs,
 	};
+}
+
+function parseEventLimit(rawUrl: string | undefined): number {
+	const raw = new URL(rawUrl ?? "/", "http://127.0.0.1").searchParams.get("limit") ?? "100";
+	const limit = Number(raw);
+	if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+		throw new HttpError(400, "limit_must_be_1_to_100");
+	}
+	return limit;
+}
+
+function parseEventAckBody(body: unknown): number {
+	if (!isRecord(body)) throw new HttpError(400, "body_must_be_object");
+	const throughSequence = body.throughSequence;
+	if (
+		typeof throughSequence !== "number" ||
+		!Number.isInteger(throughSequence) ||
+		throughSequence < 1
+	) {
+		throw new HttpError(400, "throughSequence_must_be_positive_integer");
+	}
+	return throughSequence;
 }
 
 function writeError(response: ServerResponse, error: unknown): void {

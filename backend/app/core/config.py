@@ -334,7 +334,6 @@ class Settings(BaseSettings):
     channel_telegram_api_base_url: str = "https://api.telegram.org"
     channel_discord_api_base_url: str = "https://discord.com/api/v10"
     channel_discord_gateway_url: str = "wss://gateway.discord.gg"
-    channel_whatsapp_graph_api_base_url: str = "https://graph.facebook.com/v20.0"
     channel_whatsapp_baileys_sidecars_json: str = ""
 
 

@@ -14,9 +14,9 @@ from app.models.channel import (
 )
 from app.models.user import User
 from app.services.channel_debug_events import record_channel_debug_event
-from app.services.whatsapp_shared_runtime import (
-    register_whatsapp_shared_bot_transport,
-    unregister_whatsapp_shared_bot_transport,
+from app.services.whatsapp_provider_bridge import (
+    register_whatsapp_provider_transport,
+    unregister_whatsapp_provider_transport,
 )
 
 pytestmark = pytest.mark.usefixtures("channel_agent")
@@ -190,18 +190,18 @@ async def test_channel_debug_health_reports_whatsapp_native_transport_status(
     assert health["nativeTransport"] == {
         "available": False,
         "mode": "none",
-        "reason": "shared-bot-transport-unavailable",
+        "reason": "provider-transport-unavailable",
         "supportsOutboundMessages": False,
         "supportsRawRelay": False,
         "supportsIqQueries": False,
     }
 
     account_id = UUID(created["id"])
-    register_whatsapp_shared_bot_transport(account_id, FakeWhatsAppTransport())
+    register_whatsapp_provider_transport(account_id, FakeWhatsAppTransport())
     try:
         available = await client.get("/v1/channels/debug/health")
     finally:
-        unregister_whatsapp_shared_bot_transport(account_id)
+        unregister_whatsapp_provider_transport(account_id)
 
     assert available.status_code == 200
     health = next(

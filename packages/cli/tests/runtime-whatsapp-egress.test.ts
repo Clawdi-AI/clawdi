@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { egressProfileSchema } from "../src/runtime/egress-profiles";
 import { buildManagedWhatsAppEgressProfiles } from "../src/runtime/whatsapp-egress";
@@ -19,9 +19,57 @@ const capabilitySecretRef = (link: string) =>
 	`secret://channels/whatsapp/account/links/${link}/egress-capability`;
 
 describe("native WhatsApp egress contract", () => {
+	it("keeps one physical socket implementation and no legacy application connector", () => {
+		const repositoryRoot = realpathSync(join(import.meta.dir, "../../.."));
+		const productionRoots = [
+			join(repositoryRoot, "backend/app"),
+			join(repositoryRoot, "packages/cli/src"),
+			join(repositoryRoot, "packages/whatsapp-baileys-sidecar/src"),
+		];
+		const productionSources = productionRoots.flatMap((root) => sourceFiles(root));
+		const socketOwners = productionSources.filter((path) =>
+			readFileSync(path, "utf-8").includes("makeWASocket("),
+		);
+
+		expect(socketOwners).toEqual([
+			join(repositoryRoot, "packages/whatsapp-baileys-sidecar/src/runtime.ts"),
+		]);
+		expect(
+			existsSync(join(repositoryRoot, "backend/app/services/whatsapp_shared_runtime.py")),
+		).toBe(false);
+		expect(
+			existsSync(join(repositoryRoot, "backend/app/services/whatsapp_media_reupload.py")),
+		).toBe(false);
+		for (const path of productionSources) {
+			const source = readFileSync(path, "utf-8");
+			expect(source).not.toMatch(/\bBasePlatformAdapter\b|HERMES_WA_CREDS_JSON|WHATSAPP_MODE/);
+		}
+	});
+
+	it("contains no Meta Cloud or Graph compatibility in production WhatsApp modules", () => {
+		const repositoryRoot = realpathSync(join(import.meta.dir, "../../.."));
+		const whatsappSources = [
+			...sourceFiles(join(repositoryRoot, "backend/app")),
+			...sourceFiles(join(repositoryRoot, "packages/cli/src")),
+			...sourceFiles(join(repositoryRoot, "packages/whatsapp-baileys-sidecar/src")),
+		].filter((path) => path.slice(repositoryRoot.length).toLowerCase().includes("whatsapp"));
+
+		for (const path of whatsappSources) {
+			const source = readFileSync(path, "utf-8");
+			expect(source).not.toMatch(
+				/graph\.facebook|WHATSAPP_GRAPH|graph_api|\bMeta (?:Cloud|Graph)\b|\bCloud API\b|media.?reupload/i,
+			);
+		}
+		const routeSource = readFileSync(
+			join(repositoryRoot, "backend/app/routes/channel_routers/whatsapp.py"),
+			"utf-8",
+		);
+		expect(routeSource).not.toMatch(/\/graph|\/webhook|\/media/);
+	});
+
 	it("gates new upgrades on an exact per-Link capability and denies stale markers", () => {
 		const profiles = buildManagedWhatsAppEgressProfiles({
-			cloudApiUrl: "https://cloud-api.test/base?ignored=true",
+			controlPlaneApiUrl: "https://control-plane.test/base?ignored=true",
 			links: ["link-a", "link-b"].map((linkId) => ({
 				linkId,
 				agentTokenSecretRef: agentTokenSecretRef(linkId),
@@ -54,7 +102,7 @@ describe("native WhatsApp egress contract", () => {
 			expect(profile.match.path).toEqual({ type: "equals", value: "/ws/chat" });
 			expect(profile.match.notAfter).toBe("2099-08-01T00:00:00Z");
 			expect(profile.rewrite?.upstreamBaseUrl).toBe(
-				"wss://cloud-api.test/v1/channels/whatsapp/baileys",
+				"wss://control-plane.test/v1/channels/whatsapp/baileys",
 			);
 			expect(profile.rewrite?.preservePath).toBe(false);
 			expect(profile.rewrite?.removeHeaders).toEqual([CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER]);
@@ -138,3 +186,12 @@ describe("native WhatsApp egress contract", () => {
 		expect(release.noiseTrustSeam.available).toBe(false);
 	});
 });
+
+function sourceFiles(root: string): string[] {
+	return readdirSync(root)
+		.flatMap((name) => {
+			const path = join(root, name);
+			return statSync(path).isDirectory() ? sourceFiles(path) : [path];
+		})
+		.filter((path) => /\.(?:js|py|ts)$/.test(path));
+}

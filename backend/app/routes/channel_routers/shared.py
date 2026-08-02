@@ -1761,18 +1761,6 @@ def _socketio_auth_token(packet: str) -> str | None:
     )
 
 
-def _whatsapp_graph_text(params: dict[str, Any]) -> str:
-    text = params.get("text")
-    if isinstance(text, dict):
-        body = _optional_str(text.get("body"))
-        if body:
-            return body
-    body = _optional_str(params.get("body"))
-    if body:
-        return body
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="text.body is required")
-
-
 def _binding_response(
     binding: ChannelBinding,
     *,

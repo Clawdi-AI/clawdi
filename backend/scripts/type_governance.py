@@ -45,7 +45,7 @@ EXPECTED_CONFIG = {
         "app/services/sync_events.py",
         "app/services/whatsapp_baileys.py",
         "app/services/whatsapp_noise.py",
-        "app/services/whatsapp_shared_runtime.py",
+        "app/services/whatsapp_provider_bridge.py",
     ],
     "strict": [
         "app/core/query_utils.py",

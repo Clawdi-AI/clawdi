@@ -7,14 +7,16 @@ from collections.abc import Callable, Mapping
 from typing import Any
 from uuid import UUID
 
+from app.core.database import async_session_factory
 from app.services.whatsapp_native_transport import (
     WhatsAppBaileysSidecarClient,
     WhatsAppBaileysSidecarConfig,
-    WhatsAppNativeTransportAdapter,
+    WhatsAppProviderTransportAdapter,
 )
-from app.services.whatsapp_shared_runtime import (
-    register_whatsapp_shared_bot_transport,
-    unregister_whatsapp_shared_bot_transport,
+from app.services.whatsapp_provider_bridge import (
+    persist_whatsapp_provider_event,
+    register_whatsapp_provider_transport,
+    unregister_whatsapp_provider_transport,
 )
 
 log = logging.getLogger(__name__)
@@ -23,7 +25,7 @@ SidecarClientFactory = Callable[[WhatsAppBaileysSidecarConfig], WhatsAppBaileysS
 
 
 class ConfiguredWhatsAppSidecarRegistry:
-    """Register configured Baileys sidecars into the shared-bot transport seam."""
+    """Own configured physical transports and their durable ingress pumps."""
 
     def __init__(
         self,
@@ -34,6 +36,7 @@ class ConfiguredWhatsAppSidecarRegistry:
         self._registrations = parse_whatsapp_sidecar_registrations(raw_config)
         self._client_factory = client_factory
         self._clients: dict[UUID, WhatsAppBaileysSidecarClient] = {}
+        self._ingress_tasks: dict[UUID, asyncio.Task[None]] = {}
 
     async def start(self) -> None:
         for account_id, sidecar in self._registrations.items():
@@ -46,15 +49,24 @@ class ConfiguredWhatsAppSidecarRegistry:
                     account_id,
                     exc,
                 )
-            register_whatsapp_shared_bot_transport(
+            register_whatsapp_provider_transport(
                 account_id,
-                WhatsAppNativeTransportAdapter(client),
+                WhatsAppProviderTransportAdapter(client),
             )
             self._clients[account_id] = client
+            self._ingress_tasks[account_id] = asyncio.create_task(
+                self._pump_provider_ingress(account_id, client)
+            )
 
     async def stop(self) -> None:
+        tasks = tuple(self._ingress_tasks.values())
+        self._ingress_tasks.clear()
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         for account_id in tuple(self._clients):
-            unregister_whatsapp_shared_bot_transport(account_id)
+            unregister_whatsapp_provider_transport(account_id)
         clients = tuple(self._clients.values())
         self._clients.clear()
         if clients:
@@ -62,6 +74,36 @@ class ConfiguredWhatsAppSidecarRegistry:
                 *(client.aclose() for client in clients),
                 return_exceptions=True,
             )
+
+    async def _pump_provider_ingress(
+        self,
+        account_id: UUID,
+        client: WhatsAppBaileysSidecarClient,
+    ) -> None:
+        while True:
+            try:
+                events = await client.provider_events(limit=100)
+                if not events:
+                    await asyncio.sleep(0.25)
+                    continue
+                for event in events:
+                    async with async_session_factory() as db:
+                        await persist_whatsapp_provider_event(
+                            db,
+                            account_id=account_id,
+                            event=event,
+                        )
+                    await client.acknowledge_provider_events(
+                        through_sequence=event.sequence,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception(
+                    "WhatsApp provider ingress pump failed for account %s",
+                    account_id,
+                )
+                await asyncio.sleep(1.0)
 
 
 def parse_whatsapp_sidecar_registrations(

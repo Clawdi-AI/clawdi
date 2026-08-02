@@ -13,6 +13,7 @@ import pino, { type Logger } from "pino";
 import type { SidecarConfig } from "./config.js";
 import { DurableJsonCache } from "./durable-cache.js";
 import { acquireProviderAccountOwnerLock, type ProviderAccountOwnerLock } from "./owner-lock.js";
+import { DurableProviderInbox, type ProviderMessageEvent } from "./provider-inbox.js";
 import {
 	type BaileysRuntime,
 	type RelayMessageRequest,
@@ -30,6 +31,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	private readonly startedAt = Date.now();
 	private readonly logger: Logger;
 	private readonly retryCounterCache: DurableJsonCache;
+	private readonly providerInbox: DurableProviderInbox;
 
 	constructor(private readonly config: SidecarConfig) {
 		this.logger = pino({ level: config.logLevel });
@@ -37,6 +39,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			join(config.sessionDir, "retry-counters.json"),
 			3600,
 		);
+		this.providerInbox = new DurableProviderInbox(join(config.sessionDir, "provider-inbox"));
 	}
 
 	async start(): Promise<void> {
@@ -112,6 +115,14 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		return response;
 	}
 
+	providerEvents(limit: number): ProviderMessageEvent[] {
+		return this.providerInbox.list(limit);
+	}
+
+	acknowledgeProviderEvents(throughSequence: number): void {
+		this.providerInbox.acknowledge(throughSequence);
+	}
+
 	private async openSocket(): Promise<void> {
 		this.status = "connecting";
 		const { state, saveCreds } = await useMultiFileAuthState(this.config.sessionDir);
@@ -128,6 +139,32 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		});
 		this.socket = socket;
 		socket.ev.on("creds.update", saveCreds);
+		socket.ev.on("messages.upsert", ({ messages, type }) => {
+			if (type !== "notify") return;
+			for (const message of messages) {
+				const remoteJid = message.key.remoteJid;
+				const messageId = message.key.id;
+				if (!remoteJid || !messageId || !message.message || message.key.fromMe === true) continue;
+				try {
+					this.providerInbox.append({
+						eventType: "messages.upsert",
+						messageId,
+						remoteJid,
+						...optionalEventString(message.key, "remoteJidAlt"),
+						...optionalEventString(message.key, "participant"),
+						...optionalEventString(message.key, "participantAlt"),
+						fromMe: false,
+						...(message.pushName ? { pushName: message.pushName } : {}),
+						...messageTimestampField(message.messageTimestamp),
+						messageProtoBase64: Buffer.from(
+							proto.Message.encode(message.message).finish(),
+						).toString("base64"),
+					});
+				} catch (error: unknown) {
+					this.logger.error({ error, messageId }, "WhatsApp provider ingress persistence failed");
+				}
+			}
+		});
 		socket.ev.on("connection.update", (update) => {
 			const { connection, lastDisconnect, qr } = update;
 			if (qr) {
@@ -199,4 +236,30 @@ function isBinaryNode(value: unknown): value is BinaryNode {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function optionalEventString(
+	value: unknown,
+	key: "remoteJidAlt" | "participant" | "participantAlt",
+): Partial<Record<typeof key, string>> {
+	if (!isRecord(value)) return {};
+	const item = value[key];
+	return typeof item === "string" && item ? { [key]: item } : {};
+}
+
+function messageTimestampField(value: unknown): { messageTimestamp?: number } {
+	if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
+		return { messageTimestamp: value };
+	}
+	if (!isRecord(value)) return {};
+	const toNumber = value.toNumber;
+	if (typeof toNumber !== "function") return {};
+	try {
+		const number = Reflect.apply(toNumber, value, []);
+		return typeof number === "number" && Number.isSafeInteger(number) && number > 0
+			? { messageTimestamp: number }
+			: {};
+	} catch {
+		return {};
+	}
 }

@@ -124,8 +124,8 @@ def build_channel_workers() -> tuple[
 ]:
     """Build the Clawdi-owned channel worker stack.
 
-    These are backend outbox/webhook/gateway workers. They do not recreate the
-    legacy channel bridge process or own provider routing state.
+    These are backend outbox/webhook/gateway workers. They do not recreate an
+    application-level runtime relay or own physical provider transport state.
     """
     return (
         AiProviderOAuthRevokeWorker(async_session_factory),

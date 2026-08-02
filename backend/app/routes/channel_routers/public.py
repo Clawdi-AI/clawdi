@@ -45,7 +45,6 @@ from app.models.channel import (
     ChannelDebugEvent,
     ChannelDelivery,
     ChannelMessage,
-    ChannelWhatsAppAuthCert,
 )
 from app.models.session import AgentEnvironment
 from app.routes.channel_routers.shared import (
@@ -138,8 +137,9 @@ from app.services.whatsapp_baileys import (
     buffer_json,
     deserialize_creds,
     encode_buffer_json,
+    load_or_create_whatsapp_auth_cert,
+    mint_whatsapp_agent_credential,
     whatsapp_agent_websocket_url,
-    whatsapp_media_proxy_base_url,
 )
 
 router = APIRouter(prefix="/channels", tags=["channels"])
@@ -231,40 +231,53 @@ async def _runtime_credentials_response(
 ) -> list[ChannelRuntimeCredentialResponse]:
     if account.provider != CHANNEL_PROVIDER_WHATSAPP:
         return []
-    result = await db.execute(
-        select(ChannelAgentCredential, ChannelWhatsAppAuthCert)
-        .outerjoin(
-            ChannelWhatsAppAuthCert,
-            ChannelWhatsAppAuthCert.account_id == ChannelAgentCredential.account_id,
-        )
+    await db.execute(
+        select(ChannelAccount.id)
         .where(
-            ChannelAgentCredential.account_id == account.id,
-            ChannelAgentCredential.bot_agent_link_id == link.id,
-            ChannelAgentCredential.provider == CHANNEL_PROVIDER_WHATSAPP,
-            ChannelAgentCredential.revoked_at.is_(None),
+            ChannelAccount.id == account.id,
         )
-        .order_by(ChannelAgentCredential.created_at.desc(), ChannelAgentCredential.id.desc())
-        .limit(1)
+        .with_for_update()
     )
-    row = result.first()
-    if row is None:
-        return []
-    credential, auth_cert = row
-    creds = deserialize_creds(
-        decrypt(credential.encrypted_credentials, credential.credential_nonce)
-    )
+    credential = (
+        await db.execute(
+            select(ChannelAgentCredential)
+            .where(
+                ChannelAgentCredential.account_id == account.id,
+                ChannelAgentCredential.bot_agent_link_id == link.id,
+                ChannelAgentCredential.provider == CHANNEL_PROVIDER_WHATSAPP,
+                ChannelAgentCredential.revoked_at.is_(None),
+            )
+            .order_by(ChannelAgentCredential.created_at.desc(), ChannelAgentCredential.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    auth_cert = await load_or_create_whatsapp_auth_cert(db, account=account)
+    if credential is None:
+        stored = await mint_whatsapp_agent_credential(
+            db,
+            account=account,
+            bot_agent_link_id=link.id,
+            user_id=link.user_id,
+        )
+        credential = stored.credential
+        creds = stored.minted.creds
+        await db.commit()
+        await db.refresh(credential)
+    else:
+        creds = deserialize_creds(
+            decrypt(credential.encrypted_credentials, credential.credential_nonce)
+        )
+        await db.commit()
     material: dict[str, Any] = {
         "schemaVersion": "clawdi.whatsappBaileysAuthState.v1",
         "creds": encode_buffer_json(creds),
         "websocketUrl": whatsapp_agent_websocket_url(),
-        "mediaProxyBaseUrl": whatsapp_media_proxy_base_url(),
-    }
-    if auth_cert is not None:
-        material["authCert"] = {
+        "authCert": {
             "SERIAL": auth_cert.serial,
-            "ISSUER": "clawdi",
+            "ISSUER": auth_cert.issuer,
             "PUBLIC_KEY": buffer_json(auth_cert.root_public_key),
-        }
+        },
+    }
     return [
         ChannelRuntimeCredentialResponse(
             id=credential.id,
@@ -1795,9 +1808,9 @@ async def _last_delivery_error(
 def _native_transport_health(account: ChannelAccount) -> dict[str, Any] | None:
     if account.provider != CHANNEL_PROVIDER_WHATSAPP:
         return None
-    from app.services.whatsapp_shared_runtime import whatsapp_shared_bot_transport_status
+    from app.services.whatsapp_provider_bridge import whatsapp_provider_transport_status
 
-    return whatsapp_shared_bot_transport_status(account.id).as_dict()
+    return whatsapp_provider_transport_status(account.id).as_dict()
 
 
 def _telegram_bot_username(account: ChannelAccount) -> str | None:
