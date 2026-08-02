@@ -83,8 +83,14 @@ const BAILEYS_TARGETS = [
 	{
 		relativePath: "lib/Socket/socket.js",
 		preimageSha256: "ab9b68888e123ad683dbc26555fc928400c1526c93ec6b66853f2ba30f8177a9",
-		postimageSha256: "3e4ce87fc485635c9ada35cc4056110136356fcb3b549955a7518943d45082c0",
+		postimageSha256: "0bc910c7fa0cb8fbd1ea757452254764ab2e0e8629cddee9f81c172402498852",
 		replacements: [
+			{
+				before:
+					"import { DEF_CALLBACK_PREFIX, DEF_TAG_PREFIX, INITIAL_PREKEY_COUNT, MIN_PREKEY_COUNT, NOISE_WA_HEADER, PROCESSABLE_HISTORY_TYPES, TimeMs, UPLOAD_TIMEOUT } from '../Defaults/index.js';\n",
+				after:
+					"import { DEFAULT_CONNECTION_CONFIG, DEF_CALLBACK_PREFIX, DEF_TAG_PREFIX, INITIAL_PREKEY_COUNT, MIN_PREKEY_COUNT, NOISE_WA_HEADER, PROCESSABLE_HISTORY_TYPES, TimeMs, UPLOAD_TIMEOUT } from '../Defaults/index.js';\n",
+			},
 			{
 				before: "import { executeWMexQuery } from './mex.js';\n",
 				after:
@@ -92,7 +98,6 @@ const BAILEYS_TARGETS = [
 					"const CLAWDI_MANAGED_SOCKET_KEY = 'clawdi.managedWhatsAppSocket';\n" +
 					"const CLAWDI_MANAGED_SOCKET_SCHEMA = 'clawdi.managedWhatsAppSocket.v1';\n" +
 					"const CLAWDI_LINK_CAPABILITY_HEADER = 'x-clawdi-whatsapp-link-capability';\n" +
-					"const OFFICIAL_WHATSAPP_WEB_SOCKET_URL = 'wss://web.whatsapp.com/ws/chat';\n" +
 					"const hasExactKeys = (value, keys) => Object.keys(value).sort().join('\\0') === [...keys].sort().join('\\0');\n" +
 					"const managedSocketMetadata = (creds) => {\n" +
 					"    const additionalData = creds?.additionalData;\n" +
@@ -118,7 +123,7 @@ const BAILEYS_TARGETS = [
 				before:
 					"    const url = typeof waWebSocketUrl === 'string' ? new URL(waWebSocketUrl) : waWebSocketUrl;\n",
 				after:
-					"    const effectiveWebSocketUrl = managedMetadata ? OFFICIAL_WHATSAPP_WEB_SOCKET_URL : waWebSocketUrl;\n" +
+					"    const effectiveWebSocketUrl = managedMetadata ? DEFAULT_CONNECTION_CONFIG.waWebSocketUrl : waWebSocketUrl;\n" +
 					"    const url = typeof effectiveWebSocketUrl === 'string' ? new URL(effectiveWebSocketUrl) : effectiveWebSocketUrl;\n",
 			},
 			{

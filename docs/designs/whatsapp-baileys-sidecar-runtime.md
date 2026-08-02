@@ -183,7 +183,7 @@ It is therefore not a safe dedicated marker seam. Revision
 
 | Target | Pristine SHA-256 | Patched SHA-256 |
 | --- | --- | --- |
-| `lib/Socket/socket.js` | `ab9b68888e123ad683dbc26555fc928400c1526c93ec6b66853f2ba30f8177a9` | `3e4ce87fc485635c9ada35cc4056110136356fcb3b549955a7518943d45082c0` |
+| `lib/Socket/socket.js` | `ab9b68888e123ad683dbc26555fc928400c1526c93ec6b66853f2ba30f8177a9` | `0bc910c7fa0cb8fbd1ea757452254764ab2e0e8629cddee9f81c172402498852` |
 | `lib/Utils/noise-handler.js` | `970f9526ce0e5a6bebf937328b3d835966a9282c0d232f31b5c0bb283531afe8` | `be9d357b337b20f2d678c68d1c989091187a8fa6f767af92645dba05b827f206` |
 | `lib/Utils/noise-handler.d.ts` | `a556ca0b67c3448769ad5ed0d59acbf566a21115fa107cd582b1dcb28c4fd516` | `34197090723b4b197b36062d8283f86ada1f8d5863a58efab446b8bf87f2e28e` |
 
@@ -193,11 +193,11 @@ strictly validates exact keys, schema, selector shape, safe serial, trimmed
 issuer, and 32-byte public key. A present malformed value fails before a
 network connection. A valid value derives a copy used only by
 `WebSocketClient`, adds the selector header there, passes the public trust to
-`makeNoiseHandler`, and forces the official
-`wss://web.whatsapp.com/ws/chat`. The original config remains unchanged for
-HTTP/media users. If the namespaced value is absent, the original config,
-including consumer URL/options and official `WA_CERT_DETAILS`, is used exactly
-as before.
+`makeNoiseHandler`, and selects Baileys' upstream-owned
+`DEFAULT_CONNECTION_CONFIG.waWebSocketUrl`. The original config remains
+unchanged for HTTP/media users. If the namespaced value is absent, the original
+config, including consumer URL/options and official `WA_CERT_DETAILS`, is used
+exactly as before.
 
 Compatibility tests run against both consumer artifact names used here,
 `baileys` (OpenClaw) and `@whiskeysockets/baileys` (Hermes). The executable
@@ -267,7 +267,7 @@ The receipt is
 The receipt contains only its schema, patch revision, audited Baileys package
 root, runtime/alias, observed compatible version, compatible major, relative
 target paths, and pre/post SHA-256 values. The reconciler remains larger than
-the 36 net added upstream lines because it retains package-layout recovery,
+the 35 net added upstream lines because it retains package-layout recovery,
 strict SemVer/name checks, symlink checks, TOCTOU rechecks, durable staging,
 receipt/version-transition recovery, rollback preflight, Hermes reinstall
 handling, and caller snapshot compatibility. Consumer patch definitions,

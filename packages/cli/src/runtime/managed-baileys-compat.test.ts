@@ -29,6 +29,17 @@ const pristineBaileysRoot = join(
 	repositoryRoot,
 	"packages/whatsapp-baileys-sidecar/node_modules/baileys",
 );
+const rc13DefaultsModule = await import(
+	pathToFileURL(join(pristineBaileysRoot, "lib/Defaults/index.js")).href
+);
+const rc13DefaultConnectionConfig = Reflect.get(rc13DefaultsModule, "DEFAULT_CONNECTION_CONFIG");
+if (!rc13DefaultConnectionConfig || typeof rc13DefaultConnectionConfig !== "object") {
+	throw new Error("rc13 DEFAULT_CONNECTION_CONFIG export is missing");
+}
+const rc13DefaultWebSocketUrl = Reflect.get(rc13DefaultConnectionConfig, "waWebSocketUrl");
+if (typeof rc13DefaultWebSocketUrl !== "string") {
+	throw new Error("rc13 default WhatsApp WebSocket URL is missing");
+}
 const temporaryRoots: string[] = [];
 
 interface ArtifactFixture {
@@ -50,6 +61,13 @@ it("defines exactly the three audited Baileys targets and no consumer target", (
 		"lib/Utils/noise-handler.js",
 		"lib/Utils/noise-handler.d.ts",
 	]);
+	const socketPatch = MANAGED_BAILEYS_STATIC_PATCH_TARGETS[0];
+	expect(socketPatch?.replacements.map((replacement) => replacement.after).join("\n")).toContain(
+		"DEFAULT_CONNECTION_CONFIG.waWebSocketUrl",
+	);
+	expect(
+		socketPatch?.replacements.map((replacement) => replacement.after).join("\n"),
+	).not.toContain("wss://web.whatsapp.com/ws/chat");
 });
 
 describe.each(["openclaw", "hermes"] as const)("managed Baileys %s compatibility", (runtime) => {
@@ -348,7 +366,7 @@ it("executes patched socket routing without mutating consumer HTTP options", () 
 		auth: { creds: { additionalData: { "clawdi.managedWhatsAppSocket": metadata } } },
 	});
 	const managedSocket = executePatchedSocketPrologue(socketPath, managedConfig);
-	expect(String(managedSocket.url)).toBe("wss://web.whatsapp.com/ws/chat");
+	expect(String(managedSocket.url)).toBe(rc13DefaultWebSocketUrl);
 	expect(managedSocket.webSocketConfig).not.toBe(managedConfig);
 	expect(managedSocket.webSocketConfig.options?.headers).toEqual({
 		"user-agent": "audited-client",
@@ -580,7 +598,7 @@ interface SocketHarnessResult {
 
 function socketConfig(overrides: Partial<SocketHarnessConfig>): SocketHarnessConfig {
 	return {
-		waWebSocketUrl: "wss://web.whatsapp.com/ws/chat",
+		waWebSocketUrl: rc13DefaultWebSocketUrl,
 		auth: { creds: {} },
 		shouldSyncHistoryMessage: () => true,
 		logger: { warn() {} },
@@ -625,6 +643,7 @@ function executePatchedSocketPrologue(
 		"Curve",
 		"makeNoiseHandler",
 		"NOISE_WA_HEADER",
+		"DEFAULT_CONNECTION_CONFIG",
 		"WebSocketClient",
 		`${helpers}\n${prologue}\nreturn { url, noise, ws };\n};\nreturn makeSocket;`,
 	);
@@ -640,6 +659,7 @@ function executePatchedSocketPrologue(
 			return {};
 		},
 		Buffer.from("WA"),
+		rc13DefaultConnectionConfig,
 		WebSocketClient,
 	]);
 	if (typeof makeSocket !== "function") throw new Error("patched makeSocket did not compile");
