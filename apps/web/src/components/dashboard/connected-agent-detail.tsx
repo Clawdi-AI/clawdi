@@ -166,7 +166,7 @@ export function ConnectedAgentDetail({
 				<section className="flex flex-col gap-4">
 					<PageHeader
 						title={activeTabLabel}
-						description={activeTabMeta.description}
+						description={activeTab === "overview" ? undefined : activeTabMeta.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
 						status={headerStatus}
 					/>

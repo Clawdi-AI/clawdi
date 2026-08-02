@@ -571,7 +571,7 @@ export function HostedAgentDetail({
 				{isLiveToolTab ? null : (
 					<PageHeader
 						title={activeTabLabel}
-						description={activeNavItem.description}
+						description={activeTab === "overview" ? undefined : activeNavItem.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
 						actions={
 							interfaceAvailable ? (
@@ -1213,8 +1213,7 @@ function InitialDeploymentPage({
 						)}
 					</div>
 					<div>
-						<p className="text-sm font-medium">Starting</p>
-						<h2 className="mt-1 text-xl font-semibold">
+						<h2 className="text-xl font-semibold">
 							{deploymentTransitionTimedOut
 								? "Setup is taking longer than expected"
 								: "Starting your agent…"}
