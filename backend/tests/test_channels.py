@@ -5546,7 +5546,7 @@ async def test_telegram_agent_webhook_is_scoped_to_agent_link(
 ):
     _reset_sequenced_provider_client([200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created, workspace_pair, chat_id = await _paired_telegram_shared_chat(
@@ -5667,9 +5667,9 @@ async def test_telegram_set_webhook_rejects_private_dns_targets(
     client: httpx.AsyncClient,
     monkeypatch,
 ):
-    def fake_getaddrinfo(host, port):
+    def fake_getaddrinfo(host, port, *_args):
         assert host == "agent-hook.example"
-        assert port is None
+        assert port == 443
         return [
             (
                 socket.AF_INET,
@@ -8207,7 +8207,7 @@ async def test_telegram_agent_webhook_success_acks_inbox(
 ):
     _reset_sequenced_provider_client([200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created = await _create_paired_telegram_channel(
@@ -8256,7 +8256,7 @@ async def test_telegram_agent_webhook_5xx_defers_ack_to_worker(
 ):
     _reset_sequenced_provider_client([503, 200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created = await _create_paired_telegram_channel(
@@ -8311,7 +8311,7 @@ async def test_telegram_update_redelivery_retries_failed_agent_webhook(
 ):
     _reset_sequenced_provider_client([503, 200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created = await _create_paired_telegram_channel(
@@ -8378,7 +8378,7 @@ async def test_telegram_agent_webhook_inactive_link_records_debug_health(
 ):
     _reset_sequenced_provider_client([200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created = await _create_paired_telegram_channel(
@@ -8448,14 +8448,16 @@ async def test_telegram_agent_webhook_inactive_link_records_debug_health(
 
 
 @pytest.mark.asyncio
-async def test_telegram_agent_webhook_4xx_does_not_ack_inbox(
+@pytest.mark.parametrize("failure_status", [302, 403])
+async def test_telegram_agent_webhook_non_2xx_does_not_ack_inbox(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     monkeypatch,
+    failure_status: int,
 ):
-    _reset_sequenced_provider_client([403, 200])
+    _reset_sequenced_provider_client([failure_status, 200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created = await _create_paired_telegram_channel(
@@ -8513,18 +8515,13 @@ async def test_telegram_agent_webhook_revalidates_dns_at_delivery(
         ("10.0.0.5", 0),
     ]
 
-    def fake_getaddrinfo(host, port):
+    def fake_getaddrinfo(host, port, *_args):
         assert host == "agent-hook.example"
-        assert port is None
+        assert port == 443
         address = resolutions.pop(0)
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", address)]
 
-    _reset_fake_provider_client()
     monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
-    monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
-        _FakeProviderClient,
-    )
     created = await _create_paired_telegram_channel(
         client,
         name="telegram-agent-webhook-dns-revalidate",
@@ -8568,7 +8565,7 @@ async def test_telegram_webhook_worker_retries_failed_agent_delivery(
 ):
     _reset_sequenced_provider_client([503, 503, 503, 200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created = await _create_paired_telegram_channel(
@@ -8628,7 +8625,7 @@ async def test_telegram_webhook_worker_does_not_retry_after_unpair(
 ) -> None:
     _reset_sequenced_provider_client([503])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created = await _create_paired_telegram_channel(
@@ -8717,7 +8714,7 @@ async def test_telegram_webhook_worker_skips_non_webhook_queue_head(
 ):
     _reset_sequenced_provider_client([503, 503, 503, 200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     polling_channel = await _create_paired_telegram_channel(
@@ -8811,7 +8808,7 @@ async def test_telegram_webhook_worker_drops_expired_agent_delivery(
 ):
     _reset_sequenced_provider_client([503, 503, 503])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created = await _create_paired_telegram_channel(
@@ -11808,7 +11805,7 @@ async def test_telegram_concurrent_redelivery_has_one_agent_side_effect(
     ).status_code == 200
     _reset_sequenced_provider_client([200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     update = {
