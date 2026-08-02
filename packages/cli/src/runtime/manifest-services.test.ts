@@ -1828,6 +1828,23 @@ describe("runtime manifest services", () => {
 		expect(harness.installCount()).toBe(2);
 	});
 
+	test.each(
+		installGateHarnesses,
+	)("rolls back the %s receipt when authority commit fails", (_name, createHarness) => {
+		const harness = createHarness();
+		const failed = harness.converge(() => {
+			throw new Error("authority commit rejected");
+		});
+
+		expect(failed.installErrors.join("\n")).toContain("authority commit rejected");
+		expect(harness.installCount()).toBe(1);
+		expect(harness.receipt()).toBeUndefined();
+
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(2);
+		expect(harness.receipt()).toBeDefined();
+	});
+
 	test.each(installGateHarnesses)("does not bless post-commit %s drift", (_name, createHarness) => {
 		const harness = createHarness();
 		expect(harness.converge(harness.drift).installErrors).toEqual([]);
