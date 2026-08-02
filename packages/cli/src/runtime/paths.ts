@@ -74,6 +74,14 @@ function defaultHome(mode: RuntimeMode): string {
 	return process.env.HOME || homedir();
 }
 
+function defaultClawdiHome(mode: RuntimeMode, userHome: string): string {
+	if (mode === "hosted") {
+		// Keep the hosted user-state tree anchored to the resolved runtime home.
+		return process.env.CLAWDI_HOME || join(userHome, ".clawdi");
+	}
+	return getClawdiDir();
+}
+
 function runningAsRoot(): boolean {
 	return typeof process.getuid === "function" && process.getuid() === 0;
 }
@@ -97,7 +105,7 @@ export function detectRuntimeMode(): RuntimeMode {
 export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths {
 	const mode = opts.mode ?? detectRuntimeMode();
 	const userHome = defaultHome(mode);
-	const clawdiHome = getClawdiDir();
+	const clawdiHome = defaultClawdiHome(mode, userHome);
 	const serviceStateRoot = envPath("CLAWDI_SERVICE_STATE_DIR") ?? "/var/lib/clawdi";
 	const runRoot = envPath("CLAWDI_RUN_DIR") ?? "/run/clawdi";
 	const shareRoot = envPath("CLAWDI_SHARE_DIR") ?? "/usr/share/clawdi";
