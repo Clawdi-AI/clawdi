@@ -15,6 +15,7 @@ from app.models.channel import (
     CHANNEL_STATUS_ACTIVE,
     CHANNEL_VISIBILITY_PRIVATE,
     WHATSAPP_ONBOARDING_ACTIVE_STATES,
+    WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
     WHATSAPP_ONBOARDING_STATE_CANCELED,
     WHATSAPP_ONBOARDING_STATE_CONNECTED,
     WHATSAPP_ONBOARDING_STATE_ERROR,
@@ -120,6 +121,7 @@ async def start_whatsapp_onboarding(
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     existing = await db.scalar(
         select(ChannelWhatsAppOnboardingSession).where(
+            ChannelWhatsAppOnboardingSession.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
             ChannelWhatsAppOnboardingSession.user_id == user_id,
             ChannelWhatsAppOnboardingSession.request_id == request_id,
         )
@@ -140,6 +142,7 @@ async def start_whatsapp_onboarding(
     await _lock_allocation(db)
     existing = await db.scalar(
         select(ChannelWhatsAppOnboardingSession).where(
+            ChannelWhatsAppOnboardingSession.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
             ChannelWhatsAppOnboardingSession.user_id == user_id,
             ChannelWhatsAppOnboardingSession.request_id == request_id,
         )
@@ -169,6 +172,7 @@ async def start_whatsapp_onboarding(
         )
     unfinished_name = await db.scalar(
         select(ChannelWhatsAppOnboardingSession.id).where(
+            ChannelWhatsAppOnboardingSession.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
             ChannelWhatsAppOnboardingSession.user_id == user_id,
             ChannelWhatsAppOnboardingSession.name == name,
             ChannelWhatsAppOnboardingSession.state.in_(_UNRELEASED_SESSION_STATES),
@@ -194,6 +198,7 @@ async def start_whatsapp_onboarding(
         )
     now = datetime.now(UTC)
     onboarding = ChannelWhatsAppOnboardingSession(
+        ownership_kind=WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
         sidecar_account_id=sidecar_account_id,
         sidecar_config_revision=sidecar_config_revision,
         user_id=user_id,
@@ -364,7 +369,7 @@ async def cancel_whatsapp_onboarding(
         )
     try:
         await client.health()
-        canceled = await _stop_unfinished_pairing(client)
+        canceled = await stop_whatsapp_pairing(client)
     except WhatsAppSidecarError:
         await _mark_session_error(db, onboarding)
         raise HTTPException(
@@ -513,7 +518,7 @@ async def require_whatsapp_custom_logout_for_archive(
                 config_revision=sidecar_config_revision,
                 registry=registry,
             )
-        disconnected = await _stop_unfinished_pairing(client, current=current)
+        disconnected = await stop_whatsapp_pairing(client, current=current)
     except WhatsAppSidecarError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -528,6 +533,7 @@ async def require_whatsapp_custom_logout_for_archive(
         await registry.unbind_custom_account(slot_id=sidecar_account_id, account_id=account.id)
     onboarding = await db.scalar(
         select(ChannelWhatsAppOnboardingSession).where(
+            ChannelWhatsAppOnboardingSession.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
             ChannelWhatsAppOnboardingSession.channel_account_id == account.id,
             ChannelWhatsAppOnboardingSession.user_id == account.user_id,
             ChannelWhatsAppOnboardingSession.state == WHATSAPP_ONBOARDING_STATE_CONNECTED,
@@ -557,6 +563,8 @@ async def expire_stale_whatsapp_onboarding_sessions(
         (
             await db.scalars(
                 select(ChannelWhatsAppOnboardingSession.id).where(
+                    ChannelWhatsAppOnboardingSession.ownership_kind
+                    == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
                     ChannelWhatsAppOnboardingSession.state.in_(stale_states),
                     ChannelWhatsAppOnboardingSession.expires_at <= deadline,
                 )
@@ -569,6 +577,8 @@ async def expire_stale_whatsapp_onboarding_sessions(
             select(ChannelWhatsAppOnboardingSession)
             .where(
                 ChannelWhatsAppOnboardingSession.id == session_id,
+                ChannelWhatsAppOnboardingSession.ownership_kind
+                == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
                 ChannelWhatsAppOnboardingSession.state.in_(stale_states),
                 ChannelWhatsAppOnboardingSession.expires_at <= deadline,
             )
@@ -591,6 +601,7 @@ async def _owned_session(
         select(ChannelWhatsAppOnboardingSession)
         .where(
             ChannelWhatsAppOnboardingSession.id == session_id,
+            ChannelWhatsAppOnboardingSession.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
             ChannelWhatsAppOnboardingSession.user_id == user_id,
         )
         .with_for_update()
@@ -622,6 +633,7 @@ async def _free_account_ids(
     if not configured:
         return []
     session_query = select(ChannelWhatsAppOnboardingSession.sidecar_account_id).where(
+        ChannelWhatsAppOnboardingSession.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
         ChannelWhatsAppOnboardingSession.sidecar_account_id.in_(configured),
         ChannelWhatsAppOnboardingSession.state.in_(_UNRELEASED_SESSION_STATES),
     )
@@ -870,7 +882,7 @@ async def _expire_session(
                 onboarding,
                 manual_pairing_code_supported=False,
             )
-        canceled = await _stop_unfinished_pairing(client, current=current)
+        canceled = await stop_whatsapp_pairing(client, current=current)
     except WhatsAppSidecarError:
         return await _mark_session_error(db, onboarding)
     if canceled.status != "stopped" or canceled.registered:
@@ -894,7 +906,7 @@ async def _confirm_stopped(
         )
     try:
         await client.health()
-        stopped = await _stop_unfinished_pairing(client)
+        stopped = await stop_whatsapp_pairing(client)
     except WhatsAppSidecarError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -907,7 +919,7 @@ async def _confirm_stopped(
         )
 
 
-async def _stop_unfinished_pairing(
+async def stop_whatsapp_pairing(
     client: WhatsAppSidecarClient,
     *,
     current: WhatsAppSidecarPairingStatus | None = None,
@@ -929,20 +941,21 @@ async def _logout_registered_pairing(
     current: WhatsAppSidecarPairingStatus,
 ) -> WhatsAppSidecarPairingStatus:
     if not current.registered:
-        raise WhatsAppSidecarProtocolError("custom sidecar lost registered auth")
+        raise WhatsAppSidecarProtocolError("WhatsApp sidecar lost registered auth")
     deadline = asyncio.get_running_loop().time() + _LOGOUT_RECOVERY_TTL_SECONDS
     observed = current
     while True:
         if not observed.registered:
             return observed if observed.status == "stopped" else await client.pairing_cancel()
+        if asyncio.get_running_loop().time() >= deadline:
+            raise WhatsAppSidecarUnavailableError("WhatsApp sidecar did not reconnect for logout")
         if observed.status == "connected":
             try:
                 return await client.pairing_logout()
             except WhatsAppSidecarUnavailableError:
+                await asyncio.sleep(0.25)
                 observed = await client.pairing_status()
                 continue
-        if asyncio.get_running_loop().time() >= deadline:
-            raise WhatsAppSidecarUnavailableError("custom sidecar did not reconnect for logout")
         if observed.status in {"starting", "disconnected", "stopped"}:
             await client.pairing_retry()
         await asyncio.sleep(0.25)

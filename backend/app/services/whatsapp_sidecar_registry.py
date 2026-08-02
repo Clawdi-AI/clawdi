@@ -9,10 +9,13 @@ from uuid import UUID
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session_factory
 from app.models.channel import (
     CHANNEL_PROVIDER_WHATSAPP,
+    CHANNEL_VISIBILITY_PUBLIC,
+    WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
     WHATSAPP_ONBOARDING_STATE_ERROR,
     ChannelAccount,
     ChannelWhatsAppOnboardingSession,
@@ -98,6 +101,7 @@ class ConfiguredWhatsAppSidecarRegistry:
         _validate_disjoint_physical_slots(self._managed, self._custom)
         self._client_factory = client_factory
         self._clients_by_slot: dict[UUID, WhatsAppSidecarClient] = {}
+        self._bound_managed_accounts: set[UUID] = set()
         self._custom_slot_to_account: dict[UUID, UUID] = {}
         self._custom_account_to_slot: dict[UUID, UUID] = {}
         self._blocked_custom_slots: set[UUID] = set()
@@ -116,6 +120,18 @@ class ConfiguredWhatsAppSidecarRegistry:
         if slot_id not in self._custom or slot_id in self._blocked_custom_slots:
             return None
         return self._clients_by_slot.get(slot_id)
+
+    def get_managed_client(self, account_id: UUID) -> WhatsAppSidecarClient | None:
+        if account_id not in self._managed:
+            return None
+        return self._clients_by_slot.get(account_id)
+
+    def managed_account_revision(self, account_id: UUID) -> str | None:
+        config = self._managed.get(account_id)
+        return config.binding_revision if config is not None else None
+
+    def managed_is_bound(self, account_id: UUID) -> bool:
+        return account_id in self._bound_managed_accounts
 
     def custom_slot_is_blocked(self, slot_id: UUID) -> bool:
         return slot_id in self._blocked_custom_slots
@@ -148,7 +164,6 @@ class ConfiguredWhatsAppSidecarRegistry:
                         account_id,
                         type(exc).__name__,
                     )
-                self._register_transport(account_id, client)
 
             if self._custom:
                 await self.reconcile_custom_ownership()
@@ -173,10 +188,86 @@ class ConfiguredWhatsAppSidecarRegistry:
         self._custom_slot_to_account.clear()
         self._custom_account_to_slot.clear()
         self._blocked_custom_slots.clear()
+        self._bound_managed_accounts.clear()
         clients = tuple(self._clients_by_slot.values())
         self._clients_by_slot.clear()
         if clients:
             await asyncio.gather(*(client.aclose() for client in clients), return_exceptions=True)
+
+    async def bind_managed_account(self, account_id: UUID, *, config_revision: str) -> bool:
+        config = self._managed.get(account_id)
+        client = self._clients_by_slot.get(account_id)
+        if config is None or client is None or config.binding_revision != config_revision:
+            raise WhatsAppSidecarProtocolError("managed Baileys account is unavailable")
+        if account_id in self._bound_managed_accounts:
+            return False
+        self._register_transport(account_id, client)
+        self._bound_managed_accounts.add(account_id)
+        return True
+
+    async def unbind_managed_account(self, account_id: UUID) -> bool:
+        if account_id not in self._bound_managed_accounts:
+            return False
+        task = self._ingress_tasks.pop(account_id, None)
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        unregister_whatsapp_provider_transport(account_id)
+        self._bound_managed_accounts.remove(account_id)
+        return True
+
+    async def reconcile_managed_ownership(self, db: AsyncSession | None = None) -> None:
+        """Attach ingress only for promoted public accounts with exact configured identity."""
+        if db is None:
+            async with async_session_factory() as owned_db:
+                accounts = await self._managed_accounts(owned_db)
+        else:
+            accounts = await self._managed_accounts(db)
+        desired: dict[UUID, str] = {}
+        for account in accounts:
+            config = account.config if isinstance(account.config, dict) else {}
+            revision = config.get("sidecar_config_revision")
+            if config.get("connection_mode") != "baileys_managed" or not isinstance(revision, str):
+                log.error("WhatsApp managed account %s has invalid physical identity", account.id)
+                continue
+            desired[account.id] = revision
+        for account_id in tuple(self._bound_managed_accounts - desired.keys()):
+            await self.unbind_managed_account(account_id)
+        for account_id, revision in desired.items():
+            try:
+                client = self._clients_by_slot.get(account_id)
+                if client is None:
+                    raise WhatsAppSidecarProtocolError("managed Baileys account is unavailable")
+                health = await client.health()
+                pairing = await client.pairing_status()
+                if (
+                    not health.connected
+                    or not health.registered
+                    or pairing.status != "connected"
+                    or not pairing.registered
+                ):
+                    raise WhatsAppSidecarProtocolError(
+                        "managed Baileys physical auth is unavailable"
+                    )
+                await self.bind_managed_account(account_id, config_revision=revision)
+            except WhatsAppSidecarError:
+                if account_id in self._bound_managed_accounts:
+                    await self.unbind_managed_account(account_id)
+                log.error("WhatsApp managed account %s is not safe to attach", account_id)
+
+    async def _managed_accounts(self, db: AsyncSession) -> list[ChannelAccount]:
+        return list(
+            (
+                await db.scalars(
+                    select(ChannelAccount).where(
+                        ChannelAccount.id.in_(self._managed),
+                        ChannelAccount.provider == CHANNEL_PROVIDER_WHATSAPP,
+                        ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
+                        ChannelAccount.archived_at.is_(None),
+                    )
+                )
+            ).all()
+        )
 
     async def bind_custom_account(
         self,
@@ -287,7 +378,9 @@ class ConfiguredWhatsAppSidecarRegistry:
                     (
                         await db.scalars(
                             select(ChannelWhatsAppOnboardingSession).where(
-                                ChannelWhatsAppOnboardingSession.state.in_(_UNRELEASED_STATES)
+                                ChannelWhatsAppOnboardingSession.ownership_kind
+                                == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
+                                ChannelWhatsAppOnboardingSession.state.in_(_UNRELEASED_STATES),
                             )
                         )
                     ).all()

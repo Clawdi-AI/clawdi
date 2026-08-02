@@ -67,6 +67,9 @@ from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
 from app.services.whatsapp_device_onboarding import expire_stale_whatsapp_onboarding_sessions
+from app.services.whatsapp_managed_onboarding import (
+    expire_stale_managed_whatsapp_onboarding_sessions,
+)
 from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegistry
 
 configure_application_logging()
@@ -107,6 +110,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await start_postgres_listener()
     try:
         await whatsapp_sidecars.start()
+        if whatsapp_sidecars.managed_account_ids:
+            await whatsapp_sidecars.reconcile_managed_ownership()
     except Exception:
         await whatsapp_sidecars.stop()
         await stop_postgres_listener()
@@ -114,31 +119,40 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     await warm_clerk_jwks()
 
-    if whatsapp_sidecars.custom_slot_ids:
+    if whatsapp_sidecars.custom_slot_ids or whatsapp_sidecars.managed_account_ids:
 
         async def _expire_whatsapp_onboarding() -> None:
             while True:
                 await asyncio.sleep(15)
                 try:
-                    await whatsapp_sidecars.reconcile_custom_ownership()
+                    if whatsapp_sidecars.custom_slot_ids:
+                        await whatsapp_sidecars.reconcile_custom_ownership()
+                    if whatsapp_sidecars.managed_account_ids:
+                        await whatsapp_sidecars.reconcile_managed_ownership()
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    log.exception("WhatsApp Custom ownership reconciliation failed")
+                    log.exception("WhatsApp sidecar ownership reconciliation failed")
                 try:
                     async with async_session_factory() as db:
-                        await expire_stale_whatsapp_onboarding_sessions(
-                            db,
-                            registry=whatsapp_sidecars,
-                        )
+                        if whatsapp_sidecars.custom_slot_ids:
+                            await expire_stale_whatsapp_onboarding_sessions(
+                                db,
+                                registry=whatsapp_sidecars,
+                            )
+                        if whatsapp_sidecars.managed_account_ids:
+                            await expire_stale_managed_whatsapp_onboarding_sessions(
+                                db,
+                                registry=whatsapp_sidecars,
+                            )
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    log.exception("WhatsApp Custom onboarding expiry sweep failed")
+                    log.exception("WhatsApp onboarding expiry sweep failed")
 
         task = asyncio.create_task(
             _expire_whatsapp_onboarding(),
-            name="whatsapp-custom-onboarding-expiry",
+            name="whatsapp-onboarding-expiry",
         )
         background.add(task)
         task.add_done_callback(background.discard)
@@ -430,6 +444,8 @@ def _is_whatsapp_onboarding_request(request: Request) -> bool:
         (
             "/api/channels/whatsapp/onboarding/",
             "/v1/channels/whatsapp/onboarding/",
+            "/api/admin/channels/whatsapp/onboarding",
+            "/v1/admin/channels/whatsapp/onboarding",
         )
     )
 
