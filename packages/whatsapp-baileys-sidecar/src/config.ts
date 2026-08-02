@@ -47,7 +47,7 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Sidecar
 	}
 	const config: SidecarConfig = {
 		accountId,
-		host: nonEmpty(env.CLAWDI_WA_SIDECAR_HOST) ?? "127.0.0.1",
+		host: parseLoopbackHost(nonEmpty(env.CLAWDI_WA_SIDECAR_HOST) ?? "127.0.0.1"),
 		port: parsePort(env.CLAWDI_WA_SIDECAR_PORT ?? "8787"),
 		...(socketPath ? { socketPath } : {}),
 		apiToken,
@@ -119,11 +119,21 @@ function nonEmpty(value: string | undefined): string | undefined {
 }
 
 function parsePort(raw: string): number {
-	const value = Number.parseInt(raw, 10);
+	if (!/^[0-9]+$/.test(raw)) {
+		throw new Error(`invalid CLAWDI_WA_SIDECAR_PORT: ${raw}`);
+	}
+	const value = Number(raw);
 	if (!Number.isInteger(value) || value < 1 || value > 65_535) {
 		throw new Error(`invalid CLAWDI_WA_SIDECAR_PORT: ${raw}`);
 	}
 	return value;
+}
+
+function parseLoopbackHost(raw: string): string {
+	if (raw !== "127.0.0.1" && raw !== "localhost" && raw !== "::1") {
+		throw new Error("CLAWDI_WA_SIDECAR_HOST must be 127.0.0.1, localhost, or ::1");
+	}
+	return raw;
 }
 
 function parsePositiveInteger(

@@ -3,14 +3,13 @@ import type { AddressInfo } from "node:net";
 import { createConnection } from "node:net";
 
 import { loadConfigFromEnv } from "./config.js";
+import { createSharedShutdown } from "./graceful-shutdown.js";
 import { BaileysSocketRuntime } from "./runtime.js";
 import { createSidecarServer } from "./server.js";
 
 const config = loadConfigFromEnv();
 const runtime = new BaileysSocketRuntime(config);
 const server = createSidecarServer(runtime, { apiToken: config.apiToken });
-
-let stopping = false;
 
 try {
 	await runtime.start();
@@ -95,9 +94,7 @@ function socketAcceptsConnections(socketPath: string): Promise<boolean> {
 	});
 }
 
-async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
-	if (stopping) return;
-	stopping = true;
+const shutdown = createSharedShutdown(async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {
 	console.log(
 		JSON.stringify({
 			event: "clawdi_whatsapp_provider_transport_stopping",
@@ -107,7 +104,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
 	);
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 	await runtime.stop();
-}
+});
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
 	process.on(signal, async () => {

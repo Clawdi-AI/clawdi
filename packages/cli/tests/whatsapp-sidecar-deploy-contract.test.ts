@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { prepareWhatsAppSidecarDeploy } from "../../../scripts/prepare-whatsapp-sidecar-deploy";
+import {
+	buildWhatsAppSidecarContainerPreflightCommand,
+	readDesiredWhatsAppSidecarServiceNames,
+} from "../../../scripts/whatsapp-sidecar-container-preflight";
 
 const FIRST_ID = "11111111-1111-4111-8111-111111111111";
 const SECOND_ID = "22222222-2222-4222-8222-222222222222";
@@ -24,6 +28,10 @@ const materializerSource = readFileSync(
 	join(repoRoot, "scripts/prepare-whatsapp-sidecar-deploy.ts"),
 	"utf8",
 );
+const sidecarRunbook = readFileSync(
+	join(repoRoot, "docs/runbooks/whatsapp-baileys-sidecars.md"),
+	"utf8",
+);
 const dockerignore = readFileSync(join(repoRoot, ".dockerignore"), "utf8");
 
 describe("WhatsApp sidecar deployment materializer", () => {
@@ -39,11 +47,16 @@ describe("WhatsApp sidecar deployment materializer", () => {
 
 			expect(manifest.accounts.map((account) => account.account_id)).toEqual([FIRST_ID, SECOND_ID]);
 			expect(new Set(manifest.accounts.map((account) => account.accessory_name)).size).toBe(2);
+			expect(new Set(manifest.accounts.map((account) => account.service_name)).size).toBe(2);
 			expect(new Set(manifest.accounts.map((account) => account.socket_path)).size).toBe(2);
+			expect(readDesiredWhatsAppSidecarServiceNames(manifestPath)).toEqual(
+				manifest.accounts.map((account) => account.service_name),
+			);
 			const publicManifest = readFileSync(manifestPath, "utf8");
 			expect(publicManifest).not.toContain(FIRST_TOKEN);
 			expect(publicManifest).not.toContain(SECOND_TOKEN);
 			expect(publicManifest).toContain(`/run/clawdi-whatsapp/${FIRST_ID}/sidecar.sock`);
+			expect(publicManifest).toContain("clawdi-whatsapp-baileys-11111111111141118111111111111111");
 			const secrets = readFileSync(secretsPath, "utf8");
 			expect(secrets).toContain("BASE_SECRET=preserved");
 			expect(secrets).toContain("CHANNEL_WHATSAPP_BAILEYS_SIDECARS_JSON=");
@@ -145,6 +158,85 @@ describe("WhatsApp sidecar deployment materializer", () => {
 	});
 });
 
+describe("WhatsApp sidecar remote container preflight", () => {
+	test("uses an exact read-only Docker inspection contract", () => {
+		const command = buildWhatsAppSidecarContainerPreflightCommand([serviceName(FIRST_ID)]);
+
+		expect(command).toContain(
+			"docker container ls --all --filter 'label=service' --format '{{.ID}}'",
+		);
+		expect(command).toContain(
+			'docker container inspect --format \'{{index .Config.Labels "service"}}\' "$container_id"',
+		);
+		expect(command).not.toMatch(/\bdocker\s+(?:container\s+)?(?:stop|rm|prune)\b/);
+		expect(command).not.toContain("/state");
+		expect(() =>
+			buildWhatsAppSidecarContainerPreflightCommand(["clawdi-whatsapp-baileys-user-input"]),
+		).toThrow("invalid WhatsApp sidecar service name");
+	});
+
+	test("rejects a desired service name not derived from its account UUID", () => {
+		withDeploymentFiles(({ manifestPath, secretsPath }) => {
+			const manifest = prepareWhatsAppSidecarDeploy({
+				rawRegistry: JSON.stringify({ [FIRST_ID]: entry(FIRST_ID, FIRST_TOKEN) }),
+				manifestPath,
+				secretsPath,
+			});
+			const account = manifest.accounts[0];
+			if (!account) throw new Error("expected generated sidecar account");
+			account.service_name = serviceName(SECOND_ID);
+			writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`, { mode: 0o600 });
+
+			expect(() => readDesiredWhatsAppSidecarServiceNames(manifestPath)).toThrow(
+				"invalid generated WhatsApp sidecar account identity",
+			);
+		});
+	});
+
+	test("allows zero accounts only when no Clawdi WhatsApp container exists", async () => {
+		expect((await runRemotePreflight([], [])).exitCode).toBe(0);
+
+		for (const existing of ["aaaaaaaaaaaa", "bbbbbbbbbbbb"]) {
+			const result = await runRemotePreflight([], [[existing, serviceName(FIRST_ID)]]);
+			expect(result.exitCode).not.toBe(0);
+			expect(result.stderr).toContain("Unexpected Clawdi WhatsApp sidecar container");
+		}
+	});
+
+	test("allows only one existing container for each exact desired service", async () => {
+		const desired = [serviceName(FIRST_ID)];
+		expect((await runRemotePreflight(desired, [])).exitCode).toBe(0);
+		expect(
+			(await runRemotePreflight(desired, [["aaaaaaaaaaaa", serviceName(FIRST_ID)]])).exitCode,
+		).toBe(0);
+
+		const unexpected = await runRemotePreflight(desired, [
+			["aaaaaaaaaaaa", serviceName(FIRST_ID)],
+			["bbbbbbbbbbbb", serviceName(SECOND_ID)],
+		]);
+		expect(unexpected.exitCode).not.toBe(0);
+		expect(unexpected.stderr).toContain(serviceName(SECOND_ID));
+
+		const duplicate = await runRemotePreflight(desired, [
+			["aaaaaaaaaaaa", serviceName(FIRST_ID)],
+			["bbbbbbbbbbbb", serviceName(FIRST_ID)],
+		]);
+		expect(duplicate.exitCode).not.toBe(0);
+		expect(duplicate.stderr).toContain("Duplicate Clawdi WhatsApp sidecar container");
+	});
+
+	test("rejects malformed Clawdi WhatsApp service labels", async () => {
+		for (const malformed of [
+			"clawdi-whatsapp-baileys-short",
+			"clawdi-whatsapp-baileys-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		]) {
+			const result = await runRemotePreflight([], [["aaaaaaaaaaaa", malformed]]);
+			expect(result.exitCode).not.toBe(0);
+			expect(result.stderr).toContain("Malformed Clawdi WhatsApp sidecar service label");
+		}
+	});
+});
+
 describe("WhatsApp sidecar production deployment contract", () => {
 	test("builds an immutable non-root image from the declared Bun toolchain", () => {
 		expect(sidecarDockerfile.match(/FROM oven\/bun:1\.3\.14-alpine/g)).toHaveLength(2);
@@ -163,6 +255,7 @@ describe("WhatsApp sidecar production deployment contract", () => {
 
 	test("uses one Kamal accessory and two disjoint durable host paths per account", () => {
 		expect(deployConfig).toContain("whatsapp_accounts.each do |account|");
+		expect(deployConfig).toContain('service: <%= account.fetch("service_name") %>');
 		expect(deployConfig).toContain("clawdi-whatsapp-baileys-sidecar:<%= sidecar_image_version %>");
 		expect(deployConfig).toContain('/<%= account.fetch("account_id") %>/state');
 		expect(deployConfig).toContain('/<%= account.fetch("account_id") %>/run');
@@ -193,7 +286,12 @@ describe("WhatsApp sidecar production deployment contract", () => {
 			'kamal deploy -P --version "$' + '{{ needs.build.outputs.image_tag }}"',
 		);
 		const directoryPrepare = imageWorkflow.indexOf('kamal accessory directories "$accessory"');
+		const containerPreflight = imageWorkflow.indexOf(
+			"bun run scripts/whatsapp-sidecar-container-preflight.ts",
+		);
 		const accessoryReboot = imageWorkflow.indexOf('kamal accessory reboot "$accessory"');
+		expect(containerPreflight).toBeGreaterThan(0);
+		expect(containerPreflight).toBeLessThan(directoryPrepare);
 		expect(directoryPrepare).toBeGreaterThan(0);
 		expect(directoryPrepare).toBeLessThan(appDeploy);
 		expect(imageWorkflow).toContain("realpath -e '$" + "{state_path}'");
@@ -201,6 +299,12 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(imageWorkflow).toContain("1000:1000:770");
 		expect(appDeploy).toBeGreaterThan(0);
 		expect(accessoryReboot).toBeGreaterThan(appDeploy);
+		expect(imageWorkflow).toContain(
+			"docker container inspect --format '{{.Config.Image}}' '$" + "{service_name}'",
+		);
+		expect(imageWorkflow).toContain(
+			"ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar:$" + "{{ needs.build.outputs.image_tag }}",
+		);
 		expect(imageWorkflow).toContain("src/healthcheck.ts");
 		expect(imageWorkflow).not.toContain("kamal accessory remove");
 	});
@@ -214,6 +318,16 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(sidecarDockerfile.match(/COPY apps\/web\/package\.json/g)).toHaveLength(1);
 		expect(sidecarDockerfile).not.toContain("COPY --from=dependencies /app/apps/web");
 	});
+
+	test("documents fail-closed retirement without automatic state deletion", () => {
+		expect(sidecarRunbook).toContain('kamal accessory stop "$WHATSAPP_ACCESSORY"');
+		expect(sidecarRunbook).toContain('kamal accessory remove_container "$WHATSAPP_ACCESSORY"');
+		expect(sidecarRunbook).toContain("Only now remove this UUID's entry");
+		expect(sidecarRunbook).toContain("must not be used here");
+		expect(sidecarRunbook).toContain("do not delete or repurpose either");
+		expect(imageWorkflow).not.toContain("kamal accessory remove_container");
+		expect(imageWorkflow).not.toContain("kamal accessory remove ");
+	});
 });
 
 function entry(accountId: string, apiToken: string) {
@@ -221,6 +335,58 @@ function entry(accountId: string, apiToken: string) {
 		api_token: apiToken,
 		unix_socket_path: `/run/clawdi-whatsapp/${accountId}/sidecar.sock`,
 	};
+}
+
+function serviceName(accountId: string): string {
+	return `clawdi-whatsapp-baileys-${accountId.replaceAll("-", "")}`;
+}
+
+async function runRemotePreflight(
+	desiredServices: readonly string[],
+	containers: readonly (readonly [id: string, service: string])[],
+): Promise<{ exitCode: number; stderr: string }> {
+	const directory = mkdtempSync(join(tmpdir(), "clawdi-sidecar-preflight-"));
+	chmodSync(directory, 0o700);
+	const fakeDocker = join(directory, "docker");
+	const listedIds = containers.map(([id]) => `printf '%s\\n' '${id}'`).join("\n    ");
+	const inspectedLabels = containers
+		.map(([id, service]) => `${id}) printf '%s\\n' '${service}' ;;`)
+		.join("\n    ");
+	writeFileSync(
+		fakeDocker,
+		`#!/bin/sh
+set -eu
+if [ "$1" = container ] && [ "$2" = ls ]; then
+  case " $* " in *" --all "*) ;; *) exit 90 ;; esac
+  case " $* " in *" --filter label=service "*) ;; *) exit 91 ;; esac
+  ${listedIds}
+elif [ "$1" = container ] && [ "$2" = inspect ] && [ "$3" = --format ] && [ "$#" -eq 5 ]; then
+  case "$5" in
+    ${inspectedLabels}
+    *) exit 92 ;;
+  esac
+else
+  exit 93
+fi
+`,
+		{ mode: 0o700 },
+	);
+	chmodSync(fakeDocker, 0o700);
+	try {
+		const command = buildWhatsAppSidecarContainerPreflightCommand(desiredServices);
+		const processHandle = Bun.spawn(["sh", "-c", command], {
+			env: { ...process.env, PATH: `${directory}:${process.env.PATH ?? ""}` },
+			stderr: "pipe",
+			stdout: "pipe",
+		});
+		const [exitCode, stderr] = await Promise.all([
+			processHandle.exited,
+			new Response(processHandle.stderr).text(),
+		]);
+		return { exitCode, stderr };
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
 }
 
 function withDeploymentFiles(

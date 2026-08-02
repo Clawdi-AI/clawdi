@@ -117,6 +117,12 @@ describe("sidecar config", () => {
 			expect(() =>
 				loadConfigFromEnv({ ...base, CLAWDI_WA_PROVIDER_INBOX_MAX_BYTES: "1.5" }),
 			).toThrow("must be an integer between 1");
+			expect(() => loadConfigFromEnv({ ...base, CLAWDI_WA_SIDECAR_HOST: "0.0.0.0" })).toThrow(
+				"must be 127.0.0.1, localhost, or ::1",
+			);
+			expect(() => loadConfigFromEnv({ ...base, CLAWDI_WA_SIDECAR_PORT: "8787x" })).toThrow(
+				"invalid CLAWDI_WA_SIDECAR_PORT",
+			);
 			expect(() =>
 				loadConfigFromEnv({ ...base, CLAWDI_WA_SIDECAR_TOKEN: "secret with spaces" }),
 			).toThrow("printable ASCII");

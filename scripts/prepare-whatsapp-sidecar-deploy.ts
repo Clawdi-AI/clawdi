@@ -24,6 +24,7 @@ type RegistryEntry = {
 export type SidecarDeployAccount = {
 	account_id: string;
 	accessory_name: string;
+	service_name: string;
 	socket_path: string;
 	token_secret_name: string;
 };
@@ -46,6 +47,7 @@ export function prepareWhatsAppSidecarDeploy(input: {
 			return {
 				account_id: accountId,
 				accessory_name: `whatsapp-baileys-${compactId}`,
+				service_name: `clawdi-whatsapp-baileys-${compactId}`,
 				socket_path: entry.unix_socket_path,
 				token_secret_name: `CLAWDI_WA_SIDECAR_TOKEN_${compactId.toUpperCase()}`,
 			} satisfies SidecarDeployAccount;

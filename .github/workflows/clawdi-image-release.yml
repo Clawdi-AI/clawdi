@@ -235,6 +235,9 @@ jobs:
         run: |
           gem install kamal -v '2.12.0' --no-document
           test "$(kamal version)" = "2.12.0"
+          whatsapp_preflight="$(bun run scripts/whatsapp-sidecar-container-preflight.ts)"
+          test -n "$whatsapp_preflight"
+          kamal server exec "$whatsapp_preflight"
           while IFS= read -r accessory; do
             test -n "$accessory"
             kamal accessory directories "$accessory"
@@ -252,9 +255,13 @@ jobs:
                test \"\$(stat -c '%u:%g:%a' '${run_path}')\" = '1000:1000:770'"
           done < <(jq -r '.accounts[].account_id' .kamal/whatsapp-sidecars.json)
           kamal deploy -P --version "${{ needs.build.outputs.image_tag }}"
-          while IFS= read -r accessory; do
+          while IFS=$'\t' read -r accessory service_name; do
             test -n "$accessory"
+            test -n "$service_name"
             kamal accessory reboot "$accessory"
+            kamal server exec \
+              "test \"\$(docker container inspect --format '{{.Config.Image}}' '${service_name}')\" = \
+               'ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar:${{ needs.build.outputs.image_tag }}'"
             ready=false
             for _attempt in $(seq 1 30); do
               if kamal accessory exec "$accessory" --reuse \
@@ -269,4 +276,4 @@ jobs:
               echo "WhatsApp sidecar failed readiness: $accessory" >&2
               exit 1
             fi
-          done < <(jq -r '.accounts[].accessory_name' .kamal/whatsapp-sidecars.json)
+          done < <(jq -r '.accounts[] | [.accessory_name, .service_name] | @tsv' .kamal/whatsapp-sidecars.json)

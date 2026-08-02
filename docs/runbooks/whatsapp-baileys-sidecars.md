@@ -43,10 +43,35 @@ than stretching the socket directory across a shared filesystem.
 
 Kamal documents that [accessories are managed separately, are not changed by
 `kamal deploy`, and have no zero-downtime deployment](https://kamal-deploy.org/docs/configuration/accessories/).
-The release workflow therefore runs `kamal deploy` first, then serially invokes
+Before creating directories or deploying the app, the release workflow reads
+the secret-free desired manifest and remotely inspects every running or stopped
+container with a Docker `service` label. It ignores unrelated services, but
+fails closed on a malformed, duplicate, or unexpected
+`clawdi-whatsapp-baileys-<32-lowercase-hex>` service. This includes the
+zero-account case. The preflight is read-only: it never stops or removes a
+container, prunes Docker resources, or changes an account directory. A newly
+added desired account may have no container yet; its later reconcile creates
+the first one. The generated Kamal config sets that service name explicitly;
+Kamal 2.12 derives the accessory container name from `service`
+([`configuration/accessory.rb` lines 26-28](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/configuration/accessory.rb#L26-L28))
+and places the same value in its reserved `service` label
+([lines 145-147](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/configuration/accessory.rb#L145-L147)).
+
+After the app deploy, the workflow serially invokes
 [`kamal accessory reboot`](https://kamal-deploy.org/docs/commands/accessory/)
-and an authenticated readiness probe for every configured account. Reboot is
-stop, remove-container, then boot; it never overlaps two physical owners. The
+and an authenticated readiness probe for every configured account. The exact
+Kamal 2.12 source implements reboot as prepare, pull, stop, remove-container,
+then boot ([`accessory.rb` lines 78-89](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/accessory.rb#L78-L89));
+its stop tolerates a nonzero Docker stop result
+([lines 108-123](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/accessory.rb#L108-L123)),
+then `remove_container` removes stopped containers through the exact accessory
+service-label filter
+([`commands/accessory.rb` lines 102-117](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/commands/accessory.rb#L102-L117)).
+Only after that removal does boot start the replacement, so there is no rolling
+socket collision or second physical owner. Because a failed stop is tolerated,
+the workflow then exact-inspects the resulting container's image reference and
+requires the intended full-SHA sidecar tag before authenticated readiness; a
+surviving older container cannot make the roll-forward look successful. The
 sidecar also acquires SQLite `WAL` + `EXCLUSIVE` locking before it removes a
 stale UDS. Repeated releases may cause a short account-by-account provider
 transport interruption, but cannot run two sockets.
@@ -129,12 +154,13 @@ gh variable set WHATSAPP_BAILEYS_HOST_ROOT --body '/absolute/encrypted/clawdi-wh
 
 Merge and release only after review. The exact-SHA workflow builds both the
 backend and `clawdi-whatsapp-baileys-sidecar` images. It materializes a
-secret-free account inventory, creates `<host-root>/<uuid>/{state,run}` before
-the app bind mounts are evaluated, verifies each host path is canonical and
-owned by `1000:1000` with exact `0700`/`0770` modes, deploys API/worker with the
-registry, and reboots each accessory serially. It does not call `kamal
-accessory remove`, so an app release or sidecar roll-forward cannot delete auth
-state.
+secret-free account inventory, proves through the read-only remote preflight
+that every existing Clawdi WhatsApp service label belongs to that manifest,
+then creates `<host-root>/<uuid>/{state,run}` before the app bind mounts are
+evaluated. It verifies each host path is canonical and owned by `1000:1000`
+with exact `0700`/`0770` modes, deploys API/worker with the registry, and reboots
+each accessory serially. It does not call `kamal accessory remove`, so an app
+release or sidecar roll-forward cannot delete auth state.
 
 Done: the release summary names both images at the same full SHA, and the
 WhatsApp accessory readiness loop exits 0.
@@ -186,9 +212,12 @@ Done: the sanitized response has `state == "connected"` and
 
 ## Health and readiness
 
-The image healthcheck calls `/v1/health` over the UDS with that account's
-bearer and verifies the returned account UUID. The release gate runs the same
-probe from the existing container:
+The production image healthcheck calls `/v1/health` over the configured UDS
+with that account's bearer and verifies the returned account UUID. For narrow
+backward compatibility it uses TCP only when no UDS is configured, and then
+accepts only the exact configured `127.0.0.1`, `localhost`, or `::1` host and a
+strict port in `1..65535`. UDS plus an explicit host or port fails closed. The
+release gate runs the same probe from the existing container:
 
 ```bash
 WHATSAPP_ACCESSORY="whatsapp-baileys-${WHATSAPP_ACCOUNT_ID//-/}"
@@ -280,11 +309,61 @@ accessory reboot "$WHATSAPP_ACCESSORY"`. Both paths preserve the absolute host
 state directory. If the old image rejects state provenance, restore a compatible
 encrypted backup rather than editing metadata.
 
-Removing an account is a deliberate two-release operation: while it is still
-present in the registry, confirm physical logout/archive through the canonical
-admin API and stop its accessory; only then remove the registry entry. Retain
-the encrypted state backup according to policy. Automatic deployment never
-deletes an omitted account's host directory.
+Retire one account deliberately while its entry is still in the registry. Do
+not remove the registry entry first: an omitted but still-running or stopped
+container is unexpected and the next release will abort without touching it.
+
+1. From a deployment checkout where the materializer has generated the current
+   `.kamal/whatsapp-sidecars.json`, validate the canonical UUID, derive names
+   only from it, and run the same read-only preflight against that desired
+   manifest:
+
+   ```bash
+   [[ "$WHATSAPP_ACCOUNT_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+   WHATSAPP_ACCESSORY="whatsapp-baileys-${WHATSAPP_ACCOUNT_ID//-/}"
+   WHATSAPP_SERVICE="clawdi-${WHATSAPP_ACCESSORY}"
+   kamal server exec "$(bun run scripts/whatsapp-sidecar-container-preflight.ts)"
+   ```
+
+2. Archive through the canonical admin endpoint while the registry can still
+   authenticate to that sidecar. The endpoint first requires physical WhatsApp
+   logout and fails without archiving if logout cannot be confirmed:
+
+   ```bash
+   curl --fail-with-body --silent --show-error \
+     -X DELETE "https://cloud-api.clawdi.ai/v1/admin/channels/$WHATSAPP_ACCOUNT_ID" \
+     -H "X-Admin-Key: $ADMIN_API_KEY"
+   ```
+
+   Done: the response is HTTP 204 and a subsequent admin read reports a non-null
+   `archived_at`.
+
+3. Stop the still-configured accessory, remove only its stopped container, and
+   prove its exact service label is absent:
+
+   ```bash
+   kamal accessory stop "$WHATSAPP_ACCESSORY"
+   kamal accessory remove_container "$WHATSAPP_ACCESSORY"
+   kamal server exec \
+     "test -z \"\$(docker container ls --all --quiet --filter 'label=service=$WHATSAPP_SERVICE')\""
+   ```
+
+   Kamal 2.12 `remove_container` uses the service-label-filtered stopped-container
+   prune cited above. It does not invoke `remove_service_directory`; by contrast,
+   [`kamal accessory remove`](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/accessory.rb#L235-L282)
+   also removes the image and service data directory and must not be used here.
+
+4. Only now remove this UUID's entry from
+   `CHANNEL_WHATSAPP_BAILEYS_SIDECARS_JSON`, preserving all other entries and
+   their bearers. Retain the encrypted state backup and the account's host
+   `state/` directory according to policy; do not delete or repurpose either.
+5. Release the exact intended SHA. Before `kamal deploy`, the zero/N-account
+   preflight must again prove that no unexpected container exists. Do not run a
+   release between step 3 and removing the registry entry, because a still-
+   desired accessory would be reconciled and booted again.
+
+Automatic deployment never logs out accounts, retires containers, or deletes
+an omitted account's host directory.
 
 Done: the selected image SHA passes authenticated health, and the host state
 directory still exists with the same account-bound database.
