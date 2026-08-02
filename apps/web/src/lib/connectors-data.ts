@@ -38,6 +38,13 @@ type ConnectedAppMetadataPlan = {
 	missingNames: string[];
 };
 
+export function limitConnectedAppMetadataNames(
+	names: readonly string[],
+	limit?: number,
+): readonly string[] {
+	return limit === undefined ? names : names.slice(0, Math.max(0, limit));
+}
+
 export function resolveConnectedAppMetadataPlan(
 	names: readonly string[],
 	catalog?: ConnectedAppCatalogSnapshot,
@@ -209,12 +216,13 @@ export function useDisconnect() {
  * searching.
  *
  * Fan-out: one `/available/{name}` query per unique active app not
- * covered by a supplied catalog snapshot. Other callers keep the
- * existing detail-query behavior when no snapshot is supplied.
+ * covered by a supplied catalog snapshot. Callers can cap metadata
+ * resolution for compact previews without changing the full connection
+ * count; the default preserves the existing unbounded behavior.
  */
 export function useConnectedAppCards(
 	catalog?: ConnectedAppCatalogSnapshot,
-	{ enabled = true }: { enabled?: boolean } = {},
+	{ enabled = true, limit }: { enabled?: boolean; limit?: number } = {},
 ) {
 	const connectionsQ = useConnections({ enabled });
 	const api = useOpenApi();
@@ -235,9 +243,10 @@ export function useConnectedAppCards(
 		() => Array.from(new Set(activeConnections.flatMap((c) => (c.app_name ? [c.app_name] : [])))),
 		[activeConnections],
 	);
+	const metadataNames = useMemo(() => limitConnectedAppMetadataNames(names, limit), [names, limit]);
 	const metadataPlan = useMemo(
-		() => resolveConnectedAppMetadataPlan(names, catalog),
-		[names, catalog?.apps, catalog?.error, catalog?.isLoading],
+		() => resolveConnectedAppMetadataPlan(metadataNames, catalog),
+		[metadataNames, catalog?.apps, catalog?.error, catalog?.isLoading],
 	);
 
 	const lookup = useQueries({
@@ -252,12 +261,14 @@ export function useConnectedAppCards(
 		for (const query of lookup) {
 			if (query.data) byName.set(query.data.name, query.data);
 		}
-		return names.flatMap((name) => {
+		return metadataNames.flatMap((name) => {
 			const app = byName.get(name);
 			return app ? [app] : [];
 		});
-	}, [lookup, metadataPlan.catalogApps, names]);
-	const waitingForCatalog = Boolean(catalog?.isLoading && !catalog.apps && names.length > 0);
+	}, [lookup, metadataPlan.catalogApps, metadataNames]);
+	const waitingForCatalog = Boolean(
+		catalog?.isLoading && !catalog.apps && metadataNames.length > 0,
+	);
 	const isLoading = connectionsQ.isLoading || waitingForCatalog || lookup.some((q) => q.isLoading);
 	const connectionsLoading = connectionsQ.isLoading;
 	const metadataLoading = waitingForCatalog || lookup.some((q) => q.isLoading);

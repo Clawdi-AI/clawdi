@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, CircleCheck, type LucideIcon, RefreshCw } from "lucide-react";
+import { ArrowRight, type LucideIcon, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { IconChip } from "@/components/icon-chip";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,8 @@ export type AgentOverviewModuleContent = {
 	description: ReactNode;
 	body?: ReactNode;
 };
+
+export const OVERVIEW_IDENTITY_RAIL_LIMIT = 4;
 
 export function AgentOverviewStatusCard({
 	agentId,
@@ -177,23 +179,8 @@ export function OverviewIdentityIconRail({
 	);
 }
 
-export function OverviewIdentityIconItem({
-	connected = false,
-	children,
-}: {
-	connected?: boolean;
-	children: ReactNode;
-}) {
-	return (
-		<li className="relative w-fit">
-			{children}
-			{connected ? (
-				<span className="pointer-events-none absolute -right-1 -bottom-1 rounded-full bg-background text-primary">
-					<CircleCheck className="size-4 fill-background" aria-hidden="true" />
-				</span>
-			) : null}
-		</li>
-	);
+export function OverviewIdentityIconItem({ children }: { children: ReactNode }) {
+	return <li className="w-fit">{children}</li>;
 }
 
 export function AgentOverviewCapabilities({
@@ -238,7 +225,7 @@ export function AgentOverviewCapabilities({
 									role="article"
 									key={module.id}
 									data-overview-module={module.id}
-									className="h-full min-h-32 min-w-0 gap-0 py-0"
+									className="h-full min-h-28 min-w-0 gap-0 py-0"
 								>
 									<CardHeader className="p-0">
 										<Link

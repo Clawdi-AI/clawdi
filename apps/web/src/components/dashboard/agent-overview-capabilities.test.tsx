@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+	OverviewIdentityIconItem,
 	OverviewMetadata,
 	OverviewResourceDetails,
 } from "@/components/dashboard/agent-overview-capabilities";
@@ -44,6 +45,17 @@ describe("overview resource details", () => {
 		const empty = renderToStaticMarkup(createElement(OverviewResourceDetails, { items: [] }));
 
 		expect(empty).not.toContain('data-testid="overview-resource-badges"');
+	});
+});
+
+describe("overview identity rail item", () => {
+	test("renders content without a connected adornment", () => {
+		const markup = renderToStaticMarkup(
+			createElement(OverviewIdentityIconItem, null, createElement("span", null, "GitHub")),
+		);
+
+		expect(markup).toBe('<li class="w-fit"><span>GitHub</span></li>');
+		expect(markup).not.toContain("circle-check");
 	});
 });
 
