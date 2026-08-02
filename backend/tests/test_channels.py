@@ -17217,7 +17217,13 @@ async def test_discord_reserved_command_version_waits_for_global_and_guild_succe
         ([({"id": "223456789012345678"}, 200)], 409),
         (
             [
-                ({"id": DISCORD_TEST_APPLICATION_ID}, 200),
+                (
+                    {
+                        "id": DISCORD_TEST_APPLICATION_ID,
+                        "flags": channel_service.DISCORD_GATEWAY_MESSAGE_CONTENT_LIMITED_FLAG,
+                    },
+                    200,
+                ),
                 ({"message": "invalid interactions endpoint"}, 400),
             ],
             502,
