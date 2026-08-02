@@ -110,8 +110,22 @@ async def _close_on_oauth_access_expiry(
         await sleep(min(remaining, HEARTBEAT_INTERVAL_S))
 
 
+async def _cancel_and_wait(*tasks: asyncio.Task[object]) -> None:
+    """Cancel and collect every child before surfacing the first failure."""
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    for task in tasks:
+        if task.cancelled():
+            continue
+        failure = task.exception()
+        if failure is not None:
+            raise failure
+
+
 async def _stream(
-    queue: asyncio.Queue[dict],
+    queue: sync_events.SyncEventQueue,
     request: Request,
     revoked: asyncio.Event,
 ) -> AsyncIterator[bytes]:
@@ -142,10 +156,7 @@ async def _stream(
             # asyncio later reports "Task was destroyed but it is pending".
             # Own both child tasks on every exit, including generator
             # cancellation and server shutdown.
-            for task in child_tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*child_tasks, return_exceptions=True)
+            await _cancel_and_wait(*child_tasks)
         if revoked_task in done or revoked.is_set():
             return
         if event_task not in done:
@@ -306,10 +317,15 @@ async def events(
                 log.warning("sync events: project refresh failed user=%s: %s", user_id, e)
                 continue
             if fresh != subscriber.visible_project_ids:
+                old_visible_count = (
+                    0
+                    if subscriber.visible_project_ids is None
+                    else len(subscriber.visible_project_ids)
+                )
                 log.info(
                     "sync events: project filter updated user=%s old=%d new=%d",
                     user_id,
-                    len(subscriber.visible_project_ids or set()),
+                    old_visible_count,
                     len(fresh),
                 )
                 subscriber.visible_project_ids = fresh
@@ -321,22 +337,15 @@ async def events(
             async for chunk in _stream(queue, request, revoked):
                 yield chunk
         finally:
-            refresh_task.cancel()
-            expiry_task.cancel()
             try:
-                await refresh_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            try:
-                await expiry_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            sync_events.unsubscribe(user_id, queue)
-            log.info(
-                "sync events: unsubscribed user=%s remaining=%s",
-                user_id,
-                sync_events.connection_count(user_id),
-            )
+                await _cancel_and_wait(refresh_task, expiry_task)
+            finally:
+                sync_events.unsubscribe(user_id, queue)
+                log.info(
+                    "sync events: unsubscribed user=%s remaining=%s",
+                    user_id,
+                    sync_events.connection_count(user_id),
+                )
 
     # `text/event-stream` is the SSE content type. `X-Accel-Buffering:
     # no` disables nginx response buffering on the off chance an

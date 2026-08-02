@@ -293,7 +293,7 @@ def validate_codex_oauth_provider_shape(provider: AiProvider | object) -> None:
         or base_url.rstrip("/") != CODEX_OPENAI_BASE_URL
     ):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "ChatGPT sign-in requires the canonical OpenAI Responses provider",
         )
 
@@ -1187,7 +1187,7 @@ def decode_oauth_state(state_value: str) -> dict:
 def validate_oauth_url(value: str, label: str) -> None:
     parsed = urlparse(value)
     if parsed.scheme != "https" or not parsed.netloc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"{label} must be an https URL")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"{label} must be an https URL")
 
 
 def validate_redirect_uri(value: str) -> None:
@@ -1203,7 +1203,7 @@ def validate_redirect_uri(value: str) -> None:
     ):
         return
     raise HTTPException(
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
         "redirect_uri must be https or loopback http",
     )
 

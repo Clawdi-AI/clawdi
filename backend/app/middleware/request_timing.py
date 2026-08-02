@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 import re
 import time
-from typing import cast
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -35,8 +34,10 @@ class RequestTimingMiddleware:
             return
 
         started = time.perf_counter()
-        method = cast(str, scope.get("method", "GET"))
-        raw_path = cast(str, scope.get("path", ""))
+        raw_method: object = scope.get("method", "GET")
+        method = raw_method if isinstance(raw_method, str) else "GET"
+        raw_path_value: object = scope.get("path", "")
+        raw_path = raw_path_value if isinstance(raw_path_value, str) else ""
         path = _log_safe_path(raw_path)
         status_code = 500
 
@@ -113,9 +114,10 @@ def _is_expected_long_request(path: str) -> bool:
 
 
 def _request_id(scope: Scope) -> str:
-    state = scope.get("state")
-    if isinstance(state, dict):
-        value = state.get("request_id")
-        if isinstance(value, str) and value:
+    state: object = scope.get("state")
+    match state:
+        case {"request_id": str(value)} if value:
             return value
+        case _:
+            pass
     return "-"

@@ -6,6 +6,7 @@ import io
 import re
 import tarfile
 from pathlib import Path, PurePosixPath
+from typing import TypeGuard
 
 MAX_FILES = 5000
 # Hard cap on TOTAL members (files + dirs + everything else). Without
@@ -36,6 +37,11 @@ class TarValidationError(ValueError):
 
 class SkillTextValidationError(ValueError):
     """Raised when SKILL.md text cannot be stored safely."""
+
+
+def _is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
+    """Narrow an untyped parser result after checking its runtime container."""
+    return isinstance(value, dict)
 
 
 def validate_tar(data: bytes) -> int:
@@ -185,11 +191,11 @@ def parse_frontmatter(content: str) -> dict[str, str]:
         return {}
 
     try:
-        loaded = yaml.safe_load(raw)
+        loaded: object = yaml.safe_load(raw)
     except yaml.YAMLError:
         return {}
 
-    if not isinstance(loaded, dict):
+    if not _is_object_dict(loaded):
         return {}
 
     # Per-key truncation caps. Anything not listed here gets a

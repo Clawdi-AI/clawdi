@@ -233,7 +233,7 @@ async def upsert_ai_provider(
         body = body.model_copy(update={"provider_id": V2_MANAGED_AI_PROVIDER_ID})
     errors = _validate_provider(body)
     if errors:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": errors})
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, {"errors": errors})
     await lock_ai_provider_owner(db, auth.user_id)
     await _validate_hosted_consumer_endpoint(
         db,
@@ -666,12 +666,12 @@ async def patch_ai_provider(
     update = {field: getattr(body, field) for field in body.model_fields_set}
     null_errors = _validate_patch_nulls(update)
     if null_errors:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": null_errors})
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, {"errors": null_errors})
     for key, value in update.items():
         setattr(merged, key, value)
     errors = _validate_provider(merged)
     if errors:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": errors})
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, {"errors": errors})
     await _validate_hosted_consumer_endpoint(
         db,
         owner_user_id=auth.user_id,
@@ -758,7 +758,7 @@ async def set_ai_provider_api_key(
     profile = "default"
     runtime_env_name = body.runtime_env_name
     if runtime_env_name is not None and not _is_runtime_env_name(runtime_env_name):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid runtime_env_name")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid runtime_env_name")
     proposed_runtime_env_name = runtime_env_name or provider.runtime_env_name
     await _validate_runtime_env_name_unique(
         db,
@@ -805,7 +805,7 @@ async def import_ai_provider_auth(
     profile = _normalize_profile(auth_import.profile)
     if auth_import.type == "oauth_profile":
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "oauth_profile import is not supported; use Codex OAuth connect",
         )
     tool = _normalize_profile(auth_import.tool)
@@ -1086,7 +1086,7 @@ async def _accept_ai_provider(
     oauth_provider = _validate_ai_provider_accept_contract(provider_body, body.credential)
     errors = _validate_provider(provider_body)
     if errors:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": errors})
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, {"errors": errors})
 
     await lock_ai_provider_owner(db, auth.user_id)
     await _validate_hosted_consumer_endpoint(
@@ -1211,7 +1211,7 @@ def _validate_ai_provider_accept_contract(
     if isinstance(credential, AiProviderApiKeyAcceptCredential):
         if provider.auth.type != "api_key" or provider.auth.source != "managed":
             raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
                 "API-key accept requires managed api_key provider auth",
             )
         return None
@@ -1224,7 +1224,7 @@ def _validate_ai_provider_accept_contract(
         or provider.auth.profile != "default"
     ):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "OAuth accept requires the default Codex agent profile",
         )
     return oauth_provider
@@ -1417,7 +1417,7 @@ def _oauth_authorization_code_redirect_uri(
             or parsed.password is not None
         ):
             raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
                 "the official Codex OAuth client only supports a loopback http redirect_uri",
             )
         return requested
@@ -1426,7 +1426,7 @@ def _oauth_authorization_code_redirect_uri(
     _validate_redirect_uri(registered)
     if requested is not None and not secrets.compare_digest(requested, registered):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "redirect_uri must match the server-registered OAuth callback",
         )
     return registered
@@ -1447,7 +1447,7 @@ async def _validate_hosted_consumer_endpoint(
         provider_id=provider_id,
     ):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "Hosted AI Provider base_url must be a public HTTPS URL",
         )
 
@@ -1915,7 +1915,7 @@ def _validate_supported_agent_profile_tool(tool: str) -> None:
     if tool in SUPPORTED_AGENT_PROFILE_TOOLS:
         return
     raise HTTPException(
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
         "AI Provider auth profiles currently support Codex only",
     )
 
@@ -1924,7 +1924,7 @@ def _validate_supported_oauth_provider(oauth_provider: str) -> None:
     if oauth_provider in SUPPORTED_OAUTH_PROVIDERS:
         return
     raise HTTPException(
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
         "AI Provider OAuth currently supports Codex only",
     )
 
@@ -1991,7 +1991,7 @@ def _active_auth_profile(provider: AiProvider) -> str | None:
 def _normalize_profile(input: str) -> str:
     profile = input.strip().lower()
     if not re.fullmatch(r"[a-z][a-z0-9._-]{0,119}", profile):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid profile")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid profile")
     return profile
 
 
