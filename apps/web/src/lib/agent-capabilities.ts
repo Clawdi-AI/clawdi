@@ -50,7 +50,7 @@ const AGENT_OVERVIEW_GROUPS = {
 		},
 		{
 			id: "operate",
-			label: "Operate",
+			label: "Tools",
 			columns: 2,
 			modules: [
 				{ id: "model-provider", section: "ai", size: "standard" },

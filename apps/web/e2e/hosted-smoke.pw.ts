@@ -2711,7 +2711,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 
 	const overview = page.locator('[data-agent-overview="hosted"]');
 	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
-	await expect(overview.getByRole("heading", { name: "Operate", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Tools", exact: true })).toBeVisible();
 	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="projects"]')).not.toHaveClass(
 		/md:col-span-2/,
@@ -2935,7 +2935,7 @@ test("hosted provisioning stays focused on Compute", async ({ page }, testInfo) 
 	await expect(main.locator('[data-agent-overview="hosted"]')).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Open Agent Interface" })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Resources", exact: true })).toHaveCount(0);
-	await expect(main.getByRole("heading", { name: "Operate", exact: true })).toHaveCount(0);
+	await expect(main.getByRole("heading", { name: "Tools", exact: true })).toHaveCount(0);
 	await expect(main.locator('[data-overview-module="sessions"]')).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1000 });
 	await page.screenshot({
@@ -2963,7 +2963,7 @@ test("hosted unavailable status stays inside Compute", async ({ page }, testInfo
 	const overview = main.locator('[data-agent-overview="hosted"]');
 	const compute = main.locator('[data-overview-status="compute"]');
 	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
-	await expect(overview.getByRole("heading", { name: "Operate", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Tools", exact: true })).toBeVisible();
 	await expect(compute).toContainText("Status unavailable");
 	await expect(compute).toContainText("Clawdi cannot confirm the current compute status.");
 	await expect(compute.getByRole("button", { name: "Check again", exact: true })).toBeVisible();

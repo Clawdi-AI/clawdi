@@ -385,7 +385,7 @@ const AGENT_NAVIGATION_GROUPS = [
 	},
 	{
 		id: "operate",
-		label: "Operate",
+		label: "Tools",
 		itemIds: ["console", "terminal", "channels", "ai"],
 		separated: false,
 	},

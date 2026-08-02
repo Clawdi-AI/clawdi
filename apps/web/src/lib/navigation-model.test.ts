@@ -159,7 +159,7 @@ describe("sidebar navigation model", () => {
 			},
 			{
 				id: "operate",
-				label: "Operate",
+				label: "Tools",
 				separated: false,
 				items: [
 					{ id: "console", label: "Agent Interface" },
@@ -175,7 +175,7 @@ describe("sidebar navigation model", () => {
 				items: [{ id: "settings", label: "Settings" }],
 			},
 		]);
-		expectSingleResourcesHeading(hostedGroups, ["Resources", "Operate"]);
+		expectSingleResourcesHeading(hostedGroups, ["Resources", "Tools"]);
 
 		expect(CONNECTED_AGENT_SECTION_IDS).toEqual([
 			"overview",
