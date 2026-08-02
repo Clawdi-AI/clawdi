@@ -46,6 +46,21 @@ function SessionCardSkeleton({ testId }: { testId?: string }) {
 	);
 }
 
+export function OverviewSessionListSkeleton() {
+	return (
+		<div
+			data-testid="overview-session-grid"
+			className="grid gap-2"
+			aria-label="Loading recent sessions"
+			role="status"
+		>
+			{Array.from({ length: 3 }).map((_, index) => (
+				<SessionCardSkeleton key={index} testId="overview-session-skeleton-row" />
+			))}
+		</div>
+	);
+}
+
 export function OverviewSessionList({
 	sessions,
 	isLoading,
@@ -58,18 +73,7 @@ export function OverviewSessionList({
 	sessionLink: (session: SessionListItem) => SessionLinkOptions;
 }) {
 	if (isLoading) {
-		return (
-			<div
-				data-testid="overview-session-grid"
-				className="grid gap-2"
-				aria-label="Loading recent sessions"
-				role="status"
-			>
-				{Array.from({ length: 3 }).map((_, index) => (
-					<SessionCardSkeleton key={index} testId="overview-session-skeleton-row" />
-				))}
-			</div>
-		);
+		return <OverviewSessionListSkeleton />;
 	}
 	const visibleSessions = sessions.slice(0, 3);
 	const placeholderCount = 3 - visibleSessions.length;

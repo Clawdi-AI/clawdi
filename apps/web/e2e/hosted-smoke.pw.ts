@@ -3241,8 +3241,9 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	}
 	const moduleHeights = [...resourceGeometry, ...toolGeometry].map((box) => box.height);
 	expect(Math.max(...moduleHeights) - Math.min(...moduleHeights)).toBeLessThanOrEqual(2);
-	expect(new Set(moduleHeights.map((height) => Math.round(height)))).toEqual(new Set([73]));
-	expect(Math.max(...moduleHeights)).toBeLessThan(80);
+	for (const height of moduleHeights) {
+		expect(Math.abs(height - (sessionBoxes[0]?.height ?? 0))).toBeLessThanOrEqual(2);
+	}
 	expect((toolGeometry[1]?.x ?? 0) + (toolGeometry[1]?.width ?? 0)).toBeLessThan(
 		(resourceGeometry[2]?.x ?? 0) + 1,
 	);
@@ -3497,6 +3498,47 @@ test("hosted projection loading uses module skeletons", async ({ page }, testInf
 	await page.setViewportSize({ width: 1280, height: 1600 });
 	await page.screenshot({
 		path: testInfo.outputPath("hosted-agent-overview-loading.png"),
+		fullPage: true,
+	});
+});
+
+test("hosted inventory loading skeleton matches the compact overview geometry", async ({
+	page,
+}, testInfo) => {
+	await stubHostedApi(page, {
+		deploymentsResponse: {
+			body: [railHostedDeployment],
+			status: 200,
+			delayMs: 5_000,
+		},
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+
+	const skeleton = page.locator("[data-agent-detail-skeleton]");
+	await expect(skeleton).toBeVisible();
+	await expect(skeleton.locator("[data-overview-module-skeleton]")).toHaveCount(7);
+	await expect(skeleton.getByTestId("overview-session-skeleton-row")).toHaveCount(3);
+	const moduleBoxes = await skeleton
+		.locator("[data-overview-module-skeleton]")
+		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
+	expect(
+		Math.max(...moduleBoxes.map((box) => box.height)) -
+			Math.min(...moduleBoxes.map((box) => box.height)),
+	).toBeLessThanOrEqual(2);
+	const sessionsBox = await skeleton.getByTestId("overview-session-grid").boundingBox();
+	const statusBox = await skeleton.getByTestId("overview-status-card-skeleton").boundingBox();
+	const sessionRowBox = await skeleton
+		.getByTestId("overview-session-skeleton-row")
+		.first()
+		.boundingBox();
+	for (const box of moduleBoxes) {
+		expect(Math.abs(box.height - (sessionRowBox?.height ?? 0))).toBeLessThanOrEqual(2);
+	}
+	expect(Math.abs((sessionsBox?.height ?? 0) - (statusBox?.height ?? 0))).toBeLessThanOrEqual(2);
+	await page.screenshot({
+		path: testInfo.outputPath("hosted-agent-overview-initial-skeleton.png"),
 		fullPage: true,
 	});
 });

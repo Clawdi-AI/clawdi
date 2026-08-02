@@ -962,8 +962,9 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		Math.max(...resourceGeometry.map((box) => box.height)) -
 			Math.min(...resourceGeometry.map((box) => box.height)),
 	).toBeLessThanOrEqual(2);
-	expect(new Set(resourceGeometry.map((box) => Math.round(box.height)))).toEqual(new Set([73]));
-	expect(Math.max(...resourceGeometry.map((box) => box.height))).toBeLessThan(80);
+	for (const box of resourceGeometry) {
+		expect(Math.abs(box.height - (sessionBoxes[0]?.height ?? 0))).toBeLessThanOrEqual(2);
+	}
 	expect(
 		await resourceGrid
 			.locator("[data-overview-module]")

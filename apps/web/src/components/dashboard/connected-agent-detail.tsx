@@ -12,6 +12,7 @@ import {
 } from "@/components/dashboard/agent-label";
 import {
 	AgentOverviewCapabilities,
+	AgentOverviewCapabilitiesSkeleton,
 	AgentOverviewStatusCard,
 	OverviewMetadata,
 	OverviewModuleError,
@@ -34,8 +35,13 @@ import { DetailNotFound } from "@/components/detail/layout";
 import { MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { OverviewSessionList, SessionFeed } from "@/components/sessions/session-feed";
+import {
+	OverviewSessionList,
+	OverviewSessionListSkeleton,
+	SessionFeed,
+} from "@/components/sessions/session-feed";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusDot } from "@/components/ui/status-badge";
 import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
@@ -189,7 +195,7 @@ export function ConnectedAgentDetail({
 					/>
 				)
 			) : isLoading ? (
-				<AgentDetailContentSkeleton />
+				<AgentDetailContentSkeleton variant="connected" />
 			) : agent ? (
 				<section className="flex flex-col gap-4">
 					<PageHeader
@@ -353,39 +359,55 @@ export function ConnectedAgentDetailSkeleton({ hosted = false }: { hosted?: bool
 			data-hosted={hosted ? "true" : undefined}
 			className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}
 		>
-			<AgentDetailContentSkeleton />
+			<AgentDetailContentSkeleton variant={hosted ? "hosted" : "connected"} />
 		</div>
 	);
 }
 
-function AgentDetailContentSkeleton() {
+function AgentDetailContentSkeleton({ variant }: { variant: "connected" | "hosted" }) {
 	return (
-		<section className="flex flex-col gap-8">
-			<div className="flex flex-col gap-2">
-				<div className="flex items-center gap-2">
+		<section className="flex flex-col gap-8" data-agent-detail-skeleton>
+			<div className="flex flex-wrap items-start justify-between gap-4">
+				<div className="flex items-center gap-3">
 					<Skeleton className="size-4 rounded-sm" />
-					<Skeleton className="h-5 w-28" />
+					<Skeleton className="h-7 w-28" />
+					{variant === "hosted" ? <Skeleton className="h-5 w-14 rounded-full" /> : null}
 				</div>
+				{variant === "hosted" ? <Skeleton className="h-9 w-48 rounded-md" /> : null}
 			</div>
-			<div>
-				<Skeleton className="mb-3 h-4 w-28" />
-				<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
-					<div className="grid min-h-52 gap-2">
-						{Array.from({ length: 3 }).map((_, index) => (
-							<Skeleton key={index} className="h-11 rounded-lg" />
-						))}
+			<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
+				<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
+					<div className="flex items-center justify-between">
+						<Skeleton className="h-5 w-28" />
+						<Skeleton className="h-8 w-20" />
 					</div>
-					<Skeleton className="min-h-52 rounded-lg" />
+					<OverviewSessionListSkeleton />
+				</div>
+				<div className="@3xl/main:row-start-2">
+					<Card
+						size="sm"
+						className="h-full gap-0 bg-muted/20 py-0"
+						aria-hidden="true"
+						data-testid="overview-status-card-skeleton"
+					>
+						<CardHeader className="p-0">
+							<div className="flex items-center gap-3 px-4 py-3">
+								<Skeleton className="size-8 shrink-0 rounded-lg" />
+								<div className="min-w-0 flex-1">
+									<Skeleton className="h-5 w-20" />
+									<Skeleton className="h-5 w-16" />
+								</div>
+								<Skeleton className="size-4 shrink-0" />
+							</div>
+						</CardHeader>
+						<CardContent className="flex flex-1 flex-col justify-end gap-2 px-4 pb-4">
+							<Skeleton className="h-4 w-full" />
+							<Skeleton className="h-4 w-3/4" />
+						</CardContent>
+					</Card>
 				</div>
 			</div>
-			<div>
-				<Skeleton className="mb-3 h-4 w-20" />
-				<div className="grid gap-3 @2xl/main:grid-cols-2 @4xl/main:grid-cols-3">
-					{Array.from({ length: 5 }).map((_, index) => (
-						<Skeleton key={index} className="h-40 rounded-xl" />
-					))}
-				</div>
-			</div>
+			<AgentOverviewCapabilitiesSkeleton variant={variant} />
 		</section>
 	);
 }
