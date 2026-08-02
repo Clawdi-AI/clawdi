@@ -303,3 +303,67 @@ uses Python `logging` with `logging.basicConfig(level=logging.INFO)` in
 `RequestTimingMiddleware` adds `X-Process-Time-Ms` to HTTP responses. Requests
 at or above `SLOW_REQUEST_LOG_MS` log as `request_slow`; 5xx responses log as
 `request_error`, and uncaught exceptions log as `request_failed`.
+
+## Channel queue retention
+
+The channels worker drains retention hourly in independently committed batches.
+`CHANNEL_MESSAGE_CLEANUP_BATCH_SIZE` bounds each record kind per transaction and
+`CHANNEL_MESSAGE_CLEANUP_MAX_BATCHES` bounds one run. PostgreSQL row locks with
+`SKIP LOCKED` let overlapping cleaners divide eligible rows without deleting
+pending work or waiting on one another.
+
+Retention ownership is deliberately narrow:
+
+| State | Retention rule |
+| --- | --- |
+| Accounts, links, secrets, bindings, aliases, credentials | Durable product and authorization state; owner lifecycle controls deletion. |
+| Messages and deliveries | Bound pending inbox and pending outbox rows are durable and are never time-pruned. Delivered inbound, terminal Telegram/Discord outbound, and old unbound inbound rows use the configured message horizons; delivery rows cascade with their message. |
+| Debug events | Telegram/Discord operational history uses the delivered-message horizon. |
+| Pair codes | Claimed/revoked codes and long-expired pending codes use the short unbound-message horizon (24 hours by default). Live codes are preserved. |
+| Agent references | Active Telegram file/message authorization stays durable. Discord interaction-token references expire after 20 minutes; references without an active link otherwise use the delivered-message horizon. |
+| Scheduled messages | Durable pending product work; the generic retention worker does not delete it. |
+
+Telegram documents that upstream updates are not kept longer than 24 hours,
+but Clawdi does not silently apply that limit to the shared bound inbox. Discord
+does not have the same coordinated drop contract, and the current schema has no
+terminal drop outcome. Instead, the worker exports provider-specific pending
+age/count metrics and logs a warning after
+`CHANNEL_MESSAGE_STUCK_PENDING_HOURS` (24 hours by default). Alert when
+`msg_router_channel_queue_stuck_pending` is non-zero or when
+`msg_router_channel_retention_budget_exhaustions_total` increases. The worker's
+existing `/health` readiness contract is unchanged; its process-local `/metrics`
+surface exposes these gauges and counters.
+
+Queue gauges include only currently deliverable authority: the Account, Link,
+and Binding must be active, unarchived, and identity-consistent. Historical rows
+under retired authority do not create false stuck alerts. Account-scoped pending
+outbound rows remain visible when they do not require a Link.
+
+Message text and non-secret provider JSON are not scrubbed ahead of row
+retention. Text is active channel activity history, pending Telegram replay
+needs the provider payload, and Telegram/Discord tutorial cooldowns read
+delivered payload markers. The narrow exception is Discord interaction
+credentials: Discord documents a 15-minute token lifetime, so after a five-minute
+safety margin the worker deletes the corresponding Agent references and removes
+only the root interaction `token` or `INTERACTION_CREATE` `d.token` field. The
+remaining message/content/context and dedupe tombstone stay intact, including
+for pending rows. The hourly worker removes eligible secrets on its next sweep;
+`msg_router_channel_retention_secret_scrubs_total` records completed scrubs and
+the retention-budget metric exposes a backlog that outlives the per-run bound.
+
+Retention selects use dedicated partial/composite indexes for their fixed
+provider/state predicates and oldest-first columns. The indexes are created
+concurrently so migration does not block live channel writes.
+
+Protocol references:
+
+- [Telegram `getUpdates`](https://core.telegram.org/bots/api#getupdates)
+- [Discord interaction responses](https://docs.discord.com/developers/interactions/receiving-and-responding)
+- [PostgreSQL locking clause](https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE)
+- [SQLAlchemy `with_for_update`](https://docs.sqlalchemy.org/en/20/core/selectable.html#sqlalchemy.sql.expression.Select.with_for_update)
+
+The channels-worker role is non-proxied. Port 8000 is the worker process-local
+health/metrics listener, not an externally routed API endpoint. When running
+that process directly, or from inside its container/network namespace,
+`curl -fsS http://127.0.0.1:8000/metrics | rg 'msg_router_channel_(queue|retention)'`
+prints the queue and retention metric families.

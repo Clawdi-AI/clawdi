@@ -146,3 +146,33 @@ def test_runtime_observation_hard_retention_cannot_precede_replay_horizon():
             runtime_observation_replay_horizon_days=8,
             runtime_observation_hard_retention_days=7,
         )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "channel_message_retention_days",
+        "channel_unbound_message_retention_hours",
+        "channel_message_cleanup_batch_size",
+        "channel_message_cleanup_max_batches",
+        "channel_message_stuck_pending_hours",
+    ],
+)
+def test_channel_retention_settings_require_positive_bounds(field: str):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, **{field: 0})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("channel_message_retention_days", 3_651),
+        ("channel_unbound_message_retention_hours", 87_601),
+        ("channel_message_cleanup_batch_size", 10_001),
+        ("channel_message_cleanup_max_batches", 1_001),
+        ("channel_message_stuck_pending_hours", 8_761),
+    ],
+)
+def test_channel_retention_settings_reject_unbounded_work(field: str, value: int):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, **{field: value})
