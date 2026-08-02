@@ -310,6 +310,21 @@ no `bot` scope, and carries no bot permission bitfield. The native Gateway
 default (`46593`) separately enables Guilds, Guild Messages, Guild Message
 Reactions, Direct Messages, Direct Message Reactions, and Message Content. It
 does not enable Guild Members, Presences, moderation, or voice intents.
+Discord account preparation verifies that the application flags contain either
+the approved or limited Message Content capability before configuring installs.
+If the owner has not enabled that privileged intent, preparation stops with an
+actionable configuration error; Clawdi does not try to mutate privileged-intent
+Portal settings.
+
+Hermes' upstream Discord client also asks for Voice States, but the managed
+Clawdi Gateway is the event authority and intentionally ignores the downstream
+IDENTIFY intent selection. Managed Discord voice is not enabled: the install
+does not grant Connect, Speak, or Send Voice Messages, and the upstream voice
+message helper can fall back to an ordinary attachment. Likewise, managed
+Hermes uses its allow-everyone mode without the Members intent. Member search
+from its optional admin toolset is therefore not a managed capability; Clawdi
+does not broaden the privileged Guild Members intent merely because the raw
+adapter exposes that tool.
 
 Unpair flow:
 

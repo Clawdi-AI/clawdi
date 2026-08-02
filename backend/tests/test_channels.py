@@ -16536,6 +16536,7 @@ async def test_discord_pair_preparation_configures_endpoint_then_global_commands
             (
                 {
                     "id": DISCORD_TEST_APPLICATION_ID,
+                    "flags": channel_service.DISCORD_GATEWAY_MESSAGE_CONTENT_LIMITED_FLAG,
                     "integration_types_config": {
                         "0": {
                             "oauth2_install_params": {
@@ -16704,6 +16705,48 @@ async def test_discord_pair_preparation_configures_endpoint_then_global_commands
         account.config["discord_reserved_command_version"]
         == channel_service.DISCORD_RESERVED_COMMAND_VERSION
     )
+
+
+@pytest.mark.asyncio
+async def test_discord_pair_preparation_requires_message_content_intent(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _DiscordPreparationProviderClient.reset(
+        [
+            (
+                {
+                    "id": DISCORD_TEST_APPLICATION_ID,
+                    "flags": 0,
+                    "integration_types_config": {"0": {}},
+                },
+                200,
+            )
+        ]
+    )
+    monkeypatch.setattr(channel_service.httpx, "AsyncClient", _DiscordPreparationProviderClient)
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-message-content-readiness",
+                "provider_token": "discord-provider-token",
+                "config": {
+                    "application_id": DISCORD_TEST_APPLICATION_ID,
+                    "public_key": DISCORD_TEST_PUBLIC_KEY,
+                },
+            },
+        )
+    ).json()
+
+    pair = await client.post(f"/v1/channels/{created['id']}/pair-codes", json={})
+
+    assert pair.status_code == 400
+    assert pair.json() == {
+        "detail": "Enable the Message Content Intent for this Discord application, then retry."
+    }
+    assert [call["method"] for call in _DiscordPreparationProviderClient.calls] == ["GET"]
 
 
 @pytest.mark.asyncio
@@ -17286,6 +17329,7 @@ async def test_discord_pair_preparation_requires_exact_persisted_install_contrac
             (
                 {
                     "id": DISCORD_TEST_APPLICATION_ID,
+                    "flags": channel_service.DISCORD_GATEWAY_MESSAGE_CONTENT_LIMITED_FLAG,
                     "integration_types_config": initial_integration_types,
                 },
                 200,
@@ -18736,6 +18780,7 @@ async def test_discord_guild_only_install_capability_stays_guild_only(
             (
                 {
                     "id": DISCORD_TEST_APPLICATION_ID,
+                    "flags": channel_service.DISCORD_GATEWAY_MESSAGE_CONTENT_LIMITED_FLAG,
                     "integration_types_config": {
                         "0": {
                             "oauth2_install_params": {
@@ -18971,6 +19016,23 @@ def test_discord_minimal_bot_permissions_are_exact_text_and_public_thread_baseli
     excluded_bits = (3, 4, 5, 13, 17, 20, 21, 28, 29, 30, 31, 33, 34, 36, 40, 43, 44, 49)
     for excluded_bit in excluded_bits:
         assert permissions & (1 << excluded_bit) == 0
+
+
+def test_discord_message_content_intent_readiness_accepts_limited_or_approved_flags() -> None:
+    channel_service._require_discord_message_content_intent(
+        {"flags": channel_service.DISCORD_GATEWAY_MESSAGE_CONTENT_LIMITED_FLAG}
+    )
+    channel_service._require_discord_message_content_intent(
+        {"flags": channel_service.DISCORD_GATEWAY_MESSAGE_CONTENT_FLAG}
+    )
+
+    for payload in ({}, {"flags": 0}, {"flags": True}, {"flags": "524288"}):
+        with pytest.raises(HTTPException) as exc_info:
+            channel_service._require_discord_message_content_intent(payload)
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == (
+            "Enable the Message Content Intent for this Discord application, then retry."
+        )
 
 
 def _discord_provider_result(
