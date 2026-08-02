@@ -51,6 +51,14 @@ describe("hosted channel instructions and gates", () => {
 		}
 	});
 
+	test("renders the canonical serialization of the URL that passed validation", () => {
+		const nonCanonical =
+			"\nHTTPS://DISCORD.COM:443/oauth2/temporary/../authorize?client_id=123456789012345678&scope=bot+applications.commands\t";
+		expect(verifiedDiscordInstallUrl(nonCanonical)).toBe(
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=bot+applications.commands",
+		);
+	});
+
 	test("rejects malformed, non-Discord, redirecting, and ambiguous install URLs", () => {
 		for (const unsupported of [
 			null,

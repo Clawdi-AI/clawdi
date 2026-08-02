@@ -99,6 +99,9 @@ export function verifiedDiscordInstallUrl(value: string | null | undefined): str
 			seenKeys.add(key);
 		}
 
+		// Render the canonical serialization of the same URL object that passed
+		// validation, so casing, default ports, dot segments, or surrounding
+		// whitespace cannot make validation and navigation parse different values.
 		return url.href;
 	} catch {
 		return null;

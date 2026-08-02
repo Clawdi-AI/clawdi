@@ -113,17 +113,31 @@ releases.
      main concurrency may cancel an older run in favor of the newest cumulative
      commit. A push outside that path filter does not start a backend image
      release.
-   - Every successful main `Backend CI` run builds and deploys its exact
-     `workflow_run.head_sha`. `Clawdi Image Release` must not narrow that trusted
-     signal with a single-commit diff: a preceding backend run may have been
-     canceled after its changes became ancestors of the successful SHA. Release
-     runs use GitHub Actions' non-canceling `queue: max` concurrency so
-     consecutive successful SHAs remain FIFO and cannot deploy an older image
-     last. Manual dispatches always build their resolved ref. This follows the
-     official GitHub [`workflow_run` conclusion/data
+   - `Clawdi Image Release` uses one workflow-level production concurrency
+     group with `cancel-in-progress: false` and `queue: max`. GitHub permits one
+     running release plus up to 100 pending runs in that group instead of
+     replacing an older pending run. Waiting runs are processed by the time each
+     run starts waiting, but workflow dispatch order is not guaranteed; do not
+     infer dispatch ordering or stale-rollback impossibility from the queue
+     alone. After the automatic queue drains, confirm the deployed version is
+     the newest successful `Backend CI` head SHA. If it is not, wait for the
+     group to become idle and dispatch that newest exact ref.
+   - A release that starts checks out, builds, tags, and deploys its exact
+     `workflow_run.head_sha`. It must not narrow that trusted signal with a
+     single-commit diff because a canceled predecessor's backend changes are
+     already ancestors of the successful cumulative SHA. The exact SHA is both
+     the immutable OCI image tag and the Kamal deployment version.
+   - Manual dispatch always builds its resolved ref through the same production
+     concurrency group. An older ref is an explicit rollback and can defeat the
+     intended automatic release history if it waits behind automatic runs.
+     Do not dispatch an older ref while an automatic release is running or
+     pending. Confirm the `Clawdi Image Release` group is idle first. There is no
+     separate deploy-job concurrency gate; the workflow-level gate covers build
+     and deploy together. These rules follow the current official GitHub
+     [`workflow_run` conclusion/data
      contract](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#running-a-workflow-based-on-the-conclusion-of-another-workflow)
-     and [concurrency queue
-     semantics](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#concurrency).
+     and [`queue: max` workflow concurrency
+     contract](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency.md).
    - `.github/workflows/clawdi-release.yml` is manual-only. Run `Release Clawdi`
      only after the deployed commit should get public app/backend/web release
      notes.
@@ -262,26 +276,52 @@ GitHub Actions secrets; operators keep Kamal secrets in the gitignored
 `.kamal/secrets` file and export deployment parameters before running Kamal.
 Self-hosters set `DEPLOY_HOST` to their own server.
 
-Every deploy should run these checks before traffic is considered healthy:
+The deployment workflow installs and verifies exactly Kamal `2.12.0`; the
+configuration keeps `minimum_version: 2.12.0` as an independent floor. The
+workflow-level GitHub concurrency queue is the scheduler layer. Kamal's
+automatic remote deploy lock remains the fail-fast second layer, so deployment
+commands must not add `--lock-wait`. These choices follow the audited Kamal
+v2.12.0 [non-proxied health and primary-role
+barrier](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/app/boot.rb),
+[Docker health polling](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/healthcheck/poller.rb),
+and [automatic deploy lock](https://github.com/basecamp/kamal/blob/v2.12.0/lib/kamal/cli/base.rb)
+source.
 
-1. Apply migrations before starting code that depends on them:
+The Kamal `web` primary role runs the image's default API process. That API
+entrypoint alone runs `alembic upgrade head`, and it starts Uvicorn only after
+the migration succeeds; the non-primary `channels-worker` role does not run
+migrations. Kamal keeps the still-serving old API in rotation while the new
+primary boots, then requires the new primary to pass the proxy `/health` gate
+before it boots non-primary roles. Consequently every migration must use an
+expand/contract sequence compatible with the old API during this rolling
+window. A routine Kamal deploy must not separately run Alembic by hand.
 
-   ```bash
-   cd backend
-   uv run alembic upgrade head
-   ```
+The proxy `/health` gate reaches the API handler that executes database
+`SELECT 1`. The image-level Docker HEALTHCHECK calls the same local path for
+both roles. On the worker, `/health` returns failure until
+`ChannelWorkerHealth.ready` is true and returns failure again while stopping,
+so Docker cannot report the worker healthy before its worker stack is ready.
+The HEALTHCHECK retry budget is bounded by the 120-second Kamal
+`deploy_timeout`.
 
-2. Confirm required extensions and services are available:
+The workflow does not add a public-network post-deploy request: without an
+authenticated, environment-specific assertion it would be a brittle duplicate
+of the deterministic proxy and container readiness gates. Run authenticated
+surface smokes deliberately after those gates when the release requires them.
+
+Before traffic is considered healthy, complete these checks:
+
+1. Confirm required extensions and services are available:
    - PostgreSQL has `pgvector` and `pg_trgm`.
    - File store credentials point at the intended bucket/prefix.
    - `VAULT_ENCRYPTION_KEY` and `ENCRYPTION_KEY` are both set and distinct.
    - Clerk JWT configuration is present for web auth.
-3. Smoke test:
+2. Smoke test:
    - Web dashboard loads after sign-in.
    - Backend health/API requests return 2xx.
    - CLI can authenticate and run `clawdi vault list --json`.
    - A Vault key resolves only through CLI/API-key auth, never through web auth.
-4. Check logs for migration errors, 5xx spikes, auth failures, and frontend
+3. Check logs for migration errors, 5xx spikes, auth failures, and frontend
    build/runtime errors.
 
 ### Connector Post-Deploy Smoke

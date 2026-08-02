@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Git ref to build. Defaults to the workflow SHA."
+        description: "Git ref to build. Defaults to the workflow SHA. Do not use an older ref while an automatic release is running or pending."
         required: false
       build_web:
         description: "Also publish the web image. Requires matching public web build variables."
@@ -157,10 +157,6 @@ jobs:
     needs: build
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 15
-    concurrency:
-      group: kamal-deploy-clawdi
-      cancel-in-progress: false
-      queue: max
     steps:
       - uses: actions/checkout@v7
         with:
@@ -203,5 +199,6 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_SSH_PROXY_COMMAND: ${{ secrets.DEPLOY_SSH_PROXY_COMMAND }}
         run: |
-          gem install kamal -v '~> 2.12' --no-document
+          gem install kamal -v '2.12.0' --no-document
+          test "$(kamal version)" = "2.12.0"
           kamal deploy -P --version "${{ needs.build.outputs.image_tag }}"
