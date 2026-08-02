@@ -397,7 +397,7 @@ describe("channel commands", () => {
 							expires_at: new Date().toISOString(),
 							pairing_command: "/clawdi_pair NPQRSTVWXY",
 							discord_install_url:
-								"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=274878024768&scope=bot%20applications.commands",
+								"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=309237763136&scope=bot%20applications.commands",
 							discord_user_install_url:
 								"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
 						},

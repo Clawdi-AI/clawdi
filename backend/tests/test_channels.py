@@ -13392,6 +13392,7 @@ def test_discord_gateway_helpers_build_protocol_payloads():
         },
     }
     assert discord_gateway_intents(ChannelAccount(config=None)) == DISCORD_DEFAULT_INTENTS
+    assert DISCORD_DEFAULT_INTENTS == sum(1 << bit for bit in (0, 9, 10, 12, 13, 15))
     assert discord_gateway_intents(ChannelAccount(config={"gateway_intents": "513"})) == 513
     lock_key = discord_gateway_advisory_lock_key(UUID("00000000-0000-0000-0000-000000000001"))
     assert 0 <= lock_key <= 0x7FFF_FFFF_FFFF_FFFF
@@ -16535,6 +16536,7 @@ async def test_discord_pair_preparation_configures_endpoint_then_global_commands
             (
                 {
                     "id": DISCORD_TEST_APPLICATION_ID,
+                    "flags": channel_service.DISCORD_GATEWAY_MESSAGE_CONTENT_LIMITED_FLAG,
                     "integration_types_config": {
                         "0": {
                             "oauth2_install_params": {
@@ -16678,11 +16680,11 @@ async def test_discord_pair_preparation_configures_endpoint_then_global_commands
         "https://discord.com/oauth2/authorize"
         f"?client_id={DISCORD_TEST_APPLICATION_ID}"
         "&integration_type=0"
-        "&permissions=274878024768"
+        "&permissions=309237763136"
         "&scope=bot%20applications.commands"
     )
     bot_permissions = int(parse_qs(urlparse(install_url).query)["permissions"][0])
-    assert bot_permissions == sum(1 << bit for bit in (6, 10, 11, 14, 15, 16, 38))
+    assert bot_permissions == sum(1 << bit for bit in (6, 10, 11, 14, 15, 16, 35, 38))
     assert bot_permissions & ((1 << 3) | (1 << 5)) == 0
     assert pair.json()["discord_user_install_url"] == (
         "https://discord.com/oauth2/authorize"
@@ -16694,12 +16696,57 @@ async def test_discord_pair_preparation_configures_endpoint_then_global_commands
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
     assert account.config["discord_interactions_configured"] is True
-    assert account.config["discord_install_config_version"] == 1
+    assert (
+        account.config["discord_install_config_version"]
+        == channel_service.DISCORD_INSTALL_CONFIG_VERSION
+    )
     assert account.config["discord_user_install_supported"] is True
     assert (
         account.config["discord_reserved_command_version"]
         == channel_service.DISCORD_RESERVED_COMMAND_VERSION
     )
+
+
+@pytest.mark.asyncio
+async def test_discord_pair_preparation_requires_message_content_intent(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _DiscordPreparationProviderClient.reset(
+        [
+            (
+                {
+                    "id": DISCORD_TEST_APPLICATION_ID,
+                    "flags": 0,
+                    "integration_types_config": {"0": {}},
+                },
+                200,
+            )
+        ]
+    )
+    monkeypatch.setattr(channel_service.httpx, "AsyncClient", _DiscordPreparationProviderClient)
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-message-content-readiness",
+                "provider_token": "discord-provider-token",
+                "config": {
+                    "application_id": DISCORD_TEST_APPLICATION_ID,
+                    "public_key": DISCORD_TEST_PUBLIC_KEY,
+                },
+            },
+        )
+    ).json()
+
+    pair = await client.post(f"/v1/channels/{created['id']}/pair-codes", json={})
+
+    assert pair.status_code == 400
+    assert pair.json() == {
+        "detail": "Enable the Message Content Intent for this Discord application, then retry."
+    }
+    assert [call["method"] for call in _DiscordPreparationProviderClient.calls] == ["GET"]
 
 
 @pytest.mark.asyncio
@@ -17170,7 +17217,13 @@ async def test_discord_reserved_command_version_waits_for_global_and_guild_succe
         ([({"id": "223456789012345678"}, 200)], 409),
         (
             [
-                ({"id": DISCORD_TEST_APPLICATION_ID}, 200),
+                (
+                    {
+                        "id": DISCORD_TEST_APPLICATION_ID,
+                        "flags": channel_service.DISCORD_GATEWAY_MESSAGE_CONTENT_LIMITED_FLAG,
+                    },
+                    200,
+                ),
                 ({"message": "invalid interactions endpoint"}, 400),
             ],
             502,
@@ -17282,6 +17335,7 @@ async def test_discord_pair_preparation_requires_exact_persisted_install_contrac
             (
                 {
                     "id": DISCORD_TEST_APPLICATION_ID,
+                    "flags": channel_service.DISCORD_GATEWAY_MESSAGE_CONTENT_LIMITED_FLAG,
                     "integration_types_config": initial_integration_types,
                 },
                 200,
@@ -18732,6 +18786,7 @@ async def test_discord_guild_only_install_capability_stays_guild_only(
             (
                 {
                     "id": DISCORD_TEST_APPLICATION_ID,
+                    "flags": channel_service.DISCORD_GATEWAY_MESSAGE_CONTENT_LIMITED_FLAG,
                     "integration_types_config": {
                         "0": {
                             "oauth2_install_params": {
@@ -18948,13 +19003,42 @@ async def test_discord_admin_token_change_invalidates_verified_install_capabilit
     assert "discord_user_install_supported" not in account.config
 
 
-def test_discord_minimal_bot_permissions_are_exact_text_baseline() -> None:
+def test_discord_minimal_bot_permissions_are_exact_text_and_public_thread_baseline() -> None:
     permissions = channel_service.DISCORD_MINIMAL_BOT_PERMISSIONS
 
-    assert permissions == sum(1 << bit for bit in (6, 10, 11, 14, 15, 16, 38))
-    excluded_bits = (3, 4, 5, 13, 17, 20, 21, 28, 29, 30, 31, 33, 34, 35, 36, 40, 43, 44, 49)
+    expected_permission_bits = {
+        "ADD_REACTIONS": 6,
+        "VIEW_CHANNEL": 10,
+        "SEND_MESSAGES": 11,
+        "EMBED_LINKS": 14,
+        "ATTACH_FILES": 15,
+        "READ_MESSAGE_HISTORY": 16,
+        "CREATE_PUBLIC_THREADS": 35,
+        "SEND_MESSAGES_IN_THREADS": 38,
+    }
+    assert permissions == sum(1 << bit for bit in expected_permission_bits.values())
+    assert permissions == 309_237_763_136
+
+    excluded_bits = (3, 4, 5, 13, 17, 20, 21, 28, 29, 30, 31, 33, 34, 36, 40, 43, 44, 49)
     for excluded_bit in excluded_bits:
         assert permissions & (1 << excluded_bit) == 0
+
+
+def test_discord_message_content_intent_readiness_accepts_limited_or_approved_flags() -> None:
+    channel_service._require_discord_message_content_intent(
+        {"flags": channel_service.DISCORD_GATEWAY_MESSAGE_CONTENT_LIMITED_FLAG}
+    )
+    channel_service._require_discord_message_content_intent(
+        {"flags": channel_service.DISCORD_GATEWAY_MESSAGE_CONTENT_FLAG}
+    )
+
+    for payload in ({}, {"flags": 0}, {"flags": True}, {"flags": "524288"}):
+        with pytest.raises(HTTPException) as exc_info:
+            channel_service._require_discord_message_content_intent(payload)
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == (
+            "Enable the Message Content Intent for this Discord application, then retry."
+        )
 
 
 def _discord_provider_result(

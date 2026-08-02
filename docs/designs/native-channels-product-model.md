@@ -291,14 +291,46 @@ cannot be safely materialized in DMs. User Install DMs support Clawdi's
 account-global reserved pair/unpair commands and routed messages only.
 
 The managed server install requests only Add Reactions, View Channels, Send
-Messages, Embed Links, Attach Files, Read Message History, and Send Messages in
-Threads (`274878024768`). Voice, moderation, event, expression, channel, role,
-pin, poll, sticker, and optional thread-tool actions are not granted by
-default. Managed OpenClaw projections explicitly gate those optional action
-surfaces; ordinary replies in existing threads continue through normal message
-sending. Managed Hermes projections leave user allowlists empty instead of
-writing a `"*"` username, so they do not accidentally request Server Members
-intent while preserving the adapter's documented allow-everyone behavior.
+Messages, Embed Links, Attach Files, Read Message History, Create Public
+Threads, and Send Messages in Threads (`309237763136`). Create Public Threads
+supports Hermes' public `/thread`, auto-thread, and forum-post behavior plus the
+transparent transport's public thread-create contract. Create Private Threads
+and Manage Threads remain excluded: Clawdi does not create private threads or
+archive, lock, or delete threads. Hermes supplies names in its thread-create
+requests and does not rename existing threads. OpenClaw can asynchronously
+replace an auto-thread's provisional name with a generated title, but it PATCHes
+only the thread ID returned by that same bot create request; Discord permits a
+thread creator to change `name`, `archived`, and `auto_archive_duration` without
+Manage Threads. Managed OpenClaw projections also set `actions.channels` and
+`actions.threads` to false, blocking arbitrary `sendMessage.threadName` renames
+and the optional thread action tool; ordinary replies in existing threads
+continue through normal message sending. Managed Hermes projections leave user
+allowlists empty instead of writing a `"*"` username, so they do not accidentally
+request Server Members intent while preserving the adapter's documented
+allow-everyone behavior.
+
+OAuth scopes, bot role permissions, and Gateway intents are independent. Guild
+Install uses the `bot` and `applications.commands` OAuth scopes and the exact
+permission bitfield above. User Install uses only `applications.commands`, has
+no `bot` scope, and carries no bot permission bitfield. The native Gateway
+default (`46593`) separately enables Guilds, Guild Messages, Guild Message
+Reactions, Direct Messages, Direct Message Reactions, and Message Content. It
+does not enable Guild Members, Presences, moderation, or voice intents.
+Discord account preparation verifies that the application flags contain either
+the approved or limited Message Content capability before configuring installs.
+If the owner has not enabled that privileged intent, preparation stops with an
+actionable configuration error; Clawdi does not try to mutate privileged-intent
+Portal settings.
+
+Hermes' upstream Discord client also asks for Voice States, but the managed
+Clawdi Gateway is the event authority and intentionally ignores the downstream
+IDENTIFY intent selection. Managed Discord voice is not enabled: the install
+does not grant Connect, Speak, or Send Voice Messages, and the upstream voice
+message helper can fall back to an ordinary attachment. Likewise, managed
+Hermes uses its allow-everyone mode without the Members intent. Member search
+from its optional admin toolset is therefore not a managed capability; Clawdi
+does not broaden the privileged Guild Members intent merely because the raw
+adapter exposes that tool.
 
 Unpair flow:
 

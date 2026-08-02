@@ -132,19 +132,25 @@ DISCORD_GUILD_INTERACTION_CONTEXT = 0
 DISCORD_BOT_DM_INTERACTION_CONTEXT = 1
 DISCORD_RESERVED_COMMAND_VERSION = 3
 DISCORD_RESERVED_COMMAND_VERSION_CONFIG_KEY = "discord_reserved_command_version"
-DISCORD_INSTALL_CONFIG_VERSION = 1
+DISCORD_INSTALL_CONFIG_VERSION = 2
 DISCORD_INSTALL_CONFIG_VERSION_CONFIG_KEY = "discord_install_config_version"
 DISCORD_USER_INSTALL_SUPPORTED_CONFIG_KEY = "discord_user_install_supported"
+DISCORD_GATEWAY_MESSAGE_CONTENT_FLAG = 1 << 18
+DISCORD_GATEWAY_MESSAGE_CONTENT_LIMITED_FLAG = 1 << 19
 # Discord API docs baseline 07c83a8f1c54accd8e8d13072a5e08d1b1be7ac3.
 # ADD_REACTIONS, VIEW_CHANNEL, SEND_MESSAGES, EMBED_LINKS, ATTACH_FILES,
-# READ_MESSAGE_HISTORY, and SEND_MESSAGES_IN_THREADS. Never request
+# READ_MESSAGE_HISTORY, CREATE_PUBLIC_THREADS, and SEND_MESSAGES_IN_THREADS.
+# CREATE_PUBLIC_THREADS is required by Hermes' /thread and auto-thread paths
+# (including its create-from-message fallback) and by the transparent Discord
+# transport's pinned thread-create contract. Private-thread creation and thread
+# moderation are not part of the managed surface. Never request
 # ADMINISTRATOR or MANAGE_GUILD for the bot; pair mutation authority is the
 # invoking member's computed permissions. The managed OpenClaw projection
 # disables advanced actions that need excluded role permissions; Gateway
 # intents are a separate capability and never widen the bot role. The default
 # install deliberately excludes CONNECT, SPEAK, MANAGE_MESSAGES, MANAGE_EVENTS,
 # and MANAGE_GUILD_EXPRESSIONS.
-DISCORD_MINIMAL_BOT_PERMISSIONS = 274_878_024_768
+DISCORD_MINIMAL_BOT_PERMISSIONS = 309_237_763_136
 DISCORD_GUILD_PERMISSION_DENIED = "discord_guild_permission_denied"
 DISCORD_GUILD_USE_INTERACTION = "discord_guild_use_interaction"
 DISCORD_GUILD_INSTALL_REQUIRED = "discord_guild_install_required"
@@ -3639,6 +3645,7 @@ async def configure_discord_application(account: ChannelAccount) -> dict[str, An
         provider_token=token,
         config=account.config,
     )
+    _require_discord_message_content_intent(identity)
     raw_integration_config = identity.get("integration_types_config")
     integration_config = (
         {
@@ -4047,6 +4054,19 @@ def _verify_discord_application_identity(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Discord bot token belongs to a different application.",
+        )
+
+
+def _require_discord_message_content_intent(payload: dict[str, Any]) -> None:
+    """Require the privileged intent that the native Gateway always identifies with."""
+    flags = payload.get("flags")
+    approved = DISCORD_GATEWAY_MESSAGE_CONTENT_FLAG
+    limited = DISCORD_GATEWAY_MESSAGE_CONTENT_LIMITED_FLAG
+    enabled_flags = approved | limited
+    if not isinstance(flags, int) or isinstance(flags, bool) or flags & enabled_flags == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=("Enable the Message Content Intent for this Discord application, then retry."),
         )
 
 
