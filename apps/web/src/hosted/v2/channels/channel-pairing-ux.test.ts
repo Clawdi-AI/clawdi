@@ -8,6 +8,7 @@ function source(relativePath: string): string {
 const detail = source("./channel-detail-page.tsx");
 const pairDialog = source("./telegram-pair-dialog.tsx");
 const discordPairDialog = source("./discord-pair-dialog.tsx");
+const pairingErrors = source("./channel-pairing-errors.ts");
 const pairingDialogUi = source("./pairing-dialog-ui.tsx");
 const pairingSuccess = source("./channel-pairing-success.ts");
 const hooks = source("./channels-hooks.ts");
@@ -127,7 +128,8 @@ describe("channel IA boundary", () => {
 		expect(discordPairDialog).toContain("This Discord pair code has expired");
 		expect(discordPairDialog).toContain("Generate new code");
 		expect(discordPairDialog).toContain("Couldn't prepare Discord pairing");
-		expect(discordPairDialog).toContain("Discord pairing is temporarily unavailable. Try again.");
+		expect(discordPairDialog).toContain("DISCORD_PAIR_ERROR_NORMALIZER");
+		expect(pairingErrors).toContain("pairing is temporarily unavailable. Try again.");
 		expect(discordPairDialog).toContain("Server install temporarily unavailable");
 		expect(discordPairDialog).toContain("Retry server install");
 		expect(discordPairDialog).not.toContain("server install settings are out of date");

@@ -13,6 +13,7 @@ import {
 	verifiedDiscordInstallUrl,
 	verifiedDiscordPairingCommand,
 } from "@/hosted/v2/channels/channel-linking.logic";
+import { DISCORD_PAIR_ERROR_NORMALIZER } from "@/hosted/v2/channels/channel-pairing-errors";
 import { usePairingSuccess } from "@/hosted/v2/channels/channel-pairing-success";
 import type { ChannelBinding, ChannelPairCode } from "@/hosted/v2/channels/channel-types";
 import { useCreatePairCode } from "@/hosted/v2/channels/channels-hooks";
@@ -28,7 +29,6 @@ import {
 	PairingNotice,
 	PairingQrCode,
 } from "@/hosted/v2/channels/pairing-dialog-ui";
-import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 
 const DISCORD_PAIR_TTL_SECONDS = 300;
 
@@ -36,14 +36,6 @@ type DiscordPairResult = Pick<ChannelPairCode, "code" | "expires_at" | "pairing_
 	discord_install_url: string | null;
 	discord_user_install_url: string | null;
 	server_install_retryable: boolean;
-};
-
-const DISCORD_PAIR_ERROR_NORMALIZER = {
-	isAuthError: isApiAuthError,
-	normalizeError: (error: unknown) =>
-		isApiAuthError(error)
-			? normalizeApiError(error)
-			: "Discord pairing is temporarily unavailable. Try again.",
 };
 
 export function DiscordPairDialog({
@@ -76,9 +68,21 @@ export function DiscordPairDialog({
 	const openKeyRef = useRef<string | null>(null);
 	const sessionRef = useRef(0);
 	const lockedSessionRef = useRef<number | null>(null);
+	const invalidatePendingSession = useCallback(() => {
+		openKeyRef.current = null;
+		sessionRef.current += 1;
+		lockedSessionRef.current = null;
+	}, []);
+	const requestOpenChange = useCallback(
+		(nextOpen: boolean) => {
+			if (!nextOpen) invalidatePendingSession();
+			onOpenChange(nextOpen);
+		},
+		[invalidatePendingSession, onOpenChange],
+	);
 	const handlePairingOpenChange = usePairingSuccess({
 		open,
-		onOpenChange,
+		onOpenChange: requestOpenChange,
 		accountId,
 		agentLinkId,
 		provider: "discord",
@@ -130,9 +134,7 @@ export function DiscordPairDialog({
 	useEffect(() => {
 		const openKey = open ? `${accountId}:${agentLinkId}` : null;
 		if (!openKey) {
-			openKeyRef.current = null;
-			sessionRef.current += 1;
-			lockedSessionRef.current = null;
+			if (openKeyRef.current !== null) invalidatePendingSession();
 			return;
 		}
 		if (openKeyRef.current === openKey) return;
@@ -141,7 +143,7 @@ export function DiscordPairDialog({
 		sessionRef.current = session;
 		lockedSessionRef.current = null;
 		void prepare(session);
-	}, [accountId, agentLinkId, open, prepare]);
+	}, [accountId, agentLinkId, invalidatePendingSession, open, prepare]);
 
 	useEffect(() => {
 		if (!open || !result) return;

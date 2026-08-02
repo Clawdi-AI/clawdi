@@ -11,6 +11,7 @@ import {
 	telegramPairDeepLink,
 } from "@/hosted/v2/channels/channel-detail-page.logic";
 import { pairCodeExpired } from "@/hosted/v2/channels/channel-linking.logic";
+import { TELEGRAM_PAIR_ERROR_NORMALIZER } from "@/hosted/v2/channels/channel-pairing-errors";
 import { usePairingSuccess } from "@/hosted/v2/channels/channel-pairing-success";
 import type { ChannelBinding } from "@/hosted/v2/channels/channel-types";
 import { useCreatePairCode } from "@/hosted/v2/channels/channels-hooks";
@@ -67,9 +68,21 @@ export function TelegramPairDialog({
 	const openKeyRef = useRef<string | null>(null);
 	const sessionRef = useRef(0);
 	const lockedSessionRef = useRef<number | null>(null);
+	const invalidatePendingSession = useCallback(() => {
+		openKeyRef.current = null;
+		sessionRef.current += 1;
+		lockedSessionRef.current = null;
+	}, []);
+	const requestOpenChange = useCallback(
+		(nextOpen: boolean) => {
+			if (!nextOpen) invalidatePendingSession();
+			onOpenChange(nextOpen);
+		},
+		[invalidatePendingSession, onOpenChange],
+	);
 	const handlePairingOpenChange = usePairingSuccess({
 		open,
-		onOpenChange,
+		onOpenChange: requestOpenChange,
 		accountId,
 		agentLinkId,
 		provider: "telegram",
@@ -111,9 +124,7 @@ export function TelegramPairDialog({
 	useEffect(() => {
 		const openKey = open ? `${accountId}:${agentLinkId}` : null;
 		if (!openKey) {
-			openKeyRef.current = null;
-			sessionRef.current += 1;
-			lockedSessionRef.current = null;
+			if (openKeyRef.current !== null) invalidatePendingSession();
 			return;
 		}
 		if (openKeyRef.current === openKey) return;
@@ -122,7 +133,7 @@ export function TelegramPairDialog({
 		sessionRef.current = session;
 		lockedSessionRef.current = null;
 		void generate(session);
-	}, [accountId, agentLinkId, generate, open]);
+	}, [accountId, agentLinkId, generate, invalidatePendingSession, open]);
 
 	useEffect(() => {
 		if (!open || !result) return;
@@ -172,6 +183,7 @@ export function TelegramPairDialog({
 							error={requestError}
 							onRetry={() => void generate()}
 							title="Couldn't create Telegram link"
+							normalizer={TELEGRAM_PAIR_ERROR_NORMALIZER}
 						/>
 					) : result ? (
 						<div className="space-y-4">
