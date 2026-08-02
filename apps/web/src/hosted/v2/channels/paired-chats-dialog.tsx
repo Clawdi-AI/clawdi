@@ -22,71 +22,75 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { useIsMobile } from "@/hooks/use-mobile";
-import type { AgentPairedChatItem } from "@/hosted/v2/channels/agent-channel-bindings.logic";
+import {
+	type AgentPairedChatItem,
+	selectPairedChatsForLink,
+} from "@/hosted/v2/channels/agent-channel-bindings.logic";
+import { useChannelBindings } from "@/hosted/v2/channels/channels-hooks";
 import { PairedChatRow } from "@/hosted/v2/channels/paired-chat-row";
 import { cn } from "@/lib/utils";
 
 export function PairedChatsDialog({
+	agentId,
+	accountId,
 	linkId,
 	channelName,
 	provider,
-	pairedChats,
-	bindingsLoading,
-	bindingsError,
-	onBindingsRetry,
+	bindingCount,
 }: {
+	agentId: string;
+	accountId: string;
 	linkId: string;
 	channelName: string;
 	provider: string;
-	pairedChats: AgentPairedChatItem[];
-	bindingsLoading: boolean;
-	bindingsError: boolean;
-	onBindingsRetry: () => void;
+	bindingCount: number;
 }) {
 	const [open, setOpen] = useState(false);
+	const [retrying, setRetrying] = useState(false);
 	const isMobile = useIsMobile();
+	const bindings = useChannelBindings(accountId, open);
+	const pairedChats = selectPairedChatsForLink({
+		accountId,
+		agentLinkId: linkId,
+		bindings: bindings.data ?? [],
+		provider,
+	});
+	const bindingsLoading = open && bindings.data === undefined && bindings.isPending;
+	const bindingsError = Boolean(open && bindings.error && bindings.data === undefined);
+	const descriptionCount = bindings.data === undefined ? bindingCount : pairedChats.length;
+	const retryBindings = async () => {
+		setRetrying(true);
+		try {
+			await bindings.refetch();
+		} finally {
+			setRetrying(false);
+		}
+	};
 	const panelId = `paired-chats-${linkId}`;
-	const statusId = `${panelId}-status`;
-	const label = `${pairedChats.length} paired ${pairedChats.length === 1 ? "chat" : "chats"}`;
-	const description = `${pairedChats.length} ${pairedChats.length === 1 ? "chat" : "chats"} connected through this channel. Unpairing affects only the selected chat.`;
+	const label = `${bindingCount} paired ${bindingCount === 1 ? "chat" : "chats"}`;
+	const description = `${descriptionCount} ${descriptionCount === 1 ? "chat" : "chats"} connected through this channel. Unpairing affects only the selected chat.`;
 	const trigger = (
 		<button
 			type="button"
 			data-agent-paired-chats-trigger={linkId}
-			className={cn(
-				buttonVariants({ variant: bindingsError ? "destructive" : "outline", size: "xs" }),
-				"max-w-full justify-start",
-			)}
+			className={cn(buttonVariants({ variant: "outline", size: "xs" }), "max-w-full justify-start")}
 			aria-controls={panelId}
-			aria-describedby={bindingsLoading || bindingsError ? statusId : undefined}
 		>
-			{bindingsError ? (
-				<AlertCircle className="size-3" aria-hidden="true" />
-			) : bindingsLoading ? (
-				<Spinner className="size-3" aria-hidden="true" />
-			) : null}
 			<span data-agent-paired-chats-label className="whitespace-nowrap">
 				{label}
 			</span>
 		</button>
 	);
-	const assistiveStatus = bindingsError ? (
-		<span id={statusId} role="alert" className="sr-only">
-			Couldn’t load paired chats
-		</span>
-	) : bindingsLoading ? (
-		<span id={statusId} role="status" className="sr-only">
-			Loading paired chats
-		</span>
-	) : null;
 	const list = (
 		<PairedChatsList
+			agentId={agentId}
 			linkId={linkId}
 			provider={provider}
 			pairedChats={pairedChats}
 			bindingsLoading={bindingsLoading}
 			bindingsError={bindingsError}
-			onBindingsRetry={onBindingsRetry}
+			bindingsRetrying={retrying}
+			onBindingsRetry={retryBindings}
 		/>
 	);
 
@@ -94,7 +98,6 @@ export function PairedChatsDialog({
 		return (
 			<Sheet open={open} onOpenChange={setOpen}>
 				<SheetTrigger render={trigger} />
-				{assistiveStatus}
 				<SheetContent
 					id={panelId}
 					data-hosted="true"
@@ -130,7 +133,6 @@ export function PairedChatsDialog({
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger render={trigger} />
-			{assistiveStatus}
 			<DialogContent
 				id={panelId}
 				data-hosted="true"
@@ -161,19 +163,23 @@ export function PairedChatsDialog({
 }
 
 function PairedChatsList({
+	agentId,
 	linkId,
 	provider,
 	pairedChats,
 	bindingsLoading,
 	bindingsError,
+	bindingsRetrying,
 	onBindingsRetry,
 }: {
+	agentId: string;
 	linkId: string;
 	provider: string;
 	pairedChats: AgentPairedChatItem[];
 	bindingsLoading: boolean;
 	bindingsError: boolean;
-	onBindingsRetry: () => void;
+	bindingsRetrying: boolean;
+	onBindingsRetry: () => Promise<void>;
 }) {
 	return (
 		<div data-agent-paired-chats-list={linkId} className="min-w-0 divide-y">
@@ -193,16 +199,22 @@ function PairedChatsList({
 						variant="outline"
 						size="sm"
 						className="col-start-2 justify-self-start sm:col-start-3"
-						onClick={onBindingsRetry}
+						disabled={bindingsRetrying}
+						onClick={() => void onBindingsRetry()}
 					>
-						<RefreshCw className="size-3.5" />
-						Retry
+						{bindingsRetrying ? (
+							<Spinner className="size-3.5" />
+						) : (
+							<RefreshCw className="size-3.5" />
+						)}
+						{bindingsRetrying ? "Retrying…" : "Retry"}
 					</Button>
 				</div>
 			) : null}
 			{pairedChats.map((item) => (
 				<PairedChatRow
 					key={item.binding.id}
+					agentId={agentId}
 					accountId={item.accountId}
 					binding={item.binding}
 					provider={item.provider}

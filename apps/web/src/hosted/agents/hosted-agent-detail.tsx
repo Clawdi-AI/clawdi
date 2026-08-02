@@ -242,11 +242,7 @@ import {
 } from "@/hosted/v2/ai-providers/model-binding";
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
-import {
-	type AgentPairedChatItem,
-	type ChannelAccountSummary,
-	selectAgentPairedChats,
-} from "@/hosted/v2/channels/agent-channel-bindings.logic";
+import type { ChannelAccountSummary } from "@/hosted/v2/channels/agent-channel-bindings.logic";
 import {
 	type AgentChannelCardItem,
 	activeAgentLinkForAccount,
@@ -255,13 +251,12 @@ import {
 } from "@/hosted/v2/channels/agent-channel-cards.logic";
 import { CHANNEL_CARD_GRID_CLASS, ChannelCard } from "@/hosted/v2/channels/channel-card";
 import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
-import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
+import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client.logic";
 import {
 	agentProviderHasSingleLinkLimit,
 	channelProviderLinkingReady,
 } from "@/hosted/v2/channels/channel-linking.logic";
 import { channelKeys } from "@/hosted/v2/channels/channel-query-cache";
-import type { ChannelBinding } from "@/hosted/v2/channels/channel-types";
 import {
 	CHANNEL_DESTRUCTIVE_ACTION_CLASS,
 	ChannelStatusBadge,
@@ -269,9 +264,9 @@ import {
 	isNormalChannelStatus,
 } from "@/hosted/v2/channels/channel-ui";
 import {
+	agentChannelLinksQueryOptions,
 	useAgentChannelLinks,
 	useBotPool,
-	useChannelBindingsForAccounts,
 	useChannels,
 	useCreatePairCode,
 	useUnlinkAgentChannel,
@@ -2367,10 +2362,12 @@ function ChannelsTab({
 	agentName: string;
 }) {
 	const api = useApi();
+	const openApi = useOpenApi();
 	const qc = useQueryClient();
 	const channels = useChannels();
 	const botPool = useBotPool();
-	const linked = useAgentChannelLinks(environmentId, isCloudEnvId(environmentId));
+	const linked = useAgentChannelLinks(environmentId, isCloudEnvId(environmentId), true);
+	const agentLinksQueryKey = agentChannelLinksQueryOptions(openApi, environmentId).queryKey;
 	const unlink = useUnlinkAgentChannel(environmentId);
 	const [recentLinks, setRecentLinks] = useState<ReadonlyMap<string, AgentChannelLink>>(
 		() => new Map(),
@@ -2438,29 +2435,8 @@ function ChannelsTab({
 		}
 		return map;
 	}, [cardGroups]);
-	const activeAccountIds = useMemo(
-		() => Array.from(new Set(visibleActiveLinks.map((link) => link.account_id))),
-		[visibleActiveLinks],
-	);
-	const bindingQueries = useChannelBindingsForAccounts(activeAccountIds);
-	const bindingsForAccount = (accountId: string): readonly ChannelBinding[] | undefined => {
-		const index = activeAccountIds.indexOf(accountId);
-		return index >= 0 ? bindingQueries[index]?.data : undefined;
-	};
-	const pairedChats = selectAgentPairedChats({
-		visibleLinks: visibleActiveLinks,
-		bindingsByAccount: bindingQueries.flatMap((query, index) => {
-			const accountId = activeAccountIds[index];
-			return accountId ? [{ accountId, bindings: query.data ?? [] }] : [];
-		}),
-		accountSummaries,
-	});
-	const pairedChatsByLinkId = new Map<string, AgentPairedChatItem[]>();
-	for (const item of pairedChats) {
-		const items = pairedChatsByLinkId.get(item.agentLinkId) ?? [];
-		items.push(item);
-		pairedChatsByLinkId.set(item.agentLinkId, items);
-	}
+	const bindingCountForLink = (linkId: string) =>
+		visibleActiveLinks.find((link) => link.id === linkId)?.binding_count ?? 0;
 	const linkedProviders = useMemo(() => {
 		const providers = new Set<string>();
 		for (const link of visibleActiveLinks) {
@@ -2503,7 +2479,7 @@ function ChannelsTab({
 
 	function acceptLinkedChannel(nextLink: AgentChannelLink) {
 		setRecentLinks((current) => new Map(current).set(nextLink.account_id, nextLink));
-		void qc.invalidateQueries({ queryKey: ["agent-channel-links", environmentId] });
+		void qc.invalidateQueries({ queryKey: agentLinksQueryKey, exact: true });
 		void qc.invalidateQueries({ queryKey: channelKeys.agentLinks(nextLink.account_id) });
 		void qc.invalidateQueries({ queryKey: channelKeys.pool });
 		void qc.invalidateQueries({ queryKey: channelKeys.list });
@@ -2560,7 +2536,9 @@ function ChannelsTab({
 		setUnlinkingLinkIds((prev) => new Set(prev).add(linkId));
 		void (async () => {
 			try {
-				await unlink.mutateAsync({ accountId: accountIdToUnlink, linkId });
+				await unlink.mutateAsync({
+					params: { path: { account_id: accountIdToUnlink, link_id: linkId } },
+				});
 				setRecentLinks((current) => {
 					if (current.get(accountIdToUnlink)?.id !== linkId) return current;
 					const next = new Map(current);
@@ -2581,17 +2559,10 @@ function ChannelsTab({
 	}
 	function renderBot(bot: AgentChannelCardItem) {
 		const linkForBot = bot.link;
-		const bindingQuery = linkForBot
-			? bindingQueries[activeAccountIds.indexOf(linkForBot.account_id)]
-			: undefined;
 		return (
 			<AgentChannelBotCard
 				bot={bot}
-				pairedChats={linkForBot ? (pairedChatsByLinkId.get(linkForBot.id) ?? []) : []}
-				bindings={bindingQuery?.data}
-				bindingsLoading={Boolean(bindingQuery?.isPending)}
-				bindingsError={Boolean(bindingQuery?.error && bindingQuery.data === undefined)}
-				onBindingsRetry={() => void bindingQuery?.refetch()}
+				agentId={environmentId}
 				agentName={agentName}
 				agentType={agentType}
 				linkedProviders={linkedProviders}
@@ -2702,10 +2673,11 @@ function ChannelsTab({
 					onCloseComplete={() => {
 						setTelegramPair((current) => (current?.open === false ? null : current));
 					}}
+					agentId={environmentId}
 					accountId={telegramPair.accountId}
 					agentLinkId={telegramPair.agentLinkId}
 					channelName={telegramPair.channelName}
-					bindings={bindingsForAccount(telegramPair.accountId)}
+					bindingCount={bindingCountForLink(telegramPair.agentLinkId)}
 				/>
 			) : null}
 			{discordPair ? (
@@ -2717,10 +2689,11 @@ function ChannelsTab({
 					onCloseComplete={() => {
 						setDiscordPair((current) => (current?.open === false ? null : current));
 					}}
+					agentId={environmentId}
 					accountId={discordPair.accountId}
 					agentLinkId={discordPair.agentLinkId}
 					channelName={discordPair.channelName}
-					bindings={bindingsForAccount(discordPair.accountId)}
+					bindingCount={bindingCountForLink(discordPair.agentLinkId)}
 				/>
 			) : null}
 		</div>
@@ -2793,11 +2766,7 @@ function AgentChannelBotsSection({
 
 function AgentChannelBotCard({
 	bot,
-	pairedChats,
-	bindings,
-	bindingsLoading,
-	bindingsError,
-	onBindingsRetry,
+	agentId,
 	agentName,
 	agentType,
 	linkedProviders,
@@ -2807,11 +2776,7 @@ function AgentChannelBotCard({
 	onUnlink,
 }: {
 	bot: AgentChannelCardItem;
-	pairedChats: AgentPairedChatItem[];
-	bindings: readonly ChannelBinding[] | undefined;
-	bindingsLoading: boolean;
-	bindingsError: boolean;
-	onBindingsRetry: () => void;
+	agentId: string;
 	agentName: string;
 	agentType: HostedRuntime;
 	linkedProviders: ReadonlySet<string>;
@@ -2827,11 +2792,7 @@ function AgentChannelBotCard({
 			{bot.link ? (
 				<ConnectedChannelGroup
 					link={bot.link}
-					pairedChats={pairedChats}
-					bindings={bindings}
-					bindingsLoading={bindingsLoading}
-					bindingsError={bindingsError}
-					onBindingsRetry={onBindingsRetry}
+					agentId={agentId}
 					fallbackAccount={{
 						provider: bot.provider,
 						name: bot.name,
@@ -2873,22 +2834,14 @@ function AgentChannelBotCard({
 
 function ConnectedChannelGroup({
 	link,
-	pairedChats,
-	bindings,
-	bindingsLoading,
-	bindingsError,
-	onBindingsRetry,
+	agentId,
 	onUnlink,
 	unlinking,
 	fallbackAccount,
 	agentName,
 }: {
 	link: AgentChannelLink;
-	pairedChats: AgentPairedChatItem[];
-	bindings: readonly ChannelBinding[] | undefined;
-	bindingsLoading: boolean;
-	bindingsError: boolean;
-	onBindingsRetry: () => void;
+	agentId: string;
 	onUnlink: () => void;
 	unlinking: boolean;
 	fallbackAccount?: ChannelAccountSummary;
@@ -2901,20 +2854,19 @@ function ConnectedChannelGroup({
 		<div data-agent-channel-group-id={link.id} className="h-full min-w-0">
 			<LinkedChannelRow
 				link={link}
+				agentId={agentId}
 				fallbackAccount={fallbackAccount}
 				agentName={agentName}
-				bindings={bindings}
 				unlinking={unlinking}
 				onUnlink={onUnlink}
 				pairedChatsControl={
 					<PairedChatsDialog
+						agentId={agentId}
+						accountId={link.account_id}
 						linkId={link.id}
 						channelName={channelName}
 						provider={provider}
-						pairedChats={pairedChats}
-						bindingsLoading={bindingsLoading}
-						bindingsError={bindingsError}
-						onBindingsRetry={onBindingsRetry}
+						bindingCount={link.binding_count}
 					/>
 				}
 			/>
@@ -2930,22 +2882,22 @@ type AgentPairCodeResult = {
 
 function LinkedChannelRow({
 	link,
+	agentId,
 	onUnlink,
 	unlinking,
 	fallbackAccount,
 	agentName,
-	bindings,
 	pairedChatsControl,
 }: {
 	link: AgentChannelLink;
+	agentId: string;
 	onUnlink: () => void;
 	unlinking: boolean;
 	fallbackAccount?: ChannelAccountSummary;
 	agentName: string;
-	bindings: readonly ChannelBinding[] | undefined;
 	pairedChatsControl: React.ReactNode;
 }) {
-	const pair = useCreatePairCode(link.account_id);
+	const pair = useCreatePairCode(link.account_id, { agentId });
 	const [code, setCode] = useState<AgentPairCodeResult | null>(null);
 	const [telegramPairOpen, setTelegramPairOpen] = useState(false);
 	const [discordPairOpen, setDiscordPairOpen] = useState(false);
@@ -3063,20 +3015,22 @@ function LinkedChannelRow({
 				<TelegramPairDialog
 					open={telegramPairOpen}
 					onOpenChange={setTelegramPairOpen}
+					agentId={agentId}
 					accountId={link.account_id}
 					agentLinkId={link.id}
 					channelName={name}
-					bindings={bindings}
+					bindingCount={link.binding_count}
 				/>
 			) : null}
 			{isDiscord ? (
 				<DiscordPairDialog
 					open={discordPairOpen}
 					onOpenChange={setDiscordPairOpen}
+					agentId={agentId}
 					accountId={link.account_id}
 					agentLinkId={link.id}
 					channelName={name}
-					bindings={bindings}
+					bindingCount={link.binding_count}
 				/>
 			) : null}
 		</>

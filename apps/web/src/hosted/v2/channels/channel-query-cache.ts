@@ -1,9 +1,11 @@
-import type { QueryClient } from "@tanstack/react-query";
+import type { QueryClient, QueryKey } from "@tanstack/react-query";
 
 export const channelKeys = {
 	list: ["get", "/v1/channels"] as const,
 	pool: ["get", "/v1/channels/bot-pool"] as const,
 	health: ["get", "/v1/channels/health", {}] as const,
+	// Broad prefix only for channel deletion, where the affected Agent ids are unknown.
+	agentLinksList: ["get", "/v1/channels/agent-links"] as const,
 	channel: (id: string) =>
 		["get", "/v1/channels/{account_id}", { params: { path: { account_id: id } } }] as const,
 	agentLinks: (id: string) =>
@@ -29,6 +31,7 @@ export const channelKeys = {
 export async function invalidateCreatedChannelQueries(
 	qc: QueryClient,
 	created: { id: string; agent_id?: string | null },
+	agentLinksQueryKey?: QueryKey,
 ): Promise<void> {
 	const invalidations = [
 		qc.invalidateQueries({ queryKey: channelKeys.list }),
@@ -36,10 +39,8 @@ export async function invalidateCreatedChannelQueries(
 		qc.invalidateQueries({ queryKey: channelKeys.health }),
 		qc.invalidateQueries({ queryKey: channelKeys.agentLinks(created.id) }),
 	];
-	if (created.agent_id) {
-		invalidations.push(
-			qc.invalidateQueries({ queryKey: ["agent-channel-links", created.agent_id] }),
-		);
+	if (created.agent_id && agentLinksQueryKey) {
+		invalidations.push(qc.invalidateQueries({ queryKey: agentLinksQueryKey, exact: true }));
 	}
 	await Promise.all(invalidations);
 }
@@ -59,6 +60,6 @@ export async function removeDeletedChannelQueries(
 		qc.invalidateQueries({ queryKey: channelKeys.list }),
 		qc.invalidateQueries({ queryKey: channelKeys.pool }),
 		qc.invalidateQueries({ queryKey: channelKeys.health }),
-		qc.invalidateQueries({ queryKey: ["agent-channel-links"] }),
+		qc.invalidateQueries({ queryKey: channelKeys.agentLinksList }),
 	]);
 }

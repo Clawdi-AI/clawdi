@@ -122,7 +122,6 @@ export function PairingExpiry({
 }) {
 	return (
 		<p
-			role="status"
 			className={cn(
 				"text-center text-sm font-medium",
 				expired ? "text-destructive" : "text-muted-foreground",

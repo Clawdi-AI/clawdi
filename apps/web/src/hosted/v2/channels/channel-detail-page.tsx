@@ -45,6 +45,10 @@ import {
 	isNormalChannelStatus,
 } from "@/hosted/v2/channels/channel-ui";
 import {
+	channelActivityErrorSummary,
+	channelHealthErrorSummary,
+} from "@/hosted/v2/channels/channel-user-facing-errors";
+import {
 	useChannel,
 	useChannelActivity,
 	useChannelAgentLinks,
@@ -437,7 +441,7 @@ function ActivityTab({ accountId }: { accountId: string }) {
 function ActivityRow({ item }: { item: ChannelActivityItem }) {
 	const inbound = item.direction === "inbound";
 	const isEvent = item.kind === "debug_event";
-	const error = item.delivery_last_error ?? item.error;
+	const error = channelActivityErrorSummary(item);
 
 	return (
 		<div className={cn(ENTITY_CARD_BASE, "flex items-start gap-3")}>
@@ -497,6 +501,7 @@ function HealthTab({ accountId }: { accountId: string }) {
 	];
 	const transport = h.native_transport ? nativeTransportSummary(h.native_transport) : null;
 	const summary = channelHealthSummary(h);
+	const errorSummary = channelHealthErrorSummary(h);
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -514,7 +519,7 @@ function HealthTab({ accountId }: { accountId: string }) {
 				))}
 			</div>
 
-			{h.last_error ? (
+			{errorSummary ? (
 				<div
 					className={cn(
 						ENTITY_CARD_BASE,
@@ -525,11 +530,8 @@ function HealthTab({ accountId }: { accountId: string }) {
 						<TriangleAlert className="size-4" />
 						Last error
 					</div>
-					<p className="text-sm text-destructive/90">{h.last_error}</p>
-					<p className="text-xs text-muted-foreground">
-						{[h.last_error_stage, h.last_error_outcome].filter(Boolean).join(" · ")} ·{" "}
-						{relativeTime(h.last_error_at)}
-					</p>
+					<p className="text-sm text-destructive/90">{errorSummary}</p>
+					<p className="text-xs text-muted-foreground">Reported {relativeTime(h.last_error_at)}</p>
 				</div>
 			) : null}
 

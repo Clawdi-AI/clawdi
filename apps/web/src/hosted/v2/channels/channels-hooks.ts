@@ -1,21 +1,22 @@
 "use client";
 
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import { toast } from "sonner";
-import { useChannelEditApi } from "@/hosted/v2/channels/channel-edit-client";
+import { normalizeAgentChannelLinks } from "@/hosted/v2/channels/channel-edit-client.logic";
 import { CHANNEL_HEALTH_REFETCH_INTERVAL_MS } from "@/hosted/v2/channels/channel-health-query";
 import {
 	invalidateCreatedChannelQueries,
 	channelKeys as keys,
 	removeDeletedChannelQueries,
 } from "@/hosted/v2/channels/channel-query-cache";
+import { agentChannelLinksQueryBehavior } from "@/hosted/v2/channels/channel-query-options.logic";
 import type {
 	ChannelCreate,
 	ChannelCreated,
 	WhatsAppOnboardingSession,
 } from "@/hosted/v2/channels/channel-types";
-import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
+import { type OpenApiClient, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
 /**
@@ -146,32 +147,31 @@ export function useChannelAgentLinks(id: string) {
 	);
 }
 
-function channelBindingsQueryOptions(api: ReturnType<typeof useOpenApi>, id: string) {
+function channelBindingsQueryOptionsWhen(api: OpenApiClient, id: string, enabled: boolean) {
 	return api.queryOptions(
 		"get",
 		"/v1/channels/{account_id}/bindings",
 		{ params: { path: { account_id: id } } },
-		{ enabled: Boolean(id), refetchInterval: 3_000, refetchIntervalInBackground: false },
+		{
+			enabled: enabled && Boolean(id),
+			refetchInterval: enabled ? 3_000 : false,
+			refetchIntervalInBackground: false,
+		},
 	);
 }
 
-export function useChannelBindings(id: string) {
-	return useQuery(channelBindingsQueryOptions(useOpenApi(), id));
+export function useChannelBindings(id: string, enabled = true) {
+	return useQuery(channelBindingsQueryOptionsWhen(useOpenApi(), id, enabled));
 }
 
-export function useChannelBindingsForAccounts(accountIds: readonly string[]) {
-	const api = useOpenApi();
-	return useQueries({
-		queries: accountIds.map((accountId) => channelBindingsQueryOptions(api, accountId)),
-	});
-}
-
-export function useDeleteChannelBinding(accountId: string) {
+export function useDeleteChannelBinding(accountId: string, agentId: string) {
 	const api = useOpenApi();
 	const qc = useQueryClient();
+	const agentLinksKey = agentChannelLinksQueryOptions(api, agentId).queryKey;
 	return api.useMutation("delete", "/v1/channels/{account_id}/bindings/{binding_id}", {
 		onSuccess: async (result) => {
 			await Promise.all([
+				qc.invalidateQueries({ queryKey: agentLinksKey, exact: true }),
 				qc.invalidateQueries({ queryKey: keys.bindings(accountId) }),
 				qc.invalidateQueries({ queryKey: keys.activity(accountId) }),
 			]);
@@ -201,11 +201,18 @@ export function useEnvironments() {
 
 export function useCreateChannel() {
 	const api = useApi();
+	const openApi = useOpenApi();
 	const qc = useQueryClient();
 	return useSensitiveAction(async (body: ChannelCreate) => {
 		try {
 			const result = unwrap(await api.POST("/v1/channels", { body }));
-			await invalidateCreatedChannelQueries(qc, result);
+			await invalidateCreatedChannelQueries(
+				qc,
+				result,
+				result.agent_id
+					? agentChannelLinksQueryOptions(openApi, result.agent_id).queryKey
+					: undefined,
+			);
 			return {
 				id: result.id,
 				name: result.name,
@@ -239,9 +246,10 @@ export function useDeleteChannel() {
 
 export function useCreatePairCode(
 	accountId: string,
-	{ toastOnError = true }: { toastOnError?: boolean } = {},
+	{ agentId, toastOnError = true }: { agentId?: string; toastOnError?: boolean } = {},
 ) {
 	const api = useApi();
+	const openApi = useOpenApi();
 	const qc = useQueryClient();
 	return useSensitiveAction(async (vars: { agent_link_id: string; ttl_seconds?: number }) => {
 		try {
@@ -252,7 +260,12 @@ export function useCreatePairCode(
 				}),
 			);
 			qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) });
-			qc.invalidateQueries({ queryKey: ["agent-channel-links"] });
+			if (agentId) {
+				qc.invalidateQueries({
+					queryKey: agentChannelLinksQueryOptions(openApi, agentId).queryKey,
+					exact: true,
+				});
+			}
 			qc.invalidateQueries({ queryKey: keys.bindings(accountId) });
 			return {
 				code: result.code,
@@ -272,25 +285,38 @@ export function useCreatePairCode(
 	});
 }
 
-/** An agent's linked channels (+account summary) — fixes the per-channel N+1. */
-export function useAgentChannelLinks(agentId: string, enabled = true) {
-	const editApi = useChannelEditApi();
-	return useQuery({
-		queryKey: ["agent-channel-links", agentId],
-		queryFn: () => editApi.listAgentLinks(agentId),
-		enabled: enabled && Boolean(agentId),
-	});
+export function agentChannelLinksQueryOptions(
+	api: OpenApiClient,
+	agentId: string,
+	{ enabled = true, poll = false }: { enabled?: boolean; poll?: boolean } = {},
+) {
+	return api.queryOptions(
+		"get",
+		"/v1/channels/agent-links",
+		{ params: { query: { agent_id: agentId } } },
+		{
+			...agentChannelLinksQueryBehavior(agentId, { enabled, poll }),
+			select: normalizeAgentChannelLinks,
+		},
+	);
+}
+
+/** An Agent's linked channels and active binding counts in one generated query. */
+export function useAgentChannelLinks(agentId: string, enabled = true, poll = false) {
+	return useQuery(agentChannelLinksQueryOptions(useOpenApi(), agentId, { enabled, poll }));
 }
 
 export function useUnlinkAgentChannel(agentId: string) {
-	const editApi = useChannelEditApi();
+	const api = useOpenApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (vars: { accountId: string; linkId: string }) =>
-			editApi.unlinkAgent(vars.accountId, vars.linkId),
+	const agentLinksKey = agentChannelLinksQueryOptions(api, agentId).queryKey;
+	return api.useMutation("delete", "/v1/channels/{account_id}/agent-links/{link_id}", {
 		onSuccess: (_data, vars) => {
-			qc.invalidateQueries({ queryKey: ["agent-channel-links", agentId] });
-			qc.invalidateQueries({ queryKey: keys.agentLinks(vars.accountId) });
+			const accountId = vars.params.path.account_id;
+			qc.invalidateQueries({ queryKey: agentLinksKey, exact: true });
+			qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) });
+			qc.invalidateQueries({ queryKey: keys.bindings(accountId) });
+			qc.invalidateQueries({ queryKey: keys.activity(accountId) });
 			qc.invalidateQueries({ queryKey: keys.list });
 			qc.invalidateQueries({ queryKey: keys.pool });
 			toast.success("Channel unlinked");

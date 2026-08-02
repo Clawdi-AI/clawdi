@@ -8,6 +8,7 @@ function source(relativePath: string): string {
 const detail = source("./channel-detail-page.tsx");
 const pairDialog = source("./telegram-pair-dialog.tsx");
 const discordPairDialog = source("./discord-pair-dialog.tsx");
+const pairingErrors = source("./channel-pairing-errors.ts");
 const pairingDialogUi = source("./pairing-dialog-ui.tsx");
 const pairingSuccess = source("./channel-pairing-success.ts");
 const hooks = source("./channels-hooks.ts");
@@ -18,7 +19,6 @@ const pairedChatRow = source("./paired-chat-row.tsx");
 const pairedChatRowLogic = source("./paired-chat-row.logic.ts");
 const pairedChatsDialog = source("./paired-chats-dialog.tsx");
 const confirmAction = source("../../../components/ui/confirm-action.tsx");
-const agentBindingLogic = source("./agent-channel-bindings.logic.ts");
 const linkedChannelRow = agentDetail.slice(
 	agentDetail.indexOf("function LinkedChannelRow"),
 	agentDetail.indexOf("// ── Settings / Compute"),
@@ -83,7 +83,9 @@ describe("channel IA boundary", () => {
 		expect(agentDetail).toContain("setDiscordPairOpen(true)");
 		expect(agentDetail).toContain("setDiscordPair({");
 		expect(agentDetail).toContain("<DiscordPairDialog");
-		expect(discordPairDialog).toContain("useCreatePairCode(accountId, { toastOnError: false })");
+		expect(discordPairDialog).toContain(
+			"useCreatePairCode(accountId, { agentId, toastOnError: false })",
+		);
 		expect(discordPairDialog).toContain("await pair.execute");
 		expect(discordPairDialog).toContain(
 			"verifiedDiscordPairingCommand(data.pairing_command, data.code)",
@@ -127,7 +129,8 @@ describe("channel IA boundary", () => {
 		expect(discordPairDialog).toContain("This Discord pair code has expired");
 		expect(discordPairDialog).toContain("Generate new code");
 		expect(discordPairDialog).toContain("Couldn't prepare Discord pairing");
-		expect(discordPairDialog).toContain("Discord pairing is temporarily unavailable. Try again.");
+		expect(discordPairDialog).toContain("DISCORD_PAIR_ERROR_NORMALIZER");
+		expect(pairingErrors).toContain("pairing is temporarily unavailable. Try again.");
 		expect(discordPairDialog).toContain("Server install temporarily unavailable");
 		expect(discordPairDialog).toContain("Retry server install");
 		expect(discordPairDialog).not.toContain("server install settings are out of date");
@@ -153,7 +156,7 @@ describe("channel IA boundary", () => {
 		expect(pairDialog).toContain("agent_link_id: agentLinkId");
 		expect(pairDialog).toContain("ttl_seconds: TELEGRAM_PAIR_TTL_SECONDS");
 		expect(pairDialog).toContain("openKeyRef.current === openKey");
-		expect(pairDialog).toContain("useCreatePairCode(accountId, { toastOnError: false })");
+		expect(pairDialog).toContain("useCreatePairCode(accountId, { agentId, toastOnError: false })");
 		expect(pairDialog).toContain("success: false");
 		expect(pairDialog).not.toContain("Select");
 	});
@@ -161,12 +164,13 @@ describe("channel IA boundary", () => {
 	test("acknowledges only a newly active binding from the current pairing attempt", () => {
 		expect(pairDialog).toContain("usePairingSuccess");
 		expect(discordPairDialog).toContain("usePairingSuccess");
-		expect(agentDetail).toContain("bindings={bindingQuery?.data}");
-		expect(agentDetail).toContain("bindings={bindingsForAccount(telegramPair.accountId)}");
-		expect(agentDetail).toContain("bindings={bindingsForAccount(discordPair.accountId)}");
-		expect(pairingSuccess).toContain("initialActiveBindingIds: new Set");
-		expect(pairingSuccess).toContain("binding.agent_link_id === agentLinkId");
-		expect(pairingSuccess).toContain('binding.status.toLowerCase() === "active"');
+		expect(agentDetail).toContain("bindingCount={bindingCountForLink(telegramPair.agentLinkId)}");
+		expect(agentDetail).toContain("bindingCount={bindingCountForLink(discordPair.agentLinkId)}");
+		expect(pairingSuccess).toContain("baselineBindingCount: bindingCount");
+		expect(pairingSuccess).toContain(
+			"pairingCountIncreased(bindingCount, attempt.baselineBindingCount)",
+		);
+		expect(pairingSuccess).toContain("if (!nextOpen) attemptRef.current = null");
 		expect(pairingSuccess).toContain('toast.success("Chat paired"');
 		expect(pairingSuccess).toContain("attempt.completed = true");
 		expect(pairingSuccess).toContain("openRef.current = false");
@@ -232,9 +236,9 @@ describe("channel IA boundary", () => {
 	});
 
 	test("shows chat identity and isolates Unpair to the selected chat with recovery", () => {
-		expect(agentDetail).toContain("useChannelBindingsForAccounts(activeAccountIds)");
-		expect(agentDetail).toContain("selectAgentPairedChats");
-		expect(agentDetail).toContain("pairedChatsByLinkId.get(linkForBot.id) ?? []");
+		expect(agentDetail).not.toContain("useChannelBindingsForAccounts");
+		expect(pairedChatsDialog).toContain("useChannelBindings(accountId, open)");
+		expect(pairedChatsDialog).toContain("selectPairedChatsForLink");
 		expect(pairedChatRow).toContain("Only this chat will be disconnected");
 		expect(pairedChatRow).toContain("<ConfirmAction");
 		expect(pairedChatRow).toContain("binding_id: binding.id");
@@ -243,10 +247,11 @@ describe("channel IA boundary", () => {
 		expect(hooks).toContain("export function useDeleteChannelBinding");
 		expect(hooks).toContain("keys.bindings(accountId)");
 		expect(hooks).toContain('toastApiError("Couldn\'t unpair chat")');
-		expect(hooks).toContain("refetchInterval: 3_000");
-		expect(agentDetail).toContain("bindingsLoading={Boolean(bindingQuery?.isPending)}");
-		expect(agentDetail).not.toContain("bindingsLoading={Boolean(bindingQuery?.isFetching)}");
-		expect(agentDetail).toContain("bindingQuery?.error && bindingQuery.data === undefined");
+		expect(pairedChatsDialog).toContain(
+			"open && bindings.data === undefined && bindings.isPending",
+		);
+		expect(pairedChatsDialog).not.toContain("bindings.isFetching");
+		expect(pairedChatsDialog).toContain("bindings.error && bindings.data === undefined");
 		expect(pairedChatRow).toContain("binding.last_message_at");
 		expect(pairedChatRow).toContain("Last activity {relativeTime(binding.last_message_at)}");
 		expect(pairedChatRow).not.toContain("No activity yet");
@@ -254,7 +259,7 @@ describe("channel IA boundary", () => {
 		expect(agentDetail).not.toContain("No activity yet");
 		expect(agentDetail).not.toContain("Last activity");
 		expect(pairedChatsDialog).toContain("pairedChats.map");
-		expect(pairedChatsDialog).toContain("pairedChats.length === 1");
+		expect(pairedChatsDialog).toContain("bindingCount === 1");
 		expect(pairedChatsDialog).toContain('"chat" : "chats"');
 		expect(agentDetail).not.toContain("Link to start pairing chats");
 		expect(agentDetail).toContain("Agent Link gated");
@@ -309,13 +314,6 @@ describe("channel IA boundary", () => {
 		expect(pairedChatRow).not.toContain("Through");
 		expect(pairedChatRow).not.toContain("border-l-2");
 		expect(pairedChatRow).not.toContain("ml-4");
-	});
-
-	test("filters Agent-page chats by the visible active link and account", () => {
-		expect(agentBindingLogic).toContain("activeAgentChannelLinks(visibleLinks)");
-		expect(agentBindingLogic).toContain("binding.account_id !== accountId");
-		expect(agentBindingLogic).toContain("linksById.get(binding.agent_link_id)");
-		expect(agentBindingLogic).toContain("link.account_id !== accountId");
 	});
 
 	test("never renders returned runtime credentials", () => {
