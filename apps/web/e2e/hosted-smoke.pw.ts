@@ -1123,6 +1123,7 @@ type HostedApiStubOptions = {
 	agentProjectBindings?: readonly unknown[];
 	agentProjectBindingRequests?: string[];
 	agentProjects?: readonly unknown[];
+	agentProjectsResponse?: StubResponse;
 	agentResourceFixtures?: boolean;
 	agentOrderRequests?: string[];
 	autoReloadRequests?: string[];
@@ -2094,6 +2095,18 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			return fulfillJson(r, { items: [] });
 		}
 		if (p === "/v1/projects") {
+			if (options.agentProjectsResponse) {
+				if (options.agentProjectsResponse.delayMs) {
+					await new Promise((resolve) =>
+						setTimeout(resolve, options.agentProjectsResponse?.delayMs),
+					);
+				}
+				return fulfillJson(
+					r,
+					options.agentProjectsResponse.body,
+					options.agentProjectsResponse.status,
+				);
+			}
 			if (options.agentProjects) return fulfillJson(r, options.agentProjects);
 			if (!options.agentResourceFixtures) return fulfillJson(r, []);
 			return fulfillJson(r, [
@@ -2638,7 +2651,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	);
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toContainText("Ready");
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toContainText(
-		"Managed interface",
+		"Hermes",
 	);
 	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Running");
 	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Basic");
@@ -2654,6 +2667,10 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText("Model");
 	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("CPU");
 	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Memory");
+	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Storage");
+	await expect(overview.getByText("Scope", { exact: true })).toHaveCount(0);
+	await expect(overview.getByText("Access", { exact: true })).toHaveCount(0);
+	await expect(overview.getByText("Managed", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="live-sync"]')).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1600 });
@@ -2700,7 +2717,7 @@ test("hosted overview distinguishes empty skills and channels from loading", asy
 		"No skills available",
 	);
 	await expect(overview.locator('[data-overview-module="channels"]')).toContainText(
-		"No channels linked",
+		"No channels connected",
 	);
 	await expect(overview.getByTestId("overview-module-skeleton")).toHaveCount(0);
 });
@@ -2718,27 +2735,81 @@ test("hosted overview shows a true empty Projects state", async ({ page }) => {
 	await expect(
 		page
 			.locator('[data-overview-module="projects"]')
-			.getByText("No projects bound", { exact: true }),
+			.getByText("No projects added", { exact: true }),
 	).toBeVisible();
 });
 
-test("hosted starting status and actions stay inside Compute", async ({ page }) => {
+test("hosted overview keeps project count when names fail", async ({ page }) => {
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		agentResourceFixtures: true,
+		agentProjectsResponse: { status: 500, body: { detail: "project list failed" } },
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+
+	const projectsCard = page.locator('[data-overview-module="projects"]');
+	await expect(projectsCard).toContainText("1 project");
+	await expect(projectsCard).toContainText("Can’t load project names");
+	await expect(projectsCard.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+	await expect(projectsCard).not.toContainText("No projects added");
+	await expect(page.locator('[data-overview-module="vaults"]')).toContainText(
+		"Available through 1 project",
+	);
+});
+
+test("hosted overview keeps project count while names load", async ({ page }) => {
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		agentResourceFixtures: true,
+		agentProjectsResponse: { status: 200, body: [], delayMs: 5_000 },
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+
+	const projectsCard = page.locator('[data-overview-module="projects"]');
+	await expect(projectsCard).toContainText("1 project");
+	await expect(projectsCard.getByLabel("Loading project names summary")).toBeVisible();
+	await expect(page.locator('[data-overview-module="vaults"]')).toContainText(
+		"Available through 1 project",
+	);
+});
+
+test("hosted provisioning stays focused on Compute", async ({ page }, testInfo) => {
 	const startingDeployment = { ...railHostedDeployment, status: "starting" };
 	await stubHostedApi(page, {
 		deployments: [startingDeployment],
 		cloudAgents: [railHostedCloudAgent],
+		cloudAgentNotFoundIds: [railHostedEnvironmentId],
 	});
 	await page.goto(`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${startingDeployment.id}`);
 
 	const main = page.locator("main");
 	const compute = main.locator('[data-overview-module="compute"]');
 	await expect(compute).toContainText("Starting");
+	await expect(compute).toContainText("Plan");
+	await expect(compute).toContainText("CPU");
+	await expect(compute).toContainText("Memory");
+	await expect(compute).toContainText("Storage");
 	await expect(compute).toContainText("Startup is still in progress.");
 	await expect(compute.getByRole("link", { name: "Compute", exact: true })).toBeVisible();
 	await expect(main.getByText("Starting your agent…", { exact: true })).toHaveCount(0);
 	await expect(
 		compute.getByText("Startup is still in progress.", { exact: false }),
 	).toHaveAttribute("role", "status");
+	await expect(main.getByTestId("hosted-overview-provisioning-placeholder")).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Resources", exact: true })).toHaveCount(0);
+	await expect(main.getByRole("heading", { name: "Operate", exact: true })).toHaveCount(0);
+	await expect(main.locator('[data-overview-module="sessions"]')).toHaveCount(0);
+	await page.setViewportSize({ width: 1280, height: 1000 });
+	await page.screenshot({
+		path: testInfo.outputPath("hosted-agent-overview-provisioning.png"),
+		fullPage: true,
+	});
 });
 
 test("hosted unavailable status stays inside Compute", async ({ page }, testInfo) => {

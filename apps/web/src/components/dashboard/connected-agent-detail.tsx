@@ -82,9 +82,10 @@ export function ConnectedAgentDetail({
 
 	const overviewProjects = useAgentOverviewProjects(id, { enabled: !!agent });
 	const projectBindings = overviewProjects.bindings.data;
-	const projectBindingsLoading = overviewProjects.isLoading;
+	const projectBindingsLoading = overviewProjects.bindings.isLoading;
 	const projectBindingsError = overviewProjects.bindings.error;
 	const refetchProjectBindings = overviewProjects.bindings.refetch;
+	const projectNames = overviewProjects.nameResolution;
 
 	const {
 		data: sessionsPage,
@@ -116,6 +117,10 @@ export function ConnectedAgentDetail({
 		? sessionsError
 		: null;
 	const sessionTotal = blockingSessionsError ? "—" : (sessionsPage?.total ?? 0);
+	const sessionSummary =
+		typeof sessionTotal === "number" && sessionTotal > 0
+			? `${sessionTotal} recent ${sessionTotal === 1 ? "session" : "sessions"}`
+			: "No recent sessions";
 	const syncStatus = daemonStatusVisual(agent);
 	const syncTone =
 		syncStatus.kind === "live"
@@ -181,9 +186,7 @@ export function ConnectedAgentDetail({
 										) : (
 											<div className="space-y-3">
 												<div>
-													<p className="text-lg font-semibold tracking-tight">
-														{sessionTotal} {sessionTotal === 1 ? "session" : "sessions"}
-													</p>
+													<p className="text-lg font-semibold tracking-tight">{sessionSummary}</p>
 													<p className="mt-1 text-xs text-muted-foreground">
 														Recent synced activity
 													</p>
@@ -227,12 +230,36 @@ export function ConnectedAgentDetail({
 										) : (
 											<div className="space-y-3">
 												<p className="text-lg font-semibold">
-													{projectBindings?.length ?? 0} bound
+													{(projectBindings?.length ?? 0) > 0
+														? `${projectBindings?.length} ${projectBindings?.length === 1 ? "project" : "projects"}`
+														: "No projects added"}
 												</p>
-												<OverviewSummaryRows
-													items={overviewProjects.names}
-													empty="No projects bound"
-												/>
+												{(projectBindings?.length ?? 0) === 0 ? null : projectNames.isLoading ? (
+													<OverviewModuleSkeleton
+														label="project names"
+														rows={3}
+														showHeading={false}
+													/>
+												) : projectNames.error ? (
+													<OverviewModuleError
+														label="Project names"
+														onRetry={() => void projectNames.refetch()}
+													/>
+												) : (
+													<>
+														<OverviewSummaryRows
+															items={projectNames.names}
+															empty="Project names can’t be shown"
+														/>
+														{projectNames.unresolvedCount > 0 ? (
+															<p className="text-xs text-muted-foreground">
+																{projectNames.unresolvedCount} project{" "}
+																{projectNames.unresolvedCount === 1 ? "name can’t" : "names can’t"}{" "}
+																be shown
+															</p>
+														) : null}
+													</>
+												)}
 											</div>
 										),
 									},
@@ -244,24 +271,21 @@ export function ConnectedAgentDetail({
 										) : (
 											<div className="space-y-3">
 												<p className="text-lg font-semibold">
-													{skillsForThisEnv?.length ?? 0} available
+													{(skillsForThisEnv?.length ?? 0) > 0
+														? `${skillsForThisEnv?.length} ${skillsForThisEnv?.length === 1 ? "skill" : "skills"}`
+														: "No skills available"}
 												</p>
-												<OverviewChips
-													items={(skillsForThisEnv ?? []).map((skill) => skill.name)}
-													empty="No skills available"
-												/>
+												{(skillsForThisEnv?.length ?? 0) > 0 ? (
+													<OverviewChips
+														items={(skillsForThisEnv ?? []).map((skill) => skill.name)}
+														empty="No skills available"
+													/>
+												) : null}
 											</div>
 										),
 									},
 									memories: {
-										body: (
-											<OverviewMetadata
-												items={[
-													{ label: "Scope", value: "Account-wide" },
-													{ label: "Access", value: "All agents" },
-												]}
-											/>
-										),
+										body: <p className="text-sm font-medium">Shared with all your agents</p>,
 									},
 									vaults: {
 										body: projectBindingsLoading ? (
@@ -272,28 +296,15 @@ export function ConnectedAgentDetail({
 												onRetry={() => void refetchProjectBindings()}
 											/>
 										) : (
-											<OverviewMetadata
-												items={[
-													{
-														label: "Sources",
-														value: projectBindings?.length
-															? `${projectBindings.length} bound Projects`
-															: "No bound Projects",
-													},
-													{ label: "Delivery", value: "Through Projects" },
-												]}
-											/>
+											<p className="text-sm font-medium">
+												{projectBindings?.length
+													? `Available through ${projectBindings.length} ${projectBindings.length === 1 ? "project" : "projects"}`
+													: "Add a project to use vaults"}
+											</p>
 										),
 									},
 									connectors: {
-										body: (
-											<OverviewMetadata
-												items={[
-													{ label: "Scope", value: "Account-wide" },
-													{ label: "Managed", value: "Account settings" },
-												]}
-											/>
-										),
+										body: <p className="text-sm font-medium">Shared with all your agents</p>,
 									},
 								}}
 							/>

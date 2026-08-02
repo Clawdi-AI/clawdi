@@ -570,6 +570,7 @@ export function HostedAgentDetail({
 				) : null}
 				{deploymentStatus.known &&
 				deploymentProjectionQueryable &&
+				!(activeTab === "overview" && isStartingStatus(deploymentStatus)) &&
 				shouldShowHostedProjectionNotice(activeTab) ? (
 					<HostedProjectionNotice
 						projection={projection}
@@ -1222,8 +1223,12 @@ function OverviewTab({
 	const sessionsEmptyMessage = deploymentRunning
 		? "No sessions from this agent yet."
 		: "Sessions appear once your agent is running.";
+	const sessionSummary = sessions.length
+		? `${sessions.length} recent ${sessions.length === 1 ? "session" : "sessions"}`
+		: "No recent sessions";
 	const overviewProjects = useAgentOverviewProjects(agentId, { enabled: Boolean(agent) });
 	const projectBindings = overviewProjects.bindings;
+	const projectNames = overviewProjects.nameResolution;
 	const skills = useAgentProjectSkills(
 		agentId,
 		agent?.default_project_id,
@@ -1241,12 +1246,14 @@ function OverviewTab({
 	const consoleLocation = runtimeConsoleLocation(consoleUrl);
 	const providerId = primaryModelProviderId(primaryModel) ?? bindingProvider?.provider_id;
 	const projectionUnavailable = !deploymentStatus.known;
+	const provisioning = isStartingStatus(deploymentStatus) && !projectionAvailable;
 	return (
 		<div className="flex flex-col gap-5">
 			<AgentOverviewCapabilities
 				agentId={agentId}
 				variant="hosted"
 				routeSearch={routeSearch}
+				visibleModuleIds={provisioning ? ["agent-interface", "compute"] : undefined}
 				content={{
 					sessions: {
 						body: !projectionAvailable ? (
@@ -1262,7 +1269,7 @@ function OverviewTab({
 						) : (
 							<div className="space-y-3">
 								<div>
-									<p className="text-lg font-semibold">{sessions.length} recent</p>
+									<p className="text-lg font-semibold">{sessionSummary}</p>
 									<p className="mt-1 text-xs text-muted-foreground">Managed agent activity</p>
 								</div>
 								<div className="border-t pt-3">
@@ -1282,19 +1289,13 @@ function OverviewTab({
 						body: (
 							<div className="space-y-3">
 								<p className="text-lg font-semibold">
-									{deploymentRunning ? "Ready" : "Unavailable"}
+									{deploymentRunning ? "Ready to open" : "Not available"}
 								</p>
-								<OverviewMetadata
-									items={[
-										{ label: "Interface", value: runtimeDisplayName(spec.runtime) },
-										{
-											label: "Endpoint",
-											value: deploymentRunning
-												? (consoleLocation ?? "Managed interface")
-												: "Requires running compute",
-										},
-									]}
-								/>
+								<p className="text-sm text-muted-foreground">
+									{deploymentRunning
+										? (consoleLocation ?? runtimeDisplayName(spec.runtime))
+										: "Available when compute is running"}
+								</p>
 							</div>
 						),
 					},
@@ -1314,8 +1315,32 @@ function OverviewTab({
 							/>
 						) : (
 							<div className="space-y-3">
-								<p className="text-lg font-semibold">{projectBindings.data?.length ?? 0} bound</p>
-								<OverviewSummaryRows items={overviewProjects.names} empty="No projects bound" />
+								<p className="text-lg font-semibold">
+									{(projectBindings.data?.length ?? 0) > 0
+										? `${projectBindings.data?.length} ${projectBindings.data?.length === 1 ? "project" : "projects"}`
+										: "No projects added"}
+								</p>
+								{(projectBindings.data?.length ?? 0) === 0 ? null : projectNames.isLoading ? (
+									<OverviewModuleSkeleton label="project names" rows={3} showHeading={false} />
+								) : projectNames.error ? (
+									<OverviewModuleError
+										label="Project names"
+										onRetry={() => void projectNames.refetch()}
+									/>
+								) : (
+									<>
+										<OverviewSummaryRows
+											items={projectNames.names}
+											empty="Project names can’t be shown"
+										/>
+										{projectNames.unresolvedCount > 0 ? (
+											<p className="text-xs text-muted-foreground">
+												{projectNames.unresolvedCount} project{" "}
+												{projectNames.unresolvedCount === 1 ? "name can’t" : "names can’t"} be shown
+											</p>
+										) : null}
+									</>
+								)}
 							</div>
 						),
 					},
@@ -1332,23 +1357,22 @@ function OverviewTab({
 							<OverviewModuleError label="Skills" onRetry={() => void skills.refetch()} />
 						) : (
 							<div className="space-y-3">
-								<p className="text-lg font-semibold">{skills.skills?.length ?? 0} available</p>
-								<OverviewChips
-									items={(skills.skills ?? []).map((skill) => skill.name)}
-									empty="No skills available"
-								/>
+								<p className="text-lg font-semibold">
+									{(skills.skills?.length ?? 0) > 0
+										? `${skills.skills?.length} ${skills.skills?.length === 1 ? "skill" : "skills"}`
+										: "No skills available"}
+								</p>
+								{(skills.skills?.length ?? 0) > 0 ? (
+									<OverviewChips
+										items={(skills.skills ?? []).map((skill) => skill.name)}
+										empty="No skills available"
+									/>
+								) : null}
 							</div>
 						),
 					},
 					memories: {
-						body: (
-							<OverviewMetadata
-								items={[
-									{ label: "Scope", value: "Account-wide" },
-									{ label: "Access", value: "All agents" },
-								]}
-							/>
-						),
+						body: <p className="text-sm font-medium">Shared with all your agents</p>,
 					},
 					vaults: {
 						body: !agent ? (
@@ -1365,28 +1389,15 @@ function OverviewTab({
 								onRetry={() => void projectBindings.refetch()}
 							/>
 						) : (
-							<OverviewMetadata
-								items={[
-									{
-										label: "Sources",
-										value: projectBindings.data?.length
-											? `${projectBindings.data.length} bound Projects`
-											: "No bound Projects",
-									},
-									{ label: "Delivery", value: "Through Projects" },
-								]}
-							/>
+							<p className="text-sm font-medium">
+								{projectBindings.data?.length
+									? `Available through ${projectBindings.data.length} ${projectBindings.data.length === 1 ? "project" : "projects"}`
+									: "Add a project to use vaults"}
+							</p>
 						),
 					},
 					connectors: {
-						body: (
-							<OverviewMetadata
-								items={[
-									{ label: "Scope", value: "Account-wide" },
-									{ label: "Managed", value: "Account settings" },
-								]}
-							/>
-						),
+						body: <p className="text-sm font-medium">Shared with all your agents</p>,
 					},
 					"model-provider": {
 						body: (
@@ -1411,8 +1422,12 @@ function OverviewTab({
 							<OverviewModuleError label="Channels" onRetry={() => void channelLinks.refetch()} />
 						) : (
 							<div className="space-y-3">
-								<p className="text-lg font-semibold">{channelLinks.data?.length ?? 0} linked</p>
-								<OverviewSummaryRows items={linkedChannelRows} empty="No channels linked" />
+								<p className="text-lg font-semibold">
+									{(channelLinks.data?.length ?? 0) > 0
+										? `${channelLinks.data?.length} connected ${channelLinks.data?.length === 1 ? "channel" : "channels"}`
+										: "No channels connected"}
+								</p>
+								<OverviewSummaryRows items={linkedChannelRows} empty="No channels connected" />
 							</div>
 						),
 					},
@@ -1429,6 +1444,7 @@ function OverviewTab({
 										{ label: "Plan", value: isPerformance ? "Performance" : "Basic" },
 										{ label: "CPU", value: `${spec.resources.vcpu} vCPU` },
 										{ label: "Memory", value: formatMemoryMib(spec.resources.memory_mib) },
+										{ label: "Storage", value: `${spec.resources.disk_gib} GiB` },
 									]}
 								/>
 								{deploymentRunning ? null : (
@@ -1451,6 +1467,18 @@ function OverviewTab({
 					},
 				}}
 			/>
+			{provisioning ? (
+				<div
+					data-testid="hosted-overview-provisioning-placeholder"
+					className="rounded-lg border border-dashed bg-muted/20 px-6 py-10 text-center"
+				>
+					<p className="text-sm font-medium">Your agent’s workspace is getting ready</p>
+					<p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
+						Recent activity, projects, skills, memories, vaults, connectors, models, and channels
+						will appear here automatically when your agent is ready.
+					</p>
+				</div>
+			) : null}
 		</div>
 	);
 }

@@ -1,8 +1,26 @@
 "use client";
 
 import { useMemo } from "react";
-import { orderedAgentProjectBindings } from "@/components/dashboard/agent-project-scope";
+import {
+	type AgentProjectBinding,
+	orderedAgentProjectBindings,
+} from "@/components/dashboard/agent-project-scope";
 import { useOpenApi } from "@/lib/api";
+import type { components } from "@/lib/api-schemas";
+
+type ProjectRow = components["schemas"]["ProjectResponse"];
+
+export function resolveAgentOverviewProjectNames(
+	bindings: readonly AgentProjectBinding[],
+	projects: readonly ProjectRow[],
+) {
+	const projectsById = new Map(projects.map((project) => [project.id, project.name]));
+	const names = orderedAgentProjectBindings(bindings).flatMap((binding) => {
+		const name = projectsById.get(binding.project_id)?.trim();
+		return name ? [name] : [];
+	});
+	return { names, unresolvedCount: Math.max(0, bindings.length - names.length) };
+}
 
 export function agentProjectBindingsQueryKey(agentId: string | null | undefined) {
 	return [
@@ -35,22 +53,19 @@ export function useAgentOverviewProjects(
 		"get",
 		"/v1/projects",
 		{},
-		{ enabled: enabled && bindings.isSuccess },
+		{ enabled: enabled && bindings.isSuccess && (bindings.data?.length ?? 0) > 0 },
 	);
-	const names = useMemo(() => {
-		const projectsById = new Map(
-			(projects.data ?? []).map((project) => [project.id, project.name]),
-		);
-		return orderedAgentProjectBindings(bindings.data ?? []).flatMap((binding) => {
-			const name = projectsById.get(binding.project_id)?.trim();
-			return name ? [name] : [];
-		});
+	const resolvedNames = useMemo(() => {
+		return resolveAgentOverviewProjectNames(bindings.data ?? [], projects.data ?? []);
 	}, [bindings.data, projects.data]);
 
 	return {
 		bindings,
-		names,
-		isLoading: bindings.isLoading || (bindings.isSuccess && projects.isLoading),
-		projectsError: projects.error,
+		nameResolution: {
+			...resolvedNames,
+			isLoading: (bindings.data?.length ?? 0) > 0 && projects.isLoading,
+			error: projects.error,
+			refetch: projects.refetch,
+		},
 	};
 }

@@ -16,15 +16,23 @@ export type AgentOverviewModuleContent = {
 	body: ReactNode;
 };
 
-export function OverviewModuleSkeleton({ label, rows = 2 }: { label: string; rows?: 1 | 2 | 3 }) {
+export function OverviewModuleSkeleton({
+	label,
+	rows = 2,
+	showHeading = true,
+}: {
+	label: string;
+	rows?: 1 | 2 | 3;
+	showHeading?: boolean;
+}) {
 	return (
 		<div
 			data-testid="overview-module-skeleton"
 			aria-label={`Loading ${label} summary`}
 			role="status"
 		>
-			<Skeleton className="h-5 w-24" />
-			<div className="mt-3 space-y-2">
+			{showHeading ? <Skeleton className="h-5 w-24" /> : null}
+			<div className={cn("space-y-2", showHeading && "mt-3")}>
 				{Array.from({ length: rows }).map((_, index) => (
 					<Skeleton key={`${label}-${index}`} className={cn("h-3", index ? "w-2/3" : "w-full")} />
 				))}
@@ -36,7 +44,7 @@ export function OverviewModuleSkeleton({ label, rows = 2 }: { label: string; row
 export function OverviewModuleError({ label, onRetry }: { label: string; onRetry?: () => void }) {
 	return (
 		<div className="space-y-3 text-sm" role="status">
-			<p className="font-medium">{label} unavailable</p>
+			<p className="font-medium">Can’t load {label.toLowerCase()}</p>
 			{onRetry ? (
 				<Button type="button" variant="outline" size="sm" onClick={onRetry}>
 					<RefreshCw /> Retry
@@ -149,15 +157,26 @@ export function AgentOverviewCapabilities({
 	variant,
 	routeSearch,
 	content,
+	visibleModuleIds,
 }: {
 	agentId: string;
 	variant: AgentNavigationVariant;
 	routeSearch: AgentRouteSearch;
 	content: Partial<Record<AgentOverviewModuleId, AgentOverviewModuleContent>>;
+	visibleModuleIds?: readonly AgentOverviewModuleId[];
 }) {
+	const visibleModules = visibleModuleIds ? new Set(visibleModuleIds) : null;
+	const groups = agentOverviewGroups(variant)
+		.map((group) => ({
+			...group,
+			modules: visibleModules
+				? group.modules.filter((module) => visibleModules.has(module.id))
+				: group.modules,
+		}))
+		.filter((group) => group.modules.length > 0);
 	return (
 		<div className="flex flex-col gap-8" data-agent-overview={variant}>
-			{agentOverviewGroups(variant).map((group) => (
+			{groups.map((group) => (
 				<section key={group.id} aria-labelledby={`agent-overview-${group.id}`}>
 					<div className="mb-3">
 						<h2 id={`agent-overview-${group.id}`} className="text-sm font-semibold">

@@ -195,6 +195,8 @@ type DashboardApiStubOptions = {
 	projectBindingsError?: { status: number; detail: string };
 	projectBindingsGate?: Promise<void>;
 	projects?: readonly unknown[];
+	projectsGate?: Promise<void>;
+	projectsResponse?: { body: unknown; status: number };
 	skillRequests?: string[];
 	skillsByProjectId?: Readonly<Record<string, readonly unknown[]>>;
 	vaultRequests?: string[];
@@ -248,6 +250,11 @@ async function stubDashboardApi(
 			return;
 		}
 		if (url.pathname === "/v1/projects") {
+			await options.projectsGate;
+			if (options.projectsResponse) {
+				await fulfillJson(route, options.projectsResponse.body, options.projectsResponse.status);
+				return;
+			}
 			await fulfillJson(route, options.projects ?? projects);
 			return;
 		}
@@ -462,7 +469,9 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(overview.locator('[data-overview-module="live-sync"]')).toContainText("Machine");
 	await expect(overview.locator('[data-overview-module="live-sync"]')).toContainText("Last seen");
 	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("Research");
-	await expect(overview.locator('[data-overview-module="memories"]')).toContainText("Scope");
+	await expect(overview.locator('[data-overview-module="memories"]')).toContainText(
+		"Shared with all your agents",
+	);
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1400 });
@@ -470,6 +479,34 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		path: testInfo.outputPath("connected-agent-overview.png"),
 		fullPage: true,
 	});
+});
+
+test("connected overview keeps project count when names fail", async ({ page }) => {
+	await stubDashboardApi(page, [], {
+		projectsResponse: { status: 500, body: { detail: "project list failed" } },
+	});
+	await page.goto("/agents/agent-smoke-1");
+
+	const projectsCard = page.locator('[data-overview-module="projects"]');
+	await expect(projectsCard).toContainText("1 project");
+	await expect(projectsCard).toContainText("Can’t load project names");
+	await expect(projectsCard.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+	await expect(projectsCard).not.toContainText("No projects added");
+	await expect(page.locator('[data-overview-module="vaults"]')).toContainText(
+		"Available through 1 project",
+	);
+});
+
+test("connected overview keeps project count while names load", async ({ page }) => {
+	await stubDashboardApi(page, [], { projectsGate: new Promise<void>(() => {}) });
+	await page.goto("/agents/agent-smoke-1");
+
+	const projectsCard = page.locator('[data-overview-module="projects"]');
+	await expect(projectsCard).toContainText("1 project");
+	await expect(projectsCard.getByLabel("Loading project names summary")).toBeVisible();
+	await expect(page.locator('[data-overview-module="vaults"]')).toContainText(
+		"Available through 1 project",
+	);
 });
 
 test("connected agent Memories stays account-wide with canonical detail links", async ({
