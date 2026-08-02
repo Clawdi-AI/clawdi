@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.api_scopes import RUNTIME_MCP_SCOPES
 from app.schemas.runtime import (
     HostedEgressEngine,
     HostedEgressProfiles,
@@ -23,11 +24,7 @@ from app.schemas.runtime import (
 )
 
 PlatformOwnerKind = Literal["clerk", "partner_tenant"]
-PLATFORM_RUNTIME_KEY_SCOPES = (
-    "sessions:write",
-    "skills:read",
-    "skills:write",
-)
+PLATFORM_RUNTIME_KEY_SCOPES = RUNTIME_MCP_SCOPES
 
 _CLERK_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _PARTNER_TENANT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")

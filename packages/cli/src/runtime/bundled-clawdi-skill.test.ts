@@ -86,14 +86,24 @@ describe("bundled Clawdi skill connector contract", () => {
 		}
 	});
 
-	it("keeps hosted-only guidance free of local Clawdi capabilities", () => {
-		expect(hostedSkill).not.toMatch(/\bMemory\b|memory_(?:search|add|extract)/i);
-		expect(hostedSkill).not.toMatch(
-			/\bVault\b|\bAI Provider\b|\bCLI\b|\bconfig(?:uration)?\b|\bsetup\b/i,
-		);
+	it("teaches hosted MCP capabilities without local-only operations", () => {
+		expect(hostedSkill).toContain("## Memory");
+		expect(hostedSkill).toContain("`memory_search`");
+		expect(hostedSkill).toContain("`memory_add`");
+		expect(hostedSkill).toContain("`memory_extract`");
+		expect(hostedSkill).toContain("## Projects");
+		expect(hostedSkill).toContain("`project_current`");
+		expect(hostedSkill).toContain("## Vault Metadata");
+		expect(hostedSkill).toContain("`vault_get`");
+		expect(hostedSkill).toContain("`vault_resolve`");
+		expect(hostedSkill).toContain("Vault mutation is not an Agent MCP capability");
+		expect(hostedSkill).not.toMatch(/\bCLI\b|\bsetup\b/i);
 		expect(hostedSkill).not.toMatch(/dashboard/i);
 		expect(genericSkill).toContain("## Memory");
-		expect(genericSkill).toContain("## Vault CLI");
-		expect(genericSkill).toContain("## AI Provider CLI");
+		expect(genericSkill).toContain("## Vault Management");
+		expect(genericSkill).toContain("a human operator");
+		expect(genericSkill).not.toContain("## Vault CLI");
+		expect(genericSkill).toContain("## AI Provider Management");
+		expect(genericSkill).not.toContain("## AI Provider CLI");
 	});
 });
