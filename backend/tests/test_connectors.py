@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -202,18 +201,28 @@ class FakeLink:
 
 
 class FakeConnectedAccounts:
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        create_status: str = "ACTIVE",
+        retrieve_statuses: list[str] | None = None,
+    ):
         self.created: dict[str, Any] | None = None
+        self.create_status = create_status
+        self.retrieve_statuses = list(retrieve_statuses or [])
+        self.retrieve_calls: list[str] = []
 
     async def create(self, **kwargs):
         self.created = kwargs
-        return SimpleNamespace(id="ca_posthog", status="ACTIVE")
+        return SimpleNamespace(id="ca_posthog", status=self.create_status)
 
     async def list(self, **kwargs):
         return SimpleNamespace(items=[], next_cursor=None)
 
     async def retrieve(self, connected_account_id: str):
-        return SimpleNamespace(id=connected_account_id, status="ACTIVE")
+        self.retrieve_calls.append(connected_account_id)
+        status = self.retrieve_statuses.pop(0) if self.retrieve_statuses else "ACTIVE"
+        return SimpleNamespace(id=connected_account_id, status=status)
 
     async def delete(self, connected_account_id: str):
         return SimpleNamespace(success=True)
@@ -231,6 +240,7 @@ class FakeClient:
         list_toolkits: list[Any] | None = None,
         detail_toolkits: dict[str, Any] | None = None,
         auth_configs: FakeAuthConfigs | None = None,
+        connected_accounts: FakeConnectedAccounts | None = None,
     ):
         if detail_toolkits is None:
             detail_toolkits = {"posthog": _posthog_detail_toolkit()}
@@ -240,7 +250,7 @@ class FakeClient:
         )
         self.auth_configs = auth_configs or FakeAuthConfigs()
         self.link = FakeLink()
-        self.connected_accounts = FakeConnectedAccounts()
+        self.connected_accounts = connected_accounts or FakeConnectedAccounts()
         self.tools = FakeTools()
 
 
@@ -671,16 +681,28 @@ async def test_credentials_connect_uses_custom_auth_config_and_connected_account
 async def test_credentials_connect_times_out_when_composio_stays_pending(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    fake = FakeClient()
-    fake.connected_accounts.create = AsyncMock(
-        return_value=SimpleNamespace(id="ca_posthog", status="INITIALIZING")
+    connected_accounts = FakeConnectedAccounts(
+        create_status="INITIALIZING",
+        retrieve_statuses=["INITIALIZING"],
     )
+    fake = FakeClient(connected_accounts=connected_accounts)
     monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
-    monkeypatch.setattr(
-        composio,
-        "_wait_for_connection_status",
-        AsyncMock(return_value="INITIALIZING"),
-    )
+
+    class SteppedClock:
+        def __init__(self) -> None:
+            self.values = iter((0.0, 10.0, 20.0))
+
+        def time(self) -> float:
+            return next(self.values)
+
+    sleep_calls: list[float] = []
+
+    async def advance(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    clock = SteppedClock()
+    monkeypatch.setattr(composio.asyncio, "get_running_loop", lambda: clock)
+    monkeypatch.setattr(composio.asyncio, "sleep", advance)
     composio._tool_router_session_cache["clerk_user_123"] = composio.ComposioMcpSession(
         url="https://app.composio.dev/tool_router/v3/trs_old/mcp",
         headers={},
@@ -694,6 +716,8 @@ async def test_credentials_connect_times_out_when_composio_stays_pending(
             {"generic_api_key": "phx_123"},
         )
 
+    assert sleep_calls == [1.0]
+    assert connected_accounts.retrieve_calls == ["ca_posthog"]
     assert "clerk_user_123" not in composio._tool_router_session_cache
 
 

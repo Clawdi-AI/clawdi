@@ -181,7 +181,21 @@ async def test_whatsapp_provider_bridge_queues_exact_proto_before_physical_deliv
         assert queued.outcome == "queued"
         assert transport.outbound_messages == []
 
-        async def allow_runtime_authority(*args, **kwargs) -> bool:
+        async def allow_runtime_authority(
+            _db: AsyncSession,
+            *,
+            link: ChannelBotAgentLink | None,
+        ) -> bool:
+            assert link is not None
+            return True
+
+        async def allow_provider_cardinality(
+            _db: AsyncSession,
+            *,
+            account: ChannelAccount,
+            link: ChannelBotAgentLink,
+        ) -> bool:
+            assert account.id == link.account_id
             return True
 
         monkeypatch.setattr(
@@ -190,7 +204,7 @@ async def test_whatsapp_provider_bridge_queues_exact_proto_before_physical_deliv
         )
         monkeypatch.setattr(
             "app.services.channels.bot_agent_link_has_provider_cardinality_capability",
-            allow_runtime_authority,
+            allow_provider_cardinality,
         )
         delivered_id = await ChannelDeliveryWorker(sessionmaker).run_once()
     finally:

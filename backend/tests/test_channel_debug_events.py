@@ -57,6 +57,7 @@ async def test_channel_debug_events_are_sanitized_and_filterable(
                 "message": "m" * 700,
             },
             "items": list(range(25)),
+            "opaque": object(),
         },
     )
     await db_session.commit()
@@ -79,6 +80,7 @@ async def test_channel_debug_events_are_sanitized_and_filterable(
     assert "telegram-secret" not in response.text
     assert len(event["details"]["nested"]["message"]) <= 503
     assert len(event["details"]["items"]) == 20
+    assert isinstance(event["details"]["opaque"], str)
     assert len(event["error"]) <= 503
 
 

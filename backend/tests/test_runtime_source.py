@@ -478,17 +478,20 @@ def test_runtime_secret_source_collision_fails_before_decrypt(monkeypatch) -> No
     assert decrypt_calls == []
 
 
-def test_runtime_source_rejects_non_public_provider_before_auth_selection(monkeypatch) -> None:
+def test_runtime_source_rejects_non_public_provider_without_decrypting_secret(monkeypatch) -> None:
     from app.services import runtime_source
 
     batch = _batch()
     provider = batch.providers[(USER_ID, "managed")]
     provider.base_url = "https://provider.home.arpa/v1"
 
-    def reject_auth_selection(*args, **kwargs):
-        raise AssertionError("invalid Hosted endpoint must fail before auth selection")
+    decrypt_calls: list[tuple[bytes, bytes]] = []
 
-    monkeypatch.setattr(runtime_source, "_selected_auth_payload", reject_auth_selection)
+    def record_decrypt(ciphertext: bytes, nonce: bytes) -> str:
+        decrypt_calls.append((ciphertext, nonce))
+        return "must-not-be-projected"
+
+    monkeypatch.setattr(runtime_source, "decrypt", record_decrypt)
 
     with pytest.raises(RuntimeSourceError, match="public host"):
         render_runtime_source(
@@ -498,6 +501,7 @@ def test_runtime_source_rejects_non_public_provider_before_auth_selection(monkey
             vault_key_identity="vault-key",
             decrypt_secrets=True,
         )
+    assert decrypt_calls == []
 
 
 def test_runtime_source_never_decrypts_or_projects_channel_provider_token(monkeypatch) -> None:
