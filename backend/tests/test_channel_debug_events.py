@@ -18,13 +18,33 @@ from app.models.channel import (
     ChannelMessage,
 )
 from app.models.user import User
-from app.services.channel_debug_events import record_channel_debug_event
+from app.services.channel_debug_events import (
+    public_channel_debug_details,
+    record_channel_debug_event,
+)
 from app.services.whatsapp_provider_bridge import (
     register_whatsapp_provider_transport,
     unregister_whatsapp_provider_transport,
 )
 
 pytestmark = pytest.mark.usefixtures("channel_agent")
+
+
+def test_public_channel_debug_details_allows_only_known_whatsapp_runtime_enums():
+    assert public_channel_debug_details("baileys_websocket", key="runtime") == ("baileys_websocket")
+    assert public_channel_debug_details("baileys_noise", key="runtime") == "baileys_noise"
+    assert public_channel_debug_details("provider-controlled", key="runtime") == "[redacted]"
+    assert (
+        public_channel_debug_details("server=s.whatsapp.net device=true", key="jidDescription")
+        == "server=s.whatsapp.net device=true"
+    )
+    assert (
+        public_channel_debug_details("server=secret.example device=true", key="jidDescription")
+        == "[redacted]"
+    )
+    digest = "a" * 64
+    assert public_channel_debug_details(digest, key="clientStaticSha256") == digest
+    assert public_channel_debug_details("not-a-digest", key="clientStaticSha256") == "[redacted]"
 
 
 @pytest.mark.asyncio

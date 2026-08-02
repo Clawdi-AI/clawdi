@@ -5,13 +5,27 @@ import json
 from uuid import UUID
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.services.whatsapp_sidecar_registry as sidecar_registry_module
+from app.models.channel import (
+    CHANNEL_PROVIDER_WHATSAPP,
+    CHANNEL_VISIBILITY_PUBLIC,
+    ChannelAccount,
+)
+from app.models.user import User
 from app.services.whatsapp_native_transport import (
     WhatsAppBaileysSidecarConfig,
     WhatsAppProviderMessageEvent,
+    WhatsAppSidecarCapabilities,
+    WhatsAppSidecarHealth,
+    WhatsAppSidecarPairingStatus,
 )
-from app.services.whatsapp_provider_bridge import whatsapp_provider_transport_status
+from app.services.whatsapp_provider_bridge import (
+    WhatsAppProviderAccountRetired,
+    unregister_whatsapp_provider_transport,
+    whatsapp_provider_transport_status,
+)
 from app.services.whatsapp_sidecar_registry import (
     ConfiguredWhatsAppSidecarRegistry,
     parse_whatsapp_sidecar_registrations,
@@ -320,3 +334,185 @@ async def test_provider_ingress_ack_waits_until_persistence_returns(monkeypatch)
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ownership_kind", ["managed", "custom"])
+async def test_provider_ingress_terminal_exit_releases_owner_and_can_reattach_once(
+    monkeypatch: pytest.MonkeyPatch,
+    ownership_kind: str,
+    db_session: AsyncSession,
+    seed_user: User,
+):
+    account_id = UUID("00000000-0000-0000-0000-000000000904")
+    slot_id = (
+        account_id if ownership_kind == "managed" else UUID("00000000-0000-0000-0000-000000000944")
+    )
+    raw = json.dumps(
+        {
+            str(slot_id): {
+                "base_url": f"https://sidecar-{ownership_kind}.example.test",
+                "api_token": "secret",
+            }
+        }
+    )
+    registry = ConfiguredWhatsAppSidecarRegistry(
+        raw if ownership_kind == "managed" else "",
+        raw if ownership_kind == "custom" else "",
+    )
+    config = registry._managed.get(slot_id) or registry._custom[slot_id]
+    account = ChannelAccount(
+        id=account_id,
+        user_id=seed_user.id,
+        provider=CHANNEL_PROVIDER_WHATSAPP,
+        name=f"terminal-{ownership_kind}",
+        visibility=CHANNEL_VISIBILITY_PUBLIC,
+        webhook_secret_hash="test-secret-hash",
+        config={
+            "connection_mode": f"baileys_{ownership_kind}",
+            "sidecar_config_revision": config.binding_revision,
+            **({"sidecar_account_id": str(slot_id)} if ownership_kind == "custom" else {}),
+        },
+    )
+    db_session.add(account)
+    await db_session.commit()
+    event = WhatsAppProviderMessageEvent(
+        sequence=8,
+        message_id="provider-8",
+        remote_jid="15550001111@s.whatsapp.net",
+        remote_jid_alt=None,
+        participant=None,
+        participant_alt=None,
+        push_name=None,
+        message_timestamp=None,
+        message_proto=b"\x0a\x05hello",
+    )
+    acknowledgements: list[int] = []
+    attempts = 0
+    reattached = asyncio.Event()
+
+    class SessionContext:
+        async def __aenter__(self):
+            return db_session
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    async def retired(_db, *, account_id, event):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise WhatsAppProviderAccountRetired
+        reattached.set()
+        await asyncio.Future()
+
+    class PumpClient:
+        async def provider_events(self, *, limit=100):
+            return [event]
+
+        async def acknowledge_provider_events(self, *, through_sequence):
+            acknowledgements.append(through_sequence)
+
+        async def capabilities(self):
+            return WhatsAppSidecarCapabilities(pairing=frozenset({"qr"}))
+
+        async def health(self):
+            return WhatsAppSidecarHealth(status="connected", connected=True, registered=True)
+
+        async def pairing_status(self):
+            return WhatsAppSidecarPairingStatus(status="connected", registered=True)
+
+    monkeypatch.setattr(sidecar_registry_module, "async_session_factory", lambda: SessionContext())
+    monkeypatch.setattr(sidecar_registry_module, "persist_whatsapp_provider_event", retired)
+
+    client = PumpClient()
+    registry._clients_by_slot[slot_id] = client
+    if ownership_kind == "managed":
+        await registry.reconcile_managed_ownership(db_session)
+    else:
+        await registry.reconcile_custom_ownership()
+    first_task = registry._ingress_tasks[account_id]
+    await asyncio.wait_for(first_task, timeout=1)
+
+    assert acknowledgements == []
+    assert account_id not in registry._ingress_tasks
+    assert whatsapp_provider_transport_status(account_id).available is False
+    assert account_id not in registry._bound_managed_accounts
+    assert account_id not in registry._custom_account_to_slot
+
+    if ownership_kind == "managed":
+        await registry.reconcile_managed_ownership(db_session)
+    else:
+        await registry.reconcile_custom_ownership()
+    second_task = registry._ingress_tasks[account_id]
+    try:
+        await asyncio.wait_for(reattached.wait(), timeout=1)
+        if ownership_kind == "managed":
+            await registry.reconcile_managed_ownership(db_session)
+        else:
+            await registry.reconcile_custom_ownership()
+        assert second_task is registry._ingress_tasks[account_id]
+        assert second_task is not first_task
+        assert attempts == 2
+        assert len(registry._ingress_tasks) == 1
+    finally:
+        second_task.cancel()
+        await asyncio.gather(second_task, return_exceptions=True)
+        registry._ingress_tasks.clear()
+        unregister_whatsapp_provider_transport(account_id)
+
+
+@pytest.mark.asyncio
+async def test_provider_ingress_retries_transient_errors(monkeypatch):
+    account_id = UUID("00000000-0000-0000-0000-000000000905")
+    calls = 0
+    persisted = asyncio.Event()
+
+    class SessionContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    async def transient_then_wait(_db, *, account_id, event):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("temporary database failure")
+        persisted.set()
+
+    event = WhatsAppProviderMessageEvent(
+        sequence=9,
+        message_id="provider-9",
+        remote_jid="15550001111@s.whatsapp.net",
+        remote_jid_alt=None,
+        participant=None,
+        participant_alt=None,
+        push_name=None,
+        message_timestamp=None,
+        message_proto=b"\x0a\x05hello",
+    )
+
+    class PumpClient:
+        async def provider_events(self, *, limit=100):
+            return [event]
+
+        async def acknowledge_provider_events(self, *, through_sequence):
+            await asyncio.Future()
+
+    monkeypatch.setattr(sidecar_registry_module, "async_session_factory", lambda: SessionContext())
+    monkeypatch.setattr(
+        sidecar_registry_module,
+        "persist_whatsapp_provider_event",
+        transient_then_wait,
+    )
+    registry = ConfiguredWhatsAppSidecarRegistry("")
+    task = asyncio.create_task(registry._pump_provider_ingress(account_id, PumpClient()))
+    try:
+        await asyncio.wait_for(persisted.wait(), timeout=2)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    assert calls == 2

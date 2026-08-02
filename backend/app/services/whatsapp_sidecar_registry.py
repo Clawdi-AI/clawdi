@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import async_session_factory
 from app.models.channel import (
     CHANNEL_PROVIDER_WHATSAPP,
+    CHANNEL_STATUS_ACTIVE,
     CHANNEL_VISIBILITY_PUBLIC,
     WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
     WHATSAPP_ONBOARDING_STATE_ERROR,
@@ -34,6 +35,7 @@ from app.services.whatsapp_native_transport import (
     validate_whatsapp_sidecar_base_url,
 )
 from app.services.whatsapp_provider_bridge import (
+    WhatsAppProviderAccountRetired,
     persist_whatsapp_provider_event,
     register_whatsapp_provider_transport,
     unregister_whatsapp_provider_transport,
@@ -263,6 +265,7 @@ class ConfiguredWhatsAppSidecarRegistry:
                         ChannelAccount.id.in_(self._managed),
                         ChannelAccount.provider == CHANNEL_PROVIDER_WHATSAPP,
                         ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
+                        ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
                         ChannelAccount.archived_at.is_(None),
                     )
                 )
@@ -354,6 +357,21 @@ class ConfiguredWhatsAppSidecarRegistry:
             unregister_whatsapp_provider_transport(account_id)
             raise
 
+    def _release_terminal_ingress_owner(
+        self,
+        account_id: UUID,
+        task: asyncio.Task[None] | None,
+    ) -> None:
+        """Release local ownership from inside a terminal pump without awaiting itself."""
+        if self._ingress_tasks.get(account_id) is not task:
+            return
+        self._ingress_tasks.pop(account_id, None)
+        unregister_whatsapp_provider_transport(account_id)
+        self._bound_managed_accounts.discard(account_id)
+        slot_id = self._custom_account_to_slot.pop(account_id, None)
+        if slot_id is not None:
+            self._custom_slot_to_account.pop(slot_id, None)
+
     async def reconcile_custom_ownership(self) -> None:
         """Rehydrate durable account mappings and fail closed on slot drift.
 
@@ -369,6 +387,7 @@ class ConfiguredWhatsAppSidecarRegistry:
                         await db.scalars(
                             select(ChannelAccount).where(
                                 ChannelAccount.provider == CHANNEL_PROVIDER_WHATSAPP,
+                                ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
                                 ChannelAccount.archived_at.is_(None),
                             )
                         )
@@ -523,6 +542,12 @@ class ConfiguredWhatsAppSidecarRegistry:
                     await client.acknowledge_provider_events(through_sequence=event.sequence)
             except asyncio.CancelledError:
                 raise
+            except WhatsAppProviderAccountRetired:
+                self._release_terminal_ingress_owner(
+                    account_id,
+                    asyncio.current_task(),
+                )
+                return
             except Exception:
                 log.exception("WhatsApp provider ingress pump failed for account %s", account_id)
                 await asyncio.sleep(1.0)

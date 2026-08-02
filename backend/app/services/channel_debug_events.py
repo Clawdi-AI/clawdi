@@ -52,6 +52,8 @@ SECRET_KEY_RE = re.compile(
 )
 _PUBLIC_SAFE_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,119}$", re.I)
 _PUBLIC_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@/-]{1,300}$")
+_PUBLIC_SAFE_SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
+_PUBLIC_SAFE_SHA256_KEYS = frozenset({"clientstaticsha256"})
 _PUBLIC_SAFE_DETAIL_STRING_KEYS = frozenset(
     {
         "direction",
@@ -69,6 +71,25 @@ _PUBLIC_SAFE_DETAIL_STRING_KEYS = frozenset(
         "link_status",
     }
 )
+_PUBLIC_SAFE_DETAIL_ENUMS = {
+    "jiddescription": frozenset(
+        {
+            "invalid",
+            "missing",
+            "server=broadcast device=false",
+            "server=broadcast device=true",
+            "server=g.us device=false",
+            "server=g.us device=true",
+            "server=lid device=false",
+            "server=lid device=true",
+            "server=newsletter device=false",
+            "server=newsletter device=true",
+            "server=s.whatsapp.net device=false",
+            "server=s.whatsapp.net device=true",
+        }
+    ),
+    "runtime": frozenset({"baileys_noise", "baileys_websocket"}),
+}
 
 
 @dataclass(frozen=True)
@@ -104,6 +125,7 @@ async def record_channel_debug_event(
         minimize_stored_diagnostics = normalized_provider in {
             CHANNEL_PROVIDER_TELEGRAM,
             CHANNEL_PROVIDER_DISCORD,
+            CHANNEL_PROVIDER_WHATSAPP,
         }
         async with db.begin_nested():
             event = ChannelDebugEvent(
@@ -278,6 +300,10 @@ def public_channel_debug_details(
             return "[redacted]"
         if normalized_key == "id" or normalized_key.endswith("_id"):
             return value if _PUBLIC_SAFE_ID_RE.fullmatch(value) else "[redacted]"
+        if normalized_key in _PUBLIC_SAFE_SHA256_KEYS:
+            return value if _PUBLIC_SAFE_SHA256_RE.fullmatch(value) else "[redacted]"
+        if value in _PUBLIC_SAFE_DETAIL_ENUMS.get(normalized_key, ()):
+            return value
         if normalized_key in _PUBLIC_SAFE_DETAIL_STRING_KEYS and _PUBLIC_SAFE_CODE_RE.fullmatch(
             value
         ):

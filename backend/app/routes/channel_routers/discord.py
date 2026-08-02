@@ -77,22 +77,22 @@ from app.services.channels import (
     DISCORD_REF_INTERACTION_TOKEN,
     ChannelAgentContext,
     ack_discord_gateway_messages,
+    channel_control_command_event_was_handled,
     channel_runtime_account_key,
     channel_runtime_placeholder_token,
     dequeue_discord_gateway_events,
     discord_channel_scope_from_payload,
     discord_chat_from_payload,
+    discord_control_command_admission,
+    discord_control_command_from_payload,
+    discord_control_reply_for_command,
     discord_external_user_id_from_payload,
     discord_message_id_from_payload,
-    discord_pair_command_from_payload,
-    discord_pairing_command_admission,
-    discord_pairing_reply_for_command,
     discord_text_from_payload,
     discord_user_display_name_from_payload,
     get_active_channel_account,
     get_channel_agent_reference,
     lock_active_discord_binding_lease,
-    pairing_command_event_was_handled,
     record_discord_interaction_references,
     record_discord_outbound_message,
     record_inactive_bot_agent_link_event,
@@ -100,7 +100,7 @@ from app.services.channels import (
     resolve_channel_agent_by_identity,
     resolve_channel_agent_by_token,
     resolve_inbound_binding,
-    send_pairing_command_reply,
+    send_control_command_reply,
     update_discord_binding_display_name_from_trusted_event,
     upsert_binding_alias,
     verify_discord_signature,
@@ -1490,10 +1490,10 @@ async def discord_webhook(
     if chat is None:
         return {"ok": True}
     external_chat_id, external_chat_type, external_chat_name = chat
-    command = discord_pair_command_from_payload(payload)
+    command = discord_control_command_from_payload(payload)
     channel_id, guild_id = discord_channel_scope_from_payload(payload)
     provider_event_id = discord_message_id_from_payload(payload)
-    if await pairing_command_event_was_handled(
+    if await channel_control_command_event_was_handled(
         db,
         account=account,
         external_chat_id=external_chat_id,
@@ -1520,7 +1520,7 @@ async def discord_webhook(
     )
     if trusted_dm_name is not None:
         external_chat_name = trusted_dm_name
-    admission = await discord_pairing_command_admission(
+    admission = await discord_control_command_admission(
         account,
         payload,
         command=command,
@@ -1585,7 +1585,7 @@ async def discord_webhook(
         await record_inactive_bot_agent_link_event(db, account=account, binding=binding)
     await db.commit()
     message = messages[0][0]
-    reply_text = discord_pairing_reply_for_command(command, binding_result, guild_id=guild_id)
+    reply_text = discord_control_reply_for_command(command, binding_result, guild_id=guild_id)
     if payload.get("type") == 2:
         if binding_result.paired and binding_result.binding is not None and guild_id is not None:
             # Discord interactions have a short acknowledgement deadline. The
@@ -1628,7 +1628,7 @@ async def discord_webhook(
         guild_id=guild_id,
         paired=binding_result.paired,
     )
-    reply = await send_pairing_command_reply(
+    reply = await send_control_command_reply(
         db,
         account=account,
         external_chat_id=external_chat_id,
