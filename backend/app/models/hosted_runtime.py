@@ -40,7 +40,7 @@ class HostedRuntimeState(Base, TimestampMixin):
     locale: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
     system: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
     egress_engine: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
-    runtimes: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
+    runtimes: Mapped[dict[str, JsonValue]] = mapped_column(JSONB(none_as_null=True), nullable=False)
     live_sync: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
     recovery: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
     egress_profiles: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))

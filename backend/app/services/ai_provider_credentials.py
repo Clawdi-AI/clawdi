@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,10 @@ from app.services.url_security import is_public_https_url
 
 OAuthConsumerRuntime = Literal["codex", "hermes", "openclaw"]
 OAUTH_CONSUMER_RUNTIMES = frozenset({"codex", "hermes", "openclaw"})
+_RUNTIME_MAP_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
+_OAUTH_CONSUMER_RUNTIME_ADAPTER: TypeAdapter[OAuthConsumerRuntime] = TypeAdapter(
+    OAuthConsumerRuntime
+)
 
 
 class OAuthCredentialClaimConflict(ValueError):
@@ -36,12 +40,20 @@ async def lock_ai_provider_owner(db: AsyncSession, owner_user_id: UUID) -> None:
 
 
 def selected_runtime_binding(runtimes: object) -> tuple[OAuthConsumerRuntime, str | None] | None:
-    if not isinstance(runtimes, dict) or len(runtimes) != 1:
-        return None
-    runtime_name, raw_runtime = next(iter(runtimes.items()))
-    if runtime_name not in OAUTH_CONSUMER_RUNTIMES:
+    if not isinstance(runtimes, dict):
         return None
     try:
+        runtime_map = _RUNTIME_MAP_ADAPTER.validate_python(runtimes, strict=True)
+    except ValidationError:
+        return None
+    if len(runtime_map) != 1:
+        return None
+    raw_runtime_name, raw_runtime = next(iter(runtime_map.items()))
+    try:
+        runtime_name = _OAUTH_CONSUMER_RUNTIME_ADAPTER.validate_python(
+            raw_runtime_name,
+            strict=True,
+        )
         runtime = validate_hosted_runtime_desired_state(raw_runtime)
     except ValidationError:
         return None

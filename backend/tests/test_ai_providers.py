@@ -9,9 +9,9 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
@@ -27,6 +27,7 @@ from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.platform_idempotency import PlatformMutationIdempotency
 from app.models.session import AgentEnvironment
+from app.models.user import User
 from app.routes import ai_providers as ai_provider_routes
 from app.schemas.ai_provider import AiProviderAcceptRequest, AiProviderResponse
 from app.services import ai_provider_oauth_attempt as oauth_attempt_service
@@ -5598,13 +5599,10 @@ async def test_oauth_import_rejects_multiple_hosted_runtime_bindings(
 @pytest.mark.asyncio
 @pytest.mark.committed_db
 async def test_auth_and_runtime_mutations_serialize_on_common_user_lock(
-    db_session,
-    engine,
-    seed_user,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    from app.services import ai_provider_auth_transition, ai_provider_credentials
-
+    db_session: AsyncSession,
+    engine: AsyncEngine,
+    seed_user: User,
+) -> None:
     owner_user_id = seed_user.id
     provider_id = "common-user-lock-provider"
     provider = AiProvider(
@@ -5640,30 +5638,7 @@ async def test_auth_and_runtime_mutations_serialize_on_common_user_lock(
         }
     }
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
-    auth_holds_user_lock = asyncio.Event()
-    release_auth = asyncio.Event()
-    runtime_user_lock_attempted = asyncio.Event()
-    original_owner_lock = ai_provider_credentials.lock_ai_provider_owner
-
-    async def hold_auth_owner_lock(db, requested_owner_user_id):
-        await original_owner_lock(db, requested_owner_user_id)
-        auth_holds_user_lock.set()
-        await release_auth.wait()
-
-    async def observe_runtime_owner_lock(db, requested_owner_user_id):
-        runtime_user_lock_attempted.set()
-        await original_owner_lock(db, requested_owner_user_id)
-
-    monkeypatch.setattr(
-        ai_provider_auth_transition,
-        "lock_ai_provider_owner",
-        hold_auth_owner_lock,
-    )
-    monkeypatch.setattr(
-        ai_provider_credentials,
-        "lock_ai_provider_owner",
-        observe_runtime_owner_lock,
-    )
+    business_backend_pids: asyncio.Queue[int] = asyncio.Queue()
 
     async def mutate_auth() -> None:
         async with session_factory() as session:
@@ -5674,6 +5649,9 @@ async def test_auth_and_runtime_mutations_serialize_on_common_user_lock(
                 )
             )
             assert locked_provider is not None
+            backend_pid = await session.scalar(select(func.pg_backend_pid()))
+            assert isinstance(backend_pid, int)
+            business_backend_pids.put_nowait(backend_pid)
             await transition_ai_provider_auth(
                 session,
                 owner_user_id=owner_user_id,
@@ -5686,6 +5664,9 @@ async def test_auth_and_runtime_mutations_serialize_on_common_user_lock(
 
     async def mutate_runtime() -> None:
         async with session_factory() as session:
+            backend_pid = await session.scalar(select(func.pg_backend_pid()))
+            assert isinstance(backend_pid, int)
+            business_backend_pids.put_nowait(backend_pid)
             await reconcile_runtime_oauth_claims(
                 session,
                 owner_user_id=owner_user_id,
@@ -5694,22 +5675,61 @@ async def test_auth_and_runtime_mutations_serialize_on_common_user_lock(
             )
             await session.commit()
 
-    auth_task = asyncio.create_task(mutate_auth())
-    runtime_task = None
-    try:
-        await asyncio.wait_for(auth_holds_user_lock.wait(), timeout=2)
+    async with session_factory() as lock_holder:
+        await lock_holder.execute(select(User.id).where(User.id == owner_user_id).with_for_update())
+        auth_task = asyncio.create_task(mutate_auth())
         runtime_task = asyncio.create_task(mutate_runtime())
-        await asyncio.wait_for(runtime_user_lock_attempted.wait(), timeout=2)
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(asyncio.shield(runtime_task), timeout=0.05)
-        release_auth.set()
-        await asyncio.wait_for(asyncio.gather(auth_task, runtime_task), timeout=2)
-    finally:
-        release_auth.set()
-        if not auth_task.done():
-            auth_task.cancel()
-        if runtime_task is not None and not runtime_task.done():
-            runtime_task.cancel()
+        tasks = (auth_task, runtime_task)
+        try:
+            backend_pids = frozenset(
+                await asyncio.wait_for(
+                    asyncio.gather(
+                        business_backend_pids.get(),
+                        business_backend_pids.get(),
+                    ),
+                    timeout=2,
+                )
+            )
+            assert len(backend_pids) == 2
+
+            async def wait_for_business_lock_waits() -> None:
+                first_pid, second_pid = backend_pids
+                async with session_factory() as observer:
+                    while True:
+                        waiting_pids = frozenset(
+                            (
+                                await observer.execute(
+                                    text(
+                                        """
+                                        SELECT pid
+                                        FROM pg_stat_activity
+                                        WHERE pid IN (:first_pid, :second_pid)
+                                          AND state = 'active'
+                                          AND wait_event_type = 'Lock'
+                                        """
+                                    ),
+                                    {
+                                        "first_pid": first_pid,
+                                        "second_pid": second_pid,
+                                    },
+                                )
+                            ).scalars()
+                        )
+                        if waiting_pids == backend_pids:
+                            return
+                        await observer.rollback()
+                        await asyncio.sleep(0.01)
+
+            await asyncio.wait_for(wait_for_business_lock_waits(), timeout=2)
+            await lock_holder.commit()
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=2)
+        except BaseException:
+            await lock_holder.rollback()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
 
 @pytest.mark.asyncio
