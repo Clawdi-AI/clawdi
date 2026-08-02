@@ -18,9 +18,7 @@ import {
 import {
 	type DeploymentStatus,
 	type DeploymentStatusTone,
-	deploymentStatusFromResource,
-	deploymentStatusLabel,
-	deploymentStatusTone,
+	deploymentRuntimeStatusPresentation,
 	isRunningStatus,
 } from "@/hosted/deployment-status";
 import {
@@ -58,10 +56,11 @@ export function hostedRuntimeStatusView(
 	env: Env | null | undefined,
 	failurePresentation?: DeploymentFailurePresentation | null,
 ): HostedRuntimeStatusView {
-	const compute = deploymentStatusFromResource(deployment);
+	const computePresentation = deploymentRuntimeStatusPresentation(deployment);
+	const compute = computePresentation.status;
 	const failureStatus = compute.kind === "failed" ? failurePresentation?.status : null;
-	const computeLabel = failureStatus?.label ?? deploymentStatusLabel(compute);
-	const computeTone = failureStatus?.tone ?? deploymentStatusTone(compute);
+	const computeLabel = failureStatus?.label ?? computePresentation.label;
+	const computeTone = failureStatus?.tone ?? computePresentation.tone;
 	const sync = env === undefined ? null : daemonStatusVisual(env, "on-clawdi");
 	const computeIsRunning = isRunningStatus(compute);
 	const failureReason =

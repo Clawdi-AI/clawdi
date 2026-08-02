@@ -228,8 +228,8 @@ async function expectAgentOverviewTypography(page: Page) {
 			}),
 		);
 	expect(primaryMetrics.length).toBeGreaterThan(3);
-	expect(new Set(primaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["16px"]));
-	expect(new Set(primaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["600"]));
+	expect(new Set(primaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
+	expect(new Set(primaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["500"]));
 
 	const detailMetrics = await main
 		.locator('[data-testid="overview-resource-badges"] [data-slot="badge"]')
@@ -935,6 +935,10 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 			Math.max(...row.map((box) => box.height)) - Math.min(...row.map((box) => box.height)),
 		).toBeLessThanOrEqual(2);
 	}
+	expect(
+		Math.max(...resourceGeometry.map((box) => box.height)) -
+			Math.min(...resourceGeometry.map((box) => box.height)),
+	).toBeLessThanOrEqual(2);
 	expect(
 		await resourceGrid
 			.locator("[data-overview-module]")

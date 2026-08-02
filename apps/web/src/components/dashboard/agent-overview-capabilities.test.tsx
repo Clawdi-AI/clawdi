@@ -21,6 +21,8 @@ describe("overview resource summary", () => {
 		);
 
 		expect(markup).toContain('data-testid="overview-resource-summary"');
+		expect(markup).toContain("text-sm font-medium text-muted-foreground");
+		expect(markup).not.toContain("text-base font-semibold");
 		expect(markup).toContain('data-testid="overview-resource-badges"');
 		expect(markup).toContain('data-slot="badge"');
 		for (const item of [
