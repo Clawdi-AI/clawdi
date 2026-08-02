@@ -35,7 +35,11 @@ from app.services.agent_environments import (
     AgentEnvironmentIdConflict,
     register_agent_environment,
 )
-from app.services.agent_lifecycle import active_agent_filter, archive_agent_and_project
+from app.services.agent_lifecycle import (
+    AgentLifecycleBoundaryError,
+    active_agent_filter,
+    archive_agent_and_project,
+)
 from app.services.ai_provider_credentials import (
     OAuthCredentialClaimConflict,
     lock_ai_provider_owner,
@@ -657,7 +661,18 @@ async def platform_delete_agent(
         "explicit_identity": agent.registration_key is None,
     }
     await queue_environment_runtime_manifest_changed(db, owner.id, agent_id)
-    await archive_agent_and_project(db, agent=agent)
+    try:
+        revoked_key_ids = await archive_agent_and_project(db, agent=agent)
+    except AgentLifecycleBoundaryError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "agent_project_ownership_unproven",
+                "message": (
+                    "Agent Project ownership could not be proven; no resources were archived."
+                ),
+            },
+        ) from None
     await _complete_mutation(
         db,
         operation="agents.delete",
@@ -674,6 +689,8 @@ async def platform_delete_agent(
         environment_id=agent_id,
         audit_details=audit_details,
     )
+    for key_id in revoked_key_ids:
+        invalidate_api_key_auth_cache(key_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

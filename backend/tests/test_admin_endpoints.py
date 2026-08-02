@@ -2464,7 +2464,7 @@ async def test_admin_register_env_idempotent(admin_client, db_session, seed_user
 
 
 @pytest.mark.asyncio
-async def test_admin_delete_env_removes_environment_and_orphans_sessions(
+async def test_admin_delete_env_archives_identity_and_preserves_relationships(
     admin_client, db_session, seed_user
 ):
     """Hosted compute delete needs an admin path to remove the
@@ -2552,19 +2552,21 @@ async def test_admin_delete_env_removes_environment_and_orphans_sessions(
     env = (
         await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == env_id))
     ).scalar_one_or_none()
-    assert env is None
-    assert (
+    assert env is not None
+    assert env.archived_at is not None
+    retained_skills = (
         await db_session.execute(
             select(Skill).where(Skill.project_id == environment.default_project_id)
         )
-    ).scalars().all() == []
+    ).scalars().all()
+    assert len(retained_skills) == 2
     await db_session.refresh(seed_user)
-    assert seed_user.skills_revision == revision_before + 2
+    assert seed_user.skills_revision == revision_before
     await db_session.refresh(session_row)
-    assert session_row.environment_id is None
+    assert session_row.environment_id == env_id
     await db_session.refresh(claimed_payload)
-    assert claimed_payload.consumer_environment_id is None
-    assert claimed_payload.consumer_runtime is None
+    assert claimed_payload.consumer_environment_id == env_id
+    assert claimed_payload.consumer_runtime == "codex"
     event = (
         await db_session.execute(
             select(ControlPlaneAuditEvent).where(
@@ -2615,7 +2617,9 @@ async def test_admin_delete_environment_accepts_matching_optional_owner(
     )
 
     assert response.status_code == 204, response.text
-    assert await db_session.get(AgentEnvironment, env.id) is None
+    archived = await db_session.get(AgentEnvironment, env.id)
+    assert archived is not None
+    assert archived.archived_at is not None
 
 
 @pytest.mark.asyncio

@@ -1511,6 +1511,8 @@ async def test_disconnect_archives_identity_and_preserves_session_link(
     env_id = await _register_env_named(client, machine_id, agent_type="codex")
 
     from app.models.ai_provider import AiProviderAuthPayload
+    from app.services.ai_provider_credentials import environment_matches_runtime
+    from app.services.runtime_source import load_runtime_source_batch
     from app.services.vault_crypto import encrypt
 
     encrypted, nonce = encrypt('{"kind":"oauth-test"}')
@@ -1527,6 +1529,12 @@ async def test_disconnect_archives_identity_and_preserves_session_link(
     )
     db_session.add(claimed_payload)
     await db_session.commit()
+    assert await environment_matches_runtime(
+        db_session,
+        owner_user_id=seed_user.id,
+        environment_id=uuid.UUID(env_id),
+        runtime="codex",
+    )
     started = datetime.now(UTC).isoformat()
     await client.post(
         "/v1/sessions/batch",
@@ -1576,6 +1584,18 @@ async def test_disconnect_archives_identity_and_preserves_session_link(
     await db_session.refresh(claimed_payload)
     assert str(claimed_payload.consumer_environment_id) == env_id
     assert claimed_payload.consumer_runtime == "codex"
+    assert not await environment_matches_runtime(
+        db_session,
+        owner_user_id=seed_user.id,
+        environment_id=uuid.UUID(env_id),
+        runtime="codex",
+    )
+    archived_source = await load_runtime_source_batch(
+        db_session,
+        environment_ids=[uuid.UUID(env_id)],
+        owner_user_id=seed_user.id,
+    )
+    assert uuid.UUID(env_id) not in archived_source.rows
 
     assert (await client.get("/v1/agents")).json() == []
     assert (await client.get(f"/v1/agents/{env_id}")).status_code == 404
@@ -1589,6 +1609,20 @@ async def test_disconnect_archives_identity_and_preserves_session_link(
     # registration above already used the same generated value.
     assert reconnected == env_id
     assert (await client.get(f"/v1/agents/{env_id}")).status_code == 200
+    assert await environment_matches_runtime(
+        db_session,
+        owner_user_id=seed_user.id,
+        environment_id=uuid.UUID(env_id),
+        runtime="codex",
+    )
+    restored_source = await load_runtime_source_batch(
+        db_session,
+        environment_ids=[uuid.UUID(env_id)],
+        owner_user_id=seed_user.id,
+    )
+    assert uuid.UUID(env_id) in restored_source.rows
+    await db_session.refresh(claimed_payload)
+    assert claimed_payload.consumer_environment_id == uuid.UUID(env_id)
 
 
 @pytest.mark.asyncio
@@ -1636,6 +1670,42 @@ async def test_delete_environment_rejects_explicit_agent_identity(
 async def test_delete_environment_404_for_unknown(client: httpx.AsyncClient):
     r = await client.delete(f"/v1/environments/{uuid.uuid4()}")
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_disconnect_fails_atomically_when_agent_project_is_shared(
+    client: httpx.AsyncClient, db_session: AsyncSession, seed_user
+):
+    from sqlalchemy import select
+
+    from app.models.project import Project
+    from app.models.session import AgentEnvironment
+
+    env_id = uuid.UUID(await _register_env(client, f"shared-project-{uuid.uuid4().hex}"))
+    agent = await db_session.scalar(select(AgentEnvironment).where(AgentEnvironment.id == env_id))
+    assert agent is not None
+    project = await db_session.get(Project, agent.default_project_id)
+    assert project is not None
+    sibling = AgentEnvironment(
+        id=uuid.uuid4(),
+        user_id=seed_user.id,
+        machine_id=f"corrupt-sibling-{uuid.uuid4().hex}",
+        machine_name="Corrupt sibling",
+        agent_type="codex",
+        os="linux",
+        registration_key=f"machine:corrupt-{uuid.uuid4().hex}:agent:codex",
+        default_project_id=project.id,
+    )
+    db_session.add(sibling)
+    await db_session.commit()
+
+    response = await client.delete(f"/v1/agents/{env_id}")
+    assert response.status_code == 409, response.text
+    assert "could not be proven" in response.text
+    await db_session.refresh(agent)
+    await db_session.refresh(project)
+    assert agent.archived_at is None
+    assert project.archived_at is None
 
 
 # ---------------------------------------------------------------------------

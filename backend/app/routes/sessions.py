@@ -25,7 +25,13 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, get_auth, require_scope, require_web_auth
+from app.core.auth import (
+    AuthContext,
+    get_auth,
+    invalidate_api_key_auth_cache,
+    require_scope,
+    require_web_auth,
+)
 from app.core.config import settings
 from app.core.database import get_session, runtime_snapshot_session
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
@@ -84,7 +90,11 @@ from app.services.agent_environments import (
     local_machine_registration_key,
     register_agent_environment,
 )
-from app.services.agent_lifecycle import active_agent_filter, archive_agent_and_project
+from app.services.agent_lifecycle import (
+    AgentLifecycleBoundaryError,
+    active_agent_filter,
+    archive_agent_and_project,
+)
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.memory_extraction import extract_memories_from_session
@@ -698,6 +708,7 @@ async def _clear_agent_avatar(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -753,6 +764,7 @@ async def _upload_agent_avatar(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -1532,8 +1544,17 @@ async def _delete_agent_identity(
             "This agent uses an explicit identity and cannot be disconnected here",
         )
     await queue_environment_runtime_manifest_changed(db, auth.user_id, agent_id)
-    await archive_agent_and_project(db, agent=env)
+    try:
+        revoked_key_ids = await archive_agent_and_project(db, agent=env)
+    except AgentLifecycleBoundaryError:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Agent Project ownership could not be proven; no resources were archived.",
+        ) from None
     await db.commit()
+    for key_id in revoked_key_ids:
+        invalidate_api_key_auth_cache(key_id)
 
 
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)

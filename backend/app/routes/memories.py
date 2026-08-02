@@ -81,6 +81,8 @@ async def _attach_source_machines(
         }
     rows = []
     if sids:
+        # Historical Session enrichment retains archived Agent identity; this
+        # outer join grants no runtime or mutation authority.
         rows = (
             await db.execute(
                 select(

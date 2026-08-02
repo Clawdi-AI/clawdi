@@ -6,10 +6,13 @@ from uuid import UUID
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import invalidate_api_key_auth_cache
 from app.models.api_key import ApiKey
-from app.models.project import Project
+from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
+
+
+class AgentLifecycleBoundaryError(RuntimeError):
+    """The exclusive Agent/Project lifecycle relationship is not provable."""
 
 
 def active_agent_filter():
@@ -22,54 +25,105 @@ def active_project_filter():
 
 async def archive_agent_and_project(
     db: AsyncSession, *, agent: AgentEnvironment, now: datetime | None = None
-) -> None:
+) -> tuple[UUID, ...]:
     """Archive identity and its exclusive Agent Project in one transaction.
 
     Relationships and resource rows are intentionally untouched. Bound keys
     are revoked in the same transaction so an archived identity has no cached
     or persistent operational authority.
     """
-    archived_at = now or datetime.now(UTC)
-    agent.archived_at = archived_at
+    locked_agent = await db.scalar(
+        select(AgentEnvironment)
+        .where(
+            AgentEnvironment.id == agent.id,
+            AgentEnvironment.user_id == agent.user_id,
+            active_agent_filter(),
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if locked_agent is None:
+        raise AgentLifecycleBoundaryError("active Agent identity is not available")
+
     project = await db.scalar(
         select(Project)
         .where(
-            Project.id == agent.default_project_id,
-            Project.user_id == agent.user_id,
+            Project.id == locked_agent.default_project_id,
+            Project.user_id == locked_agent.user_id,
+            Project.kind == PROJECT_KIND_ENVIRONMENT,
+            Project.origin_environment_id == locked_agent.id,
         )
         .with_for_update()
     )
     if project is None:
-        raise RuntimeError("Agent Project is missing")
+        raise AgentLifecycleBoundaryError("exclusive Agent Project is not provable")
+
+    sibling_ids = tuple(
+        (
+            await db.scalars(
+                select(AgentEnvironment.id)
+                .where(AgentEnvironment.default_project_id == project.id)
+                .with_for_update()
+            )
+        ).all()
+    )
+    if sibling_ids != (locked_agent.id,):
+        raise AgentLifecycleBoundaryError("Agent Project is shared by another Agent")
+
+    archived_at = now or datetime.now(UTC)
+    locked_agent.archived_at = archived_at
     project.archived_at = archived_at
     key_ids = list(
         (
             await db.scalars(
                 select(ApiKey.id).where(
-                    ApiKey.environment_id == agent.id,
+                    ApiKey.environment_id == locked_agent.id,
                     ApiKey.revoked_at.is_(None),
                 )
             )
         ).all()
     )
     await db.execute(update(ApiKey).where(ApiKey.id.in_(key_ids)).values(revoked_at=archived_at))
-    for key_id in key_ids:
-        invalidate_api_key_auth_cache(key_id)
+    return tuple(key_ids)
 
 
 async def reactivate_agent_and_project(db: AsyncSession, *, agent: AgentEnvironment) -> None:
     """Reactivate the existing identity and exclusive Project atomically."""
-    agent.archived_at = None
+    locked_agent = await db.scalar(
+        select(AgentEnvironment)
+        .where(
+            AgentEnvironment.id == agent.id,
+            AgentEnvironment.user_id == agent.user_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if locked_agent is None:
+        raise AgentLifecycleBoundaryError("Agent identity is not available")
     project = await db.scalar(
         select(Project)
         .where(
-            Project.id == agent.default_project_id,
-            Project.user_id == agent.user_id,
+            Project.id == locked_agent.default_project_id,
+            Project.user_id == locked_agent.user_id,
+            Project.kind == PROJECT_KIND_ENVIRONMENT,
+            Project.origin_environment_id == locked_agent.id,
         )
         .with_for_update()
     )
     if project is None:
-        raise RuntimeError("Agent Project is missing")
+        raise AgentLifecycleBoundaryError("exclusive Agent Project is not provable")
+    sibling_ids = tuple(
+        (
+            await db.scalars(
+                select(AgentEnvironment.id)
+                .where(AgentEnvironment.default_project_id == project.id)
+                .with_for_update()
+            )
+        ).all()
+    )
+    if sibling_ids != (locked_agent.id,):
+        raise AgentLifecycleBoundaryError("Agent Project is shared by another Agent")
+    locked_agent.archived_at = None
     project.archived_at = None
 
 

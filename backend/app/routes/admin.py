@@ -88,7 +88,11 @@ from app.services.agent_environments import (
     local_machine_registration_key,
     register_agent_environment,
 )
-from app.services.agent_lifecycle import active_agent_filter, archive_agent_and_project
+from app.services.agent_lifecycle import (
+    AgentLifecycleBoundaryError,
+    active_agent_filter,
+    archive_agent_and_project,
+)
 from app.services.ai_provider_credentials import (
     OAuthCredentialClaimConflict,
     lock_ai_provider_owner,
@@ -1545,8 +1549,17 @@ async def _admin_delete_environment(
         },
     )
     await queue_environment_runtime_manifest_changed(db, env.user_id, environment_id)
-    await archive_agent_and_project(db, agent=env)
+    try:
+        revoked_key_ids = await archive_agent_and_project(db, agent=env)
+    except AgentLifecycleBoundaryError:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Agent Project ownership could not be proven; no resources were archived.",
+        ) from None
     await db.commit()
+    for key_id in revoked_key_ids:
+        invalidate_api_key_auth_cache(key_id)
     logger.info(
         "admin_environment_deleted target_clerk_id=%s env_id=%s",
         target_clerk_id,

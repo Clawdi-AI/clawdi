@@ -219,6 +219,29 @@ async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
     key_hash = hashlib.sha256(token.encode()).hexdigest()
     cached = _get_cached_api_key_auth(key_hash)
     if cached is not None:
+        # Bound Agent keys are an operational authority boundary. Revalidate
+        # their durable key + Agent lifecycle on every cache hit so a request
+        # racing archive commit cannot re-cache authority after the caller's
+        # post-commit invalidation, and so other worker-local caches fail
+        # closed immediately after they observe the committed archive.
+        if cached.api_key is not None and cached.api_key.environment_id is not None:
+            from app.models.session import AgentEnvironment
+
+            active_key_id = await db.scalar(
+                select(ApiKey.id)
+                .join(
+                    AgentEnvironment,
+                    AgentEnvironment.id == ApiKey.environment_id,
+                )
+                .where(
+                    ApiKey.id == cached.api_key.id,
+                    ApiKey.revoked_at.is_(None),
+                    AgentEnvironment.archived_at.is_(None),
+                )
+            )
+            if active_key_id is None:
+                _api_key_auth_cache.pop(key_hash, None)
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has been revoked")
         return cached
 
     result = await db.execute(select(ApiKey).where(ApiKey.key_hash == key_hash))
@@ -259,13 +282,18 @@ async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
         if api_key_project_id is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Agent is archived")
 
-    _cache_api_key_auth(
-        key_hash=key_hash,
-        api_key=api_key,
-        user=user,
-        api_key_project_id=api_key_project_id,
-        now=now,
-    )
+    # Agent-bound keys are lifecycle authority and must never be installed in
+    # a process-local cache. A cache fill racing archive commit could otherwise
+    # happen after the archive caller's post-commit invalidation. Unbound keys
+    # retain the existing cache behavior.
+    if api_key.environment_id is None:
+        _cache_api_key_auth(
+            key_hash=key_hash,
+            api_key=api_key,
+            user=user,
+            api_key_project_id=api_key_project_id,
+            now=now,
+        )
     return AuthContext(user=user, api_key=api_key, api_key_project_id=api_key_project_id)
 
 
