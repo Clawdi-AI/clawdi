@@ -1882,13 +1882,26 @@ cat > '${logPath}'
 			offline: false,
 		});
 
-		writeFakeGatewayCli({
-			path: openclawCommand,
-			logPath,
-			runtime: "openclaw",
-			unitPath,
-			failInstall: true,
-		});
+		const installerToken = "official-installer-token-must-not-leak";
+		process.env.OFFICIAL_INSTALLER_TEST_TOKEN = installerToken;
+		mkdirSync(dirname(openclawCommand), { recursive: true });
+		writeFileSync(
+			openclawCommand,
+			`#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "gateway install --force --json")
+    printf '%s' '{"ok":false,"error":"official stdout marker official-installer-token-must-not-leak","manifest":{"secretValues":{"hidden":"manifest-secret-must-not-leak"}}}'
+    printf 'discarded-stderr-prefix' >&2
+    printf '%5000s' '' | tr ' ' x >&2
+    printf '\\x1b[31mofficial stderr marker\\x1b[0m OFFICIAL_INSTALLER_TEST_TOKEN=%s VISIBLE_ENV=environment-value-must-not-leak Bearer %s https://diagnostic-user:url-password-must-not-leak@example.test/path?token=query-token-must-not-leak\n' "$OFFICIAL_INSTALLER_TEST_TOKEN" "$OFFICIAL_INSTALLER_TEST_TOKEN" >&2
+    exit 41
+    ;;
+  *) exit 64 ;;
+esac
+`,
+		);
+		chmodSync(openclawCommand, 0o700);
 		let authorityCommits = 0;
 		let finalActivations = 0;
 		const failedFirstInstall = convergeRuntimeManifest(load("inline-install-failure", 1), paths, {
@@ -1909,9 +1922,23 @@ cat > '${logPath}'
 				rollback: () => {},
 			},
 		});
-		expect(failedFirstInstall.installErrors.join("\n")).toContain(
-			"official openclaw-gateway service install failed",
-		);
+		const firstInstallError = failedFirstInstall.installErrors.join("\n");
+		expect(firstInstallError).toContain("official openclaw-gateway service install failed");
+		expect(firstInstallError).toContain("exit code 41");
+		expect(firstInstallError).toContain("stdout tail:");
+		expect(firstInstallError).toContain("official stdout marker <redacted>");
+		expect(firstInstallError).toContain("stderr tail:");
+		expect(firstInstallError).toContain("official stderr marker");
+		expect(firstInstallError).toContain("OFFICIAL_INSTALLER_TEST_TOKEN=<redacted>");
+		expect(firstInstallError).toContain("VISIBLE_ENV=<redacted>");
+		expect(firstInstallError).not.toContain(installerToken);
+		expect(firstInstallError).not.toContain("manifest-secret-must-not-leak");
+		expect(firstInstallError).not.toContain("environment-value-must-not-leak");
+		expect(firstInstallError).not.toContain("url-password-must-not-leak");
+		expect(firstInstallError).not.toContain("query-token-must-not-leak");
+		expect(firstInstallError).not.toContain("discarded-stderr-prefix");
+		expect(firstInstallError).not.toContain("\u001b");
+		expect(firstInstallError.length).toBeLessThan(5000);
 		expect(existsSync(paths.managedConfig)).toBe(false);
 		expect(existsSync(manifest.workspaceRoot ?? "")).toBe(false);
 		expect(existsSync(dropInPath)).toBe(false);

@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
+import { stripTerminalEscapes } from "../lib/sanitize";
 import { runtimeContentSha256 } from "./applied-state";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import type { RuntimeInstallReceiptEntry, RuntimeInstallReceipts } from "./install-receipts";
@@ -890,6 +891,100 @@ function officialRuntimeServiceInstallArgs(program: RuntimeSystemdUserProgram): 
 	return officialRuntimeServiceDescriptorForProgram(program)?.installArgs ?? null;
 }
 
+const OFFICIAL_INSTALLER_MAX_BUFFER_BYTES = 64 * 1024;
+const OFFICIAL_INSTALLER_OUTPUT_TAIL_CHARACTERS = 4000;
+const SENSITIVE_ENV_KEY_SEGMENT =
+	/(?:^|_)(?:API_KEY|AUTH|COOKIE|CREDENTIAL|KEY|PASSWORD|PASSWD|PRIVATE_KEY|SECRET|SESSION|TOKEN)(?:$|_)/i;
+const ENV_ASSIGNMENT = /\b([A-Za-z_][A-Za-z0-9_]*)=(?:"(?:\\.|[^"\\])*"|'[^']*'|[^\s]+)/g;
+const BEARER_CREDENTIAL = /\b(Bearer)\s+[^\s,"'}\]]+/gi;
+const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi;
+const SENSITIVE_URL_VALUE =
+	/([?&#](?:access_token|api_key|auth|authorization|client_secret|credential|key|password|refresh_token|secret|token)=)[^&#\s]+/gi;
+const SENSITIVE_STRUCTURED_VALUE =
+	/((?:["']?(?:access[_-]?token|api[_-]?key|auth(?:orization)?|credential|password|private[_-]?key|secret|token)["']?)\s*:\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,}\]]+)/gi;
+
+function officialInstallerSecretValues(program: RuntimeSystemdUserProgram): string[] {
+	const values = new Set(Object.values(program.resolvedSecretEnv).filter(Boolean));
+	for (const [key, value] of Object.entries(program.env)) {
+		if (value && SENSITIVE_ENV_KEY_SEGMENT.test(key)) values.add(value);
+	}
+	for (const [key, value] of Object.entries(process.env)) {
+		if (value && value.length >= 8 && SENSITIVE_ENV_KEY_SEGMENT.test(key)) values.add(value);
+	}
+	return [...values].sort((left, right) => right.length - left.length);
+}
+
+function officialInstallerJsonDiagnostic(value: string): string | null | undefined {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(value);
+	} catch {
+		return undefined;
+	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+	const record = parsed as Record<string, unknown>;
+	const diagnostic: Record<string, unknown> = {};
+	for (const key of ["error", "message"] as const) {
+		if (typeof record[key] === "string" && record[key]) diagnostic[key] = record[key];
+	}
+	for (const key of ["hints", "warnings"] as const) {
+		if (!Array.isArray(record[key])) continue;
+		const strings = record[key]
+			.filter((item): item is string => typeof item === "string")
+			.slice(-10);
+		if (strings.length > 0) diagnostic[key] = strings;
+	}
+	return Object.keys(diagnostic).length > 0 ? JSON.stringify(diagnostic) : null;
+}
+
+function redactOfficialInstallerOutput(value: string, secrets: readonly string[]): string {
+	let redacted = stripTerminalEscapes(value);
+	for (const secret of secrets) redacted = redacted.replaceAll(secret, "<redacted>");
+	return redacted
+		.replace(ENV_ASSIGNMENT, "$1=<redacted>")
+		.replace(BEARER_CREDENTIAL, "$1 <redacted>")
+		.replace(URL_USERINFO, "$1<redacted>@")
+		.replace(SENSITIVE_URL_VALUE, "$1<redacted>")
+		.replace(SENSITIVE_STRUCTURED_VALUE, '$1"<redacted>"');
+}
+
+function officialInstallerOutputTail(
+	value: string | Buffer | null | undefined,
+	secrets: readonly string[],
+	options: { requireJson?: boolean } = {},
+): string | null {
+	const raw = String(value ?? "").trim();
+	if (!raw) return null;
+	const jsonDiagnostic = officialInstallerJsonDiagnostic(raw);
+	const diagnostic =
+		jsonDiagnostic === undefined ? (options.requireJson ? null : raw) : jsonDiagnostic;
+	if (!diagnostic) return null;
+	const redacted = redactOfficialInstallerOutput(diagnostic, secrets).trim();
+	return redacted ? redacted.slice(-OFFICIAL_INSTALLER_OUTPUT_TAIL_CHARACTERS) : null;
+}
+
+function officialInstallerFailureDetail(
+	program: RuntimeSystemdUserProgram,
+	result: ReturnType<typeof spawnRuntimeUserCommand>,
+): string {
+	const secrets = officialInstallerSecretValues(program);
+	const spawnError = result.error
+		? officialInstallerOutputTail(result.error.message, secrets)
+		: null;
+	const stdout = officialInstallerOutputTail(result.stdout, secrets, {
+		requireJson: officialRuntimeServiceInstallArgs(program)?.includes("--json") === true,
+	});
+	const stderr = officialInstallerOutputTail(result.stderr, secrets);
+	const details = [
+		`exit code ${result.status ?? "unavailable"}`,
+		result.signal ? `signal ${result.signal}` : null,
+		result.error ? `spawn error: ${spawnError ?? "unknown"}` : null,
+		stdout ? `stdout tail: ${stdout}` : null,
+		stderr ? `stderr tail: ${stderr}` : null,
+	].filter((detail): detail is string => detail !== null);
+	return details.join("; ");
+}
+
 function installOfficialRuntimeUserService(
 	program: RuntimeSystemdUserProgram,
 	paths: RuntimePaths,
@@ -902,11 +997,20 @@ function installOfficialRuntimeUserService(
 	}
 	try {
 		resetFailedRuntimeUserService(runtimeSystemdProgramName(program), paths, program.cwd);
-		runRuntimeUserCommand(program.command, args, "", paths.userHome, program.cwd);
-		return null;
+		const result = spawnRuntimeUserCommand(program.command, args, paths.userHome, program.cwd, {
+			maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
+		});
+		return result.status === 0 && !result.error
+			? null
+			: `official ${runtimeSystemdProgramName(program)} service install failed: ${officialInstallerFailureDetail(program, result)}`;
 	} catch (error) {
+		const secrets = officialInstallerSecretValues(program);
+		const detail = officialInstallerOutputTail(
+			error instanceof Error ? error.message : String(error),
+			secrets,
+		);
 		return `official ${runtimeSystemdProgramName(program)} service install failed: ${
-			error instanceof Error ? error.message : String(error)
+			detail ?? "unknown error"
 		}`;
 	}
 }

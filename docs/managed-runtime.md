@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Status | Public runtime contract |
-| Last updated | 2026-07-22 |
+| Last updated | 2026-08-02 |
 | Owner | CLI runtime and cloud-api layers |
 
 This document describes the public Clawdi CLI and dashboard contract for managed
@@ -243,6 +243,16 @@ that boundary convergent in both directions:
   exact plan-derived filesystem pre-images and reconciles systemd to that
   restored set; it never applies a partially rendered generation merely because
   another convergence step reported an error.
+
+An official installer failure reports its exit code, terminating signal or
+spawn error, and bounded stdout/stderr tails. Capture is capped at 64 KiB per
+stream and each reported tail at 4,000 characters. Terminal controls are
+removed and known secret values, credentials, URL parameters, and environment
+assignments are redacted. For an installer with a JSON contract, Clawdi
+allowlists only `error`, `message`, `hints`, and `warnings`; it never projects
+the rest of the installer response, a runtime manifest, or process environment.
+The failure still aborts Apply before authority commits and uses the existing
+filesystem/systemd rollback transaction.
 
 Official service installers/uninstallers run only in the hosted systemd apply
 path. Unit tests select installer execution through an explicit in-process test
@@ -731,13 +741,43 @@ specifically `cli-config.yaml.example`,
 
 ### Official OpenClaw evidence
 
-Research was refreshed on 2026-07-22. The then-current official `main` commit
-was [`ba467fbd3efa9ab109e620c4e42cfe92388171c5`](https://github.com/openclaw/openclaw/commit/ba467fbd3efa9ab109e620c4e42cfe92388171c5).
-The latest stable release was
+Installer research was refreshed on 2026-08-02. The official `main` commit at
+that time was
+[`1e9a620a28d6d8f8a0ba165f2004718a79030460`](https://github.com/openclaw/openclaw/commit/1e9a620a28d6d8f8a0ba165f2004718a79030460).
+The stable release tag
 [`v2026.7.1`](https://github.com/openclaw/openclaw/releases/tag/v2026.7.1),
-whose annotated tag resolves to release commit
+resolves to release commit
 [`2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`](https://github.com/openclaw/openclaw/commit/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4).
-All behavior evidence below is pinned to the newer exact `main` commit.
+The immutable integration target is `openclaw@2026.7.1-2` with npm integrity
+`sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==`.
+Its npm manifest omits `gitHead`, while its own `openclaw --version` reports
+`OpenClaw 2026.7.1-2 (0790d9f)`, identifying official source commit
+[`0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c`](https://github.com/openclaw/openclaw/commit/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c).
+
+At that published commit, the official installer contract is:
+
+| Stage | Official line evidence | Diagnostic consequence |
+| --- | --- | --- |
+| Gateway install preparation | [`install.ts` lines 141-298](https://github.com/openclaw/openclaw/blob/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c/src/cli/daemon-cli/install.ts#L141-L298) | Config initialization, service inspection, token resolution, and plan construction all precede the platform service install. |
+| JSON failure response | [`response.ts` lines 49-50](https://github.com/openclaw/openclaw/blob/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c/src/cli/daemon-cli/response.ts#L49-L50) and [109-177](https://github.com/openclaw/openclaw/blob/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c/src/cli/daemon-cli/response.ts#L109-L177) | `--json` emits the structured failure through the JSON writer and exits with code 1. Clawdi must inspect stdout as well as stderr. |
+| Systemd staging | [`systemd.ts` lines 831-950](https://github.com/openclaw/openclaw/blob/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c/src/daemon/systemd.ts#L831-L950) | User-manager validation and environment/unit writes happen before activation. |
+| Systemd activation | [`systemd.ts` lines 1101-1147](https://github.com/openclaw/openclaw/blob/0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c/src/daemon/systemd.ts#L1101-L1147) | `daemon-reload`, enable, and restart are separate failure points after staging. |
+
+Consequently, the absence of gateway process journal entries does not identify
+which installer stage failed. The isolated regression test runs the published
+package's real `gateway install --force --json` path under a live systemd user
+manager and UID/GID 10001, forces an immutable pre-activation `EISDIR` failure,
+and proves exit/stdout propagation plus exact transaction rollback without
+inventing a success path:
+
+```bash
+scripts/test-runtime-official-installer-systemd.sh
+```
+
+Done: the command exits 0 and reports `1 pass`.
+
+The Runtime UI behavior evidence below remains pinned to exact official commit
+[`ba467fbd3efa9ab109e620c4e42cfe92388171c5`](https://github.com/openclaw/openclaw/commit/ba467fbd3efa9ab109e620c4e42cfe92388171c5).
 
 | Requirement | Official line evidence | Contract consequence |
 | --- | --- | --- |
