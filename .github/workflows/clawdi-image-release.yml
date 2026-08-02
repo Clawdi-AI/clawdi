@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Git ref to build. Defaults to the workflow SHA."
+        description: "Git ref to build. Defaults to the workflow SHA. Do not use an older ref while an automatic release is running or pending."
         required: false
       build_web:
         description: "Also publish the web image. Requires matching public web build variables."
@@ -34,6 +34,7 @@ permissions:
 concurrency:
   group: clawdi-image-release-production
   cancel-in-progress: false
+  queue: max
 
 env:
   BACKEND_IMAGE_NAME: ghcr.io/clawdi-ai/clawdi-backend
@@ -44,12 +45,13 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main')
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     outputs:
       image_tag: ${{ steps.rev.outputs.sha }}
-      build_required: ${{ steps.runtime-changes.outputs.build }}
     steps:
       - name: Resolve source ref
         id: source-ref
@@ -72,47 +74,15 @@ jobs:
       - id: rev
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Detect backend image changes
-        id: runtime-changes
-        run: |
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            echo "build=true" >> "$GITHUB_OUTPUT"
-            echo "reason=workflow_dispatch" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          changed_files="$(git diff-tree --no-commit-id --name-only -r -m --first-parent "${{ steps.rev.outputs.sha }}")"
-          printf '%s\n' "$changed_files"
-
-          build=false
-          readarray -t files <<< "$changed_files"
-          for file in "${files[@]}"; do
-            case "$file" in
-              backend/*|.dockerignore|.github/workflows/clawdi-image-release.yml)
-                build=true
-                ;;
-            esac
-          done
-
-          echo "build=${build}" >> "$GITHUB_OUTPUT"
-          if [ "$build" = "true" ]; then
-            echo "reason=backend_image_inputs_changed" >> "$GITHUB_OUTPUT"
-          else
-            echo "reason=no_backend_image_inputs_changed" >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: docker/setup-buildx-action@v4
-        if: steps.runtime-changes.outputs.build == 'true'
 
       - uses: docker/login-action@v4
-        if: steps.runtime-changes.outputs.build == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
       - name: Resolve OCI label metadata
-        if: steps.runtime-changes.outputs.build == 'true'
         id: labels
         run: |
           created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -121,7 +91,6 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and push backend image
-        if: steps.runtime-changes.outputs.build == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -141,7 +110,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=clawdi-backend-image
 
       - name: Validate web image inputs
-        if: steps.runtime-changes.outputs.build == 'true' && inputs.build_web
+        if: inputs.build_web
         env:
           WEB_CLERK_PUBLISHABLE_KEY: ${{ inputs.web_clerk_publishable_key }}
         run: |
@@ -151,7 +120,7 @@ jobs:
           fi
 
       - name: Build and push web image
-        if: steps.runtime-changes.outputs.build == 'true' && inputs.build_web
+        if: inputs.build_web
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -176,7 +145,6 @@ jobs:
           cache-to: type=gha,mode=max,scope=clawdi-web-image
 
       - name: Print image summary
-        if: steps.runtime-changes.outputs.build == 'true'
         run: |
           echo "### Clawdi Images" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -187,22 +155,10 @@ jobs:
             echo "- Web: skipped" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Print skipped image summary
-        if: steps.runtime-changes.outputs.build != 'true'
-        run: |
-          echo "### Clawdi Images" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Backend image build: skipped" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Reason: \`${{ steps.runtime-changes.outputs.reason }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Ref: \`${{ steps.rev.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
   deploy-vps:
     needs: build
-    if: needs.build.outputs.build_required == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 15
-    concurrency:
-      group: kamal-deploy-clawdi
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
         with:
@@ -245,5 +201,6 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_SSH_PROXY_COMMAND: ${{ secrets.DEPLOY_SSH_PROXY_COMMAND }}
         run: |
-          gem install kamal -v '~> 2.12' --no-document
+          gem install kamal -v '2.12.0' --no-document
+          test "$(kamal version)" = "2.12.0"
           kamal deploy -P --version "${{ needs.build.outputs.image_tag }}"

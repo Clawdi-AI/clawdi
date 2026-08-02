@@ -89,10 +89,13 @@ describe("channel IA boundary", () => {
 			"verifiedDiscordPairingCommand(data.pairing_command, data.code)",
 		);
 		expect(discordPairDialog).toContain("pairing_command: pairingCommand");
-		expect(discordPairDialog).toContain("discord_user_install_url: verifiedDiscordUserInstallUrl(");
 		expect(discordPairDialog).toContain(
-			"verifiedDiscordServerInstallUrl(data.discord_install_url)",
+			"const serverInstallUrl = verifiedDiscordInstallUrl(data.discord_install_url)",
 		);
+		expect(discordPairDialog).toContain(
+			"const userInstallUrl = verifiedDiscordInstallUrl(data.discord_user_install_url)",
+		);
+		expect(discordPairDialog).toContain("server_install_retryable: serverInstallRetryable");
 		expect(discordPairDialog).toContain('result.pairing_command.split(" ", 1)[0]');
 		expect(discordPairDialog).toContain('data-discord-pair-path="server"');
 		expect(discordPairDialog).toContain('data-discord-pair-path="dm"');
@@ -124,6 +127,10 @@ describe("channel IA boundary", () => {
 		expect(discordPairDialog).toContain("This Discord pair code has expired");
 		expect(discordPairDialog).toContain("Generate new code");
 		expect(discordPairDialog).toContain("Couldn't prepare Discord pairing");
+		expect(discordPairDialog).toContain("Discord pairing is temporarily unavailable. Try again.");
+		expect(discordPairDialog).toContain("Server install temporarily unavailable");
+		expect(discordPairDialog).toContain("Retry server install");
+		expect(discordPairDialog).not.toContain("server install settings are out of date");
 		expect(pairingDialogUi).toContain("success: false");
 		expect(hooks).toContain("if (toastOnError) toastApiError");
 		expect(agentDetail).not.toContain("Commands synced. In Discord");
