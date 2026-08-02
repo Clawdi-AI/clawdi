@@ -241,6 +241,46 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response_body", "error"),
+    [
+        (b"not-json", "response must be valid JSON"),
+        (
+            b'{"node":{"content":{"$type":"base64-bytes","base64":"not-base64!"}}}',
+            "encoded bytes require valid base64",
+        ),
+        (
+            b'{"node":{"content":{"type":"Buffer","data":[256]}}}',
+            "encoded Buffer bytes must be integers between 0 and 255",
+        ),
+    ],
+)
+async def test_whatsapp_baileys_sidecar_client_rejects_invalid_query_json(
+    response_body: bytes,
+    error: str,
+):
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=response_body)
+
+    async with httpx.AsyncClient(
+        base_url="https://baileys-sidecar.internal",
+        transport=httpx.MockTransport(handler),
+    ) as http_client:
+        client = WhatsAppBaileysSidecarClient(
+            WhatsAppBaileysSidecarConfig(
+                base_url="https://baileys-sidecar.internal",
+                api_token="sidecar-secret",
+            ),
+            http_client=http_client,
+        )
+        with pytest.raises(ValueError, match=error):
+            await client.query(
+                {"tag": "iq", "attrs": {"id": "query", "type": "get"}},
+                15_000,
+            )
+
+
+@pytest.mark.asyncio
 async def test_whatsapp_provider_transport_health_reports_sidecar_mode():
     account_id = UUID("00000000-0000-0000-0000-000000000456")
     client = WhatsAppBaileysSidecarClient(
