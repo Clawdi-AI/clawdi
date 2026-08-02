@@ -34,7 +34,7 @@ describe("sidecar config", () => {
 			expect(config.accountId).toBe(ACCOUNT_ID);
 			expect(config.port).toBe(9876);
 			expect(config.sessionDir).toBe(sessionDir);
-			expect(config.webVersion).toEqual([2, 3000, 1_035_194_821]);
+			expect(config.webVersion).toEqual([2, 3000, 1_043_857_760]);
 			expect(config.providerInbox).toEqual({
 				maxEvents: 10_000,
 				maxBytes: 256 * 1024 * 1024,

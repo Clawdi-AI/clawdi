@@ -28,9 +28,9 @@ class FakeRuntime implements BaileysRuntime {
 			accountId: "11111111-1111-4111-8111-111111111111",
 			advertisedRelease: {
 				packageName: "@whiskeysockets/baileys",
-				packageVersion: "7.0.0-rc13",
-				sourceCommit: "8053b086ecc97ec3f78299561de11959bab05d39",
-				version: [2, 3000, 1_035_194_821],
+				packageVersion: "7.0.0-rc14",
+				sourceCommit: "7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a",
+				version: [2, 3000, 1_043_857_760],
 			},
 			uptimeSeconds: 1,
 		} as const;
@@ -198,9 +198,9 @@ describe("sidecar HTTP contract", () => {
 			accountId: "11111111-1111-4111-8111-111111111111",
 			advertisedRelease: {
 				packageName: "@whiskeysockets/baileys",
-				packageVersion: "7.0.0-rc13",
-				sourceCommit: "8053b086ecc97ec3f78299561de11959bab05d39",
-				version: [2, 3000, 1_035_194_821],
+				packageVersion: "7.0.0-rc14",
+				sourceCommit: "7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a",
+				version: [2, 3000, 1_043_857_760],
 			},
 			uptimeSeconds: 1,
 		});

@@ -46,7 +46,7 @@ The authenticated public lifecycle is:
 
 At backend startup and every reconciliation interval, each process rebuilds
 `ChannelAccount -> slot -> provider transport/pump` from active durable rows.
-It validates slot revision, sidecar account identity, the pinned Baileys rc13
+It validates slot revision, sidecar account identity, the pinned Baileys rc14
 source and Web version, and registration agreement. Missing auth, config drift,
 duplicate ownership, or orphan physical state is blocked rather than exposed
 as available capacity.
@@ -65,7 +65,7 @@ transport contract:
 | `GET` | `/v1/capabilities` | Advertise the exact narrow pairing contract. |
 | `GET` | `/v1/pairing/status` | Return socket-owner state and current ephemeral pairing material. |
 | `POST` | `/v1/pairing/qr` | Start or idempotently observe QR pairing. |
-| `POST` | `/v1/pairing/code` | Call pinned rc13 `requestPairingCode` after phone validation. |
+| `POST` | `/v1/pairing/code` | Call pinned rc14 `requestPairingCode` after phone validation. |
 | `POST` | `/v1/pairing/cancel` | Stop an unfinished unregistered session and clear its state. |
 | `POST` | `/v1/pairing/logout` | Remove the companion device before clearing physical auth. |
 | `POST` | `/v1/pairing/retry` | Reopen the same registered session for logout/recovery. |

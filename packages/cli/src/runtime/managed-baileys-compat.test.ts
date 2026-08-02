@@ -33,16 +33,22 @@ const pristineBaileysRoot = join(
 	repositoryRoot,
 	"packages/whatsapp-baileys-sidecar/node_modules/baileys",
 );
-const rc13DefaultsModule = await import(
+const qualifiedDefaultsModule = await import(
 	pathToFileURL(join(pristineBaileysRoot, "lib/Defaults/index.js")).href
 );
-const rc13DefaultConnectionConfig = Reflect.get(rc13DefaultsModule, "DEFAULT_CONNECTION_CONFIG");
-if (!rc13DefaultConnectionConfig || typeof rc13DefaultConnectionConfig !== "object") {
-	throw new Error("rc13 DEFAULT_CONNECTION_CONFIG export is missing");
+const qualifiedDefaultConnectionConfig = Reflect.get(
+	qualifiedDefaultsModule,
+	"DEFAULT_CONNECTION_CONFIG",
+);
+if (!qualifiedDefaultConnectionConfig || typeof qualifiedDefaultConnectionConfig !== "object") {
+	throw new Error("qualified DEFAULT_CONNECTION_CONFIG export is missing");
 }
-const rc13DefaultWebSocketUrl = Reflect.get(rc13DefaultConnectionConfig, "waWebSocketUrl");
-if (typeof rc13DefaultWebSocketUrl !== "string") {
-	throw new Error("rc13 default WhatsApp WebSocket URL is missing");
+const qualifiedDefaultWebSocketUrl = Reflect.get(
+	qualifiedDefaultConnectionConfig,
+	"waWebSocketUrl",
+);
+if (typeof qualifiedDefaultWebSocketUrl !== "string") {
+	throw new Error("qualified default WhatsApp WebSocket URL is missing");
 }
 const temporaryRoots: string[] = [];
 
@@ -72,10 +78,21 @@ it("defines exactly the three audited Baileys targets and no consumer target", (
 	expect(socketPatch?.hunks.map((hunk) => hunk.after).join("\n")).not.toContain(
 		"wss://web.whatsapp.com/ws/chat",
 	);
+	const qualifiedRc14Hashes = new Map([
+		["lib/Socket/socket.js", "ff8b19ff02491fa080ee371f066d49c94acb903207dd0d9fdb5548e5a594fb4a"],
+		[
+			"lib/Utils/noise-handler.js",
+			"970f9526ce0e5a6bebf937328b3d835966a9282c0d232f31b5c0bb283531afe8",
+		],
+		[
+			"lib/Utils/noise-handler.d.ts",
+			"a556ca0b67c3448769ad5ed0d59acbf566a21115fa107cd582b1dcb28c4fd516",
+		],
+	]);
 	for (const target of MANAGED_BAILEYS_STATIC_PATCH_TARGETS) {
-		expect(sha256File(join(pristineBaileysRoot, target.relativePath))).toBe(
-			target.auditPristineSha256,
-		);
+		const qualifiedHash = qualifiedRc14Hashes.get(target.relativePath);
+		if (!qualifiedHash) throw new Error(`missing rc14 hash for ${target.relativePath}`);
+		expect(sha256File(join(pristineBaileysRoot, target.relativePath))).toBe(qualifiedHash);
 		expect(new Set(target.hunks.map((hunk) => hunk.id)).size).toBe(target.hunks.length);
 	}
 });
@@ -738,7 +755,7 @@ it("executes patched socket routing without mutating consumer HTTP options", () 
 		auth: { creds: { additionalData: { "clawdi.managedWhatsAppSocket": metadata } } },
 	});
 	const managedSocket = executePatchedSocketPrologue(socketPath, managedConfig);
-	expect(String(managedSocket.url)).toBe(rc13DefaultWebSocketUrl);
+	expect(String(managedSocket.url)).toBe(qualifiedDefaultWebSocketUrl);
 	expect(managedSocket.webSocketConfig).not.toBe(managedConfig);
 	expect(managedSocket.webSocketConfig.options?.headers).toEqual({
 		"user-agent": "audited-client",
@@ -760,12 +777,13 @@ it("executes patched socket routing without mutating consumer HTTP options", () 
 	).toThrow("Invalid Clawdi managed WhatsApp socket metadata");
 });
 
-it("keeps managed upgrade identity out of real rc13 media fetch", async () => {
+it("keeps managed upgrade identity out of the qualified artifact media fetch", async () => {
 	const mediaModule = await import(
 		pathToFileURL(join(pristineBaileysRoot, "lib/Utils/messages-media.js")).href
 	);
 	const getHttpStream = Reflect.get(mediaModule, "getHttpStream");
-	if (typeof getHttpStream !== "function") throw new Error("rc13 getHttpStream export is missing");
+	if (typeof getHttpStream !== "function")
+		throw new Error("qualified getHttpStream export is missing");
 	let fetchInit: RequestInit | undefined;
 	const originalFetch = globalThis.fetch;
 	globalThis.fetch = Object.assign(
@@ -795,7 +813,7 @@ it("executes official Noise trust by default and the managed public key plus ser
 	);
 	const officialCert = Reflect.get(defaultsModule, "WA_CERT_DETAILS");
 	if (!officialCert || typeof officialCert !== "object") {
-		throw new Error("rc13 WA_CERT_DETAILS export is missing");
+		throw new Error("qualified WA_CERT_DETAILS export is missing");
 	}
 	const harness = await loadPatchedNoiseHarness(
 		join(fixture.baileysRoot, "lib/Utils/noise-handler.js"),
@@ -1048,7 +1066,8 @@ interface SocketHarnessResult {
 
 function socketConfig(overrides: Partial<SocketHarnessConfig>): SocketHarnessConfig {
 	return {
-		waWebSocketUrl: rc13DefaultWebSocketUrl,
+		waWebSocketUrl: qualifiedDefaultWebSocketUrl,
+		browser: ["Clawdi", "Chrome", "1.0.0"],
 		auth: { creds: {} },
 		shouldSyncHistoryMessage: () => true,
 		logger: { warn() {} },
@@ -1067,7 +1086,7 @@ function executePatchedSocketPrologue(
 	const connectLine = "    ws.connect();";
 	const socketEnd = source.indexOf(connectLine, socketStart) + connectLine.length;
 	if (helpersStart < 0 || helpersEnd < 0 || socketStart < 0 || socketEnd < connectLine.length) {
-		throw new Error("patched rc13 socket prologue is missing");
+		throw new Error("patched qualified socket prologue is missing");
 	}
 	const helpers = source.slice(helpersStart, helpersEnd);
 	const prologue = source
@@ -1109,7 +1128,7 @@ function executePatchedSocketPrologue(
 			return {};
 		},
 		Buffer.from("WA"),
-		rc13DefaultConnectionConfig,
+		qualifiedDefaultConnectionConfig,
 		WebSocketClient,
 	]);
 	if (typeof makeSocket !== "function") throw new Error("patched makeSocket did not compile");
@@ -1258,7 +1277,7 @@ async function stockAuthModules() {
 	const useMultiFileAuthState = Reflect.get(authModule, "useMultiFileAuthState");
 	const BufferJSON = Reflect.get(genericsModule, "BufferJSON");
 	if (typeof useMultiFileAuthState !== "function" || !BufferJSON) {
-		throw new Error("rc13 auth-state exports are missing");
+		throw new Error("qualified auth-state exports are missing");
 	}
 	return { useMultiFileAuthState, BufferJSON };
 }

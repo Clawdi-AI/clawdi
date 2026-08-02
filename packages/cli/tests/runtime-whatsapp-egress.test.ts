@@ -152,7 +152,7 @@ describe("native WhatsApp egress contract", () => {
 		]);
 	});
 
-	it("audits both stock rc13 aliases while only the CLI patch supplies managed compatibility", () => {
+	it("qualifies the rc14 sidecar artifact while consumers remain on audited rc13", () => {
 		const sidecarRoot = join(import.meta.dir, "../../whatsapp-baileys-sidecar");
 		const baileysRoot = realpathSync(join(sidecarRoot, "node_modules/baileys"));
 		const packageJson = JSON.parse(readFileSync(join(baileysRoot, "package.json"), "utf-8")) as {
@@ -176,17 +176,17 @@ describe("native WhatsApp egress contract", () => {
 		expect(hermesArtifact.consumerStableCommit).toBe("cc4cab2f592e60a197e796506de9168f74baf3ea");
 		expect(WHATSAPP_UPSTREAM_AUDIT.openclaw).not.toHaveProperty("mainCommit");
 		expect(WHATSAPP_UPSTREAM_AUDIT.hermes).not.toHaveProperty("mainCommit");
-		expect(packageJson.name).toBe(hermesArtifact.package);
-		expect(packageJson.version).toBe(release.version);
+		expect(packageJson.name).toBe("@whiskeysockets/baileys");
+		expect(packageJson.version).toBe("7.0.0-rc14");
 		expect(release.gitCommit).toBe("8053b086ecc97ec3f78299561de11959bab05d39");
 		expect(createHash("sha256").update(noiseHandler).digest("hex")).toBe(
-			release.sharedSurfaceSha256.noiseHandler,
+			"970f9526ce0e5a6bebf937328b3d835966a9282c0d232f31b5c0bb283531afe8",
 		);
 		expect(createHash("sha256").update(socket).digest("hex")).toBe(
-			release.sharedSurfaceSha256.socket,
+			"ff8b19ff02491fa080ee371f066d49c94acb903207dd0d9fdb5548e5a594fb4a",
 		);
 		expect(createHash("sha256").update(noiseTypes).digest("hex")).toBe(
-			release.sharedSurfaceSha256.noiseHandlerTypes,
+			"a556ca0b67c3448769ad5ed0d59acbf566a21115fa107cd582b1dcb28c4fd516",
 		);
 		expect(noiseHandler).toContain(
 			"Curve.verify(WA_CERT_DETAILS.PUBLIC_KEY, certIntermediate.details",
@@ -206,8 +206,11 @@ describe("native WhatsApp egress contract", () => {
 		expect(sidecarState).toContain('db.exec("PRAGMA locking_mode = EXCLUSIVE")');
 		expect(sidecarState).toContain('["account_id", input.accountId]');
 		expect(sidecarState).not.toMatch(/process\.kill|unlinkSync/);
-		expect(auditedVersion).toContain('AUDITED_BAILEYS_RELEASE = "7.0.0-rc13"');
-		expect(auditedVersion).toContain('AUDITED_WHATSAPP_WEB_VERSION_TEXT = "2.3000.1035194821"');
+		expect(auditedVersion).toContain('AUDITED_BAILEYS_RELEASE = "7.0.0-rc14"');
+		expect(auditedVersion).toContain(
+			'AUDITED_BAILEYS_SOURCE_COMMIT = "7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a"',
+		);
+		expect(auditedVersion).toContain('AUDITED_WHATSAPP_WEB_VERSION_TEXT = "2.3000.1043857760"');
 		expect(release.noiseTrustSeam).toMatchObject({
 			available: true,
 			providedBy: "clawdi.managedBaileysCompat.v3",
