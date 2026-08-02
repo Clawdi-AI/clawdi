@@ -1004,9 +1004,49 @@ function cachedHostedCliDesiredState(home: string, packageSpec: string): Runtime
 
 function seedOpenClawBinary(home: string): void {
 	const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+	const unitPath = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
 	mkdirSync(dirname(openclawBin), { recursive: true });
-	writeFileSync(openclawBin, "#!/bin/sh\nexit 0\n");
+	writeFileSync(
+		openclawBin,
+		`#!/bin/sh
+if [ "\${1:-}" = "--version" ]; then
+  printf 'openclaw test-version\n'
+  exit 0
+fi
+if [ "$*" = "gateway install --force --json" ]; then
+  mkdir -p '${dirname(unitPath)}'
+  printf '%s\n' '[Unit]' '[Service]' 'ExecStart=${openclawBin} gateway run' > '${unitPath}'
+  printf '{"ok":true}\n'
+  exit 0
+fi
+if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
+  cat >/dev/null
+fi
+exit 0
+`,
+	);
 	chmodSync(openclawBin, 0o700);
+}
+
+function openClawDiscordPluginInspectFixture(pluginSource: string): Record<string, unknown> {
+	return {
+		plugin: {
+			id: "discord",
+			source: pluginSource,
+			origin: "global",
+			status: "loaded",
+			version: "1.2.3",
+			enabled: true,
+		},
+		install: {
+			source: "npm",
+			spec: "@openclaw/discord",
+			installPath: dirname(pluginSource),
+			resolvedName: "@openclaw/discord",
+			resolvedVersion: "1.2.3",
+			integrity: "sha512-test",
+		},
+	};
 }
 
 function seedOfficialOpenClawServiceInstaller(home: string): void {
@@ -4481,6 +4521,7 @@ exit 0
 		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
 		const openclawCommand = join(root, "openclaw-command.log");
 		const patchCount = join(root, "openclaw-patch-count");
+		const unitPath = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -4490,6 +4531,7 @@ exit 0
 			openclawBin,
 			[
 				"#!/bin/sh",
+				'if [ "$1" = "--version" ]; then printf "OpenClaw test-version\\n"; exit 0; fi',
 				`printf '%s\\n' "$*" >> '${openclawCommand}'`,
 				'if [ "$1 $2 $3" = "config patch --stdin" ]; then',
 				`  count=$(cat '${patchCount}' 2>/dev/null || printf '0')`,
@@ -4499,6 +4541,8 @@ exit 0
 				"  exit 0",
 				"fi",
 				'if [ "$1 $2 $3 $4" = "gateway install --force --json" ]; then',
+				`  mkdir -p '${dirname(unitPath)}'`,
+				`  printf '%s\\n' '[Unit]' '[Service]' 'ExecStart=${openclawBin} gateway run' > '${unitPath}'`,
 				"  printf '{\"ok\":true}\\n'",
 				"  exit 0",
 				"fi",
@@ -6119,8 +6163,7 @@ exit 64
 		const bootstrapToken = "bootstrap-transport-token";
 		const runtimeAuthToken = "runtime-business-token";
 		mkdirSync(dirname(openclawBin), { recursive: true });
-		writeFileSync(openclawBin, "#!/usr/bin/env bash\nexit 0\n");
-		chmodSync(openclawBin, 0o700);
+		seedOpenClawBinary(home);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -9470,7 +9513,10 @@ fi
 			const rejectedEvent = JSON.parse(logs.at(-1) ?? "{}");
 			const rejectedEventText = JSON.stringify(rejectedEvent);
 			expect(rejectedEvent.status).toBe("error");
-			expect(rejectedEvent.error).toContain("transparent-egress prerequisite activation failed");
+			// The verified OpenClaw service receipt keeps the official installer out
+			// of this steady-state apply, so sidecar activation belongs to the final
+			// systemd transaction instead of the installer prerequisite phase.
+			expect(rejectedEvent.error).toContain("systemd apply failed");
 			expect(rejectedEvent.systemdUnitsChanged).toBe(false);
 			expect(rejectedEvent.systemdApply).toEqual({
 				applied: false,
@@ -9489,6 +9535,7 @@ fi
 			expect(readFileSync(paths.manifestLastGood, "utf-8")).toBe(committedLastGood);
 			expect(readFileSync(paths.managedSecretCacheFile, "utf-8")).toBe(committedSecretCache);
 			const rollbackSystemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
+			expect(rollbackSystemctlCalls).not.toContain("official openclaw installer");
 			expect(
 				rollbackSystemctlCalls.filter((call) => call === "restart clawdi-runtime-sidecar.service"),
 			).toHaveLength(2);
@@ -11854,6 +11901,7 @@ chmod +x "$prefix/bin/clawdi"
 		const openclawPatch = join(root, "openclaw-channel-patch.json");
 		const openclawPatchArgs = join(root, "openclaw-channel-patch-args.txt");
 		const openclawPluginInstalls = join(root, "openclaw-plugin-installs.txt");
+		const openclawPluginSource = join(home, ".openclaw", "extensions", "discord", "index.js");
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
 		const logs: string[] = [];
@@ -11876,6 +11924,12 @@ if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin
 fi
 if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
   printf '%s\\n' "\${3:-}" >> '${openclawPluginInstalls}'
+  mkdir -p '${dirname(openclawPluginSource)}'
+  printf '%s\\n' 'export const discordPlugin = true;' > '${openclawPluginSource}'
+  exit 0
+fi
+if [ "$*" = "plugins inspect discord --json" ]; then
+  printf '%s\\n' '${JSON.stringify(openClawDiscordPluginInspectFixture(openclawPluginSource))}'
   exit 0
 fi
 if [ "$*" = "gateway install --force --json" ]; then
@@ -13224,12 +13278,17 @@ exit 64
 		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
 		const openclawPatch = join(root, "openclaw-channel-remove-patch.jsonl");
 		const openclawPluginInstalls = join(root, "openclaw-plugin-installs.txt");
+		const openclawPluginSource = join(home, ".openclaw", "extensions", "discord", "index.js");
 		mkdirSync(join(home, ".openclaw", "bin"), { recursive: true });
 		mkdirSync(workspace, { recursive: true });
 		writeFileSync(
 			openclawBin,
 			`#!/usr/bin/env bash
 set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  printf 'openclaw test-version\\n'
+  exit 0
+fi
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
   cat >> '${openclawPatch}'
   printf '\\n---\\n' >> '${openclawPatch}'
@@ -13237,6 +13296,12 @@ if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin
 fi
 if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
   printf '%s\\n' "\${3:-}" >> '${openclawPluginInstalls}'
+  mkdir -p '${dirname(openclawPluginSource)}'
+  printf '%s\\n' 'export const discordPlugin = true;' > '${openclawPluginSource}'
+  exit 0
+fi
+if [ "$*" = "plugins inspect discord --json" ]; then
+  printf '%s\\n' '${JSON.stringify(openClawDiscordPluginInspectFixture(openclawPluginSource))}'
   exit 0
 fi
 printf 'unexpected openclaw command: %s\\n' "$*" >&2
@@ -13332,11 +13397,18 @@ exit 64
 		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
 		const openclawPatch = join(root, "openclaw-channel-patch.json");
 		const openclawPluginInstalls = join(root, "openclaw-plugin-installs.txt");
+		const openclawPluginSource = join(home, ".openclaw", "extensions", "discord", "index.js");
 		mkdirSync(dirname(openclawBin), { recursive: true });
+		mkdirSync(dirname(openclawPluginSource), { recursive: true });
+		writeFileSync(openclawPluginSource, "export const discordPlugin = true;\n");
 		writeFileSync(
 			openclawBin,
 			`#!/usr/bin/env bash
 set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  printf 'openclaw test-version\\n'
+  exit 0
+fi
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
   cat > '${openclawPatch}'
   exit 0
@@ -13346,6 +13418,10 @@ if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
   printf 'plugin already exists: %s\\n' "$HOME/.openclaw/npm/projects/openclaw-discord/node_modules/\${3:-}" >&2
   printf 'Use openclaw plugins update to upgrade the tracked plugin.\\n' >&2
   exit 1
+fi
+if [ "$*" = "plugins inspect discord --json" ]; then
+  printf '%s\\n' '${JSON.stringify(openClawDiscordPluginInspectFixture(openclawPluginSource))}'
+  exit 0
 fi
 printf 'unexpected openclaw command: %s\\n' "$*" >&2
 exit 64

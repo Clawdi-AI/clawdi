@@ -275,9 +275,11 @@ function egressRuntimeManifest(
 ): RuntimeManifest {
 	process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
 	const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
-	mkdirSync(dirname(commandPath), { recursive: true });
-	writeFileSync(commandPath, "#!/usr/bin/env sh\nexit 0\n");
-	chmodSync(commandPath, 0o700);
+	writeFakeGatewayCli({
+		path: commandPath,
+		runtime: "openclaw",
+		unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+	});
 	return baseManifest(
 		paths,
 		{
@@ -500,6 +502,7 @@ function writeFakeGatewayCli(input: {
 	path: string;
 	runtime: "openclaw" | "hermes";
 	unitPath: string;
+	configPatchPath?: string;
 	failInstall?: boolean;
 }): void {
 	mkdirSync(dirname(input.path), { recursive: true });
@@ -508,6 +511,12 @@ function writeFakeGatewayCli(input: {
 		`#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
+	"--version")
+		printf '%s\\n' '${input.runtime === "openclaw" ? "OpenClaw test-version" : "Hermes test-version"}'
+		;;
+  "config patch --stdin")
+    ${input.configPatchPath ? `cat > '${input.configPatchPath}'` : "cat >/dev/null"}
+    ;;
   "gateway install --force --json"|"gateway install --force"|"gateway install")
     ${
 			input.failInstall
@@ -519,8 +528,12 @@ Description=Official gateway
 
 [Service]
 ExecStart=official gateway run
-EOF`
+EOF
+    printf '%s\\n' '{"ok":true}'`
 		}
+    ;;
+  "gateway uninstall")
+    rm -f '${input.unitPath}'
     ;;
   *)
     printf 'unexpected ${input.runtime} command: %s\\n' "$*" >&2
@@ -2919,9 +2932,11 @@ describe("runtime manifest reconciliation invariants", () => {
 			egressEngine.sha256,
 			"mitmdump",
 		);
-		mkdirSync(dirname(commandPath), { recursive: true });
-		writeFileSync(commandPath, "#!/usr/bin/env sh\nexit 0\n");
-		chmodSync(commandPath, 0o700);
+		writeFakeGatewayCli({
+			path: commandPath,
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
 		mkdirSync(dirname(engineBinary), { recursive: true });
 		writeFileSync(engineBinary, "#!/usr/bin/env sh\nexit 0\n");
 		chmodSync(engineBinary, 0o700);
@@ -3096,9 +3111,11 @@ describe("runtime manifest reconciliation invariants", () => {
 			egressEngine.sha256,
 			"mitmdump",
 		);
-		mkdirSync(dirname(commandPath), { recursive: true });
-		writeFileSync(commandPath, "#!/usr/bin/env sh\nexit 0\n");
-		chmodSync(commandPath, 0o700);
+		writeFakeGatewayCli({
+			path: commandPath,
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
 		mkdirSync(dirname(engineBinary), { recursive: true });
 		writeFileSync(engineBinary, "#!/usr/bin/env sh\nexit 0\n");
 		chmodSync(engineBinary, 0o700);
@@ -3943,17 +3960,12 @@ describe("runtime manifest reconciliation invariants", () => {
 		chmodSync(paths.runConfigRoot, 0o755);
 		chmodSync(paths.systemdEnvRoot, 0o755);
 		chmodSync(paths.managedSecretRoot, 0o711);
-		writeFileSync(
-			commandPath,
-			[
-				"#!/usr/bin/env bash",
-				"set -euo pipefail",
-				"cat >/dev/null || true",
-				`printf '%s\\n' '{"forward-converged":true}' > '${targetConfig}'`,
-				"",
-			].join("\n"),
-		);
-		chmodSync(commandPath, 0o700);
+		writeFakeGatewayCli({
+			path: commandPath,
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+			configPatchPath: targetConfig,
+		});
 		mkdirSync(dropInRoot, { recursive: true });
 		writeFileSync(
 			managedUserDropIn,
@@ -4452,6 +4464,10 @@ describe("runtime manifest reconciliation invariants", () => {
 			`#!/usr/bin/env bash
 set -euo pipefail
 test "$(id -u)" = "10001"
+if [ "$*" = "--version" ]; then
+  printf '%s\\n' 'OpenClaw test-version'
+  exit 0
+fi
 test "$*" = "gateway install --force --json"
 unit="$HOME/.config/systemd/user/\${OPENCLAW_SYSTEMD_UNIT:-openclaw-gateway.service}"
 cp "$unit" "$unit.bak"
