@@ -17,6 +17,7 @@ from app.models.channel import (
     ChannelWhatsAppOnboardingSession,
 )
 from app.services.channels import archive_channel_account
+from app.services.whatsapp_device_onboarding import stop_whatsapp_pairing
 from app.services.whatsapp_managed_onboarding import (
     cancel_managed_whatsapp_onboarding,
     expire_stale_managed_whatsapp_onboarding_sessions,
@@ -243,6 +244,33 @@ async def test_expired_managed_reservation_confirms_stop(db_session, seed_user):
 
 
 @pytest.mark.asyncio
+async def test_expired_reservation_promotes_connected_registered_sidecar(db_session, seed_user):
+    account_id = uuid4()
+    fake = FakeManagedSidecar()
+    registry = _registry(account_id, fake)
+    await registry.start()
+    try:
+        started = await _start(db_session, seed_user, registry, account_id)
+        session = await db_session.get(ChannelWhatsAppOnboardingSession, started.id)
+        session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await db_session.commit()
+        fake.connected = fake.registered = True
+
+        assert (
+            await expire_stale_managed_whatsapp_onboarding_sessions(db_session, registry=registry)
+            == 0
+        )
+        account = await db_session.get(ChannelAccount, account_id)
+        assert account is not None
+        await db_session.refresh(session)
+        assert session.state == "connected"
+        assert fake.logout_calls == 0
+        assert fake.cancel_calls == 0
+    finally:
+        await registry.stop()
+
+
+@pytest.mark.asyncio
 async def test_logout_then_archive_rollback_is_idempotent_on_retry(db_session, seed_user):
     account_id = uuid4()
     fake = FakeManagedSidecar()
@@ -391,5 +419,45 @@ async def test_restart_reconciliation_fails_closed_on_revision_and_physical_drif
         fake.connected = True
         await registry.reconcile_managed_ownership(db_session)
         assert registry.managed_is_bound(account_id)
+
+        fake.connected = fake.registered = False
+        await registry.reconcile_managed_ownership(db_session)
+        assert not registry.managed_is_bound(account_id)
+
+        fake.connected = fake.registered = True
+        await registry.reconcile_managed_ownership(db_session)
+        assert registry.managed_is_bound(account_id)
+        account.config = {
+            "connection_mode": "baileys_managed",
+            "sidecar_config_revision": "drifted-again",
+        }
+        await db_session.commit()
+        await registry.reconcile_managed_ownership(db_session)
+        assert not registry.managed_is_bound(account_id)
     finally:
         await registry.stop()
+
+
+@pytest.mark.asyncio
+async def test_registered_logout_unavailable_retries_with_backoff(monkeypatch):
+    fake = FakeManagedSidecar()
+    fake.connected = fake.registered = True
+    failures = 3
+    sleeps: list[float] = []
+    original_logout = fake.pairing_logout
+
+    async def flaky_logout():
+        nonlocal failures
+        if failures:
+            failures -= 1
+            raise WhatsAppSidecarUnavailableError("injected transient failure")
+        return await original_logout()
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(fake, "pairing_logout", flaky_logout)
+    monkeypatch.setattr("app.services.whatsapp_device_onboarding.asyncio.sleep", record_sleep)
+    result = await stop_whatsapp_pairing(fake)
+    assert result.status == "stopped"
+    assert sleeps == [0.25, 0.25, 0.25]

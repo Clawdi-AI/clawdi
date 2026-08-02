@@ -941,18 +941,19 @@ async def _logout_registered_pairing(
     current: WhatsAppSidecarPairingStatus,
 ) -> WhatsAppSidecarPairingStatus:
     if not current.registered:
-        raise WhatsAppSidecarProtocolError("custom sidecar lost registered auth")
+        raise WhatsAppSidecarProtocolError("WhatsApp sidecar lost registered auth")
     deadline = asyncio.get_running_loop().time() + _LOGOUT_RECOVERY_TTL_SECONDS
     observed = current
     while True:
         if not observed.registered:
             return observed if observed.status == "stopped" else await client.pairing_cancel()
         if asyncio.get_running_loop().time() >= deadline:
-            raise WhatsAppSidecarUnavailableError("custom sidecar did not reconnect for logout")
+            raise WhatsAppSidecarUnavailableError("WhatsApp sidecar did not reconnect for logout")
         if observed.status == "connected":
             try:
                 return await client.pairing_logout()
             except WhatsAppSidecarUnavailableError:
+                await asyncio.sleep(0.25)
                 observed = await client.pairing_status()
                 continue
         if observed.status in {"starting", "disconnected", "stopped"}:

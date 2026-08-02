@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import cast
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -23,7 +24,10 @@ from app.models.channel import (
     ChannelAccount,
     ChannelWhatsAppOnboardingSession,
 )
-from app.schemas.channel import ChannelWhatsAppOnboardingSessionResponse
+from app.schemas.channel import (
+    ChannelWhatsAppOnboardingSessionResponse,
+    WhatsAppOnboardingState,
+)
 from app.services.channels import generate_webhook_secret, hash_token
 from app.services.whatsapp_device_onboarding import (
     WHATSAPP_ONBOARDING_TTL,
@@ -174,7 +178,11 @@ async def require_managed_whatsapp_logout_for_archive(
         or config.get("connection_mode") != "baileys_managed"
     ):
         return
-    client = registry.get_managed_client(account.id) if registry else None
+    if registry is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp disconnect could not be confirmed"
+        )
+    client = registry.get_managed_client(account.id)
     revision = config.get("sidecar_config_revision")
     if (
         client is None
@@ -229,24 +237,14 @@ async def _refresh(
     registry: ConfiguredWhatsAppSidecarRegistry | None,
     start_qr: bool,
 ) -> ChannelWhatsAppOnboardingSessionResponse:
-    client = registry.get_managed_client(onboarding.sidecar_account_id) if registry else None
-    if (
-        client is None
-        or registry.managed_account_revision(onboarding.sidecar_account_id)
+    if registry is None:
+        return await _error(db, onboarding)
+    client = registry.get_managed_client(onboarding.sidecar_account_id)
+    if client is None or (
+        registry.managed_account_revision(onboarding.sidecar_account_id)
         != onboarding.sidecar_config_revision
     ):
         return await _error(db, onboarding)
-    if datetime.now(UTC) >= onboarding.expires_at:
-        try:
-            stopped = await stop_whatsapp_pairing(client)
-        except WhatsAppSidecarError:
-            return await _error(db, onboarding)
-        if stopped.status != "stopped" or stopped.registered:
-            return await _error(db, onboarding)
-        onboarding.state = WHATSAPP_ONBOARDING_STATE_EXPIRED
-        onboarding.completed_at = datetime.now(UTC)
-        await db.commit()
-        return _response(onboarding)
     try:
         await client.capabilities()
         health = await client.health()
@@ -257,6 +255,17 @@ async def _refresh(
         return await _error(db, onboarding)
     if health.connected and pairing.status == "connected" and pairing.registered:
         await _promote(db, onboarding=onboarding, registry=registry)
+        return _response(onboarding)
+    if datetime.now(UTC) >= onboarding.expires_at:
+        try:
+            stopped = await stop_whatsapp_pairing(client, current=pairing)
+        except WhatsAppSidecarError:
+            return await _error(db, onboarding)
+        if stopped.status != "stopped" or stopped.registered:
+            return await _error(db, onboarding)
+        onboarding.state = WHATSAPP_ONBOARDING_STATE_EXPIRED
+        onboarding.completed_at = datetime.now(UTC)
+        await db.commit()
         return _response(onboarding)
     if pairing.registered:
         onboarding.state = WHATSAPP_ONBOARDING_STATE_SCANNED
@@ -376,7 +385,7 @@ def _response(
         id=row.id,
         channel_account_id=row.channel_account_id,
         name=row.name,
-        state=row.state,
+        state=cast(WhatsAppOnboardingState, row.state),
         method="qr",
         qr=qr,
         qr_expires_at=qr_expires_at,

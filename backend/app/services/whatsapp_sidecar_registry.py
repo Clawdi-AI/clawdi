@@ -251,6 +251,8 @@ class ConfiguredWhatsAppSidecarRegistry:
                     )
                 await self.bind_managed_account(account_id, config_revision=revision)
             except WhatsAppSidecarError:
+                if account_id in self._bound_managed_accounts:
+                    await self.unbind_managed_account(account_id)
                 log.error("WhatsApp managed account %s is not safe to attach", account_id)
 
     async def _managed_accounts(self, db: AsyncSession) -> list[ChannelAccount]:
