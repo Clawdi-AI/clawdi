@@ -162,6 +162,26 @@ const sessions = {
 	page: 1,
 	page_size: 25,
 };
+const overviewSessions = {
+	...sessions,
+	items: Array.from({ length: 5 }, (_, index) => ({
+		...sessions.items[0],
+		id: `session-overview-${index + 1}`,
+		local_session_id: `local-overview-${index + 1}`,
+		summary: [
+			"Plan release",
+			"Review customer notes",
+			"Fix sync health",
+			"Draft weekly update",
+			"Fifth hidden session",
+		][index],
+		message_count: index + 2,
+		input_tokens: 100 * (index + 1),
+		output_tokens: 50 * (index + 1),
+		last_activity_at: new Date(now.getTime() - index * 60 * 60 * 1000).toISOString(),
+	})),
+	total: 5,
+};
 
 const memories = {
 	items: [
@@ -191,6 +211,21 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 }
 
 type DashboardApiStubOptions = {
+	sessionsPage?: unknown;
+	connectorConnections?: readonly unknown[];
+	connectorConnectionsGate?: Promise<void>;
+	connectorConnectionsResponse?: { body: unknown; status: number };
+	connectorCatalog?: readonly {
+		name: string;
+		display_name: string;
+		logo: string;
+		description: string;
+		auth_type: string;
+		connect_disabled: boolean;
+		connect_disabled_reason: null;
+	}[];
+	connectorCatalogGate?: Promise<void>;
+	connectorCatalogResponse?: { body: unknown; status: number };
 	projectBindings?: readonly unknown[];
 	projectBindingsError?: { status: number; detail: string };
 	projectBindingsGate?: Promise<void>;
@@ -289,12 +324,38 @@ async function stubDashboardApi(
 			return;
 		}
 		if (url.pathname === "/v1/connectors") {
-			await fulfillJson(route, []);
+			await options.connectorConnectionsGate;
+			if (options.connectorConnectionsResponse) {
+				await fulfillJson(
+					route,
+					options.connectorConnectionsResponse.body,
+					options.connectorConnectionsResponse.status,
+				);
+				return;
+			}
+			await fulfillJson(route, options.connectorConnections ?? []);
+			return;
+		}
+		const connectorAppMatch = url.pathname.match(/^\/v1\/connectors\/available\/([^/]+)$/);
+		if (connectorAppMatch) {
+			const app = options.connectorCatalog?.find(
+				(item) => item.name === decodeURIComponent(connectorAppMatch[1]),
+			);
+			await fulfillJson(route, app ?? { detail: "App not found" }, app ? 200 : 404);
 			return;
 		}
 		if (url.pathname === "/v1/connectors/available") {
+			await options.connectorCatalogGate;
+			if (options.connectorCatalogResponse) {
+				await fulfillJson(
+					route,
+					options.connectorCatalogResponse.body,
+					options.connectorCatalogResponse.status,
+				);
+				return;
+			}
 			await fulfillJson(route, {
-				items: [
+				items: options.connectorCatalog ?? [
 					{
 						name: "gmail",
 						display_name: "Gmail",
@@ -312,7 +373,7 @@ async function stubDashboardApi(
 			return;
 		}
 		if (url.pathname === "/v1/sessions") {
-			await fulfillJson(route, sessions);
+			await fulfillJson(route, options.sessionsPage ?? sessions);
 			return;
 		}
 		if (url.pathname === "/v1/memories") {
@@ -419,14 +480,30 @@ test("Console and connected agents use the scoped navigation grammar", async ({ 
 
 	await page.goto("/agents/agent-smoke-1");
 	await expectSidebarNavigationGroups(page, [
-		{ label: null, items: ["Overview", "Sessions", "Memories"] },
-		{ label: "Resources", items: ["Connectors", "Projects", "Skills", "Vaults"] },
+		{ label: null, items: ["Overview", "Sessions"] },
+		{ label: "Resources", items: ["Projects", "Skills", "Memories", "Vaults", "Connectors"] },
 		{ label: null, items: ["Settings"] },
 	]);
 });
 
 test("connected agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
 	await stubDashboardApi(page, [], {
+		sessionsPage: overviewSessions,
+		connectorConnections: [
+			{ id: "conn-github", app_name: "github", status: "ACTIVE" },
+			{ id: "conn-slack", app_name: "slack", status: "ACTIVE" },
+		],
+		connectorCatalog: ["github", "slack", "gmail", "notion", "linear", "dropbox", "calendar"].map(
+			(name) => ({
+				name,
+				display_name: name[0]?.toUpperCase() + name.slice(1),
+				logo: "",
+				description: `${name} connector`,
+				auth_type: "oauth",
+				connect_disabled: false,
+				connect_disabled_reason: null,
+			}),
+		),
 		skillsByProjectId: {
 			"project-smoke": [
 				{
@@ -470,10 +547,19 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	);
 	await expect(page.locator('[data-overview-status="live-sync"]')).toContainText("Machine");
 	await expect(page.locator('[data-overview-status="live-sync"]')).toContainText("Last seen");
+	const recentSessions = page.getByRole("region", { name: "Recent sessions" });
+	await expect(recentSessions.locator("article")).toHaveCount(4);
+	await expect(recentSessions).not.toContainText("Fifth hidden session");
 	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("Research");
 	for (const moduleId of ["memories", "vaults", "connectors"]) {
 		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toBeVisible();
 	}
+	const connectors = overview.locator('[data-overview-module="connectors"]');
+	await expect(connectors).toContainText("2 connected apps");
+	await expect(connectors.getByRole("link", { name: "Connected: Github" })).toBeVisible();
+	await expect(connectors.getByRole("link", { name: "Connected: Slack" })).toBeVisible();
+	await expect(connectors.getByRole("link", { name: "Popular: Gmail" })).toBeVisible();
+	await expect(connectors.getByRole("link", { name: "Popular: Github" })).toHaveCount(0);
 	const sidebar = page.getByTestId("app-sidebar");
 	for (const section of ["Memories", "Vaults", "Connectors"]) {
 		await expect(sidebar.getByRole("link", { name: section, exact: true })).toBeVisible();
@@ -485,6 +571,64 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		path: testInfo.outputPath("connected-agent-overview.png"),
 		fullPage: true,
 	});
+});
+
+test("connected overview keeps connector and catalog states independent", async ({ page }) => {
+	await stubDashboardApi(page, [], {
+		connectorConnectionsGate: new Promise<void>(() => {}),
+		connectorCatalog: [
+			{
+				name: "gmail",
+				display_name: "Gmail",
+				logo: "",
+				description: "Email",
+				auth_type: "oauth",
+				connect_disabled: false,
+				connect_disabled_reason: null,
+			},
+		],
+	});
+	await page.goto("/agents/agent-smoke-1");
+	const card = page.locator('[data-overview-module="connectors"]');
+	await expect(card.getByLabel("Loading connected apps")).toBeVisible();
+	await expect(card.getByRole("link", { name: "Popular: Gmail" })).toBeVisible();
+	await expect(card).not.toContainText("No apps connected");
+});
+
+test("connected overview reports connector errors without a false empty state", async ({
+	page,
+}) => {
+	await stubDashboardApi(page, [], {
+		connectorConnectionsResponse: { body: { detail: "failed" }, status: 500 },
+		connectorCatalogResponse: { body: { detail: "failed" }, status: 500 },
+	});
+	await page.goto("/agents/agent-smoke-1");
+	const card = page.locator('[data-overview-module="connectors"]');
+	await expect(card).toContainText("Can’t load connected apps", { timeout: 12_000 });
+	await expect(card).toContainText("Can’t load popular apps");
+	await expect(card).not.toContainText("No apps connected");
+});
+
+test("connected overview preserves active count while popular apps load", async ({ page }) => {
+	await stubDashboardApi(page, [], {
+		connectorConnections: [{ id: "conn-github", app_name: "github", status: "ACTIVE" }],
+		connectorCatalogGate: new Promise<void>(() => {}),
+		connectorCatalog: [
+			{
+				name: "github",
+				display_name: "Github",
+				logo: "",
+				description: "Source",
+				auth_type: "oauth",
+				connect_disabled: false,
+				connect_disabled_reason: null,
+			},
+		],
+	});
+	await page.goto("/agents/agent-smoke-1");
+	const card = page.locator('[data-overview-module="connectors"]');
+	await expect(card).toContainText("1 connected app");
+	await expect(card.getByLabel("Loading popular apps")).toBeVisible();
 });
 
 test("connected overview keeps project count when names fail", async ({ page }) => {

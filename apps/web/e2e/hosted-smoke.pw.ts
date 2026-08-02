@@ -1119,6 +1119,17 @@ function isStubResponse(value: unknown): value is StubResponse {
 }
 
 type HostedApiStubOptions = {
+	sessionsPage?: unknown;
+	connectorConnections?: readonly unknown[];
+	connectorCatalog?: readonly {
+		name: string;
+		display_name: string;
+		logo: string;
+		description: string;
+		auth_type: string;
+		connect_disabled: boolean;
+		connect_disabled_reason: null;
+	}[];
 	aiProviders?: readonly unknown[];
 	agentProjectBindings?: readonly unknown[];
 	agentProjectBindingRequests?: string[];
@@ -2170,13 +2181,20 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				page_size: Number(url.searchParams.get("page_size") ?? "25"),
 			});
 		}
-		if (p === "/v1/connectors") return fulfillJson(r, []);
+		if (p === "/v1/connectors") return fulfillJson(r, options.connectorConnections ?? []);
+		const connectorAppMatch = p.match(/^\/v1\/connectors\/available\/([^/]+)$/);
+		if (connectorAppMatch) {
+			const app = options.connectorCatalog?.find(
+				(item) => item.name === decodeURIComponent(connectorAppMatch[1] ?? ""),
+			);
+			return fulfillJson(r, app ?? { detail: "App not found" }, app ? 200 : 404);
+		}
 		if (p === "/v1/connectors/available") {
 			if (!options.agentResourceFixtures) {
 				return fulfillJson(r, { items: [], total: 0, page: 1, page_size: 24 });
 			}
 			return fulfillJson(r, {
-				items: [
+				items: options.connectorCatalog ?? [
 					{
 						name: "github",
 						display_name: "GitHub",
@@ -2192,7 +2210,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				page_size: 24,
 			});
 		}
-		if (p === "/v1/sessions") return fulfillJson(r, emptyPage);
+		if (p === "/v1/sessions") return fulfillJson(r, options.sessionsPage ?? emptyPage);
 		if (p === "/v1/memories") return fulfillJson(r, hostedMemories);
 		if (p === "/v1/settings") {
 			return fulfillJson(r, { memory_provider: "builtin", mem0_api_key: null });
@@ -2602,6 +2620,57 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		deployments: [railHostedDeployment],
 		cloudAgents: [railHostedCloudAgent],
 		agentResourceFixtures: true,
+		sessionsPage: {
+			items: Array.from({ length: 5 }, (_, index) => ({
+				id: `hosted-overview-session-${index + 1}`,
+				local_session_id: `hosted-local-${index + 1}`,
+				project_path: "/hosted",
+				agent_name: "rail-cloud",
+				agent_display_name: "Rail Cloud",
+				agent_default_name: "Rail Cloud",
+				agent_type: "hermes",
+				machine_name: "rail-cloud",
+				started_at: `2026-07-15T0${index}:00:00Z`,
+				ended_at: null,
+				updated_at: `2026-07-15T0${index}:30:00Z`,
+				last_activity_at: `2026-07-15T0${index}:30:00Z`,
+				duration_seconds: 1800,
+				message_count: index + 3,
+				input_tokens: (index + 1) * 200,
+				output_tokens: (index + 1) * 100,
+				cache_read_tokens: 0,
+				model: "gpt-5",
+				models_used: ["gpt-5"],
+				summary: [
+					"Prepare launch brief",
+					"Research customer feedback",
+					"Update project plan",
+					"Review release risks",
+					"Fifth hosted session",
+				][index],
+				tags: [],
+				status: "active",
+				content_hash: `hosted-hash-${index}`,
+			})),
+			total: 5,
+			page: 1,
+			page_size: 20,
+		},
+		connectorConnections: [
+			{ id: "hosted-conn-github", app_name: "github", status: "ACTIVE" },
+			{ id: "hosted-conn-slack", app_name: "slack", status: "ACTIVE" },
+		],
+		connectorCatalog: ["github", "slack", "gmail", "notion", "linear", "dropbox", "calendar"].map(
+			(name) => ({
+				name,
+				display_name: name[0]?.toUpperCase() + name.slice(1),
+				logo: "",
+				description: `${name} connector`,
+				auth_type: "oauth",
+				connect_disabled: false,
+				connect_disabled_reason: null,
+			}),
+		),
 		skillsByProjectId: {
 			"project-hosted": [
 				{
@@ -2650,6 +2719,9 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.locator('[data-overview-module="projects"]')).toContainText(
 		"Hosted Agent Project",
 	);
+	const recentSessions = page.getByRole("region", { name: "Recent sessions" });
+	await expect(recentSessions.locator("article")).toHaveCount(4);
+	await expect(recentSessions).not.toContainText("Fifth hosted session");
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Open Agent Interface" })).toHaveAttribute(
 		"href",
@@ -2674,6 +2746,12 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	for (const moduleId of ["memories", "vaults", "connectors"]) {
 		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toBeVisible();
 	}
+	const connectors = overview.locator('[data-overview-module="connectors"]');
+	await expect(connectors).toContainText("2 connected apps");
+	await expect(connectors.getByRole("link", { name: "Connected: Github" })).toBeVisible();
+	await expect(connectors.getByRole("link", { name: "Connected: Slack" })).toBeVisible();
+	await expect(connectors.getByRole("link", { name: "Popular: Gmail" })).toBeVisible();
+	await expect(connectors.getByRole("link", { name: "Popular: Github" })).toHaveCount(0);
 	const sidebar = page.getByTestId("app-sidebar");
 	for (const section of ["Memories", "Vaults", "Connectors"]) {
 		await expect(sidebar.getByRole("link", { name: section, exact: true })).toBeVisible();

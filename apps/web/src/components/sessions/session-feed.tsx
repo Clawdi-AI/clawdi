@@ -56,6 +56,7 @@ export function OverviewSessionList({
 					showAgent={false}
 					quietAutomated={true}
 					link={sessionLink(session)}
+					compact
 				/>
 			))}
 		</div>
@@ -162,11 +163,13 @@ function SessionFeedCard({
 	showAgent = true,
 	quietAutomated = true,
 	link,
+	compact = false,
 }: {
 	session: SessionListItem;
 	showAgent?: boolean;
 	quietAutomated?: boolean;
 	link: SessionLinkOptions;
+	compact?: boolean;
 }) {
 	const title = formatSessionSummary(session.summary) || session.local_session_id.slice(0, 8);
 	const projectFolder = session.project_path?.split("/").pop();
@@ -184,24 +187,42 @@ function SessionFeedCard({
 					isAutomated && "bg-muted/30",
 				)}
 			>
-				<EntityHeader
-					align="start"
-					icon={<AgentIcon agent={session.agent_type} size="lg" />}
-					title={title}
-					meta={[
-						showAgent ? agent : null,
-						projectFolder ? (
-							<span key="folder" className="font-mono" title={session.project_path ?? undefined}>
-								{projectFolder}
-							</span>
-						) : null,
-						`${session.message_count} ${session.message_count === 1 ? "message" : "messages"}`,
-						`${formatNumber(totalTokens)} tokens`,
-						<span key="time" title={formatAbsoluteTooltip(session.last_activity_at)}>
-							{relativeTime(session.last_activity_at)}
-						</span>,
-					]}
-				/>
+				{compact ? (
+					<div className="flex min-w-0 gap-3">
+						<AgentIcon agent={session.agent_type} size="lg" />
+						<div className="min-w-0 flex-1">
+							<p className="truncate text-sm font-semibold">{title}</p>
+							<div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+								<span>
+									{session.message_count} {session.message_count === 1 ? "message" : "messages"}
+								</span>
+								<span>{formatNumber(totalTokens)} tokens</span>
+								<span title={formatAbsoluteTooltip(session.last_activity_at)}>
+									{relativeTime(session.last_activity_at)}
+								</span>
+							</div>
+						</div>
+					</div>
+				) : (
+					<EntityHeader
+						align="start"
+						icon={<AgentIcon agent={session.agent_type} size="lg" />}
+						title={title}
+						meta={[
+							showAgent ? agent : null,
+							projectFolder ? (
+								<span key="folder" className="font-mono" title={session.project_path ?? undefined}>
+									{projectFolder}
+								</span>
+							) : null,
+							`${session.message_count} ${session.message_count === 1 ? "message" : "messages"}`,
+							`${formatNumber(totalTokens)} tokens`,
+							<span key="time" title={formatAbsoluteTooltip(session.last_activity_at)}>
+								{relativeTime(session.last_activity_at)}
+							</span>,
+						]}
+					/>
+				)}
 			</div>
 			<Link
 				{...link}

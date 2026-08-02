@@ -8,6 +8,7 @@ import {
 	OverviewModuleSkeleton,
 	OverviewSummaryRows,
 } from "@/components/dashboard/agent-overview-capabilities";
+import { Skeleton } from "@/components/ui/skeleton";
 import { fetchAgentProjectVaults } from "@/components/vault/vault-scope";
 import { unwrap, useApi } from "@/lib/api";
 import { useAvailableApps, useConnectedAppCards } from "@/lib/connectors-data";
@@ -79,32 +80,56 @@ export function OverviewVaultsBody({
 export function OverviewConnectorsBody() {
 	const connected = useConnectedAppCards();
 	const catalog = useAvailableApps({ page: 1, pageSize: 8 });
-	if (connected.isLoading && catalog.isLoading)
-		return <OverviewModuleSkeleton label="connectors" rows={2} />;
-	const connectedNames = new Set(connected.data.map((app) => app.name));
-	const connectedAppCount = new Set(
-		connected.activeConnections.map((connection) => connection.app_name),
-	).size;
+	const connectedNames = new Set(
+		connected.activeConnections.flatMap((connection) =>
+			connection.app_name ? [connection.app_name] : [],
+		),
+	);
+	const connectedAppCount = connectedNames.size;
 	const popular = (catalog.data?.items ?? [])
 		.filter((app) => !connectedNames.has(app.name))
 		.slice(0, 5);
 	return (
 		<div className="space-y-3">
-			<p className="text-lg font-semibold">
-				{connectedAppCount
-					? `${connectedAppCount} connected ${connectedAppCount === 1 ? "app" : "apps"}`
-					: "No apps connected"}
-			</p>
-			{connected.error ? (
+			{connected.isLoading ? (
+				<ConnectorRailSkeleton label="Connected" />
+			) : connected.connectionsError ? (
 				<OverviewModuleError label="Connected apps" onRetry={connected.refetch} />
-			) : connected.data.length ? (
-				<ConnectorRail label="Connected" apps={connected.data.slice(0, 6)} />
-			) : null}
-			{catalog.error ? (
+			) : (
+				<div className="space-y-3">
+					<p className="text-lg font-semibold">
+						{connectedAppCount
+							? `${connectedAppCount} connected ${connectedAppCount === 1 ? "app" : "apps"}`
+							: "No apps connected"}
+					</p>
+					{connected.data.length ? (
+						<ConnectorRail label="Connected" apps={connected.data.slice(0, 6)} />
+					) : null}
+					{connected.metadataError ? (
+						<p className="text-xs text-muted-foreground">Some app icons can’t be shown.</p>
+					) : null}
+				</div>
+			)}
+			{catalog.isLoading ? (
+				<ConnectorRailSkeleton label="Popular" />
+			) : catalog.error ? (
 				<OverviewModuleError label="Popular apps" onRetry={() => void catalog.refetch()} />
 			) : popular.length ? (
 				<ConnectorRail label="Popular" apps={popular} />
 			) : null}
+		</div>
+	);
+}
+
+function ConnectorRailSkeleton({ label }: { label: string }) {
+	return (
+		<div aria-label={`Loading ${label.toLowerCase()} apps`} role="status">
+			<p className="mb-2 text-xs text-muted-foreground">{label}</p>
+			<div className="flex gap-2">
+				{Array.from({ length: 5 }).map((_, index) => (
+					<Skeleton key={index} className="size-9 rounded-lg" />
+				))}
+			</div>
 		</div>
 	);
 }
