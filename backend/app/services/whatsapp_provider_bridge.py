@@ -3,12 +3,13 @@ from __future__ import annotations
 import base64
 import hashlib
 import secrets
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Literal, Protocol, TypeGuard
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from pydantic import JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -42,6 +43,7 @@ from app.services.whatsapp_native_transport import WhatsAppProviderMessageEvent
 from app.services.whatsapp_runtime_types import WhatsAppOutboundMessage
 
 WHATSAPP_PROVIDER_PAYLOAD_SCHEMA = "clawdi.whatsappBaileysProviderMessage.v1"
+_PROVIDER_PAYLOAD_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 
 
 @dataclass(frozen=True)
@@ -71,7 +73,7 @@ class WhatsAppProviderTransportStatus:
     supports_raw_relay: bool
     supports_iq_queries: bool
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(self) -> dict[str, JsonValue]:
         return {
             "available": self.available,
             "mode": self.mode,
@@ -339,8 +341,8 @@ async def relay_whatsapp_provider_payload(
     account: ChannelAccount,
     external_chat_id: str,
     text: str,
-    provider_payload: dict[str, Any] | None,
-) -> tuple[str | None, dict[str, Any]]:
+    provider_payload: object | None,
+) -> tuple[str | None, dict[str, JsonValue]]:
     transport = get_whatsapp_provider_transport(account.id)
     if transport is None or not _transport_connected(transport):
         raise HTTPException(
@@ -482,7 +484,9 @@ async def _load_active_whatsapp_account(
     return account
 
 
-def _provider_payload_from_outbound(message: WhatsAppOutboundMessage) -> dict[str, Any]:
+def _provider_payload_from_outbound(
+    message: WhatsAppOutboundMessage,
+) -> dict[str, JsonValue]:
     return {
         "schemaVersion": WHATSAPP_PROVIDER_PAYLOAD_SCHEMA,
         "messageId": message.message_id,
@@ -496,7 +500,7 @@ def _outbound_from_provider_payload(
     *,
     external_chat_id: str,
     text: str,
-    provider_payload: dict[str, Any] | None,
+    provider_payload: object | None,
 ) -> WhatsAppOutboundMessage:
     if provider_payload is None:
         message_id = secrets.token_hex(10).upper()
@@ -508,13 +512,20 @@ def _outbound_from_provider_payload(
             attrs={"id": message_id, "to": external_chat_id},
             conversation=text,
         )
-    if provider_payload.get("schemaVersion") != WHATSAPP_PROVIDER_PAYLOAD_SCHEMA:
+    try:
+        payload = _PROVIDER_PAYLOAD_ADAPTER.validate_python(provider_payload, strict=True)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid whatsapp provider payload",
+        ) from exc
+    if payload.get("schemaVersion") != WHATSAPP_PROVIDER_PAYLOAD_SCHEMA:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="invalid whatsapp provider payload schema",
         )
-    message_id = _required_payload_str(provider_payload, "messageId")
-    raw_proto = _required_payload_str(provider_payload, "messageProtoBase64")
+    message_id = _required_payload_str(payload, "messageId")
+    raw_proto = _required_payload_str(payload, "messageProtoBase64")
     try:
         message_proto = base64.b64decode(raw_proto, validate=True)
     except ValueError as exc:
@@ -527,21 +538,32 @@ def _outbound_from_provider_payload(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="invalid whatsapp provider message proto",
         )
-    enc_type = provider_payload.get("encType")
-    if enc_type not in {"pkmsg", "msg", "skmsg"}:
+    enc_type = payload.get("encType")
+    if enc_type == "pkmsg":
+        normalized_enc_type: Literal["pkmsg", "msg", "skmsg"] = "pkmsg"
+    elif enc_type == "msg":
+        normalized_enc_type = "msg"
+    elif enc_type == "skmsg":
+        normalized_enc_type = "skmsg"
+    else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="invalid whatsapp provider encryption type",
         )
-    raw_attrs = provider_payload.get("attrs")
-    if not isinstance(raw_attrs, dict) or not all(
-        isinstance(key, str) and isinstance(value, str) for key, value in raw_attrs.items()
-    ):
+    raw_attrs = payload.get("attrs")
+    if not isinstance(raw_attrs, dict):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="invalid whatsapp provider message attributes",
         )
-    attrs = {str(key): str(value) for key, value in raw_attrs.items()}
+    attrs: dict[str, str] = {}
+    for key, value in raw_attrs.items():
+        if not isinstance(value, str):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="invalid whatsapp provider message attributes",
+            )
+        attrs[key] = value
     if attrs.get("to") not in {None, external_chat_id}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -553,14 +575,14 @@ def _outbound_from_provider_payload(
         to_jid=external_chat_id,
         message_id=message_id,
         message_proto=message_proto,
-        enc_type=enc_type,
+        enc_type=normalized_enc_type,
         attrs=attrs,
         conversation=text or None,
     )
 
 
-def _provider_event_payload(event: WhatsAppProviderMessageEvent) -> dict[str, Any]:
-    key: dict[str, Any] = {
+def _provider_event_payload(event: WhatsAppProviderMessageEvent) -> dict[str, JsonValue]:
+    key: dict[str, JsonValue] = {
         "id": event.message_id,
         "remoteJid": event.remote_jid,
         "fromMe": False,
@@ -571,7 +593,7 @@ def _provider_event_payload(event: WhatsAppProviderMessageEvent) -> dict[str, An
         key["participant"] = event.participant
     if event.participant_alt:
         key["participantAlt"] = event.participant_alt
-    payload: dict[str, Any] = {
+    payload: dict[str, JsonValue] = {
         "schemaVersion": "clawdi.whatsappBaileysProviderEvent.v1",
         "key": key,
         "messageProtoBase64": base64.b64encode(event.message_proto).decode("ascii"),
@@ -583,7 +605,7 @@ def _provider_event_payload(event: WhatsAppProviderMessageEvent) -> dict[str, An
     return payload
 
 
-def _required_payload_str(payload: dict[str, Any], key: str) -> str:
+def _required_payload_str(payload: Mapping[str, JsonValue], key: str) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value:
         raise HTTPException(
@@ -629,7 +651,7 @@ def _node_target_jids(node: BinaryNode) -> tuple[str, ...]:
     )
 
 
-def _raw_relay_debug_details(node: BinaryNode) -> dict[str, Any]:
+def _raw_relay_debug_details(node: BinaryNode) -> dict[str, JsonValue]:
     attrs = _node_attrs(node)
     return {
         "runtime": "baileys_noise",
@@ -642,10 +664,14 @@ def _raw_relay_debug_details(node: BinaryNode) -> dict[str, Any]:
 
 
 def _node_attrs(node: BinaryNode) -> dict[str, str]:
-    attrs = node.get("attrs")
-    if not isinstance(attrs, dict):
+    attrs: object = node.get("attrs")
+    if not _is_object_dict(attrs):
         return {}
     return {str(key): str(value) for key, value in attrs.items()}
+
+
+def _is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
+    return isinstance(value, dict)
 
 
 def _transport_connected(transport: WhatsAppProviderTransport) -> bool:
