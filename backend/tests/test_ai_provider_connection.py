@@ -398,6 +398,19 @@ async def test_connection_probe_rejects_success_status_without_protocol_response
     assert "credential-must-stay-secret" not in repr(result)
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"\xff",
+        b"not-json",
+        b"[]",
+        (b'{"id":"resp_test","object":"response","status":[],"model":"test-model","output":[]}'),
+    ],
+)
+def test_connection_probe_rejects_malformed_provider_json(body: bytes) -> None:
+    assert not ai_provider_connection._is_valid_inference_response("openai_responses", body)
+
+
 @pytest.mark.asyncio
 async def test_connection_probe_redacts_network_failures(monkeypatch: pytest.MonkeyPatch):
     _mock_public_dns(monkeypatch)
