@@ -14,7 +14,7 @@
 		"test:internal": "bun test"
 	},
 	"dependencies": {
-		"baileys": "npm:@whiskeysockets/baileys@7.0.0-rc13",
+		"baileys": "npm:@whiskeysockets/baileys@7.0.0-rc14",
 		"pino": "^10.3.1"
 	},
 	"devDependencies": {

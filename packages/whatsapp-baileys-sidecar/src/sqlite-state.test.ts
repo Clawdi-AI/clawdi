@@ -16,7 +16,7 @@ import {
 const ACCOUNT_A = "11111111-1111-4111-8111-111111111111";
 const ACCOUNT_B = "22222222-2222-4222-8222-222222222222";
 const REGISTERED_ME = { id: "15550001111:1@s.whatsapp.net", name: "Test account" };
-const WEB_VERSION = parseAuditedWhatsAppWebVersion("2.3000.1035194821");
+const WEB_VERSION = parseAuditedWhatsAppWebVersion("2.3000.1043857760");
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
@@ -267,10 +267,42 @@ describe("SQLite provider state", () => {
 		expect(() => makeState(inboxDirectory)).toThrow("corrupt provider inbox event");
 	});
 
-	it("immutably binds a session to one account and one audited state version", () => {
+	it("accepts only exact audited state provenance without rewriting rc13 metadata", async () => {
 		const directory = makeDirectory();
 		const first = makeState(directory);
+		first.saveCreds({ registered: true, me: REGISTERED_ME, routingInfo: Buffer.from([1, 2, 3]) });
+		await first.state.keys.set({
+			session: { sender: Buffer.from([4, 5, 6]) },
+			tctoken: { contact: { token: Buffer.from([7, 8]), timestamp: "1700000000" } },
+		});
+		first.retryCounterCache.set("retry", { count: 2 });
+		first.appendProviderEvents([providerEvent("inbound-1")]);
 		first.close();
+		mutateDatabase(directory, (database) => {
+			const update = database.query("UPDATE provider_metadata SET value = ? WHERE key = ?");
+			update.run("7.0.0-rc13", "baileys_release");
+			update.run("2.3000.1035194821", "whatsapp_web_version");
+		});
+
+		const reopened = makeState(directory);
+		expect(reopened.state.creds.routingInfo).toEqual(Buffer.from([1, 2, 3]));
+		expect(await reopened.state.keys.get("session", ["sender"])).toEqual({
+			sender: Buffer.from([4, 5, 6]),
+		});
+		expect(await reopened.state.keys.get("tctoken", ["contact"])).toEqual({
+			contact: { token: Buffer.from([7, 8]), timestamp: "1700000000" },
+		});
+		expect(reopened.retryCounterCache.get<{ count: number }>("retry")).toEqual({ count: 2 });
+		expect(reopened.providerEvents(100)).toHaveLength(1);
+		const metadata = internalDatabase(reopened)
+			.query<{ key: string; value: string }, []>("SELECT key, value FROM provider_metadata")
+			.all();
+		expect(Object.fromEntries(metadata.map((row) => [row.key, row.value]))).toMatchObject({
+			baileys_release: "7.0.0-rc13",
+			whatsapp_web_version: "2.3000.1035194821",
+		});
+		reopened.close();
+
 		expect(() => makeState(directory, { accountId: ACCOUNT_B })).toThrow(
 			"immutably bound to a different account id",
 		);
@@ -279,6 +311,33 @@ describe("SQLite provider state", () => {
 			database
 				.query("UPDATE provider_metadata SET value = '2.3000.999' WHERE key = ?")
 				.run("whatsapp_web_version");
+		});
+		expect(() => makeState(directory)).toThrow("explicit audited state migration");
+	});
+
+	it("records rc14 provenance for a new database and rejects mixed or extra metadata", () => {
+		const directory = makeDirectory();
+		const state = makeState(directory);
+		state.close();
+		mutateDatabase(directory, (database) => {
+			const rows = database
+				.query<{ key: string; value: string }, []>("SELECT key, value FROM provider_metadata")
+				.all();
+			expect(Object.fromEntries(rows.map((row) => [row.key, row.value]))).toMatchObject({
+				baileys_release: "7.0.0-rc14",
+				whatsapp_web_version: "2.3000.1043857760",
+			});
+			database
+				.query("UPDATE provider_metadata SET value = ? WHERE key = 'baileys_release'")
+				.run("7.0.0-rc13");
+		});
+		expect(() => makeState(directory)).toThrow("explicit audited state migration");
+
+		mutateDatabase(directory, (database) => {
+			database
+				.query("UPDATE provider_metadata SET value = ? WHERE key = 'baileys_release'")
+				.run("7.0.0-rc14");
+			database.query("INSERT INTO provider_metadata (key, value) VALUES ('unexpected', '1')").run();
 		});
 		expect(() => makeState(directory)).toThrow("explicit audited state migration");
 	});

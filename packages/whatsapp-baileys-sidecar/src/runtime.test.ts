@@ -48,7 +48,7 @@ describe("physical Baileys runtime", () => {
 		await runtime.stop();
 	});
 
-	it("supports the pinned rc13 pairing-code method without retaining phone input", async () => {
+	it("supports the pinned rc14 pairing-code method without retaining phone input", async () => {
 		const harness = createHarness({ registered: false });
 		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
 
@@ -169,7 +169,7 @@ describe("physical Baileys runtime", () => {
 		await runtime.start();
 
 		expect(harness.socketConfigurations).toHaveLength(1);
-		expect(harness.socketConfigurations[0]?.version).toEqual([2, 3000, 1_035_194_821]);
+		expect(harness.socketConfigurations[0]?.version).toEqual([2, 3000, 1_043_857_760]);
 		const runtimeSource = readFileSync(new URL("runtime.ts", import.meta.url), "utf8");
 		expect(runtimeSource).not.toContain("fetchLatestBaileysVersion");
 		expect(runtimeSource).not.toContain("useMultiFileAuthState");
@@ -524,7 +524,7 @@ function sidecarConfig(): SidecarConfig {
 		apiToken: "test-token",
 		sessionDir: "/unused/in-memory-test-state",
 		logLevel: "silent",
-		webVersion: parseAuditedWhatsAppWebVersion("2.3000.1035194821"),
+		webVersion: parseAuditedWhatsAppWebVersion("2.3000.1043857760"),
 		providerInbox: { maxEvents: 100, maxBytes: 1024 * 1024 },
 	};
 }

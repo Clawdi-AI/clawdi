@@ -83,18 +83,24 @@ socket always uses Baileys' official upstream URL.
 
 The session directory contains one `provider-state.sqlite` database for auth
 credentials, Signal keys, retry counters, exact retry message protos, immutable
-account/release metadata, and the bounded provider ingress spool. It uses
-SQLite WAL, `synchronous=FULL`, transactional key batches, and
+account/state-format provenance metadata, and the bounded provider ingress
+spool. It uses SQLite WAL, `synchronous=FULL`, transactional key batches, and
 `locking_mode=EXCLUSIVE`; startup verifies all three settings. The SQLite
-advisory lock is the one-owner mechanism. There is no PID file to mistake for a
-live owner after a host restart.
+exclusive locking mode is the one-owner mechanism on filesystems where SQLite
+locking is reliable. There is no PID file to mistake for a live owner after a
+host restart; deployments must use a local filesystem with SQLite-compatible
+locking semantics.
 
-The database is immutably bound to the canonical provider account UUID, pinned
-Baileys release, and audited WhatsApp Web version before auth opens. A mismatch
-fails closed and requires an explicit complete migration; startup never
-rewrites identity metadata or partially imports the removed JSON/multi-file
-state. Existing database/WAL/shared-memory paths are verified as regular files
-before SQLite opens them, so a symlinked state path fails closed. The default
+The database is immutably bound to the canonical provider account UUID and
+schema before auth opens. Its release/Web tuple records immutable audited
+state-format provenance, not the current process identity. rc14 accepts only
+the exact rc13 and rc14 provenance pairs, leaving rc13 metadata unchanged so a
+rollback remains possible before rc14-origin state is created. Unknown, mixed,
+missing, or extra metadata fails closed and requires an explicit complete
+migration; startup never rewrites provenance or partially imports the removed
+JSON/multi-file state. Existing database/WAL/shared-memory paths are verified
+as regular files before SQLite opens them, so a symlinked state path fails
+closed. The default
 ingress limits are 10,000 events and 256 MiB, configurable
 downward or upward within validated hard bounds. Ingress sequence uses SQLite
 `AUTOINCREMENT`, so acknowledging an empty queue does not reset it on restart.
@@ -107,14 +113,15 @@ capacity exhaustion, transaction/write failure, or an unavailable durability
 mode fail-stops the physical socket instead of logging and dropping an event.
 
 Production does not call `fetchLatestBaileysVersion()`. Baileys is fixed at
-`7.0.0-rc13`, and the configured Web version is exactly
-`2.3000.1035194821`. This was audited on 2026-08-02 against the installed
-release and upstream source commit
-[`8053b086`](https://github.com/WhiskeySockets/Baileys/blob/8053b086ecc97ec3f78299561de11959bab05d39/src/Defaults/index.ts),
+`7.0.0-rc14`, and the configured Web version is exactly
+`2.3000.1043857760`. This was audited on 2026-08-02 against the official npm
+artifact (integrity
+`sha512-WK+X8ju8TPGxvWIsP8hrY6JB6FltYuFe+vsqKfjOYX25JObij9qLf2c3ZGdl1Q+vhFwbnT+AZmWAB5pTvzmSiQ==`)
+and upstream source commit
+[`7e7b0757`](https://github.com/WhiskeySockets/Baileys/blob/7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a/src/Defaults/index.ts),
 whose default is the same tuple. Reconciliation is deliberate: update the
 fixed package release, audited source/tuple, tests, and documentation together,
-then run an explicit state migration. Existing state refuses a silent version
-change.
+then explicitly audit any newly accepted state-format provenance pair.
 
 FastAPI registers one provider transport per account through
 `CHANNEL_WHATSAPP_BAILEYS_SIDECARS_JSON`. Its bearer-authenticated HTTP contract
@@ -203,6 +210,15 @@ fuzz-zero behavior without an external `git` or `patch` process. Missing,
 duplicated, ambiguous, partially changed, or simultaneously present forms fail
 closed before any target mutation. Arbitrary bytes outside the hunk ranges are
 preserved.
+
+The separate rc14 qualification used the official npm artifact without
+changing either consumer dependency. All nine strict contexts apply exactly to
+rc14. `noise-handler.js` and its declaration are byte-identical to rc13;
+`socket.js` has SHA-256
+`ff8b19ff02491fa080ee371f066d49c94acb903207dd0d9fdb5548e5a594fb4a`.
+The executable harness includes rc14's new Android-browser warning path and
+continues to prove default upstream trust, managed trust selection, dedicated
+WebSocket header routing, unchanged HTTP/media options, and auth reconstruction.
 
 The CLI embeds validated Link metadata under
 `creds.additionalData["clawdi.managedWhatsAppSocket"]`. Patched `makeSocket`

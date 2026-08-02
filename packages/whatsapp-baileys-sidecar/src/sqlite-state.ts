@@ -632,28 +632,39 @@ function validateOrBindMetadata(
 	if (input.webVersion.join(".") !== AUDITED_WHATSAPP_WEB_VERSION_TEXT) {
 		throw new Error("provider state requires the audited WhatsApp Web version");
 	}
-	const expected = new Map<string, string>([
+	const expectedIdentity = new Map<string, string>([
 		["schema_version", STATE_SCHEMA_VERSION],
 		["account_id", input.accountId],
-		["baileys_release", AUDITED_BAILEYS_RELEASE],
-		["whatsapp_web_version", input.webVersion.join(".")],
 	]);
+	const currentProvenance = [AUDITED_BAILEYS_RELEASE, input.webVersion.join(".")] as const;
 	if (!input.databaseExisted) {
 		const insert = db.query("INSERT INTO provider_metadata (key, value) VALUES (?, ?)");
 		db.transaction(() => {
-			for (const [key, value] of expected) insert.run(key, value);
+			for (const [key, value] of expectedIdentity) insert.run(key, value);
+			insert.run("baileys_release", currentProvenance[0]);
+			insert.run("whatsapp_web_version", currentProvenance[1]);
 		})();
 		return;
 	}
 	const rows = db
 		.query<{ key: string; value: string }, []>("SELECT key, value FROM provider_metadata")
 		.all();
+	if (rows.length !== 4) {
+		throw new Error("provider state metadata requires an explicit audited state migration");
+	}
 	const actual = new Map(rows.map((row) => [row.key, row.value]));
-	for (const [key, value] of expected) {
+	for (const [key, value] of expectedIdentity) {
 		if (actual.get(key) === value) continue;
 		if (key === "account_id") {
 			throw new Error("provider state is immutably bound to a different account id");
 		}
+		throw new Error("provider state metadata requires an explicit audited state migration");
+	}
+	const provenance = [actual.get("baileys_release"), actual.get("whatsapp_web_version")];
+	const auditedProvenance = [["7.0.0-rc13", "2.3000.1035194821"], currentProvenance] as const;
+	if (
+		!auditedProvenance.some(([release, web]) => provenance[0] === release && provenance[1] === web)
+	) {
 		throw new Error("provider state metadata requires an explicit audited state migration");
 	}
 }
