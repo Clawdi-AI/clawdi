@@ -276,6 +276,50 @@ async def test_stream_returns_when_revoked_event_set():
 
 
 @pytest.mark.asyncio
+async def test_stream_cancellation_awaits_internal_wait_tasks(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Disconnect cancellation must not orphan Queue/Event wait tasks."""
+    from unittest.mock import Mock
+
+    from app.routes import sync as sync_route
+
+    queue: asyncio.Queue = asyncio.Queue()
+    revoked = asyncio.Event()
+    request = Mock()
+
+    async def _not_disconnected():
+        return False
+
+    request.is_disconnected = _not_disconnected
+    gen = sync_route._stream(queue, request, revoked)
+    assert await gen.__anext__() == b": connected\n\n"
+
+    original_create_task = asyncio.create_task
+    internal_tasks: list[asyncio.Task] = []
+
+    def _track_create_task(coro):
+        task = original_create_task(coro)
+        internal_tasks.append(task)
+        return task
+
+    monkeypatch.setattr(sync_route.asyncio, "create_task", _track_create_task)
+    next_chunk = original_create_task(gen.__anext__())
+    for _ in range(10):
+        if len(internal_tasks) == 2:
+            break
+        await asyncio.sleep(0)
+    assert len(internal_tasks) == 2
+
+    next_chunk.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await next_chunk
+
+    assert all(task.done() for task in internal_tasks)
+    assert all(task.cancelled() for task in internal_tasks)
+
+
+@pytest.mark.asyncio
 async def test_stream_drops_event_queued_before_revoke():
     """Race: event lands in the queue right before / during the
     25s `wait_for(queue.get())`. The refresher fires `revoked`
