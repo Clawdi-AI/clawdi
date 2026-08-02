@@ -9,12 +9,42 @@ hash is never round-trippable, a revoked key authenticates with 401, and
 from __future__ import annotations
 
 import hashlib
+import uuid
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from httpx import ASGITransport
 
+from app.core.auth import AuthContext, require_auth_scopes
 from app.main import app
+from app.models.api_key import ApiKey
+
+
+def test_scope_enforcement_preserves_legacy_access_and_fails_closed_for_strict_runtime(
+    seed_user,
+):
+    legacy_auth = AuthContext(
+        user=seed_user,
+        api_key=ApiKey(user_id=seed_user.id, scopes=None),
+    )
+    require_auth_scopes(legacy_auth, "vault:read")
+
+    strict_runtime_auth = AuthContext(
+        user=seed_user,
+        api_key=ApiKey(
+            user_id=seed_user.id,
+            scopes=None,
+            managed=True,
+            environment_id=uuid.uuid4(),
+            runtime_deployment_id="deployment-test",
+        ),
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        require_auth_scopes(strict_runtime_auth, "vault:read")
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "missing scope: vault:read"
 
 
 @pytest.mark.asyncio

@@ -27,10 +27,15 @@ class MemoryProvider(Protocol):
         source: str = "manual",
         tags: list[str] | None = None,
         source_session_id: uuid.UUID | None = None,
+        source_environment_id: uuid.UUID | None = None,
     ) -> dict: ...
 
     async def search(
-        self, user_id: str, query: str, limit: int = 50, category: str | None = None
+        self,
+        user_id: str,
+        query: str,
+        limit: int = 50,
+        category: str | None = None,
     ) -> list[dict]: ...
 
     async def list_all(
@@ -42,9 +47,13 @@ class MemoryProvider(Protocol):
         order: str = "desc",
     ) -> list[dict]: ...
 
-    async def count(self, user_id: str, category: str | None = None) -> int: ...
+    async def count(
+        self,
+        user_id: str,
+        category: str | None = None,
+    ) -> int: ...
 
-    async def delete(self, user_id: str, memory_id: str) -> None: ...
+    async def delete(self, user_id: str, memory_id: str) -> bool: ...
 
 
 class BuiltinProvider:
@@ -67,6 +76,7 @@ class BuiltinProvider:
         source: str = "manual",
         tags: list[str] | None = None,
         source_session_id: uuid.UUID | None = None,
+        source_environment_id: uuid.UUID | None = None,
     ) -> dict:
         vec: list[float] | None = None
         if self.embedder is not None:
@@ -85,6 +95,7 @@ class BuiltinProvider:
             source=source,
             tags=tags,
             source_session_id=source_session_id,
+            source_environment_id=source_environment_id,
             embedding=vec,
         )
         self.db.add(memory)
@@ -93,7 +104,11 @@ class BuiltinProvider:
         return {"id": str(memory.id)}
 
     async def search(
-        self, user_id: str, query: str, limit: int = 50, category: str | None = None
+        self,
+        user_id: str,
+        query: str,
+        limit: int = 50,
+        category: str | None = None,
     ) -> list[dict]:
         fts_rows = await self._search_fts(user_id, query, limit, category)
         if self.embedder is None:
@@ -109,7 +124,11 @@ class BuiltinProvider:
         return [_strip_scores(r) for r in merged]
 
     async def _search_fts(
-        self, user_id: str, query: str, limit: int, category: str | None
+        self,
+        user_id: str,
+        query: str,
+        limit: int,
+        category: str | None,
     ) -> list[dict]:
         """FTS + trigram hybrid with strict/relaxed score floor.
 
@@ -165,7 +184,11 @@ class BuiltinProvider:
     VECTOR_DISTANCE_RELAXED = 0.80  # sim ≥ 0.20 — fallback when strict empty
 
     async def _search_vector(
-        self, user_id: str, query: str, limit: int, category: str | None
+        self,
+        user_id: str,
+        query: str,
+        limit: int,
+        category: str | None,
     ) -> list[dict]:
         """pgvector cosine-distance nearest neighbors among rows with embeddings.
 
@@ -173,7 +196,10 @@ class BuiltinProvider:
         so abstract queries against narrowly-phrased memories still surface
         something rather than a pure "not found".
         """
-        q_vec = await self.embedder.embed(query)
+        embedder = self.embedder
+        if embedder is None:
+            return []
+        q_vec = await embedder.embed(query)
         rows = await self._run_vector_search(
             user_id,
             q_vec,
@@ -237,7 +263,11 @@ class BuiltinProvider:
         result = await self.db.execute(q)
         return [memory_to_dict(m) for m in result.scalars().all()]
 
-    async def count(self, user_id: str, category: str | None = None) -> int:
+    async def count(
+        self,
+        user_id: str,
+        category: str | None = None,
+    ) -> int:
         from sqlalchemy import func as sqlfunc
 
         q = select(sqlfunc.count()).select_from(Memory).where(Memory.user_id == uuid.UUID(user_id))
@@ -245,7 +275,7 @@ class BuiltinProvider:
             q = q.where(Memory.category == category)
         return (await self.db.execute(q)).scalar_one()
 
-    async def delete(self, user_id: str, memory_id: str) -> None:
+    async def delete(self, user_id: str, memory_id: str) -> bool:
         result = await self.db.execute(
             select(Memory).where(
                 Memory.id == uuid.UUID(memory_id),
@@ -253,16 +283,18 @@ class BuiltinProvider:
             )
         )
         memory = result.scalar_one_or_none()
-        if memory:
-            await self.db.delete(memory)
-            await self.db.commit()
+        if memory is None:
+            return False
+        await self.db.delete(memory)
+        await self.db.commit()
+        return True
 
 
 class Mem0Provider:
     """Memory provider backed by Mem0 API."""
 
     def __init__(self, api_key: str):
-        from mem0 import MemoryClient
+        from mem0 import MemoryClient  # pyright: ignore[reportMissingImports]
 
         self.client = MemoryClient(api_key=api_key)
 
@@ -274,25 +306,39 @@ class Mem0Provider:
         source: str = "manual",
         tags: list[str] | None = None,
         source_session_id: uuid.UUID | None = None,
+        source_environment_id: uuid.UUID | None = None,
     ) -> dict:
-        # Mem0 has no native column for `source_session_id`; persist it in
-        # metadata so the linkage isn't lost across providers.
+        # Mem0 has no native provenance columns; persist both forms in metadata
+        # and use the same metadata as a server-side search/list filter.
         metadata: dict = {"category": category, "source": source, "tags": tags or []}
         if source_session_id is not None:
             metadata["source_session_id"] = str(source_session_id)
+        if source_environment_id is not None:
+            metadata["source_environment_id"] = str(source_environment_id)
         result = self.client.add(
             [{"role": "user", "content": content}],
-            user_id=user_id,
+            filters={"user_id": user_id},
             metadata=metadata,
         )
-        mem_id = result[0]["id"] if result else str(uuid.uuid4())
+        items = _mem0_items(result)
+        mem_id = items[0].get("id") if items else None
+        if not isinstance(mem_id, str) or not mem_id:
+            mem_id = str(uuid.uuid4())
         return {"id": mem_id}
 
     async def search(
-        self, user_id: str, query: str, limit: int = 50, category: str | None = None
+        self,
+        user_id: str,
+        query: str,
+        limit: int = 50,
+        category: str | None = None,
     ) -> list[dict]:
-        results = self.client.search(query, user_id=user_id, limit=limit)
-        items = results.get("results", results) if isinstance(results, dict) else results
+        results = self.client.search(
+            query,
+            filters=_mem0_filters(user_id, category=category),
+            top_k=limit,
+        )
+        items = _mem0_items(results)
         out = []
         for r in items:
             if not isinstance(r, dict):
@@ -309,6 +355,7 @@ class Mem0Provider:
                     "tags": meta.get("tags"),
                     "created_at": r.get("created_at", ""),
                     "source_session_id": meta.get("source_session_id"),
+                    "source_environment_id": meta.get("source_environment_id"),
                 }
             )
         return out
@@ -323,10 +370,12 @@ class Mem0Provider:
         # Protocol compatibility but ignored here.
     ) -> list[dict]:
         del order  # intentionally unused for mem0 provider
-        results = self.client.get_all(user_id=user_id)
-        items = results if isinstance(results, list) else results.get("results", [])
-        if category:
-            items = [i for i in items if i.get("metadata", {}).get("category") == category]
+        results = self.client.get_all(
+            filters=_mem0_filters(user_id, category=category),
+            page=(offset // limit) + 1,
+            page_size=limit,
+        )
+        items = _mem0_items(results)
         return [
             {
                 "id": r.get("id", ""),
@@ -336,19 +385,34 @@ class Mem0Provider:
                 "tags": r.get("metadata", {}).get("tags"),
                 "created_at": r.get("created_at", ""),
                 "source_session_id": r.get("metadata", {}).get("source_session_id"),
+                "source_environment_id": r.get("metadata", {}).get("source_environment_id"),
             }
-            for r in items[offset : offset + limit]
+            for r in items[:limit]
         ]
 
-    async def count(self, user_id: str, category: str | None = None) -> int:
-        results = self.client.get_all(user_id=user_id)
-        items = results if isinstance(results, list) else results.get("results", [])
-        if category:
-            items = [i for i in items if i.get("metadata", {}).get("category") == category]
+    async def count(
+        self,
+        user_id: str,
+        category: str | None = None,
+    ) -> int:
+        results = self.client.get_all(
+            filters=_mem0_filters(user_id, category=category),
+            page=1,
+            page_size=1,
+        )
+        if isinstance(results, dict):
+            count = results.get("count")
+            if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+                return count
+        items = _mem0_items(results)
         return len(items)
 
-    async def delete(self, user_id: str, memory_id: str) -> None:
+    async def delete(self, user_id: str, memory_id: str) -> bool:
+        memory = self.client.get(memory_id)
+        if not isinstance(memory, dict) or memory.get("user_id") != user_id:
+            return False
         self.client.delete(memory_id)
+        return True
 
 
 # ---------- helpers ----------
@@ -367,6 +431,9 @@ def memory_to_dict(m: Memory) -> dict:
         # source machine in one bulk query. None when the memory was
         # added manually.
         "source_session_id": str(m.source_session_id) if m.source_session_id else None,
+        "source_environment_id": (
+            str(m.source_environment_id) if m.source_environment_id else None
+        ),
     }
 
 
@@ -374,6 +441,7 @@ def _row_to_dict(r) -> dict:
     """Serialize a raw SQL row (SQLAlchemy RowMapping) to the API shape."""
     created_at = r["created_at"]
     sid = r.get("source_session_id") if hasattr(r, "get") else None
+    eid = r.get("source_environment_id") if hasattr(r, "get") else None
     return {
         "id": str(r["id"]),
         "content": r["content"],
@@ -383,7 +451,32 @@ def _row_to_dict(r) -> dict:
         "access_count": r["access_count"],
         "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
         "source_session_id": str(sid) if sid else None,
+        "source_environment_id": str(eid) if eid else None,
     }
+
+
+def _mem0_items(result: object) -> list[dict]:
+    if isinstance(result, list):
+        return [item for item in result if isinstance(item, dict)]
+    if isinstance(result, dict):
+        raw = result.get("results")
+        if isinstance(raw, list):
+            return [item for item in raw if isinstance(item, dict)]
+        if isinstance(result.get("id"), str):
+            return [result]
+    return []
+
+
+def _mem0_filters(
+    user_id: str,
+    *,
+    category: str | None,
+) -> dict:
+    """Build an account-scoped Mem0 Platform v3 filter."""
+    conditions: list[dict] = [{"user_id": user_id}]
+    if category is not None:
+        conditions.append({"metadata": {"category": category}})
+    return {"AND": conditions}
 
 
 def _row_to_search_dict(r, score_key: str) -> dict:
@@ -534,8 +627,7 @@ def mem0_available() -> bool:
     if cached is not None:
         return cached
     try:
-        import mem0  # noqa: F401  -- presence check, not used here
-
+        __import__("mem0")
         cached = True
     except ImportError:
         cached = False

@@ -1896,12 +1896,9 @@ export interface paths {
          *     With `force=true`, re-embeds rows that already have embeddings too
          *     (useful after changing the embedding model).
          *
-         *     Agent API keys are rejected: this is a maintenance/admin
-         *     operation that touches every memory the user owns, including
-         *     cross-Agent memories the bound key isn't allowed to read. Pre-fix
-         *     a leaked Agent A deploy key with `scopes=None` could call this
-         *     endpoint and feed every Agent's content to the embedder as a side
-         *     channel.
+         *     Agent API keys are rejected because this bulk maintenance operation is not
+         *     part of ordinary Memory read/write behavior. Environment-bound runtimes may
+         *     recall account Memory but cannot trigger account-wide re-embedding work.
          */
         post: operations["embed_backfill_v1_memories_embed_backfill_post"];
         delete?: never;
