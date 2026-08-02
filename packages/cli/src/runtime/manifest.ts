@@ -3467,7 +3467,11 @@ function installOpenClawChannelPlugins(input: {
 		input.receiptTargets.channelPlugins.set(key, target);
 		if (verifiedCurrentRevision !== null) continue;
 		runPluginInstallWithFallback(input.commandPath, specs, input.home, input.workspaceRoot);
-		target.expectedCurrentRevision = currentRevision();
+		const installedRevision = currentRevision();
+		if (!installedRevision) {
+			throw new Error(`OpenClaw ${channel} channel plugin install could not be verified`);
+		}
+		target.expectedCurrentRevision = installedRevision;
 	}
 }
 
@@ -4130,12 +4134,7 @@ function commitRuntimeInstallReceipts(
 	const receipts = emptyRuntimeInstallReceipts();
 	commitRuntimeInstallReceiptGroup(receipts.officialServices, targets.officialServices);
 	commitRuntimeInstallReceiptGroup(receipts.channelPlugins, targets.channelPlugins);
-	try {
-		writeRuntimeInstallReceipts(receipts, paths);
-	} catch {
-		// Receipt persistence is an optimization. Failing closed means the next
-		// convergence executes the unchanged official install commands again.
-	}
+	writeRuntimeInstallReceipts(receipts, paths);
 }
 
 function commitRuntimeInstallReceiptGroup(
@@ -4143,9 +4142,13 @@ function commitRuntimeInstallReceiptGroup(
 	targets: Map<string, RuntimeInstallReceiptTarget>,
 ): void {
 	for (const [key, target] of [...targets].sort(([left], [right]) => left.localeCompare(right))) {
-		if (!target.expectedCurrentRevision) continue;
+		if (!target.expectedCurrentRevision) {
+			throw new Error(`runtime install receipt target ${key} was not verified`);
+		}
 		const currentRevision = target.currentRevision();
-		if (currentRevision !== target.expectedCurrentRevision) continue;
+		if (currentRevision !== target.expectedCurrentRevision) {
+			throw new Error(`runtime install receipt target ${key} changed before commit`);
+		}
 		receipts[key] = { desiredRevision: target.desiredRevision, currentRevision };
 	}
 }
@@ -5179,7 +5182,7 @@ export function convergeRuntimeManifest(
 	const runtimeSystemdUserPrograms: RuntimeSystemdUserProgram[] = [];
 	const installErrors: string[] = [];
 	const appliedState = readRuntimeAppliedState(paths);
-	const previousInstallReceipts = readRuntimeInstallReceipts(paths);
+	let previousInstallReceipts: RuntimeInstallReceipts | null = null;
 	const installReceiptTargets: RuntimeInstallReceiptTargets = {
 		officialServices: new Map(),
 		channelPlugins: new Map(),
@@ -5204,6 +5207,24 @@ export function convergeRuntimeManifest(
 		previousProjectedProviderIds,
 	});
 	if (installErrors.length > 0) {
+		return runtimeConvergenceWithoutApply({
+			load,
+			paths,
+			workspaceRoot,
+			enabledRuntimes,
+			installErrors,
+			projectedProviderIds: Object.fromEntries(
+				Object.entries(previousProjectedProviderIds).map(([runtime, providerIds]) => [
+					runtime,
+					[...providerIds],
+				]),
+			),
+		});
+	}
+	try {
+		previousInstallReceipts = readRuntimeInstallReceipts(paths);
+	} catch (error) {
+		installErrors.push(error instanceof Error ? error.message : String(error));
 		return runtimeConvergenceWithoutApply({
 			load,
 			paths,
@@ -5923,6 +5944,7 @@ export function convergeRuntimeManifest(
 			const egressRevisionPreviouslyCommitted =
 				desiredEgressSidecarSecretRevision !== undefined &&
 				desiredEgressSidecarSecretRevision === appliedState?.egressSidecarSecretRevision;
+			commitRuntimeInstallReceipts(installReceiptTargets, paths);
 			opts.commitAuthority?.(convergence, {
 				...(desiredDaemonAuthTokenRevision !== undefined &&
 				(systemdActivationApplied || daemonRevisionPreviouslyCommitted)
@@ -5933,7 +5955,6 @@ export function convergeRuntimeManifest(
 					? { egressSidecarSecretRevision: desiredEgressSidecarSecretRevision }
 					: {}),
 			});
-			commitRuntimeInstallReceipts(installReceiptTargets, paths);
 			try {
 				for (const cleanupError of removeStaleRuntimeSystemdFiles(paths, systemdUnits.staleFiles)) {
 					console.warn(`post-commit systemd file cleanup deferred: ${cleanupError}`);

@@ -1021,8 +1021,13 @@ export function installOfficialRuntimeService(
 ): string | null {
 	reloadRuntimeUserManager(paths, paths.userHome);
 	const error = installOfficialRuntimeUserService({ ...item.program, cwd: paths.userHome }, paths);
-	if (!error) item.target.expectedCurrentRevision = item.target.currentRevision();
-	return error;
+	if (error) return error;
+	const currentRevision = item.target.currentRevision();
+	if (!currentRevision) {
+		return `official ${runtimeSystemdProgramName(item.program)} service install could not be verified`;
+	}
+	item.target.expectedCurrentRevision = currentRevision;
+	return null;
 }
 
 function resetFailedRuntimeUserService(name: string, paths: RuntimePaths, cwd: string): void {

@@ -12,7 +12,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { readRuntimeInstallReceipts } from "./install-receipts";
+import {
+	readRuntimeInstallReceipts,
+	runtimeInstallReceiptsPath,
+	writeRuntimeInstallReceipts,
+} from "./install-receipts";
 import {
 	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
 	type RuntimeManifest,
@@ -98,6 +102,8 @@ function writeFakeGatewayCli(input: {
 		snapshotPrefix: string;
 	};
 }): void {
+	const version =
+		input.version ?? (input.runtime === "hermes" ? "Hermes Agent v0.18.0" : "OpenClaw 2026.7.29");
 	const stateCheck = input.requiredSystemdState
 		? `test -f '${input.requiredSystemdState.envPath}'
     test -f '${input.requiredSystemdState.dropInPath}'
@@ -110,15 +116,11 @@ function writeFakeGatewayCli(input: {
 	writeFileSync(
 		input.path,
 		`#!/usr/bin/env bash
-set -euo pipefail
-case "$*" in
-	${
-		input.version
-			? `"--version")
-	printf '%s\\n' '${input.version}'
-	;;`
-			: ""
-	}
+	set -euo pipefail
+	case "$*" in
+	  "--version")
+		printf '%s\\n' '${version}'
+		;;
   "gateway install --force --json"|"gateway install --force"|"gateway install")
 	${stateCheck}
 	printf '%s %s\\n' '${input.runtime}' "$*" >> '${input.logPath}'
@@ -212,6 +214,7 @@ function writeFakePluginCli(input: {
 	inspectStatePath: string;
 	pluginSourcePath: string;
 	failInstallMarker: string;
+	version?: string;
 }): void {
 	mkdirSync(dirname(input.path), { recursive: true });
 	writeFileSync(
@@ -219,7 +222,7 @@ function writeFakePluginCli(input: {
 		`#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
-  "--version") printf '%s\\n' 'OpenClaw 2026.7.29' ;;
+	  "--version") printf '%s\\n' '${input.version ?? "OpenClaw 2026.7.29"}' ;;
   "plugins inspect discord --json") cat '${input.inspectStatePath}' ;;
   "plugins install @openclaw/discord")
 	mkdir -p '${dirname(input.inspectStatePath)}'
@@ -241,32 +244,38 @@ esac
 interface InstallGateHarness {
 	converge: (commitAuthority?: () => void) => ReturnType<typeof convergeRuntimeManifest>;
 	drift: () => void;
+	revise: () => void;
 	failNextInstall: () => void;
 	restoreInstaller: () => void;
 	installCount: () => number;
 	receipt: () => unknown;
 }
 
-function officialServiceHarness(): InstallGateHarness {
+function officialServiceHarness(runtime: "openclaw" | "hermes" = "hermes"): InstallGateHarness {
 	const paths = tempRuntimePaths();
 	const logPath = join(paths.runRoot, "official-service-receipt.log");
-	const command = join(paths.userHome, ".local", "bin", "hermes");
-	const unitPath = join(paths.systemdUserRoot, "hermes-gateway.service");
+	const command =
+		runtime === "openclaw"
+			? join(paths.userHome, ".openclaw", "bin", "openclaw")
+			: join(paths.userHome, ".local", "bin", "hermes");
+	const unitPath = join(paths.systemdUserRoot, `${runtime}-gateway.service`);
 	const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
 	process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
 	writeFakeSystemctl({ path: systemctlCommand, logPath });
-	const writeCli = (failInstall = false) =>
+	const writeCli = (failInstall = false, version?: string) =>
 		writeFakeGatewayCli({
 			path: command,
 			logPath,
-			runtime: "hermes",
+			runtime,
 			unitPath,
-			version: "Hermes Agent v0.18.0",
+			version: version ?? (runtime === "hermes" ? "Hermes Agent v0.18.0" : "OpenClaw 2026.7.29"),
 			failInstall,
 		});
 	writeCli();
+	const manifest = installGateManifest(paths, runtime, command);
+	if (runtime === "openclaw") delete manifest.projection;
 	const load: RuntimeManifestLoad = {
-		manifest: installGateManifest(paths, "hermes", command),
+		manifest,
 		source: "remote-datasource",
 		sourcePath: "inline-service-receipt",
 		offline: false,
@@ -278,10 +287,15 @@ function officialServiceHarness(): InstallGateHarness {
 				executeOfficialServiceInstallers: true,
 			}),
 		drift: () => chmodSync(unitPath, 0o600),
+		revise: () =>
+			writeCli(false, runtime === "hermes" ? "Hermes Agent v0.18.1" : "OpenClaw 2026.7.30"),
 		failNextInstall: () => writeCli(true),
 		restoreInstaller: () => writeCli(),
-		installCount: () => readFileSync(logPath, "utf8").match(/hermes gateway install/g)?.length ?? 0,
-		receipt: () => readRuntimeInstallReceipts(paths)?.officialServices["hermes-gateway.service"],
+		installCount: () =>
+			readFileSync(logPath, "utf8").match(new RegExp(`${runtime} gateway install`, "g"))?.length ??
+			0,
+		receipt: () =>
+			readRuntimeInstallReceipts(paths)?.officialServices[`${runtime}-gateway.service`],
 	};
 }
 
@@ -311,6 +325,15 @@ function channelPluginHarness(): InstallGateHarness {
 		converge: (commitAuthority) =>
 			convergeRuntimeManifest(load, paths, commitAuthority ? { commitAuthority } : {}),
 		drift: () => writeFileSync(pluginSourcePath, "export const discordPlugin = false;\n"),
+		revise: () =>
+			writeFakePluginCli({
+				path: command,
+				installLogPath,
+				inspectStatePath,
+				pluginSourcePath,
+				failInstallMarker,
+				version: "OpenClaw 2026.7.30",
+			}),
 		failNextInstall: () => writeFileSync(failInstallMarker, "fail\n"),
 		restoreInstaller: () => rmSync(failInstallMarker, { force: true }),
 		installCount: () =>
@@ -320,7 +343,8 @@ function channelPluginHarness(): InstallGateHarness {
 }
 
 const installGateHarnesses = [
-	["official service", officialServiceHarness],
+	["Hermes official service", () => officialServiceHarness("hermes")],
+	["OpenClaw official service", () => officialServiceHarness("openclaw")],
 	["channel plugin", channelPluginHarness],
 ] as const;
 
@@ -1177,7 +1201,7 @@ describe("runtime manifest services", () => {
 		}
 	});
 
-	test("prepares the Hermes dashboard artifact before activation and keeps ExecStart build-free", () => {
+	test("reuses the Hermes dashboard artifact across full refreshes and rebuilds real drift", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "hermes-dashboard-prerequisite.log");
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
@@ -1246,17 +1270,29 @@ describe("runtime manifest services", () => {
 		);
 		expect(converge().installErrors).toEqual([]);
 		expect(readFileSync(logPath, "utf8").match(/^npm /gm)).toHaveLength(3);
+		expect(converge().installErrors).toEqual([]);
+		expect(readFileSync(logPath, "utf8").match(/^npm /gm)).toHaveLength(3);
 		expect(
 			readRuntimeInstallReceipts(paths)?.officialServices["hermes-dashboard:artifact"],
 		).toBeDefined();
 
-		writeFileSync(join(dirname(distIndex), "app.js"), "drifted asset\n");
+		writeFakeGatewayCli({
+			path: hermesCommand,
+			logPath,
+			runtime: "hermes",
+			unitPath: join(paths.systemdUserRoot, "hermes-gateway.service"),
+			version: "Hermes Agent v0.18.1",
+		});
 		expect(converge().installErrors).toEqual([]);
 		expect(readFileSync(logPath, "utf8").match(/^npm /gm)).toHaveLength(6);
 
-		rmSync(join(dirname(distIndex), "app.js"));
+		writeFileSync(join(dirname(distIndex), "app.js"), "drifted asset\n");
 		expect(converge().installErrors).toEqual([]);
 		expect(readFileSync(logPath, "utf8").match(/^npm /gm)).toHaveLength(9);
+
+		rmSync(join(dirname(distIndex), "app.js"));
+		expect(converge().installErrors).toEqual([]);
+		expect(readFileSync(logPath, "utf8").match(/^npm /gm)).toHaveLength(12);
 	});
 
 	test("passes the transparent-egress system CA to every Hermes dashboard npm command", () => {
@@ -1303,7 +1339,7 @@ describe("runtime manifest services", () => {
 		]);
 	});
 
-	test("binds a cold Hermes dashboard receipt after the installer creates the command", () => {
+	test("reuses a persisted Hermes dashboard receipt after process planning restarts", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "hermes-dashboard-cold-receipt.log");
 		const npmCommand = join(paths.runRoot, "bin", "npm");
@@ -1348,9 +1384,7 @@ describe("runtime manifest services", () => {
 		const currentRevision = coldPlan.target?.expectedCurrentRevision;
 		expect(currentRevision).toMatch(/^[a-f0-9]{64}$/);
 
-		const receiptPlan = planHermesDashboardArtifact(
-			[program],
-			paths,
+		writeRuntimeInstallReceipts(
 			{
 				schemaVersion: "clawdi.runtimeInstallReceipts.v1",
 				officialServices: {
@@ -1361,6 +1395,12 @@ describe("runtime manifest services", () => {
 				},
 				channelPlugins: {},
 			},
+			paths,
+		);
+		const receiptPlan = planHermesDashboardArtifact(
+			[program],
+			paths,
+			readRuntimeInstallReceipts(paths),
 			true,
 		);
 		expect(prepareHermesDashboardArtifact(receiptPlan, paths)).toBeNull();
@@ -1450,6 +1490,176 @@ describe("runtime manifest services", () => {
 		expect(existsSync(join(paths.systemdUserRoot, "clawdi-hermes-dashboard.service"))).toBe(false);
 		expect(existsSync(join(paths.systemdUserRoot, "hermes-gateway.service"))).toBe(false);
 		expect(existsSync(join(paths.userHome, ".hermes", "config.yaml"))).toBe(false);
+
+		writeFakeNpm({ path: npmCommand, logPath, distIndex });
+		const retry = convergeRuntimeManifest(
+			{
+				manifest,
+				source: "remote-datasource",
+				sourcePath: "inline-dashboard-retry",
+				offline: false,
+			},
+			paths,
+			{
+				systemdApply: {
+					activateEgressPrerequisite: () => ({
+						applied: true,
+						systemUnitsChanged: [],
+						userUnitsChanged: [],
+					}),
+					activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
+					rollback: () => {},
+				},
+			},
+		);
+		expect(retry.installErrors).toEqual([]);
+		expect(readFileSync(distIndex, "utf8")).toBe("<html>Hermes dashboard</html>\n");
+		expect(
+			readRuntimeInstallReceipts(paths)?.officialServices["hermes-dashboard:artifact"],
+		).toBeDefined();
+		expect(readFileSync(logPath, "utf8").match(/^npm /gm)).toHaveLength(6);
+	});
+
+	test("blocks Hermes dashboard preparation when an existing receipt cannot be read", () => {
+		const paths = tempRuntimePaths();
+		const logPath = join(paths.runRoot, "hermes-dashboard-receipt-read.log");
+		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		const npmCommand = join(paths.runRoot, "bin", "npm");
+		const distIndex = join(
+			paths.userHome,
+			".hermes",
+			"hermes-agent",
+			"hermes_cli",
+			"web_dist",
+			"index.html",
+		);
+		mkdirSync(dirname(distIndex), { recursive: true });
+		writeFileSync(distIndex, "<html>trusted dashboard</html>\n");
+		process.env.PATH = `${dirname(npmCommand)}:${process.env.PATH ?? ""}`;
+		writeFakeGatewayCli({
+			path: hermesCommand,
+			logPath,
+			runtime: "hermes",
+			unitPath: join(paths.systemdUserRoot, "hermes-gateway.service"),
+			version: "Hermes Agent v0.18.0",
+		});
+		writeFakeNpm({ path: npmCommand, logPath, distIndex });
+		const receiptPath = runtimeInstallReceiptsPath(paths);
+		mkdirSync(dirname(receiptPath), { recursive: true });
+		writeFileSync(receiptPath, "{not-json}\n", { mode: 0o600 });
+		const manifest = installGateManifest(paths, "hermes", hermesCommand);
+		manifest.runtimes.hermes!.services.dashboard = runSettings(hermesCommand, ["dashboard"]);
+		let authorityCommits = 0;
+
+		const result = convergeRuntimeManifest(
+			{
+				manifest,
+				source: "remote-datasource",
+				sourcePath: "inline-dashboard-receipt-read-failure",
+				offline: false,
+			},
+			paths,
+			{
+				commitAuthority: () => {
+					authorityCommits += 1;
+				},
+				executeOfficialServiceInstallers: true,
+			},
+		);
+
+		expect(result.installErrors).toEqual([
+			expect.stringContaining("runtime install receipts could not be decoded"),
+		]);
+		expect(authorityCommits).toBe(0);
+		expect(existsSync(logPath)).toBe(false);
+		expect(readFileSync(distIndex, "utf8")).toBe("<html>trusted dashboard</html>\n");
+	});
+
+	test("rolls back a built Hermes artifact when receipt persistence fails, then retries", () => {
+		const paths = tempRuntimePaths();
+		const logPath = join(paths.runRoot, "hermes-dashboard-receipt-write.log");
+		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		const npmCommand = join(paths.runRoot, "bin", "npm");
+		const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
+		const distIndex = join(
+			paths.userHome,
+			".hermes",
+			"hermes-agent",
+			"hermes_cli",
+			"web_dist",
+			"index.html",
+		);
+		mkdirSync(dirname(distIndex), { recursive: true });
+		writeFileSync(distIndex, "<html>previous dashboard</html>\n");
+		process.env.PATH = `${dirname(npmCommand)}:${process.env.PATH ?? ""}`;
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
+		writeFakeSystemctl({ path: systemctlCommand, logPath });
+		writeFakeGatewayCli({
+			path: hermesCommand,
+			logPath,
+			runtime: "hermes",
+			unitPath: join(paths.systemdUserRoot, "hermes-gateway.service"),
+			version: "Hermes Agent v0.18.0",
+		});
+		writeFakeNpm({ path: npmCommand, logPath, distIndex });
+		const manifest = installGateManifest(paths, "hermes", hermesCommand);
+		manifest.runtimes.hermes!.services.dashboard = runSettings(hermesCommand, ["dashboard"]);
+		const receiptPath = runtimeInstallReceiptsPath(paths);
+		let authorityCommits = 0;
+		let rollbacks = 0;
+		const load: RuntimeManifestLoad = {
+			manifest,
+			source: "remote-datasource",
+			sourcePath: "inline-dashboard-receipt-write-failure",
+			offline: false,
+		};
+
+		const failed = convergeRuntimeManifest(load, paths, {
+			commitAuthority: () => {
+				authorityCommits += 1;
+			},
+			systemdApply: {
+				activateEgressPrerequisite: () => ({
+					applied: true,
+					systemUnitsChanged: [],
+					userUnitsChanged: [],
+				}),
+				activate: () => {
+					mkdirSync(receiptPath, { recursive: true });
+					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+				},
+				rollback: () => {
+					rollbacks += 1;
+				},
+			},
+		});
+
+		expect(failed.installErrors).toEqual([
+			expect.stringContaining("runtime install receipts could not be persisted"),
+		]);
+		expect(authorityCommits).toBe(0);
+		expect(rollbacks).toBe(1);
+		expect(existsSync(receiptPath)).toBe(false);
+		expect(readFileSync(distIndex, "utf8")).toBe("<html>previous dashboard</html>\n");
+		expect(readFileSync(logPath, "utf8").match(/^npm /gm)).toHaveLength(3);
+
+		const retried = convergeRuntimeManifest(load, paths, {
+			systemdApply: {
+				activateEgressPrerequisite: () => ({
+					applied: true,
+					systemUnitsChanged: [],
+					userUnitsChanged: [],
+				}),
+				activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
+				rollback: () => {},
+			},
+		});
+		expect(retried.installErrors).toEqual([]);
+		expect(readFileSync(distIndex, "utf8")).toBe("<html>Hermes dashboard</html>\n");
+		expect(
+			readRuntimeInstallReceipts(paths)?.officialServices["hermes-dashboard:artifact"],
+		).toBeDefined();
+		expect(readFileSync(logPath, "utf8").match(/^npm /gm)).toHaveLength(6);
 	});
 
 	test("rejects an upstream-incompatible npm before dashboard mutation", () => {
@@ -1606,11 +1816,23 @@ describe("runtime manifest services", () => {
 
 	test.each(
 		installGateHarnesses,
-	)("does not bless post-install %s drift during authority commit", (_name, createHarness) => {
+	)("reconciles a real %s command revision change exactly once", (_name, createHarness) => {
+		const harness = createHarness();
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(1);
+
+		harness.revise();
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(2);
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(2);
+	});
+
+	test.each(installGateHarnesses)("does not bless post-commit %s drift", (_name, createHarness) => {
 		const harness = createHarness();
 		expect(harness.converge(harness.drift).installErrors).toEqual([]);
 		expect(harness.installCount()).toBe(1);
-		expect(harness.receipt()).toBeUndefined();
+		expect(harness.receipt()).toBeDefined();
 
 		expect(harness.converge().installErrors).toEqual([]);
 		expect(harness.installCount()).toBe(2);
