@@ -2701,7 +2701,6 @@ async def _lock_active_inbound_bindings(
             and_(
                 ChannelBotAgentLink.id == ChannelBinding.bot_agent_link_id,
                 ChannelBotAgentLink.account_id == ChannelBinding.account_id,
-                ChannelBotAgentLink.user_id == ChannelBinding.user_id,
             ),
         )
         .join(ChannelAccount, ChannelAccount.id == ChannelBinding.account_id)
@@ -3160,6 +3159,7 @@ async def dequeue_telegram_updates(
                 ChannelBinding.id == ChannelMessage.binding_id,
                 ChannelBinding.account_id == ChannelMessage.account_id,
                 ChannelBinding.bot_agent_link_id == ChannelMessage.bot_agent_link_id,
+                ChannelBinding.user_id == ChannelMessage.user_id,
             ),
         )
         .join(
@@ -3405,6 +3405,7 @@ async def pending_channel_inbox_count(
                 ChannelBinding.id == ChannelMessage.binding_id,
                 ChannelBinding.account_id == ChannelMessage.account_id,
                 ChannelBinding.bot_agent_link_id == ChannelMessage.bot_agent_link_id,
+                ChannelBinding.user_id == ChannelMessage.user_id,
             ),
         )
         .join(
