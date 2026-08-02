@@ -91,10 +91,10 @@ async function expectOverviewSessionSlot({
 	await expect(placeholders).toHaveCount(3 - realCount);
 	await expect(grid.getByRole("link")).toHaveCount(realCount);
 	await expect(placeholders.locator("a, button, article")).toHaveCount(0);
-	const compactAlignment = await grid.locator(":scope > article").evaluateAll((articles) =>
+	const cardAlignment = await grid.locator(":scope > article").evaluateAll((articles) =>
 		articles.map((article) => {
-			const avatar = article.querySelector<HTMLElement>('[data-testid="overview-session-avatar"]');
-			const textBlock = article.querySelector<HTMLElement>('[data-testid="overview-session-text"]');
+			const avatar = article.querySelector<HTMLElement>('[data-testid="session-card-avatar"]');
+			const textBlock = article.querySelector<HTMLElement>('[data-testid="session-card-text"]');
 			const avatarBox = avatar?.getBoundingClientRect();
 			const textBox = textBlock?.getBoundingClientRect();
 			return {
@@ -103,7 +103,7 @@ async function expectOverviewSessionSlot({
 			};
 		}),
 	);
-	for (const alignment of compactAlignment)
+	for (const alignment of cardAlignment)
 		expect(Math.abs(alignment.avatarCenter - alignment.textCenter)).toBeLessThanOrEqual(2);
 	const placeholderSemantics = await placeholders.evaluateAll((elements) =>
 		elements.map((element) => ({
@@ -205,19 +205,21 @@ async function expectAgentOverviewTypography(page: Page) {
 	expect(new Set(primaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["16px"]));
 	expect(new Set(primaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["600"]));
 
-	const detailMetrics = await main.getByTestId("overview-summary-list").evaluateAll((elements) =>
-		elements.map((element) => {
-			const style = getComputedStyle(element);
-			return { fontSize: style.fontSize, fontWeight: style.fontWeight };
-		}),
-	);
+	const detailMetrics = await main
+		.locator('[data-testid="overview-resource-badges"] [data-slot="badge"]')
+		.evaluateAll((elements) =>
+			elements.map((element) => {
+				const style = getComputedStyle(element);
+				return { fontSize: style.fontSize, fontWeight: style.fontWeight };
+			}),
+		);
 	expect(detailMetrics.length).toBeGreaterThan(0);
-	expect(new Set(detailMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
-	expect(new Set(detailMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["400"]));
+	expect(new Set(detailMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["12px"]));
+	expect(new Set(detailMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["500"]));
 
 	const metadataMetrics = await main
 		.locator(
-			'[data-testid="overview-session-meta"], [data-overview-status] dl, [data-testid="overview-compute-summary"] ul',
+			'[data-testid="session-card-meta"], [data-overview-status] dl, [data-testid="overview-compute-summary"] ul',
 		)
 		.evaluateAll((elements) =>
 			elements.map((element) => {
@@ -244,24 +246,19 @@ async function expectAgentOverviewTypography(page: Page) {
 	expect(new Set(toolPrimaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["600"]));
 
 	const toolSecondaryMetrics = await main
-		.locator(
-			'[data-overview-tool-secondary], [data-overview-module="channels"] [data-testid="overview-summary-list"]',
-		)
+		.locator("[data-overview-tool-secondary]")
 		.evaluateAll((elements) =>
 			elements.map((element) => {
 				const style = getComputedStyle(element);
 				return { fontSize: style.fontSize, fontWeight: style.fontWeight, color: style.color };
 			}),
 		);
-	expect(toolSecondaryMetrics).toHaveLength(2);
+	expect(toolSecondaryMetrics).toHaveLength(1);
 	expect(new Set(toolSecondaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
 	expect(new Set(toolSecondaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(
 		new Set(["400"]),
 	);
-	expect(new Set(toolSecondaryMetrics.map(({ color }) => color))).toEqual(
-		new Set(toolPrimaryMetrics.map(({ color }) => color)),
-	);
-	expect(toolSecondaryMetrics[0]?.color).not.toBe(metadataMetrics[0]?.color);
+	expect(toolSecondaryMetrics[0]?.color).toBe(metadataMetrics[0]?.color);
 }
 
 // HOSTED (Clawdi Cloud) smoke against the vite dev server with dev-auth-bypass
@@ -3063,8 +3060,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const sessionBoxes = await recentSessions.locator("article").evaluateAll((cards) =>
 		cards.map((card) => {
 			const rect = card.getBoundingClientRect();
-			const title = card.querySelector<HTMLElement>('[data-testid="overview-session-title"]');
-			const meta = card.querySelector<HTMLElement>('[data-testid="overview-session-meta"]');
+			const title = card.querySelector<HTMLElement>('[data-testid="session-card-title"]');
+			const meta = card.querySelector<HTMLElement>('[data-testid="session-card-meta"]');
 			const titleStyle = title ? getComputedStyle(title) : null;
 			return {
 				x: rect.x,
@@ -3150,11 +3147,25 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		}),
 	).toBeVisible();
 	await expect(page.getByText("Your agent is running", { exact: true })).toHaveCount(0);
-	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("Daily briefing");
-	await expect(overview.locator('[data-overview-module="channels"]')).toContainText(
-		"Research Telegram",
-	);
-	await expect(overview.locator('[data-overview-module="channels"]')).toContainText("Telegram");
+	const resourceBadges = overview.getByTestId("overview-resource-badges");
+	await expect(resourceBadges).toHaveCount(3);
+	await expect(
+		overview.locator('[data-overview-module="projects"] [data-slot="badge"]'),
+	).toHaveAccessibleName("Hosted Agent Project");
+	await expect(
+		overview.locator('[data-overview-module="skills"] [data-slot="badge"]'),
+	).toHaveAccessibleName("Daily briefing");
+	await expect(
+		overview.locator('[data-overview-module="vaults"] [data-slot="badge"]'),
+	).toHaveAccessibleName("Hosted Scoped Vault");
+	const channelRail = overview.getByTestId("overview-channel-rail");
+	await expect(channelRail.getByRole("link")).toHaveCount(1);
+	await expect(
+		channelRail.getByRole("link", {
+			name: "Connected channel: Telegram, Research Telegram",
+		}),
+	).toBeVisible();
+	await expect(channelRail.locator("img")).toHaveAttribute("alt", "Telegram");
 	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText(
 		"Managed by Clawdi",
 	);
@@ -3170,10 +3181,6 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	for (const moduleId of ["memories", "vaults", "connectors"]) {
 		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toBeVisible();
 	}
-	const flatResourceSummaries = overview.getByTestId("overview-summary-list");
-	await expect(flatResourceSummaries).toHaveCount(3);
-	for (const summary of await flatResourceSummaries.all())
-		await expect(summary).not.toHaveClass(/rounded|border|divide-y|bg-/);
 	const connectors = overview.locator('[data-overview-module="connectors"]');
 	await expect(connectors).toContainText("2 connected");
 	const connectorLinks = connectors.getByTestId("overview-connector-rail").getByRole("link");
@@ -3261,6 +3268,10 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 				((mobileSessionsBox?.x ?? 0) + (mobileSessionsBox?.width ?? 0)),
 		),
 	).toBeLessThanOrEqual(2);
+	await page.screenshot({
+		path: testInfo.outputPath("hosted-agent-overview-mobile.png"),
+		fullPage: true,
+	});
 	await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
 	const mobileSidebar = page.getByRole("dialog");
 	await expectInlineSidebarStatus(mobileSidebar, "hosted");
@@ -3382,6 +3393,19 @@ test("hosted projection loading uses module skeletons", async ({ page }, testInf
 
 	const overview = page.locator('[data-agent-overview="hosted"]');
 	await expect(overview.getByTestId("overview-module-skeleton").first()).toBeVisible();
+	const sessionSkeletons = page
+		.getByRole("status", { name: "Loading recent sessions" })
+		.getByTestId("overview-session-skeleton-row");
+	await expect(sessionSkeletons).toHaveCount(3);
+	const skeletonBoxes = await sessionSkeletons.evaluateAll((rows) =>
+		rows.map((row) => row.getBoundingClientRect().toJSON()),
+	);
+	expect(
+		Math.max(...skeletonBoxes.map((box) => box.height)) -
+			Math.min(...skeletonBoxes.map((box) => box.height)),
+	).toBeLessThanOrEqual(1);
+	expect(skeletonBoxes[0]?.height).toBeGreaterThanOrEqual(64);
+	expect(skeletonBoxes[0]?.height).toBeLessThanOrEqual(72);
 	await expect(overview.locator('[data-overview-module="vaults"]')).not.toContainText(
 		"No vaults available",
 	);
@@ -3535,13 +3559,20 @@ test("hosted Tools channels preserve zero, singular, plural, error, and loading 
 	await page.goto(overviewUrl);
 	await expect(channels.getByText("0 connected channels", { exact: true })).toHaveCount(0);
 	await expect(channels.getByText("No channels connected", { exact: true })).toHaveCount(1);
-	await expect(channels.getByTestId("overview-summary-list")).toHaveCount(0);
+	await expect(channels.getByTestId("overview-channel-rail")).toHaveCount(0);
 
 	options.channelAgentLinksResponse = { body: [channelLink(1, "telegram")], status: 200 };
 	await page.reload();
 	await expect(channels.getByText("1 connected channel", { exact: true })).toBeVisible();
-	await expect(channels.getByTestId("overview-summary-list")).toContainText(
-		"Telegram: Research Telegram",
+	await expect(
+		channels.getByRole("link", {
+			name: "Connected channel: Telegram, Research Telegram",
+		}),
+	).toHaveAttribute("title", "Telegram: Research Telegram (connected)");
+	await expect(channels.getByTestId("overview-channel-rail").getByRole("link")).toHaveCount(1);
+	await expect(channels.getByTestId("overview-channel-rail").locator("img")).toHaveAttribute(
+		"alt",
+		"Telegram",
 	);
 
 	options.channelAgentLinksResponse = {
@@ -3550,7 +3581,14 @@ test("hosted Tools channels preserve zero, singular, plural, error, and loading 
 	};
 	await page.reload();
 	await expect(channels.getByText("2 connected channels", { exact: true })).toBeVisible();
-	await expect(channels.getByTestId("overview-summary-list").locator("li")).toHaveCount(2);
+	const channelLinks = channels.getByTestId("overview-channel-rail").getByRole("link");
+	await expect(channelLinks).toHaveCount(2);
+	await expect(channelLinks.nth(0)).toHaveAccessibleName(
+		"Connected channel: Telegram, Research Telegram",
+	);
+	await expect(channelLinks.nth(1)).toHaveAccessibleName(
+		"Connected channel: Discord, Team Discord",
+	);
 
 	options.channelAgentLinksResponse = {
 		body: { detail: "channel service unavailable" },

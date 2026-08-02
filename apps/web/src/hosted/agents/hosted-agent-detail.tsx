@@ -35,10 +35,11 @@ import { agentDisplayName } from "@/components/dashboard/agent-label";
 import {
 	AgentOverviewCapabilities,
 	AgentOverviewStatusCard,
+	OverviewIdentityIconItem,
+	OverviewIdentityIconRail,
 	OverviewModuleError,
 	OverviewModuleSkeleton,
 	OverviewModuleUnavailable,
-	OverviewSummaryRows,
 } from "@/components/dashboard/agent-overview-capabilities";
 import {
 	OverviewConnectorsBody,
@@ -270,6 +271,7 @@ import {
 	ChannelStatusBadge,
 	CopyInline,
 	isNormalChannelStatus,
+	ProviderChip,
 } from "@/hosted/v2/channels/channel-ui";
 import {
 	useAgentChannelLinks,
@@ -1163,11 +1165,9 @@ function OverviewTab({
 	);
 	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
 	const linkedChannelCount = channelLinks.data?.length ?? 0;
-	const linkedChannelRows = (channelLinks.data ?? []).flatMap((link) => {
-		if (!link.account) return [];
-		const provider = providerMeta(link.account.provider).label;
-		return [`${provider}: ${link.account.name}`];
-	});
+	const linkedChannels = (channelLinks.data ?? []).flatMap((link) =>
+		link.account ? [link.account] : [],
+	);
 	const projectionLoading = projectionStatus === "loading";
 	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
 	return (
@@ -1317,7 +1317,7 @@ function OverviewTab({
 									>
 										{model}
 									</p>
-									<p data-overview-tool-secondary className="text-sm">
+									<p data-overview-tool-secondary className="text-sm text-muted-foreground">
 										{managedProvider
 											? "Managed by Clawdi"
 											: providerDisplayLabel(providerId ?? "", providers.data ?? [])}
@@ -1345,11 +1345,34 @@ function OverviewTab({
 										? "No channels connected"
 										: `${linkedChannelCount} connected ${linkedChannelCount === 1 ? "channel" : "channels"}`}
 								</p>
-								{linkedChannelCount > 0 ? (
-									<OverviewSummaryRows
-										items={linkedChannelRows}
-										empty="Channel details unavailable"
-									/>
+								{linkedChannels.length > 0 ? (
+									<OverviewIdentityIconRail
+										label="Connected channels"
+										testId="overview-channel-rail"
+									>
+										{linkedChannels.slice(0, 5).map((channel) => {
+											const provider = providerMeta(channel.provider).label;
+											return (
+												<OverviewIdentityIconItem key={channel.id} connected>
+													<Link
+														to="/channels/$id"
+														params={{ id: channel.id }}
+														aria-label={`Connected channel: ${provider}, ${channel.name}`}
+														title={`${provider}: ${channel.name} (connected)`}
+														className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+													>
+														<ProviderChip
+															provider={channel.provider}
+															size="md"
+															className="size-9"
+														/>
+													</Link>
+												</OverviewIdentityIconItem>
+											);
+										})}
+									</OverviewIdentityIconRail>
+								) : linkedChannelCount > 0 ? (
+									<p className="text-sm text-muted-foreground">Channel details unavailable</p>
 								) : null}
 							</div>
 						),

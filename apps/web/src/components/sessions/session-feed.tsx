@@ -5,7 +5,7 @@ import { MessageSquare } from "lucide-react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { agentIdentity } from "@/components/dashboard/agent-label";
 import { EmptyState, type EmptyStateVariant } from "@/components/empty-state";
-import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
+import { ENTITY_CARD_BASE } from "@/components/entity-card";
 import { SectionLabel } from "@/components/section-label";
 import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -20,6 +20,31 @@ import {
 } from "@/lib/utils";
 
 type SessionLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
+
+type SessionMetadataItem = {
+	key: string;
+	value: string;
+	title?: string;
+	className?: string;
+};
+
+const SESSION_CARD_CLASS = "flex min-h-16.5 min-w-0 items-center gap-3 px-4 py-3 transition-colors";
+
+function SessionCardSkeleton({ testId }: { testId?: string }) {
+	return (
+		<div
+			data-testid={testId}
+			aria-hidden="true"
+			className={cn(ENTITY_CARD_BASE, SESSION_CARD_CLASS)}
+		>
+			<Skeleton className="size-8 shrink-0 rounded-md" />
+			<div className="min-w-0 flex-1">
+				<Skeleton className="h-4 w-4/5" />
+				<Skeleton className="mt-1.5 h-3 w-1/2" />
+			</div>
+		</div>
+	);
+}
 
 export function OverviewSessionList({
 	sessions,
@@ -41,17 +66,7 @@ export function OverviewSessionList({
 				role="status"
 			>
 				{Array.from({ length: 3 }).map((_, index) => (
-					<div
-						key={index}
-						data-testid="overview-session-skeleton-row"
-						aria-hidden="true"
-						className={cn(ENTITY_CARD_BASE, "px-4 py-3")}
-					>
-						<div className="flex h-10 flex-col justify-center">
-							<Skeleton className="h-4 w-4/5" />
-							<Skeleton className="mt-1.5 h-3 w-1/2" />
-						</div>
-					</div>
+					<SessionCardSkeleton key={index} testId="overview-session-skeleton-row" />
 				))}
 			</div>
 		);
@@ -61,13 +76,12 @@ export function OverviewSessionList({
 	return (
 		<div data-testid="overview-session-grid" className="grid gap-2">
 			{visibleSessions.map((session) => (
-				<SessionFeedCard
+				<SessionCard
 					key={session.id}
 					session={session}
 					showAgent={false}
 					quietAutomated={true}
 					link={sessionLink(session)}
-					compact
 				/>
 			))}
 			{Array.from({ length: placeholderCount }).map((_, index) => (
@@ -77,7 +91,8 @@ export function OverviewSessionList({
 					aria-hidden="true"
 					className={cn(
 						ENTITY_CARD_BASE,
-						"pointer-events-none flex h-16.5 items-center border-border/60 bg-muted/10 px-4 py-3 text-xs text-muted-foreground select-none",
+						SESSION_CARD_CLASS,
+						"pointer-events-none border-border/60 bg-muted/10 text-xs text-muted-foreground select-none",
 					)}
 				>
 					{visibleSessions.length === 0 && index === 0 ? emptyMessage : null}
@@ -126,10 +141,7 @@ export function SessionFeed({
 		return (
 			<div className="flex flex-col gap-2">
 				{Array.from({ length: 5 }).map((_, index) => (
-					<div key={index} className={ENTITY_CARD_BASE}>
-						<Skeleton className="h-4 w-4/5" />
-						<Skeleton className="mt-3 h-3 w-1/2" />
-					</div>
+					<SessionCardSkeleton key={index} />
 				))}
 			</div>
 		);
@@ -143,7 +155,7 @@ export function SessionFeed({
 		return (
 			<div className="flex flex-col gap-2">
 				{sessions.map((session) => (
-					<SessionFeedCard
+					<SessionCard
 						key={session.id}
 						session={session}
 						showAgent={showAgent}
@@ -172,7 +184,7 @@ export function SessionFeed({
 					<SectionLabel>{group.label}</SectionLabel>
 					<div className="flex flex-col gap-2">
 						{group.items.map((session) => (
-							<SessionFeedCard
+							<SessionCard
 								key={session.id}
 								session={session}
 								showAgent={showAgent}
@@ -187,18 +199,16 @@ export function SessionFeed({
 	);
 }
 
-function SessionFeedCard({
+export function SessionCard({
 	session,
 	showAgent = true,
 	quietAutomated = true,
 	link,
-	compact = false,
 }: {
 	session: SessionListItem;
 	showAgent?: boolean;
 	quietAutomated?: boolean;
 	link: SessionLinkOptions;
-	compact?: boolean;
 }) {
 	const title = formatSessionSummary(session.summary) || session.local_session_id.slice(0, 8);
 	const projectFolder = session.project_path?.split("/").pop();
@@ -207,67 +217,68 @@ function SessionFeedCard({
 	// Cron jobs and bracketed heartbeats are routine noise — keep them in the
 	// timeline but visually quieter than human work (taste audit round 2).
 	const isAutomated = quietAutomated && /^(Cron:|\[)/.test(title);
+	const metadata: SessionMetadataItem[] = [
+		showAgent ? { key: "agent", value: agent } : null,
+		projectFolder
+			? {
+					key: "project",
+					value: projectFolder,
+					title: session.project_path ?? undefined,
+					className: "font-mono",
+				}
+			: null,
+		{
+			key: "messages",
+			value: `${session.message_count} ${session.message_count === 1 ? "message" : "messages"}`,
+		},
+		{ key: "tokens", value: `${formatNumber(totalTokens)} tokens` },
+		{
+			key: "time",
+			value: relativeTime(session.last_activity_at),
+			title: formatAbsoluteTooltip(session.last_activity_at),
+		},
+	].filter((item): item is SessionMetadataItem => item !== null);
 	return (
-		<article className="group relative z-0">
-			<div
+		<article data-testid="session-card" className="min-w-0">
+			<Link
+				{...link}
+				aria-label={`Open session ${title}`}
 				className={cn(
 					ENTITY_CARD_BASE,
-					"transition-colors group-hover:bg-muted/50",
-					compact && "h-16.5 px-4 py-3",
+					SESSION_CARD_CLASS,
+					"group hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
 					isAutomated && "bg-muted/30",
 				)}
 			>
-				{compact ? (
-					<div className="flex min-w-0 items-center gap-3">
-						<span data-testid="overview-session-avatar" className="flex shrink-0">
-							<AgentIcon agent={session.agent_type} size="lg" />
-						</span>
-						<div data-testid="overview-session-text" className="w-0 min-w-0 flex-1 overflow-hidden">
-							<p data-testid="overview-session-title" className="truncate text-sm font-semibold">
-								{title}
-							</p>
-							<div
-								data-testid="overview-session-meta"
-								className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground"
-							>
-								<span>
-									{session.message_count} {session.message_count === 1 ? "message" : "messages"}
-								</span>
-								<span aria-hidden="true">·</span>
-								<span>{formatNumber(totalTokens)} tokens</span>
-								<span aria-hidden="true">·</span>
-								<span title={formatAbsoluteTooltip(session.last_activity_at)}>
-									{relativeTime(session.last_activity_at)}
-								</span>
-							</div>
-						</div>
-					</div>
-				) : (
-					<EntityHeader
-						align="start"
-						icon={<AgentIcon agent={session.agent_type} size="lg" />}
+				<span data-testid="session-card-avatar" className="flex shrink-0">
+					<AgentIcon agent={session.agent_type} size="lg" />
+				</span>
+				<span data-testid="session-card-text" className="w-0 min-w-0 flex-1">
+					<span
+						data-testid="session-card-title"
+						className="block truncate text-sm leading-5 font-semibold"
 						title={title}
-						meta={[
-							showAgent ? agent : null,
-							projectFolder ? (
-								<span key="folder" className="font-mono" title={session.project_path ?? undefined}>
-									{projectFolder}
+					>
+						{title}
+					</span>
+					<span
+						data-testid="session-card-meta"
+						className="mt-0.5 flex min-w-0 flex-wrap items-center gap-y-0 text-xs leading-4 text-muted-foreground"
+					>
+						{metadata.map((item, index) => (
+							<span key={item.key} className="inline-flex min-w-0 max-w-full items-center">
+								{index > 0 ? (
+									<span className="mx-1.5 shrink-0 text-muted-foreground/40" aria-hidden="true">
+										·
+									</span>
+								) : null}
+								<span className={cn("min-w-0 truncate", item.className)} title={item.title}>
+									{item.value}
 								</span>
-							) : null,
-							`${session.message_count} ${session.message_count === 1 ? "message" : "messages"}`,
-							`${formatNumber(totalTokens)} tokens`,
-							<span key="time" title={formatAbsoluteTooltip(session.last_activity_at)}>
-								{relativeTime(session.last_activity_at)}
-							</span>,
-						]}
-					/>
-				)}
-			</div>
-			<Link
-				{...link}
-				className="absolute inset-0 z-10 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-			>
-				<span className="sr-only">Open session {session.local_session_id}</span>
+							</span>
+						))}
+					</span>
+				</span>
 			</Link>
 		</article>
 	);

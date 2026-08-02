@@ -3,44 +3,49 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
 	OverviewMetadata,
-	OverviewSummaryRows,
+	OverviewResourceSummary,
 } from "@/components/dashboard/agent-overview-capabilities";
 
-describe("overview summary rows", () => {
-	test("renders resource names as a compact flat list", () => {
+describe("overview resource summary", () => {
+	test("renders up to three resource names with the existing Badge primitive", () => {
 		const markup = renderToStaticMarkup(
-			createElement(OverviewSummaryRows, {
-				items: ["Hosted Agent Project", "Shared Vault", "Telegram: Research"],
-				empty: "No resources",
+			createElement(OverviewResourceSummary, {
+				primary: "4 projects",
+				items: [
+					"Hosted Agent Project with a deliberately long accessible name",
+					"Shared Vault",
+					"Research Skills",
+					"Hidden fourth resource",
+				],
 			}),
 		);
 
-		expect(markup).toContain('data-testid="overview-summary-list"');
-		for (const item of ["Hosted Agent Project", "Shared Vault", "Telegram: Research"])
+		expect(markup).toContain('data-testid="overview-resource-summary"');
+		expect(markup).toContain('data-testid="overview-resource-badges"');
+		expect(markup).toContain('data-slot="badge"');
+		for (const item of [
+			"Hosted Agent Project with a deliberately long accessible name",
+			"Shared Vault",
+			"Research Skills",
+		])
 			expect(markup).toContain(item);
-		expect(markup).not.toContain("rounded");
-		expect(markup).not.toContain("border");
-		expect(markup).not.toContain("divide-y");
-		expect(markup).not.toContain("bg-");
-		expect(markup).not.toContain("font-medium");
+		expect(markup).not.toContain("Hidden fourth resource");
+		expect(markup).toContain(
+			'title="Hosted Agent Project with a deliberately long accessible name"',
+		);
+		expect(markup).toContain(
+			'aria-label="Hosted Agent Project with a deliberately long accessible name"',
+		);
+		expect(markup).toContain("truncate");
 	});
 
-	test("keeps the existing empty state and three-row limit", () => {
-		const populated = renderToStaticMarkup(
-			createElement(OverviewSummaryRows, {
-				items: ["One", "Two", "Three", "Four"],
-				empty: "No resources",
-			}),
-		);
+	test("does not duplicate an empty primary value with an empty badge list", () => {
 		const empty = renderToStaticMarkup(
-			createElement(OverviewSummaryRows, { items: [], empty: "No resources" }),
+			createElement(OverviewResourceSummary, { primary: "No projects added", items: [] }),
 		);
 
-		expect(populated).toContain("One");
-		expect(populated).toContain("Three");
-		expect(populated).not.toContain("Four");
-		expect(empty).toContain("No resources");
-		expect(empty).not.toContain('data-testid="overview-summary-list"');
+		expect(empty.match(/No projects added/g)).toHaveLength(1);
+		expect(empty).not.toContain('data-testid="overview-resource-badges"');
 	});
 });
 

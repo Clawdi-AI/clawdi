@@ -2,14 +2,15 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { CircleCheck, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import {
-	OverviewChips,
+	OverviewIdentityIconItem,
+	OverviewIdentityIconRail,
 	OverviewModuleError,
 	OverviewModuleSkeleton,
 	OverviewModuleUnavailable,
-	OverviewSummaryRows,
+	OverviewResourceSummary,
 } from "@/components/dashboard/agent-overview-capabilities";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -35,27 +36,29 @@ export function OverviewProjectsBody({
 	if (bindings.isUnavailable) return <OverviewModuleUnavailable />;
 	if (bindings.error) return <OverviewModuleError label="Projects" onRetry={bindings.onRetry} />;
 	const count = bindings.count ?? 0;
-	return (
-		<div className="space-y-3">
-			<p data-overview-primary-value className="text-base font-semibold">
-				{count ? `${count} ${count === 1 ? "project" : "projects"}` : "No projects added"}
-			</p>
-			{count === 0 ? null : names.isLoading ? (
+	const primary = count ? `${count} ${count === 1 ? "project" : "projects"}` : "No projects added";
+	if (count === 0) return <OverviewResourceSummary primary={primary} />;
+	if (names.isLoading)
+		return (
+			<OverviewResourceSummary primary={primary}>
 				<OverviewModuleSkeleton label="project names" rows={3} showHeading={false} />
-			) : names.error ? (
+			</OverviewResourceSummary>
+		);
+	if (names.error)
+		return (
+			<OverviewResourceSummary primary={primary}>
 				<OverviewModuleError label="Project names" onRetry={names.onRetry} />
-			) : (
-				<>
-					<OverviewSummaryRows items={names.items} empty="Project names can’t be shown" />
-					{names.unresolvedCount > 0 ? (
-						<p className="text-xs text-muted-foreground">
-							{names.unresolvedCount} project{" "}
-							{names.unresolvedCount === 1 ? "name can’t" : "names can’t"} be shown
-						</p>
-					) : null}
-				</>
-			)}
-		</div>
+			</OverviewResourceSummary>
+		);
+	const unresolvedCopy = names.unresolvedCount
+		? `${names.unresolvedCount} project ${names.unresolvedCount === 1 ? "name can’t" : "names can’t"} be shown`
+		: "Project names can’t be shown";
+	return (
+		<OverviewResourceSummary primary={primary} items={names.items}>
+			{names.unresolvedCount > 0 || names.items.length === 0 ? (
+				<p className="text-sm text-muted-foreground">{unresolvedCopy}</p>
+			) : null}
+		</OverviewResourceSummary>
 	);
 }
 
@@ -67,14 +70,14 @@ export function OverviewSkillsBody({
 	if (state.isUnavailable) return <OverviewModuleUnavailable />;
 	if (state.error) return <OverviewModuleError label="Skills" onRetry={state.onRetry} />;
 	return (
-		<div className="space-y-3">
-			<p data-overview-primary-value className="text-base font-semibold">
-				{items.length
+		<OverviewResourceSummary
+			primary={
+				items.length
 					? `${items.length} ${items.length === 1 ? "skill" : "skills"}`
-					: "No skills available"}
-			</p>
-			{items.length ? <OverviewChips items={items} empty="No skills available" /> : null}
-		</div>
+					: "No skills available"
+			}
+			items={items}
+		/>
 	);
 }
 
@@ -90,9 +93,9 @@ export function OverviewMemoriesBody() {
 		return <OverviewModuleError label="Memories" onRetry={() => void query.refetch()} />;
 	const total = query.data?.total ?? 0;
 	return (
-		<p data-overview-primary-value className="text-base font-semibold">
-			{total ? `${total} ${total === 1 ? "memory" : "memories"}` : "No memories yet"}
-		</p>
+		<OverviewResourceSummary
+			primary={total ? `${total} ${total === 1 ? "memory" : "memories"}` : "No memories yet"}
+		/>
 	);
 }
 
@@ -111,19 +114,14 @@ export function OverviewVaultsBody({
 		return <OverviewModuleError label="Vaults" onRetry={() => void query.refetch()} />;
 	const vaults = query.data ?? [];
 	return (
-		<div className="space-y-3">
-			<p data-overview-primary-value className="text-base font-semibold">
-				{vaults.length
+		<OverviewResourceSummary
+			primary={
+				vaults.length
 					? `${vaults.length} ${vaults.length === 1 ? "vault" : "vaults"}`
-					: "No vaults available"}
-			</p>
-			{vaults.length ? (
-				<OverviewSummaryRows
-					items={vaults.map((vault) => vault.name)}
-					empty="No vaults available"
-				/>
-			) : null}
-		</div>
+					: "No vaults available"
+			}
+			items={vaults.map((vault) => vault.name)}
+		/>
 	);
 }
 
@@ -218,9 +216,9 @@ function ConnectorRail({
 	loadingSlots: number;
 }) {
 	return (
-		<div className="flex flex-wrap gap-2" data-testid="overview-connector-rail">
+		<OverviewIdentityIconRail label="Connector apps" testId="overview-connector-rail">
 			{apps.map(({ app, state }) => (
-				<div key={app.name} className="relative">
+				<OverviewIdentityIconItem key={app.name} connected={state === "connected"}>
 					<Link
 						to="/connectors/$name"
 						params={{ name: app.name }}
@@ -230,16 +228,13 @@ function ConnectorRail({
 					>
 						<ConnectorIcon name={app.display_name} logo={app.logo} size="sm" />
 					</Link>
-					{state === "connected" ? (
-						<span className="absolute -right-1 -bottom-1 rounded-full bg-background text-primary">
-							<CircleCheck className="size-4 fill-background" aria-hidden="true" />
-						</span>
-					) : null}
-				</div>
+				</OverviewIdentityIconItem>
 			))}
 			{Array.from({ length: loadingSlots }).map((_, index) => (
-				<Skeleton key={index} className="size-9 rounded-lg" aria-label="Loading app" />
+				<li key={index}>
+					<Skeleton className="size-9 rounded-lg" aria-label="Loading app" />
+				</li>
 			))}
-		</div>
+		</OverviewIdentityIconRail>
 	);
 }
