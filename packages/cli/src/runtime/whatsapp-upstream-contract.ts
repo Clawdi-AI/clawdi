@@ -72,8 +72,9 @@ function isCanonicalBase64Bytes(value: string, byteLength: number): boolean {
 }
 
 // Audit evidence is intentionally centralized with the readiness requirements.
-// Updating a version without re-auditing these exact artifacts must not enable
-// the runtime projection.
+// This records the pristine audit anchor. Compatibility acceptance still
+// requires the expected alias, valid SemVer major 7, and exact target hashes;
+// changing this audit record alone must not enable runtime projection.
 export const WHATSAPP_UPSTREAM_AUDIT = {
 	auditedAt: "2026-08-02",
 	baileysRelease: {
@@ -100,7 +101,7 @@ export const WHATSAPP_UPSTREAM_AUDIT = {
 			noiseHandlerTypes: "a556ca0b67c3448769ad5ed0d59acbf566a21115fa107cd582b1dcb28c4fd516",
 		},
 		noiseTrustSeam: {
-			requiredSocketOption: "authCert",
+			requiredCredentialMetadata: CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY,
 			scope: "Noise intermediate certificate public key and serial verification",
 			available: true,
 			providedBy: "clawdi.managedBaileysCompat.v2",

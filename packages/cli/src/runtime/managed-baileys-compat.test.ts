@@ -44,6 +44,14 @@ afterEach(() => {
 	for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
+it("defines exactly the three audited Baileys targets and no consumer target", () => {
+	expect(MANAGED_BAILEYS_STATIC_PATCH_TARGETS.map((target) => target.relativePath)).toEqual([
+		"lib/Socket/socket.js",
+		"lib/Utils/noise-handler.js",
+		"lib/Utils/noise-handler.d.ts",
+	]);
+});
+
 describe.each(["openclaw", "hermes"] as const)("managed Baileys %s compatibility", (runtime) => {
 	it("is inert before a managed Link has produced a receipt", () => {
 		const fixture = createArtifactFixture(runtime);
@@ -223,6 +231,17 @@ it("updates a compatible 7.x receipt transition and still rolls back safely", ()
 	assertTargetState(fixture, "preimage");
 });
 
+it("refuses an unknown receipt revision without touching pristine targets", () => {
+	const fixture = createArtifactFixture("openclaw");
+	writeJson(managedBaileysCompatReceiptPath(fixture), {
+		schemaVersion: "clawdi.managedBaileysPatchReceipt.v999",
+		patchRevision: "unknown",
+	});
+
+	expect(() => reconcile(fixture)).toThrow("receipt is invalid");
+	assertTargetState(fixture, "preimage");
+});
+
 it("rejects the wrong alias package name and symlinked package identity", () => {
 	const wrongName = createArtifactFixture("openclaw");
 	writeJson(join(wrongName.baileysRoot, "package.json"), {
@@ -240,6 +259,24 @@ it("rejects the wrong alias package name and symlinked package identity", () => 
 	symlinkSync(redirected, packagePath);
 	expect(() => reconcile(symlinked)).toThrow("target must be a real file");
 	assertTargetState(symlinked, "preimage");
+});
+
+it("refuses a symlinked patch target before mutating any audited file", () => {
+	const fixture = createArtifactFixture("openclaw");
+	const targets = artifactTargets(fixture);
+	const target = targets[0];
+	if (!target) throw new Error("missing symlink target fixture");
+	const redirected = join(fixture.root, "redirected-target.js");
+	copyFileSync(target.path, redirected);
+	rmSync(target.path);
+	symlinkSync(redirected, target.path);
+	const unchanged = targets.slice(1).map(({ path }) => readFileSync(path));
+
+	expect(() => reconcile(fixture)).toThrow("target must be a real file");
+	targets.slice(1).forEach(({ path }, index) => {
+		expect(readFileSync(path)).toEqual(unchanged[index]);
+	});
+	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(false);
 });
 
 it("snapshots the Hermes dependency tree only when isolated npm ci may replace it", () => {
