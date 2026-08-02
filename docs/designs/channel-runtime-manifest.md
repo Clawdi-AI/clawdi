@@ -94,7 +94,7 @@ channels:
           token_env: TELEGRAM_BOT_TOKEN
           projection: dotenv
         pair_code:
-          ttl_seconds: 900
+          ttl_seconds: 300
           command_env: TELEGRAM_PAIR_COMMAND
     commands:
       sync: true
@@ -111,7 +111,7 @@ channels:
           token_env: DISCORD_BOT_TOKEN
           projection: dotenv
         pair_code:
-          ttl_seconds: 900
+          ttl_seconds: 300
           command_env: DISCORD_PAIR_COMMAND
 
 outputs:

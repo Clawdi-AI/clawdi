@@ -11,14 +11,13 @@ export const CHANNEL_CARD_GRID_CLASS = cn(ENTITY_GRID_CLASS, "items-stretch xl:g
 /**
  * Shared visual shell for bot inventory and Agent channel cards. Provider
  * identity and responsive header layout live here; navigation, mutations, and
- * nested chat content remain composed by each surface.
+ * status metadata remain composed by each surface.
  */
 export function ChannelCard({
 	provider,
 	title,
 	state,
 	actions,
-	children,
 	className,
 	headerClassName,
 }: {
@@ -26,7 +25,6 @@ export function ChannelCard({
 	title: ReactNode;
 	state?: ReactNode | ReactNode[];
 	actions?: ReactNode;
-	children?: ReactNode;
 	className?: string;
 	headerClassName?: string;
 }) {
@@ -56,11 +54,6 @@ export function ChannelCard({
 					</div>
 				) : null}
 			</div>
-			{children ? (
-				<div data-channel-card-footer className="shrink-0 border-t">
-					{children}
-				</div>
-			) : null}
 		</article>
 	);
 }

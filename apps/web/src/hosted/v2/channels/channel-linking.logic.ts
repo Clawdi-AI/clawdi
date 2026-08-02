@@ -101,10 +101,6 @@ export function verifiedDiscordUserInstallUrl(value: string | null | undefined):
 	}
 }
 
-export function pairingActionLabel(provider: string): string {
-	return provider === "discord" ? "Pair Discord" : "Pair chat";
-}
-
 export function pairCodeExpired(expiresAt: string, nowMs: number): boolean {
 	const expiresAtMs = Date.parse(expiresAt);
 	return !Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs;

@@ -14,20 +14,18 @@ const agentChannels = source("../../agents/hosted-agent-detail.tsx");
 const pairedChatsDialog = source("./paired-chats-dialog.tsx");
 
 describe("shared Channel card", () => {
-	test("renders the hosted v2 Entity Card shell with aligned headers and composable content", () => {
+	test("renders the hosted v2 Entity Card shell with aligned headers", () => {
 		const markup = renderToStaticMarkup(
 			createElement(ChannelCard, {
 				provider: "telegram",
 				title: "Support Telegram",
 				actions: createElement("button", { type: "button" }, "Pair"),
-				children: createElement("p", null, "Paired chats · 2"),
 			}),
 		);
 
 		expect(markup).toContain('data-hosted="true"');
 		expect(markup).toContain('data-v2="true"');
 		expect(markup).toContain("data-channel-card-header");
-		expect(markup).toContain("data-channel-card-footer");
 		expect(markup).toContain("min-h-20");
 		expect(markup).toContain("data-channel-card-actions");
 		expect(markup).toContain("h-full");
@@ -35,14 +33,14 @@ describe("shared Channel card", () => {
 		expect(markup).toContain("content-center");
 		expect(markup).toContain(">Support Telegram<");
 		expect(markup).toContain(">Pair<");
-		expect(markup).toContain("Paired chats · 2");
+		expect(markup).not.toContain("data-channel-card-footer");
 
 		expect(card).toContain("ENTITY_CARD_BASE");
 		expect(card).toContain("ENTITY_GRID_CLASS");
 		expect(card).toContain('"items-stretch xl:grid-cols-2"');
 	});
 
-	test("keeps optional content out of Console-style inventory cards", () => {
+	test("keeps status filler out of Console-style inventory cards", () => {
 		const markup = renderToStaticMarkup(
 			createElement(ChannelCard, {
 				provider: "discord",
@@ -82,17 +80,24 @@ describe("shared Channel card", () => {
 		);
 		expect(consoleChannels).toContain('<HealthBadge key="health" health={health} />');
 		expect(consoleChannels).not.toContain("status={health}");
+		expect(agentChannels).not.toContain("HealthBadge");
+		expect(agentChannels).not.toContain("useChannelHealth");
+		expect(agentChannels).not.toContain("ChannelHealthItemResponse");
 	});
 
-	test("composes a real equal-height footer for every Agent channel card", () => {
-		expect(agentChannels).toContain("data-agent-channel-link-guidance");
-		expect(agentChannels).toContain("Link to start pairing chats");
-		expect(agentChannels).toContain("h-10 min-h-10 max-h-10");
+	test("keeps Agent channel cards equal-height without surface-specific footers", () => {
+		expect(agentChannels).not.toContain("data-agent-channel-link-guidance");
+		expect(agentChannels).not.toContain("Link to start pairing chats");
+		expect(agentChannels).toContain(
+			"type AgentChannelCardProps = ComponentProps<typeof ChannelCard>",
+		);
+		expect(card).not.toContain("children");
+		expect(card).not.toContain("data-channel-card-footer");
 		expect(agentChannels).toContain("h-[7.5rem] flex-none grid-rows-[2.75rem_2rem]");
 		expect(agentChannels).toContain("xl:h-20 xl:grid-rows-1");
 		expect(agentChannels).toContain('state={unavailableReason ?? "Available"}');
-		expect(agentChannels).toContain('isNormalChannelStatus(link.status) ? (\n\t\t\t"Linked"');
-		expect(agentChannels).not.toContain('key="paired"');
+		expect(agentChannels).toContain("pairedChatsControl");
+		expect(agentChannels).not.toContain('isNormalChannelStatus(link.status) ? (\n\t\t\t"Linked"');
 		expect(consoleChannels).not.toContain('state="Available"');
 		expect(consoleChannels).not.toContain('state="Linked"');
 	});
@@ -106,7 +111,10 @@ describe("shared Channel card", () => {
 		expect(pairedChatsDialog).toContain("useIsMobile()");
 		expect(pairedChatsDialog).toContain('side="bottom"');
 		expect(pairedChatsDialog).toContain("overflow-y-auto");
-		expect(pairedChatsDialog).toContain("h-10 min-h-10 max-h-10");
+		expect(pairedChatsDialog).toContain('size: "xs"');
+		expect(pairedChatsDialog).toContain("pairedChats.length === 1");
+		expect(pairedChatsDialog).toContain('"chat" : "chats"');
+		expect(pairedChatsDialog).toContain("aria-describedby");
 		expect(pairedChatsDialog).not.toContain("Show more");
 		expect(pairedChatsDialog).not.toContain("Show less");
 	});

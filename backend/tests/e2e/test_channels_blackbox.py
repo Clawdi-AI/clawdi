@@ -361,7 +361,7 @@ async def _pair_imessage(
         json={
             "data": {
                 "guid": f"imessage-pair-{run_id}",
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chats": [{"guid": chat_guid, "displayName": "E2E"}],
             }
         },
@@ -400,7 +400,7 @@ async def _pair_whatsapp(
                                     {
                                         "id": f"wamid-pair-{run_id}",
                                         "from": phone,
-                                        "text": {"body": f"/bot_pair {pair['code']}"},
+                                        "text": {"body": f"/clawdi_pair {pair['code']}"},
                                     }
                                 ]
                             }

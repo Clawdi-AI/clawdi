@@ -186,10 +186,8 @@ Pair flow:
 
 1. A user chooses an accessible channel account and one of their agents.
 2. Clawdi creates or reuses a `channel_bot_agent_links` row.
-3. Clawdi returns a one-time provider command. Discord uses
-   `/clawdi_pair <code>`; Telegram also uses `/clawdi_pair <code>` while
-   accepting legacy `/bot_pair <code>` input. WhatsApp and iMessage use
-   `/bot_pair <code>`.
+3. Clawdi returns the one-time `/clawdi_pair <code>` command. Telegram,
+   Discord, WhatsApp, and iMessage all use this canonical spelling.
 4. The user sends the code into the external chat.
 5. Provider ingress extracts:
    - external bot account from the webhook route,
@@ -210,6 +208,38 @@ Pair flow:
    idempotent bulk overwrite; the channel worker retries missing or stale
    fingerprints after transient failures and after the bot joins later.
 
+Pair-code security and rollout rules:
+
+- Newly issued codes contain 10 characters from an unambiguous 32-character
+  alphabet, for 50 bits of entropy, and have no display prefix. The default
+  TTL is 5 minutes; API callers may explicitly request 60 through 86,400
+  seconds. Changing the default does not shorten the stored expiry of a code
+  that was already issued.
+- The database stores only the SHA-256 code hash. The hash is globally unique,
+  while lookup also requires the channel account id; global uniqueness does
+  not make a code claimable through another bot. Each row targets one
+  caller-owned bot-agent link and user.
+- Generation retries a code-hash uniqueness collision at most five times using
+  the named database constraint without aborting the caller's transaction.
+- Provider ingress is authenticated before claim processing. Claim locks the
+  code row and the target chat identity. Exactly one concurrent claim can mark
+  the code claimed; later attempts return `already_used`. Invalid,
+  actor-forbidden, or already-paired attempts do not consume the code, so a
+  legitimate user can retry until its stored expiry. An expired code is always
+  rejected even if its row still has pending status.
+- There is no dedicated durable invalid-guess limiter. Ten characters are used
+  instead of eight for that reason: at an intentionally conservative 1,000
+  online guesses per second for the full 300-second default TTL, one pending
+  code on the account has an upper-bound success probability of about
+  `300,000 / 2^50 = 2.7e-10`. The same bound for an eight-character, 40-bit
+  code would be about `2.7e-7`. Risk scales linearly with simultaneously
+  pending codes on the same account.
+- The 10-character code fits Telegram's `/start` payload and every native
+  provider command parser. Previously issued `PAIR...` code values remain
+  claimable with the canonical command until their stored expiry, and their
+  Telegram `/start` payloads remain parseable. `/bot_pair` and `/bot_unpair`
+  are not accepted command aliases.
+
 The visible reply is not part of the database transaction that claims the pair
 code. If the provider send fails, the claimed binding remains valid and the
 webhook still succeeds. This prevents a transient provider outage from rolling
@@ -227,6 +257,20 @@ claimed. A direct-message pair requires interaction context `1` and
 `authorizing_integration_owners["1"]` equal to the invoking user. Context `2`
 (`PRIVATE_CHANNEL`), message-shaped payloads, and webhook-secret-only requests
 cannot claim pair codes.
+
+Discord binding display names are metadata only; routing and authority always
+use immutable provider ids. A newly paired Guild reuses the trusted name from
+the existing bot-authenticated membership response, without a second provider
+request. A newly paired DM uses the invoking actor's `global_name`, then
+`username`, from a Discord-signed interaction or trusted Gateway event after
+trimming blank values. Existing Guild bindings are lazily healed from trusted
+`GUILD_CREATE` events, and existing DM bindings from signed interactions or
+trusted Gateway actors that match the original pairing actor. Guild healing
+also normalizes legacy `guild_text` rows to `guild` while preserving
+`external_chat_id` as the Guild id. Listing bindings never makes per-row
+provider requests, webhook-secret-only payloads cannot update display
+metadata, and a blank or id-shaped candidate never overwrites a useful stored
+name.
 
 Normal unpair follows the same context and installation-owner checks; a Guild
 unpair with a valid owner also requires current Manage Server authority. If
@@ -253,9 +297,8 @@ intent while preserving the adapter's documented allow-everyone behavior.
 
 Unpair flow:
 
-1. The external actor sends the provider's unpair command. Discord uses
-   `/clawdi_unpair`; Telegram also uses `/clawdi_unpair` while accepting
-   legacy `/bot_unpair`. WhatsApp and iMessage use `/bot_unpair`.
+1. The external actor sends `/clawdi_unpair`. Telegram, Discord, WhatsApp, and
+   iMessage all use this canonical spelling.
 2. Provider ingress resolves the active binding for the chat.
 3. The backend verifies the command actor matches
    `ChannelBinding.paired_external_user_id`.

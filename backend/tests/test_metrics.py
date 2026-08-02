@@ -160,7 +160,7 @@ async def test_telegram_webhook_increments_inbound_metric(
             "message": {
                 "message_id": 1,
                 "chat": {"id": 42, "type": "private", "first_name": "Metrics"},
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
             },
         },
     )

@@ -108,7 +108,7 @@ async def test_imessage_channel_delete_invalidates_creds_and_allows_remint(
         json={
             "data": {
                 "guid": "imessage-remint-pair",
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chats": [{"guid": "iMessage;-;+15550009000", "displayName": "Ops"}],
             }
         },

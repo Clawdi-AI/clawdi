@@ -205,7 +205,7 @@ export function useCreatePairCode(
 			const result = unwrap(
 				await api.POST("/v1/channels/{account_id}/pair-codes", {
 					params: { path: { account_id: accountId } },
-					body: { ttl_seconds: vars.ttl_seconds ?? 900, ...vars },
+					body: { ttl_seconds: vars.ttl_seconds ?? 300, ...vars },
 				}),
 			);
 			qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) });

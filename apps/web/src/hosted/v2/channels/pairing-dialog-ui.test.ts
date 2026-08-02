@@ -7,7 +7,7 @@ describe("pairing dialog primitives", () => {
 	test("renders a semantic click-to-copy code control", () => {
 		const markup = renderToStaticMarkup(
 			createElement(CopyablePairingCode, {
-				value: "/clawdi_pair PAIRABC123",
+				value: "/clawdi_pair BCDFGHJKLM",
 				label: "Telegram pairing command",
 			}),
 		);
@@ -16,7 +16,7 @@ describe("pairing dialog primitives", () => {
 		expect(markup).toContain('aria-label="Copy Telegram pairing command"');
 		expect(markup).toContain('title="Copy Telegram pairing command"');
 		expect(markup).toContain("<code");
-		expect(markup).toContain("/clawdi_pair PAIRABC123");
+		expect(markup).toContain("/clawdi_pair BCDFGHJKLM");
 		expect(markup).toContain('aria-live="polite"');
 		expect(markup).toContain(">Copy<");
 	});

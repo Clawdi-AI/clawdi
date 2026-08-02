@@ -45,6 +45,7 @@ from app.models.channel import (
     DELIVERY_STATUS_PENDING,
     MESSAGE_DIRECTION_INBOUND,
     MESSAGE_DIRECTION_OUTBOUND,
+    PAIR_CODE_STATUS_CLAIMED,
     PAIR_CODE_STATUS_PENDING,
     PAIR_CODE_STATUS_REVOKED,
     ChannelAccount,
@@ -126,9 +127,7 @@ pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db
 TELEGRAM_AGENT_TOKEN_RE = re.compile(r"^[1-9][0-9]{8}:[A-Za-z0-9_-]{32,}$")
 DISCORD_TEST_APPLICATION_ID = "123456789012345678"
 DISCORD_TEST_PUBLIC_KEY = "11" * 32
-_REAL_DISCORD_BOT_GUILD_MEMBERSHIP_DENIED_REASON = (
-    channel_service.discord_bot_guild_membership_denied_reason
-)
+_REAL_DISCORD_BOT_GUILD_MEMBERSHIP_CHECK = channel_service.discord_bot_guild_membership_check
 
 
 def _discord_ready_config(
@@ -155,9 +154,9 @@ def _verified_discord_guild_membership(monkeypatch: pytest.MonkeyPatch) -> None:
         _account: ChannelAccount,
         *,
         guild_id: str,
-    ) -> str | None:
+    ) -> channel_service.DiscordGuildMembershipCheck:
         assert guild_id
-        return None
+        return channel_service.DiscordGuildMembershipCheck()
 
     async def configure_test_discord_application(account: ChannelAccount) -> dict[str, Any]:
         config = dict(account.config) if isinstance(account.config, dict) else {}
@@ -209,7 +208,7 @@ def _verified_discord_guild_membership(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(
         channel_service,
-        "discord_bot_guild_membership_denied_reason",
+        "discord_bot_guild_membership_check",
         verified_membership,
     )
     monkeypatch.setattr(
@@ -819,7 +818,7 @@ async def _create_paired_imessage_channel(
         json={
             "data": {
                 "guid": f"{webhook_message_guid}-pair",
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chats": [{"guid": chat_guid, "displayName": "Ops"}],
             }
         },
@@ -923,7 +922,7 @@ async def _pair_telegram_chat(
             "message": {
                 "message_id": update_id,
                 "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chat": {
                     "id": int(chat_id) if chat_id.lstrip("-").isdigit() else chat_id,
                     **({"type": chat_type} if chat_type is not None else {}),
@@ -2294,7 +2293,7 @@ async def test_one_bot_account_can_link_and_pair_chats_to_multiple_agents(
                 "update_id": update_id,
                 "message": {
                     "message_id": update_id,
-                    "text": f"/bot_pair {code}",
+                    "text": f"/clawdi_pair {code}",
                     "chat": {"id": chat_id, "type": "private"},
                     "from": {"id": chat_id},
                 },
@@ -2396,7 +2395,7 @@ async def test_historical_duplicate_managed_accounts_are_visible_but_fail_closed
         account_id=UUID(second.json()["id"]),
         bot_agent_link_id=second_link.id,
         user_id=user.id,
-        code_hash=hash_token("PAIRDUPLICATE01"),
+        code_hash=hash_token("X7V9Q2M4KC"),
         expires_at=datetime.now(UTC) + timedelta(minutes=15),
     )
     legacy_binding = ChannelBinding(
@@ -2437,7 +2436,7 @@ async def test_historical_duplicate_managed_accounts_are_visible_but_fail_closed
     claim = await channel_service.claim_pair_code(
         db_session,
         account=second_account,
-        raw_code="PAIRDUPLICATE01",
+        raw_code="X7V9Q2M4KC",
         external_chat_id="duplicate-account-chat",
         external_chat_type="private",
         external_chat_name="Second bot chat",
@@ -3972,7 +3971,7 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
             "update_id": 7001,
             "message": {
                 "message_id": 7001,
-                "text": f"/bot_pair {pair_body['code']}",
+                "text": f"/clawdi_pair {pair_body['code']}",
                 "chat": {"id": 99001, "type": "private", "first_name": "A"},
             },
         },
@@ -4289,7 +4288,7 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     paired_a = await client.post(
         f"/v1/channels/telegram/{account_id}/webhook",
         headers={"x-telegram-bot-api-secret-token": webhook_secret},
-        json=group_command(8101, f"/bot_pair {pair_a.json()['code']}", 1111),
+        json=group_command(8101, f"/clawdi_pair {pair_a.json()['code']}", 1111),
     )
     assert paired_a.status_code == 200
     assert paired_a.json()["paired"] is True
@@ -4309,7 +4308,7 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     bob_unpair = await client.post(
         f"/v1/channels/telegram/{account_id}/webhook",
         headers={"x-telegram-bot-api-secret-token": webhook_secret},
-        json=group_command(8102, "/bot_unpair", 2222),
+        json=group_command(8102, "/clawdi_unpair", 2222),
     )
     assert bob_unpair.status_code == 200
     assert bob_unpair.json()["unpaired"] is False
@@ -4334,7 +4333,7 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     bob_takeover = await client.post(
         f"/v1/channels/telegram/{account_id}/webhook",
         headers={"x-telegram-bot-api-secret-token": webhook_secret},
-        json=group_command(8103, f"/bot_pair {pair_b.json()['code']}", 2222),
+        json=group_command(8103, f"/clawdi_pair {pair_b.json()['code']}", 2222),
     )
     assert bob_takeover.status_code == 200
     assert bob_takeover.json()["paired"] is False
@@ -4368,7 +4367,7 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     alice_unpair = await client.post(
         f"/v1/channels/telegram/{account_id}/webhook",
         headers={"x-telegram-bot-api-secret-token": webhook_secret},
-        json=group_command(8104, "/bot_unpair", 1111),
+        json=group_command(8104, "/clawdi_unpair", 1111),
     )
     assert alice_unpair.status_code == 200
     assert alice_unpair.json()["unpaired"] is True
@@ -4392,12 +4391,12 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
                 concurrent.post(
                     f"/v1/channels/telegram/{account_id}/webhook",
                     headers={"x-telegram-bot-api-secret-token": webhook_secret},
-                    json=group_command(8105, f"/bot_pair {pair_a_again.json()['code']}", 1111),
+                    json=group_command(8105, f"/clawdi_pair {pair_a_again.json()['code']}", 1111),
                 ),
                 concurrent.post(
                     f"/v1/channels/telegram/{account_id}/webhook",
                     headers={"x-telegram-bot-api-secret-token": webhook_secret},
-                    json=group_command(8106, f"/bot_pair {pair_b.json()['code']}", 2222),
+                    json=group_command(8106, f"/clawdi_pair {pair_b.json()['code']}", 2222),
                 ),
             )
     finally:
@@ -4461,7 +4460,7 @@ async def test_group_pairing_requires_external_actor(
             "update_id": 8201,
             "message": {
                 "message_id": 8201,
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chat": {"id": -99003, "type": "supergroup", "title": "Ops"},
             },
         },
@@ -4512,7 +4511,7 @@ async def test_pair_code_binding_race_returns_controlled_failure(
         json={
             "message": {
                 "message_id": 1,
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chat": {"id": 123456, "type": "private"},
             }
         },
@@ -4554,7 +4553,7 @@ async def test_telegram_bot_api_get_updates_reads_paired_inbox(client: httpx.Asy
             "update_id": 1,
             "message": {
                 "message_id": 1,
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chat": {"id": 222, "type": "private"},
             },
         },
@@ -4709,8 +4708,8 @@ async def test_telegram_repair_moves_chat_to_new_agent_link(
             },
         )
 
-    default_claim = await post_update(101, f"/bot_pair {default_pair['code']}")
-    workspace_claim = await post_update(102, f"/bot_pair {workspace_pair['code']}")
+    default_claim = await post_update(101, f"/clawdi_pair {default_pair['code']}")
+    workspace_claim = await post_update(102, f"/clawdi_pair {workspace_pair['code']}")
     inbound = await post_update(103, "shared chat update")
     assert default_claim.status_code == 200
     assert default_claim.json()["paired"] is True
@@ -4802,8 +4801,10 @@ async def _paired_telegram_shared_chat(
             },
         )
 
-    assert (await post_update(201, f"/bot_pair {default_pair['code']}")).json()["paired"] is True
-    assert (await post_update(202, f"/bot_pair {workspace_pair['code']}")).json()["paired"] is True
+    assert (await post_update(201, f"/clawdi_pair {default_pair['code']}")).json()["paired"] is True
+    assert (await post_update(202, f"/clawdi_pair {workspace_pair['code']}")).json()[
+        "paired"
+    ] is True
     return created, workspace_pair, "888"
 
 
@@ -4826,7 +4827,7 @@ async def test_telegram_unpair_archives_current_chat_route(
             "update_id": 203,
             "message": {
                 "message_id": 203,
-                "text": "/bot_unpair",
+                "text": "/clawdi_unpair",
                 "chat": {"id": int(chat_id), "type": "private"},
             },
         },
@@ -4910,7 +4911,7 @@ async def test_telegram_same_provider_multiple_bots_are_account_scoped(
                 "update_id": update_id,
                 "message": {
                     "message_id": update_id,
-                    "text": f"/bot_pair {pair['code']}",
+                    "text": f"/clawdi_pair {pair['code']}",
                     "chat": {"id": 888, "type": "private"},
                 },
             },
@@ -5522,7 +5523,7 @@ async def test_telegram_bot_api_chat_capabilities_are_agent_link_scoped(
             "message": {
                 "message_id": 2,
                 "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
-                "text": f"/bot_pair {second_pair['code']}",
+                "text": f"/clawdi_pair {second_pair['code']}",
                 "chat": {"id": 222, "type": "private"},
             },
         },
@@ -6316,7 +6317,7 @@ async def test_telegram_chat_menu_button_is_scoped_and_replayed_per_link(
             "message": {
                 "message_id": 2,
                 "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
-                "text": f"/bot_pair {second_pair['code']}",
+                "text": f"/clawdi_pair {second_pair['code']}",
                 "chat": {"id": 777, "type": "private"},
             },
         },
@@ -6349,7 +6350,7 @@ async def test_telegram_chat_menu_button_is_scoped_and_replayed_per_link(
             "message": {
                 "message_id": 3,
                 "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
-                "text": "/bot_unpair",
+                "text": "/clawdi_unpair",
                 "chat": {"id": 777, "type": "private"},
             },
         },
@@ -6719,7 +6720,7 @@ async def test_telegram_pairing_replays_stored_broad_scope_commands(
             "update_id": 51,
             "message": {
                 "message_id": 51,
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chat": {"id": 777, "type": "private"},
                 "from": {"id": 777, "is_bot": False},
             },
@@ -6828,7 +6829,7 @@ async def test_telegram_repair_and_unpair_clear_previous_link_commands(
             "message": {
                 "message_id": 2,
                 "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
-                "text": f"/bot_pair {second_pair['code']}",
+                "text": f"/clawdi_pair {second_pair['code']}",
                 "chat": {"id": 777, "type": "private"},
             },
         },
@@ -6874,7 +6875,7 @@ async def test_telegram_repair_and_unpair_clear_previous_link_commands(
             "message": {
                 "message_id": 3,
                 "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
-                "text": "/bot_unpair",
+                "text": "/clawdi_unpair",
                 "chat": {"id": 777, "type": "private"},
             },
         },
@@ -10622,7 +10623,7 @@ async def test_whatsapp_graph_agent_send_uses_agent_token_and_binding(
                                     {
                                         "id": "wamid.agent.pair",
                                         "from": "15550002222",
-                                        "text": {"body": f"/bot_pair {pair['code']}"},
+                                        "text": {"body": f"/clawdi_pair {pair['code']}"},
                                     }
                                 ],
                             }
@@ -10687,7 +10688,7 @@ async def test_bluebubbles_agent_send_uses_agent_token_and_binding(
         json={
             "data": {
                 "guid": "imsg-pair",
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chats": [{"guid": "iMessage;-;+15550001111"}],
             }
         },
@@ -10743,7 +10744,7 @@ async def test_bluebubbles_agent_send_resolves_any_service_binding(
         json={
             "data": {
                 "guid": "imsg-any-pair",
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chats": [{"guid": "any;-;+15550001112"}],
             }
         },
@@ -11308,7 +11309,7 @@ async def test_bluebubbles_query_routes_are_binding_scoped(client: httpx.AsyncCl
         json={
             "data": {
                 "guid": "imsg-query-pair",
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chats": [{"guid": "iMessage;-;+15550003333", "displayName": "Ops"}],
             }
         },
@@ -11710,7 +11711,7 @@ async def test_telegram_webhook_pair_code_creates_binding(client: httpx.AsyncCli
                 "message_id": 42,
                 "message_thread_id": 321,
                 "is_topic_message": True,
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chat": {
                     "id": 987654321,
                     "type": "private",
@@ -11833,7 +11834,7 @@ async def test_telegram_pairing_threads_share_one_chat_binding(client: httpx.Asy
                 "message": {
                     "message_id": update_id,
                     "message_thread_id": thread_id,
-                    "text": f"/bot_pair {pair['code']}",
+                    "text": f"/clawdi_pair {pair['code']}",
                     "chat": {"id": 987654321, "type": "private"},
                     "from": {"id": 987654321, "is_bot": False},
                 },
@@ -12083,7 +12084,7 @@ async def test_telegram_webhook_pair_code_sends_user_reply(
                 "message_id": 42,
                 "message_thread_id": 321,
                 "is_topic_message": True,
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chat": {"id": 987654321, "type": "private", "username": "paco"},
                 "from": {"id": 987654321, "is_bot": False, "username": "paco"},
             },
@@ -12127,7 +12128,7 @@ async def test_telegram_webhook_pair_command_sends_failure_replies(
                 "message_id": 43,
                 "message_thread_id": 322,
                 "is_topic_message": True,
-                "text": "/bot_pair",
+                "text": "/clawdi_pair",
                 "chat": {
                     "id": 987654322,
                     "type": "supergroup",
@@ -12146,7 +12147,7 @@ async def test_telegram_webhook_pair_command_sends_failure_replies(
                 "message_id": 44,
                 "message_thread_id": 999,
                 "is_topic_message": False,
-                "text": "/bot_pair PAIRDOESNOTEXIST",
+                "text": "/clawdi_pair BCDFGHJKLM",
                 "chat": {"id": 987654322, "type": "private"},
                 "from": {"id": 987654322, "is_bot": False},
             },
@@ -12201,7 +12202,7 @@ async def test_telegram_webhook_unpair_sends_user_reply(
                 "message_id": 45,
                 "message_thread_id": 323,
                 "is_topic_message": True,
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chat": {"id": 987654323, "type": "private"},
                 "from": {"id": 987654323, "is_bot": False},
             },
@@ -12216,7 +12217,7 @@ async def test_telegram_webhook_unpair_sends_user_reply(
                 "message_id": 46,
                 "message_thread_id": 324,
                 "is_topic_message": True,
-                "text": "/bot_unpair",
+                "text": "/clawdi_unpair",
                 "chat": {"id": 987654323, "type": "private"},
                 "from": {"id": 987654323, "is_bot": False},
             },
@@ -12292,7 +12293,7 @@ async def test_telegram_channel_direct_message_pairing_replies_stay_in_originati
                 "message_id": 48,
                 "direct_messages_topic": {"topic_id": 4242},
                 "is_topic_message": True,
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chat": chat,
                 "from": {"id": 4242, "is_bot": False},
             },
@@ -12447,7 +12448,7 @@ async def test_telegram_channel_direct_message_pairing_replies_stay_in_originati
                 "message_id": 51,
                 "direct_messages_topic": {"topic_id": 4242},
                 "is_topic_message": True,
-                "text": "/bot_unpair",
+                "text": "/clawdi_unpair",
                 "chat": chat,
                 "from": {"id": 4242, "is_bot": False},
             },
@@ -12578,7 +12579,7 @@ async def test_telegram_webhook_unpair_redelivery_does_not_duplicate_reply(
         "update_id": 7003,
         "message": {
             "message_id": 47,
-            "text": "/bot_unpair",
+            "text": "/clawdi_unpair",
             "chat": {"id": 987654325, "type": "private"},
             "from": {"id": 4242, "is_bot": False},
         },
@@ -12640,7 +12641,7 @@ async def test_telegram_update_dedupe_is_account_scoped_across_repair(
         "update_id": 7201,
         "message": {
             "message_id": 201,
-            "text": f"/bot_pair {first_pair['code']}",
+            "text": f"/clawdi_pair {first_pair['code']}",
             "chat": chat,
             "from": actor,
         },
@@ -12656,7 +12657,7 @@ async def test_telegram_update_dedupe_is_account_scoped_across_repair(
                 "update_id": 7202,
                 "message": {
                     "message_id": 202,
-                    "text": "/bot_unpair",
+                    "text": "/clawdi_unpair",
                     "chat": chat,
                     "from": actor,
                 },
@@ -12678,7 +12679,7 @@ async def test_telegram_update_dedupe_is_account_scoped_across_repair(
                 "update_id": 7203,
                 "message": {
                     "message_id": 203,
-                    "text": f"/bot_pair {second_pair['code']}",
+                    "text": f"/clawdi_pair {second_pair['code']}",
                     "chat": chat,
                     "from": actor,
                 },
@@ -12891,7 +12892,7 @@ async def test_telegram_webhook_pair_reply_failure_does_not_roll_back_binding(
             "update_id": 1,
             "message": {
                 "message_id": 47,
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chat": {"id": 987654324, "type": "private"},
                 "from": {"id": 987654324, "is_bot": False},
             },
@@ -13093,41 +13094,239 @@ async def test_telegram_webhook_rejects_invalid_secret(client: httpx.AsyncClient
     assert response.status_code == 401
 
 
-def test_parse_pair_command_matches_strict_bot_shapes():
+def test_parse_pair_command_matches_strict_canonical_shapes():
     assert parse_pair_command("/clawdi_pair ABCDEF1234").code == "ABCDEF1234"
     assert parse_pair_command("/clawdi_pair@shared_bot ABC123").code == "ABC123"
     assert parse_pair_command("/clawdi_pair ABC123 thanks").code == ""
+    assert parse_pair_command("/clawdi_pair ABC123\n•").code == ""
+    assert parse_pair_command("/clawdi_pair").code == ""
     assert parse_pair_command("/clawdi_unpair").kind == "unpair"
     assert parse_pair_command("/clawdi_unpair@shared_bot").kind == "unpair"
     assert parse_pair_command("/clawdi_unpair now").kind == "unknown"
-    assert parse_pair_command("/bot_pair ABCDEF1234") is not None
-    assert parse_pair_command("/bot_pair ABCDEF1234").code == "ABCDEF1234"
-    assert parse_pair_command("/bot_pair@shared_bot ABC123").code == "ABC123"
-    assert parse_pair_command("/bot_pair ABC123 thanks").code == ""
-    assert parse_pair_command("/bot_pair ABC123\n•").code == ""
-    assert parse_pair_command("/bot_pair").code == ""
+    assert parse_pair_command("/start BCDFGHJKLM").code == "BCDFGHJKLM"
+    assert parse_pair_command("/start@shared_bot BCDFGHJKLM").code == "BCDFGHJKLM"
+    # Pending codes issued before the shorter-code rollout remain claimable
+    # through Telegram deep links until their stored expiry.
     assert parse_pair_command("/start PAIRABCDEF1234").code == "PAIRABCDEF1234"
-    assert parse_pair_command("/start@shared_bot PAIRABCDEF1234").code == "PAIRABCDEF1234"
     assert parse_pair_command("/start PAIRABCDEF1234 thanks") is None
     assert parse_pair_command("/start OLD_PAIR_CODE") is None
     assert parse_pair_command("/start") is None
-    assert parse_pair_command("/bot_unpair").kind == "unpair"
-    assert parse_pair_command("/bot_unpair@shared_bot").kind == "unpair"
-    assert parse_pair_command("/bot_unpair now").kind == "unknown"
     assert parse_pair_command("hello world") is None
-    unknown = parse_pair_command("/bot_foo bar")
+
+    unknown = parse_pair_command("/clawdi_foo bar")
     assert unknown is not None
     assert unknown.kind == "unknown"
-    assert unknown.command == "/bot_foo"
+    assert unknown.command == "/clawdi_foo"
 
 
-def test_generate_pair_code_uses_unambiguous_80_bit_shape_and_varies():
+@pytest.mark.parametrize(
+    "text",
+    [
+        "/bot_pair BCDFGHJKLM",
+        "/bot_pair@shared_bot BCDFGHJKLM",
+        "/bot_unpair",
+        "/bot_unpair@shared_bot",
+    ],
+)
+def test_parse_pair_command_rejects_legacy_aliases(text: str):
+    assert parse_pair_command(text) is None
+
+
+def test_generate_pair_code_uses_unambiguous_50_bit_shape_and_varies():
     codes = {generate_pair_code() for _ in range(32)}
 
-    assert len(codes) > 1
-    assert all(len(code) == 20 for code in codes)
-    assert all(code.startswith("PAIR") for code in codes)
-    assert all(set(code[4:]) <= set("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for code in codes)
+    assert len(codes) == 32
+    assert all(len(code) == 10 for code in codes)
+    assert all(set(code) <= set("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for code in codes)
+
+
+@pytest.mark.asyncio
+async def test_pair_code_defaults_to_five_minutes_and_expires_without_claim(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={"provider": "telegram", "name": "pair-code-five-minute-default"},
+        )
+    ).json()
+    requested_at = datetime.now(UTC)
+
+    pair_response = await client.post(f"/v1/channels/{created['id']}/pair-codes", json={})
+
+    assert pair_response.status_code == 201, pair_response.text
+    pair = pair_response.json()
+    expires_at = datetime.fromisoformat(pair["expires_at"])
+    assert timedelta(seconds=295) <= expires_at - requested_at <= timedelta(seconds=305)
+    pair_row = await db_session.get(ChannelPairCode, UUID(pair["id"]))
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert pair_row is not None
+    assert account is not None
+    pair_row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    await db_session.commit()
+
+    claim = await channel_service.claim_pair_code(
+        db_session,
+        account=account,
+        raw_code=pair["code"],
+        external_chat_id="expired-pair-code-chat",
+        external_chat_type="private",
+        external_chat_name="Expired",
+        external_user_id="expired-pair-code-user",
+    )
+
+    assert claim.binding is None
+    assert claim.reason == "expired"
+    await db_session.refresh(pair_row)
+    assert pair_row.status == PAIR_CODE_STATUS_PENDING
+
+
+@pytest.mark.asyncio
+async def test_pair_code_generation_retries_hash_collision_without_aborting_request(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={"provider": "telegram", "name": "pair-code-hash-collision"},
+        )
+    ).json()
+    link = await db_session.get(ChannelBotAgentLink, UUID(created["agent_link_id"]))
+    assert link is not None
+    colliding_code = "BCDFGHJKLM"
+    replacement_code = "NPQRSTVWXY"
+    db_session.add(
+        ChannelPairCode(
+            account_id=UUID(created["id"]),
+            bot_agent_link_id=link.id,
+            user_id=link.user_id,
+            code_hash=hash_token(colliding_code),
+            expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        )
+    )
+    await db_session.commit()
+    generated_codes = iter((colliding_code, replacement_code))
+    monkeypatch.setattr(channel_service, "generate_pair_code", lambda: next(generated_codes))
+
+    response = await client.post(f"/v1/channels/{created['id']}/pair-codes", json={})
+
+    assert response.status_code == 201, response.text
+    assert response.json()["code"] == replacement_code
+    stored_hashes = set(
+        (
+            await db_session.execute(
+                select(ChannelPairCode.code_hash).where(
+                    ChannelPairCode.account_id == UUID(created["id"])
+                )
+            )
+        ).scalars()
+    )
+    assert stored_hashes == {hash_token(colliding_code), hash_token(replacement_code)}
+
+
+@pytest.mark.asyncio
+async def test_pair_code_generation_stops_after_bounded_hash_collisions(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={"provider": "telegram", "name": "pair-code-bounded-collision"},
+        )
+    ).json()
+    link = await db_session.get(ChannelBotAgentLink, UUID(created["agent_link_id"]))
+    assert link is not None
+    colliding_code = "BCDFGHJKLM"
+    db_session.add(
+        ChannelPairCode(
+            account_id=UUID(created["id"]),
+            bot_agent_link_id=link.id,
+            user_id=link.user_id,
+            code_hash=hash_token(colliding_code),
+            expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        )
+    )
+    await db_session.commit()
+    generation_count = 0
+
+    def colliding_generator() -> str:
+        nonlocal generation_count
+        generation_count += 1
+        return colliding_code
+
+    monkeypatch.setattr(channel_service, "generate_pair_code", colliding_generator)
+
+    response = await client.post(f"/v1/channels/{created['id']}/pair-codes", json={})
+
+    assert response.status_code == 500, response.text
+    assert response.json()["detail"] == "could not allocate a unique pair code"
+    assert generation_count == channel_service.PAIR_CODE_GENERATION_ATTEMPTS
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(ChannelPairCode)
+            .where(ChannelPairCode.account_id == UUID(created["id"]))
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_pair_code_concurrent_claim_is_single_use(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={"provider": "telegram", "name": "pair-code-concurrent-single-use"},
+        )
+    ).json()
+    pair = (await client.post(f"/v1/channels/{created['id']}/pair-codes", json={})).json()
+    account_id = UUID(created["id"])
+    session_factory = async_sessionmaker(db_session.bind, expire_on_commit=False)
+
+    async def claim(chat_id: str) -> channel_service.PairCodeClaimResult:
+        async with session_factory() as claim_db:
+            account = await claim_db.get(ChannelAccount, account_id)
+            assert account is not None
+            result = await channel_service.claim_pair_code(
+                claim_db,
+                account=account,
+                raw_code=pair["code"],
+                external_chat_id=chat_id,
+                external_chat_type="private",
+                external_chat_name=chat_id,
+                external_user_id=f"user-{chat_id}",
+            )
+            await claim_db.commit()
+            return result
+
+    first, second = await asyncio.gather(claim("single-use-a"), claim("single-use-b"))
+
+    assert sorted(result.reason or "claimed" for result in (first, second)) == [
+        "already_used",
+        "claimed",
+    ]
+    bindings = list(
+        (
+            await db_session.execute(
+                select(ChannelBinding)
+                .where(ChannelBinding.account_id == account_id)
+                .execution_options(populate_existing=True)
+            )
+        ).scalars()
+    )
+    assert len(bindings) == 1
+    pair_row = await db_session.get(ChannelPairCode, UUID(pair["id"]), populate_existing=True)
+    assert pair_row is not None
+    assert pair_row.status == PAIR_CODE_STATUS_CLAIMED
+    assert pair_row.claimed_external_chat_id == bindings[0].external_chat_id
 
 
 @pytest.mark.parametrize(
@@ -13146,14 +13345,14 @@ def test_discord_interaction_parser_accepts_current_reserved_commands(
             "type": 2,
             "data": {
                 "name": name,
-                "options": [{"name": "code", "value": "PAIRCURRENT123"}],
+                "options": [{"name": "code", "value": "BCDFGHJKLM"}],
             },
         }
     )
 
     assert command is not None
     assert command.kind == expected_kind
-    assert command.code == ("PAIRCURRENT123" if expected_kind == "pair" else None)
+    assert command.code == ("BCDFGHJKLM" if expected_kind == "pair" else None)
 
 
 @pytest.mark.parametrize("name", ["bot_pair", "bot_unpair", "pair", "unpair"])
@@ -13164,7 +13363,7 @@ def test_discord_interaction_parser_rejects_legacy_and_generic_commands(name: st
                 "type": 2,
                 "data": {
                     "name": name,
-                    "options": [{"name": "code", "value": "PAIRLEGACY123"}],
+                    "options": [{"name": "code", "value": "BCDFGHJKLM"}],
                 },
             }
         )
@@ -13172,20 +13371,18 @@ def test_discord_interaction_parser_rejects_legacy_and_generic_commands(name: st
     )
 
 
-@pytest.mark.parametrize("content", ["/bot_pair PAIRLEGACY123", "/bot_unpair"])
+@pytest.mark.parametrize("content", ["/bot_pair BCDFGHJKLM", "/bot_unpair"])
 def test_discord_message_parser_rejects_legacy_text_commands(content: str):
     assert discord_pair_command_from_payload({"d": {"content": content}}) is None
 
 
 def test_discord_message_parser_requires_slash_for_current_commands():
-    current = discord_pair_command_from_payload({"d": {"content": "/clawdi_pair PAIRCURRENT123"}})
+    current = discord_pair_command_from_payload({"d": {"content": "/clawdi_pair BCDFGHJKLM"}})
 
     assert current is not None
     assert current.kind == "pair"
-    assert current.code == "PAIRCURRENT123"
-    assert (
-        discord_pair_command_from_payload({"d": {"content": "clawdi_pair PAIRCURRENT123"}}) is None
-    )
+    assert current.code == "BCDFGHJKLM"
+    assert discord_pair_command_from_payload({"d": {"content": "clawdi_pair BCDFGHJKLM"}}) is None
     assert discord_pair_command_from_payload({"d": {"content": "clawdi_unpair"}}) is None
 
 
@@ -14024,7 +14221,7 @@ async def test_telegram_webhook_unpair_archives_and_allows_repair(client: httpx.
         json={
             "message": {
                 "message_id": 1,
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chat": {"id": 123456, "type": "private"},
             }
         },
@@ -14038,7 +14235,7 @@ async def test_telegram_webhook_unpair_archives_and_allows_repair(client: httpx.
         json={
             "message": {
                 "message_id": 2,
-                "text": "/bot_unpair@shared_bot",
+                "text": "/clawdi_unpair@shared_bot",
                 "chat": {"id": 123456, "type": "private"},
             }
         },
@@ -14062,7 +14259,7 @@ async def test_telegram_webhook_unpair_archives_and_allows_repair(client: httpx.
         json={
             "message": {
                 "message_id": 3,
-                "text": f"/bot_pair {pair_again['code']}",
+                "text": f"/clawdi_pair {pair_again['code']}",
                 "chat": {"id": 123456, "type": "private"},
             }
         },
@@ -14102,7 +14299,7 @@ async def test_telegram_pairing_same_agent_is_idempotent_and_consumes_code(
         json={
             "message": {
                 "message_id": 1,
-                "text": f"/bot_pair {first['code']}",
+                "text": f"/clawdi_pair {first['code']}",
                 "chat": {"id": 111, "type": "private"},
             }
         },
@@ -14113,7 +14310,7 @@ async def test_telegram_pairing_same_agent_is_idempotent_and_consumes_code(
         json={
             "message": {
                 "message_id": 2,
-                "text": f"/bot_pair {second['code']}",
+                "text": f"/clawdi_pair {second['code']}",
                 "chat": {"id": 111, "type": "private"},
             }
         },
@@ -14124,7 +14321,7 @@ async def test_telegram_pairing_same_agent_is_idempotent_and_consumes_code(
         json={
             "message": {
                 "message_id": 3,
-                "text": "/bot_unpair",
+                "text": "/clawdi_unpair",
                 "chat": {"id": 111, "type": "private"},
             }
         },
@@ -14135,7 +14332,7 @@ async def test_telegram_pairing_same_agent_is_idempotent_and_consumes_code(
         json={
             "message": {
                 "message_id": 4,
-                "text": f"/bot_pair {second['code']}",
+                "text": f"/clawdi_pair {second['code']}",
                 "chat": {"id": 111, "type": "private"},
             }
         },
@@ -15774,7 +15971,7 @@ async def test_imessage_webhook_pair_code_creates_binding(client: httpx.AsyncCli
             "type": "new-message",
             "data": {
                 "guid": "imsg-1",
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chats": [{"guid": "iMessage;-;+15551234567", "displayName": "Ops"}],
             },
         },
@@ -15819,7 +16016,7 @@ async def test_imessage_webhook_pair_code_sends_user_reply(
             "type": "new-message",
             "data": {
                 "guid": "imsg-1",
-                "text": f"/bot_pair {pair['code']}",
+                "text": f"/clawdi_pair {pair['code']}",
                 "chats": [{"guid": "iMessage;-;+15551234567", "displayName": "Ops"}],
             },
         },
@@ -15889,7 +16086,7 @@ async def test_whatsapp_webhook_pair_code_creates_binding(
                                     {
                                         "id": "wamid.1",
                                         "from": "15551234567",
-                                        "text": {"body": f"/bot_pair {pair['code']}"},
+                                        "text": {"body": f"/clawdi_pair {pair['code']}"},
                                     }
                                 ],
                             }
@@ -15948,7 +16145,7 @@ async def test_whatsapp_webhook_pair_code_sends_user_reply(
                                     {
                                         "id": "wamid.1",
                                         "from": "15551234567",
-                                        "text": {"body": f"/bot_pair {pair['code']}"},
+                                        "text": {"body": f"/clawdi_pair {pair['code']}"},
                                     }
                                 ],
                             }
@@ -16041,7 +16238,7 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
             "update_id": 401,
             "message": {
                 "message_id": 401,
-                "text": f"/bot_pair {pair_codes['telegram']}",
+                "text": f"/clawdi_pair {pair_codes['telegram']}",
                 "chat": {"id": shared_chat_id, "type": "private"},
             },
         },
@@ -16072,7 +16269,7 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
         json={
             "data": {
                 "guid": "imessage-shared-msg",
-                "text": f"/bot_pair {pair_codes['imessage']}",
+                "text": f"/clawdi_pair {pair_codes['imessage']}",
                 "handle": {"address": "shared-imessage-sender"},
                 "chats": [{"guid": shared_chat_id, "displayName": "Shared Chat"}],
             }
@@ -16092,7 +16289,7 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
                                     {
                                         "id": "wamid.shared",
                                         "from": shared_chat_id,
-                                        "text": {"body": f"/bot_pair {pair_codes['whatsapp']}"},
+                                        "text": {"body": f"/clawdi_pair {pair_codes['whatsapp']}"},
                                     }
                                 ],
                             }
@@ -16153,7 +16350,7 @@ async def test_whatsapp_webhook_accepts_meta_hmac_signature(
                                     {
                                         "id": "wamid.hmac",
                                         "from": "15551239999",
-                                        "text": {"body": f"/bot_pair {pair['code']}"},
+                                        "text": {"body": f"/clawdi_pair {pair['code']}"},
                                     }
                                 ],
                             }
@@ -16236,7 +16433,7 @@ async def test_whatsapp_webhook_skips_from_me_messages(
                     "remoteJid": "15551112222@s.whatsapp.net",
                     "fromMe": True,
                 },
-                "message": {"conversation": f"/bot_pair {pair['code']}"},
+                "message": {"conversation": f"/clawdi_pair {pair['code']}"},
             }
         },
     )
@@ -16311,7 +16508,7 @@ async def test_whatsapp_webhook_pairs_from_common_baileys_wrappers(
             json={
                 "message": {
                     "key": {"id": f"PAIR-{label}", "remoteJid": jid, "fromMe": False},
-                    "message": wrapped_message(f"/bot_pair {pair['code']}"),
+                    "message": wrapped_message(f"/clawdi_pair {pair['code']}"),
                 }
             },
         )
@@ -16352,7 +16549,7 @@ async def test_send_channel_message_uses_binding(client: httpx.AsyncClient):
             json={
                 "message": {
                     "message_id": 42,
-                    "text": f"/bot_pair {pair['code']}",
+                    "text": f"/clawdi_pair {pair['code']}",
                     "chat": {"id": 111, "type": "private"},
                 }
             },
@@ -18202,7 +18399,7 @@ def test_discord_pair_install_contract_requires_matching_context_and_owner(
     external_user_id: str,
     expected: str | None,
 ) -> None:
-    command = channel_service.ChannelPairCommand(kind="pair", code="PAIRCODE")
+    command = channel_service.ChannelPairCommand(kind="pair", code="BCDFGHJKLM")
 
     assert (
         channel_service.discord_pair_install_denied_reason(
@@ -18255,8 +18452,13 @@ async def test_discord_secret_only_interaction_cannot_claim_pair_code(
             "authorizing_integration_owners": {"0": "forged-secret-only-guild"},
             "member": {
                 "permissions": "32",
-                "user": {"id": "forged-secret-only-user"},
+                "user": {
+                    "id": "forged-secret-only-user",
+                    "global_name": "Forged display name",
+                    "username": "forged-display-name",
+                },
             },
+            "channel": {"id": "forged-secret-only-channel", "name": "Forged channel"},
             "data": {
                 "name": "clawdi_pair",
                 "options": [{"name": "code", "value": pair["code"]}],
@@ -18272,6 +18474,331 @@ async def test_discord_secret_only_interaction_cannot_claim_pair_code(
     assert pair_code is not None
     assert pair_code.status == PAIR_CODE_STATUS_PENDING
     assert (await client.get(f"/v1/channels/{created['id']}/bindings")).json() == []
+
+
+@pytest.mark.asyncio
+async def test_discord_signed_guild_pair_persists_provider_name_and_routes_by_id(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    guild_id = "named-guild-id"
+    guild_name = "Clawdi Community"
+
+    async def named_membership(
+        _account: ChannelAccount,
+        *,
+        guild_id: str,
+    ) -> channel_service.DiscordGuildMembershipCheck:
+        assert guild_id == "named-guild-id"
+        return channel_service.DiscordGuildMembershipCheck(guild_name=guild_name)
+
+    monkeypatch.setattr(
+        channel_service,
+        "discord_bot_guild_membership_check",
+        named_membership,
+    )
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-named-guild",
+                "provider_token": "discord-provider-token",
+                "config": _discord_ready_config(),
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 300},
+        )
+    ).json()
+
+    response = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "type": 2,
+            "id": "named-guild-interaction",
+            "token": "named-guild-token",
+            "application_id": DISCORD_TEST_APPLICATION_ID,
+            "channel_id": "named-guild-channel",
+            "guild_id": guild_id,
+            "context": 0,
+            "authorizing_integration_owners": {"0": guild_id},
+            "member": {
+                "permissions": "32",
+                "user": {"id": "named-guild-admin"},
+            },
+            "data": {
+                "name": "clawdi_pair",
+                "options": [{"name": "code", "value": pair["code"]}],
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    bindings = (await client.get(f"/v1/channels/{created['id']}/bindings")).json()
+    assert len(bindings) == 1
+    assert bindings[0]["external_chat_id"] == guild_id
+    assert bindings[0]["external_chat_type"] == "guild"
+    assert bindings[0]["external_chat_name"] == guild_name
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    binding = await db_session.get(ChannelBinding, UUID(bindings[0]["id"]))
+    assert account is not None
+    assert binding is not None
+    assert await _discord_bound_guilds(db_session, account=account) == [guild_id]
+    assert shared_router._discord_binding_guild_id(binding) == guild_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user", "expected_name"),
+    [
+        (
+            {
+                "id": "named-dm-user",
+                "global_name": "Paco Display",
+                "username": "paco_username",
+            },
+            "Paco Display",
+        ),
+        (
+            {"id": "named-dm-user", "global_name": None, "username": "paco_username"},
+            "paco_username",
+        ),
+        (
+            {"id": "named-dm-user", "global_name": "   ", "username": "paco_username"},
+            "paco_username",
+        ),
+    ],
+)
+async def test_discord_signed_dm_pair_persists_invoking_user_name(
+    client: httpx.AsyncClient,
+    user: dict[str, Any],
+    expected_name: str,
+) -> None:
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": f"discord-named-dm-{expected_name}",
+                "provider_token": "discord-provider-token",
+                "config": _discord_ready_config(),
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 300},
+        )
+    ).json()
+
+    response = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "type": 2,
+            "id": f"named-dm-interaction-{expected_name}",
+            "token": f"named-dm-token-{expected_name}",
+            "application_id": DISCORD_TEST_APPLICATION_ID,
+            "channel_id": f"named-dm-channel-{expected_name}",
+            "context": 1,
+            "authorizing_integration_owners": {"1": "named-dm-user"},
+            "user": user,
+            "data": {
+                "name": "clawdi_pair",
+                "options": [{"name": "code", "value": pair["code"]}],
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    bindings = (await client.get(f"/v1/channels/{created['id']}/bindings")).json()
+    assert len(bindings) == 1
+    assert bindings[0]["external_chat_id"] == f"named-dm-channel-{expected_name}"
+    assert bindings[0]["external_chat_type"] == "dm"
+    assert bindings[0]["external_chat_name"] == expected_name
+
+
+@pytest.mark.asyncio
+async def test_discord_trusted_gateway_dm_lazily_heals_existing_name_without_bad_overwrite(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    channel_id = "legacy-dm-channel-id"
+    actor_id = "legacy-dm-actor"
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-legacy-dm-name",
+                "provider_token": "discord-provider-token",
+                "config": _discord_ready_config(),
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 300},
+        )
+    ).json()
+    paired = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "type": 2,
+            "id": "legacy-dm-pair",
+            "token": "legacy-dm-pair-token",
+            "application_id": DISCORD_TEST_APPLICATION_ID,
+            "channel_id": channel_id,
+            "context": 1,
+            "authorizing_integration_owners": {"1": actor_id},
+            "user": {"id": actor_id},
+            "data": {
+                "name": "clawdi_pair",
+                "options": [{"name": "code", "value": pair["code"]}],
+            },
+        },
+    )
+    assert paired.status_code == 200, paired.text
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(ChannelBinding.account_id == UUID(created["id"]))
+        )
+    ).scalar_one()
+    binding.external_chat_name = channel_id
+    await db_session.commit()
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+
+    assert await record_discord_dispatch(
+        db_session,
+        account=account,
+        frame={
+            "op": 0,
+            "t": "MESSAGE_CREATE",
+            "s": 1,
+            "d": {
+                "id": "legacy-dm-name-heal",
+                "channel_id": channel_id,
+                "channel_type": 1,
+                "content": "trusted DM",
+                "author": {
+                    "id": actor_id,
+                    "global_name": "  Trusted Display  ",
+                    "username": "trusted_username",
+                },
+            },
+        },
+    )
+    await db_session.commit()
+    await db_session.refresh(binding)
+    assert binding.external_chat_name == "Trusted Display"
+
+    assert await record_discord_dispatch(
+        db_session,
+        account=account,
+        frame={
+            "op": 0,
+            "t": "MESSAGE_CREATE",
+            "s": 2,
+            "d": {
+                "id": "legacy-dm-name-fallback",
+                "channel_id": channel_id,
+                "channel_type": 1,
+                "content": "fallback DM",
+                "author": {
+                    "id": actor_id,
+                    "global_name": "   ",
+                    "username": channel_id,
+                },
+            },
+        },
+    )
+    await db_session.commit()
+    await db_session.refresh(binding)
+    assert binding.external_chat_name == "Trusted Display"
+
+
+@pytest.mark.asyncio
+async def test_discord_secret_only_dm_payload_cannot_replace_existing_display_name(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    channel_id = "secret-only-existing-dm"
+    actor_id = "secret-only-existing-actor"
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-secret-only-existing-name",
+                "provider_token": "discord-provider-token",
+                "config": _discord_ready_config(),
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 300},
+        )
+    ).json()
+    paired = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "type": 2,
+            "id": "secret-only-existing-pair",
+            "token": "secret-only-existing-pair-token",
+            "application_id": DISCORD_TEST_APPLICATION_ID,
+            "channel_id": channel_id,
+            "context": 1,
+            "authorizing_integration_owners": {"1": actor_id},
+            "user": {"id": actor_id, "global_name": "Trusted Existing"},
+            "data": {
+                "name": "clawdi_pair",
+                "options": [{"name": "code", "value": pair["code"]}],
+            },
+        },
+    )
+    assert paired.status_code == 200, paired.text
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(ChannelBinding.account_id == UUID(created["id"]))
+        )
+    ).scalar_one()
+    assert binding.external_chat_name == "Trusted Existing"
+    monkeypatch.setattr(discord_router, "verify_discord_signature", lambda **_kwargs: False)
+
+    forged = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "id": "secret-only-existing-forged-message",
+            "channel_id": channel_id,
+            "channel_type": 1,
+            "content": "forged metadata",
+            "author": {
+                "id": actor_id,
+                "global_name": "Forged Display",
+                "username": "forged_username",
+            },
+            "channel": {"id": channel_id, "name": "Forged Channel"},
+        },
+    )
+
+    assert forged.status_code == 200, forged.text
+    await db_session.refresh(binding)
+    assert binding.external_chat_name == "Trusted Existing"
 
 
 @pytest.mark.asyncio
@@ -18302,13 +18829,13 @@ async def test_discord_guild_pair_membership_preflight_fails_closed_without_clai
             *,
             guild_id: str,
             reason: str = denied_reason,
-        ) -> str:
+        ) -> channel_service.DiscordGuildMembershipCheck:
             assert guild_id == f"membership-{suffix}-guild"
-            return reason
+            return channel_service.DiscordGuildMembershipCheck(denied_reason=reason)
 
         monkeypatch.setattr(
             channel_service,
-            "discord_bot_guild_membership_denied_reason",
+            "discord_bot_guild_membership_check",
             denied_membership,
         )
         pair = (
@@ -18351,7 +18878,18 @@ async def test_discord_guild_pair_membership_preflight_fails_closed_without_clai
 @pytest.mark.parametrize(
     ("status_code", "payload", "headers", "expected"),
     [
-        (200, {"id": "membership-real-guild"}, {}, None),
+        (
+            200,
+            {"id": "membership-real-guild", "name": "Clawdi Community"},
+            {},
+            None,
+        ),
+        (
+            200,
+            {"id": "membership-real-guild", "name": "   "},
+            {},
+            None,
+        ),
         (
             200,
             {"id": "wrong-guild"},
@@ -18427,12 +18965,18 @@ async def test_discord_membership_helper_classifies_real_provider_responses(
     monkeypatch.setattr(channel_service, "discord_rate_limiter", limiter)
     monkeypatch.setattr(channel_service.httpx, "AsyncClient", MembershipClient)
 
-    result = await _REAL_DISCORD_BOT_GUILD_MEMBERSHIP_DENIED_REASON(
+    result = await _REAL_DISCORD_BOT_GUILD_MEMBERSHIP_CHECK(
         account,
         guild_id="membership-real-guild",
     )
 
-    assert result == expected
+    assert result.denied_reason == expected
+    expected_guild_name = (
+        payload.get("name", "").strip()
+        if expected is None and isinstance(payload.get("name"), str)
+        else None
+    )
+    assert result.guild_name == (expected_guild_name or None)
     assert len(MembershipClient.calls) == 1
     if status_code == 429:
         decision = limiter.check("GET", "/guilds/membership-real-guild")
@@ -18468,12 +19012,11 @@ async def test_discord_membership_helper_network_failure_is_unavailable(
     monkeypatch.setattr(channel_service.httpx, "AsyncClient", NetworkFailureClient)
 
     assert (
-        await _REAL_DISCORD_BOT_GUILD_MEMBERSHIP_DENIED_REASON(
+        await _REAL_DISCORD_BOT_GUILD_MEMBERSHIP_CHECK(
             account,
             guild_id="membership-network-guild",
         )
-        == channel_service.DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE
-    )
+    ).denied_reason == channel_service.DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE
 
 
 @pytest.mark.asyncio
@@ -18492,12 +19035,12 @@ async def test_discord_owner_missing_unpair_cleanup_skips_manage_guild_and_membe
         _account: ChannelAccount,
         *,
         guild_id: str,
-    ) -> str | None:
+    ) -> channel_service.DiscordGuildMembershipCheck:
         raise AssertionError(f"unpair attempted membership check for {guild_id}")
 
     monkeypatch.setattr(
         channel_service,
-        "discord_bot_guild_membership_denied_reason",
+        "discord_bot_guild_membership_check",
         membership_must_not_run,
     )
 
@@ -20085,6 +20628,86 @@ async def test_discord_gateway_guild_create_triggers_reconcile_without_reconnect
         )
         is False
     )
+
+
+@pytest.mark.asyncio
+async def test_discord_gateway_guild_create_lazily_heals_legacy_name_and_keeps_id_authority(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    guild_id = "legacy-guild-id"
+    created = await _create_paired_discord_channel(
+        client,
+        name="discord-legacy-guild-name",
+        channel_id="legacy-guild-channel",
+        guild_id=guild_id,
+    )
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(ChannelBinding.account_id == account.id)
+        )
+    ).scalar_one()
+    binding.external_chat_type = "guild_text"
+    binding.external_chat_name = guild_id
+    await db_session.commit()
+    reconciled_guild_ids: list[str] = []
+
+    async def capture_reconcile(
+        _sessionmaker: async_sessionmaker[AsyncSession],
+        *,
+        account_id: UUID,
+        guild_id: str,
+    ) -> int:
+        assert account_id == account.id
+        reconciled_guild_ids.append(guild_id)
+        return 1
+
+    monkeypatch.setattr(
+        "app.services.discord_gateway_worker.reconcile_discord_guild_commands",
+        capture_reconcile,
+    )
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+
+    assert (
+        await record_discord_gateway_dispatch(
+            sessionmaker,
+            account.id,
+            {
+                "op": 0,
+                "t": "GUILD_CREATE",
+                "s": 81,
+                "d": {"id": guild_id, "name": "  Renamed Guild  ", "unavailable": False},
+            },
+        )
+        is False
+    )
+    await db_session.refresh(binding)
+    assert binding.external_chat_type == "guild"
+    assert binding.external_chat_name == "Renamed Guild"
+    assert binding.external_chat_id == guild_id
+    assert await _discord_bound_guilds(db_session, account=account) == [guild_id]
+    assert shared_router._discord_binding_guild_id(binding) == guild_id
+    assert reconciled_guild_ids == [guild_id]
+
+    assert (
+        await record_discord_gateway_dispatch(
+            sessionmaker,
+            account.id,
+            {
+                "op": 0,
+                "t": "GUILD_CREATE",
+                "s": 82,
+                "d": {"id": guild_id, "name": guild_id, "unavailable": False},
+            },
+        )
+        is False
+    )
+    await db_session.refresh(binding)
+    assert binding.external_chat_name == "Renamed Guild"
+    assert reconciled_guild_ids == [guild_id, guild_id]
 
 
 @pytest.mark.asyncio
