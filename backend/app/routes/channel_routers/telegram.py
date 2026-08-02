@@ -974,31 +974,31 @@ async def _deliver_telegram_agent_webhook_for_binding(
     ).one_or_none()
     if authority is None:
         return False
-    binding, account, link = authority
+    current_binding, current_account, current_link = authority
     if (
-        binding.status != BINDING_STATUS_ACTIVE
-        or account.status != CHANNEL_STATUS_ACTIVE
-        or account.archived_at is not None
+        current_binding.status != BINDING_STATUS_ACTIVE
+        or current_account.status != CHANNEL_STATUS_ACTIVE
+        or current_account.archived_at is not None
     ):
         return False
-    if link is None or link.status != BOT_AGENT_LINK_STATUS_ACTIVE or link.archived_at is not None:
+    if current_link.status != BOT_AGENT_LINK_STATUS_ACTIVE or current_link.archived_at is not None:
         await record_inactive_bot_agent_link_event(
             db,
-            account=account,
-            binding=binding,
-            link=link,
+            account=current_account,
+            binding=current_binding,
+            link=current_link,
         )
         return False
     if not await bot_agent_link_has_strict_v2_authority(
         db,
-        link=link,
+        link=current_link,
     ) or not await bot_agent_link_has_provider_cardinality_capability(
         db,
-        account=account,
-        link=link,
+        account=current_account,
+        link=current_link,
     ):
         return False
-    return await _deliver_telegram_agent_webhook(account, link, payload)
+    return await _deliver_telegram_agent_webhook(current_account, current_link, payload)
 
 
 async def _validate_telegram_webhook_url(account: Any, url: str) -> JSONResponse | None:
