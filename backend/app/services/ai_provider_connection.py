@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-import json
 import socket
 import ssl
 from dataclasses import dataclass
-from typing import Any
 from urllib.parse import quote
 
 import httpx
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from app.schemas.ai_provider import ConnectionErrorCategory
 
@@ -20,6 +19,7 @@ _PROBE_TIMEOUT = httpx.Timeout(connect=4.0, read=8.0, write=4.0, pool=2.0)
 _TOTAL_PROBE_TIMEOUT_SECONDS = 10.0
 _MAX_PROBE_ADDRESSES = 4
 _MAX_RESPONSE_BYTES = 64 * 1024
+_PROBE_RESPONSE_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,7 +41,7 @@ class ConnectionProbeResult:
 class _ProbeRequest:
     url: httpx.URL
     headers: dict[str, str]
-    body: dict[str, Any]
+    body: dict[str, JsonValue]
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,6 +278,7 @@ def _build_probe_request(
         else:
             headers["authorization"] = f"Bearer {credential}"
 
+    body: dict[str, JsonValue]
     if api_mode == "anthropic_messages":
         path = _append_api_path(base.path, "v1/messages", avoid_duplicate="v1")
         body = {
@@ -418,17 +419,15 @@ async def _send_pinned_request(
 
 def _is_valid_inference_response(api_mode: str, body: bytes) -> bool:
     try:
-        payload = json.loads(body)
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return False
-    if not isinstance(payload, dict):
+        payload = _PROBE_RESPONSE_ADAPTER.validate_json(body, strict=True)
+    except ValidationError:
         return False
     if api_mode == "openai_responses":
         return (
             payload.get("object") == "response"
             and _is_non_empty_string(payload.get("id"))
             and _is_non_empty_string(payload.get("model"))
-            and payload.get("status") in {"completed", "incomplete"}
+            and payload.get("status") in ("completed", "incomplete")
             and isinstance(payload.get("output"), list)
         )
     if api_mode == "openai_chat":
@@ -450,7 +449,7 @@ def _is_valid_inference_response(api_mode: str, body: bytes) -> bool:
     return False
 
 
-def _is_non_empty_string(value: Any) -> bool:
+def _is_non_empty_string(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
