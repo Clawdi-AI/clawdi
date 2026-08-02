@@ -3,7 +3,7 @@
 Status: review record for PR #719 and its dependent cleanup
 Date: 2026-08-01
 
-This audit compares `origin/main` at `f43542eab` with PR #719 at `b8567b97d`
+This audit compares `origin/main` at `f43542eab` with PR #719 at `58060d7ba`
 and the dependent cleanup worktree. It covers files whose path contains
 `whatsapp` or `egress` and every tracked text file that references WhatsApp.
 Generated API output is checked separately after regeneration.
