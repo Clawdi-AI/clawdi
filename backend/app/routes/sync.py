@@ -38,7 +38,6 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -129,16 +128,24 @@ async def _stream(
             return
         event_task = asyncio.create_task(queue.get())
         revoked_task = asyncio.create_task(revoked.wait())
-        done, pending = await asyncio.wait(
-            {event_task, revoked_task},
-            timeout=HEARTBEAT_INTERVAL_S,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for task in pending:
-            task.cancel()
-        for task in pending:
-            with suppress(asyncio.CancelledError):
-                await task
+        child_tasks = (event_task, revoked_task)
+        try:
+            done, _pending = await asyncio.wait(
+                child_tasks,
+                timeout=HEARTBEAT_INTERVAL_S,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            # A client disconnect cancels the async generator while it may be
+            # parked inside ``asyncio.wait``. Cleanup after a normal wait is
+            # therefore insufficient: Queue.get/Event.wait tasks survive and
+            # asyncio later reports "Task was destroyed but it is pending".
+            # Own both child tasks on every exit, including generator
+            # cancellation and server shutdown.
+            for task in child_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*child_tasks, return_exceptions=True)
         if revoked_task in done or revoked.is_set():
             return
         if event_task not in done:
