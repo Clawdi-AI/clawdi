@@ -36,6 +36,20 @@ CHANNEL_PROVIDERS = (
 CHANNEL_STATUS_ACTIVE = "active"
 CHANNEL_STATUS_DISABLED = "disabled"
 
+WHATSAPP_ONBOARDING_STATE_GENERATING = "generating"
+WHATSAPP_ONBOARDING_STATE_READY = "ready"
+WHATSAPP_ONBOARDING_STATE_SCANNED = "scanned"
+WHATSAPP_ONBOARDING_STATE_CONNECTED = "connected"
+WHATSAPP_ONBOARDING_STATE_EXPIRED = "expired"
+WHATSAPP_ONBOARDING_STATE_CANCELED = "canceled"
+WHATSAPP_ONBOARDING_STATE_ERROR = "error"
+WHATSAPP_ONBOARDING_ACTIVE_STATES = (
+    WHATSAPP_ONBOARDING_STATE_GENERATING,
+    WHATSAPP_ONBOARDING_STATE_READY,
+    WHATSAPP_ONBOARDING_STATE_SCANNED,
+    WHATSAPP_ONBOARDING_STATE_CONNECTED,
+)
+
 CHANNEL_VISIBILITY_PRIVATE = "private"
 CHANNEL_VISIBILITY_PUBLIC = "public"
 
@@ -100,6 +114,70 @@ class ChannelAccount(Base, TimestampMixin):
             "name",
             unique=True,
             postgresql_where=sql_text("archived_at IS NULL"),
+        ),
+    )
+
+
+class ChannelWhatsAppOnboardingSession(Base, TimestampMixin):
+    """Non-secret ownership and lifecycle metadata for a Custom device login.
+
+    ``sidecar_account_id`` is the configured one-socket sidecar slot. A separate
+    ChannelAccount is created only after Baileys reports an authenticated socket,
+    so pending/failed device sessions never appear in bot inventory and a logged-
+    out physical slot can be safely reused. QR values, pairing codes, phone
+    numbers, and provider auth state never enter this row.
+    """
+
+    __tablename__ = "channel_whatsapp_onboarding_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    sidecar_account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    sidecar_config_revision: Mapped[str] = mapped_column(String(64), nullable=False)
+    channel_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("channel_accounts.id", ondelete="SET NULL"),
+        index=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    method: Mapped[str] = mapped_column(String(16), nullable=False, default="qr")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "request_id",
+            name="uq_channel_whatsapp_onboarding_user_request",
+        ),
+        Index(
+            "uq_channel_whatsapp_onboarding_active_sidecar_account",
+            "sidecar_account_id",
+            unique=True,
+            postgresql_where=sql_text(
+                "state IN ('generating', 'ready', 'scanned', 'connected', 'error')"
+            ),
+        ),
+        Index(
+            "uq_channel_whatsapp_onboarding_active_user_name",
+            "user_id",
+            "name",
+            unique=True,
+            postgresql_where=sql_text(
+                "state IN ('generating', 'ready', 'scanned', 'connected', 'error')"
+            ),
         ),
     )
 

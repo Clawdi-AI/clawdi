@@ -1,11 +1,11 @@
 export const WHATSAPP_LINKING_READY = false;
 
-export const CONNECTABLE_BOT_PROVIDERS = ["telegram", "discord"] as const;
+export const CONNECTABLE_BOT_PROVIDERS = ["telegram", "discord", "whatsapp"] as const;
 export type ConnectableBotProvider = (typeof CONNECTABLE_BOT_PROVIDERS)[number];
 
 const SINGLE_LINK_PROVIDERS_BY_AGENT_TYPE: Readonly<Record<string, ReadonlySet<string>>> = {
-	hermes: new Set(["telegram", "discord"]),
-	openclaw: new Set(["telegram", "discord"]),
+	hermes: new Set(["telegram", "discord", "whatsapp"]),
+	openclaw: new Set(["telegram", "discord", "whatsapp"]),
 };
 
 export function channelProviderLinkingReady(provider: string): boolean {
@@ -26,6 +26,7 @@ export function availableBotProvidersForAgent(
 ): ConnectableBotProvider[] {
 	return CONNECTABLE_BOT_PROVIDERS.filter(
 		(provider) =>
+			provider === "whatsapp" ||
 			!agentId ||
 			!agentProviderHasSingleLinkLimit(agentType, provider) ||
 			!linkedProviders?.has(provider),

@@ -169,6 +169,8 @@ from app.services.user_provisioning import (
     lazy_create_partner_user_with_personal_project,
     lazy_create_user_with_personal_project,
 )
+from app.services.whatsapp_device_onboarding import require_whatsapp_custom_logout_for_archive
+from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_registry
 
 logger = logging.getLogger(__name__)
 
@@ -1391,6 +1393,11 @@ async def admin_delete_channel(
                 )
             )
         ).scalars()
+    )
+    await require_whatsapp_custom_logout_for_archive(
+        db,
+        account=account,
+        registry=get_active_whatsapp_sidecar_registry(),
     )
     await archive_channel_account(db, account=account)
     if account.provider in (CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD):

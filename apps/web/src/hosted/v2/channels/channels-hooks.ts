@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 import { toast } from "sonner";
 import { useChannelEditApi } from "@/hosted/v2/channels/channel-edit-client";
 import { CHANNEL_HEALTH_REFETCH_INTERVAL_MS } from "@/hosted/v2/channels/channel-health-query";
@@ -9,7 +10,11 @@ import {
 	channelKeys as keys,
 	removeDeletedChannelQueries,
 } from "@/hosted/v2/channels/channel-query-cache";
-import type { ChannelCreate, ChannelCreated } from "@/hosted/v2/channels/channel-types";
+import type {
+	ChannelCreate,
+	ChannelCreated,
+	WhatsAppOnboardingSession,
+} from "@/hosted/v2/channels/channel-types";
 import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
@@ -47,6 +52,89 @@ export function useChannel(id: string) {
 		{ params: { path: { account_id: id } } },
 		{ enabled: Boolean(id) },
 	);
+}
+
+export function useWhatsAppOnboardingReadiness(enabled: boolean) {
+	return useOpenApi().useQuery(
+		"get",
+		"/v1/channels/whatsapp/onboarding/readiness",
+		{},
+		{
+			enabled,
+			staleTime: 10_000,
+			refetchOnWindowFocus: false,
+		},
+	);
+}
+
+export function useWhatsAppOnboardingActions() {
+	const api = useApi();
+	const qc = useQueryClient();
+
+	const accept = useCallback(
+		async (result: WhatsAppOnboardingSession): Promise<WhatsAppOnboardingSession> => {
+			if (result.state === "connected" && result.channel_account_id) {
+				await invalidateCreatedChannelQueries(qc, {
+					id: result.channel_account_id,
+					agent_id: null,
+				});
+			}
+			return result;
+		},
+		[qc],
+	);
+
+	const start = useSensitiveAction(async (input: { requestId: string; name: string }) =>
+		accept(
+			unwrap(
+				await api.POST("/v1/channels/whatsapp/onboarding/sessions", {
+					body: { request_id: input.requestId, name: input.name },
+				}),
+			),
+		),
+	);
+	const refresh = useCallback(
+		async (sessionId: string) =>
+			accept(
+				unwrap(
+					await api.GET("/v1/channels/whatsapp/onboarding/sessions/{session_id}", {
+						params: { path: { session_id: sessionId } },
+					}),
+				),
+			),
+		[accept, api],
+	);
+	const pairingCode = useSensitiveAction(
+		async (input: { sessionId: string; phoneNumber: string }) =>
+			accept(
+				unwrap(
+					await api.POST("/v1/channels/whatsapp/onboarding/sessions/{session_id}/pairing-code", {
+						params: { path: { session_id: input.sessionId } },
+						body: { phone_number: input.phoneNumber },
+					}),
+				),
+			),
+	);
+	const cancel = useSensitiveAction(async (sessionId: string) =>
+		accept(
+			unwrap(
+				await api.POST("/v1/channels/whatsapp/onboarding/sessions/{session_id}/cancel", {
+					params: { path: { session_id: sessionId } },
+				}),
+			),
+		),
+	);
+	const retry = useSensitiveAction(async (sessionId: string) =>
+		accept(
+			unwrap(
+				await api.POST("/v1/channels/whatsapp/onboarding/sessions/{session_id}/retry", {
+					params: { path: { session_id: sessionId } },
+				}),
+			),
+		),
+	);
+
+	return { start, refresh, pairingCode, cancel, retry };
 }
 
 export function useChannelAgentLinks(id: string) {

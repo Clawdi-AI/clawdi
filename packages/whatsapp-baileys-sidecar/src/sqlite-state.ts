@@ -38,6 +38,7 @@ export type ProviderInboxConfig = {
 
 export type ProviderStateFailureOperation =
 	| "auth_creds_write"
+	| "physical_auth_reset"
 	| "signal_key_read"
 	| "signal_key_write"
 	| "signal_key_clear"
@@ -158,7 +159,9 @@ export class SQLiteProviderState {
 		this.withFailure("auth_creds_write", () => {
 			if (update) Object.assign(this.creds, update);
 			validateAuthenticationCreds(this.creds);
-			const value = serializeBufferJson(this.creds, "Baileys auth credentials");
+			const persistedCreds = credentialsForPersistence(this.creds);
+			validateAuthenticationCreds(persistedCreds);
+			const value = serializeBufferJson(persistedCreds, "Baileys auth credentials");
 			if (Buffer.byteLength(value) > MAX_CREDS_BYTES) {
 				throw new Error("Baileys auth credentials exceed the durable size limit");
 			}
@@ -237,6 +240,29 @@ export class SQLiteProviderState {
 			this.transaction(() => {
 				this.db.query("DELETE FROM provider_inbox WHERE sequence <= ?").run(throughSequence);
 			});
+		});
+	}
+
+	resetPhysicalAuth(): void {
+		this.withFailure("physical_auth_reset", () => {
+			const fresh = initAuthCreds();
+			validateAuthenticationCreds(fresh);
+			const serialized = serializeBufferJson(fresh, "Baileys auth credentials");
+			this.transaction(() => {
+				this.db.exec(`
+					DELETE FROM signal_keys;
+					DELETE FROM retry_cache;
+					DELETE FROM retry_messages;
+					DELETE FROM provider_inbox;
+				`);
+				this.db.run("INSERT OR REPLACE INTO auth_creds (singleton, value) VALUES (1, ?)", [
+					serialized,
+				]);
+			});
+			for (const key of Object.keys(this.creds) as Array<keyof AuthenticationCreds>) {
+				delete this.creds[key];
+			}
+			Object.assign(this.creds, fresh);
 		});
 	}
 
@@ -705,6 +731,11 @@ function validateAuthenticationCreds(value: unknown): AuthenticationCreds {
 		!Number.isSafeInteger(value.registrationId) ||
 		typeof value.registrationId !== "number" ||
 		value.registrationId < 0 ||
+		(value.registered &&
+			(!isRecord(value.me) ||
+				typeof value.me.id !== "string" ||
+				!value.me.id ||
+				value.me.id.length > 512)) ||
 		!validBase64(value.advSecretKey) ||
 		!Array.isArray(value.processedHistoryMessages) ||
 		!nonNegativeSafeInteger(value.firstUnuploadedPreKeyId) ||
@@ -719,6 +750,18 @@ function validateAuthenticationCreds(value: unknown): AuthenticationCreds {
 		throw new Error("corrupt Baileys authentication credentials");
 	}
 	return value as AuthenticationCreds;
+}
+
+function credentialsForPersistence(creds: AuthenticationCreds): AuthenticationCreds {
+	return {
+		...creds,
+		// The link code is useful only to the live pairing socket and must never
+		// survive in the physical auth database.
+		pairingCode: undefined,
+		// requestPairingCode temporarily stores the raw phone JID in `me` before
+		// authentication. A crash restarts pairing instead of retaining that input.
+		...(creds.registered ? {} : { me: undefined }),
+	};
 }
 
 function validKeyPair(value: unknown): boolean {

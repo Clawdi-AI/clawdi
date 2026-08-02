@@ -12,6 +12,7 @@ import {
 	TerminalSquare,
 	Trash2,
 	TriangleAlert,
+	Unplug,
 } from "lucide-react";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -239,6 +240,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	const ch = channel.data;
 	const meta = providerMeta(ch.provider);
 	const providerUnavailable = meta.unavailable === true;
+	const disconnectsWhatsApp = ch.provider === "whatsapp" && ch.visibility === "private";
 
 	return (
 		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
@@ -259,9 +261,13 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				}
 				actions={
 					<ConfirmAction
-						title={`Remove ${ch.name}?`}
-						description="Agents linked to this channel will stop sending and receiving. This can't be undone."
-						confirmLabel="Remove channel"
+						title={`${disconnectsWhatsApp ? "Disconnect" : "Remove"} ${ch.name}?`}
+						description={
+							disconnectsWhatsApp
+								? "This logs out Clawdi as a linked device and removes the Custom bot. Linked Agents will stop sending and receiving."
+								: "Agents linked to this channel will stop sending and receiving. This can't be undone."
+						}
+						confirmLabel={disconnectsWhatsApp ? "Disconnect and remove" : "Remove channel"}
 						destructive
 						onConfirm={removeChannel}
 					>
@@ -270,8 +276,14 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 							className="text-muted-foreground hover:text-destructive"
 							disabled={removing}
 						>
-							{removing ? <Spinner className="size-4" /> : <Trash2 className="size-4" />}
-							{removing ? "Removing…" : "Remove"}
+							{removing ? (
+								<Spinner className="size-4" />
+							) : disconnectsWhatsApp ? (
+								<Unplug className="size-4" />
+							) : (
+								<Trash2 className="size-4" />
+							)}
+							{removing ? "Removing…" : disconnectsWhatsApp ? "Disconnect" : "Remove"}
 						</Button>
 					</ConfirmAction>
 				}

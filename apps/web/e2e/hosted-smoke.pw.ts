@@ -9218,8 +9218,8 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 		fullPage: true,
 	});
 
-	await page.getByRole("button", { name: "Connect custom bot", exact: true }).click();
-	let connectDialog = page.getByRole("dialog", { name: "Connect custom bot" });
+	await page.getByRole("button", { name: "Add channel", exact: true }).click();
+	let connectDialog = page.getByRole("dialog", { name: "Add channel" });
 	await expect(connectDialog.getByRole("button", { name: /^Telegram Telegram$/ })).toHaveAttribute(
 		"aria-pressed",
 		"true",
@@ -9276,8 +9276,8 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 			testInfo.outputPath("channels-owned-bot-inventory-320x568.png"),
 		fullPage: false,
 	});
-	await page.getByRole("button", { name: "Connect custom bot", exact: true }).click();
-	connectDialog = page.getByRole("dialog", { name: "Connect custom bot" });
+	await page.getByRole("button", { name: "Add channel", exact: true }).click();
+	connectDialog = page.getByRole("dialog", { name: "Add channel" });
 	await expectNoHorizontalOverflow(connectDialog, "Telegram credentials dialog at 320px");
 	await expectContainedInOwnerAndViewport(
 		page,
@@ -9318,6 +9318,349 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 	);
 	await connectDialog.screenshot({ path: testInfo.outputPath("connect-bot-discord-320.png") });
 	expect(errors, `Channels inventory browser errors: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", async ({
+	page,
+}, testInfo) => {
+	test.setTimeout(120_000);
+	const errors = collectBrowserErrors(page);
+	await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+	const channelAccounts: unknown[] = [];
+	const desktopSessionId = "20aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+	const mobileSessionId = "20bbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+	const activeCancelSessionId = "20cccccc-cccc-4ccc-8ccc-cccccccccccc";
+	const connectedAccountId = "20dddddd-dddd-4ddd-8ddd-dddddddddddd";
+	const longAccountName = `Personal WhatsApp — ${"long-device-identity".repeat(6)}`.slice(0, 120);
+	const now = Date.now();
+	const startedAt = new Date(now).toISOString();
+	const expiresAt = new Date(now + 5 * 60_000).toISOString();
+	const qrExpiresAt = () => new Date(Date.now() + 20_000).toISOString();
+	const startRequests: string[] = [];
+	const pairingCodeRequests: string[] = [];
+	let readinessAvailable = false;
+	let scenario: "desktop" | "mobile" = "desktop";
+	let desktopStatusReads = 0;
+	let mobileStartAttempts = 0;
+	let cancelCalls = 0;
+	let mobileStatus: "ready" | "code" | "expired" | "error" | "canceled" = "ready";
+
+	const onboardingSession = (
+		id: string,
+		name: string,
+		state: string,
+		overrides: Record<string, unknown> = {},
+	) => ({
+		id,
+		channel_account_id: null,
+		name,
+		state,
+		method: "qr",
+		qr: null,
+		qr_expires_at: null,
+		pairing_code: null,
+		manual_pairing_code_supported: true,
+		started_at: startedAt,
+		expires_at: expiresAt,
+		completed_at: null,
+		...overrides,
+	});
+	const connectedAccount = {
+		id: connectedAccountId,
+		provider: "whatsapp",
+		name: longAccountName,
+		status: "active",
+		visibility: "private",
+		has_provider_token: false,
+		webhook_url: `https://cloud.example.test/channels/${connectedAccountId}`,
+		created_at: new Date(now + 10_000).toISOString(),
+	};
+
+	await stubHostedApi(page, {
+		channelAccounts,
+		channelBotPool: {
+			providers: {
+				whatsapp: [
+					{
+						...connectedAccount,
+						id: "20eeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+						name: "Clawdi shared WhatsApp",
+						visibility: "public",
+						access: "public",
+						capabilities: {
+							link_agent: false,
+							pair_chat: false,
+							send_message: false,
+							manage_account: false,
+							sync_commands: false,
+						},
+						link_count: 0,
+						max_links: null,
+						available: true,
+					},
+				],
+			},
+		},
+	});
+	await page.route(`${CLOUD_API}/v1/channels/whatsapp/onboarding/**`, async (route) => {
+		const request = route.request();
+		const path = new URL(request.url()).pathname;
+		const method = request.method();
+		if (path.endsWith("/readiness") && method === "GET") {
+			return fulfillJson(route, {
+				available: readinessAvailable,
+				manual_pairing_code_supported: readinessAvailable,
+				reason: readinessAvailable ? null : "managed_sidecar_required",
+			});
+		}
+		if (path.endsWith("/sessions") && method === "POST") {
+			const body = request.postData() ?? "";
+			startRequests.push(body);
+			const parsed = JSON.parse(body) as { name?: string };
+			if (scenario === "desktop") {
+				return fulfillJson(
+					route,
+					onboardingSession(desktopSessionId, parsed.name ?? "WhatsApp", "generating"),
+					201,
+				);
+			}
+			mobileStartAttempts += 1;
+			if (mobileStartAttempts === 1) {
+				return fulfillJson(route, { detail: "Temporary onboarding failure" }, 503);
+			}
+			const sessionId = mobileStartAttempts === 2 ? mobileSessionId : activeCancelSessionId;
+			mobileStatus = "ready";
+			return fulfillJson(
+				route,
+				onboardingSession(sessionId, parsed.name ?? "WhatsApp", "ready", {
+					qr: `mobile-device-qr-${mobileStartAttempts}`,
+					qr_expires_at: qrExpiresAt(),
+				}),
+				201,
+			);
+		}
+		if (path.endsWith("/pairing-code") && method === "POST") {
+			pairingCodeRequests.push(request.postData() ?? "");
+			mobileStatus = "code";
+			return fulfillJson(
+				route,
+				onboardingSession(mobileSessionId, "Phone viewport WhatsApp", "ready", {
+					method: "code",
+					pairing_code: "1234-5678",
+				}),
+			);
+		}
+		if (path.endsWith("/retry") && method === "POST") {
+			mobileStatus = "ready";
+			return fulfillJson(
+				route,
+				onboardingSession(mobileSessionId, "Phone viewport WhatsApp", "ready", {
+					qr: "mobile-device-qr-retry",
+					qr_expires_at: qrExpiresAt(),
+				}),
+			);
+		}
+		if (path.endsWith("/cancel") && method === "POST") {
+			cancelCalls += 1;
+			mobileStatus = "canceled";
+			const sessionId = path.includes(activeCancelSessionId)
+				? activeCancelSessionId
+				: mobileSessionId;
+			return fulfillJson(
+				route,
+				onboardingSession(sessionId, "Phone viewport WhatsApp", "canceled", {
+					completed_at: new Date().toISOString(),
+				}),
+			);
+		}
+		if (method === "GET" && path.endsWith(desktopSessionId)) {
+			desktopStatusReads += 1;
+			if (desktopStatusReads === 1) {
+				return fulfillJson(
+					route,
+					onboardingSession(desktopSessionId, longAccountName, "ready", {
+						qr: "desktop-device-qr-alpha",
+						qr_expires_at: qrExpiresAt(),
+					}),
+				);
+			}
+			if (desktopStatusReads === 2) {
+				return fulfillJson(
+					route,
+					onboardingSession(desktopSessionId, longAccountName, "ready", {
+						qr: "desktop-device-qr-rotated",
+						qr_expires_at: qrExpiresAt(),
+					}),
+				);
+			}
+			if (desktopStatusReads === 3) {
+				return fulfillJson(route, onboardingSession(desktopSessionId, longAccountName, "scanned"));
+			}
+			if (!channelAccounts.includes(connectedAccount)) channelAccounts.push(connectedAccount);
+			return fulfillJson(
+				route,
+				onboardingSession(desktopSessionId, longAccountName, "connected", {
+					channel_account_id: connectedAccountId,
+					completed_at: new Date().toISOString(),
+				}),
+			);
+		}
+		if (method === "GET" && path.endsWith(mobileSessionId)) {
+			if (mobileStatus === "code") {
+				return fulfillJson(
+					route,
+					onboardingSession(mobileSessionId, "Phone viewport WhatsApp", "ready", {
+						method: "code",
+						pairing_code: "1234-5678",
+					}),
+				);
+			}
+			if (mobileStatus === "expired" || mobileStatus === "error") {
+				return fulfillJson(
+					route,
+					onboardingSession(mobileSessionId, "Phone viewport WhatsApp", mobileStatus, {
+						completed_at: new Date().toISOString(),
+					}),
+				);
+			}
+			return fulfillJson(
+				route,
+				onboardingSession(mobileSessionId, "Phone viewport WhatsApp", "ready", {
+					qr: "mobile-device-qr-ready",
+					qr_expires_at: qrExpiresAt(),
+				}),
+			);
+		}
+		return fulfillJson(route, { detail: "Unknown fake onboarding request" }, 404);
+	});
+
+	await page.setViewportSize({ width: 1440, height: 1000 });
+	await page.goto("/channels");
+	await page.getByRole("button", { name: "Add channel", exact: true }).click();
+	let dialog = page.getByRole("dialog", { name: "Add channel" });
+	await dialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ }).click();
+	await expect(dialog.getByText("Clawdi WhatsApp", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("Your WhatsApp", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("You never scan its device QR.", { exact: false })).toBeVisible();
+	await expect(dialog.getByRole("button", { name: "Connect your account" })).toBeDisabled();
+	await expect(dialog).toContainText("isn't compatible with this deployment");
+	await expect(dialog.getByLabel("Bot token")).toHaveCount(0);
+	await page.keyboard.press("Escape");
+
+	readinessAvailable = true;
+	await page.reload();
+	await page.getByRole("button", { name: "Add channel", exact: true }).click();
+	dialog = page.getByRole("dialog", { name: "Add channel" });
+	await dialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ }).click();
+	await expect(dialog.getByRole("button", { name: "Choose from an Agent" })).toBeVisible();
+	await expect(dialog.getByRole("button", { name: "Connect your account" })).toBeEnabled();
+	await expectNoHorizontalOverflow(dialog, "WhatsApp account choice desktop");
+	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-account-choice-desktop.png") });
+
+	await dialog.getByRole("button", { name: "Connect your account" }).click();
+	await dialog.getByLabel("Account name").fill(longAccountName);
+	await dialog.getByRole("button", { name: "Generate QR" }).click();
+	await expect(dialog.getByText("Generating QR code…", { exact: true })).toBeVisible();
+	const qr = dialog.getByRole("img", { name: "WhatsApp linked-device QR code" });
+	await expect(qr).toBeVisible();
+	const firstQrMarkup = await qr.evaluate((element) => element.outerHTML);
+	await expect(dialog).toContainText(
+		"WhatsApp > Settings/Menu > Linked devices > Link a device > scan.",
+	);
+	await expect(dialog.getByText("Can't scan? Use a pairing code", { exact: true })).toBeVisible();
+	await expectNoHorizontalOverflow(dialog, "WhatsApp QR ready desktop");
+	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-qr-ready-desktop.png") });
+	await expect.poll(() => desktopStatusReads).toBeGreaterThanOrEqual(2);
+	await expect.poll(() => qr.evaluate((element) => element.outerHTML)).not.toBe(firstQrMarkup);
+	await expect(dialog.getByText("Device approved", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("WhatsApp account connected", { exact: true })).toBeVisible();
+	await expect(dialog).toContainText("Agent Link and chat Pair remain gated");
+	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-connected-desktop.png") });
+	await dialog.getByRole("button", { name: "Review Custom bots", exact: true }).click();
+	const ownedSection = page.locator("[data-owned-bots-section]");
+	await expect(ownedSection.getByText(longAccountName, { exact: true })).toBeVisible();
+	await expect(ownedSection).not.toContainText("Last activity");
+	await expectNoHorizontalOverflow(ownedSection, "connected WhatsApp Custom inventory desktop");
+
+	scenario = "mobile";
+	await page.setViewportSize({ width: 320, height: 568 });
+	await page.getByRole("button", { name: "Add channel", exact: true }).click();
+	dialog = page.getByRole("dialog", { name: "Add channel" });
+	const mobileWhatsAppProvider = dialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ });
+	await expect(mobileWhatsAppProvider).toContainText("WhatsApp");
+	await expect(mobileWhatsAppProvider.locator("span").filter({ hasText: /^WhatsApp$/ })).toHaveCSS(
+		"text-overflow",
+		"clip",
+	);
+	await mobileWhatsAppProvider.click();
+	await expectNoHorizontalOverflow(dialog, "WhatsApp account choice at 320x568");
+	await expectNoHorizontalOverflow(page.locator("html"), "WhatsApp choice document at 320x568");
+	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-account-choice-320x568.png") });
+	await dialog.getByRole("button", { name: "Connect your account" }).click();
+	await dialog.getByLabel("Account name").fill("Phone viewport WhatsApp");
+	await dialog.getByRole("button", { name: "Generate QR" }).click();
+	await expect(
+		dialog.getByText("Couldn't start WhatsApp connection", { exact: true }),
+	).toBeVisible();
+	await dialog.getByRole("button", { name: "Generate QR" }).click();
+	await expect(dialog.getByRole("img", { name: "WhatsApp linked-device QR code" })).toBeVisible();
+	const mobileStarts = startRequests
+		.slice(-2)
+		.map((body) => JSON.parse(body) as { request_id: string });
+	expect(mobileStarts[0]?.request_id).toBe(mobileStarts[1]?.request_id);
+	await expect(dialog).toContainText("A phone cannot scan a QR shown on the same phone");
+	await expectNoHorizontalOverflow(dialog, "WhatsApp QR ready at 320x568");
+	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-qr-ready-320x568.png") });
+
+	await dialog.getByText("Can't scan? Use a pairing code", { exact: true }).click();
+	const phoneInput = dialog.getByLabel("WhatsApp phone number");
+	await phoneInput.fill("+14155550123");
+	await expect(dialog).toContainText("Use country code and digits only");
+	await expect(dialog.getByRole("button", { name: "Get pairing code" })).toBeDisabled();
+	await phoneInput.fill("14155550123");
+	await dialog.getByRole("button", { name: "Get pairing code" }).click();
+	await expect.poll(() => pairingCodeRequests).toHaveLength(1);
+	expect(JSON.parse(pairingCodeRequests[0] ?? "{}")).toEqual({
+		phone_number: "14155550123",
+	});
+	expect(pairingCodeRequests[0]).not.toContain("+");
+	const copyCode = dialog.locator("button").filter({ hasText: "1234-5678" });
+	await expect(copyCode).toHaveAccessibleName("Copy WhatsApp pairing code");
+	await expect(copyCode).toContainText("1234-5678");
+	await copyCode.click();
+	await expect(copyCode).toHaveAccessibleName("WhatsApp pairing code copied");
+	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("1234-5678");
+	await expect(page.locator("[data-sonner-toast]").filter({ hasText: "1234-5678" })).toHaveCount(0);
+	await expectNoHorizontalOverflow(dialog, "WhatsApp manual code at 320x568");
+	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-manual-code-320x568.png") });
+
+	mobileStatus = "expired";
+	await expect(dialog.getByText("Connection expired", { exact: true })).toBeVisible();
+	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-expired-320x568.png") });
+	await dialog.getByRole("button", { name: "Retry", exact: true }).click();
+	await expect(dialog.getByRole("img", { name: "WhatsApp linked-device QR code" })).toBeVisible();
+	mobileStatus = "error";
+	await expect(dialog.getByText("Couldn't connect WhatsApp", { exact: true })).toBeVisible();
+	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-error-320x568.png") });
+	await dialog.getByRole("button", { name: "Back", exact: true }).click();
+	await expect(dialog.getByText("Your WhatsApp", { exact: true })).toBeVisible();
+	expect(cancelCalls).toBe(1);
+
+	await dialog.getByRole("button", { name: "Connect your account" }).click();
+	await dialog.getByLabel("Account name").fill("Canceled WhatsApp");
+	await dialog.getByRole("button", { name: "Generate QR" }).click();
+	await expect(dialog.getByRole("button", { name: "Cancel connection" })).toBeVisible();
+	await dialog.getByRole("button", { name: "Cancel connection" }).click();
+	await expect(dialog.getByText("Your WhatsApp", { exact: true })).toBeVisible();
+	expect(cancelCalls).toBe(2);
+	await expectNoHorizontalOverflow(dialog, "WhatsApp canceled flow at 320x568");
+	const unexpectedErrors = errors.filter(
+		(error) => !error.includes("server responded with a status of 503 (Service Unavailable)"),
+	);
+	expect(
+		unexpectedErrors,
+		`WhatsApp onboarding browser errors: ${unexpectedErrors.join(" | ")}`,
+	).toEqual([]);
 });
 
 test("Channels shared-only inventory stays primary without duplicate empty actions", async ({
@@ -9363,9 +9706,7 @@ test("Channels shared-only inventory stays primary without duplicate empty actio
 	await expect(sharedSection.getByText("Shared Discord", { exact: true })).toBeVisible();
 	await expect(sharedSection.getByRole("img", { name: "Discord" })).toBeVisible();
 	await expect(page.getByText("No bots yet", { exact: true })).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Connect custom bot", exact: true })).toHaveCount(
-		1,
-	);
+	await expect(page.getByRole("button", { name: "Add channel", exact: true })).toHaveCount(1);
 	await expect(page.getByRole("button", { name: /Discord\s+1/ })).toBeVisible();
 	await page.screenshot({
 		path: testInfo.outputPath("channels-shared-only-desktop.png"),
@@ -9524,16 +9865,16 @@ for (const firstTimeViewport of [
 		await expectNoHorizontalOverflow(clawdiSection, `${firstTimeViewport.label} Clawdi bots`);
 		await expectNoHorizontalOverflow(customSection, `${firstTimeViewport.label} Custom bots`);
 		const connectCustom = customSection.getByRole("button", {
-			name: "Add custom bot",
+			name: "Add channel",
 			exact: true,
 		});
 		await expect(connectCustom.locator("svg")).toHaveCount(1);
-		await expect(connectCustom.getByText("Add custom bot", { exact: true })).toBeVisible();
+		await expect(connectCustom.getByText("Add channel", { exact: true })).toBeVisible();
 		await expectContainedInOwnerAndViewport(
 			page,
 			connectCustom,
 			customSection,
-			`${firstTimeViewport.label} Add custom bot`,
+			`${firstTimeViewport.label} Add channel`,
 		);
 		await page.screenshot({
 			path: testInfo.outputPath(`agent-first-time-bot-groups-${firstTimeViewport.label}.png`),
@@ -9541,10 +9882,28 @@ for (const firstTimeViewport of [
 		});
 
 		await connectCustom.click();
-		const connectDialog = page.getByRole("dialog", { name: "Connect custom bot" });
+		let connectDialog = page.getByRole("dialog", { name: "Add channel" });
 		await expect(connectDialog).toBeVisible();
 		await expect(page.getByRole("dialog")).toHaveCount(1);
-		await expect(connectDialog).toContainText("Connect a Custom bot you manage to this Agent.");
+		await expect(connectDialog).toContainText(
+			"Add a Custom bot you manage, or choose a Clawdi bot for this Agent.",
+		);
+		await connectDialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ }).click();
+		await expect(connectDialog.getByText("Clawdi WhatsApp", { exact: true })).toBeVisible();
+		await expect(connectDialog.getByText("Your WhatsApp", { exact: true })).toBeVisible();
+		await expect(
+			connectDialog.getByText("You never scan its device QR.", { exact: false }),
+		).toBeVisible();
+		await connectDialog.getByRole("button", { name: "View Clawdi bots", exact: true }).click();
+		await expect(connectDialog).toHaveCount(0);
+		await expect(clawdiSection).toBeFocused();
+
+		await connectCustom.click();
+		connectDialog = page.getByRole("dialog", { name: "Add channel" });
+		await expect(connectDialog).toBeVisible();
+		await expect(
+			connectDialog.getByRole("button", { name: /^Telegram Telegram$/ }),
+		).toHaveAttribute("aria-pressed", "true");
 		await connectDialog.getByLabel("Name").fill("Browser Telegram");
 		await connectDialog.getByLabel("Bot token").fill("123456:browser-test-token");
 		await expectNoHorizontalOverflow(
@@ -9833,7 +10192,7 @@ test("Agent bot groups keep every bot visible and gate provider conflicts in pla
 	expect(linkedTelegramHeaderBox.y).toBe(unlinkedDiscordHeaderBox.y);
 	expect(linkedTelegramHeaderBox.height).toBe(unlinkedDiscordHeaderBox.height);
 	await expect(
-		customSection.getByRole("button", { name: "Add custom bot", exact: true }),
+		customSection.getByRole("button", { name: "Add channel", exact: true }),
 	).toBeVisible();
 	await expect(page.getByRole("dialog", { name: "Add channel" })).toHaveCount(0);
 	await expectNoHorizontalOverflow(page.locator("html"), "desktop Agent bot groups");

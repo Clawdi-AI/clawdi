@@ -11,6 +11,7 @@ import {
 } from "./json-bytes.js";
 import {
 	type BaileysRuntime,
+	PairingLifecycleError,
 	type RelayMessageRequest,
 	RuntimeNotConnectedError,
 } from "./types.js";
@@ -37,6 +38,35 @@ export function createSidecarServer(runtime: BaileysRuntime, config: ServerConfi
 			const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
 			if (method === "GET" && path === "/v1/health") {
 				writeJson(response, 200, runtime.health());
+				return;
+			}
+			if (method === "GET" && path === "/v1/capabilities") {
+				writeJson(response, 200, runtime.capabilities());
+				return;
+			}
+			if (method === "GET" && path === "/v1/pairing/status") {
+				writeJson(response, 200, runtime.pairingStatus());
+				return;
+			}
+			if (method === "POST" && path === "/v1/pairing/qr") {
+				writeJson(response, 200, await runtime.startQrPairing());
+				return;
+			}
+			if (method === "POST" && path === "/v1/pairing/code") {
+				const body = await readJsonBody(request, maxBodyBytes);
+				writeJson(response, 200, await runtime.requestPairingCode(parsePhoneNumber(body)));
+				return;
+			}
+			if (method === "POST" && path === "/v1/pairing/cancel") {
+				writeJson(response, 200, await runtime.cancelPairing());
+				return;
+			}
+			if (method === "POST" && path === "/v1/pairing/logout") {
+				writeJson(response, 200, await runtime.logoutPairing());
+				return;
+			}
+			if (method === "POST" && path === "/v1/pairing/retry") {
+				writeJson(response, 200, await runtime.retryPairing());
 				return;
 			}
 			if (method === "POST" && path === "/v1/relay-message") {
@@ -131,10 +161,40 @@ function parseRelayMessageBody(body: unknown): RelayMessageRequest {
 				body.additionalAttributes ?? {},
 				"additionalAttributes",
 			),
+			additionalNodes: parseRelayAdditionalNodes(body.additionalNodes ?? []),
 		};
 	} catch (error: unknown) {
 		throw new HttpError(400, error instanceof Error ? error.message : "invalid_relay_message");
 	}
+}
+
+function parseRelayAdditionalNodes(value: unknown): RelayMessageRequest["additionalNodes"] {
+	if (!Array.isArray(value) || value.length > 1) {
+		throw new Error("unsupported_additionalNodes");
+	}
+	if (value.length === 0) return [];
+	const node = value[0];
+	if (
+		!isRecord(node) ||
+		Object.keys(node).some((key) => key !== "tag" && key !== "attrs") ||
+		node.tag !== "meta" ||
+		!isRecord(node.attrs) ||
+		Object.keys(node.attrs).length !== 1 ||
+		node.attrs.polltype !== "creation"
+	) {
+		throw new Error("unsupported_additionalNodes");
+	}
+	return [{ tag: "meta", attrs: { polltype: "creation" } }];
+}
+
+function parsePhoneNumber(body: unknown): string {
+	if (!isRecord(body) || typeof body.phoneNumber !== "string") {
+		throw new HttpError(400, "phoneNumber_required");
+	}
+	if (!/^[1-9][0-9]{6,14}$/.test(body.phoneNumber)) {
+		throw new HttpError(422, "invalid_phone_number");
+	}
+	return body.phoneNumber;
 }
 
 function parseNodeBody(body: unknown) {
@@ -198,13 +258,21 @@ function writeError(response: ServerResponse, error: unknown): void {
 		writeJson(response, 503, { error: "baileys_not_connected" });
 		return;
 	}
+	if (error instanceof PairingLifecycleError) {
+		writeJson(response, 409, { error: error.message });
+		return;
+	}
 	writeJson(response, 500, {
 		error: error instanceof Error ? error.name : "internal_error",
 	});
 }
 
 function writeJson(response: ServerResponse, status: number, body: unknown): void {
-	response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+	response.writeHead(status, {
+		"cache-control": "no-store, private",
+		"content-type": "application/json; charset=utf-8",
+		pragma: "no-cache",
+	});
 	response.end(JSON.stringify(body));
 }
 

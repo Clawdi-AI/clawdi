@@ -14,10 +14,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.channel import (
+    BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_ACTIVE,
     PROVIDER_EVENT_SCOPE_ACCOUNT,
     ChannelAccount,
+    ChannelBotAgentLink,
 )
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channels import (
@@ -36,6 +38,7 @@ from app.services.whatsapp_baileys import (
     forward_iq_over,
     remember_whatsapp_binding_aliases,
     resolve_whatsapp_binding_by_jids,
+    validate_relay_outbound_additional_nodes,
     whatsapp_text_from_message_proto,
     whatsapp_text_message_proto,
 )
@@ -317,15 +320,23 @@ class WhatsAppProviderBridge:
             return None
         async with self._sessionmaker() as db:
             account = await _load_active_whatsapp_account(db, account_id=self._account_id)
-            resolve_jid = await _build_bound_jid_resolver(
-                db,
-                account=account,
-                node=node,
-                bot_agent_link_id=bot_agent_link_id,
-            )
-        targets = _node_target_jids(node)
-        if not targets or any(resolve_jid(target) is None for target in targets):
-            return None
+            if _is_authorized_provider_service_iq(node):
+                if not await _active_link_owns_account(
+                    db,
+                    account_id=account.id,
+                    bot_agent_link_id=bot_agent_link_id,
+                ):
+                    return None
+            else:
+                resolve_jid = await _build_bound_jid_resolver(
+                    db,
+                    account=account,
+                    node=node,
+                    bot_agent_link_id=bot_agent_link_id,
+                )
+                targets = _node_target_jids(node)
+                if not targets or any(resolve_jid(target) is None for target in targets):
+                    return None
         transport = self._transport()
         if transport is None or self._forward_iq_inflight >= 5:
             return None
@@ -484,16 +495,39 @@ async def _load_active_whatsapp_account(
     return account
 
 
+async def _active_link_owns_account(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    bot_agent_link_id: UUID,
+) -> bool:
+    return (
+        await db.scalar(
+            select(ChannelBotAgentLink.id).where(
+                ChannelBotAgentLink.id == bot_agent_link_id,
+                ChannelBotAgentLink.account_id == account_id,
+                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                ChannelBotAgentLink.archived_at.is_(None),
+            )
+        )
+        is not None
+    )
+
+
 def _provider_payload_from_outbound(
     message: WhatsAppOutboundMessage,
 ) -> dict[str, JsonValue]:
-    return {
+    payload: dict[str, JsonValue] = {
         "schemaVersion": WHATSAPP_PROVIDER_PAYLOAD_SCHEMA,
         "messageId": message.message_id,
         "messageProtoBase64": base64.b64encode(message.message_proto).decode("ascii"),
         "encType": message.enc_type,
         "attrs": dict(message.attrs),
     }
+    additional_nodes = validate_relay_outbound_additional_nodes(message.additional_nodes)
+    if additional_nodes:
+        payload["additionalNodes"] = [{"tag": "meta", "attrs": {"polltype": "creation"}}]
+    return payload
 
 
 def _outbound_from_provider_payload(
@@ -571,6 +605,13 @@ def _outbound_from_provider_payload(
         )
     attrs["to"] = external_chat_id
     attrs["id"] = message_id
+    try:
+        additional_nodes = validate_relay_outbound_additional_nodes(payload.get("additionalNodes"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid whatsapp provider additional nodes",
+        ) from exc
     return WhatsAppOutboundMessage(
         to_jid=external_chat_id,
         message_id=message_id,
@@ -578,6 +619,7 @@ def _outbound_from_provider_payload(
         enc_type=normalized_enc_type,
         attrs=attrs,
         conversation=text or None,
+        additional_nodes=additional_nodes,
     )
 
 
@@ -651,6 +693,36 @@ def _node_target_jids(node: BinaryNode) -> tuple[str, ...]:
     )
 
 
+def _is_authorized_provider_service_iq(node: BinaryNode) -> bool:
+    if node.get("tag") != "iq" or set(node).difference({"tag", "attrs", "content"}):
+        return False
+    attrs = _strict_string_dict(node.get("attrs"))
+    if attrs is None:
+        return False
+    if set(attrs) != {"id", "type", "xmlns", "to"} or not attrs["id"]:
+        return False
+    iq_type = attrs.get("type")
+    xmlns = attrs.get("xmlns")
+    target = attrs.get("to")
+    if iq_type is None or xmlns is None or target is None:
+        return False
+    expected_child = {
+        ("set", "w:m", "s.whatsapp.net"): "media_conn",
+        ("get", "privacy", "s.whatsapp.net"): "privacy",
+    }.get((iq_type, xmlns, target))
+    content: object = node.get("content")
+    if expected_child is None or not _is_object_list(content) or len(content) != 1:
+        return False
+    child = content[0]
+    return (
+        _is_object_dict(child)
+        and not set(child).difference({"tag", "attrs", "content"})
+        and child.get("tag") == expected_child
+        and child.get("attrs") == {}
+        and child.get("content") is None
+    )
+
+
 def _raw_relay_debug_details(node: BinaryNode) -> dict[str, JsonValue]:
     attrs = _node_attrs(node)
     return {
@@ -672,6 +744,21 @@ def _node_attrs(node: BinaryNode) -> dict[str, str]:
 
 def _is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
     return isinstance(value, dict)
+
+
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
+def _strict_string_dict(value: object) -> dict[str, str] | None:
+    if not _is_object_dict(value):
+        return None
+    result: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not isinstance(item, str):
+            return None
+        result[key] = item
+    return result
 
 
 def _transport_connected(transport: WhatsAppProviderTransport) -> bool:

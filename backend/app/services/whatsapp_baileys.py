@@ -50,7 +50,7 @@ RelayDropReason = Literal[
 RELAY_TAG_ALLOWLIST = {"presence", "chatstate", "receipt"}
 MAX_NODE_DEPTH = 32
 MAX_NODE_COUNT = 1024
-FORWARDABLE_GET_XMLNS = {"w", "w:profile:picture", "w:biz"}
+FORWARDABLE_GET_XMLNS = {"w", "w:profile:picture", "w:biz", "privacy"}
 FORWARDABLE_SET_XMLNS = {"w:m", "w:g2"}
 RELAY_MANAGED_MESSAGE_ATTRS = {
     "id",
@@ -218,6 +218,36 @@ def relay_outbound_extra_attrs(stanza_attrs: Mapping[str, Any]) -> dict[str, str
         if isinstance(value, str):
             out[key] = value
     return out
+
+
+def relay_outbound_additional_nodes(stanza: BinaryNode) -> tuple[BinaryNode, ...]:
+    """Keep only the exact rc13 poll-creation transport metadata node."""
+
+    if any(_is_poll_creation_meta_node(child) for child in _children(stanza)):
+        return ({"tag": "meta", "attrs": {"polltype": "creation"}},)
+    return ()
+
+
+def validate_relay_outbound_additional_nodes(value: object) -> tuple[BinaryNode, ...]:
+    """Validate the intentionally narrow additional-node transport boundary."""
+
+    if value is None or value == [] or value == ():
+        return ()
+    if not isinstance(value, (list, tuple)) or len(value) != 1:
+        raise ValueError("unsupported WhatsApp relay additional nodes")
+    node = value[0]
+    if not isinstance(node, dict) or not _is_poll_creation_meta_node(node):
+        raise ValueError("unsupported WhatsApp relay additional nodes")
+    return ({"tag": "meta", "attrs": {"polltype": "creation"}},)
+
+
+def _is_poll_creation_meta_node(node: BinaryNode) -> bool:
+    return (
+        set(node).issubset({"tag", "attrs", "content"})
+        and node.get("tag") == "meta"
+        and node.get("attrs") == {"polltype": "creation"}
+        and node.get("content") is None
+    )
 
 
 class WhatsAppInboxPump:

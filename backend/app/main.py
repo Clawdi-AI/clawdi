@@ -18,7 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.auth import warm_clerk_jwks
 from app.core.config import settings
-from app.core.database import get_session
+from app.core.database import async_session_factory, get_session
 from app.core.logging_config import configure_application_logging
 from app.core.sentry import init_sentry
 from app.middleware.body_size_limit import BodySizeLimitMiddleware
@@ -66,6 +66,7 @@ from app.services.ai_provider_auth_transition import OAuthCredentialPayloadCorru
 from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
+from app.services.whatsapp_device_onboarding import expire_stale_whatsapp_onboarding_sessions
 from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegistry
 
 configure_application_logging()
@@ -100,16 +101,47 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
     background: set[asyncio.Task[None]] = set()
     whatsapp_sidecars = ConfiguredWhatsAppSidecarRegistry(
-        settings.channel_whatsapp_baileys_sidecars_json.get_secret_value()
+        settings.channel_whatsapp_baileys_sidecars_json.get_secret_value(),
+        settings.channel_whatsapp_custom_baileys_sidecars_json.get_secret_value(),
     )
     await start_postgres_listener()
     try:
         await whatsapp_sidecars.start()
     except Exception:
+        await whatsapp_sidecars.stop()
         await stop_postgres_listener()
         raise
 
     await warm_clerk_jwks()
+
+    if whatsapp_sidecars.custom_slot_ids:
+
+        async def _expire_whatsapp_onboarding() -> None:
+            while True:
+                await asyncio.sleep(15)
+                try:
+                    await whatsapp_sidecars.reconcile_custom_ownership()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception("WhatsApp Custom ownership reconciliation failed")
+                try:
+                    async with async_session_factory() as db:
+                        await expire_stale_whatsapp_onboarding_sessions(
+                            db,
+                            registry=whatsapp_sidecars,
+                        )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception("WhatsApp Custom onboarding expiry sweep failed")
+
+        task = asyncio.create_task(
+            _expire_whatsapp_onboarding(),
+            name="whatsapp-custom-onboarding-expiry",
+        )
+        background.add(task)
+        task.add_done_callback(background.discard)
 
     if settings.memory_embedding_mode.lower() == "local":
 
@@ -238,11 +270,26 @@ def _apply_public_session_export_cache_policy(
     return response
 
 
+def _apply_whatsapp_onboarding_cache_policy(request: Request, response: Response) -> Response:
+    if _is_whatsapp_onboarding_request(request):
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
+
 async def request_validation_exception_handler(
     request: Request,
     exc: RequestValidationError,
 ) -> Response:
     path = request.url.path
+    if _is_whatsapp_onboarding_request(request):
+        return _apply_whatsapp_onboarding_cache_policy(
+            request,
+            JSONResponse(
+                status_code=422,
+                content={"detail": "Invalid WhatsApp onboarding request"},
+            ),
+        )
     if path.endswith("/runtime-state"):
         errors = _validation_errors_for_log(exc)
         log.warning(
@@ -334,7 +381,10 @@ async def oauth_credential_payload_corrupt_exception_handler(
         status_code=409,
         content={"detail": str(exc)},
     )
-    return _apply_public_session_export_cache_policy(request, response)
+    return _apply_whatsapp_onboarding_cache_policy(
+        request,
+        _apply_public_session_export_cache_policy(request, response),
+    )
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -350,7 +400,10 @@ async def clawdi_http_exception_handler(
         )
     else:
         response = await http_exception_handler(request, exc)
-    return _apply_public_session_export_cache_policy(request, response)
+    return _apply_whatsapp_onboarding_cache_policy(
+        request,
+        _apply_public_session_export_cache_policy(request, response),
+    )
 
 
 @app.exception_handler(RequestValidationError)
@@ -369,6 +422,15 @@ async def clawdi_request_validation_exception_handler(
 def _is_bluebubbles_request(request: Request) -> bool:
     return request.url.path.startswith(
         ("/api/channels/imessage/bluebubbles/", "/v1/channels/imessage/bluebubbles/")
+    )
+
+
+def _is_whatsapp_onboarding_request(request: Request) -> bool:
+    return request.url.path.startswith(
+        (
+            "/api/channels/whatsapp/onboarding/",
+            "/v1/channels/whatsapp/onboarding/",
+        )
     )
 
 

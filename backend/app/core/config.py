@@ -337,6 +337,9 @@ class Settings(BaseSettings):
     channel_discord_api_base_url: str = "https://discord.com/api/v10"
     channel_discord_gateway_url: str = "wss://gateway.discord.gg"
     channel_whatsapp_baileys_sidecars_json: SecretStr = SecretStr("")
+    # Dedicated one-socket slots for user-owned WhatsApp linked-device sessions.
+    # This must remain separate from the Clawdi-managed shared account registry.
+    channel_whatsapp_custom_baileys_sidecars_json: SecretStr = SecretStr("")
 
 
 settings = Settings()

@@ -15,6 +15,7 @@ import {
 
 const ACCOUNT_A = "11111111-1111-4111-8111-111111111111";
 const ACCOUNT_B = "22222222-2222-4222-8222-222222222222";
+const REGISTERED_ME = { id: "15550001111:1@s.whatsapp.net", name: "Test account" };
 const WEB_VERSION = parseAuditedWhatsAppWebVersion("2.3000.1035194821");
 const temporaryDirectories: string[] = [];
 
@@ -37,6 +38,7 @@ describe("SQLite provider state", () => {
 		first.saveCreds({
 			registered: true,
 			registrationId: 0,
+			me: REGISTERED_ME,
 			routingInfo: Buffer.from([1, 2, 3]),
 		});
 		const appStateKey = proto.Message.AppStateSyncKeyData.create({
@@ -85,6 +87,30 @@ describe("SQLite provider state", () => {
 		second.close();
 	});
 
+	it("keeps manual phone and pairing-code input out of unregistered auth snapshots", () => {
+		const directory = makeDirectory();
+		const phoneJid = "14155550123@s.whatsapp.net";
+		const first = makeState(directory);
+		first.saveCreds({
+			me: { id: phoneJid, name: "~" },
+			pairingCode: "12345678",
+		});
+
+		expect(first.state.creds.me?.id).toBe(phoneJid);
+		expect(first.state.creds.pairingCode).toBe("12345678");
+		const stored = internalDatabase(first)
+			.query<{ value: string }, []>("SELECT value FROM auth_creds WHERE singleton = 1")
+			.get();
+		expect(stored?.value).not.toContain(phoneJid);
+		expect(stored?.value).not.toContain("12345678");
+		first.close();
+
+		const second = makeState(directory);
+		expect(second.state.creds.me).toBeUndefined();
+		expect(second.state.creds.pairingCode).toBeUndefined();
+		second.close();
+	});
+
 	it("rolls back a multi-key Signal transaction and reports the injected failure", async () => {
 		const failures: Array<{ operation: ProviderStateFailureOperation; message: string }> = [];
 		const state = makeState(makeDirectory(), {
@@ -124,6 +150,60 @@ describe("SQLite provider state", () => {
 		second.close();
 	});
 
+	it("atomically clears physical auth, Signal, retry, and inbox state across restart", async () => {
+		const directory = makeDirectory();
+		let first: SQLiteProviderState | undefined = makeState(directory);
+		first.saveCreds({ registered: true, me: REGISTERED_ME, routingInfo: Buffer.from([1, 2, 3]) });
+		await first.state.keys.set({ session: { sender: Buffer.from([4, 5, 6]) } });
+		first.retryCounterCache.set("retry", { count: 2 });
+		first.storeRetryMessage(
+			"15550001111@s.whatsapp.net",
+			"outbound-1",
+			proto.Message.encode({ conversation: "retry" }).finish(),
+		);
+		first.appendProviderEvents([providerEvent("inbound-1")]);
+
+		first.resetPhysicalAuth();
+
+		expect(first.state.creds.registered).toBe(false);
+		expect(await first.state.keys.get("session", ["sender"])).toEqual({});
+		expect(first.retryCounterCache.get("retry")).toBeUndefined();
+		expect(first.getRetryMessage("15550001111@s.whatsapp.net", "outbound-1")).toBeUndefined();
+		expect(first.providerEvents(100)).toEqual([]);
+		first.close();
+		first = undefined;
+		Bun.gc(true);
+
+		const second = makeState(directory);
+		expect(second.state.creds.registered).toBe(false);
+		expect(await second.state.keys.get("session", ["sender"])).toEqual({});
+		expect(second.retryCounterCache.get("retry")).toBeUndefined();
+		expect(second.getRetryMessage("15550001111@s.whatsapp.net", "outbound-1")).toBeUndefined();
+		expect(second.providerEvents(100)).toEqual([]);
+		second.close();
+	});
+
+	it("rolls back and reports a failed physical-auth reset", async () => {
+		const failures: ProviderStateFailureOperation[] = [];
+		const state = makeState(makeDirectory(), {
+			onFailure: (operation) => failures.push(operation),
+		});
+		state.saveCreds({ registered: true, me: REGISTERED_ME });
+		await state.state.keys.set({ session: { sender: Buffer.from([1]) } });
+		internalDatabase(state).exec(`
+			CREATE TRIGGER fail_auth_reset BEFORE INSERT ON auth_creds
+			BEGIN SELECT RAISE(ABORT, 'injected auth reset failure'); END;
+		`);
+
+		expect(() => state.resetPhysicalAuth()).toThrow("injected auth reset failure");
+		expect(state.state.creds.registered).toBe(true);
+		expect(await state.state.keys.get("session", ["sender"])).toEqual({
+			sender: Buffer.from([1]),
+		});
+		expect(failures).toEqual(["physical_auth_reset"]);
+		state.close();
+	});
+
 	it("enforces inbox event and byte capacities atomically", () => {
 		const countState = makeState(makeDirectory(), { maxEvents: 1, maxBytes: 100_000 });
 		countState.appendProviderEvents([providerEvent("first")]);
@@ -161,6 +241,12 @@ describe("SQLite provider state", () => {
 	});
 
 	it("fails closed on corrupt creds and corrupt pending inbox data", () => {
+		const missingIdentityState = makeState(makeDirectory());
+		expect(() => missingIdentityState.saveCreds({ registered: true })).toThrow(
+			"corrupt Baileys authentication credentials",
+		);
+		missingIdentityState.close();
+
 		const credsDirectory = makeDirectory();
 		const credsState = makeState(credsDirectory);
 		credsState.close();

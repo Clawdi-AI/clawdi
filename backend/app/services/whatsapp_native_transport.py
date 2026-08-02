@@ -2,16 +2,23 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from datetime import UTC, datetime
+from typing import Literal, Protocol, cast
 from urllib.parse import urlsplit
+from uuid import UUID
 
 import httpx
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from app.services.whatsapp_baileys import BinaryNode, relay_outbound_extra_attrs
+from app.services.whatsapp_baileys import (
+    BinaryNode,
+    relay_outbound_extra_attrs,
+    validate_relay_outbound_additional_nodes,
+)
 from app.services.whatsapp_runtime_types import WhatsAppOutboundMessage
 
 _BYTES_SENTINEL = "base64-bytes"
@@ -34,6 +41,69 @@ type _NativeNodeValue = (
     | list[_NativeNodeValue]
     | tuple[_NativeNodeValue, ...]
 )
+_CAPABILITIES_PATH = "/v1/capabilities"
+_PAIRING_STATUS_PATH = "/v1/pairing/status"
+_PAIRING_QR_PATH = "/v1/pairing/qr"
+_PAIRING_CODE_PATH = "/v1/pairing/code"
+_PAIRING_CANCEL_PATH = "/v1/pairing/cancel"
+_PAIRING_LOGOUT_PATH = "/v1/pairing/logout"
+_PAIRING_RETRY_PATH = "/v1/pairing/retry"
+_MAX_PAIRING_JSON_BYTES = 128 * 1024
+_PAIRING_ACTIONS = frozenset({"qr", "code", "cancel", "logout", "retry"})
+_EXPECTED_BAILEYS_RELEASE = {
+    "packageName": "@whiskeysockets/baileys",
+    "packageVersion": "7.0.0-rc13",
+    "sourceCommit": "8053b086ecc97ec3f78299561de11959bab05d39",
+    "version": [2, 3000, 1035194821],
+}
+
+WhatsAppSidecarRuntimeStatus = Literal[
+    "starting",
+    "connecting",
+    "pairing_qr",
+    "pairing_code",
+    "connected",
+    "disconnected",
+    "stopped",
+]
+
+
+class WhatsAppSidecarError(Exception):
+    """Redacted physical-sidecar failure safe for lifecycle handling."""
+
+
+class WhatsAppSidecarUnavailableError(WhatsAppSidecarError):
+    pass
+
+
+class WhatsAppSidecarRejectedError(WhatsAppSidecarError):
+    pass
+
+
+class WhatsAppSidecarProtocolError(WhatsAppSidecarError):
+    pass
+
+
+@dataclass(frozen=True)
+class WhatsAppSidecarHealth:
+    status: WhatsAppSidecarRuntimeStatus
+    connected: bool
+    registered: bool
+
+
+@dataclass(frozen=True)
+class WhatsAppSidecarCapabilities:
+    pairing: frozenset[str]
+
+
+@dataclass(frozen=True)
+class WhatsAppSidecarPairingStatus:
+    status: WhatsAppSidecarRuntimeStatus
+    registered: bool
+    method: Literal["qr", "code"] | None = None
+    qr: str | None = field(default=None, repr=False)
+    qr_expires_at: datetime | None = field(default=None, repr=False)
+    code: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -42,6 +112,7 @@ class WhatsAppNativeRelayRequest:
     message_id: str
     message_proto: bytes
     additional_attributes: Mapping[str, str]
+    additional_nodes: tuple[BinaryNode, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -62,12 +133,22 @@ class WhatsAppBaileysSidecarConfig:
     base_url: str
     api_token: str = field(repr=False)
     timeout_seconds: float = 10.0
+    account_id: UUID | None = None
 
     def __post_init__(self) -> None:
         validate_whatsapp_sidecar_base_url(self.base_url)
         validate_whatsapp_sidecar_api_token(self.api_token)
         if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
             raise ValueError("baileys sidecar timeout_seconds must be positive and finite")
+
+    @property
+    def binding_revision(self) -> str:
+        """Stable, non-secret identity for one configured physical slot revision."""
+
+        if self.account_id is None:
+            raise ValueError("baileys sidecar account_id is required for slot ownership")
+        material = f"clawdi-whatsapp-slot-v1\0{self.account_id}\0{self.base_url}"
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 class WhatsAppNativeUpstreamClient(Protocol):
@@ -107,6 +188,7 @@ class WhatsAppProviderTransportAdapter:
                 message_id=message.message_id,
                 message_proto=message.message_proto,
                 additional_attributes=relay_outbound_extra_attrs(message.attrs),
+                additional_nodes=validate_relay_outbound_additional_nodes(message.additional_nodes),
             )
         )
 
@@ -153,10 +235,96 @@ class WhatsAppBaileysSidecarClient:
             await self._client.aclose()
 
     async def refresh_health(self) -> bool:
+        if self._config.account_id is not None:
+            health = await self.health()
+            self._connected = health.connected
+            return self._connected
         response = await self._request("GET", _HEALTH_PATH)
         data = _response_json(response)
         self._connected = _sidecar_health_connected(data)
         return self._connected
+
+    async def health(self) -> WhatsAppSidecarHealth:
+        payload = await self._request_json("GET", _HEALTH_PATH)
+        expected_account_id = self._config.account_id
+        raw_account_id = payload.get("accountId")
+        try:
+            account_matches = (
+                expected_account_id is not None
+                and isinstance(raw_account_id, str)
+                and UUID(raw_account_id) == expected_account_id
+            )
+        except ValueError:
+            account_matches = False
+        if not account_matches or payload.get("advertisedRelease") != _EXPECTED_BAILEYS_RELEASE:
+            raise WhatsAppSidecarProtocolError("unexpected Baileys sidecar identity")
+        connected = _required_bool(payload, "connected")
+        self._connected = connected
+        return WhatsAppSidecarHealth(
+            status=_runtime_status(payload.get("status")),
+            connected=connected,
+            registered=_required_bool(payload, "registered"),
+        )
+
+    async def capabilities(self) -> WhatsAppSidecarCapabilities:
+        payload = await self._request_json("GET", _CAPABILITIES_PATH)
+        pairing = payload.get("pairing")
+        pairing_strings = (
+            [item for item in pairing if isinstance(item, str)] if isinstance(pairing, list) else []
+        )
+        if (
+            payload.get("schemaVersion") != "clawdi.whatsapp.sidecar-capabilities.v1"
+            or not isinstance(pairing, list)
+            or len(pairing_strings) != len(pairing)
+            or len(pairing_strings) != len(set(pairing_strings))
+            or frozenset(pairing_strings) != _PAIRING_ACTIONS
+            or payload.get("rawProviderAccess") is not False
+        ):
+            raise WhatsAppSidecarProtocolError("unsafe Baileys sidecar capabilities")
+        return WhatsAppSidecarCapabilities(pairing=frozenset(pairing_strings))
+
+    async def pairing_status(self) -> WhatsAppSidecarPairingStatus:
+        return self._remember_pairing_status(
+            _pairing_status(await self._request_json("GET", _PAIRING_STATUS_PATH))
+        )
+
+    async def pairing_qr(self) -> WhatsAppSidecarPairingStatus:
+        return self._remember_pairing_status(
+            _pairing_status(await self._request_json("POST", _PAIRING_QR_PATH))
+        )
+
+    async def pairing_code(self, phone_number: str) -> WhatsAppSidecarPairingStatus:
+        return self._remember_pairing_status(
+            _pairing_status(
+                await self._request_json(
+                    "POST",
+                    _PAIRING_CODE_PATH,
+                    json_body={"phoneNumber": phone_number},
+                )
+            )
+        )
+
+    async def pairing_cancel(self) -> WhatsAppSidecarPairingStatus:
+        return self._remember_pairing_status(
+            _pairing_status(await self._request_json("POST", _PAIRING_CANCEL_PATH))
+        )
+
+    async def pairing_logout(self) -> WhatsAppSidecarPairingStatus:
+        return self._remember_pairing_status(
+            _pairing_status(await self._request_json("POST", _PAIRING_LOGOUT_PATH))
+        )
+
+    async def pairing_retry(self) -> WhatsAppSidecarPairingStatus:
+        return self._remember_pairing_status(
+            _pairing_status(await self._request_json("POST", _PAIRING_RETRY_PATH))
+        )
+
+    def _remember_pairing_status(
+        self,
+        pairing: WhatsAppSidecarPairingStatus,
+    ) -> WhatsAppSidecarPairingStatus:
+        self._connected = pairing.status == "connected" and pairing.registered
+        return pairing
 
     async def relay_message(self, request: WhatsAppNativeRelayRequest) -> str | None:
         response = await self._request(
@@ -167,6 +335,7 @@ class WhatsAppBaileysSidecarClient:
                 "messageId": request.message_id,
                 "messageProtoBase64": base64.b64encode(request.message_proto).decode("ascii"),
                 "additionalAttributes": dict(request.additional_attributes),
+                "additionalNodes": _encode_json_value(request.additional_nodes),
             },
         )
         self._connected = True
@@ -228,18 +397,49 @@ class WhatsAppBaileysSidecarClient:
         params: Mapping[str, str | int] | None = None,
     ) -> httpx.Response:
         headers = {"Authorization": f"Bearer {self._api_token}"}
-        if json_body is None:
-            response = await self._client.request(method, path, headers=headers, params=params)
-        else:
-            response = await self._client.request(
-                method,
-                path,
-                headers=headers,
-                json=json_body,
-                params=params,
-            )
-        response.raise_for_status()
+        try:
+            if json_body is None:
+                response = await self._client.request(
+                    method,
+                    path,
+                    headers=headers,
+                    params=params,
+                )
+            else:
+                response = await self._client.request(
+                    method,
+                    path,
+                    headers=headers,
+                    json=json_body,
+                    params=params,
+                )
+        except httpx.HTTPError:
+            self._connected = False
+            raise WhatsAppSidecarUnavailableError("Baileys sidecar unavailable") from None
+        if response.status_code >= 500:
+            self._connected = False
+            raise WhatsAppSidecarUnavailableError("Baileys sidecar unavailable")
+        if response.status_code >= 400:
+            raise WhatsAppSidecarRejectedError("Baileys sidecar rejected request")
         return response
+
+    async def _request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: JsonValue = None,
+    ) -> Mapping[str, JsonValue]:
+        response = await self._request(method, path, json_body=json_body)
+        if len(response.content) > _MAX_PAIRING_JSON_BYTES:
+            raise WhatsAppSidecarProtocolError("Baileys sidecar response too large")
+        try:
+            value = _response_json(response)
+        except ValueError:
+            raise WhatsAppSidecarProtocolError("invalid Baileys sidecar response") from None
+        if not isinstance(value, dict):
+            raise WhatsAppSidecarProtocolError("invalid Baileys sidecar response")
+        return value
 
 
 def validate_whatsapp_sidecar_base_url(value: str) -> str:
@@ -309,6 +509,82 @@ def _sidecar_health_connected(data: JsonValue) -> bool:
     if isinstance(connected, bool):
         return connected
     return str(data.get("status") or "").lower() == "connected"
+
+
+def _runtime_status(value: object) -> WhatsAppSidecarRuntimeStatus:
+    allowed = {
+        "starting",
+        "connecting",
+        "pairing_qr",
+        "pairing_code",
+        "connected",
+        "disconnected",
+        "stopped",
+    }
+    if not isinstance(value, str) or value not in allowed:
+        raise WhatsAppSidecarProtocolError("invalid Baileys sidecar status")
+    return cast(WhatsAppSidecarRuntimeStatus, value)
+
+
+def _required_bool(value: Mapping[str, JsonValue], key: str) -> bool:
+    raw = value.get(key)
+    if not isinstance(raw, bool):
+        raise WhatsAppSidecarProtocolError("invalid Baileys sidecar response")
+    return raw
+
+
+def _optional_secret(value: JsonValue, *, maximum: int) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value or len(value) > maximum:
+        raise WhatsAppSidecarProtocolError("invalid Baileys sidecar pairing response")
+    return value
+
+
+def _optional_expiry(value: JsonValue) -> datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > 64:
+        raise WhatsAppSidecarProtocolError("invalid Baileys sidecar pairing response")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise WhatsAppSidecarProtocolError("invalid Baileys sidecar pairing response") from None
+    if parsed.tzinfo is None:
+        raise WhatsAppSidecarProtocolError("invalid Baileys sidecar pairing response")
+    return parsed.astimezone(UTC)
+
+
+def _pairing_status(value: Mapping[str, JsonValue]) -> WhatsAppSidecarPairingStatus:
+    runtime_status = _runtime_status(value.get("status"))
+    if runtime_status == "connecting":
+        raise WhatsAppSidecarProtocolError("invalid Baileys sidecar pairing response")
+    registered = _required_bool(value, "registered")
+    raw_method = value.get("method")
+    if raw_method is not None and raw_method not in {"qr", "code"}:
+        raise WhatsAppSidecarProtocolError("invalid Baileys sidecar pairing response")
+    method = cast(Literal["qr", "code"] | None, raw_method)
+    qr = _optional_secret(value.get("qr"), maximum=65_536)
+    qr_expires_at = _optional_expiry(value.get("qrExpiresAt"))
+    code = _optional_secret(value.get("code"), maximum=200)
+    if (qr is not None or qr_expires_at is not None) and method != "qr":
+        raise WhatsAppSidecarProtocolError("invalid Baileys sidecar pairing response")
+    if code is not None and method != "code":
+        raise WhatsAppSidecarProtocolError("invalid Baileys sidecar pairing response")
+    if runtime_status == "pairing_qr" and (qr is None or qr_expires_at is None):
+        raise WhatsAppSidecarProtocolError("invalid Baileys sidecar pairing response")
+    if runtime_status == "pairing_code" and code is None:
+        raise WhatsAppSidecarProtocolError("invalid Baileys sidecar pairing response")
+    if registered and (qr is not None or code is not None):
+        raise WhatsAppSidecarProtocolError("registered Baileys sidecar exposed pairing material")
+    return WhatsAppSidecarPairingStatus(
+        status=runtime_status,
+        registered=registered,
+        method=method,
+        qr=qr,
+        qr_expires_at=qr_expires_at,
+        code=code,
+    )
 
 
 def _provider_message_event(value: JsonValue) -> WhatsAppProviderMessageEvent:

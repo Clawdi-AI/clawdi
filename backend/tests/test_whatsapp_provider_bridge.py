@@ -173,6 +173,7 @@ async def test_whatsapp_provider_bridge_queues_exact_proto_before_physical_deliv
             "addressing_mode": "lid",
         },
         conversation="exact edit",
+        additional_nodes=({"tag": "meta", "attrs": {"polltype": "creation"}},),
     )
 
     register_whatsapp_provider_transport(account.id, transport)
@@ -215,6 +216,7 @@ async def test_whatsapp_provider_bridge_queues_exact_proto_before_physical_deliv
     relayed = transport.outbound_messages[0]
     assert relayed.message_proto == message_proto
     assert relayed.attrs == message.attrs
+    assert relayed.additional_nodes == message.additional_nodes
 
     await db_session.rollback()
     stored = await db_session.get(ChannelMessage, queued.channel_message_id)
@@ -228,6 +230,7 @@ async def test_whatsapp_provider_bridge_queues_exact_proto_before_physical_deliv
         "messageProtoBase64": base64.b64encode(message_proto).decode("ascii"),
         "encType": "msg",
         "attrs": message.attrs,
+        "additionalNodes": [{"tag": "meta", "attrs": {"polltype": "creation"}}],
     }
     assert stored.provider_message_id == "physical-agent-exact-1"
     assert delivery.status == "succeeded"
@@ -331,6 +334,91 @@ async def test_whatsapp_provider_bridge_authorizes_raw_nodes_and_bounded_iq(
         tenant_id=str(link.id),
         bot_agent_link_id=link.id,
     )
+    media_iq = await bridge.forward_iq(
+        {
+            "tag": "iq",
+            "attrs": {
+                "id": "media-conn-1",
+                "xmlns": "w:m",
+                "type": "set",
+                "to": "s.whatsapp.net",
+            },
+            "content": [{"tag": "media_conn", "attrs": {}}],
+        },
+        tenant_id=str(link.id),
+        bot_agent_link_id=link.id,
+    )
+    privacy_iq = await bridge.forward_iq(
+        {
+            "tag": "iq",
+            "attrs": {
+                "id": "privacy-1",
+                "xmlns": "privacy",
+                "type": "get",
+                "to": "s.whatsapp.net",
+            },
+            "content": [{"tag": "privacy", "attrs": {}}],
+        },
+        tenant_id=str(link.id),
+        bot_agent_link_id=link.id,
+    )
+    malformed_service_iq = await bridge.forward_iq(
+        {
+            "tag": "iq",
+            "attrs": {
+                "id": "unsafe-media-1",
+                "xmlns": "w:m",
+                "type": "set",
+                "to": "s.whatsapp.net",
+                "target": other_binding.external_chat_id,
+            },
+            "content": [{"tag": "media_conn", "attrs": {}}],
+        },
+        tenant_id=str(link.id),
+        bot_agent_link_id=link.id,
+    )
+    missing_id_service_iq = await bridge.forward_iq(
+        {
+            "tag": "iq",
+            "attrs": {
+                "xmlns": "privacy",
+                "type": "get",
+                "to": "s.whatsapp.net",
+            },
+            "content": [{"tag": "privacy", "attrs": {}}],
+        },
+        tenant_id=str(link.id),
+        bot_agent_link_id=link.id,
+    )
+    cross_link_service_iq = await bridge.forward_iq(
+        {
+            "tag": "iq",
+            "attrs": {
+                "id": "privacy-cross-link",
+                "xmlns": "privacy",
+                "type": "get",
+                "to": "s.whatsapp.net",
+            },
+            "content": [{"tag": "privacy", "attrs": {}}],
+        },
+        tenant_id=str(other_link.id),
+        bot_agent_link_id=link.id,
+    )
+    missing_link_id = uuid4()
+    missing_link_service_iq = await bridge.forward_iq(
+        {
+            "tag": "iq",
+            "attrs": {
+                "id": "privacy-missing-link",
+                "xmlns": "privacy",
+                "type": "get",
+                "to": "s.whatsapp.net",
+            },
+            "content": [{"tag": "privacy", "attrs": {}}],
+        },
+        tenant_id=str(missing_link_id),
+        bot_agent_link_id=missing_link_id,
+    )
 
     assert relayed.outcome == "relayed"
     assert dropped.outcome == "dropped"
@@ -349,7 +437,25 @@ async def test_whatsapp_provider_bridge_authorizes_raw_nodes_and_bounded_iq(
     assert cross_link_iq is None
     assert mismatched_tenant_iq is None
     assert untargeted_iq is None
-    assert len(transport.iq_queries) == 1
+    assert media_iq is not None
+    assert media_iq["attrs"]["id"] == "media-conn-1"
+    assert privacy_iq is not None
+    assert privacy_iq["attrs"]["id"] == "privacy-1"
+    assert malformed_service_iq is None
+    assert missing_id_service_iq is None
+    assert cross_link_service_iq is None
+    assert missing_link_service_iq is None
+    assert len(transport.iq_queries) == 3
+    assert transport.iq_queries[1][0] == {
+        "tag": "iq",
+        "attrs": {"xmlns": "w:m", "type": "set", "to": "s.whatsapp.net"},
+        "content": [{"tag": "media_conn", "attrs": {}}],
+    }
+    assert transport.iq_queries[2][0] == {
+        "tag": "iq",
+        "attrs": {"xmlns": "privacy", "type": "get", "to": "s.whatsapp.net"},
+        "content": [{"tag": "privacy", "attrs": {}}],
+    }
 
 
 @pytest.mark.asyncio

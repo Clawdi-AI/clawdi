@@ -90,20 +90,22 @@ describe("hosted channel instructions and gates", () => {
 		}
 	});
 
-	test("selects the first unlinked provider and exposes no form when both are linked", () => {
+	test("keeps WhatsApp account onboarding separate from Agent link cardinality", () => {
 		expect(availableBotProvidersForAgent("agent-1", "openclaw", new Set())).toEqual([
 			"telegram",
 			"discord",
+			"whatsapp",
 		]);
 		expect(availableBotProvidersForAgent("agent-1", "openclaw", new Set(["telegram"]))).toEqual([
 			"discord",
+			"whatsapp",
 		]);
 		expect(
 			availableBotProvidersForAgent("agent-1", "openclaw", new Set(["telegram", "discord"])),
-		).toEqual([]);
+		).toEqual(["whatsapp"]);
 		expect(
 			availableBotProvidersForAgent(undefined, undefined, new Set(["telegram", "discord"])),
-		).toEqual(["telegram", "discord"]);
+		).toEqual(["telegram", "discord", "whatsapp"]);
 	});
 
 	test("expires pairing actions exactly at the server deadline", () => {
@@ -124,8 +126,8 @@ describe("hosted channel instructions and gates", () => {
 		for (const agentType of ["openclaw", "hermes"]) {
 			expect(agentProviderHasSingleLinkLimit(agentType, "telegram")).toBe(true);
 			expect(agentProviderHasSingleLinkLimit(agentType, "discord")).toBe(true);
+			expect(agentProviderHasSingleLinkLimit(agentType, "whatsapp")).toBe(true);
 		}
-		expect(agentProviderHasSingleLinkLimit("openclaw", "whatsapp")).toBe(false);
 		expect(agentProviderHasSingleLinkLimit("codex", "telegram")).toBe(false);
 	});
 });

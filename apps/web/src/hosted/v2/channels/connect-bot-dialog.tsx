@@ -29,6 +29,7 @@ import {
 	discordBotTokenError,
 	discordPublicKeyError,
 } from "@/hosted/v2/channels/connect-bot-dialog.logic";
+import { WhatsAppDeviceOnboarding } from "@/hosted/v2/channels/whatsapp-device-onboarding";
 
 export function ConnectBotDialog({
 	open,
@@ -37,6 +38,7 @@ export function ConnectBotDialog({
 	agentType,
 	linkedProviders,
 	onAgentConnected,
+	onChooseClawdiWhatsapp,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -49,6 +51,7 @@ export function ConnectBotDialog({
 		provider: string;
 		agentLinkId: string;
 	}) => void;
+	onChooseClawdiWhatsapp?: () => void;
 }) {
 	const create = useCreateChannel();
 	const [provider, setProvider] = useState<ConnectableBotProvider>("telegram");
@@ -83,6 +86,7 @@ export function ConnectBotDialog({
 	const meta = PROVIDER_META[provider];
 	const providerAlreadyLinked = !availableProviders.includes(provider);
 	const discordSelected = provider === "discord";
+	const whatsappSelected = provider === "whatsapp";
 	const tokenError = discordSelected ? discordBotTokenError(token) : null;
 	const applicationIdError = discordSelected ? discordApplicationIdError(applicationId) : null;
 	const publicKeyError = discordSelected ? discordPublicKeyError(publicKey) : null;
@@ -98,6 +102,7 @@ export function ConnectBotDialog({
 	}
 
 	const canSubmit =
+		!whatsappSelected &&
 		!providerAlreadyLinked &&
 		name.trim().length > 0 &&
 		token.trim().length > 0 &&
@@ -171,21 +176,21 @@ export function ConnectBotDialog({
 	}
 
 	const providerChoices = (
-		<fieldset className="grid grid-cols-2 gap-2 border-0 p-0" aria-label="Provider">
+		<fieldset className="grid grid-cols-2 gap-2 border-0 p-0 sm:grid-cols-3" aria-label="Provider">
 			{CONNECTABLE_BOT_PROVIDERS.map((item) => {
-				const alreadyLinked = !availableProviders.includes(item);
+				const alreadyLinked = item !== "whatsapp" && !availableProviders.includes(item);
 				return (
 					<Button
 						key={item}
 						type="button"
 						variant={!alreadyLinked && provider === item ? "secondary" : "outline"}
-						className="h-12 min-w-0 justify-start gap-2 px-2.5"
+						className="h-auto min-h-12 min-w-0 justify-start gap-1.5 px-2 sm:gap-2 sm:px-2.5"
 						disabled={alreadyLinked}
 						aria-pressed={!alreadyLinked && provider === item}
 						onClick={() => changeProvider(item)}
 					>
 						<EntityIcon kind="channel" id={item} label={PROVIDER_META[item].label} size="sm" />
-						<span className="min-w-0 truncate text-left leading-tight">
+						<span className="min-w-0 whitespace-normal break-words text-left text-xs leading-tight [overflow-wrap:anywhere] sm:text-sm">
 							{PROVIDER_META[item].label}
 						</span>
 					</Button>
@@ -236,11 +241,11 @@ export function ConnectBotDialog({
 				) : (
 					<>
 						<DialogHeader>
-							<DialogTitle>Connect custom bot</DialogTitle>
+							<DialogTitle>Add channel</DialogTitle>
 							<DialogDescription>
 								{agentId
-									? "Connect a Custom bot you manage to this Agent."
-									: "Connect a Custom bot you manage."}
+									? "Add a Custom bot you manage, or choose a Clawdi bot for this Agent."
+									: "Connect a Custom bot you manage, or find a Clawdi bot for an Agent."}
 							</DialogDescription>
 						</DialogHeader>
 
@@ -253,7 +258,7 @@ export function ConnectBotDialog({
 								</p>
 							</div>
 						) : (
-							<div className="flex flex-col gap-3">
+							<div className="flex min-w-0 flex-col gap-3">
 								{providerChoices}
 								{unavailableProviders.length === 1 ? (
 									<p className="text-xs text-muted-foreground">
@@ -261,125 +266,144 @@ export function ConnectBotDialog({
 										Unlink it to connect another Custom bot from that provider.
 									</p>
 								) : null}
-								<p className="min-w-0 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
-									{provider === "telegram" ? "Need a bot token? " : "Need app credentials? "}
-									<a
-										href={meta.setupUrl}
-										target="_blank"
-										rel="noreferrer"
-										className="inline-flex min-w-0 flex-wrap items-center gap-1 font-medium text-foreground underline underline-offset-4"
-									>
-										{provider === "telegram"
-											? "Create a bot with @BotFather"
-											: "Open Discord Developer Portal"}
-										<ExternalLink className="size-3" />
-									</a>
-								</p>
-
-								<div className="flex flex-col gap-1.5">
-									<Label htmlFor="connect-name">Name</Label>
-									<Input
-										id="connect-name"
-										value={name}
-										onChange={(event) => setName(event.target.value)}
-										placeholder="Support Bot"
-										autoComplete="off"
+								{whatsappSelected ? (
+									<WhatsAppDeviceOnboarding
+										agentId={agentId}
+										onChooseClawdi={() => {
+											handleOpenChange(false);
+											onChooseClawdiWhatsapp?.();
+										}}
+										onDone={() => handleOpenChange(false)}
 									/>
-								</div>
-
-								<div className="flex flex-col gap-1.5">
-									<Label htmlFor="connect-token">Bot token</Label>
-									<Input
-										id="connect-token"
-										type="password"
-										value={token}
-										onChange={(event) => setToken(event.target.value)}
-										placeholder={meta.tokenPlaceholder}
-										autoComplete="off"
-										spellCheck={false}
-										required
-										aria-invalid={Boolean(tokenError)}
-										aria-describedby={tokenError ? "connect-token-error" : undefined}
-									/>
-									{tokenError ? (
-										<p
-											id="connect-token-error"
-											className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
-										>
-											{tokenError}
-										</p>
-									) : null}
-								</div>
-
-								{discordSelected ? (
+								) : (
 									<>
+										<p className="min-w-0 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
+											{provider === "telegram" ? "Need a bot token? " : "Need app credentials? "}
+											<a
+												href={meta.setupUrl}
+												target="_blank"
+												rel="noreferrer"
+												className="inline-flex min-w-0 flex-wrap items-center gap-1 font-medium text-foreground underline underline-offset-4"
+											>
+												{provider === "telegram"
+													? "Create a bot with @BotFather"
+													: "Open Discord Developer Portal"}
+												<ExternalLink className="size-3" />
+											</a>
+										</p>
+
 										<div className="flex flex-col gap-1.5">
-											<Label htmlFor="connect-app-id">Application ID</Label>
+											<Label htmlFor="connect-name">Name</Label>
 											<Input
-												id="connect-app-id"
-												value={applicationId}
-												onChange={(event) => setApplicationId(event.target.value)}
-												placeholder="Application ID"
+												id="connect-name"
+												value={name}
+												onChange={(event) => setName(event.target.value)}
+												placeholder="Support Bot"
+												autoComplete="off"
+											/>
+										</div>
+
+										<div className="flex flex-col gap-1.5">
+											<Label htmlFor="connect-token">Bot token</Label>
+											<Input
+												id="connect-token"
+												type="password"
+												value={token}
+												onChange={(event) => setToken(event.target.value)}
+												placeholder={meta.tokenPlaceholder}
 												autoComplete="off"
 												spellCheck={false}
 												required
-												aria-invalid={Boolean(applicationIdError)}
-												aria-describedby={applicationIdError ? "connect-app-id-error" : undefined}
+												aria-invalid={Boolean(tokenError)}
+												aria-describedby={tokenError ? "connect-token-error" : undefined}
 											/>
-											{applicationIdError ? (
+											{tokenError ? (
 												<p
-													id="connect-app-id-error"
+													id="connect-token-error"
 													className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
 												>
-													{applicationIdError}
+													{tokenError}
 												</p>
 											) : null}
 										</div>
-										<div className="flex flex-col gap-1.5">
-											<Label htmlFor="connect-public-key">Public key</Label>
-											<Input
-												id="connect-public-key"
-												value={publicKey}
-												onChange={(event) => setPublicKey(event.target.value)}
-												placeholder="64-character hex public key"
-												autoComplete="off"
-												spellCheck={false}
-												required
-												aria-invalid={Boolean(publicKeyError)}
-												aria-describedby={publicKeyError ? "connect-public-key-error" : undefined}
-											/>
-											{publicKeyError ? (
-												<p
-													id="connect-public-key-error"
-													className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
-												>
-													{publicKeyError}
-												</p>
-											) : null}
-										</div>
+
+										{discordSelected ? (
+											<>
+												<div className="flex flex-col gap-1.5">
+													<Label htmlFor="connect-app-id">Application ID</Label>
+													<Input
+														id="connect-app-id"
+														value={applicationId}
+														onChange={(event) => setApplicationId(event.target.value)}
+														placeholder="Application ID"
+														autoComplete="off"
+														spellCheck={false}
+														required
+														aria-invalid={Boolean(applicationIdError)}
+														aria-describedby={
+															applicationIdError ? "connect-app-id-error" : undefined
+														}
+													/>
+													{applicationIdError ? (
+														<p
+															id="connect-app-id-error"
+															className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
+														>
+															{applicationIdError}
+														</p>
+													) : null}
+												</div>
+												<div className="flex flex-col gap-1.5">
+													<Label htmlFor="connect-public-key">Public key</Label>
+													<Input
+														id="connect-public-key"
+														value={publicKey}
+														onChange={(event) => setPublicKey(event.target.value)}
+														placeholder="64-character hex public key"
+														autoComplete="off"
+														spellCheck={false}
+														required
+														aria-invalid={Boolean(publicKeyError)}
+														aria-describedby={
+															publicKeyError ? "connect-public-key-error" : undefined
+														}
+													/>
+													{publicKeyError ? (
+														<p
+															id="connect-public-key-error"
+															className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
+														>
+															{publicKeyError}
+														</p>
+													) : null}
+												</div>
+											</>
+										) : null}
 									</>
-								) : null}
+								)}
 							</div>
 						)}
 
-						<DialogFooter>
-							<Button
-								variant="outline"
-								className="min-w-0 whitespace-normal"
-								onClick={() => handleOpenChange(false)}
-							>
-								{isSubmitting ? "Close" : "Cancel"}
-							</Button>
-							{availableProviders.length > 0 ? (
+						{!whatsappSelected ? (
+							<DialogFooter>
 								<Button
+									variant="outline"
 									className="min-w-0 whitespace-normal"
-									onClick={() => void submit()}
-									disabled={!canSubmit || isSubmitting}
+									onClick={() => handleOpenChange(false)}
 								>
-									{isSubmitting ? "Connecting…" : "Connect custom bot"}
+									{isSubmitting ? "Close" : "Cancel"}
 								</Button>
-							) : null}
-						</DialogFooter>
+								{availableProviders.length > 0 ? (
+									<Button
+										className="min-w-0 whitespace-normal"
+										onClick={() => void submit()}
+										disabled={!canSubmit || isSubmitting}
+									>
+										{isSubmitting ? "Connecting…" : "Connect custom bot"}
+									</Button>
+								) : null}
+							</DialogFooter>
+						) : null}
 					</>
 				)}
 			</DialogContent>

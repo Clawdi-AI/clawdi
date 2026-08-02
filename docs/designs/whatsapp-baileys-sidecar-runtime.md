@@ -67,6 +67,12 @@ The backend may inspect only the JIDs, message ids, and node attributes needed
 for ownership and binding policy. It must preserve Baileys proto/BinaryNode
 fidelity and must not translate through Meta Graph payloads.
 
+The stock OpenClaw/Hermes capability and call-path evidence is recorded in
+[`whatsapp-native-capability-audit.md`](whatsapp-native-capability-audit.md).
+Clawdi does not duplicate those application features. Its only capability
+repairs are narrow protocol-envelope fidelity for exact provider-service IQs
+and the rc13 poll-creation metadata node.
+
 ## Physical Provider Transport
 
 `BaileysSocketRuntime` calls `makeWASocket` once for one configured provider
@@ -133,11 +139,12 @@ public application relay API. Raw nodes and IQs remain because the native Noise
 bridge calls them after backend policy checks; removing them would break
 receipts, key/group queries, and protocol fidelity.
 
-Current repair verification: `bun test packages/whatsapp-baileys-sidecar/src`
-reports 28 passing tests. It covers restart, transaction rollback, corrupt
-state, `creds.update`, Signal get/set/delete/clear, empty-queue sequence
-monotonicity, capacity, persistence fail-stop, exact pinned socket version,
-immutable account binding, exclusive ownership, and pre-open symlink rejection.
+Current repair verification: `scripts/test.sh sidecar` reports 41 passing tests
+in the isolated runner. It covers pairing lifecycle serialization and rotation,
+restart, transaction rollback, corrupt state, `creds.update`, Signal
+get/set/delete/clear, empty-queue sequence monotonicity, capacity, persistence
+fail-stop, exact pinned socket version, immutable account binding, exclusive
+ownership, and pre-open symlink rejection.
 
 ## Generic Egress Layering
 
