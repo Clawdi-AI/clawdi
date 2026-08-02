@@ -126,7 +126,10 @@ async def load_runtime_source_batch(
 ) -> RuntimeSourceBatch:
     if not environment_ids:
         return RuntimeSourceBatch({}, {}, {}, {}, {})
-    env_filters: list[ColumnElement[bool]] = [AgentEnvironment.id.in_(environment_ids)]
+    env_filters: list[ColumnElement[bool]] = [
+        AgentEnvironment.id.in_(environment_ids),
+        AgentEnvironment.archived_at.is_(None),
+    ]
     if owner_user_id is not None:
         env_filters.append(AgentEnvironment.user_id == owner_user_id)
     env_rows = (

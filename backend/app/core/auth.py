@@ -252,9 +252,12 @@ async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
                 select(AgentEnvironment.default_project_id).where(
                     AgentEnvironment.id == api_key.environment_id,
                     AgentEnvironment.user_id == api_key.user_id,
+                    AgentEnvironment.archived_at.is_(None),
                 )
             )
         ).scalar_one_or_none()
+        if api_key_project_id is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Agent is archived")
 
     _cache_api_key_auth(
         key_hash=key_hash,

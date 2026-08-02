@@ -388,7 +388,9 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
         json={"owner": owner},
     )
     assert deleted_agent.status_code == 204, deleted_agent.text
-    assert await db_session.get(AgentEnvironment, agent_id) is None
+    archived_agent = await db_session.get(AgentEnvironment, agent_id)
+    assert archived_agent is not None
+    assert archived_agent.archived_at is not None
 
     events = (
         (
@@ -1174,10 +1176,10 @@ async def test_platform_idempotency_replays_every_mutation_without_second_side_e
         await db_session.scalar(
             select(func.count()).select_from(Skill).where(Skill.project_id == agent_project_id)
         )
-        == 0
+        == 2
     )
     await db_session.refresh(seed_user)
-    assert seed_user.skills_revision == revision_before_agent_delete + 2
+    assert seed_user.skills_revision == revision_before_agent_delete
 
     assert (
         await db_session.scalar(

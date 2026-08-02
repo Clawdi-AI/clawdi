@@ -2211,7 +2211,8 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
     env = (
         await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == agent_id))
     ).scalar_one_or_none()
-    assert env is None
+    assert env is not None
+    assert env.archived_at is not None
 
 
 @pytest.mark.asyncio

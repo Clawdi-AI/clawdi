@@ -35,11 +35,7 @@ from app.services.agent_environments import (
     AgentEnvironmentIdConflict,
     register_agent_environment,
 )
-from app.services.agent_skill_projection import (
-    AgentSkillProjectionBoundaryError,
-    delete_agent_project_skill_rows,
-    delete_agent_skill_files_best_effort,
-)
+from app.services.agent_lifecycle import active_agent_filter, archive_agent_and_project
 from app.services.ai_provider_credentials import (
     OAuthCredentialClaimConflict,
     lock_ai_provider_owner,
@@ -448,6 +444,7 @@ async def _load_owned_agent(
             .where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == owner_user_id,
+                active_agent_filter(),
             )
             .with_for_update()
         )
@@ -659,25 +656,8 @@ async def platform_delete_agent(
         "machine_id": agent.machine_id,
         "explicit_identity": agent.registration_key is None,
     }
-    try:
-        skill_file_keys = await delete_agent_project_skill_rows(db, agent=agent)
-    except AgentSkillProjectionBoundaryError:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail={
-                "code": "agent_project_ownership_unproven",
-                "message": (
-                    "Agent Project ownership could not be proven; no resources were deleted."
-                ),
-            },
-        ) from None
-    await release_runtime_oauth_claims(
-        db,
-        owner_user_id=owner.id,
-        environment_id=agent_id,
-    )
     await queue_environment_runtime_manifest_changed(db, owner.id, agent_id)
-    await db.delete(agent)
+    await archive_agent_and_project(db, agent=agent)
     await _complete_mutation(
         db,
         operation="agents.delete",
@@ -694,7 +674,6 @@ async def platform_delete_agent(
         environment_id=agent_id,
         audit_details=audit_details,
     )
-    await delete_agent_skill_files_best_effort(skill_file_keys, agent_id=agent_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

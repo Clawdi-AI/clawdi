@@ -28,6 +28,7 @@ async def runtime_manifest_reserved_skill_ids(
         .where(
             AgentEnvironment.user_id == user_id,
             AgentEnvironment.default_project_id == project_id,
+            AgentEnvironment.archived_at.is_(None),
         )
     )
     reserved: set[str] = set()

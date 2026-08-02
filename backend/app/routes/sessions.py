@@ -84,12 +84,7 @@ from app.services.agent_environments import (
     local_machine_registration_key,
     register_agent_environment,
 )
-from app.services.agent_skill_projection import (
-    AgentSkillProjectionBoundaryError,
-    delete_agent_project_skill_rows,
-    delete_agent_skill_files_best_effort,
-)
-from app.services.ai_provider_credentials import release_runtime_oauth_claims
+from app.services.agent_lifecycle import active_agent_filter, archive_agent_and_project
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.memory_extraction import extract_memories_from_session
@@ -291,7 +286,7 @@ async def _list_agent_identities(
     bound_env = _bound_env_id(auth)
     stmt = (
         select(AgentEnvironment)
-        .where(AgentEnvironment.user_id == auth.user_id)
+        .where(AgentEnvironment.user_id == auth.user_id, active_agent_filter())
         .order_by(
             AgentEnvironment.sort_order.asc(),
             AgentEnvironment.created_at.asc(),
@@ -384,6 +379,7 @@ async def _get_agent_identity(
             .where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).first()
@@ -410,7 +406,7 @@ async def list_environment_runtime_observed(
     db: AsyncSession = Depends(get_session),
 ) -> RuntimeObservedSummaryResponse:
     bound_env = _bound_env_id(auth)
-    filters = [AgentEnvironment.user_id == auth.user_id]
+    filters = [AgentEnvironment.user_id == auth.user_id, active_agent_filter()]
     if bound_env is not None:
         filters.append(AgentEnvironment.id == bound_env)
 
@@ -524,6 +520,7 @@ async def _reorder_agent_identities(
             await db.execute(
                 select(AgentEnvironment)
                 .where(AgentEnvironment.user_id == auth.user_id)
+                .where(active_agent_filter())
                 .order_by(
                     AgentEnvironment.sort_order.asc(),
                     AgentEnvironment.created_at.asc(),
@@ -645,6 +642,7 @@ async def _update_agent_identity(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -835,6 +833,7 @@ async def get_environment_runtime_observed(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == environment_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -958,6 +957,7 @@ async def get_agent_mcp_inventory(
             .where(
                 HostedRuntimeState.environment_id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -1515,13 +1515,12 @@ async def _delete_agent_identity(
     auth: AuthContext,
     db: AsyncSession,
 ) -> None:
-    """Delete an agent environment. Existing sessions remain (orphaned)
-    so users don't lose history when removing a machine. The session
-    list query uses an outer-join so orphaned rows still render."""
+    """Archive an Agent and its exclusive Project without breaking identity."""
     result = await db.execute(
         select(AgentEnvironment).where(
             AgentEnvironment.id == agent_id,
             AgentEnvironment.user_id == auth.user_id,
+            active_agent_filter(),
         )
     )
     env = result.scalar_one_or_none()
@@ -1532,22 +1531,9 @@ async def _delete_agent_identity(
             status.HTTP_409_CONFLICT,
             "This agent uses an explicit identity and cannot be disconnected here",
         )
-    try:
-        skill_file_keys = await delete_agent_project_skill_rows(db, agent=env)
-    except AgentSkillProjectionBoundaryError:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "Agent Project ownership could not be proven; no resources were deleted.",
-        ) from None
-    await release_runtime_oauth_claims(
-        db,
-        owner_user_id=auth.user_id,
-        environment_id=agent_id,
-    )
     await queue_environment_runtime_manifest_changed(db, auth.user_id, agent_id)
-    await db.delete(env)
+    await archive_agent_and_project(db, agent=env)
     await db.commit()
-    await delete_agent_skill_files_best_effort(skill_file_keys, agent_id=agent_id)
 
 
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1696,6 +1682,7 @@ async def sync_heartbeat(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -1887,6 +1874,7 @@ async def batch_create_sessions(
                 select(AgentEnvironment.id).where(
                     AgentEnvironment.id.in_(requested_env_ids),
                     AgentEnvironment.user_id == auth.user_id,
+                    active_agent_filter(),
                 )
             )
         )

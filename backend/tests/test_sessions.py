@@ -1503,26 +1503,12 @@ async def test_session_batch_rejects_malformed_uuid_with_422_not_500(client: htt
 
 
 @pytest.mark.asyncio
-async def test_delete_environment_orphans_sessions_via_fk(
+async def test_disconnect_archives_identity_and_preserves_session_link(
     client: httpx.AsyncClient, db_session: AsyncSession, seed_user
 ):
-    """Deleting an environment must keep historical sessions but null out
-    the FK so the list query renders them as unlabeled — never 500.
-    The FK + ON DELETE SET NULL is what makes this safe under concurrent
-    deletion (the previous SELECT-then-INSERT race could create orphans
-    that violated invariants the codebase implicitly relied on).
-
-    This test asserts at *both* layers:
-      1. HTTP — the dashboard list endpoint returns the row with null
-         agent label (could pass without an FK, just via outerjoin).
-      2. Raw SQL — `sessions.environment_id IS NULL` after delete. This
-         is what proves `ON DELETE SET NULL` actually fired; without the
-         FK the column would still hold the deleted UUID."""
-    env_id = await _register_env_named(
-        client,
-        f"delete-oauth-claim-{uuid.uuid4().hex}",
-        agent_type="codex",
-    )
+    """Disconnect keeps the stable Agent identity attached to history."""
+    machine_id = f"delete-oauth-claim-{uuid.uuid4().hex}"
+    env_id = await _register_env_named(client, machine_id, agent_type="codex")
 
     from app.models.ai_provider import AiProviderAuthPayload
     from app.services.vault_crypto import encrypt
@@ -1564,11 +1550,11 @@ async def test_delete_environment_orphans_sessions_via_fk(
     assert listing["total"] == 1
     item = listing["items"][0]
     assert item["local_session_id"] == "keep-me"
-    assert item["agent_name"] is None
+    assert item["agent_name"] == f"mac-{machine_id}"
     assert item["agent_display_name"] is None
     assert item["agent_default_name"] is None
-    assert item["agent_type"] is None
-    assert item["machine_name"] is None
+    assert item["agent_type"] == "codex"
+    assert item["machine_name"] == f"mac-{machine_id}"
 
     # The decisive check: after the DELETE, the session's environment_id
     # column is NULL (not the deleted UUID). This only happens because the
@@ -1586,10 +1572,23 @@ async def test_delete_environment_orphans_sessions_via_fk(
             {"sid": "keep-me"},
         )
     ).one()
-    assert row.environment_id is None
+    assert str(row.environment_id) == env_id
     await db_session.refresh(claimed_payload)
-    assert claimed_payload.consumer_environment_id is None
-    assert claimed_payload.consumer_runtime is None
+    assert str(claimed_payload.consumer_environment_id) == env_id
+    assert claimed_payload.consumer_runtime == "codex"
+
+    assert (await client.get("/v1/agents")).json() == []
+    assert (await client.get(f"/v1/agents/{env_id}")).status_code == 404
+
+    reconnected = await _register_env_named(
+        client,
+        machine_id,
+        agent_type="codex",
+    )
+    # This helper uses the machine id as registration identity; the original
+    # registration above already used the same generated value.
+    assert reconnected == env_id
+    assert (await client.get(f"/v1/agents/{env_id}")).status_code == 200
 
 
 @pytest.mark.asyncio

@@ -1103,7 +1103,7 @@ async def test_workload_owner_is_still_mandatory_and_mismatch_is_forbidden(
 
 
 @pytest.mark.asyncio
-async def test_platform_agent_delete_releases_runtime_oauth_claim_in_same_transaction(
+async def test_platform_agent_archive_preserves_runtime_oauth_claim(
     workload_harness,
     seed_user,
     db_session,
@@ -1142,10 +1142,11 @@ async def test_platform_agent_delete_releases_runtime_oauth_claim_in_same_transa
     )
 
     assert deleted.status_code == 204, deleted.text
-    assert await db_session.get(AgentEnvironment, agent_id) is None
+    agent = await db_session.get(AgentEnvironment, agent_id)
+    assert agent is not None and agent.archived_at is not None
     await db_session.refresh(payload)
-    assert payload.consumer_environment_id is None
-    assert payload.consumer_runtime is None
+    assert payload.consumer_environment_id == agent_id
+    assert payload.consumer_runtime == "openclaw"
 
 
 @pytest.mark.asyncio
