@@ -22,12 +22,13 @@ from app.models.channel import (
 )
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channels import (
+    _lock_active_account_authority,
+    _lock_active_link_for_account,
     channel_control_command_event_was_handled,
     enqueue_channel_outbound_message,
     find_binding,
     find_existing_inbound_provider_event,
     lock_active_binding_authority,
-    lock_active_link_authority,
     parse_channel_control_command,
     record_inbound_messages_for_bindings,
     resolve_inbound_binding,
@@ -516,13 +517,12 @@ async def _active_link_owns_account(
     account_id: UUID,
     bot_agent_link_id: UUID,
 ) -> bool:
-    account = await db.get(ChannelAccount, account_id)
+    account = await _lock_active_account_authority(db, account_id=account_id)
+    if account is None:
+        return False
     return (
-        account is not None
-        and await lock_active_link_authority(
-            db,
-            account=account,
-            bot_agent_link_id=bot_agent_link_id,
+        await _lock_active_link_for_account(
+            db, account=account, bot_agent_link_id=bot_agent_link_id
         )
         is not None
     )

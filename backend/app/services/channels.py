@@ -1875,21 +1875,10 @@ async def lock_active_binding_authority(
     bot_agent_link_id: UUID,
 ) -> ChannelBinding | None:
     """Lock Account -> Link -> Binding authority through the caller's transaction."""
-    locked_account = (
-        await db.execute(
-            select(ChannelAccount)
-            .where(
-                ChannelAccount.id == account.id,
-                ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
-                ChannelAccount.archived_at.is_(None),
-            )
-            .execution_options(populate_existing=True)
-            .with_for_update(read=True, of=ChannelAccount)
-        )
-    ).scalar_one_or_none()
+    locked_account = await _lock_active_account_authority(db, account_id=account.id)
     if locked_account is None:
         return None
-    link = await lock_active_link_authority(
+    link = await _lock_active_link_for_account(
         db,
         account=locked_account,
         bot_agent_link_id=bot_agent_link_id,
@@ -1919,11 +1908,26 @@ async def lock_active_link_authority(
     bot_agent_link_id: UUID,
 ) -> ChannelBotAgentLink | None:
     """Hold Account -> Link authority through the caller's transaction."""
-    locked_account = (
+    locked_account = await _lock_active_account_authority(db, account_id=account.id)
+    if locked_account is None:
+        return None
+    return await _lock_active_link_for_account(
+        db,
+        account=locked_account,
+        bot_agent_link_id=bot_agent_link_id,
+    )
+
+
+async def _lock_active_account_authority(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+) -> ChannelAccount | None:
+    return (
         await db.execute(
             select(ChannelAccount)
             .where(
-                ChannelAccount.id == account.id,
+                ChannelAccount.id == account_id,
                 ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
                 ChannelAccount.archived_at.is_(None),
             )
@@ -1931,15 +1935,21 @@ async def lock_active_link_authority(
             .with_for_update(read=True, of=ChannelAccount)
         )
     ).scalar_one_or_none()
-    if locked_account is None:
-        return None
+
+
+async def _lock_active_link_for_account(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    bot_agent_link_id: UUID,
+) -> ChannelBotAgentLink | None:
     return (
         await db.execute(
             select(ChannelBotAgentLink)
             .where(
                 ChannelBotAgentLink.id == bot_agent_link_id,
-                ChannelBotAgentLink.account_id == locked_account.id,
-                ChannelBotAgentLink.user_id == locked_account.user_id,
+                ChannelBotAgentLink.account_id == account.id,
+                ChannelBotAgentLink.user_id == account.user_id,
                 ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
                 ChannelBotAgentLink.archived_at.is_(None),
             )
@@ -2878,16 +2888,7 @@ async def channel_control_command_event_was_handled(
     command: ChannelControlCommand | None,
 ) -> bool:
     """Serialize control commands and reject a previously handled provider event."""
-    if (
-        provider_event_id is None
-        or command is None
-        or command.kind
-        not in {
-            "pair",
-            "unpair",
-            "help",
-        }
-    ):
+    if provider_event_id is None or command is None:
         return False
     # The same transaction-level scope lock is acquired again by
     # resolve_inbound_binding. Taking it before the event lookup closes the
@@ -5756,6 +5757,11 @@ async def send_whatsapp_message(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="chat is not paired with this agent link",
             )
+    elif await _lock_active_account_authority(db, account_id=account.id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="channel not found",
+        )
     provider_external_chat_id = (
         binding.external_chat_id if binding is not None else external_chat_id
     )

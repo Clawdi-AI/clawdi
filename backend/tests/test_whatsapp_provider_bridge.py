@@ -670,6 +670,105 @@ async def test_whatsapp_direct_outbound_holds_authority_until_provider_io_finish
 
 
 @pytest.mark.asyncio
+async def test_whatsapp_account_only_send_holds_authority_until_provider_io_finishes(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    account, _link, binding = await _seed_whatsapp_link_and_binding(
+        client, db_session, channel_agent, name="wa-account-only-authority-barrier"
+    )
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    io_started = asyncio.Event()
+    release_io = asyncio.Event()
+
+    async def blocked_provider(**_kwargs):
+        io_started.set()
+        await release_io.wait()
+        return "provider-message", {}
+
+    monkeypatch.setattr("app.services.channels._send_whatsapp_provider_payload", blocked_provider)
+
+    async def send() -> None:
+        async with sessionmaker() as db:
+            current_account = await db.get(ChannelAccount, account.id)
+            assert current_account is not None
+            await send_whatsapp_message(
+                db,
+                account=current_account,
+                external_chat_id=binding.external_chat_id,
+                text="control reply",
+                bind_to_existing=False,
+            )
+            await db.commit()
+
+    send_task = asyncio.create_task(send())
+    await asyncio.wait_for(io_started.wait(), timeout=1)
+    async with sessionmaker() as mutation_db:
+        mutation = asyncio.create_task(
+            mutation_db.execute(
+                select(ChannelAccount).where(ChannelAccount.id == account.id).with_for_update()
+            )
+        )
+        await asyncio.sleep(0.05)
+        assert mutation.done() is False
+        release_io.set()
+        await send_task
+        locked_account = (await mutation).scalar_one()
+        locked_account.status = "disabled"
+        await mutation_db.commit()
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_account_retirement_wins_before_account_only_send_io(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    account, _link, binding = await _seed_whatsapp_link_and_binding(
+        client, db_session, channel_agent, name="wa-account-retirement-wins"
+    )
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    provider_calls = 0
+
+    async def provider(**_kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        return "provider-message", {}
+
+    monkeypatch.setattr("app.services.channels._send_whatsapp_provider_payload", provider)
+    async with sessionmaker() as mutation_db:
+        locked_account = (
+            await mutation_db.execute(
+                select(ChannelAccount).where(ChannelAccount.id == account.id).with_for_update()
+            )
+        ).scalar_one()
+        locked_account.status = "disabled"
+
+        async def send() -> None:
+            async with sessionmaker() as send_db:
+                stale_account = await send_db.get(ChannelAccount, account.id)
+                assert stale_account is not None
+                await send_whatsapp_message(
+                    send_db,
+                    account=stale_account,
+                    external_chat_id=binding.external_chat_id,
+                    text="control reply",
+                    bind_to_existing=False,
+                )
+
+        send_task = asyncio.create_task(send())
+        await asyncio.sleep(0.05)
+        assert provider_calls == 0
+        await mutation_db.commit()
+        with pytest.raises(HTTPException, match="channel not found"):
+            await send_task
+    assert provider_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_whatsapp_link_retirement_wins_before_direct_io_and_provider_is_not_called(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -965,15 +1064,35 @@ async def test_whatsapp_unpaired_traffic_is_silent_and_replayed_command_replies_
                     )
 
             await asyncio.gather(consume_help(), consume_help())
+
+        unknown = event(
+            6,
+            "unknown-control",
+            "15550001111@s.whatsapp.net",
+            "/clawdi_unknown",
+        )
+
+        async def consume_unknown() -> None:
+            async with sessionmaker() as db:
+                await persist_whatsapp_provider_event(
+                    db,
+                    account_id=account.id,
+                    event=unknown,
+                )
+
+        await asyncio.gather(consume_unknown(), consume_unknown())
     finally:
         unregister_whatsapp_provider_transport(account.id)
 
-    assert len(transport.outbound_messages) == 3
+    assert len(transport.outbound_messages) == 4
     assert transport.outbound_messages[0].conversation == "This chat is not paired."
-    assert [message.conversation for message in transport.outbound_messages[1:]] == [
+    assert [message.conversation for message in transport.outbound_messages[1:3]] == [
         channel_control_help_reply(),
         channel_control_help_reply(),
     ]
+    assert transport.outbound_messages[3].conversation == (
+        "Unknown command: /clawdi_unknown. Use /clawdi_help for instructions."
+    )
     await db_session.rollback()
     command_messages = list(
         (
@@ -987,6 +1106,18 @@ async def test_whatsapp_unpaired_traffic_is_silent_and_replayed_command_replies_
     )
     assert len(command_messages) == 1
     assert command_messages[0].delivered_at is not None
+    unknown_messages = list(
+        (
+            await db_session.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.account_id == account.id,
+                    ChannelMessage.provider_event_id == "unknown-control",
+                )
+            )
+        ).scalars()
+    )
+    assert len(unknown_messages) == 1
+    assert unknown_messages[0].delivered_at is not None
 
 
 @pytest.mark.asyncio

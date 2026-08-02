@@ -5,11 +5,21 @@ import json
 from uuid import UUID
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.services.whatsapp_sidecar_registry as sidecar_registry_module
+from app.models.channel import (
+    CHANNEL_PROVIDER_WHATSAPP,
+    CHANNEL_VISIBILITY_PUBLIC,
+    ChannelAccount,
+)
+from app.models.user import User
 from app.services.whatsapp_native_transport import (
     WhatsAppBaileysSidecarConfig,
     WhatsAppProviderMessageEvent,
+    WhatsAppSidecarCapabilities,
+    WhatsAppSidecarHealth,
+    WhatsAppSidecarPairingStatus,
 )
 from app.services.whatsapp_provider_bridge import (
     WhatsAppProviderAccountRetired,
@@ -329,10 +339,43 @@ async def test_provider_ingress_ack_waits_until_persistence_returns(monkeypatch)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ownership_kind", ["managed", "custom"])
 async def test_provider_ingress_terminal_exit_releases_owner_and_can_reattach_once(
-    monkeypatch,
-    ownership_kind,
+    monkeypatch: pytest.MonkeyPatch,
+    ownership_kind: str,
+    db_session: AsyncSession,
+    seed_user: User,
 ):
     account_id = UUID("00000000-0000-0000-0000-000000000904")
+    slot_id = (
+        account_id if ownership_kind == "managed" else UUID("00000000-0000-0000-0000-000000000944")
+    )
+    raw = json.dumps(
+        {
+            str(slot_id): {
+                "base_url": f"https://sidecar-{ownership_kind}.example.test",
+                "api_token": "secret",
+            }
+        }
+    )
+    registry = ConfiguredWhatsAppSidecarRegistry(
+        raw if ownership_kind == "managed" else "",
+        raw if ownership_kind == "custom" else "",
+    )
+    config = registry._managed.get(slot_id) or registry._custom[slot_id]
+    account = ChannelAccount(
+        id=account_id,
+        user_id=seed_user.id,
+        provider=CHANNEL_PROVIDER_WHATSAPP,
+        name=f"terminal-{ownership_kind}",
+        visibility=CHANNEL_VISIBILITY_PUBLIC,
+        webhook_secret_hash="test-secret-hash",
+        config={
+            "connection_mode": f"baileys_{ownership_kind}",
+            "sidecar_config_revision": config.binding_revision,
+            **({"sidecar_account_id": str(slot_id)} if ownership_kind == "custom" else {}),
+        },
+    )
+    db_session.add(account)
+    await db_session.commit()
     event = WhatsAppProviderMessageEvent(
         sequence=8,
         message_id="provider-8",
@@ -350,7 +393,7 @@ async def test_provider_ingress_terminal_exit_releases_owner_and_can_reattach_on
 
     class SessionContext:
         async def __aenter__(self):
-            return object()
+            return db_session
 
         async def __aexit__(self, exc_type, exc, traceback):
             return False
@@ -370,18 +413,24 @@ async def test_provider_ingress_terminal_exit_releases_owner_and_can_reattach_on
         async def acknowledge_provider_events(self, *, through_sequence):
             acknowledgements.append(through_sequence)
 
+        async def capabilities(self):
+            return WhatsAppSidecarCapabilities(pairing=frozenset({"qr"}))
+
+        async def health(self):
+            return WhatsAppSidecarHealth(status="connected", connected=True, registered=True)
+
+        async def pairing_status(self):
+            return WhatsAppSidecarPairingStatus(status="connected", registered=True)
+
     monkeypatch.setattr(sidecar_registry_module, "async_session_factory", lambda: SessionContext())
     monkeypatch.setattr(sidecar_registry_module, "persist_whatsapp_provider_event", retired)
 
-    registry = ConfiguredWhatsAppSidecarRegistry("")
     client = PumpClient()
-    registry._register_transport(account_id, client)
+    registry._clients_by_slot[slot_id] = client
     if ownership_kind == "managed":
-        registry._bound_managed_accounts.add(account_id)
+        await registry.reconcile_managed_ownership(db_session)
     else:
-        slot_id = UUID("00000000-0000-0000-0000-000000000944")
-        registry._custom_slot_to_account[slot_id] = account_id
-        registry._custom_account_to_slot[account_id] = slot_id
+        await registry.reconcile_custom_ownership()
     first_task = registry._ingress_tasks[account_id]
     await asyncio.wait_for(first_task, timeout=1)
 
@@ -391,13 +440,21 @@ async def test_provider_ingress_terminal_exit_releases_owner_and_can_reattach_on
     assert account_id not in registry._bound_managed_accounts
     assert account_id not in registry._custom_account_to_slot
 
-    registry._register_transport(account_id, client)
+    if ownership_kind == "managed":
+        await registry.reconcile_managed_ownership(db_session)
+    else:
+        await registry.reconcile_custom_ownership()
     second_task = registry._ingress_tasks[account_id]
     try:
         await asyncio.wait_for(reattached.wait(), timeout=1)
+        if ownership_kind == "managed":
+            await registry.reconcile_managed_ownership(db_session)
+        else:
+            await registry.reconcile_custom_ownership()
         assert second_task is registry._ingress_tasks[account_id]
         assert second_task is not first_task
         assert attempts == 2
+        assert len(registry._ingress_tasks) == 1
     finally:
         second_task.cancel()
         await asyncio.gather(second_task, return_exceptions=True)
