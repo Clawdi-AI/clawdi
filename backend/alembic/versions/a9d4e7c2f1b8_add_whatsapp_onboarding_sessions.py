@@ -1,7 +1,7 @@
 """Add non-secret WhatsApp device-onboarding lifecycle metadata.
 
 Revision ID: a9d4e7c2f1b8
-Revises: f3b7c1d9e5a2
+Revises: b5d8e2a7c4f1
 Create Date: 2026-08-02 00:00:00.000000
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "a9d4e7c2f1b8"
-down_revision: str | Sequence[str] | None = "f3b7c1d9e5a2"
+down_revision: str | Sequence[str] | None = "b5d8e2a7c4f1"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
