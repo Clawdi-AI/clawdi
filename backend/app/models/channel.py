@@ -166,9 +166,10 @@ class ChannelWhatsAppOnboardingSession(Base, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint(
+            "ownership_kind",
             "user_id",
             "request_id",
-            name="uq_channel_whatsapp_onboarding_user_request",
+            name="uq_channel_whatsapp_onboarding_kind_user_request",
         ),
         Index(
             "uq_channel_whatsapp_onboarding_active_sidecar_account",

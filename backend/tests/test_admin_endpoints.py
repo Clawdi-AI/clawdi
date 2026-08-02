@@ -55,6 +55,9 @@ class _ManagedOnboardingSidecar:
         self.registered = False
         self.qr = "sensitive-rotating-qr"
         self.logout_fails = False
+        self.logout_calls = 0
+        self.cancel_calls = 0
+        self.stopped = False
 
     async def refresh_health(self) -> bool:
         return self.connected
@@ -75,9 +78,12 @@ class _ManagedOnboardingSidecar:
         )
 
     async def pairing_qr(self):
+        self.stopped = False
         return await self.pairing_status()
 
     async def pairing_status(self):
+        if self.stopped:
+            return WhatsAppSidecarPairingStatus(status="stopped", registered=False)
         if self.connected:
             return WhatsAppSidecarPairingStatus(status="connected", registered=self.registered)
         return WhatsAppSidecarPairingStatus(
@@ -88,14 +94,25 @@ class _ManagedOnboardingSidecar:
         )
 
     async def pairing_cancel(self):
+        self.cancel_calls += 1
+        if self.registered:
+            raise AssertionError("registered sessions must logout, not cancel")
+        self.connected = False
+        self.stopped = True
         return WhatsAppSidecarPairingStatus(status="stopped", registered=False)
 
     async def pairing_logout(self):
+        self.logout_calls += 1
         if self.logout_fails:
             raise WhatsAppSidecarUnavailableError("unavailable")
         self.connected = False
         self.registered = False
+        self.stopped = True
         return WhatsAppSidecarPairingStatus(status="stopped", registered=False)
+
+    async def pairing_retry(self):
+        self.connected = True
+        return await self.pairing_status()
 
     async def provider_events(self, *, limit=100):
         return []
@@ -2890,7 +2907,7 @@ async def test_admin_managed_whatsapp_qr_promotes_only_after_connected_and_logou
             "/v1/admin/channels/whatsapp/onboarding", json=payload, headers=_AUTH
         )
         assert started.status_code == 200, started.text
-        assert started.headers["cache-control"] == "no-store"
+        assert started.headers["cache-control"] == "no-store, private"
         assert started.json()["qr"] == fake.qr
         assert await db_session.get(ChannelAccount, account_id) is None
         fake.qr = "sensitive-rotated-qr"
@@ -2904,6 +2921,7 @@ async def test_admin_managed_whatsapp_qr_promotes_only_after_connected_and_logou
             f"/v1/admin/channels/whatsapp/onboarding/{started.json()['id']}", headers=_AUTH
         )
         assert promoted.status_code == 200, promoted.text
+        assert promoted.headers["cache-control"] == "no-store, private"
         assert promoted.json()["channel_account_id"] == str(account_id)
         account = await db_session.get(ChannelAccount, account_id)
         assert account is not None and account.visibility == "public"
@@ -2940,3 +2958,102 @@ async def test_admin_managed_whatsapp_qr_promotes_only_after_connected_and_logou
         ).status_code == 204
     finally:
         await registry.stop()
+
+
+@pytest.mark.asyncio
+async def test_admin_managed_whatsapp_errors_are_authenticated_configured_only_and_no_store(
+    admin_client, seed_user, monkeypatch
+):
+    import app.routes.admin as admin_routes
+
+    monkeypatch.setattr(admin_routes, "get_active_whatsapp_sidecar_registry", lambda: None)
+    payload = {
+        "account_id": str(uuid.uuid4()),
+        "target_clerk_id": seed_user.clerk_id,
+        "request_id": str(uuid.uuid4()),
+        "name": "Shared WhatsApp",
+    }
+    responses = [
+        await admin_client.post("/v1/admin/channels/whatsapp/onboarding", json=payload),
+        await admin_client.post("/v1/admin/channels/whatsapp/onboarding", json={}, headers=_AUTH),
+        await admin_client.post(
+            "/v1/admin/channels/whatsapp/onboarding", json=payload, headers=_AUTH
+        ),
+        await admin_client.get(
+            f"/v1/admin/channels/whatsapp/onboarding/{uuid.uuid4()}", headers=_AUTH
+        ),
+        await admin_client.delete(
+            f"/v1/admin/channels/whatsapp/onboarding/{uuid.uuid4()}", headers=_AUTH
+        ),
+    ]
+    assert [response.status_code for response in responses] == [401, 422, 404, 404, 404]
+    for response in responses:
+        assert response.headers["cache-control"] == "no-store, private"
+        assert response.headers["pragma"] == "no-cache"
+
+
+@pytest.mark.asyncio
+async def test_admin_managed_whatsapp_cancel_success_is_no_store(
+    admin_client, seed_user, monkeypatch
+):
+    import app.routes.admin as admin_routes
+
+    account_id = uuid.uuid4()
+    fake = _ManagedOnboardingSidecar()
+    registry = ConfiguredWhatsAppSidecarRegistry(
+        json.dumps(
+            {
+                str(account_id): {
+                    "base_url": "http://127.0.0.1:43194",
+                    "api_token": "fake",
+                }
+            }
+        ),
+        client_factory=lambda _config: fake,
+    )
+    await registry.start()
+    monkeypatch.setattr(admin_routes, "get_active_whatsapp_sidecar_registry", lambda: registry)
+    try:
+        started = await admin_client.post(
+            "/v1/admin/channels/whatsapp/onboarding",
+            headers=_AUTH,
+            json={
+                "account_id": str(account_id),
+                "target_clerk_id": seed_user.clerk_id,
+                "request_id": str(uuid.uuid4()),
+                "name": "Cancelable Shared WhatsApp",
+            },
+        )
+        canceled = await admin_client.delete(
+            f"/v1/admin/channels/whatsapp/onboarding/{started.json()['id']}", headers=_AUTH
+        )
+        assert canceled.status_code == 200
+        assert canceled.json()["state"] == "canceled"
+        assert canceled.headers["cache-control"] == "no-store, private"
+        assert canceled.headers["pragma"] == "no-cache"
+    finally:
+        await registry.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["telegram", "discord"])
+async def test_admin_delete_non_whatsapp_provider_regression(
+    admin_client, db_session, seed_user, provider
+):
+    from app.models.channel import ChannelAccount
+
+    account = ChannelAccount(
+        user_id=seed_user.id,
+        provider=provider,
+        name=f"delete-{provider}-{uuid.uuid4()}",
+        status="active",
+        visibility="public",
+        webhook_secret_hash="0" * 64,
+        config={},
+    )
+    db_session.add(account)
+    await db_session.commit()
+    response = await admin_client.delete(f"/v1/admin/channels/{account.id}", headers=_AUTH)
+    assert response.status_code == 204
+    await db_session.refresh(account)
+    assert account.archived_at is not None

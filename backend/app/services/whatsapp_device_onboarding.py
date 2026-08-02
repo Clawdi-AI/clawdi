@@ -369,7 +369,7 @@ async def cancel_whatsapp_onboarding(
         )
     try:
         await client.health()
-        canceled = await _stop_unfinished_pairing(client)
+        canceled = await stop_whatsapp_pairing(client)
     except WhatsAppSidecarError:
         await _mark_session_error(db, onboarding)
         raise HTTPException(
@@ -518,7 +518,7 @@ async def require_whatsapp_custom_logout_for_archive(
                 config_revision=sidecar_config_revision,
                 registry=registry,
             )
-        disconnected = await _stop_unfinished_pairing(client, current=current)
+        disconnected = await stop_whatsapp_pairing(client, current=current)
     except WhatsAppSidecarError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -882,7 +882,7 @@ async def _expire_session(
                 onboarding,
                 manual_pairing_code_supported=False,
             )
-        canceled = await _stop_unfinished_pairing(client, current=current)
+        canceled = await stop_whatsapp_pairing(client, current=current)
     except WhatsAppSidecarError:
         return await _mark_session_error(db, onboarding)
     if canceled.status != "stopped" or canceled.registered:
@@ -906,7 +906,7 @@ async def _confirm_stopped(
         )
     try:
         await client.health()
-        stopped = await _stop_unfinished_pairing(client)
+        stopped = await stop_whatsapp_pairing(client)
     except WhatsAppSidecarError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -919,7 +919,7 @@ async def _confirm_stopped(
         )
 
 
-async def _stop_unfinished_pairing(
+async def stop_whatsapp_pairing(
     client: WhatsAppSidecarClient,
     *,
     current: WhatsAppSidecarPairingStatus | None = None,
@@ -947,14 +947,14 @@ async def _logout_registered_pairing(
     while True:
         if not observed.registered:
             return observed if observed.status == "stopped" else await client.pairing_cancel()
+        if asyncio.get_running_loop().time() >= deadline:
+            raise WhatsAppSidecarUnavailableError("custom sidecar did not reconnect for logout")
         if observed.status == "connected":
             try:
                 return await client.pairing_logout()
             except WhatsAppSidecarUnavailableError:
                 observed = await client.pairing_status()
                 continue
-        if asyncio.get_running_loop().time() >= deadline:
-            raise WhatsAppSidecarUnavailableError("custom sidecar did not reconnect for logout")
         if observed.status in {"starting", "disconnected", "stopped"}:
             await client.pairing_retry()
         await asyncio.sleep(0.25)

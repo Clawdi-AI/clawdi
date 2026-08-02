@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.channel import (
@@ -15,6 +16,7 @@ from app.models.channel import (
     WHATSAPP_ONBOARDING_STATE_CANCELED,
     WHATSAPP_ONBOARDING_STATE_CONNECTED,
     WHATSAPP_ONBOARDING_STATE_ERROR,
+    WHATSAPP_ONBOARDING_STATE_EXPIRED,
     WHATSAPP_ONBOARDING_STATE_GENERATING,
     WHATSAPP_ONBOARDING_STATE_READY,
     WHATSAPP_ONBOARDING_STATE_SCANNED,
@@ -23,7 +25,10 @@ from app.models.channel import (
 )
 from app.schemas.channel import ChannelWhatsAppOnboardingSessionResponse
 from app.services.channels import generate_webhook_secret, hash_token
-from app.services.whatsapp_device_onboarding import WHATSAPP_ONBOARDING_TTL
+from app.services.whatsapp_device_onboarding import (
+    WHATSAPP_ONBOARDING_TTL,
+    stop_whatsapp_pairing,
+)
 from app.services.whatsapp_native_transport import (
     WhatsAppSidecarError,
     WhatsAppSidecarProtocolError,
@@ -32,6 +37,7 @@ from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegi
 
 _LOCK_ID = 8_071_323_913
 _OWNING_STATES = ("generating", "ready", "scanned", "connected", "error")
+_EXPIRABLE_STATES = ("generating", "ready", "scanned", "error")
 
 
 async def start_managed_whatsapp_onboarding(
@@ -83,6 +89,16 @@ async def start_managed_whatsapp_onboarding(
         raise HTTPException(
             status.HTTP_409_CONFLICT, "configured WhatsApp account is already onboarded"
         )
+    duplicate_name = await db.scalar(
+        select(ChannelAccount.id).where(
+            ChannelAccount.user_id == user_id,
+            ChannelAccount.provider == CHANNEL_PROVIDER_WHATSAPP,
+            ChannelAccount.name == name,
+            ChannelAccount.archived_at.is_(None),
+        )
+    )
+    if duplicate_name is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "WhatsApp account name already exists")
     now = datetime.now(UTC)
     onboarding = ChannelWhatsAppOnboardingSession(
         ownership_kind=WHATSAPP_ONBOARDING_OWNERSHIP_MANAGED,
@@ -111,6 +127,7 @@ async def get_managed_whatsapp_onboarding(
     if onboarding.state in {
         WHATSAPP_ONBOARDING_STATE_CONNECTED,
         WHATSAPP_ONBOARDING_STATE_CANCELED,
+        WHATSAPP_ONBOARDING_STATE_EXPIRED,
     }:
         return _response(onboarding)
     return await _refresh(db, onboarding=onboarding, registry=registry, start_qr=False)
@@ -131,7 +148,7 @@ async def cancel_managed_whatsapp_onboarding(
         )
     client = registry.get_managed_client(onboarding.sidecar_account_id) if registry else None
     try:
-        stopped = await client.pairing_cancel() if client is not None else None
+        stopped = await stop_whatsapp_pairing(client) if client is not None else None
     except WhatsAppSidecarError:
         stopped = None
     if stopped is None or stopped.status != "stopped" or stopped.registered:
@@ -168,7 +185,7 @@ async def require_managed_whatsapp_logout_for_archive(
             status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp disconnect could not be confirmed"
         )
     try:
-        result = await client.pairing_logout()
+        result = await stop_whatsapp_pairing(client)
     except WhatsAppSidecarError:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp disconnect could not be confirmed"
@@ -178,6 +195,31 @@ async def require_managed_whatsapp_logout_for_archive(
             status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp disconnect could not be confirmed"
         )
     await registry.unbind_managed_account(account.id)
+
+
+async def expire_stale_managed_whatsapp_onboarding_sessions(
+    db: AsyncSession,
+    *,
+    registry: ConfiguredWhatsAppSidecarRegistry,
+) -> int:
+    session_ids = list(
+        (
+            await db.scalars(
+                select(ChannelWhatsAppOnboardingSession.id).where(
+                    ChannelWhatsAppOnboardingSession.ownership_kind
+                    == WHATSAPP_ONBOARDING_OWNERSHIP_MANAGED,
+                    ChannelWhatsAppOnboardingSession.state.in_(_EXPIRABLE_STATES),
+                    ChannelWhatsAppOnboardingSession.expires_at <= datetime.now(UTC),
+                )
+            )
+        ).all()
+    )
+    expired = 0
+    for session_id in session_ids:
+        result = await get_managed_whatsapp_onboarding(db, session_id=session_id, registry=registry)
+        if result.state == WHATSAPP_ONBOARDING_STATE_EXPIRED:
+            expired += 1
+    return expired
 
 
 async def _refresh(
@@ -194,6 +236,17 @@ async def _refresh(
         != onboarding.sidecar_config_revision
     ):
         return await _error(db, onboarding)
+    if datetime.now(UTC) >= onboarding.expires_at:
+        try:
+            stopped = await stop_whatsapp_pairing(client)
+        except WhatsAppSidecarError:
+            return await _error(db, onboarding)
+        if stopped.status != "stopped" or stopped.registered:
+            return await _error(db, onboarding)
+        onboarding.state = WHATSAPP_ONBOARDING_STATE_EXPIRED
+        onboarding.completed_at = datetime.now(UTC)
+        await db.commit()
+        return _response(onboarding)
     try:
         await client.capabilities()
         health = await client.health()
@@ -226,34 +279,56 @@ async def _promote(
     onboarding: ChannelWhatsAppOnboardingSession,
     registry: ConfiguredWhatsAppSidecarRegistry,
 ) -> None:
+    account_id = onboarding.sidecar_account_id
+    session_id = onboarding.id
+    newly_bound = False
     account = await db.get(ChannelAccount, onboarding.sidecar_account_id)
-    if account is None:
-        account = ChannelAccount(
-            id=onboarding.sidecar_account_id,
-            user_id=onboarding.user_id,
-            provider=CHANNEL_PROVIDER_WHATSAPP,
-            name=onboarding.name,
-            status=CHANNEL_STATUS_ACTIVE,
-            visibility=CHANNEL_VISIBILITY_PUBLIC,
-            webhook_secret_hash=hash_token(generate_webhook_secret()),
-            config={
-                "connection_mode": "baileys_managed",
-                "sidecar_config_revision": onboarding.sidecar_config_revision,
-            },
+    try:
+        if account is None:
+            account = ChannelAccount(
+                id=account_id,
+                user_id=onboarding.user_id,
+                provider=CHANNEL_PROVIDER_WHATSAPP,
+                name=onboarding.name,
+                status=CHANNEL_STATUS_ACTIVE,
+                visibility=CHANNEL_VISIBILITY_PUBLIC,
+                webhook_secret_hash=hash_token(generate_webhook_secret()),
+                config={
+                    "connection_mode": "baileys_managed",
+                    "sidecar_config_revision": onboarding.sidecar_config_revision,
+                },
+            )
+            db.add(account)
+            await db.flush()
+        elif not _matches(
+            account, user_id=onboarding.user_id, revision=onboarding.sidecar_config_revision
+        ):
+            raise WhatsAppSidecarProtocolError("managed WhatsApp identity conflict")
+        newly_bound = await registry.bind_managed_account(
+            account.id, config_revision=onboarding.sidecar_config_revision
         )
-        db.add(account)
-        await db.flush()
-    elif not _matches(
-        account, user_id=onboarding.user_id, revision=onboarding.sidecar_config_revision
-    ):
-        raise WhatsAppSidecarProtocolError("managed WhatsApp identity conflict")
-    onboarding.channel_account_id = account.id
-    onboarding.state = WHATSAPP_ONBOARDING_STATE_CONNECTED
-    onboarding.completed_at = datetime.now(UTC)
-    await db.commit()
-    await registry.bind_managed_account(
-        account.id, config_revision=onboarding.sidecar_config_revision
-    )
+        onboarding.channel_account_id = account.id
+        onboarding.state = WHATSAPP_ONBOARDING_STATE_CONNECTED
+        onboarding.completed_at = datetime.now(UTC)
+        await db.commit()
+    except BaseException as exc:
+        await db.rollback()
+        if newly_bound:
+            await registry.unbind_managed_account(account_id)
+        failed = await _session(db, session_id)
+        failed.state = WHATSAPP_ONBOARDING_STATE_ERROR
+        await db.commit()
+        if isinstance(exc, IntegrityError):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "WhatsApp account name or identity already exists",
+            ) from exc
+        if isinstance(exc, WhatsAppSidecarError):
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "WhatsApp transport could not be attached",
+            ) from None
+        raise
 
 
 def _matches(account: ChannelAccount, *, user_id: UUID, revision: str) -> bool:

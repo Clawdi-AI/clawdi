@@ -22,9 +22,29 @@ def upgrade() -> None:
         "channel_whatsapp_onboarding_sessions",
         "ownership_kind IN ('custom', 'managed')",
     )
+    op.drop_constraint(
+        "uq_channel_whatsapp_onboarding_user_request",
+        "channel_whatsapp_onboarding_sessions",
+        type_="unique",
+    )
+    op.create_unique_constraint(
+        "uq_channel_whatsapp_onboarding_kind_user_request",
+        "channel_whatsapp_onboarding_sessions",
+        ["ownership_kind", "user_id", "request_id"],
+    )
 
 
 def downgrade() -> None:
+    op.drop_constraint(
+        "uq_channel_whatsapp_onboarding_kind_user_request",
+        "channel_whatsapp_onboarding_sessions",
+        type_="unique",
+    )
+    op.create_unique_constraint(
+        "uq_channel_whatsapp_onboarding_user_request",
+        "channel_whatsapp_onboarding_sessions",
+        ["user_id", "request_id"],
+    )
     op.drop_constraint(
         "ck_channel_whatsapp_onboarding_ownership_kind",
         "channel_whatsapp_onboarding_sessions",

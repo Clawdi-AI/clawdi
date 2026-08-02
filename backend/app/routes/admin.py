@@ -195,7 +195,7 @@ router = APIRouter(prefix="/admin", tags=["admin"], include_in_schema=False)
 
 
 def _no_store(response: Response) -> None:
-    response.headers["Cache-Control"] = "no-store"
+    response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
 
 
@@ -1233,17 +1233,6 @@ async def admin_get_managed_whatsapp_onboarding(
     result = await get_managed_whatsapp_onboarding(
         db, session_id=session_id, registry=get_active_whatsapp_sidecar_registry()
     )
-    record_control_plane_audit(
-        db,
-        actor_type="admin",
-        action="channel.whatsapp.onboarding.status",
-        resource_type="channel_whatsapp_onboarding",
-        resource_id=str(result.id),
-        channel_account_id=result.channel_account_id,
-        source="api.admin",
-        details={"state": result.state},
-    )
-    await db.commit()
     return result
 
 
