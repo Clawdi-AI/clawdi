@@ -468,6 +468,8 @@ async def require_whatsapp_custom_logout_for_archive(
     account: ChannelAccount,
     registry: ConfiguredWhatsAppSidecarRegistry | None,
 ) -> None:
+    if account.provider != CHANNEL_PROVIDER_WHATSAPP:
+        return
     config = account.config if isinstance(account.config, dict) else {}
     if config.get("connection_mode") != "baileys_custom":
         return

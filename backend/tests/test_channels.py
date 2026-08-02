@@ -17516,6 +17516,47 @@ async def test_send_channel_message_uses_binding(client: httpx.AsyncClient):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider",
+    [CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD],
+)
+async def test_delete_non_whatsapp_channel_ignores_whatsapp_custom_config_collision(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    provider: str,
+):
+    config: dict[str, Any] = {
+        "connection_mode": "baileys_custom",
+        "sidecar_account_id": "not-a-whatsapp-slot",
+        "sidecar_config_revision": "not-a-whatsapp-revision",
+    }
+    if provider == CHANNEL_PROVIDER_DISCORD:
+        config.update(_discord_ready_config())
+    created = await client.post(
+        "/v1/channels",
+        json={
+            "provider": provider,
+            "name": f"{provider}-whatsapp-config-collision-{uuid4().hex}",
+            "provider_token": (
+                "123456:telegram-secret"
+                if provider == CHANNEL_PROVIDER_TELEGRAM
+                else "discord-provider-token"
+            ),
+            "config": config,
+        },
+    )
+    assert created.status_code == 201, created.text
+    account_id = UUID(created.json()["id"])
+
+    deleted = await client.delete(f"/v1/channels/{account_id}")
+
+    assert deleted.status_code == 204, deleted.text
+    account = await db_session.get(ChannelAccount, account_id, populate_existing=True)
+    assert account is not None
+    assert account.archived_at is not None
+
+
+@pytest.mark.asyncio
 async def test_delete_channel_fails_pending_outbound_deliveries(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
