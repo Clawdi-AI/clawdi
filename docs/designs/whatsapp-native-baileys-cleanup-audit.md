@@ -3,7 +3,7 @@
 Status: review record for PR #719 and its dependent cleanup
 Date: 2026-08-02
 
-This audit compares `origin/main` at `f43542eab` with PR #719 at `58060d7ba`
+This audit compares `origin/main` at `165b5d07e` with PR #719 at `96d337b9c`
 and the dependent cleanup worktree. It covers files whose path contains
 `whatsapp` or `egress` and every tracked text file that references WhatsApp.
 Generated API output is checked separately after regeneration.
@@ -260,9 +260,12 @@ cd backend && uv run pytest -q tests/test_whatsapp_native_transport.py \
   tests/test_whatsapp_sidecar_registry.py
 ```
 
-The repair-specific sidecar suite reports 28 passing tests and the focused
-backend transport/registry suite reports 30 passing tests. The source
-invariants report one production physical socket owner, no demo multi-file
-auth or dynamic Web-version fetch, no legacy application connector, no hosted
-Graph/Cloud WhatsApp surface, no provider constants in the generic addon, and
-false gates.
+The focused CLI profile suites report 24 passing tests, the generic addon
+suite reports 21, the repair-specific sidecar suite reports 28, and the
+focused backend transport/registry suite reports 34. On a newly migrated
+throwaway pgvector database, the latest-main channel/Baileys suite plus the
+WhatsApp transport/registry/bridge/Noise suites report 455 passing tests. The
+source invariants report one production physical socket owner, no
+demo multi-file auth or dynamic Web-version fetch, no legacy application
+connector, no hosted Graph/Cloud WhatsApp surface, no provider constants in
+the generic addon, and false gates.
