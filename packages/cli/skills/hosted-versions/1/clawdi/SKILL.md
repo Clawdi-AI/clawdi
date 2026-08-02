@@ -47,8 +47,8 @@ as well as a possible unknown UUID; do not try to bypass it through another tool
 - `vault_get` — List key names, provenance, and exact references for an attached Vault.
 
 Use `vault_resolve` only when the current task requires one referenced plaintext value. Pass
-the exact Project-scoped reference and `confirm_secret_access: true`. Treat the result as
-sensitive: never echo it, save it to Memory, or include it in logs.
+the exact Project-scoped reference. Treat the result as sensitive: never echo it, save it to
+Memory, or include it in logs.
 
 The metadata tools never return plaintext secret values. Preserve exact references for
 `vault_resolve` or when passing them to an authorized runtime:

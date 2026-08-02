@@ -793,6 +793,21 @@ async def get_auth_short_session(
     return ctx
 
 
+def require_auth_scopes(auth: AuthContext, *needed: str) -> None:
+    """Enforce API-key scopes consistently across HTTP and MCP boundaries."""
+    if not auth.is_cli or auth.api_key is None:
+        return
+    scopes = auth.api_key.scopes
+    if scopes is None and not is_runtime_deployment_principal(auth):
+        return
+    missing = list(needed) if scopes is None else [scope for scope in needed if scope not in scopes]
+    if missing:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"missing scope: {', '.join(missing)}",
+        )
+
+
 def require_scope_short_session(*needed: str):
     """Same scope-check semantics as `require_scope`, paired with
     `get_auth_short_session` so the route doesn't pin a DB connection
@@ -800,16 +815,7 @@ def require_scope_short_session(*needed: str):
     daemon routes."""
 
     async def _check(auth: AuthContext = Depends(get_auth_short_session)) -> AuthContext:
-        if not auth.is_cli or auth.api_key is None:
-            return auth
-        if auth.api_key.scopes is None:
-            return auth
-        missing = [s for s in needed if s not in auth.api_key.scopes]
-        if missing:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                f"missing scope: {', '.join(missing)}",
-            )
+        require_auth_scopes(auth, *needed)
         return auth
 
     return _check
@@ -828,16 +834,7 @@ def require_scope(*needed: str):
     """
 
     async def _check(auth: AuthContext = Depends(get_auth)) -> AuthContext:
-        if not auth.is_cli or auth.api_key is None:
-            return auth
-        if auth.api_key.scopes is None:
-            return auth
-        missing = [s for s in needed if s not in auth.api_key.scopes]
-        if missing:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                f"missing scope: {', '.join(missing)}",
-            )
+        require_auth_scopes(auth, *needed)
         return auth
 
     return _check

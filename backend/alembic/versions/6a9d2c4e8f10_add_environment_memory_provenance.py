@@ -36,8 +36,7 @@ _STRICT_SCOPES = (
     "sessions:write",
     "skills:read",
     "skills:write",
-    "vault:metadata:read",
-    "vault:plaintext:read",
+    "vault:read",
 )
 _PLATFORM_PREVIOUS_SCOPES = (
     "sessions:write",
@@ -54,8 +53,7 @@ _PLATFORM_SCOPES = (
     "sessions:write",
     "skills:read",
     "skills:write",
-    "vault:metadata:read",
-    "vault:plaintext:read",
+    "vault:read",
 )
 
 

@@ -263,7 +263,7 @@ The user-facing CLI wrappers stay as normal commands such as
 `clawdi daemon logs`.
 
 Besides daemon control methods, the daemon exposes headless command methods
-for `sync.push`, `sync.pull`, `vault.*`, `auth.*`, `update.*`, and
+for `sync.push`, `sync.pull`, `auth.*`, `update.*`, and
 `operation.*`. Long-running commands return an operation id:
 
 ```sh
@@ -278,12 +278,9 @@ curl -s http://127.0.0.1:17654/rpc \
   -d '{"jsonrpc":"2.0","id":1,"method":"operation.status","params":{"id":"<operation-id>"}}'
 ```
 
-Vault plaintext access is opt-in. `vault.resolve` defaults to a
-redacted dry-run unless the request explicitly asks for plaintext.
-`vault.read` and `vault.inject` require `confirm_secret_access: true`
-before rendering plaintext, and plaintext access cannot be backgrounded
-into an operation log. Mutating vault calls that would otherwise prompt
-must pass their non-interactive confirmation, such as `yes: true`.
+Vault operations are intentionally absent from the daemon control RPC.
+Agents use the authenticated Clawdi MCP endpoint; human operators use the
+foreground CLI commands directly.
 
 Non-loopback HTTP binds are rejected unless the daemon is started or
 installed with `--allow-remote` (or

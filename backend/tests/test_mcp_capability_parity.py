@@ -296,25 +296,13 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
                     client,
                     81,
                     "vault_resolve",
-                    {
-                        "reference": default_reference,
-                        "confirm_secret_access": True,
-                    },
+                    {"reference": default_reference},
                 )
             )
             assert resolved == {
                 "reference": default_reference,
                 "value": "runtime-a-default-secret",
             }
-            missing_confirmation = await _tool_call(
-                client,
-                82,
-                "vault_resolve",
-                {"reference": default_reference},
-            )
-            assert missing_confirmation["isError"] is True
-            assert missing_confirmation["content"][0]["text"] == "Error: Invalid tool arguments"
-
             active_auth["value"] = _runtime_auth(seed_user, env_b.id)
             other_search = await _tool_call(
                 client,
@@ -348,10 +336,7 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
                 client,
                 83,
                 "vault_resolve",
-                {
-                    "reference": default_reference,
-                    "confirm_secret_access": True,
-                },
+                {"reference": default_reference},
             )
             assert inaccessible_secret["isError"] is True
             assert "Project not found" in inaccessible_secret["content"][0]["text"]
@@ -514,7 +499,7 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
             assert "missing scope: projects:read" in missing_project["content"][0]["text"]
             missing_vault = await _tool_call(client, 4, "vault_list")
             assert missing_vault["isError"] is True
-            assert "missing scope: vault:metadata:read" in missing_vault["content"][0]["text"]
+            assert "missing scope: vault:read" in missing_vault["content"][0]["text"]
             missing_plaintext = await _tool_call(
                 client,
                 41,
@@ -522,12 +507,11 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
                 {
                     "reference": (
                         f"clawdi://project/{env.default_project_id}/vault/default/field/TOKEN"
-                    ),
-                    "confirm_secret_access": True,
+                    )
                 },
             )
             assert missing_plaintext["isError"] is True
-            assert "missing scope: vault:plaintext:read" in missing_plaintext["content"][0]["text"]
+            assert "missing scope: vault:read" in missing_plaintext["content"][0]["text"]
 
             runtime_auth.api_key.scopes = ["projects:read"]
             invalid = await _tool_call(

@@ -248,8 +248,7 @@ tokens and bridge credentials out of the agent process.
 
 `vault_list` and `vault_get` select only attachment metadata and field names;
 they never select or decrypt `encrypted_value`, `nonce`, or credential payloads.
-`vault_resolve` requires the separate `vault:plaintext:read` scope plus an
-explicit `confirm_secret_access: true`, accepts one exact Project-scoped
+`vault_resolve` requires `vault:read`, accepts one exact Project-scoped
 reference, and returns its decrypted value. Returned references use the exact canonical forms
 `clawdi://project/<project-id>/vault/<vault>/field/<field>` and
 `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`.

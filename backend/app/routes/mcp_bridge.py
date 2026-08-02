@@ -27,6 +27,7 @@ from app.core.auth import (
     _is_env_bound_api_key,
     get_auth,
     is_runtime_deployment_principal,
+    require_auth_scopes,
     require_clerk_id,
 )
 from app.core.database import get_session
@@ -173,7 +174,6 @@ class _VaultGetArguments(_ToolArguments):
 
 class _VaultResolveArguments(_ToolArguments):
     reference: StrictStr = Field(min_length=1, max_length=1_000)
-    confirm_secret_access: Literal[True]
 
     @field_validator("reference")
     @classmethod
@@ -417,8 +417,8 @@ _NATIVE_TOOLS.extend(
             "description": (
                 "Resolve one exact Project-scoped clawdi:// reference to its plaintext secret. "
                 "Call only when the current task requires the value. The result is sensitive: "
-                "never echo it, store it in Memory, or include it in logs. Requires "
-                "confirm_secret_access=true. Hosted runtimes are restricted to their bound Project."
+                "never echo it, store it in Memory, or include it in logs. Hosted runtimes are "
+                "restricted to their bound Project."
             ),
             "inputSchema": _VaultResolveArguments.model_json_schema(),
         },
@@ -610,18 +610,20 @@ _NATIVE_TOOL_SCOPES: dict[str, tuple[str, ...]] = {
     "project_current": ("projects:read",),
     "project_list": ("projects:read",),
     "project_get": ("projects:read",),
-    "vault_list": ("vault:metadata:read",),
-    "vault_get": ("vault:metadata:read",),
-    "vault_resolve": ("vault:plaintext:read",),
+    "vault_list": ("vault:read",),
+    "vault_get": ("vault:read",),
+    "vault_resolve": ("vault:read",),
 }
 _DECLARED_NATIVE_TOOL_NAMES = frozenset(
     name for tool in _NATIVE_TOOLS if isinstance((name := tool.get("name")), str)
 )
+if _DECLARED_NATIVE_TOOL_NAMES != frozenset(_NATIVE_TOOL_SCOPES):
+    raise RuntimeError("every native MCP tool must declare exactly one scope policy")
 
 
 async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
     try:
-        _require_scope(auth, "connectors:read")
+        require_auth_scopes(auth, "connectors:read")
     except HTTPException:
         return []
     clerk_id = require_clerk_id(auth)
@@ -654,7 +656,7 @@ async def _list_clawdi_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
         if not isinstance(name, str):
             continue
         try:
-            _require_scope(auth, *_NATIVE_TOOL_SCOPES.get(name, ()))
+            require_auth_scopes(auth, *_NATIVE_TOOL_SCOPES[name])
         except HTTPException:
             continue
         native_tools.append(tool)
@@ -669,12 +671,13 @@ async def _list_clawdi_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
 async def _call_clawdi_mcp_tool(
     name: str, arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
+    if name in _DECLARED_NATIVE_TOOL_NAMES:
+        require_auth_scopes(auth, *_NATIVE_TOOL_SCOPES[name])
     if name == "memory_search":
         return await _tool_memory_search(arguments, auth=auth, db=db)
     if name == "memory_add":
         return await _tool_memory_add(arguments, auth=auth, db=db)
     if name == "memory_extract":
-        _require_scope(auth, "memories:read", "memories:write")
         _validate_arguments(_NoArguments, arguments)
         return _tool_text(_MEMORY_EXTRACT_INSTRUCTIONS)
     if name == "session_search":
@@ -696,17 +699,6 @@ async def _call_clawdi_mcp_tool(
     return await _tool_connector_call(name, arguments, auth=auth)
 
 
-def _require_scope(auth: AuthContext, *needed: str) -> None:
-    if not auth.is_cli or auth.api_key is None:
-        return
-    scopes = auth.api_key.scopes
-    if scopes is None and not is_runtime_deployment_principal(auth):
-        return
-    missing = list(needed) if scopes is None else [scope for scope in needed if scope not in scopes]
-    if missing:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, f"missing scope: {', '.join(missing)}")
-
-
 def _tool_text(text: str, *, is_error: bool = False) -> dict[str, Any]:
     payload: dict[str, Any] = {"content": [{"type": "text", "text": text}]}
     if is_error:
@@ -721,7 +713,6 @@ def _tool_json(payload: object) -> dict[str, Any]:
 async def _tool_memory_search(
     arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
-    _require_scope(auth, "memories:read")
     parsed = _validate_arguments(_MemorySearchArguments, arguments)
     provider = await get_memory_provider(str(auth.user_id), db)
     hits = await provider.search(
@@ -741,7 +732,6 @@ async def _tool_memory_search(
 async def _tool_memory_add(
     arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
-    _require_scope(auth, "memories:write")
     parsed = _validate_arguments(_MemoryAddArguments, arguments)
     finding = find_likely_secret(parsed.content)
     if finding is not None:
@@ -785,7 +775,6 @@ def _user_sessions_stmt(auth: AuthContext):
 async def _tool_session_search(
     arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
-    _require_scope(auth, "sessions:read")
     parsed = _validate_arguments(_SessionSearchArguments, arguments)
     stmt = (
         _user_sessions_stmt(auth)
@@ -823,7 +812,6 @@ async def _tool_session_search(
 async def _tool_session_read(
     arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
-    _require_scope(auth, "sessions:read")
     parsed = _validate_arguments(_SessionReadArguments, arguments)
     match = _SHARE_URL_RE.search(parsed.reference)
     session_id = match.group(1) if match else parsed.reference
@@ -904,7 +892,6 @@ async def _visible_project_or_404(
 async def _tool_project_current(
     arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
-    _require_scope(auth, "projects:read")
     _validate_arguments(_NoArguments, arguments)
     project_id = await resolve_default_write_project(db, auth)
     project = await _visible_project_or_404(db, auth, project_id)
@@ -914,7 +901,6 @@ async def _tool_project_current(
 async def _tool_project_list(
     arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
-    _require_scope(auth, "projects:read")
     parsed = _validate_arguments(_ProjectListArguments, arguments)
     visible_project_ids = await project_ids_visible_to(db, auth)
     projects = (
@@ -935,7 +921,6 @@ async def _tool_project_list(
 async def _tool_project_get(
     arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
-    _require_scope(auth, "projects:read")
     parsed = _validate_arguments(_ProjectGetArguments, arguments)
     project = await _visible_project_or_404(db, auth, UUID(parsed.project_id))
     return _tool_json(_project_payload(project))
@@ -944,7 +929,6 @@ async def _tool_project_get(
 async def _tool_vault_list(
     arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
-    _require_scope(auth, "vault:metadata:read")
     parsed = _validate_arguments(_VaultListArguments, arguments)
     visible_project_ids = await project_ids_visible_to(db, auth)
     if parsed.project_id is not None:
@@ -1021,7 +1005,6 @@ def _exact_vault_reference(
 async def _tool_vault_get(
     arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
-    _require_scope(auth, "vault:metadata:read")
     parsed = _validate_arguments(_VaultGetArguments, arguments)
     project_id = UUID(parsed.project_id)
     vault_id = UUID(parsed.vault_id)
@@ -1102,7 +1085,6 @@ def _parse_exact_project_vault_reference(reference: str) -> tuple[UUID, str, str
 async def _tool_vault_resolve(
     arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
-    _require_scope(auth, "vault:plaintext:read")
     parsed = _validate_arguments(_VaultResolveArguments, arguments)
     project_id, vault_slug, section, field = _parse_exact_project_vault_reference(parsed.reference)
     await _visible_project_or_404(db, auth, project_id)
@@ -1135,7 +1117,7 @@ async def _tool_vault_resolve(
 async def _tool_connector_call(
     name: str, arguments: dict[str, Any], *, auth: AuthContext
 ) -> dict[str, Any]:
-    _require_scope(auth, "connectors:invoke")
+    require_auth_scopes(auth, "connectors:invoke")
     session = await get_tool_router_mcp_session(require_clerk_id(auth))
     response = await call_tool_router_mcp_tool(session, name, arguments)
     result = response.model_dump(by_alias=True, exclude_none=True)
