@@ -549,12 +549,12 @@ export function HostedAgentDetail({
 	const activeNavItem = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
-	const initialProvisioning =
+	const showInitialStartingPage =
 		activeTab === "overview" &&
 		isStartingStatus(deploymentStatus) &&
 		projection.status !== "resolved";
 	const interfaceAvailable =
-		activeTab === "overview" && !initialProvisioning && isRunningStatus(deploymentStatus);
+		activeTab === "overview" && !showInitialStartingPage && isRunningStatus(deploymentStatus);
 	const isLiveToolTab = activeTab === "console" || activeTab === "terminal";
 	return (
 		<div
@@ -608,7 +608,7 @@ export function HostedAgentDetail({
 					/>
 				) : null}
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
-					{initialProvisioning ? (
+					{showInitialStartingPage ? (
 						<InitialDeploymentPage
 							deployment={deployment}
 							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
@@ -1217,7 +1217,7 @@ function InitialDeploymentPage({
 						<h2 className="mt-1 text-xl font-semibold">
 							{deploymentTransitionTimedOut
 								? "Setup is taking longer than expected"
-								: "Setting up your agent"}
+								: "Starting your agent…"}
 						</h2>
 						<p className="mt-2 text-sm text-muted-foreground">
 							{deploymentTransitionTimedOut
@@ -1368,7 +1368,10 @@ function OverviewTab({
 						tint="bg-identity-4-bg text-identity-4-fg"
 					>
 						<div className="flex h-full flex-col justify-between gap-4">
-							<p className="inline-flex items-center gap-2 text-lg font-semibold">
+							<p
+								className="inline-flex items-center gap-2 text-lg font-semibold"
+								title={`Agent status: ${deploymentStatusLabel(deploymentStatus)}`}
+							>
 								<StatusDot status={deploymentStatusTone(deploymentStatus)} />
 								{deploymentStatusLabel(deploymentStatus)}
 							</p>

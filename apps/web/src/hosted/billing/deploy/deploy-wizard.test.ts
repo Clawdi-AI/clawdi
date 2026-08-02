@@ -123,7 +123,11 @@ describe("deploy wizard responsive layout", () => {
 		expect(wizardSource).toContain("Basic plan unavailable");
 		expect(wizardSource).not.toContain("basicPlan?.vcpu ?? 2");
 		expect(wizardSource).not.toContain("basicPlan?.ram_gb ?? 4");
-		expect(agentDetailSource).toContain("disk_gib} GiB storage");
+		expect(
+			agentDetailSource.match(
+				/\{ label: "Storage", value: `\$\{spec\.resources\.disk_gib\} GiB` \}/g,
+			),
+		).toHaveLength(2);
 		expect(wizardSource).toContain('className="whitespace-nowrap" data-testid={testId}');
 		expect(wizardSource).toMatch(/data-testid=\{`\$\{testId\}-savings`\}/);
 	});
