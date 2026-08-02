@@ -12530,6 +12530,7 @@ async def test_telegram_channel_direct_message_pairing_replies_stay_in_originati
 @pytest.mark.asyncio
 async def test_telegram_webhook_unpair_redelivery_does_not_duplicate_reply(
     client: httpx.AsyncClient,
+    db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ):
     _reset_fake_provider_client({"ok": True, "result": {"message_id": 103}})
@@ -12573,6 +12574,15 @@ async def test_telegram_webhook_unpair_redelivery_does_not_duplicate_reply(
     assert [call["json"]["text"] for call in replies] == [
         "Unpaired. This chat is no longer connected to an agent."
     ]
+    command_message = (
+        await db_session.execute(
+            select(ChannelMessage).where(
+                ChannelMessage.account_id == UUID(created["id"]),
+                ChannelMessage.provider_event_id == "update:7003",
+            )
+        )
+    ).scalar_one()
+    assert command_message.delivered_at is not None
 
 
 @pytest.mark.asyncio
@@ -12693,6 +12703,11 @@ async def test_telegram_unpaired_private_tutorial_is_idempotent_cooled_down_and_
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    expected_tutorial = (
+        "This chat isn't paired yet. In Clawdi, open your agent's Telegram channel, "
+        "choose Pair, then use the link or send /clawdi_pair <code> here."
+    )
+    assert telegram_router.TELEGRAM_UNPAIRED_TUTORIAL == expected_tutorial
     _reset_fake_provider_client({"ok": True, "result": {"message_id": 106}})
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
@@ -12749,7 +12764,7 @@ async def test_telegram_unpaired_private_tutorial_is_idempotent_cooled_down_and_
     assert [call["json"] for call in tutorial_calls] == [
         {
             "chat_id": "987654410",
-            "text": telegram_router.TELEGRAM_UNPAIRED_TUTORIAL,
+            "text": expected_tutorial,
         }
     ]
     assert (await client.get(f"/v1/channels/{created['id']}/bindings")).json() == []
@@ -12761,7 +12776,7 @@ async def test_telegram_unpaired_private_tutorial_is_idempotent_cooled_down_and_
             select(ChannelMessage).where(
                 ChannelMessage.account_id == UUID(created["id"]),
                 ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
-                ChannelMessage.text == telegram_router.TELEGRAM_UNPAIRED_TUTORIAL,
+                ChannelMessage.text == expected_tutorial,
             )
         )
     ).scalar_one()

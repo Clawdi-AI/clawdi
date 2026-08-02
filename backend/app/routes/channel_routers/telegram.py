@@ -110,8 +110,8 @@ router = APIRouter(prefix="/channels/telegram", tags=["channels"])
 log = logging.getLogger(__name__)
 
 TELEGRAM_UNPAIRED_TUTORIAL = (
-    "This chat isn't paired yet. In Clawdi, open your agent, choose Pair Telegram, "
-    "then use the generated link or send /clawdi_pair <code> here."
+    "This chat isn't paired yet. In Clawdi, open your agent's Telegram channel, "
+    "choose Pair, then use the link or send /clawdi_pair <code> here."
 )
 TELEGRAM_UNPAIRED_TUTORIAL_COOLDOWN = timedelta(minutes=10)
 _TELEGRAM_UNPAIRED_TUTORIAL_KIND = "telegram_unpaired_tutorial"
