@@ -112,7 +112,12 @@ releases.
      `push.main.paths` filter includes every backend image/release input, and
      main concurrency may cancel an older run in favor of the newest cumulative
      commit. A push outside that path filter does not start a backend image
-     release.
+     release. Because a `workflow_run` workflow can access secrets and write
+     tokens even when its predecessor could not, the privileged image workflow
+     accepts only a successful `push` run for `main` whose
+     `head_repository.full_name` is this repository. This follows GitHub's
+     official [`workflow_run` privilege and untrusted-code
+     warning](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows.md#workflow_run).
    - `Clawdi Image Release` uses one workflow-level production concurrency
      group with `cancel-in-progress: false` and `queue: max`. GitHub permits one
      running release plus up to 100 pending runs in that group instead of
@@ -126,7 +131,8 @@ releases.
      `workflow_run.head_sha`. It must not narrow that trusted signal with a
      single-commit diff because a canceled predecessor's backend changes are
      already ancestors of the successful cumulative SHA. The exact SHA is both
-     the immutable OCI image tag and the Kamal deployment version.
+     the commit-addressed OCI image tag and the Kamal deployment version; GHCR
+     tags remain mutable and are not a registry immutability guarantee.
    - Manual dispatch always builds its resolved ref through the same production
      concurrency group. An older ref is an explicit rollback and can defeat the
      intended automatic release history if it waits behind automatic runs.
@@ -301,8 +307,12 @@ The proxy `/health` gate reaches the API handler that executes database
 both roles. On the worker, `/health` returns failure until
 `ChannelWorkerHealth.ready` is true and returns failure again while stopping,
 so Docker cannot report the worker healthy before its worker stack is ready.
-The HEALTHCHECK retry budget is bounded by the 120-second Kamal
-`deploy_timeout`.
+Under Docker's official [HEALTHCHECK timing
+contract](https://docs.docker.com/reference/dockerfile/#healthcheck), the
+30-second start period still allows migration startup. Even allowing one full
+5-second check to straddle that boundary, the 5-second interval and timeout
+with eight counted retries give a conservative 115-second unhealthy deadline,
+strictly below the 120-second Kamal `deploy_timeout`.
 
 The workflow does not add a public-network post-deploy request: without an
 authenticated, environment-specific assertion it would be a brittle duplicate

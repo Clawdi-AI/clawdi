@@ -39,7 +39,7 @@ EXPOSE 8000
 
 # Kamal uses Docker health for non-proxied roles. Both the API and channels
 # worker serve readiness-aware GET /health on this port.
-HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=8 \
+HEALTHCHECK --interval=5s --timeout=5s --start-period=30s --retries=8 \
     CMD ["curl", "--fail", "--silent", "--show-error", "--max-time", "4", "http://127.0.0.1:8000/health"]
 
 CMD ["python", "-m", "app.runtime_entrypoint"]
