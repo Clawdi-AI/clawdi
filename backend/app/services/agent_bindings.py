@@ -13,6 +13,7 @@ from app.models.agent_project_binding import AgentProjectBinding
 from app.models.project import Project
 from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
+from app.services.agent_lifecycle import active_agent_filter, active_project_filter
 
 
 async def get_owned_agent_or_404(
@@ -26,6 +27,7 @@ async def get_owned_agent_or_404(
             select(AgentEnvironment).where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == user_id,
+                active_agent_filter(),
             )
         )
     ).scalar_one_or_none()
@@ -41,7 +43,7 @@ async def assert_project_visible_to_user(
     project_id: UUID,
 ) -> Project:
     project = (
-        await db.execute(select(Project).where(Project.id == project_id))
+        await db.execute(select(Project).where(Project.id == project_id, active_project_filter()))
     ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
@@ -68,7 +70,7 @@ async def assert_project_writable_by_user(
     project_id: UUID,
 ) -> Project:
     project = (
-        await db.execute(select(Project).where(Project.id == project_id))
+        await db.execute(select(Project).where(Project.id == project_id, active_project_filter()))
     ).scalar_one_or_none()
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")

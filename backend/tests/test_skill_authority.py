@@ -907,7 +907,7 @@ async def test_old_project_fence_cannot_delete_unclaimed_cloud_row(
 
 
 @pytest.mark.asyncio
-async def test_dashboard_agent_delete_cleans_all_agent_project_rows_files_and_revision(
+async def test_dashboard_agent_disconnect_preserves_agent_project_rows_and_files(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user: User,
@@ -984,7 +984,6 @@ async def test_dashboard_agent_delete_cleans_all_agent_project_rows_files_and_re
     await db_session.commit()
     before = await client.get("/v1/skills", params={"project_id": str(environment_project.id)})
     assert before.status_code == 200, before.text
-    old_etag = before.headers["etag"]
     await db_session.refresh(seed_user)
     revision_before = seed_user.skills_revision
     events = subscribe(
@@ -994,48 +993,20 @@ async def test_dashboard_agent_delete_cleans_all_agent_project_rows_files_and_re
     try:
         deleted = await client.delete(f"/v1/agents/{agent_id}")
         assert deleted.status_code == 204, deleted.text
-        deletion_events = [await asyncio.wait_for(events.get(), timeout=1) for _ in range(3)]
     finally:
         unsubscribe(seed_user.id, events)
-    await db_session.refresh(seed_user)
-    assert seed_user.skills_revision == revision_before + 3
-    assert sorted(event["skills_revision"] for event in deletion_events) == [
-        revision_before + 1,
-        revision_before + 2,
-        revision_before + 3,
-    ]
-    assert [event["project_id"] for event in deletion_events].count(
-        str(environment_project.id)
-    ) == 2
-    assert [event["project_id"] for event in deletion_events].count(str(old_project.id)) == 1
-
-    conditional = await client.get(
-        "/v1/skills",
-        params={"project_id": str(environment_project.id)},
-        headers={"If-None-Match": old_etag},
+    await db_session.refresh(environment_project)
+    assert environment_project.archived_at is not None
+    preserved = (
+        (await db_session.execute(select(Skill).where(Skill.project_id == environment_project.id)))
+        .scalars()
+        .all()
     )
-    assert conditional.status_code == 200, conditional.text
-    assert conditional.headers["etag"] != old_etag
-    assert conditional.json()["items"] == []
-    assert (
-        await db_session.execute(select(Skill).where(Skill.project_id == environment_project.id))
-    ).scalars().all() == []
-    assert (
-        await db_session.execute(select(Skill).where(Skill.project_id == old_project.id))
-    ).scalars().all() == []
-    kept = (
-        await db_session.execute(
-            select(Skill).where(
-                Skill.project_id == workspace_project.id,
-                Skill.skill_key == "keep-workspace",
-                Skill.is_active,
-            )
-        )
-    ).scalar_one()
-    assert kept.authority == SKILL_AUTHORITY_CLOUD
-    assert await file_store.exists(workspace_file_key) is True
+    assert {row.skill_key for row in preserved} == {"delete-legacy", "delete-claimed"}
     for file_key in agent_file_keys:
-        assert await file_store.exists(file_key) is False
+        assert await file_store.exists(file_key) is True
+    await db_session.refresh(seed_user)
+    assert seed_user.skills_revision == revision_before
 
 
 @pytest.mark.asyncio

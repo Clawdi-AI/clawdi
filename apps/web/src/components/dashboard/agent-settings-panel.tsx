@@ -137,7 +137,7 @@ export function AgentSettingsPanel({
 			),
 		onSuccess: () => {
 			toast.success("Agent disconnected", {
-				description: "Sessions and skills stay in your account.",
+				description: "Sessions, Skills, and Projects are retained until it reconnects.",
 			});
 			queryClient.invalidateQueries({
 				predicate: (q) => {
@@ -378,13 +378,10 @@ export function AgentSettingsPanel({
 						<ConfirmAction
 							title="Disconnect this agent?"
 							description={
-								<>
-									<p>Sessions and skills stay in your account.</p>
-									<p>
-										This agent will stop syncing and sessions will no longer be tagged with it.
-										Reconnect from that agent to resume.
-									</p>
-								</>
+								<p>
+									Sync stops and the Agent leaves active views. Sessions, Skills, and Projects are
+									retained and return when it reconnects.
+								</p>
 							}
 							confirmLabel="Disconnect agent"
 							destructive

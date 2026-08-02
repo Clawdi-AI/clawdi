@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
+from app.services.agent_lifecycle import reactivate_agent_and_project
 
 _AGENT_TYPE_LABELS = {
     "openclaw": "OpenClaw",
@@ -83,6 +84,8 @@ async def register_agent_environment(
             )
         ).scalar_one_or_none()
         if existing is not None:
+            if existing.archived_at is not None:
+                await reactivate_agent_and_project(db, agent=existing)
             await _refresh_agent_environment(
                 db,
                 existing,
@@ -118,6 +121,8 @@ async def register_agent_environment(
             )
         ).scalar_one_or_none()
         if existing is not None:
+            if existing.archived_at is not None:
+                await reactivate_agent_and_project(db, agent=existing)
             await _refresh_agent_environment(
                 db,
                 existing,
@@ -205,6 +210,8 @@ async def register_agent_environment(
                 os_name=os_name,
                 registration_key=registration_key,
             )
+            if winner.archived_at is not None:
+                await reactivate_agent_and_project(db, agent=winner)
             if commit:
                 await db.commit()
             else:
@@ -222,6 +229,23 @@ async def register_agent_environment(
         ).scalar_one_or_none()
         if winner is None:
             raise
+        if winner.archived_at is not None:
+            await reactivate_agent_and_project(db, agent=winner)
+            await _refresh_agent_environment(
+                db,
+                winner,
+                user_id=user_id,
+                machine_id=machine_id,
+                machine_name=machine_name,
+                agent_type=agent_type,
+                agent_version=agent_version,
+                os_name=os_name,
+                registration_key=registration_key,
+            )
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
         return AgentEnvironmentRegistration(env=winner, created=False)
 
 

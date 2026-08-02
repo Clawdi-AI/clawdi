@@ -488,6 +488,7 @@ async def get_or_create_bot_agent_link(
             .where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == link_user_id,
+                AgentEnvironment.archived_at.is_(None),
             )
             .execution_options(populate_existing=True)
             .with_for_update(of=(AgentEnvironment, V2RuntimeEnvironmentFence))
@@ -592,6 +593,7 @@ async def get_strict_v2_hosted_channel_agent_or_409(
         .where(
             AgentEnvironment.id == agent_id,
             AgentEnvironment.user_id == user_id,
+            AgentEnvironment.archived_at.is_(None),
         )
         .execution_options(populate_existing=True)
     )
@@ -645,6 +647,7 @@ async def bot_agent_link_allows_new_pairing(
                 ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
                 ChannelAccount.archived_at.is_(None),
                 AgentEnvironment.user_id == user_id,
+                AgentEnvironment.archived_at.is_(None),
             )
             .execution_options(populate_existing=True)
             .with_for_update(of=(ChannelBotAgentLink, V2RuntimeEnvironmentFence))
@@ -781,7 +784,10 @@ async def list_strict_v2_hosted_channel_agent_ids(
                 V2RuntimeEnvironmentFence,
                 V2RuntimeEnvironmentFence.environment_id == AgentEnvironment.id,
             )
-            .where(AgentEnvironment.user_id == user_id)
+            .where(
+                AgentEnvironment.user_id == user_id,
+                AgentEnvironment.archived_at.is_(None),
+            )
             .order_by(AgentEnvironment.created_at, AgentEnvironment.id)
         )
     ).all()
@@ -817,6 +823,7 @@ async def ensure_hosted_agent_provider_link_available(
             .where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == user_id,
+                AgentEnvironment.archived_at.is_(None),
             )
             .with_for_update()
         )
@@ -1261,6 +1268,7 @@ async def resolve_channel_agent_by_token(
             ChannelAccount.archived_at.is_(None),
             ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
             AgentEnvironment.user_id == ChannelBotAgentLink.user_id,
+            AgentEnvironment.archived_at.is_(None),
         )
         .execution_options(populate_existing=True)
     )
@@ -1307,6 +1315,7 @@ async def resolve_channel_agent_by_identity(
             ChannelAccount.archived_at.is_(None),
             ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
             AgentEnvironment.user_id == ChannelBotAgentLink.user_id,
+            AgentEnvironment.archived_at.is_(None),
         )
         .execution_options(populate_existing=True)
     )

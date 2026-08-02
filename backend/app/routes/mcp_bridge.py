@@ -749,6 +749,7 @@ def _user_sessions_stmt(auth: AuthContext):
 
     Strict Hosted runtimes intentionally receive cross-Agent history. Legacy
     environment keys predate that contract and retain their local boundary.
+    Session-history reads intentionally retain archived Agent type/name.
     """
     stmt = (
         select(Session, AgentEnvironment.agent_type)

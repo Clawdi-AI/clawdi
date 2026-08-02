@@ -88,10 +88,10 @@ from app.services.agent_environments import (
     local_machine_registration_key,
     register_agent_environment,
 )
-from app.services.agent_skill_projection import (
-    AgentSkillProjectionBoundaryError,
-    delete_agent_project_skill_rows,
-    delete_agent_skill_files_best_effort,
+from app.services.agent_lifecycle import (
+    AgentLifecycleBoundaryError,
+    active_agent_filter,
+    archive_agent_and_project,
 )
 from app.services.ai_provider_credentials import (
     OAuthCredentialClaimConflict,
@@ -1525,6 +1525,7 @@ async def _admin_delete_environment(
             .where(
                 AgentEnvironment.id == environment_id,
                 AgentEnvironment.user_id == target_user_id,
+                active_agent_filter(),
             )
             .with_for_update()
             .execution_options(populate_existing=True)
@@ -1547,22 +1548,18 @@ async def _admin_delete_environment(
             "explicit_identity": env.registration_key is None,
         },
     )
+    await queue_environment_runtime_manifest_changed(db, env.user_id, environment_id)
     try:
-        skill_file_keys = await delete_agent_project_skill_rows(db, agent=env)
-    except AgentSkillProjectionBoundaryError:
+        revoked_key_ids = await archive_agent_and_project(db, agent=env)
+    except AgentLifecycleBoundaryError:
+        await db.rollback()
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "Agent Project ownership could not be proven; no resources were deleted.",
+            "Agent Project ownership could not be proven; no resources were archived.",
         ) from None
-    await release_runtime_oauth_claims(
-        db,
-        owner_user_id=env.user_id,
-        environment_id=environment_id,
-    )
-    await queue_environment_runtime_manifest_changed(db, env.user_id, environment_id)
-    await db.delete(env)
     await db.commit()
-    await delete_agent_skill_files_best_effort(skill_file_keys, agent_id=environment_id)
+    for key_id in revoked_key_ids:
+        invalidate_api_key_auth_cache(key_id)
     logger.info(
         "admin_environment_deleted target_clerk_id=%s env_id=%s",
         target_clerk_id,
@@ -1633,6 +1630,7 @@ async def _admin_upsert_runtime_state(
             .where(
                 AgentEnvironment.id == environment_id,
                 AgentEnvironment.user_id == target_user_id,
+                active_agent_filter(),
             )
             .with_for_update()
             .execution_options(populate_existing=True)
@@ -1843,6 +1841,7 @@ async def _admin_delete_runtime_state(
             .where(
                 AgentEnvironment.id == environment_id,
                 AgentEnvironment.user_id == target_user_id,
+                active_agent_filter(),
             )
             .with_for_update()
             .execution_options(populate_existing=True)

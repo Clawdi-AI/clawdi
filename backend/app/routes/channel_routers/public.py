@@ -512,6 +512,7 @@ async def _runtime_channels_environment_id(
             select(AgentEnvironment.id).where(
                 AgentEnvironment.id == requested_environment_id,
                 AgentEnvironment.user_id == auth.user_id,
+                AgentEnvironment.archived_at.is_(None),
             )
         )
     ).scalar_one_or_none()

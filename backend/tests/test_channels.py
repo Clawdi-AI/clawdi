@@ -20195,3 +20195,35 @@ async def test_discord_gateway_guild_delete_archives_cleans_and_is_replay_safe(
     assert len(bindings) == 1
     assert bindings[0]["external_chat_id"] == guild_id
     assert provider_calls == []
+
+
+@pytest.mark.asyncio
+async def test_archived_agent_cannot_route_channels_and_reactivation_restores_authority(
+    db_session, seed_user, channel_agent
+):
+    from fastapi import HTTPException
+
+    from app.services.agent_lifecycle import (
+        archive_agent_and_project,
+        reactivate_agent_and_project,
+    )
+    from app.services.channels import get_strict_v2_hosted_channel_agent_or_409
+
+    await archive_agent_and_project(db_session, agent=channel_agent)
+    await db_session.commit()
+    with pytest.raises(HTTPException) as exc_info:
+        await get_strict_v2_hosted_channel_agent_or_409(
+            db_session,
+            agent_id=channel_agent.id,
+            user_id=seed_user.id,
+        )
+    assert exc_info.value.status_code == 409
+
+    await reactivate_agent_and_project(db_session, agent=channel_agent)
+    await db_session.commit()
+    restored = await get_strict_v2_hosted_channel_agent_or_409(
+        db_session,
+        agent_id=channel_agent.id,
+        user_id=seed_user.id,
+    )
+    assert restored.id == channel_agent.id
