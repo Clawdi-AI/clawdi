@@ -106,30 +106,11 @@ export function OverviewMetadata({
 	items: readonly { label: string; value: ReactNode }[];
 }) {
 	return (
-		<dl className="space-y-2 text-sm">
+		<dl className="space-y-2 text-xs text-muted-foreground">
 			{items.map((item) => (
 				<div key={item.label} className="flex min-w-0 items-baseline justify-between gap-3">
-					<dt className="text-xs text-muted-foreground">{item.label}</dt>
-					<dd className="min-w-0 break-words text-right font-medium">{item.value}</dd>
-				</div>
-			))}
-		</dl>
-	);
-}
-
-export function OverviewMetrics({
-	items,
-	columns = 3,
-}: {
-	items: readonly { label: string; value: ReactNode }[];
-	columns?: 2 | 3;
-}) {
-	return (
-		<dl className={cn("grid gap-2", columns === 2 ? "grid-cols-2" : "grid-cols-3")}>
-			{items.map((item) => (
-				<div key={item.label} className="rounded-md bg-muted/60 px-2.5 py-2">
-					<dt className="text-[11px] text-muted-foreground">{item.label}</dt>
-					<dd className="mt-0.5 truncate text-sm font-medium">{item.value}</dd>
+					<dt>{item.label}</dt>
+					<dd className="min-w-0 break-words text-right">{item.value}</dd>
 				</div>
 			))}
 		</dl>
@@ -140,7 +121,7 @@ export function OverviewSummaryRows({ items, empty }: { items: readonly string[]
 	return items.length ? (
 		<ul className="space-y-1 text-sm" data-testid="overview-summary-list">
 			{items.slice(0, 3).map((item) => (
-				<li key={item} className="truncate font-medium leading-5">
+				<li key={item} className="truncate leading-5">
 					{item}
 				</li>
 			))}

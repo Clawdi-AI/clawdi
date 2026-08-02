@@ -37,7 +37,7 @@ export function OverviewProjectsBody({
 	const count = bindings.count ?? 0;
 	return (
 		<div className="space-y-3">
-			<p className="text-lg font-semibold">
+			<p data-overview-primary-value className="text-base font-semibold">
 				{count ? `${count} ${count === 1 ? "project" : "projects"}` : "No projects added"}
 			</p>
 			{count === 0 ? null : names.isLoading ? (
@@ -68,7 +68,7 @@ export function OverviewSkillsBody({
 	if (state.error) return <OverviewModuleError label="Skills" onRetry={state.onRetry} />;
 	return (
 		<div className="space-y-3">
-			<p className="text-lg font-semibold">
+			<p data-overview-primary-value className="text-base font-semibold">
 				{items.length
 					? `${items.length} ${items.length === 1 ? "skill" : "skills"}`
 					: "No skills available"}
@@ -90,7 +90,7 @@ export function OverviewMemoriesBody() {
 		return <OverviewModuleError label="Memories" onRetry={() => void query.refetch()} />;
 	const total = query.data?.total ?? 0;
 	return (
-		<p className="text-lg font-semibold">
+		<p data-overview-primary-value className="text-base font-semibold">
 			{total ? `${total} ${total === 1 ? "memory" : "memories"}` : "No memories yet"}
 		</p>
 	);
@@ -112,7 +112,7 @@ export function OverviewVaultsBody({
 	const vaults = query.data ?? [];
 	return (
 		<div className="space-y-3">
-			<p className="text-lg font-semibold">
+			<p data-overview-primary-value className="text-base font-semibold">
 				{vaults.length
 					? `${vaults.length} ${vaults.length === 1 ? "vault" : "vaults"}`
 					: "No vaults available"}
@@ -163,7 +163,7 @@ export function OverviewConnectorsBody() {
 	return (
 		<div className="space-y-3">
 			{!connected.connectionsLoading && !connectionsUnavailable ? (
-				<p className="text-lg font-semibold">
+				<p data-overview-primary-value className="text-base font-semibold">
 					{connectedAppCount ? `${connectedAppCount} connected` : "No apps connected"}
 				</p>
 			) : null}

@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { OverviewSummaryRows } from "@/components/dashboard/agent-overview-capabilities";
+import {
+	OverviewMetadata,
+	OverviewSummaryRows,
+} from "@/components/dashboard/agent-overview-capabilities";
 
 describe("overview summary rows", () => {
 	test("renders resource names as a compact flat list", () => {
@@ -19,6 +22,7 @@ describe("overview summary rows", () => {
 		expect(markup).not.toContain("border");
 		expect(markup).not.toContain("divide-y");
 		expect(markup).not.toContain("bg-");
+		expect(markup).not.toContain("font-medium");
 	});
 
 	test("keeps the existing empty state and three-row limit", () => {
@@ -37,5 +41,22 @@ describe("overview summary rows", () => {
 		expect(populated).not.toContain("Four");
 		expect(empty).toContain("No resources");
 		expect(empty).not.toContain('data-testid="overview-summary-list"');
+	});
+});
+
+describe("overview metadata", () => {
+	test("uses the shared muted metadata hierarchy for labels and values", () => {
+		const markup = renderToStaticMarkup(
+			createElement(OverviewMetadata, {
+				items: [
+					{ label: "Machine", value: "workstation.local" },
+					{ label: "Last seen", value: "Just now" },
+				],
+			}),
+		);
+
+		expect(markup).toContain("space-y-2 text-xs text-muted-foreground");
+		expect(markup).not.toContain("text-sm");
+		expect(markup).not.toContain("font-medium");
 	});
 });
