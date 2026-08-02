@@ -46,6 +46,7 @@ import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycl
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { errorMessage } from "@/lib/utils";
 
@@ -296,7 +297,7 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 
 			{links.isLoading ? (
 				<Skeleton className="h-16 w-full" />
-			) : links.error ? (
+			) : shouldBlockQueryError(links.error, links.data) ? (
 				<EmptyHint
 					variant="destructive"
 					message={
@@ -634,7 +635,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			<Separator />
 			{invites.isLoading ? (
 				<Skeleton className="h-16 w-full" />
-			) : invites.error ? (
+			) : shouldBlockQueryError(invites.error, invites.data) ? (
 				<EmptyHint
 					variant="destructive"
 					message={
@@ -857,7 +858,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 			<Separator />
 			{members.isLoading ? (
 				<Skeleton className="h-16 w-full" />
-			) : members.error ? (
+			) : shouldBlockQueryError(members.error, members.data) ? (
 				<EmptyHint
 					variant="destructive"
 					message={

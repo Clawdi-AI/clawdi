@@ -56,6 +56,7 @@ import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -156,7 +157,6 @@ function SkillsPageInner() {
 	const {
 		data: skillsData,
 		isLoading: skillsLoading,
-		isFetching: skillsFetching,
 		error: skillsError,
 		refetch: refetchSkills,
 	} = useQuery({
@@ -174,6 +174,10 @@ function SkillsPageInner() {
 		enabled: !isResolvingTarget,
 		placeholderData: keepPreviousData,
 	});
+	const blockingProjectsError = shouldBlockQueryError(projectsError, projects)
+		? projectsError
+		: null;
+	const blockingSkillsError = shouldBlockQueryError(skillsError, skillsData) ? skillsError : null;
 	// Tab row shows custom + personal projects; the per-agent long tail
 	// lives behind one overflow menu (a 16-tab row teaches nothing).
 	// Both ranked by installed-skill count, busiest first.
@@ -603,9 +607,9 @@ function SkillsPageInner() {
 				}
 			/>
 
-			{projectsError ? (
+			{blockingProjectsError ? (
 				<ApiErrorPanel
-					error={projectsError}
+					error={blockingProjectsError}
 					onRetry={() => {
 						void refetchProjects();
 					}}
@@ -619,9 +623,9 @@ function SkillsPageInner() {
 			    'No skills installed on this agent yet,' which is
 			    indistinguishable from a real /api/skills outage from
 			    the user's perspective. */}
-			{skillsError ? (
+			{blockingSkillsError ? (
 				<ApiErrorPanel
-					error={skillsError}
+					error={blockingSkillsError}
 					onRetry={() => {
 						void refetchSkills();
 					}}
@@ -645,12 +649,7 @@ function SkillsPageInner() {
 				</Alert>
 			) : null}
 
-			<section
-				className={cn(
-					"space-y-3 transition-opacity",
-					skillsFetching && !skillsLoading ? "opacity-60" : "opacity-100",
-				)}
-			>
+			<section className="space-y-3">
 				<SectionLabel
 					count={
 						skillsForTarget

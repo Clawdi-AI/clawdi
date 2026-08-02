@@ -19,6 +19,7 @@ import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { WelcomeWalletCard } from "@/hosted/billing/subscription/welcome-wallet-card";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION =
@@ -59,7 +60,7 @@ export function SubscriptionPage() {
 		);
 	}
 
-	if (plans.error) {
+	if (shouldBlockQueryError(plans.error, plans.data)) {
 		return (
 			<div data-hosted="true" className={SUBSCRIPTION_PAGE_CLASS}>
 				<PageHeader title="Compute" description={DESCRIPTION} />

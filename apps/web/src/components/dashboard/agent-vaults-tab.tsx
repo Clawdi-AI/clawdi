@@ -5,6 +5,7 @@ import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bi
 import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VaultsSurface } from "@/components/vault/vaults-surface";
+import { shouldBlockQueryError } from "@/lib/query-state";
 
 export function AgentVaultsTab({ agentId }: { agentId: string }) {
 	const bindings = useAgentProjectBindings(agentId);
@@ -23,7 +24,7 @@ export function AgentVaultsTab({ agentId }: { agentId: string }) {
 		);
 	}
 
-	if (bindings.error) {
+	if (shouldBlockQueryError(bindings.error, bindings.data)) {
 		return (
 			<ApiErrorPanel
 				error={bindings.error}

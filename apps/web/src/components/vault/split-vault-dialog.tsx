@@ -21,6 +21,7 @@ import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycl
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
@@ -273,7 +274,7 @@ export function SplitVaultDialog({
 							them. Add the new vaults to those Projects afterwards.
 						</p>
 					) : null}
-					{projectsQuery.error ? (
+					{shouldBlockQueryError(projectsQuery.error, projectsQuery.data) ? (
 						<ApiErrorPanel
 							error={projectsQuery.error}
 							onRetry={() => {
@@ -288,7 +289,7 @@ export function SplitVaultDialog({
 							selected.length === 0 ||
 							run.isPending ||
 							projectsQuery.isLoading ||
-							!!projectsQuery.error
+							shouldBlockQueryError(projectsQuery.error, projectsQuery.data)
 						}
 						onClick={() => run.mutate()}
 					>

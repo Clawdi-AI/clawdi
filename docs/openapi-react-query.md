@@ -18,21 +18,37 @@ structured error bodies. Only `useOpenApi()` converts non-2xx responses to
 
 ## Loading and refresh contract
 
-- Use `isPending`/`isLoading` only for the first load when no data is present.
-- A background `isFetching` state may add a quiet refresh affordance or opacity
-  treatment, but it must keep the existing count, rows, dimensions, and empty
-  state decision.
-- A refetch error with cached data keeps rendering that data. Reserve blocking
-  error panels for queries without usable data.
+- Use `isPending`/`isLoading` only for the first load while `data` is
+  `undefined`. A stable skeleton may represent that unresolved layout.
+- Treat `isFetching` as network activity, not as permission to restyle the
+  current result. Background refresh must not change primary-content opacity,
+  swap content for a skeleton, hide counts, revisit the empty-state decision,
+  or replace usable content with an error panel.
+- A refetch error with cached data keeps rendering that data. Use
+  `shouldBlockQueryError(error, data)` where a component needs the shared
+  blocking-error distinction. A resource-detail 404 is the intentional
+  exception: deletion makes the cached entity no longer usable, so the not-found
+  boundary is authoritative.
+- User-triggered refresh may show a subtle local progress indicator. Track that
+  action locally instead of presenting ambient polling or focus-refetch
+  `isFetching` as user progress. Do not reject the click because an ambient
+  fetch is active: call `refetch()` and let TanStack's default
+  `cancelRefetch: true` coordinate the in-flight request while the local action
+  owns its spinner and disabled state. Mutation-local progress remains
+  appropriate.
 - Polling must be bounded, disabled in background unless explicitly required,
-  and must use stable path/query parameters. Query cancellation is supplied by
+  and must use stable path/query parameters. In this app, a poll is bounded by
+  its mounted foreground surface, a recoverable transient state, or an explicit
+  maximum-attempt/terminal condition. Every intended poll sets
+  `refetchIntervalInBackground: false`. Query cancellation is supplied by
   openapi-react-query's propagated `AbortSignal`.
 - Use `placeholderData: keepPreviousData` when a list identity changes through
   search, filtering, or pagination.
 
-The paired-chat inventory is the reference polling case: its three-second
-bindings refresh passes `isPending`, not `isFetching`, to the dialog. Cached
-chat rows and counts therefore do not flash on every poll.
+The paired-chat inventory is one reference polling case: its three-second
+bindings refresh passes initial pending state, not background fetching state,
+to the dialog. The same contract applies to Agent skills and sessions, channel
+health, dashboard Agents, deployment reconciliation, and Wallet refreshes.
 
 ## Intentional TanStack Query exceptions
 
@@ -65,10 +81,26 @@ key or the matching `[method, path]` prefix.
 
 The integration was checked against official sources matching the lockfile:
 
-- `openapi-react-query` 0.5.4:
-  <https://github.com/openapi-ts/openapi-typescript/tree/openapi-react-query%400.5.4/packages/openapi-react-query>
-- `openapi-fetch` 0.17.0:
-  <https://github.com/openapi-ts/openapi-typescript/tree/openapi-fetch%400.17.0/packages/openapi-fetch>
-- TanStack Query 5.101.4 background fetching and cancellation:
-  <https://tanstack.com/query/v5/docs/framework/react/guides/background-fetching-indicators>
-  and <https://tanstack.com/query/v5/docs/framework/react/guides/query-cancellation>
+- `openapi-react-query` 0.5.4 wraps TanStack query options, forwards the query
+  context `AbortSignal`, and constructs the typed `[method, path, init]` key:
+  <https://github.com/openapi-ts/openapi-typescript/blob/openapi-react-query%400.5.4/packages/openapi-react-query/src/index.ts>
+- `openapi-fetch` 0.17.0 typed client and middleware implementation:
+  <https://github.com/openapi-ts/openapi-typescript/tree/openapi-fetch%400.17.0/packages/openapi-fetch/src>
+- TanStack Query 5.101.4 distinguishes initial pending state from background
+  `isFetching`, retains prior pages with `keepPreviousData`, and supplies query
+  cancellation; its `refetch` contract defaults `cancelRefetch` to `true`:
+  <https://github.com/TanStack/query/blob/%40tanstack%2Freact-query%405.101.4/docs/framework/react/guides/background-fetching-indicators.md>,
+  <https://github.com/TanStack/query/blob/%40tanstack%2Freact-query%405.101.4/docs/framework/react/guides/paginated-queries.md>,
+  and
+  <https://github.com/TanStack/query/blob/%40tanstack%2Freact-query%405.101.4/docs/framework/react/guides/query-cancellation.md>,
+  plus
+  <https://github.com/TanStack/query/blob/%40tanstack%2Freact-query%405.101.4/docs/framework/react/reference/useQuery.md>.
+- React 19.2.7 is the component/runtime contract used by these surfaces:
+  <https://github.com/facebook/react/tree/v19.2.7/packages/react>.
+- Base UI 1.6.0 and shadcn 4.16.1 provide accessible progress and skeleton
+  primitives; they do not redefine query lifecycle state. Their versioned
+  sources reinforce using those primitives as explicit task/placeholder UI,
+  while TanStack remains authoritative for data state:
+  <https://github.com/mui/base-ui/blob/v1.6.0/docs/src/app/%28docs%29/react/components/progress/page.mdx>
+  and
+  <https://github.com/shadcn-ui/ui/blob/shadcn%404.16.1/apps/v4/content/docs/components/base/skeleton.mdx>.

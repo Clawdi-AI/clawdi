@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import { Brain, Laptop, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -13,15 +13,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
-import { unwrap, useApi } from "@/lib/api";
+import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
 import { projectResourceHref } from "@/lib/project-resource-model";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
 export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 	const router = useRouter();
-	const api = useApi();
+	const api = useOpenApi();
 	const queryClient = useQueryClient();
 
 	const {
@@ -29,14 +30,8 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 		isLoading,
 		error,
 		refetch,
-	} = useQuery({
-		queryKey: ["memory", memoryId],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/memories/{memory_id}", {
-					params: { path: { memory_id: memoryId } },
-				}),
-			),
+	} = api.useQuery("get", "/v1/memories/{memory_id}", {
+		params: { path: { memory_id: memoryId } },
 	});
 
 	// First sentence (or 80 chars) — keeps the breadcrumb readable.
@@ -44,33 +39,29 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 		? memory.content.split(/[.\n]/)[0]?.slice(0, 80)?.trim() || null
 		: null;
 	useSetBreadcrumbTitle(memoryTitle);
+	const blockingError =
+		isApiNotFoundError(error) || shouldBlockQueryError(error, memory) ? error : null;
 
-	const deleteMemory = useMutation({
-		mutationFn: async () =>
-			unwrap(
-				await api.DELETE("/v1/memories/{memory_id}", {
-					params: { path: { memory_id: memoryId } },
-				}),
-			),
+	const deleteMemory = api.useMutation("delete", "/v1/memories/{memory_id}", {
 		onSuccess: () => {
 			toast.success("Memory Deleted", {
 				description: "Your agents will no longer recall it.",
 			});
-			queryClient.invalidateQueries({ queryKey: ["memories"] });
+			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
 			void router.navigate({ href: projectResourceHref("memories") });
 		},
 		onError: (e) => toast.error("Couldn't delete memory", { description: errorMessage(e) }),
 	});
 
-	const onDelete = () => deleteMemory.mutate();
+	const onDelete = () => deleteMemory.mutate({ params: { path: { memory_id: memoryId } } });
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			{error && isApiNotFoundError(error) ? (
-				<DetailNotFound title="Memory not found" message={errorMessage(error)} />
-			) : error ? (
+			{blockingError && isApiNotFoundError(blockingError) ? (
+				<DetailNotFound title="Memory not found" message={errorMessage(blockingError)} />
+			) : blockingError ? (
 				<ApiErrorPanel
-					error={error}
+					error={blockingError}
 					onRetry={() => {
 						void refetch();
 					}}

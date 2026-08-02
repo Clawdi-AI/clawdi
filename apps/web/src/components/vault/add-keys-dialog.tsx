@@ -32,6 +32,7 @@ import { buildKeyImportPreview } from "@/components/vault/key-import-logic";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { identityFor } from "@/lib/identity";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { errorMessage } from "@/lib/utils";
 
@@ -113,13 +114,19 @@ export function AddKeysDialog({
 		effectiveChoice === NEW_VAULT &&
 		!vaultSlug &&
 		(vaultsQuery.isLoading || projectsQuery.isLoading);
+	const blockingVaultsError = shouldBlockQueryError(vaultsQuery.error, vaultsQuery.data)
+		? vaultsQuery.error
+		: null;
+	const blockingProjectsError = shouldBlockQueryError(projectsQuery.error, projectsQuery.data)
+		? projectsQuery.error
+		: null;
 	const newVaultUnavailable =
 		effectiveChoice === NEW_VAULT &&
 		!vaultSlug &&
 		!vaultsQuery.isLoading &&
 		!projectsQuery.isLoading &&
-		!vaultsQuery.error &&
-		!projectsQuery.error &&
+		!blockingVaultsError &&
+		!blockingProjectsError &&
 		writableProject === undefined;
 	const existingItems = useQuery({
 		queryKey: ["vault-items", selectedVaultId, effectiveSlug, selectedVaultProjectId],
@@ -149,7 +156,10 @@ export function AddKeysDialog({
 		effectiveChoice !== NEW_VAULT &&
 		(vaultsQuery.isLoading || selectedVaultId === undefined || existingItems.isLoading);
 	const destinationLoadError =
-		vaultsQuery.error ?? (effectiveChoice === NEW_VAULT ? projectsQuery.error : null);
+		blockingVaultsError ?? (effectiveChoice === NEW_VAULT ? blockingProjectsError : null);
+	const existingItemsError = shouldBlockQueryError(existingItems.error, existingItems.data)
+		? existingItems.error
+		: null;
 	const canSave =
 		importPlan.parsed.errors.length === 0 &&
 		importableCount > 0 &&
@@ -159,7 +169,7 @@ export function AddKeysDialog({
 		!newVaultUnavailable &&
 		!destinationPending &&
 		!destinationLoadError &&
-		!existingItems.error;
+		!existingItemsError;
 
 	const save = useSensitiveAction(async () => {
 		try {
@@ -343,9 +353,9 @@ export function AddKeysDialog({
 							</AlertDescription>
 						</Alert>
 					) : null}
-					{existingItems.error ? (
+					{existingItemsError ? (
 						<ApiErrorPanel
-							error={existingItems.error}
+							error={existingItemsError}
 							onRetry={() => {
 								void existingItems.refetch();
 							}}

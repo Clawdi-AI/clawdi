@@ -28,6 +28,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { type SessionListQuery, sessionListQueryOptions } from "@/lib/session-queries";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn, recencyBucketFor } from "@/lib/utils";
@@ -142,11 +143,10 @@ function SessionsListInner() {
 		],
 	);
 
-	const { data, isLoading, isFetching, error, refetch } = useQuery({
+	const { data, isLoading, error, refetch } = useQuery({
 		...sessionListQueryOptions($api, sessionQuery),
-		// Keep previous results visible during refetch; the
-		// `isFetching && !isLoading` opacity transition below is
-		// the only "loading" signal the user sees.
+		// Keep the previous page visible while search, filters, or pagination
+		// move to a new query key.
 		placeholderData: keepPreviousData,
 	});
 
@@ -340,7 +340,7 @@ function SessionsListInner() {
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 			<PageHeader title="Sessions" description={SESSIONS_RESOURCE.managementDescription} />
 
-			{error ? (
+			{shouldBlockQueryError(error, data) ? (
 				<ApiErrorPanel
 					error={error}
 					onRetry={() => {
@@ -349,12 +349,7 @@ function SessionsListInner() {
 					title="Couldn't load sessions"
 				/>
 			) : (
-				<div
-					className={cn(
-						"space-y-4 transition-opacity",
-						isFetching && !isLoading ? "opacity-60" : "opacity-100",
-					)}
-				>
+				<div className="space-y-4">
 					{sessionToolbar}
 					{params.view === "table" ? (
 						<div className="hidden md:block">

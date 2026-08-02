@@ -38,6 +38,7 @@ import { isApiNotFoundError } from "@/lib/api-errors";
 import type { SessionMessage } from "@/lib/api-schemas";
 import { useCurrentUser } from "@/lib/auth-client";
 import { formatDuration } from "@/lib/format";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	SESSION_DETAIL_GC_MS,
 	SESSION_DETAIL_STALE_MS,
@@ -261,7 +262,7 @@ export function SessionDetailContent({
 		);
 	}
 
-	if (sessionError) {
+	if (isApiNotFoundError(sessionError) || shouldBlockQueryError(sessionError, session)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				{isApiNotFoundError(sessionError) ? (
@@ -387,7 +388,7 @@ export function SessionDetailContent({
 			{session.has_content ? (
 				isContentLoading ? (
 					<MessagesSkeleton />
-				) : isContentError ? (
+				) : isContentError && shouldBlockQueryError(contentError, pagesData) ? (
 					<ApiErrorPanel
 						error={contentError}
 						onRetry={() => {

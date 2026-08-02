@@ -15,5 +15,6 @@ export function useWalletSnapshot({ enabled = true }: { enabled?: boolean } = {}
 		enabled: isDeployApiConfigured() && enabled,
 		retry: billingQueryRetry,
 		refetchInterval: 30_000,
+		refetchIntervalInBackground: false,
 	});
 }

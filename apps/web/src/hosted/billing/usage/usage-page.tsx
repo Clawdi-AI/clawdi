@@ -1,6 +1,7 @@
 "use client";
 
 import { Activity, AlertCircle, RefreshCw } from "lucide-react";
+import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -24,6 +25,7 @@ import {
 } from "@/hosted/v2/ai-providers/model-binding";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { formatShortDate } from "@/lib/format";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Clawdi AI usage in USD for the current reporting window across your agents.";
@@ -62,6 +64,16 @@ export function UsagePage() {
 	const usage = useUsage();
 	const providers = useUserAiProviders();
 	const managedModelCatalog = useManagedModelCatalog();
+	const [manualRetrying, setManualRetrying] = useState(false);
+	const retryUsage = async () => {
+		if (manualRetrying) return;
+		setManualRetrying(true);
+		try {
+			await usage.refetch();
+		} finally {
+			setManualRetrying(false);
+		}
+	};
 
 	if (usage.isLoading) {
 		return (
@@ -72,7 +84,7 @@ export function UsagePage() {
 		);
 	}
 
-	if (usage.error || !usage.data) {
+	if (shouldBlockQueryError(usage.error, usage.data) || !usage.data) {
 		return (
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
 				<PageHeader title="Usage" description={DESCRIPTION} />
@@ -80,7 +92,7 @@ export function UsagePage() {
 					normalizer={billingErrorNormalizer}
 					error={usage.error}
 					onRetry={() => {
-						void usage.refetch();
+						void retryUsage();
 					}}
 				/>
 			</div>
@@ -92,9 +104,9 @@ export function UsagePage() {
 			usage={usage.data}
 			providers={providers.data ?? []}
 			managedModels={managedModelCatalog.data?.models ?? []}
-			isRetrying={usage.isFetching}
+			isRetrying={manualRetrying}
 			onRetry={() => {
-				void usage.refetch();
+				void retryUsage();
 			}}
 		/>
 	);

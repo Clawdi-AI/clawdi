@@ -1,6 +1,6 @@
 "use client";
 
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { ChevronDown, Plus, Share2 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -40,9 +40,11 @@ import { formatApiError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { getProjectResourceDefinition, projectDetailHref } from "@/lib/project-resource-model";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn, errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
+type ProjectCreate = components["schemas"]["ProjectCreate"];
 type ProjectRow = components["schemas"]["ProjectResponse"];
 type CountValue = number | "unavailable";
 
@@ -118,6 +120,8 @@ export default function ProjectsPage() {
 		}
 		return m;
 	}, [vaults.data]);
+	const skillCountsUnavailable = shouldBlockQueryError(skills.error, skills.data);
+	const vaultCountsUnavailable = shouldBlockQueryError(vaults.error, vaults.data);
 
 	const ownedProjects = useMemo(
 		() => rows.filter((s) => s.is_owner !== false).sort(compareProjectsForProductUse),
@@ -155,13 +159,7 @@ export default function ProjectsPage() {
 		);
 	}, [customProjects, sharedProjects, search]);
 
-	const createProject = useMutation({
-		mutationFn: async (): Promise<ProjectRow> => {
-			const payload: { name: string; slug?: string } = { name: newProjectName.trim() };
-			const slug = normalizeSlugInput(newProjectSlug);
-			if (slug) payload.slug = slug;
-			return unwrap(await api.POST("/v1/projects", { body: payload }));
-		},
+	const createProject = $api.useMutation("post", "/v1/projects", {
 		onSuccess: (project) => {
 			setCreateOpen(false);
 			qc.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
@@ -210,7 +208,7 @@ export default function ProjectsPage() {
 				}
 			/>
 
-			{projects.error ? (
+			{shouldBlockQueryError(projects.error, projects.data) ? (
 				<ApiErrorPanel
 					error={projects.error}
 					onRetry={() => {
@@ -243,7 +241,10 @@ export default function ProjectsPage() {
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (!newProjectName.trim() || createProject.isPending) return;
-							createProject.mutate();
+							const body: ProjectCreate = { name: newProjectName.trim() };
+							const slug = normalizeSlugInput(newProjectSlug);
+							if (slug) body.slug = slug;
+							createProject.mutate({ body });
 						}}
 					>
 						<div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
@@ -295,25 +296,18 @@ export default function ProjectsPage() {
 					No projects match “{search.trim()}”.
 				</p>
 			) : (
-				<div
-					className={cn(
-						HERO_GRID_CLASS,
-						"transition-opacity",
-						projects.isFetching && !projects.isLoading ? "opacity-60" : "opacity-100",
-					)}
-					data-testid="project-grid"
-				>
+				<div className={HERO_GRID_CLASS} data-testid="project-grid">
 					{gridProjects.map(({ project, shared }) => (
 						<ProjectResourceCard
 							key={project.id}
 							project={project}
 							footer={[
 								formatCountLabel(
-									skills.error ? "unavailable" : (skillCounts.get(project.id) ?? 0),
+									skillCountsUnavailable ? "unavailable" : (skillCounts.get(project.id) ?? 0),
 									"skill",
 								),
 								formatCountLabel(
-									vaults.error ? "unavailable" : (vaultCounts.get(project.id) ?? 0),
+									vaultCountsUnavailable ? "unavailable" : (vaultCounts.get(project.id) ?? 0),
 									"vault",
 								),
 								shared && project.owner_display ? `by ${project.owner_display}` : null,
@@ -358,8 +352,12 @@ export default function ProjectsPage() {
 									key={project.id}
 									project={project}
 									agent={projectAgentFor(project, agentsById)}
-									skillCount={skills.error ? "unavailable" : (skillCounts.get(project.id) ?? 0)}
-									vaultCount={vaults.error ? "unavailable" : (vaultCounts.get(project.id) ?? 0)}
+									skillCount={
+										skillCountsUnavailable ? "unavailable" : (skillCounts.get(project.id) ?? 0)
+									}
+									vaultCount={
+										vaultCountsUnavailable ? "unavailable" : (vaultCounts.get(project.id) ?? 0)
+									}
 								/>
 							))}
 						</div>

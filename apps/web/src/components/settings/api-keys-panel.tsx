@@ -53,6 +53,7 @@ import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { ApiKey } from "@/lib/api-schemas";
 import { formatShortDate } from "@/lib/format";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
 const API_KEY_LABEL_MAX_LENGTH = 200;
@@ -201,7 +202,7 @@ export function ApiKeysPanel() {
 				</p>
 			</div>
 
-			{error ? (
+			{shouldBlockQueryError(error, listedKeys) ? (
 				<ApiErrorPanel error={error} onRetry={() => refetch()} title="Couldn’t load API keys" />
 			) : isLoading ? (
 				<>

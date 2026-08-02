@@ -14,6 +14,7 @@ import { useHostedDeployments, usePlans, useWalletLedger } from "@/hosted/billin
 import { largestSignupGrantUsd } from "@/hosted/billing/subscription/subscription-utils";
 import { welcomeWalletDescription } from "@/hosted/billing/subscription/welcome-wallet-card.logic";
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
+import { shouldBlockQueryError } from "@/lib/query-state";
 
 const WELCOME_GRANT_RECHECK_INTERVAL_MS = 5_000;
 const WELCOME_GRANT_TIMEOUT_MS = 60_000;
@@ -35,9 +36,19 @@ export function WelcomeWalletCard({ showDeployAction = true }: { showDeployActio
 	const grantApplied = grant?.status === "applied";
 	const grantPending = grant?.status === "pending";
 	const hasDeployments = (deployments.data?.length ?? 0) > 0;
-	const ledgerHasError = Boolean(ledger.error);
+	const blockingWalletError = shouldBlockQueryError(wallet.error, wallet.data)
+		? wallet.error
+		: null;
+	const blockingLedgerError = shouldBlockQueryError(ledger.error, ledger.data)
+		? ledger.error
+		: null;
+	const blockingDeploymentsError = shouldBlockQueryError(deployments.error, deployments.data)
+		? deployments.error
+		: null;
+	const ledgerHasError = Boolean(blockingLedgerError);
 	const [grantCheckTimedOut, setGrantCheckTimedOut] = useState(false);
 	const [grantCheckGeneration, setGrantCheckGeneration] = useState(0);
+	const [manualRefreshing, setManualRefreshing] = useState(false);
 	const grantRefetchInFlight = useRef(false);
 	const refetchLedger = ledger.refetch;
 
@@ -91,10 +102,16 @@ export function WelcomeWalletCard({ showDeployAction = true }: { showDeployActio
 		refetchLedger,
 	]);
 
-	function retryGrantCheck() {
+	async function retryGrantCheck() {
+		if (manualRefreshing) return;
 		setGrantCheckTimedOut(false);
 		setGrantCheckGeneration((generation) => generation + 1);
-		void refetchLedger().catch(() => undefined);
+		setManualRefreshing(true);
+		try {
+			await refetchLedger();
+		} finally {
+			setManualRefreshing(false);
+		}
 	}
 
 	// Past onboarding — they already have at least one agent.
@@ -112,7 +129,7 @@ export function WelcomeWalletCard({ showDeployAction = true }: { showDeployActio
 			</Card>
 		);
 	}
-	const loadError = wallet.error ?? ledger.error ?? deployments.error;
+	const loadError = blockingWalletError ?? blockingLedgerError ?? blockingDeploymentsError;
 	if (loadError) {
 		return (
 			<Card data-hosted="true">
@@ -121,9 +138,9 @@ export function WelcomeWalletCard({ showDeployAction = true }: { showDeployActio
 						normalizer={billingErrorNormalizer}
 						error={loadError}
 						onRetry={() => {
-							if (wallet.error) void wallet.refetch();
-							if (ledger.error) void ledger.refetch();
-							if (deployments.error) void deployments.refetch();
+							if (blockingWalletError) void wallet.refetch();
+							if (blockingLedgerError) void ledger.refetch();
+							if (blockingDeploymentsError) void deployments.refetch();
 						}}
 						title="Couldn't load welcome balance"
 					/>
@@ -176,10 +193,10 @@ export function WelcomeWalletCard({ showDeployAction = true }: { showDeployActio
 							<Button
 								type="button"
 								variant="outline"
-								onClick={retryGrantCheck}
-								disabled={ledger.isFetching}
+								onClick={() => void retryGrantCheck()}
+								disabled={manualRefreshing}
 							>
-								{ledger.isFetching ? <Spinner /> : <RefreshCw />}
+								{manualRefreshing ? <Spinner /> : <RefreshCw />}
 								Refresh balance
 							</Button>
 						) : null}

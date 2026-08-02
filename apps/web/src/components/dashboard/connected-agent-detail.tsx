@@ -31,6 +31,7 @@ import {
 import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -92,7 +93,18 @@ export function ConnectedAgentDetail({
 		refetch: refetchSkills,
 	} = useAgentProjectSkills(id, agentProjectId, id, false, Boolean(agent));
 
-	const sessionTotal = sessionsError ? "—" : (sessionsPage?.total ?? 0);
+	const blockingAgentError =
+		isApiNotFoundError(error) || shouldBlockQueryError(error, agent) ? error : null;
+	const blockingSkillsError = shouldBlockQueryError(skillsError, skillsForThisEnv)
+		? skillsError
+		: null;
+	const blockingProjectBindingsError = shouldBlockQueryError(projectBindingsError, projectBindings)
+		? projectBindingsError
+		: null;
+	const blockingSessionsError = shouldBlockQueryError(sessionsError, sessionsPage)
+		? sessionsError
+		: null;
+	const sessionTotal = blockingSessionsError ? "—" : (sessionsPage?.total ?? 0);
 	const activeTabMeta = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeTabMeta.icon;
@@ -108,12 +120,12 @@ export function ConnectedAgentDetail({
 	});
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}>
-			{error ? (
-				isApiNotFoundError(error) ? (
-					<DetailNotFound title="Agent not found" message={errorMessage(error)} />
+			{blockingAgentError ? (
+				isApiNotFoundError(blockingAgentError) ? (
+					<DetailNotFound title="Agent not found" message={errorMessage(blockingAgentError)} />
 				) : (
 					<ApiErrorPanel
-						error={error}
+						error={blockingAgentError}
 						onRetry={() => {
 							void refetchAgent();
 						}}
@@ -137,34 +149,36 @@ export function ConnectedAgentDetail({
 								<AgentStatPanel label="Sessions" value={sessionTotal} />
 								<AgentStatPanel
 									label="Skills"
-									value={skillsError ? "—" : skillsForThisEnv ? skillsForThisEnv.length : "—"}
+									value={
+										blockingSkillsError ? "—" : skillsForThisEnv ? skillsForThisEnv.length : "—"
+									}
 								/>
 								<AgentStatPanel
 									label="Projects"
-									value={projectBindingsError ? "—" : (projectBindings?.length ?? "—")}
+									value={blockingProjectBindingsError ? "—" : (projectBindings?.length ?? "—")}
 								/>
 							</div>
-							{skillsError ? (
+							{blockingSkillsError ? (
 								<ApiErrorPanel
-									error={skillsError}
+									error={blockingSkillsError}
 									onRetry={() => {
 										void refetchSkills();
 									}}
 									title="Couldn't load agent skills"
 								/>
 							) : null}
-							{projectBindingsError ? (
+							{blockingProjectBindingsError ? (
 								<ApiErrorPanel
-									error={projectBindingsError}
+									error={blockingProjectBindingsError}
 									onRetry={() => {
 										void refetchProjectBindings();
 									}}
 									title="Couldn't load agent Projects"
 								/>
 							) : null}
-							{sessionsError ? (
+							{blockingSessionsError ? (
 								<ApiErrorPanel
-									error={sessionsError}
+									error={blockingSessionsError}
 									onRetry={() => {
 										void refetchSessions();
 									}}
@@ -184,9 +198,9 @@ export function ConnectedAgentDetail({
 					) : null}
 
 					{activeTab === "sessions" ? (
-						sessionsError ? (
+						blockingSessionsError ? (
 							<ApiErrorPanel
-								error={sessionsError}
+								error={blockingSessionsError}
 								onRetry={() => {
 									void refetchSessions();
 								}}

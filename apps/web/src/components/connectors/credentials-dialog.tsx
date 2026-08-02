@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import { useAuthFields } from "@/lib/connectors-data";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { buildCredentialPayload, getVisibleCredentialFields } from "./credentials-dialog.logic";
 
@@ -139,7 +140,7 @@ export function ConnectorCredentialsDialog({
 						<div className="flex items-center justify-center py-6">
 							<Spinner className="size-5 text-muted-foreground" />
 						</div>
-					) : fields.error ? (
+					) : shouldBlockQueryError(fields.error, fields.data) ? (
 						<ApiErrorPanel
 							error={fields.error}
 							onRetry={() => {

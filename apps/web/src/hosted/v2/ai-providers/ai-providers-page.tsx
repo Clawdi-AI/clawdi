@@ -45,6 +45,7 @@ import {
 import { providerPresentation } from "@/hosted/v2/ai-providers/model-binding";
 import { ProviderConnectionTest } from "@/hosted/v2/ai-providers/provider-connection-test";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Choose how your agents reach a model.";
@@ -58,6 +59,9 @@ export function AiProvidersPage() {
 	const [editing, setEditing] = useState<AiProvider | null>(null);
 
 	const list = providers.data ?? [];
+	const blockingProvidersError = shouldBlockQueryError(providers.error, providers.data)
+		? providers.error
+		: null;
 
 	return (
 		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
@@ -67,7 +71,7 @@ export function AiProvidersPage() {
 				actions={
 					<Button
 						size="sm"
-						disabled={!providers.isSuccess}
+						disabled={providers.data === undefined}
 						onClick={() => {
 							setEditing(null);
 							setAddOpen(true);
@@ -85,12 +89,14 @@ export function AiProvidersPage() {
 			</div>
 
 			<div className="flex flex-col gap-2">
-				<SectionLabel count={!providers.isLoading && !providers.error ? list.length : undefined}>
+				<SectionLabel
+					count={!providers.isLoading && !blockingProvidersError ? list.length : undefined}
+				>
 					Your providers
 				</SectionLabel>
-				{providers.error ? (
+				{blockingProvidersError ? (
 					<ApiErrorPanel
-						error={providers.error}
+						error={blockingProvidersError}
 						onRetry={() => providers.refetch()}
 						title="Couldn’t load providers"
 					/>

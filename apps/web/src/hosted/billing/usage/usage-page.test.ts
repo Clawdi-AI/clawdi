@@ -38,7 +38,10 @@ describe("usage availability rendering", () => {
 		const source = readFileSync(new URL("./usage-page.tsx", import.meta.url), "utf8");
 
 		expect(source).toContain("<UsageRetryButton");
-		expect(source).toContain("void usage.refetch();");
+		expect(source).toContain("const [manualRetrying, setManualRetrying] = useState(false);");
+		expect(source).toContain("await usage.refetch();");
+		expect(source).toContain("isRetrying={manualRetrying}");
+		expect(source).not.toContain("isRetrying={usage.isFetching}");
 	});
 
 	test("renders a real complete zero as no usage", () => {
