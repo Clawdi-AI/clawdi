@@ -64,7 +64,7 @@ const projects = [
 		id: "project-unrelated",
 		name: "Unrelated Project",
 		slug: "unrelated-project",
-		kind: "custom",
+		kind: "workspace",
 		origin_environment_id: null,
 		archived_at: null,
 		created_at: now.toISOString(),
@@ -445,8 +445,12 @@ test("connected agent Memories stays account-wide with canonical detail links", 
 
 test("connected agent resource tabs reuse scoped Projects, account Connectors, and effective Vaults", async ({
 	page,
-}) => {
+}, testInfo) => {
 	const vaultRequests: string[] = [];
+	const longContextProjectName =
+		"Automation Library for exceptionally long production workflow names across several teams";
+	const longContextProjectSlug =
+		"automation-library-for-exceptionally-long-production-workflow-names-across-several-teams";
 	const projectAccessBindings = [
 		{
 			...projectBindings[0],
@@ -486,8 +490,8 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 		},
 		{
 			id: "project-context-later",
-			name: "Automation Library",
-			slug: "automation-library",
+			name: longContextProjectName,
+			slug: longContextProjectSlug,
 			kind: "workspace",
 			origin_environment_id: null,
 			archived_at: null,
@@ -503,9 +507,12 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 		vaultRequests,
 	});
 
+	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.goto("/agents/agent-smoke-1/connectors?q=gmail&page=2");
 	const main = page.locator("main");
-	await expect(main.getByRole("heading", { name: "Connectors", level: 1 })).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Connectors", level: 1 })).toBeVisible({
+		timeout: 15_000,
+	});
 	await expect(page).toHaveTitle("Connectors · Clawdi");
 	await expect(
 		main.getByText("Account-wide connectors available across all agents."),
@@ -518,35 +525,160 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 		timeout: 15_000,
 	});
 	const projectStack = main.getByTestId("agent-project-stack");
-	const projectRows = projectStack.locator('ol[aria-label="Effective Project read order"] > li');
-	await expect(projectRows).toHaveCount(3);
-	await expect(projectRows.nth(0)).toContainText("Smoke Project");
-	await expect(projectRows.nth(0)).toContainText("Writes here by default");
-	await expect(projectRows.nth(0)).not.toContainText("Fixed");
-	await expect(projectRows.nth(0)).not.toContainText("Default writes");
-	await expect(projectRows.nth(0).locator('[data-slot="badge"]')).toHaveCount(2);
-	await expect(projectRows.nth(0).getByRole("button")).toHaveCount(0);
-	await expect(projectRows.nth(1)).toContainText("Team Knowledge");
-	await expect(projectRows.nth(1)).toContainText("Viewer");
-	await expect(projectRows.nth(1)).not.toContainText("Read access");
-	await expect(projectRows.nth(1)).not.toContainText("Skills and Vaults");
-	await expect(projectRows.nth(1).locator('[data-slot="badge"]')).toHaveCount(2);
-	await expect(projectRows.nth(2)).toContainText("Automation Library");
-	await expect(projectRows.nth(2).locator('[data-slot="badge"]')).toHaveCount(1);
+	const projectGrid = projectStack.getByTestId("agent-project-grid");
+	const projectCards = projectGrid.getByTestId("agent-project-card");
+	await expect(projectCards).toHaveCount(3);
+	expect(
+		await projectGrid.evaluate(
+			(element) => getComputedStyle(element).gridTemplateColumns.split(" ").length,
+		),
+	).toBe(3);
+	for (const card of await projectCards.all()) {
+		await expect(card.locator(":scope > div")).toHaveCSS("border-top-width", "1px");
+	}
+	await expect(projectCards.nth(0)).toContainText("Smoke Project");
+	await expect(projectCards.nth(0)).toContainText("Read order 1");
+	await expect(projectCards.nth(0)).toContainText("Default write destination");
+	await expect(projectCards.nth(0)).not.toContainText("Fixed");
+	await expect(projectCards.nth(0)).not.toContainText("Owner");
+	await expect(projectCards.nth(0).locator('[data-slot="badge"]')).toHaveCount(1);
+	await expect(projectCards.nth(0).getByRole("button")).toHaveCount(0);
 	await expect(
-		projectRows.nth(1).getByRole("button", { name: "Move Team Knowledge up" }),
+		projectCards.nth(0).getByRole("link", { name: "Open Smoke Project" }),
+	).toHaveAttribute("href", "/projects/project-smoke");
+	await expect(projectCards.nth(1)).toContainText("Team Knowledge");
+	await expect(projectCards.nth(1)).toContainText("Read order 2");
+	await expect(projectCards.nth(1)).toContainText("Viewer");
+	await expect(projectCards.nth(1)).not.toContainText("Read access");
+	await expect(projectCards.nth(1)).not.toContainText("Skills and Vaults");
+	await expect(projectCards.nth(1).locator('[data-slot="badge"]')).toHaveCount(2);
+	await expect(projectCards.nth(2)).toContainText(longContextProjectName);
+	await expect(projectCards.nth(2)).toContainText("Read order 3");
+	await expect(projectCards.nth(2).locator('[data-slot="badge"]')).toHaveCount(1);
+	await projectCards.nth(1).hover();
+	await expect(
+		projectCards.nth(1).getByRole("button", { name: "Move Team Knowledge up" }),
 	).toBeDisabled();
 	await expect(
-		projectRows.nth(1).getByRole("button", { name: "Remove Team Knowledge" }),
+		projectCards.nth(1).getByRole("button", { name: "Remove Team Knowledge" }),
 	).toBeVisible();
-	await expect(projectStack.getByTestId("agent-project-add")).toBeVisible();
-	await expect(projectStack.getByLabel("Add a Project")).toBeVisible();
+	await expect
+		.poll(() =>
+			projectCards
+				.nth(1)
+				.getByRole("button", { name: "Remove Team Knowledge" })
+				.evaluate((element) => getComputedStyle(element.parentElement ?? element).opacity),
+		)
+		.toBe("1");
+	await projectCards.nth(1).getByRole("button", { name: "Remove Team Knowledge" }).click();
+	await expect(page).toHaveURL(/\/agents\/agent-smoke-1\/project-access$/);
+	const removeProjectDialog = page.getByRole("alertdialog", { name: "Remove this Project?" });
+	await expect(removeProjectDialog).toContainText(
+		"Team Knowledge will no longer be available to this agent.",
+	);
+	await removeProjectDialog.getByRole("button", { name: "Cancel" }).click();
+	await expect(projectStack.getByLabel("Project to add")).toHaveCount(0);
+	const addProjectTrigger = projectStack.getByRole("button", { name: "Add Project", exact: true });
+	await expect(addProjectTrigger).toBeVisible();
+	await addProjectTrigger.click();
+	const addProjectDialog = page.getByTestId("agent-project-add-dialog");
+	await expect(addProjectDialog).toBeVisible();
+	await expect(addProjectDialog.getByRole("heading", { name: "Add Project" })).toBeVisible();
+	const compactProjectPicker = addProjectDialog.getByLabel("Project to add");
+	await expect(compactProjectPicker).toBeVisible();
+	await compactProjectPicker.click();
+	await page.getByRole("option", { name: /Unrelated Project/ }).click();
+	await expect(
+		addProjectDialog.getByRole("button", { name: "Add Project", exact: true }),
+	).toBeEnabled();
+	await addProjectDialog.getByRole("button", { name: "Cancel" }).click();
+	await expect(addProjectDialog).toHaveCount(0);
+
+	await projectStack.screenshot({
+		path: testInfo.outputPath("connected-agent-projects-desktop.png"),
+	});
+	await page.locator("html").evaluate((element) => element.classList.add("dark"));
+	await projectStack.screenshot({ path: testInfo.outputPath("connected-agent-projects-dark.png") });
+	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+
+	await page.setViewportSize({ width: 2000, height: 1000 });
+	const centeredAgentSurface = projectStack.locator(
+		"xpath=ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' max-w-7xl ')][1]",
+	);
+	expect(
+		await centeredAgentSurface.evaluate((element) => element.getBoundingClientRect().width),
+	).toBeLessThanOrEqual(1280);
 
 	await page.setViewportSize({ width: 390, height: 844 });
-	await expect(projectRows.nth(2)).toBeVisible();
+	await expect(projectCards.nth(2)).toBeVisible();
+	expect(
+		await projectGrid.evaluate(
+			(element) => getComputedStyle(element).gridTemplateColumns.split(" ").length,
+		),
+	).toBe(1);
+	await expect
+		.poll(() =>
+			projectCards
+				.nth(1)
+				.getByRole("button", { name: "Remove Team Knowledge" })
+				.evaluate((element) => getComputedStyle(element.parentElement ?? element).opacity),
+		)
+		.toBe("1");
+	const longTitle = projectCards.nth(2).getByRole("heading", { name: longContextProjectName });
+	const longSlug = projectCards.nth(2).getByText(longContextProjectSlug, { exact: true });
+	expect(await longTitle.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
+		true,
+	);
+	expect(await longSlug.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
+		true,
+	);
 	expect(
 		await projectStack.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
 	).toBe(true);
+	expect(
+		await page
+			.locator("html")
+			.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+	).toBe(true);
+	await projectStack.screenshot({
+		path: testInfo.outputPath("connected-agent-projects-mobile.png"),
+	});
+	const primaryProjectLink = projectCards.nth(0).getByRole("link", { name: "Open Smoke Project" });
+	await primaryProjectLink.focus();
+	await expect(primaryProjectLink).toBeFocused();
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(/\/projects\/project-smoke$/);
+
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.goto("/projects");
+	await expect(main.getByRole("heading", { name: "Projects", level: 1 })).toBeVisible();
+	const consoleProjectGrid = main.getByTestId("project-grid");
+	const consoleSharedProject = consoleProjectGrid.getByRole("link", {
+		name: "Open Team Knowledge",
+	});
+	await expect(consoleSharedProject).toHaveAttribute("href", "/projects/project-context-first");
+	await expect(consoleSharedProject.locator("xpath=..")).toContainText("Viewer");
+	await expect(consoleProjectGrid.getByText("Custom Project", { exact: true })).toHaveCount(0);
+	await expect(consoleProjectGrid.getByText("Owner", { exact: true })).toHaveCount(0);
+	await main.getByRole("button", { name: /System projects/i }).click();
+	const systemProjectCard = main
+		.getByRole("link", { name: "Open Smoke Project" })
+		.locator("xpath=..");
+	await expect(systemProjectCard).toContainText("Agent Project");
+	await expect(systemProjectCard).toContainText("Agent: Smoke Codex");
+	await expect(systemProjectCard).not.toContainText("Owner");
+	await main.screenshot({ path: testInfo.outputPath("console-projects-desktop.png") });
+	await page.locator("html").evaluate((element) => element.classList.add("dark"));
+	await main.screenshot({ path: testInfo.outputPath("console-projects-dark.png") });
+	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+	await page.setViewportSize({ width: 390, height: 844 });
+	await expect(consoleSharedProject).toBeVisible();
+	expect(
+		await page
+			.locator("html")
+			.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+	).toBe(true);
+	await main.screenshot({ path: testInfo.outputPath("console-projects-mobile.png") });
 
 	await page.goto("/agents/agent-smoke-1/vaults");
 	await expect(main.getByRole("heading", { name: "Vaults", level: 1 })).toBeVisible();
