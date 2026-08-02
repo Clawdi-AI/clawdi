@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -159,17 +167,26 @@ describe("WhatsApp sidecar deployment materializer", () => {
 });
 
 describe("WhatsApp sidecar remote container preflight", () => {
-	test("uses an exact read-only Docker inspection contract", () => {
+	test("survives the pinned Kamal 2.12.0 server exec argument normalization", async () => {
 		const command = buildWhatsAppSidecarContainerPreflightCommand([serviceName(FIRST_ID)]);
+		const normalizedCommand = renderKamalServerExecCommand([`  ${command}\n`]);
+		const decodedScript = decodePreflightScript(normalizedCommand);
+		const oldMultilineTransport = renderKamalServerExecCommand([decodedScript]);
 
-		expect(command).toContain(
+		expect(command).not.toContain("\n");
+		expect(normalizedCommand).toBe(command);
+		expect(oldMultilineTransport).toContain("do; case");
+		expect(await shellSyntaxExitCode(oldMultilineTransport)).not.toBe(0);
+		expect(await shellSyntaxExitCode(normalizedCommand)).toBe(0);
+		expect(decodedScript).toContain(
 			"docker container ls --all --filter 'label=service' --format '{{.ID}}'",
 		);
-		expect(command).toContain(
+		expect(decodedScript).toContain(
 			'docker container inspect --format \'{{index .Config.Labels "service"}}\' "$container_id"',
 		);
-		expect(command).not.toMatch(/\bdocker\s+(?:container\s+)?(?:stop|rm|prune)\b/);
-		expect(command).not.toContain("/state");
+		expect(decodedScript).not.toMatch(/\bdocker\s+(?:container\s+)?(?:stop|rm|prune)\b/);
+		expect(decodedScript).not.toContain("/state");
+		expect((await runRemotePreflight([serviceName(FIRST_ID)], [])).exitCode).toBe(0);
 		expect(() =>
 			buildWhatsAppSidecarContainerPreflightCommand(["clawdi-whatsapp-baileys-user-input"]),
 		).toThrow("invalid WhatsApp sidecar service name");
@@ -233,6 +250,45 @@ describe("WhatsApp sidecar remote container preflight", () => {
 			const result = await runRemotePreflight([], [["aaaaaaaaaaaa", malformed]]);
 			expect(result.exitCode).not.toBe(0);
 			expect(result.stderr).toContain("Malformed Clawdi WhatsApp sidecar service label");
+		}
+	});
+
+	test("rejects malformed Docker container ids after Kamal normalization", async () => {
+		const result = await runRemotePreflight([], [["not-a-container-id", serviceName(FIRST_ID)]]);
+		expect(result.exitCode).not.toBe(0);
+		expect(result.stderr).toContain("Invalid container id returned by Docker");
+	});
+
+	test("fails closed without executing when base64 decoding fails or is unavailable", async () => {
+		const command = renderKamalServerExecCommand([
+			buildWhatsAppSidecarContainerPreflightCommand([]),
+		]);
+		const directory = mkdtempSync(join(tmpdir(), "clawdi-sidecar-decoder-"));
+		const marker = join(directory, "executed");
+		try {
+			writeFileSync(
+				join(directory, "base64"),
+				`#!/bin/sh\nprintf '%s\\n' 'touch "${marker}"'\nexit 23\n`,
+				{ mode: 0o700 },
+			);
+			const failedDecode = await Bun.spawn(["/bin/sh", "-c", command], {
+				env: { PATH: directory },
+				stderr: "ignore",
+				stdout: "ignore",
+			}).exited;
+			expect(failedDecode).toBe(23);
+			expect(existsSync(marker)).toBe(false);
+
+			rmSync(join(directory, "base64"));
+			const unavailableDecode = await Bun.spawn(["/bin/sh", "-c", command], {
+				env: { PATH: directory },
+				stderr: "ignore",
+				stdout: "ignore",
+			}).exited;
+			expect(unavailableDecode).not.toBe(0);
+			expect(existsSync(marker)).toBe(false);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
 		}
 	});
 });
@@ -373,7 +429,9 @@ fi
 	);
 	chmodSync(fakeDocker, 0o700);
 	try {
-		const command = buildWhatsAppSidecarContainerPreflightCommand(desiredServices);
+		const command = renderKamalServerExecCommand([
+			buildWhatsAppSidecarContainerPreflightCommand(desiredServices),
+		]);
 		const processHandle = Bun.spawn(["sh", "-c", command], {
 			env: { ...process.env, PATH: `${directory}:${process.env.PATH ?? ""}` },
 			stderr: "pipe",
@@ -387,6 +445,31 @@ fi
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
+}
+
+// Kamal 2.12.0 joins server exec arguments, then its pinned SSHKit 1.25.0 sanitizes lines.
+function renderKamalServerExecCommand(commands: readonly string[]): string {
+	return commands
+		.map((command) => command.trim())
+		.join(" ")
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.join("; ");
+}
+
+function decodePreflightScript(command: string): string {
+	const match = command.match(
+		/^script="\$\(printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d\)" && sh -c "\$script"$/,
+	);
+	if (!match?.[1]) throw new Error("unexpected preflight command transport");
+	return Buffer.from(match[1], "base64").toString("utf8");
+}
+
+async function shellSyntaxExitCode(command: string): Promise<number> {
+	return Bun.spawn(["sh", "-n", "-c", command], {
+		stderr: "ignore",
+		stdout: "ignore",
+	}).exited;
 }
 
 function withDeploymentFiles(
