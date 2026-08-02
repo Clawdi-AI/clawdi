@@ -35,18 +35,17 @@ import { agentDisplayName } from "@/components/dashboard/agent-label";
 import {
 	AgentOverviewCapabilities,
 	AgentOverviewStatusCard,
+	OverviewDescriptionSkeleton,
 	OverviewIdentityIconItem,
 	OverviewIdentityIconRail,
 	OverviewModuleError,
-	OverviewModuleSkeleton,
-	OverviewModuleUnavailable,
 } from "@/components/dashboard/agent-overview-capabilities";
 import {
-	OverviewConnectorsBody,
-	OverviewMemoriesBody,
-	OverviewProjectsBody,
-	OverviewSkillsBody,
-	OverviewVaultsBody,
+	overviewProjectsModule,
+	overviewSkillsModule,
+	useOverviewConnectorsModule,
+	useOverviewMemoriesModule,
+	useOverviewVaultsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentOverviewProjects } from "@/components/dashboard/agent-project-bindings-query";
 import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
@@ -928,7 +927,7 @@ export function OverviewComputeSummary({
 	];
 	return (
 		<div className="space-y-1.5" data-testid="overview-compute-summary">
-			<p data-overview-compute-plan className="text-sm font-medium text-muted-foreground">
+			<p data-overview-compute-plan className="text-sm text-muted-foreground">
 				{plan} plan
 			</p>
 			<ul
@@ -1171,6 +1170,17 @@ function OverviewTab({
 	);
 	const projectionLoading = projectionStatus === "loading";
 	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
+	const memoriesModule = useOverviewMemoriesModule();
+	const connectorsModule = useOverviewConnectorsModule();
+	const vaultsModule = useOverviewVaultsModule({
+		projectIds: effectiveAgentProjectIds(projectBindings.data ?? []),
+		resolution:
+			projectionLoading || projectBindings.isLoading
+				? "loading"
+				: projectionUnavailable || projectBindings.error
+					? "unavailable"
+					: "ready",
+	});
 	return (
 		<div className="flex flex-col gap-8">
 			<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
@@ -1216,17 +1226,18 @@ function OverviewTab({
 						title="Compute"
 						icon={Cpu}
 						tint="bg-identity-4-bg text-identity-4-fg"
-					>
-						<div className="flex h-full flex-col gap-4">
-							<p
+						description={
+							<span
 								data-overview-compute-status
-								data-overview-primary-value
-								className="inline-flex items-center gap-2 text-sm font-medium"
+								className="inline-flex items-center gap-2"
 								title={`Agent status: ${computeStatusPresentation.label}`}
 							>
 								<StatusDot status={computeStatusPresentation.tone} />
 								{computeStatusPresentation.label}
-							</p>
+							</span>
+						}
+					>
+						<div className="flex h-full flex-col gap-4">
 							<OverviewComputeSummary
 								plan={isPerformance ? "Performance" : "Basic"}
 								vcpu={spec.resources.vcpu}
@@ -1251,73 +1262,51 @@ function OverviewTab({
 				variant="hosted"
 				routeSearch={routeSearch}
 				content={{
-					projects: {
-						body: (
-							<OverviewProjectsBody
-								bindings={{
-									count: agent ? (projectBindings.data?.length ?? null) : null,
-									isLoading: projectionLoading || projectBindings.isLoading,
-									isUnavailable: projectionUnavailable,
-									error: projectBindings.error,
-									onRetry: () => void projectBindings.refetch(),
-								}}
-								names={{
-									items: projectNames.names,
-									unresolvedCount: projectNames.unresolvedCount,
-									isLoading: projectNames.isLoading,
-									error: projectNames.error,
-									onRetry: () => void projectNames.refetch(),
-								}}
-							/>
-						),
-					},
-					skills: {
-						body: (
-							<OverviewSkillsBody
-								items={(skills.skills ?? []).map((skill) => skill.name)}
-								isLoading={projectionLoading || skills.isLoading}
-								isUnavailable={projectionUnavailable}
-								error={skills.error}
-								onRetry={() => void skills.refetch()}
-							/>
-						),
-					},
-					memories: { body: <OverviewMemoriesBody /> },
-					vaults: {
-						body: (
-							<OverviewVaultsBody
-								projectIds={effectiveAgentProjectIds(projectBindings.data ?? [])}
-								resolution={
-									projectionLoading || projectBindings.isLoading
-										? "loading"
-										: projectionUnavailable || projectBindings.error
-											? "unavailable"
-											: "ready"
-								}
-							/>
-						),
-					},
-					connectors: { body: <OverviewConnectorsBody /> },
+					projects: overviewProjectsModule({
+						bindings: {
+							count: agent ? (projectBindings.data?.length ?? null) : null,
+							isLoading: projectionLoading || projectBindings.isLoading,
+							isUnavailable: projectionUnavailable,
+							error: projectBindings.error,
+							onRetry: () => void projectBindings.refetch(),
+						},
+						names: {
+							items: projectNames.names,
+							unresolvedCount: projectNames.unresolvedCount,
+							isLoading: projectNames.isLoading,
+							error: projectNames.error,
+							onRetry: () => void projectNames.refetch(),
+						},
+					}),
+					skills: overviewSkillsModule({
+						items: (skills.skills ?? []).map((skill) => skill.name),
+						isLoading: projectionLoading || skills.isLoading,
+						isUnavailable: projectionUnavailable,
+						error: skills.error,
+						onRetry: () => void skills.refetch(),
+					}),
+					memories: memoriesModule,
+					vaults: vaultsModule,
+					connectors: connectorsModule,
 					"model-provider": {
-						body:
+						description:
 							providers.isLoading || managedModelCatalog.isLoading ? (
-								<OverviewModuleSkeleton label="model and provider" rows={2} showHeading={false} />
+								<OverviewDescriptionSkeleton label="model and provider" />
 							) : providers.error || managedModelCatalog.error ? (
+								"Unavailable right now"
+							) : (
+								model
+							),
+						body:
+							providers.error || managedModelCatalog.error ? (
 								<OverviewModuleError
 									label="Model & Provider"
 									onRetry={() =>
 										void (managedProvider ? managedModelCatalog.refetch() : providers.refetch())
 									}
 								/>
-							) : (
-								<div className="space-y-3" data-overview-tool-summary="model-provider">
-									<p
-										data-overview-primary-value
-										data-overview-tool-primary
-										className="text-sm font-medium text-muted-foreground"
-									>
-										{model}
-									</p>
+							) : providers.isLoading || managedModelCatalog.isLoading ? undefined : (
+								<div data-overview-tool-summary="model-provider">
 									<p data-overview-tool-secondary className="text-xs text-muted-foreground">
 										{managedProvider
 											? "Managed by Clawdi"
@@ -1327,56 +1316,42 @@ function OverviewTab({
 							),
 					},
 					channels: {
-						body: projectionLoading ? (
-							<OverviewModuleSkeleton label="channels" rows={2} showHeading={false} />
-						) : projectionUnavailable ? (
-							<OverviewModuleUnavailable />
-						) : channelLinks.isLoading ? (
-							<OverviewModuleSkeleton label="channels" rows={2} showHeading={false} />
-						) : channelLinks.error ? (
+						description:
+							projectionLoading || channelLinks.isLoading ? (
+								<OverviewDescriptionSkeleton label="channels" />
+							) : projectionUnavailable || channelLinks.error ? (
+								"Unavailable right now"
+							) : linkedChannelCount === 0 ? (
+								"No channels connected"
+							) : (
+								`${linkedChannelCount} connected ${linkedChannelCount === 1 ? "channel" : "channels"}`
+							),
+						body: channelLinks.error ? (
 							<OverviewModuleError label="Channels" onRetry={() => void channelLinks.refetch()} />
-						) : (
-							<div className="space-y-3" data-overview-tool-summary="channels">
-								<p
-									data-overview-primary-value
-									data-overview-tool-primary
-									className="text-sm font-medium text-muted-foreground"
-								>
-									{linkedChannelCount === 0
-										? "No channels connected"
-										: `${linkedChannelCount} connected ${linkedChannelCount === 1 ? "channel" : "channels"}`}
-								</p>
-								{linkedChannels.length > 0 ? (
-									<OverviewIdentityIconRail
-										label="Connected channels"
-										testId="overview-channel-rail"
-									>
-										{linkedChannels.slice(0, 5).map((channel) => {
-											const provider = providerMeta(channel.provider).label;
-											return (
-												<OverviewIdentityIconItem key={channel.id} connected>
-													<Link
-														to="/channels/$id"
-														params={{ id: channel.id }}
-														aria-label={`Connected channel: ${provider}, ${channel.name}`}
-														title={`${provider}: ${channel.name} (connected)`}
-														className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-													>
-														<ProviderChip
-															provider={channel.provider}
-															size="md"
-															className="size-9"
-														/>
-													</Link>
-												</OverviewIdentityIconItem>
-											);
-										})}
-									</OverviewIdentityIconRail>
-								) : linkedChannelCount > 0 ? (
-									<p className="text-sm text-muted-foreground">Channel details unavailable</p>
-								) : null}
+						) : linkedChannels.length > 0 ? (
+							<div data-overview-tool-summary="channels">
+								<OverviewIdentityIconRail label="Connected channels" testId="overview-channel-rail">
+									{linkedChannels.slice(0, 5).map((channel) => {
+										const provider = providerMeta(channel.provider).label;
+										return (
+											<OverviewIdentityIconItem key={channel.id} connected>
+												<Link
+													to="/channels/$id"
+													params={{ id: channel.id }}
+													aria-label={`Connected channel: ${provider}, ${channel.name}`}
+													title={`${provider}: ${channel.name} (connected)`}
+													className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+												>
+													<ProviderChip provider={channel.provider} size="md" className="size-9" />
+												</Link>
+											</OverviewIdentityIconItem>
+										);
+									})}
+								</OverviewIdentityIconRail>
 							</div>
-						),
+						) : linkedChannelCount > 0 ? (
+							<p className="text-sm text-muted-foreground">Channel details unavailable</p>
+						) : undefined,
 					},
 				}}
 			/>

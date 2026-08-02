@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { IconChip } from "@/components/icon-chip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type AgentOverviewModuleId, agentOverviewGroups } from "@/lib/agent-capabilities";
 import { type AgentRouteSearch, agentSectionLink } from "@/lib/agent-routes";
@@ -15,7 +15,8 @@ import {
 import { cn } from "@/lib/utils";
 
 export type AgentOverviewModuleContent = {
-	body: ReactNode;
+	description: ReactNode;
+	body?: ReactNode;
 };
 
 export function AgentOverviewStatusCard({
@@ -25,6 +26,7 @@ export function AgentOverviewStatusCard({
 	title,
 	icon: Icon,
 	tint,
+	description,
 	children,
 }: {
 	agentId: string;
@@ -33,7 +35,8 @@ export function AgentOverviewStatusCard({
 	title: string;
 	icon: LucideIcon;
 	tint: string;
-	children: ReactNode;
+	description: ReactNode;
+	children?: ReactNode;
 }) {
 	return (
 		<Card
@@ -45,16 +48,22 @@ export function AgentOverviewStatusCard({
 			<CardHeader className="p-0">
 				<Link
 					{...agentSectionLink(agentId, section, routeSearch)}
+					aria-label={title}
 					className="group flex items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
 				>
 					<IconChip size="sm" tint={tint}>
 						<Icon />
 					</IconChip>
-					<h2 className="min-w-0 flex-1 text-sm font-semibold">{title}</h2>
+					<div className="min-w-0 flex-1">
+						<CardTitle>{title}</CardTitle>
+						<CardDescription>{description}</CardDescription>
+					</div>
 					<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 				</Link>
 			</CardHeader>
-			<CardContent className="flex flex-1 flex-col px-4 pb-4">{children}</CardContent>
+			{children ? (
+				<CardContent className="flex flex-1 flex-col px-4 pb-4">{children}</CardContent>
+			) : null}
 		</Card>
 	);
 }
@@ -97,6 +106,10 @@ export function OverviewModuleError({ label, onRetry }: { label: string; onRetry
 	);
 }
 
+export function OverviewDescriptionSkeleton({ label }: { label: string }) {
+	return <Skeleton className="h-4 w-20" aria-label={`Loading ${label} summary`} role="status" />;
+}
+
 export function OverviewModuleUnavailable() {
 	return <p className="text-sm text-muted-foreground">Unavailable right now</p>;
 }
@@ -118,20 +131,15 @@ export function OverviewMetadata({
 	);
 }
 
-export function OverviewResourceSummary({
-	primary,
+export function OverviewResourceDetails({
 	items,
 	children,
 }: {
-	primary: ReactNode;
 	items?: readonly string[];
 	children?: ReactNode;
 }) {
 	return (
 		<div className="space-y-3" data-testid="overview-resource-summary">
-			<p data-overview-primary-value className="text-sm font-medium text-muted-foreground">
-				{primary}
-			</p>
 			{items?.length ? (
 				<ul className="flex min-w-0 flex-wrap gap-1.5" data-testid="overview-resource-badges">
 					{items.slice(0, 3).map((item, index) => (
@@ -230,23 +238,31 @@ export function AgentOverviewCapabilities({
 									role="article"
 									key={module.id}
 									data-overview-module={module.id}
-									className="h-full min-h-36 min-w-0 gap-0 py-0"
+									className="h-full min-h-32 min-w-0 gap-0 py-0"
 								>
 									<CardHeader className="p-0">
 										<Link
 											{...agentSectionLink(agentId, module.section, routeSearch)}
+											aria-label={title}
 											className="group flex items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
 										>
 											<IconChip size="sm" tint={item.tint}>
 												<Icon />
 											</IconChip>
-											<h3 className="min-w-0 flex-1 text-sm font-semibold">{title}</h3>
+											<div className="min-w-0 flex-1">
+												<CardTitle>{title}</CardTitle>
+												<CardDescription data-overview-primary-value>
+													{moduleContent.description}
+												</CardDescription>
+											</div>
 											<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 										</Link>
 									</CardHeader>
-									<CardContent className="flex flex-1 flex-col px-4 pb-4">
-										{moduleContent.body}
-									</CardContent>
+									{moduleContent.body ? (
+										<CardContent className="flex flex-1 flex-col px-4 pb-4">
+											{moduleContent.body}
+										</CardContent>
+									) : null}
 								</Card>
 							);
 						})}

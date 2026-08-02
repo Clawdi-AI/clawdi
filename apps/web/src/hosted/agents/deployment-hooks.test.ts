@@ -241,7 +241,8 @@ describe("overview Compute hierarchy", () => {
 		expect(markup).toContain('aria-label="Configuration: 2 vCPU, 4 GiB memory, 20 GiB storage"');
 		expect(markup).toContain('data-testid="overview-compute-summary"');
 		expect(markup).toContain('data-overview-compute-plan="true"');
-		expect(markup).toContain("text-sm font-medium text-muted-foreground");
+		expect(markup).toContain("text-sm text-muted-foreground");
+		expect(markup).not.toContain("text-sm font-medium text-muted-foreground");
 		expect(markup).not.toContain("text-sm font-semibold");
 		expect(markup).not.toContain("grid-cols-2");
 		expect(markup).not.toContain("rounded");

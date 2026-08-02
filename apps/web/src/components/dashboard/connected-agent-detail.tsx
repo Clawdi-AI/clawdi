@@ -17,11 +17,11 @@ import {
 	OverviewModuleError,
 } from "@/components/dashboard/agent-overview-capabilities";
 import {
-	OverviewConnectorsBody,
-	OverviewMemoriesBody,
-	OverviewProjectsBody,
-	OverviewSkillsBody,
-	OverviewVaultsBody,
+	overviewProjectsModule,
+	overviewSkillsModule,
+	useOverviewConnectorsModule,
+	useOverviewMemoriesModule,
+	useOverviewVaultsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentOverviewProjects } from "@/components/dashboard/agent-project-bindings-query";
 import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
@@ -164,6 +164,17 @@ export function ConnectedAgentDetail({
 	const scopedSessionLink = (sessionId: string) => ({
 		...agentSessionDetailLink(id, sessionId, routeSearch),
 	});
+	const memoriesModule = useOverviewMemoriesModule({ enabled: overviewEnabled });
+	const connectorsModule = useOverviewConnectorsModule({ enabled: overviewEnabled });
+	const vaultsModule = useOverviewVaultsModule({
+		projectIds: effectiveAgentProjectIds(projectBindings ?? []),
+		resolution: projectBindingsLoading
+			? "loading"
+			: blockingProjectBindingsError
+				? "unavailable"
+				: "ready",
+		enabled: overviewEnabled,
+	});
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}>
 			{blockingAgentError ? (
@@ -232,14 +243,13 @@ export function ConnectedAgentDetail({
 										title="Live Sync"
 										icon={Laptop}
 										tint="bg-identity-7-bg text-identity-7-fg"
-									>
-										<div className="flex h-full flex-col justify-between gap-4">
-											<p
-												data-overview-primary-value
-												className="inline-flex items-center gap-2 text-sm font-medium"
-											>
+										description={
+											<span className="inline-flex items-center gap-2">
 												<StatusDot status={syncTone} /> {syncStatus.label}
-											</p>
+											</span>
+										}
+									>
+										<div className="flex h-full flex-col justify-end">
 											<OverviewMetadata
 												items={[
 													{ label: "Machine", value: agent.machine_name },
@@ -255,51 +265,30 @@ export function ConnectedAgentDetail({
 								variant="connected"
 								routeSearch={routeSearch}
 								content={{
-									projects: {
-										body: (
-											<OverviewProjectsBody
-												bindings={{
-													count: projectBindings?.length ?? null,
-													isLoading: projectBindingsLoading,
-													error: blockingProjectBindingsError,
-													onRetry: () => void refetchProjectBindings(),
-												}}
-												names={{
-													items: projectNames.names,
-													unresolvedCount: projectNames.unresolvedCount,
-													isLoading: projectNames.isLoading,
-													error: projectNames.error,
-													onRetry: () => void projectNames.refetch(),
-												}}
-											/>
-										),
-									},
-									skills: {
-										body: (
-											<OverviewSkillsBody
-												items={(skillsForThisEnv ?? []).map((skill) => skill.name)}
-												isLoading={skillsLoading}
-												error={blockingSkillsError}
-												onRetry={() => void refetchSkills()}
-											/>
-										),
-									},
-									memories: { body: <OverviewMemoriesBody /> },
-									vaults: {
-										body: (
-											<OverviewVaultsBody
-												projectIds={effectiveAgentProjectIds(projectBindings ?? [])}
-												resolution={
-													projectBindingsLoading
-														? "loading"
-														: blockingProjectBindingsError
-															? "unavailable"
-															: "ready"
-												}
-											/>
-										),
-									},
-									connectors: { body: <OverviewConnectorsBody /> },
+									projects: overviewProjectsModule({
+										bindings: {
+											count: projectBindings?.length ?? null,
+											isLoading: projectBindingsLoading,
+											error: blockingProjectBindingsError,
+											onRetry: () => void refetchProjectBindings(),
+										},
+										names: {
+											items: projectNames.names,
+											unresolvedCount: projectNames.unresolvedCount,
+											isLoading: projectNames.isLoading,
+											error: projectNames.error,
+											onRetry: () => void projectNames.refetch(),
+										},
+									}),
+									skills: overviewSkillsModule({
+										items: (skillsForThisEnv ?? []).map((skill) => skill.name),
+										isLoading: skillsLoading,
+										error: blockingSkillsError,
+										onRetry: () => void refetchSkills(),
+									}),
+									memories: memoriesModule,
+									vaults: vaultsModule,
+									connectors: connectorsModule,
 								}}
 							/>
 						</div>

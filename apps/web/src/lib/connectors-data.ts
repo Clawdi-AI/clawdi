@@ -138,9 +138,9 @@ export function connectorToolsQueryOptions(api: OpenApiClient, appName: string) 
 	);
 }
 
-export function useConnections() {
+export function useConnections({ enabled = true }: { enabled?: boolean } = {}) {
 	const api = useOpenApi();
-	return useQuery(connectionsQueryOptions(api));
+	return useQuery({ ...connectionsQueryOptions(api), enabled });
 }
 
 export function useAvailableApp(appName: string) {
@@ -148,12 +148,18 @@ export function useAvailableApp(appName: string) {
 	return useQuery(availableAppQueryOptions(api, appName));
 }
 
-export function useAvailableApps({ page, pageSize, search }: AvailableAppsQueryArgs) {
+export function useAvailableApps({
+	page,
+	pageSize,
+	search,
+	enabled = true,
+}: AvailableAppsQueryArgs & { enabled?: boolean }) {
 	const api = useOpenApi();
 	const queryClient = useQueryClient();
 	const query = useQuery({
 		...availableAppsQueryOptions(api, { page, pageSize, search }),
 		placeholderData: keepPreviousData,
+		enabled,
 	});
 	useEffect(() => {
 		const apps = query.data?.items;
@@ -206,8 +212,11 @@ export function useDisconnect() {
  * covered by a supplied catalog snapshot. Other callers keep the
  * existing detail-query behavior when no snapshot is supplied.
  */
-export function useConnectedAppCards(catalog?: ConnectedAppCatalogSnapshot) {
-	const connectionsQ = useConnections();
+export function useConnectedAppCards(
+	catalog?: ConnectedAppCatalogSnapshot,
+	{ enabled = true }: { enabled?: boolean } = {},
+) {
+	const connectionsQ = useConnections({ enabled });
 	const api = useOpenApi();
 
 	const activeConnections = useMemo(
@@ -232,7 +241,10 @@ export function useConnectedAppCards(catalog?: ConnectedAppCatalogSnapshot) {
 	);
 
 	const lookup = useQueries({
-		queries: metadataPlan.missingNames.map((name) => availableAppQueryOptions(api, name)),
+		queries: metadataPlan.missingNames.map((name) => ({
+			...availableAppQueryOptions(api, name),
+			enabled,
+		})),
 	});
 
 	const data = useMemo(() => {

@@ -5,12 +5,13 @@ import { Link } from "@tanstack/react-router";
 import { RefreshCw } from "lucide-react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import {
+	type AgentOverviewModuleContent,
+	OverviewDescriptionSkeleton,
 	OverviewIdentityIconItem,
 	OverviewIdentityIconRail,
 	OverviewModuleError,
 	OverviewModuleSkeleton,
-	OverviewModuleUnavailable,
-	OverviewResourceSummary,
+	OverviewResourceDetails,
 } from "@/components/dashboard/agent-overview-capabilities";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,113 +26,146 @@ type SummaryState = {
 	onRetry: () => void;
 };
 
-export function OverviewProjectsBody({
+export function overviewProjectsModule({
 	bindings,
 	names,
 }: {
 	bindings: SummaryState & { count: number | null };
 	names: SummaryState & { items: readonly string[]; unresolvedCount: number };
-}) {
-	if (bindings.isLoading) return <OverviewModuleSkeleton label="projects" rows={3} />;
-	if (bindings.isUnavailable) return <OverviewModuleUnavailable />;
-	if (bindings.error) return <OverviewModuleError label="Projects" onRetry={bindings.onRetry} />;
+}): AgentOverviewModuleContent {
+	if (bindings.isLoading)
+		return {
+			description: <OverviewDescriptionSkeleton label="projects" />,
+			body: <OverviewModuleSkeleton label="projects" rows={3} showHeading={false} />,
+		};
+	if (bindings.isUnavailable) return { description: "Unavailable right now" };
+	if (bindings.error)
+		return {
+			description: "Unavailable right now",
+			body: <OverviewModuleError label="Projects" onRetry={bindings.onRetry} />,
+		};
 	const count = bindings.count ?? 0;
 	const primary = count ? `${count} ${count === 1 ? "project" : "projects"}` : "No projects added";
-	if (count === 0) return <OverviewResourceSummary primary={primary} />;
+	if (count === 0) return { description: primary };
 	if (names.isLoading)
-		return (
-			<OverviewResourceSummary primary={primary}>
-				<OverviewModuleSkeleton label="project names" rows={3} showHeading={false} />
-			</OverviewResourceSummary>
-		);
+		return {
+			description: primary,
+			body: (
+				<OverviewResourceDetails>
+					<OverviewModuleSkeleton label="project names" rows={3} showHeading={false} />
+				</OverviewResourceDetails>
+			),
+		};
 	if (names.error)
-		return (
-			<OverviewResourceSummary primary={primary}>
-				<OverviewModuleError label="Project names" onRetry={names.onRetry} />
-			</OverviewResourceSummary>
-		);
+		return {
+			description: primary,
+			body: (
+				<OverviewResourceDetails>
+					<OverviewModuleError label="Project names" onRetry={names.onRetry} />
+				</OverviewResourceDetails>
+			),
+		};
 	const unresolvedCopy = names.unresolvedCount
 		? `${names.unresolvedCount} project ${names.unresolvedCount === 1 ? "name can’t" : "names can’t"} be shown`
 		: "Project names can’t be shown";
-	return (
-		<OverviewResourceSummary primary={primary} items={names.items}>
-			{names.unresolvedCount > 0 || names.items.length === 0 ? (
-				<p className="text-sm text-muted-foreground">{unresolvedCopy}</p>
-			) : null}
-		</OverviewResourceSummary>
-	);
+	return {
+		description: primary,
+		body: (
+			<OverviewResourceDetails items={names.items}>
+				{names.unresolvedCount > 0 || names.items.length === 0 ? (
+					<p className="text-sm text-muted-foreground">{unresolvedCopy}</p>
+				) : null}
+			</OverviewResourceDetails>
+		),
+	};
 }
 
-export function OverviewSkillsBody({
+export function overviewSkillsModule({
 	items,
 	...state
-}: SummaryState & { items: readonly string[] }) {
-	if (state.isLoading) return <OverviewModuleSkeleton label="skills" rows={2} />;
-	if (state.isUnavailable) return <OverviewModuleUnavailable />;
-	if (state.error) return <OverviewModuleError label="Skills" onRetry={state.onRetry} />;
-	return (
-		<OverviewResourceSummary
-			primary={
-				items.length
-					? `${items.length} ${items.length === 1 ? "skill" : "skills"}`
-					: "No skills available"
-			}
-			items={items}
-		/>
-	);
+}: SummaryState & { items: readonly string[] }): AgentOverviewModuleContent {
+	if (state.isLoading) return { description: <OverviewDescriptionSkeleton label="skills" /> };
+	if (state.isUnavailable) return { description: "Unavailable right now" };
+	if (state.error)
+		return {
+			description: "Unavailable right now",
+			body: <OverviewModuleError label="Skills" onRetry={state.onRetry} />,
+		};
+	return {
+		description: items.length
+			? `${items.length} ${items.length === 1 ? "skill" : "skills"}`
+			: "No skills available",
+		body: items.length ? <OverviewResourceDetails items={items} /> : undefined,
+	};
 }
 
-export function OverviewMemoriesBody() {
+export function useOverviewMemoriesModule({
+	enabled = true,
+}: {
+	enabled?: boolean;
+} = {}): AgentOverviewModuleContent {
 	const api = useApi();
 	const query = useQuery({
 		queryKey: ["memories", "", "", 0, 1],
 		queryFn: async () =>
 			unwrap(await api.GET("/v1/memories", { params: { query: { page: 1, page_size: 1 } } })),
+		enabled,
 	});
-	if (query.isLoading) return <OverviewModuleSkeleton label="memories" rows={1} />;
+	if (query.isLoading) return { description: <OverviewDescriptionSkeleton label="memories" /> };
 	if (query.error)
-		return <OverviewModuleError label="Memories" onRetry={() => void query.refetch()} />;
+		return {
+			description: "Unavailable right now",
+			body: <OverviewModuleError label="Memories" onRetry={() => void query.refetch()} />,
+		};
 	const total = query.data?.total ?? 0;
-	return (
-		<OverviewResourceSummary
-			primary={total ? `${total} ${total === 1 ? "memory" : "memories"}` : "No memories yet"}
-		/>
-	);
+	return {
+		description: total ? `${total} ${total === 1 ? "memory" : "memories"}` : "No memories yet",
+	};
 }
 
-export function OverviewVaultsBody({
+export function useOverviewVaultsModule({
 	projectIds,
 	resolution,
+	enabled = true,
 }: {
 	projectIds: readonly string[];
 	resolution: "loading" | "unavailable" | "ready";
-}) {
-	const query = useAgentProjectVaults(projectIds, { enabled: resolution === "ready" });
+	enabled?: boolean;
+}): AgentOverviewModuleContent {
+	const query = useAgentProjectVaults(projectIds, { enabled: enabled && resolution === "ready" });
 	if (resolution === "loading" || query.isLoading)
-		return <OverviewModuleSkeleton label="vaults" rows={2} />;
-	if (resolution === "unavailable") return <OverviewModuleUnavailable />;
+		return { description: <OverviewDescriptionSkeleton label="vaults" /> };
+	if (resolution === "unavailable") return { description: "Unavailable right now" };
 	if (query.error)
-		return <OverviewModuleError label="Vaults" onRetry={() => void query.refetch()} />;
+		return {
+			description: "Unavailable right now",
+			body: <OverviewModuleError label="Vaults" onRetry={() => void query.refetch()} />,
+		};
 	const vaults = query.data ?? [];
-	return (
-		<OverviewResourceSummary
-			primary={
-				vaults.length
-					? `${vaults.length} ${vaults.length === 1 ? "vault" : "vaults"}`
-					: "No vaults available"
-			}
-			items={vaults.map((vault) => vault.name)}
-		/>
-	);
+	return {
+		description: vaults.length
+			? `${vaults.length} ${vaults.length === 1 ? "vault" : "vaults"}`
+			: "No vaults available",
+		body: vaults.length ? (
+			<OverviewResourceDetails items={vaults.map((vault) => vault.name)} />
+		) : undefined,
+	};
 }
 
-export function OverviewConnectorsBody() {
-	const catalog = useAvailableApps({ page: 1, pageSize: 8 });
-	const connected = useConnectedAppCards({
-		apps: catalog.data?.items,
-		isLoading: catalog.isLoading,
-		error: catalog.error,
-	});
+export function useOverviewConnectorsModule({
+	enabled = true,
+}: {
+	enabled?: boolean;
+} = {}): AgentOverviewModuleContent {
+	const catalog = useAvailableApps({ page: 1, pageSize: 8, enabled });
+	const connected = useConnectedAppCards(
+		{
+			apps: catalog.data?.items,
+			isLoading: catalog.isLoading,
+			error: catalog.error,
+		},
+		{ enabled },
+	);
 	const connectedNames = new Set(
 		connected.activeConnections.flatMap((connection) =>
 			connection.app_name ? [connection.app_name] : [],
@@ -158,39 +192,49 @@ export function OverviewConnectorsBody() {
 			connected.connectionsLoading || connected.metadataLoading || catalog.isLoading ? 3 : 0,
 		),
 	);
-	return (
-		<div className="space-y-3">
-			{!connected.connectionsLoading && !connectionsUnavailable ? (
-				<p data-overview-primary-value className="text-sm font-medium text-muted-foreground">
-					{connectedAppCount ? `${connectedAppCount} connected` : "No apps connected"}
-				</p>
-			) : null}
-			{allUnavailable ? (
-				<OverviewModuleError
-					label="Apps"
-					onRetry={() => {
-						connected.refetch();
-						void catalog.refetch();
-					}}
-				/>
-			) : apps.length || loadingSlots ? (
-				<ConnectorRail apps={apps} loadingSlots={loadingSlots} />
-			) : null}
-			{allUnavailable ? null : connected.connectionsLoading ? (
-				<span className="sr-only" aria-label="Loading connected apps" role="status" />
-			) : connectionsUnavailable ? (
-				<ConnectorRetry label="Can’t load connected apps" onRetry={connected.refetch} />
-			) : connected.metadataError ? (
-				<ConnectorRetry
-					label="Some connected app icons can’t be shown"
-					onRetry={connected.refetch}
-				/>
-			) : null}
-			{!allUnavailable && catalogUnavailable ? (
-				<ConnectorRetry label="Can’t load suggested apps" onRetry={() => void catalog.refetch()} />
-			) : null}
-		</div>
+	const description = connected.connectionsLoading ? (
+		<OverviewDescriptionSkeleton label="apps" />
+	) : connectionsUnavailable ? (
+		"Unavailable right now"
+	) : connectedAppCount ? (
+		`${connectedAppCount} connected`
+	) : (
+		"No apps connected"
 	);
+	return {
+		description,
+		body: (
+			<div className="space-y-3">
+				{allUnavailable ? (
+					<OverviewModuleError
+						label="Apps"
+						onRetry={() => {
+							connected.refetch();
+							void catalog.refetch();
+						}}
+					/>
+				) : apps.length || loadingSlots ? (
+					<ConnectorRail apps={apps} loadingSlots={loadingSlots} />
+				) : null}
+				{allUnavailable ? null : connected.connectionsLoading ? (
+					<span className="sr-only" aria-label="Loading connected apps" role="status" />
+				) : connectionsUnavailable ? (
+					<ConnectorRetry label="Can’t load connected apps" onRetry={connected.refetch} />
+				) : connected.metadataError ? (
+					<ConnectorRetry
+						label="Some connected app icons can’t be shown"
+						onRetry={connected.refetch}
+					/>
+				) : null}
+				{!allUnavailable && catalogUnavailable ? (
+					<ConnectorRetry
+						label="Can’t load suggested apps"
+						onRetry={() => void catalog.refetch()}
+					/>
+				) : null}
+			</div>
+		),
+	};
 }
 
 function ConnectorRetry({ label, onRetry }: { label: string; onRetry: () => void }) {
