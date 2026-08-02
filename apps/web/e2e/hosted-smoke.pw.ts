@@ -2575,10 +2575,50 @@ test("returning users can deploy on Clawdi or connect another machine", async ({
 });
 
 test("hosted agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
+	const telegramAccount = {
+		id: "channel-overview-telegram",
+		provider: "telegram",
+		name: "Research Telegram",
+		status: "active",
+		created_at: "2026-07-15T00:00:00Z",
+	};
 	await stubHostedApi(page, {
 		deployments: [railHostedDeployment],
 		cloudAgents: [railHostedCloudAgent],
 		agentResourceFixtures: true,
+		skillsByProjectId: {
+			"project-hosted": [
+				{
+					id: "skill-hosted-briefing",
+					skill_key: "briefing",
+					name: "Daily briefing",
+					description: "Prepare daily briefings",
+					version: 1,
+					source: "cloud",
+					authority: "cloud",
+					source_repo: null,
+					agent_types: ["hermes"],
+					file_count: 1,
+					content_hash: "b".repeat(64),
+					is_active: true,
+					created_at: "2026-07-15T00:00:00Z",
+					updated_at: "2026-07-15T00:00:00Z",
+					project_id: "project-hosted",
+					project_name: "Hosted Agent Project",
+					project_kind: "environment",
+				},
+			],
+		},
+		channelAgentLinks: [
+			{
+				id: "link-overview-telegram",
+				account_id: telegramAccount.id,
+				agent_id: railHostedEnvironmentId,
+				status: "active",
+				created_at: "2026-07-15T00:00:00Z",
+				account: telegramAccount,
+			},
+		],
 	});
 	await page.goto(
 		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
@@ -2593,12 +2633,38 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.locator('[data-overview-module="projects"]')).toContainText(
 		"Hosted Agent Project",
 	);
-	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveClass(
-		/bg-identity-6-bg\/20/,
+	await expect(overview.locator('[data-overview-module="agent-interface"]')).toContainText(
+		"UI ready",
+	);
+	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Running");
+	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Basic");
+	await expect(page.getByText("Your agent is running", { exact: true })).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("Daily briefing");
+	await expect(overview.locator('[data-overview-module="channels"]')).toContainText(
+		"Research Telegram",
 	);
 	await expect(overview.locator('[data-overview-module="live-sync"]')).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1600 });
 	await page.screenshot({ path: testInfo.outputPath("hosted-agent-overview.png"), fullPage: true });
+});
+
+test("hosted starting status and actions stay inside Compute", async ({ page }) => {
+	const startingDeployment = { ...railHostedDeployment, status: "starting" };
+	await stubHostedApi(page, {
+		deployments: [startingDeployment],
+		cloudAgents: [railHostedCloudAgent],
+	});
+	await page.goto(`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${startingDeployment.id}`);
+
+	const main = page.locator("main");
+	const compute = main.locator('[data-overview-module="compute"]');
+	await expect(compute).toContainText("Starting");
+	await expect(compute).toContainText("Startup is still in progress.");
+	await expect(compute.getByRole("link", { name: "Compute", exact: true })).toBeVisible();
+	await expect(main.getByText("Starting your agent…", { exact: true })).toHaveCount(0);
+	await expect(
+		compute.getByText("Startup is still in progress.", { exact: false }),
+	).toHaveAttribute("role", "status");
 });
 
 test("empty accounts without deploy access only get the connected-agent path", async ({ page }) => {

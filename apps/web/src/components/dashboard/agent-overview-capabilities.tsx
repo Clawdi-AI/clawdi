@@ -19,44 +19,32 @@ export type AgentOverviewModuleContent = {
 
 const MODULE_PRESENTATION: Record<
 	AgentOverviewModuleId,
-	{
-		label?: string;
-		icon?: LucideIcon;
-		tint?: string;
-		accent: string;
-		emphasis?: string;
-		header?: string;
-	}
+	{ label?: string; icon?: LucideIcon; tint?: string; source?: boolean }
 > = {
-	sessions: { accent: "border-t-identity-3-fg/45" },
+	sessions: {},
 	"live-sync": {
 		label: "Live Sync",
 		icon: Laptop,
 		tint: "bg-identity-7-bg text-identity-7-fg",
-		accent: "border-t-identity-7-fg/60",
-		emphasis: "border-identity-7-fg/25 bg-identity-7-bg/20",
-		header: "bg-identity-7-bg/30",
+		source: true,
 	},
 	"agent-interface": {
 		label: "Agent Interface",
 		icon: Cloud,
 		tint: "bg-identity-6-bg text-identity-6-fg",
-		accent: "border-t-identity-6-fg/60",
-		emphasis: "border-identity-6-fg/25 bg-identity-6-bg/20",
-		header: "bg-identity-6-bg/30",
+		source: true,
 	},
-	projects: { accent: "border-t-identity-1-fg/45" },
-	skills: { accent: "border-t-identity-2-fg/45" },
-	memories: { accent: "border-t-identity-6-fg/45" },
-	vaults: { accent: "border-t-identity-4-fg/45" },
-	connectors: { accent: "border-t-identity-7-fg/45" },
-	"model-provider": { label: "Model & Provider", accent: "border-t-identity-2-fg/45" },
-	channels: { accent: "border-t-identity-5-fg/45" },
+	projects: {},
+	skills: {},
+	memories: {},
+	vaults: {},
+	connectors: {},
+	"model-provider": { label: "Model & Provider" },
+	channels: {},
 	compute: {
 		label: "Compute",
 		icon: Settings2,
 		tint: "bg-identity-4-bg text-identity-4-fg",
-		accent: "border-t-identity-4-fg/45",
 	},
 };
 
@@ -81,7 +69,9 @@ export function AgentOverviewCapabilities({
 						</h2>
 						<p className="text-xs text-muted-foreground">{group.description}</p>
 					</div>
-					<div className="grid gap-3 md:grid-cols-3">
+					<div
+						className={cn("grid gap-3", group.columns === 4 ? "md:grid-cols-4" : "md:grid-cols-3")}
+					>
 						{group.modules.map((module) => {
 							const item = AGENT_SECTION_NAVIGATION_ITEMS[module.section];
 							const presentation = MODULE_PRESENTATION[module.id];
@@ -93,18 +83,14 @@ export function AgentOverviewCapabilities({
 									key={module.id}
 									data-overview-module={module.id}
 									className={cn(
-										"min-w-0 overflow-hidden rounded-xl border border-t-2 bg-card shadow-xs",
-										presentation.accent,
-										presentation.emphasis,
+										"min-w-0 overflow-hidden rounded-lg border bg-card",
+										presentation.source && "bg-muted/20",
 										module.size === "wide" && "md:col-span-2",
 									)}
 								>
 									<Link
 										{...agentSectionLink(agentId, module.section, routeSearch)}
-										className={cn(
-											"group flex items-center gap-3 p-4 pb-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-											presentation.header,
-										)}
+										className="group flex items-center gap-3 p-4 pb-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
 									>
 										<IconChip size="sm" tint={presentation.tint ?? item.tint}>
 											<Icon />
@@ -124,7 +110,7 @@ export function AgentOverviewCapabilities({
 												{moduleContent.items.slice(0, 3).map((summaryItem) => (
 													<li
 														key={summaryItem}
-														className="max-w-full truncate rounded-full bg-identity-1-bg/60 px-2.5 py-1 text-xs font-medium text-identity-1-fg"
+														className="max-w-full truncate rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-foreground"
 													>
 														{summaryItem}
 													</li>

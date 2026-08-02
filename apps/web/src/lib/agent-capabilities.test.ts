@@ -18,8 +18,13 @@ describe("agent capabilities", () => {
 		expect(connected.map((group) => group.id)).toEqual(["now", "resources"]);
 		expect(hosted.map((group) => group.id)).toEqual(["now", "resources", "operate"]);
 		expect(connected[0]?.modules.map((module) => module.id)).toEqual(["sessions", "live-sync"]);
-		expect(hosted[0]?.modules.map((module) => module.id)).toEqual(["sessions", "agent-interface"]);
+		expect(hosted[0]?.modules.map((module) => module.id)).toEqual([
+			"sessions",
+			"agent-interface",
+			"compute",
+		]);
 		expect(connected[1]?.modules).toEqual(hosted[1]?.modules);
+		expect(hosted[2]?.modules.map((module) => module.id)).toEqual(["model-provider", "channels"]);
 	});
 
 	test("gives Sessions and Projects the dominant module width", () => {

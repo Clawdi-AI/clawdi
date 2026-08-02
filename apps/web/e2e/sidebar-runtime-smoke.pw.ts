@@ -420,7 +420,29 @@ test("Console and connected agents use the scoped navigation grammar", async ({ 
 
 test("connected agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
 	await stubDashboardApi(page, [], {
-		skillsByProjectId: { "project-smoke": [] },
+		skillsByProjectId: {
+			"project-smoke": [
+				{
+					id: "skill-smoke-research",
+					skill_key: "research",
+					name: "Research",
+					description: "Research workflow",
+					version: 1,
+					source: "cloud",
+					authority: "cloud",
+					source_repo: null,
+					agent_types: ["codex"],
+					file_count: 1,
+					content_hash: "a".repeat(64),
+					is_active: true,
+					created_at: now.toISOString(),
+					updated_at: now.toISOString(),
+					project_id: "project-smoke",
+					project_name: "Smoke Project",
+					project_kind: "environment",
+				},
+			],
+		},
 	});
 	await page.goto("/agents/agent-smoke-1");
 
@@ -432,9 +454,10 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(overview.locator('[data-overview-module="projects"]')).toContainText(
 		"Smoke Project",
 	);
-	await expect(overview.locator('[data-overview-module="live-sync"]')).toHaveClass(
-		/bg-identity-7-bg\/20/,
+	await expect(overview.locator('[data-overview-module="live-sync"]')).toContainText(
+		"smoke-machine.local",
 	);
+	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("Research");
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1400 });
 	await page.screenshot({

@@ -187,6 +187,7 @@ import {
 	type DeploymentStatus,
 	deploymentStatusFromResource,
 	deploymentStatusLabel,
+	deploymentStatusTone,
 	isRunningStatus,
 } from "@/hosted/deployment-status";
 import { DeploymentStatusUnavailableState } from "@/hosted/deployment-status-unavailable";
@@ -1047,6 +1048,106 @@ export function OverviewFailedPanel({
 	);
 }
 
+function runtimeConsoleLocation(url: string | null): string | null {
+	if (!url) return null;
+	try {
+		return new URL(url).host;
+	} catch {
+		return null;
+	}
+}
+
+function OverviewComputeStatus({
+	deployment,
+	failure,
+	showActions,
+	planChangeHref,
+	providerSettingsHref,
+	onDeleteAccepted,
+	deploymentTransitionTimedOut,
+	isCheckingDeployment,
+	onCheckDeploymentAgain,
+}: {
+	deployment: HostedDeployment;
+	failure: DeploymentFailurePresentation | null;
+	showActions: boolean;
+	planChangeHref: string;
+	providerSettingsHref: string;
+	onDeleteAccepted: (deploymentId: string) => void;
+	deploymentTransitionTimedOut: boolean;
+	isCheckingDeployment: boolean;
+	onCheckDeploymentAgain: () => void;
+}) {
+	const status = deploymentStatusFromResource(deployment.resource.status);
+	const failed = failure || status.kind === "failed";
+	const retryStatus = status.kind === "unknown" || deploymentTransitionTimedOut;
+	return (
+		<div className="space-y-3 text-xs">
+			{failure ? (
+				<div className="space-y-1 text-destructive-muted-foreground" role="status">
+					<p className="font-medium">{failure.title}</p>
+					<p className="line-clamp-2">{failure.reason}</p>
+				</div>
+			) : status.kind === "failed" ? (
+				<p className="text-destructive-muted-foreground" role="status">
+					The last compute change failed. Contact support before trying again.
+				</p>
+			) : deploymentTransitionTimedOut ? (
+				<p className="text-warning-muted-foreground" role="status">
+					Startup is taking longer than expected.
+				</p>
+			) : isStartingStatus(status) ? (
+				<p className="inline-flex items-center gap-2 text-muted-foreground" role="status">
+					<Spinner className="size-3.5" /> Startup is still in progress.
+				</p>
+			) : status.kind === "stopped" ? (
+				<p className="text-muted-foreground" role="status">
+					Start compute to use sessions, channels, and the agent interface.
+				</p>
+			) : status.kind === "unknown" ? (
+				<p className="text-warning-muted-foreground" role="status">
+					Clawdi cannot confirm the current compute status.
+				</p>
+			) : null}
+			{showActions ? (
+				<div className="flex flex-wrap gap-2">
+					{failure ? (
+						<OverviewFailureAction
+							deployment={deployment}
+							failure={failure}
+							planChangeHref={planChangeHref}
+							providerSettingsHref={providerSettingsHref}
+							onDeleteAccepted={onDeleteAccepted}
+						/>
+					) : status.kind === "stopped" ? (
+						<StartComputeAction deployment={deployment} label="Start" />
+					) : retryStatus ? (
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							disabled={isCheckingDeployment}
+							onClick={onCheckDeploymentAgain}
+						>
+							{isCheckingDeployment ? <Spinner className="size-3.5" /> : <RefreshCw />}
+							Check again
+						</Button>
+					) : canRestartDeployment(status) && !failed ? (
+						<RestartComputeAction deployment={deployment} label="Restart" />
+					) : null}
+					{failure?.remediation.kind === "retry_delete" ? null : (
+						<DeleteComputeAction
+							deployment={deployment}
+							onDeleteAccepted={onDeleteAccepted}
+							variant="outline"
+						/>
+					)}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
 function OverviewTab({
 	agentId,
 	routeSearch,
@@ -1109,11 +1210,6 @@ function OverviewTab({
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentFailure = deploymentFailurePresentation(deployment);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
-	const showReadinessPanel =
-		!deploymentFailure &&
-		(deploymentTransitionTimedOut ||
-			isStartingStatus(deploymentStatus) ||
-			deploymentStatus.kind === "running");
 	const sessionsEmptyMessage = deploymentRunning
 		? "No sessions from this agent yet."
 		: "Sessions appear once your agent is running.";
@@ -1126,27 +1222,12 @@ function OverviewTab({
 		false,
 		Boolean(agent),
 	);
+	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
+	const consoleUrl = runtimeConsoleUrl(deployment, spec.runtime);
+	const consoleLocation = runtimeConsoleLocation(consoleUrl);
+	const providerId = primaryModelProviderId(primaryModel) ?? bindingProvider?.provider_id;
 	return (
 		<div className="flex flex-col gap-5">
-			{showReadinessPanel ? (
-				<OverviewReadinessPanel
-					deployment={deployment}
-					deploymentTransitionTimedOut={deploymentTransitionTimedOut}
-					isCheckingDeployment={isCheckingDeployment}
-					onCheckDeploymentAgain={onCheckDeploymentAgain}
-				/>
-			) : null}
-			{deploymentFailure || deploymentStatus.kind === "failed" ? (
-				<OverviewFailedPanel
-					deployment={deployment}
-					planChangeHref={planChangeHref}
-					providerSettingsHref={providerSettingsHref}
-					onDeleteAccepted={onDeleteAccepted}
-				/>
-			) : null}
-			{deploymentStatus.kind === "stopped" ? (
-				<StoppedAgentState deployment={deployment} variant="inset" />
-			) : null}
 			<AgentOverviewCapabilities
 				agentId={agentId}
 				variant="hosted"
@@ -1170,8 +1251,10 @@ function OverviewTab({
 							) : null,
 					},
 					"agent-interface": {
-						value: deploymentRunning ? "Ready to use" : deploymentStatusLabel(deploymentStatus),
-						detail: "Open the managed browser interface for this agent.",
+						value: deploymentRunning
+							? `${runtimeDisplayName(spec.runtime)} UI ready`
+							: "Unavailable",
+						detail: consoleLocation ?? "Available after compute is running.",
 					},
 					projects: {
 						value: !agent
@@ -1193,30 +1276,58 @@ function OverviewTab({
 									? "Unavailable"
 									: `${skills.skills?.length ?? 0} available`,
 						detail: "Skills available through this agent's Projects.",
+						items: (skills.skills ?? []).map((skill) => skill.name),
 					},
 					memories: {
-						value: "Shared context",
-						detail: "Account-wide memory available across agents.",
+						value: "Account-wide",
+						detail: "Shared with every agent in this account.",
 					},
 					vaults: {
-						value: "Project access",
-						detail: "Vaults supplied safely through this agent's Projects.",
+						value: projectBindings.isLoading
+							? "Loading…"
+							: `From ${projectBindings.data?.length ?? 0} ${projectBindings.data?.length === 1 ? "Project" : "Projects"}`,
+						detail: "Secrets are supplied through bound Projects.",
 					},
 					connectors: {
-						value: "Account connections",
-						detail: "External apps available across agents.",
+						value: "Account-wide",
+						detail: "Connected apps are available to every agent.",
 					},
 					"model-provider": {
 						value: model,
-						detail: "Primary model and credential source used by this agent.",
+						detail: providerId ? `Provider: ${providerId}` : "Provider configuration pending.",
 					},
 					channels: {
-						value: "Messaging links",
-						detail: "Manage the channels linked to this agent.",
+						value: channelLinks.isLoading
+							? "Loading…"
+							: channelLinks.error
+								? "Unavailable"
+								: `${channelLinks.data?.length ?? 0} linked`,
+						detail: "Telegram, Discord, WhatsApp, and iMessage links.",
+						items: (channelLinks.data ?? []).flatMap((link) =>
+							link.account?.name ? [link.account.name] : [],
+						),
 					},
 					compute: {
-						value: isPerformance ? "Performance" : "Basic",
-						detail: `${spec.resources.vcpu} vCPU · ${formatMemoryMib(spec.resources.memory_mib)} · ${spec.resources.disk_gib} GiB storage`,
+						value: (
+							<span className="inline-flex items-center gap-2">
+								<StatusDot status={deploymentStatusTone(deploymentStatus)} />
+								{deploymentStatusLabel(deploymentStatus)}
+							</span>
+						),
+						detail: `${isPerformance ? "Performance" : "Basic"} · ${spec.resources.vcpu} vCPU · ${formatMemoryMib(spec.resources.memory_mib)}`,
+						content: (
+							<OverviewComputeStatus
+								deployment={deployment}
+								failure={deploymentFailure}
+								showActions={showDeploymentActions}
+								planChangeHref={planChangeHref}
+								providerSettingsHref={providerSettingsHref}
+								onDeleteAccepted={onDeleteAccepted}
+								deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+								isCheckingDeployment={isCheckingDeployment}
+								onCheckDeploymentAgain={onCheckDeploymentAgain}
+							/>
+						),
 					},
 				}}
 			/>
@@ -1229,37 +1340,7 @@ function OverviewTab({
 					/>
 				</div>
 			) : null}
-			{showDeploymentActions ? (
-				<OverviewDeploymentActions deployment={deployment} onDeleteAccepted={onDeleteAccepted} />
-			) : null}
 		</div>
-	);
-}
-
-function OverviewDeploymentActions({
-	deployment,
-	onDeleteAccepted,
-}: {
-	deployment: HostedDeployment;
-	onDeleteAccepted: (deploymentId: string) => void;
-}) {
-	const status = deploymentStatusFromResource(deployment.resource.status);
-	const failed = status.kind === "failed";
-	return (
-		<SettingsSection
-			title="Agent actions"
-			description="These actions remain available while other agent details load."
-		>
-			<div className="flex flex-wrap gap-2.5">
-				{canRestartDeployment(status) && !failed ? (
-					<RestartComputeAction deployment={deployment} />
-				) : null}
-				{canStartDeployment(status) && !failed && status.kind !== "stopped" ? (
-					<StartComputeAction deployment={deployment} />
-				) : null}
-				<DeleteComputeAction deployment={deployment} onDeleteAccepted={onDeleteAccepted} />
-			</div>
-		</SettingsSection>
 	);
 }
 

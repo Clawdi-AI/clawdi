@@ -7,8 +7,6 @@ import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
 import {
 	AgentSourceBadgeForEnvironment,
 	agentDisplayName,
-	agentTypeLabel,
-	cleanMachineName,
 } from "@/components/dashboard/agent-label";
 import { AgentOverviewCapabilities } from "@/components/dashboard/agent-overview-capabilities";
 import { useAgentOverviewProjects } from "@/components/dashboard/agent-project-bindings-query";
@@ -24,7 +22,7 @@ import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SessionFeed } from "@/components/sessions/session-feed";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { StatusDot } from "@/components/ui/status-badge";
 import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
 import {
 	type AgentRouteSearch,
@@ -38,7 +36,7 @@ import { isApiNotFoundError } from "@/lib/api-errors";
 import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { sessionListQueryOptions } from "@/lib/session-queries";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
 type AgentTab =
 	| "overview"
@@ -160,23 +158,6 @@ export function ConnectedAgentDetail({
 
 					{activeTab === "overview" ? (
 						<div className="flex flex-col gap-5">
-							<DetailPanel className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
-								<div className="min-w-0">
-									<div className="flex flex-wrap items-center gap-2">
-										<h2 className="truncate text-lg font-semibold tracking-tight">{agentTitle}</h2>
-										<StatusBadge status={syncTone} withDot>
-											{syncStatus.label}
-										</StatusBadge>
-									</div>
-									<p className="mt-1 text-sm text-muted-foreground">
-										{agentTypeLabel(agent.agent_type)} on {cleanMachineName(agent.machine_name)}
-									</p>
-								</div>
-								<div className="text-xs text-muted-foreground sm:text-right">
-									<p>{syncStatus.tooltip}</p>
-									<p className="mt-1">Runtime managed outside Clawdi</p>
-								</div>
-							</DetailPanel>
 							<AgentOverviewCapabilities
 								agentId={id}
 								variant="connected"
@@ -198,7 +179,15 @@ export function ConnectedAgentDetail({
 											/>
 										),
 									},
-									"live-sync": { value: syncStatus.label, detail: syncStatus.tooltip },
+									"live-sync": {
+										value: (
+											<span className="inline-flex items-center gap-2">
+												<StatusDot status={syncTone} />
+												{syncStatus.label}
+											</span>
+										),
+										detail: `${agent.machine_name} · last seen ${relativeTime(agent.last_seen_at)}`,
+									},
 									projects: {
 										value: projectBindingsLoading
 											? "Loading…"
@@ -215,18 +204,21 @@ export function ConnectedAgentDetail({
 												? "Unavailable"
 												: `${skillsForThisEnv?.length ?? 0} available`,
 										detail: "Skills available through this agent's Projects.",
+										items: (skillsForThisEnv ?? []).map((skill) => skill.name),
 									},
 									memories: {
-										value: "Shared context",
-										detail: "Account-wide memory available across agents.",
+										value: "Account-wide",
+										detail: "Shared with every agent in this account.",
 									},
 									vaults: {
-										value: "Project access",
-										detail: "Vaults supplied safely through this agent's Projects.",
+										value: projectBindingsLoading
+											? "Loading…"
+											: `From ${projectBindings?.length ?? 0} ${projectBindings?.length === 1 ? "Project" : "Projects"}`,
+										detail: "Secrets are supplied through bound Projects.",
 									},
 									connectors: {
-										value: "Account connections",
-										detail: "External apps available across agents.",
+										value: "Account-wide",
+										detail: "Connected apps are available to every agent.",
 									},
 								}}
 							/>
