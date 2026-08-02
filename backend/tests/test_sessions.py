@@ -11,7 +11,28 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.file_store import FileStore
+
 _TEST_SYSTEM = {}
+
+
+class _CountingGetFileStore:
+    def __init__(self, delegate: FileStore) -> None:
+        self._delegate = delegate
+        self.get_calls = 0
+
+    async def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
+        await self._delegate.put(key, data, content_type)
+
+    async def get(self, key: str) -> bytes:
+        self.get_calls += 1
+        return await self._delegate.get(key)
+
+    async def delete(self, key: str) -> None:
+        await self._delegate.delete(key)
+
+    async def exists(self, key: str) -> bool:
+        return await self._delegate.exists(key)
 
 
 async def _register_env(client: httpx.AsyncClient, machine_id: str = "test-machine-1") -> str:
@@ -975,6 +996,7 @@ import json  # noqa: E402
 @pytest.mark.asyncio
 async def test_session_messages_endpoint_caches_parsed_blob(
     client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """Round-57 P2: paginating through a long session must NOT
     re-download + re-parse the full JSON blob on every page.
@@ -1019,25 +1041,14 @@ async def test_session_messages_endpoint_caches_parsed_blob(
     # routes); the route handler is now a thin wrapper.
     session_content._messages_cache.clear()
 
-    # Wrap file_store.get so we can count blob reads.
-    orig_get = sessions_route.file_store.get
-    call_count = 0
-
-    async def counting_get(file_key: str) -> bytes:
-        nonlocal call_count
-        call_count += 1
-        return await orig_get(file_key)
-
-    sessions_route.file_store.get = counting_get  # type: ignore[assignment]
-    try:
-        for offset in (0, 10, 20):
-            r = await client.get(f"/v1/sessions/{sid}/messages?offset={offset}&limit=10")
-            assert r.status_code == 200, r.text
-    finally:
-        sessions_route.file_store.get = orig_get  # type: ignore[assignment]
+    counting_store = _CountingGetFileStore(sessions_route.file_store)
+    monkeypatch.setattr(sessions_route, "file_store", counting_store)
+    for offset in (0, 10, 20):
+        r = await client.get(f"/v1/sessions/{sid}/messages?offset={offset}&limit=10")
+        assert r.status_code == 200, r.text
 
     # Three pages, ONE blob read — cache absorbed pages 2 + 3.
-    assert call_count == 1, f"expected 1 file_store.get, saw {call_count}"
+    assert counting_store.get_calls == 1
 
 
 @pytest.mark.asyncio

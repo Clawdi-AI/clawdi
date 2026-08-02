@@ -23,6 +23,28 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
+from app.services.file_store import FileStore
+
+
+class _ContentErrorFileStore:
+    def __init__(self, delegate: FileStore, failure_name: str) -> None:
+        self._delegate = delegate
+        self._failure_name = failure_name
+
+    async def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
+        await self._delegate.put(key, data, content_type)
+
+    async def get(self, key: str) -> bytes:
+        if self._failure_name == "missing":
+            raise FileNotFoundError(key)
+        return b"not valid JSON"
+
+    async def delete(self, key: str) -> None:
+        await self._delegate.delete(key)
+
+    async def exists(self, key: str) -> bool:
+        return await self._delegate.exists(key)
+
 
 async def _register_env(client: httpx.AsyncClient) -> str:
     r = await client.post(
@@ -323,7 +345,6 @@ async def test_public_exports_disable_caching_on_content_errors(
     expected_status: int,
 ):
     from app.routes import public_sessions as public_sessions_route
-    from app.services.session_content import SessionContentInvalid, SessionContentMissing
 
     sid, _ = await _seed_session_with_content(
         client,
@@ -331,12 +352,11 @@ async def test_public_exports_disable_caching_on_content_errors(
     )
     await _enable_link(client, sid)
 
-    async def _fail_content_load(*_args):
-        if failure_name == "missing":
-            raise SessionContentMissing("missing test content")
-        raise SessionContentInvalid("invalid test content")
-
-    monkeypatch.setattr(public_sessions_route, "load_session_messages", _fail_content_load)
+    monkeypatch.setattr(
+        public_sessions_route,
+        "file_store",
+        _ContentErrorFileStore(public_sessions_route.file_store, failure_name),
+    )
 
     for suffix in ("export.md", "export.json"):
         response = await anon_client.get(f"/v1/public/sessions/{sid}/{suffix}")
