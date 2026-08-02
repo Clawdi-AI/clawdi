@@ -37,7 +37,6 @@ import {
 	AgentOverviewCapabilities,
 	AgentOverviewStatusCard,
 	OverviewMetadata,
-	OverviewMetrics,
 	OverviewModuleError,
 	OverviewModuleSkeleton,
 	OverviewModuleUnavailable,
@@ -486,6 +485,7 @@ export function HostedAgentDetail({
 	const [isCheckingProjection, setIsCheckingProjection] = useState(false);
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
+	const hasTerminalDeploymentFailure = deploymentFailurePresentation(deployment) !== null;
 	const deploymentProjectionQueryable = canQueryDeploymentProjection(deploymentStatus);
 	const cloudEnvironmentId = isCloudEnvId(environmentId);
 	const agentQuery = $api.useQuery(
@@ -553,6 +553,7 @@ export function HostedAgentDetail({
 	const showInitialStartingPage =
 		activeTab === "overview" &&
 		isStartingStatus(deploymentStatus) &&
+		!hasTerminalDeploymentFailure &&
 		projection.status !== "resolved";
 	const interfaceAvailable =
 		activeTab === "overview" && !showInitialStartingPage && isRunningStatus(deploymentStatus);
@@ -626,7 +627,10 @@ export function HostedAgentDetail({
 							canRetryProjection={deploymentProjectionQueryable}
 							onRetryProjection={() => void agentQuery.refetch()}
 							isPerformance={isPerformance}
-							showDeploymentActions={!deploymentRunning && !isStartingStatus(deploymentStatus)}
+							showDeploymentActions={
+								!deploymentRunning &&
+								(!isStartingStatus(deploymentStatus) || hasTerminalDeploymentFailure)
+							}
 							onDeleteAccepted={onDeleteAccepted}
 							sessions={sessions.data?.items ?? []}
 							sessionsLoading={sessions.isLoading}
@@ -1040,6 +1044,37 @@ export function OverviewComputeStatus({
 	);
 }
 
+export function OverviewComputeSummary({
+	plan,
+	vcpu,
+	memoryMib,
+	storageGib,
+}: {
+	plan: string;
+	vcpu: number;
+	memoryMib: number;
+	storageGib: number;
+}) {
+	const configuration = [
+		`${vcpu} vCPU`,
+		`${formatMemoryMib(memoryMib)} memory`,
+		`${storageGib} GiB storage`,
+	];
+	return (
+		<div className="space-y-1.5 rounded-md border bg-background/60 px-3 py-2.5">
+			<p className="text-sm font-semibold">{plan} plan</p>
+			<ul
+				aria-label={`Configuration: ${configuration.join(", ")}`}
+				className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
+			>
+				{configuration.map((item) => (
+					<li key={item}>{item}</li>
+				))}
+			</ul>
+		</div>
+	);
+}
+
 export function InitialDeploymentPage({
 	deployment,
 	deploymentTransitionTimedOut,
@@ -1325,7 +1360,7 @@ function OverviewTab({
 						icon={Cpu}
 						tint="bg-identity-4-bg text-identity-4-fg"
 					>
-						<div className="flex h-full flex-col justify-between gap-4">
+						<div className="flex h-full flex-col gap-4">
 							<p
 								className="inline-flex items-center gap-2 text-lg font-semibold"
 								title={`Agent status: ${deploymentStatusLabel(deploymentStatus)}`}
@@ -1333,17 +1368,14 @@ function OverviewTab({
 								<StatusDot status={deploymentStatusTone(deploymentStatus)} />
 								{deploymentStatusLabel(deploymentStatus)}
 							</p>
-							<OverviewMetrics
-								columns={2}
-								items={[
-									{ label: "Plan", value: isPerformance ? "Performance" : "Basic" },
-									{ label: "CPU", value: `${spec.resources.vcpu} vCPU` },
-									{ label: "Memory", value: formatMemoryMib(spec.resources.memory_mib) },
-									{ label: "Storage", value: `${spec.resources.disk_gib} GiB` },
-								]}
+							<OverviewComputeSummary
+								plan={isPerformance ? "Performance" : "Basic"}
+								vcpu={spec.resources.vcpu}
+								memoryMib={spec.resources.memory_mib}
+								storageGib={spec.resources.disk_gib}
 							/>
 							{deploymentRunning ? null : (
-								<div className="border-t pt-3">
+								<div className="mt-auto border-t pt-3">
 									<OverviewComputeStatus
 										deployment={deployment}
 										failure={deploymentFailure}

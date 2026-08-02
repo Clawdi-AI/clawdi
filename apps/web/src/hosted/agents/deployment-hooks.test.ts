@@ -32,6 +32,8 @@ type OverviewFailureAction =
 	typeof import("@/hosted/agents/hosted-agent-detail").OverviewFailureAction;
 type OverviewComputeStatus =
 	typeof import("@/hosted/agents/hosted-agent-detail").OverviewComputeStatus;
+type OverviewComputeSummary =
+	typeof import("@/hosted/agents/hosted-agent-detail").OverviewComputeSummary;
 type InitialDeploymentPage =
 	typeof import("@/hosted/agents/hosted-agent-detail").InitialDeploymentPage;
 
@@ -41,6 +43,7 @@ let shouldShowProjectionNotice: ShouldShowHostedProjectionNotice | null = null;
 let runManualDeploymentRefetch: RunManualDeploymentRefetch | null = null;
 let overviewFailureAction: OverviewFailureAction | null = null;
 let overviewComputeStatus: OverviewComputeStatus | null = null;
+let overviewComputeSummary: OverviewComputeSummary | null = null;
 let initialDeploymentPage: InitialDeploymentPage | null = null;
 
 function requiredDeploymentStatus(
@@ -65,6 +68,7 @@ beforeAll(async () => {
 	shouldShowProjectionNotice = detailModule.shouldShowHostedProjectionNotice;
 	overviewFailureAction = detailModule.OverviewFailureAction;
 	overviewComputeStatus = detailModule.OverviewComputeStatus;
+	overviewComputeSummary = detailModule.OverviewComputeSummary;
 	initialDeploymentPage = detailModule.InitialDeploymentPage;
 });
 
@@ -128,6 +132,27 @@ describe("deployment failure remediation rendering", () => {
 		expect(markup).toContain('href="mailto:support@clawdi.ai"');
 		expect(markup).not.toContain("Deployment operation");
 		expect(markup).not.toContain("failure reason and operation");
+	});
+});
+
+describe("overview Compute hierarchy", () => {
+	test("keeps plan and configuration in one compact summary instead of metric tiles", () => {
+		if (!overviewComputeSummary) throw new Error("agent detail was not loaded");
+		const markup = renderToStaticMarkup(
+			createElement(overviewComputeSummary, {
+				plan: "Basic",
+				vcpu: 2,
+				memoryMib: 4096,
+				storageGib: 20,
+			}),
+		);
+
+		expect(markup).toContain("Basic plan");
+		expect(markup).toContain("2 vCPU");
+		expect(markup).toContain("4 GiB memory");
+		expect(markup).toContain("20 GiB storage");
+		expect(markup).toContain('aria-label="Configuration: 2 vCPU, 4 GiB memory, 20 GiB storage"');
+		expect(markup).not.toContain("grid-cols-2");
 	});
 });
 
@@ -244,9 +269,10 @@ describe("deployment transition timeout rendering", () => {
 			"utf8",
 		);
 		expect(detailSource).toContain(
-			"showDeploymentActions={!deploymentRunning && !isStartingStatus(deploymentStatus)}",
+			"(!isStartingStatus(deploymentStatus) || hasTerminalDeploymentFailure)",
 		);
 		expect(detailSource).toContain("!isStartingStatus(deploymentStatus)");
+		expect(detailSource).toContain("!hasTerminalDeploymentFailure &&");
 		expect(detailSource).not.toContain('projection.status === "resolved" &&');
 	});
 

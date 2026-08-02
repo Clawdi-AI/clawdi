@@ -2652,6 +2652,33 @@ test("returning users can deploy on Clawdi or connect another machine", async ({
 	await expect(page.getByRole("dialog", { name: "Add agent" })).toBeVisible();
 });
 
+test("global Hosted Wallet balance lives in chrome and reuses its cached query", async ({
+	page,
+}, testInfo) => {
+	const walletRequests: string[] = [];
+	await stubHostedApi(page, { deployments: [], walletRequests });
+	await page.goto("/channels");
+
+	const walletEntry = page.getByTestId("global-wallet-balance");
+	await expect(walletEntry).toHaveCount(1);
+	await expect(walletEntry).toContainText("Wallet");
+	await expect(walletEntry).toContainText("$25.00");
+	await expect(walletEntry).toHaveAccessibleName("Wallet balance $25.00. Open Wallet settings");
+	await expect.poll(() => walletRequests.length).toBe(1);
+	await page.screenshot({
+		path: testInfo.outputPath("hosted-global-wallet-channels.png"),
+		fullPage: true,
+	});
+
+	await walletEntry.click();
+	await expect(page).toHaveURL(/settings=billing-wallet/);
+	const settingsDialog = page.getByTestId("settings-dialog");
+	await expect(settingsDialog.getByRole("heading", { name: "Wallet", level: 1 })).toBeVisible();
+	await expect(settingsDialog.getByText("$25.00", { exact: true })).toBeVisible();
+	await page.waitForTimeout(250);
+	expect(walletRequests).toHaveLength(1);
+});
+
 test("hosted agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
 	const sessionRequests: string[] = [];
 	const aiProviderRequests: string[] = [];
@@ -2847,7 +2874,12 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	);
 	const compute = page.locator('[data-overview-status="compute"]');
 	await expect(compute).toContainText("Running");
-	await expect(compute).toContainText("Basic");
+	await expect(compute).toContainText("Basic plan");
+	await expect(
+		compute.getByRole("list", {
+			name: "Configuration: 2 vCPU, 4 GiB memory, 20 GiB storage",
+		}),
+	).toBeVisible();
 	await expect(page.getByText("Your agent is running", { exact: true })).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("Daily briefing");
 	await expect(overview.locator('[data-overview-module="channels"]')).toContainText(
@@ -2860,9 +2892,12 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText("Model");
 	expect(aiProviderRequests).toEqual([]);
 	await expect.poll(() => managedModelRequests.length).toBe(1);
-	await expect(compute).toContainText("CPU");
-	await expect(compute).toContainText("Memory");
-	await expect(compute).toContainText("Storage");
+	for (const configuration of ["2 vCPU", "4 GiB memory", "20 GiB storage"])
+		await expect(compute.getByText(configuration, { exact: true })).toBeVisible();
+	await expect(compute.getByText("Plan", { exact: true })).toHaveCount(0);
+	await expect(compute.getByText("CPU", { exact: true })).toHaveCount(0);
+	await expect(compute.getByText("Memory", { exact: true })).toHaveCount(0);
+	await expect(compute.getByText("Storage", { exact: true })).toHaveCount(0);
 	for (const moduleId of ["memories", "vaults", "connectors"]) {
 		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toBeVisible();
 	}
@@ -3342,13 +3377,17 @@ test("raw offline stays a Compute-only status and does not become status unavail
 });
 
 test("empty accounts without deploy access only get the connected-agent path", async ({ page }) => {
+	const walletRequests: string[] = [];
 	await stubHostedApi(page, {
 		canCreateCloudAgents: false,
 		deployments: [],
 		cloudAgents: [],
+		walletRequests,
 	});
 	await page.goto("/");
 
+	await expect(page.getByTestId("global-wallet-balance")).toHaveCount(0);
+	expect(walletRequests).toEqual([]);
 	await expect(page.getByText("Let's connect your first agent", { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Deploy on Clawdi", exact: true })).toHaveCount(0);
 	await expect(page.getByText("Node.js 22.5+ is required.", { exact: true })).toHaveCount(0);
@@ -4099,13 +4138,17 @@ test("whole agent tile drag does not navigate and the next click does", async ({
 test("existing Cloud customers keep billing settings when new deploys are disabled", async ({
 	page,
 }) => {
+	const walletRequests: string[] = [];
 	await stubHostedApi(page, {
 		canCreateCloudAgents: false,
 		deployments: [includedBasicDeployment],
+		walletRequests,
 	});
 	await page.goto("/channels");
 	await page.waitForLoadState("networkidle");
 
+	await expect(page.getByTestId("global-wallet-balance")).toContainText("$25.00");
+	await expect.poll(() => walletRequests.length).toBe(1);
 	await page.getByRole("button", { name: "Settings", exact: true }).click();
 	const dialog = page.getByTestId("settings-dialog");
 	await expect(dialog).toBeVisible();
@@ -6126,7 +6169,7 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 	await expect(main.getByText("Failed", { exact: true })).toBeVisible();
 	await expect(main.locator('[data-overview-status="compute"]')).toContainText("Failed");
 	await expect(main.getByRole("alert")).toHaveCount(0);
-	await expect(main.getByText("Basic", { exact: true })).toBeVisible();
+	await expect(main.getByText("Basic plan", { exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
@@ -6249,7 +6292,7 @@ test("failed deployment with a retained projection keeps status-authoritative na
 		main.getByText("The Clawdi service could not complete this request.", { exact: true }),
 	).toBeVisible();
 	await expect(main.getByText("Failed", { exact: true })).toBeVisible();
-	await expect(main.getByText("Basic", { exact: true })).toBeVisible();
+	await expect(main.getByText("Basic plan", { exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();

@@ -33,6 +33,14 @@ const HostedAgentOwnershipSensor = IS_HOSTED_BUILD
 		)
 	: null;
 
+const GlobalWalletBalance = IS_HOSTED_BUILD
+	? lazy(() =>
+			import("@/hosted/global-wallet-balance").then((m) => ({
+				default: m.GlobalWalletBalance,
+			})),
+		)
+	: null;
+
 export default function DashboardLayout({ children }: { children: ReactNode }) {
 	const hydrated = useHydrated();
 	const [ownership, setOwnership] = useState<AgentOwnership | null>(null);
@@ -74,7 +82,15 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 							data-scroll-restoration-id="dashboard-scroll-container"
 							className="md:h-[calc(100svh-1rem)] md:overflow-y-auto"
 						>
-							<SiteHeader />
+							<SiteHeader
+								actions={
+									GlobalWalletBalance ? (
+										<Suspense fallback={null}>
+											<GlobalWalletBalance />
+										</Suspense>
+									) : null
+								}
+							/>
 							<div className="flex flex-1 flex-col">
 								<div className="@container/main flex flex-1 flex-col gap-2">
 									<div
