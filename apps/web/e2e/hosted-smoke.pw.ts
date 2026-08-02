@@ -2929,7 +2929,7 @@ test("hosted provisioning stays focused on Compute", async ({ page }, testInfo) 
 
 	const main = page.locator("main");
 	const panel = main.getByTestId("hosted-initial-deployment-panel");
-	await expect(panel).toContainText("Setting up your agent");
+	await expect(panel).toContainText("Starting your agent");
 	for (const detail of ["Starting", "Plan", "CPU", "Memory", "Storage"])
 		await expect(panel).toContainText(detail);
 	await expect(main.locator('[data-agent-overview="hosted"]')).toHaveCount(0);
