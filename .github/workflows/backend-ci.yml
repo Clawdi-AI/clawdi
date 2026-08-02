@@ -4,6 +4,11 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "packages/whatsapp-baileys-sidecar/**"
+      - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
+      - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
+      - "scripts/prepare-whatsapp-sidecar-deploy.ts"
+      - "config/deploy.yml"
       - "deploy/self-host/**"
       - "apps/web/Dockerfile"
       - ".dockerignore"
@@ -19,6 +24,11 @@ on:
     branches: [main]
     paths:
       - "backend/**"
+      - "packages/whatsapp-baileys-sidecar/**"
+      - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
+      - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
+      - "scripts/prepare-whatsapp-sidecar-deploy.ts"
+      - "config/deploy.yml"
       - "deploy/self-host/**"
       - "apps/web/Dockerfile"
       - ".dockerignore"
@@ -45,6 +55,7 @@ jobs:
     outputs:
       any: ${{ steps.filter.outputs.any }}
       test: ${{ steps.filter.outputs.test }}
+      sidecar: ${{ steps.filter.outputs.sidecar }}
     steps:
       - uses: actions/checkout@v7
       - id: filter
@@ -68,6 +79,11 @@ jobs:
               - ".github/actions/setup-bun-ci/**"
               - ".github/workflows/backend-ci.yml"
               - ".github/workflows/clawdi-image-release.yml"
+              - "packages/whatsapp-baileys-sidecar/**"
+              - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
+              - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
+              - "scripts/prepare-whatsapp-sidecar-deploy.ts"
+              - "config/deploy.yml"
             test:
               - "backend/app/**"
               - "backend/tests/**"
@@ -76,6 +92,18 @@ jobs:
               - "backend/uv.lock"
               - "backend/Dockerfile"
               - ".github/workflows/backend-ci.yml"
+            sidecar:
+              - "packages/whatsapp-baileys-sidecar/**"
+              - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
+              - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
+              - "scripts/prepare-whatsapp-sidecar-deploy.ts"
+              - "config/deploy.yml"
+              - "package.json"
+              - "bun.lock"
+              - ".dockerignore"
+              - ".github/actions/setup-bun-ci/**"
+              - ".github/workflows/backend-ci.yml"
+              - ".github/workflows/clawdi-image-release.yml"
 
   lint-and-typecheck:
     needs: changes
@@ -179,3 +207,29 @@ jobs:
           uv run alembic upgrade head
       - name: Pytest (ephemeral internal suite)
         run: uv run pytest -q
+
+  sidecar:
+    needs: changes
+    if: needs.changes.outputs.sidecar == 'true'
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          bun-version: "1.3.14"
+      - name: Sidecar typecheck and tests
+        run: |
+          bun run --cwd packages/whatsapp-baileys-sidecar typecheck
+          bun run --cwd packages/whatsapp-baileys-sidecar test:internal
+      - name: Deployment contract tests
+        run: >-
+          bun run --cwd packages/cli test:internal
+          tests/whatsapp-sidecar-deploy-contract.test.ts
+          tests/clawdi-image-release-workflow.test.ts
+      - name: Build production sidecar image
+        run: >-
+          docker build
+          --file packages/whatsapp-baileys-sidecar/Dockerfile
+          --tag clawdi-whatsapp-baileys-sidecar:ci
+          .

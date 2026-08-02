@@ -274,6 +274,13 @@ discoverable from account state and should be reconciled separately with
 
 ## Production Deployment Checks
 
+Managed physical WhatsApp accounts use exact-SHA Kamal accessories and an
+explicit serial reconcile after the app deploy. Configure, scan, rotate, back
+up, restore, or roll them back only through
+[`whatsapp-baileys-sidecars.md`](whatsapp-baileys-sidecars.md). Kamal does not
+update accessories as part of `kamal deploy`; the workflow's accessory reboot
+and authenticated readiness loop are required release steps.
+
 ### Production values
 
 [`config/deploy.yml`](../../config/deploy.yml) keeps the Kamal structure public

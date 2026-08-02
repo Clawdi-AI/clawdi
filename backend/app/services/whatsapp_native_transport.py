@@ -4,6 +4,8 @@ import base64
 import binascii
 import hashlib
 import math
+import os
+import stat
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -52,9 +54,9 @@ _MAX_PAIRING_JSON_BYTES = 128 * 1024
 _PAIRING_ACTIONS = frozenset({"qr", "code", "cancel", "logout", "retry"})
 _EXPECTED_BAILEYS_RELEASE = {
     "packageName": "@whiskeysockets/baileys",
-    "packageVersion": "7.0.0-rc13",
-    "sourceCommit": "8053b086ecc97ec3f78299561de11959bab05d39",
-    "version": [2, 3000, 1035194821],
+    "packageVersion": "7.0.0-rc14",
+    "sourceCommit": "7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a",
+    "version": [2, 3000, 1043857760],
 }
 
 WhatsAppSidecarRuntimeStatus = Literal[
@@ -130,13 +132,23 @@ class WhatsAppProviderMessageEvent:
 
 @dataclass(frozen=True)
 class WhatsAppBaileysSidecarConfig:
-    base_url: str
     api_token: str = field(repr=False)
+    base_url: str | None = None
+    unix_socket_path: str | None = None
     timeout_seconds: float = 10.0
     account_id: UUID | None = None
 
     def __post_init__(self) -> None:
-        validate_whatsapp_sidecar_base_url(self.base_url)
+        if (self.base_url is None) == (self.unix_socket_path is None):
+            raise ValueError("baileys sidecar requires exactly one transport endpoint")
+        if self.base_url is not None:
+            validate_whatsapp_sidecar_base_url(self.base_url)
+        if self.unix_socket_path is not None:
+            validate_whatsapp_sidecar_unix_socket_path(self.unix_socket_path)
+            if self.account_id is None:
+                raise ValueError("baileys sidecar unix_socket_path requires account_id")
+            if os.path.basename(os.path.dirname(self.unix_socket_path)) != str(self.account_id):
+                raise ValueError("baileys sidecar unix_socket_path must be account-scoped")
         validate_whatsapp_sidecar_api_token(self.api_token)
         if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
             raise ValueError("baileys sidecar timeout_seconds must be positive and finite")
@@ -147,8 +159,16 @@ class WhatsAppBaileysSidecarConfig:
 
         if self.account_id is None:
             raise ValueError("baileys sidecar account_id is required for slot ownership")
-        material = f"clawdi-whatsapp-slot-v1\0{self.account_id}\0{self.base_url}"
+        material = f"clawdi-whatsapp-slot-v1\0{self.account_id}\0{self.endpoint_identity}"
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    @property
+    def endpoint_identity(self) -> str:
+        if self.unix_socket_path is not None:
+            return f"unix:{self.unix_socket_path}"
+        if self.base_url is None:  # pragma: no cover - guarded by __post_init__
+            raise ValueError("baileys sidecar transport endpoint unavailable")
+        return self.base_url
 
 
 class WhatsAppNativeUpstreamClient(Protocol):
@@ -215,16 +235,29 @@ class WhatsAppBaileysSidecarClient:
         *,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        base_url = validate_whatsapp_sidecar_base_url(config.base_url)
         api_token = validate_whatsapp_sidecar_api_token(config.api_token)
         self._config = config
         self._api_token = api_token
         self._connected = False
         self._owns_client = http_client is None
-        self._client = http_client or httpx.AsyncClient(
-            base_url=base_url,
-            timeout=httpx.Timeout(config.timeout_seconds),
-        )
+        if http_client is not None:
+            self._client = http_client
+        elif config.unix_socket_path is not None:
+            self._client = httpx.AsyncClient(
+                base_url="http://localhost",
+                transport=httpx.AsyncHTTPTransport(
+                    uds=validate_whatsapp_sidecar_unix_socket_path(config.unix_socket_path),
+                    trust_env=False,
+                ),
+                timeout=httpx.Timeout(config.timeout_seconds),
+            )
+        else:
+            if config.base_url is None:  # pragma: no cover - guarded by config
+                raise ValueError("baileys sidecar transport endpoint unavailable")
+            self._client = httpx.AsyncClient(
+                base_url=validate_whatsapp_sidecar_base_url(config.base_url),
+                timeout=httpx.Timeout(config.timeout_seconds),
+            )
 
     @property
     def connected(self) -> bool:
@@ -398,6 +431,8 @@ class WhatsAppBaileysSidecarClient:
     ) -> httpx.Response:
         headers = {"Authorization": f"Bearer {self._api_token}"}
         try:
+            if self._config.unix_socket_path is not None:
+                _assert_whatsapp_sidecar_unix_socket_ready(self._config.unix_socket_path)
             if json_body is None:
                 response = await self._client.request(
                     method,
@@ -413,6 +448,9 @@ class WhatsAppBaileysSidecarClient:
                     json=json_body,
                     params=params,
                 )
+        except WhatsAppSidecarUnavailableError:
+            self._connected = False
+            raise
         except httpx.HTTPError:
             self._connected = False
             raise WhatsAppSidecarUnavailableError("Baileys sidecar unavailable") from None
@@ -479,6 +517,51 @@ def validate_whatsapp_sidecar_base_url(value: str) -> str:
     }:
         raise ValueError("baileys sidecar base_url requires HTTPS except for exact loopback hosts")
     return candidate.rstrip("/")
+
+
+def validate_whatsapp_sidecar_unix_socket_path(value: str) -> str:
+    """Return a canonical per-account UDS path without relaxing TCP origin policy."""
+
+    if (
+        not value
+        or value != value.strip()
+        or "\x00" in value
+        or not os.path.isabs(value)
+        or os.path.normpath(value) != value
+        or len(os.fsencode(value)) > 103
+        or os.path.basename(value) != "sidecar.sock"
+    ):
+        raise ValueError(
+            "baileys sidecar unix_socket_path must be a bounded absolute "
+            "normalized sidecar.sock path"
+        )
+    return value
+
+
+def _assert_whatsapp_sidecar_unix_socket_ready(value: str) -> None:
+    path = validate_whatsapp_sidecar_unix_socket_path(value)
+    parent = os.path.dirname(path)
+    try:
+        parent_stat = os.lstat(parent)
+        socket_stat = os.lstat(path)
+        expected_uid = os.getuid()
+        expected_gid = os.getgid()
+        if (
+            stat.S_ISLNK(parent_stat.st_mode)
+            or not stat.S_ISDIR(parent_stat.st_mode)
+            or os.path.realpath(parent) != parent
+            or stat.S_IMODE(parent_stat.st_mode) != 0o770
+            or parent_stat.st_uid != expected_uid
+            or parent_stat.st_gid != expected_gid
+            or stat.S_ISLNK(socket_stat.st_mode)
+            or not stat.S_ISSOCK(socket_stat.st_mode)
+            or stat.S_IMODE(socket_stat.st_mode) != 0o660
+            or socket_stat.st_uid != expected_uid
+            or socket_stat.st_gid != expected_gid
+        ):
+            raise OSError("unsafe sidecar Unix socket")
+    except OSError:
+        raise WhatsAppSidecarUnavailableError("Baileys sidecar unavailable") from None
 
 
 def validate_whatsapp_sidecar_api_token(value: str) -> str:

@@ -1,11 +1,11 @@
-import { mkdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import type { WAVersion } from "baileys";
 
 import {
 	AUDITED_WHATSAPP_WEB_VERSION_TEXT,
 	parseAuditedWhatsAppWebVersion,
 } from "./audited-version.js";
+import { assertOwnedDirectory } from "./filesystem-security.js";
 
 const DEFAULT_PROVIDER_INBOX_MAX_EVENTS = 10_000;
 const DEFAULT_PROVIDER_INBOX_MAX_BYTES = 256 * 1024 * 1024;
@@ -15,6 +15,7 @@ export type SidecarConfig = {
 	accountId: string;
 	host: string;
 	port: number;
+	socketPath?: string;
 	apiToken: string;
 	sessionDir: string;
 	logLevel: string;
@@ -32,13 +33,23 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Sidecar
 	const apiToken = parseApiToken(
 		readRequired(env.CLAWDI_WA_SIDECAR_TOKEN, "CLAWDI_WA_SIDECAR_TOKEN"),
 	);
-	const sessionDir = resolve(
-		readRequired(env.CLAWDI_WA_SIDECAR_SESSION_DIR, "CLAWDI_WA_SIDECAR_SESSION_DIR"),
+	const sessionDir = readRequired(
+		env.CLAWDI_WA_SIDECAR_SESSION_DIR,
+		"CLAWDI_WA_SIDECAR_SESSION_DIR",
 	);
+	assertOwnedDirectory(sessionDir, 0o700, "provider session directory");
+	const socketPath = parseSocketPath(env.CLAWDI_WA_SIDECAR_SOCKET_PATH, accountId);
+	if (socketPath) {
+		if (nonEmpty(env.CLAWDI_WA_SIDECAR_HOST) || nonEmpty(env.CLAWDI_WA_SIDECAR_PORT)) {
+			throw new Error("CLAWDI_WA_SIDECAR_SOCKET_PATH cannot be combined with host or port");
+		}
+		assertOwnedDirectory(dirname(socketPath), 0o770, "provider socket directory");
+	}
 	const config: SidecarConfig = {
 		accountId,
 		host: nonEmpty(env.CLAWDI_WA_SIDECAR_HOST) ?? "127.0.0.1",
 		port: parsePort(env.CLAWDI_WA_SIDECAR_PORT ?? "8787"),
+		...(socketPath ? { socketPath } : {}),
 		apiToken,
 		sessionDir,
 		logLevel: nonEmpty(env.CLAWDI_WA_SIDECAR_LOG_LEVEL) ?? "info",
@@ -60,8 +71,24 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Sidecar
 			),
 		},
 	};
-	mkdirSync(config.sessionDir, { recursive: true, mode: 0o700 });
 	return config;
+}
+
+function parseSocketPath(raw: string | undefined, accountId: string): string | undefined {
+	const value = nonEmpty(raw);
+	if (!value) return undefined;
+	if (
+		value.includes("\0") ||
+		resolve(value) !== value ||
+		Buffer.byteLength(value) > 103 ||
+		basename(value) !== "sidecar.sock" ||
+		basename(dirname(value)) !== accountId
+	) {
+		throw new Error(
+			"CLAWDI_WA_SIDECAR_SOCKET_PATH must be a bounded account-scoped sidecar.sock path",
+		);
+	}
+	return value;
 }
 
 function parseAccountId(value: string): string {

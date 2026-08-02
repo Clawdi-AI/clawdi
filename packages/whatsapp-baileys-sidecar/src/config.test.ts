@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -45,6 +45,55 @@ describe("sidecar config", () => {
 		}
 	});
 
+	it("selects an account-scoped Unix socket without enabling TCP", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-wa-sidecar-"));
+		const sessionDir = join(root, "state");
+		const socketDir = join(root, ACCOUNT_ID);
+		mkdirSync(sessionDir, { mode: 0o700 });
+		mkdirSync(socketDir, { mode: 0o770 });
+		chmodSync(socketDir, 0o770);
+		const socketPath = join(socketDir, "sidecar.sock");
+		try {
+			const config = loadConfigFromEnv({
+				CLAWDI_WA_PROVIDER_ACCOUNT_ID: ACCOUNT_ID,
+				CLAWDI_WA_SIDECAR_TOKEN: "secret",
+				CLAWDI_WA_SIDECAR_SESSION_DIR: sessionDir,
+				CLAWDI_WA_SIDECAR_SOCKET_PATH: socketPath,
+			});
+
+			expect(config.socketPath).toBe(socketPath);
+			expect(() =>
+				loadConfigFromEnv({
+					CLAWDI_WA_PROVIDER_ACCOUNT_ID: ACCOUNT_ID,
+					CLAWDI_WA_SIDECAR_TOKEN: "secret",
+					CLAWDI_WA_SIDECAR_SESSION_DIR: sessionDir,
+					CLAWDI_WA_SIDECAR_SOCKET_PATH: socketPath,
+					CLAWDI_WA_SIDECAR_HOST: "0.0.0.0",
+				}),
+			).toThrow("cannot be combined with host or port");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("fails closed instead of repairing unsafe durable directory permissions", () => {
+		const sessionDir = mkdtempSync(join(tmpdir(), "clawdi-wa-sidecar-"));
+		chmodSync(sessionDir, 0o755);
+		try {
+			expect(() =>
+				loadConfigFromEnv({
+					CLAWDI_WA_PROVIDER_ACCOUNT_ID: ACCOUNT_ID,
+					CLAWDI_WA_SIDECAR_TOKEN: "secret",
+					CLAWDI_WA_SIDECAR_SESSION_DIR: sessionDir,
+				}),
+			).toThrow("provider session directory must have mode 700");
+			expect((statSync(sessionDir).mode & 0o777).toString(8)).toBe("755");
+		} finally {
+			chmodSync(sessionDir, 0o700);
+			rmSync(sessionDir, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects malformed account, version, and inbox capacity settings", () => {
 		const sessionDir = mkdtempSync(join(tmpdir(), "clawdi-wa-sidecar-"));
 		const base = {
@@ -53,6 +102,9 @@ describe("sidecar config", () => {
 			CLAWDI_WA_SIDECAR_SESSION_DIR: sessionDir,
 		};
 		try {
+			expect(() =>
+				loadConfigFromEnv({ ...base, CLAWDI_WA_SIDECAR_SESSION_DIR: "relative/state" }),
+			).toThrow("absolute normalized path");
 			expect(() =>
 				loadConfigFromEnv({ ...base, CLAWDI_WA_PROVIDER_ACCOUNT_ID: "account-a" }),
 			).toThrow("canonical UUID");

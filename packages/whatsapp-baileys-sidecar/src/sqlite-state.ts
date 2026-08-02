@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
 	type AuthenticationCreds,
@@ -14,6 +14,7 @@ import {
 } from "baileys";
 
 import { AUDITED_BAILEYS_RELEASE, AUDITED_WHATSAPP_WEB_VERSION_TEXT } from "./audited-version.js";
+import { assertOwnedDirectory } from "./filesystem-security.js";
 
 export type ProviderMessageEvent = {
 	sequence: number;
@@ -949,12 +950,7 @@ function validBase64(value: unknown): value is string {
 }
 
 function prepareSessionDirectory(sessionDir: string): void {
-	mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
-	const stat = lstatSync(sessionDir);
-	if (!stat.isDirectory() || stat.isSymbolicLink()) {
-		throw new Error("provider session path must be a real directory");
-	}
-	chmodSync(sessionDir, 0o700);
+	assertOwnedDirectory(sessionDir, 0o700, "provider session directory");
 }
 
 function rejectLegacyState(sessionDir: string): void {

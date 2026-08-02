@@ -571,7 +571,7 @@ def _parse_registrations(
         raise ValueError(f"{setting_name} must be an object")
 
     registrations: dict[UUID, WhatsAppBaileysSidecarConfig] = {}
-    origins: set[str] = set()
+    endpoints: set[str] = set()
     for account_id_raw, value in payload.items():
         try:
             account_id = UUID(str(account_id_raw))
@@ -580,9 +580,9 @@ def _parse_registrations(
         if account_id in registrations:
             raise ValueError(f"duplicate WhatsApp sidecar account id: {account_id}")
         config = _parse_sidecar_config(account_id=account_id, value=value)
-        if config.base_url in origins:
-            raise ValueError("each WhatsApp sidecar base_url must be unique")
-        origins.add(config.base_url)
+        if config.endpoint_identity in endpoints:
+            raise ValueError("each WhatsApp sidecar transport endpoint must be unique")
+        endpoints.add(config.endpoint_identity)
         registrations[account_id] = config
     return registrations
 
@@ -590,7 +590,13 @@ def _parse_registrations(
 def _parse_sidecar_config(*, account_id: UUID, value: JsonValue) -> WhatsAppBaileysSidecarConfig:
     if not isinstance(value, dict):
         raise ValueError(f"WhatsApp sidecar config for {account_id} must be an object")
-    unknown = set(value) - {"account_id", "base_url", "api_token", "timeout_seconds"}
+    unknown = set(value) - {
+        "account_id",
+        "base_url",
+        "unix_socket_path",
+        "api_token",
+        "timeout_seconds",
+    }
     if unknown:
         raise ValueError(f"WhatsApp sidecar config for {account_id} has unknown fields")
     declared_id = value.get("account_id")
@@ -603,12 +609,12 @@ def _parse_sidecar_config(*, account_id: UUID, value: JsonValue) -> WhatsAppBail
             ) from exc
         if parsed_declared_id != account_id:
             raise ValueError(f"WhatsApp sidecar account_id mismatch for {account_id}")
-    base_url = validate_whatsapp_sidecar_base_url(
-        _required_str(value, "base_url", account_id=account_id)
-    )
+    base_url = _optional_str(value, "base_url", account_id=account_id)
+    unix_socket_path = _optional_str(value, "unix_socket_path", account_id=account_id)
     return WhatsAppBaileysSidecarConfig(
-        base_url=base_url,
         api_token=_required_str(value, "api_token", account_id=account_id),
+        base_url=(validate_whatsapp_sidecar_base_url(base_url) if base_url is not None else None),
+        unix_socket_path=unix_socket_path,
         timeout_seconds=_optional_float(value, "timeout_seconds", account_id=account_id) or 10.0,
         account_id=account_id,
     )
@@ -620,10 +626,12 @@ def _validate_disjoint_physical_slots(
 ) -> None:
     if set(managed).intersection(custom):
         raise ValueError("managed and Custom WhatsApp sidecars must use disjoint slot ids")
-    managed_origins = {config.base_url for config in managed.values()}
-    custom_origins = {config.base_url for config in custom.values()}
-    if managed_origins.intersection(custom_origins):
-        raise ValueError("managed and Custom WhatsApp sidecars must use disjoint origins")
+    managed_endpoints = {config.endpoint_identity for config in managed.values()}
+    custom_endpoints = {config.endpoint_identity for config in custom.values()}
+    if managed_endpoints.intersection(custom_endpoints):
+        raise ValueError(
+            "managed and Custom WhatsApp sidecars must use disjoint transport endpoints"
+        )
 
 
 def _configured_slot_id(config: Mapping[str, JsonValue]) -> UUID | None:

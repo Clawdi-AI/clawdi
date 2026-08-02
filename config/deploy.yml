@@ -1,3 +1,49 @@
+<%
+require "json"
+require "pathname"
+
+whatsapp_manifest_path = File.expand_path(".kamal/whatsapp-sidecars.json", Dir.pwd)
+whatsapp_manifest = if File.exist?(whatsapp_manifest_path)
+  JSON.parse(File.read(whatsapp_manifest_path))
+else
+  { "schema_version" => 1, "accounts" => [] }
+end
+unless whatsapp_manifest == { "schema_version" => 1, "accounts" => whatsapp_manifest["accounts"] } && whatsapp_manifest["accounts"].is_a?(Array)
+  raise "invalid generated WhatsApp sidecar deployment manifest"
+end
+whatsapp_accounts = whatsapp_manifest.fetch("accounts")
+whatsapp_account_ids = []
+whatsapp_accounts.each do |account|
+  unless account.is_a?(Hash) && account.keys.sort == %w[accessory_name account_id socket_path token_secret_name]
+    raise "invalid generated WhatsApp sidecar account entry"
+  end
+  account_id = account.fetch("account_id")
+  unless account_id.is_a?(String) && account_id.match?(/\A[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/)
+    raise "invalid generated WhatsApp sidecar account id"
+  end
+  compact_id = account_id.delete("-")
+  unless account.fetch("accessory_name") == "whatsapp-baileys-#{compact_id}" &&
+      account.fetch("socket_path") == "/run/clawdi-whatsapp/#{account_id}/sidecar.sock" &&
+      account.fetch("token_secret_name") == "CLAWDI_WA_SIDECAR_TOKEN_#{compact_id.upcase}"
+    raise "invalid generated WhatsApp sidecar account identity"
+  end
+  whatsapp_account_ids << account_id
+end
+unless whatsapp_account_ids.uniq.length == whatsapp_account_ids.length
+  raise "duplicate generated WhatsApp sidecar account id"
+end
+whatsapp_host_root = ENV.fetch("WHATSAPP_BAILEYS_HOST_ROOT", "").strip
+sidecar_image_version = ENV.fetch("DEPLOY_IMAGE_VERSION", "").strip
+if whatsapp_accounts.any?
+  unless whatsapp_host_root != "/" && whatsapp_host_root.match?(/\A\/[A-Za-z0-9._\/-]+\z/) &&
+      Pathname.new(whatsapp_host_root).absolute? && Pathname.new(whatsapp_host_root).cleanpath.to_s == whatsapp_host_root
+    raise "WHATSAPP_BAILEYS_HOST_ROOT must be a safe absolute normalized non-root path"
+  end
+  unless sidecar_image_version.match?(/\A[0-9a-f]{40}\z/)
+    raise "DEPLOY_IMAGE_VERSION must be a full lowercase git SHA when WhatsApp sidecars are configured"
+  end
+end
+%>
 # Kamal deployment for the clawdi backend (cloud-api.clawdi.ai).
 #
 # Images are built and pushed to GHCR by CI; Kamal never builds.
@@ -90,8 +136,40 @@ deploy_timeout: 120 # api entrypoint runs alembic before listening
 
 volumes:
   - clawdi-fastembed:/tmp/fastembed_cache # fastembed default cache; persists the ~1.1GB ONNX model across deploys
+<% whatsapp_accounts.each do |account| %>
+  - <%= whatsapp_host_root %>/<%= account.fetch("account_id") %>/run:<%= File.dirname(account.fetch("socket_path")) %>:ro
+<% end %>
 
 accessories:
+<% whatsapp_accounts.each do |account| %>
+  <%= account.fetch("accessory_name") %>:
+    image: ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar:<%= sidecar_image_version %>
+    host: <%= ENV.fetch("DEPLOY_HOST") %>
+    network: bridge
+    directories:
+      - local: <%= whatsapp_host_root %>/<%= account.fetch("account_id") %>/state
+        remote: /data
+        mode: "700"
+      - local: <%= whatsapp_host_root %>/<%= account.fetch("account_id") %>/run
+        remote: <%= File.dirname(account.fetch("socket_path")) %>
+        mode: "770"
+    options:
+      memory: 512m
+      pids-limit: 128
+      read-only: true
+      cap-drop: ALL
+      security-opt: no-new-privileges:true
+      tmpfs: /tmp:rw,noexec,nosuid,nodev,size=16m
+    env:
+      clear:
+        CLAWDI_WA_PROVIDER_ACCOUNT_ID: <%= account.fetch("account_id") %>
+        CLAWDI_WA_SIDECAR_SESSION_DIR: /data
+        CLAWDI_WA_SIDECAR_SOCKET_PATH: <%= account.fetch("socket_path") %>
+        CLAWDI_WA_SIDECAR_LOG_LEVEL: info
+      secret:
+        - CLAWDI_WA_SIDECAR_TOKEN:<%= account.fetch("token_secret_name") %>
+
+<% end %>
   postgres:
     image: ghcr.io/clawdi-ai/postgres-pgbackrest:pg18 # pgvector pg18 + pgBackRest (WAL archiving to R2)
     host: <%= ENV.fetch("DEPLOY_HOST") %>
@@ -188,3 +266,6 @@ env:
     - MEMORY_EMBEDDING_API_KEY
     - MEMORY_EMBEDDING_BASE_URL
     - VAULT_ENCRYPTION_KEY
+<% if whatsapp_accounts.any? %>
+    - CHANNEL_WHATSAPP_BAILEYS_SIDECARS_JSON
+<% end %>

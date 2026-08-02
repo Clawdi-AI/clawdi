@@ -38,6 +38,7 @@ concurrency:
 
 env:
   BACKEND_IMAGE_NAME: ghcr.io/clawdi-ai/clawdi-backend
+  SIDECAR_IMAGE_NAME: ghcr.io/clawdi-ai/clawdi-whatsapp-baileys-sidecar
   WEB_IMAGE_NAME: ghcr.io/clawdi-ai/clawdi-web
 
 jobs:
@@ -109,6 +110,25 @@ jobs:
           cache-from: type=gha,scope=clawdi-backend-image
           cache-to: type=gha,mode=max,scope=clawdi-backend-image
 
+      - name: Build and push WhatsApp sidecar image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: packages/whatsapp-baileys-sidecar/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.SIDECAR_IMAGE_NAME }}:${{ steps.rev.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.rev.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.rev.outputs.sha }}
+            org.opencontainers.image.created=${{ steps.labels.outputs.created }}
+            org.opencontainers.image.title=Clawdi WhatsApp Baileys Sidecar
+            org.opencontainers.image.description=Account-scoped physical WhatsApp transport for Clawdi.
+          provenance: false
+          cache-from: type=gha,scope=clawdi-whatsapp-sidecar-image
+          cache-to: type=gha,mode=max,scope=clawdi-whatsapp-sidecar-image
+
       - name: Validate web image inputs
         if: inputs.build_web
         env:
@@ -149,6 +169,7 @@ jobs:
           echo "### Clawdi Images" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- Backend: \`${{ env.BACKEND_IMAGE_NAME }}:${{ steps.rev.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- WhatsApp sidecar: \`${{ env.SIDECAR_IMAGE_NAME }}:${{ steps.rev.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
           if [ "${{ inputs.build_web }}" = "true" ]; then
             echo "- Web: \`${{ env.WEB_IMAGE_NAME }}:${{ steps.rev.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
           else
@@ -179,9 +200,18 @@ jobs:
         env:
           KAMAL_SECRETS: ${{ secrets.KAMAL_SECRETS }}
         run: |
-          mkdir -p .kamal
+          install -d -m 700 .kamal
           printf '%s\n' "$KAMAL_SECRETS" > .kamal/secrets
           chmod 600 .kamal/secrets
+
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          bun-version: "1.3.14"
+
+      - name: Materialize WhatsApp sidecar deployment
+        env:
+          CHANNEL_WHATSAPP_BAILEYS_SIDECARS_JSON: ${{ secrets.CHANNEL_WHATSAPP_BAILEYS_SIDECARS_JSON }}
+        run: bun run scripts/prepare-whatsapp-sidecar-deploy.ts
 
       - name: Prepare runner for Ruby
         run: |
@@ -200,7 +230,43 @@ jobs:
           CLOUDFLARE_ORIGIN_KEY: ${{ secrets.CLOUDFLARE_ORIGIN_KEY }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_SSH_PROXY_COMMAND: ${{ secrets.DEPLOY_SSH_PROXY_COMMAND }}
+          DEPLOY_IMAGE_VERSION: ${{ needs.build.outputs.image_tag }}
+          WHATSAPP_BAILEYS_HOST_ROOT: ${{ vars.WHATSAPP_BAILEYS_HOST_ROOT }}
         run: |
           gem install kamal -v '2.12.0' --no-document
           test "$(kamal version)" = "2.12.0"
+          while IFS= read -r accessory; do
+            test -n "$accessory"
+            kamal accessory directories "$accessory"
+          done < <(jq -r '.accounts[].accessory_name' .kamal/whatsapp-sidecars.json)
+          while IFS= read -r account_id; do
+            test -n "$account_id"
+            state_path="${WHATSAPP_BAILEYS_HOST_ROOT}/${account_id}/state"
+            run_path="${WHATSAPP_BAILEYS_HOST_ROOT}/${account_id}/run"
+            kamal server exec \
+              "test -d '${state_path}' && test ! -L '${state_path}' && \
+               realpath -e '${state_path}' | grep -Fxq '${state_path}' && \
+               test \"\$(stat -c '%u:%g:%a' '${state_path}')\" = '1000:1000:700' && \
+               test -d '${run_path}' && test ! -L '${run_path}' && \
+               realpath -e '${run_path}' | grep -Fxq '${run_path}' && \
+               test \"\$(stat -c '%u:%g:%a' '${run_path}')\" = '1000:1000:770'"
+          done < <(jq -r '.accounts[].account_id' .kamal/whatsapp-sidecars.json)
           kamal deploy -P --version "${{ needs.build.outputs.image_tag }}"
+          while IFS= read -r accessory; do
+            test -n "$accessory"
+            kamal accessory reboot "$accessory"
+            ready=false
+            for _attempt in $(seq 1 30); do
+              if kamal accessory exec "$accessory" --reuse \
+                "bun run /app/packages/whatsapp-baileys-sidecar/src/healthcheck.ts" \
+                >/dev/null 2>&1; then
+                ready=true
+                break
+              fi
+              sleep 2
+            done
+            if [ "$ready" != true ]; then
+              echo "WhatsApp sidecar failed readiness: $accessory" >&2
+              exit 1
+            fi
+          done < <(jq -r '.accounts[].accessory_name' .kamal/whatsapp-sidecars.json)
