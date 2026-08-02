@@ -303,3 +303,50 @@ uses Python `logging` with `logging.basicConfig(level=logging.INFO)` in
 `RequestTimingMiddleware` adds `X-Process-Time-Ms` to HTTP responses. Requests
 at or above `SLOW_REQUEST_LOG_MS` log as `request_slow`; 5xx responses log as
 `request_error`, and uncaught exceptions log as `request_failed`.
+
+## Channel queue retention
+
+The channels worker drains retention hourly in independently committed batches.
+`CHANNEL_MESSAGE_CLEANUP_BATCH_SIZE` bounds each record kind per transaction and
+`CHANNEL_MESSAGE_CLEANUP_MAX_BATCHES` bounds one run. PostgreSQL row locks with
+`SKIP LOCKED` let overlapping cleaners divide eligible rows without deleting
+pending work or waiting on one another.
+
+Retention ownership is deliberately narrow:
+
+| State | Retention rule |
+| --- | --- |
+| Accounts, links, secrets, bindings, aliases, credentials | Durable product and authorization state; owner lifecycle controls deletion. |
+| Messages and deliveries | Bound pending inbox and pending outbox rows are durable and are never time-pruned. Delivered inbound, terminal Telegram/Discord outbound, and old unbound inbound rows use the configured message horizons; delivery rows cascade with their message. |
+| Debug events | Telegram/Discord operational history uses the delivered-message horizon. |
+| Pair codes | Claimed/revoked codes and codes expired beyond the message horizon are ephemeral. Live codes are preserved. |
+| Agent references | Active Telegram file/message authorization stays durable. Expired Discord interaction-token references and references without an active link use the message horizon. Discord documents a 15-minute interaction-token lifetime. |
+| Scheduled messages | Durable pending product work; the generic retention worker does not delete it. |
+
+Telegram documents that upstream updates are not kept longer than 24 hours,
+but Clawdi does not silently apply that limit to the shared bound inbox. Discord
+does not have the same coordinated drop contract, and the current schema has no
+terminal drop outcome. Instead, the worker exports provider-specific pending
+age/count metrics and logs a warning after
+`CHANNEL_MESSAGE_STUCK_PENDING_HOURS` (24 hours by default). Alert when
+`msg_router_channel_queue_stuck_pending` is non-zero or when
+`msg_router_channel_retention_budget_exhaustions_total` increases. The worker's
+existing `/health` readiness contract is unchanged; its process-local `/metrics`
+surface exposes these gauges and counters.
+
+Message text and provider JSON are not scrubbed ahead of row retention. Text is
+active channel activity history, pending Telegram replay needs the provider
+payload, and Telegram/Discord tutorial cooldowns read delivered payload markers.
+Introducing a second compaction horizon would change those consumers and needs
+an explicit product contract; the worker does not guess one.
+
+Protocol references:
+
+- [Telegram `getUpdates`](https://core.telegram.org/bots/api#getupdates)
+- [Discord interaction responses](https://docs.discord.com/developers/interactions/receiving-and-responding)
+- [PostgreSQL locking clause](https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE)
+- [SQLAlchemy `with_for_update`](https://docs.sqlalchemy.org/en/20/core/selectable.html#sqlalchemy.sql.expression.Select.with_for_update)
+
+Done: with the channels worker running,
+`curl -fsS http://127.0.0.1:8000/metrics | rg 'msg_router_channel_(queue|retention)'`
+prints the queue and retention metric families.

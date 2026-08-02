@@ -305,9 +305,11 @@ class Settings(BaseSettings):
     channel_long_poll_max_seconds: float = 30.0
     channel_long_poll_interval_seconds: float = 0.1
     discord_gateway_poll_interval_seconds: float = 1.0
-    channel_message_retention_days: int = 30
-    channel_unbound_message_retention_hours: int = 24
-    channel_message_cleanup_batch_size: int = 500
+    channel_message_retention_days: Annotated[int, Field(gt=0, le=3_650)] = 30
+    channel_unbound_message_retention_hours: Annotated[int, Field(gt=0, le=87_600)] = 24
+    channel_message_cleanup_batch_size: Annotated[int, Field(gt=0, le=10_000)] = 500
+    channel_message_cleanup_max_batches: Annotated[int, Field(gt=0, le=1_000)] = 20
+    channel_message_stuck_pending_hours: Annotated[int, Field(gt=0, le=8_760)] = 24
 
     # Shared LLM credentials for any feature that needs chat completions
     # (memory extraction today; session summarization, auto-tagging, etc.

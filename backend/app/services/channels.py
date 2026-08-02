@@ -17,7 +17,7 @@ import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import HTTPException, status
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, exists, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,6 +53,7 @@ from app.models.channel import (
     ChannelBinding,
     ChannelBindingAlias,
     ChannelBotAgentLink,
+    ChannelDebugEvent,
     ChannelDelivery,
     ChannelMessage,
     ChannelPairCode,
@@ -194,6 +195,44 @@ TELEGRAM_REF_FILE_PATH = "telegram_file_path"
 TELEGRAM_REF_MESSAGE_ID = "telegram_message_id"
 DISCORD_REF_INTERACTION_ID_TOKEN = "discord_interaction_id_token"
 DISCORD_REF_INTERACTION_TOKEN = "discord_interaction_token"
+CHANNEL_RETENTION_PROVIDERS = (CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD)
+DISCORD_EPHEMERAL_REFERENCE_KINDS = (
+    DISCORD_REF_INTERACTION_ID_TOKEN,
+    DISCORD_REF_INTERACTION_TOKEN,
+)
+
+
+@dataclass(frozen=True)
+class ChannelQueueSnapshot:
+    provider: str
+    queue: str
+    pending_count: int
+    stuck_count: int
+    oldest_pending_at: datetime | None
+
+
+@dataclass(frozen=True)
+class ChannelRetentionBatch:
+    messages: int = 0
+    debug_events: int = 0
+    pair_codes: int = 0
+    agent_references: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.messages + self.debug_events + self.pair_codes + self.agent_references
+
+    def saturated_kinds(self, limit: int) -> tuple[str, ...]:
+        return tuple(
+            kind
+            for kind, count in (
+                ("messages", self.messages),
+                ("debug_events", self.debug_events),
+                ("pair_codes", self.pair_codes),
+                ("agent_references", self.agent_references),
+            )
+            if count == limit
+        )
 
 
 @dataclass(frozen=True)
@@ -3381,10 +3420,27 @@ async def prune_channel_messages(
         return 0
     current_time = now or datetime.now(UTC)
     delivered_cutoff = current_time - (
-        delivered_retention or timedelta(days=settings.channel_message_retention_days)
+        delivered_retention
+        if delivered_retention is not None
+        else timedelta(days=settings.channel_message_retention_days)
     )
     unbound_cutoff = current_time - (
-        unbound_retention or timedelta(hours=settings.channel_unbound_message_retention_hours)
+        unbound_retention
+        if unbound_retention is not None
+        else timedelta(hours=settings.channel_unbound_message_retention_hours)
+    )
+    enabled_account = exists(
+        select(ChannelAccount.id).where(
+            ChannelAccount.id == ChannelMessage.account_id,
+            ChannelAccount.provider.in_(CHANNEL_RETENTION_PROVIDERS),
+        )
+    )
+    terminal_delivery = exists(
+        select(ChannelDelivery.id).where(
+            ChannelDelivery.message_id == ChannelMessage.id,
+            ChannelDelivery.status.in_((DELIVERY_STATUS_SUCCEEDED, DELIVERY_STATUS_FAILED)),
+            ChannelDelivery.updated_at < delivered_cutoff,
+        )
     )
     result = await db.execute(
         select(ChannelMessage)
@@ -3399,16 +3455,238 @@ async def prune_channel_messages(
                     ChannelMessage.binding_id.is_(None),
                     ChannelMessage.created_at < unbound_cutoff,
                 ),
+                and_(
+                    ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
+                    enabled_account,
+                    terminal_delivery,
+                ),
             )
         )
         .order_by(ChannelMessage.created_at, ChannelMessage.id)
         .limit(batch_limit)
+        .with_for_update(skip_locked=True, of=ChannelMessage)
     )
     messages = list(result.scalars().all())
     for message in messages:
         await db.delete(message)
     await db.flush()
     return len(messages)
+
+
+async def prune_channel_debug_events(
+    db: AsyncSession,
+    *,
+    now: datetime | None = None,
+    retention: timedelta | None = None,
+    limit: int | None = None,
+) -> int:
+    batch_limit = max(
+        0,
+        settings.channel_message_cleanup_batch_size if limit is None else limit,
+    )
+    if batch_limit == 0:
+        return 0
+    current_time = now or datetime.now(UTC)
+    cutoff = current_time - (
+        retention
+        if retention is not None
+        else timedelta(days=settings.channel_message_retention_days)
+    )
+    result = await db.execute(
+        select(ChannelDebugEvent)
+        .where(
+            ChannelDebugEvent.provider.in_(CHANNEL_RETENTION_PROVIDERS),
+            ChannelDebugEvent.created_at < cutoff,
+        )
+        .order_by(ChannelDebugEvent.created_at, ChannelDebugEvent.id)
+        .limit(batch_limit)
+        .with_for_update(skip_locked=True, of=ChannelDebugEvent)
+    )
+    events = list(result.scalars().all())
+    for event in events:
+        await db.delete(event)
+    await db.flush()
+    return len(events)
+
+
+async def prune_channel_pair_codes(
+    db: AsyncSession,
+    *,
+    now: datetime | None = None,
+    retention: timedelta | None = None,
+    limit: int | None = None,
+) -> int:
+    batch_limit = max(
+        0,
+        settings.channel_message_cleanup_batch_size if limit is None else limit,
+    )
+    if batch_limit == 0:
+        return 0
+    current_time = now or datetime.now(UTC)
+    cutoff = current_time - (
+        retention
+        if retention is not None
+        else timedelta(days=settings.channel_message_retention_days)
+    )
+    result = await db.execute(
+        select(ChannelPairCode)
+        .join(ChannelAccount, ChannelAccount.id == ChannelPairCode.account_id)
+        .where(
+            ChannelAccount.provider.in_(CHANNEL_RETENTION_PROVIDERS),
+            or_(
+                and_(
+                    ChannelPairCode.status.in_(
+                        (PAIR_CODE_STATUS_CLAIMED, PAIR_CODE_STATUS_REVOKED)
+                    ),
+                    ChannelPairCode.updated_at < cutoff,
+                ),
+                and_(
+                    ChannelPairCode.status == PAIR_CODE_STATUS_PENDING,
+                    ChannelPairCode.expires_at < cutoff,
+                ),
+            ),
+        )
+        .order_by(ChannelPairCode.created_at, ChannelPairCode.id)
+        .limit(batch_limit)
+        .with_for_update(skip_locked=True, of=ChannelPairCode)
+    )
+    pair_codes = list(result.scalars().all())
+    for pair_code in pair_codes:
+        await db.delete(pair_code)
+    await db.flush()
+    return len(pair_codes)
+
+
+async def prune_channel_agent_references(
+    db: AsyncSession,
+    *,
+    now: datetime | None = None,
+    retention: timedelta | None = None,
+    limit: int | None = None,
+) -> int:
+    batch_limit = max(
+        0,
+        settings.channel_message_cleanup_batch_size if limit is None else limit,
+    )
+    if batch_limit == 0:
+        return 0
+    current_time = now or datetime.now(UTC)
+    cutoff = current_time - (
+        retention
+        if retention is not None
+        else timedelta(days=settings.channel_message_retention_days)
+    )
+    active_link = exists(
+        select(ChannelBotAgentLink.id).where(
+            ChannelBotAgentLink.id == ChannelAgentReference.bot_agent_link_id,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+        )
+    )
+    result = await db.execute(
+        select(ChannelAgentReference)
+        .where(
+            ChannelAgentReference.provider.in_(CHANNEL_RETENTION_PROVIDERS),
+            ChannelAgentReference.updated_at < cutoff,
+            or_(
+                ~active_link,
+                and_(
+                    ChannelAgentReference.provider == CHANNEL_PROVIDER_DISCORD,
+                    ChannelAgentReference.ref_kind.in_(DISCORD_EPHEMERAL_REFERENCE_KINDS),
+                ),
+            ),
+        )
+        .order_by(ChannelAgentReference.updated_at, ChannelAgentReference.id)
+        .limit(batch_limit)
+        .with_for_update(skip_locked=True, of=ChannelAgentReference)
+    )
+    references = list(result.scalars().all())
+    for reference in references:
+        await db.delete(reference)
+    await db.flush()
+    return len(references)
+
+
+async def prune_channel_retention_batch(
+    db: AsyncSession,
+    *,
+    now: datetime | None = None,
+    limit: int | None = None,
+) -> ChannelRetentionBatch:
+    current_time = now or datetime.now(UTC)
+    return ChannelRetentionBatch(
+        messages=await prune_channel_messages(db, now=current_time, limit=limit),
+        debug_events=await prune_channel_debug_events(db, now=current_time, limit=limit),
+        pair_codes=await prune_channel_pair_codes(db, now=current_time, limit=limit),
+        agent_references=await prune_channel_agent_references(db, now=current_time, limit=limit),
+    )
+
+
+async def channel_queue_snapshots(
+    db: AsyncSession,
+    *,
+    now: datetime | None = None,
+    stuck_after: timedelta | None = None,
+) -> tuple[ChannelQueueSnapshot, ...]:
+    current_time = now or datetime.now(UTC)
+    stuck_cutoff = current_time - (
+        stuck_after
+        if stuck_after is not None
+        else timedelta(hours=settings.channel_message_stuck_pending_hours)
+    )
+    snapshots: list[ChannelQueueSnapshot] = []
+    for provider in CHANNEL_RETENTION_PROVIDERS:
+        inbox_row = (
+            await db.execute(
+                select(
+                    func.count(ChannelMessage.id),
+                    func.count(ChannelMessage.id).filter(ChannelMessage.created_at < stuck_cutoff),
+                    func.min(ChannelMessage.created_at),
+                )
+                .join(ChannelAccount, ChannelAccount.id == ChannelMessage.account_id)
+                .where(
+                    ChannelAccount.provider == provider,
+                    ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+                    ChannelMessage.binding_id.is_not(None),
+                    ChannelMessage.delivered_at.is_(None),
+                )
+            )
+        ).one()
+        snapshots.append(
+            ChannelQueueSnapshot(
+                provider=provider,
+                queue="inbox",
+                pending_count=int(inbox_row[0]),
+                stuck_count=int(inbox_row[1]),
+                oldest_pending_at=inbox_row[2],
+            )
+        )
+        outbox_row = (
+            await db.execute(
+                select(
+                    func.count(ChannelDelivery.id),
+                    func.count(ChannelDelivery.id).filter(
+                        ChannelDelivery.created_at < stuck_cutoff
+                    ),
+                    func.min(ChannelDelivery.created_at),
+                )
+                .join(ChannelAccount, ChannelAccount.id == ChannelDelivery.account_id)
+                .where(
+                    ChannelAccount.provider == provider,
+                    ChannelDelivery.status == DELIVERY_STATUS_PENDING,
+                )
+            )
+        ).one()
+        snapshots.append(
+            ChannelQueueSnapshot(
+                provider=provider,
+                queue="outbox",
+                pending_count=int(outbox_row[0]),
+                stuck_count=int(outbox_row[1]),
+                oldest_pending_at=outbox_row[2],
+            )
+        )
+    return tuple(snapshots)
 
 
 async def wait_for_channel_inbox_events(
@@ -3690,6 +3968,8 @@ async def deliver_channel_delivery(
 
     message.provider_message_id = provider_message_id
     message.payload = _delivery_success_payload(message.payload, provider_response)
+    if account.provider in CHANNEL_RETENTION_PROVIDERS:
+        message.delivered_at = datetime.now(UTC)
     delivery.status = DELIVERY_STATUS_SUCCEEDED
     delivery.locked_at = None
     delivery.locked_by = None
@@ -4338,6 +4618,7 @@ async def send_telegram_message(
         provider_message_id=provider_message_id,
         text=text,
         payload=payload if isinstance(payload, dict) else None,
+        delivered_at=datetime.now(UTC),
     )
 
 
@@ -4447,6 +4728,7 @@ async def send_discord_message(
         provider_message_id=provider_message_id,
         text=text,
         payload=response_payload,
+        delivered_at=datetime.now(UTC),
     )
 
 
@@ -4474,6 +4756,7 @@ async def record_discord_outbound_message(
         provider_message_id=provider_message_id,
         text=_read_optional_str(provider_response.get("content")) or "",
         payload=None,
+        delivered_at=datetime.now(UTC),
     )
 
 
@@ -4879,6 +5162,7 @@ async def _record_outbound_channel_message(
     provider_message_id: str | None,
     text: str,
     payload: dict[str, Any] | None,
+    delivered_at: datetime | None = None,
 ) -> ChannelMessage:
     owner_user_id = binding.user_id if binding is not None else account.user_id
     message = ChannelMessage(
@@ -4891,6 +5175,7 @@ async def _record_outbound_channel_message(
         provider_message_id=provider_message_id,
         text=text,
         payload=payload,
+        delivered_at=delivered_at,
     )
     db.add(message)
     await db.flush()
