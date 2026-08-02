@@ -34,4 +34,12 @@ describe("agent capabilities", () => {
 			expect(modules.find((module) => module.id === "projects")?.size).toBe("wide");
 		}
 	});
+
+	test("keeps desktop columns explicit without presentation copy in the registry", () => {
+		expect(agentOverviewGroups("connected").map((group) => group.columns)).toEqual([3, 3]);
+		expect(agentOverviewGroups("hosted").map((group) => group.columns)).toEqual([4, 3, 3]);
+		for (const group of [...agentOverviewGroups("connected"), ...agentOverviewGroups("hosted")]) {
+			expect(Object.hasOwn(group, "description")).toBe(false);
+		}
+	});
 });

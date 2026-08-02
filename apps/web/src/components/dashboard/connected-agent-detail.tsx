@@ -8,7 +8,14 @@ import {
 	AgentSourceBadgeForEnvironment,
 	agentDisplayName,
 } from "@/components/dashboard/agent-label";
-import { AgentOverviewCapabilities } from "@/components/dashboard/agent-overview-capabilities";
+import {
+	AgentOverviewCapabilities,
+	OverviewChips,
+	OverviewMetadata,
+	OverviewModuleError,
+	OverviewModuleSkeleton,
+	OverviewSummaryRows,
+} from "@/components/dashboard/agent-overview-capabilities";
 import { useAgentOverviewProjects } from "@/components/dashboard/agent-project-bindings-query";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
@@ -164,91 +171,132 @@ export function ConnectedAgentDetail({
 								routeSearch={routeSearch}
 								content={{
 									sessions: {
-										value: sessionsLoading
-											? "Loading…"
-											: `${sessionTotal} ${sessionTotal === 1 ? "session" : "sessions"}`,
-										detail: "Recent work synced from this agent.",
-										content: blockingSessionsError ? null : (
-											<SessionFeed
-												sessions={(sessionsPage?.items ?? []).slice(0, 3)}
-												isLoading={sessionsLoading}
-												emptyMessage="No sessions synced from this agent yet."
-												emptyVariant="inset"
-												showAgent={false}
-												sessionLink={(session) => scopedSessionLink(session.id)}
+										body: sessionsLoading ? (
+											<OverviewModuleSkeleton label="sessions" rows={3} />
+										) : blockingSessionsError ? (
+											<OverviewModuleError
+												label="Sessions"
+												onRetry={() => void refetchSessions()}
 											/>
+										) : (
+											<div className="space-y-3">
+												<div>
+													<p className="text-lg font-semibold tracking-tight">
+														{sessionTotal} {sessionTotal === 1 ? "session" : "sessions"}
+													</p>
+													<p className="mt-1 text-xs text-muted-foreground">
+														Recent synced activity
+													</p>
+												</div>
+												<div className="border-t pt-3">
+													<SessionFeed
+														sessions={(sessionsPage?.items ?? []).slice(0, 3)}
+														isLoading={false}
+														emptyMessage="No sessions synced from this agent yet."
+														emptyVariant="inset"
+														showAgent={false}
+														sessionLink={(session) => scopedSessionLink(session.id)}
+													/>
+												</div>
+											</div>
 										),
 									},
 									"live-sync": {
-										value: (
-											<span className="inline-flex items-center gap-2">
-												<StatusDot status={syncTone} />
-												{syncStatus.label}
-											</span>
+										body: (
+											<div className="space-y-3">
+												<p className="inline-flex items-center gap-2 text-lg font-semibold">
+													<StatusDot status={syncTone} /> {syncStatus.label}
+												</p>
+												<OverviewMetadata
+													items={[
+														{ label: "Machine", value: agent.machine_name },
+														{ label: "Last seen", value: relativeTime(agent.last_seen_at) },
+													]}
+												/>
+											</div>
 										),
-										detail: `${agent.machine_name} · last seen ${relativeTime(agent.last_seen_at)}`,
 									},
 									projects: {
-										value: projectBindingsLoading
-											? "Loading…"
-											: projectBindingsError
-												? "Unavailable"
-												: `${projectBindings?.length ?? 0} ${projectBindings?.length === 1 ? "Project" : "Projects"}`,
-										detail: "Projects this agent reads for context and resources.",
-										items: overviewProjects.names,
+										body: projectBindingsLoading ? (
+											<OverviewModuleSkeleton label="projects" rows={3} />
+										) : blockingProjectBindingsError ? (
+											<OverviewModuleError
+												label="Projects"
+												onRetry={() => void refetchProjectBindings()}
+											/>
+										) : (
+											<div className="space-y-3">
+												<p className="text-lg font-semibold">
+													{projectBindings?.length ?? 0} bound
+												</p>
+												<OverviewSummaryRows
+													items={overviewProjects.names}
+													empty="No projects bound"
+												/>
+											</div>
+										),
 									},
 									skills: {
-										value: skillsLoading
-											? "Loading…"
-											: skillsError
-												? "Unavailable"
-												: `${skillsForThisEnv?.length ?? 0} available`,
-										detail: "Skills available through this agent's Projects.",
-										items: (skillsForThisEnv ?? []).map((skill) => skill.name),
+										body: skillsLoading ? (
+											<OverviewModuleSkeleton label="skills" rows={2} />
+										) : blockingSkillsError ? (
+											<OverviewModuleError label="Skills" onRetry={() => void refetchSkills()} />
+										) : (
+											<div className="space-y-3">
+												<p className="text-lg font-semibold">
+													{skillsForThisEnv?.length ?? 0} available
+												</p>
+												<OverviewChips
+													items={(skillsForThisEnv ?? []).map((skill) => skill.name)}
+													empty="No skills available"
+												/>
+											</div>
+										),
 									},
 									memories: {
-										value: "Account-wide",
-										detail: "Shared with every agent in this account.",
+										body: (
+											<OverviewMetadata
+												items={[
+													{ label: "Scope", value: "Account-wide" },
+													{ label: "Access", value: "All agents" },
+												]}
+											/>
+										),
 									},
 									vaults: {
-										value: projectBindingsLoading
-											? "Loading…"
-											: `From ${projectBindings?.length ?? 0} ${projectBindings?.length === 1 ? "Project" : "Projects"}`,
-										detail: "Secrets are supplied through bound Projects.",
+										body: projectBindingsLoading ? (
+											<OverviewModuleSkeleton label="vault sources" rows={2} />
+										) : blockingProjectBindingsError ? (
+											<OverviewModuleError
+												label="Vault sources"
+												onRetry={() => void refetchProjectBindings()}
+											/>
+										) : (
+											<OverviewMetadata
+												items={[
+													{
+														label: "Sources",
+														value: projectBindings?.length
+															? `${projectBindings.length} bound Projects`
+															: "No bound Projects",
+													},
+													{ label: "Delivery", value: "Through Projects" },
+												]}
+											/>
+										),
 									},
 									connectors: {
-										value: "Account-wide",
-										detail: "Connected apps are available to every agent.",
+										body: (
+											<OverviewMetadata
+												items={[
+													{ label: "Scope", value: "Account-wide" },
+													{ label: "Managed", value: "Account settings" },
+												]}
+											/>
+										),
 									},
 								}}
 							/>
-							{blockingSkillsError ? (
-								<ApiErrorPanel
-									error={blockingSkillsError}
-									onRetry={() => {
-										void refetchSkills();
-									}}
-									title="Couldn't load agent skills"
-								/>
-							) : null}
-							{blockingProjectBindingsError ? (
-								<ApiErrorPanel
-									error={blockingProjectBindingsError}
-									onRetry={() => {
-										void refetchProjectBindings();
-									}}
-									title="Couldn't load agent Projects"
-								/>
-							) : null}
-							{blockingSessionsError ? (
-								<ApiErrorPanel
-									error={blockingSessionsError}
-									onRetry={() => {
-										void refetchSessions();
-									}}
-									title="Couldn't load agent sessions"
-								/>
-							) : null}
 						</div>
 					) : null}
 

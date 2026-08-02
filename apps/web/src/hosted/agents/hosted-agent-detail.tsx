@@ -34,7 +34,15 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
-import { AgentOverviewCapabilities } from "@/components/dashboard/agent-overview-capabilities";
+import {
+	AgentOverviewCapabilities,
+	OverviewChips,
+	OverviewMetadata,
+	OverviewMetrics,
+	OverviewModuleError,
+	OverviewModuleSkeleton,
+	OverviewSummaryRows,
+} from "@/components/dashboard/agent-overview-capabilities";
 import { useAgentOverviewProjects } from "@/components/dashboard/agent-project-bindings-query";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
@@ -1224,16 +1232,15 @@ function OverviewTab({
 		Boolean(agent),
 	);
 	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
-	const linkedChannelProviders = Array.from(
-		new Set(
-			(channelLinks.data ?? []).flatMap((link) =>
-				link.account?.provider ? [providerMeta(link.account.provider).label] : [],
-			),
-		),
-	);
+	const linkedChannelRows = (channelLinks.data ?? []).flatMap((link) => {
+		if (!link.account) return [];
+		const provider = providerMeta(link.account.provider).label;
+		return [`${provider}: ${link.account.name}`];
+	});
 	const consoleUrl = runtimeConsoleUrl(deployment, spec.runtime);
 	const consoleLocation = runtimeConsoleLocation(consoleUrl);
 	const providerId = primaryModelProviderId(primaryModel) ?? bindingProvider?.provider_id;
+	const projectionUnavailable = !deploymentStatus.known;
 	return (
 		<div className="flex flex-col gap-5">
 			<AgentOverviewCapabilities
@@ -1242,117 +1249,208 @@ function OverviewTab({
 				routeSearch={routeSearch}
 				content={{
 					sessions: {
-						value: projectionAvailable
-							? `${sessions.length} recent ${sessions.length === 1 ? "session" : "sessions"}`
-							: "Available when running",
-						detail: "Recent work from this managed agent.",
-						content:
-							projectionAvailable && !sessionsError ? (
-								<SessionFeed
-									sessions={sessions.slice(0, 3)}
-									isLoading={sessionsLoading}
-									emptyMessage={sessionsEmptyMessage}
-									emptyVariant="inset"
-									showAgent={false}
-									sessionLink={sessionLink}
-								/>
-							) : null,
+						body: !projectionAvailable ? (
+							projectionUnavailable ? (
+								<OverviewModuleError label="Sessions" />
+							) : (
+								<OverviewModuleSkeleton label="sessions" rows={3} />
+							)
+						) : sessionsLoading ? (
+							<OverviewModuleSkeleton label="sessions" rows={3} />
+						) : sessionsError ? (
+							<OverviewModuleError label="Sessions" onRetry={() => void onRetrySessions()} />
+						) : (
+							<div className="space-y-3">
+								<div>
+									<p className="text-lg font-semibold">{sessions.length} recent</p>
+									<p className="mt-1 text-xs text-muted-foreground">Managed agent activity</p>
+								</div>
+								<div className="border-t pt-3">
+									<SessionFeed
+										sessions={sessions.slice(0, 3)}
+										isLoading={false}
+										emptyMessage={sessionsEmptyMessage}
+										emptyVariant="inset"
+										showAgent={false}
+										sessionLink={sessionLink}
+									/>
+								</div>
+							</div>
+						),
 					},
 					"agent-interface": {
-						value: deploymentRunning
-							? `${runtimeDisplayName(spec.runtime)} UI ready`
-							: "Unavailable",
-						detail: deploymentRunning
-							? (consoleLocation ?? "Managed interface available")
-							: "Available after compute is running.",
+						body: (
+							<div className="space-y-3">
+								<p className="text-lg font-semibold">
+									{deploymentRunning ? "Ready" : "Unavailable"}
+								</p>
+								<OverviewMetadata
+									items={[
+										{ label: "Interface", value: runtimeDisplayName(spec.runtime) },
+										{
+											label: "Endpoint",
+											value: deploymentRunning
+												? (consoleLocation ?? "Managed interface")
+												: "Requires running compute",
+										},
+									]}
+								/>
+							</div>
+						),
 					},
 					projects: {
-						value: !agent
-							? "Details pending"
-							: projectBindings.isLoading
-								? "Loading…"
-								: projectBindings.error
-									? "Unavailable"
-									: `${projectBindings.data?.length ?? 0} ${projectBindings.data?.length === 1 ? "Project" : "Projects"}`,
-						detail: "Projects this agent reads for context and resources.",
-						items: overviewProjects.names,
+						body: !agent ? (
+							projectionUnavailable ? (
+								<OverviewModuleError label="Projects" />
+							) : (
+								<OverviewModuleSkeleton label="projects" rows={3} />
+							)
+						) : projectBindings.isLoading ? (
+							<OverviewModuleSkeleton label="projects" rows={3} />
+						) : projectBindings.error ? (
+							<OverviewModuleError
+								label="Projects"
+								onRetry={() => void projectBindings.refetch()}
+							/>
+						) : (
+							<div className="space-y-3">
+								<p className="text-lg font-semibold">{projectBindings.data?.length ?? 0} bound</p>
+								<OverviewSummaryRows items={overviewProjects.names} empty="No projects bound" />
+							</div>
+						),
 					},
 					skills: {
-						value: !agent
-							? "Details pending"
-							: skills.isLoading
-								? "Loading…"
-								: skills.error
-									? "Unavailable"
-									: `${skills.skills?.length ?? 0} available`,
-						detail: "Skills available through this agent's Projects.",
-						items: (skills.skills ?? []).map((skill) => skill.name),
+						body: !agent ? (
+							projectionUnavailable ? (
+								<OverviewModuleError label="Skills" />
+							) : (
+								<OverviewModuleSkeleton label="skills" rows={2} />
+							)
+						) : skills.isLoading ? (
+							<OverviewModuleSkeleton label="skills" rows={2} />
+						) : skills.error ? (
+							<OverviewModuleError label="Skills" onRetry={() => void skills.refetch()} />
+						) : (
+							<div className="space-y-3">
+								<p className="text-lg font-semibold">{skills.skills?.length ?? 0} available</p>
+								<OverviewChips
+									items={(skills.skills ?? []).map((skill) => skill.name)}
+									empty="No skills available"
+								/>
+							</div>
+						),
 					},
 					memories: {
-						value: "Account-wide",
-						detail: "Shared with every agent in this account.",
+						body: (
+							<OverviewMetadata
+								items={[
+									{ label: "Scope", value: "Account-wide" },
+									{ label: "Access", value: "All agents" },
+								]}
+							/>
+						),
 					},
 					vaults: {
-						value: projectBindings.isLoading
-							? "Loading…"
-							: `From ${projectBindings.data?.length ?? 0} ${projectBindings.data?.length === 1 ? "Project" : "Projects"}`,
-						detail: "Secrets are supplied through bound Projects.",
+						body: !agent ? (
+							projectionUnavailable ? (
+								<OverviewModuleError label="Vault sources" />
+							) : (
+								<OverviewModuleSkeleton label="vault sources" rows={2} />
+							)
+						) : projectBindings.isLoading ? (
+							<OverviewModuleSkeleton label="vault sources" rows={2} />
+						) : projectBindings.error ? (
+							<OverviewModuleError
+								label="Vault sources"
+								onRetry={() => void projectBindings.refetch()}
+							/>
+						) : (
+							<OverviewMetadata
+								items={[
+									{
+										label: "Sources",
+										value: projectBindings.data?.length
+											? `${projectBindings.data.length} bound Projects`
+											: "No bound Projects",
+									},
+									{ label: "Delivery", value: "Through Projects" },
+								]}
+							/>
+						),
 					},
 					connectors: {
-						value: "Account-wide",
-						detail: "Connected apps are available to every agent.",
+						body: (
+							<OverviewMetadata
+								items={[
+									{ label: "Scope", value: "Account-wide" },
+									{ label: "Managed", value: "Account settings" },
+								]}
+							/>
+						),
 					},
 					"model-provider": {
-						value: model,
-						detail: providerId ? `Provider: ${providerId}` : "Managed by Clawdi",
+						body: (
+							<OverviewMetadata
+								items={[
+									{ label: "Model", value: model },
+									{ label: "Provider", value: providerId ?? "Managed by Clawdi" },
+								]}
+							/>
+						),
 					},
 					channels: {
-						value: channelLinks.isLoading
-							? "Loading…"
-							: channelLinks.error
-								? "Unavailable"
-								: `${channelLinks.data?.length ?? 0} linked`,
-						detail:
-							(channelLinks.data?.length ?? 0) === 0
-								? "No channels linked"
-								: linkedChannelProviders.join(" · ") || "Linked account details available",
-						items: (channelLinks.data ?? []).flatMap((link) =>
-							link.account?.name ? [link.account.name] : [],
+						body: !agent ? (
+							projectionUnavailable ? (
+								<OverviewModuleError label="Channels" />
+							) : (
+								<OverviewModuleSkeleton label="channels" rows={2} />
+							)
+						) : channelLinks.isLoading ? (
+							<OverviewModuleSkeleton label="channels" rows={2} />
+						) : channelLinks.error ? (
+							<OverviewModuleError label="Channels" onRetry={() => void channelLinks.refetch()} />
+						) : (
+							<div className="space-y-3">
+								<p className="text-lg font-semibold">{channelLinks.data?.length ?? 0} linked</p>
+								<OverviewSummaryRows items={linkedChannelRows} empty="No channels linked" />
+							</div>
 						),
 					},
 					compute: {
-						value: (
-							<span className="inline-flex items-center gap-2">
-								<StatusDot status={deploymentStatusTone(deploymentStatus)} />
-								{deploymentStatusLabel(deploymentStatus)}
-							</span>
-						),
-						detail: `${isPerformance ? "Performance" : "Basic"} · ${spec.resources.vcpu} vCPU · ${formatMemoryMib(spec.resources.memory_mib)}`,
-						content: (
-							<OverviewComputeStatus
-								deployment={deployment}
-								failure={deploymentFailure}
-								showActions={showDeploymentActions}
-								planChangeHref={planChangeHref}
-								providerSettingsHref={providerSettingsHref}
-								onDeleteAccepted={onDeleteAccepted}
-								deploymentTransitionTimedOut={deploymentTransitionTimedOut}
-								isCheckingDeployment={isCheckingDeployment}
-								onCheckDeploymentAgain={onCheckDeploymentAgain}
-							/>
+						body: (
+							<div className="space-y-3">
+								<p className="inline-flex items-center gap-2 text-lg font-semibold">
+									<StatusDot status={deploymentStatusTone(deploymentStatus)} />
+									{deploymentStatusLabel(deploymentStatus)}
+								</p>
+								<OverviewMetrics
+									columns={2}
+									items={[
+										{ label: "Plan", value: isPerformance ? "Performance" : "Basic" },
+										{ label: "CPU", value: `${spec.resources.vcpu} vCPU` },
+										{ label: "Memory", value: formatMemoryMib(spec.resources.memory_mib) },
+									]}
+								/>
+								{deploymentRunning ? null : (
+									<div className="border-t pt-3">
+										<OverviewComputeStatus
+											deployment={deployment}
+											failure={deploymentFailure}
+											showActions={showDeploymentActions}
+											planChangeHref={planChangeHref}
+											providerSettingsHref={providerSettingsHref}
+											onDeleteAccepted={onDeleteAccepted}
+											deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+											isCheckingDeployment={isCheckingDeployment}
+											onCheckDeploymentAgain={onCheckDeploymentAgain}
+										/>
+									</div>
+								)}
+							</div>
 						),
 					},
 				}}
 			/>
-			{projectionAvailable && sessionsError ? (
-				<div>
-					<ApiErrorPanel
-						error={sessionsError}
-						onRetry={onRetrySessions}
-						title="Couldn't load sessions"
-					/>
-				</div>
-			) : null}
 		</div>
 	);
 }

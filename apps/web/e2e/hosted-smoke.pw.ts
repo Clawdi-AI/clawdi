@@ -1870,7 +1870,10 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p.startsWith("/v1/agents/") && r.request().method() === "GET") {
 			const id = decodeURIComponent(p.slice("/v1/agents/".length));
 			const response = options.cloudAgentResponses?.[id]?.shift();
-			if (response) return fulfillJson(r, response.body, response.status);
+			if (response) {
+				if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+				return fulfillJson(r, response.body, response.status);
+			}
 			const error = options.cloudAgentErrors?.[id];
 			if (error) return fulfillJson(r, { detail: error.detail }, error.status);
 			if (options.cloudAgentNotFoundIds?.includes(id)) {
@@ -2633,11 +2636,9 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.locator('[data-overview-module="projects"]')).toContainText(
 		"Hosted Agent Project",
 	);
+	await expect(overview.locator('[data-overview-module="agent-interface"]')).toContainText("Ready");
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toContainText(
-		"UI ready",
-	);
-	await expect(overview.locator('[data-overview-module="agent-interface"]')).toContainText(
-		"Managed interface available",
+		"Managed interface",
 	);
 	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Running");
 	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Basic");
@@ -2650,10 +2651,75 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText(
 		"Managed by Clawdi",
 	);
+	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText("Model");
+	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("CPU");
+	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Memory");
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="live-sync"]')).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1600 });
 	await page.screenshot({ path: testInfo.outputPath("hosted-agent-overview.png"), fullPage: true });
+});
+
+test("hosted projection loading uses module skeletons", async ({ page }, testInfo) => {
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		cloudAgentResponses: {
+			[railHostedEnvironmentId]: [{ body: railHostedCloudAgent, status: 200, delayMs: 5_000 }],
+		},
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+
+	const overview = page.locator('[data-agent-overview="hosted"]');
+	await expect(overview.getByTestId("overview-module-skeleton").first()).toBeVisible();
+	await expect(overview.getByTestId("overview-module-skeleton")).toHaveCount(5);
+	await expect(overview.getByText("Details pending", { exact: true })).toHaveCount(0);
+	await expect(overview.getByText("Loading…", { exact: true })).toHaveCount(0);
+	await page.setViewportSize({ width: 1280, height: 1600 });
+	await page.screenshot({
+		path: testInfo.outputPath("hosted-agent-overview-loading.png"),
+		fullPage: true,
+	});
+});
+
+test("hosted overview distinguishes empty skills and channels from loading", async ({ page }) => {
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		agentResourceFixtures: true,
+		skillsByProjectId: { "project-hosted": [] },
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+
+	const overview = page.locator('[data-agent-overview="hosted"]');
+	await expect(overview.locator('[data-overview-module="skills"]')).toContainText(
+		"No skills available",
+	);
+	await expect(overview.locator('[data-overview-module="channels"]')).toContainText(
+		"No channels linked",
+	);
+	await expect(overview.getByTestId("overview-module-skeleton")).toHaveCount(0);
+});
+
+test("hosted overview shows a true empty Projects state", async ({ page }) => {
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		agentProjectBindings: [],
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+
+	await expect(
+		page
+			.locator('[data-overview-module="projects"]')
+			.getByText("No projects bound", { exact: true }),
+	).toBeVisible();
 });
 
 test("hosted starting status and actions stay inside Compute", async ({ page }) => {

@@ -1,7 +1,9 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, Cloud, Laptop, type LucideIcon, Settings2 } from "lucide-react";
+import { ArrowRight, Cloud, Laptop, type LucideIcon, RefreshCw, Settings2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { IconChip } from "@/components/icon-chip";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { type AgentOverviewModuleId, agentOverviewGroups } from "@/lib/agent-capabilities";
 import { type AgentRouteSearch, agentSectionLink } from "@/lib/agent-routes";
 import {
@@ -11,11 +13,105 @@ import {
 import { cn } from "@/lib/utils";
 
 export type AgentOverviewModuleContent = {
-	value: ReactNode;
-	detail: ReactNode;
-	content?: ReactNode;
-	items?: readonly string[];
+	body: ReactNode;
 };
+
+export function OverviewModuleSkeleton({ label, rows = 2 }: { label: string; rows?: 1 | 2 | 3 }) {
+	return (
+		<div
+			data-testid="overview-module-skeleton"
+			aria-label={`Loading ${label} summary`}
+			role="status"
+		>
+			<Skeleton className="h-5 w-24" />
+			<div className="mt-3 space-y-2">
+				{Array.from({ length: rows }).map((_, index) => (
+					<Skeleton key={`${label}-${index}`} className={cn("h-3", index ? "w-2/3" : "w-full")} />
+				))}
+			</div>
+		</div>
+	);
+}
+
+export function OverviewModuleError({ label, onRetry }: { label: string; onRetry?: () => void }) {
+	return (
+		<div className="space-y-3 text-sm" role="status">
+			<p className="font-medium">{label} unavailable</p>
+			{onRetry ? (
+				<Button type="button" variant="outline" size="sm" onClick={onRetry}>
+					<RefreshCw /> Retry
+				</Button>
+			) : null}
+		</div>
+	);
+}
+
+export function OverviewMetadata({
+	items,
+}: {
+	items: readonly { label: string; value: ReactNode }[];
+}) {
+	return (
+		<dl className="space-y-2 text-sm">
+			{items.map((item) => (
+				<div key={item.label} className="flex min-w-0 items-baseline justify-between gap-3">
+					<dt className="text-xs text-muted-foreground">{item.label}</dt>
+					<dd className="min-w-0 break-words text-right font-medium">{item.value}</dd>
+				</div>
+			))}
+		</dl>
+	);
+}
+
+export function OverviewMetrics({
+	items,
+	columns = 3,
+}: {
+	items: readonly { label: string; value: ReactNode }[];
+	columns?: 2 | 3;
+}) {
+	return (
+		<dl className={cn("grid gap-2", columns === 2 ? "grid-cols-2" : "grid-cols-3")}>
+			{items.map((item) => (
+				<div key={item.label} className="rounded-md bg-muted/60 px-2.5 py-2">
+					<dt className="text-[11px] text-muted-foreground">{item.label}</dt>
+					<dd className="mt-0.5 truncate text-sm font-medium">{item.value}</dd>
+				</div>
+			))}
+		</dl>
+	);
+}
+
+export function OverviewSummaryRows({ items, empty }: { items: readonly string[]; empty: string }) {
+	return items.length ? (
+		<ul className="divide-y rounded-md border text-sm">
+			{items.slice(0, 3).map((item) => (
+				<li key={item} className="truncate px-3 py-2 font-medium">
+					{item}
+				</li>
+			))}
+		</ul>
+	) : (
+		<p className="text-sm text-muted-foreground">{empty}</p>
+	);
+}
+
+export function OverviewChips({ items, empty }: { items: readonly string[]; empty: string }) {
+	return items.length ? (
+		<ul className="flex flex-wrap gap-1.5">
+			{items.slice(0, 3).map((item) => (
+				<li
+					key={item}
+					className="max-w-full truncate rounded-full bg-muted px-2.5 py-1 text-xs font-medium"
+				>
+					{item}
+				</li>
+			))}
+		</ul>
+	) : (
+		<p className="text-sm text-muted-foreground">{empty}</p>
+	);
+}
 
 const MODULE_PRESENTATION: Record<
 	AgentOverviewModuleId,
@@ -97,29 +193,7 @@ export function AgentOverviewCapabilities({
 										<h3 className="min-w-0 flex-1 text-sm font-semibold">{title}</h3>
 										<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 									</Link>
-									<div className="px-4 pb-4">
-										<div className="text-lg font-semibold tracking-tight">
-											{moduleContent?.value ?? "Available"}
-										</div>
-										<p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-											{moduleContent?.detail ?? item.description}
-										</p>
-										{moduleContent?.items?.length ? (
-											<ul className="mt-4 flex flex-wrap gap-1.5" aria-label={`${title} summary`}>
-												{moduleContent.items.slice(0, 3).map((summaryItem) => (
-													<li
-														key={summaryItem}
-														className="max-w-full truncate rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-foreground"
-													>
-														{summaryItem}
-													</li>
-												))}
-											</ul>
-										) : null}
-										{moduleContent?.content ? (
-											<div className="mt-4 border-t pt-3">{moduleContent.content}</div>
-										) : null}
-									</div>
+									<div className="px-4 pb-4">{moduleContent?.body ?? null}</div>
 								</article>
 							);
 						})}

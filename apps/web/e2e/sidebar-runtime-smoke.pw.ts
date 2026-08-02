@@ -459,7 +459,10 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(overview.locator('[data-overview-module="live-sync"]')).toContainText(
 		"smoke-machine.local",
 	);
+	await expect(overview.locator('[data-overview-module="live-sync"]')).toContainText("Machine");
+	await expect(overview.locator('[data-overview-module="live-sync"]')).toContainText("Last seen");
 	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("Research");
+	await expect(overview.locator('[data-overview-module="memories"]')).toContainText("Scope");
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1400 });
