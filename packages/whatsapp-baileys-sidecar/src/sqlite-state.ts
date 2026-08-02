@@ -704,7 +704,7 @@ function validateAuthenticationCreds(value: unknown): AuthenticationCreds {
 		!validSignedKeyPair(value.signedPreKey) ||
 		!Number.isSafeInteger(value.registrationId) ||
 		typeof value.registrationId !== "number" ||
-		value.registrationId < 1 ||
+		value.registrationId < 0 ||
 		!validBase64(value.advSecretKey) ||
 		!Array.isArray(value.processedHistoryMessages) ||
 		!nonNegativeSafeInteger(value.firstUnuploadedPreKeyId) ||
