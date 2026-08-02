@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -29,6 +30,7 @@ from app.services.whatsapp_provider_bridge import (
     WhatsAppProviderBridge,
     persist_whatsapp_provider_event,
     register_whatsapp_provider_transport,
+    relay_whatsapp_provider_payload,
     unregister_whatsapp_provider_transport,
     whatsapp_provider_transport_status,
 )
@@ -116,6 +118,30 @@ def test_whatsapp_provider_transport_registration_is_exclusive_per_account():
         unregister_whatsapp_provider_transport(account_id)
 
     assert whatsapp_provider_transport_status(account_id).available is False
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_provider_payload_rejects_non_json_values_before_relay():
+    account_id = uuid4()
+    transport = _FakeProviderTransport()
+    register_whatsapp_provider_transport(account_id, transport)
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            await relay_whatsapp_provider_payload(
+                account=ChannelAccount(id=account_id),
+                external_chat_id="15551114444@s.whatsapp.net",
+                text="hello",
+                provider_payload={
+                    "schemaVersion": WHATSAPP_PROVIDER_PAYLOAD_SCHEMA,
+                    "messageId": object(),
+                },
+            )
+    finally:
+        unregister_whatsapp_provider_transport(account_id)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "invalid whatsapp provider payload"
+    assert transport.outbound_messages == []
 
 
 @pytest.mark.asyncio

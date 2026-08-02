@@ -71,6 +71,7 @@ EXPECTED_CONFIG = {
         "app/services/runtime_observation.py",
         "app/services/tar_utils.py",
         "app/services/whatsapp_native_transport.py",
+        "app/services/whatsapp_provider_bridge.py",
         "app/services/whatsapp_runtime_types.py",
         "app/services/whatsapp_sidecar_registry.py",
     ],
