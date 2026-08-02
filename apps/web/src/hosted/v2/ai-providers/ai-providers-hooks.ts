@@ -1,7 +1,7 @@
 "use client";
 
 import { projectUserSelectableAiProviders } from "@clawdi/shared";
-import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type {
 	AiProviderAcceptRequest,
@@ -11,33 +11,29 @@ import type {
 	AiProviderList,
 	AiProviderOAuthDevicePollResponse,
 	AiProviderOAuthDeviceStartResponse,
-	AiProviderPatch,
 } from "@/hosted/v2/ai-providers/types";
-import { toastApiError, unwrap, useApi } from "@/lib/api";
+import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
 /** Typed data hooks for the AI Providers surface (cloud-api `/v1/ai-providers`). */
 
-const KEY = ["ai-providers"] as const;
+const KEY = ["get", "/v1/ai-providers"] as const;
 export const selectUserAiProviders = (data: AiProviderList) =>
 	projectUserSelectableAiProviders(data.providers);
 
-function aiProvidersQueryOptions(api: ReturnType<typeof useApi>) {
-	return queryOptions({
-		queryKey: KEY,
-		queryFn: async () => unwrap(await api.GET("/v1/ai-providers")),
-	});
-}
-
 export function useAiProviders() {
-	return useQuery(aiProvidersQueryOptions(useApi()));
+	return useOpenApi().useQuery("get", "/v1/ai-providers", {});
 }
 
 export function useUserAiProviders() {
-	return useQuery({
-		...aiProvidersQueryOptions(useApi()),
-		select: selectUserAiProviders,
-	});
+	return useOpenApi().useQuery(
+		"get",
+		"/v1/ai-providers",
+		{},
+		{
+			select: selectUserAiProviders,
+		},
+	);
 }
 
 export function useAcceptProvider() {
@@ -69,31 +65,18 @@ export function useAcceptProvider() {
 }
 
 export function usePatchProvider() {
-	const api = useApi();
+	const api = useOpenApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (vars: { providerId: string; body: AiProviderPatch }) =>
-			unwrap(
-				await api.PATCH("/v1/ai-providers/{provider_id}", {
-					params: { path: { provider_id: vars.providerId } },
-					body: vars.body,
-				}),
-			),
+	return api.useMutation("patch", "/v1/ai-providers/{provider_id}", {
 		onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
 		onError: toastApiError("Couldn't update provider"),
 	});
 }
 
 export function useDeleteProvider() {
-	const api = useApi();
+	const api = useOpenApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (providerId: string) =>
-			unwrap(
-				await api.DELETE("/v1/ai-providers/{provider_id}", {
-					params: { path: { provider_id: providerId } },
-				}),
-			),
+	return api.useMutation("delete", "/v1/ai-providers/{provider_id}", {
 		onSuccess: (result) => {
 			qc.invalidateQueries({ queryKey: KEY });
 			toast.success("Provider removed", {
@@ -122,15 +105,7 @@ export function useTestDraftProviderConnection() {
 }
 
 export function useTestProviderConnection() {
-	const api = useApi();
-	return useMutation({
-		mutationFn: async ({ providerId, model }: { providerId: string; model?: string }) =>
-			unwrap(
-				await api.POST("/v1/ai-providers/{provider_id}/test", {
-					params: { path: { provider_id: providerId } },
-					body: model ? { model } : {},
-				}),
-			),
+	return useOpenApi().useMutation("post", "/v1/ai-providers/{provider_id}/test", {
 		onError: toastApiError("Couldn't test connection"),
 	});
 }

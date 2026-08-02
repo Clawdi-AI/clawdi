@@ -1,6 +1,5 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Bot, Check, Copy, Terminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -9,7 +8,7 @@ import { AgentLabel, AgentSourceBadgeForEnvironment } from "@/components/dashboa
 import { agentRegistrationDescription } from "@/components/dashboard/agent-registration-status";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { unwrap, useApi } from "@/lib/api";
+import { useOpenApi } from "@/lib/api";
 import { cn, errorMessage } from "@/lib/utils";
 
 // Fallback origin used during SSR and on the first client render before the
@@ -87,17 +86,21 @@ function CopyButton({
  * watches for newly registered agents and surfaces an explicit success state.
  */
 export function AddAgentSetup() {
-	const api = useApi();
+	const api = useOpenApi();
 	const origin = useOrigin();
 	const prompt = `Set up Clawdi on this machine. Fetch ${origin}/skill.md, and follow the skills to set it up. Finally, confirm the installation with \`clawdi doctor\`.`;
 
 	// Live success detection: snapshot the env ids on first load, then poll
 	// while mounted. Anything new is "your agent just connected".
-	const envs = useQuery({
-		queryKey: ["agents"],
-		queryFn: async () => unwrap(await api.GET("/v1/agents")),
-		refetchInterval: 5_000,
-	});
+	const envs = api.useQuery(
+		"get",
+		"/v1/agents",
+		{},
+		{
+			refetchInterval: 5_000,
+			refetchIntervalInBackground: false,
+		},
+	);
 	const baseline = useRef<Set<string> | null>(null);
 	useEffect(() => {
 		if (envs.data && baseline.current === null) {

@@ -41,14 +41,14 @@ const ACCEPTED_OPERATION_TRANSITIONS = {
 
 export function invalidateDeploymentSnapshots(qc: QueryClient) {
 	void qc.invalidateQueries({ queryKey: billingKeys.deployments });
-	void qc.invalidateQueries({ queryKey: ["agents"] });
+	void qc.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
 }
 
 function scheduleDeploymentSettlingRefresh(qc: QueryClient) {
 	for (const delay of SETTLING_REFRESH_DELAYS_MS) {
 		globalThis.setTimeout(() => {
 			void qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			void qc.invalidateQueries({ queryKey: ["agents"] });
+			void qc.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
 		}, delay);
 	}
 }

@@ -8,12 +8,12 @@ export type AcceptInvitationResponse = Schemas["InvitationAcceptResponse"];
 // Project invitations are the first notification source. Keep the shell named
 // generically so future notification types (agent health, billing, access
 // changes) can join without replacing the header affordance.
-export const NOTIFICATION_CENTER_QUERY_KEY = ["me-invitations"] as const;
+export const NOTIFICATION_CENTER_QUERY_KEY = ["get", "/v1/me/invitations"] as const;
 export const NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS = [
 	NOTIFICATION_CENTER_QUERY_KEY,
 	["skills"],
-	["projects"],
-	["agents"],
+	["get", "/v1/projects"],
+	["get", "/v1/agents"],
 ] as const;
 
 export function getPendingNotificationCount(

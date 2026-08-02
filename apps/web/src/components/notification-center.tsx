@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import { CheckCircle2, InboxIcon, MailOpen, XCircle } from "lucide-react";
 import { useState } from "react";
@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
-import { ApiError, unwrap, useApi } from "@/lib/api";
+import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import { projectDetailHref } from "@/lib/project-resource-model";
 import { cn, errorMessage } from "@/lib/utils";
@@ -31,7 +31,6 @@ import {
 	getPendingNotificationCount,
 	getProjectInvitationAccessCopy,
 	NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS,
-	NOTIFICATION_CENTER_QUERY_KEY,
 	type ProjectInvitationNotification,
 } from "./notification-center.logic";
 
@@ -39,6 +38,7 @@ export function NotificationCenter() {
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const api = useApi();
+	const $api = useOpenApi();
 	const [open, setOpen] = useState(false);
 
 	function refetchMembershipDerived() {
@@ -47,12 +47,14 @@ export function NotificationCenter() {
 		}
 	}
 
-	const invitations = useQuery({
-		queryKey: NOTIFICATION_CENTER_QUERY_KEY,
-		queryFn: async (): Promise<ProjectInvitationNotification[]> =>
-			unwrap(await api.GET("/v1/me/invitations")),
-		refetchOnWindowFocus: true,
-	});
+	const invitations = $api.useQuery(
+		"get",
+		"/v1/me/invitations",
+		{},
+		{
+			refetchOnWindowFocus: true,
+		},
+	);
 
 	const accept = useMutation({
 		mutationFn: async ({

@@ -52,7 +52,7 @@ export async function navigateToAcceptedDeployment({
 	queryClient.setQueryData<HostedDeployment[]>(billingKeys.deployments, (deployments) =>
 		upsertAuthoritativeDeployment(deployments, authoritative),
 	);
-	void queryClient.invalidateQueries({ queryKey: ["agents"] });
+	void queryClient.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
 
 	await navigate({
 		href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),

@@ -52,7 +52,7 @@ export function ConnectorCredentialsDialog({
 				body: { credentials },
 			}),
 		);
-		queryClient.invalidateQueries({ queryKey: ["connections"] });
+		queryClient.invalidateQueries({ queryKey: ["get", "/v1/connectors"] });
 	});
 	const [values, setValues] = useState<Record<string, string>>({});
 	const [submitError, setSubmitError] = useState<string | null>(null);

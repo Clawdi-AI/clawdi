@@ -762,7 +762,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 		qc.invalidateQueries({ queryKey: ["share-links", projectId] });
 		qc.invalidateQueries({ queryKey: ["invitations", projectId] });
 		qc.invalidateQueries({ queryKey: ["skills"] });
-		qc.invalidateQueries({ queryKey: ["projects"] });
+		qc.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
 	};
 
 	const remove = useMutation({

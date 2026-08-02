@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -38,7 +38,7 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { toastApiError, unwrap, useApi } from "@/lib/api";
+import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
@@ -50,13 +50,16 @@ export function AgentProjectsTab({
 	agentId: string;
 	enabled?: boolean;
 }) {
-	const api = useApi();
+	const $api = useOpenApi();
 	const queryClient = useQueryClient();
-	const projects = useQuery({
-		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
-		enabled,
-	});
+	const projects = $api.useQuery(
+		"get",
+		"/v1/projects",
+		{},
+		{
+			enabled,
+		},
+	);
 	const bindings = useAgentProjectBindings(agentId, { enabled });
 
 	return (
@@ -75,7 +78,7 @@ export function AgentProjectsTab({
 			}}
 			onChanged={() => {
 				void queryClient.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(agentId) });
-				void queryClient.invalidateQueries({ queryKey: ["projects"] });
+				void queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
 			}}
 		/>
 	);

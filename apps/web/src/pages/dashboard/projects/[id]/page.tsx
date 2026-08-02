@@ -23,6 +23,10 @@ import {
 	agentDisplayName,
 	compareAgentEnvironments,
 } from "@/components/dashboard/agent-label";
+import {
+	agentProjectBindingsQueryKey,
+	useAgentProjectBindings,
+} from "@/components/dashboard/agent-project-bindings-query";
 import { DetailNotFound, DetailPanel, DetailTitle } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -73,7 +77,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { vaultDetailSearch } from "@/components/vault/vault-detail-identity";
 import { agentSectionHref, agentSectionLabel } from "@/lib/agent-routes";
-import { ApiError, unwrap, useApi } from "@/lib/api";
+import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { formatApiError, isApiNotFoundError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
@@ -96,6 +100,7 @@ const AGENT_PROJECTS_SECTION_LABEL = agentSectionLabel("projects");
 
 export default function ProjectDetailPage({ projectId }: { projectId: string }) {
 	const api = useApi();
+	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const router = useRouter();
 	const searchStr = useLocation({ select: (location) => location.searchStr });
@@ -109,10 +114,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	const [showCreateVault, setShowCreateVault] = useState(false);
 	const joinedFromShare = searchParams.get("joined") === "share";
 
-	const projects = useQuery({
-		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
-	});
+	const projects = $api.useQuery("get", "/v1/projects", {});
 
 	const rows = projects.data ?? [];
 	const project = rows.find((row) => row.id === projectId) ?? null;
@@ -136,11 +138,14 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 		}
 	};
 
-	const environments = useQuery({
-		queryKey: ["agents"],
-		queryFn: async () => unwrap(await api.GET("/v1/agents")),
-		enabled: !!project,
-	});
+	const environments = $api.useQuery(
+		"get",
+		"/v1/agents",
+		{},
+		{
+			enabled: !!project,
+		},
+	);
 	const agentsById = useMemo(
 		() => new Map((environments.data ?? []).map((agent) => [agent.id, agent])),
 		[environments.data],
@@ -214,9 +219,9 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	});
 
 	const refresh = () => {
-		qc.invalidateQueries({ queryKey: ["projects"] });
+		qc.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
 		qc.invalidateQueries({ queryKey: ["skills"] });
-		qc.invalidateQueries({ queryKey: ["vaults"] });
+		qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 		qc.invalidateQueries({ queryKey: ["project-bound-agents", projectId] });
 	};
 
@@ -229,7 +234,9 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 			),
 		onSuccess: () => {
 			refresh();
-			qc.invalidateQueries({ queryKey: ["agent-project-bindings"] });
+			qc.invalidateQueries({
+				queryKey: ["get", "/v1/agents/{agent_id}/project-bindings"],
+			});
 			toast.success("Left Shared Project", { description: "Membership removed." });
 			void router.navigate({ href: projectResourceHref("projects") });
 		},
@@ -875,16 +882,7 @@ function UseProjectWithAgentDialog({
 	}));
 	const selectedEnv = orderedEnvironments.find((env) => env.id === selectedAgentId) ?? null;
 	const projectIsHome = selectedEnv?.default_project_id === project.id;
-	const selectedBindings = useQuery({
-		queryKey: ["agent-project-bindings", selectedAgentId],
-		queryFn: async (): Promise<AgentProjectBinding[]> =>
-			unwrap(
-				await api.GET("/v1/agents/{agent_id}/project-bindings", {
-					params: { path: { agent_id: selectedAgentId } },
-				}),
-			),
-		enabled: open && !!selectedAgentId,
-	});
+	const selectedBindings = useAgentProjectBindings(selectedAgentId, { enabled: open });
 	const existingBinding =
 		selectedBindings.data?.find((binding) => binding.project_id === project.id) ?? null;
 	const projectIsAlreadyAvailable = projectIsHome || !!existingBinding;
@@ -907,9 +905,9 @@ function UseProjectWithAgentDialog({
 		},
 		onSuccess: () => {
 			const agentName = selectedEnv ? displayAgentName(selectedEnv) : "the agent";
-			qc.invalidateQueries({ queryKey: ["agent-project-bindings", selectedAgentId] });
+			qc.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(selectedAgentId) });
 			qc.invalidateQueries({ queryKey: ["skills"] });
-			qc.invalidateQueries({ queryKey: ["vaults"] });
+			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			toast.success("Project Added", {
 				description: `Done. ${agentName} can now use ${projectName}'s skills and Vault keys.`,
 				action: {

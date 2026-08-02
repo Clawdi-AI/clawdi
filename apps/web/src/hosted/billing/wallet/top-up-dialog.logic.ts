@@ -56,7 +56,7 @@ export function invalidateWalletActivity(queryClient: QueryClient): void {
 	queryClient.invalidateQueries({ queryKey: billingKeys.subscriptionCreateQuotes });
 	queryClient.invalidateQueries({ queryKey: billingKeys.deployments });
 	queryClient.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });
-	queryClient.invalidateQueries({ queryKey: ["agents"] });
+	queryClient.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
 }
 
 export function completeTopup(

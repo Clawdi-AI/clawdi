@@ -1,6 +1,6 @@
 "use client";
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { Brain, Key, type LucideIcon, MessageSquare, Settings, Sparkles } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
@@ -15,7 +15,7 @@ import {
 	CommandSeparator,
 } from "@/components/ui/command";
 import { Spinner } from "@/components/ui/spinner";
-import { unwrap, useApi } from "@/lib/api";
+import { useOpenApi } from "@/lib/api";
 import type { SearchHit } from "@/lib/api-schemas";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
@@ -100,7 +100,7 @@ function CommandPalette({
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }) {
-	const api = useApi();
+	const api = useOpenApi();
 	const router = useRouter();
 	const hostedAccess = useHostedProductAccess();
 	const [query, setQuery] = useState("");
@@ -138,17 +138,19 @@ function CommandPalette({
 		return shortcuts;
 	}, [hostedAccess.canCreateCloudAgents]);
 
-	const { data, isFetching } = useQuery({
-		queryKey: ["command-search", debounced],
-		queryFn: async () =>
-			unwrap(await api.GET("/v1/search", { params: { query: { q: debounced } } })),
-		enabled: open && debounced.trim().length > 0,
-		staleTime: 30_000,
-		// Keep the last page of results visible while a new debounced query
-		// flies out — prevents the palette flashing to "empty" on every
-		// keystroke.
-		placeholderData: keepPreviousData,
-	});
+	const { data, isFetching } = api.useQuery(
+		"get",
+		"/v1/search",
+		{ params: { query: { q: debounced } } },
+		{
+			enabled: open && debounced.trim().length > 0,
+			staleTime: 30_000,
+			// Keep the last page of results visible while a new debounced query
+			// flies out — prevents the palette flashing to "empty" on every
+			// keystroke.
+			placeholderData: keepPreviousData,
+		},
+	);
 
 	const jump = useCallback(
 		(href: string) => {

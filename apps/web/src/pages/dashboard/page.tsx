@@ -22,7 +22,7 @@ import { SessionFeed } from "@/components/sessions/session-feed";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { unwrap, useApi } from "@/lib/api";
+import { useOpenApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { sessionListQueryOptions } from "@/lib/session-queries";
@@ -81,7 +81,7 @@ const HostedFleetSummary = IS_HOSTED_BUILD
 	: null;
 
 export default function DashboardPage() {
-	const api = useApi();
+	const $api = useOpenApi();
 	const hostedAccess = useHostedProductAccess();
 
 	const {
@@ -89,40 +89,50 @@ export default function DashboardPage() {
 		isLoading: statsLoading,
 		error: statsError,
 		refetch: refetchStats,
-	} = useQuery({
-		queryKey: ["dashboard-stats"],
-		queryFn: async () => unwrap(await api.GET("/v1/dashboard/stats")),
-		// Overview counts are cheap and reflect recent mutations across many
-		// resources, so keep this query fresher than the global 30s default.
-		staleTime: 0,
-		refetchOnMount: "always",
-	});
+	} = $api.useQuery(
+		"get",
+		"/v1/dashboard/stats",
+		{},
+		{
+			// Overview counts are cheap and reflect recent mutations across many
+			// resources, so keep this query fresher than the global 30s default.
+			staleTime: 0,
+			refetchOnMount: "always",
+		},
+	);
 
 	const {
 		data: projects,
 		isLoading: projectsLoading,
 		error: projectsError,
 		refetch: refetchProjects,
-	} = useQuery({
-		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/v1/projects")),
-		staleTime: DASHBOARD_STALE_MS,
-	});
+	} = $api.useQuery(
+		"get",
+		"/v1/projects",
+		{},
+		{
+			staleTime: DASHBOARD_STALE_MS,
+		},
+	);
 
 	const {
 		data: environments,
 		isLoading: envsLoading,
 		error: envsError,
 		refetch: refetchEnvs,
-	} = useQuery({
-		queryKey: ["agents"],
-		queryFn: async () => unwrap(await api.GET("/v1/agents")),
-		// Daemon-status badge classification is time-sensitive — a
-		// daemon that paused while the tab was open would otherwise
-		// stay green indefinitely. Match the agent detail page's
-		// 10s cadence so the live indicator is actually live.
-		refetchInterval: 10_000,
-	});
+	} = $api.useQuery(
+		"get",
+		"/v1/agents",
+		{},
+		{
+			// Daemon-status badge classification is time-sensitive — a
+			// daemon that paused while the tab was open would otherwise
+			// stay green indefinitely. Match the agent detail page's
+			// 10s cadence so the live indicator is actually live.
+			refetchInterval: 10_000,
+			refetchIntervalInBackground: false,
+		},
+	);
 
 	// Manual sessions only: on a working fleet ~3/4 of sessions are
 	// cron/heartbeat ticks, and "Recent sessions" buried the user's own
@@ -133,7 +143,7 @@ export default function DashboardPage() {
 		error: sessionsError,
 		refetch: refetchSessions,
 	} = useQuery(
-		sessionListQueryOptions(api, {
+		sessionListQueryOptions($api, {
 			page_size: RECENT_SESSIONS_CACHE_PAGE_SIZE,
 			automated: false,
 		}),

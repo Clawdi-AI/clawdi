@@ -25,7 +25,7 @@ import { DataTableFacetedFilter } from "@/components/ui/data-table-faceted-filte
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { SearchInput } from "@/components/ui/search-input";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { unwrap, useApi } from "@/lib/api";
+import { useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { type SessionListQuery, sessionListQueryOptions } from "@/lib/session-queries";
@@ -78,7 +78,7 @@ export default function SessionsPage() {
 }
 
 function SessionsListInner() {
-	const api = useApi();
+	const $api = useOpenApi();
 	const queryClient = useQueryClient();
 
 	// All filter / sort / pagination state lives in the URL via
@@ -143,17 +143,14 @@ function SessionsListInner() {
 	);
 
 	const { data, isLoading, isFetching, error, refetch } = useQuery({
-		...sessionListQueryOptions(api, sessionQuery),
+		...sessionListQueryOptions($api, sessionQuery),
 		// Keep previous results visible during refetch; the
 		// `isFetching && !isLoading` opacity transition below is
 		// the only "loading" signal the user sees.
 		placeholderData: keepPreviousData,
 	});
 
-	const { data: envs } = useQuery({
-		queryKey: ["agents", "filter"],
-		queryFn: async () => unwrap(await api.GET("/v1/agents")),
-	});
+	const { data: envs } = $api.useQuery("get", "/v1/agents", {});
 	const agentOptions = useMemo(() => {
 		const set = new Set<string>();
 		for (const e of envs ?? []) {
@@ -197,9 +194,9 @@ function SessionsListInner() {
 	useEffect(() => {
 		if (!data || params.page >= pageCount) return;
 		void queryClient.prefetchQuery(
-			sessionListQueryOptions(api, { ...sessionQuery, page: params.page + 1 }),
+			sessionListQueryOptions($api, { ...sessionQuery, page: params.page + 1 }),
 		);
-	}, [api, data, pageCount, params.page, queryClient, sessionQuery]);
+	}, [$api, data, pageCount, params.page, queryClient, sessionQuery]);
 
 	const groupable = params.sort === "last_activity_at" || params.sort === "started_at";
 

@@ -230,13 +230,16 @@ describe("channel IA boundary", () => {
 		expect(agentDetail).toContain("pairedChatsByLinkId.get(linkForBot.id) ?? []");
 		expect(pairedChatRow).toContain("Only this chat will be disconnected");
 		expect(pairedChatRow).toContain("<ConfirmAction");
-		expect(pairedChatRow).toContain("unpair.mutateAsync(binding.id)");
+		expect(pairedChatRow).toContain("binding_id: binding.id");
 		expect(pairedChatRow).toContain("unpair.isPending");
 		expect(confirmAction).toContain("void runConfirm().catch");
 		expect(hooks).toContain("export function useDeleteChannelBinding");
 		expect(hooks).toContain("keys.bindings(accountId)");
 		expect(hooks).toContain('toastApiError("Couldn\'t unpair chat")');
 		expect(hooks).toContain("refetchInterval: 3_000");
+		expect(agentDetail).toContain("bindingsLoading={Boolean(bindingQuery?.isPending)}");
+		expect(agentDetail).not.toContain("bindingsLoading={Boolean(bindingQuery?.isFetching)}");
+		expect(agentDetail).toContain("bindingQuery?.error && bindingQuery.data === undefined");
 		expect(pairedChatRow).toContain("binding.last_message_at");
 		expect(pairedChatRow).toContain("Last activity {relativeTime(binding.last_message_at)}");
 		expect(pairedChatRow).not.toContain("No activity yet");

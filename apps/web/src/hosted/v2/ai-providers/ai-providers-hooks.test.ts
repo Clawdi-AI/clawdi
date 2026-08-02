@@ -64,7 +64,7 @@ describe("provider mutation contract", () => {
 
 		expect(hooksSource).toContain('api.POST("/v1/ai-providers/accept"');
 		expect(hooksSource).toContain('api.POST("/v1/ai-providers/test"');
-		expect(hooksSource).toContain('api.POST("/v1/ai-providers/{provider_id}/test"');
+		expect(hooksSource).toContain('useMutation("post", "/v1/ai-providers/{provider_id}/test"');
 		expect(hooksSource).toContain(
 			'api.POST("/v1/ai-providers/{provider_id}/auth/oauth/device/start"',
 		);

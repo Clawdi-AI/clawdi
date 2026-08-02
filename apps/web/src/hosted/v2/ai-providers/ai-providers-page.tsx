@@ -209,11 +209,14 @@ function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage
 	}
 
 	function removeProvider() {
-		del.mutate(provider.provider_id, {
-			onSuccess: () => {
-				setOpen(false);
+		del.mutate(
+			{ params: { path: { provider_id: provider.provider_id } } },
+			{
+				onSuccess: () => {
+					setOpen(false);
+				},
 			},
-		});
+		);
 	}
 
 	return (

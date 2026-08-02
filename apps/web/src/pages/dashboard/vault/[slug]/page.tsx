@@ -52,7 +52,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { CopyKeysDialog } from "@/components/vault/copy-keys-dialog";
 import { prefixGroupsFor, SplitVaultDialog } from "@/components/vault/split-vault-dialog";
-import { unwrap, useApi } from "@/lib/api";
+import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
@@ -80,6 +80,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 	const slug = decodeURIComponent(rawSlug);
 	const [vaultId] = useQueryState("vault", parseAsString);
 	const api = useApi();
+	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const router = useRouter();
 
@@ -104,10 +105,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 	const isOwner = vault?.is_owner !== false;
 	const anyProjectId = vault?.project_ids?.[0];
 
-	const projects = useQuery({
-		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
-	});
+	const projects = $api.useQuery("get", "/v1/projects", {});
 	const projectById = useMemo(
 		() => new Map((projects.data ?? []).map((p) => [p.id, p])),
 		[projects.data],
@@ -159,7 +157,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 		filteredKeyNames.length > 0 && filteredKeyNames.every((k) => selectedKeys.has(keyId(k)));
 
 	const refresh = () => {
-		qc.invalidateQueries({ queryKey: ["vaults"] });
+		qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 		qc.invalidateQueries({ queryKey: ["vault-items", vault?.id, slug] });
 		qc.invalidateQueries({ queryKey: ["vault-detail", slug, vault?.id] });
 	};
@@ -255,7 +253,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 				}),
 			),
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["vaults"] });
+			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			qc.removeQueries({ queryKey: ["vault-items", vault?.id, slug] });
 			toast.success("Vault deleted", {
 				description: `${vault?.name ?? slug} and its keys were removed.`,

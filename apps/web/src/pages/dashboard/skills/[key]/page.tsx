@@ -48,7 +48,7 @@ import {
 	agentDeploymentRouteQuery,
 	agentSectionHref,
 } from "@/lib/agent-routes";
-import { ApiError, unwrap, useApi } from "@/lib/api";
+import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
 import { skillCapabilities } from "@/lib/skill-authority";
@@ -95,6 +95,7 @@ export function SkillDetailContent({
 }) {
 	const router = useRouter();
 	const api = useApi();
+	const $api = useOpenApi();
 	const queryClient = useQueryClient();
 
 	// `?project=<project_id>` is set by the skills list page when the
@@ -148,16 +149,16 @@ export function SkillDetailContent({
 	});
 
 	const agentEnvironmentId = agentId ?? skill?.environment_id ?? null;
-	const { data: skillAgent } = useQuery({
-		queryKey: ["agents", agentEnvironmentId],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/agents/{agent_id}", {
-					params: { path: { agent_id: agentEnvironmentId ?? "" } },
-				}),
-			),
-		enabled: !!agentEnvironmentId,
-	});
+	const { data: skillAgent } = $api.useQuery(
+		"get",
+		"/v1/agents/{agent_id}",
+		{
+			params: { path: { agent_id: agentEnvironmentId ?? "" } },
+		},
+		{
+			enabled: !!agentEnvironmentId,
+		},
+	);
 	const skillAgentLabel = skillAgent
 		? agentDisplayName(skillAgent)
 		: skill?.machine_name
@@ -167,10 +168,10 @@ export function SkillDetailContent({
 	useSetBreadcrumbSegmentTitle(agentId ? agentSectionHref(agentId) : null, skillAgentLabel);
 	useSetBreadcrumbTitle(breadcrumbTitle);
 
-	const { data: defaultProject, error: projectError } = useQuery({
-		queryKey: ["projects", "default"],
-		queryFn: async () => unwrap(await api.GET("/v1/projects/default")),
-	});
+	const { data: defaultProject, error: projectError } = $api.useQuery(
+		"get",
+		"/v1/projects/default",
+	);
 	// Edits land in the skill's own project when the detail response
 	// carries one (multi-machine accounts), falling back to the
 	// caller's default project (single-machine accounts and legacy
@@ -182,10 +183,7 @@ export function SkillDetailContent({
 	// Persisted authority and durable Project kind jointly control every
 	// browser mutation. In particular, environment-kind Projects stay
 	// read-only even after Agent deletion clears origin_environment_id.
-	const { data: projects } = useQuery({
-		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/v1/projects")),
-	});
+	const { data: projects } = $api.useQuery("get", "/v1/projects", {});
 	const skillProject = useMemo(
 		() =>
 			skill?.project_id

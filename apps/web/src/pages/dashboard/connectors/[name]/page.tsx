@@ -131,7 +131,7 @@ function ConnectorDetail({ name }: { name: string }) {
 		inflightDisconnectsRef.current.add(connectionId);
 		setDisconnectingIds((s) => new Set(s).add(connectionId));
 		disconnectMutation.mutate(
-			{ connectionId },
+			{ params: { path: { connection_id: connectionId } } },
 			{
 				onSettled: () => {
 					inflightDisconnectsRef.current.delete(connectionId);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Plus } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
-import { unwrap, useApi } from "@/lib/api";
+import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { errorMessage } from "@/lib/utils";
@@ -54,6 +54,7 @@ export function CopyKeysDialog({
 	children: ReactElement;
 }) {
 	const api = useApi();
+	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const [open, setOpen] = useState(false);
 	const [targetChoice, setTargetChoice] = useState("");
@@ -63,17 +64,24 @@ export function CopyKeysDialog({
 	const attachedCount = vault.project_ids?.length ?? 0;
 	const verb = mode === "move" ? "Move" : "Copy";
 
-	const vaultsQuery = useQuery({
-		queryKey: ["vaults", "all"],
-		queryFn: async () =>
-			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
-		enabled: open,
-	});
-	const projectsQuery = useQuery({
-		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/v1/projects")),
-		enabled: open,
-	});
+	const vaultsQuery = $api.useQuery(
+		"get",
+		"/v1/vault",
+		{
+			params: { query: { page_size: 200 } },
+		},
+		{
+			enabled: open,
+		},
+	);
+	const projectsQuery = $api.useQuery(
+		"get",
+		"/v1/projects",
+		{},
+		{
+			enabled: open,
+		},
+	);
 	const ownVaults = useMemo(
 		() => (vaultsQuery.data?.items ?? []).filter((v) => v.is_owner !== false),
 		[vaultsQuery.data],
@@ -213,7 +221,7 @@ export function CopyKeysDialog({
 			return { targetSlug, copied, failed, sourceRemoveFailed };
 		},
 		onSuccess: ({ targetSlug, copied, failed, sourceRemoveFailed }) => {
-			qc.invalidateQueries({ queryKey: ["vaults"] });
+			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			qc.invalidateQueries({ queryKey: ["vault-items"] });
 			const sourceCleanupFailed = sourceRemoveFailed.length > 0;
 			toast.success(

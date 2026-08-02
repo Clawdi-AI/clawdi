@@ -14,12 +14,9 @@ import {
 } from "@/components/dashboard/agent-skills-query";
 import { SkillCardGrid } from "@/components/skills/skill-card";
 import { type AgentRouteSearch, agentSkillDetailLink } from "@/lib/agent-routes";
-import { unwrap, useApi } from "@/lib/api";
-import type { components } from "@/lib/api-schemas";
+import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { identityFor } from "@/lib/identity";
 import { skillCapabilities } from "@/lib/skill-authority";
-
-type ProjectRow = components["schemas"]["ProjectResponse"];
 
 export function useAgentProjectSkills(
 	agentId: string,
@@ -100,7 +97,7 @@ export function AgentSkillsTab({
 	isResolvingAgentProject?: boolean;
 	projectionFence?: string;
 }) {
-	const api = useApi();
+	const $api = useOpenApi();
 	const {
 		skills,
 		isLoading: skillsLoading,
@@ -113,11 +110,14 @@ export function AgentSkillsTab({
 		true,
 		!isResolvingAgentProject,
 	);
-	const projects = useQuery({
-		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
-		enabled: !isResolvingAgentProject,
-	});
+	const projects = $api.useQuery(
+		"get",
+		"/v1/projects",
+		{},
+		{
+			enabled: !isResolvingAgentProject,
+		},
+	);
 	const projectsById = useMemo(
 		() => new Map((projects.data ?? []).map((project) => [project.id, project])),
 		[projects.data],

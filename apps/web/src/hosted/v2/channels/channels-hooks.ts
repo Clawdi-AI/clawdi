@@ -1,117 +1,87 @@
 "use client";
 
-import {
-	queryOptions,
-	useMutation,
-	useQueries,
-	useQuery,
-	useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useChannelEditApi } from "@/hosted/v2/channels/channel-edit-client";
-import { channelHealthQueryOptions } from "@/hosted/v2/channels/channel-health-query";
+import { CHANNEL_HEALTH_REFETCH_INTERVAL_MS } from "@/hosted/v2/channels/channel-health-query";
 import {
 	invalidateCreatedChannelQueries,
 	channelKeys as keys,
 	removeDeletedChannelQueries,
 } from "@/hosted/v2/channels/channel-query-cache";
 import type { ChannelCreate, ChannelCreated } from "@/hosted/v2/channels/channel-types";
-import { toastApiError, unwrap, useApi } from "@/lib/api";
+import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
 /**
  * Typed data hooks for the native channels surface. All reads/writes go
- * through the generated cloud-api client (`useApi`) against
+ * through the generated cloud-api client (`useOpenApi` or `useApi`) against
  * `/v1/channels/*`; mutations invalidate the affected queries and surface
  * recoverable errors as toasts.
  */
 
 export function useChannels() {
-	const api = useApi();
-	return useQuery({
-		queryKey: keys.list,
-		queryFn: async () => unwrap(await api.GET("/v1/channels")),
-	});
+	return useOpenApi().useQuery("get", "/v1/channels");
 }
 
 export function useBotPool() {
-	const api = useApi();
-	return useQuery({
-		queryKey: keys.pool,
-		queryFn: async () => unwrap(await api.GET("/v1/channels/bot-pool")),
-	});
+	return useOpenApi().useQuery("get", "/v1/channels/bot-pool");
 }
 
 export function useChannelHealth() {
-	const api = useApi();
-	return useQuery(
-		channelHealthQueryOptions(async () => unwrap(await api.GET("/v1/channels/health"))),
+	return useOpenApi().useQuery(
+		"get",
+		"/v1/channels/health",
+		{},
+		{
+			refetchInterval: CHANNEL_HEALTH_REFETCH_INTERVAL_MS,
+			refetchIntervalInBackground: false,
+		},
 	);
 }
 
 export function useChannel(id: string) {
-	const api = useApi();
-	return useQuery({
-		queryKey: keys.channel(id),
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/channels/{account_id}", {
-					params: { path: { account_id: id } },
-				}),
-			),
-		enabled: Boolean(id),
-	});
+	return useOpenApi().useQuery(
+		"get",
+		"/v1/channels/{account_id}",
+		{ params: { path: { account_id: id } } },
+		{ enabled: Boolean(id) },
+	);
 }
 
 export function useChannelAgentLinks(id: string) {
-	const api = useApi();
-	return useQuery({
-		queryKey: keys.agentLinks(id),
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/channels/{account_id}/agent-links", {
-					params: { path: { account_id: id } },
-				}),
-			),
-		enabled: Boolean(id),
-	});
+	return useOpenApi().useQuery(
+		"get",
+		"/v1/channels/{account_id}/agent-links",
+		{ params: { path: { account_id: id } } },
+		{ enabled: Boolean(id) },
+	);
 }
 
-function channelBindingsQueryOptions(api: ReturnType<typeof useApi>, id: string) {
-	return queryOptions({
-		queryKey: keys.bindings(id),
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/channels/{account_id}/bindings", {
-					params: { path: { account_id: id } },
-				}),
-			),
-		enabled: Boolean(id),
-		refetchInterval: 3_000,
-	});
+function channelBindingsQueryOptions(api: ReturnType<typeof useOpenApi>, id: string) {
+	return api.queryOptions(
+		"get",
+		"/v1/channels/{account_id}/bindings",
+		{ params: { path: { account_id: id } } },
+		{ enabled: Boolean(id), refetchInterval: 3_000, refetchIntervalInBackground: false },
+	);
 }
 
 export function useChannelBindings(id: string) {
-	return useQuery(channelBindingsQueryOptions(useApi(), id));
+	return useQuery(channelBindingsQueryOptions(useOpenApi(), id));
 }
 
 export function useChannelBindingsForAccounts(accountIds: readonly string[]) {
-	const api = useApi();
+	const api = useOpenApi();
 	return useQueries({
 		queries: accountIds.map((accountId) => channelBindingsQueryOptions(api, accountId)),
 	});
 }
 
 export function useDeleteChannelBinding(accountId: string) {
-	const api = useApi();
+	const api = useOpenApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (bindingId: string) =>
-			unwrap(
-				await api.DELETE("/v1/channels/{account_id}/bindings/{binding_id}", {
-					params: { path: { account_id: accountId, binding_id: bindingId } },
-				}),
-			),
+	return api.useMutation("delete", "/v1/channels/{account_id}/bindings/{binding_id}", {
 		onSuccess: async (result) => {
 			await Promise.all([
 				qc.invalidateQueries({ queryKey: keys.bindings(accountId) }),
@@ -128,26 +98,17 @@ export function useDeleteChannelBinding(accountId: string) {
 }
 
 export function useChannelActivity(id: string) {
-	const api = useApi();
-	return useQuery({
-		queryKey: keys.activity(id),
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/channels/{account_id}/activity", {
-					params: { path: { account_id: id }, query: { limit: 50 } },
-				}),
-			),
-		enabled: Boolean(id),
-	});
+	return useOpenApi().useQuery(
+		"get",
+		"/v1/channels/{account_id}/activity",
+		{ params: { path: { account_id: id }, query: { limit: 50 } } },
+		{ enabled: Boolean(id) },
+	);
 }
 
 /** Connected agents available to link / pair. Shares the `environments` key. */
 export function useEnvironments() {
-	const api = useApi();
-	return useQuery({
-		queryKey: ["agents"],
-		queryFn: async () => unwrap(await api.GET("/v1/agents")),
-	});
+	return useOpenApi().useQuery("get", "/v1/agents", {});
 }
 
 export function useCreateChannel() {
@@ -176,16 +137,11 @@ export function useCreateChannel() {
 }
 
 export function useDeleteChannel() {
-	const api = useApi();
+	const api = useOpenApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (id: string) =>
-			unwrap(
-				await api.DELETE("/v1/channels/{account_id}", {
-					params: { path: { account_id: id } },
-				}),
-			),
-		onSuccess: async (_data, id) => {
+	return api.useMutation("delete", "/v1/channels/{account_id}", {
+		onSuccess: async (_data, variables) => {
+			const id = variables.params.path.account_id;
 			await removeDeletedChannelQueries(qc, id);
 			toast.success("Channel removed");
 		},

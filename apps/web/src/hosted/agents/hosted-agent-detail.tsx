@@ -249,6 +249,7 @@ import {
 	agentProviderHasSingleLinkLimit,
 	channelProviderLinkingReady,
 } from "@/hosted/v2/channels/channel-linking.logic";
+import { channelKeys } from "@/hosted/v2/channels/channel-query-cache";
 import type { ChannelBinding } from "@/hosted/v2/channels/channel-types";
 import {
 	CHANNEL_DESTRUCTIVE_ACTION_CLASS,
@@ -276,7 +277,7 @@ import {
 	agentSessionDetailLink,
 	HOSTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
-import { ApiError, toastApiError, unwrap, useApi } from "@/lib/api";
+import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
@@ -462,28 +463,28 @@ export function HostedAgentDetail({
 	isCheckingDeployment: boolean;
 	onCheckDeploymentAgain: () => void;
 }) {
-	const api = useApi();
+	const $api = useOpenApi();
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
 	const deploymentProjectionQueryable = canQueryDeploymentProjection(deploymentStatus);
 	const cloudEnvironmentId = isCloudEnvId(environmentId);
-	const agentQuery = useQuery({
-		queryKey: ["agents", environmentId],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/agents/{agent_id}", {
-					params: { path: { agent_id: environmentId } },
-				}),
-			),
-		enabled: cloudEnvironmentId && deploymentProjectionQueryable,
-		refetchInterval: (query) =>
-			missingProjectionRefetchInterval(
-				query.state.error,
-				deploymentStatus,
-				query.state.fetchFailureCount,
-			),
-		refetchIntervalInBackground: false,
-	});
+	const agentQuery = $api.useQuery(
+		"get",
+		"/v1/agents/{agent_id}",
+		{
+			params: { path: { agent_id: environmentId } },
+		},
+		{
+			enabled: cloudEnvironmentId && deploymentProjectionQueryable,
+			refetchInterval: (query) =>
+				missingProjectionRefetchInterval(
+					query.state.error,
+					deploymentStatus,
+					query.state.fetchFailureCount,
+				),
+			refetchIntervalInBackground: false,
+		},
+	);
 	const projection = resolveHostedAgentProjection({
 		enabled: cloudEnvironmentId && deploymentProjectionQueryable,
 		data: agentQuery.data,
@@ -513,7 +514,7 @@ export function HostedAgentDetail({
 	});
 
 	const sessions = useQuery({
-		...sessionListQueryOptions(api, { environment_id: environmentId, page_size: 20 }),
+		...sessionListQueryOptions($api, { environment_id: environmentId, page_size: 20 }),
 		enabled: deploymentRunning && projection.status === "resolved",
 	});
 
@@ -765,7 +766,7 @@ function HostedAgentSessionsTab({
 	enabled: boolean;
 	routeSearch: AgentRouteSearch;
 }) {
-	const api = useApi();
+	const $api = useOpenApi();
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
 
@@ -774,7 +775,7 @@ function HostedAgentSessionsTab({
 	}, [environmentId]);
 
 	const sessions = useQuery({
-		...sessionListQueryOptions(api, { environment_id: environmentId, page, page_size: pageSize }),
+		...sessionListQueryOptions($api, { environment_id: environmentId, page, page_size: pageSize }),
 		enabled: enabled && isCloudEnvId(environmentId),
 		placeholderData: keepPreviousData,
 		// staleTime only controls freshness; this mounted-tab observer owns visibility refreshes.
@@ -2445,9 +2446,9 @@ function ChannelsTab({
 	function acceptLinkedChannel(nextLink: AgentChannelLink) {
 		setRecentLinks((current) => new Map(current).set(nextLink.account_id, nextLink));
 		void qc.invalidateQueries({ queryKey: ["agent-channel-links", environmentId] });
-		void qc.invalidateQueries({ queryKey: ["channel-agent-links", nextLink.account_id] });
-		void qc.invalidateQueries({ queryKey: ["channel-bot-pool"] });
-		void qc.invalidateQueries({ queryKey: ["channels"] });
+		void qc.invalidateQueries({ queryKey: channelKeys.agentLinks(nextLink.account_id) });
+		void qc.invalidateQueries({ queryKey: channelKeys.pool });
+		void qc.invalidateQueries({ queryKey: channelKeys.list });
 		showPairingForLink(nextLink);
 	}
 
@@ -2529,8 +2530,8 @@ function ChannelsTab({
 				bot={bot}
 				pairedChats={linkForBot ? (pairedChatsByLinkId.get(linkForBot.id) ?? []) : []}
 				bindings={bindingQuery?.data}
-				bindingsLoading={Boolean(bindingQuery?.isFetching)}
-				bindingsError={Boolean(bindingQuery?.error)}
+				bindingsLoading={Boolean(bindingQuery?.isPending)}
+				bindingsError={Boolean(bindingQuery?.error && bindingQuery.data === undefined)}
 				onBindingsRetry={() => void bindingQuery?.refetch()}
 				agentName={agentName}
 				agentType={agentType}

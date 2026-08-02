@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Check, Copy, KeyRound, Laptop, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
@@ -50,7 +50,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { toastApiError, unwrap, useApi } from "@/lib/api";
+import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { ApiKey } from "@/lib/api-schemas";
 import { formatShortDate } from "@/lib/format";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
@@ -65,6 +65,7 @@ type RevokeContext = {
 /** API Keys settings — CLI-facing bearer tokens. */
 export function ApiKeysPanel() {
 	const api = useApi();
+	const $api = useOpenApi();
 	const queryClient = useQueryClient();
 	const [createDialogOpen, setCreateDialogOpen] = useState(false);
 	const [newLabel, setNewLabel] = useState("");
@@ -84,15 +85,7 @@ export function ApiKeysPanel() {
 		error: "Couldn’t copy the API key — select and copy it manually.",
 	});
 
-	const {
-		data: listedKeys,
-		error,
-		isLoading,
-		refetch,
-	} = useQuery({
-		queryKey: API_KEYS_QUERY_KEY,
-		queryFn: async () => unwrap(await api.GET("/v1/auth/keys")),
-	});
+	const { data: listedKeys, error, isLoading, refetch } = $api.useQuery("get", "/v1/auth/keys");
 	const keys = useMemo(() => activeApiKeys(listedKeys), [listedKeys]);
 
 	const createKey = useSensitiveAction(async (label: string) => {

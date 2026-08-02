@@ -1,6 +1,6 @@
 import type { ApiKey } from "@/lib/api-schemas";
 
-export const API_KEYS_QUERY_KEY = ["api-keys"] as const;
+export const API_KEYS_QUERY_KEY = ["get", "/v1/auth/keys"] as const;
 
 /** Keep revoked keys out of the UI while older backends are still in a rolling deployment. */
 export function activeApiKeys(keys: readonly ApiKey[] | undefined): ApiKey[] {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Send } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -25,7 +25,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { ensureBlob, unwrap, useApi, useSkillArchiveUploader } from "@/lib/api";
+import { ensureBlob, unwrap, useApi, useOpenApi, useSkillArchiveUploader } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { skillCapabilities } from "@/lib/skill-authority";
@@ -49,6 +49,7 @@ export function SendSkillDialog({
 	onDone?: () => void;
 }) {
 	const api = useApi();
+	const $api = useOpenApi();
 	const uploadSkillArchive = useSkillArchiveUploader();
 	const qc = useQueryClient();
 	const [open, setOpen] = useState(false);
@@ -58,11 +59,14 @@ export function SendSkillDialog({
 	const single = skills.length === 1 ? skills[0] : null;
 	const batchLabel = single ? single.name : `${skills.length} skills`;
 
-	const projectsQuery = useQuery({
-		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/v1/projects")),
-		enabled: open,
-	});
+	const projectsQuery = $api.useQuery(
+		"get",
+		"/v1/projects",
+		{},
+		{
+			enabled: open,
+		},
+	);
 	const projects = projectsQuery.data;
 	const destinationLoadError = projectsQuery.error;
 
