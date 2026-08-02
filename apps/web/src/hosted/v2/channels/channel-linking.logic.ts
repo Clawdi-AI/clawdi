@@ -58,7 +58,7 @@ export function verifiedDiscordServerInstallUrl(value: string | null | undefined
 			url.searchParams.getAll("client_id").length !== 1 ||
 			url.searchParams.get("integration_type") !== "0" ||
 			url.searchParams.getAll("integration_type").length !== 1 ||
-			url.searchParams.get("permissions") !== "274878024768" ||
+			url.searchParams.get("permissions") !== "309237763136" ||
 			url.searchParams.getAll("permissions").length !== 1 ||
 			url.searchParams.getAll("scope").length !== 1 ||
 			scopes.size !== 2 ||

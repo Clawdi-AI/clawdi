@@ -8993,7 +8993,7 @@ test("Telegram and Discord pairing acknowledge one newly active binding at 320px
 					expires_at: validExpiry,
 					pairing_command: "/clawdi_pair 3456789BCD",
 					discord_install_url:
-						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=274878024768&scope=bot%20applications.commands",
+						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=309237763136&scope=bot%20applications.commands",
 					discord_user_install_url:
 						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
 				},
@@ -9491,7 +9491,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 					expires_at: validExpiry,
 					pairing_command: "/clawdi_pair 56789BCDFG",
 					discord_install_url:
-						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=274878024768&scope=bot%20applications.commands",
+						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=309237763136&scope=bot%20applications.commands",
 					discord_user_install_url:
 						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
 				},
@@ -9506,7 +9506,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 					expires_at: validExpiry,
 					pairing_command: "/clawdi_pair HJKLMNPQRS",
 					discord_install_url:
-						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=274878024768&scope=bot%20applications.commands",
+						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=309237763136&scope=bot%20applications.commands",
 					discord_user_install_url:
 						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
 				},
@@ -9521,7 +9521,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 					expires_at: "2000-01-01T00:00:00Z",
 					pairing_command: "/clawdi_pair TVWXYZ2345",
 					discord_install_url:
-						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=274878024768&scope=bot%20applications.commands",
+						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=309237763136&scope=bot%20applications.commands",
 					discord_user_install_url:
 						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
 				},
@@ -10204,7 +10204,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 		.poll(() => page.evaluate(() => navigator.clipboard.readText()))
 		.toContain("integration_type=0");
 	await expect(discordServerInstallLink).toHaveAttribute("href", /integration_type=0/);
-	await expect(discordServerInstallLink).toHaveAttribute("href", /permissions=274878024768/);
+	await expect(discordServerInstallLink).toHaveAttribute("href", /permissions=309237763136/);
 	await discordDmTab.click();
 	await expect(discordPairDialog.locator('[data-discord-pair-path="dm"]')).toBeVisible();
 	const discordUserInstallQr = discordPairDialog.getByRole("img", {
