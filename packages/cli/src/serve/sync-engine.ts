@@ -77,6 +77,34 @@ export function isSkillSyncServerEvent(event: ServerEvent): event is SkillServer
 	);
 }
 
+const AGENT_DISCONNECTED_ERROR_CODE = "agent_disconnected";
+
+function agentLookupStopHint(error: unknown): string | null {
+	if (!(error instanceof ApiError)) return null;
+	// Older active-only Core versions returned 404 for the owner's archived
+	// Agent. Keep that rolling-upgrade stop only at the exact lookup call, but
+	// do not claim that an ambiguous 404 proves the Agent was disconnected.
+	if (error.status === 404) {
+		return "This installation's Agent was not found. Run clawdi setup to reconnect this installation.";
+	}
+	if (error.status !== 403) return null;
+	try {
+		const payload: unknown = JSON.parse(error.body);
+		if (typeof payload !== "object" || payload === null || !("detail" in payload)) return null;
+		const detail = payload.detail;
+		const disconnected =
+			typeof detail === "object" &&
+			detail !== null &&
+			"code" in detail &&
+			detail.code === AGENT_DISCONNECTED_ERROR_CODE;
+		return disconnected
+			? "This installation is disconnected. Run clawdi setup to reconnect it with retained data."
+			: null;
+	} catch {
+		return null;
+	}
+}
+
 export function skillInvalidationKey(event: ServerEvent, projectId: string): string | null {
 	if (!isSkillSyncServerEvent(event) || event.project_id !== projectId) return null;
 	return event.skill_key;
@@ -349,6 +377,18 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		root_dir: rootDir,
 		state_dir: stateDir,
 	});
+	const stopForDisconnectedAgent = (hint: string): void => {
+		log.info("engine.agent_disconnected", {
+			environment_id: opts.environmentId,
+			hint,
+		});
+		// Exit status 2 is the supervisor's established no-restart control
+		// outcome, not an application-crash classification. On macOS,
+		// KeepAlive requires the same best-effort self-unload used for auth.
+		process.exitCode = 2;
+		removeLaunchdDaemonSupervision(opts.adapter.agentType);
+		opts.abortController.abort();
+	};
 
 	// Fetch this Agent's default_project_id at boot. Projection requests are
 	// Agent-scoped, while the durable claim and absence report are additionally
@@ -384,6 +424,11 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	try {
 		defaultProjectId = await fetchDefaultProjectId();
 	} catch (e) {
+		const stopHint = agentLookupStopHint(e);
+		if (stopHint !== null) {
+			stopForDisconnectedAgent(stopHint);
+			return;
+		}
 		if (isAuthFailure(e)) {
 			log.error("engine.auth_failed", { origin: "boot_project_fetch" });
 			process.exitCode = 2;
@@ -529,6 +574,11 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 				}
 				consecutiveFailures = 0;
 			} catch (e) {
+				const stopHint = agentLookupStopHint(e);
+				if (stopHint !== null) {
+					stopForDisconnectedAgent(stopHint);
+					return;
+				}
 				if (isAuthFailure(e)) {
 					triggerAuthFailureAbort("project_refresh");
 					return;

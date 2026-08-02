@@ -126,6 +126,7 @@ _AGENT_AVATAR_PREFIX = "agent-avatars/"
 _AGENT_AVATAR_KEY_RE = re.compile(r"^agent-avatars/[0-9a-f]{32}\.(png|jpg|webp)$")
 _RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=90)
 _HEARTBEAT_FRESHNESS_WRITE_INTERVAL = timedelta(seconds=40)
+_AGENT_DISCONNECTED_ERROR_CODE = "agent_disconnected"
 _RUNTIME_OBSERVED_ADAPTER = TypeAdapter(HostedRuntimeObserved)
 _MANUAL_SESSION_SUMMARY_FILTER = text(
     "(sessions.summary IS NULL OR "
@@ -435,13 +436,24 @@ async def _get_agent_identity(
             .where(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == auth.user_id,
-                active_agent_filter(),
             )
         )
     ).first()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Agent not found")
     env, state = row
+    if env.archived_at is not None:
+        # The owner may distinguish their retained, disconnected identity from
+        # a random id. The user_id predicate above and bound-id fence before the
+        # query keep nonexistent, cross-owner, and mismatched bound ids at 404.
+        # Released daemons already treat 403 as a no-restart supervisor stop.
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": _AGENT_DISCONNECTED_ERROR_CODE,
+                "message": "Agent is disconnected",
+            },
+        )
     payload = _identity_response(env, state, agent_response=agent_response)
     etag = strong_json_etag(payload.model_dump(mode="json"))
     headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
