@@ -899,7 +899,35 @@ describe("daemon startup Agent lookup", () => {
 		}
 	}
 
-	it("maps the persisted canonical Agent 404 to a clean no-restart stop", async () => {
+	it("maps the stable archived-Agent 403 to disconnected guidance and a no-restart stop", async () => {
+		await withStartupCase(
+			async () =>
+				new Response('{"detail":{"code":"agent_disconnected","message":"Agent is disconnected"}}', {
+					status: 403,
+					headers: { "content-type": "application/json" },
+				}),
+			async ({ abortController, requests, logs }) => {
+				await runSyncEngine({
+					environmentId: "agent-disconnected",
+					adapter: adapterRegistry.hermes.create(),
+					abort: abortController.signal,
+					abortController,
+					forcePollWatcher: true,
+				});
+
+				expect(requests).toHaveLength(1);
+				expect(new URL(requests[0].url).pathname).toBe("/v1/agents/agent-disconnected");
+				expect(process.exitCode).toBe(2);
+				expect(abortController.signal.aborted).toBe(true);
+				expect(logs.join("")).toContain('"level":"info","event":"engine.agent_disconnected"');
+				expect(logs.join("")).toContain("This installation is disconnected");
+				expect(logs.join("")).toContain("retained data");
+				expect(logs.join("")).not.toContain('"event":"engine.auth_failed"');
+			},
+		);
+	});
+
+	it("keeps an ambiguous 404 on a safe legacy-compatible stop path", async () => {
 		await withStartupCase(
 			async () => new Response('{"detail":"Agent not found"}', { status: 404 }),
 			async ({ abortController, requests, logs }) => {
@@ -916,7 +944,33 @@ describe("daemon startup Agent lookup", () => {
 				expect(process.exitCode).toBe(2);
 				expect(abortController.signal.aborted).toBe(true);
 				expect(logs.join("")).toContain('"level":"info","event":"engine.agent_disconnected"');
+				expect(logs.join("")).toContain("Agent was not found");
+				expect(logs.join("")).not.toContain("retained data");
 				expect(logs.join("")).not.toContain('"level":"error","event":"engine.agent_disconnected"');
+			},
+		);
+	});
+
+	it("keeps an unrelated 403 on the established auth-failure stop path", async () => {
+		await withStartupCase(
+			async () =>
+				new Response('{"detail":"Forbidden"}', {
+					status: 403,
+					headers: { "content-type": "application/json" },
+				}),
+			async ({ abortController, logs }) => {
+				await runSyncEngine({
+					environmentId: "agent-forbidden",
+					adapter: adapterRegistry.hermes.create(),
+					abort: abortController.signal,
+					abortController,
+					forcePollWatcher: true,
+				});
+
+				expect(process.exitCode).toBe(2);
+				expect(abortController.signal.aborted).toBe(true);
+				expect(logs.join("")).toContain('"level":"error","event":"engine.auth_failed"');
+				expect(logs.join("")).not.toContain('"event":"engine.agent_disconnected"');
 			},
 		);
 	});
@@ -939,6 +993,29 @@ describe("daemon startup Agent lookup", () => {
 				expect(
 					requests.every((request) => new URL(request.url).pathname === "/v1/agents/agent-offline"),
 				).toBe(true);
+				expect(process.exitCode).toBe(0);
+				expect(abortController.signal.aborted).toBe(false);
+			},
+		);
+	});
+
+	it("keeps network failures on the ordinary retry and fatal path", async () => {
+		await withStartupCase(
+			async () => {
+				throw new TypeError("fetch failed");
+			},
+			async ({ abortController, requests }) => {
+				await expect(
+					runSyncEngine({
+						environmentId: "agent-network-offline",
+						adapter: adapterRegistry.hermes.create(),
+						abort: abortController.signal,
+						abortController,
+						forcePollWatcher: true,
+					}),
+				).rejects.toMatchObject({ status: 0, isNetwork: true });
+
+				expect(requests).toHaveLength(3);
 				expect(process.exitCode).toBe(0);
 				expect(abortController.signal.aborted).toBe(false);
 			},

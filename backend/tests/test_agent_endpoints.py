@@ -9,7 +9,11 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import AuthContext, get_auth, get_auth_short_session
+from app.main import app
+from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
+from app.models.user import User
 from app.services.runtime_source import expected_runtime_bundle_v2_etag
 
 _DEPRECATED_HOSTED_FIELDS = {"hosted_managed", "hosted_deployment_id"}
@@ -217,8 +221,66 @@ async def test_agent_delete_disconnects_self_managed_agent(client: httpx.AsyncCl
     response = await client.delete(f"/v1/agents/{agent_id}")
     assert response.status_code == 204, response.text
 
-    detail = await client.get(f"/v1/agents/{agent_id}")
-    assert detail.status_code == 404
+    expected_detail = {
+        "detail": {
+            "code": "agent_disconnected",
+            "message": "Agent is disconnected",
+        }
+    }
+    for path in (
+        f"/v1/agents/{agent_id}",
+        f"/v1/environments/{agent_id}",
+        f"/api/agents/{agent_id}",
+        f"/api/environments/{agent_id}",
+    ):
+        detail = await client.get(path)
+        assert detail.status_code == 403, (path, detail.text)
+        assert detail.json() == expected_detail
+
+    assert (await client.get("/v1/agents")).json() == []
+    assert (await client.get("/v1/environments")).json() == []
+
+
+@pytest.mark.asyncio
+async def test_archived_agent_detail_does_not_leak_to_missing_wrong_owner_or_bound_mismatch(
+    client: httpx.AsyncClient,
+    seed_user,
+):
+    agent_id = await _register_agent(client)
+    disconnected = await client.delete(f"/v1/agents/{agent_id}")
+    assert disconnected.status_code == 204, disconnected.text
+
+    missing_id = uuid.uuid4()
+    assert (await client.get(f"/v1/agents/{missing_id}")).status_code == 404
+    assert (await client.get(f"/v1/environments/{missing_id}")).status_code == 404
+
+    other_user = User(
+        id=uuid.uuid4(),
+        clerk_id=f"other_{uuid.uuid4().hex}",
+        email="other@example.test",
+        name="Other",
+    )
+
+    async def wrong_owner_auth() -> AuthContext:
+        return AuthContext(user=other_user)
+
+    app.dependency_overrides[get_auth] = wrong_owner_auth
+    app.dependency_overrides[get_auth_short_session] = wrong_owner_auth
+    assert (await client.get(f"/v1/agents/{agent_id}")).status_code == 404
+    assert (await client.get(f"/v1/environments/{agent_id}")).status_code == 404
+
+    mismatched_key = ApiKey(
+        user_id=seed_user.id,
+        environment_id=uuid.uuid4(),
+    )
+
+    async def mismatched_bound_auth() -> AuthContext:
+        return AuthContext(user=seed_user, api_key=mismatched_key)
+
+    app.dependency_overrides[get_auth] = mismatched_bound_auth
+    app.dependency_overrides[get_auth_short_session] = mismatched_bound_auth
+    assert (await client.get(f"/v1/agents/{agent_id}")).status_code == 404
+    assert (await client.get(f"/v1/environments/{agent_id}")).status_code == 404
 
 
 @pytest.mark.asyncio

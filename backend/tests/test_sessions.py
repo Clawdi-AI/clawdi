@@ -1606,7 +1606,9 @@ async def test_disconnect_archives_identity_and_preserves_session_link(
     assert uuid.UUID(env_id) not in archived_source.rows
 
     assert (await client.get("/v1/agents")).json() == []
-    assert (await client.get(f"/v1/agents/{env_id}")).status_code == 404
+    archived_detail = await client.get(f"/v1/agents/{env_id}")
+    assert archived_detail.status_code == 403
+    assert archived_detail.json()["detail"]["code"] == "agent_disconnected"
 
     reconnected = await _register_env_named(
         client,
