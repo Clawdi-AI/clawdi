@@ -558,21 +558,22 @@ function buildManagedChannelEgressProfiles(
 		}
 	}
 	const whatsapp = singleLinkForProvider(links, "whatsapp");
-	if (whatsapp) {
-		const material = whatsappBaileysCredentialMaterial(whatsapp);
-		if (!material) {
+	if (WHATSAPP_UPSTREAM_READY) {
+		if (whatsapp && !whatsappBaileysCredentialMaterial(whatsapp)) {
 			throw new Error(`managed WhatsApp Link ${whatsapp.linkId} has no valid synthetic auth`);
 		}
 		profiles.push(
 			...buildManagedWhatsAppEgressProfiles({
 				controlPlaneApiUrl: cloudApiUrl,
-				links: [
-					{
-						linkId: whatsapp.linkId,
-						agentTokenSecretRef: whatsapp.secretRef,
-						capabilitySecretRef: whatsapp.placeholderSecretRef,
-					},
-				],
+				links: whatsapp
+					? [
+							{
+								linkId: whatsapp.linkId,
+								agentTokenSecretRef: whatsapp.secretRef,
+								capabilitySecretRef: whatsapp.placeholderSecretRef,
+							},
+						]
+					: [],
 			}),
 		);
 	}
@@ -598,6 +599,7 @@ function mergeEgressProfiles(
 function isChannelProjectionProfile(profile: EgressProfile): boolean {
 	return (
 		profile.owner === "clawdi-native-channels" ||
+		profile.owner === "clawdi-native-whatsapp" ||
 		profile.id === "direct-provider-passthrough" ||
 		profile.id.startsWith("direct-provider-passthrough-")
 	);

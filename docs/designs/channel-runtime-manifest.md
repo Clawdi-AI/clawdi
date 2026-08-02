@@ -325,7 +325,11 @@ The managed projection is entirely gate-controlled:
    strips it, injects the Link bearer, and rewrites the WebSocket upgrade to the
    Noise endpoint. The capability is a profile selector, not a WhatsApp token.
 4. Missing capability preserves the stock plugin's official upstream request;
-   a present invalid or expired capability fails closed.
+   a present invalid, stale, or misplaced capability fails closed. The
+   deterministic selector has no expiry because it grants no backend authority.
+   Link removal deletes the valid route but retains the deny rule, while the
+   backend independently rejects revoked bearers and cross-Link synthetic
+   identities during convergence.
 
 The pinned artifacts receive the dedicated WebSocket-only header and
 `authCert` seams through the CLI-owned static compatibility reconciler. It
@@ -413,8 +417,6 @@ boundary.
 - Whether `clawdi run` should automatically load `outputs.dotenv`, or whether
   users should pass `--env-file .env.clawdi.channels` explicitly.
 - Live validation of the exact target-native OpenClaw and Hermes config shape.
-- Rotation and expiry policy for the independent per-Link managed-upgrade
-  capability without exposing public credential authority.
 - Whether the backend should expose a user API to update private channel
   account config after creation. Today the manifest can create or reuse private
   bots, but not reconcile changed provider config without deletion.
@@ -426,7 +428,7 @@ boundary.
 3. Implement idempotent account and link reconciliation through user APIs.
 4. Implement dotenv projection with private atomic writes.
 5. Implement explicit token rotation flags and missing-token warnings.
-6. Keep WhatsApp native projection gated until the external seams and E2E exist.
+6. Keep WhatsApp native projection gated until native-plugin E2E and the live drill exist.
 7. Use stock OpenClaw/Hermes WhatsApp integrations; do not add custom adapters.
 8. Add CLI tests proving:
    - no admin endpoint is called,

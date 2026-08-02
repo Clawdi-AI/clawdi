@@ -19,7 +19,7 @@ or Hermes channel connector and not a second agent runtime.
   WebSocket upgrade carries the exact managed marker. The generic egress engine
   strips the marker and injects the AgentLink bearer before forwarding.
 - A missing marker is a user-owned socket and remains request-level passthrough
-  to the official upstream. A present but invalid, expired, or misplaced marker
+  to the official upstream. A present but invalid, stale, or misplaced marker
   matches the generic deny profile and fails closed.
 - FastAPI owns bindings, aliases, durable inbox/outbox state, Link authority,
   Noise/Signal emulation, and revocation. The provider transport has no product
@@ -28,7 +28,8 @@ or Hermes channel connector and not a second agent runtime.
   account connection. The physical provider socket and Link-scoped synthetic
   sockets are intentionally distinct.
 
-The four isolated artifact-seam audit fields are true, but the aggregate
+The four isolated, compatibility-patch-provided artifact-seam audit fields are
+true; none is described as a native upstream capability. The aggregate
 WhatsApp linking, runtime, and upstream readiness constants remain false in
 `packages/cli/src/runtime/whatsapp-upstream-contract.ts`. Native-plugin E2E and
 the live-account drill are still unproven. No managed marker, compatibility
@@ -164,9 +165,9 @@ layouts, not inferred from source package names:
 | OpenClaw | `@openclaw/whatsapp@2026.7.1` | `baileys@7.0.0-rc13` | `dist/session-DriaHt7V.js` | `21417f0271cf1ae63a6fd4f05510b78755e4b1870ae087a1d23c68adc128de7a` |
 | Hermes | release `2026.7.30`, package `0.19.1` | `@whiskeysockets/baileys@7.0.0-rc13` | `scripts/whatsapp-bridge/bridge.js` | `9e1c4745da7d385a56fe3e48ff510e94f577ccd4cd01daa66c02d69267226185` |
 
-Both aliases resolve to the audited Baileys source commit `8053b086`. OpenClaw
-constructs every initial and reconnecting socket through `createWaSocket`.
-Hermes constructs them through `startSocket`, including its reconnect timer.
+Both aliases resolve to the audited Baileys source commit `8053b086`. Every
+OpenClaw socket construction enters `createWaSocket`. Hermes uses `startSocket`
+for its initial socket and reconnect timer.
 The older local `7.0.0-rc.9` patch was reviewed only for the backward-compatible
 `authCert ?? WA_CERT_DETAILS` trust behavior; its custom websocket URL routing
 and release assumptions are intentionally absent.
@@ -199,14 +200,22 @@ against `authCert ?? WA_CERT_DETAILS`. `WebSocketClient.connect` must merge only
 fetch/media requests. Defaults preserve current upstream behavior.
 
 Compatibility tests run against both consumer artifact names used here,
-`baileys` (OpenClaw) and `@whiskeysockets/baileys` (Hermes):
+`baileys` (OpenClaw) and `@whiskeysockets/baileys` (Hermes). The executable
+harness evaluates the exact patched rc13 `WebSocketClient` and Noise handler,
+calls rc13 `getHttpStream`, and executes the patched OpenClaw `createWaSocket`
+and Hermes `startSocket` functions:
 
 1. no options still trust the official certificate and emit no marker;
-2. `authCert` accepts a fixture chain signed by the supplied authority and
-   rejects the official/wrong authority and serial;
-3. `webSocketHeaders` appear on initial and reconnect upgrades only;
-4. the marker is absent from fetch, media upload/download, redirects, and logs;
-5. both artifact aliases expose identical types and runtime behavior.
+2. `authCert` selects the supplied public key and serial instead;
+3. `webSocketHeaders` appear in the WebSocket constructor options but not in
+   ordinary media fetch options;
+4. a second construction through both consumer functions rereads changed
+   selector/trust files, while source assertions only audit the constructor
+   call-site shape;
+5. both artifact aliases expose the same narrow types and runtime seams.
+
+This is executable compatibility-seam evidence, not full native-plugin E2E.
+The native-plugin and live-account gates therefore remain false.
 
 The CLI reconciler is a narrow static compatibility exception to the general
 ban on runtime monkey-patching and source forks. It performs no fuzzy or
@@ -225,23 +234,42 @@ The receipt is
 
 1. With no managed Link, no receipt means inert. A matching receipt triggers a
    full rollback preflight; exact postimages return to exact preimages and the
-   receipt is removed. Missing installer artifacts are tolerated. Any unknown
-   hash refuses the entire rollback, leaves the receipt in place, and does not
-   block the unmanaged or user-owned runtime because the optional seams remain
-   inert without the sidecar.
+   receipt is removed. An entirely absent audited artifact root means the
+   package was uninstalled and its receipt can be forgotten. If the root still
+   exists, every package identity and target must exist and match an audited
+   preimage or postimage; a missing target, symlink, identity mismatch, or
+   unknown hash refuses the entire rollback before any target mutation and
+   preserves the receipt.
 2. With a managed Link, Hermes first restores lockfile-pinned local bridge
    dependencies when Baileys is absent. The live-state transaction snapshots
    the whole `node_modules` tree whenever that `npm ci` may run.
 3. The reconciler verifies the real, non-symlinked artifact root, exact package
    names and versions, and every target's exact pristine or patched SHA-256.
+   It does not claim registry/tarball integrity verification: npm integrity is
+   not present in installed `package.json` and is not receipt authority.
    Unknown versions, missing targets, and drift fail before managed WhatsApp
    activation.
 4. Exact patched files plus a matching receipt are a no-op. Exact patched files
    without a receipt recover the receipt. Pristine or mixed recognized files
    write and fsync the receipt, stage all replacements, recheck every source
-   hash, then rename and fsync each target directory.
+   hash, then rename each target and fsync its directory. Each rename is an
+   atomic file replacement, but the six-file change is not a global atomic
+   transaction. A crash can leave a recognized preimage/postimage mixture;
+   the durable receipt makes the next reconcile converge it safely.
 5. An installer restore to recognized pristine files reapplies the patch.
    Manifest convergence failure restores the exact pre-apply live snapshot.
-   Rollback also preflights every target before changing any file.
+   Rollback also preflights every target before changing any file. A crash
+   during rollback leaves the receipt until every target is restored, so the
+   next rollback converges a recognized mixed state.
+
+The receipt contains only its schema, patch revision, audited artifact root,
+exact consumer/Baileys names and versions, relative target paths, and pre/post
+SHA-256 values. The reconciler remains larger than the upstream runtime change
+because it embeds six exact replacement definitions per artifact and retains
+package-layout recovery, symlink checks, TOCTOU rechecks, durable staging,
+receipt recovery, rollback preflight, Hermes reinstall handling, and caller
+snapshot compatibility. Timestamp and unverifiable integrity receipt fields,
+the multi-artifact receipt state, and duplicate apply/rollback commit code were
+removed because they added no safety.
 
 Done: `bun test --isolate packages/cli/src/runtime/managed-baileys-compat.test.ts packages/cli/tests/managed-whatsapp-projection.test.ts packages/cli/tests/runtime-whatsapp-egress.test.ts` exits 0 and reports no failures.

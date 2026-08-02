@@ -128,9 +128,14 @@ it("uses Link identity in the marker and refuses cross-Link reuse", () => {
 		runtimeLoad("openclaw", home),
 		whatsappChannels("link-whatsapp-2"),
 	);
+	const repeated = applyRuntimeChannelsToManifestLoad(
+		runtimeLoad("openclaw", home),
+		whatsappChannels(),
+	);
 	const firstSocket = managedSocket(first);
 	const secondSocket = managedSocket(second);
 	expect(firstSocket.capability).not.toBe(secondSocket.capability);
+	expect(managedSocket(repeated).capability).toBe(firstSocket.capability);
 	const firstProfile = first.manifest.egressProfiles?.profiles.find(
 		(profile) => profile.kind === "websocket",
 	);
@@ -140,6 +145,7 @@ it("uses Link identity in the marker and refuses cross-Link reuse", () => {
 	expect(firstProfile?.match.headers[CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER]).not.toEqual(
 		secondProfile?.match.headers[CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER],
 	);
+	expect(firstProfile?.match).not.toHaveProperty("notAfter");
 });
 
 it("removes only CLI-owned managed auth when no Link remains", () => {
@@ -166,13 +172,21 @@ it("removes only CLI-owned managed auth when no Link remains", () => {
 		),
 	).toContain(authDir);
 
-	const empty = applyRuntimeChannelsToManifestLoad(runtimeLoad("openclaw", home), {
+	const emptyLoad = runtimeLoad("openclaw", home);
+	emptyLoad.manifest = projected.manifest;
+	const empty = applyRuntimeChannelsToManifestLoad(emptyLoad, {
 		channels: [],
 		source: "remote-datasource",
 		sourcePath: "test://channels/empty",
 	});
 	materializeHostedChannelCredentials(empty.manifest, empty.secretValues, home);
 	expect(existsSync(authDir)).toBe(false);
+	expect(empty.manifest.egressProfiles?.profiles).toEqual([
+		expect.objectContaining({
+			id: "native-whatsapp-baileys-invalid-capability",
+			kind: "deny",
+		}),
+	]);
 });
 
 it("uses broad installer and plugin snapshots instead of overlapping patch targets", () => {

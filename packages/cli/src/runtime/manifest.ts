@@ -107,6 +107,7 @@ import {
 	runtimeRootLiveMutationTargets,
 } from "./live-state-snapshot";
 import {
+	MANAGED_WHATSAPP_SOCKET_CONFIG_FILE,
 	type ManagedBaileysRuntime,
 	managedBaileysCompatMutationTargets,
 	managedBaileysCompatReceiptPath,
@@ -451,7 +452,6 @@ interface ManagedWhatsAppAuthCredential {
 }
 
 const MANAGED_WHATSAPP_AUTH_MARKER = ".clawdi-managed-whatsapp-auth.json";
-const MANAGED_WHATSAPP_SOCKET_CONFIG = ".clawdi-managed-whatsapp-socket.json";
 
 export function materializeHostedChannelCredentials(
 	manifest: RuntimeManifest,
@@ -579,7 +579,8 @@ function parseManagedWhatsAppAuthCredentials(value: unknown): ManagedWhatsAppAut
 	const socketConfigFile = files
 		.map(recordValue)
 		.find(
-			(file) => file?.path === MANAGED_WHATSAPP_SOCKET_CONFIG && typeof file.secretRef === "string",
+			(file) =>
+				file?.path === MANAGED_WHATSAPP_SOCKET_CONFIG_FILE && typeof file.secretRef === "string",
 		);
 	const credsJsonSecretRef = credsFile ? stringValue(credsFile.secretRef) : null;
 	const socketConfigSecretRef = socketConfigFile ? stringValue(socketConfigFile.secretRef) : null;
@@ -670,14 +671,14 @@ function materializeManagedWhatsAppAuthDir(
 	);
 	makeRuntimeUserOwned(join(credential.authDir, "creds.json"));
 	writePrivateFileAtomic(
-		join(credential.authDir, MANAGED_WHATSAPP_SOCKET_CONFIG),
+		join(credential.authDir, MANAGED_WHATSAPP_SOCKET_CONFIG_FILE),
 		`${JSON.stringify(socketConfig, null, 2)}\n`,
 		{
 			mode: 0o600,
 			dirMode: 0o700,
 		},
 	);
-	makeRuntimeUserOwned(join(credential.authDir, MANAGED_WHATSAPP_SOCKET_CONFIG));
+	makeRuntimeUserOwned(join(credential.authDir, MANAGED_WHATSAPP_SOCKET_CONFIG_FILE));
 	writeJsonFile(join(credential.authDir, MANAGED_WHATSAPP_AUTH_MARKER), {
 		schemaVersion: "clawdi.managedWhatsAppAuth.v1",
 		provider: "whatsapp",

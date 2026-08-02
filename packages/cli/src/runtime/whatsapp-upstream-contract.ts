@@ -14,8 +14,6 @@ export const WHATSAPP_UPSTREAM_AUDIT = {
 				consumerVersion: "2026.7.1",
 				consumerStableCommit: "2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4",
 				package: "baileys",
-				npmIntegrity:
-					"sha512-v8k74K8B5R7WNYGa26MyJAYEu3Wc4BSuK01QaK8lr30lhE8Nga31nWNu8KN0NDDt+Fsvkq4SQFFI8Q13ghjKmA==",
 			},
 			hermes: {
 				consumer: "hermes",
@@ -23,8 +21,6 @@ export const WHATSAPP_UPSTREAM_AUDIT = {
 				consumerPackageVersion: "0.19.1",
 				consumerStableCommit: "cc4cab2f592e60a197e796506de9168f74baf3ea",
 				package: "@whiskeysockets/baileys",
-				npmIntegrity:
-					"sha512-8JPc8gaaCRykkjW2jxLGQ7/RZGrc7awO7WU+QJocf58eSUI9jAdcuYLynzhAbyU4UWvJJsHImZ+5E/JaZj5ypA==",
 			},
 		},
 		sharedSurfaceSha256: {
@@ -48,13 +44,21 @@ export const WHATSAPP_UPSTREAM_AUDIT = {
 	openclaw: {
 		version: "2026.7.1",
 		stableCommit: "2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4",
-		nativeManagedUpgradeIdentity: true,
+		consumerSocketConstructionCompatibility: {
+			available: true,
+			nativeUpstream: false,
+			providedBy: "clawdi.managedBaileysCompat.v1",
+		},
 	},
 	hermes: {
 		version: "2026.7.30",
 		packageVersion: "0.19.1",
 		stableCommit: "cc4cab2f592e60a197e796506de9168f74baf3ea",
-		nativeManagedUpgradeIdentity: true,
+		consumerSocketConstructionCompatibility: {
+			available: true,
+			nativeUpstream: false,
+			providedBy: "clawdi.managedBaileysCompat.v1",
+		},
 	},
 } as const;
 
@@ -62,8 +66,10 @@ export const WHATSAPP_RUNTIME_REQUIREMENTS = {
 	baileysNoiseTrustSeam: WHATSAPP_UPSTREAM_AUDIT.baileysRelease.noiseTrustSeam.available,
 	baileysWebSocketUpgradeHeaderSeam:
 		WHATSAPP_UPSTREAM_AUDIT.baileysRelease.webSocketUpgradeHeaderSeam.available,
-	openclawManagedUpgradeIdentity: WHATSAPP_UPSTREAM_AUDIT.openclaw.nativeManagedUpgradeIdentity,
-	hermesManagedUpgradeIdentity: WHATSAPP_UPSTREAM_AUDIT.hermes.nativeManagedUpgradeIdentity,
+	openclawPatchedConsumerSocketConstruction:
+		WHATSAPP_UPSTREAM_AUDIT.openclaw.consumerSocketConstructionCompatibility.available,
+	hermesPatchedConsumerSocketConstruction:
+		WHATSAPP_UPSTREAM_AUDIT.hermes.consumerSocketConstructionCompatibility.available,
 	openclawNativePluginE2E: false,
 	hermesNativePluginE2E: false,
 	liveAccountDrill: false,

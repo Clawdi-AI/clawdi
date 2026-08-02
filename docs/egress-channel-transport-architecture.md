@@ -44,8 +44,15 @@ the placeholder location native to its official client:
 The WhatsApp marker only selects a local profile. It is not the real provider
 credential, not the Link bearer, and not a WhatsApp token. A missing marker is a
 user-owned stock Baileys connection and retains official upstream behavior. A
-present marker that is wrong, expired, or placed on another request is caught by
+present marker that is wrong, stale, or placed on another request is caught by
 the lower-priority deny profile and fails closed.
+
+The per-Link marker is deterministic and intentionally has no expiry: it is a
+local profile selector, not backend authority. Link removal removes its valid
+rewrite profile while retaining the catch-all marked-request deny profile.
+Until that projection converges, the backend still rejects the revoked Link
+bearer; it also binds synthetic Noise identity to that Link, so copying a
+selector or synthetic identity across Links does not confer authority.
 
 `packages/cli/tests/egress_addon/clawdi_egress_addon_test.py` runs all three
 profile shapes through the same matcher and rewrite functions and asserts that
@@ -62,8 +69,7 @@ validates its own resource identity:
 - WhatsApp validates the active Link, synthetic Noise identity, and JID binding.
 
 Invalid or revoked Link authority is rejected even for an already established
-session. Profile expiry only bounds new upgrades; it is not the revocation
-mechanism.
+session. Local selector lifecycle is not the revocation mechanism.
 
 ## WhatsApp Topology
 
@@ -77,9 +83,11 @@ emulator. See
 The pinned Baileys release lacks dedicated `authCert` and WebSocket-only header
 options. The CLI now owns an exact version-and-source-hash-gated compatibility
 patch for the pinned OpenClaw and Hermes artifacts. It adds only those two
-options; it does not add URL routing. Native-plugin E2E and live-account drills
-remain unproven, so the aggregate WhatsApp linking, runtime, and upstream gates
-remain false. Current production convergence therefore installs no WhatsApp
+options; it does not add URL routing. The audited consumer construction support
+is provided by that downstream patch, not by native upstream releases.
+Executable seam tests are not native-plugin E2E, and live-account drills remain
+unproven, so the aggregate WhatsApp linking, runtime, and upstream gates remain
+false. Current production convergence therefore installs no WhatsApp
 credentials, compatibility patch, or interception profile.
 
 ## Source Of Truth

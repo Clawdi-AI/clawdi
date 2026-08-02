@@ -45,7 +45,6 @@ interface PackageIdentity {
 	path: string;
 	name: string;
 	version: string;
-	integrity?: string;
 }
 
 interface ManagedBaileysArtifact {
@@ -57,7 +56,7 @@ interface ManagedBaileysArtifact {
 }
 
 export interface ManagedBaileysPatchReceiptTarget {
-	path: string;
+	relativePath: string;
 	preimageSha256: string;
 	postimageSha256: string;
 }
@@ -71,17 +70,16 @@ export interface ManagedBaileysPatchReceiptArtifact {
 }
 
 export interface ManagedBaileysPatchReceipt {
-	schemaVersion: "clawdi.managedBaileysPatchReceipt.v1";
+	schemaVersion: "clawdi.managedBaileysPatchReceipt.v2";
 	patchRevision: typeof MANAGED_BAILEYS_PATCH_REVISION;
-	appliedAt: string;
-	artifacts: ManagedBaileysPatchReceiptArtifact[];
+	artifact: ManagedBaileysPatchReceiptArtifact;
 }
 
 export type ManagedBaileysReconcileResult =
 	| { status: "inert"; receiptPath: string }
-	| { status: "already-patched"; receiptPath: string; receipt: ManagedBaileysPatchReceipt }
-	| { status: "receipt-recovered"; receiptPath: string; receipt: ManagedBaileysPatchReceipt }
-	| { status: "applied"; receiptPath: string; receipt: ManagedBaileysPatchReceipt }
+	| { status: "already-patched"; receiptPath: string }
+	| { status: "receipt-recovered"; receiptPath: string }
+	| { status: "applied"; receiptPath: string }
 	| { status: "rolled-back"; receiptPath: string }
 	| { status: "rollback-refused"; receiptPath: string; errors: string[] };
 
@@ -302,7 +300,6 @@ export function reconcileManagedBaileysCompatibility(input: {
 	home: string;
 	appRoot?: string;
 	paths: Pick<RuntimePaths, "installInventory">;
-	now?: () => Date;
 }): ManagedBaileysReconcileResult {
 	const receiptPath = managedBaileysCompatReceiptPath(input.paths);
 	if (!input.desiredRuntime) return rollbackManagedBaileysCompatibility(receiptPath, input);
@@ -328,9 +325,9 @@ export function reconcileManagedBaileysCompatibility(input: {
 		);
 	}
 	const existingReceipt = readReceipt(receiptPath);
-	const receipt = buildReceipt(artifact, input.now?.() ?? new Date());
+	const receipt = buildReceipt(artifact);
 	const receiptMatches = existingReceipt
-		? receiptMatchesArtifact(existingReceipt, artifact)
+		? receiptArtifactMatches(existingReceipt.artifact, artifact)
 		: false;
 	if (existingReceipt && !receiptMatches) {
 		const rollback = rollbackManagedBaileysCompatibility(receiptPath, input);
@@ -349,7 +346,6 @@ export function reconcileManagedBaileysCompatibility(input: {
 	return {
 		status: applied ? "applied" : receiptMatches ? "already-patched" : "receipt-recovered",
 		receiptPath,
-		receipt: receiptMatches && existingReceipt ? existingReceipt : receipt,
 	};
 }
 
@@ -365,38 +361,57 @@ function rollbackManagedBaileysCompatibility(
 		expectedSha256: string;
 		content: string;
 	}> = [];
-	for (const artifactReceipt of receipt.artifacts) {
-		const appRoot = join(
-			input.home,
-			...(artifactReceipt.runtime === "openclaw" ? [".openclaw"] : [".hermes", "hermes-agent"]),
-		);
-		const artifact = resolveArtifact({
-			runtime: artifactReceipt.runtime,
-			home: input.home,
-			appRoot,
-		});
-		if (!receiptArtifactMatches(artifactReceipt, artifact)) {
-			throw new Error("managed WhatsApp compatibility receipt does not match the audited artifact");
+	const auditedStates: Array<{ path: string; expectedSha256: string }> = [];
+	const artifactReceipt = receipt.artifact;
+	const appRoot = join(
+		input.home,
+		...(artifactReceipt.runtime === "openclaw" ? [".openclaw"] : [".hermes", "hermes-agent"]),
+	);
+	const artifact = resolveArtifact({
+		runtime: artifactReceipt.runtime,
+		home: input.home,
+		appRoot,
+	});
+	if (!receiptArtifactMatches(artifactReceipt, artifact)) {
+		errors.push("managed WhatsApp compatibility receipt does not match the audited artifact");
+	} else if (directoryEntryExists(artifact.root)) {
+		try {
+			verifyArtifactIdentity(artifact);
+		} catch (error) {
+			errors.push(String(error));
 		}
-		for (const target of artifact.targets) {
-			const path = join(artifact.root, target.relativePath);
-			if (!existsSync(path)) continue;
-			const sha256 = sha256File(path);
-			if (sha256 === target.preimageSha256) continue;
-			if (sha256 !== target.postimageSha256) {
-				errors.push(`${path} has unknown hash ${sha256}`);
-				continue;
+		if (errors.length === 0) {
+			for (const target of artifact.targets) {
+				try {
+					const state = classifyTarget(artifact, target);
+					auditedStates.push({ path: state.path, expectedSha256: state.sha256 });
+					if (state.state === "preimage") continue;
+					if (state.state === "unknown") {
+						errors.push(`${state.path} has unknown hash ${state.sha256}`);
+						continue;
+					}
+					const pristine = applyReplacements(
+						readFileSync(state.path, "utf8"),
+						target.replacements,
+						true,
+					);
+					if (sha256String(pristine) !== target.preimageSha256) {
+						errors.push(`${state.path} inverse patch did not reproduce the audited preimage`);
+						continue;
+					}
+					rollbackEntries.push({
+						path: state.path,
+						expectedSha256: state.sha256,
+						content: pristine,
+					});
+				} catch (error) {
+					errors.push(String(error));
+				}
 			}
-			const pristine = applyReplacements(readFileSync(path, "utf8"), target.replacements, true);
-			if (sha256String(pristine) !== target.preimageSha256) {
-				errors.push(`${path} inverse patch did not reproduce the audited preimage`);
-				continue;
-			}
-			rollbackEntries.push({ path, expectedSha256: sha256, content: pristine });
 		}
 	}
 	if (errors.length > 0) return { status: "rollback-refused", receiptPath, errors };
-	replaceTargetContents(rollbackEntries);
+	replaceTargetContents(rollbackEntries, auditedStates);
 	rmSync(receiptPath, { force: true });
 	fsyncDirectory(dirname(receiptPath));
 	return { status: "rolled-back", receiptPath };
@@ -468,15 +483,11 @@ function resolveArtifact(input: {
 				path: join(root, "package.json"),
 				name: "@openclaw/whatsapp",
 				version: OPENCLAW_WHATSAPP_VERSION,
-				integrity:
-					"sha512-wLY/Omc5fleRpl2lKGN8sxt/8hYfHGwLRezmWsk8oCbea5pRKUPE6ZX+wJO1O52NOJkAGCuiXvS7x0qIeKxXbQ==",
 			},
 			baileys: {
 				path: join(root, "node_modules", "baileys", "package.json"),
 				name: "baileys",
 				version: BAILEYS_VERSION,
-				integrity:
-					"sha512-v8k74K8B5R7WNYGa26MyJAYEu3Wc4BSuK01QaK8lr30lhE8Nga31nWNu8KN0NDDt+Fsvkq4SQFFI8Q13ghjKmA==",
 			},
 			targets: [
 				OPENCLAW_CONSUMER_TARGET,
@@ -504,8 +515,6 @@ function resolveArtifact(input: {
 			path: join(root, "node_modules", "@whiskeysockets", "baileys", "package.json"),
 			name: "@whiskeysockets/baileys",
 			version: BAILEYS_VERSION,
-			integrity:
-				"sha512-8JPc8gaaCRykkjW2jxLGQ7/RZGrc7awO7WU+QJocf58eSUI9jAdcuYLynzhAbyU4UWvJJsHImZ+5E/JaZj5ypA==",
 		},
 		targets: [
 			HERMES_CONSUMER_TARGET,
@@ -537,10 +546,17 @@ function verifyPackageIdentity(identity: PackageIdentity, pyproject: boolean): v
 	}
 	if (pyproject) {
 		const source = readFileSync(identity.path, "utf8");
-		const match = /^version = "([^"]+)"$/m.exec(source);
-		if (match?.[1] !== identity.version) {
+		const projectHeader = /^\[project\]\s*$/m.exec(source);
+		const remainder = projectHeader
+			? source.slice(projectHeader.index + projectHeader[0].length)
+			: "";
+		const nextSection = /^\[/m.exec(remainder)?.index ?? remainder.length;
+		const project = remainder.slice(0, nextSection);
+		const name = /^name = "([^"]+)"$/m.exec(project)?.[1];
+		const version = /^version = "([^"]+)"$/m.exec(project)?.[1];
+		if (name !== identity.name || version !== identity.version) {
 			throw new Error(
-				`managed WhatsApp compatibility requires ${identity.name}@${identity.version}; found ${match?.[1] ?? "unknown"}`,
+				`managed WhatsApp compatibility requires ${identity.name}@${identity.version}; found ${name ?? "unknown"}@${version ?? "unknown"}`,
 			);
 		}
 		return;
@@ -587,36 +603,18 @@ function applyArtifactTargets(
 	artifact: ManagedBaileysArtifact,
 	states: ReturnType<typeof classifyTarget>[],
 ): void {
-	const staged: Array<{ path: string; stagingPath: string }> = [];
-	try {
-		for (const state of states) {
-			if (state.state !== "preimage") continue;
-			const content = applyReplacements(
-				readFileSync(state.path, "utf8"),
-				state.target.replacements,
-			);
-			if (sha256String(content) !== state.target.postimageSha256) {
-				throw new Error(`static managed WhatsApp patch postimage mismatch for ${state.path}`);
-			}
-			const stagingPath = stageReplacement(state.path, content);
-			staged.push({ path: state.path, stagingPath });
+	const replacements = states.flatMap((state) => {
+		if (state.state !== "preimage") return [];
+		const content = applyReplacements(readFileSync(state.path, "utf8"), state.target.replacements);
+		if (sha256String(content) !== state.target.postimageSha256) {
+			throw new Error(`static managed WhatsApp patch postimage mismatch for ${state.path}`);
 		}
-		for (const state of states) {
-			const current = sha256File(state.path);
-			if (current !== state.sha256) {
-				throw new Error(
-					`managed WhatsApp compatibility artifact changed during reconcile: ${state.path}`,
-				);
-			}
-		}
-		for (const entry of staged) {
-			renameSync(entry.stagingPath, entry.path);
-			makeRuntimeUserOwned(entry.path);
-			fsyncDirectory(dirname(entry.path));
-		}
-	} finally {
-		for (const entry of staged) rmSync(entry.stagingPath, { force: true });
-	}
+		return [{ path: state.path, expectedSha256: state.sha256, content }];
+	});
+	replaceTargetContents(
+		replacements,
+		states.map((state) => ({ path: state.path, expectedSha256: state.sha256 })),
+	);
 	for (const target of artifact.targets) {
 		const path = join(artifact.root, target.relativePath);
 		if (sha256File(path) !== target.postimageSha256) {
@@ -668,6 +666,7 @@ function stageReplacement(path: string, content: string): string {
 
 function replaceTargetContents(
 	entries: readonly { path: string; expectedSha256: string; content: string }[],
+	auditedStates: readonly { path: string; expectedSha256: string }[] = entries,
 ): void {
 	const staged: Array<
 		(typeof entries)[number] & {
@@ -678,7 +677,7 @@ function replaceTargetContents(
 		for (const entry of entries) {
 			staged.push({ ...entry, stagingPath: stageReplacement(entry.path, entry.content) });
 		}
-		for (const entry of staged) {
+		for (const entry of auditedStates) {
 			if (sha256File(entry.path) !== entry.expectedSha256) {
 				throw new Error(
 					`managed WhatsApp compatibility artifact changed during reconcile: ${entry.path}`,
@@ -746,24 +745,21 @@ function assertTrustedRealFile(root: string, path: string): void {
 	}
 }
 
-function buildReceipt(artifact: ManagedBaileysArtifact, now: Date): ManagedBaileysPatchReceipt {
+function buildReceipt(artifact: ManagedBaileysArtifact): ManagedBaileysPatchReceipt {
 	return {
-		schemaVersion: "clawdi.managedBaileysPatchReceipt.v1",
+		schemaVersion: "clawdi.managedBaileysPatchReceipt.v2",
 		patchRevision: MANAGED_BAILEYS_PATCH_REVISION,
-		appliedAt: now.toISOString(),
-		artifacts: [
-			{
-				runtime: artifact.runtime,
-				artifactRoot: artifact.root,
-				consumer: identityReceipt(artifact.consumer),
-				baileys: identityReceipt(artifact.baileys),
-				targets: artifact.targets.map((target) => ({
-					path: join(artifact.root, target.relativePath),
-					preimageSha256: target.preimageSha256,
-					postimageSha256: target.postimageSha256,
-				})),
-			},
-		],
+		artifact: {
+			runtime: artifact.runtime,
+			artifactRoot: artifact.root,
+			consumer: identityReceipt(artifact.consumer),
+			baileys: identityReceipt(artifact.baileys),
+			targets: artifact.targets.map((target) => ({
+				relativePath: target.relativePath,
+				preimageSha256: target.preimageSha256,
+				postimageSha256: target.postimageSha256,
+			})),
+		},
 	};
 }
 
@@ -771,15 +767,7 @@ function identityReceipt(identity: PackageIdentity): Omit<PackageIdentity, "path
 	return {
 		name: identity.name,
 		version: identity.version,
-		...(identity.integrity ? { integrity: identity.integrity } : {}),
 	};
-}
-
-function receiptMatchesArtifact(
-	receipt: ManagedBaileysPatchReceipt,
-	artifact: ManagedBaileysArtifact,
-): boolean {
-	return receipt.artifacts.length === 1 && receiptArtifactMatches(receipt.artifacts[0], artifact);
 }
 
 function receiptArtifactMatches(
@@ -790,13 +778,15 @@ function receiptArtifactMatches(
 		return false;
 	}
 	if (
-		JSON.stringify(receipt.consumer) !== JSON.stringify(identityReceipt(artifact.consumer)) ||
-		JSON.stringify(receipt.baileys) !== JSON.stringify(identityReceipt(artifact.baileys))
+		receipt.consumer.name !== artifact.consumer.name ||
+		receipt.consumer.version !== artifact.consumer.version ||
+		receipt.baileys.name !== artifact.baileys.name ||
+		receipt.baileys.version !== artifact.baileys.version
 	) {
 		return false;
 	}
 	const targets = artifact.targets.map((target) => ({
-		path: join(artifact.root, target.relativePath),
+		relativePath: target.relativePath,
 		preimageSha256: target.preimageSha256,
 		postimageSha256: target.postimageSha256,
 	}));
@@ -811,28 +801,33 @@ function readReceipt(path: string): ManagedBaileysPatchReceipt | null {
 			!value ||
 			typeof value !== "object" ||
 			Array.isArray(value) ||
-			Reflect.get(value, "schemaVersion") !== "clawdi.managedBaileysPatchReceipt.v1" ||
+			Reflect.get(value, "schemaVersion") !== "clawdi.managedBaileysPatchReceipt.v2" ||
 			Reflect.get(value, "patchRevision") !== MANAGED_BAILEYS_PATCH_REVISION ||
-			typeof Reflect.get(value, "appliedAt") !== "string" ||
-			!Array.isArray(Reflect.get(value, "artifacts"))
+			!Reflect.get(value, "artifact")
 		) {
 			throw new Error("unknown receipt schema or patch revision");
 		}
 		const receipt = value as ManagedBaileysPatchReceipt;
 		if (
-			receipt.artifacts.length !== 1 ||
-			!receipt.artifacts.every(
-				(artifact) =>
-					(artifact.runtime === "openclaw" || artifact.runtime === "hermes") &&
-					typeof artifact.artifactRoot === "string" &&
-					Array.isArray(artifact.targets),
-			)
+			(receipt.artifact.runtime !== "openclaw" && receipt.artifact.runtime !== "hermes") ||
+			typeof receipt.artifact.artifactRoot !== "string" ||
+			!Array.isArray(receipt.artifact.targets)
 		) {
 			throw new Error("receipt artifact set is invalid");
 		}
 		return receipt;
 	} catch (error) {
 		throw new Error(`managed WhatsApp compatibility receipt is invalid: ${String(error)}`);
+	}
+}
+
+function directoryEntryExists(path: string): boolean {
+	try {
+		lstatSync(path);
+		return true;
+	} catch (error) {
+		if (error instanceof Error && Reflect.get(error, "code") === "ENOENT") return false;
+		throw error;
 	}
 }
 
