@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initAuthCreds, proto } from "baileys";
+import { DisconnectReason, initAuthCreds, proto } from "baileys";
 
 import { parseAuditedWhatsAppWebVersion } from "./audited-version.js";
 import type { SidecarConfig } from "./config.js";
@@ -13,6 +13,155 @@ import type { ProviderMessageEventInput } from "./sqlite-state.js";
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("physical Baileys runtime", () => {
+	it("keeps an unregistered capacity slot idle until authenticated pairing starts", async () => {
+		const harness = createHarness({ registered: false });
+		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
+
+		await runtime.start();
+		expect(harness.socketConfigurations).toHaveLength(0);
+		expect(runtime.health()).toMatchObject({ status: "stopped", registered: false });
+
+		await runtime.startQrPairing();
+		expect(harness.socketConfigurations).toHaveLength(1);
+		const firstQrObservedAt = Date.now();
+		harness.events.emit("connection.update", { qr: "sensitive-qr-value" });
+		const ready = runtime.pairingStatus();
+		expect(ready).toMatchObject({
+			status: "pairing_qr",
+			registered: false,
+			method: "qr",
+			qr: "sensitive-qr-value",
+		});
+		expect(Date.parse(ready.qrExpiresAt ?? "") - firstQrObservedAt).toBeWithin(59_000, 61_000);
+
+		const rotatedQrObservedAt = Date.now();
+		harness.events.emit("connection.update", { qr: "sensitive-qr-value-rotated" });
+		const rotated = runtime.pairingStatus();
+		expect(rotated).toMatchObject({ qr: "sensitive-qr-value-rotated" });
+		expect(Date.parse(rotated.qrExpiresAt ?? "") - rotatedQrObservedAt).toBeWithin(19_000, 21_000);
+		expect(Date.parse(rotated.qrExpiresAt ?? "")).toBeLessThan(Date.parse(ready.qrExpiresAt ?? ""));
+
+		harness.events.emit("creds.update", { registered: true });
+		expect(runtime.pairingStatus()).toEqual({ status: "starting", registered: true });
+		harness.events.emit("connection.update", { connection: "open" });
+		expect(runtime.pairingStatus()).toEqual({ status: "connected", registered: true });
+		await runtime.stop();
+	});
+
+	it("supports the pinned rc13 pairing-code method without retaining phone input", async () => {
+		const harness = createHarness({ registered: false });
+		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
+
+		const pairing = await runtime.requestPairingCode("15551234567");
+
+		expect(pairing).toEqual({
+			status: "pairing_code",
+			registered: false,
+			method: "code",
+			code: "12345678",
+		});
+		expect(harness.pairingCodePhones).toEqual(["15551234567"]);
+		await expect(runtime.startQrPairing()).rejects.toThrow("pairing_method_already_selected");
+		expect(harness.socketConfigurations).toHaveLength(1);
+		await runtime.cancelPairing();
+		expect(harness.physicalAuthResets).toBe(1);
+		expect(runtime.pairingStatus()).toEqual({ status: "stopped", registered: false });
+		await runtime.stop();
+	});
+
+	it("confirms physical logout before clearing registered auth", async () => {
+		const harness = createHarness();
+		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
+		await runtime.start();
+		harness.events.emit("connection.update", { connection: "open" });
+
+		const loggedOut = await runtime.logoutPairing();
+
+		expect(harness.logoutCalls).toBe(1);
+		expect(harness.physicalAuthResets).toBe(1);
+		expect(loggedOut).toEqual({ status: "stopped", registered: false });
+		await runtime.stop();
+	});
+
+	it("serializes concurrent QR starts onto one physical socket", async () => {
+		const harness = createHarness({ registered: false });
+		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
+
+		await Promise.all([runtime.startQrPairing(), runtime.startQrPairing()]);
+
+		expect(harness.socketConfigurations).toHaveLength(1);
+		await runtime.cancelPairing();
+		await runtime.stop();
+	});
+
+	it("keeps and retries the same socket when pairing cancellation is not confirmed", async () => {
+		const harness = createHarness({ registered: false, cancelFailures: 1 });
+		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
+		await runtime.startQrPairing();
+
+		await expect(runtime.cancelPairing()).rejects.toThrow("injected cancel failure");
+		expect(runtime.health()).toMatchObject({ status: "disconnected", registered: false });
+		expect(harness.socketConfigurations).toHaveLength(1);
+		expect(harness.physicalAuthResets).toBe(0);
+
+		const canceled = await runtime.cancelPairing();
+		expect(harness.socketConfigurations).toHaveLength(1);
+		expect(harness.physicalAuthResets).toBe(1);
+		expect(canceled).toEqual({ status: "stopped", registered: false });
+		await runtime.stop();
+	});
+
+	it("keeps and retries the same socket when logout is not confirmed", async () => {
+		const harness = createHarness({ logoutFailures: 1 });
+		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
+		await runtime.start();
+		harness.events.emit("connection.update", { connection: "open" });
+
+		await expect(runtime.logoutPairing()).rejects.toThrow("injected logout failure");
+		expect(runtime.health()).toMatchObject({ status: "connected", registered: true });
+		expect(harness.socketConfigurations).toHaveLength(1);
+
+		const loggedOut = await runtime.logoutPairing();
+		expect(harness.logoutCalls).toBe(2);
+		expect(harness.socketConfigurations).toHaveLength(1);
+		expect(loggedOut).toEqual({ status: "stopped", registered: false });
+		await runtime.stop();
+	});
+
+	it("cancels the scheduled reconnect before a manual registered-session retry", async () => {
+		const harness = createHarness();
+		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
+		await runtime.start();
+		harness.events.emit("connection.update", {
+			connection: "close",
+			lastDisconnect: { error: { output: { statusCode: DisconnectReason.connectionLost } } },
+		});
+
+		await runtime.retryPairing();
+		harness.events.emit("connection.update", { connection: "open" });
+		await new Promise((resolve) => setTimeout(resolve, 3_100));
+
+		expect(harness.socketConfigurations).toHaveLength(2);
+		expect(runtime.health()).toMatchObject({ status: "connected", registered: true });
+		await runtime.stop();
+	});
+
+	it("clears physical auth when WhatsApp unlinks the device remotely", async () => {
+		const harness = createHarness();
+		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
+		await runtime.start();
+		harness.events.emit("connection.update", { connection: "open" });
+
+		harness.events.emit("connection.update", {
+			connection: "close",
+			lastDisconnect: { error: { output: { statusCode: DisconnectReason.loggedOut } } },
+		});
+
+		expect(harness.physicalAuthResets).toBe(1);
+		expect(runtime.pairingStatus()).toEqual({ status: "stopped", registered: false });
+		await runtime.stop();
+	});
+
 	it("passes the exact audited Web version to makeWASocket without dynamic discovery", async () => {
 		const harness = createHarness();
 		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
@@ -130,7 +279,7 @@ describe("physical Baileys runtime", () => {
 			socketFactory: harness.dependencies.socketFactory,
 		});
 		try {
-			await runtime.start();
+			await runtime.startQrPairing();
 			harness.events.emit("connection.update", { connection: "open" });
 
 			harness.events.emit("messages.upsert", {
@@ -211,9 +360,12 @@ describe("physical Baileys runtime", () => {
 });
 
 type HarnessOptions = {
+	registered?: boolean;
 	failCredsWrite?: boolean;
 	failInboxWrite?: boolean;
 	failRetryWrite?: boolean;
+	cancelFailures?: number;
+	logoutFailures?: number;
 	onAppendProviderEvents?: () => void;
 	onStoreRetryMessage?: () => void;
 	onRelayMessage?: () => void;
@@ -226,11 +378,21 @@ function createHarness(options: HarnessOptions = {}) {
 	const retryMessages: Array<{ remoteJid: string; messageId: string; message: Buffer }> = [];
 	const relayRequests: Array<{ jid: string; messageId?: string }> = [];
 	const endedErrors: Error[] = [];
+	const pairingCodePhones: string[] = [];
 	const socketConfigurations: Array<Parameters<ProviderSocketFactory>[0]> = [];
+	let logoutCalls = 0;
+	let cancelFailuresRemaining = options.cancelFailures ?? 0;
+	let logoutFailuresRemaining = options.logoutFailures ?? 0;
+	let physicalAuthResets = 0;
 	let stateClosed = false;
+	const creds = initAuthCreds();
+	creds.registered = options.registered ?? true;
+	if (creds.registered) {
+		creds.me = { id: "15550001111:1@s.whatsapp.net", name: "Test account" };
+	}
 	const providerState = {
 		state: {
-			creds: initAuthCreds(),
+			creds,
 			keys: {
 				async get() {
 					return {};
@@ -250,6 +412,7 @@ function createHarness(options: HarnessOptions = {}) {
 		saveCreds(update = {}) {
 			credsUpdates.push(update);
 			if (options.failCredsWrite) throw new Error("injected creds write failure");
+			Object.assign(creds, update);
 		},
 		storeRetryMessage(remoteJid: string, messageId: string, message: Uint8Array) {
 			retryMessages.push({ remoteJid, messageId, message: Buffer.from(message) });
@@ -268,6 +431,11 @@ function createHarness(options: HarnessOptions = {}) {
 			return [];
 		},
 		acknowledgeProviderEvents() {},
+		resetPhysicalAuth() {
+			physicalAuthResets += 1;
+			for (const key of Object.keys(creds)) Reflect.deleteProperty(creds, key);
+			Object.assign(creds, initAuthCreds());
+		},
 		close() {
 			stateClosed = true;
 		},
@@ -279,6 +447,22 @@ function createHarness(options: HarnessOptions = {}) {
 			ev: events,
 			async end(error) {
 				endedErrors.push(error ?? new Error("socket ended"));
+				if (cancelFailuresRemaining > 0) {
+					cancelFailuresRemaining -= 1;
+					throw new Error("injected cancel failure");
+				}
+			},
+			async logout() {
+				logoutCalls += 1;
+				if (logoutFailuresRemaining > 0) {
+					logoutFailuresRemaining -= 1;
+					throw new Error("injected logout failure");
+				}
+				creds.registered = false;
+			},
+			async requestPairingCode(phoneNumber) {
+				pairingCodePhones.push(phoneNumber);
+				return "12345678";
 			},
 			async relayMessage(jid, _message, relayOptions) {
 				relayRequests.push({
@@ -302,7 +486,14 @@ function createHarness(options: HarnessOptions = {}) {
 		retryMessages,
 		relayRequests,
 		endedErrors,
+		pairingCodePhones,
 		socketConfigurations,
+		get logoutCalls() {
+			return logoutCalls;
+		},
+		get physicalAuthResets() {
+			return physicalAuthResets;
+		},
 		get stateClosed() {
 			return stateClosed;
 		},

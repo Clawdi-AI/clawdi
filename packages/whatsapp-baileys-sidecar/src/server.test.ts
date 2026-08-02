@@ -5,6 +5,7 @@ import { createSidecarServer } from "./server.js";
 import type { ProviderMessageEvent } from "./sqlite-state.js";
 import {
 	type BaileysRuntime,
+	type PairingStatus,
 	type RelayMessageRequest,
 	RuntimeNotConnectedError,
 } from "./types.js";
@@ -23,8 +24,54 @@ class FakeRuntime implements BaileysRuntime {
 		return {
 			status: this.connected ? "connected" : "disconnected",
 			connected: this.connected,
+			registered: true,
+			accountId: "11111111-1111-4111-8111-111111111111",
+			advertisedRelease: {
+				packageName: "@whiskeysockets/baileys",
+				packageVersion: "7.0.0-rc13",
+				sourceCommit: "8053b086ecc97ec3f78299561de11959bab05d39",
+				version: [2, 3000, 1_035_194_821],
+			},
 			uptimeSeconds: 1,
 		} as const;
+	}
+
+	capabilities() {
+		return {
+			schemaVersion: "clawdi.whatsapp.sidecar-capabilities.v1",
+			pairing: ["qr", "code", "cancel", "logout", "retry"],
+			rawProviderAccess: false,
+		} as const;
+	}
+
+	pairingStatus(): PairingStatus {
+		return { status: this.connected ? "connected" : "disconnected", registered: true };
+	}
+
+	async startQrPairing(): Promise<PairingStatus> {
+		return {
+			status: "pairing_qr",
+			registered: false,
+			method: "qr",
+			qr: "sensitive-qr",
+			qrExpiresAt: "2026-08-02T12:00:00.000Z",
+		};
+	}
+
+	async requestPairingCode(_phoneNumber: string): Promise<PairingStatus> {
+		return { status: "pairing_code", registered: false, method: "code", code: "12345678" };
+	}
+
+	async cancelPairing(): Promise<PairingStatus> {
+		return { status: "stopped", registered: false };
+	}
+
+	async logoutPairing(): Promise<PairingStatus> {
+		return { status: "stopped", registered: false };
+	}
+
+	async retryPairing(): Promise<PairingStatus> {
+		return this.pairingStatus();
 	}
 
 	async relayMessage(request: RelayMessageRequest): Promise<string> {
@@ -77,13 +124,65 @@ afterEach(async () => {
 });
 
 describe("sidecar HTTP contract", () => {
-	it("requires bearer auth for every endpoint", async () => {
+	it("requires bearer auth for every pairing endpoint", async () => {
 		const { url } = await startTestServer(new FakeRuntime());
+		const requests: Array<[string, RequestInit | undefined]> = [
+			["/v1/capabilities", undefined],
+			["/v1/pairing/status", undefined],
+			["/v1/pairing/qr", { method: "POST" }],
+			[
+				"/v1/pairing/code",
+				{ method: "POST", body: JSON.stringify({ phoneNumber: "15551234567" }) },
+			],
+			["/v1/pairing/cancel", { method: "POST" }],
+			["/v1/pairing/logout", { method: "POST" }],
+			["/v1/pairing/retry", { method: "POST" }],
+		];
 
-		const response = await fetch(`${url}/v1/health`);
+		for (const [path, init] of requests) {
+			const response = await fetch(`${url}${path}`, init);
+			expect(response.status).toBe(401);
+			expect(await response.json()).toEqual({ error: "unauthorized" });
+		}
+	});
 
-		expect(response.status).toBe(401);
-		expect(await response.json()).toEqual({ error: "unauthorized" });
+	it("serves the complete no-store pairing lifecycle contract", async () => {
+		const { url } = await startTestServer(new FakeRuntime());
+		const requests: Array<[string, RequestInit | undefined]> = [
+			["/v1/capabilities", undefined],
+			["/v1/pairing/status", undefined],
+			["/v1/pairing/qr", { method: "POST" }],
+			[
+				"/v1/pairing/code",
+				{ method: "POST", body: JSON.stringify({ phoneNumber: "15551234567" }) },
+			],
+			["/v1/pairing/cancel", { method: "POST" }],
+			["/v1/pairing/logout", { method: "POST" }],
+			["/v1/pairing/retry", { method: "POST" }],
+		];
+
+		for (const [path, init] of requests) {
+			const response = await authedFetch(`${url}${path}`, init);
+			expect(response.status).toBe(200);
+			expect(response.headers.get("cache-control")).toBe("no-store, private");
+			expect(response.headers.get("pragma")).toBe("no-cache");
+		}
+	});
+
+	it("validates pairing-code phone input without echoing it", async () => {
+		const { url } = await startTestServer(new FakeRuntime());
+		const phoneNumber = "+1 (555) 123-4567";
+
+		const response = await authedFetch(`${url}/v1/pairing/code`, {
+			method: "POST",
+			body: JSON.stringify({ phoneNumber }),
+		});
+		const body = await response.text();
+
+		expect(response.status).toBe(422);
+		expect(body).not.toContain(phoneNumber);
+		expect(body).not.toContain("15551234567");
+		expect(body).toBe('{"error":"invalid_phone_number"}');
 	});
 
 	it("reports health", async () => {
@@ -95,8 +194,17 @@ describe("sidecar HTTP contract", () => {
 		expect(await response.json()).toEqual({
 			status: "connected",
 			connected: true,
+			registered: true,
+			accountId: "11111111-1111-4111-8111-111111111111",
+			advertisedRelease: {
+				packageName: "@whiskeysockets/baileys",
+				packageVersion: "7.0.0-rc13",
+				sourceCommit: "8053b086ecc97ec3f78299561de11959bab05d39",
+				version: [2, 3000, 1_035_194_821],
+			},
 			uptimeSeconds: 1,
 		});
+		expect(response.headers.get("cache-control")).toBe("no-store, private");
 	});
 
 	it("relays outbound proto messages with preserved attrs", async () => {

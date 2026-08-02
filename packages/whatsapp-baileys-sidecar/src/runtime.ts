@@ -12,6 +12,7 @@ import {
 } from "baileys";
 import pino, { type Logger } from "pino";
 
+import { AUDITED_PROVIDER_RELEASE } from "./audited-version.js";
 import type { SidecarConfig } from "./config.js";
 import {
 	type ProviderMessageEvent,
@@ -21,6 +22,8 @@ import {
 } from "./sqlite-state.js";
 import {
 	type BaileysRuntime,
+	PairingLifecycleError,
+	type PairingStatus,
 	type RelayMessageRequest,
 	type RuntimeHealth,
 	RuntimeNotConnectedError,
@@ -28,6 +31,9 @@ import {
 } from "./types.js";
 
 const RECONNECT_DELAY_MS = 3_000;
+const FIRST_QR_TTL_MS = 60_000;
+const ROTATED_QR_TTL_MS = 20_000;
+const E164_DIGITS = /^[1-9][0-9]{6,14}$/;
 const TRANSIENT_DISCONNECT_REASONS = new Set<number>([
 	DisconnectReason.connectionClosed,
 	DisconnectReason.connectionLost,
@@ -46,7 +52,10 @@ type ProviderSocketEvents = {
 	on(event: "connection.update", listener: (update: Partial<ConnectionState>) => void): void;
 };
 
-type ProviderSocket = Pick<WASocket, "user" | "end" | "relayMessage" | "sendNode" | "query"> & {
+type ProviderSocket = Pick<
+	WASocket,
+	"user" | "end" | "logout" | "relayMessage" | "requestPairingCode" | "sendNode" | "query"
+> & {
 	ev: ProviderSocketEvents;
 };
 
@@ -67,6 +76,7 @@ type ProviderState = {
 	appendProviderEvents(events: readonly ProviderMessageEventInput[]): void;
 	providerEvents(limit: number): ProviderMessageEvent[];
 	acknowledgeProviderEvents(throughSequence: number): void;
+	resetPhysicalAuth(): void;
 	close(): void;
 };
 
@@ -85,15 +95,26 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	private fatalReason: string | undefined;
 	private readonly startedAt = Date.now();
 	private readonly logger: Logger;
+	private readonly baileysLogger: Logger;
 	private readonly providerState: ProviderState;
 	private readonly socketFactory: ProviderSocketFactory;
 	private stateClosed = false;
+	private pairingMethod: "qr" | "code" | undefined;
+	private pairingQr: string | undefined;
+	private pairingQrExpiresAt: number | undefined;
+	private pairingCode: string | undefined;
+	private qrGeneration = 0;
+	private physicalAuthResetGeneration = 0;
+	private lifecycleTail: Promise<void> = Promise.resolve();
 
 	constructor(
 		private readonly config: SidecarConfig,
 		dependencies: BaileysRuntimeDependencies = {},
 	) {
 		this.logger = pino({ level: config.logLevel });
+		// Upstream Baileys logs can contain JIDs/device metadata. The sidecar
+		// emits only its own generic lifecycle logs at the configured level.
+		this.baileysLogger = pino({ level: "silent" });
 		this.socketFactory = dependencies.socketFactory ?? defaultProviderSocketFactory;
 		this.providerState =
 			dependencies.providerState ??
@@ -114,12 +135,15 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		if (this.status === "connected" || this.status === "connecting" || this.status === "starting") {
 			return;
 		}
+		if (!this.providerState.state.creds.registered) {
+			this.status = "stopped";
+			return;
+		}
 		this.status = "starting";
 		try {
 			await this.openSocket();
 		} catch (error: unknown) {
-			this.status = "stopped";
-			this.closeState();
+			this.status = "disconnected";
 			throw error;
 		}
 	}
@@ -151,10 +175,139 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		return {
 			status: this.status,
 			connected: this.status === "connected",
+			registered: this.providerState.state.creds.registered,
+			accountId: this.config.accountId,
+			advertisedRelease: AUDITED_PROVIDER_RELEASE,
 			uptimeSeconds: Math.floor((Date.now() - this.startedAt) / 1000),
 			...(user ? { user } : {}),
 			...(this.lastDisconnectReason ? { lastDisconnectReason: this.lastDisconnectReason } : {}),
 		};
+	}
+
+	capabilities() {
+		return {
+			schemaVersion: "clawdi.whatsapp.sidecar-capabilities.v1",
+			pairing: ["qr", "code", "cancel", "logout", "retry"],
+			rawProviderAccess: false,
+		} as const;
+	}
+
+	pairingStatus(): PairingStatus {
+		const registered = this.providerState.state.creds.registered;
+		if (registered) this.clearPairingSecrets();
+		const qrIsCurrent =
+			this.pairingQr !== undefined &&
+			this.pairingQrExpiresAt !== undefined &&
+			Date.now() < this.pairingQrExpiresAt;
+		const status =
+			this.status === "connecting" || this.status === "starting"
+				? "starting"
+				: this.status === "pairing_qr" && !qrIsCurrent
+					? "starting"
+					: this.status;
+		return {
+			status,
+			registered,
+			...(this.pairingMethod ? { method: this.pairingMethod } : {}),
+			...(qrIsCurrent && this.pairingQr && this.pairingQrExpiresAt
+				? {
+						qr: this.pairingQr,
+						qrExpiresAt: new Date(this.pairingQrExpiresAt).toISOString(),
+					}
+				: {}),
+			...(this.pairingCode ? { code: this.pairingCode } : {}),
+		};
+	}
+
+	async startQrPairing(): Promise<PairingStatus> {
+		return await this.runLifecycle(async () => {
+			this.requirePairable();
+			if (this.socket && this.pairingMethod === "qr") return this.pairingStatus();
+			if (this.socket && this.pairingMethod === "code") {
+				throw new PairingLifecycleError("pairing_method_already_selected");
+			}
+			this.pairingMethod = "qr";
+			this.pairingCode = undefined;
+			this.pairingQr = undefined;
+			this.pairingQrExpiresAt = undefined;
+			this.qrGeneration = 0;
+			if (!this.socket) await this.openSocket();
+			return this.pairingStatus();
+		});
+	}
+
+	async requestPairingCode(phoneNumber: string): Promise<PairingStatus> {
+		return await this.runLifecycle(async () => {
+			this.requirePairable();
+			if (!E164_DIGITS.test(phoneNumber)) {
+				throw new PairingLifecycleError("invalid_phone_number");
+			}
+			if (!this.socket) await this.openSocket();
+			const socket = this.socket;
+			if (!socket) throw new PairingLifecycleError("pairing_socket_unavailable");
+			const code = await socket.requestPairingCode(phoneNumber);
+			if (!code || code.length > 200) throw new PairingLifecycleError("invalid_pairing_code");
+			this.pairingMethod = "code";
+			this.pairingQr = undefined;
+			this.pairingQrExpiresAt = undefined;
+			this.pairingCode = code;
+			this.status = "pairing_code";
+			return this.pairingStatus();
+		});
+	}
+
+	async cancelPairing(): Promise<PairingStatus> {
+		return await this.runLifecycle(async () => {
+			if (this.providerState.state.creds.registered) {
+				throw new PairingLifecycleError("registered_session_requires_logout");
+			}
+			return await this.cancelPairingUnsafe();
+		});
+	}
+
+	async logoutPairing(): Promise<PairingStatus> {
+		return await this.runLifecycle(async () => {
+			if (!this.providerState.state.creds.registered) return await this.cancelPairingUnsafe();
+			const socket = this.socket;
+			if (!socket || this.status !== "connected") {
+				throw new PairingLifecycleError("registered_session_not_connected");
+			}
+			const resetGeneration = this.physicalAuthResetGeneration;
+			try {
+				await socket.logout("Clawdi user requested linked-device logout");
+			} catch (error: unknown) {
+				// A failed request does not confirm companion-device removal. Keep
+				// this socket so a retry cannot create a second physical owner.
+				if (!this.providerState.state.creds.registered) {
+					if (this.physicalAuthResetGeneration === resetGeneration) this.resetPhysicalAuth();
+					if (this.socket === socket) this.socket = null;
+					this.clearPairingSecrets();
+					this.status = "stopped";
+					return this.pairingStatus();
+				}
+				throw error;
+			}
+			if (this.socket === socket) this.socket = null;
+			if (this.physicalAuthResetGeneration === resetGeneration) this.resetPhysicalAuth();
+			this.clearPairingSecrets();
+			this.status = "stopped";
+			this.lastDisconnectReason = undefined;
+			this.fatalReason = undefined;
+			return this.pairingStatus();
+		});
+	}
+
+	async retryPairing(): Promise<PairingStatus> {
+		return await this.runLifecycle(async () => {
+			if (!this.providerState.state.creds.registered) {
+				throw new PairingLifecycleError("unregistered_session_requires_pairing");
+			}
+			if (!this.socket) {
+				this.fatalReason = undefined;
+				await this.openSocket();
+			}
+			return this.pairingStatus();
+		});
 	}
 
 	async relayMessage(request: RelayMessageRequest): Promise<string | undefined> {
@@ -201,11 +354,15 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	}
 
 	private async openSocket(): Promise<void> {
+		// A manual lifecycle retry supersedes any scheduled reconnect. This
+		// keeps one runtime from opening a second socket when the old timer fires.
+		this.clearReconnectTimer();
+		if (this.socket) return;
 		this.status = "connecting";
 		const socket = this.socketFactory({
 			version: this.config.webVersion,
 			auth: this.providerState.state,
-			logger: this.logger.child({ component: "baileys" }),
+			logger: this.baileysLogger,
 			printQRInTerminal: false,
 			syncFullHistory: false,
 			markOnlineOnConnect: false,
@@ -217,6 +374,9 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		socket.ev.on("creds.update", (update) => {
 			try {
 				this.providerState.saveCreds(update);
+				if (update.registered === true || this.providerState.state.creds.registered) {
+					this.clearPairingSecrets();
+				}
 			} catch (error: unknown) {
 				this.markFatal("auth_state_persistence_failed", asError(error));
 			}
@@ -252,7 +412,14 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		socket.ev.on("connection.update", (update) => {
 			if (this.socket !== socket) return;
 			const { connection, lastDisconnect, qr } = update;
-			if (qr) this.logger.warn("WhatsApp pairing QR emitted by physical provider transport");
+			if (qr && this.pairingMethod !== "code") {
+				this.pairingMethod = "qr";
+				this.pairingQr = qr;
+				this.qrGeneration += 1;
+				this.pairingQrExpiresAt =
+					Date.now() + (this.qrGeneration === 1 ? FIRST_QR_TTL_MS : ROTATED_QR_TTL_MS);
+				this.status = "pairing_qr";
+			}
 			if (connection === "open") {
 				if (this.fatalReason) return;
 				this.status = "connected";
@@ -271,12 +438,23 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			}
 			this.lastDisconnectReason = reason === undefined ? "unknown_disconnect" : String(reason);
 			this.logger.warn({ reason }, "WhatsApp connection closed");
+			if (reason === DisconnectReason.loggedOut) {
+				try {
+					this.resetPhysicalAuth();
+					this.clearPairingSecrets();
+					this.status = "stopped";
+					this.lastDisconnectReason = undefined;
+					this.fatalReason = undefined;
+				} catch (error: unknown) {
+					this.markStateFatal("physical_auth_reset", asError(error));
+				}
+				return;
+			}
 			if (reason !== undefined && TRANSIENT_DISCONNECT_REASONS.has(reason)) {
 				this.scheduleReconnect();
 				return;
 			}
-			this.fatalReason =
-				reason === DisconnectReason.loggedOut ? "provider_logged_out" : "non_transient_disconnect";
+			this.fatalReason = "non_transient_disconnect";
 			this.lastDisconnectReason = this.fatalReason;
 		});
 	}
@@ -300,6 +478,73 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			throw new RuntimeNotConnectedError();
 		}
 		return this.socket;
+	}
+
+	private requirePairable(): void {
+		if (this.stateClosed || this.fatalReason) {
+			throw new PairingLifecycleError("provider_state_unavailable");
+		}
+		if (this.providerState.state.creds.registered) {
+			throw new PairingLifecycleError("physical_account_already_registered");
+		}
+	}
+
+	private clearReconnectTimer(): void {
+		if (this.reconnectTimer) {
+			clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = undefined;
+		}
+	}
+
+	private async cancelPairingUnsafe(): Promise<PairingStatus> {
+		this.clearReconnectTimer();
+		const socket = this.socket;
+		if (socket) {
+			try {
+				await socket.end(new Error("WhatsApp linked-device session stopped"));
+			} catch (error: unknown) {
+				// Do not detach an unconfirmed physical owner. A later cancel can
+				// retry this same socket, but pairing cannot open a second one.
+				this.fatalReason = "pairing_socket_stop_unconfirmed";
+				this.status = "disconnected";
+				throw error;
+			}
+			if (this.socket === socket) this.socket = null;
+		}
+		this.clearReconnectTimer();
+		this.resetPhysicalAuth();
+		this.clearPairingSecrets();
+		this.status = "stopped";
+		this.lastDisconnectReason = undefined;
+		this.fatalReason = undefined;
+		return this.pairingStatus();
+	}
+
+	private clearPairingSecrets(): void {
+		this.pairingMethod = undefined;
+		this.pairingQr = undefined;
+		this.pairingQrExpiresAt = undefined;
+		this.pairingCode = undefined;
+		this.qrGeneration = 0;
+	}
+
+	private resetPhysicalAuth(): void {
+		this.providerState.resetPhysicalAuth();
+		this.physicalAuthResetGeneration += 1;
+	}
+
+	private async runLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+		const previous = this.lifecycleTail;
+		let release: (() => void) | undefined;
+		this.lifecycleTail = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		await previous;
+		try {
+			return await operation();
+		} finally {
+			release?.();
+		}
 	}
 
 	private markStateFatal(operation: ProviderStateFailureOperation, error: Error): void {
