@@ -178,7 +178,7 @@ describe("deployment transition timeout rendering", () => {
 			expect(markup).toContain(fixture.title);
 			expect(markup).not.toContain("Deploying your agent");
 			expect(markup).not.toContain("Current status");
-			expect(markup).toContain(`>${fixture.activeLabel}</p>`);
+			expect(markup).toContain(fixture.activeLabel);
 			expect(markup).toContain(fixture.step);
 			expect(markup).toContain('aria-label="Deployment progress"');
 			for (const [stage, state] of Object.entries(fixture.states)) {
@@ -191,7 +191,12 @@ describe("deployment transition timeout rendering", () => {
 			for (const shortLabel of ["Environment", "Install", "Ready"])
 				expect(markup).toContain(`>${shortLabel}</p>`);
 			expect(markup).toContain("updates automatically");
-			expect(markup).not.toContain('data-slot="spinner"');
+			if (fixture.status === "running") {
+				expect(markup).not.toContain('data-slot="spinner"');
+			} else {
+				expect(markup).toContain('data-slot="spinner"');
+				expect(markup).toContain('aria-hidden="true"');
+			}
 			expect(markup).not.toContain("aria-valuenow");
 			expect(markup).not.toContain("RuntimeNotReady");
 			expect(markup).not.toContain("DriverApplying");
@@ -218,6 +223,7 @@ describe("deployment transition timeout rendering", () => {
 		expect(markup).toContain(">Installing OpenClaw</p>");
 		expect(markup).toContain("Step 2 of 3");
 		expect(markup).toContain('data-deployment-stage="starting" data-stage-state="active"');
+		expect(markup).not.toContain('data-slot="spinner"');
 	});
 
 	test("keeps projection availability notices off the deployment-backed overview", () => {

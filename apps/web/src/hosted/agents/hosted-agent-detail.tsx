@@ -1093,11 +1093,16 @@ export function InitialDeploymentPage({
 				<div>
 					<div className="flex items-baseline justify-between gap-4">
 						<p
-							className="text-base font-semibold"
+							className="inline-flex items-center gap-2 text-base font-semibold"
 							role="status"
 							aria-live="polite"
 							aria-atomic="true"
 						>
+							{!deploymentTransitionTimedOut && status.kind !== "running" ? (
+								<span className="inline-flex" aria-hidden="true">
+									<Spinner className="size-3.5 shrink-0 text-primary" />
+								</span>
+							) : null}
 							{activeStageLabel}
 						</p>
 						<p className="shrink-0 text-xs font-medium text-muted-foreground">

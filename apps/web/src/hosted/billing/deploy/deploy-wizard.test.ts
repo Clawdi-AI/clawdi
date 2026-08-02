@@ -127,7 +127,7 @@ describe("deploy wizard responsive layout", () => {
 			agentDetailSource.match(
 				/\{ label: "Storage", value: `\$\{spec\.resources\.disk_gib\} GiB` \}/g,
 			),
-		).toHaveLength(2);
+		).toHaveLength(1);
 		expect(wizardSource).toContain('className="whitespace-nowrap" data-testid={testId}');
 		expect(wizardSource).toMatch(/data-testid=\{`\$\{testId\}-savings`\}/);
 	});

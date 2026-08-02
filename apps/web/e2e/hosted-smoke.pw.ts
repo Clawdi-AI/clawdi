@@ -3220,7 +3220,9 @@ for (const deploymentStatus of ["creating", "starting"] as const) {
 			await expect(segment).toHaveAttribute("data-stage-state", state);
 			if (state === "active") await expect(segment).toHaveAttribute("aria-current", "step");
 		}
-		await expect(panel.locator('[data-slot="spinner"]')).toHaveCount(0);
+		const spinner = panel.locator('[data-slot="spinner"]');
+		await expect(spinner).toHaveCount(1);
+		await expect(spinner.locator("..")).toHaveAttribute("aria-hidden", "true");
 		for (const detail of ["Plan", "CPU", "Memory", "Storage"])
 			await expect(panel.getByText(detail, { exact: true })).toHaveCount(0);
 		await expect(main.locator('[data-agent-overview="hosted"]')).toHaveCount(0);
