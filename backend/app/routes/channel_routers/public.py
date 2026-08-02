@@ -126,6 +126,7 @@ from app.services.channels import (
     lock_channel_binding_identity,
     mark_discord_reserved_commands_current,
     normalize_telegram_bot_username,
+    pending_channel_inbox_count,
     rearm_discord_command_reconciliation,
     rotate_bot_agent_link_token,
     store_channel_secrets,
@@ -1714,18 +1715,11 @@ async def _count_pending_inbox(
     account: ChannelAccount,
     user_id: UUID,
 ) -> int:
-    result = await db.execute(
-        select(func.count())
-        .select_from(ChannelMessage)
-        .where(
-            ChannelMessage.account_id == account.id,
-            ChannelMessage.user_id == user_id,
-            ChannelMessage.direction == "inbound",
-            ChannelMessage.binding_id.is_not(None),
-            ChannelMessage.delivered_at.is_(None),
-        )
+    return await pending_channel_inbox_count(
+        db,
+        account=account,
+        user_id=user_id,
     )
-    return int(result.scalar_one())
 
 
 async def _count_deliveries(

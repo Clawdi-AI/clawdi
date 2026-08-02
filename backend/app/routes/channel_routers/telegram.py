@@ -759,6 +759,7 @@ async def telegram_webhook(
         text=text,
         payload=payload,
         suppress_duplicate_event=True,
+        require_active_authority=not binding_result.command_handled,
     )
     if not messages:
         existing = await find_existing_inbound_provider_event(

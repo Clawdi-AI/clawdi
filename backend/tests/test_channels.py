@@ -1492,20 +1492,42 @@ async def test_channel_health_summarizes_delivery_and_debug_state(
         external_chat_type="private",
         external_chat_name="Health Chat",
     )
-    db_session.add(binding)
+    archived_binding = ChannelBinding(
+        account_id=account.id,
+        bot_agent_link_id=UUID(created["agent_link_id"]),
+        user_id=seed_user.id,
+        external_chat_id="historical-health-chat",
+        external_chat_type="private",
+        external_chat_name="Historical Health Chat",
+        status=BINDING_STATUS_ARCHIVED,
+    )
+    db_session.add_all([binding, archived_binding])
     await db_session.flush()
-    db_session.add(
-        ChannelMessage(
-            account_id=account.id,
-            bot_agent_link_id=UUID(created["agent_link_id"]),
-            binding_id=binding.id,
-            user_id=seed_user.id,
-            direction=MESSAGE_DIRECTION_INBOUND,
-            external_chat_id=binding.external_chat_id,
-            provider_message_id="health-inbound-1",
-            text="needs delivery",
-            payload={},
-        )
+    db_session.add_all(
+        [
+            ChannelMessage(
+                account_id=account.id,
+                bot_agent_link_id=UUID(created["agent_link_id"]),
+                binding_id=binding.id,
+                user_id=seed_user.id,
+                direction=MESSAGE_DIRECTION_INBOUND,
+                external_chat_id=binding.external_chat_id,
+                provider_message_id="health-inbound-1",
+                text="needs delivery",
+                payload={},
+            ),
+            ChannelMessage(
+                account_id=account.id,
+                bot_agent_link_id=UUID(created["agent_link_id"]),
+                binding_id=archived_binding.id,
+                user_id=seed_user.id,
+                direction=MESSAGE_DIRECTION_INBOUND,
+                external_chat_id=archived_binding.external_chat_id,
+                provider_message_id="historical-health-inbound",
+                text="must not affect health",
+                payload={},
+            ),
+        ]
     )
     await db_session.commit()
 
@@ -7557,6 +7579,10 @@ async def test_telegram_update_redelivery_retries_failed_agent_webhook(
     assert messages[0].delivered_at is None
     assert len(_SequencedProviderClient.calls) == 1
 
+    # Production webhook requests close their scoped session after the
+    # redelivery response. Mirror that boundary before the independent worker
+    # tries to acquire the Binding delivery fence.
+    await db_session.rollback()
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     result = await ChannelWebhookDeliveryWorker(sessionmaker).run_once()
     await db_session.refresh(messages[0])
@@ -7627,9 +7653,9 @@ async def test_telegram_agent_webhook_inactive_link_records_debug_health(
         item for item in health_response.json()["items"] if item["account_id"] == created["id"]
     )
     assert health["health_status"] == "error"
-    assert "pending_inbox" in health["reasons"]
+    assert "pending_inbox" not in health["reasons"]
     assert "recent_error" in health["reasons"]
-    assert health["pending_inbox"] >= 1
+    assert health["pending_inbox"] == 0
     assert health["last_error"] == "bot agent link inactive"
     assert health["last_error_stage"] == "agent_webhook"
     assert health["last_error_outcome"] == "failure"
@@ -13259,6 +13285,250 @@ async def test_telegram_ui_unpair_revokes_pending_polling_update_across_repair(
 
 
 @pytest.mark.asyncio
+async def test_telegram_ui_unpair_winning_before_inbound_lease_records_only_unbound_evidence(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 109}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    chat_id = "442"
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-unpair-wins-before-inbound-lease",
+        chat_id=chat_id,
+        chat_type="private",
+    )
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(
+                ChannelBinding.account_id == UUID(created["id"]),
+                ChannelBinding.external_chat_id == chat_id,
+            )
+        )
+    ).scalar_one()
+    binding_id = binding.id
+    original_record = telegram_router.record_inbound_messages_for_bindings
+    resolved_before_lease = asyncio.Event()
+    release_inbound = asyncio.Event()
+
+    async def pause_before_ordinary_inbound_lease(*args: Any, **kwargs: Any):
+        if kwargs["text"] == "ordinary update paused before lease":
+            assert kwargs["require_active_authority"] is True
+            resolved_before_lease.set()
+            await release_inbound.wait()
+        return await original_record(*args, **kwargs)
+
+    monkeypatch.setattr(
+        telegram_router,
+        "record_inbound_messages_for_bindings",
+        pause_before_ordinary_inbound_lease,
+    )
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    previous_session_override = app.dependency_overrides[get_session]
+
+    async def independent_request_session() -> AsyncIterator[AsyncSession]:
+        async with sessionmaker() as request_db:
+            yield request_db
+
+    await db_session.rollback()
+    await db_session.refresh(seed_user)
+    app.dependency_overrides[get_session] = independent_request_session
+    inbound_task: asyncio.Task[httpx.Response] | None = None
+    try:
+        inbound_task = asyncio.create_task(
+            client.post(
+                f"/v1/channels/telegram/{created['id']}/webhook",
+                headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+                json={
+                    "update_id": 7_643,
+                    "message": {
+                        "message_id": 7_643,
+                        "text": "ordinary update paused before lease",
+                        "chat": {"id": int(chat_id), "type": "private"},
+                        "from": {"id": 4242, "is_bot": False},
+                    },
+                },
+            )
+        )
+        await asyncio.wait_for(resolved_before_lease.wait(), timeout=2)
+        deleted = await client.delete(f"/v1/channels/{created['id']}/bindings/{binding_id}")
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json()["unpaired"] is True
+        release_inbound.set()
+        inbound = await asyncio.wait_for(inbound_task, timeout=2)
+    finally:
+        release_inbound.set()
+        if inbound_task is not None and not inbound_task.done():
+            await asyncio.gather(inbound_task, return_exceptions=True)
+        app.dependency_overrides[get_session] = previous_session_override
+
+    assert inbound.status_code == 200, inbound.text
+    assert inbound.json()["binding_id"] is None
+    async with sessionmaker() as verification_db:
+        message = (
+            await verification_db.execute(
+                select(ChannelMessage).where(ChannelMessage.provider_event_id == "update:7643")
+            )
+        ).scalar_one()
+        account = await verification_db.get(ChannelAccount, UUID(created["id"]))
+        assert account is not None
+        assert message.binding_id is None
+        assert (
+            await channel_service.pending_channel_inbox_count(
+                verification_db,
+                account=account,
+            )
+            == 0
+        )
+    updates = await client.post(
+        _telegram_bot_path(created, "getUpdates"),
+        headers=_telegram_agent_headers(created),
+        json={},
+    )
+    assert updates.status_code == 200
+    assert updates.json()["result"] == []
+
+
+@pytest.mark.asyncio
+async def test_telegram_inbound_lease_makes_ui_unpair_wait_and_consume_inserted_row(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 110}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    chat_id = "443"
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-inbound-lease-makes-unpair-wait",
+        chat_id=chat_id,
+        chat_type="private",
+    )
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(
+                ChannelBinding.account_id == UUID(created["id"]),
+                ChannelBinding.external_chat_id == chat_id,
+            )
+        )
+    ).scalar_one()
+    binding_id = binding.id
+    original_record = telegram_router.record_inbound_messages_for_bindings
+    lease_acquired = asyncio.Event()
+    release_inbound_commit = asyncio.Event()
+
+    async def pause_after_ordinary_inbound_lease(*args: Any, **kwargs: Any):
+        messages = await original_record(*args, **kwargs)
+        if kwargs["text"] == "ordinary update holding lease":
+            assert kwargs["require_active_authority"] is True
+            lease_acquired.set()
+            await release_inbound_commit.wait()
+        return messages
+
+    monkeypatch.setattr(
+        telegram_router,
+        "record_inbound_messages_for_bindings",
+        pause_after_ordinary_inbound_lease,
+    )
+    original_identity_lock = public_router.lock_channel_binding_identity
+    unpair_started = asyncio.Event()
+
+    async def observe_unpair_start(*args: Any, **kwargs: Any):
+        unpair_started.set()
+        return await original_identity_lock(*args, **kwargs)
+
+    monkeypatch.setattr(public_router, "lock_channel_binding_identity", observe_unpair_start)
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    previous_session_override = app.dependency_overrides[get_session]
+
+    async def independent_request_session() -> AsyncIterator[AsyncSession]:
+        async with sessionmaker() as request_db:
+            yield request_db
+
+    await db_session.rollback()
+    await db_session.refresh(seed_user)
+    app.dependency_overrides[get_session] = independent_request_session
+    inbound_task: asyncio.Task[httpx.Response] | None = None
+    unpair_task: asyncio.Task[httpx.Response] | None = None
+    try:
+        inbound_task = asyncio.create_task(
+            client.post(
+                f"/v1/channels/telegram/{created['id']}/webhook",
+                headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+                json={
+                    "update_id": 7_644,
+                    "message": {
+                        "message_id": 7_644,
+                        "text": "ordinary update holding lease",
+                        "chat": {"id": int(chat_id), "type": "private"},
+                        "from": {"id": 4242, "is_bot": False},
+                    },
+                },
+            )
+        )
+        await asyncio.wait_for(lease_acquired.wait(), timeout=2)
+        unpair_task = asyncio.create_task(
+            client.delete(f"/v1/channels/{created['id']}/bindings/{binding_id}")
+        )
+        await asyncio.wait_for(unpair_started.wait(), timeout=2)
+        await asyncio.sleep(0.05)
+        assert not unpair_task.done()
+        release_inbound_commit.set()
+        inbound, deleted = await asyncio.wait_for(
+            asyncio.gather(inbound_task, unpair_task),
+            timeout=3,
+        )
+    finally:
+        release_inbound_commit.set()
+        pending_tasks = [
+            task for task in (inbound_task, unpair_task) if task is not None and not task.done()
+        ]
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+        app.dependency_overrides[get_session] = previous_session_override
+
+    assert inbound.status_code == 200, inbound.text
+    assert inbound.json()["binding_id"] == str(binding_id)
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["unpaired"] is True
+    async with sessionmaker() as verification_db:
+        message = (
+            await verification_db.execute(
+                select(ChannelMessage).where(ChannelMessage.provider_event_id == "update:7644")
+            )
+        ).scalar_one()
+        account = await verification_db.get(ChannelAccount, UUID(created["id"]))
+        assert account is not None
+        assert message.binding_id == binding_id
+        assert message.delivered_at is not None
+        assert (
+            await channel_service.pending_channel_inbox_count(
+                verification_db,
+                account=account,
+            )
+            == 0
+        )
+    updates = await client.post(
+        _telegram_bot_path(created, "getUpdates"),
+        headers=_telegram_agent_headers(created),
+        json={},
+    )
+    assert updates.status_code == 200
+    assert updates.json()["result"] == []
+
+
+@pytest.mark.asyncio
 async def test_delete_binding_keeps_unpair_durable_when_telegram_notification_fails(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -15023,8 +15293,9 @@ async def test_discord_webhook_inactive_link_records_debug_health(
         item for item in health_response.json()["items"] if item["account_id"] == created["id"]
     )
     assert health["health_status"] == "error"
-    assert "pending_inbox" in health["reasons"]
+    assert "pending_inbox" not in health["reasons"]
     assert "recent_error" in health["reasons"]
+    assert health["pending_inbox"] == 0
     assert health["last_error"] == "bot agent link inactive"
     assert health["last_error_stage"] == "agent_webhook"
     assert health["last_error_outcome"] == "failure"

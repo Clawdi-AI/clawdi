@@ -11,10 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.channel import (
     CHANNEL_PROVIDER_WHATSAPP,
-    MESSAGE_DIRECTION_INBOUND,
     ChannelAccount,
     ChannelDebugEvent,
-    ChannelMessage,
 )
 
 DEFAULT_DEBUG_EVENT_LIMIT = 100
@@ -169,15 +167,10 @@ def _debug_event_response(event: ChannelDebugEvent | None) -> dict[str, Any] | N
 
 
 async def _pending_inbox_count(db: AsyncSession, *, account: ChannelAccount) -> int:
-    result = await db.execute(
-        select(ChannelMessage.id).where(
-            ChannelMessage.account_id == account.id,
-            ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
-            ChannelMessage.binding_id.is_not(None),
-            ChannelMessage.delivered_at.is_(None),
-        )
-    )
-    return len(result.scalars().all())
+    # Local import avoids the channels -> debug-events module cycle.
+    from app.services.channels import pending_channel_inbox_count
+
+    return await pending_channel_inbox_count(db, account=account)
 
 
 async def _last_event(

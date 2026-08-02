@@ -2626,6 +2626,7 @@ async def record_inbound_messages_for_bindings(
     provider_event_id: str | None = None,
     provider_event_scope: str = PROVIDER_EVENT_SCOPE_CHAT,
     suppress_duplicate_event: bool = False,
+    require_active_authority: bool = False,
 ) -> list[tuple[ChannelMessage, ChannelBinding | None]]:
     target_bindings: tuple[ChannelBinding | None, ...]
     if binding_result.bindings:
@@ -2634,6 +2635,28 @@ async def record_inbound_messages_for_bindings(
         target_bindings = (binding_result.binding,)
     else:
         target_bindings = (None,)
+
+    if require_active_authority:
+        bound_targets = tuple(binding for binding in target_bindings if binding is not None)
+        if bound_targets:
+            active_bindings = await _lock_active_inbound_bindings(
+                db,
+                account=account,
+                bindings=bound_targets,
+            )
+            # Preserve the provider event as unbound idempotency evidence when
+            # authority retired after resolution. Never leave late pending work
+            # attached to an archived Binding.
+            if active_bindings is None:
+                for binding in bound_targets:
+                    await record_inactive_bot_agent_link_event(
+                        db,
+                        account=account,
+                        binding=binding,
+                    )
+                target_bindings = (None,)
+            else:
+                target_bindings = active_bindings
 
     messages: list[tuple[ChannelMessage, ChannelBinding | None]] = []
     for binding in target_bindings:
@@ -2654,6 +2677,54 @@ async def record_inbound_messages_for_bindings(
     if binding_result.command_handled:
         _mark_inbound_messages_delivered(messages)
     return messages
+
+
+async def _lock_active_inbound_bindings(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    bindings: tuple[ChannelBinding, ...],
+) -> tuple[ChannelBinding, ...] | None:
+    expected = {binding.id: (binding.bot_agent_link_id, binding.user_id) for binding in bindings}
+    authority_filters = [
+        and_(
+            ChannelBinding.id == binding_id,
+            ChannelBinding.bot_agent_link_id == bot_agent_link_id,
+            ChannelBinding.user_id == user_id,
+        )
+        for binding_id, (bot_agent_link_id, user_id) in expected.items()
+    ]
+    result = await db.execute(
+        select(ChannelBinding)
+        .join(
+            ChannelBotAgentLink,
+            and_(
+                ChannelBotAgentLink.id == ChannelBinding.bot_agent_link_id,
+                ChannelBotAgentLink.account_id == ChannelBinding.account_id,
+                ChannelBotAgentLink.user_id == ChannelBinding.user_id,
+            ),
+        )
+        .join(ChannelAccount, ChannelAccount.id == ChannelBinding.account_id)
+        .where(
+            or_(*authority_filters),
+            ChannelBinding.account_id == account.id,
+            ChannelBinding.status == BINDING_STATUS_ACTIVE,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+            ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+            ChannelAccount.archived_at.is_(None),
+        )
+        .order_by(ChannelBinding.id)
+        .execution_options(populate_existing=True)
+        # Account and Link retirement archive their Bindings in the same
+        # transaction. A shared Binding lease therefore linearizes every
+        # authority retirement without inverting the parent lock order.
+        .with_for_update(read=True, of=ChannelBinding)
+    )
+    active_bindings = tuple(result.scalars().all())
+    if len(active_bindings) != len(expected):
+        return None
+    return active_bindings
 
 
 async def record_inactive_bot_agent_link_event(
@@ -3314,6 +3385,7 @@ async def pending_channel_inbox_count(
     *,
     account: ChannelAccount,
     bot_agent_link_id: UUID | None = None,
+    user_id: UUID | None = None,
 ) -> int:
     filters = [
         ChannelMessage.account_id == account.id,
@@ -3323,6 +3395,8 @@ async def pending_channel_inbox_count(
     ]
     if bot_agent_link_id is not None:
         filters.append(ChannelMessage.bot_agent_link_id == bot_agent_link_id)
+    if user_id is not None:
+        filters.append(ChannelMessage.user_id == user_id)
     result = await db.execute(
         select(ChannelMessage.id)
         .join(
