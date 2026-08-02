@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type {
@@ -26,12 +26,15 @@ type OverviewReadinessPanel =
 type OverviewFailedPanel = typeof import("@/hosted/agents/hosted-agent-detail").OverviewFailedPanel;
 type ShouldShowHostedProjectionNotice =
 	typeof import("@/hosted/agents/hosted-agent-detail").shouldShowHostedProjectionNotice;
+type RunManualDeploymentRefetch =
+	typeof import("@/hosted/agents/agent-home").runManualDeploymentRefetch;
 
 let invalidateSnapshots: InvalidateDeploymentSnapshots | null = null;
 let projectAcceptedTransition: ProjectAcceptedDeploymentTransition | null = null;
 let overviewReadinessPanel: OverviewReadinessPanel | null = null;
 let overviewFailedPanel: OverviewFailedPanel | null = null;
 let shouldShowProjectionNotice: ShouldShowHostedProjectionNotice | null = null;
+let runManualDeploymentRefetch: RunManualDeploymentRefetch | null = null;
 
 function requiredDeploymentStatus(
 	deployment: HostedDeployment | undefined,
@@ -49,6 +52,8 @@ beforeAll(async () => {
 	const module = await import("@/hosted/agents/deployment-hooks");
 	invalidateSnapshots = module.invalidateDeploymentSnapshots;
 	projectAcceptedTransition = module.projectAcceptedDeploymentTransition;
+	const agentHomeModule = await import("@/hosted/agents/agent-home");
+	runManualDeploymentRefetch = agentHomeModule.runManualDeploymentRefetch;
 	const detailModule = await import("@/hosted/agents/hosted-agent-detail");
 	overviewReadinessPanel = detailModule.OverviewReadinessPanel;
 	overviewFailedPanel = detailModule.OverviewFailedPanel;
@@ -218,13 +223,78 @@ describe("deployment transition timeout rendering", () => {
 
 	test("wires the timed-out inventory state and real refetch action into the detail", () => {
 		const source = readFileSync(new URL("./agent-home.tsx", import.meta.url), "utf8");
+		const manualHandler = source.slice(
+			source.indexOf("const handleCheckAgain"),
+			source.indexOf("// No route may be classified as connected"),
+		);
 
 		expect(source).toContain("deploymentTransitionTimedOut,");
 		expect(source).toContain("deploymentTransitionTimedOut={deploymentTransitionTimedOut}");
 		expect(source).toContain("const [manualChecking, setManualChecking] = useState(false);");
-		expect(source).toContain("await refetch();");
+		expect(manualHandler).toContain("manualCheckInFlightRef.current");
+		expect(manualHandler).toContain(
+			"await runManualDeploymentRefetch(refetch, setManualChecking);",
+		);
+		expect(manualHandler).not.toContain("isFetchingRef");
+		expect(source).toContain("isChecking={manualChecking}");
 		expect(source).toContain("isCheckingDeployment={manualChecking}");
 		expect(source).toContain("onCheckDeploymentAgain={() => void handleCheckAgain()}");
+		const detailSource = readFileSync(
+			new URL("./hosted-agent-detail.tsx", import.meta.url),
+			"utf8",
+		);
+		expect(detailSource).toContain("isChecking={isCheckingProjection}");
+		expect(detailSource).not.toContain("isFetching={isCheckingProjection}");
+	});
+
+	test("gives a manual check local feedback while an ambient refetch is active", async () => {
+		if (!runManualDeploymentRefetch) throw new Error("agent home was not loaded");
+		let requestCount = 0;
+		let ambientRequestAborted = false;
+		let resolveManualRequest: ((value: string) => void) | undefined;
+		const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const observer = new QueryObserver(client, {
+			queryKey: ["test", "manual-check-during-ambient-refetch"],
+			queryFn: ({ signal }) => {
+				requestCount += 1;
+				if (requestCount === 1) {
+					return new Promise<string>((_resolve, reject) => {
+						signal.addEventListener(
+							"abort",
+							() => {
+								ambientRequestAborted = true;
+								reject(new Error("ambient request aborted"));
+							},
+							{ once: true },
+						);
+					});
+				}
+				return new Promise<string>((resolve) => {
+					resolveManualRequest = resolve;
+				});
+			},
+			initialData: "cached deployment",
+		});
+		const unsubscribe = observer.subscribe(() => undefined);
+		const ambientRefetch = observer.refetch({ cancelRefetch: false });
+		const checkingStates: boolean[] = [];
+
+		const manualRefetch = runManualDeploymentRefetch(
+			() => observer.refetch(),
+			(checking) => checkingStates.push(checking),
+		);
+
+		expect(checkingStates).toEqual([true]);
+		expect(requestCount).toBe(2);
+		expect(ambientRequestAborted).toBe(true);
+		if (!resolveManualRequest) throw new Error("manual request did not start");
+		resolveManualRequest("fresh deployment");
+		await Promise.all([ambientRefetch, manualRefetch]);
+
+		expect(checkingStates).toEqual([true, false]);
+		expect(observer.getCurrentResult().data).toBe("fresh deployment");
+		unsubscribe();
+		client.clear();
 	});
 });
 

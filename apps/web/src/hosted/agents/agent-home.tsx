@@ -44,6 +44,18 @@ import { cn } from "@/lib/utils";
 const UNRESOLVED_HOSTED_AGENT_REFETCH_INTERVAL_MS = 5_000;
 const UNRESOLVED_HOSTED_AGENT_MAX_REFETCH_ATTEMPTS = 24;
 
+export async function runManualDeploymentRefetch(
+	refetch: () => Promise<unknown>,
+	setManualChecking: (checking: boolean) => void,
+): Promise<void> {
+	setManualChecking(true);
+	try {
+		await refetch();
+	} finally {
+		setManualChecking(false);
+	}
+}
+
 /**
  * Agent home for hosted builds. An agent backed by a hosted deployment renders
  * the hosted agent detail (`HostedAgentDetail`); a connected agent — or one
@@ -84,6 +96,7 @@ export function AgentHome({
 	const shouldAutoRefetchUnresolvedHostedAgent =
 		unresolvedHostedAgent && (requestedFromCloudRedirect || isCloudEnvironmentId);
 	const isFetchingRef = useRef(isFetching);
+	const manualCheckInFlightRef = useRef(false);
 	const [manualChecking, setManualChecking] = useState(false);
 	const ownsCurrentSection = agentRouteOwnsSection(pathname, environmentId, section);
 	const hostedSection = HOSTED_AGENT_SECTION_IDS.some((candidate) => candidate === section);
@@ -172,12 +185,12 @@ export function AgentHome({
 	}, [refetch, shouldAutoRefetchUnresolvedHostedAgent]);
 
 	const handleCheckAgain = async () => {
-		if (isFetchingRef.current || manualChecking) return;
-		setManualChecking(true);
+		if (manualCheckInFlightRef.current) return;
+		manualCheckInFlightRef.current = true;
 		try {
-			await refetch();
+			await runManualDeploymentRefetch(refetch, setManualChecking);
 		} finally {
-			setManualChecking(false);
+			manualCheckInFlightRef.current = false;
 		}
 	};
 
@@ -236,7 +249,7 @@ export function AgentHome({
 				section={section}
 				routeSearch={routeSearch}
 				matches={ambiguousMatches}
-				isFetching={manualChecking}
+				isChecking={manualChecking}
 				onRetry={() => void handleCheckAgain()}
 			/>
 		);
@@ -304,14 +317,14 @@ function DeploymentChooser({
 	section,
 	routeSearch,
 	matches,
-	isFetching,
+	isChecking,
 	onRetry,
 }: {
 	environmentId: string;
 	section: AgentSectionId;
 	routeSearch: AgentRouteSearch;
 	matches: readonly AgentDeploymentMatch[];
-	isFetching: boolean;
+	isChecking: boolean;
 	onRetry: () => void;
 }) {
 	const hasUnknownStatus = matches.some(
@@ -336,10 +349,10 @@ function DeploymentChooser({
 							type="button"
 							variant="outline"
 							size="sm"
-							disabled={isFetching}
+							disabled={isChecking}
 							onClick={onRetry}
 						>
-							{isFetching ? <Spinner className="size-3.5" /> : <RefreshCw />}
+							{isChecking ? <Spinner className="size-3.5" /> : <RefreshCw />}
 							Check again
 						</Button>
 					</AlertDescription>

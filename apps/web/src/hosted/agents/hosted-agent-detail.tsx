@@ -562,7 +562,7 @@ export function HostedAgentDetail({
 				shouldShowHostedProjectionNotice(activeTab) ? (
 					<HostedProjectionNotice
 						projection={projection}
-						isFetching={isCheckingProjection}
+						isChecking={isCheckingProjection}
 						onRetry={() => {
 							void checkProjectionAgain();
 						}}
@@ -684,11 +684,11 @@ export function HostedAgentDetail({
 
 function HostedProjectionNotice({
 	projection,
-	isFetching,
+	isChecking,
 	onRetry,
 }: {
 	projection: HostedProjectionResolution<components["schemas"]["AgentResponse"]>;
-	isFetching: boolean;
+	isChecking: boolean;
 	onRetry: () => void;
 }) {
 	if (projection.status === "resolved") return null;
@@ -711,8 +711,8 @@ function HostedProjectionNotice({
 						Sessions, Projects, Skills, Vaults, and Channels will appear when this agent is ready.
 						Available actions and tools still work.
 					</span>
-					<Button type="button" variant="outline" size="sm" disabled={isFetching} onClick={onRetry}>
-						{isFetching ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
+					<Button type="button" variant="outline" size="sm" disabled={isChecking} onClick={onRetry}>
+						{isChecking ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
 						Check again
 					</Button>
 				</AlertDescription>

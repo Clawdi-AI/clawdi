@@ -31,7 +31,11 @@ structured error bodies. Only `useOpenApi()` converts non-2xx responses to
   boundary is authoritative.
 - User-triggered refresh may show a subtle local progress indicator. Track that
   action locally instead of presenting ambient polling or focus-refetch
-  `isFetching` as user progress. Mutation-local progress remains appropriate.
+  `isFetching` as user progress. Do not reject the click because an ambient
+  fetch is active: call `refetch()` and let TanStack's default
+  `cancelRefetch: true` coordinate the in-flight request while the local action
+  owns its spinner and disabled state. Mutation-local progress remains
+  appropriate.
 - Polling must be bounded, disabled in background unless explicitly required,
   and must use stable path/query parameters. In this app, a poll is bounded by
   its mounted foreground surface, a recoverable transient state, or an explicit
@@ -84,11 +88,13 @@ The integration was checked against official sources matching the lockfile:
   <https://github.com/openapi-ts/openapi-typescript/tree/openapi-fetch%400.17.0/packages/openapi-fetch/src>
 - TanStack Query 5.101.4 distinguishes initial pending state from background
   `isFetching`, retains prior pages with `keepPreviousData`, and supplies query
-  cancellation:
+  cancellation; its `refetch` contract defaults `cancelRefetch` to `true`:
   <https://github.com/TanStack/query/blob/%40tanstack%2Freact-query%405.101.4/docs/framework/react/guides/background-fetching-indicators.md>,
   <https://github.com/TanStack/query/blob/%40tanstack%2Freact-query%405.101.4/docs/framework/react/guides/paginated-queries.md>,
   and
-  <https://github.com/TanStack/query/blob/%40tanstack%2Freact-query%405.101.4/docs/framework/react/guides/query-cancellation.md>.
+  <https://github.com/TanStack/query/blob/%40tanstack%2Freact-query%405.101.4/docs/framework/react/guides/query-cancellation.md>,
+  plus
+  <https://github.com/TanStack/query/blob/%40tanstack%2Freact-query%405.101.4/docs/framework/react/reference/useQuery.md>.
 - React 19.2.7 is the component/runtime contract used by these surfaces:
   <https://github.com/facebook/react/tree/v19.2.7/packages/react>.
 - Base UI 1.6.0 and shadcn 4.16.1 provide accessible progress and skeleton
