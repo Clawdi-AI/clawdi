@@ -2792,7 +2792,10 @@ test("hosted provisioning stays focused on Compute", async ({ page }, testInfo) 
 	await page.goto(`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${startingDeployment.id}`);
 
 	const main = page.locator("main");
+	const agentInterface = main.locator('[data-overview-module="agent-interface"]');
 	const compute = main.locator('[data-overview-module="compute"]');
+	await expect(agentInterface).toHaveClass(/md:col-span-2/);
+	await expect(compute).toHaveClass(/md:col-span-2/);
 	await expect(compute).toContainText("Starting");
 	await expect(compute).toContainText("Plan");
 	await expect(compute).toContainText("CPU");
@@ -2804,11 +2807,31 @@ test("hosted provisioning stays focused on Compute", async ({ page }, testInfo) 
 	await expect(
 		compute.getByText("Startup is still in progress.", { exact: false }),
 	).toHaveAttribute("role", "status");
-	await expect(main.getByTestId("hosted-overview-provisioning-placeholder")).toBeVisible();
+	const placeholder = main.getByTestId("hosted-overview-provisioning-placeholder");
+	await expect(placeholder).toContainText("More details will appear here");
+	await expect(placeholder).toContainText(
+		"This page will fill in automatically when your agent is ready.",
+	);
+	for (const removedModule of ["memories", "vaults", "connectors"]) {
+		await expect(placeholder).not.toContainText(removedModule);
+	}
 	await expect(main.getByRole("heading", { name: "Resources", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Operate", exact: true })).toHaveCount(0);
 	await expect(main.locator('[data-overview-module="sessions"]')).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1000 });
+	const [gridBox, interfaceBox, computeBox] = await Promise.all([
+		agentInterface.locator("..").boundingBox(),
+		agentInterface.boundingBox(),
+		compute.boundingBox(),
+	]);
+	expect(gridBox).not.toBeNull();
+	expect(interfaceBox).not.toBeNull();
+	expect(computeBox).not.toBeNull();
+	if (gridBox && interfaceBox && computeBox) {
+		expect(Math.abs(interfaceBox.width - computeBox.width)).toBeLessThan(2);
+		expect(interfaceBox.x).toBeCloseTo(gridBox.x, 0);
+		expect(computeBox.x + computeBox.width).toBeCloseTo(gridBox.x + gridBox.width, 0);
+	}
 	await page.screenshot({
 		path: testInfo.outputPath("hosted-agent-overview-provisioning.png"),
 		fullPage: true,

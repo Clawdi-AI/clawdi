@@ -1254,6 +1254,9 @@ function OverviewTab({
 				variant="hosted"
 				routeSearch={routeSearch}
 				visibleModuleIds={provisioning ? ["agent-interface", "compute"] : undefined}
+				moduleSizeOverrides={
+					provisioning ? { "agent-interface": "wide", compute: "wide" } : undefined
+				}
 				content={{
 					sessions: {
 						body: !projectionAvailable ? (
@@ -1444,10 +1447,9 @@ function OverviewTab({
 					data-testid="hosted-overview-provisioning-placeholder"
 					className="rounded-lg border border-dashed bg-muted/20 px-6 py-10 text-center"
 				>
-					<p className="text-sm font-medium">Your agent’s workspace is getting ready</p>
+					<p className="text-sm font-medium">More details will appear here</p>
 					<p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
-						Recent activity, projects, skills, memories, vaults, connectors, models, and channels
-						will appear here automatically when your agent is ready.
+						This page will fill in automatically when your agent is ready.
 					</p>
 				</div>
 			) : null}

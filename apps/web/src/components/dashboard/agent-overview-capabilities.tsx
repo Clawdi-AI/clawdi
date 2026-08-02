@@ -155,12 +155,14 @@ export function AgentOverviewCapabilities({
 	routeSearch,
 	content,
 	visibleModuleIds,
+	moduleSizeOverrides,
 }: {
 	agentId: string;
 	variant: AgentNavigationVariant;
 	routeSearch: AgentRouteSearch;
 	content: Partial<Record<AgentOverviewModuleId, AgentOverviewModuleContent>>;
 	visibleModuleIds?: readonly AgentOverviewModuleId[];
+	moduleSizeOverrides?: Partial<Record<AgentOverviewModuleId, "standard" | "wide">>;
 }) {
 	const visibleModules = visibleModuleIds ? new Set(visibleModuleIds) : null;
 	const groups = agentOverviewGroups(variant)
@@ -184,6 +186,7 @@ export function AgentOverviewCapabilities({
 						className={cn("grid gap-3", group.columns === 4 ? "md:grid-cols-4" : "md:grid-cols-3")}
 					>
 						{group.modules.map((module) => {
+							const moduleSize = moduleSizeOverrides?.[module.id] ?? module.size;
 							const item = AGENT_SECTION_NAVIGATION_ITEMS[module.section];
 							const presentation = MODULE_PRESENTATION[module.id];
 							const moduleContent = content[module.id];
@@ -196,7 +199,7 @@ export function AgentOverviewCapabilities({
 									className={cn(
 										"min-w-0 overflow-hidden rounded-lg border bg-card",
 										presentation.source && "bg-muted/20",
-										module.size === "wide" && "md:col-span-2",
+										moduleSize === "wide" && "md:col-span-2",
 									)}
 								>
 									<Link
