@@ -68,8 +68,11 @@ export function useProviderOAuthDeviceFlow({
 	pollRef.current = poll;
 	onReadyRef.current = onReady;
 
-	const cancel = useCallback(() => {
+	const invalidate = useCallback(() => {
 		cancelOAuthSessionLifecycle(lifecycleRef.current);
+	}, []);
+
+	const clear = useCallback(() => {
 		setIssue(null);
 		setSession(null);
 	}, []);
@@ -167,5 +170,5 @@ export function useProviderOAuthDeviceFlow({
 		};
 	}, [session]);
 
-	return { session, issue, cancel, transition };
+	return { session, issue, invalidate, clear, transition };
 }

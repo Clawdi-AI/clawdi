@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
 import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
@@ -76,6 +77,8 @@ export function SplitVaultDialog({
 	const [excluded, setExcluded] = useState<Set<string>>(new Set());
 	const [removeOriginals, setRemoveOriginals] = useState(true);
 	const [progress, setProgress] = useState<string | null>(null);
+	const exit = useDialogExitLifecycle({ open, value: progress, emptyValue: null });
+	const renderedProgress = exit.renderedValue;
 
 	const anyProjectId = vault.project_ids?.[0];
 	const selected = useMemo(() => groups.filter((g) => !excluded.has(g.slug)), [groups, excluded]);
@@ -173,7 +176,7 @@ export function SplitVaultDialog({
 		onSuccess: ({ done, failed, affectedKeys }) => {
 			qc.invalidateQueries({ queryKey: ["vaults"] });
 			qc.invalidateQueries({ queryKey: ["vault-items"] });
-			setProgress(null);
+			exit.beginClose();
 			toast.success(`Split into ${done} ${done === 1 ? "vault" : "vaults"}`, {
 				description:
 					`${affectedKeys} keys ${removeOriginals ? "moved" : "copied"} with clean names.` +
@@ -189,7 +192,22 @@ export function SplitVaultDialog({
 	});
 
 	return (
-		<Dialog open={open} onOpenChange={(next) => !run.isPending && setOpen(next)}>
+		<Dialog
+			open={open}
+			onOpenChange={(next) => {
+				if (run.isPending) return;
+				if (next) exit.beginOpen();
+				else exit.beginClose();
+				setOpen(next);
+			}}
+			onOpenChangeComplete={(next) => {
+				if (next) return;
+				exit.completeClose();
+				setProgress(null);
+				setExcluded(new Set());
+				setRemoveOriginals(true);
+			}}
+		>
 			<DialogTrigger render={<Button variant="outline" size="sm" />}>
 				<Scissors className="size-3.5" />
 				Split into vaults…
@@ -271,8 +289,8 @@ export function SplitVaultDialog({
 						onClick={() => run.mutate()}
 					>
 						{run.isPending ? <Spinner /> : <Scissors className="size-3.5" />}
-						{run.isPending && progress
-							? `Splitting ${progress}`
+						{(run.isPending || !open) && renderedProgress
+							? `Splitting ${renderedProgress}`
 							: `Split ${selectedKeyCount} keys into ${selected.length} ${selected.length === 1 ? "vault" : "vaults"}`}
 					</Button>
 				</div>

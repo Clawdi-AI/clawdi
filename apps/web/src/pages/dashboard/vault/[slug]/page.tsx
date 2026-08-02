@@ -914,6 +914,8 @@ function ShareKeysDialog({
 			open={open}
 			onOpenChange={(next) => {
 				setOpen(next);
+			}}
+			onOpenChangeComplete={(next) => {
 				if (!next) reset();
 			}}
 		>

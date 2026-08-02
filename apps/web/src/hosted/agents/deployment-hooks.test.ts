@@ -305,7 +305,7 @@ describe("hosted agent customer language", () => {
 		expect(detailSource).toContain('<RuntimeUiCredentialRow label="Username"');
 		expect(detailSource).toContain('<RuntimeUiCredentialRow label="Password"');
 		expect(detailSource).toContain(
-			'<RuntimeUiCredentialRow label="Token" value={credentials.token} secret />',
+			'<RuntimeUiCredentialRow label="Token" value={renderedCredentials.token} secret />',
 		);
 		expect(detailSource).toContain("Sign in to Hermes");
 		expect(detailSource).toContain("Get your Hermes username and password from Access.");

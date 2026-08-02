@@ -433,7 +433,6 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 		onSuccess: (created) => {
 			qc.invalidateQueries({ queryKey: ["vaults"] });
 			setOpen(false);
-			setName("");
 			toast.success("Vault created", { description: "Add keys, then share it through a Project." });
 			void router.navigate({
 				to: "/vault/$slug",
@@ -453,8 +452,8 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 	return (
 		<Dialog
 			open={open}
-			onOpenChange={(next) => {
-				setOpen(next);
+			onOpenChange={setOpen}
+			onOpenChangeComplete={(next) => {
 				if (!next) setName("");
 			}}
 		>

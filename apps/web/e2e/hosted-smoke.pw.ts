@@ -1202,6 +1202,7 @@ type HostedApiStubOptions = {
 	providerDraftTestResponses?: StubResponse[];
 	providerOAuthStartRequests?: string[];
 	providerOAuthStartResponses?: StubResponse[];
+	providerOAuthPollResponses?: StubResponse[];
 	providerPatchRequests?: string[];
 	providerPatchResponses?: StubResponse[];
 	providerTestRequests?: string[];
@@ -1934,6 +1935,16 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			const response = options.providerOAuthStartResponses?.shift() ?? {
 				status: 500,
 				body: { detail: "No provider OAuth response configured" },
+			};
+			return fulfillJson(r, response.body, response.status);
+		}
+		if (
+			p.match(/^\/v1\/ai-providers\/[^/]+\/auth\/oauth\/device\/poll$/) &&
+			r.request().method() === "POST"
+		) {
+			const response = options.providerOAuthPollResponses?.shift() ?? {
+				status: 200,
+				body: { status: "pending", retry_after_seconds: 60 },
 			};
 			return fulfillJson(r, response.body, response.status);
 		}
@@ -3783,7 +3794,7 @@ test("AI Provider OAuth and destructive confirmations keep dialog semantics on m
 						verification_url: "https://auth.openai.com/codex/device",
 						user_code: "NEW-CODE",
 						expires_at: "2099-01-01T00:00:00Z",
-						poll_interval_seconds: 60,
+						poll_interval_seconds: 1,
 					},
 				},
 			},
@@ -3801,6 +3812,7 @@ test("AI Provider OAuth and destructive confirmations keep dialog semantics on m
 				},
 			},
 		],
+		providerOAuthPollResponses: [{ status: 200, body: { status: "ready" } }],
 	});
 	await page.goto("/ai-providers");
 
@@ -3873,8 +3885,14 @@ test("AI Provider OAuth and destructive confirmations keep dialog semantics on m
 			process.env.PROVIDER_OAUTH_DESKTOP_SCREENSHOT_PATH ??
 			testInfo.outputPath("provider-oauth-desktop.png"),
 	});
-	await page.keyboard.press("Escape");
+	await expect(oauthDialog).toHaveAttribute("data-ending-style", "");
+	await expect(oauthDialog.getByText("NEW-CODE", { exact: true })).toBeVisible();
 	await expect(oauthDialog).toHaveCount(0);
+	await main.getByRole("button", { name: "Add provider", exact: true }).click();
+	const cleanReopen = page.getByRole("dialog", { name: "Add a provider" });
+	await expect(cleanReopen).toBeVisible();
+	await expect(cleanReopen.getByText("NEW-CODE", { exact: true })).toHaveCount(0);
+	await page.keyboard.press("Escape");
 
 	await page.setViewportSize({ width: 390, height: 844 });
 	await main.getByRole("button", { name: "Remove ChatGPT (Codex)", exact: true }).click();

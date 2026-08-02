@@ -42,12 +42,17 @@ export function ProviderConnectionTest({
 
 	function changeOpen(next: boolean) {
 		setOpen(next);
-		if (!next) testConnection.reset();
 	}
 
 	const result = testConnection.data;
 	return (
-		<Dialog open={open} onOpenChange={changeOpen}>
+		<Dialog
+			open={open}
+			onOpenChange={changeOpen}
+			onOpenChangeComplete={(nextOpen) => {
+				if (!nextOpen) testConnection.reset();
+			}}
+		>
 			<DialogTrigger
 				render={
 					<Button variant="ghost" size="sm" aria-label={`Test connection for ${providerLabel}`} />
