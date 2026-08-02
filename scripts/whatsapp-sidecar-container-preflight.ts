@@ -18,7 +18,7 @@ export function buildWhatsAppSidecarContainerPreflightCommand(
 	}
 
 	const desiredCase = desired.length > 0 ? `${desired.join("|")}) ;;` : "";
-	return `set -eu
+	const script = `set -eu
 seen_services='|'
 container_ids="$(docker container ls --all --filter 'label=service' --format '{{.ID}}')"
 for container_id in $container_ids; do
@@ -59,6 +59,8 @@ for container_id in $container_ids; do
       ;;
   esac
 done`;
+	const encodedScript = Buffer.from(script, "utf8").toString("base64");
+	return `printf '%s' '${encodedScript}' | base64 --decode | sh`;
 }
 
 export function readDesiredWhatsAppSidecarServiceNames(manifestPath: string): string[] {
