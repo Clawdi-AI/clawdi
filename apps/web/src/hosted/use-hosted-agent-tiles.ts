@@ -59,22 +59,23 @@ export function hostedRuntimeStatusView(
 	failurePresentation?: DeploymentFailurePresentation | null,
 ): HostedRuntimeStatusView {
 	const compute = deploymentStatusFromResource(deployment);
-	const computeLabel = deploymentStatusLabel(compute);
-	const computeTone = deploymentStatusTone(compute);
+	const failureStatus = compute.kind === "failed" ? failurePresentation?.status : null;
+	const computeLabel = failureStatus?.label ?? deploymentStatusLabel(compute);
+	const computeTone = failureStatus?.tone ?? deploymentStatusTone(compute);
 	const sync = env === undefined ? null : daemonStatusVisual(env, "on-clawdi");
 	const computeIsRunning = isRunningStatus(compute);
-	const failureReason = compute.kind === "failed" ? deploymentFailureReason(deployment) : null;
+	const failureReason =
+		failurePresentation?.reason ??
+		(compute.kind === "failed" ? deploymentFailureReason(deployment) : null);
 	let secondary: HostedRuntimeStatusView["secondary"] = null;
-	if (failureReason) {
+	if (failureReason && failureStatus?.kind !== "runtime_unavailable") {
 		secondary = {
 			kind: "failure_reason",
 			label: failurePresentation
-				? compactDeploymentFailureReason(
-						`${failurePresentation.title}: ${failurePresentation.reason}`,
-					)
+				? compactDeploymentFailureReason(failurePresentation.title)
 				: `Failure: ${compactDeploymentFailureReason(failureReason)}`,
 			tooltip: failurePresentation
-				? `${failurePresentation.title}. ${failurePresentation.description} Reason: ${failurePresentation.reason}`
+				? `${failurePresentation.title}. ${failurePresentation.reason}`
 				: failureReason,
 			textClass: statusTextVariants({ status: "destructive" }),
 		};

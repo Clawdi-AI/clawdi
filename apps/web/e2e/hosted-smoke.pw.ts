@@ -3199,7 +3199,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		'section[aria-labelledby="agent-overview-resources"] [data-overview-layout="three-column"]',
 	);
 	const toolsGrid = overview.locator(
-		'section[aria-labelledby="agent-overview-operate"] [data-overview-layout="two-column"]',
+		'section[aria-labelledby="agent-overview-operate"] [data-overview-layout="three-column"]',
 	);
 	const resourceGeometry = await resourceGrid
 		.locator("[data-overview-module]")
@@ -3222,6 +3222,21 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
 	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
 	await expectOverviewResourceGeometry(toolsGrid, [2]);
+	const toolGeometry = await toolsGrid
+		.locator("[data-overview-module]")
+		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
+	expect(toolGeometry).toHaveLength(2);
+	for (let index = 0; index < toolGeometry.length; index += 1) {
+		expect(
+			Math.abs((toolGeometry[index]?.width ?? 0) - (resourceGeometry[index]?.width ?? 0)),
+		).toBeLessThanOrEqual(2);
+		expect(
+			Math.abs((toolGeometry[index]?.x ?? 0) - (resourceGeometry[index]?.x ?? 0)),
+		).toBeLessThanOrEqual(2);
+	}
+	expect((toolGeometry[1]?.x ?? 0) + (toolGeometry[1]?.width ?? 0)).toBeLessThan(
+		(resourceGeometry[2]?.x ?? 0) + 1,
+	);
 	await expectAgentOverviewTypography(page);
 	await page.setViewportSize({ width: 1024, height: 1200 });
 	await expectOverviewResourceGeometry(resourceGrid, [2, 2, 1]);
@@ -3518,8 +3533,8 @@ test("hosted Tools channels preserve zero, singular, plural, error, and loading 
 	const channels = page.locator('[data-overview-module="channels"]');
 
 	await page.goto(overviewUrl);
-	await expect(channels.getByText("0 connected channels", { exact: true })).toBeVisible();
-	await expect(channels.getByText("No channels connected", { exact: true })).toBeVisible();
+	await expect(channels.getByText("0 connected channels", { exact: true })).toHaveCount(0);
+	await expect(channels.getByText("No channels connected", { exact: true })).toHaveCount(1);
 	await expect(channels.getByTestId("overview-summary-list")).toHaveCount(0);
 
 	options.channelAgentLinksResponse = { body: [channelLink(1, "telegram")], status: 200 };
@@ -6619,14 +6634,22 @@ test("env-keyed failed overview is action-free while Settings keeps management",
 		main.getByText("Clawdi is checking the runtime. Open Compute settings for details.", {
 			exact: true,
 		}),
-	).toBeVisible();
-	await expect(main.getByText("Agent temporarily unavailable", { exact: true })).toBeVisible();
+	).toHaveCount(1);
+	await expect(main.getByText("Agent temporarily unavailable", { exact: true })).toHaveCount(0);
 	await expect(main.getByText("Agent restart failed", { exact: true })).toHaveCount(0);
 	await expect(main.getByText("internal runtime health error", { exact: true })).toHaveCount(0);
 	await expect(main.getByText(/dashboard prerequisite/i)).toHaveCount(0);
-	await expect(main.getByText("Failed", { exact: true })).toBeVisible();
 	const compute = main.locator('[data-overview-status="compute"]');
-	await expect(compute).toContainText("Failed");
+	const computeStatus = compute.locator("[data-overview-compute-status]");
+	await expect(computeStatus).toHaveText("Temporarily unavailable");
+	await expect(computeStatus.locator('[data-slot="status-dot"]')).toHaveAttribute(
+		"data-status",
+		"warning",
+	);
+	await expect(compute.getByText("Failed", { exact: true })).toHaveCount(0);
+	const sidebarStatus = page.getByTestId("app-sidebar-agent-status");
+	await expect(sidebarStatus).toContainText("Temporarily unavailable");
+	await expect(sidebarStatus.getByText("Failed", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("alert")).toHaveCount(0);
 	await expect(main.getByText("Basic plan", { exact: true })).toBeVisible();
 	for (const action of ["Retry startup", "Retry restart", "Start", "Restart", "Delete"])
@@ -6676,7 +6699,12 @@ test("a terminal restart operation error is attributed without Overview actions"
 	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
 	const compute = page.locator("main").locator('[data-overview-status="compute"]');
 	await expect(compute.getByText("Agent restart failed", { exact: true })).toBeVisible();
-	await expect(compute.getByText("Agent temporarily unavailable", { exact: true })).toHaveCount(0);
+	await expect(compute.locator("[data-overview-compute-status]")).toHaveText("Failed");
+	await expect(
+		compute.locator('[data-overview-compute-status] [data-slot="status-dot"]'),
+	).toHaveAttribute("data-status", "destructive");
+	await expect(compute.getByText("Temporarily unavailable", { exact: true })).toHaveCount(0);
+	await expect(page.getByTestId("app-sidebar-agent-status")).toContainText("Failed");
 	await expect(compute).not.toContainText("Internal operation detail");
 	for (const action of ["Retry restart", "Start", "Restart", "Delete"])
 		await expect(compute.getByRole("button", { name: action, exact: true })).toHaveCount(0);

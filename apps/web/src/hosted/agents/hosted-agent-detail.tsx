@@ -854,7 +854,11 @@ export function OverviewComputeStatus({
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	return (
 		<div className="space-y-3 text-xs">
-			{failure ? (
+			{failure?.status.kind === "runtime_unavailable" ? (
+				<p className="text-warning-muted-foreground" role="status">
+					{failure.reason}
+				</p>
+			) : failure ? (
 				<div className="space-y-1 text-destructive-muted-foreground" role="status">
 					<p className="font-medium">{failure.title}</p>
 					<p className="line-clamp-2">{failure.reason}</p>
@@ -1139,6 +1143,10 @@ function OverviewTab({
 	);
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentFailure = deploymentFailurePresentation(deployment);
+	const computeStatusPresentation = deploymentFailure?.status ?? {
+		label: deploymentStatusLabel(deploymentStatus),
+		tone: deploymentStatusTone(deploymentStatus),
+	};
 	const deploymentRunning = isRunningStatus(deploymentStatus);
 	const sessionsEmptyMessage = deploymentRunning
 		? "No sessions from this agent yet."
@@ -1154,6 +1162,7 @@ function OverviewTab({
 		Boolean(agent),
 	);
 	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
+	const linkedChannelCount = channelLinks.data?.length ?? 0;
 	const linkedChannelRows = (channelLinks.data ?? []).flatMap((link) => {
 		if (!link.account) return [];
 		const provider = providerMeta(link.account.provider).label;
@@ -1209,12 +1218,13 @@ function OverviewTab({
 					>
 						<div className="flex h-full flex-col gap-4">
 							<p
+								data-overview-compute-status
 								data-overview-primary-value
 								className="inline-flex items-center gap-2 text-base font-semibold"
-								title={`Agent status: ${deploymentStatusLabel(deploymentStatus)}`}
+								title={`Agent status: ${computeStatusPresentation.label}`}
 							>
-								<StatusDot status={deploymentStatusTone(deploymentStatus)} />
-								{deploymentStatusLabel(deploymentStatus)}
+								<StatusDot status={computeStatusPresentation.tone} />
+								{computeStatusPresentation.label}
 							</p>
 							<OverviewComputeSummary
 								plan={isPerformance ? "Performance" : "Basic"}
@@ -1222,7 +1232,7 @@ function OverviewTab({
 								memoryMib={spec.resources.memory_mib}
 								storageGib={spec.resources.disk_gib}
 							/>
-							{deploymentStatus.kind === "running" ? null : (
+							{deploymentStatus.kind === "running" && !deploymentFailure ? null : (
 								<div className="mt-auto border-t pt-3">
 									<OverviewComputeStatus
 										deployment={deployment}
@@ -1331,9 +1341,16 @@ function OverviewTab({
 									data-overview-tool-primary
 									className="text-base font-semibold"
 								>
-									{`${channelLinks.data?.length ?? 0} connected ${(channelLinks.data?.length ?? 0) === 1 ? "channel" : "channels"}`}
+									{linkedChannelCount === 0
+										? "No channels connected"
+										: `${linkedChannelCount} connected ${linkedChannelCount === 1 ? "channel" : "channels"}`}
 								</p>
-								<OverviewSummaryRows items={linkedChannelRows} empty="No channels connected" />
+								{linkedChannelCount > 0 ? (
+									<OverviewSummaryRows
+										items={linkedChannelRows}
+										empty="Channel details unavailable"
+									/>
+								) : null}
 							</div>
 						),
 					},

@@ -126,6 +126,7 @@ describe("deploymentFailureReason", () => {
 			code: "operation_aborted",
 			title: "Plan change failed",
 			description: "Get a fresh quote and confirm the price before trying again.",
+			status: { kind: "failed", label: "Failed", tone: "destructive" },
 			remediation: {
 				kind: "review_plan_change",
 				label: "Get fresh quote",
@@ -202,9 +203,14 @@ describe("deploymentFailureReason", () => {
 			code: "runtime_readiness_timeout",
 		});
 		expect(deploymentFailurePresentation(deployment)).toMatchObject({
-			title: "Agent temporarily unavailable",
+			title: "Temporarily unavailable",
 			failedVerb: null,
 			description: "Clawdi is checking the runtime. Open Compute settings for details.",
+			status: {
+				kind: "runtime_unavailable",
+				label: "Temporarily unavailable",
+				tone: "warning",
+			},
 			remediation: { kind: "none", label: null },
 		});
 		expect(deploymentFailurePresentation(deployment)?.title).not.toContain("restart");
@@ -219,8 +225,55 @@ describe("deploymentFailureReason", () => {
 		expect(deploymentFailureProjection(deployment)?.failedVerb).toBe("restart");
 		expect(deploymentFailurePresentation(deployment)).toMatchObject({
 			title: "Agent restart failed",
+			status: { kind: "failed", label: "Failed", tone: "destructive" },
 			remediation: { kind: "restart", label: "Retry restart" },
 		});
+	});
+
+	test("prioritizes customer-actionable codes over a broad reconcile phase", () => {
+		const cases = [
+			{
+				code: "provider_not_found",
+				title: "Provider configuration failed",
+				reason: "The selected provider is no longer available in your Clawdi account.",
+			},
+			{
+				code: "invalid_managed_provider_id",
+				title: "Provider configuration failed",
+				reason: "Clawdi AI cannot be combined with a saved provider.",
+			},
+			{
+				code: "insufficient_wallet_balance",
+				title: "Agent action failed",
+				reason: "Your Wallet balance was too low for the Clawdi service to complete this request.",
+			},
+		] as const;
+
+		for (const item of cases) {
+			const deployment = hostedDeploymentFixture({
+				status: "failed",
+				failure: {
+					type: `https://api.clawdi.ai/problems/${item.code}`,
+					title: "Internal reconcile failure",
+					status: 409,
+					detail: "internal controller detail",
+					code: item.code,
+					phase: "reconcile",
+					retryable: false,
+					conditionReason: "ReconcileFailed",
+					conditionMessage: "internal controller detail",
+					observedGeneration: 2,
+				},
+			});
+			const presentation = deploymentFailurePresentation(deployment);
+
+			expect(presentation).toMatchObject({
+				title: item.title,
+				reason: item.reason,
+				status: { kind: "failed", label: "Failed", tone: "destructive" },
+			});
+			expect(presentation?.title).not.toBe("Temporarily unavailable");
+		}
 	});
 
 	test("does not expose a stale failure outside the authoritative failed state", () => {

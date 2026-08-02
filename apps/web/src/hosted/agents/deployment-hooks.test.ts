@@ -158,8 +158,8 @@ describe("deployment failure status rendering", () => {
 			}),
 		);
 
-		expect(markup).toContain("Agent temporarily unavailable");
-		expect(markup).toContain("Clawdi is checking the runtime");
+		expect(markup).not.toContain("Temporarily unavailable");
+		expect(markup.match(/Clawdi is checking the runtime/g)).toHaveLength(1);
 		expect(markup).not.toContain("restart failed");
 		expect(markup).not.toContain("Hermes prerequisite");
 		expect(markup).not.toContain("internal runtime");

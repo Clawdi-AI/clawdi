@@ -48,7 +48,7 @@ const AGENT_OVERVIEW_GROUPS = {
 		{
 			id: "operate",
 			label: "Tools",
-			layout: "two-column",
+			layout: "three-column",
 			modules: [
 				{ id: "model-provider", section: "ai" },
 				{ id: "channels", section: "channels" },
