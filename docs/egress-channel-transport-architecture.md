@@ -74,10 +74,13 @@ synthetic socket owns only Link-scoped Clawdi auth and talks to the Noise
 emulator. See
 [`designs/whatsapp-baileys-sidecar-runtime.md`](designs/whatsapp-baileys-sidecar-runtime.md).
 
-The pinned Baileys release still lacks the dedicated `authCert` trust seam and
-managed-upgrade header seam required by both native consumers. All WhatsApp
-linking, runtime, upstream, and E2E gates therefore remain false, so current
-runtime convergence installs no WhatsApp credentials or interception profile.
+The pinned Baileys release lacks dedicated `authCert` and WebSocket-only header
+options. The CLI now owns an exact version-and-source-hash-gated compatibility
+patch for the pinned OpenClaw and Hermes artifacts. It adds only those two
+options; it does not add URL routing. Native-plugin E2E and live-account drills
+remain unproven, so the aggregate WhatsApp linking, runtime, and upstream gates
+remain false. Current production convergence therefore installs no WhatsApp
+credentials, compatibility patch, or interception profile.
 
 ## Source Of Truth
 
@@ -86,5 +89,7 @@ runtime convergence installs no WhatsApp credentials or interception profile.
 - Transparent redirect: `packages/cli/src/runtime/transparent-egress.ts`
 - Telegram/Discord builders: `packages/cli/src/runtime/channels.ts`
 - WhatsApp builder: `packages/cli/src/runtime/whatsapp-egress.ts`
+- Static compatibility reconciler:
+  `packages/cli/src/runtime/managed-baileys-compat.ts`
 - WhatsApp gates and upstream audit:
   `packages/cli/src/runtime/whatsapp-upstream-contract.ts`

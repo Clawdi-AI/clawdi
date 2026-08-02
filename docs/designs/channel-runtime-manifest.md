@@ -26,8 +26,8 @@ Still intentionally out of scope for this baseline:
 - Admin/public bot publishing from the CLI.
 - Provider webhook ownership, pair-code claiming, bindings, command replies,
   provider protocol state, and worker queues. Those remain backend-owned.
-- Managed WhatsApp projection. Its stock native-plugin path remains gated on
-  upstream Baileys trust/marker support and native-plugin E2E.
+- Managed WhatsApp activation. Its stock native-plugin path has a CLI-owned
+  compatibility seam, but remains gated on native-plugin E2E and a live drill.
 - Custom WhatsApp OpenClaw connectors, Hermes platform adapters, and
   application-level relay projections.
 
@@ -215,7 +215,7 @@ DISCORD_BOT_API_BASE_URL=https://channels.example.test/v1/channels/discord
 DISCORD_GATEWAY_URL=wss://channels.example.test/v1/channels/discord/gateway
 ```
 
-WhatsApp deliberately has no dotenv application-API projection. Its future
+WhatsApp deliberately has no dotenv application-API projection. Its gated
 managed path uses the runtime's stock native Baileys plugin, a private auth
 directory, and the generic managed-upgrade egress profile.
 
@@ -305,29 +305,35 @@ shape. Multiple bots for the same provider should require either multiple
 Hermes profiles or a Hermes-side multi-account config before the adapter
 claims full multi-bot support.
 
-WhatsApp is not projected through a Hermes `BasePlatformAdapter`. Once the
-upstream seam exists, Hermes must use its stock native Baileys integration with
-the same synthetic auth and managed-upgrade profile contract as OpenClaw.
+WhatsApp is not projected through a new Hermes `BasePlatformAdapter`. The gated
+projection uses Hermes' stock native Baileys integration with the same
+synthetic auth and managed-upgrade profile contract as OpenClaw.
 
 ### WhatsApp Native Baileys Projection
 
-The future projection is entirely gate-controlled:
+The managed projection is entirely gate-controlled:
 
 1. The authenticated runtime-channel source mints or reuses one Link-scoped
    synthetic credential under the account row lock. There is no public credential
    authority API.
-2. Runtime convergence writes only synthetic `creds.json` into the official
-   OpenClaw auth directory with private permissions. It never copies physical
-   provider auth state.
+2. Runtime convergence writes synthetic `creds.json` plus a strict managed
+   socket sidecar into the stock OpenClaw or Hermes auth directory with private
+   permissions. The sidecar contains only the per-Link selector and Noise
+   trust material; it never contains the Link bearer or a websocket URL, and
+   physical provider auth state is never copied.
 3. A provider profile matches an exact per-Link managed upgrade capability,
    strips it, injects the Link bearer, and rewrites the WebSocket upgrade to the
    Noise endpoint. The capability is a profile selector, not a WhatsApp token.
 4. Missing capability preserves the stock plugin's official upstream request;
    a present invalid or expired capability fails closed.
 
-No current runtime source issues that capability, because pinned Baileys lacks
-the dedicated WebSocket-only header and `authCert` seams. Runtime convergence
-therefore installs neither WhatsApp auth state nor a WhatsApp egress profile.
+The pinned artifacts receive the dedicated WebSocket-only header and
+`authCert` seams through the CLI-owned static compatibility reconciler. It
+patches only exact audited preimages and remains inert without a projected
+managed Link. The aggregate upstream gate is still false because OpenClaw and
+Hermes native-plugin E2E and the live-account drill are not complete; runtime
+convergence therefore currently installs neither WhatsApp auth state nor a
+WhatsApp egress profile.
 
 ## CLI Commands
 
@@ -406,9 +412,9 @@ boundary.
 
 - Whether `clawdi run` should automatically load `outputs.dotenv`, or whether
   users should pass `--env-file .env.clawdi.channels` explicitly.
-- Exact target-native OpenClaw and Hermes config merge shape.
-- How the future runtime source receives and rotates an independent per-Link
-  managed-upgrade capability without exposing public credential authority.
+- Live validation of the exact target-native OpenClaw and Hermes config shape.
+- Rotation and expiry policy for the independent per-Link managed-upgrade
+  capability without exposing public credential authority.
 - Whether the backend should expose a user API to update private channel
   account config after creation. Today the manifest can create or reuse private
   bots, but not reconcile changed provider config without deletion.

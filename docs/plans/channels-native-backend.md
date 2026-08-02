@@ -105,15 +105,16 @@ binding, alias, and relay policy.
 ## Gating
 
 The managed WhatsApp path is not usable yet. The pinned `7.0.0-rc13` artifacts
-`baileys` and `@whiskeysockets/baileys` both lack the required configurable
-Noise trust authority and a WebSocket-only managed marker header. OpenClaw and
-Hermes also need native-plugin E2E proof after that seam exists.
+`baileys` and `@whiskeysockets/baileys` lack the required configurable Noise
+trust authority and a WebSocket-only managed marker header, so the CLI owns an
+exact version-and-source-hash-gated static compatibility patch for those two
+seams. OpenClaw and Hermes still need native-plugin E2E proof and a live drill.
 
-Consequently all constants in
+The isolated artifact-seam evidence is true, but the aggregate constants in
 `packages/cli/src/runtime/whatsapp-upstream-contract.ts` remain false. Runtime
-projection does not materialize synthetic auth or install a WhatsApp egress
-profile. No package override, module rewrite, fork, or custom adapter is an
-accepted substitute.
+projection does not materialize synthetic auth, reconcile the patch, or install
+a WhatsApp egress profile. Fuzzy replacement, runtime monkey-patching, package
+override, broad fork, and custom adapters remain outside the accepted design.
 
 ## Acceptance Evidence
 

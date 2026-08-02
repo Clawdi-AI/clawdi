@@ -12,7 +12,7 @@ export interface ManagedWhatsAppEgressLink {
 	capabilitySecretRef: string;
 	// This bounds new websocket upgrades only. Established-session revocation is
 	// enforced independently by the backend Link bearer authority checks.
-	capabilityExpiresAt: string;
+	capabilityExpiresAt?: string;
 }
 
 // Installing one of these profiles adds web.whatsapp.com to the proxy's SNI
@@ -35,7 +35,7 @@ export function buildManagedWhatsAppEgressProfiles(input: {
 				match: {
 					scheme: "wss",
 					host: "web.whatsapp.com",
-					notAfter: link.capabilityExpiresAt,
+					...(link.capabilityExpiresAt ? { notAfter: link.capabilityExpiresAt } : {}),
 					path: { type: "equals", value: "/ws/chat" },
 					headers: {
 						[CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER]: {
@@ -72,7 +72,6 @@ export function buildManagedWhatsAppEgressProfiles(input: {
 		enabled: true,
 		kind: "deny",
 		match: {
-			scheme: "wss",
 			host: "web.whatsapp.com",
 			headers: {
 				[CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER]: { type: "exists" },

@@ -119,21 +119,22 @@ describe("native WhatsApp egress contract", () => {
 		expect(profiles.at(-1)?.match.path).toBeUndefined();
 	});
 
-	it("keeps every release, linking, runtime, and drill gate disabled", () => {
+	it("keeps release closed while recording only the isolated compatibility evidence", () => {
 		expect(WHATSAPP_LINKING_READY).toBe(false);
 		expect(WHATSAPP_RUNTIME_READY).toBe(false);
 		expect(WHATSAPP_UPSTREAM_READY).toBe(false);
 		expect(Object.values(WHATSAPP_RUNTIME_REQUIREMENTS)).toEqual([
-			false,
-			false,
-			false,
+			true,
+			true,
+			true,
+			true,
 			false,
 			false,
 			false,
 		]);
 	});
 
-	it("pins both rc13 registry artifacts and proves their shared surface has no trust seam", () => {
+	it("pins both stock rc13 artifacts while the CLI owns the gated compatibility seam", () => {
 		const sidecarRoot = join(import.meta.dir, "../../whatsapp-baileys-sidecar");
 		const baileysRoot = realpathSync(join(sidecarRoot, "node_modules/baileys"));
 		const packageJson = JSON.parse(readFileSync(join(baileysRoot, "package.json"), "utf-8")) as {
@@ -194,7 +195,15 @@ describe("native WhatsApp egress contract", () => {
 		expect(sidecarState).not.toMatch(/process\.kill|unlinkSync/);
 		expect(auditedVersion).toContain('AUDITED_BAILEYS_RELEASE = "7.0.0-rc13"');
 		expect(auditedVersion).toContain('AUDITED_WHATSAPP_WEB_VERSION_TEXT = "2.3000.1035194821"');
-		expect(release.noiseTrustSeam.available).toBe(false);
+		expect(release.noiseTrustSeam).toMatchObject({
+			available: true,
+			providedBy: "clawdi.managedBaileysCompat.v1",
+			backwardCompatibleDefault: "WA_CERT_DETAILS",
+		});
+		expect(release.webSocketUpgradeHeaderSeam).toMatchObject({
+			available: true,
+			providedBy: "clawdi.managedBaileysCompat.v1",
+		});
 	});
 });
 

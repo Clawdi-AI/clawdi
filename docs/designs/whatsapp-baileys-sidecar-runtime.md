@@ -28,9 +28,12 @@ or Hermes channel connector and not a second agent runtime.
   account connection. The physical provider socket and Link-scoped synthetic
   sockets are intentionally distinct.
 
-All WhatsApp readiness constants remain false in
-`packages/cli/src/runtime/whatsapp-upstream-contract.ts`. No managed marker,
-credential projection, or interception profile is installed in production.
+The four isolated artifact-seam audit fields are true, but the aggregate
+WhatsApp linking, runtime, and upstream readiness constants remain false in
+`packages/cli/src/runtime/whatsapp-upstream-contract.ts`. Native-plugin E2E and
+the live-account drill are still unproven. No managed marker, compatibility
+patch, credential projection, or interception profile is installed in
+production.
 
 ## Data Flow
 
@@ -151,12 +154,30 @@ Provider builders choose the natural placeholder location:
 Done: `python3 -m unittest packages/cli/tests/egress_addon/clawdi_egress_addon_test.py` exits 0 and
 `test_generic_engine_source_contains_no_channel_product_constants` passes.
 
-## Exact Upstream Proposal
+## Audited Native Artifacts
+
+The compatibility surface was audited from the actual pinned installation
+layouts, not inferred from source package names:
+
+| Consumer | Identity | Stock Baileys alias | Patched consumer entry | Pristine consumer SHA-256 |
+| --- | --- | --- | --- | --- |
+| OpenClaw | `@openclaw/whatsapp@2026.7.1` | `baileys@7.0.0-rc13` | `dist/session-DriaHt7V.js` | `21417f0271cf1ae63a6fd4f05510b78755e4b1870ae087a1d23c68adc128de7a` |
+| Hermes | release `2026.7.30`, package `0.19.1` | `@whiskeysockets/baileys@7.0.0-rc13` | `scripts/whatsapp-bridge/bridge.js` | `9e1c4745da7d385a56fe3e48ff510e94f577ccd4cd01daa66c02d69267226185` |
+
+Both aliases resolve to the audited Baileys source commit `8053b086`. OpenClaw
+constructs every initial and reconnecting socket through `createWaSocket`.
+Hermes constructs them through `startSocket`, including its reconnect timer.
+The older local `7.0.0-rc.9` patch was reviewed only for the backward-compatible
+`authCert ?? WA_CERT_DETAILS` trust behavior; its custom websocket URL routing
+and release assumptions are intentionally absent.
+
+## Static Compatibility Patch
 
 Pinned Baileys `7.0.0-rc13` already passes `SocketConfig.options.headers` to
 `ws`, but the same `RequestInit` is also used for provider HTTP/media fetches.
-It is therefore not a safe dedicated marker seam. The narrow upstream change
-is:
+It is therefore not a safe dedicated marker seam. Revision
+`clawdi.managedBaileysCompat.v1` applies this narrow change to five shared
+Baileys files and one consumer file per runtime artifact:
 
 ```ts
 export type NoiseCertificateAuthority = {
@@ -177,7 +198,7 @@ against `authCert ?? WA_CERT_DETAILS`. `WebSocketClient.connect` must merge only
 `webSocketHeaders` into the `ws` upgrade headers; it must not copy them to
 fetch/media requests. Defaults preserve current upstream behavior.
 
-Release tests must run against both consumer artifact names used here,
+Compatibility tests run against both consumer artifact names used here,
 `baileys` (OpenClaw) and `@whiskeysockets/baileys` (Hermes):
 
 1. no options still trust the official certificate and emit no marker;
@@ -187,7 +208,40 @@ Release tests must run against both consumer artifact names used here,
 4. the marker is absent from fetch, media upload/download, redirects, and logs;
 5. both artifact aliases expose identical types and runtime behavior.
 
-OpenClaw and Hermes then need a native-plugin configuration field that resolves
-the Link marker secret and passes it as `webSocketHeaders`. Clawdi must not
-monkey-patch, rewrite modules, override package resolution, or ship a custom
-ChannelPlugin/BasePlatformAdapter to simulate this seam.
+The CLI reconciler is a narrow static compatibility exception to the general
+ban on runtime monkey-patching and source forks. It performs no fuzzy or
+load-time replacement, does not override package resolution, and ships no
+custom ChannelPlugin or `BasePlatformAdapter`. The stock consumers read an
+optional CLI-owned sidecar from their normal auth directory and pass
+`authCert` plus `webSocketHeaders` to every socket construction. In managed
+mode OpenClaw deliberately ignores its user websocket override so the socket
+still requests `wss://web.whatsapp.com/ws/chat`; without the sidecar both
+consumers preserve their stock behavior.
+
+### Reconcile and Recovery
+
+The receipt is
+`<installInventory>/managed-baileys-compat.json`. Reconciliation is:
+
+1. With no managed Link, no receipt means inert. A matching receipt triggers a
+   full rollback preflight; exact postimages return to exact preimages and the
+   receipt is removed. Missing installer artifacts are tolerated. Any unknown
+   hash refuses the entire rollback, leaves the receipt in place, and does not
+   block the unmanaged or user-owned runtime because the optional seams remain
+   inert without the sidecar.
+2. With a managed Link, Hermes first restores lockfile-pinned local bridge
+   dependencies when Baileys is absent. The live-state transaction snapshots
+   the whole `node_modules` tree whenever that `npm ci` may run.
+3. The reconciler verifies the real, non-symlinked artifact root, exact package
+   names and versions, and every target's exact pristine or patched SHA-256.
+   Unknown versions, missing targets, and drift fail before managed WhatsApp
+   activation.
+4. Exact patched files plus a matching receipt are a no-op. Exact patched files
+   without a receipt recover the receipt. Pristine or mixed recognized files
+   write and fsync the receipt, stage all replacements, recheck every source
+   hash, then rename and fsync each target directory.
+5. An installer restore to recognized pristine files reapplies the patch.
+   Manifest convergence failure restores the exact pre-apply live snapshot.
+   Rollback also preflights every target before changing any file.
+
+Done: `bun test --isolate packages/cli/src/runtime/managed-baileys-compat.test.ts packages/cli/tests/managed-whatsapp-projection.test.ts packages/cli/tests/runtime-whatsapp-egress.test.ts` exits 0 and reports no failures.

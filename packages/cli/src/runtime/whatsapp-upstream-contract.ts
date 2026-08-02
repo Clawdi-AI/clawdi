@@ -4,7 +4,7 @@ export const CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER = "x-clawdi-whatsapp-link-ca
 // Updating a version without re-auditing these exact artifacts must not enable
 // the runtime projection.
 export const WHATSAPP_UPSTREAM_AUDIT = {
-	auditedAt: "2026-08-01",
+	auditedAt: "2026-08-02",
 	baileysRelease: {
 		version: "7.0.0-rc13",
 		gitCommit: "8053b086ecc97ec3f78299561de11959bab05d39",
@@ -34,24 +34,34 @@ export const WHATSAPP_UPSTREAM_AUDIT = {
 		noiseTrustSeam: {
 			requiredSocketOption: "authCert",
 			scope: "Noise intermediate certificate public key and serial verification",
-			available: false,
+			available: true,
+			providedBy: "clawdi.managedBaileysCompat.v1",
+			backwardCompatibleDefault: "WA_CERT_DETAILS",
+		},
+		webSocketUpgradeHeaderSeam: {
+			requiredSocketOption: "webSocketHeaders",
+			scope: "WebSocket upgrade only; excluded from fetch and media HTTP",
+			available: true,
+			providedBy: "clawdi.managedBaileysCompat.v1",
 		},
 	},
 	openclaw: {
 		version: "2026.7.1",
 		stableCommit: "2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4",
-		nativeManagedUpgradeIdentity: false,
+		nativeManagedUpgradeIdentity: true,
 	},
 	hermes: {
 		version: "2026.7.30",
 		packageVersion: "0.19.1",
 		stableCommit: "cc4cab2f592e60a197e796506de9168f74baf3ea",
-		nativeManagedUpgradeIdentity: false,
+		nativeManagedUpgradeIdentity: true,
 	},
 } as const;
 
 export const WHATSAPP_RUNTIME_REQUIREMENTS = {
 	baileysNoiseTrustSeam: WHATSAPP_UPSTREAM_AUDIT.baileysRelease.noiseTrustSeam.available,
+	baileysWebSocketUpgradeHeaderSeam:
+		WHATSAPP_UPSTREAM_AUDIT.baileysRelease.webSocketUpgradeHeaderSeam.available,
 	openclawManagedUpgradeIdentity: WHATSAPP_UPSTREAM_AUDIT.openclaw.nativeManagedUpgradeIdentity,
 	hermesManagedUpgradeIdentity: WHATSAPP_UPSTREAM_AUDIT.hermes.nativeManagedUpgradeIdentity,
 	openclawNativePluginE2E: false,
