@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import Literal, Protocol
 from urllib.parse import urlsplit
 
 import httpx
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from app.services.whatsapp_baileys import BinaryNode, relay_outbound_extra_attrs
 from app.services.whatsapp_runtime_types import WhatsAppOutboundMessage
@@ -19,6 +21,19 @@ _RAW_NODE_PATH = "/v1/raw-node"
 _QUERY_IQ_PATH = "/v1/query-iq"
 _PROVIDER_EVENTS_PATH = "/v1/provider-events"
 _PROVIDER_EVENTS_ACK_PATH = "/v1/provider-events/ack"
+_JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+
+type _NativeNodeValue = (
+    bytes
+    | str
+    | int
+    | float
+    | bool
+    | None
+    | Mapping[str, _NativeNodeValue]
+    | list[_NativeNodeValue]
+    | tuple[_NativeNodeValue, ...]
+)
 
 
 @dataclass(frozen=True)
@@ -139,7 +154,7 @@ class WhatsAppBaileysSidecarClient:
 
     async def refresh_health(self) -> bool:
         response = await self._request("GET", _HEALTH_PATH)
-        data = response.json()
+        data = _response_json(response)
         self._connected = _sidecar_health_connected(data)
         return self._connected
 
@@ -147,7 +162,7 @@ class WhatsAppBaileysSidecarClient:
         response = await self._request(
             "POST",
             _RELAY_MESSAGE_PATH,
-            json={
+            json_body={
                 "jid": request.jid,
                 "messageId": request.message_id,
                 "messageProtoBase64": base64.b64encode(request.message_proto).decode("ascii"),
@@ -155,8 +170,8 @@ class WhatsAppBaileysSidecarClient:
             },
         )
         self._connected = True
-        data = response.json()
-        if not isinstance(data, Mapping):
+        data = _response_json(response)
+        if not isinstance(data, dict):
             raise ValueError("baileys provider relay response must be an object")
         message_id = data.get("messageId")
         return str(message_id) if isinstance(message_id, str) and message_id else None
@@ -165,7 +180,7 @@ class WhatsAppBaileysSidecarClient:
         await self._request(
             "POST",
             _RAW_NODE_PATH,
-            json={"node": _encode_json_value(node)},
+            json_body={"node": _encode_json_value(node)},
         )
         self._connected = True
 
@@ -173,15 +188,15 @@ class WhatsAppBaileysSidecarClient:
         response = await self._request(
             "POST",
             _QUERY_IQ_PATH,
-            json={"node": _encode_json_value(node), "timeoutMs": timeout_ms},
+            json_body={"node": _encode_json_value(node), "timeoutMs": timeout_ms},
         )
         self._connected = True
-        data = response.json()
+        data = _response_json(response)
         if data is None:
             return None
-        if isinstance(data, Mapping) and data.get("node") is None and "node" in data:
+        if isinstance(data, dict) and data.get("node") is None and "node" in data:
             return None
-        raw_node = data.get("node", data) if isinstance(data, Mapping) else data
+        raw_node = data.get("node", data) if isinstance(data, dict) else data
         decoded = _decode_json_value(raw_node)
         if not isinstance(decoded, dict):
             raise ValueError("baileys sidecar query response must be a node object or null")
@@ -189,22 +204,40 @@ class WhatsAppBaileysSidecarClient:
 
     async def provider_events(self, *, limit: int = 100) -> list[WhatsAppProviderMessageEvent]:
         response = await self._request("GET", _PROVIDER_EVENTS_PATH, params={"limit": limit})
-        data = response.json()
-        if not isinstance(data, Mapping) or not isinstance(data.get("events"), list):
+        data = _response_json(response)
+        if not isinstance(data, dict):
             raise ValueError("baileys provider events response must contain an event list")
-        return [_provider_message_event(item) for item in data["events"]]
+        events = data.get("events")
+        if not isinstance(events, list):
+            raise ValueError("baileys provider events response must contain an event list")
+        return [_provider_message_event(item) for item in events]
 
     async def acknowledge_provider_events(self, *, through_sequence: int) -> None:
         await self._request(
             "POST",
             _PROVIDER_EVENTS_ACK_PATH,
-            json={"throughSequence": through_sequence},
+            json_body={"throughSequence": through_sequence},
         )
 
-    async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        headers = dict(kwargs.pop("headers", {}) or {})
-        headers["Authorization"] = f"Bearer {self._api_token}"
-        response = await self._client.request(method, path, headers=headers, **kwargs)
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: JsonValue = None,
+        params: Mapping[str, str | int] | None = None,
+    ) -> httpx.Response:
+        headers = {"Authorization": f"Bearer {self._api_token}"}
+        if json_body is None:
+            response = await self._client.request(method, path, headers=headers, params=params)
+        else:
+            response = await self._client.request(
+                method,
+                path,
+                headers=headers,
+                json=json_body,
+                params=params,
+            )
         response.raise_for_status()
         return response
 
@@ -262,16 +295,24 @@ def validate_whatsapp_sidecar_api_token(value: str) -> str:
     return token
 
 
-def _sidecar_health_connected(data: Any) -> bool:
-    if not isinstance(data, Mapping):
+def _response_json(response: httpx.Response) -> JsonValue:
+    try:
+        return _JSON_VALUE_ADAPTER.validate_json(response.content)
+    except ValidationError as exc:
+        raise ValueError("baileys sidecar response must be valid JSON") from exc
+
+
+def _sidecar_health_connected(data: JsonValue) -> bool:
+    if not isinstance(data, dict):
         return False
-    if isinstance(data.get("connected"), bool):
-        return bool(data["connected"])
+    connected = data.get("connected")
+    if isinstance(connected, bool):
+        return connected
     return str(data.get("status") or "").lower() == "connected"
 
 
-def _provider_message_event(value: Any) -> WhatsAppProviderMessageEvent:
-    if not isinstance(value, Mapping):
+def _provider_message_event(value: JsonValue) -> WhatsAppProviderMessageEvent:
+    if not isinstance(value, dict):
         raise ValueError("baileys provider event must be an object")
     sequence = value.get("sequence")
     if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
@@ -305,19 +346,19 @@ def _provider_message_event(value: Any) -> WhatsAppProviderMessageEvent:
     )
 
 
-def _required_event_str(value: Mapping[str, Any], key: str) -> str:
+def _required_event_str(value: Mapping[str, JsonValue], key: str) -> str:
     item = _optional_event_str(value, key)
     if item is None:
         raise ValueError(f"baileys provider event {key} is required")
     return item
 
 
-def _optional_event_str(value: Mapping[str, Any], key: str) -> str | None:
+def _optional_event_str(value: Mapping[str, JsonValue], key: str) -> str | None:
     item = value.get(key)
     return item if isinstance(item, str) and item else None
 
 
-def _encode_json_value(value: Any) -> Any:
+def _encode_json_value(value: _NativeNodeValue) -> JsonValue:
     if isinstance(value, bytes):
         return {
             "$type": _BYTES_SENTINEL,
@@ -327,21 +368,35 @@ def _encode_json_value(value: Any) -> Any:
         return {str(key): _encode_json_value(inner) for key, inner in value.items()}
     if isinstance(value, (list, tuple)):
         return [_encode_json_value(inner) for inner in value]
+    return _encode_scalar(value)
+
+
+def _encode_scalar(value: object) -> JsonValue:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return str(value)
 
 
-def _decode_json_value(value: Any) -> Any:
-    if isinstance(value, Mapping):
+def _decode_json_value(value: JsonValue) -> _NativeNodeValue:
+    if isinstance(value, dict):
         if value.get("$type") == _BYTES_SENTINEL:
             raw = value.get("base64")
             if not isinstance(raw, str):
                 raise ValueError("encoded bytes require a base64 string")
-            return base64.b64decode(raw)
-        if value.get("type") == "Buffer" and isinstance(value.get("data"), list):
-            return bytes(int(part) for part in value["data"])
-        return {str(key): _decode_json_value(inner) for key, inner in value.items()}
+            try:
+                return base64.b64decode(raw, validate=True)
+            except binascii.Error as exc:
+                raise ValueError("encoded bytes require valid base64") from exc
+        buffer_data = value.get("data")
+        if value.get("type") == "Buffer" and isinstance(buffer_data, list):
+            return bytes(_buffer_byte(part) for part in buffer_data)
+        return {key: _decode_json_value(inner) for key, inner in value.items()}
     if isinstance(value, list):
         return [_decode_json_value(inner) for inner in value]
+    return value
+
+
+def _buffer_byte(value: JsonValue) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 255:
+        raise ValueError("encoded Buffer bytes must be integers between 0 and 255")
     return value

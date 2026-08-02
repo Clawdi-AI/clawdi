@@ -48,8 +48,11 @@ EXPECTED_CONFIG = {
         "app/services/sync_events.py",
         "app/services/tar_utils.py",
         "app/services/whatsapp_baileys.py",
+        "app/services/whatsapp_native_transport.py",
         "app/services/whatsapp_noise.py",
         "app/services/whatsapp_provider_bridge.py",
+        "app/services/whatsapp_runtime_types.py",
+        "app/services/whatsapp_sidecar_registry.py",
     ],
     "strict": [
         "app/core/logging_config.py",
@@ -67,6 +70,9 @@ EXPECTED_CONFIG = {
         "app/services/private_ip.py",
         "app/services/runtime_observation.py",
         "app/services/tar_utils.py",
+        "app/services/whatsapp_native_transport.py",
+        "app/services/whatsapp_runtime_types.py",
+        "app/services/whatsapp_sidecar_registry.py",
     ],
 }
 EXPECTED_VERSION = "1.39.9"

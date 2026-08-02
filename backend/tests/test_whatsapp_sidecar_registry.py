@@ -87,6 +87,7 @@ def test_parse_whatsapp_sidecar_registrations_accepts_account_map():
 @pytest.mark.parametrize(
     "raw",
     [
+        "not-json",
         "[]",
         '{"not-a-uuid": {"base_url": "http://sidecar"}}',
         '{"00000000-0000-0000-0000-000000000777": {}}',

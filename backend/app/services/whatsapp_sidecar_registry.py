@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import math
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Protocol
 from uuid import UUID
+
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from app.core.database import async_session_factory
 from app.services.whatsapp_native_transport import (
     WhatsAppBaileysSidecarClient,
     WhatsAppBaileysSidecarConfig,
+    WhatsAppNativeUpstreamClient,
+    WhatsAppProviderMessageEvent,
     WhatsAppProviderTransportAdapter,
     validate_whatsapp_sidecar_base_url,
 )
@@ -22,8 +25,20 @@ from app.services.whatsapp_provider_bridge import (
 )
 
 log = logging.getLogger(__name__)
+_JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
-SidecarClientFactory = Callable[[WhatsAppBaileysSidecarConfig], WhatsAppBaileysSidecarClient]
+
+class _SidecarClient(WhatsAppNativeUpstreamClient, Protocol):
+    async def aclose(self) -> None: ...
+
+    async def refresh_health(self) -> bool: ...
+
+    async def provider_events(self, *, limit: int = 100) -> list[WhatsAppProviderMessageEvent]: ...
+
+    async def acknowledge_provider_events(self, *, through_sequence: int) -> None: ...
+
+
+SidecarClientFactory = Callable[[WhatsAppBaileysSidecarConfig], _SidecarClient]
 
 
 class ConfiguredWhatsAppSidecarRegistry:
@@ -37,7 +52,7 @@ class ConfiguredWhatsAppSidecarRegistry:
     ) -> None:
         self._registrations = parse_whatsapp_sidecar_registrations(raw_config)
         self._client_factory = client_factory
-        self._clients: dict[UUID, WhatsAppBaileysSidecarClient] = {}
+        self._clients: dict[UUID, _SidecarClient] = {}
         self._ingress_tasks: dict[UUID, asyncio.Task[None]] = {}
 
     async def start(self) -> None:
@@ -90,7 +105,7 @@ class ConfiguredWhatsAppSidecarRegistry:
     async def _pump_provider_ingress(
         self,
         account_id: UUID,
-        client: WhatsAppBaileysSidecarClient,
+        client: _SidecarClient,
     ) -> None:
         while True:
             try:
@@ -125,10 +140,10 @@ def parse_whatsapp_sidecar_registrations(
     if not raw:
         return {}
     try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        payload = _JSON_VALUE_ADAPTER.validate_json(raw)
+    except ValidationError as exc:
         raise ValueError("channel_whatsapp_baileys_sidecars_json must be valid JSON") from exc
-    if not isinstance(payload, Mapping):
+    if not isinstance(payload, dict):
         raise ValueError("channel_whatsapp_baileys_sidecars_json must be an object")
 
     registrations: dict[UUID, WhatsAppBaileysSidecarConfig] = {}
@@ -143,8 +158,8 @@ def parse_whatsapp_sidecar_registrations(
     return registrations
 
 
-def _parse_sidecar_config(*, account_id: UUID, value: Any) -> WhatsAppBaileysSidecarConfig:
-    if not isinstance(value, Mapping):
+def _parse_sidecar_config(*, account_id: UUID, value: JsonValue) -> WhatsAppBaileysSidecarConfig:
+    if not isinstance(value, dict):
         raise ValueError(f"WhatsApp sidecar config for {account_id} must be an object")
     base_url = validate_whatsapp_sidecar_base_url(
         _required_str(value, "base_url", account_id=account_id)
@@ -156,14 +171,14 @@ def _parse_sidecar_config(*, account_id: UUID, value: Any) -> WhatsAppBaileysSid
     )
 
 
-def _required_str(value: Mapping[str, Any], key: str, *, account_id: UUID) -> str:
+def _required_str(value: Mapping[str, JsonValue], key: str, *, account_id: UUID) -> str:
     text = _optional_str(value, key, account_id=account_id)
     if text is None:
         raise ValueError(f"WhatsApp sidecar config for {account_id} requires {key}")
     return text
 
 
-def _optional_str(value: Mapping[str, Any], key: str, *, account_id: UUID) -> str | None:
+def _optional_str(value: Mapping[str, JsonValue], key: str, *, account_id: UUID) -> str | None:
     raw = value.get(key)
     if raw is None:
         return None
@@ -173,7 +188,7 @@ def _optional_str(value: Mapping[str, Any], key: str, *, account_id: UUID) -> st
     return text or None
 
 
-def _optional_float(value: Mapping[str, Any], key: str, *, account_id: UUID) -> float | None:
+def _optional_float(value: Mapping[str, JsonValue], key: str, *, account_id: UUID) -> float | None:
     raw = value.get(key)
     if raw is None:
         return None
