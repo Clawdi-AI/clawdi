@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 describe("hosted agent detail header", () => {
-	test("keeps the agent source badge out of tab page headers", () => {
+	test("shows the compact Cloud badge only beside the Overview title", () => {
 		const detailSource = readFileSync(
 			new URL("./hosted-agent-detail.tsx", import.meta.url),
 			"utf8",
@@ -12,7 +12,8 @@ describe("hosted agent detail header", () => {
 			"utf8",
 		);
 
-		expect(detailSource).not.toContain("AgentSourceBadge");
+		expect(detailSource).toContain('<AgentSourceBadge source="hosted" compact />');
+		expect(detailSource).toContain('activeTab === "overview" ? <AgentSourceBadge');
 		expect(sidebarSource).toContain("AgentSourceBadge");
 	});
 

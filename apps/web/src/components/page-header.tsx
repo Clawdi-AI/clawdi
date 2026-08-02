@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 
 interface PageHeaderProps {
 	title: string;
+	titleAdornment?: ReactNode;
 	description?: string;
 	actions?: ReactNode;
 	/** Left-of-title slot — e.g. a channel or runtime icon. */
@@ -21,6 +22,7 @@ interface PageHeaderProps {
  */
 export function PageHeader({
 	title,
+	titleAdornment,
 	description,
 	actions,
 	icon,
@@ -34,7 +36,12 @@ export function PageHeader({
 			<div className="flex min-w-0 items-center gap-3">
 				{icon ? <div className="shrink-0">{icon}</div> : null}
 				<div className="min-w-0 max-w-full">
-					<h1 className="text-xl font-semibold tracking-tight text-pretty break-words">{title}</h1>
+					<div className="flex min-w-0 flex-wrap items-center gap-2">
+						<h1 className="text-xl font-semibold tracking-tight text-pretty break-words">
+							{title}
+						</h1>
+						{titleAdornment}
+					</div>
 					{description ? <p className="mt-1 text-sm text-muted-foreground">{description}</p> : null}
 					{status ? <div className="mt-1">{status}</div> : null}
 				</div>

@@ -31,7 +31,7 @@ import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
-import { agentDisplayName } from "@/components/dashboard/agent-label";
+import { AgentSourceBadge, agentDisplayName } from "@/components/dashboard/agent-label";
 import {
 	AgentOverviewCapabilities,
 	AgentOverviewStatusCard,
@@ -530,6 +530,9 @@ export function HostedAgentDetail({
 				{isLiveToolTab ? null : (
 					<PageHeader
 						title={activeTabLabel}
+						titleAdornment={
+							activeTab === "overview" ? <AgentSourceBadge source="hosted" compact /> : null
+						}
 						description={activeTab === "overview" ? undefined : activeNavItem.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
 						actions={
@@ -1259,7 +1262,6 @@ function OverviewTab({
 							isLoading: projectionLoading || projectBindings.isLoading,
 							isUnavailable: projectionUnavailable,
 							error: projectBindings.error,
-							onRetry: () => void projectBindings.refetch(),
 						},
 					}),
 					skills: overviewSkillsModule({
@@ -1267,7 +1269,6 @@ function OverviewTab({
 						isLoading: projectionLoading || skills.isLoading,
 						isUnavailable: projectionUnavailable,
 						error: skills.error,
-						onRetry: () => void skills.refetch(),
 					}),
 					memories: memoriesModule,
 					vaults: vaultsModule,
@@ -1281,15 +1282,6 @@ function OverviewTab({
 							) : (
 								model
 							),
-						error:
-							providers.error || managedModelCatalog.error ? (
-								<OverviewModuleError
-									label="Model & Provider"
-									onRetry={() =>
-										void (managedProvider ? managedModelCatalog.refetch() : providers.refetch())
-									}
-								/>
-							) : undefined,
 					},
 					channels: {
 						description:
@@ -1302,9 +1294,6 @@ function OverviewTab({
 							) : (
 								`${linkedChannelCount} connected ${linkedChannelCount === 1 ? "channel" : "channels"}`
 							),
-						error: channelLinks.error ? (
-							<OverviewModuleError label="Channels" onRetry={() => void channelLinks.refetch()} />
-						) : undefined,
 					},
 				}}
 			/>

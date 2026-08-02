@@ -27,6 +27,7 @@ export default defineConfig({
 			VITE_CLAWDI_API_URL: "http://127.0.0.1:8000",
 			VITE_CLAWDI_HOSTED: "true",
 			VITE_CLAWDI_DEPLOY_API_URL: "http://127.0.0.1:8001",
+			VITE_CLAWDI_LEGACY_DASHBOARD_URL: "https://legacy.example/dashboard",
 			VITE_DEV_AUTH_BYPASS: "true",
 			VITE_DEV_AUTH_TOKEN: "dev-bypass",
 			VITE_STRIPE_PUBLISHABLE_KEY: stripePublishableKey,

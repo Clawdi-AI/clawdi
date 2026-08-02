@@ -15,7 +15,6 @@ import { cn } from "@/lib/utils";
 
 export type AgentOverviewModuleContent = {
 	description: ReactNode;
-	error?: ReactNode;
 };
 
 export function AgentOverviewStatusCard({
@@ -147,9 +146,9 @@ export function AgentOverviewCapabilities({
 									role="article"
 									key={module.id}
 									data-overview-module={module.id}
-									className="h-full min-h-20 min-w-0"
+									className="h-full min-w-0"
 								>
-									<CardHeader className="h-full">
+									<CardHeader className="h-full grid-rows-1 content-center gap-0">
 										<Link
 											{...agentSectionLink(agentId, module.section, routeSearch)}
 											aria-label={title}
@@ -166,11 +165,6 @@ export function AgentOverviewCapabilities({
 											</div>
 											<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 										</Link>
-										{moduleContent.error ? (
-											<div className="min-w-0 pl-11" data-overview-module-error>
-												{moduleContent.error}
-											</div>
-										) : null}
 									</CardHeader>
 								</Card>
 							);

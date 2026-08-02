@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, Laptop } from "lucide-react";
+import { ArrowRight, ExternalLink, Laptop } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
@@ -49,6 +49,7 @@ import {
 } from "@/lib/agent-routes";
 import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
+import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { sessionListQueryOptions } from "@/lib/session-queries";
@@ -94,7 +95,6 @@ export function ConnectedAgentDetail({
 	const projectBindings = overviewProjects.data;
 	const projectBindingsLoading = overviewProjects.isLoading;
 	const projectBindingsError = overviewProjects.error;
-	const refetchProjectBindings = overviewProjects.refetch;
 
 	const {
 		data: overviewSessionsPage,
@@ -121,7 +121,6 @@ export function ConnectedAgentDetail({
 		skills: skillsForThisEnv,
 		isLoading: skillsLoading,
 		error: skillsError,
-		refetch: refetchSkills,
 	} = useAgentProjectSkills(id, agentProjectId, id, false, overviewEnabled);
 
 	const blockingAgentError =
@@ -157,9 +156,10 @@ export function ConnectedAgentDetail({
 	const agentTitle = agent ? agentDisplayName(agent) : null;
 	useSetAgentBreadcrumbTitle({ agentId: id, agentTitle, section: activeTab });
 	const headerStatus =
-		agent && showSourceBadge ? (
+		activeTab === "overview" && agent && showSourceBadge ? (
 			<AgentSourceBadgeForEnvironment env={agent} ownershipKind={ownershipKind} compact />
 		) : null;
+	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;
 	const scopedSessionLink = (sessionId: string) => ({
 		...agentSessionDetailLink(id, sessionId, routeSearch),
 	});
@@ -194,9 +194,28 @@ export function ConnectedAgentDetail({
 				<section className="flex flex-col gap-4">
 					<PageHeader
 						title={activeTabLabel}
+						titleAdornment={headerStatus}
 						description={activeTab === "overview" ? undefined : activeTabMeta.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
-						status={headerStatus}
+						actions={
+							activeTab === "overview" && legacyDashboardUrl ? (
+								<Button
+									variant="outline"
+									render={
+										<a
+											href={legacyDashboardUrl}
+											target="_blank"
+											rel="noopener noreferrer"
+											aria-label="Open legacy dashboard"
+										/>
+									}
+									nativeButton={false}
+								>
+									<ExternalLink />
+									Legacy dashboard
+								</Button>
+							) : null
+						}
 					/>
 
 					{activeTab === "overview" ? (
@@ -269,14 +288,12 @@ export function ConnectedAgentDetail({
 											count: projectBindings?.length ?? null,
 											isLoading: projectBindingsLoading,
 											error: blockingProjectBindingsError,
-											onRetry: () => void refetchProjectBindings(),
 										},
 									}),
 									skills: overviewSkillsModule({
 										items: (skillsForThisEnv ?? []).map((skill) => skill.name),
 										isLoading: skillsLoading,
 										error: blockingSkillsError,
-										onRetry: () => void refetchSkills(),
 									}),
 									memories: memoriesModule,
 									vaults: vaultsModule,

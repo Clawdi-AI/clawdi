@@ -10,8 +10,10 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 			),
 		grid.locator("[data-overview-module]").evaluateAll((elements) =>
 			elements.map((element) => {
+				const cardBox = element.getBoundingClientRect();
 				const header = element.querySelector<HTMLElement>('[data-slot="card-header"]');
 				const headerLink = header?.querySelector<HTMLElement>("a");
+				const linkBox = headerLink?.getBoundingClientRect();
 				const headerStyle = header ? getComputedStyle(header) : null;
 				const linkStyle = headerLink ? getComputedStyle(headerLink) : null;
 				return {
@@ -26,6 +28,9 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 						linkStyle?.paddingBottom,
 						linkStyle?.paddingLeft,
 					],
+					verticalInsetDelta: linkBox
+						? Math.abs(linkBox.top - cardBox.top - (cardBox.bottom - linkBox.bottom))
+						: Number.POSITIVE_INFINITY,
 				};
 			}),
 		),
@@ -64,6 +69,7 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 	expect(new Set(shellMetrics.map((metric) => JSON.stringify(metric.linkPadding)))).toEqual(
 		new Set([JSON.stringify(["0px", "0px", "0px", "0px"])]),
 	);
+	for (const metric of shellMetrics) expect(metric.verticalInsetDelta).toBeLessThanOrEqual(1);
 }
 
 async function expectOverviewSessionSlot({
@@ -956,8 +962,8 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		Math.max(...resourceGeometry.map((box) => box.height)) -
 			Math.min(...resourceGeometry.map((box) => box.height)),
 	).toBeLessThanOrEqual(2);
-	expect(new Set(resourceGeometry.map((box) => Math.round(box.height)))).toEqual(new Set([80]));
-	expect(Math.max(...resourceGeometry.map((box) => box.height))).toBeLessThan(128);
+	expect(new Set(resourceGeometry.map((box) => Math.round(box.height)))).toEqual(new Set([73]));
+	expect(Math.max(...resourceGeometry.map((box) => box.height))).toBeLessThan(80);
 	expect(
 		await resourceGrid
 			.locator("[data-overview-module]")
@@ -1218,8 +1224,9 @@ test("connected overview reports connector errors without a false empty state", 
 	});
 	await page.goto("/agents/agent-smoke-1");
 	const card = page.locator('[data-overview-module="connectors"]');
-	await expect(card).toContainText("Can’t load apps", { timeout: 12_000 });
-	await expect(card.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+	await expect(card).toContainText("Unavailable right now", { timeout: 12_000 });
+	await expect(card.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
+	await expect(card.locator("a, button")).toHaveCount(1);
 	await expect(card.locator("a button, button a")).toHaveCount(0);
 	await expect(card).not.toContainText("No apps connected");
 });
