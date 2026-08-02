@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.channel import (
+    BINDING_STATUS_ARCHIVED,
     MESSAGE_DIRECTION_INBOUND,
     ChannelAccount,
     ChannelBinding,
@@ -111,20 +112,42 @@ async def test_channel_debug_health_reports_pending_inbox_and_last_error(
         external_chat_type="guild_text",
         external_chat_name="debug",
     )
-    db_session.add(binding)
+    historical_binding = ChannelBinding(
+        account_id=account.id,
+        bot_agent_link_id=UUID(created["agent_link_id"]),
+        user_id=seed_user.id,
+        external_chat_id="discord-channel-debug-historical",
+        external_chat_type="guild_text",
+        external_chat_name="debug historical",
+        status=BINDING_STATUS_ARCHIVED,
+    )
+    db_session.add_all([binding, historical_binding])
     await db_session.flush()
-    db_session.add(
-        ChannelMessage(
-            account_id=account.id,
-            bot_agent_link_id=UUID(created["agent_link_id"]),
-            binding_id=binding.id,
-            user_id=seed_user.id,
-            direction=MESSAGE_DIRECTION_INBOUND,
-            external_chat_id=binding.external_chat_id,
-            provider_message_id="debug-message-1",
-            text="debug payload",
-            payload={"t": "MESSAGE_CREATE"},
-        )
+    db_session.add_all(
+        [
+            ChannelMessage(
+                account_id=account.id,
+                bot_agent_link_id=UUID(created["agent_link_id"]),
+                binding_id=binding.id,
+                user_id=seed_user.id,
+                direction=MESSAGE_DIRECTION_INBOUND,
+                external_chat_id=binding.external_chat_id,
+                provider_message_id="debug-message-1",
+                text="debug payload",
+                payload={"t": "MESSAGE_CREATE"},
+            ),
+            ChannelMessage(
+                account_id=account.id,
+                bot_agent_link_id=UUID(created["agent_link_id"]),
+                binding_id=historical_binding.id,
+                user_id=seed_user.id,
+                direction=MESSAGE_DIRECTION_INBOUND,
+                external_chat_id=historical_binding.external_chat_id,
+                provider_message_id="debug-message-historical",
+                text="must not affect debug health",
+                payload={"t": "MESSAGE_CREATE"},
+            ),
+        ]
     )
     await record_channel_debug_event(
         db_session,

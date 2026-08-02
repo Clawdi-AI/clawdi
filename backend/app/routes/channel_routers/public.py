@@ -98,6 +98,7 @@ from app.services.channels import (
     channel_webhook_url,
     configure_discord_application,
     configure_telegram_provider_webhook,
+    consume_pending_inbound_messages_for_bindings,
     create_pair_code,
     decrypt_agent_link_token,
     discord_bot_install_url,
@@ -125,6 +126,7 @@ from app.services.channels import (
     lock_channel_binding_identity,
     mark_discord_reserved_commands_current,
     normalize_telegram_bot_username,
+    pending_channel_inbox_count,
     rearm_discord_command_reconciliation,
     rotate_bot_agent_link_token,
     store_channel_secrets,
@@ -1236,6 +1238,7 @@ async def delete_channel_binding(
         )
 
     binding.status = BINDING_STATUS_ARCHIVED
+    await consume_pending_inbound_messages_for_bindings(db, bindings=[binding])
     record_control_plane_audit(
         db,
         actor_type="user",
@@ -1712,18 +1715,11 @@ async def _count_pending_inbox(
     account: ChannelAccount,
     user_id: UUID,
 ) -> int:
-    result = await db.execute(
-        select(func.count())
-        .select_from(ChannelMessage)
-        .where(
-            ChannelMessage.account_id == account.id,
-            ChannelMessage.user_id == user_id,
-            ChannelMessage.direction == "inbound",
-            ChannelMessage.binding_id.is_not(None),
-            ChannelMessage.delivered_at.is_(None),
-        )
+    return await pending_channel_inbox_count(
+        db,
+        account=account,
+        user_id=user_id,
     )
-    return int(result.scalar_one())
 
 
 async def _count_deliveries(

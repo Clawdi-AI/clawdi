@@ -77,12 +77,12 @@ from app.services.channels import (
     discord_message_id_from_payload,
     discord_pair_command_from_payload,
     discord_pairing_command_admission,
-    discord_pairing_command_event_was_handled,
     discord_pairing_reply_for_command,
     discord_text_from_payload,
     discord_user_display_name_from_payload,
     get_active_channel_account,
     get_channel_agent_reference,
+    pairing_command_event_was_handled,
     record_discord_interaction_references,
     record_discord_outbound_message,
     record_inactive_bot_agent_link_event,
@@ -1032,7 +1032,7 @@ async def discord_webhook(
     command = discord_pair_command_from_payload(payload)
     channel_id, guild_id = discord_channel_scope_from_payload(payload)
     provider_event_id = discord_message_id_from_payload(payload)
-    if await discord_pairing_command_event_was_handled(
+    if await pairing_command_event_was_handled(
         db,
         account=account,
         external_chat_id=external_chat_id,
