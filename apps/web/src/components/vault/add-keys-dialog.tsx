@@ -30,7 +30,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { buildKeyImportPreview } from "@/components/vault/key-import-logic";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
-import { unwrap, useApi } from "@/lib/api";
+import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { identityFor } from "@/lib/identity";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { errorMessage } from "@/lib/utils";
@@ -54,6 +54,7 @@ export function AddKeysDialog({
 	children?: ReactElement;
 }) {
 	const api = useApi();
+	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const [open, setOpen] = useState(false);
 	const [text, setText] = useState("");
@@ -61,17 +62,24 @@ export function AddKeysDialog({
 	const [newVaultName, setNewVaultName] = useState("");
 	const [updateExisting, setUpdateExisting] = useState(false);
 
-	const vaultsQuery = useQuery({
-		queryKey: ["vaults", "all"],
-		queryFn: async () =>
-			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
-		enabled: open,
-	});
-	const projectsQuery = useQuery({
-		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/v1/projects")),
-		enabled: open,
-	});
+	const vaultsQuery = $api.useQuery(
+		"get",
+		"/v1/vault",
+		{
+			params: { query: { page_size: 200 } },
+		},
+		{
+			enabled: open,
+		},
+	);
+	const projectsQuery = $api.useQuery(
+		"get",
+		"/v1/projects",
+		{},
+		{
+			enabled: open,
+		},
+	);
 
 	const ownVaults = useMemo(
 		() => (vaultsQuery.data?.items ?? []).filter((v) => v.is_owner !== false),
@@ -193,7 +201,7 @@ export function AddKeysDialog({
 				);
 			}
 			const summary = importPlan.summary;
-			qc.invalidateQueries({ queryKey: ["vaults"] });
+			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			qc.invalidateQueries({
 				queryKey: targetVaultId ? ["vault-items", targetVaultId] : ["vault-items"],
 			});

@@ -1,7 +1,7 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { ExternalLink, RotateCcw, Save, Trash2, Unplug, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -25,7 +25,7 @@ import {
 	agentOwnershipKindFromId,
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
-import { toastApiError, unwrap, useAgentAvatarUploader, useApi } from "@/lib/api";
+import { toastApiError, unwrap, useAgentAvatarUploader, useApi, useOpenApi } from "@/lib/api";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -36,8 +36,11 @@ const MAX_AGENT_AVATAR_BYTES = 2 * 1024 * 1024;
 const AGENT_AVATAR_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 function updateEnvironmentCaches(queryClient: QueryClient, environment: Environment) {
-	queryClient.setQueryData(["agents", environment.id], environment);
-	queryClient.setQueryData<Environment[]>(["agents"], (current) =>
+	queryClient.setQueryData(
+		["get", "/v1/agents/{agent_id}", { params: { path: { agent_id: environment.id } } }],
+		environment,
+	);
+	queryClient.setQueryData<Environment[]>(["get", "/v1/agents", {}], (current) =>
 		current?.map((item) => (item.id === environment.id ? environment : item)),
 	);
 }
@@ -52,6 +55,7 @@ export function AgentSettingsPanel({
 	formatName?: (name: string) => string;
 }) {
 	const api = useApi();
+	const $api = useOpenApi();
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const ownership = useAgentOwnership();
@@ -63,14 +67,8 @@ export function AgentSettingsPanel({
 		data: agent,
 		isLoading,
 		error,
-	} = useQuery({
-		queryKey: ["agents", environmentId],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/agents/{agent_id}", {
-					params: { path: { agent_id: environmentId } },
-				}),
-			),
+	} = $api.useQuery("get", "/v1/agents/{agent_id}", {
+		params: { path: { agent_id: environmentId } },
 	});
 
 	const serverDraftName = agent

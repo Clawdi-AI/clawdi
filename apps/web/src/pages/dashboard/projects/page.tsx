@@ -35,7 +35,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
-import { ApiError, unwrap, useApi } from "@/lib/api";
+import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
@@ -43,8 +43,6 @@ import { getProjectResourceDefinition, projectDetailHref } from "@/lib/project-r
 import { cn, errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
-type Env = components["schemas"]["AgentResponse"];
-
 type ProjectRow = components["schemas"]["ProjectResponse"];
 type CountValue = number | "unavailable";
 
@@ -52,6 +50,7 @@ const PROJECTS_RESOURCE = getProjectResourceDefinition("projects");
 
 export default function ProjectsPage() {
 	const api = useApi();
+	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const router = useRouter();
 	const [newProjectName, setNewProjectName] = useState("");
@@ -60,18 +59,24 @@ export default function ProjectsPage() {
 	const [search, setSearch] = useState("");
 	const [systemOpen, setSystemOpen] = useState(false);
 
-	const projects = useQuery({
-		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
-		placeholderData: keepPreviousData,
-	});
+	const projects = $api.useQuery(
+		"get",
+		"/v1/projects",
+		{},
+		{
+			placeholderData: keepPreviousData,
+		},
+	);
 
 	const rows = projects.data ?? [];
-	const environments = useQuery({
-		queryKey: ["agents"],
-		queryFn: async (): Promise<Env[]> => unwrap(await api.GET("/v1/agents")),
-		enabled: rows.some((project) => project.kind === "environment"),
-	});
+	const environments = $api.useQuery(
+		"get",
+		"/v1/agents",
+		{},
+		{
+			enabled: rows.some((project) => project.kind === "environment"),
+		},
+	);
 	const agentsById = useMemo(
 		() => new Map((environments.data ?? []).map((agent) => [agent.id, agent])),
 		[environments.data],
@@ -89,12 +94,16 @@ export default function ProjectsPage() {
 			),
 		placeholderData: keepPreviousData,
 	});
-	const vaults = useQuery({
-		queryKey: ["vaults", "all"],
-		queryFn: async () =>
-			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
-		placeholderData: keepPreviousData,
-	});
+	const vaults = $api.useQuery(
+		"get",
+		"/v1/vault",
+		{
+			params: { query: { page_size: 200 } },
+		},
+		{
+			placeholderData: keepPreviousData,
+		},
+	);
 	const skillCounts = useMemo(() => {
 		const m = new Map<string, number>();
 		for (const s of skills.data?.items ?? []) {
@@ -155,7 +164,7 @@ export default function ProjectsPage() {
 		},
 		onSuccess: (project) => {
 			setCreateOpen(false);
-			qc.invalidateQueries({ queryKey: ["projects"] });
+			qc.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
 			toast.success("Project created", {
 				description: `${project.name} is ready for skills, vaults, and sharing.`,
 			});

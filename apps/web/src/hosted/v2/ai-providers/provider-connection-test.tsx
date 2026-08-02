@@ -35,8 +35,8 @@ export function ProviderConnectionTest({
 
 	function runTest() {
 		testConnection.mutate({
-			providerId: provider.provider_id,
-			...(testedModel ? { model: testedModel } : {}),
+			params: { path: { provider_id: provider.provider_id } },
+			body: testedModel ? { model: testedModel } : {},
 		});
 	}
 

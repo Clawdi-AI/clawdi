@@ -77,7 +77,7 @@ describe("channel mutation feedback", () => {
 		const detail = source("./channel-detail-page.tsx");
 
 		for (const [feedback, request] of [
-			["setRemoving(true)", "await del.mutateAsync(id)"],
+			["setRemoving(true)", "await del.mutateAsync({"],
 			["setSyncing(true)", "await sync.mutateAsync"],
 		] as const) {
 			expectFeedbackBeforeRequest(detail, feedback, request);

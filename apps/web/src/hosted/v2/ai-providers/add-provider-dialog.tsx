@@ -383,7 +383,10 @@ export function AddProviderDialog({
 				models: modelsFromText(form.modelsText, editing.models, presetCatalog),
 			} satisfies AiProviderPatch;
 			const saved = await patchProvider
-				.mutateAsync({ providerId: editing.provider_id, body: patch })
+				.mutateAsync({
+					params: { path: { provider_id: editing.provider_id } },
+					body: patch,
+				})
 				.catch(() => null);
 			if (!saved) return;
 			toast.success("Provider settings updated");

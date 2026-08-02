@@ -1,6 +1,6 @@
 "use client";
 
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import {
 	ArrowDown,
 	ArrowDownNarrowWide,
@@ -33,7 +33,7 @@ import { TimeTooltip } from "@/components/time-tooltip";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ApiError, unwrap, useApi } from "@/lib/api";
+import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { SessionMessage } from "@/lib/api-schemas";
 import { useCurrentUser } from "@/lib/auth-client";
@@ -58,6 +58,7 @@ export function SessionDetailContent({
 	agentId?: string | null;
 }) {
 	const api = useApi();
+	const $api = useOpenApi();
 	const { user } = useCurrentUser();
 
 	const {
@@ -65,35 +66,35 @@ export function SessionDetailContent({
 		isLoading: isSessionLoading,
 		error: sessionError,
 		refetch: refetchSession,
-	} = useQuery({
-		queryKey: ["session", sessionId],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/sessions/{session_id}", {
-					params: { path: { session_id: sessionId } },
-				}),
-			),
-		// Don't retry 4xx (malformed UUID, not-found, unauthorized) — they won't
-		// recover on retry and the default 3× retry makes the page hang in
-		// "Loading..." for seconds before the user learns the URL is bogus.
-		retry: (failureCount, err) => {
-			const status = err instanceof ApiError ? err.status : 0;
-			if (status >= 400 && status < 500) return false;
-			return failureCount < 2;
+	} = $api.useQuery(
+		"get",
+		"/v1/sessions/{session_id}",
+		{
+			params: { path: { session_id: sessionId } },
 		},
-		staleTime: SESSION_DETAIL_STALE_MS,
-		gcTime: SESSION_DETAIL_GC_MS,
-	});
-	const { data: scopedAgent } = useQuery({
-		queryKey: ["agents", agentId],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/agents/{agent_id}", {
-					params: { path: { agent_id: agentId ?? "" } },
-				}),
-			),
-		enabled: !!agentId,
-	});
+		{
+			// Don't retry 4xx (malformed UUID, not-found, unauthorized) — they won't
+			// recover on retry and the default 3× retry makes the page hang in
+			// "Loading..." for seconds before the user learns the URL is bogus.
+			retry: (failureCount, err) => {
+				const status = err instanceof ApiError ? err.status : 0;
+				if (status >= 400 && status < 500) return false;
+				return failureCount < 2;
+			},
+			staleTime: SESSION_DETAIL_STALE_MS,
+			gcTime: SESSION_DETAIL_GC_MS,
+		},
+	);
+	const { data: scopedAgent } = $api.useQuery(
+		"get",
+		"/v1/agents/{agent_id}",
+		{
+			params: { path: { agent_id: agentId ?? "" } },
+		},
+		{
+			enabled: !!agentId,
+		},
+	);
 
 	// Direction toggle: "desc" (newest-first, default) is the most
 	// common review case for clawdi — users open a session to see

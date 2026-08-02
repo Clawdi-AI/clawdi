@@ -11,6 +11,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { ApiError, unwrap, useApi } from "@/lib/api";
+import { sessionDetailQueryKey } from "@/lib/session-queries";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
 /**
@@ -73,8 +74,8 @@ function SharePopover({ sessionId, isShared }: { sessionId: string; isShared: bo
 
 	function invalidate() {
 		qc.invalidateQueries({ queryKey: ["session-permissions", sessionId] });
-		qc.invalidateQueries({ queryKey: ["session", sessionId] });
-		qc.invalidateQueries({ queryKey: ["sessions"] });
+		qc.invalidateQueries({ queryKey: sessionDetailQueryKey(sessionId) });
+		qc.invalidateQueries({ queryKey: ["get", "/v1/sessions"] });
 	}
 
 	// Optimistic toggle: flip the cached link permission immediately so the

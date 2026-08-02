@@ -33,14 +33,13 @@ import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { vaultDetailSearch } from "@/components/vault/vault-detail-identity";
 import { fetchAgentProjectVaults } from "@/components/vault/vault-scope";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
-import { unwrap, useApi } from "@/lib/api";
+import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { cn, errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
-type ProjectRow = components["schemas"]["ProjectResponse"];
 
 const VAULTS_RESOURCE = getProjectResourceDefinition("vaults");
 
@@ -55,16 +54,21 @@ export function VaultsSurface({
 	agentProjectIds?: readonly string[];
 }) {
 	const api = useApi();
+	const $api = useOpenApi();
 	const [search, setSearch] = useState("");
 	const [projectFilter, setProjectFilter] = useState<string>("all");
 
-	const accountVaults = useQuery({
-		queryKey: ["vaults", "all"],
-		queryFn: async () =>
-			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
-		placeholderData: keepPreviousData,
-		enabled: agentProjectIds === undefined,
-	});
+	const accountVaults = $api.useQuery(
+		"get",
+		"/v1/vault",
+		{
+			params: { query: { page_size: 200 } },
+		},
+		{
+			placeholderData: keepPreviousData,
+			enabled: agentProjectIds === undefined,
+		},
+	);
 	const agentVaults = useQuery({
 		queryKey: ["vaults", "agent-projects", ...(agentProjectIds ?? [])],
 		queryFn: async () =>
@@ -79,11 +83,14 @@ export function VaultsSurface({
 	});
 	const vaultsQuery = agentProjectIds === undefined ? accountVaults : agentVaults;
 
-	const projects = useQuery({
-		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
-		placeholderData: keepPreviousData,
-	});
+	const projects = $api.useQuery(
+		"get",
+		"/v1/projects",
+		{},
+		{
+			placeholderData: keepPreviousData,
+		},
+	);
 	const projectNameById = useMemo(
 		() => new Map((projects.data ?? []).map((p) => [p.id, p.name])),
 		[projects.data],
@@ -380,22 +387,30 @@ function VaultCardSkeleton() {
 
 function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 	const api = useApi();
+	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const router = useRouter();
 	const [open, setOpen] = useState(false);
 	const [name, setName] = useState("");
 
-	const projects = useQuery({
-		queryKey: ["projects"],
-		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
-		enabled: open,
-	});
-	const vaultsQuery = useQuery({
-		queryKey: ["vaults", "all"],
-		queryFn: async () =>
-			unwrap(await api.GET("/v1/vault", { params: { query: { page_size: 200 } } })),
-		enabled: open,
-	});
+	const projects = $api.useQuery(
+		"get",
+		"/v1/projects",
+		{},
+		{
+			enabled: open,
+		},
+	);
+	const vaultsQuery = $api.useQuery(
+		"get",
+		"/v1/vault",
+		{
+			params: { query: { page_size: 200 } },
+		},
+		{
+			enabled: open,
+		},
+	);
 	// A vault is created through a project the user can write to; the
 	// personal (Global) project always exists and is the least surprising
 	// default — attachments can be changed afterwards on the vault page.
@@ -431,7 +446,7 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 			);
 		},
 		onSuccess: (created) => {
-			qc.invalidateQueries({ queryKey: ["vaults"] });
+			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			setOpen(false);
 			toast.success("Vault created", { description: "Add keys, then share it through a Project." });
 			void router.navigate({

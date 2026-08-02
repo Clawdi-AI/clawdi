@@ -51,7 +51,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { SearchInput } from "@/components/ui/search-input";
 import { Spinner } from "@/components/ui/spinner";
-import { ensureBlob, unwrap, useApi, useSkillArchiveUploader } from "@/lib/api";
+import { ensureBlob, unwrap, useApi, useOpenApi, useSkillArchiveUploader } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
@@ -80,6 +80,7 @@ export default function SkillsPage() {
 
 function SkillsPageInner() {
 	const api = useApi();
+	const $api = useOpenApi();
 	const uploadSkillArchive = useSkillArchiveUploader();
 	const queryClient = useQueryClient();
 	// `?project=<project_id>` is the canonical scope. `?target=<env_id>`
@@ -103,10 +104,7 @@ function SkillsPageInner() {
 		data: projects,
 		error: projectsError,
 		refetch: refetchProjects,
-	} = useQuery({
-		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/v1/projects")),
-	});
+	} = $api.useQuery("get", "/v1/projects", {});
 	const orderedProjects = useMemo(
 		() => [...(projects ?? [])].filter((project) => project.id).sort(compareProjectsForUse),
 		[projects],
@@ -118,10 +116,7 @@ function SkillsPageInner() {
 	const capabilitiesForSkill = (skill: SkillSummary) =>
 		skillCapabilities(skill, skill.project_id ? projectsById.get(skill.project_id) : undefined);
 
-	const { data: envs } = useQuery({
-		queryKey: ["agents"],
-		queryFn: async () => unwrap(await api.GET("/v1/agents")),
-	});
+	const { data: envs } = $api.useQuery("get", "/v1/agents", {});
 
 	// Resolution order:
 	//   - URL has ?project=X and projects loaded:

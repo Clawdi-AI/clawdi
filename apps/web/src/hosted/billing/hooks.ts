@@ -279,7 +279,7 @@ export async function refreshCheckoutReturnQueries(
 	const results = await Promise.allSettled([
 		...requiredRefreshes,
 		qc.invalidateQueries({ queryKey: billingKeys.plans }),
-		qc.invalidateQueries({ queryKey: ["agents"] }),
+		qc.invalidateQueries({ queryKey: ["get", "/v1/agents"] }),
 	]);
 	const requiredRefreshFailures = results
 		.slice(0, requiredRefreshes.length)

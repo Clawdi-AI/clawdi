@@ -168,7 +168,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 		setRemoving(true);
 		void (async () => {
 			try {
-				await del.mutateAsync(id);
+				await del.mutateAsync({ params: { path: { account_id: id } } });
 				await router.navigate({ href: "/channels" });
 			} catch {
 				// useDeleteChannel already surfaces the API error.

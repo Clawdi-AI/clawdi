@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { normalizeSessionListQuery, sessionListQueryKey } from "./session-queries";
+import {
+	normalizeSessionListQuery,
+	sessionDetailQueryKey,
+	sessionListQueryKey,
+} from "./session-queries";
 
 describe("session query cache keys", () => {
 	it("fills backend defaults so equivalent list queries share cache", () => {
@@ -41,5 +45,13 @@ describe("session query cache keys", () => {
 			model: ["a", "z"],
 			tag: ["alpha", "beta"],
 		});
+	});
+
+	it("uses the OpenAPI detail key consumed by session pages", () => {
+		expect(sessionDetailQueryKey("session_1")).toEqual([
+			"get",
+			"/v1/sessions/{session_id}",
+			{ params: { path: { session_id: "session_1" } } },
+		]);
 	});
 });

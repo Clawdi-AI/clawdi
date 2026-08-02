@@ -336,13 +336,13 @@ describe("deployment mutation settlement", () => {
 	test("invalidates deployment membership and its additive agent projection together", () => {
 		const queryClient = new QueryClient();
 		queryClient.setQueryData(billingKeys.deployments, []);
-		queryClient.setQueryData(["agents"], []);
+		queryClient.setQueryData(["get", "/v1/agents"], []);
 
 		if (!invalidateSnapshots) throw new Error("deployment hooks were not loaded");
 		invalidateSnapshots(queryClient);
 
 		expect(queryClient.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
-		expect(queryClient.getQueryState(["agents"])?.isInvalidated).toBe(true);
+		expect(queryClient.getQueryState(["get", "/v1/agents"])?.isInvalidated).toBe(true);
 	});
 
 	test("uses the shared invalidation on every inventory-changing mutation settlement", () => {

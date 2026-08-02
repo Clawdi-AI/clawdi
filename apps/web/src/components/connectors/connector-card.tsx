@@ -12,7 +12,7 @@ import {
 	EntityRow,
 } from "@/components/entity-card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useApi } from "@/lib/api";
+import { useOpenApi } from "@/lib/api";
 import { availableAppQueryOptions, connectorToolsQueryOptions } from "@/lib/connectors-data";
 import { connectorDetailHref } from "@/lib/project-resource-model";
 import { cn } from "@/lib/utils";
@@ -30,7 +30,7 @@ export function ConnectorCard({
 	app: { name: string; display_name: string; description: string; logo: string };
 	isConnected?: boolean;
 }) {
-	const api = useApi();
+	const api = useOpenApi();
 	const queryClient = useQueryClient();
 	const prefetchDetail = useCallback(() => {
 		void queryClient.prefetchQuery(availableAppQueryOptions(api, app.name));

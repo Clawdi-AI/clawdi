@@ -4,6 +4,9 @@ Guide for contributors working on `apps/web/`. The web app is a TanStack Start
 dashboard built with React 19, TanStack Router, Tailwind v4, shadcn/ui, TanStack
 Query, Zustand, and Clerk.
 
+For typed cloud-api queries, cache keys, refresh semantics, and documented
+TanStack Query exceptions, see [`openapi-react-query.md`](openapi-react-query.md).
+
 ## Local web loop
 
 Use the canonical local-stack runbook in

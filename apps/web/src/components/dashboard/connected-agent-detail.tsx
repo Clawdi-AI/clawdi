@@ -28,7 +28,7 @@ import {
 	agentSessionDetailLink,
 	CONNECTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
-import { unwrap, useApi } from "@/lib/api";
+import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 import { sessionListQueryOptions } from "@/lib/session-queries";
@@ -56,7 +56,7 @@ export function ConnectedAgentDetail({
 	showSourceBadge?: boolean;
 }) {
 	const id = environmentId;
-	const api = useApi();
+	const $api = useOpenApi();
 	const ownership = useAgentOwnership();
 	const activeTab = parseAgentTab(section) ?? "overview";
 
@@ -65,14 +65,8 @@ export function ConnectedAgentDetail({
 		isLoading,
 		error,
 		refetch: refetchAgent,
-	} = useQuery({
-		queryKey: ["agents", id],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/agents/{agent_id}", {
-					params: { path: { agent_id: id } },
-				}),
-			),
+	} = $api.useQuery("get", "/v1/agents/{agent_id}", {
+		params: { path: { agent_id: id } },
 	});
 
 	const {
@@ -87,7 +81,7 @@ export function ConnectedAgentDetail({
 		error: sessionsError,
 		refetch: refetchSessions,
 	} = useQuery({
-		...sessionListQueryOptions(api, { environment_id: id, page_size: 50 }),
+		...sessionListQueryOptions($api, { environment_id: id, page_size: 50 }),
 		enabled: !!agent,
 	});
 

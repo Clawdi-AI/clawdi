@@ -22,7 +22,7 @@ import {
 	verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useRouter, useSearch } from "@tanstack/react-router";
 import {
 	BookOpen,
@@ -98,7 +98,7 @@ import {
 	agentSectionHref,
 	parseAgentPathname,
 } from "@/lib/agent-routes";
-import { unwrap, useApi } from "@/lib/api";
+import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
 import {
 	availableAppsQueryOptions,
@@ -272,7 +272,7 @@ function SidebarNavSection({
 }
 
 function usePrefetchConnectorsCatalog() {
-	const api = useApi();
+	const api = useOpenApi();
 	const queryClient = useQueryClient();
 	return useCallback(() => {
 		void queryClient.prefetchQuery(
@@ -824,22 +824,22 @@ function FocusRailContent({
 			previousRail: AgentTile[];
 		}) => unwrap(await api.PATCH("/v1/agents/order", { body: { agent_ids: environmentIds } })),
 		onMutate: async ({ environmentIds, previousRail }) => {
-			await queryClient.cancelQueries({ queryKey: ["agents"] });
-			const previous = queryClient.getQueryData<SidebarEnvironment[]>(["agents"]);
-			queryClient.setQueryData<SidebarEnvironment[]>(["agents"], (current) =>
+			await queryClient.cancelQueries({ queryKey: ["get", "/v1/agents"] });
+			const previous = queryClient.getQueryData<SidebarEnvironment[]>(["get", "/v1/agents", {}]);
+			queryClient.setQueryData<SidebarEnvironment[]>(["get", "/v1/agents", {}], (current) =>
 				current ? reorderEnvironmentsForCache(current, environmentIds) : current,
 			);
 			return { previous, previousRail };
 		},
 		onError: (error, _variables, context) => {
 			if (context?.previous) {
-				queryClient.setQueryData(["agents"], context.previous);
+				queryClient.setQueryData(["get", "/v1/agents", {}], context.previous);
 			}
 			if (context?.previousRail) setRailAgentsOrder(context.previousRail);
 			toast.error("Couldn't reorder agents", { description: errorMessage(error) });
 		},
 		onSuccess: (data) => {
-			queryClient.setQueryData(["agents"], data);
+			queryClient.setQueryData(["get", "/v1/agents", {}], data);
 		},
 	});
 	const onDragEnd = (event: DragEndEvent) => {
@@ -1421,7 +1421,7 @@ export function AppSidebar({
 	const { user } = useCurrentUser();
 	const { setOpen: setPaletteOpen } = useCommandPalette();
 	const { isMobile, setOpenMobile, state: sidebarState } = useSidebar();
-	const api = useApi();
+	const $api = useOpenApi();
 	const hostedAccess = useHostedProductAccess();
 	const hydrated = useHydrated();
 	const [hostedAgentTiles, setHostedAgentTiles] = useState<AgentTile[] | null>(null);
@@ -1439,11 +1439,15 @@ export function AppSidebar({
 	const agentRoute = parseAgentPathname(pathname);
 	const activeAgentId = agentRoute?.agentId ?? null;
 	const activeDeploymentSelector = agentRoute ? agentDeploymentSelector(routeSearch) : null;
-	const { data: environments } = useQuery({
-		queryKey: ["agents"],
-		queryFn: async () => unwrap(await api.GET("/v1/agents")),
-		refetchInterval: activeAgentId ? 10_000 : false,
-	});
+	const { data: environments } = $api.useQuery(
+		"get",
+		"/v1/agents",
+		{},
+		{
+			refetchInterval: activeAgentId ? 10_000 : false,
+			refetchIntervalInBackground: false,
+		},
+	);
 	const hydratedEnvironments = hydrated ? environments : undefined;
 	const selfManagedTiles = useMemo(
 		() => selfManagedAgentTiles(hydratedEnvironments),

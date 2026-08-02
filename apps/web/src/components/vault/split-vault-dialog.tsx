@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Scissors } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -18,7 +18,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
-import { unwrap, useApi } from "@/lib/api";
+import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { errorMessage } from "@/lib/utils";
@@ -72,6 +72,7 @@ export function SplitVaultDialog({
 	onDone?: () => void;
 }) {
 	const api = useApi();
+	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const [open, setOpen] = useState(false);
 	const [excluded, setExcluded] = useState<Set<string>>(new Set());
@@ -84,11 +85,14 @@ export function SplitVaultDialog({
 	const selected = useMemo(() => groups.filter((g) => !excluded.has(g.slug)), [groups, excluded]);
 	const selectedKeyCount = selected.reduce((n, g) => n + g.keys.length, 0);
 
-	const projectsQuery = useQuery({
-		queryKey: ["projects"],
-		queryFn: async () => unwrap(await api.GET("/v1/projects")),
-		enabled: open,
-	});
+	const projectsQuery = $api.useQuery(
+		"get",
+		"/v1/projects",
+		{},
+		{
+			enabled: open,
+		},
+	);
 	const projects = projectsQuery.data;
 
 	const run = useMutation({
@@ -174,7 +178,7 @@ export function SplitVaultDialog({
 			return { done, failed, affectedKeys };
 		},
 		onSuccess: ({ done, failed, affectedKeys }) => {
-			qc.invalidateQueries({ queryKey: ["vaults"] });
+			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			qc.invalidateQueries({ queryKey: ["vault-items"] });
 			exit.beginClose();
 			toast.success(`Split into ${done} ${done === 1 ? "vault" : "vaults"}`, {

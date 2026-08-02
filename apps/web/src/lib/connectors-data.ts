@@ -1,15 +1,9 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import {
-	keepPreviousData,
-	useMutation,
-	useQueries,
-	useQuery,
-	useQueryClient,
-} from "@tanstack/react-query";
+import { keepPreviousData, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
-import { unwrap, useApi } from "@/lib/api";
+import { type OpenApiClient, useOpenApi } from "@/lib/api";
 
 /**
  * Connector data hooks. Always talk to cloud-api — there is no
@@ -31,7 +25,6 @@ export const CONNECTOR_CATALOG_PAGE_SIZE = 24;
 export const CONNECTOR_CATALOG_STALE_TIME_MS = 10 * 60 * 1000;
 export const CONNECTOR_CATALOG_GC_TIME_MS = CONNECTOR_CATALOG_STALE_TIME_MS;
 
-type ApiClient = ReturnType<typeof useApi>;
 type ConnectorAvailableApp = components["schemas"]["ConnectorAvailableAppResponse"];
 
 export type AvailableAppsQueryArgs = {
@@ -41,82 +34,95 @@ export type AvailableAppsQueryArgs = {
 };
 
 export function availableAppsQueryKey({ page, pageSize, search }: AvailableAppsQueryArgs) {
-	return ["available-apps", { page, pageSize, search }] as const;
+	return [
+		"get",
+		"/v1/connectors/available",
+		{ params: { query: { page, page_size: pageSize, ...(search ? { search } : {}) } } },
+	] as const;
 }
 
-export function availableAppsQueryOptions(api: ApiClient, args: AvailableAppsQueryArgs) {
+export function availableAppsQueryOptions(api: OpenApiClient, args: AvailableAppsQueryArgs) {
 	const { page, pageSize, search } = args;
-	return {
-		queryKey: availableAppsQueryKey(args),
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/connectors/available", {
-					params: {
-						query: { page, page_size: pageSize, ...(search ? { search } : {}) },
-					},
-				}),
-			),
-		staleTime: CONNECTOR_CATALOG_STALE_TIME_MS,
-		gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
-	};
+	return api.queryOptions(
+		"get",
+		"/v1/connectors/available",
+		{
+			params: { query: { page, page_size: pageSize, ...(search ? { search } : {}) } },
+		},
+		{
+			staleTime: CONNECTOR_CATALOG_STALE_TIME_MS,
+			gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
+		},
+	);
 }
 
 export function availableAppQueryKey(appName: string) {
-	return ["available-app", appName] as const;
+	return [
+		"get",
+		"/v1/connectors/available/{app_name}",
+		{ params: { path: { app_name: appName } } },
+	] as const;
 }
 
-export function availableAppQueryOptions(api: ApiClient, appName: string) {
-	return {
-		queryKey: availableAppQueryKey(appName),
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/connectors/available/{app_name}", {
-					params: { path: { app_name: appName } },
-				}),
-			),
-		staleTime: CONNECTOR_CATALOG_STALE_TIME_MS,
-		gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
-	};
+export function availableAppQueryOptions(api: OpenApiClient, appName: string) {
+	return api.queryOptions(
+		"get",
+		"/v1/connectors/available/{app_name}",
+		{
+			params: { path: { app_name: appName } },
+		},
+		{
+			staleTime: CONNECTOR_CATALOG_STALE_TIME_MS,
+			gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
+		},
+	);
 }
 
-export function connectionsQueryOptions(api: ApiClient) {
-	return {
-		queryKey: ["connections"] as const,
-		queryFn: async () => unwrap(await api.GET("/v1/connectors")),
-		refetchOnWindowFocus: "always" as const,
-	};
+export function connectionsQueryOptions(api: OpenApiClient) {
+	return api.queryOptions(
+		"get",
+		"/v1/connectors",
+		{},
+		{
+			refetchOnWindowFocus: "always" as const,
+		},
+	);
 }
 
 export function connectorToolsQueryKey(appName: string) {
-	return ["connector-tools", appName] as const;
+	return [
+		"get",
+		"/v1/connectors/{app_name}/tools",
+		{ params: { path: { app_name: appName } } },
+	] as const;
 }
 
-export function connectorToolsQueryOptions(api: ApiClient, appName: string) {
-	return {
-		queryKey: connectorToolsQueryKey(appName),
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/connectors/{app_name}/tools", {
-					params: { path: { app_name: appName } },
-				}),
-			),
-		staleTime: CONNECTOR_CATALOG_STALE_TIME_MS,
-		gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
-	};
+export function connectorToolsQueryOptions(api: OpenApiClient, appName: string) {
+	return api.queryOptions(
+		"get",
+		"/v1/connectors/{app_name}/tools",
+		{
+			params: { path: { app_name: appName } },
+		},
+		{
+			staleTime: CONNECTOR_CATALOG_STALE_TIME_MS,
+			gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
+		},
+	);
 }
 
 export function useConnections() {
-	const api = useApi();
+	const api = useOpenApi();
 	return useQuery(connectionsQueryOptions(api));
 }
 
 export function useAvailableApp(appName: string) {
-	const api = useApi();
+	const api = useOpenApi();
 	return useQuery(availableAppQueryOptions(api, appName));
 }
 
 export function useAvailableApps({ page, pageSize, search }: AvailableAppsQueryArgs) {
-	const api = useApi();
+	const api = useOpenApi();
 	const queryClient = useQueryClient();
 	const query = useQuery({
 		...availableAppsQueryOptions(api, { page, pageSize, search }),
@@ -133,39 +139,27 @@ export function useAvailableApps({ page, pageSize, search }: AvailableAppsQueryA
 }
 
 export function useConnectorTools(appName: string) {
-	const api = useApi();
+	const api = useOpenApi();
 	return useQuery(connectorToolsQueryOptions(api, appName));
 }
 
 export function useAuthFields(appName: string, { enabled }: { enabled: boolean }) {
-	const api = useApi();
-	return useQuery({
-		queryKey: ["auth-fields", appName],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/connectors/{app_name}/auth-fields", {
-					params: { path: { app_name: appName } },
-				}),
-			),
-		enabled,
-	});
+	return useOpenApi().useQuery(
+		"get",
+		"/v1/connectors/{app_name}/auth-fields",
+		{ params: { path: { app_name: appName } } },
+		{ enabled },
+	);
 }
 
 // ─────────────────────────────────────────────────────────────────────
 // Mutations
 
 export function useDisconnect() {
-	const api = useApi();
+	const api = useOpenApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async ({ connectionId }: { connectionId: string }): Promise<void> => {
-			unwrap(
-				await api.DELETE("/v1/connectors/{connection_id}", {
-					params: { path: { connection_id: connectionId } },
-				}),
-			);
-		},
-		onSuccess: () => qc.invalidateQueries({ queryKey: ["connections"] }),
+	return api.useMutation("delete", "/v1/connectors/{connection_id}", {
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["get", "/v1/connectors"] }),
 	});
 }
 
@@ -188,7 +182,7 @@ export function useDisconnect() {
  */
 export function useConnectedAppCards() {
 	const connectionsQ = useConnections();
-	const api = useApi();
+	const api = useOpenApi();
 
 	const activeConnections = useMemo(
 		() => connectionsQ.data?.filter(isActiveConnection) ?? [],

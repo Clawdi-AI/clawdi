@@ -88,7 +88,11 @@ export function PairedChatRow({
 					description="Only this chat will be disconnected. Other chats and the connected channel stay active."
 					confirmLabel="Unpair chat"
 					destructive
-					onConfirm={() => unpair.mutateAsync(binding.id)}
+					onConfirm={() =>
+						unpair.mutateAsync({
+							params: { path: { account_id: accountId, binding_id: binding.id } },
+						})
+					}
 				>
 					<Button
 						variant="ghost"

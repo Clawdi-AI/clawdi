@@ -2,6 +2,7 @@
 
 import { type components, extractApiDetail, type paths } from "@clawdi/shared/api";
 import createClient from "openapi-fetch";
+import createQueryClient from "openapi-react-query";
 import { useCallback, useMemo } from "react";
 import { ApiError, ApiNetworkError } from "@/lib/api-errors";
 import { useAuthToken } from "@/lib/auth-client";
@@ -15,6 +16,21 @@ export { ApiError, toastApiError } from "@/lib/api-errors";
 const API_URL = env.VITE_CLAWDI_API_URL;
 type SkillUploadResponse = components["schemas"]["SkillUploadResponse"];
 type EnvironmentResponse = components["schemas"]["AgentResponse"];
+
+type ApiErrorResponse<Response> = Response extends object
+	? Omit<Response, "content"> & { content: { "application/json": ApiError } }
+	: Response;
+type ApiResponses<Responses> = {
+	[Status in keyof Responses]: `${Status & (string | number)}` extends `2${string}`
+		? Responses[Status]
+		: ApiErrorResponse<Responses[Status]>;
+} & { default: { content: { "application/json": ApiError } } };
+type ApiOperation<Operation> = Operation extends { responses: infer Responses }
+	? Omit<Operation, "responses"> & { responses: ApiResponses<Responses> }
+	: Operation;
+type ApiPaths = {
+	[Path in keyof paths]: { [Method in keyof paths[Path]]: ApiOperation<paths[Path][Method]> };
+};
 
 function apiUrl(path: string): string {
 	const base = API_URL.endsWith("/") ? API_URL : `${API_URL}/`;
@@ -68,10 +84,10 @@ function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Respons
  * Use inside a React component/hook — Clerk's `getToken` is only available
  * in the browser tree.
  */
-export function useApi() {
+function useConfiguredApi(throwOnError: boolean) {
 	const { getToken } = useAuthToken();
 	return useMemo(() => {
-		const client = createClient<paths>({ baseUrl: API_URL, fetch: fetchWithTimeout });
+		const client = createClient<ApiPaths>({ baseUrl: API_URL, fetch: fetchWithTimeout });
 		client.use({
 			async onRequest({ request }) {
 				const token = await getToken();
@@ -79,9 +95,31 @@ export function useApi() {
 				return request;
 			},
 		});
+		if (throwOnError) {
+			client.use({
+				async onResponse({ response }) {
+					if (!response.ok) {
+						throw new ApiError(response.status, await apiErrorDetail(response.clone()));
+					}
+					return response;
+				},
+			});
+		}
 		return client;
-	}, [getToken]);
+	}, [getToken, throwOnError]);
 }
+
+/** Generated fetch client for flows that inspect the typed response envelope directly. */
+export function useApi() {
+	return useConfiguredApi(false);
+}
+
+/** Standard OpenAPI-backed TanStack Query client with shared transport policy. */
+export function useOpenApi() {
+	const client = useConfiguredApi(true);
+	return useMemo(() => createQueryClient(client), [client]);
+}
+export type OpenApiClient = ReturnType<typeof useOpenApi>;
 
 /**
  * Unwrap an openapi-fetch result. Throws ApiError on non-2xx so TanStack

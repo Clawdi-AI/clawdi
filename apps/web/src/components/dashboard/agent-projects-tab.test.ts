@@ -65,6 +65,6 @@ describe("agent Projects presentation", () => {
 		expect(source).toContain("<ConfirmAction");
 		expect(source).toContain('title="Remove this Project?"');
 		expect(source).toContain("agentProjectBindingsQueryKey(agentId)");
-		expect(source).toContain('invalidateQueries({ queryKey: ["projects"] })');
+		expect(source).toContain('invalidateQueries({ queryKey: ["get", "/v1/projects"] })');
 	});
 });

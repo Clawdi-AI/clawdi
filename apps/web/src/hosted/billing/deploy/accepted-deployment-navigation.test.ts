@@ -35,7 +35,7 @@ describe("accepted deployment navigation", () => {
 		});
 		const agentsProjection = [{ id: "agent_before_acceptance" }];
 		queryClient.setQueryData(billingKeys.deployments, [existing, staleCreated]);
-		queryClient.setQueryData(["agents"], agentsProjection);
+		queryClient.setQueryData(["get", "/v1/agents"], agentsProjection);
 		const inFlightStaleList = queryClient
 			.fetchQuery({
 				queryKey: billingKeys.deployments,
@@ -80,9 +80,13 @@ describe("accepted deployment navigation", () => {
 			authoritative,
 		]);
 		expect(navigations).toEqual([{ href: "/agents/hdep_created?source=on-clawdi", replace: true }]);
-		expect(queryClient.getQueryData<typeof agentsProjection>(["agents"])).toBe(agentsProjection);
-		expect(queryClient.getQueryState(["agents"])?.isInvalidated).toBe(true);
-		expect(queryClient.getQueryCache().findAll({ queryKey: ["agents"] })).toHaveLength(1);
+		expect(queryClient.getQueryData<typeof agentsProjection>(["get", "/v1/agents"])).toBe(
+			agentsProjection,
+		);
+		expect(queryClient.getQueryState(["get", "/v1/agents"])?.isInvalidated).toBe(true);
+		expect(queryClient.getQueryCache().findAll({ queryKey: ["get", "/v1/agents"] })).toHaveLength(
+			1,
+		);
 
 		queryClient.clear();
 	});
