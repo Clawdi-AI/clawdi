@@ -67,6 +67,7 @@ EXPECTED_CONFIG = {
         "app/routes/sync.py",
         "app/services/agent_bindings.py",
         "app/services/ai_provider_connection.py",
+        "app/services/ai_provider_credentials.py",
         "app/services/channel_debug_events.py",
         "app/services/channel_webhooks.py",
         "app/services/discord_gateway_worker.py",
