@@ -56,6 +56,9 @@ The metadata tools never return plaintext secret values. Preserve exact referenc
 - `clawdi://project/<project-id>/vault/<vault>/field/<field>`
 - `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`
 
+Vault mutation is not an Agent MCP capability. Ask the user to manage Vault data through an
+authorized human-facing surface; never call raw HTTP or invent an unavailable tool.
+
 ## Connectors
 
 Use the Composio Tool Router meta-tools returned by `tools/list` on the `clawdi` MCP server.

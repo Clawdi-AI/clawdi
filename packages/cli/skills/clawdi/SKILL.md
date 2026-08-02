@@ -145,29 +145,22 @@ Treat their live names and schemas as authoritative; never assume a fixed meta-t
    fields, and termination signals exactly as exposed. Select an account only when the schema
    supports it, and use additional or future meta-tools only according to their live schemas.
 
-## Vault CLI
+## Vault Management
 
-When the user asks to migrate secrets into Clawdi Vault or script secret writes, prefer the CLI over raw HTTP calls:
+Vault mutation is intentionally not an Agent MCP capability. Do not use raw HTTP, daemon
+control RPC, or execute foreground Vault CLI commands on the user's behalf. When the user
+asks to write, import, attach, detach, or delete Vault data, explain that a human operator
+must perform it and provide the safest exact foreground command. Prefer `clawdi vault set
+KEY --prompt` for one value and `clawdi vault import ...` for migrations; never place a
+plaintext secret in command arguments or your response.
 
-- Use `clawdi vault set KEY --prompt` for one-off manual secret entry; it prompts without echoing input.
-- Use `clawdi vault set KEY --stdin` for piped values. Empty stdin is rejected unless `--allow-empty` is passed intentionally.
-- Use `clawdi vault set KEY --value <value>` only when shell history exposure is acceptable.
-- Use service-specific vault slugs such as `api-service/env/KEY`; avoid broad slugs such as `prod/KEY`.
-- Use `clawdi vault import --vault <service-slug> --section <name> --project <project> --yes <file>` for non-interactive `.env` migrations into a section.
-- Keep `.env` import keys as POSIX environment identifiers such as `OPENAI_API_KEY`; section names belong in `--section`, not inside the key name.
-- Use `clawdi vault attach <vault> --project <project>` to make an existing Vault available in another Project.
-- Use `clawdi vault detach <vault> --project <project>` to remove one Project's access without deleting keys.
-- Use `clawdi vault rm <vault>/<section>/<field> --global --yes` only when the key should be deleted from the shared Vault for every attached Project.
-- Prefer exact `clawdi://project/...` references printed by the CLI. Do not print plaintext secret values unless the user explicitly asks for them.
+## AI Provider Management
 
-## AI Provider CLI
+Provider configuration is also a human operator workflow, not an Agent MCP capability. Do
+not execute provider CLI commands or handle provider credentials on the user's behalf. When
+asked, provide an exact `clawdi ai-provider` command for the operator to run and explain its
+effect; suggest `validate` or a non-live `test` before any explicitly requested live probe.
 
-When the user asks to configure model providers, API keys, or Codex OAuth for agents, use `clawdi ai-provider`:
-
-- Add reusable providers with `clawdi ai-provider add <id> --type <openai|anthropic|openrouter|gemini|mistral|custom_openai_compatible> --default-model <model> --auth <env:KEY|clawdi://...|agent:codex/profile|none>`.
-- Validate metadata with `clawdi ai-provider validate [provider-id]`.
-- Check local auth availability with `clawdi ai-provider test <provider-id>`; add `--live` only when the user explicitly wants a real provider API probe.
-- Connect Codex OAuth with `clawdi ai-provider connect <provider-id> --tool codex`; use `--callback manual` when loopback localhost cannot be reached.
 - Treat the local Provider Catalog as multi-record metadata. Do not activate it into local agent config; Core Hosted activation is supplied by the runtime manifest/controller, whose configured runtime binds exactly one provider and whose unmanaged runtime binds none.
 - Keep Codex OAuth ownership singular across Hosted runtimes. Hermes/OpenClaw native refresh, revoke, and ownership state belongs to Hosted convergence, not a local CLI materialization command.
 - Default export/import is metadata-only; `--include-secrets` requires passphrase-encrypted secret export.

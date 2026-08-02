@@ -282,6 +282,10 @@ Vault operations are intentionally absent from the daemon control RPC.
 Agents use the authenticated Clawdi MCP endpoint; human operators use the
 foreground CLI commands directly.
 
+CLI releases 0.13.17 through 0.13.28 exposed experimental `vault.*` control
+methods. They are removed rather than retained as aliases: Agent integrations
+must use MCP, while operator automation must invoke the foreground CLI.
+
 Non-loopback HTTP binds are rejected unless the daemon is started or
 installed with `--allow-remote` (or
 `CLAWDI_DAEMON_RPC_ALLOW_REMOTE=1`). Do not expose that listener

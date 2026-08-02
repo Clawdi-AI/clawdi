@@ -4,6 +4,8 @@ import json
 import logging
 import re
 import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import quote, unquote, urlsplit
 from uuid import UUID
@@ -194,10 +196,29 @@ def _validate_arguments[ArgumentsT: _ToolArguments](
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid tool arguments") from None
 
 
-_NATIVE_TOOLS: list[dict[str, Any]] = [
-    {
-        "name": "memory_search",
-        "description": (
+type _NativeToolHandler = Callable[
+    [dict[str, Any], AuthContext, AsyncSession], Awaitable[dict[str, Any]]
+]
+
+
+@dataclass(frozen=True)
+class _NativeToolSpec:
+    description: str
+    input_schema: dict[str, Any]
+    scopes: tuple[str, ...]
+    handler: _NativeToolHandler
+
+    def definition(self, name: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "description": self.description,
+            "inputSchema": self.input_schema,
+        }
+
+
+_NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
+    "memory_search": _NativeToolSpec(
+        description=(
             "ALWAYS call this BEFORE answering any question that references the user's own "
             "context — their preferences, projects, past decisions, named entities, or work "
             "history. A missed hit costs the user's trust every subsequent turn; a call that "
@@ -220,7 +241,7 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
             "When in doubt, CALL IT. Zero results is cheap; a missed memory makes you look "
             "amnesic."
         ),
-        "inputSchema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "query": {
@@ -244,10 +265,11 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
             "required": ["query"],
             "additionalProperties": False,
         },
-    },
-    {
-        "name": "memory_add",
-        "description": (
+        scopes=("memories:read",),
+        handler=lambda arguments, auth, db: _tool_memory_search(arguments, auth=auth, db=db),
+    ),
+    "memory_add": _NativeToolSpec(
+        description=(
             "Store a durable memory so future agent sessions (same agent, or a different one) "
             "can retrieve this context. Call this when you learn something non-obvious about "
             "the user or their project that a future session would benefit from knowing.\n\n"
@@ -271,7 +293,7 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
             "nouns, not pronouns. A future session will read it without today's conversation. "
             "Content language should match the user's primary language for that context."
         ),
-        "inputSchema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "content": {
@@ -297,10 +319,11 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
             "required": ["content"],
             "additionalProperties": False,
         },
-    },
-    {
-        "name": "memory_extract",
-        "description": (
+        scopes=("memories:write",),
+        handler=lambda arguments, auth, db: _tool_memory_add(arguments, auth=auth, db=db),
+    ),
+    "memory_extract": _NativeToolSpec(
+        description=(
             "Propose durable long-term memories from the CURRENT conversation, list them to "
             "the user, and save only what they approve. Call this when the user asks to "
             "'extract memories', 'save what we discussed', 'remember this conversation', or "
@@ -310,22 +333,23 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
             "This tool inspects your active conversation context — it does NOT read any "
             "external file or database."
         ),
-        "inputSchema": {
+        input_schema={
             "type": "object",
             "properties": {},
             "additionalProperties": False,
         },
-    },
-    {
-        "name": "session_search",
-        "description": (
+        scopes=("memories:read", "memories:write"),
+        handler=lambda arguments, auth, db: _tool_memory_extract(arguments, auth=auth, db=db),
+    ),
+    "session_search": _NativeToolSpec(
+        description=(
             "Search the user's past Clawdi sessions by keyword. Use when the user asks about "
             "prior work (e.g. 'find the auth migration session'). Returns up to N matching "
             "sessions with summary, agent, model, project, date, and message count. The "
             "session UUID in each result can be passed back to session_read to fetch the full "
             "conversation."
         ),
-        "inputSchema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "query": {
@@ -342,10 +366,11 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
             "required": ["query"],
             "additionalProperties": False,
         },
-    },
-    {
-        "name": "session_read",
-        "description": (
+        scopes=("sessions:read",),
+        handler=lambda arguments, auth, db: _tool_session_search(arguments, auth=auth, db=db),
+    ),
+    "session_read": _NativeToolSpec(
+        description=(
             "Read a Clawdi session and return its content as Markdown so you can ingest the "
             "conversation as context. Use this when the user references a Clawdi share URL "
             "(https://cloud.clawdi.ai/s/{uuid}) or one of their own sessions by UUID. Handles "
@@ -353,7 +378,7 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
             "YAML front-matter block (source/agent/model/project/messages) followed by "
             "`## User` / `## Assistant` turn headings."
         ),
-        "inputSchema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "reference": {
@@ -367,63 +392,66 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
             "required": ["reference"],
             "additionalProperties": False,
         },
-    },
-]
-
-_NATIVE_TOOLS.extend(
-    [
-        {
-            "name": "project_current",
-            "description": (
-                "Return the caller's current/bound Clawdi Project. Hosted runtimes always "
-                "receive only the Project bound to their authenticated environment."
-            ),
-            "inputSchema": _NoArguments.model_json_schema(),
-        },
-        {
-            "name": "project_list",
-            "description": (
-                "List Projects visible to the authenticated caller. Hosted runtimes are "
-                "restricted to their bound environment Project. This tool is read-only."
-            ),
-            "inputSchema": _ProjectListArguments.model_json_schema(),
-        },
-        {
-            "name": "project_get",
-            "description": (
-                "Read safe metadata for one visible Clawdi Project by UUID. Inaccessible "
-                "Projects are reported as not found. This tool is read-only."
-            ),
-            "inputSchema": _ProjectGetArguments.model_json_schema(),
-        },
-        {
-            "name": "vault_list",
-            "description": (
-                "List Vault metadata attached to visible Projects. Returns Vault names, "
-                "slugs, Project provenance, and key counts only; never secret values."
-            ),
-            "inputSchema": _VaultListArguments.model_json_schema(),
-        },
-        {
-            "name": "vault_get",
-            "description": (
-                "List key names and exact clawdi:// references for one Vault attachment. "
-                "Returns Project/Vault provenance and never decrypts or returns secret values."
-            ),
-            "inputSchema": _VaultGetArguments.model_json_schema(),
-        },
-        {
-            "name": "vault_resolve",
-            "description": (
-                "Resolve one exact Project-scoped clawdi:// reference to its plaintext secret. "
-                "Call only when the current task requires the value. The result is sensitive: "
-                "never echo it, store it in Memory, or include it in logs. Hosted runtimes are "
-                "restricted to their bound Project."
-            ),
-            "inputSchema": _VaultResolveArguments.model_json_schema(),
-        },
-    ]
-)
+        scopes=("sessions:read",),
+        handler=lambda arguments, auth, db: _tool_session_read(arguments, auth=auth, db=db),
+    ),
+    "project_current": _NativeToolSpec(
+        description=(
+            "Return the caller's current/bound Clawdi Project. Hosted runtimes always "
+            "receive only the Project bound to their authenticated environment."
+        ),
+        input_schema=_NoArguments.model_json_schema(),
+        scopes=("projects:read",),
+        handler=lambda arguments, auth, db: _tool_project_current(arguments, auth=auth, db=db),
+    ),
+    "project_list": _NativeToolSpec(
+        description=(
+            "List Projects visible to the authenticated caller. Hosted runtimes are "
+            "restricted to their bound environment Project. This tool is read-only."
+        ),
+        input_schema=_ProjectListArguments.model_json_schema(),
+        scopes=("projects:read",),
+        handler=lambda arguments, auth, db: _tool_project_list(arguments, auth=auth, db=db),
+    ),
+    "project_get": _NativeToolSpec(
+        description=(
+            "Read safe metadata for one visible Clawdi Project by UUID. Inaccessible "
+            "Projects are reported as not found. This tool is read-only."
+        ),
+        input_schema=_ProjectGetArguments.model_json_schema(),
+        scopes=("projects:read",),
+        handler=lambda arguments, auth, db: _tool_project_get(arguments, auth=auth, db=db),
+    ),
+    "vault_list": _NativeToolSpec(
+        description=(
+            "List Vault metadata attached to visible Projects. Returns Vault names, "
+            "slugs, Project provenance, and key counts only; never secret values."
+        ),
+        input_schema=_VaultListArguments.model_json_schema(),
+        scopes=("vault:read",),
+        handler=lambda arguments, auth, db: _tool_vault_list(arguments, auth=auth, db=db),
+    ),
+    "vault_get": _NativeToolSpec(
+        description=(
+            "List key names and exact clawdi:// references for one Vault attachment. "
+            "Returns Project/Vault provenance and never decrypts or returns secret values."
+        ),
+        input_schema=_VaultGetArguments.model_json_schema(),
+        scopes=("vault:read",),
+        handler=lambda arguments, auth, db: _tool_vault_get(arguments, auth=auth, db=db),
+    ),
+    "vault_resolve": _NativeToolSpec(
+        description=(
+            "Resolve one exact Project-scoped clawdi:// reference to its plaintext secret. "
+            "Call only when the current task requires the value. The result is sensitive: "
+            "never echo it, store it in Memory, or include it in logs. Hosted runtimes are "
+            "restricted to their bound Project."
+        ),
+        input_schema=_VaultResolveArguments.model_json_schema(),
+        scopes=("vault:read",),
+        handler=lambda arguments, auth, db: _tool_vault_resolve(arguments, auth=auth, db=db),
+    ),
+}
 
 _MEMORY_EXTRACT_INSTRUCTIONS = (
     "Review the CURRENT conversation silently and propose up to 5 durable memories worth "
@@ -601,25 +629,6 @@ def _http_exception_message(exc: HTTPException) -> str:
 _CONNECTOR_TOOLS_CACHE_TTL_SECONDS = 60.0
 _connector_tools_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
-_NATIVE_TOOL_SCOPES: dict[str, tuple[str, ...]] = {
-    "memory_search": ("memories:read",),
-    "memory_add": ("memories:write",),
-    "memory_extract": ("memories:read", "memories:write"),
-    "session_search": ("sessions:read",),
-    "session_read": ("sessions:read",),
-    "project_current": ("projects:read",),
-    "project_list": ("projects:read",),
-    "project_get": ("projects:read",),
-    "vault_list": ("vault:read",),
-    "vault_get": ("vault:read",),
-    "vault_resolve": ("vault:read",),
-}
-_DECLARED_NATIVE_TOOL_NAMES = frozenset(
-    name for tool in _NATIVE_TOOLS if isinstance((name := tool.get("name")), str)
-)
-if _DECLARED_NATIVE_TOOL_NAMES != frozenset(_NATIVE_TOOL_SCOPES):
-    raise RuntimeError("every native MCP tool must declare exactly one scope policy")
-
 
 async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
     try:
@@ -651,19 +660,16 @@ async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
 
 async def _list_clawdi_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
     native_tools: list[dict[str, Any]] = []
-    for tool in _NATIVE_TOOLS:
-        name = tool.get("name")
-        if not isinstance(name, str):
-            continue
+    for name, spec in _NATIVE_TOOL_REGISTRY.items():
         try:
-            require_auth_scopes(auth, *_NATIVE_TOOL_SCOPES[name])
+            require_auth_scopes(auth, *spec.scopes)
         except HTTPException:
             continue
-        native_tools.append(tool)
+        native_tools.append(spec.definition(name))
     connector_tools = [
         tool
         for tool in await _connector_mcp_tools(auth)
-        if tool.get("name") not in _DECLARED_NATIVE_TOOL_NAMES
+        if tool.get("name") not in _NATIVE_TOOL_REGISTRY
     ]
     return [*native_tools, *connector_tools]
 
@@ -671,31 +677,10 @@ async def _list_clawdi_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
 async def _call_clawdi_mcp_tool(
     name: str, arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
-    if name in _DECLARED_NATIVE_TOOL_NAMES:
-        require_auth_scopes(auth, *_NATIVE_TOOL_SCOPES[name])
-    if name == "memory_search":
-        return await _tool_memory_search(arguments, auth=auth, db=db)
-    if name == "memory_add":
-        return await _tool_memory_add(arguments, auth=auth, db=db)
-    if name == "memory_extract":
-        _validate_arguments(_NoArguments, arguments)
-        return _tool_text(_MEMORY_EXTRACT_INSTRUCTIONS)
-    if name == "session_search":
-        return await _tool_session_search(arguments, auth=auth, db=db)
-    if name == "session_read":
-        return await _tool_session_read(arguments, auth=auth, db=db)
-    if name == "project_current":
-        return await _tool_project_current(arguments, auth=auth, db=db)
-    if name == "project_list":
-        return await _tool_project_list(arguments, auth=auth, db=db)
-    if name == "project_get":
-        return await _tool_project_get(arguments, auth=auth, db=db)
-    if name == "vault_list":
-        return await _tool_vault_list(arguments, auth=auth, db=db)
-    if name == "vault_get":
-        return await _tool_vault_get(arguments, auth=auth, db=db)
-    if name == "vault_resolve":
-        return await _tool_vault_resolve(arguments, auth=auth, db=db)
+    spec = _NATIVE_TOOL_REGISTRY.get(name)
+    if spec is not None:
+        require_auth_scopes(auth, *spec.scopes)
+        return await spec.handler(arguments, auth, db)
     return await _tool_connector_call(name, arguments, auth=auth)
 
 
@@ -708,6 +693,13 @@ def _tool_text(text: str, *, is_error: bool = False) -> dict[str, Any]:
 
 def _tool_json(payload: object) -> dict[str, Any]:
     return _tool_text(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+async def _tool_memory_extract(
+    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
+) -> dict[str, Any]:
+    _validate_arguments(_NoArguments, arguments)
+    return _tool_text(_MEMORY_EXTRACT_INSTRUCTIONS)
 
 
 async def _tool_memory_search(
@@ -753,8 +745,11 @@ async def _tool_memory_add(
 
 
 def _user_sessions_stmt(auth: AuthContext):
-    """Sessions visible to this caller: owned, and — for env-bound API
-    keys — restricted to the key's environment."""
+    """Return account sessions, fencing only legacy environment keys.
+
+    Strict Hosted runtimes intentionally receive cross-Agent history. Legacy
+    environment keys predate that contract and retain their local boundary.
+    """
     stmt = (
         select(Session, AgentEnvironment.agent_type)
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)

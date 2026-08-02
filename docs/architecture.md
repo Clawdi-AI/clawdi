@@ -76,6 +76,10 @@ API compatibility policy lives in [`api-compatibility.md`](api-compatibility.md)
 The CLI owns local agent detection, data collection, sync, setup, MCP stdio,
 vault/env injection, and runtime convergence commands.
 
+Cloud capabilities exposed to Agents live behind the authenticated MCP API.
+Vault mutation and template injection remain foreground operator CLI workflows;
+they are not daemon control RPC or alternate Agent APIs.
+
 Adapter roots are verified in `packages/cli/src/adapters/*`:
 
 | Agent | Sessions | Skills | Version |

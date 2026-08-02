@@ -886,10 +886,10 @@ def _is_env_bound_api_key(auth: AuthContext) -> bool:
     Legacy v1 Agent keys may have `scopes=None` (full account
     capability, same as a user's own laptop key), while strict-v2
     runtime deployment keys carry an issuer-owned scope bundle.
-    Resource types with an Agent or Project boundary (sessions, skills, and
-    Vault attachments) honour this binding. Memory is intentionally
-    account-shared when the key has a Memory scope; its environment id is
-    provenance, not visibility.
+    Project-scoped resources (skills and Vault attachments) honour this
+    binding. Memory is account-shared, and strict Hosted runtimes also receive
+    account session history; legacy environment keys retain environment-local
+    session visibility. The environment id remains provenance for Memory.
 
     Distinct from `_is_scoped_api_key`: the latter is about
     capability narrowing (used to reject from user-only routes);
