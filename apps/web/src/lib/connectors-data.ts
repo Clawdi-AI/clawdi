@@ -44,7 +44,6 @@ export function resolveConnectedAppMetadataPlan(
 ): ConnectedAppMetadataPlan {
 	if (!catalog) return { catalogApps: [], missingNames: [...names] };
 	if (catalog.isLoading && !catalog.apps) return { catalogApps: [], missingNames: [] };
-	if (catalog.error) return { catalogApps: [], missingNames: [...names] };
 	const byName = new Map((catalog.apps ?? []).map((app) => [app.name, app]));
 	return {
 		catalogApps: names.flatMap((name) => {

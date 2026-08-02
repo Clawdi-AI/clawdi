@@ -46,6 +46,17 @@ describe("connected app metadata planning", () => {
 		).toEqual({ catalogApps: [], missingNames: ["github", "slack"] });
 	});
 
+	it("keeps using stale catalog data when a background refresh fails", () => {
+		const github = catalogApp("github");
+		expect(
+			resolveConnectedAppMetadataPlan(["github", "slack"], {
+				apps: [github],
+				isLoading: false,
+				error: new Error("catalog refresh failed"),
+			}),
+		).toEqual({ catalogApps: [github], missingNames: ["slack"] });
+	});
+
 	it("preserves existing no-catalog behavior for other callers", () => {
 		expect(resolveConnectedAppMetadataPlan(["slack", "github"])).toEqual({
 			catalogApps: [],
