@@ -10,6 +10,41 @@ import {
 import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
+function failedOperation(verb: DeploymentOperationVerb): DeploymentOperation {
+	return {
+		name: `operations/${verb}-failed`,
+		metadata: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+			deploymentId: "hdep_failed",
+			verb: verb as DeploymentOperation["metadata"]["verb"],
+			targetGeneration: 2,
+			manifestETag: "manifest-failed",
+			createTime: "2026-07-25T00:00:00Z",
+			updateTime: "2026-07-25T00:01:00Z",
+		},
+		done: true,
+		error: {
+			code: 13,
+			message: "operation failed",
+			details: [
+				{
+					"@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails",
+					type: "https://api.clawdi.ai/problems/operation-failed",
+					title: "Operation failed",
+					status: 500,
+					detail: "Internal operation detail",
+					code: "operation_failed",
+					retryable: true,
+					conditionReason: "OperationFailed",
+					conditionMessage: "Internal operation detail",
+					observedGeneration: 2,
+				},
+			],
+		},
+		response: null,
+	};
+}
+
 describe("deploymentFailureReason", () => {
 	test("uses client-owned copy instead of a free-form Problem title or detail", () => {
 		expect(
@@ -40,7 +75,7 @@ describe("deploymentFailureReason", () => {
 		);
 	});
 
-	test("projects the authoritative reason and failed verb for every tab", () => {
+	test("uses an explicit status phase without borrowing a pending operation verb", () => {
 		const actionableReason =
 			"Top up your wallet and retry the plan change. Operation ID: operations/plan-change-failed.";
 		const operation: DeploymentOperation = {
@@ -79,18 +114,19 @@ describe("deploymentFailureReason", () => {
 		expect(deploymentFailureProjection(deployment)).toEqual({
 			reason:
 				"The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.",
-			failedVerb: "plan_change",
+			failedVerb: null,
 			retryable: false,
 			code: "operation_aborted",
 		});
 		expect(deploymentFailurePresentation(deployment)).toEqual({
 			reason:
 				"The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.",
-			failedVerb: "plan_change",
+			failedVerb: null,
 			retryable: false,
 			code: "operation_aborted",
 			title: "Plan change failed",
 			description: "Get a fresh quote and confirm the price before trying again.",
+			status: { kind: "failed", label: "Failed", tone: "destructive" },
 			remediation: {
 				kind: "review_plan_change",
 				label: "Get fresh quote",
@@ -115,37 +151,128 @@ describe("deploymentFailureReason", () => {
 		for (const [verb, title, remediationKind] of cases) {
 			const deployment = hostedDeploymentFixture({
 				status: "failed",
-				acceptedOperation: {
-					name: `operations/${verb}-failed`,
-					metadata: {
-						"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
-						deploymentId: "hdep_failed",
-						verb: verb as DeploymentOperation["metadata"]["verb"],
-						targetGeneration: 2,
-						manifestETag: "manifest-failed",
-						createTime: "2026-07-25T00:00:00Z",
-						updateTime: "2026-07-25T00:01:00Z",
-					},
-					done: false,
-					response: null,
-				},
-				failure: {
-					type: "https://api.clawdi.ai/problems/operation_failed",
-					title: "The requested operation did not complete.",
-					status: 409,
-					detail: "The requested operation did not complete.",
-					instance: "hdep_failed",
-					code: "operation_failed",
-					retryable: true,
-					conditionReason: "OperationFailed",
-					conditionMessage: "The requested operation did not complete.",
-					observedGeneration: 2,
-				},
+				acceptedOperation: failedOperation(verb),
 			});
 			const presentation = deploymentFailurePresentation(deployment);
 
 			expect(presentation?.title).toBe(title);
 			expect(presentation?.remediation.kind).toBe(remediationKind);
+		}
+	});
+
+	test("keeps a successful restart separate from a later runtime health failure", () => {
+		const running = hostedDeploymentFixture({ id: "hdep_runtime_degraded" });
+		const deployment = hostedDeploymentFixture({
+			id: "hdep_runtime_degraded",
+			status: "failed",
+			acceptedOperation: {
+				name: "operations/restart-succeeded",
+				metadata: {
+					"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+					deploymentId: "hdep_runtime_degraded",
+					verb: "restart",
+					targetGeneration: 2,
+					manifestETag: "manifest-restarted",
+					createTime: "2026-08-01T11:26:54Z",
+					updateTime: "2026-08-01T11:27:59Z",
+				},
+				done: true,
+				response: {
+					"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse",
+					deployment: running.resource,
+				},
+			},
+			failure: {
+				type: "https://api.clawdi.ai/problems/runtime-readiness-timeout",
+				title: "Runtime readiness timed out",
+				status: 504,
+				detail: "runtime apply failed: internal prerequisite output",
+				code: "runtime_readiness_timeout",
+				phase: "reconcile",
+				retryable: true,
+				conditionReason: "RuntimeReadinessTimeout",
+				conditionMessage: "internal runtime health error",
+				observedGeneration: 2,
+			},
+		});
+
+		expect(deploymentFailureProjection(deployment)).toEqual({
+			reason: "Clawdi is checking the runtime. Open Compute settings for details.",
+			failedVerb: null,
+			retryable: true,
+			code: "runtime_readiness_timeout",
+		});
+		expect(deploymentFailurePresentation(deployment)).toMatchObject({
+			title: "Temporarily unavailable",
+			failedVerb: null,
+			description: "Clawdi is checking the runtime. Open Compute settings for details.",
+			status: {
+				kind: "runtime_unavailable",
+				label: "Temporarily unavailable",
+				tone: "warning",
+			},
+			remediation: { kind: "none", label: null },
+		});
+		expect(deploymentFailurePresentation(deployment)?.title).not.toContain("restart");
+	});
+
+	test("attributes restart wording only to a terminal restart operation error", () => {
+		const deployment = hostedDeploymentFixture({
+			status: "failed",
+			acceptedOperation: failedOperation("restart"),
+		});
+
+		expect(deploymentFailureProjection(deployment)?.failedVerb).toBe("restart");
+		expect(deploymentFailurePresentation(deployment)).toMatchObject({
+			title: "Agent restart failed",
+			status: { kind: "failed", label: "Failed", tone: "destructive" },
+			remediation: { kind: "restart", label: "Retry restart" },
+		});
+	});
+
+	test("prioritizes customer-actionable codes over a broad reconcile phase", () => {
+		const cases = [
+			{
+				code: "provider_not_found",
+				title: "Provider configuration failed",
+				reason: "The selected provider is no longer available in your Clawdi account.",
+			},
+			{
+				code: "invalid_managed_provider_id",
+				title: "Provider configuration failed",
+				reason: "Clawdi AI cannot be combined with a saved provider.",
+			},
+			{
+				code: "insufficient_wallet_balance",
+				title: "Agent action failed",
+				reason: "Your Wallet balance was too low for the Clawdi service to complete this request.",
+			},
+		] as const;
+
+		for (const item of cases) {
+			const deployment = hostedDeploymentFixture({
+				status: "failed",
+				failure: {
+					type: `https://api.clawdi.ai/problems/${item.code}`,
+					title: "Internal reconcile failure",
+					status: 409,
+					detail: "internal controller detail",
+					code: item.code,
+					phase: "reconcile",
+					retryable: false,
+					conditionReason: "ReconcileFailed",
+					conditionMessage: "internal controller detail",
+					observedGeneration: 2,
+				},
+			});
+			const presentation = deploymentFailurePresentation(deployment);
+
+			expect(presentation).toMatchObject({
+				title: item.title,
+				reason: item.reason,
+				status: { kind: "failed", label: "Failed", tone: "destructive" },
+			});
+			expect(presentation?.title).not.toBe("Temporarily unavailable");
 		}
 	});
 

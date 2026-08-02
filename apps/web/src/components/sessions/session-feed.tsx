@@ -34,26 +34,33 @@ export function OverviewSessionList({
 }) {
 	if (isLoading) {
 		return (
-			<div className="grid gap-2" aria-label="Loading recent sessions" role="status">
+			<div
+				data-testid="overview-session-grid"
+				className="grid gap-2"
+				aria-label="Loading recent sessions"
+				role="status"
+			>
 				{Array.from({ length: 3 }).map((_, index) => (
 					<div
 						key={index}
 						data-testid="overview-session-skeleton-row"
+						aria-hidden="true"
 						className={cn(ENTITY_CARD_BASE, "px-4 py-3")}
 					>
-						<Skeleton className="h-4 w-4/5" />
-						<Skeleton className="mt-1.5 h-3 w-1/2" />
+						<div className="flex h-10 flex-col justify-center">
+							<Skeleton className="h-4 w-4/5" />
+							<Skeleton className="mt-1.5 h-3 w-1/2" />
+						</div>
 					</div>
 				))}
 			</div>
 		);
 	}
-	if (sessions.length === 0) {
-		return <EmptyState variant="inset" icon={MessageSquare} description={emptyMessage} />;
-	}
+	const visibleSessions = sessions.slice(0, 3);
+	const placeholderCount = 3 - visibleSessions.length;
 	return (
 		<div data-testid="overview-session-grid" className="grid gap-2">
-			{sessions.slice(0, 3).map((session) => (
+			{visibleSessions.map((session) => (
 				<SessionFeedCard
 					key={session.id}
 					session={session}
@@ -63,6 +70,24 @@ export function OverviewSessionList({
 					compact
 				/>
 			))}
+			{Array.from({ length: placeholderCount }).map((_, index) => (
+				<div
+					key={`placeholder-${index}`}
+					data-testid="overview-session-placeholder"
+					aria-hidden="true"
+					className={cn(
+						ENTITY_CARD_BASE,
+						"pointer-events-none flex h-16.5 items-center border-border/60 bg-muted/10 px-4 py-3 text-xs text-muted-foreground select-none",
+					)}
+				>
+					{visibleSessions.length === 0 && index === 0 ? emptyMessage : null}
+				</div>
+			))}
+			{visibleSessions.length === 0 ? (
+				<p className="sr-only" role="status">
+					{emptyMessage}
+				</p>
+			) : null}
 		</div>
 	);
 }
@@ -188,14 +213,16 @@ function SessionFeedCard({
 				className={cn(
 					ENTITY_CARD_BASE,
 					"transition-colors group-hover:bg-muted/50",
-					compact && "px-4 py-3",
+					compact && "h-16.5 px-4 py-3",
 					isAutomated && "bg-muted/30",
 				)}
 			>
 				{compact ? (
-					<div className="flex min-w-0 items-start gap-3">
-						<AgentIcon agent={session.agent_type} size="lg" />
-						<div className="w-0 min-w-0 flex-1 overflow-hidden">
+					<div className="flex min-w-0 items-center gap-3">
+						<span data-testid="overview-session-avatar" className="flex shrink-0">
+							<AgentIcon agent={session.agent_type} size="lg" />
+						</span>
+						<div data-testid="overview-session-text" className="w-0 min-w-0 flex-1 overflow-hidden">
 							<p data-testid="overview-session-title" className="truncate text-sm font-semibold">
 								{title}
 							</p>

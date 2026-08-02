@@ -6,6 +6,7 @@ import type {
 	HostedDeployment,
 	HostedDeploymentStatus,
 } from "@/hosted/billing/contracts";
+import { deploymentFailurePresentation } from "@/hosted/deployment-failure";
 import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
@@ -41,7 +42,11 @@ function hostedRuntimeStatusView(
 		status: rawStatus,
 		failure: failureReason ? deploymentFailure(failureReason) : null,
 	});
-	return getRuntimeStatusView(deployment.resource.status, environment);
+	return getRuntimeStatusView(
+		deployment.resource.status,
+		environment,
+		deploymentFailurePresentation(deployment),
+	);
 }
 
 function hostedDeploymentToTiles(deployment: HostedDeployment, envs: Env[] = []) {
@@ -121,6 +126,32 @@ function acceptedOperation(verb: DeploymentOperationVerb): DeploymentOperation {
 			updateTime: "2026-07-25T00:01:00Z",
 		},
 		done: false,
+		response: null,
+	};
+}
+
+function failedOperation(verb: DeploymentOperationVerb): DeploymentOperation {
+	return {
+		...acceptedOperation(verb),
+		done: true,
+		error: {
+			code: 13,
+			message: "operation failed",
+			details: [
+				{
+					"@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails",
+					type: "https://api.clawdi.ai/problems/operation-failed",
+					title: "Operation failed",
+					status: 500,
+					detail: "Internal operation failure",
+					code: "operation_failed",
+					retryable: true,
+					conditionReason: "OperationFailed",
+					conditionMessage: "Internal operation failure",
+					observedGeneration: 2,
+				},
+			],
+		},
 		response: null,
 	};
 }
@@ -226,7 +257,9 @@ describe("deploymentToTiles", () => {
 			}),
 		);
 
-		expectHostedTileStatus(tile, "Failed");
+		expectHostedTileStatus(tile, "Temporarily unavailable");
+		expect(tile?.cardStatus?.visual.dotClass).toContain("bg-warning");
+		expect(tile?.cardStatus?.labels).toEqual(["Temporarily unavailable"]);
 	});
 
 	test("links by deployment env identity when the cloud-api projection is missing", () => {
@@ -243,21 +276,21 @@ describe("deploymentToTiles", () => {
 			env: null,
 		});
 		expect(tile?.env).toBeNull();
-		expectHostedTileStatus(tile, "Failed");
+		expectHostedTileStatus(tile, "Temporarily unavailable");
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});
 
 	test("keeps a failed plan change on a summary-only tile", () => {
 		const environmentId = "env-failed-plan-change";
 		const reason = "Top up your Wallet and retry the plan change.";
-		const [tile] = hostedDeploymentToTiles(
-			deployment({
-				status: "failed",
-				failureReason: reason,
-				failedVerb: "plan_change",
-				environmentId,
-			}),
-		);
+		const planFailure = deployment({ status: "failed", environmentId });
+		if (!planFailure.resource.status) throw new Error("Expected deployment status");
+		planFailure.resource.status.failure = {
+			...deploymentFailure(reason),
+			code: "operation_aborted",
+			phase: "plan_change",
+		};
+		const [tile] = hostedDeploymentToTiles(planFailure);
 
 		expectHostedTileStatus(tile, "Failed");
 		expect(tile?.href).toBe(`/agents/${environmentId}?source=on-clawdi&d=dep_123`);
@@ -355,7 +388,7 @@ describe("deploymentToTiles", () => {
 			href: null,
 			env: null,
 		});
-		expectHostedTileStatus(tile, "Failed");
+		expectHostedTileStatus(tile, "Temporarily unavailable");
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});
 });
@@ -477,19 +510,30 @@ describe("hostedRuntimeStatusView", () => {
 		expect(creating.secondary).toBeNull();
 	});
 
-	test("shows failed deployment reason as secondary status", () => {
+	test("shows a safe runtime failure summary without exposing internal details", () => {
 		const view = hostedRuntimeStatusView(
 			"failed",
 			null,
 			" startup_probe_failing;   restart_count=2 ",
 		);
 
-		expect(view.primary.label).toBe("Failed");
-		expect(view.secondary).toEqual({
-			kind: "failure_reason",
-			label: "Failure: The Clawdi service could not complete this request.",
-			tooltip: "The Clawdi service could not complete this request.",
-			textClass: "text-destructive-muted-foreground font-medium",
+		expect(view.primary).toMatchObject({ label: "Temporarily unavailable", tone: "warning" });
+		expect(view.secondary).toBeNull();
+	});
+
+	test("keeps a terminal operation failure destructive", () => {
+		if (!getRuntimeStatusView) throw new Error("hostedRuntimeStatusView was not loaded");
+		const deployment = hostedDeploymentFixture({
+			status: "failed",
+			acceptedOperation: failedOperation("restart"),
 		});
+		const view = getRuntimeStatusView(
+			deployment.resource.status,
+			null,
+			deploymentFailurePresentation(deployment),
+		);
+
+		expect(view.primary).toMatchObject({ label: "Failed", tone: "destructive" });
+		expect(view.secondary?.label).toBe("Agent restart failed");
 	});
 });

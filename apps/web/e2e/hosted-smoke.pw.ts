@@ -16,13 +16,34 @@ declare global {
 }
 
 async function expectOverviewResourceGeometry(grid: Locator, expectedRows: readonly number[]) {
-	const [gridBox, cards] = await Promise.all([
+	const [gridBox, cards, shellMetrics] = await Promise.all([
 		grid.boundingBox(),
 		grid
 			.locator("[data-overview-module]")
 			.evaluateAll((elements) =>
 				elements.map((element) => element.getBoundingClientRect().toJSON()),
 			),
+		grid.locator("[data-overview-module]").evaluateAll((elements) =>
+			elements.map((element) => {
+				const card = element.getBoundingClientRect();
+				const header = element.querySelector<HTMLElement>('[data-slot="card-header"]');
+				const headerLink = header?.querySelector<HTMLElement>("a");
+				const content = element.querySelector<HTMLElement>('[data-slot="card-content"]');
+				const linkStyle = headerLink ? getComputedStyle(headerLink) : null;
+				const contentStyle = content ? getComputedStyle(content) : null;
+				return {
+					headerHeight: header?.getBoundingClientRect().height ?? 0,
+					contentOffset: (content?.getBoundingClientRect().y ?? card.y) - card.y,
+					headerPaddingInline: [linkStyle?.paddingLeft, linkStyle?.paddingRight],
+					headerPaddingBlock: [linkStyle?.paddingTop, linkStyle?.paddingBottom],
+					contentPadding: [
+						contentStyle?.paddingLeft,
+						contentStyle?.paddingRight,
+						contentStyle?.paddingBottom,
+					],
+				};
+			}),
+		),
 	]);
 	expect(gridBox).not.toBeNull();
 	expect(cards).toHaveLength(expectedRows.reduce((total, count) => total + count, 0));
@@ -49,6 +70,111 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 		scrollWidth: element.scrollWidth,
 	}));
 	expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
+	expect(new Set(shellMetrics.map((metric) => JSON.stringify(metric))).size).toBe(1);
+	expect(shellMetrics[0]?.headerHeight ?? 0).toBeGreaterThan(0);
+	expect(shellMetrics[0]?.contentOffset ?? 0).toBeGreaterThan(0);
+	expect(Number.parseFloat(shellMetrics[0]?.contentPadding[2] ?? "0")).toBeGreaterThan(0);
+}
+
+async function expectOverviewSessionSlot({
+	region,
+	statusCard,
+	realCount,
+}: {
+	region: Locator;
+	statusCard: Locator;
+	realCount: number;
+}) {
+	const grid = region.getByTestId("overview-session-grid");
+	const placeholders = grid.getByTestId("overview-session-placeholder");
+	await expect(grid.locator(":scope > article")).toHaveCount(realCount);
+	await expect(placeholders).toHaveCount(3 - realCount);
+	await expect(grid.getByRole("link")).toHaveCount(realCount);
+	await expect(placeholders.locator("a, button, article")).toHaveCount(0);
+	const compactAlignment = await grid.locator(":scope > article").evaluateAll((articles) =>
+		articles.map((article) => {
+			const avatar = article.querySelector<HTMLElement>('[data-testid="overview-session-avatar"]');
+			const textBlock = article.querySelector<HTMLElement>('[data-testid="overview-session-text"]');
+			const avatarBox = avatar?.getBoundingClientRect();
+			const textBox = textBlock?.getBoundingClientRect();
+			return {
+				avatarCenter: (avatarBox?.top ?? 0) + (avatarBox?.height ?? 0) / 2,
+				textCenter: (textBox?.top ?? 0) + (textBox?.height ?? 0) / 2,
+			};
+		}),
+	);
+	for (const alignment of compactAlignment)
+		expect(Math.abs(alignment.avatarCenter - alignment.textCenter)).toBeLessThanOrEqual(2);
+	const placeholderSemantics = await placeholders.evaluateAll((elements) =>
+		elements.map((element) => ({
+			ariaHidden: element.getAttribute("aria-hidden"),
+			role: element.getAttribute("role"),
+			tabIndex: element.getAttribute("tabindex"),
+			pointerEvents: getComputedStyle(element).pointerEvents,
+		})),
+	);
+	for (const placeholder of placeholderSemantics) {
+		expect(placeholder).toEqual({
+			ariaHidden: "true",
+			role: null,
+			tabIndex: null,
+			pointerEvents: "none",
+		});
+	}
+	const slotRows = grid.locator(
+		':scope > article, :scope > [data-testid="overview-session-placeholder"]',
+	);
+	await expect(slotRows).toHaveCount(3);
+	const rowBoxes = await slotRows.evaluateAll((elements) =>
+		elements.map((element) => element.getBoundingClientRect().toJSON()),
+	);
+	expect(
+		Math.max(...rowBoxes.map((box) => box.height)) - Math.min(...rowBoxes.map((box) => box.height)),
+	).toBeLessThanOrEqual(2);
+	for (let index = 1; index < rowBoxes.length; index += 1) {
+		expect(Math.abs(rowBoxes[index].x - rowBoxes[0].x)).toBeLessThanOrEqual(1);
+		expect(Math.abs(rowBoxes[index].width - rowBoxes[0].width)).toBeLessThanOrEqual(1);
+	}
+	const [regionBox, gridBox, statusBox] = await Promise.all([
+		region.boundingBox(),
+		grid.boundingBox(),
+		statusCard.boundingBox(),
+	]);
+	expect(regionBox).not.toBeNull();
+	expect(gridBox).not.toBeNull();
+	expect(statusBox).not.toBeNull();
+	expect(Math.abs((gridBox?.height ?? 0) - (regionBox?.height ?? 0))).toBeLessThanOrEqual(2);
+	expect(Math.abs((statusBox?.y ?? 0) - (regionBox?.y ?? 0))).toBeLessThanOrEqual(2);
+	expect(
+		Math.abs(
+			(statusBox?.y ?? 0) +
+				(statusBox?.height ?? 0) -
+				((regionBox?.y ?? 0) + (regionBox?.height ?? 0)),
+		),
+	).toBeLessThanOrEqual(2);
+	return regionBox?.height ?? 0;
+}
+
+async function expectInlineSidebarStatus(sidebar: Locator, source: "hosted" | "connected") {
+	const status = sidebar.getByTestId("app-sidebar-agent-status");
+	await expect(status).toHaveAttribute("data-agent-status-source", source);
+	await expect(status.locator("[aria-hidden]").first()).toBeVisible();
+	const shell = await status.evaluate((element) => {
+		const style = getComputedStyle(element);
+		return {
+			backgroundColor: style.backgroundColor,
+			borderWidths: [
+				style.borderTopWidth,
+				style.borderRightWidth,
+				style.borderBottomWidth,
+				style.borderLeftWidth,
+			],
+			padding: [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft],
+		};
+	});
+	expect(new Set(shell.borderWidths)).toEqual(new Set(["0px"]));
+	expect(new Set(shell.padding)).toEqual(new Set(["0px"]));
+	expect(shell.backgroundColor).toBe("rgba(0, 0, 0, 0)");
 }
 
 async function expectAgentOverviewTypography(page: Page) {
@@ -102,6 +228,40 @@ async function expectAgentOverviewTypography(page: Page) {
 	expect(metadataMetrics.length).toBeGreaterThan(2);
 	expect(new Set(metadataMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["12px"]));
 	expect(new Set(metadataMetrics.map(({ color }) => color)).size).toBe(1);
+
+	const toolPrimaryMetrics = await main
+		.locator(
+			'[data-overview-module="model-provider"] [data-overview-tool-primary], [data-overview-module="channels"] [data-overview-tool-primary]',
+		)
+		.evaluateAll((elements) =>
+			elements.map((element) => {
+				const style = getComputedStyle(element);
+				return { fontSize: style.fontSize, fontWeight: style.fontWeight, color: style.color };
+			}),
+		);
+	expect(toolPrimaryMetrics).toHaveLength(2);
+	expect(new Set(toolPrimaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["16px"]));
+	expect(new Set(toolPrimaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["600"]));
+
+	const toolSecondaryMetrics = await main
+		.locator(
+			'[data-overview-tool-secondary], [data-overview-module="channels"] [data-testid="overview-summary-list"]',
+		)
+		.evaluateAll((elements) =>
+			elements.map((element) => {
+				const style = getComputedStyle(element);
+				return { fontSize: style.fontSize, fontWeight: style.fontWeight, color: style.color };
+			}),
+		);
+	expect(toolSecondaryMetrics).toHaveLength(2);
+	expect(new Set(toolSecondaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
+	expect(new Set(toolSecondaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(
+		new Set(["400"]),
+	);
+	expect(new Set(toolSecondaryMetrics.map(({ color }) => color))).toEqual(
+		new Set(toolPrimaryMetrics.map(({ color }) => color)),
+	);
+	expect(toolSecondaryMetrics[0]?.color).not.toBe(metadataMetrics[0]?.color);
 }
 
 // HOSTED (Clawdi Cloud) smoke against the vite dev server with dev-auth-bypass
@@ -1186,6 +1346,34 @@ function completedDeploymentOperation(
 	};
 }
 
+function failedDeploymentOperation(
+	deployment: DeploymentMutationFixture,
+	verb: "create" | "start" | "stop" | "restart" | "delete" | "update",
+): NonNullable<DeploymentRead["accepted_operation"]> {
+	return {
+		...completedDeploymentOperation(deployment, verb),
+		error: {
+			code: 13,
+			message: "operation failed",
+			details: [
+				{
+					"@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails",
+					type: "https://api.clawdi.ai/problems/operation-failed",
+					title: "Operation failed",
+					status: 500,
+					detail: "Internal operation detail",
+					code: "operation_failed",
+					retryable: true,
+					conditionReason: "OperationFailed",
+					conditionMessage: "Internal operation detail",
+					observedGeneration: 2,
+				},
+			],
+		},
+		response: null,
+	};
+}
+
 function failedDeletionReadFixture(
 	deployment: DeploymentMutationFixture,
 	retryable: boolean,
@@ -1195,7 +1383,7 @@ function failedDeletionReadFixture(
 	if (status === null) throw new Error("Failed deletion fixture requires deployment status");
 	return {
 		...read,
-		accepted_operation: completedDeploymentOperation(deployment, "delete"),
+		accepted_operation: failedDeploymentOperation(deployment, "delete"),
 		resource: {
 			...read.resource,
 			status: {
@@ -1284,6 +1472,7 @@ type HostedApiStubOptions = {
 	channelAccounts?: unknown[];
 	channelAccountsResponses?: StubResponse[];
 	channelAgentLinks?: readonly unknown[];
+	channelAgentLinksResponse?: StubResponse;
 	channelBindings?: unknown[];
 	channelBindingResponses?: Record<string, StubResponse[]>;
 	channelBotPool?: unknown;
@@ -2141,6 +2330,11 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			return fulfillJson(r, { items: options.channelHealthItems ?? [] });
 		}
 		if (p === "/v1/channels/agent-links" && r.request().method() === "GET") {
+			const response = options.channelAgentLinksResponse;
+			if (response?.delayMs) {
+				await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+			}
+			if (response) return fulfillJson(r, response.body, response.status);
 			const requestedAgentId = new URL(r.request().url()).searchParams.get("agent_id");
 			const links = options.channelAgentLinks ?? [];
 			return fulfillJson(
@@ -2934,6 +3128,12 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const compute = page.locator('[data-overview-status="compute"]');
 	await expect(compute).toContainText("Running");
 	await expect(compute).toContainText("Basic plan");
+	await expect(compute.getByRole("link", { name: "Compute", exact: true })).toHaveAttribute(
+		"href",
+		/\/settings/,
+	);
+	await expect(compute.getByRole("button")).toHaveCount(0);
+	await expect(compute.locator("a a, a button, button a")).toHaveCount(0);
 	const computePlanTypography = await compute
 		.locator("[data-overview-compute-plan]")
 		.evaluate((element) => {
@@ -2984,6 +3184,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(connectors.getByRole("link", { name: "Suggested app: Github" })).toHaveCount(0);
 	const sidebar = page.getByTestId("app-sidebar");
 	await expect(sidebar.getByText("Running", { exact: true })).toBeVisible();
+	await expectInlineSidebarStatus(sidebar, "hosted");
 	await expect(sidebar.getByText("Paused", { exact: true })).toHaveCount(0);
 	await expect(sidebar.getByText(/last seen/i)).toHaveCount(0);
 	for (const section of ["Memories", "Vaults", "Connectors"]) {
@@ -3021,13 +3222,22 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
 	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
 	await expectOverviewResourceGeometry(toolsGrid, [2]);
+	const toolGeometry = await toolsGrid
+		.locator("[data-overview-module]")
+		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
+	expect(toolGeometry).toHaveLength(2);
+	for (let index = 0; index < toolGeometry.length; index += 1) {
+		expect(
+			Math.abs((toolGeometry[index]?.width ?? 0) - (resourceGeometry[index]?.width ?? 0)),
+		).toBeLessThanOrEqual(2);
+		expect(
+			Math.abs((toolGeometry[index]?.x ?? 0) - (resourceGeometry[index]?.x ?? 0)),
+		).toBeLessThanOrEqual(2);
+	}
+	expect((toolGeometry[1]?.x ?? 0) + (toolGeometry[1]?.width ?? 0)).toBeLessThan(
+		(resourceGeometry[2]?.x ?? 0) + 1,
+	);
 	await expectAgentOverviewTypography(page);
-	expect(
-		Math.abs(
-			(resourceGeometry[0]?.width ?? 0) -
-				((await toolsGrid.locator("[data-overview-module]").first().boundingBox())?.width ?? 0),
-		),
-	).toBeLessThanOrEqual(2);
 	await page.setViewportSize({ width: 1024, height: 1200 });
 	await expectOverviewResourceGeometry(resourceGrid, [2, 2, 1]);
 	await expectOverviewResourceGeometry(toolsGrid, [2]);
@@ -3051,6 +3261,14 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 				((mobileSessionsBox?.x ?? 0) + (mobileSessionsBox?.width ?? 0)),
 		),
 	).toBeLessThanOrEqual(2);
+	await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
+	const mobileSidebar = page.getByRole("dialog");
+	await expectInlineSidebarStatus(mobileSidebar, "hosted");
+	await page.screenshot({
+		path: testInfo.outputPath("hosted-sidebar-status-mobile.png"),
+		fullPage: true,
+	});
+	await page.keyboard.press("Escape");
 	await page.setViewportSize({ width: 1280, height: 1600 });
 	await page.screenshot({ path: testInfo.outputPath("hosted-agent-overview.png"), fullPage: true });
 	await page.locator("html").evaluate((element) => element.classList.add("dark"));
@@ -3063,73 +3281,50 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
 });
 
-test("hosted overview naturally sizes one, two, and three real sessions", async ({ page }) => {
+test("hosted overview keeps a three-row accessible session slot for zero through 3+ sessions", async ({
+	page,
+}, testInfo) => {
 	await page.setViewportSize({ width: 1280, height: 900 });
-	const options = {
+	const options: HostedApiStubOptions = {
 		deployments: [railHostedDeployment],
 		cloudAgents: [railHostedCloudAgent],
-		sessionsPage: hostedOverviewSessionsPage(1),
+		sessionsPage: hostedOverviewSessionsPage(0),
 	};
 	await stubHostedApi(page, options);
 	const overviewUrl = `/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`;
-	const measurements: Array<{
-		count: number;
-		sessionsHeight: number;
-		computeHeight: number;
-	}> = [];
+	const measurements: number[] = [];
 
-	for (const count of [1, 2, 3]) {
+	for (const count of [0, 1, 2, 4]) {
 		options.sessionsPage = hostedOverviewSessionsPage(count);
-		if (count === 1) await page.goto(overviewUrl);
+		if (count === 0) await page.goto(overviewUrl);
 		else await page.reload();
 
 		const recentSessions = page.getByRole("region", { name: "Recent sessions" });
-		const sessionGrid = recentSessions.getByTestId("overview-session-grid");
 		const compute = page.locator('[data-overview-status="compute"]');
-		await expect(recentSessions.locator("article")).toHaveCount(count);
 		await expect(compute).toContainText("Running");
-		const [sessionsBox, sessionGridBox, computeBox, sessionsMinHeight, computeMinHeight] =
-			await Promise.all([
-				recentSessions.boundingBox(),
-				sessionGrid.boundingBox(),
-				compute.boundingBox(),
-				recentSessions.evaluate((element) => getComputedStyle(element).minHeight),
-				compute.evaluate((element) => getComputedStyle(element).minHeight),
-			]);
-		expect(sessionsBox).not.toBeNull();
-		expect(sessionGridBox).not.toBeNull();
-		expect(computeBox).not.toBeNull();
-		expect(sessionsMinHeight).toBe("auto");
-		expect(computeMinHeight).toBe("0px");
-		expect(
-			Math.abs((sessionsBox?.height ?? 0) - (sessionGridBox?.height ?? 0)),
-		).toBeLessThanOrEqual(1);
-		expect(Math.abs((computeBox?.y ?? 0) - (sessionsBox?.y ?? 0))).toBeLessThanOrEqual(2);
-		if (count === 3) {
-			expect(
-				Math.abs(
-					(computeBox?.y ?? 0) +
-						(computeBox?.height ?? 0) -
-						((sessionsBox?.y ?? 0) + (sessionsBox?.height ?? 0)),
-				),
-			).toBeLessThanOrEqual(2);
-		}
-		measurements.push({
-			count,
-			sessionsHeight: sessionsBox?.height ?? 0,
-			computeHeight: computeBox?.height ?? 0,
-		});
+		measurements.push(
+			await expectOverviewSessionSlot({
+				region: recentSessions,
+				statusCard: compute,
+				realCount: Math.min(count, 3),
+			}),
+		);
+		if (count === 0)
+			await expect(
+				recentSessions
+					.getByTestId("overview-session-placeholder")
+					.first()
+					.getByText("No sessions from this agent yet.", { exact: true }),
+			).toBeVisible();
+		if (count === 4) await expect(recentSessions).not.toContainText("Review risks");
+		if (count === 0 || count === 2)
+			await page.screenshot({
+				path: testInfo.outputPath(`hosted-agent-overview-${count}-sessions.png`),
+				fullPage: true,
+			});
 	}
 
-	expect(measurements.map(({ count }) => count)).toEqual([1, 2, 3]);
-	expect(measurements[1]?.sessionsHeight ?? 0).toBeGreaterThan(
-		(measurements[0]?.sessionsHeight ?? 0) + 60,
-	);
-	expect(measurements[2]?.sessionsHeight ?? 0).toBeGreaterThan(
-		(measurements[1]?.sessionsHeight ?? 0) + 60,
-	);
-	expect(measurements[0]?.computeHeight ?? 0).toBeLessThan(measurements[2]?.sessionsHeight ?? 0);
-	expect(measurements[1]?.computeHeight ?? 0).toBeLessThan(measurements[2]?.sessionsHeight ?? 0);
+	expect(Math.max(...measurements) - Math.min(...measurements)).toBeLessThanOrEqual(2);
 });
 
 test("hosted overview shows a custom provider label and gates provider catalogs", async ({
@@ -3311,6 +3506,67 @@ test("hosted overview distinguishes empty skills and channels from loading", asy
 	await expect(overview.getByTestId("overview-module-skeleton")).toHaveCount(0);
 });
 
+test("hosted Tools channels preserve zero, singular, plural, error, and loading states", async ({
+	page,
+}) => {
+	const channelLink = (index: number, provider: "telegram" | "discord") => ({
+		id: `overview-link-${index}`,
+		account_id: `overview-account-${index}`,
+		agent_id: railHostedEnvironmentId,
+		status: "active",
+		created_at: "2026-07-15T00:00:00Z",
+		account: {
+			id: `overview-account-${index}`,
+			provider,
+			name: index === 1 ? "Research Telegram" : "Team Discord",
+			status: "active",
+			created_at: "2026-07-15T00:00:00Z",
+		},
+	});
+	const options: HostedApiStubOptions = {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		channelAgentLinksResponse: { body: [], status: 200 },
+	};
+	await stubHostedApi(page, options);
+	const overviewUrl = `/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`;
+	const channels = page.locator('[data-overview-module="channels"]');
+
+	await page.goto(overviewUrl);
+	await expect(channels.getByText("0 connected channels", { exact: true })).toHaveCount(0);
+	await expect(channels.getByText("No channels connected", { exact: true })).toHaveCount(1);
+	await expect(channels.getByTestId("overview-summary-list")).toHaveCount(0);
+
+	options.channelAgentLinksResponse = { body: [channelLink(1, "telegram")], status: 200 };
+	await page.reload();
+	await expect(channels.getByText("1 connected channel", { exact: true })).toBeVisible();
+	await expect(channels.getByTestId("overview-summary-list")).toContainText(
+		"Telegram: Research Telegram",
+	);
+
+	options.channelAgentLinksResponse = {
+		body: [channelLink(1, "telegram"), channelLink(2, "discord")],
+		status: 200,
+	};
+	await page.reload();
+	await expect(channels.getByText("2 connected channels", { exact: true })).toBeVisible();
+	await expect(channels.getByTestId("overview-summary-list").locator("li")).toHaveCount(2);
+
+	options.channelAgentLinksResponse = {
+		body: { detail: "channel service unavailable" },
+		status: 400,
+	};
+	await page.reload();
+	await expect(channels.getByText("Can’t load channels", { exact: true })).toBeVisible();
+	await expect(channels.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+	await expect(channels).not.toContainText("No channels connected");
+
+	options.channelAgentLinksResponse = { body: [], status: 200, delayMs: 5_000 };
+	await page.reload();
+	await expect(channels.getByLabel("Loading channels summary")).toBeVisible();
+	await expect(channels).not.toContainText("No channels connected");
+});
+
 test("hosted overview shows a true empty Projects state", async ({ page }) => {
 	await stubHostedApi(page, {
 		deployments: [railHostedDeployment],
@@ -3439,9 +3695,46 @@ test("starting with an existing projection keeps lifecycle status in Compute", a
 		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${restartingDeployment.id}`,
 	);
 	const main = page.locator("main");
-	await expect(main.locator('[data-overview-status="compute"]')).toContainText("Starting");
+	const compute = main.locator('[data-overview-status="compute"]');
+	await expect(compute).toContainText("Starting");
+	await expect(compute).toContainText("Startup is still in progress.");
+	await expect(compute.getByRole("button")).toHaveCount(0);
+	await expect(compute.getByRole("link", { name: "Compute", exact: true })).toHaveAttribute(
+		"href",
+		/\/settings/,
+	);
 	await expect(main.getByTestId("hosted-initial-deployment-panel")).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
+});
+
+test("an accepted restart stays action-free and visibly restarting in Compute", async ({
+	page,
+}) => {
+	const restartingDeployment = { ...railHostedDeployment, status: "restarting" };
+	const restartingRead = mutationDeploymentReadFixture(restartingDeployment);
+	restartingRead.accepted_operation = {
+		...completedDeploymentOperation(restartingDeployment, "restart"),
+		done: false,
+		response: null,
+	};
+	await stubHostedApi(page, {
+		deployments: [restartingRead],
+		cloudAgents: [railHostedCloudAgent],
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${restartingDeployment.id}`,
+	);
+
+	const compute = page.locator("main").locator('[data-overview-status="compute"]');
+	await expect(compute.getByText("Restarting", { exact: true })).toHaveCount(2);
+	await expect(compute.locator('[data-slot="spinner"]')).toHaveCount(1);
+	for (const action of ["Retry restart", "Start", "Restart", "Delete"])
+		await expect(compute.getByRole("button", { name: action, exact: true })).toHaveCount(0);
+	await expect(compute.getByRole("button")).toHaveCount(0);
+	await expect(compute.getByRole("link", { name: "Compute", exact: true })).toHaveAttribute(
+		"href",
+		/\/settings/,
+	);
 });
 
 test("hosted unavailable status stays inside Compute", async ({ page }, testInfo) => {
@@ -3468,7 +3761,11 @@ test("hosted unavailable status stays inside Compute", async ({ page }, testInfo
 	await expect(overview.getByRole("heading", { name: "Tools", exact: true })).toBeVisible();
 	await expect(compute).toContainText("Status unavailable");
 	await expect(compute).toContainText("Clawdi cannot confirm the current compute status.");
-	await expect(compute.getByRole("button", { name: "Check again", exact: true })).toBeVisible();
+	await expect(compute.getByRole("button")).toHaveCount(0);
+	await expect(compute.getByRole("link", { name: "Compute", exact: true })).toHaveAttribute(
+		"href",
+		/\/settings/,
+	);
 	await expect(overview.locator('[data-overview-module="vaults"]')).toContainText(
 		"Unavailable right now",
 	);
@@ -3515,7 +3812,12 @@ test("raw offline stays a Compute-only status and does not become status unavail
 	const compute = main.locator('[data-overview-status="compute"]');
 	await expect(compute).toContainText("Offline");
 	await expect(compute).not.toContainText("Status unavailable");
-	await expect(compute.getByRole("button", { name: "Check again", exact: true })).toBeVisible();
+	await expect(compute).toContainText("Clawdi cannot confirm the current compute status.");
+	await expect(compute.getByRole("button")).toHaveCount(0);
+	await expect(compute.getByRole("link", { name: "Compute", exact: true })).toHaveAttribute(
+		"href",
+		/\/settings/,
+	);
 	await expect(main.getByTestId("deployment-status-unavailable")).toHaveCount(0);
 	await expect(
 		main.getByText("Agent details are unavailable right now.", { exact: true }),
@@ -6295,13 +6597,24 @@ test("agent settings preserves a persisted custom primary model outside the prov
 	);
 });
 
-test("env-keyed agent route keeps failed deployment recovery available without its projection", async ({
+test("env-keyed failed overview is action-free while Settings keeps management", async ({
 	page,
-}) => {
+}, testInfo) => {
 	const restartRequests: string[] = [];
 	const deleteRequests: string[] = [];
+	const failedRestartRead = mutationDeploymentReadFixture(failedMissingProjectionDeployment);
+	failedRestartRead.accepted_operation = completedDeploymentOperation(
+		failedMissingProjectionDeployment,
+		"restart",
+	);
+	const runtimeFailure = failedRestartRead.resource.status?.failure;
+	if (!runtimeFailure) throw new Error("Expected runtime failure fixture");
+	runtimeFailure.phase = "reconcile";
+	runtimeFailure.detail = "runtime apply failed: internal dashboard prerequisite output";
+	runtimeFailure.conditionMessage = "internal runtime health error";
 	await stubHostedApi(page, {
 		deployments: [failedMissingProjectionDeployment],
+		deploymentListResponses: [[failedRestartRead]],
 		plans: [basicPlan, performancePlan],
 		cloudAgentNotFoundIds: [missingProjectionEnvironmentId],
 		restartRequests,
@@ -6312,30 +6625,95 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 	const main = page.locator("main");
 	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe("hdep_failed_projection");
 	await expect(main.getByText("Some agent details are not ready", { exact: true })).toHaveCount(0);
-	await expect(main.getByText("Recent sessions", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("Recent sessions", { exact: true })).toBeVisible();
+	await expect(
+		main.getByText("Agent details are unavailable right now.", { exact: true }),
+	).toBeVisible();
 	await expect(main.getByText(missingProjectionFailureReason, { exact: true })).toHaveCount(0);
 	await expect(
-		main.getByText("The Clawdi service could not complete this request.", { exact: true }),
-	).toBeVisible();
-	await expect(main.getByText("Failed", { exact: true })).toBeVisible();
-	await expect(main.locator('[data-overview-status="compute"]')).toContainText("Failed");
+		main.getByText("Clawdi is checking the runtime. Open Compute settings for details.", {
+			exact: true,
+		}),
+	).toHaveCount(1);
+	await expect(main.getByText("Agent temporarily unavailable", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("Agent restart failed", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("internal runtime health error", { exact: true })).toHaveCount(0);
+	await expect(main.getByText(/dashboard prerequisite/i)).toHaveCount(0);
+	const compute = main.locator('[data-overview-status="compute"]');
+	const computeStatus = compute.locator("[data-overview-compute-status]");
+	await expect(computeStatus).toHaveText("Temporarily unavailable");
+	await expect(computeStatus.locator('[data-slot="status-dot"]')).toHaveAttribute(
+		"data-status",
+		"warning",
+	);
+	await expect(compute.getByText("Failed", { exact: true })).toHaveCount(0);
+	const sidebarStatus = page.getByTestId("app-sidebar-agent-status");
+	await expect(sidebarStatus).toContainText("Temporarily unavailable");
+	await expect(sidebarStatus.getByText("Failed", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("alert")).toHaveCount(0);
 	await expect(main.getByText("Basic plan", { exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
+	for (const action of ["Retry startup", "Retry restart", "Start", "Restart", "Delete"])
+		await expect(compute.getByRole("button", { name: action, exact: true })).toHaveCount(0);
+	await expect(compute.getByRole("button")).toHaveCount(0);
+	const computeSettingsLink = compute.getByRole("link", { name: "Compute", exact: true });
+	await expect(computeSettingsLink).toHaveAttribute("href", /\/settings/);
+	await expect(compute.locator("a a, a button, button a")).toHaveCount(0);
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Check again", exact: true })).toHaveCount(0);
 
 	expect(restartRequests).toEqual([]);
+	await page.setViewportSize({ width: 1280, height: 1400 });
+	await page.locator("html").evaluate((element) => element.classList.add("dark"));
+	await page.screenshot({
+		path: testInfo.outputPath("hosted-agent-overview-failed-dark.png"),
+		fullPage: true,
+	});
+	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
 
+	await computeSettingsLink.click();
+	await expect(page).toHaveURL(/\/settings/);
+	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 	await main.getByRole("button", { name: "Delete", exact: true }).click();
 	await page
 		.getByRole("alertdialog")
 		.getByRole("button", { name: "Delete agent", exact: true })
 		.click();
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_failed_projection"]);
+});
+
+test("a terminal restart operation error is attributed without Overview actions", async ({
+	page,
+}) => {
+	const failedRestartRead = mutationDeploymentReadFixture(failedMissingProjectionDeployment);
+	failedRestartRead.accepted_operation = failedDeploymentOperation(
+		failedMissingProjectionDeployment,
+		"restart",
+	);
+	await stubHostedApi(page, {
+		deployments: [failedMissingProjectionDeployment],
+		deploymentListResponses: [[failedRestartRead]],
+		cloudAgentNotFoundIds: [missingProjectionEnvironmentId],
+	});
+
+	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
+	const compute = page.locator("main").locator('[data-overview-status="compute"]');
+	await expect(compute.getByText("Agent restart failed", { exact: true })).toBeVisible();
+	await expect(compute.locator("[data-overview-compute-status]")).toHaveText("Failed");
+	await expect(
+		compute.locator('[data-overview-compute-status] [data-slot="status-dot"]'),
+	).toHaveAttribute("data-status", "destructive");
+	await expect(compute.getByText("Temporarily unavailable", { exact: true })).toHaveCount(0);
+	await expect(page.getByTestId("app-sidebar-agent-status")).toContainText("Failed");
+	await expect(compute).not.toContainText("Internal operation detail");
+	for (const action of ["Retry restart", "Start", "Restart", "Delete"])
+		await expect(compute.getByRole("button", { name: action, exact: true })).toHaveCount(0);
+	await expect(compute.getByRole("button")).toHaveCount(0);
+	await expect(compute.getByRole("link", { name: "Compute", exact: true })).toHaveAttribute(
+		"href",
+		/\/settings/,
+	);
+	await expect(compute.locator("a a, a button, button a")).toHaveCount(0);
 });
 
 test("stopped deployment tiles stay action-free and preserve honest status", async ({ page }) => {
@@ -6385,7 +6763,16 @@ test("stopped detail stays recoverable without querying its removed projection",
 		await page.goto(`${detailPath}${section}${detailQuery}`);
 		const main = page.locator("main");
 		if (section === "") {
-			await expect(main.locator('[data-overview-status="compute"]')).toContainText("Stopped");
+			const compute = main.locator('[data-overview-status="compute"]');
+			await expect(compute).toContainText("Stopped");
+			await expect(compute).toContainText(
+				"Compute is stopped. Sessions, channels, and the agent interface are unavailable.",
+			);
+			await expect(compute.getByRole("button")).toHaveCount(0);
+			await expect(compute.getByRole("link", { name: "Compute", exact: true })).toHaveAttribute(
+				"href",
+				/\/settings/,
+			);
 			await expect(
 				main.getByText("Agent details are unavailable right now.", { exact: true }),
 			).toBeVisible();
@@ -6397,7 +6784,9 @@ test("stopped detail stays recoverable without querying its removed projection",
 				main.locator('[data-slot="empty-title"]').getByText("Stopped", { exact: true }),
 			).toBeVisible();
 		}
-		await expect(main.getByRole("button", { name: "Start", exact: true })).toBeVisible();
+		if (section === "")
+			await expect(main.getByRole("button", { name: "Start", exact: true })).toHaveCount(0);
+		else await expect(main.getByRole("button", { name: "Start", exact: true })).toBeVisible();
 		await expect(main.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
 		await expect(main.getByText("Some agent details are not ready", { exact: true })).toHaveCount(
 			0,
@@ -6415,7 +6804,7 @@ test("stopped detail stays recoverable without querying its removed projection",
 	expect(removedProjectionRequests).toEqual([]);
 	expect(deployRequests.filter((path) => path.endsWith("/runtime-ui/credentials"))).toEqual([]);
 
-	await page.goto(`${detailPath}${detailQuery}`);
+	await page.goto(`${detailPath}/settings${detailQuery}`);
 	await page.locator("main").getByRole("button", { name: "Start", exact: true }).click();
 	await expect.poll(() => startRequests.length).toBe(1);
 });
@@ -6444,14 +6833,21 @@ test("failed deployment with a retained projection keeps status-authoritative na
 	).toBeVisible();
 	await expect(main.getByText("Failed", { exact: true })).toBeVisible();
 	await expect(main.getByText("Basic plan", { exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
+	const compute = main.locator('[data-overview-status="compute"]');
+	for (const action of ["Retry startup", "Retry restart", "Start", "Restart", "Delete"])
+		await expect(compute.getByRole("button", { name: action, exact: true })).toHaveCount(0);
+	await expect(compute.getByRole("button")).toHaveCount(0);
+	const computeSettingsLink = compute.getByRole("link", { name: "Compute", exact: true });
+	await expect(computeSettingsLink).toHaveAttribute("href", /\/settings/);
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toBeVisible();
 
 	expect(restartRequests).toEqual([]);
 
+	await computeSettingsLink.click();
+	await expect(page).toHaveURL(/\/settings/);
+	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 	await main.getByRole("button", { name: "Delete", exact: true }).click();
 	await page
 		.getByRole("alertdialog")

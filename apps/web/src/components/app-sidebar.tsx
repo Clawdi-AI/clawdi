@@ -1018,6 +1018,8 @@ export function focusHeaderComputeStatus(
 	return kind === "cloud" ? (tile?.cardStatus?.visual ?? null) : null;
 }
 
+const FOCUS_HEADER_STATUS_CLASS = "mt-2 flex min-w-0 items-center gap-2 text-xs leading-4";
+
 function FocusHeader({
 	activeAgent,
 	activeAgentTile,
@@ -1045,7 +1047,7 @@ function FocusHeader({
 			<div className="min-w-0 space-y-2" role="status" aria-label="Agent ownership loading">
 				<Skeleton className="h-4 w-32" />
 				<Skeleton className="h-3 w-24" />
-				<Skeleton className="h-8 w-full rounded-md" />
+				<Skeleton className="h-4 w-20" />
 			</div>
 		);
 	}
@@ -1099,14 +1101,20 @@ function FocusHeader({
 			) : null}
 			{computeStatus ? (
 				<div
-					className="mt-2 flex min-w-0 items-center gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/45 px-2 py-1 text-xs leading-4"
+					data-testid="app-sidebar-agent-status"
+					data-agent-status-source="hosted"
+					className={FOCUS_HEADER_STATUS_CLASS}
 					title={computeStatus.tooltip}
 				>
 					<StatusDot className={computeStatus.dotClass} />
 					<span className="truncate font-medium">{computeStatus.label}</span>
 				</div>
 			) : activeAgent && syncSource ? (
-				<div className="mt-2 flex min-w-0 items-center justify-between gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/45 px-2 py-1 text-xs leading-4">
+				<div
+					data-testid="app-sidebar-agent-status"
+					data-agent-status-source="connected"
+					className={cn(FOCUS_HEADER_STATUS_CLASS, "justify-between")}
+				>
 					{/* Cloud and legacy agents use supervised-runtime copy. Legacy
 					 * remediation stays in v1 when that dashboard is configured. */}
 					<DaemonStatusBadge
@@ -1124,7 +1132,11 @@ function FocusHeader({
 					</span>
 				</div>
 			) : activeAgentKind !== "cloud" ? (
-				<div className="mt-2 rounded-md border border-sidebar-border bg-sidebar-accent/45 px-2 py-1 text-xs leading-4">
+				<div
+					data-testid="app-sidebar-agent-status"
+					data-agent-status-source="fallback"
+					className={FOCUS_HEADER_STATUS_CLASS}
+				>
 					<FocusStatusFallback />
 				</div>
 			) : null}

@@ -23,7 +23,6 @@ import {
 	Settings,
 	TerminalSquare,
 	Trash2,
-	WalletCards,
 	X,
 	Zap,
 } from "lucide-react";
@@ -36,7 +35,6 @@ import { agentDisplayName } from "@/components/dashboard/agent-label";
 import {
 	AgentOverviewCapabilities,
 	AgentOverviewStatusCard,
-	OverviewMetadata,
 	OverviewModuleError,
 	OverviewModuleSkeleton,
 	OverviewModuleUnavailable,
@@ -301,7 +299,6 @@ import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { sessionListQueryOptions } from "@/lib/session-queries";
-import { settingsQueryHref } from "@/lib/settings-routes";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn } from "@/lib/utils";
 
@@ -348,40 +345,6 @@ function isStartingStatus(status: DeploymentStatus): boolean {
 
 function startingTitle(): string {
 	return "Starting your agent…";
-}
-
-function RestartComputeAction({
-	deployment,
-	label = "Restart agent",
-}: {
-	deployment: HostedDeployment;
-	label?: string;
-}) {
-	const lifecycle = useDeploymentLifecycle();
-	const runAction = useActionLock();
-	const status = deploymentStatusFromResource(deployment.resource.status);
-	const canRestart = canRestartDeployment(status);
-	return (
-		<ConfirmAction
-			title="Restart agent?"
-			description={<p>This restarts the whole agent.</p>}
-			confirmLabel={label}
-			onConfirm={() =>
-				runAction(async () => {
-					await lifecycle.mutateAsync({ id: deployment.resource.id, action: "restart" });
-				})
-			}
-		>
-			<Button variant="outline" size="sm" disabled={lifecycle.isPending || !canRestart}>
-				{lifecycle.isPending && lifecycle.variables?.action === "restart" ? (
-					<Spinner className="size-3.5" />
-				) : (
-					<RefreshCw className="size-3.5" />
-				)}
-				{label}
-			</Button>
-		</ConfirmAction>
-	);
 }
 
 function DeleteComputeAction({
@@ -535,9 +498,6 @@ export function HostedAgentDetail({
 
 	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
 	const terminalHref = agentSectionHref(environmentId, "terminal", routeSearch);
-	const planChangeHref = `${agentSectionHref(environmentId, "settings", routeSearch)}#compute-plan-controls`;
-	const providerSettingsHref = agentSectionHref(environmentId, "ai", routeSearch);
-
 	const scopedSessionLink = (sessionId: string) => ({
 		...agentSessionDetailLink(environmentId, sessionId, routeSearch),
 	});
@@ -627,11 +587,6 @@ export function HostedAgentDetail({
 							canRetryProjection={deploymentProjectionQueryable}
 							onRetryProjection={() => void agentQuery.refetch()}
 							isPerformance={isPerformance}
-							showDeploymentActions={
-								!deploymentRunning &&
-								(!isStartingStatus(deploymentStatus) || hasTerminalDeploymentFailure)
-							}
-							onDeleteAccepted={onDeleteAccepted}
 							sessions={sessions.data?.items ?? []}
 							sessionsLoading={sessions.isLoading}
 							sessionsError={
@@ -639,11 +594,7 @@ export function HostedAgentDetail({
 							}
 							onRetrySessions={() => sessions.refetch()}
 							sessionLink={(session) => scopedSessionLink(session.id)}
-							planChangeHref={planChangeHref}
-							providerSettingsHref={providerSettingsHref}
 							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
-							isCheckingDeployment={isCheckingDeployment}
-							onCheckDeploymentAgain={onCheckDeploymentAgain}
 						/>
 					) : null}
 					{deploymentStatus.known && activeTab === "console" ? (
@@ -891,154 +842,67 @@ function HostedAgentSessionsTab({
 
 // ── Overview ─────────────────────────────────────────────────────────────────
 
-export function OverviewFailureAction({
-	deployment,
-	failure,
-	planChangeHref,
-	providerSettingsHref,
-	onDeleteAccepted,
-}: {
-	deployment: HostedDeployment;
-	failure: DeploymentFailurePresentation;
-	planChangeHref: string;
-	providerSettingsHref: string;
-	onDeleteAccepted: (deploymentId: string) => void;
-}) {
-	const remediation = failure.remediation;
-	return (
-		<div className="flex shrink-0 flex-wrap gap-2">
-			{remediation.requiresWalletTopUp && remediation.kind === "restart" ? (
-				<Button
-					render={<a href={settingsQueryHref("billing-wallet")} />}
-					nativeButton={false}
-					variant="outline"
-					size="sm"
-				>
-					<WalletCards className="size-3.5" />
-					Open Wallet
-				</Button>
-			) : null}
-			{remediation.kind === "restart" ? (
-				<RestartComputeAction deployment={deployment} label={remediation.label} />
-			) : remediation.kind === "review_provider" ? (
-				<Button
-					render={<a href={providerSettingsHref} />}
-					nativeButton={false}
-					variant="outline"
-					size="sm"
-				>
-					{remediation.label}
-				</Button>
-			) : remediation.kind === "review_plan_change" ? (
-				<Button
-					render={<a href={planChangeHref} />}
-					nativeButton={false}
-					variant="outline"
-					size="sm"
-				>
-					{remediation.label}
-				</Button>
-			) : remediation.kind === "retry_delete" ? (
-				<DeleteComputeAction
-					deployment={deployment}
-					onDeleteAccepted={onDeleteAccepted}
-					label={remediation.label}
-				/>
-			) : null}
-		</div>
-	);
-}
-
 export function OverviewComputeStatus({
 	deployment,
 	failure,
-	showActions,
-	planChangeHref,
-	providerSettingsHref,
-	onDeleteAccepted,
 	deploymentTransitionTimedOut,
-	isCheckingDeployment,
-	onCheckDeploymentAgain,
 }: {
 	deployment: HostedDeployment;
 	failure: DeploymentFailurePresentation | null;
-	showActions: boolean;
-	planChangeHref: string;
-	providerSettingsHref: string;
-	onDeleteAccepted: (deploymentId: string) => void;
 	deploymentTransitionTimedOut: boolean;
-	isCheckingDeployment: boolean;
-	onCheckDeploymentAgain: () => void;
 }) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
-	const failed = failure || status.kind === "failed";
-	const retryStatus = status.kind === "unknown" || deploymentTransitionTimedOut;
 	return (
 		<div className="space-y-3 text-xs">
-			{failure ? (
+			{failure?.status.kind === "runtime_unavailable" ? (
+				<p className="text-warning-muted-foreground" role="status">
+					{failure.reason}
+				</p>
+			) : failure ? (
 				<div className="space-y-1 text-destructive-muted-foreground" role="status">
 					<p className="font-medium">{failure.title}</p>
 					<p className="line-clamp-2">{failure.reason}</p>
 				</div>
 			) : status.kind === "failed" ? (
 				<p className="text-destructive-muted-foreground" role="status">
-					The last compute change failed. Contact{" "}
-					<a className="underline underline-offset-2" href="mailto:support@clawdi.ai">
-						support
-					</a>{" "}
-					before trying again.
+					The last compute change did not complete.
+				</p>
+			) : status.kind === "restarting" ? (
+				<p className="inline-flex items-center gap-2 text-muted-foreground" role="status">
+					<Spinner className="size-3.5" /> Restarting
 				</p>
 			) : deploymentTransitionTimedOut ? (
 				<p className="text-warning-muted-foreground" role="status">
-					Startup is taking longer than expected.
+					This compute change is taking longer than expected.
+				</p>
+			) : status.kind === "updating" ? (
+				<p className="inline-flex items-center gap-2 text-muted-foreground" role="status">
+					<Spinner className="size-3.5" /> Updating compute settings.
 				</p>
 			) : isStartingStatus(status) ? (
 				<p className="inline-flex items-center gap-2 text-muted-foreground" role="status">
 					<Spinner className="size-3.5" /> Startup is still in progress.
 				</p>
+			) : status.kind === "stopping" ? (
+				<p className="text-muted-foreground" role="status">
+					Compute is stopping.
+				</p>
 			) : status.kind === "stopped" ? (
 				<p className="text-muted-foreground" role="status">
-					Start compute to use sessions, channels, and the agent interface.
+					Compute is stopped. Sessions, channels, and the agent interface are unavailable.
+				</p>
+			) : status.kind === "deleting" ? (
+				<p className="text-muted-foreground" role="status">
+					Compute is being removed.
+				</p>
+			) : status.kind === "deleted" ? (
+				<p className="text-muted-foreground" role="status">
+					Compute is no longer available.
 				</p>
 			) : status.kind === "unknown" ? (
 				<p className="text-warning-muted-foreground" role="status">
 					Clawdi cannot confirm the current compute status.
 				</p>
-			) : null}
-			{showActions ? (
-				<div className="flex flex-wrap gap-2">
-					{failure ? (
-						<OverviewFailureAction
-							deployment={deployment}
-							failure={failure}
-							planChangeHref={planChangeHref}
-							providerSettingsHref={providerSettingsHref}
-							onDeleteAccepted={onDeleteAccepted}
-						/>
-					) : status.kind === "stopped" ? (
-						<StartComputeAction deployment={deployment} label="Start" />
-					) : retryStatus ? (
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							disabled={isCheckingDeployment}
-							onClick={onCheckDeploymentAgain}
-						>
-							{isCheckingDeployment ? <Spinner className="size-3.5" /> : <RefreshCw />}
-							Check again
-						</Button>
-					) : canRestartDeployment(status) && !failed ? (
-						<RestartComputeAction deployment={deployment} label="Restart" />
-					) : null}
-					{failure?.remediation.kind === "retry_delete" ? null : (
-						<DeleteComputeAction
-							deployment={deployment}
-							onDeleteAccepted={onDeleteAccepted}
-							variant="outline"
-						/>
-					)}
-				</div>
 			) : null}
 		</div>
 	);
@@ -1233,18 +1097,12 @@ function OverviewTab({
 	canRetryProjection,
 	onRetryProjection,
 	isPerformance,
-	showDeploymentActions,
-	onDeleteAccepted,
 	sessions,
 	sessionsLoading,
 	sessionsError,
 	onRetrySessions,
 	sessionLink,
-	planChangeHref,
-	providerSettingsHref,
 	deploymentTransitionTimedOut,
-	isCheckingDeployment,
-	onCheckDeploymentAgain,
 }: {
 	agentId: string;
 	routeSearch: AgentRouteSearch;
@@ -1254,8 +1112,6 @@ function OverviewTab({
 	canRetryProjection: boolean;
 	onRetryProjection: () => void;
 	isPerformance: boolean;
-	showDeploymentActions: boolean;
-	onDeleteAccepted: (deploymentId: string) => void;
 	sessions: SessionListItem[];
 	sessionsLoading: boolean;
 	sessionsError: unknown;
@@ -1264,11 +1120,7 @@ function OverviewTab({
 		to: "/agents/$id/sessions/$sessionId";
 		params: { id: string; sessionId: string };
 	};
-	planChangeHref: string;
-	providerSettingsHref: string;
 	deploymentTransitionTimedOut: boolean;
-	isCheckingDeployment: boolean;
-	onCheckDeploymentAgain: () => void;
 }) {
 	const spec = deployment.resource.spec;
 	const primaryModel = spec.runtime_configuration.primary_model;
@@ -1291,6 +1143,10 @@ function OverviewTab({
 	);
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentFailure = deploymentFailurePresentation(deployment);
+	const computeStatusPresentation = deploymentFailure?.status ?? {
+		label: deploymentStatusLabel(deploymentStatus),
+		tone: deploymentStatusTone(deploymentStatus),
+	};
 	const deploymentRunning = isRunningStatus(deploymentStatus);
 	const sessionsEmptyMessage = deploymentRunning
 		? "No sessions from this agent yet."
@@ -1306,6 +1162,7 @@ function OverviewTab({
 		Boolean(agent),
 	);
 	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
+	const linkedChannelCount = channelLinks.data?.length ?? 0;
 	const linkedChannelRows = (channelLinks.data ?? []).flatMap((link) => {
 		if (!link.account) return [];
 		const provider = providerMeta(link.account.provider).label;
@@ -1332,7 +1189,7 @@ function OverviewTab({
 							<ArrowRight />
 						</Button>
 					</div>
-					<section aria-labelledby="hosted-recent-sessions" className="min-w-0 self-start">
+					<section aria-labelledby="hosted-recent-sessions" className="min-w-0">
 						{projectionUnavailable ? (
 							<OverviewProjectionUnavailableState
 								canRetry={canRetryProjection}
@@ -1361,12 +1218,13 @@ function OverviewTab({
 					>
 						<div className="flex h-full flex-col gap-4">
 							<p
+								data-overview-compute-status
 								data-overview-primary-value
 								className="inline-flex items-center gap-2 text-base font-semibold"
-								title={`Agent status: ${deploymentStatusLabel(deploymentStatus)}`}
+								title={`Agent status: ${computeStatusPresentation.label}`}
 							>
-								<StatusDot status={deploymentStatusTone(deploymentStatus)} />
-								{deploymentStatusLabel(deploymentStatus)}
+								<StatusDot status={computeStatusPresentation.tone} />
+								{computeStatusPresentation.label}
 							</p>
 							<OverviewComputeSummary
 								plan={isPerformance ? "Performance" : "Basic"}
@@ -1374,18 +1232,12 @@ function OverviewTab({
 								memoryMib={spec.resources.memory_mib}
 								storageGib={spec.resources.disk_gib}
 							/>
-							{deploymentRunning ? null : (
+							{deploymentStatus.kind === "running" && !deploymentFailure ? null : (
 								<div className="mt-auto border-t pt-3">
 									<OverviewComputeStatus
 										deployment={deployment}
 										failure={deploymentFailure}
-										showActions={showDeploymentActions}
-										planChangeHref={planChangeHref}
-										providerSettingsHref={providerSettingsHref}
-										onDeleteAccepted={onDeleteAccepted}
 										deploymentTransitionTimedOut={deploymentTransitionTimedOut}
-										isCheckingDeployment={isCheckingDeployment}
-										onCheckDeploymentAgain={onCheckDeploymentAgain}
 									/>
 								</div>
 							)}
@@ -1457,36 +1309,48 @@ function OverviewTab({
 									}
 								/>
 							) : (
-								<OverviewMetadata
-									items={[
-										{ label: "Model", value: model },
-										{
-											label: "Provider",
-											value: managedProvider
-												? "Managed by Clawdi"
-												: providerDisplayLabel(providerId ?? "", providers.data ?? []),
-										},
-									]}
-								/>
+								<div className="space-y-3" data-overview-tool-summary="model-provider">
+									<p
+										data-overview-primary-value
+										data-overview-tool-primary
+										className="text-base font-semibold"
+									>
+										{model}
+									</p>
+									<p data-overview-tool-secondary className="text-sm">
+										{managedProvider
+											? "Managed by Clawdi"
+											: providerDisplayLabel(providerId ?? "", providers.data ?? [])}
+									</p>
+								</div>
 							),
 					},
 					channels: {
 						body: projectionLoading ? (
-							<OverviewModuleSkeleton label="channels" rows={2} />
+							<OverviewModuleSkeleton label="channels" rows={2} showHeading={false} />
 						) : projectionUnavailable ? (
 							<OverviewModuleUnavailable />
 						) : channelLinks.isLoading ? (
-							<OverviewModuleSkeleton label="channels" rows={2} />
+							<OverviewModuleSkeleton label="channels" rows={2} showHeading={false} />
 						) : channelLinks.error ? (
 							<OverviewModuleError label="Channels" onRetry={() => void channelLinks.refetch()} />
 						) : (
-							<div className="space-y-3">
-								<p data-overview-primary-value className="text-base font-semibold">
-									{(channelLinks.data?.length ?? 0) > 0
-										? `${channelLinks.data?.length} connected ${channelLinks.data?.length === 1 ? "channel" : "channels"}`
-										: "No channels connected"}
+							<div className="space-y-3" data-overview-tool-summary="channels">
+								<p
+									data-overview-primary-value
+									data-overview-tool-primary
+									className="text-base font-semibold"
+								>
+									{linkedChannelCount === 0
+										? "No channels connected"
+										: `${linkedChannelCount} connected ${linkedChannelCount === 1 ? "channel" : "channels"}`}
 								</p>
-								<OverviewSummaryRows items={linkedChannelRows} empty="No channels connected" />
+								{linkedChannelCount > 0 ? (
+									<OverviewSummaryRows
+										items={linkedChannelRows}
+										empty="Channel details unavailable"
+									/>
+								) : null}
 							</div>
 						),
 					},
