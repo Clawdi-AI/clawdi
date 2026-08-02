@@ -793,6 +793,21 @@ async def get_auth_short_session(
     return ctx
 
 
+def require_auth_scopes(auth: AuthContext, *needed: str) -> None:
+    """Enforce API-key scopes consistently across HTTP and MCP boundaries."""
+    if not auth.is_cli or auth.api_key is None:
+        return
+    scopes = auth.api_key.scopes
+    if scopes is None and not is_runtime_deployment_principal(auth):
+        return
+    missing = list(needed) if scopes is None else [scope for scope in needed if scope not in scopes]
+    if missing:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"missing scope: {', '.join(missing)}",
+        )
+
+
 def require_scope_short_session(*needed: str):
     """Same scope-check semantics as `require_scope`, paired with
     `get_auth_short_session` so the route doesn't pin a DB connection
@@ -800,16 +815,7 @@ def require_scope_short_session(*needed: str):
     daemon routes."""
 
     async def _check(auth: AuthContext = Depends(get_auth_short_session)) -> AuthContext:
-        if not auth.is_cli or auth.api_key is None:
-            return auth
-        if auth.api_key.scopes is None:
-            return auth
-        missing = [s for s in needed if s not in auth.api_key.scopes]
-        if missing:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                f"missing scope: {', '.join(missing)}",
-            )
+        require_auth_scopes(auth, *needed)
         return auth
 
     return _check
@@ -828,16 +834,7 @@ def require_scope(*needed: str):
     """
 
     async def _check(auth: AuthContext = Depends(get_auth)) -> AuthContext:
-        if not auth.is_cli or auth.api_key is None:
-            return auth
-        if auth.api_key.scopes is None:
-            return auth
-        missing = [s for s in needed if s not in auth.api_key.scopes]
-        if missing:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                f"missing scope: {', '.join(missing)}",
-            )
+        require_auth_scopes(auth, *needed)
         return auth
 
     return _check
@@ -889,14 +886,14 @@ def _is_env_bound_api_key(auth: AuthContext) -> bool:
     Legacy v1 Agent keys may have `scopes=None` (full account
     capability, same as a user's own laptop key), while strict-v2
     runtime deployment keys carry an issuer-owned scope bundle.
-    Either way, their BLAST RADIUS still has to honour the env
-    binding: a leaked env-A key must not read env-B's data. Memory /
-    session / skill / vault routes filter by env when this is true.
+    Project-scoped resources (skills and Vault attachments) honour this
+    binding. Memory is account-shared, and strict Hosted runtimes also receive
+    account session history; legacy environment keys retain environment-local
+    session visibility. The environment id remains provenance for Memory.
 
     Distinct from `_is_scoped_api_key`: the latter is about
     capability narrowing (used to reject from user-only routes);
-    this one is about env-project visibility (used to filter
-    list/read/delete results)."""
+    this one is about env-project identity and visibility."""
     return auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None
 
 

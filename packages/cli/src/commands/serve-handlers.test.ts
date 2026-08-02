@@ -289,7 +289,7 @@ describe("daemon install activation failure", () => {
 });
 
 describe("full control RPC handler surface", () => {
-	it("advertises sync, vault, auth, update, and operation RPC methods", async () => {
+	it("advertises sync, auth, update, and operation RPC methods", async () => {
 		const { createControlRpcHandlers } = await import("./serve");
 		const handlers = createControlRpcHandlers();
 		const methodsResult = (await handlers.methods?.({})) as { methods?: string[] } | undefined;
@@ -299,7 +299,7 @@ describe("full control RPC handler surface", () => {
 		expect(methodsResult?.methods?.some((method) => method.startsWith("daemon."))).toBe(false);
 		expect(methodsResult?.methods).toContain("sync.push");
 		expect(methodsResult?.methods).toContain("sync.pull");
-		expect(methodsResult?.methods).toContain("vault.resolve");
+		expect(methodsResult?.methods?.some((method) => method.startsWith("vault."))).toBe(false);
 		expect(methodsResult?.methods).toContain("auth.login");
 		expect(methodsResult?.methods).toContain("update.check");
 		expect(methodsResult?.methods).toContain("update.install");
@@ -342,31 +342,6 @@ describe("full control RPC handler surface", () => {
 		await expect(
 			(async () => handler({ exclude_project: "/tmp/private", wait: true }))(),
 		).rejects.toThrow("Unsupported RPC params: exclude_project");
-	});
-
-	it("blocks vault plaintext reads unless explicitly confirmed", async () => {
-		const { createControlRpcHandlers } = await import("./serve");
-		const handler = createControlRpcHandlers()["vault.resolve"];
-		if (!handler) throw new Error("missing vault.resolve handler");
-
-		await expect(
-			(async () => handler({ key: "OPENAI_API_KEY", include_value: true }))(),
-		).rejects.toThrow("vault.resolve plaintext access requires confirm_secret_access=true");
-	});
-
-	it("does not allow vault.inject secret rendering in background operation logs", async () => {
-		const { createControlRpcHandlers } = await import("./serve");
-		const handler = createControlRpcHandlers()["vault.inject"];
-		if (!handler) throw new Error("missing vault.inject handler");
-
-		await expect(
-			(async () =>
-				handler({
-					input: "OPENAI_API_KEY=clawdi://prod/openai/key",
-					confirm_secret_access: true,
-					wait: false,
-				}))(),
-		).rejects.toThrow("vault.inject secret rendering cannot run as a background operation");
 	});
 
 	it("does not overwrite existing auth with an unverified imported API key", async () => {

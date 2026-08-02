@@ -4,26 +4,41 @@ import json
 import logging
 import re
 import time
-from typing import Any
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any, Literal
+from urllib.parse import quote, unquote, urlsplit
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy import cast, or_, select
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+    field_validator,
+)
+from sqlalchemy import cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import String
 
 from app.core.auth import (
     AuthContext,
     _is_env_bound_api_key,
-    _is_scoped_api_key,
     get_auth,
     is_runtime_deployment_principal,
+    require_auth_scopes,
     require_clerk_id,
 )
 from app.core.database import get_session
+from app.core.project import project_ids_visible_to, resolve_default_write_project
 from app.core.query_utils import like_needle
+from app.models.project import Project
 from app.models.session import AgentEnvironment, Session
-from app.routes.memories import _attach_source_machines, _project_filter_memories
+from app.models.vault import Vault, VaultItem, VaultProjectAttachment
+from app.routes.memories import _attach_source_machines
 from app.routes.public_sessions import _resolve_session_for_view
 from app.services.composio import (
     call_tool_router_mcp_tool,
@@ -40,6 +55,7 @@ from app.services.session_content import (
     load_session_messages,
 )
 from app.services.session_export import session_to_markdown
+from app.services.vault_crypto import decrypt
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mcp", tags=["mcp"])
@@ -51,10 +67,158 @@ _SHARE_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-_NATIVE_TOOLS: list[dict[str, Any]] = [
-    {
-        "name": "memory_search",
-        "description": (
+
+class _ToolArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class _NoArguments(_ToolArguments):
+    pass
+
+
+class _MemorySearchArguments(_ToolArguments):
+    query: StrictStr = Field(min_length=1, max_length=2_000)
+    limit: StrictInt = Field(default=10, ge=1, le=50)
+
+    @field_validator("query")
+    @classmethod
+    def _strip_query(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("query is required")
+        return value
+
+
+class _MemoryAddArguments(_ToolArguments):
+    content: StrictStr = Field(min_length=1, max_length=20_000)
+    category: Literal["fact", "preference", "pattern", "decision", "context"] = "fact"
+
+    @field_validator("content")
+    @classmethod
+    def _strip_content(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("content is required")
+        return value
+
+
+class _SessionSearchArguments(_ToolArguments):
+    query: StrictStr = Field(min_length=1, max_length=2_000)
+    limit: StrictInt = Field(default=10, ge=1, le=20)
+
+    @field_validator("query")
+    @classmethod
+    def _strip_query(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("query is required")
+        return value
+
+
+class _SessionReadArguments(_ToolArguments):
+    reference: StrictStr = Field(min_length=1, max_length=2_000)
+
+    @field_validator("reference")
+    @classmethod
+    def _strip_reference(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("reference is required")
+        return value
+
+
+class _ProjectListArguments(_ToolArguments):
+    limit: StrictInt = Field(default=50, ge=1, le=100)
+
+
+class _ProjectGetArguments(_ToolArguments):
+    project_id: StrictStr = Field(min_length=36, max_length=36)
+
+    @field_validator("project_id")
+    @classmethod
+    def _validate_project_id(cls, value: str) -> str:
+        try:
+            UUID(value)
+        except ValueError as exc:
+            raise ValueError("invalid project id") from exc
+        return value
+
+
+class _VaultListArguments(_ToolArguments):
+    project_id: StrictStr | None = Field(default=None, min_length=36, max_length=36)
+    limit: StrictInt = Field(default=50, ge=1, le=100)
+
+    @field_validator("project_id")
+    @classmethod
+    def _validate_project_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            UUID(value)
+        except ValueError as exc:
+            raise ValueError("invalid project id") from exc
+        return value
+
+
+class _VaultGetArguments(_ToolArguments):
+    project_id: StrictStr = Field(min_length=36, max_length=36)
+    vault_id: StrictStr = Field(min_length=36, max_length=36)
+
+    @field_validator("project_id", "vault_id")
+    @classmethod
+    def _validate_id(cls, value: str) -> str:
+        try:
+            UUID(value)
+        except ValueError as exc:
+            raise ValueError("invalid resource id") from exc
+        return value
+
+
+class _VaultResolveArguments(_ToolArguments):
+    reference: StrictStr = Field(min_length=1, max_length=1_000)
+
+    @field_validator("reference")
+    @classmethod
+    def _strip_reference(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("reference is required")
+        return value
+
+
+def _validate_arguments[ArgumentsT: _ToolArguments](
+    model: type[ArgumentsT], arguments: dict[str, Any]
+) -> ArgumentsT:
+    try:
+        return model.model_validate(arguments)
+    except ValidationError:
+        # Pydantic details can echo hostile input and implementation names.
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid tool arguments") from None
+
+
+type _NativeToolHandler = Callable[
+    [dict[str, Any], AuthContext, AsyncSession], Awaitable[dict[str, Any]]
+]
+
+
+@dataclass(frozen=True)
+class _NativeToolSpec:
+    description: str
+    input_schema: dict[str, Any]
+    scopes: tuple[str, ...]
+    handler: _NativeToolHandler
+
+    def definition(self, name: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "description": self.description,
+            "inputSchema": self.input_schema,
+        }
+
+
+_NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
+    "memory_search": _NativeToolSpec(
+        description=(
             "ALWAYS call this BEFORE answering any question that references the user's own "
             "context — their preferences, projects, past decisions, named entities, or work "
             "history. A missed hit costs the user's trust every subsequent turn; a call that "
@@ -77,7 +241,7 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
             "When in doubt, CALL IT. Zero results is cheap; a missed memory makes you look "
             "amnesic."
         ),
-        "inputSchema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "query": {
@@ -101,10 +265,11 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
             "required": ["query"],
             "additionalProperties": False,
         },
-    },
-    {
-        "name": "memory_add",
-        "description": (
+        scopes=("memories:read",),
+        handler=lambda arguments, auth, db: _tool_memory_search(arguments, auth=auth, db=db),
+    ),
+    "memory_add": _NativeToolSpec(
+        description=(
             "Store a durable memory so future agent sessions (same agent, or a different one) "
             "can retrieve this context. Call this when you learn something non-obvious about "
             "the user or their project that a future session would benefit from knowing.\n\n"
@@ -128,7 +293,7 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
             "nouns, not pronouns. A future session will read it without today's conversation. "
             "Content language should match the user's primary language for that context."
         ),
-        "inputSchema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "content": {
@@ -154,10 +319,11 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
             "required": ["content"],
             "additionalProperties": False,
         },
-    },
-    {
-        "name": "memory_extract",
-        "description": (
+        scopes=("memories:write",),
+        handler=lambda arguments, auth, db: _tool_memory_add(arguments, auth=auth, db=db),
+    ),
+    "memory_extract": _NativeToolSpec(
+        description=(
             "Propose durable long-term memories from the CURRENT conversation, list them to "
             "the user, and save only what they approve. Call this when the user asks to "
             "'extract memories', 'save what we discussed', 'remember this conversation', or "
@@ -167,22 +333,23 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
             "This tool inspects your active conversation context — it does NOT read any "
             "external file or database."
         ),
-        "inputSchema": {
+        input_schema={
             "type": "object",
             "properties": {},
             "additionalProperties": False,
         },
-    },
-    {
-        "name": "session_search",
-        "description": (
+        scopes=("memories:read", "memories:write"),
+        handler=lambda arguments, auth, db: _tool_memory_extract(arguments, auth=auth, db=db),
+    ),
+    "session_search": _NativeToolSpec(
+        description=(
             "Search the user's past Clawdi sessions by keyword. Use when the user asks about "
             "prior work (e.g. 'find the auth migration session'). Returns up to N matching "
             "sessions with summary, agent, model, project, date, and message count. The "
             "session UUID in each result can be passed back to session_read to fetch the full "
             "conversation."
         ),
-        "inputSchema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "query": {
@@ -199,10 +366,11 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
             "required": ["query"],
             "additionalProperties": False,
         },
-    },
-    {
-        "name": "session_read",
-        "description": (
+        scopes=("sessions:read",),
+        handler=lambda arguments, auth, db: _tool_session_search(arguments, auth=auth, db=db),
+    ),
+    "session_read": _NativeToolSpec(
+        description=(
             "Read a Clawdi session and return its content as Markdown so you can ingest the "
             "conversation as context. Use this when the user references a Clawdi share URL "
             "(https://cloud.clawdi.ai/s/{uuid}) or one of their own sessions by UUID. Handles "
@@ -210,7 +378,7 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
             "YAML front-matter block (source/agent/model/project/messages) followed by "
             "`## User` / `## Assistant` turn headings."
         ),
-        "inputSchema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "reference": {
@@ -224,8 +392,66 @@ _NATIVE_TOOLS: list[dict[str, Any]] = [
             "required": ["reference"],
             "additionalProperties": False,
         },
-    },
-]
+        scopes=("sessions:read",),
+        handler=lambda arguments, auth, db: _tool_session_read(arguments, auth=auth, db=db),
+    ),
+    "project_current": _NativeToolSpec(
+        description=(
+            "Return the caller's current/bound Clawdi Project. Hosted runtimes always "
+            "receive only the Project bound to their authenticated environment."
+        ),
+        input_schema=_NoArguments.model_json_schema(),
+        scopes=("projects:read",),
+        handler=lambda arguments, auth, db: _tool_project_current(arguments, auth=auth, db=db),
+    ),
+    "project_list": _NativeToolSpec(
+        description=(
+            "List Projects visible to the authenticated caller. Hosted runtimes are "
+            "restricted to their bound environment Project. This tool is read-only."
+        ),
+        input_schema=_ProjectListArguments.model_json_schema(),
+        scopes=("projects:read",),
+        handler=lambda arguments, auth, db: _tool_project_list(arguments, auth=auth, db=db),
+    ),
+    "project_get": _NativeToolSpec(
+        description=(
+            "Read safe metadata for one visible Clawdi Project by UUID. Inaccessible "
+            "Projects are reported as not found. This tool is read-only."
+        ),
+        input_schema=_ProjectGetArguments.model_json_schema(),
+        scopes=("projects:read",),
+        handler=lambda arguments, auth, db: _tool_project_get(arguments, auth=auth, db=db),
+    ),
+    "vault_list": _NativeToolSpec(
+        description=(
+            "List Vault metadata attached to visible Projects. Returns Vault names, "
+            "slugs, Project provenance, and key counts only; never secret values."
+        ),
+        input_schema=_VaultListArguments.model_json_schema(),
+        scopes=("vault:read",),
+        handler=lambda arguments, auth, db: _tool_vault_list(arguments, auth=auth, db=db),
+    ),
+    "vault_get": _NativeToolSpec(
+        description=(
+            "List key names and exact clawdi:// references for one Vault attachment. "
+            "Returns Project/Vault provenance and never decrypts or returns secret values."
+        ),
+        input_schema=_VaultGetArguments.model_json_schema(),
+        scopes=("vault:read",),
+        handler=lambda arguments, auth, db: _tool_vault_get(arguments, auth=auth, db=db),
+    ),
+    "vault_resolve": _NativeToolSpec(
+        description=(
+            "Resolve one exact Project-scoped clawdi:// reference to its plaintext secret. "
+            "Call only when the current task requires the value. The result is sensitive: "
+            "never echo it, store it in Memory, or include it in logs. Hosted runtimes are "
+            "restricted to their bound Project."
+        ),
+        input_schema=_VaultResolveArguments.model_json_schema(),
+        scopes=("vault:read",),
+        handler=lambda arguments, auth, db: _tool_vault_resolve(arguments, auth=auth, db=db),
+    ),
+}
 
 _MEMORY_EXTRACT_INSTRUCTIONS = (
     "Review the CURRENT conversation silently and propose up to 5 durable memories worth "
@@ -403,21 +629,12 @@ def _http_exception_message(exc: HTTPException) -> str:
 _CONNECTOR_TOOLS_CACHE_TTL_SECONDS = 60.0
 _connector_tools_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
-_HOSTED_MEMORY_TOOLS = {"memory_search", "memory_add", "memory_extract"}
-
 
 async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
-    # Mirror `require_user_auth`, which guarded the old connector MCP
-    # config route: narrowly-scoped api keys are deliberate capability
-    # narrowing and get no connector surface. Don't list what the
-    # caller can't call.
-    if _is_scoped_api_key(auth) and not is_runtime_deployment_principal(auth):
+    try:
+        require_auth_scopes(auth, "connectors:read")
+    except HTTPException:
         return []
-    if is_runtime_deployment_principal(auth):
-        try:
-            _require_scope(auth, "connectors:read")
-        except HTTPException:
-            return []
     clerk_id = require_clerk_id(auth)
     now = time.monotonic()
     cached = _connector_tools_cache.get(clerk_id)
@@ -442,56 +659,29 @@ async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
 
 
 async def _list_clawdi_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
-    tools = [*_NATIVE_TOOLS, *(await _connector_mcp_tools(auth))]
-    if is_runtime_deployment_principal(auth):
-        return [tool for tool in tools if tool.get("name") not in _HOSTED_MEMORY_TOOLS]
-    return tools
+    native_tools: list[dict[str, Any]] = []
+    for name, spec in _NATIVE_TOOL_REGISTRY.items():
+        try:
+            require_auth_scopes(auth, *spec.scopes)
+        except HTTPException:
+            continue
+        native_tools.append(spec.definition(name))
+    connector_tools = [
+        tool
+        for tool in await _connector_mcp_tools(auth)
+        if tool.get("name") not in _NATIVE_TOOL_REGISTRY
+    ]
+    return [*native_tools, *connector_tools]
 
 
 async def _call_clawdi_mcp_tool(
     name: str, arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
-    if is_runtime_deployment_principal(auth) and name in _HOSTED_MEMORY_TOOLS:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "Memory tools are not available to hosted runtime principals",
-        )
-    if name == "memory_search":
-        return await _tool_memory_search(arguments, auth=auth, db=db)
-    if name == "memory_add":
-        return await _tool_memory_add(arguments, auth=auth, db=db)
-    if name == "memory_extract":
-        return _tool_text(_MEMORY_EXTRACT_INSTRUCTIONS)
-    if name == "session_search":
-        return await _tool_session_search(arguments, auth=auth, db=db)
-    if name == "session_read":
-        return await _tool_session_read(arguments, auth=auth, db=db)
+    spec = _NATIVE_TOOL_REGISTRY.get(name)
+    if spec is not None:
+        require_auth_scopes(auth, *spec.scopes)
+        return await spec.handler(arguments, auth, db)
     return await _tool_connector_call(name, arguments, auth=auth)
-
-
-def _require_scope(auth: AuthContext, *needed: str) -> None:
-    if not auth.is_cli or auth.api_key is None:
-        return
-    scopes = auth.api_key.scopes
-    if scopes is None and not is_runtime_deployment_principal(auth):
-        return
-    missing = list(needed) if scopes is None else [scope for scope in needed if scope not in scopes]
-    if missing:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, f"missing scope: {', '.join(missing)}")
-
-
-def _string_arg(arguments: dict[str, Any], name: str) -> str:
-    value = arguments.get(name)
-    if not isinstance(value, str) or not value.strip():
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{name} is required")
-    return value.strip()
-
-
-def _int_arg(arguments: dict[str, Any], name: str, default: int, maximum: int) -> int:
-    value = arguments.get(name, default)
-    if not isinstance(value, int):
-        return default
-    return max(1, min(value, maximum))
 
 
 def _tool_text(text: str, *, is_error: bool = False) -> dict[str, Any]:
@@ -501,17 +691,28 @@ def _tool_text(text: str, *, is_error: bool = False) -> dict[str, Any]:
     return payload
 
 
+def _tool_json(payload: object) -> dict[str, Any]:
+    return _tool_text(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+async def _tool_memory_extract(
+    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
+) -> dict[str, Any]:
+    _validate_arguments(_NoArguments, arguments)
+    return _tool_text(_MEMORY_EXTRACT_INSTRUCTIONS)
+
+
 async def _tool_memory_search(
     arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
-    _require_scope(auth, "memories:read")
-    query = _string_arg(arguments, "query")
-    limit = _int_arg(arguments, "limit", 10, 50)
+    parsed = _validate_arguments(_MemorySearchArguments, arguments)
     provider = await get_memory_provider(str(auth.user_id), db)
-    search_limit = max(limit * 10, 200) if _is_env_bound_api_key(auth) else limit
-    hits = await provider.search(str(auth.user_id), query, limit=search_limit)
+    hits = await provider.search(
+        str(auth.user_id),
+        parsed.query,
+        limit=parsed.limit,
+    )
     await _attach_source_machines(db, auth, hits)
-    hits = (await _project_filter_memories(db, auth, hits))[:limit]
     text = (
         "\n\n".join(f"[{item.get('category', 'fact')}] {item.get('content', '')}" for item in hits)
         if hits
@@ -523,31 +724,32 @@ async def _tool_memory_search(
 async def _tool_memory_add(
     arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
-    _require_scope(auth, "memories:write")
-    if _is_env_bound_api_key(auth):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "Agent API keys cannot create manual memories. Memories without a source session "
-            "are not visible to scoped reads.",
-        )
-    content = _string_arg(arguments, "content")
-    finding = find_likely_secret(content)
+    parsed = _validate_arguments(_MemoryAddArguments, arguments)
+    finding = find_likely_secret(parsed.content)
     if finding is not None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, secret_memory_warning(finding))
-    category = arguments.get("category")
     provider = await get_memory_provider(str(auth.user_id), db)
+    source_environment_id = (
+        auth.api_key.environment_id
+        if _is_env_bound_api_key(auth) and auth.api_key is not None
+        else None
+    )
     result = await provider.add(
         str(auth.user_id),
-        content,
-        category=category if isinstance(category, str) else "fact",
+        parsed.content,
+        category=parsed.category,
         source="mcp",
+        source_environment_id=source_environment_id,
     )
     return _tool_text(f"Memory stored ({str(result['id'])[:8]})")
 
 
 def _user_sessions_stmt(auth: AuthContext):
-    """Sessions visible to this caller: owned, and — for env-bound API
-    keys — restricted to the key's environment."""
+    """Return account sessions, fencing only legacy environment keys.
+
+    Strict Hosted runtimes intentionally receive cross-Agent history. Legacy
+    environment keys predate that contract and retain their local boundary.
+    """
     stmt = (
         select(Session, AgentEnvironment.agent_type)
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
@@ -568,15 +770,13 @@ def _user_sessions_stmt(auth: AuthContext):
 async def _tool_session_search(
     arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
-    _require_scope(auth, "sessions:read")
-    query = _string_arg(arguments, "query")
-    limit = _int_arg(arguments, "limit", 10, 20)
+    parsed = _validate_arguments(_SessionSearchArguments, arguments)
     stmt = (
         _user_sessions_stmt(auth)
         .order_by(Session.last_activity_at.desc(), Session.id.asc())
-        .limit(limit)
+        .limit(parsed.limit)
     )
-    pattern = like_needle(query)
+    pattern = like_needle(parsed.query)
     stmt = stmt.where(
         or_(
             Session.summary.ilike(pattern, escape="\\"),
@@ -587,7 +787,7 @@ async def _tool_session_search(
     )
     rows = (await db.execute(stmt)).all()
     if not rows:
-        return _tool_text(f'No sessions matched "{query}".')
+        return _tool_text(f'No sessions matched "{parsed.query}".')
     lines = []
     for session, agent_type in rows:
         date = session.last_activity_at.date().isoformat() if session.last_activity_at else "-"
@@ -599,16 +799,17 @@ async def _tool_session_search(
             f"  - id: `{session.id}` · {agent_type or 'unknown'} · {date} · "
             f"{session.message_count or 0} msgs"
         )
-    return _tool_text(f'Found {len(rows)} session(s) matching "{query}":\n\n' + "\n".join(lines))
+    return _tool_text(
+        f'Found {len(rows)} session(s) matching "{parsed.query}":\n\n' + "\n".join(lines)
+    )
 
 
 async def _tool_session_read(
     arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
-    _require_scope(auth, "sessions:read")
-    reference = _string_arg(arguments, "reference")
-    match = _SHARE_URL_RE.search(reference)
-    session_id = match.group(1) if match else reference
+    parsed = _validate_arguments(_SessionReadArguments, arguments)
+    match = _SHARE_URL_RE.search(parsed.reference)
+    session_id = match.group(1) if match else parsed.reference
     try:
         parsed_id = UUID(session_id)
     except ValueError:
@@ -653,16 +854,265 @@ async def _tool_session_read(
     )
 
 
+def _project_payload(project: Project) -> dict[str, object]:
+    return {
+        "id": str(project.id),
+        "name": project.name,
+        "slug": project.slug,
+        "kind": project.kind,
+        "origin_environment_id": (
+            str(project.origin_environment_id) if project.origin_environment_id else None
+        ),
+        "archived_at": project.archived_at.isoformat() if project.archived_at else None,
+        "created_at": project.created_at.isoformat(),
+    }
+
+
+async def _visible_project_or_404(
+    db: AsyncSession,
+    auth: AuthContext,
+    project_id: UUID,
+) -> Project:
+    visible_project_ids = await project_ids_visible_to(db, auth)
+    if project_id not in visible_project_ids:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
+    project = (
+        await db.execute(select(Project).where(Project.id == project_id))
+    ).scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
+    return project
+
+
+async def _tool_project_current(
+    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
+) -> dict[str, Any]:
+    _validate_arguments(_NoArguments, arguments)
+    project_id = await resolve_default_write_project(db, auth)
+    project = await _visible_project_or_404(db, auth, project_id)
+    return _tool_json(_project_payload(project))
+
+
+async def _tool_project_list(
+    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
+) -> dict[str, Any]:
+    parsed = _validate_arguments(_ProjectListArguments, arguments)
+    visible_project_ids = await project_ids_visible_to(db, auth)
+    projects = (
+        (
+            await db.execute(
+                select(Project)
+                .where(Project.id.in_(visible_project_ids))
+                .order_by(Project.created_at.desc(), Project.id.asc())
+                .limit(parsed.limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return _tool_json({"projects": [_project_payload(project) for project in projects]})
+
+
+async def _tool_project_get(
+    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
+) -> dict[str, Any]:
+    parsed = _validate_arguments(_ProjectGetArguments, arguments)
+    project = await _visible_project_or_404(db, auth, UUID(parsed.project_id))
+    return _tool_json(_project_payload(project))
+
+
+async def _tool_vault_list(
+    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
+) -> dict[str, Any]:
+    parsed = _validate_arguments(_VaultListArguments, arguments)
+    visible_project_ids = await project_ids_visible_to(db, auth)
+    if parsed.project_id is not None:
+        selected_project_id = UUID(parsed.project_id)
+        if selected_project_id not in visible_project_ids:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
+        visible_project_ids = [selected_project_id]
+
+    rows = (
+        await db.execute(
+            select(
+                Project.id,
+                Project.name,
+                Project.slug,
+                Vault.id,
+                Vault.name,
+                Vault.slug,
+                func.count(VaultItem.id),
+            )
+            .join(VaultProjectAttachment, VaultProjectAttachment.project_id == Project.id)
+            .join(Vault, Vault.id == VaultProjectAttachment.vault_id)
+            .outerjoin(VaultItem, VaultItem.vault_id == Vault.id)
+            .where(Project.id.in_(visible_project_ids))
+            .group_by(Project.id, Vault.id)
+            .order_by(Project.name.asc(), Project.id.asc(), Vault.slug.asc(), Vault.id.asc())
+            .limit(parsed.limit)
+        )
+    ).all()
+    vaults = [
+        {
+            "project": {
+                "id": str(project_id),
+                "name": project_name,
+                "slug": project_slug,
+            },
+            "vault": {
+                "id": str(vault_id),
+                "name": vault_name,
+                "slug": vault_slug,
+                "key_count": item_count,
+            },
+        }
+        for (
+            project_id,
+            project_name,
+            project_slug,
+            vault_id,
+            vault_name,
+            vault_slug,
+            item_count,
+        ) in rows
+    ]
+    return _tool_json({"vaults": vaults})
+
+
+def _exact_vault_reference(
+    project_id: UUID,
+    vault_slug: str,
+    section: str,
+    field: str,
+) -> str:
+    parts = [
+        "project",
+        str(project_id),
+        "vault",
+        vault_slug,
+        *(["section", section] if section else []),
+        "field",
+        field,
+    ]
+    return "clawdi://" + "/".join(quote(part, safe="") for part in parts)
+
+
+async def _tool_vault_get(
+    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
+) -> dict[str, Any]:
+    parsed = _validate_arguments(_VaultGetArguments, arguments)
+    project_id = UUID(parsed.project_id)
+    vault_id = UUID(parsed.vault_id)
+    project = await _visible_project_or_404(db, auth, project_id)
+    vault_row = (
+        await db.execute(
+            select(Vault.id, Vault.name, Vault.slug)
+            .join(VaultProjectAttachment, VaultProjectAttachment.vault_id == Vault.id)
+            .where(
+                Vault.id == vault_id,
+                VaultProjectAttachment.project_id == project_id,
+            )
+        )
+    ).one_or_none()
+    if vault_row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Vault not found")
+    _, vault_name, vault_slug = vault_row
+    item_rows = (
+        await db.execute(
+            select(VaultItem.section, VaultItem.item_name)
+            .where(VaultItem.vault_id == vault_id)
+            .order_by(VaultItem.section.asc(), VaultItem.item_name.asc())
+        )
+    ).all()
+    keys = [
+        {
+            "section": section,
+            "field": field,
+            "reference": _exact_vault_reference(project_id, vault_slug, section, field),
+            "provenance": {
+                "project_id": str(project_id),
+                "vault_id": str(vault_id),
+                "vault_slug": vault_slug,
+            },
+        }
+        for section, field in item_rows
+    ]
+    return _tool_json(
+        {
+            "project": _project_payload(project),
+            "vault": {
+                "id": str(vault_id),
+                "name": vault_name,
+                "slug": vault_slug,
+            },
+            "keys": keys,
+        }
+    )
+
+
+def _parse_exact_project_vault_reference(reference: str) -> tuple[UUID, str, str, str]:
+    try:
+        parsed = urlsplit(reference)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Vault reference") from None
+    if parsed.scheme != "clawdi" or parsed.netloc != "project" or parsed.query or parsed.fragment:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Vault reference")
+    raw_parts = parsed.path.removeprefix("/").split("/")
+    parts = [unquote(part) for part in raw_parts]
+    if len(parts) == 5 and parts[1] == "vault" and parts[3] == "field":
+        project_raw, _, vault_slug, _, field = parts
+        section = ""
+    elif len(parts) == 7 and parts[1] == "vault" and parts[3] == "section" and parts[5] == "field":
+        project_raw, _, vault_slug, _, section, _, field = parts
+    else:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Vault reference")
+    try:
+        project_id = UUID(project_raw)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Vault reference") from None
+    if not vault_slug or not field:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Vault reference")
+    if _exact_vault_reference(project_id, vault_slug, section, field) != reference:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Vault reference")
+    return project_id, vault_slug, section, field
+
+
+async def _tool_vault_resolve(
+    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
+) -> dict[str, Any]:
+    parsed = _validate_arguments(_VaultResolveArguments, arguments)
+    project_id, vault_slug, section, field = _parse_exact_project_vault_reference(parsed.reference)
+    await _visible_project_or_404(db, auth, project_id)
+    rows = (
+        await db.execute(
+            select(VaultItem.encrypted_value, VaultItem.nonce)
+            .join(Vault, Vault.id == VaultItem.vault_id)
+            .join(VaultProjectAttachment, VaultProjectAttachment.vault_id == Vault.id)
+            .where(
+                VaultProjectAttachment.project_id == project_id,
+                Vault.slug == vault_slug,
+                VaultItem.section == section,
+                VaultItem.item_name == field,
+            )
+        )
+    ).all()
+    if not rows:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Vault reference not found")
+    if len(rows) != 1:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Vault reference is ambiguous")
+    encrypted_value, nonce = rows[0]
+    return _tool_json(
+        {
+            "reference": parsed.reference,
+            "value": decrypt(encrypted_value, nonce),
+        }
+    )
+
+
 async def _tool_connector_call(
     name: str, arguments: dict[str, Any], *, auth: AuthContext
 ) -> dict[str, Any]:
-    if _is_scoped_api_key(auth) and not is_runtime_deployment_principal(auth):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "Connector tools are not available to scoped api keys",
-        )
-    if is_runtime_deployment_principal(auth):
-        _require_scope(auth, "connectors:invoke")
+    require_auth_scopes(auth, "connectors:invoke")
     session = await get_tool_router_mcp_session(require_clerk_id(auth))
     response = await call_tool_router_mcp_tool(session, name, arguments)
     result = response.model_dump(by_alias=True, exclude_none=True)

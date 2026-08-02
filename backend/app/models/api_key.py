@@ -5,17 +5,8 @@ from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKe
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.api_scopes import RUNTIME_DEPLOYMENT_KEY_SCOPES as RUNTIME_DEPLOYMENT_KEY_SCOPES
 from app.models.base import Base, TimestampMixin
-
-RUNTIME_DEPLOYMENT_KEY_SCOPES = (
-    "connectors:read",
-    "connectors:invoke",
-    "runtime-observations:write",
-    "sessions:read",
-    "sessions:write",
-    "skills:read",
-    "skills:write",
-)
 
 
 class ApiKey(Base, TimestampMixin):

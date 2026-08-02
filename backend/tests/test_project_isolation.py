@@ -8,10 +8,9 @@ rounds 2 + B + E so they don't regress silently:
   a project, but the existing-env branch returned without
   healing — daemons booted with "no default_project_id" fatals.
 
-- GET /api/memories filters memories to the bound env when
-  the caller is a scoped api_key (deploy key). Pre-fix any
-  caller with `memories:read` saw the user's full memory set,
-  ignoring env binding.
+- Memory remains account-shared across Agents. Environment and Session ids are
+  provenance, while the explicit `memories:read` scope is the authorization
+  boundary.
 
 - /api/search excludes vault hits for scoped api keys so a
   leaked deploy key (which only carries skills/sessions
@@ -160,12 +159,11 @@ async def test_register_environment_heals_missing_project(
         app.dependency_overrides.clear()
 
 
-async def test_memories_list_scoped_to_bound_env_for_deploy_keys(
+async def test_memories_list_is_account_shared_for_deploy_keys(
     db_session: AsyncSession,
     seed_user: User,
 ):
-    """A deploy key bound to env-A must NOT see memories whose
-    source session lives in env-B (or any manual memory)."""
+    """A deploy key with memories:read sees the user's durable account memory."""
     from tests.conftest import create_env_with_project
 
     env_a = await create_env_with_project(
@@ -206,11 +204,8 @@ async def test_memories_list_scoped_to_bound_env_for_deploy_keys(
     db_session.add_all([mem_a, mem_b, mem_manual])
     await db_session.commit()
 
-    # Deploy key bound to env-A with memories:read API permission (the
-    # filter applies regardless of which permissions the key carries
-    # because the cross-env leak would happen via memories:read,
-    # which deploy keys today don't have — but the fix protects
-    # any future permission shape).
+    # Environment binding records runtime identity; the explicit scope grants
+    # account-level Memory access so knowledge can move across Agents.
     deploy_key = ApiKey(
         user_id=seed_user.id,
         key_hash=uuid.uuid4().hex,
@@ -228,27 +223,18 @@ async def test_memories_list_scoped_to_bound_env_for_deploy_keys(
         assert resp.status_code == 200, resp.text
         body = resp.json()
         contents = {m["content"] for m in body["items"]}
-        # Only env-A's memory; env-B and manual filtered out.
-        assert contents == {"from env-a"}, contents
-        assert body["total"] == 1
+        assert contents == {"from env-a", "from env-b", "manual add"}, contents
+        assert body["total"] == 3
     finally:
         await client.aclose()
         app.dependency_overrides.clear()
 
 
-async def test_memories_list_pagination_correct_for_scoped_keys(
+async def test_memories_list_account_pagination_for_scoped_keys(
     db_session: AsyncSession,
     seed_user: User,
 ):
-    """The post-filter pagination bug: when most page-1 memories belong
-    to other envs, scoped key got `total=N_filtered_in_first_page`
-    even though more env-A memories existed on page 2+. Client never
-    fetched page 2 because it thought everything was on page 1.
-
-    Fix: scoped reads page directly against the env-filtered query.
-    Total reflects the env's actual memory count, not a leaky
-    page-1-after-filter slice.
-    """
+    """Account-shared Memory pages and totals are stable across provenance."""
     from datetime import UTC, datetime, timedelta
 
     from tests.conftest import create_env_with_project
@@ -330,27 +316,21 @@ async def test_memories_list_pagination_correct_for_scoped_keys(
 
     client = await _client_for(db_session, seed_user, deploy_key)
     try:
-        # page 1: 2 of the 5 env-A memories.
+        # Account view contains all ten interleaved memories.
         page1 = await client.get("/v1/memories", params={"page": 1, "page_size": 2})
         body1 = page1.json()
-        assert body1["total"] == 5, f"total must reflect env-A's memory count, got {body1['total']}"
+        assert body1["total"] == 10
         page1_contents = {m["content"] for m in body1["items"]}
-        for c in page1_contents:
-            assert c.startswith("a-mem-"), f"page 1 leaked non-env-A memory: {c}"
         assert len(page1_contents) == 2
 
-        # page 3: tail of the env-A set.
-        page3 = await client.get("/v1/memories", params={"page": 3, "page_size": 2})
-        body3 = page3.json()
-        page3_contents = {m["content"] for m in body3["items"]}
-        for c in page3_contents:
-            assert c.startswith("a-mem-")
-        # 5 total, page_size=2 → page 3 has 1 item (5 - 2*2).
-        assert len(page3_contents) == 1
-        assert body3["total"] == 5
+        page5 = await client.get("/v1/memories", params={"page": 5, "page_size": 2})
+        body5 = page5.json()
+        page5_contents = {m["content"] for m in body5["items"]}
+        assert len(page5_contents) == 2
+        assert body5["total"] == 10
 
         # No overlap between pages.
-        assert page1_contents.isdisjoint(page3_contents)
+        assert page1_contents.isdisjoint(page5_contents)
     finally:
         await client.aclose()
         app.dependency_overrides.clear()
@@ -538,17 +518,11 @@ async def test_bound_deploy_key_still_pinned_to_its_env(
         app.dependency_overrides.clear()
 
 
-async def test_search_excludes_cross_env_memories_for_scoped_keys(
+async def test_search_includes_account_memories_for_scoped_keys(
     db_session: AsyncSession,
     seed_user: User,
 ):
-    """Global search memory hits must respect the same env-project
-    filter `/api/memories` applies. Without it, an env-A scoped
-    key could read env-B's memory contents (and manual memories
-    that have no env attribution at all) via the search palette
-    — exact same leak the direct route was hardened against, just
-    routed through a different endpoint.
-    """
+    """Global search follows the account-level memories:read grant."""
     from datetime import UTC, datetime
 
     from tests.conftest import create_env_with_project
@@ -583,7 +557,7 @@ async def test_search_excludes_cross_env_memories_for_scoped_keys(
     db_session.add_all([sess_a, sess_b])
     await db_session.flush()
 
-    needle = "kale-juice-needle-x7"
+    needle = "kalejuiceneedlex7"
     db_session.add_all(
         [
             Memory(
@@ -620,13 +594,11 @@ async def test_search_excludes_cross_env_memories_for_scoped_keys(
         resp = await client.get("/v1/search", params={"q": needle})
         assert resp.status_code == 200, resp.text
         memory_titles = {
-            hit["title"] for hit in resp.json().get("hits", []) if hit.get("type") == "memory"
+            hit["title"] for hit in resp.json().get("results", []) if hit.get("type") == "memory"
         }
-        # Only the env-A memory should leak through. Env-B and
-        # the manual memory must be filtered.
-        for t in memory_titles:
-            assert "env-b" not in t, f"env-b memory leaked via search: {t}"
-            assert "manual" not in t, f"manual memory leaked via search: {t}"
+        assert any("env-a" in title for title in memory_titles)
+        assert any("env-b" in title for title in memory_titles)
+        assert any("manual" in title for title in memory_titles)
     finally:
         await client.aclose()
         app.dependency_overrides.clear()

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,6 +18,14 @@ class Memory(Base, TimestampMixin):
     category: Mapped[str] = mapped_column(String(50), server_default="fact")
     source: Mapped[str] = mapped_column(String(50), server_default="manual")
     source_session_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # First-class provenance for writes made by an environment-bound principal
+    # without an active Session. This is deliberately server-populated so
+    # callers cannot forge another environment as the source.
+    source_environment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agent_environments.id", ondelete="SET NULL"),
+        index=True,
+    )
     tags: Mapped[list[str] | None] = mapped_column(ARRAY(String))
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
     access_count: Mapped[int] = mapped_column(Integer, server_default="0")

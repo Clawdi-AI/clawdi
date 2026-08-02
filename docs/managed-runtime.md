@@ -511,18 +511,18 @@ cannot use the fixture schema. Generic
 support; exact Hosted updates do not call `npm view` and can move to either a
 higher or lower exact version.
 
-Hosted bundled Skills have separate version authority. The trusted CLI catalog
-maps `(id, version)` to an immutable directory and SHA-256 digest;
-`clawdiCli.packageSpec` may locate installed CLI assets but never selects a
-Skill version. The current `clawdi` entry is version `1` at
+The trusted CLI catalog maps each Hosted bundled Skill entry to a package-local
+directory and SHA-256 digest. The private manifest keeps the existing `clawdi`
+version `1` compatibility label; installing a newer exact CLI package refreshes
+the managed Skill bytes and catalog digest directly, without a separate Skill
+rollout or public version choice. The asset remains at
 `skills/hosted-versions/1/clawdi/SKILL.md`, so the Skill file's direct parent
-still matches its frontmatter name. This entry is private platform desired
-state, not a public deployment field or a user Skill. Source paths, variants,
-content, digests, and package specs never cross the runtime wire. Unknown ids
-or versions, unmanaged targets, source digest mismatches, and unsupported
-source file types fail closed. An exact managed marker plus an actual
-target-content digest match is a filesystem no-op; version changes, drift, and
-legacy ownership markers use staged replacement.
+matches its frontmatter name. Source paths, content, digests, and package specs
+never cross the runtime wire. Unknown ids or versions, unmanaged targets,
+source digest mismatches, and unsupported source file types fail closed. An
+exact managed marker plus an actual target-content digest match is a filesystem
+no-op; package refreshes, drift, and legacy ownership markers use staged
+replacement.
 
 Managed-bundle integrity does not reuse `computeSkillFolderHash`. That function
 is an established client/server sync protocol over the safe dereferenced
