@@ -272,15 +272,27 @@ it.each([
 
 it("scopes snapshot targets to the desired and receipt-owned aliases only", () => {
 	const fixture = createArtifactFixture("openclaw");
-	expect(managedBaileysCompatSnapshotRuntimes({ desiredRuntime: null, paths: fixture })).toEqual(
-		[],
-	);
-	reconcile(fixture);
-	expect(managedBaileysCompatSnapshotRuntimes({ desiredRuntime: null, paths: fixture })).toEqual([
-		"openclaw",
-	]);
 	expect(
-		managedBaileysCompatSnapshotRuntimes({ desiredRuntime: "hermes", paths: fixture }),
+		managedBaileysCompatSnapshotRuntimes({
+			desiredRuntime: null,
+			home: fixture.home,
+			paths: fixture,
+		}),
+	).toEqual([]);
+	reconcile(fixture);
+	expect(
+		managedBaileysCompatSnapshotRuntimes({
+			desiredRuntime: null,
+			home: fixture.home,
+			paths: fixture,
+		}),
+	).toEqual(["openclaw"]);
+	expect(
+		managedBaileysCompatSnapshotRuntimes({
+			desiredRuntime: "hermes",
+			home: fixture.home,
+			paths: fixture,
+		}),
 	).toEqual(["hermes", "openclaw"]);
 
 	const paths = {
@@ -322,8 +334,18 @@ it("scopes snapshot targets to the desired and receipt-owned aliases only", () =
 	).toBe(false);
 
 	writeJson(managedBaileysCompatReceiptPath(fixture), { schemaVersion: "unknown" });
-	expect(managedBaileysCompatSnapshotRuntimes({ desiredRuntime: null, paths: fixture })).toEqual(
-		[],
+	expect(() =>
+		managedBaileysCompatSnapshotRuntimes({
+			desiredRuntime: null,
+			home: fixture.home,
+			paths: fixture,
+		}),
+	).toThrow("receipt is invalid");
+	expect(() => runtimeUserMutationTargets(manifest, paths, fixture.home, new Map())).toThrow(
+		"receipt is invalid",
+	);
+	expect(readFileSync(managedBaileysCompatReceiptPath(fixture), "utf8")).toBe(
+		'{\n  "schemaVersion": "unknown"\n}\n',
 	);
 });
 
@@ -543,6 +565,71 @@ it("refuses a malformed current receipt without changing owned after-hunks", () 
 		expect(readFileSync(path)).toEqual(unchanged[index]);
 	});
 	expect(existsSync(managedBaileysCompatReceiptPath(fixture))).toBe(true);
+});
+
+it("validates a malformed receipt before missing Hermes dependencies can invoke npm", () => {
+	const fixture = createArtifactFixture("hermes");
+	expect(reconcile(fixture).status).toBe("applied");
+	const bridgeRoot = join(fixture.appRoot, "scripts", "whatsapp-bridge");
+	const nodeModules = join(bridgeRoot, "node_modules");
+	const npmMarker = installFailingNpmSentinel(fixture);
+	const receiptPath = managedBaileysCompatReceiptPath(fixture);
+	const receipt = readReceipt(fixture);
+	const firstTarget = receipt.artifact.targets[0];
+	if (!firstTarget) throw new Error("missing receipt target fixture");
+	firstTarget.ownedHunkIds = ["unknown-hunk"];
+	writeJson(receiptPath, receipt);
+	const receiptBefore = readFileSync(receiptPath);
+	const packageBefore = readFileSync(join(bridgeRoot, "package.json"));
+	const lockBefore = readFileSync(join(bridgeRoot, "package-lock.json"));
+	rmSync(nodeModules, { recursive: true });
+
+	expect(() => reconcile(fixture)).toThrow("receipt is invalid");
+	expect(existsSync(npmMarker)).toBe(false);
+	expect(existsSync(nodeModules)).toBe(false);
+	expect(readFileSync(receiptPath)).toEqual(receiptBefore);
+	expect(readFileSync(join(bridgeRoot, "package.json"))).toEqual(packageBefore);
+	expect(readFileSync(join(bridgeRoot, "package-lock.json"))).toEqual(lockBefore);
+});
+
+it("validates a malformed old-runtime receipt before a Hermes runtime switch", () => {
+	const openclaw = createArtifactFixture("openclaw");
+	expect(reconcile(openclaw).status).toBe("applied");
+	const openclawBefore = artifactTargets(openclaw).map(({ path }) => readFileSync(path));
+	const receiptPath = managedBaileysCompatReceiptPath(openclaw);
+	const receipt = readReceipt(openclaw);
+	writeJson(receiptPath, { ...receipt, unexpected: true });
+	const receiptBefore = readFileSync(receiptPath);
+
+	const hermesAppRoot = join(openclaw.home, ".hermes", "hermes-agent");
+	installArtifactAlias(openclaw.home, "hermes");
+	const hermes: ArtifactFixture = {
+		runtime: "hermes",
+		root: openclaw.root,
+		home: openclaw.home,
+		appRoot: hermesAppRoot,
+		baileysRoot: join(
+			hermesAppRoot,
+			"scripts",
+			"whatsapp-bridge",
+			"node_modules",
+			"@whiskeysockets",
+			"baileys",
+		),
+		installInventory: openclaw.installInventory,
+	};
+	const bridgeRoot = join(hermesAppRoot, "scripts", "whatsapp-bridge");
+	const nodeModules = join(bridgeRoot, "node_modules");
+	const npmMarker = installFailingNpmSentinel(hermes);
+	rmSync(nodeModules, { recursive: true });
+
+	expect(() => reconcile(hermes)).toThrow("receipt is invalid");
+	expect(existsSync(npmMarker)).toBe(false);
+	expect(existsSync(nodeModules)).toBe(false);
+	expect(readFileSync(receiptPath)).toEqual(receiptBefore);
+	artifactTargets(openclaw).forEach(({ path }, index) => {
+		expect(readFileSync(path)).toEqual(openclawBefore[index]);
+	});
 });
 
 it("rejects the wrong alias package name and symlinked package identity", () => {
@@ -839,6 +926,21 @@ function writeBaileysIdentity(fixture: ArtifactFixture, version: string): void {
 		name: fixture.runtime === "openclaw" ? "baileys" : "@whiskeysockets/baileys",
 		version,
 	});
+}
+
+function installFailingNpmSentinel(fixture: ArtifactFixture): string {
+	const managedNpm = join(fixture.home, ".local", "bin", "npm");
+	const marker = join(fixture.root, "npm-spawned");
+	mkdirSync(dirname(managedNpm), { recursive: true });
+	writeFileSync(
+		managedNpm,
+		`#!/usr/bin/env node
+require("node:fs").writeFileSync(${JSON.stringify(marker)}, process.argv.slice(2).join(" "));
+process.exit(97);
+`,
+	);
+	chmodSync(managedNpm, 0o755);
+	return marker;
 }
 
 function artifactTargets(fixture: ArtifactFixture) {

@@ -236,17 +236,14 @@ export function managedBaileysCompatReceiptPath(
 
 export function managedBaileysCompatSnapshotRuntimes(input: {
 	desiredRuntime: ManagedBaileysRuntime | null;
+	home: string;
 	paths: Pick<RuntimePaths, "installInventory">;
 }): ManagedBaileysRuntime[] {
+	const receipt = readReceipt(managedBaileysCompatReceiptPath(input.paths));
+	if (receipt) assertReceiptLayout(receipt, input.home);
 	const runtimes = new Set<ManagedBaileysRuntime>();
 	if (input.desiredRuntime) runtimes.add(input.desiredRuntime);
-	try {
-		const receipt = readReceipt(managedBaileysCompatReceiptPath(input.paths));
-		if (receipt) runtimes.add(receipt.artifact.runtime);
-	} catch {
-		// Snapshot selection is not receipt authority. Reconcile validates the
-		// receipt and fails the managed operation before touching an artifact.
-	}
+	if (receipt) runtimes.add(receipt.artifact.runtime);
 	return [...runtimes];
 }
 
@@ -273,6 +270,8 @@ export function reconcileManagedBaileysCompatibility(input: {
 	paths: Pick<RuntimePaths, "installInventory">;
 }): ManagedBaileysReconcileResult {
 	const receiptPath = managedBaileysCompatReceiptPath(input.paths);
+	let existingReceipt = readReceipt(receiptPath);
+	if (existingReceipt) assertReceiptLayout(existingReceipt, input.home);
 	if (!input.desiredRuntime) return rollbackManagedBaileysCompatibility(receiptPath, input.home);
 	if (!input.appRoot) {
 		throw new Error(`managed WhatsApp ${input.desiredRuntime} artifact root is unavailable`);
@@ -290,7 +289,6 @@ export function reconcileManagedBaileysCompatibility(input: {
 	const targetStates = artifact.targets.map((target) => classifyTarget(artifact, target));
 	assertRecognizedTargets(artifact, targetStates);
 
-	let existingReceipt = readReceipt(receiptPath);
 	if (existingReceipt && !receiptLayoutMatches(existingReceipt.artifact, artifact)) {
 		const rollback = rollbackManagedBaileysCompatibility(receiptPath, input.home);
 		if (rollback.status === "rollback-refused") {
@@ -874,6 +872,15 @@ function receiptLayoutMatches(
 		const knownHunks = new Set(expected.hunks.map((hunk) => hunk.id));
 		return target.ownedHunkIds.every((id) => knownHunks.has(id));
 	});
+}
+
+function assertReceiptLayout(receipt: ManagedBaileysPatchReceipt, home: string): void {
+	const artifact = resolveInstalledArtifact(receipt.artifact.runtime, home);
+	if (!receiptLayoutMatches(receipt.artifact, artifact)) {
+		throw new Error(
+			"managed WhatsApp compatibility receipt is invalid: artifact ownership layout is unknown",
+		);
+	}
 }
 
 function readReceipt(path: string): ManagedBaileysPatchReceipt | null {

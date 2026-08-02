@@ -269,7 +269,10 @@ The receipt is
    The outer snapshot includes only the desired alias and, during cleanup or a
    runtime switch, the distinct alias named by a valid receipt. With neither a
    managed Link nor a receipt, it includes no Baileys target and performs no
-   Baileys package inspection.
+   Baileys package inspection. An existing malformed or unknown receipt aborts
+   snapshot planning and formal reconcile before Hermes dependency recovery,
+   package resolution, artifact inspection, or mutation; it is never ignored
+   to infer a narrower ownership boundary.
    Replacements are staged, every target and package identity hash is rechecked
    for TOCTOU, then each file is renamed and its directory fsynced. Each rename
    is atomic, but the three-file change is recoverable convergence rather than
@@ -282,8 +285,8 @@ The receipt is
 The receipt contains only its schema, patch revision, audited Baileys package
 root, runtime/alias, observed compatible version, compatible major, relative
 target paths, actual observed before/after file SHA-256 values, and owned hunk
-IDs. The 986-line reconciler remains larger than the 35 net added upstream
-lines because it embeds the exact patch bytes and retains two package layouts,
+IDs. The reconciler remains larger than the 35 net added upstream lines because
+it embeds the exact patch bytes and retains two package layouts,
 strict SemVer/name and receipt validation, unique hunk classification,
 per-hunk ownership, symlink checks, TOCTOU rechecks, durable staging, crash and
 version-transition recovery, rollback preflight, Hermes reinstall handling,
