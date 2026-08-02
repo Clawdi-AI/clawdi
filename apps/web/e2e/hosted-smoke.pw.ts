@@ -51,6 +51,59 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 	expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
 }
 
+async function expectAgentOverviewTypography(page: Page) {
+	const main = page.locator("main");
+	const titleMetrics = await main
+		.locator(
+			'h2[id$="recent-sessions"], [data-overview-status] h2, [data-agent-overview] section > div > h2, [data-overview-module] h3',
+		)
+		.evaluateAll((elements) =>
+			elements.map((element) => {
+				const style = getComputedStyle(element);
+				return { fontSize: style.fontSize, fontWeight: style.fontWeight };
+			}),
+		);
+	expect(titleMetrics.length).toBeGreaterThan(3);
+	expect(new Set(titleMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
+	expect(new Set(titleMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["600"]));
+
+	const primaryMetrics = await main
+		.locator("[data-overview-primary-value]")
+		.evaluateAll((elements) =>
+			elements.map((element) => {
+				const style = getComputedStyle(element);
+				return { fontSize: style.fontSize, fontWeight: style.fontWeight };
+			}),
+		);
+	expect(primaryMetrics.length).toBeGreaterThan(3);
+	expect(new Set(primaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["16px"]));
+	expect(new Set(primaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["600"]));
+
+	const detailMetrics = await main.getByTestId("overview-summary-list").evaluateAll((elements) =>
+		elements.map((element) => {
+			const style = getComputedStyle(element);
+			return { fontSize: style.fontSize, fontWeight: style.fontWeight };
+		}),
+	);
+	expect(detailMetrics.length).toBeGreaterThan(0);
+	expect(new Set(detailMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
+	expect(new Set(detailMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["400"]));
+
+	const metadataMetrics = await main
+		.locator(
+			'[data-testid="overview-session-meta"], [data-overview-status] dl, [data-testid="overview-compute-summary"] ul',
+		)
+		.evaluateAll((elements) =>
+			elements.map((element) => {
+				const style = getComputedStyle(element);
+				return { fontSize: style.fontSize, color: style.color };
+			}),
+		);
+	expect(metadataMetrics.length).toBeGreaterThan(2);
+	expect(new Set(metadataMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["12px"]));
+	expect(new Set(metadataMetrics.map(({ color }) => color)).size).toBe(1);
+}
+
 // HOSTED (Clawdi Cloud) smoke against the vite dev server with dev-auth-bypass
 // (NO Clerk key needed) + deploy-api enabled so /deploy renders. Exercises the
 // deploy wizard's Base UI Select asserting ZERO browser console/page errors.
@@ -68,6 +121,47 @@ function hostedUser(canUseV2 = true, canUseV1 = false) {
 	};
 }
 const emptyPage = { items: [], total: 0, page: 1, page_size: 25 };
+
+function hostedOverviewSessionsPage(itemCount: number) {
+	const summaries = [
+		"Prepare launch brief",
+		"Research customer feedback before the product planning review",
+		"Investigate a long-running customer issue across several projects and write a detailed plan for the next release review with every regional owner and support lead",
+		"Review risks",
+		"Fifth hosted session",
+	];
+	return {
+		items: Array.from({ length: itemCount }, (_, index) => ({
+			id: `hosted-overview-session-${index + 1}`,
+			local_session_id: `hosted-local-${index + 1}`,
+			project_path: "/hosted",
+			agent_name: "rail-cloud",
+			agent_display_name: "Rail Cloud",
+			agent_default_name: "Rail Cloud",
+			agent_type: "hermes",
+			machine_name: "rail-cloud",
+			started_at: `2026-07-15T0${index}:00:00Z`,
+			ended_at: null,
+			updated_at: `2026-07-15T0${index}:30:00Z`,
+			last_activity_at: `2026-07-15T0${index}:30:00Z`,
+			duration_seconds: 1800,
+			message_count: index + 3,
+			input_tokens: (index + 1) * 200,
+			output_tokens: (index + 1) * 100,
+			cache_read_tokens: 0,
+			model: "gpt-5",
+			models_used: ["gpt-5"],
+			summary: summaries[index],
+			tags: [],
+			status: "active",
+			content_hash: `hosted-hash-${index}`,
+		})),
+		total: itemCount,
+		page: 1,
+		page_size: 3,
+	};
+}
+
 const hostedMemories = {
 	items: [
 		{
@@ -2697,42 +2791,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		deployments: [railHostedDeployment],
 		cloudAgents: [railHostedCloudAgent],
 		agentResourceFixtures: true,
-		sessionsPage: {
-			items: Array.from({ length: 5 }, (_, index) => ({
-				id: `hosted-overview-session-${index + 1}`,
-				local_session_id: `hosted-local-${index + 1}`,
-				project_path: "/hosted",
-				agent_name: "rail-cloud",
-				agent_display_name: "Rail Cloud",
-				agent_default_name: "Rail Cloud",
-				agent_type: "hermes",
-				machine_name: "rail-cloud",
-				started_at: `2026-07-15T0${index}:00:00Z`,
-				ended_at: null,
-				updated_at: `2026-07-15T0${index}:30:00Z`,
-				last_activity_at: `2026-07-15T0${index}:30:00Z`,
-				duration_seconds: 1800,
-				message_count: index + 3,
-				input_tokens: (index + 1) * 200,
-				output_tokens: (index + 1) * 100,
-				cache_read_tokens: 0,
-				model: "gpt-5",
-				models_used: ["gpt-5"],
-				summary: [
-					"Prepare launch brief",
-					"Research customer feedback before the product planning review",
-					"Investigate a long-running customer issue across several projects and write a detailed plan for the next release review with every regional owner and support lead",
-					"Review risks",
-					"Fifth hosted session",
-				][index],
-				tags: [],
-				status: "active",
-				content_hash: `hosted-hash-${index}`,
-			})),
-			total: 5,
-			page: 1,
-			page_size: 3,
-		},
+		sessionsPage: hostedOverviewSessionsPage(5),
 		connectorConnections: [
 			{ id: "hosted-conn-github", app_name: "github", status: "ACTIVE" },
 			{ id: "hosted-conn-slack", app_name: "slack", status: "ACTIVE" },
@@ -2875,6 +2934,13 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const compute = page.locator('[data-overview-status="compute"]');
 	await expect(compute).toContainText("Running");
 	await expect(compute).toContainText("Basic plan");
+	const computePlanTypography = await compute
+		.locator("[data-overview-compute-plan]")
+		.evaluate((element) => {
+			const style = getComputedStyle(element);
+			return { fontSize: style.fontSize, fontWeight: style.fontWeight };
+		});
+	expect(computePlanTypography).toEqual({ fontSize: "14px", fontWeight: "600" });
 	await expect(compute.getByTestId("overview-compute-summary")).not.toHaveClass(
 		/rounded|border|bg-/,
 	);
@@ -2955,6 +3021,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
 	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
 	await expectOverviewResourceGeometry(toolsGrid, [2]);
+	await expectAgentOverviewTypography(page);
 	expect(
 		Math.abs(
 			(resourceGeometry[0]?.width ?? 0) -
@@ -2986,6 +3053,83 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	).toBeLessThanOrEqual(2);
 	await page.setViewportSize({ width: 1280, height: 1600 });
 	await page.screenshot({ path: testInfo.outputPath("hosted-agent-overview.png"), fullPage: true });
+	await page.locator("html").evaluate((element) => element.classList.add("dark"));
+	await expect(page.locator("html")).toHaveClass(/dark/);
+	await page.waitForTimeout(250);
+	await page.screenshot({
+		path: testInfo.outputPath("hosted-agent-overview-dark.png"),
+		fullPage: true,
+	});
+	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+});
+
+test("hosted overview naturally sizes one, two, and three real sessions", async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 900 });
+	const options = {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		sessionsPage: hostedOverviewSessionsPage(1),
+	};
+	await stubHostedApi(page, options);
+	const overviewUrl = `/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`;
+	const measurements: Array<{
+		count: number;
+		sessionsHeight: number;
+		computeHeight: number;
+	}> = [];
+
+	for (const count of [1, 2, 3]) {
+		options.sessionsPage = hostedOverviewSessionsPage(count);
+		if (count === 1) await page.goto(overviewUrl);
+		else await page.reload();
+
+		const recentSessions = page.getByRole("region", { name: "Recent sessions" });
+		const sessionGrid = recentSessions.getByTestId("overview-session-grid");
+		const compute = page.locator('[data-overview-status="compute"]');
+		await expect(recentSessions.locator("article")).toHaveCount(count);
+		await expect(compute).toContainText("Running");
+		const [sessionsBox, sessionGridBox, computeBox, sessionsMinHeight, computeMinHeight] =
+			await Promise.all([
+				recentSessions.boundingBox(),
+				sessionGrid.boundingBox(),
+				compute.boundingBox(),
+				recentSessions.evaluate((element) => getComputedStyle(element).minHeight),
+				compute.evaluate((element) => getComputedStyle(element).minHeight),
+			]);
+		expect(sessionsBox).not.toBeNull();
+		expect(sessionGridBox).not.toBeNull();
+		expect(computeBox).not.toBeNull();
+		expect(sessionsMinHeight).toBe("auto");
+		expect(computeMinHeight).toBe("0px");
+		expect(
+			Math.abs((sessionsBox?.height ?? 0) - (sessionGridBox?.height ?? 0)),
+		).toBeLessThanOrEqual(1);
+		expect(Math.abs((computeBox?.y ?? 0) - (sessionsBox?.y ?? 0))).toBeLessThanOrEqual(2);
+		if (count === 3) {
+			expect(
+				Math.abs(
+					(computeBox?.y ?? 0) +
+						(computeBox?.height ?? 0) -
+						((sessionsBox?.y ?? 0) + (sessionsBox?.height ?? 0)),
+				),
+			).toBeLessThanOrEqual(2);
+		}
+		measurements.push({
+			count,
+			sessionsHeight: sessionsBox?.height ?? 0,
+			computeHeight: computeBox?.height ?? 0,
+		});
+	}
+
+	expect(measurements.map(({ count }) => count)).toEqual([1, 2, 3]);
+	expect(measurements[1]?.sessionsHeight ?? 0).toBeGreaterThan(
+		(measurements[0]?.sessionsHeight ?? 0) + 60,
+	);
+	expect(measurements[2]?.sessionsHeight ?? 0).toBeGreaterThan(
+		(measurements[1]?.sessionsHeight ?? 0) + 60,
+	);
+	expect(measurements[0]?.computeHeight ?? 0).toBeLessThan(measurements[2]?.sessionsHeight ?? 0);
+	expect(measurements[1]?.computeHeight ?? 0).toBeLessThan(measurements[2]?.sessionsHeight ?? 0);
 });
 
 test("hosted overview shows a custom provider label and gates provider catalogs", async ({

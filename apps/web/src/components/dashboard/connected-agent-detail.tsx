@@ -210,7 +210,7 @@ export function ConnectedAgentDetail({
 									</div>
 									<section
 										aria-labelledby="connected-recent-sessions"
-										className="min-h-40 min-w-0 @3xl/main:min-h-52"
+										className="min-w-0 self-start"
 									>
 										{blockingOverviewSessionsError ? (
 											<OverviewModuleError
@@ -237,7 +237,10 @@ export function ConnectedAgentDetail({
 										tint="bg-identity-7-bg text-identity-7-fg"
 									>
 										<div className="flex h-full flex-col justify-between gap-4">
-											<p className="inline-flex items-center gap-2 text-lg font-semibold">
+											<p
+												data-overview-primary-value
+												className="inline-flex items-center gap-2 text-base font-semibold"
+											>
 												<StatusDot status={syncTone} /> {syncStatus.label}
 											</p>
 											<OverviewMetadata

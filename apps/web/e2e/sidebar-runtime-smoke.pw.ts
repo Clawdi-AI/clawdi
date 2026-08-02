@@ -35,6 +35,57 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 	expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
 }
 
+async function expectAgentOverviewTypography(page: Page) {
+	const main = page.locator("main");
+	const titleMetrics = await main
+		.locator(
+			'h2[id$="recent-sessions"], [data-overview-status] h2, [data-agent-overview] section > div > h2, [data-overview-module] h3',
+		)
+		.evaluateAll((elements) =>
+			elements.map((element) => {
+				const style = getComputedStyle(element);
+				return { fontSize: style.fontSize, fontWeight: style.fontWeight };
+			}),
+		);
+	expect(titleMetrics.length).toBeGreaterThan(3);
+	expect(new Set(titleMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
+	expect(new Set(titleMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["600"]));
+
+	const primaryMetrics = await main
+		.locator("[data-overview-primary-value]")
+		.evaluateAll((elements) =>
+			elements.map((element) => {
+				const style = getComputedStyle(element);
+				return { fontSize: style.fontSize, fontWeight: style.fontWeight };
+			}),
+		);
+	expect(primaryMetrics.length).toBeGreaterThan(3);
+	expect(new Set(primaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["16px"]));
+	expect(new Set(primaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["600"]));
+
+	const detailMetrics = await main.getByTestId("overview-summary-list").evaluateAll((elements) =>
+		elements.map((element) => {
+			const style = getComputedStyle(element);
+			return { fontSize: style.fontSize, fontWeight: style.fontWeight };
+		}),
+	);
+	expect(detailMetrics.length).toBeGreaterThan(0);
+	expect(new Set(detailMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
+	expect(new Set(detailMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["400"]));
+
+	const metadataMetrics = await main
+		.locator('[data-testid="overview-session-meta"], [data-overview-status] dl')
+		.evaluateAll((elements) =>
+			elements.map((element) => {
+				const style = getComputedStyle(element);
+				return { fontSize: style.fontSize, color: style.color };
+			}),
+		);
+	expect(metadataMetrics.length).toBeGreaterThan(2);
+	expect(new Set(metadataMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["12px"]));
+	expect(new Set(metadataMetrics.map(({ color }) => color)).size).toBe(1);
+}
+
 const now = new Date("2026-07-04T12:00:00.000Z");
 
 const agents = [
@@ -697,6 +748,7 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
 	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
 	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
+	await expectAgentOverviewTypography(page);
 	await page.setViewportSize({ width: 1024, height: 1200 });
 	await expectOverviewResourceGeometry(resourceGrid, [2, 2, 1]);
 	await page.setViewportSize({ width: 768, height: 1200 });

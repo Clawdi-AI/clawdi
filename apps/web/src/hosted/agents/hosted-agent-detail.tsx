@@ -1062,7 +1062,9 @@ export function OverviewComputeSummary({
 	];
 	return (
 		<div className="space-y-1.5" data-testid="overview-compute-summary">
-			<p className="text-sm font-semibold">{plan} plan</p>
+			<p data-overview-compute-plan className="text-sm font-semibold">
+				{plan} plan
+			</p>
 			<ul
 				aria-label={`Configuration: ${configuration.join(", ")}`}
 				className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
@@ -1330,10 +1332,7 @@ function OverviewTab({
 							<ArrowRight />
 						</Button>
 					</div>
-					<section
-						aria-labelledby="hosted-recent-sessions"
-						className="min-h-40 min-w-0 @3xl/main:min-h-52"
-					>
+					<section aria-labelledby="hosted-recent-sessions" className="min-w-0 self-start">
 						{projectionUnavailable ? (
 							<OverviewProjectionUnavailableState
 								canRetry={canRetryProjection}
@@ -1362,7 +1361,8 @@ function OverviewTab({
 					>
 						<div className="flex h-full flex-col gap-4">
 							<p
-								className="inline-flex items-center gap-2 text-lg font-semibold"
+								data-overview-primary-value
+								className="inline-flex items-center gap-2 text-base font-semibold"
 								title={`Agent status: ${deploymentStatusLabel(deploymentStatus)}`}
 							>
 								<StatusDot status={deploymentStatusTone(deploymentStatus)} />
@@ -1481,7 +1481,7 @@ function OverviewTab({
 							<OverviewModuleError label="Channels" onRetry={() => void channelLinks.refetch()} />
 						) : (
 							<div className="space-y-3">
-								<p className="text-lg font-semibold">
+								<p data-overview-primary-value className="text-base font-semibold">
 									{(channelLinks.data?.length ?? 0) > 0
 										? `${channelLinks.data?.length} connected ${channelLinks.data?.length === 1 ? "channel" : "channels"}`
 										: "No channels connected"}
