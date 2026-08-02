@@ -3,14 +3,14 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
 	OverviewMetadata,
-	OverviewResourceSummary,
+	OverviewResourceDetails,
 } from "@/components/dashboard/agent-overview-capabilities";
+import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 
-describe("overview resource summary", () => {
+describe("overview resource details", () => {
 	test("renders up to three resource names with the existing Badge primitive", () => {
 		const markup = renderToStaticMarkup(
-			createElement(OverviewResourceSummary, {
-				primary: "4 projects",
+			createElement(OverviewResourceDetails, {
 				items: [
 					"Hosted Agent Project with a deliberately long accessible name",
 					"Shared Vault",
@@ -21,8 +21,7 @@ describe("overview resource summary", () => {
 		);
 
 		expect(markup).toContain('data-testid="overview-resource-summary"');
-		expect(markup).toContain("text-sm font-medium text-muted-foreground");
-		expect(markup).not.toContain("text-base font-semibold");
+		expect(markup).not.toContain("text-sm font-medium text-muted-foreground");
 		expect(markup).toContain('data-testid="overview-resource-badges"');
 		expect(markup).toContain('data-slot="badge"');
 		for (const item of [
@@ -41,13 +40,30 @@ describe("overview resource summary", () => {
 		expect(markup).toContain("truncate");
 	});
 
-	test("does not duplicate an empty primary value with an empty badge list", () => {
-		const empty = renderToStaticMarkup(
-			createElement(OverviewResourceSummary, { primary: "No projects added", items: [] }),
+	test("does not render a badge list for empty details", () => {
+		const empty = renderToStaticMarkup(createElement(OverviewResourceDetails, { items: [] }));
+
+		expect(empty).not.toContain('data-testid="overview-resource-badges"');
+	});
+});
+
+describe("overview card typography", () => {
+	test("uses the existing small Card title and description hierarchy", () => {
+		const markup = renderToStaticMarkup(
+			createElement(
+				Card,
+				{ size: "sm" },
+				createElement(CardTitle, null, "Projects"),
+				createElement(CardDescription, null, "3 projects"),
+			),
 		);
 
-		expect(empty.match(/No projects added/g)).toHaveLength(1);
-		expect(empty).not.toContain('data-testid="overview-resource-badges"');
+		expect(markup).toContain('data-size="sm"');
+		expect(markup).toContain('data-slot="card-title"');
+		expect(markup).toContain("group-data-[size=sm]/card:text-sm");
+		expect(markup).toContain('data-slot="card-description"');
+		expect(markup).toContain("text-sm text-muted-foreground");
+		expect(markup).not.toContain("font-semibold");
 	});
 });
 

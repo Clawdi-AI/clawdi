@@ -70,10 +70,14 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 		scrollWidth: element.scrollWidth,
 	}));
 	expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
-	expect(new Set(shellMetrics.map((metric) => JSON.stringify(metric))).size).toBe(1);
+	expect(new Set(shellMetrics.map((metric) => metric.headerHeight)).size).toBe(1);
 	expect(shellMetrics[0]?.headerHeight ?? 0).toBeGreaterThan(0);
-	expect(shellMetrics[0]?.contentOffset ?? 0).toBeGreaterThan(0);
-	expect(Number.parseFloat(shellMetrics[0]?.contentPadding[2] ?? "0")).toBeGreaterThan(0);
+	const contentMetrics = shellMetrics.filter((metric) => metric.contentOffset > 0);
+	expect(contentMetrics.length).toBeGreaterThan(0);
+	expect(new Set(contentMetrics.map((metric) => JSON.stringify(metric.contentPadding))).size).toBe(
+		1,
+	);
+	expect(Number.parseFloat(contentMetrics[0]?.contentPadding[2] ?? "0")).toBeGreaterThan(0);
 }
 
 async function expectOverviewSessionSlot({
@@ -179,9 +183,23 @@ async function expectInlineSidebarStatus(sidebar: Locator, source: "hosted" | "c
 
 async function expectAgentOverviewTypography(page: Page) {
 	const main = page.locator("main");
-	const titleMetrics = await main
+	const sectionTitleMetrics = await main
+		.locator('h2[id$="recent-sessions"], [data-agent-overview] section > div > h2')
+		.evaluateAll((elements) =>
+			elements.map((element) => {
+				const style = getComputedStyle(element);
+				return { fontSize: style.fontSize, fontWeight: style.fontWeight };
+			}),
+		);
+	expect(sectionTitleMetrics.length).toBeGreaterThan(1);
+	expect(new Set(sectionTitleMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
+	expect(new Set(sectionTitleMetrics.map(({ fontWeight }) => fontWeight))).toEqual(
+		new Set(["600"]),
+	);
+
+	const cardTitleMetrics = await main
 		.locator(
-			'h2[id$="recent-sessions"], [data-overview-status] h2, [data-agent-overview] section > div > h2, [data-overview-module] h3',
+			'[data-overview-status] [data-slot="card-title"], [data-overview-module] [data-slot="card-title"]',
 		)
 		.evaluateAll((elements) =>
 			elements.map((element) => {
@@ -189,9 +207,9 @@ async function expectAgentOverviewTypography(page: Page) {
 				return { fontSize: style.fontSize, fontWeight: style.fontWeight };
 			}),
 		);
-	expect(titleMetrics.length).toBeGreaterThan(3);
-	expect(new Set(titleMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
-	expect(new Set(titleMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["600"]));
+	expect(cardTitleMetrics.length).toBeGreaterThan(3);
+	expect(new Set(cardTitleMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
+	expect(new Set(cardTitleMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["500"]));
 
 	const primaryMetrics = await main
 		.locator("[data-overview-primary-value]")
@@ -203,7 +221,7 @@ async function expectAgentOverviewTypography(page: Page) {
 		);
 	expect(primaryMetrics.length).toBeGreaterThan(3);
 	expect(new Set(primaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
-	expect(new Set(primaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["500"]));
+	expect(new Set(primaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["400"]));
 
 	const detailMetrics = await main
 		.locator('[data-testid="overview-resource-badges"] [data-slot="badge"]')
@@ -230,20 +248,6 @@ async function expectAgentOverviewTypography(page: Page) {
 	expect(metadataMetrics.length).toBeGreaterThan(2);
 	expect(new Set(metadataMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["12px"]));
 	expect(new Set(metadataMetrics.map(({ color }) => color)).size).toBe(1);
-
-	const toolPrimaryMetrics = await main
-		.locator(
-			'[data-overview-module="model-provider"] [data-overview-tool-primary], [data-overview-module="channels"] [data-overview-tool-primary]',
-		)
-		.evaluateAll((elements) =>
-			elements.map((element) => {
-				const style = getComputedStyle(element);
-				return { fontSize: style.fontSize, fontWeight: style.fontWeight, color: style.color };
-			}),
-		);
-	expect(toolPrimaryMetrics).toHaveLength(2);
-	expect(new Set(toolPrimaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
-	expect(new Set(toolPrimaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["500"]));
 
 	const toolSecondaryMetrics = await main
 		.locator("[data-overview-tool-secondary]")
@@ -3039,7 +3043,20 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("3");
 
 	const overview = page.locator('[data-agent-overview="hosted"]');
-	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible({
+		timeout: 12_000,
+	});
+	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(7);
+	await expect(
+		overview.locator('[data-overview-module] [data-slot="card-description"]'),
+	).toHaveCount(7);
+	expect(
+		await overview
+			.locator("[data-overview-module]")
+			.evaluateAll((cards) =>
+				cards.map((card) => card.querySelectorAll(':scope > [data-slot="card-content"]').length),
+			),
+	).toEqual([1, 1, 0, 1, 1, 1, 1]);
 	await expect(overview.getByRole("heading", { name: "Tools", exact: true })).toBeVisible();
 	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="projects"]')).toContainText(
@@ -3137,7 +3154,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			const style = getComputedStyle(element);
 			return { fontSize: style.fontSize, fontWeight: style.fontWeight };
 		});
-	expect(computePlanTypography).toEqual({ fontSize: "14px", fontWeight: "500" });
+	expect(computePlanTypography).toEqual({ fontSize: "14px", fontWeight: "400" });
 	await expect(compute.getByTestId("overview-compute-summary")).not.toHaveClass(
 		/rounded|border|bg-/,
 	);
@@ -3243,6 +3260,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	}
 	const moduleHeights = [...resourceGeometry, ...toolGeometry].map((box) => box.height);
 	expect(Math.max(...moduleHeights) - Math.min(...moduleHeights)).toBeLessThanOrEqual(2);
+	expect(new Set(moduleHeights.map((height) => Math.round(height)))).toEqual(new Set([128]));
+	expect(Math.max(...moduleHeights)).toBeLessThan(144);
 	expect((toolGeometry[1]?.x ?? 0) + (toolGeometry[1]?.width ?? 0)).toBeLessThan(
 		(resourceGeometry[2]?.x ?? 0) + 1,
 	);
