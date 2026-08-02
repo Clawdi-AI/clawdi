@@ -114,8 +114,16 @@ async def test_request_timing_redacts_telegram_routing_credentials(
 
 
 @pytest.mark.asyncio
-async def test_request_timing_does_not_warn_for_successful_telegram_long_poll(
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/sync/events",
+        "/v1/channels/telegram/bot123456:secret/getUpdates",
+    ],
+)
+async def test_request_timing_does_not_warn_for_successful_long_request(
     caplog: pytest.LogCaptureFixture,
+    path: str,
 ):
     async def inner(_scope: Scope, _receive: Receive, send: Send) -> None:
         await send({"type": "http.response.start", "status": 200, "headers": []})
@@ -124,7 +132,7 @@ async def test_request_timing_does_not_warn_for_successful_telegram_long_poll(
     caplog.set_level(logging.WARNING, logger="app.middleware.request_timing")
     await _collect(
         RequestTimingMiddleware(inner, slow_ms=0.000_001),
-        _scope(path="/v1/channels/telegram/bot123456:secret/getUpdates"),
+        _scope(path=path),
     )
 
     assert caplog.text == ""
