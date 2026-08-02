@@ -1132,6 +1132,7 @@ type HostedApiStubOptions = {
 		connect_disabled_reason: null;
 	}[];
 	aiProviders?: readonly unknown[];
+	aiProviderRequests?: string[];
 	agentProjectBindings?: readonly unknown[];
 	agentProjectBindingRequests?: string[];
 	agentProjects?: readonly unknown[];
@@ -1200,6 +1201,7 @@ type HostedApiStubOptions = {
 	ledgerResponses?: unknown[];
 	legacyAgentEnvironmentIds?: readonly string[];
 	managedModels?: typeof managedModelCatalog;
+	managedModelRequests?: string[];
 	planRequests?: string[];
 	mutationOrder?: string[];
 	plans?: readonly unknown[];
@@ -1383,6 +1385,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			return fulfillJson(r, plans);
 		}
 		if (p === "/v2/ai-providers/managed/models") {
+			options.managedModelRequests?.push(r.request().url());
 			return fulfillJson(r, options.managedModels ?? managedModelCatalog);
 		}
 		if (p === "/v2/wallet" && r.request().method() === "GET") {
@@ -1916,6 +1919,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			});
 		}
 		if (p === "/v1/ai-providers") {
+			options.aiProviderRequests?.push(r.request().url());
 			return fulfillJson(r, { providers: options.aiProviders ?? [] });
 		}
 		if (p === "/v1/ai-providers/accept" && r.request().method() === "POST") {
@@ -2614,6 +2618,8 @@ test("returning users can deploy on Clawdi or connect another machine", async ({
 
 test("hosted agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
 	const sessionRequests: string[] = [];
+	const aiProviderRequests: string[] = [];
+	const managedModelRequests: string[] = [];
 	const telegramAccount = {
 		id: "channel-overview-telegram",
 		provider: "telegram",
@@ -2623,6 +2629,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	};
 	await stubHostedApi(page, {
 		sessionRequests,
+		aiProviderRequests,
+		managedModelRequests,
 		deployments: [railHostedDeployment],
 		cloudAgents: [railHostedCloudAgent],
 		agentResourceFixtures: true,
@@ -2797,6 +2805,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		"Managed by Clawdi",
 	);
 	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText("Model");
+	expect(aiProviderRequests).toEqual([]);
+	await expect.poll(() => managedModelRequests.length).toBe(1);
 	await expect(compute).toContainText("CPU");
 	await expect(compute).toContainText("Memory");
 	await expect(compute).toContainText("Storage");
@@ -2832,11 +2842,60 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		Math.max(...resourceGeometry.map((box) => box.width)) -
 			Math.min(...resourceGeometry.map((box) => box.width)),
 	).toBeLessThanOrEqual(2);
-	expect(Math.abs(resourceGeometry[0].y - resourceGeometry[1].y)).toBeLessThanOrEqual(2);
-	expect(Math.abs(resourceGeometry[1].y - resourceGeometry[2].y)).toBeLessThanOrEqual(2);
-	expect(Math.abs(resourceGeometry[3].y - resourceGeometry[4].y)).toBeLessThanOrEqual(2);
+	for (const rowY of new Set(resourceGeometry.map((box) => Math.round(box.y)))) {
+		const row = resourceGeometry.filter((box) => Math.abs(box.y - rowY) <= 2);
+		expect(
+			Math.max(...row.map((box) => box.height)) - Math.min(...row.map((box) => box.height)),
+		).toBeLessThanOrEqual(2);
+	}
+	expect(
+		await resourceGrid
+			.locator("article")
+			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
+	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
 	await page.setViewportSize({ width: 1280, height: 1600 });
 	await page.screenshot({ path: testInfo.outputPath("hosted-agent-overview.png"), fullPage: true });
+});
+
+test("hosted overview shows a custom provider label and gates provider catalogs", async ({
+	page,
+}) => {
+	const aiProviderRequests: string[] = [];
+	const managedModelRequests: string[] = [];
+	const deployment: DeploymentMutationFixture = {
+		...railHostedDeployment,
+		id: "hdep_overview_custom_provider",
+		config_info: {
+			...railHostedDeployment.config_info,
+			ai_provider_auth_kind: "api_key",
+			clawdi_cloud_environments: { hermes: railHostedEnvironmentId },
+			runtime_configuration: {
+				providers: [
+					{
+						provider_id: deepSeekProvider.provider_id,
+						auth_kind: "secret_reference",
+						base_url: deepSeekProvider.base_url,
+						models: ["deepseek-v4-flash"],
+					},
+				],
+				primary_model: { provider_id: deepSeekProvider.provider_id, model: "deepseek-v4-flash" },
+				features: [],
+			},
+		},
+	};
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		cloudAgents: [railHostedCloudAgent],
+		aiProviders: [deepSeekProvider],
+		aiProviderRequests,
+		managedModelRequests,
+	});
+	await page.goto(`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${deployment.id}`);
+	const card = page.locator('[data-overview-module="model-provider"]');
+	await expect(card).toContainText("Research DeepSeek");
+	await expect(card).not.toContainText(deepSeekProvider.provider_id);
+	await expect.poll(() => aiProviderRequests.length).toBe(1);
+	expect(managedModelRequests).toEqual([]);
 });
 
 test("hosted projection loading uses module skeletons", async ({ page }, testInfo) => {
@@ -2853,7 +2912,9 @@ test("hosted projection loading uses module skeletons", async ({ page }, testInf
 
 	const overview = page.locator('[data-agent-overview="hosted"]');
 	await expect(overview.getByTestId("overview-module-skeleton").first()).toBeVisible();
-	await expect(overview.getByTestId("overview-module-skeleton").first()).toBeVisible();
+	await expect(overview.locator('[data-overview-module="vaults"]')).not.toContainText(
+		"No vaults available",
+	);
 	await expect(overview.getByText("Details pending", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Loading…", { exact: true })).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1600 });
@@ -2916,6 +2977,9 @@ test("hosted overview shows a true empty Projects state", async ({ page }) => {
 			.locator('[data-overview-module="projects"]')
 			.getByText("No projects added", { exact: true }),
 	).toBeVisible();
+	await expect(page.locator('[data-overview-module="vaults"]')).toContainText(
+		"No vaults available",
+	);
 });
 
 test("hosted overview keeps project count when names fail", async ({ page }) => {
@@ -3012,6 +3076,12 @@ test("hosted unavailable status stays inside Compute", async ({ page }, testInfo
 	await expect(compute).toContainText("Status unavailable");
 	await expect(compute).toContainText("Clawdi cannot confirm the current compute status.");
 	await expect(compute.getByRole("button", { name: "Check again", exact: true })).toBeVisible();
+	await expect(overview.locator('[data-overview-module="vaults"]')).toContainText(
+		"Can’t load vaults",
+	);
+	await expect(overview.locator('[data-overview-module="vaults"]')).not.toContainText(
+		"No vaults available",
+	);
 	await expect(main.getByTestId("deployment-status-unavailable")).toHaveCount(0);
 	expect(sessionRequests).toEqual([]);
 	await page.setViewportSize({ width: 1280, height: 1600 });

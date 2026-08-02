@@ -12,15 +12,14 @@ import {
 import {
 	AgentOverviewCapabilities,
 	AgentOverviewStatusCard,
-	OverviewChips,
 	OverviewMetadata,
 	OverviewModuleError,
-	OverviewModuleSkeleton,
-	OverviewSummaryRows,
 } from "@/components/dashboard/agent-overview-capabilities";
 import {
 	OverviewConnectorsBody,
 	OverviewMemoriesBody,
+	OverviewProjectsBody,
+	OverviewSkillsBody,
 	OverviewVaultsBody,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentOverviewProjects } from "@/components/dashboard/agent-project-bindings-query";
@@ -30,8 +29,7 @@ import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel"
 import { AgentSkillsTab, useAgentProjectSkills } from "@/components/dashboard/agent-skills-tab";
 import { AgentVaultsTab } from "@/components/dashboard/agent-vaults-tab";
 import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
-import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
-import { ENTITY_CARD_BASE } from "@/components/entity-card";
+import { DetailNotFound } from "@/components/detail/layout";
 import { MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -194,10 +192,10 @@ export function ConnectedAgentDetail({
 								<h2 id="connected-recent-sessions" className="mb-3 text-sm font-semibold">
 									Recent sessions
 								</h2>
-								<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
+								<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
 									<section
 										aria-labelledby="connected-recent-sessions"
-										className="min-h-40 min-w-0 lg:min-h-52"
+										className="min-h-40 min-w-0 @3xl/main:min-h-52"
 									>
 										{blockingOverviewSessionsError ? (
 											<OverviewModuleError
@@ -241,68 +239,32 @@ export function ConnectedAgentDetail({
 								routeSearch={routeSearch}
 								content={{
 									projects: {
-										body: projectBindingsLoading ? (
-											<OverviewModuleSkeleton label="projects" rows={3} />
-										) : blockingProjectBindingsError ? (
-											<OverviewModuleError
-												label="Projects"
-												onRetry={() => void refetchProjectBindings()}
+										body: (
+											<OverviewProjectsBody
+												bindings={{
+													count: projectBindings?.length ?? null,
+													isLoading: projectBindingsLoading,
+													error: blockingProjectBindingsError,
+													onRetry: () => void refetchProjectBindings(),
+												}}
+												names={{
+													items: projectNames.names,
+													unresolvedCount: projectNames.unresolvedCount,
+													isLoading: projectNames.isLoading,
+													error: projectNames.error,
+													onRetry: () => void projectNames.refetch(),
+												}}
 											/>
-										) : (
-											<div className="space-y-3">
-												<p className="text-lg font-semibold">
-													{(projectBindings?.length ?? 0) > 0
-														? `${projectBindings?.length} ${projectBindings?.length === 1 ? "project" : "projects"}`
-														: "No projects added"}
-												</p>
-												{(projectBindings?.length ?? 0) === 0 ? null : projectNames.isLoading ? (
-													<OverviewModuleSkeleton
-														label="project names"
-														rows={3}
-														showHeading={false}
-													/>
-												) : projectNames.error ? (
-													<OverviewModuleError
-														label="Project names"
-														onRetry={() => void projectNames.refetch()}
-													/>
-												) : (
-													<>
-														<OverviewSummaryRows
-															items={projectNames.names}
-															empty="Project names can’t be shown"
-														/>
-														{projectNames.unresolvedCount > 0 ? (
-															<p className="text-xs text-muted-foreground">
-																{projectNames.unresolvedCount} project{" "}
-																{projectNames.unresolvedCount === 1 ? "name can’t" : "names can’t"}{" "}
-																be shown
-															</p>
-														) : null}
-													</>
-												)}
-											</div>
 										),
 									},
 									skills: {
-										body: skillsLoading ? (
-											<OverviewModuleSkeleton label="skills" rows={2} />
-										) : blockingSkillsError ? (
-											<OverviewModuleError label="Skills" onRetry={() => void refetchSkills()} />
-										) : (
-											<div className="space-y-3">
-												<p className="text-lg font-semibold">
-													{(skillsForThisEnv?.length ?? 0) > 0
-														? `${skillsForThisEnv?.length} ${skillsForThisEnv?.length === 1 ? "skill" : "skills"}`
-														: "No skills available"}
-												</p>
-												{(skillsForThisEnv?.length ?? 0) > 0 ? (
-													<OverviewChips
-														items={(skillsForThisEnv ?? []).map((skill) => skill.name)}
-														empty="No skills available"
-													/>
-												) : null}
-											</div>
+										body: (
+											<OverviewSkillsBody
+												items={(skillsForThisEnv ?? []).map((skill) => skill.name)}
+												isLoading={skillsLoading}
+												error={blockingSkillsError}
+												onRetry={() => void refetchSkills()}
+											/>
 										),
 									},
 									memories: { body: <OverviewMemoriesBody /> },
@@ -310,8 +272,13 @@ export function ConnectedAgentDetail({
 										body: (
 											<OverviewVaultsBody
 												projectIds={effectiveAgentProjectIds(projectBindings ?? [])}
-												isLoading={projectBindingsLoading}
-											error={blockingProjectBindingsError}
+												resolution={
+													projectBindingsLoading
+														? "loading"
+														: blockingProjectBindingsError
+															? "unavailable"
+															: "ready"
+												}
 												onRetry={() => void refetchProjectBindings()}
 											/>
 										),
@@ -379,32 +346,37 @@ export function ConnectedAgentDetailSkeleton({ hosted = false }: { hosted?: bool
 
 function AgentDetailContentSkeleton() {
 	return (
-		<section className="flex flex-col gap-4">
+		<section className="flex flex-col gap-8">
 			<div className="flex flex-col gap-2">
 				<div className="flex items-center gap-2">
 					<Skeleton className="size-4 rounded-sm" />
 					<Skeleton className="h-5 w-28" />
 				</div>
-				<Skeleton className="h-4 w-80 max-w-full" />
 			</div>
-			<div className="grid gap-3 sm:grid-cols-3">
-				{Array.from({ length: 3 }).map((_, index) => (
-					<DetailPanel key={index} className="p-3">
-						<Skeleton className="h-7 w-12" />
-						<Skeleton className="mt-1.5 h-3 w-16" />
-					</DetailPanel>
-				))}
-			</div>
-			<div className="flex flex-col gap-2">
-				{Array.from({ length: 3 }).map((_, index) => (
-					<div key={index} className={cn(ENTITY_CARD_BASE, "flex items-start gap-3")}>
-						<Skeleton className="size-8 shrink-0 rounded-md" />
-						<div className="min-w-0 flex-1">
-							<Skeleton className="h-4 w-4/5" />
-							<Skeleton className="mt-3 h-3 w-1/2" />
-						</div>
+			<div>
+				<Skeleton className="mb-3 h-4 w-28" />
+				<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
+					<div className="grid min-h-52 gap-2">
+						{Array.from({ length: 4 }).map((_, index) => (
+							<Skeleton key={index} className="h-11 rounded-lg" />
+						))}
 					</div>
-				))}
+					<Skeleton className="min-h-52 rounded-lg" />
+				</div>
+			</div>
+			<div>
+				<Skeleton className="mb-3 h-4 w-20" />
+				<div className="grid gap-3 @2xl/main:grid-cols-2 @5xl/main:grid-cols-6">
+					{Array.from({ length: 5 }).map((_, index) => (
+						<Skeleton
+							key={index}
+							className={cn(
+								"min-h-48 rounded-lg @5xl/main:col-span-2",
+								index === 3 && "@5xl/main:col-start-2",
+							)}
+						/>
+					))}
+				</div>
 			</div>
 		</section>
 	);

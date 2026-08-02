@@ -1,8 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import type {
 	DeploymentOperation,
 	HostedDeployment,
@@ -21,9 +19,6 @@ type InvalidateDeploymentSnapshots =
 	typeof import("@/hosted/agents/deployment-hooks").invalidateDeploymentSnapshots;
 type ProjectAcceptedDeploymentTransition =
 	typeof import("@/hosted/agents/deployment-hooks").projectAcceptedDeploymentTransition;
-type OverviewReadinessPanel =
-	typeof import("@/hosted/agents/hosted-agent-detail").OverviewReadinessPanel;
-type OverviewFailedPanel = typeof import("@/hosted/agents/hosted-agent-detail").OverviewFailedPanel;
 type ShouldShowHostedProjectionNotice =
 	typeof import("@/hosted/agents/hosted-agent-detail").shouldShowHostedProjectionNotice;
 type RunManualDeploymentRefetch =
@@ -31,8 +26,6 @@ type RunManualDeploymentRefetch =
 
 let invalidateSnapshots: InvalidateDeploymentSnapshots | null = null;
 let projectAcceptedTransition: ProjectAcceptedDeploymentTransition | null = null;
-let overviewReadinessPanel: OverviewReadinessPanel | null = null;
-let overviewFailedPanel: OverviewFailedPanel | null = null;
 let shouldShowProjectionNotice: ShouldShowHostedProjectionNotice | null = null;
 let runManualDeploymentRefetch: RunManualDeploymentRefetch | null = null;
 
@@ -55,89 +48,7 @@ beforeAll(async () => {
 	const agentHomeModule = await import("@/hosted/agents/agent-home");
 	runManualDeploymentRefetch = agentHomeModule.runManualDeploymentRefetch;
 	const detailModule = await import("@/hosted/agents/hosted-agent-detail");
-	overviewReadinessPanel = detailModule.OverviewReadinessPanel;
-	overviewFailedPanel = detailModule.OverviewFailedPanel;
 	shouldShowProjectionNotice = detailModule.shouldShowHostedProjectionNotice;
-});
-
-describe("deployment failure remediation rendering", () => {
-	test("routes a failed plan change through review without startup or bare restart copy", () => {
-		if (!overviewFailedPanel) throw new Error("agent detail was not loaded");
-		const operation: DeploymentOperation = {
-			name: "operations/plan-change-failed",
-			metadata: {
-				"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
-				deploymentId: "hdep_failed",
-				verb: "plan_change" as DeploymentOperation["metadata"]["verb"],
-				targetGeneration: 2,
-				manifestETag: "manifest-failed",
-				createTime: "2026-07-25T00:00:00Z",
-				updateTime: "2026-07-25T00:01:00Z",
-			},
-			done: false,
-			response: null,
-		};
-		const deployment = hostedDeploymentFixture({
-			id: "hdep_failed",
-			status: "failed",
-			acceptedOperation: operation,
-			failure: {
-				type: "https://api.clawdi.ai/problems/operation_aborted",
-				title: "Deployment operation was aborted",
-				status: 409,
-				detail:
-					"MissingGreenlet prevented synchronous plan confirmation for operations/plan-change-failed.",
-				instance: "hdep_failed",
-				code: "operation_aborted",
-				phase: "plan_change",
-				retryable: false,
-				conditionReason: "OperationAborted",
-				conditionMessage: "Deployment operation was aborted",
-				observedGeneration: 2,
-			},
-		});
-
-		const markup = renderToStaticMarkup(
-			createElement(overviewFailedPanel, {
-				deployment,
-				planChangeHref: "/agents/env_test/settings?source=on-clawdi",
-				providerSettingsHref: "/agents/env_test/model-provider?source=on-clawdi",
-				onDeleteAccepted: () => undefined,
-			}),
-		);
-
-		expect(markup).toContain("Plan change failed");
-		expect(markup).toContain("The Clawdi service could not confirm the plan change.");
-		expect(markup).toContain("Your plan was not changed and you were not charged.");
-		expect(markup).toContain("Get a fresh quote and confirm the price before trying again.");
-		expect(markup).toContain("Get fresh quote");
-		expect(markup).not.toContain("MissingGreenlet");
-		expect(markup).not.toContain("operations/plan-change-failed");
-		expect(markup).not.toContain("provisioning");
-		expect(markup).not.toContain("synchronous plan confirmation");
-		expect(markup).not.toContain("Agent setup failed");
-		expect(markup).not.toContain("retry startup");
-		expect(markup).not.toContain("Restart compute");
-	});
-
-	test("gives an unexplained failure customer language and a working next step", () => {
-		if (!overviewFailedPanel) throw new Error("agent detail was not loaded");
-		const markup = renderToStaticMarkup(
-			createElement(overviewFailedPanel, {
-				deployment: hostedDeploymentFixture({ status: "failed" }),
-				planChangeHref: "/agents/env_test/settings?source=on-clawdi",
-				providerSettingsHref: "/agents/env_test/model-provider?source=on-clawdi",
-				onDeleteAccepted: () => undefined,
-			}),
-		);
-
-		expect(markup).toContain("Agent change failed");
-		expect(markup).toContain("Clawdi couldn’t complete the last change to this agent");
-		expect(markup).toContain("It isn’t safe to try again automatically");
-		expect(markup).toContain('href="mailto:support@clawdi.ai"');
-		expect(markup).not.toContain("Deployment operation");
-		expect(markup).not.toContain("failure reason and operation");
-	});
 });
 
 describe("deployment transition timeout rendering", () => {
@@ -163,62 +74,6 @@ describe("deployment transition timeout rendering", () => {
 		);
 		expect(detailSource).toContain("!isStartingStatus(deploymentStatus)");
 		expect(detailSource).not.toContain('projection.status === "resolved" &&');
-	});
-
-	test("keeps delayed startup copy truthful with automatic and manual checks", () => {
-		if (!overviewReadinessPanel) throw new Error("agent detail was not loaded");
-		const deployment = hostedDeploymentFixture({ status: "creating" });
-		const commonProps = {
-			deployment,
-			isCheckingDeployment: false,
-			onCheckDeploymentAgain: () => undefined,
-		};
-
-		const converging = renderToStaticMarkup(
-			createElement(overviewReadinessPanel, {
-				...commonProps,
-				deploymentTransitionTimedOut: false,
-			}),
-		);
-		const timedOut = renderToStaticMarkup(
-			createElement(overviewReadinessPanel, {
-				...commonProps,
-				deploymentTransitionTimedOut: true,
-			}),
-		);
-
-		expect(converging).toContain("Starting your agent…");
-		expect(converging).toContain("This step should finish within five minutes.");
-		expect(converging).toContain("Startup continues if you leave this page");
-		expect(converging).not.toContain("Provisioning");
-		expect(converging).not.toContain("Booting");
-		expect(converging).not.toContain("Current status");
-		expect(converging).not.toContain("Deployment progress");
-		expect(timedOut).toContain("Your agent is taking longer than expected");
-		expect(timedOut).toContain("latest status still shows your agent starting");
-		expect(timedOut).toContain("Startup may still be continuing");
-		expect(timedOut).toContain("keep checking automatically once a minute");
-		expect(timedOut).toContain("Check again");
-		expect(timedOut).not.toContain("Automatic checks have stopped");
-		expect(timedOut).not.toContain("Startup continues if you leave this page");
-	});
-
-	test("makes the authoritative running state unambiguously Running", () => {
-		if (!overviewReadinessPanel) throw new Error("agent detail was not loaded");
-		const ready = renderToStaticMarkup(
-			createElement(overviewReadinessPanel, {
-				deployment: hostedDeploymentFixture({ status: "running" }),
-				deploymentTransitionTimedOut: false,
-				isCheckingDeployment: false,
-				onCheckDeploymentAgain: () => undefined,
-			}),
-		);
-
-		expect(ready).toContain("Your agent is running");
-		expect(ready).toContain("It is ready to use");
-		expect(ready).not.toContain("automatically");
-		expect(ready).not.toContain("Provisioning");
-		expect(ready).not.toContain("Booting");
 	});
 
 	test("wires the timed-out inventory state and real refetch action into the detail", () => {

@@ -158,19 +158,6 @@ export function OverviewChips({ items, empty }: { items: readonly string[]; empt
 	);
 }
 
-const MODULE_PRESENTATION: Record<
-	AgentOverviewModuleId,
-	{ label?: string; icon?: LucideIcon; tint?: string; source?: boolean }
-> = {
-	projects: {},
-	skills: {},
-	memories: {},
-	vaults: {},
-	connectors: {},
-	"model-provider": { label: "Model & Provider" },
-	channels: {},
-};
-
 export function AgentOverviewCapabilities({
 	agentId,
 	variant,
@@ -196,38 +183,42 @@ export function AgentOverviewCapabilities({
 						data-overview-layout={group.layout}
 						className={cn(
 							"grid items-start gap-3",
-							group.layout === "balanced-five" ? "md:grid-cols-6" : "md:grid-cols-2",
+							group.layout === "balanced-five"
+								? "@2xl/main:grid-cols-2 @5xl/main:grid-cols-6"
+								: "@2xl/main:grid-cols-2",
 						)}
 					>
 						{group.modules.map((module, moduleIndex) => {
 							const item = AGENT_SECTION_NAVIGATION_ITEMS[module.section];
-							const presentation = MODULE_PRESENTATION[module.id];
 							const moduleContent = content[module.id];
-							const Icon = presentation.icon ?? item.icon;
-							const title = presentation.label ?? item.label;
+							if (!moduleContent) {
+								throw new Error(`Missing overview content for ${module.id}`);
+							}
+							const Icon = item.icon;
+							const title = module.id === "model-provider" ? "Model & Provider" : item.label;
 							return (
 								<article
 									key={module.id}
 									data-overview-module={module.id}
 									className={cn(
-										"min-w-0 overflow-hidden rounded-lg border bg-card",
-										group.layout === "balanced-five" && "md:col-span-2",
-										group.layout === "balanced-five" && moduleIndex === 3 && "md:col-start-2",
-										presentation.source && "bg-muted/20",
-										module.size === "wide" && "md:col-span-2",
+										"flex min-h-48 min-w-0 flex-col overflow-hidden rounded-lg border bg-card",
+										group.layout === "balanced-five" && "@5xl/main:col-span-2",
+										group.layout === "balanced-five" &&
+											moduleIndex === 3 &&
+											"@5xl/main:col-start-2",
 									)}
 								>
 									<Link
 										{...agentSectionLink(agentId, module.section, routeSearch)}
-										className="group flex items-center gap-3 p-4 pb-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+										className="group flex h-16 shrink-0 items-center gap-3 px-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
 									>
-										<IconChip size="sm" tint={presentation.tint ?? item.tint}>
+										<IconChip size="sm" tint={item.tint}>
 											<Icon />
 										</IconChip>
 										<h3 className="min-w-0 flex-1 text-sm font-semibold">{title}</h3>
 										<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 									</Link>
-									<div className="px-4 pb-4">{moduleContent?.body ?? null}</div>
+									<div className="flex flex-1 flex-col px-4 pb-4">{moduleContent.body}</div>
 								</article>
 							);
 						})}

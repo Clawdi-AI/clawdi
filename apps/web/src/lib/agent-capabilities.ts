@@ -1,4 +1,8 @@
-import type { AgentNavigationVariant, AgentSectionId } from "@/lib/navigation-model";
+import {
+	AGENT_RESOURCE_SECTION_IDS,
+	type AgentNavigationVariant,
+	type AgentSectionId,
+} from "@/lib/navigation-model";
 
 export type AgentOverviewModuleId =
 	| "projects"
@@ -14,7 +18,6 @@ export type AgentOverviewGroupId = "resources" | "operate";
 export type AgentOverviewModule = {
 	id: AgentOverviewModuleId;
 	section: AgentSectionId;
-	size: "standard" | "wide";
 };
 
 export type AgentOverviewGroup = {
@@ -24,13 +27,7 @@ export type AgentOverviewGroup = {
 	modules: readonly AgentOverviewModule[];
 };
 
-const SHARED_RESOURCES = [
-	{ id: "projects", section: "projects", size: "standard" },
-	{ id: "skills", section: "skills", size: "standard" },
-	{ id: "memories", section: "memories", size: "standard" },
-	{ id: "connectors", section: "connectors", size: "standard" },
-	{ id: "vaults", section: "vaults", size: "standard" },
-] as const satisfies readonly AgentOverviewModule[];
+const SHARED_RESOURCES = AGENT_RESOURCE_SECTION_IDS.map((section) => ({ id: section, section }));
 
 const AGENT_OVERVIEW_GROUPS = {
 	connected: [
@@ -53,8 +50,8 @@ const AGENT_OVERVIEW_GROUPS = {
 			label: "Tools",
 			layout: "two-column",
 			modules: [
-				{ id: "model-provider", section: "ai", size: "standard" },
-				{ id: "channels", section: "channels", size: "standard" },
+				{ id: "model-provider", section: "ai" },
+				{ id: "channels", section: "channels" },
 			],
 		},
 	],

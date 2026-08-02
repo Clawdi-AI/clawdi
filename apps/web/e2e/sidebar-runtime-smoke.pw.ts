@@ -636,9 +636,17 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		Math.max(...resourceGeometry.map((box) => box.width)) -
 			Math.min(...resourceGeometry.map((box) => box.width)),
 	).toBeLessThanOrEqual(2);
-	expect(Math.abs(resourceGeometry[0].y - resourceGeometry[1].y)).toBeLessThanOrEqual(2);
-	expect(Math.abs(resourceGeometry[1].y - resourceGeometry[2].y)).toBeLessThanOrEqual(2);
-	expect(Math.abs(resourceGeometry[3].y - resourceGeometry[4].y)).toBeLessThanOrEqual(2);
+	for (const rowY of new Set(resourceGeometry.map((box) => Math.round(box.y)))) {
+		const row = resourceGeometry.filter((box) => Math.abs(box.y - rowY) <= 2);
+		expect(
+			Math.max(...row.map((box) => box.height)) - Math.min(...row.map((box) => box.height)),
+		).toBeLessThanOrEqual(2);
+	}
+	expect(
+		await resourceGrid
+			.locator("article")
+			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
+	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
 	const resourceGridBox = await resourceGrid.boundingBox();
 	expect(
 		Math.abs(

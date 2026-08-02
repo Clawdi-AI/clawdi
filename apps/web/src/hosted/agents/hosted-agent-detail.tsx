@@ -6,14 +6,12 @@ import { Link, useRouter } from "@tanstack/react-router";
 import {
 	AlertCircle,
 	Check,
-	CircleCheck,
 	Copy,
 	Cpu,
 	ExternalLink,
 	Eye,
 	EyeOff,
 	Info,
-	LifeBuoy,
 	Link2,
 	Link2Off,
 	type LucideIcon,
@@ -37,7 +35,6 @@ import { agentDisplayName } from "@/components/dashboard/agent-label";
 import {
 	AgentOverviewCapabilities,
 	AgentOverviewStatusCard,
-	OverviewChips,
 	OverviewMetadata,
 	OverviewMetrics,
 	OverviewModuleError,
@@ -47,6 +44,8 @@ import {
 import {
 	OverviewConnectorsBody,
 	OverviewMemoriesBody,
+	OverviewProjectsBody,
+	OverviewSkillsBody,
 	OverviewVaultsBody,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentOverviewProjects } from "@/components/dashboard/agent-project-bindings-query";
@@ -621,6 +620,7 @@ export function HostedAgentDetail({
 							routeSearch={routeSearch}
 							deployment={deployment}
 							agent={isCloudEnvId(environmentId) ? agent : null}
+							projectionStatus={projection.status}
 							isPerformance={isPerformance}
 							showDeploymentActions={!deploymentRunning && !isStartingStatus(deploymentStatus)}
 							onDeleteAccepted={onDeleteAccepted}
@@ -883,90 +883,6 @@ function HostedAgentSessionsTab({
 
 // ── Overview ─────────────────────────────────────────────────────────────────
 
-export function OverviewReadinessPanel({
-	deployment,
-	deploymentTransitionTimedOut,
-	isCheckingDeployment,
-	onCheckDeploymentAgain,
-}: {
-	deployment: HostedDeployment;
-	deploymentTransitionTimedOut: boolean;
-	isCheckingDeployment: boolean;
-	onCheckDeploymentAgain: () => void;
-}) {
-	const status = deployment.resource.status;
-	if (status === null) {
-		return (
-			<DeploymentStatusUnavailableState
-				deployment={deployment}
-				isRetrying={isCheckingDeployment}
-				onRetry={onCheckDeploymentAgain}
-			/>
-		);
-	}
-	const ready = status.summary_state === "running";
-	const title = deploymentTransitionTimedOut
-		? "Your agent is taking longer than expected"
-		: ready
-			? "Your agent is running"
-			: startingTitle();
-	const description = deploymentTransitionTimedOut
-		? "The latest status still shows your agent starting after five minutes. Startup may still be continuing. We’ll keep checking automatically once a minute while you’re here, or you can check again now."
-		: ready
-			? "It is ready to use."
-			: "This step should finish within five minutes. Startup continues if you leave this page.";
-	return (
-		<div
-			className={cn(
-				"rounded-xl border p-5",
-				deploymentTransitionTimedOut
-					? "border-warning/30 bg-warning-muted text-warning-muted-foreground"
-					: ready
-						? "border-success/30 bg-success-muted text-success-muted-foreground"
-						: "border-info-muted bg-info-muted text-info-muted-foreground",
-			)}
-		>
-			<div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-				<div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-background">
-					{deploymentTransitionTimedOut ? (
-						<AlertCircle className="size-5" />
-					) : ready ? (
-						<CircleCheck className="size-5" />
-					) : (
-						<Spinner className="size-5" />
-					)}
-				</div>
-				<div className="min-w-0 flex-1">
-					<h2 className="text-sm font-semibold text-foreground">{title}</h2>
-					<p className="mt-1 text-sm">{description}</p>
-					{deploymentTransitionTimedOut ? (
-						<div className="mt-3 flex flex-wrap gap-2">
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								disabled={isCheckingDeployment}
-								onClick={onCheckDeploymentAgain}
-							>
-								{isCheckingDeployment ? (
-									<Spinner className="size-3.5" />
-								) : (
-									<RefreshCw className="size-3.5" />
-								)}
-								Check again
-							</Button>
-						</div>
-					) : null}
-				</div>
-			</div>
-		</div>
-	);
-}
-
-function DeploymentFailureReasonText({ reason }: { reason: string }) {
-	return <p className="mt-2 whitespace-pre-wrap break-words text-sm">{reason}</p>;
-}
-
 function OverviewFailureAction({
 	deployment,
 	failure,
@@ -1021,72 +937,6 @@ function OverviewFailureAction({
 					label={remediation.label}
 				/>
 			) : null}
-		</div>
-	);
-}
-
-export function OverviewFailedPanel({
-	deployment,
-	planChangeHref,
-	providerSettingsHref,
-	onDeleteAccepted,
-}: {
-	deployment: HostedDeployment;
-	planChangeHref: string;
-	providerSettingsHref: string;
-	onDeleteAccepted: (deploymentId: string) => void;
-}) {
-	const status = deploymentStatusFromResource(deployment.resource.status);
-	const failure = deploymentFailurePresentation(deployment);
-	if (failure) {
-		return (
-			<Alert data-hosted="true" variant="destructive">
-				<AlertCircle className="size-4" />
-				<AlertTitle>{failure.title}</AlertTitle>
-				<AlertDescription className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-					<div className="min-w-0">
-						<p>
-							{failure.description} Current status: {deploymentStatusLabel(status)}.
-						</p>
-						<DeploymentFailureReasonText reason={failure.reason} />
-					</div>
-					<OverviewFailureAction
-						deployment={deployment}
-						failure={failure}
-						planChangeHref={planChangeHref}
-						providerSettingsHref={providerSettingsHref}
-						onDeleteAccepted={onDeleteAccepted}
-					/>
-				</AlertDescription>
-			</Alert>
-		);
-	}
-	return (
-		<div className="rounded-xl border border-destructive-muted bg-destructive-muted p-5 text-destructive-muted-foreground">
-			<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-				<div className="flex min-w-0 gap-3">
-					<div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-destructive-muted bg-background">
-						<AlertCircle className="size-5" />
-					</div>
-					<div className="min-w-0">
-						<h2 className="text-sm font-semibold text-foreground">Agent change failed</h2>
-						<p className="mt-1 text-sm">
-							Clawdi couldn’t complete the last change to this agent or determine why. It isn’t safe
-							to try again automatically. Contact support before trying again. Current status:{" "}
-							{deploymentStatusLabel(status)}.
-						</p>
-					</div>
-				</div>
-				<Button
-					render={<a href="mailto:support@clawdi.ai" />}
-					nativeButton={false}
-					variant="outline"
-					size="sm"
-					className="shrink-0"
-				>
-					<LifeBuoy data-icon="inline-start" /> Contact support
-				</Button>
-			</div>
 		</div>
 	);
 }
@@ -1260,6 +1110,7 @@ function OverviewTab({
 	routeSearch,
 	deployment,
 	agent,
+	projectionStatus,
 	isPerformance,
 	showDeploymentActions,
 	onDeleteAccepted,
@@ -1278,6 +1129,7 @@ function OverviewTab({
 	routeSearch: AgentRouteSearch;
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
+	projectionStatus: HostedProjectionResolution<unknown>["status"];
 	isPerformance: boolean;
 	showDeploymentActions: boolean;
 	onDeleteAccepted: (deploymentId: string) => void;
@@ -1296,13 +1148,15 @@ function OverviewTab({
 	onCheckDeploymentAgain: () => void;
 }) {
 	const spec = deployment.resource.spec;
-	const providers = useUserAiProviders();
-	const managedModelCatalog = useManagedModelCatalog();
 	const primaryModel = spec.runtime_configuration.primary_model;
 	const bindingProvider =
 		spec.runtime_configuration.providers.find(
 			(provider) => provider.provider_id === primaryModelProviderId(primaryModel),
 		) ?? spec.runtime_configuration.providers[0];
+	const providerId = primaryModelProviderId(primaryModel) ?? bindingProvider?.provider_id;
+	const managedProvider = !providerId || isManagedProviderId(providerId);
+	const providers = useUserAiProviders({ enabled: !managedProvider });
+	const managedModelCatalog = useManagedModelCatalog({ enabled: managedProvider });
 	const model = modelBindingDisplayName(
 		primaryModel,
 		runtimeAiProviderAuthKind(deployment) ?? bindingProvider?.auth_kind,
@@ -1334,18 +1188,18 @@ function OverviewTab({
 		const provider = providerMeta(link.account.provider).label;
 		return [`${provider}: ${link.account.name}`];
 	});
-	const providerId = primaryModelProviderId(primaryModel) ?? bindingProvider?.provider_id;
-	const projectionUnavailable = !deploymentStatus.known;
+	const projectionLoading = projectionStatus === "loading";
+	const projectionUnavailable = projectionStatus === "unavailable" || !deploymentStatus.known;
 	return (
 		<div className="flex flex-col gap-8">
 			<div>
 				<h2 id="hosted-recent-sessions" className="mb-3 text-sm font-semibold">
 					Recent sessions
 				</h2>
-				<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
+				<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
 					<section
 						aria-labelledby="hosted-recent-sessions"
-						className="min-h-40 min-w-0 lg:min-h-52"
+						className="min-h-40 min-w-0 @3xl/main:min-h-52"
 					>
 						{sessionsError ? (
 							<OverviewModuleError label="Sessions" onRetry={() => void onRetrySessions()} />
@@ -1408,75 +1262,34 @@ function OverviewTab({
 				routeSearch={routeSearch}
 				content={{
 					projects: {
-						body: !agent ? (
-							projectionUnavailable ? (
-								<OverviewModuleError label="Projects" />
-							) : (
-								<OverviewModuleSkeleton label="projects" rows={3} />
-							)
-						) : projectBindings.isLoading ? (
-							<OverviewModuleSkeleton label="projects" rows={3} />
-						) : projectBindings.error ? (
-							<OverviewModuleError
-								label="Projects"
-								onRetry={() => void projectBindings.refetch()}
+						body: (
+							<OverviewProjectsBody
+								bindings={{
+									count: agent ? (projectBindings.data?.length ?? null) : null,
+									isLoading: projectionLoading || projectBindings.isLoading,
+									error: projectionUnavailable
+										? new Error("Projection unavailable")
+										: projectBindings.error,
+									onRetry: () => void projectBindings.refetch(),
+								}}
+								names={{
+									items: projectNames.names,
+									unresolvedCount: projectNames.unresolvedCount,
+									isLoading: projectNames.isLoading,
+									error: projectNames.error,
+									onRetry: () => void projectNames.refetch(),
+								}}
 							/>
-						) : (
-							<div className="space-y-3">
-								<p className="text-lg font-semibold">
-									{(projectBindings.data?.length ?? 0) > 0
-										? `${projectBindings.data?.length} ${projectBindings.data?.length === 1 ? "project" : "projects"}`
-										: "No projects added"}
-								</p>
-								{(projectBindings.data?.length ?? 0) === 0 ? null : projectNames.isLoading ? (
-									<OverviewModuleSkeleton label="project names" rows={3} showHeading={false} />
-								) : projectNames.error ? (
-									<OverviewModuleError
-										label="Project names"
-										onRetry={() => void projectNames.refetch()}
-									/>
-								) : (
-									<>
-										<OverviewSummaryRows
-											items={projectNames.names}
-											empty="Project names can’t be shown"
-										/>
-										{projectNames.unresolvedCount > 0 ? (
-											<p className="text-xs text-muted-foreground">
-												{projectNames.unresolvedCount} project{" "}
-												{projectNames.unresolvedCount === 1 ? "name can’t" : "names can’t"} be shown
-											</p>
-										) : null}
-									</>
-								)}
-							</div>
 						),
 					},
 					skills: {
-						body: !agent ? (
-							projectionUnavailable ? (
-								<OverviewModuleError label="Skills" />
-							) : (
-								<OverviewModuleSkeleton label="skills" rows={2} />
-							)
-						) : skills.isLoading ? (
-							<OverviewModuleSkeleton label="skills" rows={2} />
-						) : skills.error ? (
-							<OverviewModuleError label="Skills" onRetry={() => void skills.refetch()} />
-						) : (
-							<div className="space-y-3">
-								<p className="text-lg font-semibold">
-									{(skills.skills?.length ?? 0) > 0
-										? `${skills.skills?.length} ${skills.skills?.length === 1 ? "skill" : "skills"}`
-										: "No skills available"}
-								</p>
-								{(skills.skills?.length ?? 0) > 0 ? (
-									<OverviewChips
-										items={(skills.skills ?? []).map((skill) => skill.name)}
-										empty="No skills available"
-									/>
-								) : null}
-							</div>
+						body: (
+							<OverviewSkillsBody
+								items={(skills.skills ?? []).map((skill) => skill.name)}
+								isLoading={projectionLoading || skills.isLoading}
+								error={projectionUnavailable ? new Error("Projection unavailable") : skills.error}
+								onRetry={() => void skills.refetch()}
+							/>
 						),
 					},
 					memories: { body: <OverviewMemoriesBody /> },
@@ -1484,22 +1297,42 @@ function OverviewTab({
 						body: (
 							<OverviewVaultsBody
 								projectIds={effectiveAgentProjectIds(projectBindings.data ?? [])}
-								isLoading={projectBindings.isLoading}
-								error={projectBindings.error}
+								resolution={
+									projectionLoading || projectBindings.isLoading
+										? "loading"
+										: projectionUnavailable || projectBindings.error
+											? "unavailable"
+											: "ready"
+								}
 								onRetry={() => void projectBindings.refetch()}
 							/>
 						),
 					},
 					connectors: { body: <OverviewConnectorsBody /> },
 					"model-provider": {
-						body: (
-							<OverviewMetadata
-								items={[
-									{ label: "Model", value: model },
-									{ label: "Provider", value: providerId ?? "Managed by Clawdi" },
-								]}
-							/>
-						),
+						body:
+							providers.isLoading || managedModelCatalog.isLoading ? (
+								<OverviewModuleSkeleton label="model and provider" rows={2} showHeading={false} />
+							) : providers.error || managedModelCatalog.error ? (
+								<OverviewModuleError
+									label="Model & Provider"
+									onRetry={() =>
+										void (managedProvider ? managedModelCatalog.refetch() : providers.refetch())
+									}
+								/>
+							) : (
+								<OverviewMetadata
+									items={[
+										{ label: "Model", value: model },
+										{
+											label: "Provider",
+											value: managedProvider
+												? "Managed by Clawdi"
+												: providerDisplayLabel(providerId ?? "", providers.data ?? []),
+										},
+									]}
+								/>
+							),
 					},
 					channels: {
 						body: !agent ? (

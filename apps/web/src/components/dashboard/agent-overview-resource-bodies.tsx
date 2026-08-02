@@ -5,15 +5,74 @@ import { Link } from "@tanstack/react-router";
 import { CircleCheck, RefreshCw } from "lucide-react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import {
+	OverviewChips,
 	OverviewModuleError,
 	OverviewModuleSkeleton,
 	OverviewSummaryRows,
 } from "@/components/dashboard/agent-overview-capabilities";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fetchAgentProjectVaults } from "@/components/vault/vault-scope";
+import { useAgentProjectVaults } from "@/components/vault/agent-vaults-query";
 import { unwrap, useApi } from "@/lib/api";
 import { useAvailableApps, useConnectedAppCards } from "@/lib/connectors-data";
+
+type SummaryState = {
+	isLoading: boolean;
+	error: unknown;
+	onRetry: () => void;
+};
+
+export function OverviewProjectsBody({
+	bindings,
+	names,
+}: {
+	bindings: SummaryState & { count: number | null };
+	names: SummaryState & { items: readonly string[]; unresolvedCount: number };
+}) {
+	if (bindings.isLoading) return <OverviewModuleSkeleton label="projects" rows={3} />;
+	if (bindings.error) return <OverviewModuleError label="Projects" onRetry={bindings.onRetry} />;
+	const count = bindings.count ?? 0;
+	return (
+		<div className="space-y-3">
+			<p className="text-lg font-semibold">
+				{count ? `${count} ${count === 1 ? "project" : "projects"}` : "No projects added"}
+			</p>
+			{count === 0 ? null : names.isLoading ? (
+				<OverviewModuleSkeleton label="project names" rows={3} showHeading={false} />
+			) : names.error ? (
+				<OverviewModuleError label="Project names" onRetry={names.onRetry} />
+			) : (
+				<>
+					<OverviewSummaryRows items={names.items} empty="Project names can’t be shown" />
+					{names.unresolvedCount > 0 ? (
+						<p className="text-xs text-muted-foreground">
+							{names.unresolvedCount} project{" "}
+							{names.unresolvedCount === 1 ? "name can’t" : "names can’t"} be shown
+						</p>
+					) : null}
+				</>
+			)}
+		</div>
+	);
+}
+
+export function OverviewSkillsBody({
+	items,
+	...state
+}: SummaryState & { items: readonly string[] }) {
+	if (state.isLoading) return <OverviewModuleSkeleton label="skills" rows={2} />;
+	if (state.error) return <OverviewModuleError label="Skills" onRetry={state.onRetry} />;
+	return (
+		<div className="space-y-3">
+			<p className="text-lg font-semibold">
+				{items.length
+					? `${items.length} ${items.length === 1 ? "skill" : "skills"}`
+					: "No skills available"}
+			</p>
+			{items.length ? <OverviewChips items={items} empty="No skills available" /> : null}
+		</div>
+	);
+}
 
 export function OverviewMemoriesBody() {
 	const api = useApi();
@@ -35,30 +94,17 @@ export function OverviewMemoriesBody() {
 
 export function OverviewVaultsBody({
 	projectIds,
-	isLoading,
-	error,
+	resolution,
 	onRetry,
 }: {
 	projectIds: readonly string[];
-	isLoading: boolean;
-	error: unknown;
+	resolution: "loading" | "unavailable" | "ready";
 	onRetry: () => void;
 }) {
-	const api = useApi();
-	const query = useQuery({
-		queryKey: ["vaults", "agent-projects", ...projectIds],
-		queryFn: async () =>
-			fetchAgentProjectVaults(projectIds, async (projectId, page, pageSize) =>
-				unwrap(
-					await api.GET("/v1/vault", {
-						params: { query: { project_id: projectId, page, page_size: pageSize } },
-					}),
-				),
-			),
-		enabled: !isLoading && !error && projectIds.length > 0,
-	});
-	if (isLoading || query.isLoading) return <OverviewModuleSkeleton label="vaults" rows={2} />;
-	if (error) return <OverviewModuleError label="Vaults" onRetry={onRetry} />;
+	const query = useAgentProjectVaults(projectIds, { enabled: resolution === "ready" });
+	if (resolution === "loading" || query.isLoading)
+		return <OverviewModuleSkeleton label="vaults" rows={2} />;
+	if (resolution === "unavailable") return <OverviewModuleError label="Vaults" onRetry={onRetry} />;
 	if (query.error)
 		return <OverviewModuleError label="Vaults" onRetry={() => void query.refetch()} />;
 	const vaults = query.data ?? [];
