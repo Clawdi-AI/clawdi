@@ -98,6 +98,9 @@ DISCORD_RESERVED_COMMAND_NAMES = frozenset(
     }
 )
 DISCORD_LEGACY_RESERVED_COMMAND_NAMES = frozenset({"bot_pair", "bot_unpair"})
+_DISCORD_UNPAIRED_TUTORIAL_KIND = "discord_unpaired_tutorial"
+_DISCORD_UNPAIRED_TUTORIAL_SUCCESS_COOLDOWN = timedelta(minutes=10)
+_DISCORD_UNPAIRED_TUTORIAL_FAILURE_BACKOFF = timedelta(seconds=30)
 PAIR_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 PAIR_CODE_LENGTH = 10
 PAIR_CODE_GENERATION_ATTEMPTS = 5
@@ -1519,6 +1522,45 @@ async def lock_channel_binding_identity(
     await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(lock_name, 0))))
 
 
+async def lock_active_discord_binding_lease(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    bot_agent_link_id: UUID,
+    binding_id: UUID,
+    external_chat_id: str,
+) -> ChannelBinding | None:
+    """Hold active Discord authority through the caller's transaction."""
+    lock_name = f"channel-binding:{account_id}:{external_chat_id}"
+    await db.execute(select(func.pg_advisory_xact_lock_shared(func.hashtextextended(lock_name, 0))))
+    return (
+        await db.execute(
+            select(ChannelBinding)
+            .join(ChannelAccount, ChannelAccount.id == ChannelBinding.account_id)
+            .join(ChannelBotAgentLink, ChannelBotAgentLink.id == ChannelBinding.bot_agent_link_id)
+            .where(
+                ChannelBinding.id == binding_id,
+                ChannelBinding.account_id == account_id,
+                ChannelBinding.bot_agent_link_id == bot_agent_link_id,
+                ChannelBinding.external_chat_id == external_chat_id,
+                ChannelBinding.status == BINDING_STATUS_ACTIVE,
+                ChannelAccount.provider == CHANNEL_PROVIDER_DISCORD,
+                ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                ChannelAccount.archived_at.is_(None),
+                ChannelBotAgentLink.account_id == ChannelBinding.account_id,
+                ChannelBotAgentLink.user_id == ChannelBinding.user_id,
+                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                ChannelBotAgentLink.archived_at.is_(None),
+            )
+            .with_for_update(
+                read=True,
+                of=(ChannelAccount, ChannelBotAgentLink, ChannelBinding),
+            )
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+
+
 def binding_is_controlled_by_actor(
     binding: ChannelBinding,
     *,
@@ -1691,7 +1733,8 @@ async def resolve_inbound_binding(
     command_actor_required: bool = False,
 ) -> InboundBindingResult:
     parsed = command if command is not None else parse_pair_command(text)
-    if parsed is not None and parsed.kind in {"pair", "unpair"}:
+    pairing_mutation = parsed is not None and parsed.kind in {"pair", "unpair"}
+    if pairing_mutation:
         await lock_channel_binding_identity(
             db,
             account_id=account.id,
@@ -1707,6 +1750,25 @@ async def resolve_inbound_binding(
                 external_chat_type=external_chat_type,
             )
         ]
+        if not pairing_mutation:
+            leased_bindings: list[ChannelBinding] = []
+            for candidate in sorted(bindings, key=lambda value: value.id):
+                leased = await lock_active_discord_binding_lease(
+                    db,
+                    account_id=account.id,
+                    bot_agent_link_id=candidate.bot_agent_link_id,
+                    binding_id=candidate.id,
+                    external_chat_id=external_chat_id,
+                )
+                if leased is None:
+                    await record_inactive_bot_agent_link_event(
+                        db,
+                        account=account,
+                        binding=candidate,
+                    )
+                else:
+                    leased_bindings.append(leased)
+            bindings = leased_bindings
     binding = bindings[0] if bindings else None
     if parsed is None:
         authorized_bindings: list[ChannelBinding] = []
@@ -5261,7 +5323,15 @@ async def record_discord_dispatch(
                 external_user_id=external_user_id,
             )
     if binding_result.binding is None and not binding_result.command_handled:
-        return False
+        return await _record_discord_unpaired_message_and_maybe_instruct(
+            db,
+            account=account,
+            frame=frame,
+            authority_chat_id=external_chat_id,
+            channel_id=key.channel_id if key is not None else None,
+            guild_id=guild_id,
+            provider_event_id=provider_event_id,
+        )
     data = frame.get("d")
     payload = frame if isinstance(data, dict) else {"d": data}
     messages = await record_inbound_messages_for_bindings(
@@ -5307,6 +5377,130 @@ async def record_discord_dispatch(
             binding_result=binding_result,
             reply=reply,
         )
+    return True
+
+
+async def _record_discord_unpaired_message_and_maybe_instruct(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    frame: dict[str, Any],
+    authority_chat_id: str,
+    channel_id: str | None,
+    guild_id: str | None,
+    provider_event_id: str | None,
+) -> bool:
+    data = frame.get("d")
+    if frame.get("t") != "MESSAGE_CREATE" or not isinstance(data, dict) or channel_id is None:
+        return False
+    message_type = data.get("type", 0)
+    author = data.get("author")
+    if (
+        message_type != 0
+        or not isinstance(author, dict)
+        or author.get("bot") is True
+        or data.get("webhook_id") is not None
+    ):
+        return False
+    if guild_id is not None:
+        application_id = discord_application_id_from_config(account.config)
+        mentions = data.get("mentions")
+        if (
+            application_id is None
+            or not isinstance(mentions, list)
+            or not any(
+                isinstance(mention, dict)
+                and _read_optional_str(mention.get("id")) == application_id
+                for mention in mentions
+            )
+        ):
+            return False
+
+    await lock_channel_binding_identity(
+        db,
+        account_id=account.id,
+        external_chat_id=authority_chat_id,
+    )
+    if await find_binding(db, account=account, external_chat_id=authority_chat_id) is not None:
+        return False
+
+    now = datetime.now(UTC)
+    marker_result = InboundBindingResult(binding=None, bindings=())
+    messages = await record_inbound_messages_for_bindings(
+        db,
+        account=account,
+        binding_result=marker_result,
+        external_chat_id=channel_id,
+        provider_message_id=provider_event_id,
+        text=None,
+        payload={"kind": _DISCORD_UNPAIRED_TUTORIAL_KIND, "outcome": "pending"},
+        suppress_duplicate_event=True,
+    )
+    if not messages:
+        return True
+    marker = messages[0][0]
+    marker.delivered_at = now
+    previous = (
+        await db.execute(
+            select(ChannelMessage)
+            .where(
+                ChannelMessage.account_id == account.id,
+                ChannelMessage.external_chat_id == channel_id,
+                ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+                ChannelMessage.id != marker.id,
+                func.jsonb_extract_path_text(ChannelMessage.payload, "kind")
+                == _DISCORD_UNPAIRED_TUTORIAL_KIND,
+                func.jsonb_extract_path_text(ChannelMessage.payload, "outcome").in_(
+                    ("sent", "failed")
+                ),
+            )
+            .order_by(ChannelMessage.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if previous is not None:
+        previous_payload = previous.payload if isinstance(previous.payload, dict) else {}
+        cooldown = (
+            _DISCORD_UNPAIRED_TUTORIAL_SUCCESS_COOLDOWN
+            if previous_payload.get("outcome") == "sent"
+            else _DISCORD_UNPAIRED_TUTORIAL_FAILURE_BACKOFF
+        )
+        if previous.created_at + cooldown > now:
+            marker.payload = {"kind": _DISCORD_UNPAIRED_TUTORIAL_KIND, "outcome": "suppressed"}
+            return True
+
+    tutorial = (
+        "This Discord server is not paired. Create a Discord pairing code in Clawdi, "
+        "then run /clawdi_pair <code>."
+        if guild_id is not None
+        else "This Discord chat is not paired. Create a Discord pairing code in Clawdi, "
+        "then run /clawdi_pair <code>."
+    )
+    try:
+        await send_discord_message(
+            db,
+            account=account,
+            external_chat_id=channel_id,
+            text=tutorial,
+            bind_to_existing=False,
+        )
+    except HTTPException as exc:
+        marker.payload = {"kind": _DISCORD_UNPAIRED_TUTORIAL_KIND, "outcome": "failed"}
+        log.warning(
+            "discord_unpaired_tutorial_failed account_id=%s channel_id=%s status=%s",
+            account.id,
+            channel_id,
+            exc.status_code,
+        )
+    except Exception:
+        marker.payload = {"kind": _DISCORD_UNPAIRED_TUTORIAL_KIND, "outcome": "failed"}
+        log.exception(
+            "discord_unpaired_tutorial_failed account_id=%s channel_id=%s",
+            account.id,
+            channel_id,
+        )
+    else:
+        marker.payload = {"kind": _DISCORD_UNPAIRED_TUTORIAL_KIND, "outcome": "sent"}
     return True
 
 

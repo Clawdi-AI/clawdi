@@ -6,9 +6,11 @@ import logging
 import secrets
 import zlib
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from email import policy
 from email.message import Message
 from email.parser import BytesParser
+from time import monotonic
 from typing import Any
 from urllib.parse import quote
 from uuid import UUID
@@ -26,7 +28,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,10 +41,12 @@ from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_DISCORD,
+    CHANNEL_STATUS_ACTIVE,
     ChannelAccount,
     ChannelBinding,
     ChannelBindingAlias,
     ChannelBotAgentLink,
+    ChannelMessage,
 )
 from app.routes.channel_routers.shared import (
     _clear_discord_guild_commands,
@@ -50,6 +54,7 @@ from app.routes.channel_routers.shared import (
     _discord_bot_user,
     _discord_gateway_dispatch,
     _discord_interaction_content,
+    _discord_retry_after_seconds,
     _DiscordProviderResult,
     _fan_out_discord_global_commands,
     _handle_discord_application_commands,
@@ -67,7 +72,6 @@ from app.services.channels import (
     DISCORD_REF_INTERACTION_ID_TOKEN,
     DISCORD_REF_INTERACTION_TOKEN,
     ChannelAgentContext,
-    ack_channel_inbox_events,
     channel_runtime_account_key,
     channel_runtime_placeholder_token,
     dequeue_discord_gateway_events,
@@ -82,6 +86,7 @@ from app.services.channels import (
     discord_user_display_name_from_payload,
     get_active_channel_account,
     get_channel_agent_reference,
+    lock_active_discord_binding_lease,
     pairing_command_event_was_handled,
     record_discord_interaction_references,
     record_discord_outbound_message,
@@ -101,6 +106,7 @@ router = APIRouter(prefix="/channels/discord", tags=["channels"])
 log = logging.getLogger(__name__)
 
 _DISCORD_GATEWAY_RESUME_BUFFER_SIZE = 100
+_DISCORD_GATEWAY_MAX_CHANNELS = 256
 _DISCORD_GATEWAY_SESSIONS: dict[str, dict[str, Any]] = {}
 _DISCORD_GATEWAY_CAPABILITY_SUBJECT = "clawdi_discord_gateway"
 _DISCORD_GATEWAY_CAPABILITY_AUDIENCE = "clawdi_discord_gateway"
@@ -427,6 +433,23 @@ async def _authorize_discord_channel_request(
         path=path,
         query_params=request.query_params if original_is_channel_get else None,
     )
+    if preflight.status_code != status.HTTP_200_OK:
+        if preflight.status_code in {status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND}:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="channel is not paired",
+            )
+        retry_after = _discord_retry_after_seconds(preflight)
+        raise HTTPException(
+            status_code=preflight.status_code,
+            detail=(
+                "discord api temporarily unavailable"
+                if preflight.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+                or preflight.status_code >= 500
+                else "discord channel lookup failed"
+            ),
+            headers={"Retry-After": str(retry_after)} if retry_after is not None else None,
+        )
     payload = preflight.json_object() if preflight.status_code == status.HTTP_200_OK else None
     if payload is None or _optional_str(payload.get("id")) != channel_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="channel is not paired")
@@ -688,79 +711,59 @@ async def discord_agent_gateway(
     compressor = zlib.compressobj(wbits=zlib.MAX_WBITS) if compress == "zlib-stream" else None
     account: ChannelAccount | None = None
     bot_agent_link_id: UUID | None = None
-    last_sequence = 0
     last_inbox_sequence = 0
-    gateway_sequence = 1
+    gateway_sequence = 0
     session_id = secrets.token_urlsafe(18)
     session_state: dict[str, Any] | None = None
-
-    def inbox_sequence_for_gateway_sequence(sequence: int) -> int | None:
-        if session_state is None:
-            return None
-        inbox_by_gateway = session_state.get("inbox_by_gateway_sequence")
-        if not isinstance(inbox_by_gateway, dict):
-            return None
-        inbox_sequence = inbox_by_gateway.get(sequence)
-        return inbox_sequence if isinstance(inbox_sequence, int) else None
-
-    def max_ackable_inbox_sequence(through_sequence: int) -> int:
-        if session_state is None:
-            return 0
-        inbox_by_gateway = session_state.get("inbox_by_gateway_sequence")
-        if not isinstance(inbox_by_gateway, dict):
-            return 0
-        return max(
-            (
-                inbox_sequence
-                for gateway_sequence_key, inbox_sequence in inbox_by_gateway.items()
-                if isinstance(gateway_sequence_key, int)
-                and isinstance(inbox_sequence, int)
-                and gateway_sequence_key <= through_sequence
-            ),
-            default=0,
-        )
-
-    def remember_dispatched_inbox_sequence(
-        *,
-        gateway_sequence_value: int,
-        inbox_sequence: int,
-    ) -> None:
-        if session_state is None:
-            return
-        inbox_by_gateway = session_state.setdefault("inbox_by_gateway_sequence", {})
-        if isinstance(inbox_by_gateway, dict):
-            inbox_by_gateway[gateway_sequence_value] = inbox_sequence
-
-    async def ack_gateway_sequence(through_sequence: int) -> None:
-        if account is None or bot_agent_link_id is None:
-            return
-        inbox_sequence = max_ackable_inbox_sequence(through_sequence)
-        if inbox_sequence <= 0:
-            return
-        await _ack_discord_gateway_sequence(
-            account=account,
-            bot_agent_link_id=bot_agent_link_id,
-            through_sequence=inbox_sequence,
-        )
+    projected_guilds: set[str] = set()
+    projected_channels: dict[str, dict[str, Any]] = {}
+    deferred_channels: dict[str, float] = {}
 
     async def send_gateway_frame(payload: dict[str, Any], *, record: bool = True) -> None:
-        if record and session_state is not None and payload.get("op") == 0 and payload.get("s"):
+        if compressor is None:
+            await websocket.send_json(payload)
+        else:
+            raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+            await websocket.send_bytes(
+                compressor.compress(raw) + compressor.flush(zlib.Z_SYNC_FLUSH)
+            )
+        if record and session_state is not None and payload.get("op") == 0:
             frames = session_state.setdefault("frames", [])
             frames.append(payload)
             if len(frames) > _DISCORD_GATEWAY_RESUME_BUFFER_SIZE:
                 del frames[:-_DISCORD_GATEWAY_RESUME_BUFFER_SIZE]
-                if frames and isinstance(frames[0].get("s"), int):
-                    session_state["dropped_before_sequence"] = frames[0]["s"]
-                    inbox_by_gateway = session_state.get("inbox_by_gateway_sequence")
-                    if isinstance(inbox_by_gateway, dict):
-                        for sequence in list(inbox_by_gateway):
-                            if isinstance(sequence, int) and sequence < frames[0]["s"]:
-                                inbox_by_gateway.pop(sequence, None)
-        if compressor is None:
-            await websocket.send_json(payload)
-            return
-        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        await websocket.send_bytes(compressor.compress(raw) + compressor.flush(zlib.Z_SYNC_FLUSH))
+                session_state["dropped_before_sequence"] = frames[0]["s"]
+
+    async def send_dispatch(
+        event_type: str,
+        data: dict[str, Any],
+        *,
+        record: bool = True,
+    ) -> None:
+        nonlocal gateway_sequence
+        gateway_sequence += 1
+        await send_gateway_frame(
+            {"op": 0, "t": event_type, "s": gateway_sequence, "d": data},
+            record=record,
+        )
+        if session_state is not None:
+            session_state["last_sequence"] = gateway_sequence
+
+    async def send_guild(guild_id: str, guild_name: str) -> None:
+        payload = _discord_guild_create_payload(
+            guild_id=guild_id,
+            guild_name=guild_name,
+            sequence=0,
+        )
+        await send_dispatch("GUILD_CREATE", payload["d"])
+        projected_guilds.add(guild_id)
+
+    async def send_channel(payload: dict[str, Any]) -> None:
+        event_type = _discord_gateway_channel_event(payload)
+        data = dict(payload)
+        if event_type == "THREAD_CREATE":
+            data["newly_created"] = False
+        await send_dispatch(event_type, data)
 
     await send_gateway_frame({"op": 10, "d": {"heartbeat_interval": 45_000}}, record=False)
     try:
@@ -839,33 +842,13 @@ async def discord_agent_gateway(
                     return
                 resolved_account = resolved_agent.account
                 resolved_link_id = resolved_agent.link.id
-                bound_guilds = await _discord_bound_guilds(
-                    db,
-                    account=resolved_account,
-                    bot_agent_link_id=resolved_link_id,
-                )
-                bound_guild_channels = await _discord_bound_guild_channels(
-                    db,
-                    account=resolved_account,
-                    bot_agent_link_id=resolved_link_id,
-                )
             if op == 6:
                 resume_session_id = _optional_str(data.get("session_id"))
                 if resume_session_id is None:
                     await send_gateway_frame({"op": 9, "d": False}, record=False)
                     continue
                 resume_state = _DISCORD_GATEWAY_SESSIONS.get(resume_session_id)
-                if resume_state is None:
-                    if _DISCORD_GATEWAY_SESSIONS:
-                        await send_gateway_frame({"op": 9, "d": False}, record=False)
-                        continue
-                    resume_state = {
-                        "account_id": resolved_account.id,
-                        "bot_agent_link_id": resolved_link_id,
-                        "frames": [],
-                    }
-                    _DISCORD_GATEWAY_SESSIONS[resume_session_id] = resume_state
-                elif (
+                if resume_state is None or (
                     resume_state.get("account_id") != resolved_account.id
                     or resume_state.get("bot_agent_link_id") != resolved_link_id
                 ):
@@ -875,35 +858,81 @@ async def discord_agent_gateway(
                 bot_agent_link_id = resolved_link_id
                 session_id = resume_session_id
                 session_state = resume_state
-                last_sequence = _optional_int_param(data.get("seq")) or 0
-                gateway_sequence = max(gateway_sequence, last_sequence)
-                last_inbox_sequence = max_ackable_inbox_sequence(last_sequence)
-                await ack_gateway_sequence(last_sequence)
+                resume_sequence = _optional_int_param(data.get("seq"))
+                frames = [
+                    retained
+                    for retained in session_state.get("frames", [])
+                    if isinstance(retained, dict) and isinstance(retained.get("s"), int)
+                ]
+                latest_sequence = max(
+                    max((retained["s"] for retained in frames), default=0),
+                    session_state.get("last_sequence", 0),
+                )
                 dropped_before_sequence = session_state.get("dropped_before_sequence")
                 if (
-                    isinstance(dropped_before_sequence, int)
-                    and last_sequence < dropped_before_sequence
+                    resume_sequence is None
+                    or resume_sequence < 0
+                    or resume_sequence > latest_sequence
+                    or not any(retained.get("t") == "READY" for retained in frames)
+                    or (
+                        isinstance(dropped_before_sequence, int)
+                        and resume_sequence < dropped_before_sequence
+                    )
                 ):
                     await send_gateway_frame({"op": 9, "d": False}, record=False)
                     account = None
                     bot_agent_link_id = None
                     session_state = None
                     continue
-                for replayed in [
-                    frame
-                    for frame in session_state.get("frames", [])
-                    if isinstance(frame.get("s"), int) and frame["s"] > last_sequence
-                ]:
+                gateway_sequence = latest_sequence
+                async with async_session_factory() as db:
+                    resume_guilds, resume_channels = await _discord_gateway_authority(
+                        db,
+                        account=account,
+                        bot_agent_link_id=bot_agent_link_id,
+                    )
+                for retained in frames:
+                    event_type = retained.get("t")
+                    event_data = retained.get("d")
+                    if not isinstance(event_data, dict):
+                        continue
+                    if event_type == "READY":
+                        for private in event_data.get("private_channels", []):
+                            if not isinstance(private, dict):
+                                continue
+                            private_id = _optional_str(private.get("id"))
+                            if private_id in resume_channels:
+                                projected_channels[private_id] = private
+                    elif event_type == "GUILD_CREATE":
+                        retained_guild_id = _optional_str(event_data.get("id"))
+                        if retained_guild_id in resume_guilds:
+                            projected_guilds.add(retained_guild_id)
+                    elif event_type == "GUILD_DELETE":
+                        projected_guilds.discard(_optional_str(event_data.get("id")) or "")
+                    elif event_type in {
+                        "CHANNEL_CREATE",
+                        "CHANNEL_UPDATE",
+                        "THREAD_CREATE",
+                        "THREAD_UPDATE",
+                    }:
+                        retained_channel_id = _optional_str(event_data.get("id"))
+                        if retained_channel_id in resume_channels:
+                            thread_metadata = event_data.get("thread_metadata")
+                            if (
+                                event_type == "THREAD_UPDATE"
+                                and isinstance(thread_metadata, dict)
+                                and thread_metadata.get("archived") is True
+                            ):
+                                projected_channels.pop(retained_channel_id, None)
+                            else:
+                                projected_channels[retained_channel_id] = event_data
+                    elif event_type in {"CHANNEL_DELETE", "THREAD_DELETE"}:
+                        projected_channels.pop(_optional_str(event_data.get("id")) or "", None)
+                for replayed in frames:
+                    if replayed["s"] <= resume_sequence:
+                        continue
                     await send_gateway_frame(replayed, record=False)
-                    last_sequence = max(last_sequence, replayed["s"])
-                    gateway_sequence = max(gateway_sequence, replayed["s"])
-                    replayed_inbox_sequence = inbox_sequence_for_gateway_sequence(replayed["s"])
-                    if replayed_inbox_sequence is not None:
-                        last_inbox_sequence = max(last_inbox_sequence, replayed_inbox_sequence)
-                await send_gateway_frame(
-                    {"op": 0, "t": "RESUMED", "s": last_sequence, "d": {}},
-                    record=False,
-                )
+                await send_dispatch("RESUMED", {}, record=False)
             else:
                 account = resolved_account
                 bot_agent_link_id = resolved_link_id
@@ -913,66 +942,199 @@ async def discord_agent_gateway(
                     "frames": [],
                 }
                 _DISCORD_GATEWAY_SESSIONS[session_id] = session_state
-                await send_gateway_frame(
-                    {
-                        "op": 0,
-                        "t": "READY",
-                        "s": 1,
-                        "d": {
-                            "v": 10,
-                            "session_id": session_id,
-                            "resume_gateway_url": (
-                                _discord_gateway_url(resolved_agent)
-                                if capability is not None
-                                else (
-                                    settings.channel_discord_gateway_url.strip().rstrip("/")
-                                    if link_token is not None
-                                    else _public_ws_url("/v1/channels/discord/gateway")
-                                )
-                            ),
-                            "user": _discord_bot_user(account),
-                            "application": {"id": _discord_application_id(account)},
-                            "guilds": [
-                                {"id": guild_id, "unavailable": False} for guild_id in bound_guilds
-                            ],
-                        },
-                    }
-                )
-                last_sequence = 1
-                for guild_id in bound_guilds:
-                    gateway_sequence += 1
-                    await send_gateway_frame(
-                        _discord_guild_create_payload(
-                            guild_id=guild_id,
-                            channel_ids=bound_guild_channels.get(guild_id, []),
-                            sequence=gateway_sequence,
-                        )
+                async with async_session_factory() as db:
+                    guilds, channels = await _discord_gateway_authority(
+                        db,
+                        account=account,
+                        bot_agent_link_id=bot_agent_link_id,
                     )
-                    last_sequence = gateway_sequence
+                for channel_id, guild_id in channels.items():
+                    try:
+                        result = await _request_discord_provider(
+                            account=account,
+                            method="GET",
+                            path=f"channels/{channel_id}",
+                        )
+                    except HTTPException:
+                        continue
+                    channel = _discord_gateway_channel(
+                        result,
+                        channel_id=channel_id,
+                        guild_id=guild_id,
+                    )
+                    if channel is not None:
+                        projected_channels[channel_id] = channel
+                await send_dispatch(
+                    "READY",
+                    {
+                        "v": 10,
+                        "session_id": session_id,
+                        "resume_gateway_url": (
+                            _discord_gateway_url(resolved_agent)
+                            if capability is not None
+                            else (
+                                settings.channel_discord_gateway_url.strip().rstrip("/")
+                                if link_token is not None
+                                else _public_ws_url("/v1/channels/discord/gateway")
+                            )
+                        ),
+                        "user": _discord_bot_user(account),
+                        "application": {"id": _discord_application_id(account)},
+                        "guilds": [{"id": guild_id, "unavailable": False} for guild_id in guilds],
+                        "private_channels": [
+                            payload
+                            for channel_id, payload in projected_channels.items()
+                            if channels.get(channel_id) is None
+                        ],
+                    },
+                )
+                for guild_id, guild_name in guilds.items():
+                    await send_guild(guild_id, guild_name)
+                for channel_id, channel in projected_channels.items():
+                    if channels.get(channel_id) is not None:
+                        await send_channel(channel)
+
+        if bot_agent_link_id is None:
+            await websocket.close(code=4004)
+            return
+        active_link_id = bot_agent_link_id
 
         while True:
             async with async_session_factory() as db:
                 events = await dequeue_discord_gateway_events(
                     db,
                     account=account,
-                    bot_agent_link_id=bot_agent_link_id,
+                    bot_agent_link_id=active_link_id,
                     after_sequence=last_inbox_sequence,
                     limit=100,
                 )
             if events:
                 for message in events:
-                    inbox_sequence = int(message.inbox_sequence)
-                    gateway_sequence += 1
-                    last_sequence = gateway_sequence
-                    last_inbox_sequence = inbox_sequence
                     payload = _discord_gateway_dispatch(message)
-                    payload["s"] = gateway_sequence
-                    remember_dispatched_inbox_sequence(
-                        gateway_sequence_value=gateway_sequence,
-                        inbox_sequence=inbox_sequence,
+                    guild_id, channel_id = _discord_gateway_scope(payload)
+                    async with async_session_factory() as db:
+                        guilds, channels = await _discord_gateway_authority(
+                            db,
+                            account=account,
+                            bot_agent_link_id=active_link_id,
+                            priority_channel_id=channel_id,
+                        )
+                    for removed_guild_id in projected_guilds - set(guilds):
+                        await send_dispatch(
+                            "GUILD_DELETE",
+                            {"id": removed_guild_id, "unavailable": False},
+                        )
+                        projected_guilds.discard(removed_guild_id)
+                        for projected_id, projected in list(projected_channels.items()):
+                            if _optional_str(projected.get("guild_id")) == removed_guild_id:
+                                projected_channels.pop(projected_id, None)
+                    for removed_channel_id in set(projected_channels) - set(channels):
+                        projected_channels.pop(removed_channel_id, None)
+                    for removed_channel_id in set(deferred_channels) - set(channels):
+                        deferred_channels.pop(removed_channel_id, None)
+                    event_type = _optional_str(payload.get("t"))
+                    lifecycle = bool(
+                        event_type and event_type.startswith(("GUILD_", "CHANNEL_", "THREAD_"))
                     )
-                    await send_gateway_frame(payload)
-                continue
+                    authorized = (
+                        guild_id in guilds
+                        if lifecycle and guild_id is not None
+                        else channel_id in channels and channels[channel_id] == guild_id
+                    )
+                    projected = (
+                        projected_channels.get(channel_id) if channel_id is not None else None
+                    )
+                    if authorized and not lifecycle and channel_id is not None:
+                        if projected is None:
+                            retry_at = deferred_channels.get(channel_id, 0.0)
+                            if monotonic() < retry_at:
+                                break
+                            result: _DiscordProviderResult | None = None
+                            try:
+                                result = await _request_discord_provider(
+                                    account=account,
+                                    method="GET",
+                                    path=f"channels/{channel_id}",
+                                )
+                            except HTTPException as exc:
+                                if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+                                    retry_after = _discord_retry_after_seconds(
+                                        _DiscordProviderResult(
+                                            content=b"",
+                                            status_code=exc.status_code,
+                                            media_type="application/json",
+                                            headers=dict(exc.headers or {}),
+                                        )
+                                    )
+                                    deferred_channels[channel_id] = monotonic() + (
+                                        retry_after if retry_after is not None else 1.0
+                                    )
+                                    break
+                                if exc.status_code >= 500:
+                                    deferred_channels[channel_id] = monotonic() + 1.0
+                                    break
+                            if (
+                                result is not None
+                                and result.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+                            ):
+                                retry_after = _discord_retry_after_seconds(result)
+                                deferred_channels[channel_id] = monotonic() + (
+                                    retry_after if retry_after is not None else 1.0
+                                )
+                                break
+                            if result is not None and result.status_code >= 500:
+                                deferred_channels[channel_id] = monotonic() + 1.0
+                                break
+                            projected = (
+                                _discord_gateway_channel(
+                                    result,
+                                    channel_id=channel_id,
+                                    guild_id=guild_id,
+                                )
+                                if result is not None
+                                else None
+                            )
+                            if projected is not None:
+                                deferred_channels.pop(channel_id, None)
+
+                    async def send_message() -> None:
+                        if guild_id is not None and guild_id not in projected_guilds:
+                            await send_guild(guild_id, guilds[guild_id])
+                        if channel_id is not None and projected is not None:
+                            if channel_id not in projected_channels:
+                                await send_channel(projected)
+                            projected_channels[channel_id] = projected
+                        data = payload.get("d")
+                        if event_type is not None and isinstance(data, dict):
+                            await send_dispatch(event_type, data)
+
+                    sent = await _send_discord_gateway_message(
+                        account_id=account.id,
+                        bot_agent_link_id=active_link_id,
+                        message=message,
+                        send=(
+                            send_message
+                            if authorized and (lifecycle or projected is not None)
+                            else None
+                        ),
+                    )
+                    last_inbox_sequence = int(message.inbox_sequence)
+                    if sent == "sent" and lifecycle and channel_id is not None:
+                        data = payload.get("d")
+                        if event_type in {"CHANNEL_DELETE", "THREAD_DELETE"}:
+                            projected_channels.pop(channel_id, None)
+                        elif isinstance(data, dict) and channels.get(channel_id) == guild_id:
+                            thread_metadata = data.get("thread_metadata")
+                            if (
+                                event_type == "THREAD_UPDATE"
+                                and isinstance(thread_metadata, dict)
+                                and thread_metadata.get("archived") is True
+                            ):
+                                projected_channels.pop(channel_id, None)
+                            else:
+                                projected_channels[channel_id] = dict(data)
+                else:
+                    continue
 
             try:
                 frame = await asyncio.wait_for(
@@ -980,9 +1142,6 @@ async def discord_agent_gateway(
                     timeout=max(0.001, settings.discord_gateway_poll_interval_seconds),
                 )
                 if isinstance(frame, dict) and frame.get("op") == 1:
-                    ack_sequence = _optional_int_param(frame.get("d"))
-                    if ack_sequence is not None:
-                        await ack_gateway_sequence(ack_sequence)
                     await send_gateway_frame({"op": 11, "d": None}, record=False)
             except TimeoutError:
                 pass
@@ -1283,24 +1442,6 @@ async def cleanup_discord_guild_commands_after_authority_revoked(
         return False
 
 
-async def _ack_discord_gateway_sequence(
-    *,
-    account: ChannelAccount,
-    bot_agent_link_id: UUID | None,
-    through_sequence: int,
-) -> None:
-    if through_sequence <= 0 or bot_agent_link_id is None:
-        return
-    async with async_session_factory() as db:
-        await ack_channel_inbox_events(
-            db,
-            account=account,
-            bot_agent_link_id=bot_agent_link_id,
-            through_sequence=through_sequence,
-        )
-        await db.commit()
-
-
 async def _handle_discord_interaction_callback(
     db: AsyncSession,
     *,
@@ -1446,22 +1587,94 @@ def _discord_binding_guild_id(binding: ChannelBinding) -> str | None:
     return None
 
 
-def _discord_gateway_channel_payload(*, guild_id: str, channel_id: str) -> dict[str, Any]:
-    return {
-        "id": channel_id,
-        "guild_id": guild_id,
-        "name": channel_id,
-        "type": 0,
-        "position": 0,
-        "permission_overwrites": [],
-        "parent_id": None,
-    }
+async def _discord_gateway_authority(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    bot_agent_link_id: UUID,
+    priority_channel_id: str | None = None,
+) -> tuple[dict[str, str], dict[str, str | None]]:
+    priority = (ChannelBindingAlias.alias_external_chat_id == priority_channel_id) | (
+        ChannelBinding.external_chat_id == priority_channel_id
+    )
+    rows = (
+        await db.execute(
+            select(ChannelBinding, ChannelBindingAlias)
+            .join(ChannelAccount, ChannelAccount.id == ChannelBinding.account_id)
+            .join(ChannelBotAgentLink, ChannelBotAgentLink.id == ChannelBinding.bot_agent_link_id)
+            .outerjoin(
+                ChannelBindingAlias,
+                and_(
+                    ChannelBindingAlias.binding_id == ChannelBinding.id,
+                    ChannelBindingAlias.account_id == account.id,
+                    ChannelBindingAlias.bot_agent_link_id == bot_agent_link_id,
+                    ChannelBindingAlias.alias_kind == "discord_channel",
+                ),
+            )
+            .where(
+                ChannelBinding.account_id == account.id,
+                ChannelBinding.bot_agent_link_id == bot_agent_link_id,
+                ChannelBinding.status == BINDING_STATUS_ACTIVE,
+                ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                ChannelAccount.archived_at.is_(None),
+                ChannelBotAgentLink.account_id == account.id,
+                ChannelBotAgentLink.user_id == ChannelBinding.user_id,
+                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                ChannelBotAgentLink.archived_at.is_(None),
+            )
+            .order_by(priority.desc(), ChannelBindingAlias.updated_at.desc())
+            .limit(_DISCORD_GATEWAY_MAX_CHANNELS)
+        )
+    ).all()
+    guilds: dict[str, str] = {}
+    channels: dict[str, str | None] = {}
+    for binding, alias in rows:
+        guild_id = _discord_binding_guild_id(binding)
+        if guild_id is not None:
+            guilds[guild_id] = binding.external_chat_name or guild_id
+            if alias is not None:
+                channels[alias.alias_external_chat_id] = guild_id
+        elif (binding.external_chat_type or "").lower() in {
+            "dm",
+            "direct_messages",
+            "group_dm",
+            "private",
+        }:
+            channels[binding.external_chat_id] = None
+    return guilds, channels
+
+
+def _discord_gateway_channel(
+    result: _DiscordProviderResult,
+    *,
+    channel_id: str,
+    guild_id: str | None,
+) -> dict[str, Any] | None:
+    payload = result.json_object() if result.status_code == status.HTTP_200_OK else None
+    channel_type = payload.get("type") if payload is not None else None
+    if (
+        payload is None
+        or _optional_str(payload.get("id")) != channel_id
+        or isinstance(channel_type, bool)
+        or not isinstance(channel_type, int)
+    ):
+        return None
+    payload_guild_id = _optional_str(payload.get("guild_id"))
+    if (guild_id is None and (payload_guild_id is not None or channel_type not in {1, 3})) or (
+        guild_id is not None and (payload_guild_id != guild_id or channel_type in {1, 3})
+    ):
+        return None
+    return dict(payload)
+
+
+def _discord_gateway_channel_event(payload: dict[str, Any]) -> str:
+    return "THREAD_CREATE" if payload.get("type") in {10, 11, 12} else "CHANNEL_CREATE"
 
 
 def _discord_guild_create_payload(
     *,
     guild_id: str,
-    channel_ids: list[str],
+    guild_name: str,
     sequence: int,
 ) -> dict[str, Any]:
     return {
@@ -1470,13 +1683,61 @@ def _discord_guild_create_payload(
         "s": sequence,
         "d": {
             "id": guild_id,
-            "name": guild_id,
+            "name": guild_name,
             "unavailable": False,
-            "channels": [
-                _discord_gateway_channel_payload(guild_id=guild_id, channel_id=channel_id)
-                for channel_id in channel_ids
-            ],
+            "channels": [],
             "threads": [],
             "members": [],
         },
     }
+
+
+def _discord_gateway_scope(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+    data = payload.get("d")
+    if not isinstance(data, dict):
+        return None, None
+    event_type = _optional_str(payload.get("t"))
+    guild_id = _optional_str(data.get("guild_id"))
+    channel_id = _optional_str(data.get("channel_id"))
+    if event_type and event_type.startswith("GUILD_"):
+        guild_id = _optional_str(data.get("id")) or guild_id
+    elif event_type and event_type.startswith(("CHANNEL_", "THREAD_")):
+        channel_id = _optional_str(data.get("id")) or channel_id
+    return guild_id, channel_id
+
+
+async def _send_discord_gateway_message(
+    *,
+    account_id: UUID,
+    bot_agent_link_id: UUID,
+    message: ChannelMessage,
+    send: Any | None,
+) -> str:
+    if message.binding_id is None:
+        return "dropped"
+    async with async_session_factory() as db:
+        binding = await lock_active_discord_binding_lease(
+            db,
+            account_id=account_id,
+            bot_agent_link_id=bot_agent_link_id,
+            binding_id=message.binding_id,
+            external_chat_id=message.external_chat_id,
+        )
+        current = (
+            await db.execute(
+                select(ChannelMessage)
+                .where(
+                    ChannelMessage.id == message.id,
+                    ChannelMessage.account_id == account_id,
+                    ChannelMessage.bot_agent_link_id == bot_agent_link_id,
+                )
+                .with_for_update(of=ChannelMessage)
+            )
+        ).scalar_one_or_none()
+        if current is None or current.delivered_at is not None:
+            return "consumed"
+        if binding is not None and send is not None:
+            await send()
+        current.delivered_at = datetime.now(UTC)
+        await db.commit()
+        return "sent" if binding is not None and send is not None else "dropped"
