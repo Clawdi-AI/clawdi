@@ -401,13 +401,13 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		// Do not broaden this to other 404s; Skill and unrelated resource
 		// misses retain their existing retry/failure behavior.
 		if (e instanceof ApiError && e.status === 404) {
-			log.error("engine.agent_disconnected", {
+			log.info("engine.agent_disconnected", {
 				environment_id: opts.environmentId,
-				hint: "This installation is disconnected. Run `clawdi setup` to reconnect it with retained data.",
+				hint: "This installation is disconnected. Run clawdi setup to reconnect it with retained data.",
 			});
-			// Reuse the supervisor's established no-restart outcome. On macOS,
-			// KeepAlive requires the same best-effort self-unload used for an
-			// unrecoverable authentication stop.
+			// Exit status 2 is the supervisor's established no-restart control
+			// outcome, not an application-crash classification. On macOS,
+			// KeepAlive requires the same best-effort self-unload used for auth.
 			process.exitCode = 2;
 			removeLaunchdDaemonSupervision(opts.adapter.agentType);
 			opts.abortController.abort();

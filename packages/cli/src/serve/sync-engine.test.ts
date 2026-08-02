@@ -847,10 +847,15 @@ describe("isAuthFailure", () => {
 describe("daemon startup Agent lookup", () => {
 	async function withStartupCase(
 		fetchImpl: (request: Request) => Promise<Response>,
-		run: (fixture: { abortController: AbortController; requests: Request[] }) => Promise<void>,
+		run: (fixture: {
+			abortController: AbortController;
+			requests: Request[];
+			logs: string[];
+		}) => Promise<void>,
 	): Promise<void> {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-daemon-startup-"));
 		const originalFetch = globalThis.fetch;
+		const originalStderrWrite = process.stderr.write;
 		const originalHome = process.env.CLAWDI_HOME;
 		const originalState = process.env.CLAWDI_STATE_DIR;
 		const originalApiUrl = process.env.CLAWDI_API_URL;
@@ -858,6 +863,7 @@ describe("daemon startup Agent lookup", () => {
 		const originalAuthOrigin = process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
 		const originalExitCode = process.exitCode;
 		const requests: Request[] = [];
+		const logs: string[] = [];
 		try {
 			process.env.CLAWDI_HOME = join(root, "home");
 			process.env.CLAWDI_STATE_DIR = join(root, "serve");
@@ -870,9 +876,14 @@ describe("daemon startup Agent lookup", () => {
 				requests.push(request);
 				return fetchImpl(request);
 			}) as typeof fetch;
-			await run({ abortController: new AbortController(), requests });
+			process.stderr.write = ((chunk: string | Uint8Array) => {
+				logs.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+				return true;
+			}) as typeof process.stderr.write;
+			await run({ abortController: new AbortController(), requests, logs });
 		} finally {
 			globalThis.fetch = originalFetch;
+			process.stderr.write = originalStderrWrite;
 			if (originalHome === undefined) delete process.env.CLAWDI_HOME;
 			else process.env.CLAWDI_HOME = originalHome;
 			if (originalState === undefined) delete process.env.CLAWDI_STATE_DIR;
@@ -891,7 +902,7 @@ describe("daemon startup Agent lookup", () => {
 	it("maps the persisted canonical Agent 404 to a clean no-restart stop", async () => {
 		await withStartupCase(
 			async () => new Response('{"detail":"Agent not found"}', { status: 404 }),
-			async ({ abortController, requests }) => {
+			async ({ abortController, requests, logs }) => {
 				await runSyncEngine({
 					environmentId: "agent-disconnected",
 					adapter: adapterRegistry.hermes.create(),
@@ -904,6 +915,8 @@ describe("daemon startup Agent lookup", () => {
 				expect(new URL(requests[0].url).pathname).toBe("/v1/agents/agent-disconnected");
 				expect(process.exitCode).toBe(2);
 				expect(abortController.signal.aborted).toBe(true);
+				expect(logs.join("")).toContain('"level":"info","event":"engine.agent_disconnected"');
+				expect(logs.join("")).not.toContain('"level":"error","event":"engine.agent_disconnected"');
 			},
 		);
 	});

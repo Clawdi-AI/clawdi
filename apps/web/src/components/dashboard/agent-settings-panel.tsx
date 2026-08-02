@@ -137,7 +137,7 @@ export function AgentSettingsPanel({
 			),
 		onSuccess: () => {
 			toast.success("Agent disconnected", {
-				description: "Data is retained. Run `clawdi setup` on this installation to reconnect.",
+				description: "Data is retained. Run clawdi setup on this installation to reconnect.",
 			});
 			queryClient.invalidateQueries({
 				predicate: (q) => {
