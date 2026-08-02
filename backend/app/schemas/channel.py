@@ -4,12 +4,27 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
 ChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
 ChannelVisibility = Literal["private", "public"]
 ChannelBotPoolAccess = Literal["owner", "public"]
 ChannelHealthStatus = Literal["ok", "warning", "error"]
+WhatsAppOnboardingState = Literal[
+    "generating",
+    "ready",
+    "scanned",
+    "connected",
+    "expired",
+    "canceled",
+    "error",
+]
+WhatsAppOnboardingReadinessReason = Literal[
+    "not_configured",
+    "no_capacity",
+    "managed_sidecar_required",
+    "temporarily_unavailable",
+]
 
 
 class ChannelAccountCreate(BaseModel):
@@ -107,6 +122,44 @@ class ChannelAccountCreatedResponse(ChannelAccountResponse):
     agent_link_id: UUID | None = None
     agent_id: UUID | None = None
     agent_token: str | None = None
+
+
+class ChannelWhatsAppOnboardingReadinessResponse(BaseModel):
+    available: bool
+    manual_pairing_code_supported: bool
+    reason: WhatsAppOnboardingReadinessReason | None = None
+
+
+class ChannelWhatsAppOnboardingCreate(BaseModel):
+    request_id: UUID
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("name cannot be blank")
+        return stripped
+
+
+class ChannelWhatsAppOnboardingPairingCodeCreate(BaseModel):
+    phone_number: SecretStr
+
+
+class ChannelWhatsAppOnboardingSessionResponse(BaseModel):
+    id: UUID
+    channel_account_id: UUID | None = None
+    name: str
+    state: WhatsAppOnboardingState
+    method: Literal["qr", "code"]
+    qr: str | None = Field(default=None, repr=False)
+    qr_expires_at: datetime | None = None
+    pairing_code: str | None = Field(default=None, repr=False)
+    manual_pairing_code_supported: bool
+    started_at: datetime
+    expires_at: datetime
+    completed_at: datetime | None = None
 
 
 class ChannelAgentLinkCreate(BaseModel):

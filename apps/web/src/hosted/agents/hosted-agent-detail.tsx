@@ -2614,6 +2614,11 @@ function ChannelsTab({
 			/>
 		);
 	}
+	function focusClawdiBots() {
+		const section = document.querySelector<HTMLElement>('[data-agent-channel-section="clawdi"]');
+		section?.scrollIntoView({ behavior: "smooth", block: "start" });
+		section?.focus({ preventScroll: true });
+	}
 
 	return (
 		<div data-agent-channels className="flex flex-col gap-8">
@@ -2632,7 +2637,7 @@ function ChannelsTab({
 			<AgentChannelBotsSection
 				kind="custom"
 				title="Custom bots"
-				description="Bots whose provider credentials you manage."
+				description="Bots and WhatsApp accounts whose connection you manage."
 				bots={cardGroups.customBots}
 				isLoading={channels.isLoading}
 				error={shouldBlockQueryError(channels.error, channels.data) ? channels.error : null}
@@ -2648,7 +2653,7 @@ function ChannelsTab({
 						onClick={() => setCustomBotDialogOpen(true)}
 					>
 						<Plus className="size-3.5 shrink-0" />
-						Add custom bot
+						Add channel
 					</Button>
 				}
 				renderBot={renderBot}
@@ -2667,6 +2672,7 @@ function ChannelsTab({
 				agentId={environmentId}
 				agentType={agentType}
 				linkedProviders={linkedProviders}
+				onChooseClawdiWhatsapp={focusClawdiBots}
 				onAgentConnected={(bot) => {
 					setRecentLinks((current) =>
 						new Map(current).set(bot.id, {
@@ -2754,7 +2760,11 @@ function AgentChannelBotsSection({
 	renderBot: (bot: AgentChannelCardItem) => React.ReactNode;
 }) {
 	return (
-		<section data-agent-channel-section={kind} className="flex min-w-0 flex-col gap-3">
+		<section
+			data-agent-channel-section={kind}
+			tabIndex={-1}
+			className="flex min-w-0 scroll-mt-6 flex-col gap-3 outline-none"
+		>
 			<div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
 				<div className="min-w-0 flex-1">
 					<SectionLabel count={bots.length}>{title}</SectionLabel>
@@ -2820,6 +2830,7 @@ function AgentChannelBotCard({
 	onUnlink: () => void;
 }) {
 	const unavailableReason = agentChannelLinkUnavailableReason({ bot, agentType, linkedProviders });
+	const activationGated = unavailableReason === "Coming soon";
 	return (
 		<div data-agent-channel-account-id={bot.id} className="h-full min-w-0">
 			{bot.link ? (
@@ -2845,16 +2856,23 @@ function AgentChannelBotCard({
 					title={bot.name}
 					state={unavailableReason ?? "Available"}
 					actions={
-						<Button
-							type="button"
-							size="sm"
-							className="w-full min-w-0 sm:w-28"
-							disabled={Boolean(unavailableReason) || linking}
-							onClick={onLink}
-						>
-							{linking ? <Spinner className="size-3.5" /> : <Link2 className="size-3.5" />}
-							{linking ? "Linking…" : "Link"}
-						</Button>
+						activationGated ? (
+							<p className="flex min-w-0 items-center justify-center gap-1.5 text-xs text-muted-foreground [overflow-wrap:anywhere] sm:w-28">
+								<Info className="size-3.5 shrink-0" />
+								Agent Link gated
+							</p>
+						) : (
+							<Button
+								type="button"
+								size="sm"
+								className="w-full min-w-0 sm:w-28"
+								disabled={Boolean(unavailableReason) || linking}
+								onClick={onLink}
+							>
+								{linking ? <Spinner className="size-3.5" /> : <Link2 className="size-3.5" />}
+								{linking ? "Linking…" : "Link"}
+							</Button>
+						)
 					}
 				/>
 			)}

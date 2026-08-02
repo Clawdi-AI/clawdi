@@ -94,7 +94,7 @@ export function ChannelsPage() {
 				actions={
 					<Button size="sm" variant="outline" onClick={() => setConnectOpen(true)}>
 						<Plus />
-						Connect custom bot
+						Add channel
 					</Button>
 				}
 			/>
@@ -103,7 +103,7 @@ export function ChannelsPage() {
 				<EmptyState
 					icon={MessagesSquare}
 					title="No bots yet"
-					description="Connect a Custom Telegram or Discord bot you manage."
+					description="Add a Custom Telegram, Discord, or WhatsApp account you manage."
 				/>
 			) : (
 				<>

@@ -19,3 +19,6 @@ export type ChannelBinding = Schemas["ChannelBindingResponse"];
 export type ChannelPairCode = Schemas["ChannelPairCodeResponse"];
 export type ChannelActivityItem = Schemas["ChannelActivityItemResponse"];
 export type ChannelHealthItem = Schemas["ChannelHealthItemResponse"];
+export type WhatsAppOnboardingReadiness = Schemas["ChannelWhatsAppOnboardingReadinessResponse"];
+export type WhatsAppOnboardingSession = Schemas["ChannelWhatsAppOnboardingSessionResponse"];
+export type WhatsAppOnboardingState = WhatsAppOnboardingSession["state"];

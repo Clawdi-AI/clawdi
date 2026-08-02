@@ -65,7 +65,7 @@ describe("channel IA boundary", () => {
 		expect(agentDetail).toContain('title="Custom bots"');
 		expect(agentDetail).toContain("No Clawdi bots available");
 		expect(agentDetail).toContain("No custom bots yet");
-		expect(agentDetail).toContain("Add custom bot");
+		expect(agentDetail).toContain("Add channel");
 		expect(agentDetail).not.toContain("<AddChannelDialog");
 		expect(agentDetail).toContain("<ConnectBotDialog");
 		expect(agentDetail).toContain("setCustomBotDialogOpen(true)");
@@ -257,6 +257,8 @@ describe("channel IA boundary", () => {
 		expect(pairedChatsDialog).toContain("pairedChats.length === 1");
 		expect(pairedChatsDialog).toContain('"chat" : "chats"');
 		expect(agentDetail).not.toContain("Link to start pairing chats");
+		expect(agentDetail).toContain("Agent Link gated");
+		expect(agentDetail).toContain("activationGated ? (");
 		expect(pairedChatsDialog).toContain("aria-controls={panelId}");
 		expect(pairedChatsDialog).toContain('role="status"');
 		expect(pairedChatsDialog).toContain('role="alert"');

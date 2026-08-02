@@ -13,7 +13,7 @@ describe("global Channels inventory", () => {
 		expect(channelsPage).toContain("data-owned-bots-section");
 		expect(channelsPage).toContain("<SharedBotsSection");
 		expect(channelsPage).toContain("data-shared-bots-section");
-		expect(channelsPage).toContain("Connect custom bot");
+		expect(channelsPage).toContain("Add channel");
 		expect(channelsPage).toContain("Custom bots");
 		expect(channelsPage).toContain("Clawdi bots");
 		expect(channelsPage).toContain("orderedChannelsForFilter");
@@ -46,7 +46,7 @@ describe("global Channels inventory", () => {
 		expect(hooks).toContain("export function useUnlinkAgentChannel(");
 	});
 
-	test("reuses one Custom bot form for Console inventory and direct Agent setup", () => {
+	test("reuses one Add channel dialog for Console inventory and direct Agent setup", () => {
 		const connectDialog = source("./connect-bot-dialog.tsx");
 		const agentDetail = source("../../agents/hosted-agent-detail.tsx");
 
@@ -58,7 +58,7 @@ describe("global Channels inventory", () => {
 		expect(agentDetail).toContain("open={customBotDialogOpen}");
 		expect(agentDetail).toContain("agentId={environmentId}");
 		expect(agentDetail).toContain("linkedProviders={linkedProviders}");
-		expect(agentDetail).toContain("Add custom bot");
+		expect(agentDetail).toContain("Add channel");
 		expect(agentDetail).toContain('title="Clawdi bots"');
 		expect(agentDetail).toContain('title="Custom bots"');
 		expect(agentDetail).toContain("body: { agent_id: environmentId }");
@@ -73,7 +73,8 @@ describe("global Channels inventory", () => {
 		expect(connectDialog).toContain("Application ID");
 		expect(connectDialog).toContain("Public key");
 		expect(connectDialog).not.toContain("setupSteps");
-		expect(connectDialog).not.toContain("WhatsApp");
+		expect(connectDialog).toContain("whatsappSelected");
+		expect(connectDialog).toContain("<WhatsAppDeviceOnboarding");
 		expect(connectDialog).not.toContain("Server ID");
 		expect(connectDialog).not.toContain("Guild ID");
 	});

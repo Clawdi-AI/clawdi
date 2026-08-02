@@ -143,6 +143,8 @@ from app.services.whatsapp_baileys import (
     mint_whatsapp_agent_credential,
     whatsapp_agent_websocket_url,
 )
+from app.services.whatsapp_device_onboarding import require_whatsapp_custom_logout_for_archive
+from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_registry
 
 router = APIRouter(prefix="/channels", tags=["channels"])
 
@@ -814,6 +816,11 @@ async def delete_channel(
                 )
             )
         ).scalars()
+    )
+    await require_whatsapp_custom_logout_for_archive(
+        db,
+        account=account,
+        registry=get_active_whatsapp_sidecar_registry(),
     )
     await archive_channel_account(db, account=account)
     for link in active_links:

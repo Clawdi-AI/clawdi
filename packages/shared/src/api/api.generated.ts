@@ -306,6 +306,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/channels/whatsapp/onboarding/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Whatsapp Onboarding Readiness */
+        get: operations["get_whatsapp_onboarding_readiness_v1_channels_whatsapp_onboarding_readiness_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/onboarding/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Whatsapp Onboarding Session */
+        post: operations["create_whatsapp_onboarding_session_v1_channels_whatsapp_onboarding_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/onboarding/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Whatsapp Onboarding Session */
+        get: operations["get_whatsapp_onboarding_session_v1_channels_whatsapp_onboarding_sessions__session_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/onboarding/sessions/{session_id}/pairing-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Whatsapp Onboarding Pairing Code */
+        post: operations["create_whatsapp_onboarding_pairing_code_v1_channels_whatsapp_onboarding_sessions__session_id__pairing_code_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/onboarding/sessions/{session_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Whatsapp Onboarding Session */
+        post: operations["cancel_whatsapp_onboarding_session_v1_channels_whatsapp_onboarding_sessions__session_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channels/whatsapp/onboarding/sessions/{session_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Whatsapp Onboarding Session */
+        post: operations["retry_whatsapp_onboarding_session_v1_channels_whatsapp_onboarding_sessions__session_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/channels/debug/events": {
         parameters: {
             query?: never;
@@ -4424,6 +4526,75 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** ChannelWhatsAppOnboardingCreate */
+        ChannelWhatsAppOnboardingCreate: {
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Name */
+            name: string;
+        };
+        /** ChannelWhatsAppOnboardingPairingCodeCreate */
+        ChannelWhatsAppOnboardingPairingCodeCreate: {
+            /**
+             * Phone Number
+             * Format: password
+             */
+            phone_number: string;
+        };
+        /** ChannelWhatsAppOnboardingReadinessResponse */
+        ChannelWhatsAppOnboardingReadinessResponse: {
+            /** Available */
+            available: boolean;
+            /** Manual Pairing Code Supported */
+            manual_pairing_code_supported: boolean;
+            /** Reason */
+            reason?: ("not_configured" | "no_capacity" | "managed_sidecar_required" | "temporarily_unavailable") | null;
+        };
+        /** ChannelWhatsAppOnboardingSessionResponse */
+        ChannelWhatsAppOnboardingSessionResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Channel Account Id */
+            channel_account_id?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "generating" | "ready" | "scanned" | "connected" | "expired" | "canceled" | "error";
+            /**
+             * Method
+             * @enum {string}
+             */
+            method: "qr" | "code";
+            /** Qr */
+            qr?: string | null;
+            /** Qr Expires At */
+            qr_expires_at?: string | null;
+            /** Pairing Code */
+            pairing_code?: string | null;
+            /** Manual Pairing Code Supported */
+            manual_pairing_code_supported: boolean;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Completed At */
+            completed_at?: string | null;
+        };
         /**
          * ConnectRequest
          * @description OAuth connect-link request body.
@@ -8088,6 +8259,187 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ControlPlaneAuditEventListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_whatsapp_onboarding_readiness_v1_channels_whatsapp_onboarding_readiness_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelWhatsAppOnboardingReadinessResponse"];
+                };
+            };
+        };
+    };
+    create_whatsapp_onboarding_session_v1_channels_whatsapp_onboarding_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelWhatsAppOnboardingCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelWhatsAppOnboardingSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_whatsapp_onboarding_session_v1_channels_whatsapp_onboarding_sessions__session_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelWhatsAppOnboardingSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_whatsapp_onboarding_pairing_code_v1_channels_whatsapp_onboarding_sessions__session_id__pairing_code_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelWhatsAppOnboardingPairingCodeCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelWhatsAppOnboardingSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_whatsapp_onboarding_session_v1_channels_whatsapp_onboarding_sessions__session_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelWhatsAppOnboardingSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_whatsapp_onboarding_session_v1_channels_whatsapp_onboarding_sessions__session_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelWhatsAppOnboardingSessionResponse"];
                 };
             };
             /** @description Validation Error */
