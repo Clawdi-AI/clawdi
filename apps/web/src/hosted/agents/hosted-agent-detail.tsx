@@ -39,6 +39,7 @@ import {
 	OverviewMetrics,
 	OverviewModuleError,
 	OverviewModuleSkeleton,
+	OverviewModuleUnavailable,
 	OverviewSummaryRows,
 } from "@/components/dashboard/agent-overview-capabilities";
 import {
@@ -621,6 +622,8 @@ export function HostedAgentDetail({
 							deployment={deployment}
 							agent={isCloudEnvId(environmentId) ? agent : null}
 							projectionStatus={projection.status}
+							canRetryProjection={deploymentProjectionQueryable}
+							onRetryProjection={() => void agentQuery.refetch()}
 							isPerformance={isPerformance}
 							showDeploymentActions={!deploymentRunning && !isStartingStatus(deploymentStatus)}
 							onDeleteAccepted={onDeleteAccepted}
@@ -1105,12 +1108,33 @@ function InitialDeploymentPage({
 	);
 }
 
+function OverviewProjectionUnavailableState({
+	canRetry,
+	onRetry,
+}: {
+	canRetry: boolean;
+	onRetry: () => void;
+}) {
+	return (
+		<div className="flex h-full min-h-40 flex-col items-start justify-center gap-3 rounded-lg border bg-muted/20 p-4">
+			<p className="text-sm text-muted-foreground">Agent details are unavailable right now.</p>
+			{canRetry ? (
+				<Button type="button" variant="outline" size="sm" onClick={onRetry}>
+					<RefreshCw /> Check again
+				</Button>
+			) : null}
+		</div>
+	);
+}
+
 function OverviewTab({
 	agentId,
 	routeSearch,
 	deployment,
 	agent,
 	projectionStatus,
+	canRetryProjection,
+	onRetryProjection,
 	isPerformance,
 	showDeploymentActions,
 	onDeleteAccepted,
@@ -1130,6 +1154,8 @@ function OverviewTab({
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
 	projectionStatus: HostedProjectionResolution<unknown>["status"];
+	canRetryProjection: boolean;
+	onRetryProjection: () => void;
 	isPerformance: boolean;
 	showDeploymentActions: boolean;
 	onDeleteAccepted: (deploymentId: string) => void;
@@ -1189,7 +1215,7 @@ function OverviewTab({
 		return [`${provider}: ${link.account.name}`];
 	});
 	const projectionLoading = projectionStatus === "loading";
-	const projectionUnavailable = projectionStatus === "unavailable" || !deploymentStatus.known;
+	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
 	return (
 		<div className="flex flex-col gap-8">
 			<div>
@@ -1201,12 +1227,17 @@ function OverviewTab({
 						aria-labelledby="hosted-recent-sessions"
 						className="min-h-40 min-w-0 @3xl/main:min-h-52"
 					>
-						{sessionsError ? (
+						{projectionUnavailable ? (
+							<OverviewProjectionUnavailableState
+								canRetry={canRetryProjection}
+								onRetry={onRetryProjection}
+							/>
+						) : sessionsError ? (
 							<OverviewModuleError label="Sessions" onRetry={() => void onRetrySessions()} />
 						) : (
 							<OverviewSessionList
 								sessions={sessions}
-								isLoading={sessionsLoading}
+								isLoading={projectionLoading || sessionsLoading}
 								emptyMessage={sessionsEmptyMessage}
 								sessionLink={sessionLink}
 							/>
@@ -1267,9 +1298,8 @@ function OverviewTab({
 								bindings={{
 									count: agent ? (projectBindings.data?.length ?? null) : null,
 									isLoading: projectionLoading || projectBindings.isLoading,
-									error: projectionUnavailable
-										? new Error("Projection unavailable")
-										: projectBindings.error,
+									isUnavailable: projectionUnavailable,
+									error: projectBindings.error,
 									onRetry: () => void projectBindings.refetch(),
 								}}
 								names={{
@@ -1287,7 +1317,8 @@ function OverviewTab({
 							<OverviewSkillsBody
 								items={(skills.skills ?? []).map((skill) => skill.name)}
 								isLoading={projectionLoading || skills.isLoading}
-								error={projectionUnavailable ? new Error("Projection unavailable") : skills.error}
+								isUnavailable={projectionUnavailable}
+								error={skills.error}
 								onRetry={() => void skills.refetch()}
 							/>
 						),
@@ -1304,7 +1335,6 @@ function OverviewTab({
 											? "unavailable"
 											: "ready"
 								}
-								onRetry={() => void projectBindings.refetch()}
 							/>
 						),
 					},
@@ -1335,12 +1365,10 @@ function OverviewTab({
 							),
 					},
 					channels: {
-						body: !agent ? (
-							projectionUnavailable ? (
-								<OverviewModuleError label="Channels" />
-							) : (
-								<OverviewModuleSkeleton label="channels" rows={2} />
-							)
+						body: projectionLoading ? (
+							<OverviewModuleSkeleton label="channels" rows={2} />
+						) : projectionUnavailable ? (
+							<OverviewModuleUnavailable />
 						) : channelLinks.isLoading ? (
 							<OverviewModuleSkeleton label="channels" rows={2} />
 						) : channelLinks.error ? (

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { agentOverviewGroups } from "@/lib/agent-capabilities";
 import { agentNavigationSectionIds } from "@/lib/navigation-model";
 
@@ -27,5 +28,14 @@ describe("agent overview registry", () => {
 		expect(connected[0]?.layout).toBe("balanced-five");
 		expect(hosted[1]?.layout).toBe("two-column");
 		expect(connected[0]?.modules.every((module) => !("size" in module))).toBe(true);
+	});
+
+	test("skips a missing summary without rendering an empty card or crashing the overview", () => {
+		const source = readFileSync(
+			new URL("../components/dashboard/agent-overview-capabilities.tsx", import.meta.url),
+			"utf8",
+		);
+		expect(source).toContain("if (!moduleContent) return null;");
+		expect(source).not.toContain("Missing overview content");
 	});
 });

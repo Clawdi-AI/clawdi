@@ -91,6 +91,10 @@ export function OverviewModuleError({ label, onRetry }: { label: string; onRetry
 	);
 }
 
+export function OverviewModuleUnavailable() {
+	return <p className="text-sm text-muted-foreground">Unavailable right now</p>;
+}
+
 export function OverviewMetadata({
 	items,
 }: {
@@ -182,18 +186,16 @@ export function AgentOverviewCapabilities({
 					<div
 						data-overview-layout={group.layout}
 						className={cn(
-							"grid items-start gap-3",
+							"grid gap-3",
 							group.layout === "balanced-five"
-								? "@2xl/main:grid-cols-2 @5xl/main:grid-cols-6"
+								? "@2xl/main:grid-cols-4 @4xl/main:grid-cols-6"
 								: "@2xl/main:grid-cols-2",
 						)}
 					>
 						{group.modules.map((module, moduleIndex) => {
 							const item = AGENT_SECTION_NAVIGATION_ITEMS[module.section];
 							const moduleContent = content[module.id];
-							if (!moduleContent) {
-								throw new Error(`Missing overview content for ${module.id}`);
-							}
+							if (!moduleContent) return null;
 							const Icon = item.icon;
 							const title = module.id === "model-provider" ? "Model & Provider" : item.label;
 							return (
@@ -201,16 +203,19 @@ export function AgentOverviewCapabilities({
 									key={module.id}
 									data-overview-module={module.id}
 									className={cn(
-										"flex min-h-48 min-w-0 flex-col overflow-hidden rounded-lg border bg-card",
-										group.layout === "balanced-five" && "@5xl/main:col-span-2",
+										"flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card",
+										group.layout === "balanced-five" && "@2xl/main:col-span-2",
+										group.layout === "balanced-five" &&
+											moduleIndex === 4 &&
+											"@2xl/main:col-start-2 @4xl/main:col-start-auto",
 										group.layout === "balanced-five" &&
 											moduleIndex === 3 &&
-											"@5xl/main:col-start-2",
+											"@4xl/main:col-start-2",
 									)}
 								>
 									<Link
 										{...agentSectionLink(agentId, module.section, routeSearch)}
-										className="group flex h-16 shrink-0 items-center gap-3 px-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+										className="group flex shrink-0 items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
 									>
 										<IconChip size="sm" tint={item.tint}>
 											<Icon />

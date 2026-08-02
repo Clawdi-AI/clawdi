@@ -1,4 +1,37 @@
-import { expect, type Page, type Route, test } from "@playwright/test";
+import { expect, type Locator, type Page, type Route, test } from "@playwright/test";
+
+async function expectOverviewResourceGeometry(grid: Locator, expectedRows: readonly number[]) {
+	const [gridBox, cards] = await Promise.all([
+		grid.boundingBox(),
+		grid
+			.locator("article")
+			.evaluateAll((elements) =>
+				elements.map((element) => element.getBoundingClientRect().toJSON()),
+			),
+	]);
+	expect(gridBox).not.toBeNull();
+	const rowYs = [...new Set(cards.map((card) => Math.round(card.y)))];
+	const rows = rowYs.map((rowY) => cards.filter((card) => Math.abs(card.y - rowY) <= 2));
+	expect(rows.map((row) => row.length)).toEqual(expectedRows);
+	expect(
+		Math.max(...cards.map((card) => card.width)) - Math.min(...cards.map((card) => card.width)),
+	).toBeLessThanOrEqual(2);
+	for (const row of rows) {
+		expect(
+			Math.max(...row.map((card) => card.height)) - Math.min(...row.map((card) => card.height)),
+		).toBeLessThanOrEqual(2);
+	}
+	for (const card of cards) {
+		expect(card.x).toBeGreaterThanOrEqual((gridBox?.x ?? 0) - 1);
+		expect(card.x + card.width).toBeLessThanOrEqual((gridBox?.x ?? 0) + (gridBox?.width ?? 0) + 1);
+	}
+	const finalRow = rows.at(-1) ?? [];
+	const finalLeft = Math.min(...finalRow.map((card) => card.x));
+	const finalRight = Math.max(...finalRow.map((card) => card.x + card.width));
+	expect(
+		Math.abs((finalLeft + finalRight) / 2 - ((gridBox?.x ?? 0) + (gridBox?.width ?? 0) / 2)),
+	).toBeLessThanOrEqual(2);
+}
 
 const now = new Date("2026-07-04T12:00:00.000Z");
 
@@ -647,17 +680,13 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 			.locator("article")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
 	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
-	const resourceGridBox = await resourceGrid.boundingBox();
-	expect(
-		Math.abs(
-			resourceGeometry[3].x -
-				(resourceGridBox?.x ?? 0) -
-				((resourceGridBox?.x ?? 0) +
-					(resourceGridBox?.width ?? 0) -
-					(resourceGeometry[4].x + resourceGeometry[4].width)),
-		),
-	).toBeLessThanOrEqual(2);
+	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
+	await page.setViewportSize({ width: 1024, height: 1200 });
+	await expectOverviewResourceGeometry(resourceGrid, [2, 2, 1]);
+	await page.setViewportSize({ width: 768, height: 1200 });
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
 	await page.setViewportSize({ width: 390, height: 844 });
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
 	const mobileSessionBoxes = await recentSessions
 		.locator("article")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));

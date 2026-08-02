@@ -15,6 +15,40 @@ declare global {
 	}
 }
 
+async function expectOverviewResourceGeometry(grid: Locator, expectedRows: readonly number[]) {
+	const [gridBox, cards] = await Promise.all([
+		grid.boundingBox(),
+		grid
+			.locator("article")
+			.evaluateAll((elements) =>
+				elements.map((element) => element.getBoundingClientRect().toJSON()),
+			),
+	]);
+	expect(gridBox).not.toBeNull();
+	expect(cards).toHaveLength(5);
+	const rowYs = [...new Set(cards.map((card) => Math.round(card.y)))];
+	const rows = rowYs.map((rowY) => cards.filter((card) => Math.abs(card.y - rowY) <= 2));
+	expect(rows.map((row) => row.length)).toEqual(expectedRows);
+	expect(
+		Math.max(...cards.map((card) => card.width)) - Math.min(...cards.map((card) => card.width)),
+	).toBeLessThanOrEqual(2);
+	for (const row of rows) {
+		expect(
+			Math.max(...row.map((card) => card.height)) - Math.min(...row.map((card) => card.height)),
+		).toBeLessThanOrEqual(2);
+	}
+	for (const card of cards) {
+		expect(card.x).toBeGreaterThanOrEqual((gridBox?.x ?? 0) - 1);
+		expect(card.x + card.width).toBeLessThanOrEqual((gridBox?.x ?? 0) + (gridBox?.width ?? 0) + 1);
+	}
+	const finalRow = rows.at(-1) ?? [];
+	const finalLeft = Math.min(...finalRow.map((card) => card.x));
+	const finalRight = Math.max(...finalRow.map((card) => card.x + card.width));
+	expect(
+		Math.abs((finalLeft + finalRight) / 2 - ((gridBox?.x ?? 0) + (gridBox?.width ?? 0) / 2)),
+	).toBeLessThanOrEqual(2);
+}
+
 // HOSTED (Clawdi Cloud) smoke against the vite dev server with dev-auth-bypass
 // (NO Clerk key needed) + deploy-api enabled so /deploy renders. Exercises the
 // deploy wizard's Base UI Select asserting ZERO browser console/page errors.
@@ -2853,6 +2887,13 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			.locator("article")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
 	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
+	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
+	await page.setViewportSize({ width: 1024, height: 1200 });
+	await expectOverviewResourceGeometry(resourceGrid, [2, 2, 1]);
+	await page.setViewportSize({ width: 768, height: 1200 });
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
+	await page.setViewportSize({ width: 390, height: 1200 });
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
 	await page.setViewportSize({ width: 1280, height: 1600 });
 	await page.screenshot({ path: testInfo.outputPath("hosted-agent-overview.png"), fullPage: true });
 });
@@ -2923,6 +2964,80 @@ test("hosted projection loading uses module skeletons", async ({ page }, testInf
 		fullPage: true,
 	});
 });
+
+for (const projectionFailure of [
+	{ name: "missing", response: { status: 404, body: { detail: "Agent not found" } } },
+	{ name: "error", response: { status: 500, body: { detail: "projection gateway failed" } } },
+] as const) {
+	test(`hosted overview keeps ${projectionFailure.name} projection unknown until one agent retry resolves`, async ({
+		page,
+	}) => {
+		const sessionRequests: string[] = [];
+		const agentProjectBindingRequests: string[] = [];
+		const skillRequests: string[] = [];
+		const projectionRequests: string[] = [];
+		page.on("request", (request) => {
+			const url = new URL(request.url());
+			if (
+				url.origin === CLOUD_API &&
+				url.pathname === `/v1/agents/${missingProjectionEnvironmentId}`
+			)
+				projectionRequests.push(url.pathname);
+		});
+		await stubHostedApi(page, {
+			deployments: [runningMissingProjectionDeployment],
+			cloudAgentResponses:
+				projectionFailure.name === "missing"
+					? { [missingProjectionEnvironmentId]: [projectionFailure.response] }
+					: undefined,
+			cloudAgentErrors:
+				projectionFailure.name === "error"
+					? {
+							[missingProjectionEnvironmentId]: {
+								status: 500,
+								detail: "projection gateway failed",
+							},
+						}
+					: undefined,
+			sessionRequests,
+			agentProjectBindingRequests,
+			skillRequests,
+		});
+		await page.goto(
+			`/agents/${missingProjectionEnvironmentId}?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+		);
+		const main = page.locator("main");
+		await expect(
+			main.getByText("Agent details are unavailable right now.", { exact: true }),
+		).toBeVisible();
+		await expect(main.getByText("No sessions from this agent yet.", { exact: true })).toHaveCount(
+			0,
+		);
+		await expect(main.getByText("No recent sessions", { exact: true })).toHaveCount(0);
+		await expect(main.getByText("Unavailable right now", { exact: true })).toHaveCount(4);
+		await expect(main.getByRole("button", { name: "Check again", exact: true })).toHaveCount(1);
+		expect(sessionRequests).toEqual([]);
+		expect(agentProjectBindingRequests).toEqual([]);
+		expect(skillRequests).toEqual([]);
+		const requestsBeforeRetry = projectionRequests.length;
+		await main.getByRole("button", { name: "Check again", exact: true }).click();
+		await expect.poll(() => projectionRequests.length).toBeGreaterThan(requestsBeforeRetry);
+		if (projectionFailure.name === "missing") {
+			await expect(
+				main.getByText("Agent details are unavailable right now.", { exact: true }),
+			).toHaveCount(0);
+			await expect.poll(() => sessionRequests.length).toBe(1);
+			await expect.poll(() => agentProjectBindingRequests.length).toBe(1);
+		} else {
+			await expect(
+				main.getByText("Agent details are unavailable right now.", { exact: true }),
+			).toBeVisible();
+			expect(sessionRequests).toEqual([]);
+			expect(agentProjectBindingRequests).toEqual([]);
+		}
+		await expect(main).not.toContainText("projection gateway failed");
+	});
+}
 
 test("hosted Sessions tab uses its own pagination without the Overview request", async ({
 	page,
@@ -3051,6 +3166,21 @@ test("hosted provisioning stays focused on Compute", async ({ page }, testInfo) 
 	});
 });
 
+test("starting with an existing projection keeps lifecycle status in Compute", async ({ page }) => {
+	const restartingDeployment = { ...railHostedDeployment, status: "starting" };
+	await stubHostedApi(page, {
+		deployments: [restartingDeployment],
+		cloudAgents: [railHostedCloudAgent],
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${restartingDeployment.id}`,
+	);
+	const main = page.locator("main");
+	await expect(main.locator('[data-overview-status="compute"]')).toContainText("Starting");
+	await expect(main.getByTestId("hosted-initial-deployment-panel")).toHaveCount(0);
+	await expect(main.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
+});
+
 test("hosted unavailable status stays inside Compute", async ({ page }, testInfo) => {
 	const sessionRequests: string[] = [];
 	const runningRead = mutationDeploymentReadFixture(railHostedDeployment);
@@ -3077,18 +3207,61 @@ test("hosted unavailable status stays inside Compute", async ({ page }, testInfo
 	await expect(compute).toContainText("Clawdi cannot confirm the current compute status.");
 	await expect(compute.getByRole("button", { name: "Check again", exact: true })).toBeVisible();
 	await expect(overview.locator('[data-overview-module="vaults"]')).toContainText(
-		"Can’t load vaults",
+		"Unavailable right now",
 	);
 	await expect(overview.locator('[data-overview-module="vaults"]')).not.toContainText(
 		"No vaults available",
 	);
 	await expect(main.getByTestId("deployment-status-unavailable")).toHaveCount(0);
 	expect(sessionRequests).toEqual([]);
+	await expect(main.getByText("No sessions from this agent yet.", { exact: true })).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1600 });
 	await page.screenshot({
 		path: testInfo.outputPath("hosted-agent-overview-unavailable.png"),
 		fullPage: true,
 	});
+});
+
+test("raw offline stays a Compute-only status and does not become status unavailable", async ({
+	page,
+}) => {
+	const sessionRequests: string[] = [];
+	const cloudRequests: string[] = [];
+	page.on("request", (request) => {
+		const url = new URL(request.url());
+		if (url.origin === CLOUD_API) cloudRequests.push(url.pathname);
+	});
+	const runningDeployment = mutationDeploymentReadFixture(railHostedDeployment);
+	if (!runningDeployment.resource.status) throw new Error("Expected deployment status fixture");
+	const offlineDeployment = {
+		...runningDeployment,
+		resource: {
+			...runningDeployment.resource,
+			status: { ...runningDeployment.resource.status, summary_state: "offline" },
+		},
+	};
+	await stubHostedApi(page, {
+		deployments: [offlineDeployment],
+		deploymentDetailResponses: [{ body: offlineDeployment, status: 200 }],
+		sessionRequests,
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${offlineDeployment.resource.id}`,
+	);
+	const main = page.locator("main");
+	const compute = main.locator('[data-overview-status="compute"]');
+	await expect(compute).toContainText("Offline");
+	await expect(compute).not.toContainText("Status unavailable");
+	await expect(compute.getByRole("button", { name: "Check again", exact: true })).toBeVisible();
+	await expect(main.getByTestId("deployment-status-unavailable")).toHaveCount(0);
+	await expect(
+		main.getByText("Agent details are unavailable right now.", { exact: true }),
+	).toBeVisible();
+	await expect(main.getByText("No sessions from this agent yet.", { exact: true })).toHaveCount(0);
+	expect(sessionRequests).toEqual([]);
+	expect(cloudRequests.filter((path) => path === `/v1/agents/${railHostedEnvironmentId}`)).toEqual(
+		[],
+	);
 });
 
 test("empty accounts without deploy access only get the connected-agent path", async ({ page }) => {
@@ -5874,6 +6047,8 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 		main.getByText("The Clawdi service could not complete this request.", { exact: true }),
 	).toBeVisible();
 	await expect(main.getByText("Failed", { exact: true })).toBeVisible();
+	await expect(main.locator('[data-overview-status="compute"]')).toContainText("Failed");
+	await expect(main.getByRole("alert")).toHaveCount(0);
 	await expect(main.getByText("Basic", { exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
@@ -5938,9 +6113,19 @@ test("stopped detail stays recoverable without querying its removed projection",
 	for (const section of ["", "/sessions", "/channel-links", "/console"]) {
 		await page.goto(`${detailPath}${section}${detailQuery}`);
 		const main = page.locator("main");
-		await expect(
-			main.locator('[data-slot="empty-title"]').getByText("Stopped", { exact: true }),
-		).toBeVisible();
+		if (section === "") {
+			await expect(main.locator('[data-overview-status="compute"]')).toContainText("Stopped");
+			await expect(
+				main.getByText("Agent details are unavailable right now.", { exact: true }),
+			).toBeVisible();
+			await expect(main.getByText("No sessions from this agent yet.", { exact: true })).toHaveCount(
+				0,
+			);
+		} else {
+			await expect(
+				main.locator('[data-slot="empty-title"]').getByText("Stopped", { exact: true }),
+			).toBeVisible();
+		}
 		await expect(main.getByRole("button", { name: "Start", exact: true })).toBeVisible();
 		await expect(main.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
 		await expect(main.getByText("Some agent details are not ready", { exact: true })).toHaveCount(

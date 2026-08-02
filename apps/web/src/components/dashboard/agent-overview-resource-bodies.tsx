@@ -8,6 +8,7 @@ import {
 	OverviewChips,
 	OverviewModuleError,
 	OverviewModuleSkeleton,
+	OverviewModuleUnavailable,
 	OverviewSummaryRows,
 } from "@/components/dashboard/agent-overview-capabilities";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ import { useAvailableApps, useConnectedAppCards } from "@/lib/connectors-data";
 
 type SummaryState = {
 	isLoading: boolean;
+	isUnavailable?: boolean;
 	error: unknown;
 	onRetry: () => void;
 };
@@ -30,6 +32,7 @@ export function OverviewProjectsBody({
 	names: SummaryState & { items: readonly string[]; unresolvedCount: number };
 }) {
 	if (bindings.isLoading) return <OverviewModuleSkeleton label="projects" rows={3} />;
+	if (bindings.isUnavailable) return <OverviewModuleUnavailable />;
 	if (bindings.error) return <OverviewModuleError label="Projects" onRetry={bindings.onRetry} />;
 	const count = bindings.count ?? 0;
 	return (
@@ -61,6 +64,7 @@ export function OverviewSkillsBody({
 	...state
 }: SummaryState & { items: readonly string[] }) {
 	if (state.isLoading) return <OverviewModuleSkeleton label="skills" rows={2} />;
+	if (state.isUnavailable) return <OverviewModuleUnavailable />;
 	if (state.error) return <OverviewModuleError label="Skills" onRetry={state.onRetry} />;
 	return (
 		<div className="space-y-3">
@@ -95,16 +99,14 @@ export function OverviewMemoriesBody() {
 export function OverviewVaultsBody({
 	projectIds,
 	resolution,
-	onRetry,
 }: {
 	projectIds: readonly string[];
 	resolution: "loading" | "unavailable" | "ready";
-	onRetry: () => void;
 }) {
 	const query = useAgentProjectVaults(projectIds, { enabled: resolution === "ready" });
 	if (resolution === "loading" || query.isLoading)
 		return <OverviewModuleSkeleton label="vaults" rows={2} />;
-	if (resolution === "unavailable") return <OverviewModuleError label="Vaults" onRetry={onRetry} />;
+	if (resolution === "unavailable") return <OverviewModuleUnavailable />;
 	if (query.error)
 		return <OverviewModuleError label="Vaults" onRetry={() => void query.refetch()} />;
 	const vaults = query.data ?? [];
