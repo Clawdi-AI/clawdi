@@ -1,14 +1,31 @@
 import { describe, expect, test } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
 	agentProviderHasSingleLinkLimit,
 	availableBotProvidersForAgent,
 	channelProviderLinkingReady,
 	pairCodeExpired,
 	pairingCommand,
+	verifiedDiscordInstallUrl,
 	verifiedDiscordPairingCommand,
-	verifiedDiscordServerInstallUrl,
-	verifiedDiscordUserInstallUrl,
 } from "./channel-linking.logic";
+
+function productionTypeScriptFiles(directory: string): string[] {
+	return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+		const entryPath = path.join(directory, entry.name);
+		if (entry.isDirectory()) return productionTypeScriptFiles(entryPath);
+		if (
+			!entry.isFile() ||
+			!/\.(?:ts|tsx)$/.test(entry.name) ||
+			/\.test\.(?:ts|tsx)$/.test(entry.name)
+		) {
+			return [];
+		}
+		return [entryPath];
+	});
+}
 
 describe("hosted channel instructions and gates", () => {
 	test("renders the exact command accepted by the channel backend", () => {
@@ -24,38 +41,44 @@ describe("hosted channel instructions and gates", () => {
 		expect(verifiedDiscordPairingCommand(" /clawdi_pair BCDFGHJKLM", "BCDFGHJKLM")).toBeNull();
 	});
 
-	test("accepts only the official Discord User Install authorize contract", () => {
-		const supported =
-			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands";
-		expect(verifiedDiscordUserInstallUrl(supported)).toBe(supported);
+	test("accepts backend-owned Discord install policy across split deploys", () => {
+		for (const supported of [
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=274878024768&scope=bot%20applications.commands",
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=309237763136&scope=bot%20applications.commands",
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
+		]) {
+			expect(verifiedDiscordInstallUrl(supported)).toBe(supported);
+		}
+	});
+
+	test("rejects malformed, non-Discord, redirecting, and ambiguous install URLs", () => {
 		for (const unsupported of [
 			null,
 			undefined,
 			"not-a-url",
-			"https://example.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
-			"https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=applications.commands",
-			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&scope=applications.commands",
-			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=bot%20applications.commands",
-			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands&permissions=8",
+			"http://discord.com/oauth2/authorize?client_id=123456789012345678",
+			"https://example.com/oauth2/authorize?client_id=123456789012345678",
+			"https://discord.com.example.test/oauth2/authorize?client_id=123456789012345678",
+			"https://discord.com@evil.example/oauth2/authorize?client_id=123456789012345678",
+			"https://user:password@discord.com/oauth2/authorize?client_id=123456789012345678",
+			"https://discord.com/api/oauth2/authorize?client_id=123456789012345678",
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678#token",
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&redirect_uri=https%3A%2F%2Fevil.example",
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&response_type=code",
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&client_id=987654321098765432",
+			"https://discord.com/oauth2/authorize?client_id=123&scope=bot",
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=bot&scope=applications.commands",
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=",
+			"https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=%",
 		]) {
-			expect(verifiedDiscordUserInstallUrl(unsupported)).toBeNull();
+			expect(verifiedDiscordInstallUrl(unsupported)).toBeNull();
 		}
 	});
 
-	test("accepts only the explicit Discord Guild Install bot contract", () => {
-		const supported =
-			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=309237763136&scope=bot%20applications.commands";
-		expect(verifiedDiscordServerInstallUrl(supported)).toBe(supported);
-		for (const unsupported of [
-			null,
-			undefined,
-			"https://discord.com/oauth2/authorize?client_id=123456789012345678&permissions=309237763136&scope=bot%20applications.commands",
-			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&permissions=309237763136&scope=bot%20applications.commands",
-			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=0&scope=bot%20applications.commands",
-			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=274878024768&scope=bot%20applications.commands",
-			"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=309237763136&scope=applications.commands",
-		]) {
-			expect(verifiedDiscordServerInstallUrl(unsupported)).toBeNull();
+	test("keeps Discord permission policy out of Web production source", () => {
+		const webSourceRoot = fileURLToPath(new URL("../../../", import.meta.url));
+		for (const sourceFile of productionTypeScriptFiles(webSourceRoot)) {
+			expect(readFileSync(sourceFile, "utf8")).not.toMatch(/\b(?:274878024768|309237763136)\b/);
 		}
 	});
 

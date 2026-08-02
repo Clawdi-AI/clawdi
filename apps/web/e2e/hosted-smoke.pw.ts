@@ -9506,7 +9506,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 					expires_at: validExpiry,
 					pairing_command: "/clawdi_pair HJKLMNPQRS",
 					discord_install_url:
-						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=309237763136&scope=bot%20applications.commands",
+						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=0&permissions=274878024768&scope=bot%20applications.commands",
 					discord_user_install_url:
 						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
 				},
@@ -9535,6 +9535,21 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 					code: "6789BCDFGH",
 					expires_at: validExpiry,
 					pairing_command: "/clawdi_pair 6789BCDFGH",
+					discord_install_url:
+						"https://evil.example/oauth2/authorize?client_id=123456789012345678&integration_type=0&scope=bot",
+					discord_user_install_url:
+						"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
+				},
+			},
+			{
+				status: 201,
+				body: {
+					id: "agent-channel-discord-pair-install-unavailable",
+					agent_link_id: discordLinkId,
+					agent_id: agentId,
+					code: "789BCDFGHJ",
+					expires_at: validExpiry,
+					pairing_command: "/clawdi_pair 789BCDFGHJ",
 					discord_install_url: null,
 					discord_user_install_url: null,
 				},
@@ -10139,14 +10154,12 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	await discordRetry.click();
 	await expect.poll(() => pairCodeRequests.length).toBe(7);
 	await expect(
-		discordPairDialog.getByText(
-			"Discord pairing instructions are out of date. Refresh and try again.",
-			{
-				exact: true,
-			},
-		),
+		discordPairDialog.getByText("Discord pairing is temporarily unavailable. Try again.", {
+			exact: true,
+		}),
 	).toBeVisible();
 	await expect(discordPairDialog).not.toContainText("STVWXYZ234");
+	await expect(discordPairDialog).not.toContainText("failed validation");
 	await expect(discordPairDialog).not.toContainText("/bot_pair");
 	await discordRetry.click();
 	await expect.poll(() => pairCodeRequests.length).toBe(8);
@@ -10204,7 +10217,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 		.poll(() => page.evaluate(() => navigator.clipboard.readText()))
 		.toContain("integration_type=0");
 	await expect(discordServerInstallLink).toHaveAttribute("href", /integration_type=0/);
-	await expect(discordServerInstallLink).toHaveAttribute("href", /permissions=309237763136/);
+	await expect(discordServerInstallLink).toHaveAttribute("href", /permissions=274878024768/);
 	await discordDmTab.click();
 	await expect(discordPairDialog.locator('[data-discord-pair-path="dm"]')).toBeVisible();
 	const discordUserInstallQr = discordPairDialog.getByRole("img", {
@@ -10366,23 +10379,66 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	await discordPairDialog.getByRole("button", { name: "Generate new code", exact: true }).click();
 	await expect.poll(() => pairCodeRequests.length).toBe(10);
 	await expect(discordPairDialog.getByText("6789BCDFGH", { exact: true })).toBeVisible();
+	const unavailableDiscordDmTab = discordPairDialog.getByRole("tab", {
+		name: "Direct message",
+		exact: true,
+	});
+	await expect(unavailableDiscordDmTab).toBeEnabled();
+	await expect(unavailableDiscordDmTab).toHaveAttribute("aria-selected", "true");
+	await expect(discordPairDialog.locator('[data-discord-pair-path="dm"]')).toBeVisible();
+	await expect(
+		discordPairDialog.getByRole("img", { name: "Discord User Install QR code" }),
+	).toBeVisible();
+	await expect(discordPairDialog.locator('a[href^="https://evil.example"]')).toHaveCount(0);
+	await discordServerTab.click();
+	await expect(
+		discordPairDialog.getByText("Server install temporarily unavailable", { exact: true }),
+	).toBeVisible();
+	await expect(
+		discordPairDialog.getByText(
+			"Direct message pairing is still available. Retry to request a new server install link.",
+			{ exact: true },
+		),
+	).toBeVisible();
+	const retryDiscordServerInstall = discordPairDialog.getByRole("button", {
+		name: "Retry server install",
+		exact: true,
+	});
+	await expect(retryDiscordServerInstall).toBeVisible();
+	await expect(
+		discordPairDialog.getByRole("img", { name: "Discord server install QR code" }),
+	).toHaveCount(0);
+	await expect(discordPairDialog.getByRole("button", { name: "Add to server" })).toHaveCount(0);
+	await expect(discordPairDialog.getByText("6789BCDFGH", { exact: true })).toBeVisible();
+	await page.setViewportSize({ width: 320, height: 568 });
+	await expectNoHorizontalOverflow(
+		discordPairDialog,
+		"Discord unsafe server install Dialog at 320px",
+	);
+	await expectContainedInOwnerAndViewport(
+		page,
+		retryDiscordServerInstall,
+		discordPairDialog,
+		"Discord server install Retry at 320px",
+	);
+	await discordPairDialog.screenshot({
+		path: testInfo.outputPath("agent-discord-server-install-unavailable-320x568.png"),
+	});
+	await retryDiscordServerInstall.click();
+	await expect.poll(() => pairCodeRequests.length).toBe(11);
+	await expect(discordPairDialog.getByText("789BCDFGHJ", { exact: true })).toBeVisible();
 	await expect(
 		discordPairDialog.getByText("Server install unavailable", { exact: true }),
 	).toBeVisible();
 	await expect(
 		discordPairDialog.getByText(
-			"Use a server where this bot is already installed, or ask the bot owner for a valid server install link.",
+			"Use a server where this bot is already installed, or pair by direct message when available.",
 			{ exact: true },
 		),
 	).toBeVisible();
-	await expect(
-		discordPairDialog.getByRole("img", { name: "Discord server install QR code" }),
-	).toHaveCount(0);
-	await expect(discordPairDialog.getByRole("button", { name: "Add to server" })).toHaveCount(0);
-	const unavailableDiscordDmTab = discordPairDialog.getByRole("tab", {
-		name: "Direct message",
-		exact: true,
-	});
+	await expect(discordPairDialog.getByRole("button", { name: "Retry server install" })).toHaveCount(
+		0,
+	);
 	await expect(unavailableDiscordDmTab).toBeDisabled();
 	await expect(
 		discordPairDialog.getByText("Direct message pairing unavailable", { exact: true }),
@@ -10390,7 +10446,6 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	await expect(discordPairDialog.getByText(/Use Server pairing/)).toBeVisible();
 	await expect(discordPairDialog).not.toContainText("enable Discord User Install");
 	await expect(discordPairDialog.locator('[data-discord-pair-path="dm"]')).toHaveCount(0);
-	await page.setViewportSize({ width: 320, height: 568 });
 	await expectNoHorizontalOverflow(discordPairDialog, "Discord no-User-Install Dialog at 320px");
 	const fallbackInstructionPanels = await discordPairDialog
 		.locator("[data-pairing-instruction-panel]")

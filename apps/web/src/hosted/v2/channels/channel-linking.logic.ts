@@ -41,42 +41,28 @@ export function verifiedDiscordPairingCommand(pairingCommand: string, code: stri
 	return pairingCommand === expected ? pairingCommand : null;
 }
 
-export function verifiedDiscordServerInstallUrl(value: string | null | undefined): string | null {
-	if (!value) return null;
-	try {
-		const url = new URL(value);
-		const clientId = url.searchParams.get("client_id");
-		const scopes = new Set((url.searchParams.get("scope") ?? "").split(" "));
-		if (
-			url.origin !== "https://discord.com" ||
-			url.pathname !== "/oauth2/authorize" ||
-			url.username ||
-			url.password ||
-			url.hash ||
-			!clientId ||
-			!/^[0-9]{17,20}$/.test(clientId) ||
-			url.searchParams.getAll("client_id").length !== 1 ||
-			url.searchParams.get("integration_type") !== "0" ||
-			url.searchParams.getAll("integration_type").length !== 1 ||
-			url.searchParams.get("permissions") !== "309237763136" ||
-			url.searchParams.getAll("permissions").length !== 1 ||
-			url.searchParams.getAll("scope").length !== 1 ||
-			scopes.size !== 2 ||
-			!scopes.has("applications.commands") ||
-			!scopes.has("bot")
-		) {
-			return null;
-		}
-		return value;
-	} catch {
-		return null;
-	}
+const DISCORD_INSTALL_URL_MAX_LENGTH = 8_192;
+const DISCORD_INSTALL_QUERY_MAX_ENTRIES = 16;
+const DISCORD_INSTALL_QUERY_KEY = /^[a-z][a-z0-9_]{0,63}$/;
+const DISCORD_INSTALL_QUERY_VALUE_MAX_LENGTH = 2_048;
+const DISCORD_INSTALL_REDIRECT_KEYS = new Set(["redirect_uri", "response_type"]);
+
+function hasAsciiControlCharacters(value: string): boolean {
+	return [...value].some((character) => {
+		const codePoint = character.codePointAt(0);
+		return codePoint !== undefined && (codePoint <= 31 || codePoint === 127);
+	});
 }
 
-export function verifiedDiscordUserInstallUrl(value: string | null | undefined): string | null {
-	if (!value) return null;
+/**
+ * Keep external navigation on Discord without duplicating Discord install policy.
+ * The backend owns installation contexts, scopes, and role permissions.
+ */
+export function verifiedDiscordInstallUrl(value: string | null | undefined): string | null {
+	if (!value || value.length > DISCORD_INSTALL_URL_MAX_LENGTH) return null;
 	try {
 		const url = new URL(value);
+		const entries = [...url.searchParams.entries()];
 		const clientId = url.searchParams.get("client_id");
 		if (
 			url.origin !== "https://discord.com" ||
@@ -87,15 +73,33 @@ export function verifiedDiscordUserInstallUrl(value: string | null | undefined):
 			!clientId ||
 			!/^[0-9]{17,20}$/.test(clientId) ||
 			url.searchParams.getAll("client_id").length !== 1 ||
-			url.searchParams.get("integration_type") !== "1" ||
-			url.searchParams.getAll("integration_type").length !== 1 ||
-			url.searchParams.get("scope") !== "applications.commands" ||
-			url.searchParams.getAll("scope").length !== 1 ||
-			url.searchParams.has("permissions")
+			entries.length > DISCORD_INSTALL_QUERY_MAX_ENTRIES
 		) {
 			return null;
 		}
-		return value;
+
+		try {
+			decodeURIComponent(url.search.replaceAll("+", "%20"));
+		} catch {
+			return null;
+		}
+
+		const seenKeys = new Set<string>();
+		for (const [key, queryValue] of entries) {
+			if (
+				seenKeys.has(key) ||
+				!DISCORD_INSTALL_QUERY_KEY.test(key) ||
+				DISCORD_INSTALL_REDIRECT_KEYS.has(key) ||
+				!queryValue ||
+				queryValue.length > DISCORD_INSTALL_QUERY_VALUE_MAX_LENGTH ||
+				hasAsciiControlCharacters(queryValue)
+			) {
+				return null;
+			}
+			seenKeys.add(key);
+		}
+
+		return url.href;
 	} catch {
 		return null;
 	}

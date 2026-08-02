@@ -10,9 +10,8 @@ import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
 import {
 	pairCodeExpired,
+	verifiedDiscordInstallUrl,
 	verifiedDiscordPairingCommand,
-	verifiedDiscordServerInstallUrl,
-	verifiedDiscordUserInstallUrl,
 } from "@/hosted/v2/channels/channel-linking.logic";
 import { usePairingSuccess } from "@/hosted/v2/channels/channel-pairing-success";
 import type { ChannelBinding, ChannelPairCode } from "@/hosted/v2/channels/channel-types";
@@ -29,13 +28,23 @@ import {
 	PairingNotice,
 	PairingQrCode,
 } from "@/hosted/v2/channels/pairing-dialog-ui";
+import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 
 const DISCORD_PAIR_TTL_SECONDS = 300;
 
-type DiscordPairResult = Pick<
-	ChannelPairCode,
-	"code" | "expires_at" | "pairing_command" | "discord_install_url" | "discord_user_install_url"
->;
+type DiscordPairResult = Pick<ChannelPairCode, "code" | "expires_at" | "pairing_command"> & {
+	discord_install_url: string | null;
+	discord_user_install_url: string | null;
+	server_install_retryable: boolean;
+};
+
+const DISCORD_PAIR_ERROR_NORMALIZER = {
+	isAuthError: isApiAuthError,
+	normalizeError: (error: unknown) =>
+		isApiAuthError(error)
+			? normalizeApiError(error)
+			: "Discord pairing is temporarily unavailable. Try again.",
+};
 
 export function DiscordPairDialog({
 	open,
@@ -93,28 +102,20 @@ export function DiscordPairDialog({
 				if (sessionRef.current !== session) return;
 				const pairingCommand = verifiedDiscordPairingCommand(data.pairing_command, data.code);
 				if (pairingCommand === null) {
-					throw new Error("Discord pairing instructions are out of date. Refresh and try again.");
+					throw new Error("Discord pairing response failed validation.");
 				}
-				const serverInstallUrl =
-					data.discord_install_url === null || data.discord_install_url === undefined
-						? null
-						: verifiedDiscordServerInstallUrl(data.discord_install_url);
-				if (
-					data.discord_install_url !== null &&
-					data.discord_install_url !== undefined &&
-					serverInstallUrl === null
-				) {
-					throw new Error(
-						"Discord server install settings are out of date. Refresh and try again.",
-					);
-				}
+				const serverInstallUrl = verifiedDiscordInstallUrl(data.discord_install_url);
+				const userInstallUrl = verifiedDiscordInstallUrl(data.discord_user_install_url);
+				const serverInstallRetryable = Boolean(data.discord_install_url && !serverInstallUrl);
 				setNowMs(Date.now());
+				setPath(serverInstallUrl || !userInstallUrl ? "server" : "dm");
 				setResult({
 					code: data.code,
 					expires_at: data.expires_at,
 					pairing_command: pairingCommand,
 					discord_install_url: serverInstallUrl,
-					discord_user_install_url: verifiedDiscordUserInstallUrl(data.discord_user_install_url),
+					discord_user_install_url: userInstallUrl,
+					server_install_retryable: serverInstallRetryable,
 				});
 			} catch (error) {
 				if (sessionRef.current === session) setRequestError(error);
@@ -179,6 +180,7 @@ export function DiscordPairDialog({
 							error={requestError}
 							onRetry={() => void prepare()}
 							title="Couldn't prepare Discord pairing"
+							normalizer={DISCORD_PAIR_ERROR_NORMALIZER}
 						/>
 					) : result ? (
 						expired ? (
@@ -232,10 +234,31 @@ export function DiscordPairDialog({
 												label="Discord server install QR code"
 											/>
 										) : (
-											<PairingNotice title="Server install unavailable">
-												Use a server where this bot is already installed, or ask the bot owner for a
-												valid server install link.
-											</PairingNotice>
+											<>
+												<PairingNotice
+													title={
+														result.server_install_retryable
+															? "Server install temporarily unavailable"
+															: "Server install unavailable"
+													}
+												>
+													{result.server_install_retryable
+														? "Direct message pairing is still available. Retry to request a new server install link."
+														: "Use a server where this bot is already installed, or pair by direct message when available."}
+												</PairingNotice>
+												{result.server_install_retryable ? (
+													<PairingDialogActions className="sm:grid-cols-1">
+														<Button
+															variant="outline"
+															className="w-full min-w-0 whitespace-normal"
+															onClick={() => void prepare()}
+														>
+															<RefreshCw className="size-4" />
+															Retry server install
+														</Button>
+													</PairingDialogActions>
+												) : null}
+											</>
 										)}
 										<PairingExpiry>{pairCodeExpiryLabel(result.expires_at, nowMs)}</PairingExpiry>
 										{result.discord_install_url ? (
