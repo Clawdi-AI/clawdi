@@ -23,7 +23,7 @@ import {
 	useOverviewMemoriesModule,
 	useOverviewVaultsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
-import { useAgentOverviewProjects } from "@/components/dashboard/agent-project-bindings-query";
+import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
@@ -90,12 +90,11 @@ export function ConnectedAgentDetail({
 	});
 
 	const overviewEnabled = activeTab === "overview" && Boolean(agent);
-	const overviewProjects = useAgentOverviewProjects(id, { enabled: overviewEnabled });
-	const projectBindings = overviewProjects.bindings.data;
-	const projectBindingsLoading = overviewProjects.bindings.isLoading;
-	const projectBindingsError = overviewProjects.bindings.error;
-	const refetchProjectBindings = overviewProjects.bindings.refetch;
-	const projectNames = overviewProjects.nameResolution;
+	const overviewProjects = useAgentProjectBindings(id, { enabled: overviewEnabled });
+	const projectBindings = overviewProjects.data;
+	const projectBindingsLoading = overviewProjects.isLoading;
+	const projectBindingsError = overviewProjects.error;
+	const refetchProjectBindings = overviewProjects.refetch;
 
 	const {
 		data: overviewSessionsPage,
@@ -271,13 +270,6 @@ export function ConnectedAgentDetail({
 											isLoading: projectBindingsLoading,
 											error: blockingProjectBindingsError,
 											onRetry: () => void refetchProjectBindings(),
-										},
-										names: {
-											items: projectNames.names,
-											unresolvedCount: projectNames.unresolvedCount,
-											isLoading: projectNames.isLoading,
-											error: projectNames.error,
-											onRetry: () => void projectNames.refetch(),
 										},
 									}),
 									skills: overviewSkillsModule({

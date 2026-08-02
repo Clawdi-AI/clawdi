@@ -1,63 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import {
-	OverviewIdentityIconItem,
-	OverviewMetadata,
-	OverviewResourceDetails,
-} from "@/components/dashboard/agent-overview-capabilities";
+import { OverviewMetadata } from "@/components/dashboard/agent-overview-capabilities";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
-
-describe("overview resource details", () => {
-	test("renders up to three resource names with the existing Badge primitive", () => {
-		const markup = renderToStaticMarkup(
-			createElement(OverviewResourceDetails, {
-				items: [
-					"Hosted Agent Project with a deliberately long accessible name",
-					"Shared Vault",
-					"Research Skills",
-					"Hidden fourth resource",
-				],
-			}),
-		);
-
-		expect(markup).toContain('data-testid="overview-resource-summary"');
-		expect(markup).not.toContain("text-sm font-medium text-muted-foreground");
-		expect(markup).toContain('data-testid="overview-resource-badges"');
-		expect(markup).toContain('data-slot="badge"');
-		for (const item of [
-			"Hosted Agent Project with a deliberately long accessible name",
-			"Shared Vault",
-			"Research Skills",
-		])
-			expect(markup).toContain(item);
-		expect(markup).not.toContain("Hidden fourth resource");
-		expect(markup).toContain(
-			'title="Hosted Agent Project with a deliberately long accessible name"',
-		);
-		expect(markup).toContain(
-			'aria-label="Hosted Agent Project with a deliberately long accessible name"',
-		);
-		expect(markup).toContain("truncate");
-	});
-
-	test("does not render a badge list for empty details", () => {
-		const empty = renderToStaticMarkup(createElement(OverviewResourceDetails, { items: [] }));
-
-		expect(empty).not.toContain('data-testid="overview-resource-badges"');
-	});
-});
-
-describe("overview identity rail item", () => {
-	test("renders content without a connected adornment", () => {
-		const markup = renderToStaticMarkup(
-			createElement(OverviewIdentityIconItem, null, createElement("span", null, "GitHub")),
-		);
-
-		expect(markup).toBe('<li class="w-fit"><span>GitHub</span></li>');
-		expect(markup).not.toContain("circle-check");
-	});
-});
 
 describe("overview card typography", () => {
 	test("uses the existing small Card title and description hierarchy", () => {

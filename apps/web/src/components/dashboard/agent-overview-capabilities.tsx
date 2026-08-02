@@ -2,7 +2,6 @@ import { Link } from "@tanstack/react-router";
 import { ArrowRight, type LucideIcon, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { IconChip } from "@/components/icon-chip";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,10 +15,8 @@ import { cn } from "@/lib/utils";
 
 export type AgentOverviewModuleContent = {
 	description: ReactNode;
-	body?: ReactNode;
+	error?: ReactNode;
 };
-
-export const OVERVIEW_IDENTITY_RAIL_LIMIT = 4;
 
 export function AgentOverviewStatusCard({
 	agentId,
@@ -70,31 +67,6 @@ export function AgentOverviewStatusCard({
 	);
 }
 
-export function OverviewModuleSkeleton({
-	label,
-	rows = 2,
-	showHeading = true,
-}: {
-	label: string;
-	rows?: 1 | 2 | 3;
-	showHeading?: boolean;
-}) {
-	return (
-		<div
-			data-testid="overview-module-skeleton"
-			aria-label={`Loading ${label} summary`}
-			role="status"
-		>
-			{showHeading ? <Skeleton className="h-5 w-24" /> : null}
-			<div className={cn("space-y-2", showHeading && "mt-3")}>
-				{Array.from({ length: rows }).map((_, index) => (
-					<Skeleton key={`${label}-${index}`} className={cn("h-3", index ? "w-2/3" : "w-full")} />
-				))}
-			</div>
-		</div>
-	);
-}
-
 export function OverviewModuleError({ label, onRetry }: { label: string; onRetry?: () => void }) {
 	return (
 		<div className="space-y-2 text-sm text-muted-foreground" role="status">
@@ -131,56 +103,6 @@ export function OverviewMetadata({
 			))}
 		</dl>
 	);
-}
-
-export function OverviewResourceDetails({
-	items,
-	children,
-}: {
-	items?: readonly string[];
-	children?: ReactNode;
-}) {
-	return (
-		<div className="space-y-3" data-testid="overview-resource-summary">
-			{items?.length ? (
-				<ul className="flex min-w-0 flex-wrap gap-1.5" data-testid="overview-resource-badges">
-					{items.slice(0, 3).map((item, index) => (
-						<li key={`${item}-${index}`} className="min-w-0 max-w-full">
-							<Badge
-								variant="secondary"
-								className="max-w-full min-w-0"
-								aria-label={item}
-								title={item}
-							>
-								<span className="truncate">{item}</span>
-							</Badge>
-						</li>
-					))}
-				</ul>
-			) : null}
-			{children}
-		</div>
-	);
-}
-
-export function OverviewIdentityIconRail({
-	label,
-	testId,
-	children,
-}: {
-	label: string;
-	testId: string;
-	children: ReactNode;
-}) {
-	return (
-		<ul aria-label={label} className="flex flex-wrap gap-2" data-testid={testId}>
-			{children}
-		</ul>
-	);
-}
-
-export function OverviewIdentityIconItem({ children }: { children: ReactNode }) {
-	return <li className="w-fit">{children}</li>;
 }
 
 export function AgentOverviewCapabilities({
@@ -225,13 +147,13 @@ export function AgentOverviewCapabilities({
 									role="article"
 									key={module.id}
 									data-overview-module={module.id}
-									className="h-full min-h-28 min-w-0 gap-0 py-0"
+									className="h-full min-h-20 min-w-0"
 								>
-									<CardHeader className="p-0">
+									<CardHeader className="h-full">
 										<Link
 											{...agentSectionLink(agentId, module.section, routeSearch)}
 											aria-label={title}
-											className="group flex items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+											className="group flex min-w-0 items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 										>
 											<IconChip size="sm" tint={item.tint}>
 												<Icon />
@@ -244,12 +166,12 @@ export function AgentOverviewCapabilities({
 											</div>
 											<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
 										</Link>
+										{moduleContent.error ? (
+											<div className="min-w-0 pl-11" data-overview-module-error>
+												{moduleContent.error}
+											</div>
+										) : null}
 									</CardHeader>
-									{moduleContent.body ? (
-										<CardContent className="flex flex-1 flex-col px-4 pb-4">
-											{moduleContent.body}
-										</CardContent>
-									) : null}
 								</Card>
 							);
 						})}
