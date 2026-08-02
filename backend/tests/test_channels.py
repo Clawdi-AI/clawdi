@@ -768,7 +768,8 @@ class _MemoryFileStore:
     def __init__(self):
         self.data: dict[str, bytes] = {}
 
-    async def put(self, key: str, data: bytes) -> None:
+    async def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
+        del content_type
         self.data[key] = data
 
     async def get(self, key: str) -> bytes:

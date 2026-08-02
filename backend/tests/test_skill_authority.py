@@ -29,7 +29,7 @@ from app.services.agent_skill_projection import (
     delete_agent_project_skill_rows,
     delete_agent_skill_files_best_effort,
 )
-from app.services.file_store import get_file_store
+from app.services.file_store import FileStore, get_file_store
 from app.services.sync_events import subscribe, unsubscribe
 from app.services.tar_utils import tar_from_content
 
@@ -38,6 +38,33 @@ pytestmark = pytest.mark.committed_db
 _AGENT_SYNC_HEADERS = {
     SKILL_SYNC_PROTOCOL_HEADER: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
 }
+
+
+class _BlockingPutFileStore:
+    def __init__(
+        self,
+        delegate: FileStore,
+        *,
+        put_started: asyncio.Event,
+        release_put: asyncio.Event,
+    ) -> None:
+        self._delegate = delegate
+        self._put_started = put_started
+        self._release_put = release_put
+
+    async def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
+        self._put_started.set()
+        await self._release_put.wait()
+        await self._delegate.put(key, data, content_type)
+
+    async def get(self, key: str) -> bytes:
+        return await self._delegate.get(key)
+
+    async def delete(self, key: str) -> None:
+        await self._delegate.delete(key)
+
+    async def exists(self, key: str) -> bool:
+        return await self._delegate.exists(key)
 
 
 def test_agent_sync_delete_openapi_uses_bodyless_204() -> None:
@@ -1022,16 +1049,17 @@ async def test_concurrent_agent_upload_and_delete_cannot_resurrect_row_or_archiv
     auth = _api_key_auth(seed_user)
     file_store = get_file_store()
     file_key = skill_routes._file_key(seed_user.id, environment_project.id, "delete-race")
-    original_put = skill_routes.file_store.put
     put_started = asyncio.Event()
     release_put = asyncio.Event()
-
-    async def blocking_put(key: str, data: bytes, content_type: str | None = None) -> None:
-        put_started.set()
-        await release_put.wait()
-        await original_put(key, data, content_type)
-
-    monkeypatch.setattr(skill_routes.file_store, "put", blocking_put)
+    monkeypatch.setattr(
+        skill_routes,
+        "file_store",
+        _BlockingPutFileStore(
+            file_store,
+            put_started=put_started,
+            release_put=release_put,
+        ),
+    )
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async def upload() -> None:

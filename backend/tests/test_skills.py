@@ -19,6 +19,7 @@ from app.core.skill_sync_protocol import (
     SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
     SKILL_SYNC_PROTOCOL_HEADER,
 )
+from app.services.file_store import FileStore
 from app.services.skill_installer import SkillPackage
 from app.services.tar_utils import tar_from_content
 
@@ -1039,12 +1040,28 @@ async def test_list_skills_releases_db_transaction_before_inline_content_fetch(
     assert upload.status_code == 200, upload.text
 
     class AssertingFileStore:
+        def __init__(self, delegate: FileStore) -> None:
+            self._delegate = delegate
+
+        async def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
+            await self._delegate.put(key, data, content_type)
+
         async def get(self, key: str) -> bytes:
             assert key.endswith("/inline.tar.gz")
             assert not db_session.in_transaction()
             return tar_bytes
 
-    monkeypatch.setattr(skills_route, "file_store", AssertingFileStore())
+        async def delete(self, key: str) -> None:
+            await self._delegate.delete(key)
+
+        async def exists(self, key: str) -> bool:
+            return await self._delegate.exists(key)
+
+    monkeypatch.setattr(
+        skills_route,
+        "file_store",
+        AssertingFileStore(skills_route.file_store),
+    )
 
     listing = await client.get(f"/v1/skills?project_id={project_id}&include_content=true")
     assert listing.status_code == 200, listing.text
@@ -1077,10 +1094,26 @@ async def test_list_skills_inline_content_failure_is_unfenced_and_retried(
     real_file_store = skills_route.file_store
 
     class FailingFileStore:
-        async def get(self, key: str) -> bytes:
-            raise RuntimeError(f"temporary read failure for {key}")
+        def __init__(self, delegate: FileStore) -> None:
+            self._delegate = delegate
+            self._failed = False
 
-    monkeypatch.setattr(skills_route, "file_store", FailingFileStore())
+        async def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
+            await self._delegate.put(key, data, content_type)
+
+        async def get(self, key: str) -> bytes:
+            if not self._failed:
+                self._failed = True
+                raise RuntimeError(f"temporary read failure for {key}")
+            return await self._delegate.get(key)
+
+        async def delete(self, key: str) -> None:
+            await self._delegate.delete(key)
+
+        async def exists(self, key: str) -> bool:
+            return await self._delegate.exists(key)
+
+    monkeypatch.setattr(skills_route, "file_store", FailingFileStore(real_file_store))
     failed = await client.get(
         f"/v1/skills?project_id={project_id}&include_content=true",
         headers={"If-None-Match": metadata_etag},
@@ -1093,7 +1126,6 @@ async def test_list_skills_inline_content_failure_is_unfenced_and_retried(
     )
     assert failed_item["content"] is None
 
-    monkeypatch.setattr(skills_route, "file_store", real_file_store)
     recovered = await client.get(
         f"/v1/skills?project_id={project_id}&include_content=true",
         headers={"If-None-Match": metadata_etag},

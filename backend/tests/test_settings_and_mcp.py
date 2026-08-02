@@ -10,6 +10,7 @@ from __future__ import annotations
 import threading
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -969,6 +970,7 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_accoun
         agent_type="hermes",
     )
     now = datetime.now(UTC)
+    session_b_file_key = f"sessions/strict-b-{uuid4().hex}.json"
     session_a = Session(
         user_id=seed_user.id,
         environment_id=env_a.id,
@@ -982,7 +984,7 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_accoun
         local_session_id="strict-b",
         started_at=now,
         summary="Beta hosted runtime work",
-        file_key="sessions/strict-b.json",
+        file_key=session_b_file_key,
     )
     db_session.add_all([session_a, session_b])
     await db_session.commit()
@@ -1030,14 +1032,15 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_accoun
             {"content": [{"type": "text", "text": "connector ok"}]}
         )
 
-    async def fake_messages(session, store):
-        return [{"role": "user", "content": "Cross-agent session detail"}]
-
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_session)
     monkeypatch.setattr(mcp_bridge, "list_tool_router_mcp_tools", fake_list)
     monkeypatch.setattr(mcp_bridge, "call_tool_router_mcp_tool", fake_call)
     monkeypatch.setattr(mcp_bridge, "_connector_tools_cache", {})
-    monkeypatch.setattr(mcp_bridge, "load_session_messages", fake_messages)
+    await mcp_bridge.file_store.put(
+        session_b_file_key,
+        b'[{"role":"user","content":"Cross-agent session detail"}]',
+        "application/json",
+    )
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_auth] = override_auth
     try:
@@ -1127,6 +1130,7 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_accoun
     finally:
         app.dependency_overrides.pop(get_session, None)
         app.dependency_overrides.pop(get_auth, None)
+        await mcp_bridge.file_store.delete(session_b_file_key)
 
     names = [tool["name"] for tool in listed.json()["result"]["tools"]]
     assert "connector_calendar" in names
@@ -1189,13 +1193,15 @@ async def test_clawdi_mcp_session_read_share_url_respects_env_binding(
         agent_type="hermes",
     )
     now = datetime.now(UTC)
+    session_a_file_key = f"sessions/share-a-{uuid4().hex}.json"
+    session_b_file_key = f"sessions/share-b-{uuid4().hex}.json"
     session_a = Session(
         user_id=seed_user.id,
         environment_id=env_a.id,
         local_session_id="share-a",
         started_at=now,
         summary="Env A session",
-        file_key="sessions/share-a.json",
+        file_key=session_a_file_key,
     )
     session_b = Session(
         user_id=seed_user.id,
@@ -1203,7 +1209,7 @@ async def test_clawdi_mcp_session_read_share_url_respects_env_binding(
         local_session_id="share-b",
         started_at=now,
         summary="Env B session",
-        file_key="sessions/share-b.json",
+        file_key=session_b_file_key,
     )
     db_session.add_all([session_a, session_b])
     await db_session.commit()
@@ -1217,10 +1223,12 @@ async def test_clawdi_mcp_session_read_share_url_respects_env_binding(
             api_key=ApiKey(user_id=seed_user.id, environment_id=env_a.id, scopes=None),
         )
 
-    async def fake_messages(session, store):
-        return [{"role": "user", "content": "hello"}]
-
-    monkeypatch.setattr(mcp_bridge, "load_session_messages", fake_messages)
+    for file_key in (session_a_file_key, session_b_file_key):
+        await mcp_bridge.file_store.put(
+            file_key,
+            b'[{"role":"user","content":"hello"}]',
+            "application/json",
+        )
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_auth] = override_auth
 
@@ -1252,6 +1260,8 @@ async def test_clawdi_mcp_session_read_share_url_respects_env_binding(
     finally:
         app.dependency_overrides.pop(get_session, None)
         app.dependency_overrides.pop(get_auth, None)
+        for file_key in (session_a_file_key, session_b_file_key):
+            await mcp_bridge.file_store.delete(file_key)
 
     assert not own_env.get("isError"), own_env
     assert cross_env["isError"] is True, cross_env
