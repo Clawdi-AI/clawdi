@@ -839,7 +839,6 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             "enabled": True,
             "kind": "deny",
             "match": {
-                "scheme": "wss",
                 "host": "web.whatsapp.com",
                 "headers": {capability_header: {"type": "exists"}},
             },
@@ -932,6 +931,15 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         )
         self.assertEqual(egress.apply_to_flow(misplaced).action, "deny")
         self.assertIsNotNone(misplaced.response)
+
+        misplaced_http = Flow(
+            scheme="https",
+            host="web.whatsapp.com",
+            path="/media/fetch",
+            headers={capability_header: "capability-generation-2"},
+        )
+        self.assertEqual(egress.apply_to_flow(misplaced_http).action, "deny")
+        self.assertIsNotNone(misplaced_http.response)
 
         expired_profile = {
             **valid_profile,

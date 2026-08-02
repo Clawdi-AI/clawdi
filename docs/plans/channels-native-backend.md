@@ -105,15 +105,22 @@ binding, alias, and relay policy.
 ## Gating
 
 The managed WhatsApp path is not usable yet. The pinned `7.0.0-rc13` artifacts
-`baileys` and `@whiskeysockets/baileys` both lack the required configurable
-Noise trust authority and a WebSocket-only managed marker header. OpenClaw and
-Hermes also need native-plugin E2E proof after that seam exists.
+`baileys` and `@whiskeysockets/baileys` lack the required configurable Noise
+trust authority and a WebSocket-only managed marker header, so the CLI owns an
+expected-name and SemVer-major-7 static compatibility patch for those two
+Baileys aliases. Every audited before/after context hunk must match uniquely and
+exactly with fuzz zero; unrelated bytes outside those hunks are preserved. It
+reads strictly validated namespaced metadata from stock `creds.additionalData`;
+no OpenClaw or Hermes source is patched. These are explicitly downstream CLI
+patch capabilities, not native upstream managed capabilities. Executable rc13
+seam and stock auth-persistence tests do not replace OpenClaw/Hermes
+native-plugin E2E proof or a live drill.
 
-Consequently all constants in
+The isolated artifact-seam evidence is true, but the aggregate constants in
 `packages/cli/src/runtime/whatsapp-upstream-contract.ts` remain false. Runtime
-projection does not materialize synthetic auth or install a WhatsApp egress
-profile. No package override, module rewrite, fork, or custom adapter is an
-accepted substitute.
+projection does not materialize synthetic auth, reconcile the patch, or install
+a WhatsApp egress profile. Fuzzy replacement, runtime monkey-patching, package
+override, broad fork, and custom adapters remain outside the accepted design.
 
 ## Acceptance Evidence
 
@@ -123,6 +130,11 @@ accepted substitute.
 - provider ingress persistence, alias resolution, durable outbound delivery,
   raw-node policy, bounded IQ forwarding, and Link revocation tests;
 - managed/unmarked/invalid marker tests through the generic egress engine;
+- executable patched rc13 WebSocket, HTTP, Noise trust, malformed-metadata, and
+  stock consumer auth save/reconstruction evidence, without claiming
+  native-plugin E2E;
+- Link-removal stale-marker denial plus backend revoked/cross-Link authority
+  denial;
 - source invariants for no WhatsApp Graph/Cloud production path, no custom
   runtime adapter, and disabled readiness gates.
 

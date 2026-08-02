@@ -44,8 +44,15 @@ the placeholder location native to its official client:
 The WhatsApp marker only selects a local profile. It is not the real provider
 credential, not the Link bearer, and not a WhatsApp token. A missing marker is a
 user-owned stock Baileys connection and retains official upstream behavior. A
-present marker that is wrong, expired, or placed on another request is caught by
+present marker that is wrong, stale, or placed on another request is caught by
 the lower-priority deny profile and fails closed.
+
+The per-Link marker is deterministic and intentionally has no expiry: it is a
+local profile selector, not backend authority. Link removal removes its valid
+rewrite profile while retaining the catch-all marked-request deny profile.
+Until that projection converges, the backend still rejects the revoked Link
+bearer; it also binds synthetic Noise identity to that Link, so copying a
+selector or synthetic identity across Links does not confer authority.
 
 `packages/cli/tests/egress_addon/clawdi_egress_addon_test.py` runs all three
 profile shapes through the same matcher and rewrite functions and asserts that
@@ -62,8 +69,7 @@ validates its own resource identity:
 - WhatsApp validates the active Link, synthetic Noise identity, and JID binding.
 
 Invalid or revoked Link authority is rejected even for an already established
-session. Profile expiry only bounds new upgrades; it is not the revocation
-mechanism.
+session. Local selector lifecycle is not the revocation mechanism.
 
 ## WhatsApp Topology
 
@@ -74,10 +80,22 @@ synthetic socket owns only Link-scoped Clawdi auth and talks to the Noise
 emulator. See
 [`designs/whatsapp-baileys-sidecar-runtime.md`](designs/whatsapp-baileys-sidecar-runtime.md).
 
-The pinned Baileys release still lacks the dedicated `authCert` trust seam and
-managed-upgrade header seam required by both native consumers. All WhatsApp
-linking, runtime, upstream, and E2E gates therefore remain false, so current
-runtime convergence installs no WhatsApp credentials or interception profile.
+The audited Baileys release lacks managed credential metadata and a safe
+WebSocket-only header seam. The CLI owns a static compatibility patch for the
+two installed Baileys aliases, gated by expected package name, rigorously parsed
+SemVer major 7, and unique exact before/after context for every audited hunk
+with fuzz zero. Whole-file rc13 hashes are audit fixtures rather than
+compatibility gates, so unrelated changes outside those hunks are preserved.
+OpenClaw and Hermes source is not patched: their stock auth persistence carries
+the namespaced `creds.additionalData` value through initial construction and
+reconnect. Valid managed metadata forces Baileys' official WebSocket URL, adds
+the marker only to a derived upgrade config, and supplies the Noise trust;
+absent metadata preserves consumer URL/options and official trust. This is a
+downstream CLI capability, not a native upstream managed capability.
+Executable seam tests are not native-plugin E2E, and live-account drills remain
+unproven, so the aggregate WhatsApp linking, runtime, and upstream gates remain
+false. Current production convergence therefore installs no WhatsApp
+credentials, compatibility patch, or interception profile.
 
 ## Source Of Truth
 
@@ -86,5 +104,7 @@ runtime convergence installs no WhatsApp credentials or interception profile.
 - Transparent redirect: `packages/cli/src/runtime/transparent-egress.ts`
 - Telegram/Discord builders: `packages/cli/src/runtime/channels.ts`
 - WhatsApp builder: `packages/cli/src/runtime/whatsapp-egress.ts`
+- Static compatibility reconciler:
+  `packages/cli/src/runtime/managed-baileys-compat.ts`
 - WhatsApp gates and upstream audit:
   `packages/cli/src/runtime/whatsapp-upstream-contract.ts`
