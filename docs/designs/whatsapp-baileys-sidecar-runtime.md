@@ -67,6 +67,12 @@ The backend may inspect only the JIDs, message ids, and node attributes needed
 for ownership and binding policy. It must preserve Baileys proto/BinaryNode
 fidelity and must not translate through Meta Graph payloads.
 
+The stock OpenClaw/Hermes capability and call-path evidence is recorded in
+[`whatsapp-native-capability-audit.md`](whatsapp-native-capability-audit.md).
+Clawdi does not duplicate those application features. Its only capability
+repairs are narrow protocol-envelope fidelity for exact provider-service IQs
+and the rc13 poll-creation metadata node.
+
 ## Physical Provider Transport
 
 `BaileysSocketRuntime` calls `makeWASocket` once for one configured provider

@@ -60,6 +60,7 @@ async def test_whatsapp_provider_transport_adapter_relays_message_attrs():
                 "category": "peer",
             },
             conversation=None,
+            additional_nodes=({"tag": "meta", "attrs": {"polltype": "creation"}},),
         )
     )
 
@@ -73,6 +74,7 @@ async def test_whatsapp_provider_transport_adapter_relays_message_attrs():
                 "addressing_mode": "lid",
                 "category": "peer",
             },
+            additional_nodes=({"tag": "meta", "attrs": {"polltype": "creation"}},),
         )
     ]
     assert relayed_message_id == "agent-edit-1"
@@ -125,6 +127,7 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
                 "messageId": "agent-native-1",
                 "messageProtoBase64": base64.b64encode(b"\x0a\x06native").decode("ascii"),
                 "additionalAttributes": {"edit": "8"},
+                "additionalNodes": [],
             }
             return httpx.Response(200, json={"ok": True, "messageId": "provider-native-1"})
         if request.url.path == "/v1/raw-node":

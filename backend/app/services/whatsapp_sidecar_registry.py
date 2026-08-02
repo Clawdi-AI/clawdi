@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 _JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
-class _SidecarClient(WhatsAppNativeUpstreamClient, Protocol):
+class WhatsAppSidecarClient(WhatsAppNativeUpstreamClient, Protocol):
     async def aclose(self) -> None: ...
 
     async def refresh_health(self) -> bool: ...
@@ -66,7 +66,7 @@ class _SidecarClient(WhatsAppNativeUpstreamClient, Protocol):
     async def pairing_retry(self) -> WhatsAppSidecarPairingStatus: ...
 
 
-SidecarClientFactory = Callable[[WhatsAppBaileysSidecarConfig], _SidecarClient]
+SidecarClientFactory = Callable[[WhatsAppBaileysSidecarConfig], WhatsAppSidecarClient]
 _UNRELEASED_STATES = (
     "generating",
     "ready",
@@ -74,7 +74,7 @@ _UNRELEASED_STATES = (
     "connected",
     WHATSAPP_ONBOARDING_STATE_ERROR,
 )
-_ACTIVE_REGISTRY: ConfiguredWhatsAppSidecarRegistry | None = None
+_active_registry: ConfiguredWhatsAppSidecarRegistry | None = None
 
 
 class ConfiguredWhatsAppSidecarRegistry:
@@ -97,7 +97,7 @@ class ConfiguredWhatsAppSidecarRegistry:
         self._custom = parse_whatsapp_custom_sidecar_registrations(custom_raw_config)
         _validate_disjoint_physical_slots(self._managed, self._custom)
         self._client_factory = client_factory
-        self._clients_by_slot: dict[UUID, _SidecarClient] = {}
+        self._clients_by_slot: dict[UUID, WhatsAppSidecarClient] = {}
         self._custom_slot_to_account: dict[UUID, UUID] = {}
         self._custom_account_to_slot: dict[UUID, UUID] = {}
         self._blocked_custom_slots: set[UUID] = set()
@@ -112,7 +112,7 @@ class ConfiguredWhatsAppSidecarRegistry:
     def managed_account_ids(self) -> tuple[UUID, ...]:
         return tuple(sorted(self._managed, key=str))
 
-    def get_custom_client(self, slot_id: UUID) -> _SidecarClient | None:
+    def get_custom_client(self, slot_id: UUID) -> WhatsAppSidecarClient | None:
         if slot_id not in self._custom or slot_id in self._blocked_custom_slots:
             return None
         return self._clients_by_slot.get(slot_id)
@@ -131,8 +131,8 @@ class ConfiguredWhatsAppSidecarRegistry:
         return self._custom_slot_to_account.get(slot_id)
 
     async def start(self) -> None:
-        global _ACTIVE_REGISTRY
-        if self._clients_by_slot or self._ingress_tasks or _ACTIVE_REGISTRY is not None:
+        global _active_registry
+        if self._clients_by_slot or self._ingress_tasks or _active_registry is not None:
             raise RuntimeError("WhatsApp sidecar registry is already started")
         try:
             for slot_id, config in {**self._managed, **self._custom}.items():
@@ -152,15 +152,15 @@ class ConfiguredWhatsAppSidecarRegistry:
 
             if self._custom:
                 await self.reconcile_custom_ownership()
-            _ACTIVE_REGISTRY = self
+            _active_registry = self
         except BaseException:
             await self.stop()
             raise
 
     async def stop(self) -> None:
-        global _ACTIVE_REGISTRY
-        if _ACTIVE_REGISTRY is self:
-            _ACTIVE_REGISTRY = None
+        global _active_registry
+        if _active_registry is self:
+            _active_registry = None
         tasks = tuple(self._ingress_tasks.values())
         self._ingress_tasks.clear()
         for task in tasks:
@@ -248,7 +248,7 @@ class ConfiguredWhatsAppSidecarRegistry:
     def _register_transport(
         self,
         account_id: UUID,
-        client: _SidecarClient,
+        client: WhatsAppSidecarClient,
     ) -> None:
         register_whatsapp_provider_transport(
             account_id,
@@ -412,7 +412,7 @@ class ConfiguredWhatsAppSidecarRegistry:
     async def _pump_provider_ingress(
         self,
         account_id: UUID,
-        client: _SidecarClient,
+        client: WhatsAppSidecarClient,
     ) -> None:
         while True:
             try:
@@ -436,7 +436,7 @@ class ConfiguredWhatsAppSidecarRegistry:
 
 
 def get_active_whatsapp_sidecar_registry() -> ConfiguredWhatsAppSidecarRegistry | None:
-    return _ACTIVE_REGISTRY
+    return _active_registry
 
 
 def parse_whatsapp_sidecar_registrations(

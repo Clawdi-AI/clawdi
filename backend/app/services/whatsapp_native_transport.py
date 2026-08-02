@@ -14,7 +14,11 @@ from uuid import UUID
 import httpx
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from app.services.whatsapp_baileys import BinaryNode, relay_outbound_extra_attrs
+from app.services.whatsapp_baileys import (
+    BinaryNode,
+    relay_outbound_extra_attrs,
+    validate_relay_outbound_additional_nodes,
+)
 from app.services.whatsapp_runtime_types import WhatsAppOutboundMessage
 
 _BYTES_SENTINEL = "base64-bytes"
@@ -108,6 +112,7 @@ class WhatsAppNativeRelayRequest:
     message_id: str
     message_proto: bytes
     additional_attributes: Mapping[str, str]
+    additional_nodes: tuple[BinaryNode, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -183,6 +188,7 @@ class WhatsAppProviderTransportAdapter:
                 message_id=message.message_id,
                 message_proto=message.message_proto,
                 additional_attributes=relay_outbound_extra_attrs(message.attrs),
+                additional_nodes=validate_relay_outbound_additional_nodes(message.additional_nodes),
             )
         )
 
@@ -263,16 +269,19 @@ class WhatsAppBaileysSidecarClient:
     async def capabilities(self) -> WhatsAppSidecarCapabilities:
         payload = await self._request_json("GET", _CAPABILITIES_PATH)
         pairing = payload.get("pairing")
+        pairing_strings = (
+            [item for item in pairing if isinstance(item, str)] if isinstance(pairing, list) else []
+        )
         if (
             payload.get("schemaVersion") != "clawdi.whatsapp.sidecar-capabilities.v1"
             or not isinstance(pairing, list)
-            or not all(isinstance(item, str) for item in pairing)
-            or len(pairing) != len(set(pairing))
-            or set(pairing) != _PAIRING_ACTIONS
+            or len(pairing_strings) != len(pairing)
+            or len(pairing_strings) != len(set(pairing_strings))
+            or frozenset(pairing_strings) != _PAIRING_ACTIONS
             or payload.get("rawProviderAccess") is not False
         ):
             raise WhatsAppSidecarProtocolError("unsafe Baileys sidecar capabilities")
-        return WhatsAppSidecarCapabilities(pairing=frozenset(pairing))
+        return WhatsAppSidecarCapabilities(pairing=frozenset(pairing_strings))
 
     async def pairing_status(self) -> WhatsAppSidecarPairingStatus:
         return self._remember_pairing_status(
@@ -326,6 +335,7 @@ class WhatsAppBaileysSidecarClient:
                 "messageId": request.message_id,
                 "messageProtoBase64": base64.b64encode(request.message_proto).decode("ascii"),
                 "additionalAttributes": dict(request.additional_attributes),
+                "additionalNodes": _encode_json_value(request.additional_nodes),
             },
         )
         self._connected = True

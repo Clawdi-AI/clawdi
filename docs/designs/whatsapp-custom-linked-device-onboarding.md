@@ -86,8 +86,8 @@ traffic must remain gated until managed compatibility PR #738 and native
 end-to-end verification are ready. This onboarding does not depend on the
 rejected PR #713 application-adapter architecture.
 
-Done: `scripts/test.sh sidecar` reports 41 passing tests, and
+Done: `scripts/test.sh sidecar` reports 42 passing tests, and
 `scripts/test.sh backend tests/test_whatsapp_custom_onboarding.py
 tests/test_whatsapp_sidecar_registry.py tests/test_whatsapp_native_transport.py
-tests/test_whatsapp_provider_bridge.py` reports 55 passing tests in isolated
+tests/test_whatsapp_provider_bridge.py` reports 60 passing tests in isolated
 runners.

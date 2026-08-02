@@ -322,6 +322,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		return await socket.relayMessage(request.jid, message, {
 			messageId: request.messageId,
 			additionalAttributes: request.additionalAttributes,
+			additionalNodes: request.additionalNodes,
 		});
 	}
 

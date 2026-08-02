@@ -161,10 +161,30 @@ function parseRelayMessageBody(body: unknown): RelayMessageRequest {
 				body.additionalAttributes ?? {},
 				"additionalAttributes",
 			),
+			additionalNodes: parseRelayAdditionalNodes(body.additionalNodes ?? []),
 		};
 	} catch (error: unknown) {
 		throw new HttpError(400, error instanceof Error ? error.message : "invalid_relay_message");
 	}
+}
+
+function parseRelayAdditionalNodes(value: unknown): RelayMessageRequest["additionalNodes"] {
+	if (!Array.isArray(value) || value.length > 1) {
+		throw new Error("unsupported_additionalNodes");
+	}
+	if (value.length === 0) return [];
+	const node = value[0];
+	if (
+		!isRecord(node) ||
+		Object.keys(node).some((key) => key !== "tag" && key !== "attrs") ||
+		node.tag !== "meta" ||
+		!isRecord(node.attrs) ||
+		Object.keys(node.attrs).length !== 1 ||
+		node.attrs.polltype !== "creation"
+	) {
+		throw new Error("unsupported_additionalNodes");
+	}
+	return [{ tag: "meta", attrs: { polltype: "creation" } }];
 }
 
 function parsePhoneNumber(body: unknown): string {

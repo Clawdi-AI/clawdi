@@ -25,6 +25,7 @@ from app.services.whatsapp_baileys import (
     WhatsAppSyntheticDeliveryResult,
     parse_agent_bundle,
     parse_whatsapp_jid,
+    relay_outbound_additional_nodes,
     respond_to_iq,
 )
 from app.services.whatsapp_runtime_types import WhatsAppOutboundMessage
@@ -785,6 +786,7 @@ class WhatsAppNoiseEmulatorSession:
             enc_type=envelope_type,
             attrs={str(key): str(value) for key, value in attrs.items()},
             conversation=_proto_conversation_text(message_proto),
+            additional_nodes=relay_outbound_additional_nodes(node),
         )
 
     async def _extract_outbound_group_message(
@@ -846,6 +848,7 @@ class WhatsAppNoiseEmulatorSession:
             enc_type="skmsg",
             attrs={str(key): str(value) for key, value in attrs.items()},
             conversation=_proto_conversation_text(message_proto),
+            additional_nodes=relay_outbound_additional_nodes(node),
         )
 
     async def _process_group_sender_key_distribution(

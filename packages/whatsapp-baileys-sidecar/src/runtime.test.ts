@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DisconnectReason, initAuthCreds, proto } from "baileys";
+import { type BinaryNode, DisconnectReason, initAuthCreds, proto } from "baileys";
 
 import { parseAuditedWhatsAppWebVersion } from "./audited-version.js";
 import type { SidecarConfig } from "./config.js";
@@ -324,9 +324,17 @@ describe("physical Baileys runtime", () => {
 			messageId: "outbound-1",
 			messageProto: encoded,
 			additionalAttributes: { addressing_mode: "lid" },
+			additionalNodes: [{ tag: "meta", attrs: { polltype: "creation" } }],
 		});
 
 		expect(order).toEqual(["retry-stored", "relayed"]);
+		expect(harness.relayRequests).toEqual([
+			{
+				jid: "15550002222@s.whatsapp.net",
+				messageId: "outbound-1",
+				additionalNodes: [{ tag: "meta", attrs: { polltype: "creation" } }],
+			},
+		]);
 		expect(harness.retryMessages).toEqual([
 			{
 				remoteJid: "15550002222@s.whatsapp.net",
@@ -350,6 +358,7 @@ describe("physical Baileys runtime", () => {
 				messageId: "outbound-1",
 				messageProto: encoded,
 				additionalAttributes: {},
+				additionalNodes: [],
 			}),
 		).rejects.toThrow("injected retry write failure");
 		expect(harness.relayRequests).toEqual([]);
@@ -376,7 +385,11 @@ function createHarness(options: HarnessOptions = {}) {
 	const credsUpdates: Array<Record<string, unknown>> = [];
 	const providerEventBatches: ProviderMessageEventInput[][] = [];
 	const retryMessages: Array<{ remoteJid: string; messageId: string; message: Buffer }> = [];
-	const relayRequests: Array<{ jid: string; messageId?: string }> = [];
+	const relayRequests: Array<{
+		jid: string;
+		messageId?: string;
+		additionalNodes?: readonly BinaryNode[];
+	}> = [];
 	const endedErrors: Error[] = [];
 	const pairingCodePhones: string[] = [];
 	const socketConfigurations: Array<Parameters<ProviderSocketFactory>[0]> = [];
@@ -468,6 +481,9 @@ function createHarness(options: HarnessOptions = {}) {
 				relayRequests.push({
 					jid,
 					...(relayOptions.messageId ? { messageId: relayOptions.messageId } : {}),
+					...(relayOptions.additionalNodes
+						? { additionalNodes: relayOptions.additionalNodes }
+						: {}),
 				});
 				options.onRelayMessage?.();
 				return relayOptions.messageId ?? "generated-message-id";

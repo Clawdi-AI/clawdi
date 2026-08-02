@@ -32,14 +32,16 @@ from app.schemas.channel import (
 )
 from app.services.channels import generate_webhook_secret, hash_token
 from app.services.whatsapp_native_transport import (
-    WhatsAppBaileysSidecarClient,
     WhatsAppSidecarCapabilities,
     WhatsAppSidecarError,
     WhatsAppSidecarPairingStatus,
     WhatsAppSidecarProtocolError,
     WhatsAppSidecarUnavailableError,
 )
-from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegistry
+from app.services.whatsapp_sidecar_registry import (
+    ConfiguredWhatsAppSidecarRegistry,
+    WhatsAppSidecarClient,
+)
 
 WHATSAPP_ONBOARDING_TTL = timedelta(minutes=5)
 _E164_DIGITS = re.compile(r"^[1-9][0-9]{6,14}$")
@@ -648,7 +650,7 @@ async def _select_free_sidecar_slot(
 
 
 async def _pairable_sidecar(
-    client: WhatsAppBaileysSidecarClient,
+    client: WhatsAppSidecarClient,
 ) -> WhatsAppSidecarCapabilities | None:
     capabilities = await client.capabilities()
     health = await client.health()
@@ -904,7 +906,7 @@ async def _confirm_stopped(
 
 
 async def _stop_unfinished_pairing(
-    client: WhatsAppBaileysSidecarClient,
+    client: WhatsAppSidecarClient,
     *,
     current: WhatsAppSidecarPairingStatus | None = None,
 ) -> WhatsAppSidecarPairingStatus:
@@ -920,7 +922,7 @@ async def _stop_unfinished_pairing(
 
 
 async def _logout_registered_pairing(
-    client: WhatsAppBaileysSidecarClient,
+    client: WhatsAppSidecarClient,
     *,
     current: WhatsAppSidecarPairingStatus,
 ) -> WhatsAppSidecarPairingStatus:

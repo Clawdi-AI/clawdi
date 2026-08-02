@@ -622,7 +622,11 @@ def test_whatsapp_noise_emulator_session_acks_agent_message_stanzas():
         {
             "tag": "message",
             "attrs": {"id": "m-1", "to": "15551112222@s.whatsapp.net"},
-            "content": [{"tag": "enc", "attrs": {"type": reply.type}, "content": reply.ciphertext}],
+            "content": [
+                {"tag": "enc", "attrs": {"type": reply.type}, "content": reply.ciphertext},
+                {"tag": "meta", "attrs": {"polltype": "creation"}},
+                {"tag": "device-identity", "attrs": {}, "content": b"not-forwarded"},
+            ],
         }
     )
     ack_frames = _run(session.handle_inbound(pack_frame(client.transport.encrypt(message))))
@@ -646,7 +650,7 @@ def test_whatsapp_noise_emulator_session_acks_agent_message_stanzas():
         "protoBytes": len(reply_proto),
         "protoSha256": hashlib.sha256(reply_proto).hexdigest(),
         "conversationPresent": True,
-        "children": ["enc"],
+        "children": ["enc", "meta", "device-identity"],
     }
     assert outbound_messages == [
         WhatsAppOutboundMessage(
@@ -656,6 +660,7 @@ def test_whatsapp_noise_emulator_session_acks_agent_message_stanzas():
             enc_type="msg",
             attrs={"id": "m-1", "to": "15551112222@s.whatsapp.net"},
             conversation="agent reply",
+            additional_nodes=({"tag": "meta", "attrs": {"polltype": "creation"}},),
         )
     ]
 

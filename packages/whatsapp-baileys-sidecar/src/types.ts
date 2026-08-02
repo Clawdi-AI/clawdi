@@ -49,6 +49,7 @@ export type RelayMessageRequest = {
 	messageId: string;
 	messageProto: Uint8Array;
 	additionalAttributes: Record<string, string>;
+	additionalNodes: BinaryNode[];
 };
 
 export type BaileysRuntime = {

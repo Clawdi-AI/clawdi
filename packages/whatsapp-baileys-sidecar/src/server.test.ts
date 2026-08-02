@@ -221,6 +221,7 @@ describe("sidecar HTTP contract", () => {
 					edit: "8",
 					addressing_mode: "lid",
 				},
+				additionalNodes: [{ tag: "meta", attrs: { polltype: "creation" } }],
 			}),
 		});
 
@@ -235,7 +236,31 @@ describe("sidecar HTTP contract", () => {
 				edit: "8",
 				addressing_mode: "lid",
 			},
+			additionalNodes: [{ tag: "meta", attrs: { polltype: "creation" } }],
 		});
+	});
+
+	it("rejects broad relay additional nodes", async () => {
+		const runtime = new FakeRuntime();
+		const { url } = await startTestServer(runtime);
+		for (const additionalNodes of [
+			[{ tag: "meta", attrs: { event_type: "creation" } }],
+			[{ tag: "participants", attrs: {} }],
+			[{ tag: "device-identity", attrs: {} }],
+		]) {
+			const response = await authedFetch(`${url}/v1/relay-message`, {
+				method: "POST",
+				body: JSON.stringify({
+					jid: "15551114444@s.whatsapp.net",
+					messageId: "agent-unsafe-1",
+					messageProtoBase64: "CgF4",
+					additionalAttributes: {},
+					additionalNodes,
+				}),
+			});
+			expect(response.status).toBe(400);
+		}
+		expect(runtime.relayRequests).toEqual([]);
 	});
 
 	it("decodes raw node bytes and encodes IQ response bytes", async () => {

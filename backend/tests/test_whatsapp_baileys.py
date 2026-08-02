@@ -972,8 +972,7 @@ async def test_respond_to_iq_forwarding_policy_matches_msg_router():
     )
     assert forwarded_set["content"][0]["attrs"]["xmlns"] == "w:m"
 
-    before = len(forwarded)
-    blocked = await respond_to_iq(
+    forwarded_privacy = await respond_to_iq(
         {
             "tag": "iq",
             "attrs": {"id": "privacy-get", "xmlns": "privacy", "type": "get"},
@@ -983,9 +982,8 @@ async def test_respond_to_iq_forwarding_policy_matches_msg_router():
         agent_user=None,
         forward_iq=forward,
     )
-    assert len(forwarded) == before
-    assert blocked["attrs"]["id"] == "privacy-get"
-    assert "content" not in blocked
+    assert forwarded_privacy["attrs"]["id"] == "privacy-get"
+    assert forwarded_privacy["content"][0]["attrs"]["xmlns"] == "privacy"
 
     null_forward = await respond_to_iq(
         {
