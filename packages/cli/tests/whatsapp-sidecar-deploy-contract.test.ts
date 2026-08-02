@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -250,6 +258,39 @@ describe("WhatsApp sidecar remote container preflight", () => {
 		expect(result.exitCode).not.toBe(0);
 		expect(result.stderr).toContain("Invalid container id returned by Docker");
 	});
+
+	test("fails closed without executing when base64 decoding fails or is unavailable", async () => {
+		const command = renderKamalServerExecCommand([
+			buildWhatsAppSidecarContainerPreflightCommand([]),
+		]);
+		const directory = mkdtempSync(join(tmpdir(), "clawdi-sidecar-decoder-"));
+		const marker = join(directory, "executed");
+		try {
+			writeFileSync(
+				join(directory, "base64"),
+				`#!/bin/sh\nprintf '%s\\n' 'touch "${marker}"'\nexit 23\n`,
+				{ mode: 0o700 },
+			);
+			const failedDecode = await Bun.spawn(["/bin/sh", "-c", command], {
+				env: { PATH: directory },
+				stderr: "ignore",
+				stdout: "ignore",
+			}).exited;
+			expect(failedDecode).toBe(23);
+			expect(existsSync(marker)).toBe(false);
+
+			rmSync(join(directory, "base64"));
+			const unavailableDecode = await Bun.spawn(["/bin/sh", "-c", command], {
+				env: { PATH: directory },
+				stderr: "ignore",
+				stdout: "ignore",
+			}).exited;
+			expect(unavailableDecode).not.toBe(0);
+			expect(existsSync(marker)).toBe(false);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("WhatsApp sidecar production deployment contract", () => {
@@ -417,7 +458,9 @@ function renderKamalServerExecCommand(commands: readonly string[]): string {
 }
 
 function decodePreflightScript(command: string): string {
-	const match = command.match(/^printf '%s' '([A-Za-z0-9+/=]+)' \| base64 --decode \| sh$/);
+	const match = command.match(
+		/^script="\$\(printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d\)" && sh -c "\$script"$/,
+	);
 	if (!match?.[1]) throw new Error("unexpected preflight command transport");
 	return Buffer.from(match[1], "base64").toString("utf8");
 }

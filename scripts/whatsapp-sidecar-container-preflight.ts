@@ -58,9 +58,9 @@ for container_id in $container_ids; do
       esac
       ;;
   esac
-done`;
+	done`;
 	const encodedScript = Buffer.from(script, "utf8").toString("base64");
-	return `printf '%s' '${encodedScript}' | base64 --decode | sh`;
+	return `script="$(printf '%s' '${encodedScript}' | base64 -d)" && sh -c "$script"`;
 }
 
 export function readDesiredWhatsAppSidecarServiceNames(manifestPath: string): string[] {
