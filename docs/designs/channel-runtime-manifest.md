@@ -316,11 +316,12 @@ The managed projection is entirely gate-controlled:
 1. The authenticated runtime-channel source mints or reuses one Link-scoped
    synthetic credential under the account row lock. There is no public credential
    authority API.
-2. Runtime convergence writes synthetic `creds.json` plus a strict managed
-   socket sidecar into the stock OpenClaw or Hermes auth directory with private
-   permissions. The sidecar contains only the per-Link selector and Noise
-   trust material; it never contains the Link bearer or a websocket URL, and
-   physical provider auth state is never copied.
+2. Runtime convergence embeds strict namespaced metadata under
+   `creds.additionalData["clawdi.managedWhatsAppSocket"]` and writes that one
+   synthetic `creds.json` into the stock OpenClaw or Hermes auth directory with
+   private permissions. The metadata contains only its schema, per-Link
+   selector, and public Noise trust material; it never contains the Link bearer
+   or a websocket URL, and physical provider auth state is never copied.
 3. A provider profile matches an exact per-Link managed upgrade capability,
    strips it, injects the Link bearer, and rewrites the WebSocket upgrade to the
    Noise endpoint. The capability is a profile selector, not a WhatsApp token.
@@ -331,13 +332,16 @@ The managed projection is entirely gate-controlled:
    backend independently rejects revoked bearers and cross-Link synthetic
    identities during convergence.
 
-The pinned artifacts receive the dedicated WebSocket-only header and
-`authCert` seams through the CLI-owned static compatibility reconciler. It
-patches only exact audited preimages and remains inert without a projected
-managed Link. The aggregate upstream gate is still false because OpenClaw and
-Hermes native-plugin E2E and the live-account drill are not complete; runtime
-convergence therefore currently installs neither WhatsApp auth state nor a
-WhatsApp egress profile.
+The Baileys aliases receive the dedicated WebSocket-only header and `authCert`
+seams through the CLI-owned static compatibility reconciler. OpenClaw and
+Hermes source remains stock: both already persist the full Baileys auth state,
+including `additionalData`, on initial construction and reconnect. The
+reconciler accepts only rigorously parsed SemVer major 7 packages whose three
+targets match exact audited preimages or postimages, and remains inert without
+a projected managed Link. The aggregate upstream gate is still false because
+OpenClaw and Hermes native-plugin E2E and the live-account drill are not
+complete; runtime convergence therefore currently installs neither WhatsApp
+auth state nor a WhatsApp egress profile.
 
 ## CLI Commands
 

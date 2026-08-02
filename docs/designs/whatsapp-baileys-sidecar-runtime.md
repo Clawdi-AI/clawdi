@@ -160,14 +160,15 @@ Done: `python3 -m unittest packages/cli/tests/egress_addon/clawdi_egress_addon_t
 The compatibility surface was audited from the actual pinned installation
 layouts, not inferred from source package names:
 
-| Consumer | Identity | Stock Baileys alias | Patched consumer entry | Pristine consumer SHA-256 |
-| --- | --- | --- | --- | --- |
-| OpenClaw | `@openclaw/whatsapp@2026.7.1` | `baileys@7.0.0-rc13` | `dist/session-DriaHt7V.js` | `21417f0271cf1ae63a6fd4f05510b78755e4b1870ae087a1d23c68adc128de7a` |
-| Hermes | release `2026.7.30`, package `0.19.1` | `@whiskeysockets/baileys@7.0.0-rc13` | `scripts/whatsapp-bridge/bridge.js` | `9e1c4745da7d385a56fe3e48ff510e94f577ccd4cd01daa66c02d69267226185` |
+| Consumer | Audited stock identity | Installed Baileys alias | Stock auth lifecycle |
+| --- | --- | --- | --- |
+| OpenClaw | `@openclaw/whatsapp@2026.7.1` | `node_modules/baileys`, audited at `7.0.0-rc13` | Loads Baileys multi-file auth, preserves `additionalData` with `BufferJSON`, and reconstructs through `createWaSocket`. |
+| Hermes | release `2026.7.30`, package `0.19.1` | `node_modules/@whiskeysockets/baileys`, audited at `7.0.0-rc13` | `startSocket` reloads multi-file auth, subscribes `creds.update` to `saveCreds`, and calls `startSocket` again on reconnect. |
 
-Both aliases resolve to the audited Baileys source commit `8053b086`. Every
-OpenClaw socket construction enters `createWaSocket`. Hermes uses `startSocket`
-for its initial socket and reconnect timer.
+Both audited aliases resolve to Baileys source commit `8053b086`. The consumer
+identities document the stock call chains; they are not patch targets or
+reconcile identity authority. The only consumer-specific identity needed at
+runtime is the known package-root alias used to locate Baileys.
 The older local `7.0.0-rc.9` patch was reviewed only for the backward-compatible
 `authCert ?? WA_CERT_DETAILS` trust behavior; its custom websocket URL routing
 and release assumptions are intentionally absent.
@@ -177,42 +178,41 @@ and release assumptions are intentionally absent.
 Pinned Baileys `7.0.0-rc13` already passes `SocketConfig.options.headers` to
 `ws`, but the same `RequestInit` is also used for provider HTTP/media fetches.
 It is therefore not a safe dedicated marker seam. Revision
-`clawdi.managedBaileysCompat.v1` applies this narrow change to five shared
-Baileys files and one consumer file per runtime artifact:
+`clawdi.managedBaileysCompat.v2` changes only three Baileys files:
 
-```ts
-export type NoiseCertificateAuthority = {
-  SERIAL: number;
-  ISSUER: string;
-  PUBLIC_KEY: Uint8Array;
-};
+| Target | Pristine SHA-256 | Patched SHA-256 |
+| --- | --- | --- |
+| `lib/Socket/socket.js` | `ab9b68888e123ad683dbc26555fc928400c1526c93ec6b66853f2ba30f8177a9` | `3e4ce87fc485635c9ada35cc4056110136356fcb3b549955a7518943d45082c0` |
+| `lib/Utils/noise-handler.js` | `970f9526ce0e5a6bebf937328b3d835966a9282c0d232f31b5c0bb283531afe8` | `be9d357b337b20f2d678c68d1c989091187a8fa6f767af92645dba05b827f206` |
+| `lib/Utils/noise-handler.d.ts` | `a556ca0b67c3448769ad5ed0d59acbf566a21115fa107cd582b1dcb28c4fd516` | `34197090723b4b197b36062d8283f86ada1f8d5863a58efab446b8bf87f2e28e` |
 
-export type SocketConfig = {
-  // Existing fields omitted.
-  authCert?: NoiseCertificateAuthority;
-  webSocketHeaders?: Record<string, string>;
-};
-```
-
-`makeNoiseHandler` must verify the intermediate signature and issuer serial
-against `authCert ?? WA_CERT_DETAILS`. `WebSocketClient.connect` must merge only
-`webSocketHeaders` into the `ws` upgrade headers; it must not copy them to
-fetch/media requests. Defaults preserve current upstream behavior.
+The CLI embeds validated Link metadata under
+`creds.additionalData["clawdi.managedWhatsAppSocket"]`. Patched `makeSocket`
+strictly validates exact keys, schema, selector shape, safe serial, trimmed
+issuer, and 32-byte public key. A present malformed value fails before a
+network connection. A valid value derives a copy used only by
+`WebSocketClient`, adds the selector header there, passes the public trust to
+`makeNoiseHandler`, and forces the official
+`wss://web.whatsapp.com/ws/chat`. The original config remains unchanged for
+HTTP/media users. If the namespaced value is absent, the original config,
+including consumer URL/options and official `WA_CERT_DETAILS`, is used exactly
+as before.
 
 Compatibility tests run against both consumer artifact names used here,
 `baileys` (OpenClaw) and `@whiskeysockets/baileys` (Hermes). The executable
-harness evaluates the exact patched rc13 `WebSocketClient` and Noise handler,
-calls rc13 `getHttpStream`, and executes the patched OpenClaw `createWaSocket`
-and Hermes `startSocket` functions:
+harness evaluates the patched rc13 socket prologue and full Noise handler,
+calls rc13 `getHttpStream`, and runs stock Baileys auth load/save/reload cycles
+matching both audited consumer call chains:
 
-1. no options still trust the official certificate and emit no marker;
-2. `authCert` selects the supplied public key and serial instead;
-3. `webSocketHeaders` appear in the WebSocket constructor options but not in
-   ordinary media fetch options;
-4. a second construction through both consumer functions rereads changed
-   selector/trust files, while source assertions only audit the constructor
-   call-site shape;
-5. both artifact aliases expose the same narrow types and runtime seams.
+1. absent metadata retains a consumer custom URL/options, emits no marker, and
+   trusts the official certificate;
+2. valid metadata forces the official URL and uses the supplied public key and
+   serial;
+3. the marker appears in WebSocket upgrade options but not in the unchanged
+   config passed to real rc13 media fetch;
+4. malformed present metadata fails closed;
+5. OpenClaw-style `BufferJSON` persistence and Hermes `saveCreds` both preserve
+   the namespace and Buffer, and reconstruction rereads changed Link metadata.
 
 This is executable compatibility-seam evidence, not full native-plugin E2E.
 The native-plugin and live-account gates therefore remain false.
@@ -220,12 +220,10 @@ The native-plugin and live-account gates therefore remain false.
 The CLI reconciler is a narrow static compatibility exception to the general
 ban on runtime monkey-patching and source forks. It performs no fuzzy or
 load-time replacement, does not override package resolution, and ships no
-custom ChannelPlugin or `BasePlatformAdapter`. The stock consumers read an
-optional CLI-owned sidecar from their normal auth directory and pass
-`authCert` plus `webSocketHeaders` to every socket construction. In managed
-mode OpenClaw deliberately ignores its user websocket override so the socket
-still requests `wss://web.whatsapp.com/ws/chat`; without the sidecar both
-consumers preserve their stock behavior.
+custom ChannelPlugin or `BasePlatformAdapter`. It patches no OpenClaw or Hermes
+source. Stock auth persistence carries the namespaced metadata into every
+initial and reconstructed socket. Without that namespace both consumers and
+Baileys preserve stock behavior.
 
 ### Reconcile and Recovery
 
@@ -243,33 +241,36 @@ The receipt is
 2. With a managed Link, Hermes first restores lockfile-pinned local bridge
    dependencies when Baileys is absent. The live-state transaction snapshots
    the whole `node_modules` tree whenever that `npm ci` may run.
-3. The reconciler verifies the real, non-symlinked artifact root, exact package
-   names and versions, and every target's exact pristine or patched SHA-256.
+3. The reconciler verifies the real, non-symlinked Baileys package root, the
+   expected alias package name, a rigorously parsed SemVer major 7, and every
+   target's exact pristine or patched SHA-256. A different valid 7.x version is
+   accepted only when all audited target bytes still match. Major 8, other
+   majors, malformed versions, missing targets, and source drift fail closed.
    It does not claim registry/tarball integrity verification: npm integrity is
    not present in installed `package.json` and is not receipt authority.
-   Unknown versions, missing targets, and drift fail before managed WhatsApp
-   activation.
 4. Exact patched files plus a matching receipt are a no-op. Exact patched files
-   without a receipt recover the receipt. Pristine or mixed recognized files
-   write and fsync the receipt, stage all replacements, recheck every source
-   hash, then rename each target and fsync its directory. Each rename is an
-   atomic file replacement, but the six-file change is not a global atomic
-   transaction. A crash can leave a recognized preimage/postimage mixture;
-   the durable receipt makes the next reconcile converge it safely.
+   without a receipt recover the receipt. A compatible 7.x version transition
+   updates the observed version in the receipt without rollback. Pristine or
+   mixed recognized files write and fsync the receipt, stage all replacements,
+   recheck every source hash, then rename each target and fsync its directory.
+   Each rename is an atomic file replacement, but the three-file change is not
+   a global atomic transaction. A crash can leave a recognized
+   preimage/postimage mixture; the durable receipt makes the next reconcile
+   converge it safely.
 5. An installer restore to recognized pristine files reapplies the patch.
    Manifest convergence failure restores the exact pre-apply live snapshot.
    Rollback also preflights every target before changing any file. A crash
    during rollback leaves the receipt until every target is restored, so the
    next rollback converges a recognized mixed state.
 
-The receipt contains only its schema, patch revision, audited artifact root,
-exact consumer/Baileys names and versions, relative target paths, and pre/post
-SHA-256 values. The reconciler remains larger than the upstream runtime change
-because it embeds six exact replacement definitions per artifact and retains
-package-layout recovery, symlink checks, TOCTOU rechecks, durable staging,
-receipt recovery, rollback preflight, Hermes reinstall handling, and caller
-snapshot compatibility. Timestamp and unverifiable integrity receipt fields,
-the multi-artifact receipt state, and duplicate apply/rollback commit code were
-removed because they added no safety.
+The receipt contains only its schema, patch revision, audited Baileys package
+root, runtime/alias, observed compatible version, compatible major, relative
+target paths, and pre/post SHA-256 values. The reconciler remains larger than
+the 36 net added upstream lines because it retains package-layout recovery,
+strict SemVer/name checks, symlink checks, TOCTOU rechecks, durable staging,
+receipt/version-transition recovery, rollback preflight, Hermes reinstall
+handling, and caller snapshot compatibility. Consumer patch definitions,
+consumer identities, sidecar config state, timestamp and unverifiable integrity
+fields, multi-artifact receipt state, and duplicate commit code are absent.
 
 Done: `bun test --isolate packages/cli/src/runtime/managed-baileys-compat.test.ts packages/cli/tests/managed-whatsapp-projection.test.ts packages/cli/tests/runtime-whatsapp-egress.test.ts` exits 0 and reports no failures.

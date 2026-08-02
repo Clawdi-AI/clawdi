@@ -43,23 +43,22 @@ describe.each(["openclaw", "hermes"] as const)("managed WhatsApp %s projection",
 				: join(home, ".hermes", "platforms", "whatsapp", "session"),
 		);
 		const files = credential.files as Array<{ path: string; secretRef: string }>;
-		expect(files.map((file) => file.path)).toEqual([
-			"creds.json",
-			".clawdi-managed-whatsapp-socket.json",
-		]);
-		const socketSecretRef = files[1]?.secretRef;
-		if (!socketSecretRef) throw new Error("missing socket secret ref");
-		const socketJson = projected.secretValues?.[socketSecretRef];
-		if (!socketJson) throw new Error("missing socket material");
-		const socket = JSON.parse(socketJson) as Record<string, unknown>;
-		expect(socket).toEqual({
+		expect(files.map((file) => file.path)).toEqual(["creds.json"]);
+		const credsSecretRef = files[0]?.secretRef;
+		if (!credsSecretRef) throw new Error("missing creds secret ref");
+		const credsJson = projected.secretValues?.[credsSecretRef];
+		if (!credsJson) throw new Error("missing creds material");
+		const creds = JSON.parse(credsJson) as Record<string, unknown>;
+		const metadata = managedMetadata(projected);
+		expect(metadata).toEqual({
 			schemaVersion: "clawdi.managedWhatsAppSocket.v1",
 			capability: expect.stringMatching(/^clawdi_[a-f0-9]{32}$/),
 			authCert: whatsappAuthCert(),
 		});
-		expect(JSON.stringify(socket)).not.toContain("wa-agent-link-bearer");
-		expect(JSON.stringify(socket)).not.toContain("websocketUrl");
-		expect(socketSecretRef).toContain("/credentials/credential-whatsapp-1/managed-socket");
+		expect(creds.additionalData).toMatchObject({ existing: "preserved" });
+		expect(JSON.stringify(creds)).not.toContain("wa-agent-link-bearer");
+		expect(JSON.stringify(creds)).not.toContain("websocketUrl");
+		expect(credsSecretRef).toContain("/credentials/credential-whatsapp-1/creds-json");
 
 		const profiles = projected.manifest.egressProfiles?.profiles ?? [];
 		const managed = profiles.find((profile) => profile.kind === "websocket");
@@ -104,16 +103,17 @@ describe.each(["openclaw", "hermes"] as const)("managed WhatsApp %s projection",
 
 		materializeHostedChannelCredentials(projected.manifest, projected.secretValues, home);
 		if (!authDir) throw new Error("missing auth dir");
-		const materializedSocket = readFileSync(
-			join(authDir, ".clawdi-managed-whatsapp-socket.json"),
-			"utf8",
-		);
-		expect(JSON.parse(materializedSocket)).toEqual(socket);
-		expect(materializedSocket).not.toContain("wa-agent-link-bearer");
-		expect(materializedSocket).not.toContain("websocketUrl");
-		expect(JSON.parse(readFileSync(join(authDir, "creds.json"), "utf8"))).toEqual({
+		const materializedCreds = readFileSync(join(authDir, "creds.json"), "utf8");
+		expect(materializedCreds).not.toContain("wa-agent-link-bearer");
+		expect(materializedCreds).not.toContain("websocketUrl");
+		expect(existsSync(join(authDir, ".clawdi-managed-whatsapp-socket.json"))).toBe(false);
+		expect(JSON.parse(materializedCreds)).toEqual({
 			advSecretKey: "synthetic-auth-only",
 			me: { id: "15551234567:1@s.whatsapp.net" },
+			additionalData: {
+				existing: "preserved",
+				"clawdi.managedWhatsAppSocket": metadata,
+			},
 		});
 	});
 });
@@ -132,10 +132,10 @@ it("uses Link identity in the marker and refuses cross-Link reuse", () => {
 		runtimeLoad("openclaw", home),
 		whatsappChannels(),
 	);
-	const firstSocket = managedSocket(first);
-	const secondSocket = managedSocket(second);
-	expect(firstSocket.capability).not.toBe(secondSocket.capability);
-	expect(managedSocket(repeated).capability).toBe(firstSocket.capability);
+	const firstMetadata = managedMetadata(first);
+	const secondMetadata = managedMetadata(second);
+	expect(firstMetadata.capability).not.toBe(secondMetadata.capability);
+	expect(managedMetadata(repeated).capability).toBe(firstMetadata.capability);
 	const firstProfile = first.manifest.egressProfiles?.profiles.find(
 		(profile) => profile.kind === "websocket",
 	);
@@ -146,6 +146,51 @@ it("uses Link identity in the marker and refuses cross-Link reuse", () => {
 		secondProfile?.match.headers[CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER],
 	);
 	expect(firstProfile?.match).not.toHaveProperty("notAfter");
+});
+
+it("refuses malformed synthetic additionalData before projecting secrets", () => {
+	const home = temporaryHome();
+	const channels = whatsappChannels();
+	const credential = channels.channels[0]?.runtime_credentials?.[0];
+	if (!credential || typeof credential.material !== "object" || !credential.material) {
+		throw new Error("missing WhatsApp credential fixture");
+	}
+	const creds = Reflect.get(credential.material, "creds");
+	if (!creds || typeof creds !== "object") throw new Error("missing synthetic creds fixture");
+	Reflect.set(creds, "additionalData", "malformed");
+
+	expect(() => applyRuntimeChannelsToManifestLoad(runtimeLoad("openclaw", home), channels)).toThrow(
+		"synthetic creds.additionalData must be an object",
+	);
+});
+
+it("refuses tampered namespaced metadata before auth materialization", () => {
+	const home = temporaryHome();
+	const projected = applyRuntimeChannelsToManifestLoad(
+		runtimeLoad("openclaw", home),
+		whatsappChannels(),
+	);
+	const credential = projected.manifest.projection?.channelCredentials?.[0] as Record<
+		string,
+		unknown
+	>;
+	const files = credential.files as Array<{ path: string; secretRef: string }>;
+	const credsRef = files.find((file) => file.path === "creds.json")?.secretRef;
+	if (!credsRef || !projected.secretValues?.[credsRef]) {
+		throw new Error("missing projected creds fixture");
+	}
+	const creds = JSON.parse(projected.secretValues[credsRef]) as Record<string, unknown>;
+	const additionalData = creds.additionalData as Record<string, unknown>;
+	const metadata = additionalData["clawdi.managedWhatsAppSocket"] as Record<string, unknown>;
+	metadata.extra = true;
+	projected.secretValues[credsRef] = JSON.stringify(creds);
+
+	expect(() =>
+		materializeHostedChannelCredentials(projected.manifest, projected.secretValues, home),
+	).toThrow("invalid managed WhatsApp metadata");
+	expect(
+		existsSync(join(home, ".openclaw", "credentials", "whatsapp", "clawdi_acctwhatsapp")),
+	).toBe(false);
 });
 
 it("removes only CLI-owned managed auth when no Link remains", () => {
@@ -294,6 +339,7 @@ function whatsappChannels(linkId = "link-whatsapp-1"): RuntimeChannelsLoad {
 							creds: {
 								advSecretKey: "synthetic-auth-only",
 								me: { id: "15551234567:1@s.whatsapp.net" },
+								additionalData: { existing: "preserved" },
 							},
 							websocketUrl: "wss://backend.invalid/must-not-project",
 							authCert: whatsappAuthCert(),
@@ -315,12 +361,14 @@ function whatsappAuthCert() {
 	};
 }
 
-function managedSocket(load: RuntimeManifestLoad): Record<string, unknown> {
+function managedMetadata(load: RuntimeManifestLoad): Record<string, unknown> {
 	const credential = load.manifest.projection?.channelCredentials?.[0] as Record<string, unknown>;
 	const files = credential.files as Array<{ path: string; secretRef: string }>;
-	const ref = files.find((file) => file.path.endsWith("managed-whatsapp-socket.json"))?.secretRef;
-	if (!ref) throw new Error("missing socket ref");
+	const ref = files.find((file) => file.path === "creds.json")?.secretRef;
+	if (!ref) throw new Error("missing creds ref");
 	const value = load.secretValues?.[ref];
-	if (!value) throw new Error("missing socket value");
-	return JSON.parse(value) as Record<string, unknown>;
+	if (!value) throw new Error("missing creds value");
+	const creds = JSON.parse(value) as Record<string, unknown>;
+	const additionalData = creds.additionalData as Record<string, unknown>;
+	return additionalData["clawdi.managedWhatsAppSocket"] as Record<string, unknown>;
 }

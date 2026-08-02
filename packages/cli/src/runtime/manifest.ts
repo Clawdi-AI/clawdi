@@ -107,7 +107,6 @@ import {
 	runtimeRootLiveMutationTargets,
 } from "./live-state-snapshot";
 import {
-	MANAGED_WHATSAPP_SOCKET_CONFIG_FILE,
 	type ManagedBaileysRuntime,
 	managedBaileysCompatMutationTargets,
 	managedBaileysCompatReceiptPath,
@@ -206,6 +205,10 @@ import {
 	TRANSPARENT_EGRESS_TRANSPORT_VERSION,
 } from "./transparent-egress";
 import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
+import {
+	CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY,
+	parseManagedWhatsAppSocketMetadataJson,
+} from "./whatsapp-upstream-contract";
 
 type ManagedGatewayModelFetchInput = Parameters<ManagedGatewayModelListFetcher>[0];
 type ManagedGatewayModelFetchResult = ReturnType<ManagedGatewayModelListFetcher>;
@@ -447,7 +450,6 @@ interface ManagedWhatsAppAuthCredential {
 	credentialId: string;
 	authDir: string;
 	credsJsonSecretRef: string;
-	socketConfigSecretRef: string;
 	target: "openclaw" | "hermes" | "legacy";
 }
 
@@ -478,16 +480,15 @@ export function materializeHostedChannelCredentials(
 		}
 		expectedAuthDirs.add(resolve(credential.authDir));
 		const credsJson = runtimeSecretValue(normalizedSecrets, credential.credsJsonSecretRef);
-		const socketConfig = runtimeSecretValue(normalizedSecrets, credential.socketConfigSecretRef);
-		if (!credsJson || !socketConfig) {
+		if (!credsJson) {
 			removeManagedWhatsAppAuthDir(credential.authDir);
 			errors.push(
-				`missing managed WhatsApp socket material for ${credential.accountKey}/${credential.credentialId}`,
+				`missing WhatsApp auth state secret for ${credential.accountKey}/${credential.credentialId}`,
 			);
 			continue;
 		}
 		try {
-			materializeManagedWhatsAppAuthDir(credential, credsJson, socketConfig, home);
+			materializeManagedWhatsAppAuthDir(credential, credsJson, home);
 		} catch (error) {
 			errors.push(error instanceof Error ? error.message : String(error));
 		}
@@ -509,10 +510,9 @@ function validateHostedChannelCredentialsPlan(
 		const authDirError = managedWhatsAppAuthDirError(home, credential);
 		if (authDirError) throw new Error(authDirError);
 		const credsJson = runtimeSecretValue(normalizedSecrets, credential.credsJsonSecretRef);
-		const socketConfig = runtimeSecretValue(normalizedSecrets, credential.socketConfigSecretRef);
-		if (!credsJson || !socketConfig) {
+		if (!credsJson) {
 			throw new Error(
-				`missing managed WhatsApp socket material for ${credential.accountKey}/${credential.credentialId}`,
+				`missing WhatsApp auth state secret for ${credential.accountKey}/${credential.credentialId}`,
 			);
 		}
 		let parsed: unknown;
@@ -525,12 +525,13 @@ function validateHostedChannelCredentialsPlan(
 				}`,
 			);
 		}
-		if (!recordValue(parsed)) {
+		const parsedCreds = recordValue(parsed);
+		if (!parsedCreds) {
 			throw new Error(
 				`invalid WhatsApp auth state JSON for ${credential.accountKey}/${credential.credentialId}: creds.json must be a JSON object`,
 			);
 		}
-		parseManagedWhatsAppSocketConfig(socketConfig, credential);
+		assertManagedWhatsAppMetadata(parsedCreds, credential);
 		if (existsSync(credential.authDir) && lstatSync(credential.authDir).isSymbolicLink()) {
 			throw new Error(
 				`refusing to overwrite symlinked WhatsApp auth directory ${credential.authDir}`,
@@ -576,15 +577,8 @@ function parseManagedWhatsAppAuthCredentials(value: unknown): ManagedWhatsAppAut
 	const credsFile = files
 		.map(recordValue)
 		.find((file) => file?.path === "creds.json" && typeof file.secretRef === "string");
-	const socketConfigFile = files
-		.map(recordValue)
-		.find(
-			(file) =>
-				file?.path === MANAGED_WHATSAPP_SOCKET_CONFIG_FILE && typeof file.secretRef === "string",
-		);
 	const credsJsonSecretRef = credsFile ? stringValue(credsFile.secretRef) : null;
-	const socketConfigSecretRef = socketConfigFile ? stringValue(socketConfigFile.secretRef) : null;
-	if (!accountKey || !credentialId || !credsJsonSecretRef || !socketConfigSecretRef) {
+	if (!accountKey || !credentialId || !credsJsonSecretRef) {
 		throw new Error("WhatsApp auth credential projection is incomplete");
 	}
 	const targets = recordValue(record.targets);
@@ -599,7 +593,6 @@ function parseManagedWhatsAppAuthCredentials(value: unknown): ManagedWhatsAppAut
 			credentialId,
 			authDir: openclawAuthDir,
 			credsJsonSecretRef,
-			socketConfigSecretRef,
 			target: targets ? "openclaw" : "legacy",
 		});
 	}
@@ -611,7 +604,6 @@ function parseManagedWhatsAppAuthCredentials(value: unknown): ManagedWhatsAppAut
 			credentialId,
 			authDir: hermesAuthDir,
 			credsJsonSecretRef,
-			socketConfigSecretRef,
 			target: "hermes",
 		});
 	}
@@ -624,15 +616,17 @@ function parseManagedWhatsAppAuthCredentials(value: unknown): ManagedWhatsAppAut
 function materializeManagedWhatsAppAuthDir(
 	credential: ManagedWhatsAppAuthCredential,
 	credsJson: string,
-	socketConfigJson: string,
 	home: string,
 ): void {
-	let parsedCreds: unknown;
+	let parsedCreds: Record<string, unknown>;
 	try {
-		parsedCreds = JSON.parse(credsJson);
-		if (!recordValue(parsedCreds)) {
+		const parsed = JSON.parse(credsJson) as unknown;
+		const record = recordValue(parsed);
+		if (!record) {
 			throw new Error("creds.json must be a JSON object");
 		}
+		parsedCreds = record;
+		assertManagedWhatsAppMetadata(parsedCreds, credential);
 	} catch (error) {
 		removeManagedWhatsAppAuthDir(credential.authDir);
 		throw new Error(
@@ -641,8 +635,6 @@ function materializeManagedWhatsAppAuthDir(
 			}`,
 		);
 	}
-	const socketConfig = parseManagedWhatsAppSocketConfig(socketConfigJson, credential);
-
 	if (existsSync(credential.authDir) && lstatSync(credential.authDir).isSymbolicLink()) {
 		throw new Error(
 			`refusing to overwrite symlinked WhatsApp auth directory ${credential.authDir}`,
@@ -670,15 +662,6 @@ function materializeManagedWhatsAppAuthDir(
 		},
 	);
 	makeRuntimeUserOwned(join(credential.authDir, "creds.json"));
-	writePrivateFileAtomic(
-		join(credential.authDir, MANAGED_WHATSAPP_SOCKET_CONFIG_FILE),
-		`${JSON.stringify(socketConfig, null, 2)}\n`,
-		{
-			mode: 0o600,
-			dirMode: 0o700,
-		},
-	);
-	makeRuntimeUserOwned(join(credential.authDir, MANAGED_WHATSAPP_SOCKET_CONFIG_FILE));
 	writeJsonFile(join(credential.authDir, MANAGED_WHATSAPP_AUTH_MARKER), {
 		schemaVersion: "clawdi.managedWhatsAppAuth.v1",
 		provider: "whatsapp",
@@ -689,66 +672,27 @@ function materializeManagedWhatsAppAuthDir(
 	makeRuntimeUserOwned(join(credential.authDir, MANAGED_WHATSAPP_AUTH_MARKER));
 }
 
-function parseManagedWhatsAppSocketConfig(
-	value: string,
+function assertManagedWhatsAppMetadata(
+	creds: Record<string, unknown>,
 	credential: Pick<ManagedWhatsAppAuthCredential, "accountKey" | "credentialId">,
-): Record<string, unknown> {
-	let parsed: unknown;
+): void {
+	const additionalData = recordValue(creds.additionalData);
 	try {
-		parsed = JSON.parse(value);
+		if (
+			!additionalData ||
+			!Object.hasOwn(additionalData, CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY)
+		) {
+			throw new Error("metadata is missing");
+		}
+		parseManagedWhatsAppSocketMetadataJson(
+			additionalData[CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY],
+		);
 	} catch (error) {
 		throw new Error(
-			`invalid managed WhatsApp socket config for ${credential.accountKey}/${credential.credentialId}: ${
+			`invalid managed WhatsApp metadata for ${credential.accountKey}/${credential.credentialId}: ${
 				error instanceof Error ? error.message : String(error)
 			}`,
 		);
-	}
-	const config = recordValue(parsed);
-	const authCert = recordValue(config?.authCert);
-	const publicKey = recordValue(authCert?.PUBLIC_KEY);
-	const capability = stringValue(config?.capability);
-	const issuer = stringValue(authCert?.ISSUER);
-	const serial = authCert?.SERIAL;
-	const publicKeyData = stringValue(publicKey?.data);
-	if (!config) {
-		throw new Error(
-			`invalid managed WhatsApp socket config for ${credential.accountKey}/${credential.credentialId}`,
-		);
-	}
-	if (
-		config.schemaVersion !== "clawdi.managedWhatsAppSocket.v1" ||
-		!recordHasExactKeys(config, ["authCert", "capability", "schemaVersion"]) ||
-		!capability ||
-		capability.length > 512 ||
-		!authCert ||
-		!recordHasExactKeys(authCert, ["ISSUER", "PUBLIC_KEY", "SERIAL"]) ||
-		typeof serial !== "number" ||
-		!Number.isSafeInteger(serial) ||
-		serial < 0 ||
-		!issuer ||
-		!publicKey ||
-		!recordHasExactKeys(publicKey, ["data", "type"]) ||
-		publicKey.type !== "Buffer" ||
-		!publicKeyData ||
-		!isCanonicalBase64Bytes(publicKeyData, 32)
-	) {
-		throw new Error(
-			`invalid managed WhatsApp socket config for ${credential.accountKey}/${credential.credentialId}`,
-		);
-	}
-	return config;
-}
-
-function recordHasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-	return Object.keys(value).sort().join("\0") === [...keys].sort().join("\0");
-}
-
-function isCanonicalBase64Bytes(value: string, byteLength: number): boolean {
-	try {
-		const decoded = Buffer.from(value, "base64");
-		return decoded.length === byteLength && decoded.toString("base64") === value;
-	} catch {
-		return false;
 	}
 }
 

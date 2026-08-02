@@ -16,16 +16,15 @@ import {
 	writeSync,
 } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { isValidSemver } from "../lib/semver";
 import type { RuntimePaths } from "./paths";
 import { makeRuntimeUserOwned, spawnRuntimeUserCommand } from "./runtime-user-command";
 
-export const MANAGED_BAILEYS_PATCH_REVISION = "clawdi.managedBaileysCompat.v1";
-export const MANAGED_WHATSAPP_SOCKET_CONFIG_FILE = ".clawdi-managed-whatsapp-socket.json";
+export const MANAGED_BAILEYS_PATCH_REVISION = "clawdi.managedBaileysCompat.v2";
 
-const BAILEYS_VERSION = "7.0.0-rc13";
-const OPENCLAW_WHATSAPP_VERSION = "2026.7.1";
-const HERMES_VERSION = "0.19.1";
+const BAILEYS_COMPATIBLE_MAJOR = 7;
 const RECEIPT_FILE = "managed-baileys-compat.json";
+const RECEIPT_SCHEMA = "clawdi.managedBaileysPatchReceipt.v3";
 
 export type ManagedBaileysRuntime = "openclaw" | "hermes";
 
@@ -41,18 +40,12 @@ interface StaticPatchTarget {
 	replacements: readonly StrictReplacement[];
 }
 
-interface PackageIdentity {
-	path: string;
-	name: string;
-	version: string;
-}
-
 interface ManagedBaileysArtifact {
 	runtime: ManagedBaileysRuntime;
 	root: string;
-	consumer: PackageIdentity;
-	baileys: PackageIdentity;
+	packageName: "baileys" | "@whiskeysockets/baileys";
 	targets: readonly StaticPatchTarget[];
+	hermesBridgeRoot?: string;
 }
 
 export interface ManagedBaileysPatchReceiptTarget {
@@ -64,13 +57,16 @@ export interface ManagedBaileysPatchReceiptTarget {
 export interface ManagedBaileysPatchReceiptArtifact {
 	runtime: ManagedBaileysRuntime;
 	artifactRoot: string;
-	consumer: Omit<PackageIdentity, "path">;
-	baileys: Omit<PackageIdentity, "path">;
+	baileys: {
+		name: string;
+		observedVersion: string;
+		compatibleMajor: typeof BAILEYS_COMPATIBLE_MAJOR;
+	};
 	targets: ManagedBaileysPatchReceiptTarget[];
 }
 
 export interface ManagedBaileysPatchReceipt {
-	schemaVersion: "clawdi.managedBaileysPatchReceipt.v2";
+	schemaVersion: typeof RECEIPT_SCHEMA;
 	patchRevision: typeof MANAGED_BAILEYS_PATCH_REVISION;
 	artifact: ManagedBaileysPatchReceiptArtifact;
 }
@@ -85,55 +81,66 @@ export type ManagedBaileysReconcileResult =
 
 const BAILEYS_TARGETS = [
 	{
-		relativePath: "lib/Types/Socket.d.ts",
-		preimageSha256: "3555af5f3f73ceae7bb1b77018620b6a8cdfb21dc00029b4d655956eb86bb300",
-		postimageSha256: "dbcfaa83edbc660dc527d2d5d248219f3e7575660c638b7ae409cb4185199cd3",
+		relativePath: "lib/Socket/socket.js",
+		preimageSha256: "ab9b68888e123ad683dbc26555fc928400c1526c93ec6b66853f2ba30f8177a9",
+		postimageSha256: "3e4ce87fc485635c9ada35cc4056110136356fcb3b549955a7518943d45082c0",
 		replacements: [
 			{
-				before: "export type WABrowserDescription = [string, string, string];\n",
+				before: "import { executeWMexQuery } from './mex.js';\n",
 				after:
-					"export type WABrowserDescription = [string, string, string];\n" +
-					"export type NoiseCertificateAuthority = {\n" +
-					"    SERIAL: number;\n" +
-					"    ISSUER: string;\n" +
-					"    PUBLIC_KEY: Uint8Array;\n" +
+					"import { executeWMexQuery } from './mex.js';\n" +
+					"const CLAWDI_MANAGED_SOCKET_KEY = 'clawdi.managedWhatsAppSocket';\n" +
+					"const CLAWDI_MANAGED_SOCKET_SCHEMA = 'clawdi.managedWhatsAppSocket.v1';\n" +
+					"const CLAWDI_LINK_CAPABILITY_HEADER = 'x-clawdi-whatsapp-link-capability';\n" +
+					"const OFFICIAL_WHATSAPP_WEB_SOCKET_URL = 'wss://web.whatsapp.com/ws/chat';\n" +
+					"const hasExactKeys = (value, keys) => Object.keys(value).sort().join('\\0') === [...keys].sort().join('\\0');\n" +
+					"const managedSocketMetadata = (creds) => {\n" +
+					"    const additionalData = creds?.additionalData;\n" +
+					"    if (!additionalData || typeof additionalData !== 'object' || Array.isArray(additionalData) || !Object.prototype.hasOwnProperty.call(additionalData, CLAWDI_MANAGED_SOCKET_KEY)) {\n" +
+					"        return undefined;\n" +
+					"    }\n" +
+					"    const value = additionalData[CLAWDI_MANAGED_SOCKET_KEY];\n" +
+					"    const authCert = value?.authCert;\n" +
+					"    if (!value || typeof value !== 'object' || Array.isArray(value) || !hasExactKeys(value, ['authCert', 'capability', 'schemaVersion']) || value.schemaVersion !== CLAWDI_MANAGED_SOCKET_SCHEMA || typeof value.capability !== 'string' || !/^clawdi_[a-f0-9]{32}$/.test(value.capability) || !authCert || typeof authCert !== 'object' || Array.isArray(authCert) || !hasExactKeys(authCert, ['ISSUER', 'PUBLIC_KEY', 'SERIAL']) || !Number.isSafeInteger(authCert.SERIAL) || authCert.SERIAL < 0 || typeof authCert.ISSUER !== 'string' || !authCert.ISSUER || authCert.ISSUER.trim() !== authCert.ISSUER || authCert.ISSUER.length > 256 || !Buffer.isBuffer(authCert.PUBLIC_KEY) || authCert.PUBLIC_KEY.length !== 32) {\n" +
+					"        throw new Error('Invalid Clawdi managed WhatsApp socket metadata');\n" +
+					"    }\n" +
+					"    return value;\n" +
 					"};\n",
 			},
 			{
 				before:
-					"export type SocketConfig = {\n    /** the WS url to connect to WA */\n    waWebSocketUrl: string | URL;\n",
+					"    const { waWebSocketUrl, connectTimeoutMs, logger, keepAliveIntervalMs, browser, auth: authState, printQRInTerminal, defaultQueryTimeoutMs, transactionOpts, qrTimeout, makeSignalRepository } = config;\n",
 				after:
-					"export type SocketConfig = {\n" +
-					"    /** certificate authority used for Noise intermediate verification */\n" +
-					"    authCert?: NoiseCertificateAuthority;\n" +
-					"    /** headers applied exclusively to the WebSocket upgrade */\n" +
-					"    webSocketHeaders?: Record<string, string>;\n" +
-					"    /** the WS url to connect to WA */\n" +
-					"    waWebSocketUrl: string | URL;\n",
+					"    const { waWebSocketUrl, connectTimeoutMs, logger, keepAliveIntervalMs, browser, auth: authState, printQRInTerminal, defaultQueryTimeoutMs, transactionOpts, qrTimeout, makeSignalRepository } = config;\n" +
+					"    const managedMetadata = managedSocketMetadata(authState?.creds);\n",
 			},
-		],
-	},
-	{
-		relativePath: "lib/Socket/socket.js",
-		preimageSha256: "ab9b68888e123ad683dbc26555fc928400c1526c93ec6b66853f2ba30f8177a9",
-		postimageSha256: "9a35caddfa3b1e10d7ea3f35208883ddd489b4b2505978d17e1e6eb5d0af821a",
-		replacements: [
+			{
+				before:
+					"    const url = typeof waWebSocketUrl === 'string' ? new URL(waWebSocketUrl) : waWebSocketUrl;\n",
+				after:
+					"    const effectiveWebSocketUrl = managedMetadata ? OFFICIAL_WHATSAPP_WEB_SOCKET_URL : waWebSocketUrl;\n" +
+					"    const url = typeof effectiveWebSocketUrl === 'string' ? new URL(effectiveWebSocketUrl) : effectiveWebSocketUrl;\n",
+			},
 			{
 				before: "        routingInfo: authState?.creds?.routingInfo\n",
 				after:
-					"        routingInfo: authState?.creds?.routingInfo,\n        authCert: config.authCert\n",
+					"        routingInfo: authState?.creds?.routingInfo,\n" +
+					"        authCert: managedMetadata?.authCert\n",
 			},
-		],
-	},
-	{
-		relativePath: "lib/Socket/Client/websocket.js",
-		preimageSha256: "3344bcf808751d4cf1d25970ad5945c130e7f14d22814f7c2f6ac1a7b05e7de0",
-		postimageSha256: "8564bbd83a93a2d06832ba5fed4df08c411c05cc69c663600e65b5851173276d",
-		replacements: [
 			{
-				before: "            headers: this.config.options?.headers,\n",
+				before: "    const ws = new WebSocketClient(url, config);\n",
 				after:
-					"            headers: {\n                ...this.config.options?.headers,\n                ...this.config.webSocketHeaders\n            },\n",
+					"    const webSocketConfig = managedMetadata ? {\n" +
+					"        ...config,\n" +
+					"        options: {\n" +
+					"            ...config.options,\n" +
+					"            headers: {\n" +
+					"                ...config.options?.headers,\n" +
+					"                [CLAWDI_LINK_CAPABILITY_HEADER]: managedMetadata.capability\n" +
+					"            }\n" +
+					"        }\n" +
+					"    } : config;\n" +
+					"    const ws = new WebSocketClient(url, webSocketConfig);\n",
 			},
 		],
 	},
@@ -163,12 +170,8 @@ const BAILEYS_TARGETS = [
 	{
 		relativePath: "lib/Utils/noise-handler.d.ts",
 		preimageSha256: "a556ca0b67c3448769ad5ed0d59acbf566a21115fa107cd582b1dcb28c4fd516",
-		postimageSha256: "998d333b308823e255c3faad0e7abdf561720c931a3f29d25e786091262456e3",
+		postimageSha256: "34197090723b4b197b36062d8283f86ada1f8d5863a58efab446b8bf87f2e28e",
 		replacements: [
-			{
-				before: "import type { KeyPair } from '../Types/index.js';\n",
-				after: "import type { KeyPair, NoiseCertificateAuthority } from '../Types/index.js';\n",
-			},
 			{
 				before:
 					"export declare const makeNoiseHandler: ({ keyPair: { private: privateKey, public: publicKey }, NOISE_HEADER, logger, routingInfo }: {\n",
@@ -177,98 +180,17 @@ const BAILEYS_TARGETS = [
 			},
 			{
 				before: "    routingInfo?: Buffer | undefined;\n",
-				after: "    routingInfo?: Buffer | undefined;\n    authCert?: NoiseCertificateAuthority;\n",
+				after:
+					"    routingInfo?: Buffer | undefined;\n" +
+					"    authCert?: {\n" +
+					"        SERIAL: number;\n" +
+					"        ISSUER: string;\n" +
+					"        PUBLIC_KEY: Uint8Array;\n" +
+					"    };\n",
 			},
 		],
 	},
 ] as const satisfies readonly StaticPatchTarget[];
-
-const OPENCLAW_CONSUMER_TARGET = {
-	relativePath: "dist/session-DriaHt7V.js",
-	preimageSha256: "21417f0271cf1ae63a6fd4f05510b78755e4b1870ae087a1d23c68adc128de7a",
-	postimageSha256: "a11ad39e8b320ac86524c04f668e5f25193920efc40a3cb6d6f20a975cc89d16",
-	replacements: [
-		{
-			before:
-				'import { i as makeWASocket, n as fetchLatestBaileysVersion, o as useMultiFileAuthState, r as makeCacheableSignalKeyStore } from "./session.runtime-CyooSQvj.js";\n',
-			after:
-				'import { t as BufferJSON, i as makeWASocket, n as fetchLatestBaileysVersion, o as useMultiFileAuthState, r as makeCacheableSignalKeyStore } from "./session.runtime-CyooSQvj.js";\n',
-		},
-		{
-			before: 'import { randomUUID } from "node:crypto";\n',
-			after:
-				'import { randomUUID } from "node:crypto";\nimport { readFileSync } from "node:fs";\nimport { join } from "node:path";\n',
-		},
-		{
-			before: 'const OPENCLAW_WHATSAPP_WEB_SOCKET_URL_ENV = "OPENCLAW_WHATSAPP_WEB_SOCKET_URL";\n',
-			after:
-				'const OPENCLAW_WHATSAPP_WEB_SOCKET_URL_ENV = "OPENCLAW_WHATSAPP_WEB_SOCKET_URL";\n' +
-				'const CLAWDI_MANAGED_SOCKET_CONFIG = ".clawdi-managed-whatsapp-socket.json";\n' +
-				'const CLAWDI_LINK_CAPABILITY_HEADER = "x-clawdi-whatsapp-link-capability";\n' +
-				"function managedSocketOptions(authDir) {\n" +
-				"\tlet value;\n" +
-				"\ttry {\n" +
-				'\t\tvalue = JSON.parse(readFileSync(join(authDir, CLAWDI_MANAGED_SOCKET_CONFIG), "utf8"), BufferJSON.reviver);\n' +
-				"\t} catch (error) {\n" +
-				'\t\tif (error?.code === "ENOENT") return null;\n' +
-				`\t\tthrow new Error(\`Invalid managed WhatsApp socket config: \${String(error)}\`);\n` +
-				"\t}\n" +
-				'\tif (value?.schemaVersion !== "clawdi.managedWhatsAppSocket.v1" || typeof value.capability !== "string" || !Number.isInteger(value.authCert?.SERIAL) || typeof value.authCert?.ISSUER !== "string" || !Buffer.isBuffer(value.authCert?.PUBLIC_KEY) || value.authCert.PUBLIC_KEY.length !== 32) throw new Error("Invalid managed WhatsApp socket config");\n' +
-				"\treturn { authCert: value.authCert, webSocketHeaders: { [CLAWDI_LINK_CAPABILITY_HEADER]: value.capability } };\n" +
-				"}\n",
-		},
-		{
-			before:
-				"\tconst waWebSocketUrl = resolveWaWebSocketUrl(opts.waWebSocketUrl) ?? resolveEnvWaWebSocketUrl();\n",
-			after:
-				"\tconst managedOptions = managedSocketOptions(authDir);\n\tconst waWebSocketUrl = managedOptions ? void 0 : resolveWaWebSocketUrl(opts.waWebSocketUrl) ?? resolveEnvWaWebSocketUrl();\n",
-		},
-		{
-			before: "\t\tfetchAgent,\n\t\t...waWebSocketUrl ? { waWebSocketUrl } : {},\n",
-			after:
-				"\t\tfetchAgent,\n\t\t...managedOptions ?? {},\n\t\t...waWebSocketUrl ? { waWebSocketUrl } : {},\n",
-		},
-	],
-} as const satisfies StaticPatchTarget;
-
-const HERMES_CONSUMER_TARGET = {
-	relativePath: "bridge.js",
-	preimageSha256: "9e1c4745da7d385a56fe3e48ff510e94f577ccd4cd01daa66c02d69267226185",
-	postimageSha256: "829766d530f9f52a2c5e5c224867379c731ab1214853662fc9222ac50a2fd4f9",
-	replacements: [
-		{
-			before:
-				"import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage, getAggregateVotesInPollMessage, decryptPollVote, getKeyAuthor, jidNormalizedUser } from '@whiskeysockets/baileys';\n",
-			after:
-				"import { BufferJSON, makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage, getAggregateVotesInPollMessage, decryptPollVote, getKeyAuthor, jidNormalizedUser } from '@whiskeysockets/baileys';\n",
-		},
-		{
-			before:
-				"const SESSION_DIR = getArg('session', path.join(process.env.HOME || '~', '.hermes', 'whatsapp', 'session'));\n",
-			after:
-				"const SESSION_DIR = getArg('session', path.join(process.env.HOME || '~', '.hermes', 'whatsapp', 'session'));\n" +
-				"const CLAWDI_MANAGED_SOCKET_CONFIG = '.clawdi-managed-whatsapp-socket.json';\n" +
-				"const CLAWDI_LINK_CAPABILITY_HEADER = 'x-clawdi-whatsapp-link-capability';\n" +
-				"function managedSocketOptions() {\n" +
-				"  let value;\n" +
-				"  try {\n" +
-				"    value = JSON.parse(readFileSync(path.join(SESSION_DIR, CLAWDI_MANAGED_SOCKET_CONFIG), 'utf8'), BufferJSON.reviver);\n" +
-				"  } catch (error) {\n" +
-				"    if (error?.code === 'ENOENT') return {};\n" +
-				`    throw new Error(\`Invalid managed WhatsApp socket config: \${String(error)}\`);\n` +
-				"  }\n" +
-				"  if (value?.schemaVersion !== 'clawdi.managedWhatsAppSocket.v1' || typeof value.capability !== 'string' || !Number.isInteger(value.authCert?.SERIAL) || typeof value.authCert?.ISSUER !== 'string' || !Buffer.isBuffer(value.authCert?.PUBLIC_KEY) || value.authCert.PUBLIC_KEY.length !== 32) throw new Error('Invalid managed WhatsApp socket config');\n" +
-				"  return { authCert: value.authCert, webSocketHeaders: { [CLAWDI_LINK_CAPABILITY_HEADER]: value.capability } };\n" +
-				"}\n",
-		},
-		{
-			before:
-				"    markOnlineOnConnect: false,\n    // Required for Baileys 7.x: without this, incoming messages that need\n",
-			after:
-				"    markOnlineOnConnect: false,\n    ...managedSocketOptions(),\n    // Required for Baileys 7.x: without this, incoming messages that need\n",
-		},
-	],
-} as const satisfies StaticPatchTarget;
 
 export function managedBaileysCompatReceiptPath(
 	paths: Pick<RuntimePaths, "installInventory">,
@@ -282,13 +204,14 @@ export function managedBaileysCompatMutationTargets(input: {
 	appRoot: string;
 }): string[] {
 	const artifact = resolveArtifact(input);
-	const targets = artifact.targets.map((target) => join(artifact.root, target.relativePath));
-	if (input.runtime !== "hermes") return targets;
-	const nodeModules = join(artifact.root, "node_modules");
-	if (!existsSync(join(hermesManagedBaileysPackageRoot(input.appRoot), "package.json"))) {
-		return [join(artifact.root, HERMES_CONSUMER_TARGET.relativePath), nodeModules];
+	if (input.runtime === "hermes" && !existsSync(join(artifact.root, "package.json"))) {
+		return [join(assertHermesBridgeRoot(artifact), "node_modules")];
 	}
-	return [...targets, join(nodeModules, ".hermes-pkg-hash")];
+	const targets = artifact.targets.map((target) => join(artifact.root, target.relativePath));
+	if (input.runtime === "hermes") {
+		targets.push(join(assertHermesBridgeRoot(artifact), "node_modules", ".hermes-pkg-hash"));
+	}
+	return targets;
 }
 
 export function hermesManagedBaileysPackageRoot(appRoot: string): string {
@@ -302,7 +225,7 @@ export function reconcileManagedBaileysCompatibility(input: {
 	paths: Pick<RuntimePaths, "installInventory">;
 }): ManagedBaileysReconcileResult {
 	const receiptPath = managedBaileysCompatReceiptPath(input.paths);
-	if (!input.desiredRuntime) return rollbackManagedBaileysCompatibility(receiptPath, input);
+	if (!input.desiredRuntime) return rollbackManagedBaileysCompatibility(receiptPath, input.home);
 	if (!input.appRoot) {
 		throw new Error(`managed WhatsApp ${input.desiredRuntime} artifact root is unavailable`);
 	}
@@ -314,65 +237,49 @@ export function reconcileManagedBaileysCompatibility(input: {
 		home: input.home,
 		appRoot: input.appRoot,
 	});
-	verifyArtifactIdentity(artifact);
+	const observedVersion = verifyArtifactIdentity(artifact);
 	const targetStates = artifact.targets.map((target) => classifyTarget(artifact, target));
 	const unknown = targetStates.filter((state) => state.state === "unknown");
 	if (unknown.length > 0) {
 		throw new Error(
-			`managed WhatsApp compatibility patch refused drifted ${input.desiredRuntime} artifacts: ${unknown
+			`managed WhatsApp compatibility patch refused drifted ${artifact.runtime} artifacts: ${unknown
 				.map((state) => `${state.path} (${state.sha256})`)
 				.join(", ")}`,
 		);
 	}
-	const existingReceipt = readReceipt(receiptPath);
-	const receipt = buildReceipt(artifact);
-	const receiptMatches = existingReceipt
-		? receiptArtifactMatches(existingReceipt.artifact, artifact)
-		: false;
-	if (existingReceipt && !receiptMatches) {
-		const rollback = rollbackManagedBaileysCompatibility(receiptPath, input);
+
+	let existingReceipt = readReceipt(receiptPath);
+	if (existingReceipt && !receiptLayoutMatches(existingReceipt.artifact, artifact)) {
+		const rollback = rollbackManagedBaileysCompatibility(receiptPath, input.home);
 		if (rollback.status === "rollback-refused") {
 			throw new Error(
-				`managed WhatsApp compatibility could not recover the previous artifact: ${rollback.errors.join(
-					", ",
-				)}`,
+				`managed WhatsApp compatibility could not recover the previous artifact: ${rollback.errors.join(", ")}`,
 			);
 		}
+		existingReceipt = null;
 	}
-	const applied = targetStates.some((state) => state.state === "preimage");
-	if (applied || !receiptMatches) writeReceiptDurable(receiptPath, receipt);
-	if (applied) applyArtifactTargets(artifact, targetStates);
-	if (artifact.runtime === "hermes") writeHermesDependencyStamp(artifact.root);
+
+	const receipt = buildReceipt(artifact, observedVersion);
+	const receiptMatches = existingReceipt ? receiptsEqual(existingReceipt, receipt) : false;
+	const requiresPatch = targetStates.some((state) => state.state === "preimage");
+	if (requiresPatch || !receiptMatches) writeReceiptDurable(receiptPath, receipt);
+	if (requiresPatch) applyArtifactTargets(artifact, targetStates);
+	if (artifact.runtime === "hermes") writeHermesDependencyStamp(assertHermesBridgeRoot(artifact));
 	return {
-		status: applied ? "applied" : receiptMatches ? "already-patched" : "receipt-recovered",
+		status: requiresPatch ? "applied" : receiptMatches ? "already-patched" : "receipt-recovered",
 		receiptPath,
 	};
 }
 
 function rollbackManagedBaileysCompatibility(
 	receiptPath: string,
-	input: { home: string; paths: Pick<RuntimePaths, "installInventory"> },
+	home: string,
 ): ManagedBaileysReconcileResult {
 	const receipt = readReceipt(receiptPath);
 	if (!receipt) return { status: "inert", receiptPath };
+	const artifact = resolveInstalledArtifact(receipt.artifact.runtime, home);
 	const errors: string[] = [];
-	const rollbackEntries: Array<{
-		path: string;
-		expectedSha256: string;
-		content: string;
-	}> = [];
-	const auditedStates: Array<{ path: string; expectedSha256: string }> = [];
-	const artifactReceipt = receipt.artifact;
-	const appRoot = join(
-		input.home,
-		...(artifactReceipt.runtime === "openclaw" ? [".openclaw"] : [".hermes", "hermes-agent"]),
-	);
-	const artifact = resolveArtifact({
-		runtime: artifactReceipt.runtime,
-		home: input.home,
-		appRoot,
-	});
-	if (!receiptArtifactMatches(artifactReceipt, artifact)) {
+	if (!receiptLayoutMatches(receipt.artifact, artifact)) {
 		errors.push("managed WhatsApp compatibility receipt does not match the audited artifact");
 	} else if (directoryEntryExists(artifact.root)) {
 		try {
@@ -380,6 +287,8 @@ function rollbackManagedBaileysCompatibility(
 		} catch (error) {
 			errors.push(String(error));
 		}
+		const rollbackEntries: Array<{ path: string; expectedSha256: string; content: string }> = [];
+		const auditedStates: Array<{ path: string; expectedSha256: string }> = [];
 		if (errors.length === 0) {
 			for (const target of artifact.targets) {
 				try {
@@ -409,9 +318,9 @@ function rollbackManagedBaileysCompatibility(
 				}
 			}
 		}
+		if (errors.length > 0) return { status: "rollback-refused", receiptPath, errors };
+		replaceTargetContents(rollbackEntries, auditedStates);
 	}
-	if (errors.length > 0) return { status: "rollback-refused", receiptPath, errors };
-	replaceTargetContents(rollbackEntries, auditedStates);
 	rmSync(receiptPath, { force: true });
 	fsyncDirectory(dirname(receiptPath));
 	return { status: "rolled-back", receiptPath };
@@ -475,108 +384,72 @@ function resolveArtifact(input: {
 	appRoot: string;
 }): ManagedBaileysArtifact {
 	if (input.runtime === "openclaw") {
-		const root = join(input.home, ".openclaw", "extensions", "whatsapp");
-		return {
-			runtime: "openclaw",
-			root,
-			consumer: {
-				path: join(root, "package.json"),
-				name: "@openclaw/whatsapp",
-				version: OPENCLAW_WHATSAPP_VERSION,
-			},
-			baileys: {
-				path: join(root, "node_modules", "baileys", "package.json"),
-				name: "baileys",
-				version: BAILEYS_VERSION,
-			},
-			targets: [
-				OPENCLAW_CONSUMER_TARGET,
-				...BAILEYS_TARGETS.map((target) => ({
-					...target,
-					relativePath: join("node_modules", "baileys", target.relativePath),
-				})),
-			],
-		};
+		const expectedAppRoot = join(input.home, ".openclaw");
+		if (resolve(input.appRoot) !== resolve(expectedAppRoot)) {
+			throw new Error(`managed WhatsApp OpenClaw app root must be ${expectedAppRoot}`);
+		}
+		return resolveInstalledArtifact("openclaw", input.home);
 	}
 	const expectedAppRoot = join(input.home, ".hermes", "hermes-agent");
 	if (resolve(input.appRoot) !== resolve(expectedAppRoot)) {
 		throw new Error(`managed WhatsApp Hermes app root must be ${expectedAppRoot}`);
 	}
-	const root = join(input.appRoot, "scripts", "whatsapp-bridge");
+	return resolveInstalledArtifact("hermes", input.home);
+}
+
+function resolveInstalledArtifact(
+	runtime: ManagedBaileysRuntime,
+	home: string,
+): ManagedBaileysArtifact {
+	if (runtime === "openclaw") {
+		return {
+			runtime,
+			root: join(home, ".openclaw", "extensions", "whatsapp", "node_modules", "baileys"),
+			packageName: "baileys",
+			targets: BAILEYS_TARGETS,
+		};
+	}
+	const hermesBridgeRoot = join(home, ".hermes", "hermes-agent", "scripts", "whatsapp-bridge");
 	return {
-		runtime: "hermes",
-		root,
-		consumer: {
-			path: join(input.appRoot, "pyproject.toml"),
-			name: "hermes-agent",
-			version: HERMES_VERSION,
-		},
-		baileys: {
-			path: join(root, "node_modules", "@whiskeysockets", "baileys", "package.json"),
-			name: "@whiskeysockets/baileys",
-			version: BAILEYS_VERSION,
-		},
-		targets: [
-			HERMES_CONSUMER_TARGET,
-			...BAILEYS_TARGETS.map((target) => ({
-				...target,
-				relativePath: join("node_modules", "@whiskeysockets", "baileys", target.relativePath),
-			})),
-		],
+		runtime,
+		root: join(hermesBridgeRoot, "node_modules", "@whiskeysockets", "baileys"),
+		packageName: "@whiskeysockets/baileys",
+		targets: BAILEYS_TARGETS,
+		hermesBridgeRoot,
 	};
 }
 
-function verifyArtifactIdentity(artifact: ManagedBaileysArtifact): void {
-	assertTrustedRealDirectory(artifact.root);
-	verifyPackageIdentity(artifact.consumer, artifact.runtime === "hermes");
-	verifyPackageIdentity(artifact.baileys, false);
+function assertHermesBridgeRoot(artifact: ManagedBaileysArtifact): string {
+	if (!artifact.hermesBridgeRoot) throw new Error("managed WhatsApp Hermes bridge root is missing");
+	return artifact.hermesBridgeRoot;
 }
 
-function verifyPackageIdentity(identity: PackageIdentity, pyproject: boolean): void {
-	if (!existsSync(identity.path)) {
-		throw new Error(`managed WhatsApp compatibility artifact is missing ${identity.path}`);
-	}
-	if (
-		!lstatSync(identity.path).isFile() ||
-		realpathSync(identity.path) !== resolve(identity.path)
-	) {
-		throw new Error(
-			`managed WhatsApp compatibility package identity must be a real file: ${identity.path}`,
-		);
-	}
-	if (pyproject) {
-		const source = readFileSync(identity.path, "utf8");
-		const projectHeader = /^\[project\]\s*$/m.exec(source);
-		const remainder = projectHeader
-			? source.slice(projectHeader.index + projectHeader[0].length)
-			: "";
-		const nextSection = /^\[/m.exec(remainder)?.index ?? remainder.length;
-		const project = remainder.slice(0, nextSection);
-		const name = /^name = "([^"]+)"$/m.exec(project)?.[1];
-		const version = /^version = "([^"]+)"$/m.exec(project)?.[1];
-		if (name !== identity.name || version !== identity.version) {
-			throw new Error(
-				`managed WhatsApp compatibility requires ${identity.name}@${identity.version}; found ${name ?? "unknown"}@${version ?? "unknown"}`,
-			);
-		}
-		return;
-	}
+function verifyArtifactIdentity(artifact: ManagedBaileysArtifact): string {
+	assertTrustedRealDirectory(artifact.root);
+	const packagePath = join(artifact.root, "package.json");
+	assertTrustedRealFile(artifact.root, packagePath);
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(readFileSync(identity.path, "utf8"));
+		parsed = JSON.parse(readFileSync(packagePath, "utf8"));
 	} catch (error) {
 		throw new Error(
-			`managed WhatsApp compatibility could not read ${identity.path}: ${String(error)}`,
+			`managed WhatsApp compatibility could not read ${packagePath}: ${String(error)}`,
 		);
 	}
 	const record = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
 	const name = record ? Reflect.get(record, "name") : null;
 	const version = record ? Reflect.get(record, "version") : null;
-	if (name !== identity.name || version !== identity.version) {
+	if (name !== artifact.packageName) {
 		throw new Error(
-			`managed WhatsApp compatibility requires ${identity.name}@${identity.version}; found ${String(name)}@${String(version)}`,
+			`managed WhatsApp compatibility requires package ${artifact.packageName}; found ${String(name)}`,
 		);
 	}
+	if (typeof version !== "string" || !isValidSemver(version) || !version.startsWith("7.")) {
+		throw new Error(
+			`managed WhatsApp compatibility requires valid Baileys SemVer major 7; found ${String(version)}`,
+		);
+	}
+	return version;
 }
 
 function classifyTarget(artifact: ManagedBaileysArtifact, target: StaticPatchTarget) {
@@ -668,11 +541,7 @@ function replaceTargetContents(
 	entries: readonly { path: string; expectedSha256: string; content: string }[],
 	auditedStates: readonly { path: string; expectedSha256: string }[] = entries,
 ): void {
-	const staged: Array<
-		(typeof entries)[number] & {
-			stagingPath: string;
-		}
-	> = [];
+	const staged: Array<(typeof entries)[number] & { stagingPath: string }> = [];
 	try {
 		for (const entry of entries) {
 			staged.push({ ...entry, stagingPath: stageReplacement(entry.path, entry.content) });
@@ -745,52 +614,56 @@ function assertTrustedRealFile(root: string, path: string): void {
 	}
 }
 
-function buildReceipt(artifact: ManagedBaileysArtifact): ManagedBaileysPatchReceipt {
+function buildReceipt(
+	artifact: ManagedBaileysArtifact,
+	observedVersion: string,
+): ManagedBaileysPatchReceipt {
 	return {
-		schemaVersion: "clawdi.managedBaileysPatchReceipt.v2",
+		schemaVersion: RECEIPT_SCHEMA,
 		patchRevision: MANAGED_BAILEYS_PATCH_REVISION,
 		artifact: {
 			runtime: artifact.runtime,
 			artifactRoot: artifact.root,
-			consumer: identityReceipt(artifact.consumer),
-			baileys: identityReceipt(artifact.baileys),
-			targets: artifact.targets.map((target) => ({
-				relativePath: target.relativePath,
-				preimageSha256: target.preimageSha256,
-				postimageSha256: target.postimageSha256,
+			baileys: {
+				name: artifact.packageName,
+				observedVersion,
+				compatibleMajor: BAILEYS_COMPATIBLE_MAJOR,
+			},
+			targets: artifact.targets.map(({ relativePath, preimageSha256, postimageSha256 }) => ({
+				relativePath,
+				preimageSha256,
+				postimageSha256,
 			})),
 		},
 	};
 }
 
-function identityReceipt(identity: PackageIdentity): Omit<PackageIdentity, "path"> {
-	return {
-		name: identity.name,
-		version: identity.version,
-	};
-}
-
-function receiptArtifactMatches(
+function receiptLayoutMatches(
 	receipt: ManagedBaileysPatchReceiptArtifact | undefined,
 	artifact: ManagedBaileysArtifact,
 ): boolean {
-	if (!receipt || receipt.runtime !== artifact.runtime || receipt.artifactRoot !== artifact.root) {
-		return false;
-	}
 	if (
-		receipt.consumer.name !== artifact.consumer.name ||
-		receipt.consumer.version !== artifact.consumer.version ||
-		receipt.baileys.name !== artifact.baileys.name ||
-		receipt.baileys.version !== artifact.baileys.version
+		!receipt ||
+		receipt.runtime !== artifact.runtime ||
+		receipt.artifactRoot !== artifact.root ||
+		receipt.baileys.name !== artifact.packageName ||
+		receipt.baileys.compatibleMajor !== BAILEYS_COMPATIBLE_MAJOR
 	) {
 		return false;
 	}
-	const targets = artifact.targets.map((target) => ({
-		relativePath: target.relativePath,
-		preimageSha256: target.preimageSha256,
-		postimageSha256: target.postimageSha256,
+	const targets = artifact.targets.map(({ relativePath, preimageSha256, postimageSha256 }) => ({
+		relativePath,
+		preimageSha256,
+		postimageSha256,
 	}));
 	return JSON.stringify(receipt.targets) === JSON.stringify(targets);
+}
+
+function receiptsEqual(
+	left: ManagedBaileysPatchReceipt,
+	right: ManagedBaileysPatchReceipt,
+): boolean {
+	return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function readReceipt(path: string): ManagedBaileysPatchReceipt | null {
@@ -801,17 +674,27 @@ function readReceipt(path: string): ManagedBaileysPatchReceipt | null {
 			!value ||
 			typeof value !== "object" ||
 			Array.isArray(value) ||
-			Reflect.get(value, "schemaVersion") !== "clawdi.managedBaileysPatchReceipt.v2" ||
-			Reflect.get(value, "patchRevision") !== MANAGED_BAILEYS_PATCH_REVISION ||
-			!Reflect.get(value, "artifact")
+			Reflect.get(value, "schemaVersion") !== RECEIPT_SCHEMA ||
+			Reflect.get(value, "patchRevision") !== MANAGED_BAILEYS_PATCH_REVISION
 		) {
 			throw new Error("unknown receipt schema or patch revision");
 		}
 		const receipt = value as ManagedBaileysPatchReceipt;
+		const artifact = receipt.artifact;
 		if (
-			(receipt.artifact.runtime !== "openclaw" && receipt.artifact.runtime !== "hermes") ||
-			typeof receipt.artifact.artifactRoot !== "string" ||
-			!Array.isArray(receipt.artifact.targets)
+			!artifact ||
+			(artifact.runtime !== "openclaw" && artifact.runtime !== "hermes") ||
+			typeof artifact.artifactRoot !== "string" ||
+			typeof artifact.baileys?.name !== "string" ||
+			typeof artifact.baileys.observedVersion !== "string" ||
+			artifact.baileys.compatibleMajor !== BAILEYS_COMPATIBLE_MAJOR ||
+			!Array.isArray(artifact.targets) ||
+			artifact.targets.some(
+				(target) =>
+					typeof target.relativePath !== "string" ||
+					typeof target.preimageSha256 !== "string" ||
+					typeof target.postimageSha256 !== "string",
+			)
 		) {
 			throw new Error("receipt artifact set is invalid");
 		}
@@ -851,8 +734,4 @@ function sha256String(value: string): string {
 	return createHash("sha256").update(value).digest("hex");
 }
 
-export const MANAGED_BAILEYS_STATIC_PATCH_TARGETS = {
-	baileys: BAILEYS_TARGETS,
-	openclaw: OPENCLAW_CONSUMER_TARGET,
-	hermes: HERMES_CONSUMER_TARGET,
-} as const;
+export const MANAGED_BAILEYS_STATIC_PATCH_TARGETS = BAILEYS_TARGETS;

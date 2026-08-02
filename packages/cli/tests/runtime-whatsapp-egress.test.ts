@@ -152,7 +152,7 @@ describe("native WhatsApp egress contract", () => {
 		]);
 	});
 
-	it("pins both stock rc13 artifacts while the CLI owns the gated compatibility seam", () => {
+	it("audits both stock rc13 aliases while only the CLI patch supplies managed compatibility", () => {
 		const sidecarRoot = join(import.meta.dir, "../../whatsapp-baileys-sidecar");
 		const baileysRoot = realpathSync(join(sidecarRoot, "node_modules/baileys"));
 		const packageJson = JSON.parse(readFileSync(join(baileysRoot, "package.json"), "utf-8")) as {
@@ -160,7 +160,8 @@ describe("native WhatsApp egress contract", () => {
 			version: string;
 		};
 		const noiseHandler = readFileSync(join(baileysRoot, "lib/Utils/noise-handler.js"), "utf-8");
-		const socketTypes = readFileSync(join(baileysRoot, "lib/Types/Socket.d.ts"), "utf-8");
+		const socket = readFileSync(join(baileysRoot, "lib/Socket/socket.js"), "utf-8");
+		const noiseTypes = readFileSync(join(baileysRoot, "lib/Utils/noise-handler.d.ts"), "utf-8");
 		const sidecarRuntime = readFileSync(join(sidecarRoot, "src/runtime.ts"), "utf-8");
 		const sidecarConfig = readFileSync(join(sidecarRoot, "src/config.ts"), "utf-8");
 		const sidecarState = readFileSync(join(sidecarRoot, "src/sqlite-state.ts"), "utf-8");
@@ -181,14 +182,18 @@ describe("native WhatsApp egress contract", () => {
 		expect(createHash("sha256").update(noiseHandler).digest("hex")).toBe(
 			release.sharedSurfaceSha256.noiseHandler,
 		);
-		expect(createHash("sha256").update(socketTypes).digest("hex")).toBe(
-			release.sharedSurfaceSha256.socketTypes,
+		expect(createHash("sha256").update(socket).digest("hex")).toBe(
+			release.sharedSurfaceSha256.socket,
+		);
+		expect(createHash("sha256").update(noiseTypes).digest("hex")).toBe(
+			release.sharedSurfaceSha256.noiseHandlerTypes,
 		);
 		expect(noiseHandler).toContain(
 			"Curve.verify(WA_CERT_DETAILS.PUBLIC_KEY, certIntermediate.details",
 		);
 		expect(noiseHandler).toContain("issuerSerial !== WA_CERT_DETAILS.SERIAL");
-		expect(socketTypes).not.toMatch(/\bauthCert\s*[?:]/);
+		expect(socket).not.toContain("clawdi.managedWhatsAppSocket");
+		expect(noiseTypes).not.toMatch(/\bauthCert\s*[?:]/);
 		expect(sidecarRuntime).not.toContain("authCert");
 		expect(sidecarRuntime).not.toContain("waWebSocketUrl");
 		expect(sidecarConfig).not.toContain("CLAWDI_WA_WEBSOCKET_URL");
@@ -205,22 +210,22 @@ describe("native WhatsApp egress contract", () => {
 		expect(auditedVersion).toContain('AUDITED_WHATSAPP_WEB_VERSION_TEXT = "2.3000.1035194821"');
 		expect(release.noiseTrustSeam).toMatchObject({
 			available: true,
-			providedBy: "clawdi.managedBaileysCompat.v1",
+			providedBy: "clawdi.managedBaileysCompat.v2",
 			backwardCompatibleDefault: "WA_CERT_DETAILS",
 		});
 		expect(release.webSocketUpgradeHeaderSeam).toMatchObject({
 			available: true,
-			providedBy: "clawdi.managedBaileysCompat.v1",
+			providedBy: "clawdi.managedBaileysCompat.v2",
 		});
-		expect(WHATSAPP_UPSTREAM_AUDIT.openclaw.consumerSocketConstructionCompatibility).toEqual({
+		expect(WHATSAPP_UPSTREAM_AUDIT.openclaw.stockAuthStatePersistenceCompatibility).toEqual({
 			available: true,
-			nativeUpstream: false,
-			providedBy: "clawdi.managedBaileysCompat.v1",
+			nativeUpstream: true,
+			providedBy: "stock OpenClaw auth-state load/save",
 		});
-		expect(WHATSAPP_UPSTREAM_AUDIT.hermes.consumerSocketConstructionCompatibility).toEqual({
+		expect(WHATSAPP_UPSTREAM_AUDIT.hermes.stockAuthStatePersistenceCompatibility).toEqual({
 			available: true,
-			nativeUpstream: false,
-			providedBy: "clawdi.managedBaileysCompat.v1",
+			nativeUpstream: true,
+			providedBy: "stock Hermes useMultiFileAuthState load/save",
 		});
 	});
 });
