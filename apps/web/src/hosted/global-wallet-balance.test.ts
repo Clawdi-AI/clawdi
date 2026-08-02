@@ -45,6 +45,8 @@ describe("global Wallet balance presentation", () => {
 		expect(markup).toContain("$1,250.50");
 		expect(markup).toContain("Wallet balance $1,250.50. Open Wallet settings");
 		expect(markup).toContain('data-testid="global-wallet-balance"');
+		expect(markup).toContain("lucide-wallet-cards");
+		expect(markup).not.toMatch(/>\s*Wallet\s*</);
 	});
 
 	test("uses a compact skeleton while loading and never invents a zero balance", () => {
@@ -59,6 +61,10 @@ describe("global Wallet balance presentation", () => {
 		expect(loading).toContain('data-slot="skeleton"');
 		expect(loading).toContain("Wallet balance loading");
 		expect(unavailable).toContain("Wallet balance unavailable");
+		expect(loading).toContain("lucide-wallet-cards");
+		expect(unavailable).toContain("lucide-wallet-cards");
+		expect(unavailable).not.toContain('data-slot="skeleton"');
 		expect(`${loading}${unavailable}`).not.toContain("$0");
+		expect(`${loading}${unavailable}`).not.toMatch(/>\s*Wallet\s*</);
 	});
 });

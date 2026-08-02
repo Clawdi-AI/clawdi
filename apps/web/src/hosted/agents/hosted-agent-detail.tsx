@@ -1061,7 +1061,7 @@ export function OverviewComputeSummary({
 		`${storageGib} GiB storage`,
 	];
 	return (
-		<div className="space-y-1.5 rounded-md border bg-background/60 px-3 py-2.5">
+		<div className="space-y-1.5" data-testid="overview-compute-summary">
 			<p className="text-sm font-semibold">{plan} plan</p>
 			<ul
 				aria-label={`Configuration: ${configuration.join(", ")}`}

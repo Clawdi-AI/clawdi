@@ -40,7 +40,6 @@ function WalletBalanceEntry({
 			className="max-w-40 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
 		>
 			<WalletCards className="size-4" />
-			<span className="hidden sm:inline">Wallet</span>
 			{children}
 		</Button>
 	);

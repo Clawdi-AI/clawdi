@@ -2661,7 +2661,7 @@ test("global Hosted Wallet balance lives in chrome and reuses its cached query",
 
 	const walletEntry = page.getByTestId("global-wallet-balance");
 	await expect(walletEntry).toHaveCount(1);
-	await expect(walletEntry).toContainText("Wallet");
+	await expect(walletEntry).not.toContainText("Wallet");
 	await expect(walletEntry).toContainText("$25.00");
 	await expect(walletEntry).toHaveAccessibleName("Wallet balance $25.00. Open Wallet settings");
 	await expect.poll(() => walletRequests.length).toBe(1);
@@ -2875,6 +2875,9 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const compute = page.locator('[data-overview-status="compute"]');
 	await expect(compute).toContainText("Running");
 	await expect(compute).toContainText("Basic plan");
+	await expect(compute.getByTestId("overview-compute-summary")).not.toHaveClass(
+		/rounded|border|bg-/,
+	);
 	await expect(
 		compute.getByRole("list", {
 			name: "Configuration: 2 vCPU, 4 GiB memory, 20 GiB storage",
@@ -2901,6 +2904,10 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	for (const moduleId of ["memories", "vaults", "connectors"]) {
 		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toBeVisible();
 	}
+	const flatResourceSummaries = overview.getByTestId("overview-summary-list");
+	await expect(flatResourceSummaries).toHaveCount(3);
+	for (const summary of await flatResourceSummaries.all())
+		await expect(summary).not.toHaveClass(/rounded|border|divide-y|bg-/);
 	const connectors = overview.locator('[data-overview-module="connectors"]');
 	await expect(connectors).toContainText("2 connected");
 	const connectorLinks = connectors.getByTestId("overview-connector-rail").getByRole("link");

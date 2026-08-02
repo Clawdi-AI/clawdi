@@ -138,9 +138,9 @@ export function OverviewMetrics({
 
 export function OverviewSummaryRows({ items, empty }: { items: readonly string[]; empty: string }) {
 	return items.length ? (
-		<ul className="divide-y rounded-md border text-sm">
+		<ul className="space-y-1 text-sm" data-testid="overview-summary-list">
 			{items.slice(0, 3).map((item) => (
-				<li key={item} className="truncate px-3 py-2 font-medium">
+				<li key={item} className="truncate font-medium leading-5">
 					{item}
 				</li>
 			))}
