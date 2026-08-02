@@ -10,21 +10,21 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 			),
 		grid.locator("[data-overview-module]").evaluateAll((elements) =>
 			elements.map((element) => {
-				const card = element.getBoundingClientRect();
 				const header = element.querySelector<HTMLElement>('[data-slot="card-header"]');
 				const headerLink = header?.querySelector<HTMLElement>("a");
-				const content = element.querySelector<HTMLElement>('[data-slot="card-content"]');
+				const headerStyle = header ? getComputedStyle(header) : null;
 				const linkStyle = headerLink ? getComputedStyle(headerLink) : null;
-				const contentStyle = content ? getComputedStyle(content) : null;
 				return {
 					headerHeight: header?.getBoundingClientRect().height ?? 0,
-					contentOffset: (content?.getBoundingClientRect().y ?? card.y) - card.y,
-					headerPaddingInline: [linkStyle?.paddingLeft, linkStyle?.paddingRight],
-					headerPaddingBlock: [linkStyle?.paddingTop, linkStyle?.paddingBottom],
-					contentPadding: [
-						contentStyle?.paddingLeft,
-						contentStyle?.paddingRight,
-						contentStyle?.paddingBottom,
+					headerCount: element.querySelectorAll(':scope > [data-slot="card-header"]').length,
+					contentCount: element.querySelectorAll('[data-slot="card-content"]').length,
+					headerPaddingInline: [headerStyle?.paddingLeft, headerStyle?.paddingRight],
+					headerPaddingBlock: [headerStyle?.paddingTop, headerStyle?.paddingBottom],
+					linkPadding: [
+						linkStyle?.paddingTop,
+						linkStyle?.paddingRight,
+						linkStyle?.paddingBottom,
+						linkStyle?.paddingLeft,
 					],
 				};
 			}),
@@ -56,12 +56,14 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 	expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
 	expect(new Set(shellMetrics.map((metric) => metric.headerHeight)).size).toBe(1);
 	expect(shellMetrics[0]?.headerHeight ?? 0).toBeGreaterThan(0);
-	const contentMetrics = shellMetrics.filter((metric) => metric.contentOffset > 0);
-	expect(contentMetrics.length).toBeGreaterThan(0);
-	expect(new Set(contentMetrics.map((metric) => JSON.stringify(metric.contentPadding))).size).toBe(
-		1,
+	expect(new Set(shellMetrics.map((metric) => metric.headerCount))).toEqual(new Set([1]));
+	expect(new Set(shellMetrics.map((metric) => metric.contentCount))).toEqual(new Set([0]));
+	expect(new Set(shellMetrics.map((metric) => JSON.stringify(metric.headerPaddingInline)))).toEqual(
+		new Set([JSON.stringify(["16px", "16px"])]),
 	);
-	expect(Number.parseFloat(contentMetrics[0]?.contentPadding[2] ?? "0")).toBeGreaterThan(0);
+	expect(new Set(shellMetrics.map((metric) => JSON.stringify(metric.linkPadding)))).toEqual(
+		new Set([JSON.stringify(["0px", "0px", "0px", "0px"])]),
+	);
 }
 
 async function expectOverviewSessionSlot({
@@ -248,18 +250,6 @@ async function expectAgentOverviewTypography(page: Page) {
 	expect(primaryMetrics.length).toBeGreaterThan(3);
 	expect(new Set(primaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
 	expect(new Set(primaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["400"]));
-
-	const detailMetrics = await main
-		.locator('[data-testid="overview-resource-badges"] [data-slot="badge"]')
-		.evaluateAll((elements) =>
-			elements.map((element) => {
-				const style = getComputedStyle(element);
-				return { fontSize: style.fontSize, fontWeight: style.fontWeight };
-			}),
-		);
-	expect(detailMetrics.length).toBeGreaterThan(0);
-	expect(new Set(detailMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["12px"]));
-	expect(new Set(detailMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["500"]));
 
 	const metadataMetrics = await main
 		.locator('[data-testid="session-card-meta"], [data-overview-status] dl')
@@ -780,7 +770,9 @@ test("Console and connected agents use the scoped navigation grammar", async ({ 
 });
 
 test("connected agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
+	const projectRequests: string[] = [];
 	await stubDashboardApi(page, [], {
+		projectRequests,
 		sessionsPage: overviewSessions,
 		connectorConnections: [
 			{ id: "conn-github", app_name: "github", status: "ACTIVE" },
@@ -837,12 +829,22 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 			.evaluateAll((cards) =>
 				cards.map((card) => card.querySelectorAll(':scope > [data-slot="card-content"]').length),
 			),
-	).toEqual([1, 1, 0, 1, 1]);
+	).toEqual([0, 0, 0, 0, 0]);
+	await expect(overview.locator('[data-overview-module] > [data-slot="card-header"]')).toHaveCount(
+		5,
+	);
+	await expect(overview.locator("[data-overview-module-error]")).toHaveCount(0);
+	await expect(
+		overview.locator(
+			"[data-overview-module] a a, [data-overview-module] a button, [data-overview-module] button a",
+		),
+	).toHaveCount(0);
 	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
 	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveCount(0);
-	await expect(overview.locator('[data-overview-module="projects"]')).toContainText(
+	await expect(overview.locator('[data-overview-module="projects"]')).not.toContainText(
 		"Smoke Project",
 	);
+	expect(projectRequests).toEqual([]);
 	await expect(page.locator('[data-overview-status="live-sync"]')).toContainText(
 		"smoke-machine.local",
 	);
@@ -916,37 +918,16 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 				((recentSessionsBox?.y ?? 0) + (recentSessionsBox?.height ?? 0)),
 		),
 	).toBeLessThanOrEqual(2);
-	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("Research");
-	const resourceBadges = overview.getByTestId("overview-resource-badges");
-	await expect(resourceBadges).toHaveCount(3);
-	await expect(
-		overview.locator('[data-overview-module="projects"] [data-slot="badge"]'),
-	).toHaveAccessibleName("Smoke Project");
-	await expect(
-		overview.locator('[data-overview-module="skills"] [data-slot="badge"]'),
-	).toHaveAccessibleName("Research");
-	await expect(
-		overview.locator('[data-overview-module="vaults"] [data-slot="badge"]'),
-	).toHaveAccessibleName("Scoped Vault");
-	await expect(
-		overview.locator('[data-overview-module="memories"] [data-slot="badge"]'),
-	).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("1 skill");
+	await expect(overview.locator('[data-overview-module="skills"]')).not.toContainText("Research");
+	await expect(overview.locator('[data-slot="badge"]')).toHaveCount(0);
+	await expect(overview.getByTestId("overview-connector-rail")).toHaveCount(0);
 	for (const moduleId of ["memories", "vaults", "connectors"]) {
 		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toBeVisible();
 	}
 	const connectors = overview.locator('[data-overview-module="connectors"]');
 	await expect(connectors).toContainText("2 connected");
-	const connectorLinks = connectors.getByTestId("overview-connector-rail").getByRole("link");
-	await expect(connectorLinks).toHaveCount(2);
-	await expect(connectorLinks.nth(0)).toHaveAccessibleName("Connected app: Github");
-	await expect(connectorLinks.nth(1)).toHaveAccessibleName("Connected app: Slack");
-	await expect(connectors.getByRole("link", { name: /Gmail/ })).toHaveCount(0);
-	await expect(connectorLinks.locator("svg")).toHaveCount(0);
-	for (const link of await connectorLinks.all()) {
-		const box = await link.locator("div").boundingBox();
-		expect(box?.width).toBe(24);
-		expect(box?.height).toBe(24);
-	}
+	await expect(connectors.locator("a, button")).toHaveCount(1);
 	const sidebar = page.getByTestId("app-sidebar");
 	await expect(sidebar.getByText("Paused", { exact: true })).toBeVisible();
 	await expect(sidebar.getByText(/last seen/i)).toBeVisible();
@@ -975,7 +956,7 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		Math.max(...resourceGeometry.map((box) => box.height)) -
 			Math.min(...resourceGeometry.map((box) => box.height)),
 	).toBeLessThanOrEqual(2);
-	expect(new Set(resourceGeometry.map((box) => Math.round(box.height)))).toEqual(new Set([112]));
+	expect(new Set(resourceGeometry.map((box) => Math.round(box.height)))).toEqual(new Set([80]));
 	expect(Math.max(...resourceGeometry.map((box) => box.height))).toBeLessThan(128);
 	expect(
 		await resourceGrid
@@ -1176,7 +1157,7 @@ test("connected Overview keeps a three-row accessible session slot for zero thro
 	expect(Math.max(...measurements) - Math.min(...measurements)).toBeLessThanOrEqual(2);
 });
 
-test("connected Overview limits detail metadata without requesting the popular catalog", async ({
+test("connected Overview counts unique active apps without requesting connector metadata", async ({
 	page,
 }) => {
 	const connectorMetadataRequests: string[] = [];
@@ -1184,15 +1165,6 @@ test("connected Overview limits detail metadata without requesting the popular c
 	page.on("request", (request) => {
 		if (new URL(request.url()).pathname === "/v1/connectors/available")
 			catalogRequests.push(request.url());
-	});
-	const catalogApp = (name: string) => ({
-		name,
-		display_name: name,
-		logo: "",
-		description: `${name} connector`,
-		auth_type: "oauth",
-		connect_disabled: false,
-		connect_disabled_reason: null,
 	});
 	await stubDashboardApi(page, [], {
 		connectorMetadataRequests,
@@ -1204,26 +1176,17 @@ test("connected Overview limits detail metadata without requesting the popular c
 			{ id: "conn-linear", app_name: "linear", status: "ACTIVE" },
 			{ id: "conn-github-duplicate", app_name: "github", status: "ACTIVE" },
 		],
-		connectorCatalog: ["github", "slack", "gmail", "notion", "linear"].map(catalogApp),
 	});
 
 	await page.goto("/agents/agent-smoke-1");
 	const card = page.locator('[data-overview-module="connectors"]');
 	await expect(card).toContainText("5 connected");
-	await expect(card.getByTestId("overview-connector-rail").getByRole("link")).toHaveCount(4);
-	await expect.poll(() => connectorMetadataRequests.length).toBe(4);
-	expect(connectorMetadataRequests.map((request) => new URL(request).pathname)).toEqual([
-		"/v1/connectors/available/github",
-		"/v1/connectors/available/slack",
-		"/v1/connectors/available/gmail",
-		"/v1/connectors/available/notion",
-	]);
+	await expect(card.locator("a, button")).toHaveCount(1);
+	expect(connectorMetadataRequests).toEqual([]);
 	expect(catalogRequests).toEqual([]);
 });
 
-test("connected overview does not render an empty rail while connections load", async ({
-	page,
-}) => {
+test("connected overview keeps the count pending while connections load", async ({ page }) => {
 	await stubDashboardApi(page, [], {
 		connectorConnectionsGate: new Promise<void>(() => {}),
 		connectorCatalog: [
@@ -1240,9 +1203,9 @@ test("connected overview does not render an empty rail while connections load", 
 	});
 	await page.goto("/agents/agent-smoke-1");
 	const card = page.locator('[data-overview-module="connectors"]');
-	await expect(card.getByLabel("Loading connected apps")).toBeVisible();
+	await expect(card.getByLabel("Loading apps summary")).toBeVisible();
 	await expect(card.getByRole("link")).toHaveCount(1);
-	await expect(card.getByTestId("overview-connector-rail").getByRole("link")).toHaveCount(0);
+	await expect(card.getByLabel("Loading app", { exact: true })).toHaveCount(0);
 	await expect(card).not.toContainText("No apps connected");
 });
 
@@ -1256,53 +1219,9 @@ test("connected overview reports connector errors without a false empty state", 
 	await page.goto("/agents/agent-smoke-1");
 	const card = page.locator('[data-overview-module="connectors"]');
 	await expect(card).toContainText("Can’t load apps", { timeout: 12_000 });
+	await expect(card.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+	await expect(card.locator("a button, button a")).toHaveCount(0);
 	await expect(card).not.toContainText("No apps connected");
-});
-
-test("connected overview preserves active count while icon metadata loads", async ({ page }) => {
-	await stubDashboardApi(page, [], {
-		connectorConnections: [{ id: "conn-github", app_name: "github", status: "ACTIVE" }],
-		connectorMetadataGate: new Promise<void>(() => {}),
-		connectorCatalog: [
-			{
-				name: "github",
-				display_name: "Github",
-				logo: "",
-				description: "Source",
-				auth_type: "oauth",
-				connect_disabled: false,
-				connect_disabled_reason: null,
-			},
-		],
-	});
-	await page.goto("/agents/agent-smoke-1");
-	const card = page.locator('[data-overview-module="connectors"]');
-	await expect(card).toContainText("1 connected");
-	await expect(card.getByLabel("Loading app").first()).toBeVisible();
-});
-
-test("connected overview keeps project count when names fail", async ({ page }) => {
-	await stubDashboardApi(page, [], {
-		projectsResponse: { status: 500, body: { detail: "project list failed" } },
-	});
-	await page.goto("/agents/agent-smoke-1");
-
-	const projectsCard = page.locator('[data-overview-module="projects"]');
-	await expect(projectsCard).toContainText("1 project");
-	await expect(projectsCard).toContainText("Can’t load project names");
-	await expect(projectsCard.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
-	await expect(projectsCard).not.toContainText("No projects added");
-	await expect(page.locator('[data-overview-module="vaults"]')).toBeVisible();
-});
-
-test("connected overview keeps project count while names load", async ({ page }) => {
-	await stubDashboardApi(page, [], { projectsGate: new Promise<void>(() => {}) });
-	await page.goto("/agents/agent-smoke-1");
-
-	const projectsCard = page.locator('[data-overview-module="projects"]');
-	await expect(projectsCard).toContainText("1 project");
-	await expect(projectsCard.getByLabel("Loading project names summary")).toBeVisible();
-	await expect(page.locator('[data-overview-module="vaults"]')).toBeVisible();
 });
 
 test("connected agent Memories stays account-wide with canonical detail links", async ({

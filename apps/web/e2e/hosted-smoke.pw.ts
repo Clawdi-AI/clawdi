@@ -25,21 +25,21 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 			),
 		grid.locator("[data-overview-module]").evaluateAll((elements) =>
 			elements.map((element) => {
-				const card = element.getBoundingClientRect();
 				const header = element.querySelector<HTMLElement>('[data-slot="card-header"]');
 				const headerLink = header?.querySelector<HTMLElement>("a");
-				const content = element.querySelector<HTMLElement>('[data-slot="card-content"]');
+				const headerStyle = header ? getComputedStyle(header) : null;
 				const linkStyle = headerLink ? getComputedStyle(headerLink) : null;
-				const contentStyle = content ? getComputedStyle(content) : null;
 				return {
 					headerHeight: header?.getBoundingClientRect().height ?? 0,
-					contentOffset: (content?.getBoundingClientRect().y ?? card.y) - card.y,
-					headerPaddingInline: [linkStyle?.paddingLeft, linkStyle?.paddingRight],
-					headerPaddingBlock: [linkStyle?.paddingTop, linkStyle?.paddingBottom],
-					contentPadding: [
-						contentStyle?.paddingLeft,
-						contentStyle?.paddingRight,
-						contentStyle?.paddingBottom,
+					headerCount: element.querySelectorAll(':scope > [data-slot="card-header"]').length,
+					contentCount: element.querySelectorAll('[data-slot="card-content"]').length,
+					headerPaddingInline: [headerStyle?.paddingLeft, headerStyle?.paddingRight],
+					headerPaddingBlock: [headerStyle?.paddingTop, headerStyle?.paddingBottom],
+					linkPadding: [
+						linkStyle?.paddingTop,
+						linkStyle?.paddingRight,
+						linkStyle?.paddingBottom,
+						linkStyle?.paddingLeft,
 					],
 				};
 			}),
@@ -72,12 +72,14 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 	expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
 	expect(new Set(shellMetrics.map((metric) => metric.headerHeight)).size).toBe(1);
 	expect(shellMetrics[0]?.headerHeight ?? 0).toBeGreaterThan(0);
-	const contentMetrics = shellMetrics.filter((metric) => metric.contentOffset > 0);
-	expect(contentMetrics.length).toBeGreaterThan(0);
-	expect(new Set(contentMetrics.map((metric) => JSON.stringify(metric.contentPadding))).size).toBe(
-		1,
+	expect(new Set(shellMetrics.map((metric) => metric.headerCount))).toEqual(new Set([1]));
+	expect(new Set(shellMetrics.map((metric) => metric.contentCount))).toEqual(new Set([0]));
+	expect(new Set(shellMetrics.map((metric) => JSON.stringify(metric.headerPaddingInline)))).toEqual(
+		new Set([JSON.stringify(["16px", "16px"])]),
 	);
-	expect(Number.parseFloat(contentMetrics[0]?.contentPadding[2] ?? "0")).toBeGreaterThan(0);
+	expect(new Set(shellMetrics.map((metric) => JSON.stringify(metric.linkPadding)))).toEqual(
+		new Set([JSON.stringify(["0px", "0px", "0px", "0px"])]),
+	);
 }
 
 async function expectOverviewSessionSlot({
@@ -223,18 +225,6 @@ async function expectAgentOverviewTypography(page: Page) {
 	expect(new Set(primaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
 	expect(new Set(primaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["400"]));
 
-	const detailMetrics = await main
-		.locator('[data-testid="overview-resource-badges"] [data-slot="badge"]')
-		.evaluateAll((elements) =>
-			elements.map((element) => {
-				const style = getComputedStyle(element);
-				return { fontSize: style.fontSize, fontWeight: style.fontWeight };
-			}),
-		);
-	expect(detailMetrics.length).toBeGreaterThan(0);
-	expect(new Set(detailMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["12px"]));
-	expect(new Set(detailMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["500"]));
-
 	const metadataMetrics = await main
 		.locator(
 			'[data-testid="session-card-meta"], [data-overview-status] dl, [data-testid="overview-compute-summary"] ul',
@@ -248,21 +238,6 @@ async function expectAgentOverviewTypography(page: Page) {
 	expect(metadataMetrics.length).toBeGreaterThan(2);
 	expect(new Set(metadataMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["12px"]));
 	expect(new Set(metadataMetrics.map(({ color }) => color)).size).toBe(1);
-
-	const toolSecondaryMetrics = await main
-		.locator("[data-overview-tool-secondary]")
-		.evaluateAll((elements) =>
-			elements.map((element) => {
-				const style = getComputedStyle(element);
-				return { fontSize: style.fontSize, fontWeight: style.fontWeight, color: style.color };
-			}),
-		);
-	expect(toolSecondaryMetrics).toHaveLength(1);
-	expect(new Set(toolSecondaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["12px"]));
-	expect(new Set(toolSecondaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(
-		new Set(["400"]),
-	);
-	expect(toolSecondaryMetrics[0]?.color).toBe(metadataMetrics[0]?.color);
 }
 
 // HOSTED (Clawdi Cloud) smoke against the vite dev server with dev-auth-bypass
@@ -1455,6 +1430,7 @@ type HostedApiStubOptions = {
 	agentProjectBindings?: readonly unknown[];
 	agentProjectBindingRequests?: string[];
 	agentProjects?: readonly unknown[];
+	agentProjectRequests?: string[];
 	agentProjectsResponse?: StubResponse;
 	agentResourceFixtures?: boolean;
 	agentOrderRequests?: string[];
@@ -2436,6 +2412,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			return fulfillJson(r, { items: [] });
 		}
 		if (p === "/v1/projects") {
+			options.agentProjectRequests?.push(r.request().url());
 			if (options.agentProjectsResponse) {
 				if (options.agentProjectsResponse.delayMs) {
 					await new Promise((resolve) =>
@@ -2973,6 +2950,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const aiProviderRequests: string[] = [];
 	const managedModelRequests: string[] = [];
 	const overviewConnectorRequests: string[] = [];
+	const agentProjectRequests: string[] = [];
 	page.on("request", (request) => {
 		const path = new URL(request.url()).pathname;
 		if (path.startsWith("/v1/connectors/available")) overviewConnectorRequests.push(path);
@@ -2988,6 +2966,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		sessionRequests,
 		aiProviderRequests,
 		managedModelRequests,
+		agentProjectRequests,
 		deployments: [railHostedDeployment],
 		cloudAgents: [railHostedCloudAgent],
 		agentResourceFixtures: true,
@@ -3061,12 +3040,22 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			.evaluateAll((cards) =>
 				cards.map((card) => card.querySelectorAll(':scope > [data-slot="card-content"]').length),
 			),
-	).toEqual([1, 1, 0, 1, 1, 1, 1]);
+	).toEqual([0, 0, 0, 0, 0, 0, 0]);
+	await expect(overview.locator('[data-overview-module] > [data-slot="card-header"]')).toHaveCount(
+		7,
+	);
+	await expect(overview.locator("[data-overview-module-error]")).toHaveCount(0);
+	await expect(
+		overview.locator(
+			"[data-overview-module] a a, [data-overview-module] a button, [data-overview-module] button a",
+		),
+	).toHaveCount(0);
 	await expect(overview.getByRole("heading", { name: "Tools", exact: true })).toBeVisible();
 	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveCount(0);
-	await expect(overview.locator('[data-overview-module="projects"]')).toContainText(
+	await expect(overview.locator('[data-overview-module="projects"]')).not.toContainText(
 		"Hosted Agent Project",
 	);
+	expect(agentProjectRequests).toEqual([]);
 	const viewAllSessions = page
 		.locator("#hosted-recent-sessions")
 		.locator("..")
@@ -3169,28 +3158,9 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		}),
 	).toBeVisible();
 	await expect(page.getByText("Your agent is running", { exact: true })).toHaveCount(0);
-	const resourceBadges = overview.getByTestId("overview-resource-badges");
-	await expect(resourceBadges).toHaveCount(3);
-	await expect(
-		overview.locator('[data-overview-module="projects"] [data-slot="badge"]'),
-	).toHaveAccessibleName("Hosted Agent Project");
-	await expect(
-		overview.locator('[data-overview-module="skills"] [data-slot="badge"]'),
-	).toHaveAccessibleName("Daily briefing");
-	await expect(
-		overview.locator('[data-overview-module="vaults"] [data-slot="badge"]'),
-	).toHaveAccessibleName("Hosted Scoped Vault");
-	const channelRail = overview.getByTestId("overview-channel-rail");
-	await expect(channelRail.getByRole("link")).toHaveCount(1);
-	await expect(
-		channelRail.getByRole("link", {
-			name: "Connected channel: Telegram, Research Telegram",
-		}),
-	).toBeVisible();
-	await expect(channelRail.locator("img")).toHaveAttribute("alt", "Telegram");
-	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText(
-		"Managed by Clawdi",
-	);
+	await expect(overview.locator('[data-slot="badge"]')).toHaveCount(0);
+	await expect(overview.getByTestId("overview-channel-rail")).toHaveCount(0);
+	await expect(overview.getByTestId("overview-connector-rail")).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText("Model");
 	expect(aiProviderRequests).toEqual([]);
 	await expect.poll(() => managedModelRequests.length).toBe(1);
@@ -3205,29 +3175,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	}
 	const connectors = overview.locator('[data-overview-module="connectors"]');
 	await expect(connectors).toContainText("2 connected");
-	const connectorLinks = connectors.getByTestId("overview-connector-rail").getByRole("link");
-	await expect(connectorLinks).toHaveCount(2);
-	await expect(connectorLinks.nth(0)).toHaveAccessibleName("Connected app: Github");
-	await expect(connectorLinks.nth(1)).toHaveAccessibleName("Connected app: Slack");
-	await expect(connectors.getByRole("link", { name: /Gmail/ })).toHaveCount(0);
-	await expect(connectorLinks.locator("svg")).toHaveCount(0);
-	expect(overviewConnectorRequests).toEqual([
-		"/v1/connectors/available/github",
-		"/v1/connectors/available/slack",
-	]);
-	const connectorIconBoxes = await connectorLinks
-		.locator("div")
-		.evaluateAll((icons) => icons.map((icon) => icon.getBoundingClientRect().toJSON()));
-	const channelIconBoxes = await channelRail
-		.locator("img")
-		.evaluateAll((icons) => icons.map((icon) => icon.getBoundingClientRect().toJSON()));
-	expect(
-		[...connectorIconBoxes, ...channelIconBoxes].map((box) => [box.width, box.height]),
-	).toEqual([
-		[24, 24],
-		[24, 24],
-		[24, 24],
-	]);
+	await expect(connectors.locator("a, button")).toHaveCount(1);
+	expect(overviewConnectorRequests).toEqual([]);
 	const sidebar = page.getByTestId("app-sidebar");
 	await expect(sidebar.getByText("Running", { exact: true })).toBeVisible();
 	await expectInlineSidebarStatus(sidebar, "hosted");
@@ -3282,7 +3231,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	}
 	const moduleHeights = [...resourceGeometry, ...toolGeometry].map((box) => box.height);
 	expect(Math.max(...moduleHeights) - Math.min(...moduleHeights)).toBeLessThanOrEqual(2);
-	expect(new Set(moduleHeights.map((height) => Math.round(height)))).toEqual(new Set([112]));
+	expect(new Set(moduleHeights.map((height) => Math.round(height)))).toEqual(new Set([80]));
 	expect(Math.max(...moduleHeights)).toBeLessThan(128);
 	expect((toolGeometry[1]?.x ?? 0) + (toolGeometry[1]?.width ?? 0)).toBeLessThan(
 		(resourceGeometry[2]?.x ?? 0) + 1,
@@ -3454,9 +3403,7 @@ test("post-ready runtime health degradation stays navigable and surfaces consist
 	});
 });
 
-test("hosted overview shows a custom provider label and gates provider catalogs", async ({
-	page,
-}) => {
+test("hosted overview shows the custom model and gates provider catalogs", async ({ page }) => {
 	const aiProviderRequests: string[] = [];
 	const managedModelRequests: string[] = [];
 	const deployment: DeploymentMutationFixture = {
@@ -3489,7 +3436,8 @@ test("hosted overview shows a custom provider label and gates provider catalogs"
 	});
 	await page.goto(`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${deployment.id}`);
 	const card = page.locator('[data-overview-module="model-provider"]');
-	await expect(card).toContainText("Research DeepSeek");
+	await expect(card).toContainText("V4 Flash");
+	await expect(card).not.toContainText("Research DeepSeek");
 	await expect(card).not.toContainText(deepSeekProvider.provider_id);
 	await expect.poll(() => aiProviderRequests.length).toBe(1);
 	expect(managedModelRequests).toEqual([]);
@@ -3508,7 +3456,9 @@ test("hosted projection loading uses module skeletons", async ({ page }, testInf
 	);
 
 	const overview = page.locator('[data-agent-overview="hosted"]');
-	await expect(overview.getByTestId("overview-module-skeleton").first()).toBeVisible();
+	await expect(
+		overview.locator('[data-overview-primary-value] [role="status"]').first(),
+	).toBeVisible();
 	const sessionSkeletons = page
 		.getByRole("status", { name: "Loading recent sessions" })
 		.getByTestId("overview-session-skeleton-row");
@@ -3675,21 +3625,12 @@ test("hosted Tools channels preserve zero, singular, plural, error, and loading 
 	await page.goto(overviewUrl);
 	await expect(channels.getByText("0 connected channels", { exact: true })).toHaveCount(0);
 	await expect(channels.getByText("No channels connected", { exact: true })).toHaveCount(1);
-	await expect(channels.getByTestId("overview-channel-rail")).toHaveCount(0);
+	await expect(channels.locator("a, button")).toHaveCount(1);
 
 	options.channelAgentLinksResponse = { body: [channelLink(1, "telegram")], status: 200 };
 	await page.reload();
 	await expect(channels.getByText("1 connected channel", { exact: true })).toBeVisible();
-	await expect(
-		channels.getByRole("link", {
-			name: "Connected channel: Telegram, Research Telegram",
-		}),
-	).toHaveAttribute("title", "Telegram: Research Telegram (connected)");
-	await expect(channels.getByTestId("overview-channel-rail").getByRole("link")).toHaveCount(1);
-	await expect(channels.getByTestId("overview-channel-rail").locator("img")).toHaveAttribute(
-		"alt",
-		"Telegram",
-	);
+	await expect(channels.locator("a, button")).toHaveCount(1);
 
 	options.channelAgentLinksResponse = {
 		body: [channelLink(1, "telegram"), channelLink(2, "discord")],
@@ -3697,14 +3638,7 @@ test("hosted Tools channels preserve zero, singular, plural, error, and loading 
 	};
 	await page.reload();
 	await expect(channels.getByText("2 connected channels", { exact: true })).toBeVisible();
-	const channelLinks = channels.getByTestId("overview-channel-rail").getByRole("link");
-	await expect(channelLinks).toHaveCount(2);
-	await expect(channelLinks.nth(0)).toHaveAccessibleName(
-		"Connected channel: Telegram, Research Telegram",
-	);
-	await expect(channelLinks.nth(1)).toHaveAccessibleName(
-		"Connected channel: Discord, Team Discord",
-	);
+	await expect(channels.locator("a, button")).toHaveCount(1);
 
 	options.channelAgentLinksResponse = {
 		body: [
@@ -3719,7 +3653,7 @@ test("hosted Tools channels preserve zero, singular, plural, error, and loading 
 	};
 	await page.reload();
 	await expect(channels.getByText("6 connected channels", { exact: true })).toBeVisible();
-	await expect(channels.getByTestId("overview-channel-rail").getByRole("link")).toHaveCount(4);
+	await expect(channels.locator("a, button")).toHaveCount(1);
 
 	options.channelAgentLinksResponse = {
 		body: { detail: "channel service unavailable" },
@@ -3754,42 +3688,6 @@ test("hosted overview shows a true empty Projects state", async ({ page }) => {
 	await expect(page.locator('[data-overview-module="vaults"]')).toContainText(
 		"No vaults available",
 	);
-});
-
-test("hosted overview keeps project count when names fail", async ({ page }) => {
-	await stubHostedApi(page, {
-		deployments: [railHostedDeployment],
-		cloudAgents: [railHostedCloudAgent],
-		agentResourceFixtures: true,
-		agentProjectsResponse: { status: 500, body: { detail: "project list failed" } },
-	});
-	await page.goto(
-		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
-	);
-
-	const projectsCard = page.locator('[data-overview-module="projects"]');
-	await expect(projectsCard).toContainText("1 project");
-	await expect(projectsCard).toContainText("Can’t load project names");
-	await expect(projectsCard.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
-	await expect(projectsCard).not.toContainText("No projects added");
-	await expect(page.locator('[data-overview-module="vaults"]')).toBeVisible();
-});
-
-test("hosted overview keeps project count while names load", async ({ page }) => {
-	await stubHostedApi(page, {
-		deployments: [railHostedDeployment],
-		cloudAgents: [railHostedCloudAgent],
-		agentResourceFixtures: true,
-		agentProjectsResponse: { status: 200, body: [], delayMs: 5_000 },
-	});
-	await page.goto(
-		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
-	);
-
-	const projectsCard = page.locator('[data-overview-module="projects"]');
-	await expect(projectsCard).toContainText("1 project");
-	await expect(projectsCard.getByLabel("Loading project names summary")).toBeVisible();
-	await expect(page.locator('[data-overview-module="vaults"]')).toBeVisible();
 });
 
 for (const deploymentStatus of ["creating", "starting"] as const) {

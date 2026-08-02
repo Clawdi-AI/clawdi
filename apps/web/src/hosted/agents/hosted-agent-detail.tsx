@@ -35,10 +35,7 @@ import { agentDisplayName } from "@/components/dashboard/agent-label";
 import {
 	AgentOverviewCapabilities,
 	AgentOverviewStatusCard,
-	OVERVIEW_IDENTITY_RAIL_LIMIT,
 	OverviewDescriptionSkeleton,
-	OverviewIdentityIconItem,
-	OverviewIdentityIconRail,
 	OverviewModuleError,
 } from "@/components/dashboard/agent-overview-capabilities";
 import {
@@ -48,7 +45,7 @@ import {
 	useOverviewMemoriesModule,
 	useOverviewVaultsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
-import { useAgentOverviewProjects } from "@/components/dashboard/agent-project-bindings-query";
+import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
@@ -263,7 +260,6 @@ import {
 	agentProviderHasSingleLinkLimit,
 	channelProviderLinkingReady,
 } from "@/hosted/v2/channels/channel-linking.logic";
-import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import { channelKeys } from "@/hosted/v2/channels/channel-query-cache";
 import type { ChannelBinding } from "@/hosted/v2/channels/channel-types";
 import {
@@ -271,7 +267,6 @@ import {
 	ChannelStatusBadge,
 	CopyInline,
 	isNormalChannelStatus,
-	ProviderChip,
 } from "@/hosted/v2/channels/channel-ui";
 import {
 	useAgentChannelLinks,
@@ -1154,9 +1149,7 @@ function OverviewTab({
 	const sessionsEmptyMessage = deploymentRunning
 		? "No sessions from this agent yet."
 		: "Sessions appear once your agent is running.";
-	const overviewProjects = useAgentOverviewProjects(agentId, { enabled: Boolean(agent) });
-	const projectBindings = overviewProjects.bindings;
-	const projectNames = overviewProjects.nameResolution;
+	const projectBindings = useAgentProjectBindings(agentId, { enabled: Boolean(agent) });
 	const skills = useAgentProjectSkills(
 		agentId,
 		agent?.default_project_id,
@@ -1166,13 +1159,6 @@ function OverviewTab({
 	);
 	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
 	const linkedChannelCount = channelLinks.data?.length ?? 0;
-	const linkedChannels = Array.from(
-		new Map(
-			(channelLinks.data ?? []).flatMap((link) =>
-				link.account ? [[link.account.id, link.account] as const] : [],
-			),
-		).values(),
-	);
 	const projectionLoading = projectionStatus === "loading";
 	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
 	const memoriesModule = useOverviewMemoriesModule();
@@ -1275,13 +1261,6 @@ function OverviewTab({
 							error: projectBindings.error,
 							onRetry: () => void projectBindings.refetch(),
 						},
-						names: {
-							items: projectNames.names,
-							unresolvedCount: projectNames.unresolvedCount,
-							isLoading: projectNames.isLoading,
-							error: projectNames.error,
-							onRetry: () => void projectNames.refetch(),
-						},
 					}),
 					skills: overviewSkillsModule({
 						items: (skills.skills ?? []).map((skill) => skill.name),
@@ -1302,7 +1281,7 @@ function OverviewTab({
 							) : (
 								model
 							),
-						body:
+						error:
 							providers.error || managedModelCatalog.error ? (
 								<OverviewModuleError
 									label="Model & Provider"
@@ -1310,15 +1289,7 @@ function OverviewTab({
 										void (managedProvider ? managedModelCatalog.refetch() : providers.refetch())
 									}
 								/>
-							) : providers.isLoading || managedModelCatalog.isLoading ? undefined : (
-								<div data-overview-tool-summary="model-provider">
-									<p data-overview-tool-secondary className="text-xs text-muted-foreground">
-										{managedProvider
-											? "Managed by Clawdi"
-											: providerDisplayLabel(providerId ?? "", providers.data ?? [])}
-									</p>
-								</div>
-							),
+							) : undefined,
 					},
 					channels: {
 						description:
@@ -1331,31 +1302,8 @@ function OverviewTab({
 							) : (
 								`${linkedChannelCount} connected ${linkedChannelCount === 1 ? "channel" : "channels"}`
 							),
-						body: channelLinks.error ? (
+						error: channelLinks.error ? (
 							<OverviewModuleError label="Channels" onRetry={() => void channelLinks.refetch()} />
-						) : linkedChannels.length > 0 ? (
-							<div data-overview-tool-summary="channels">
-								<OverviewIdentityIconRail label="Connected channels" testId="overview-channel-rail">
-									{linkedChannels.slice(0, OVERVIEW_IDENTITY_RAIL_LIMIT).map((channel) => {
-										const provider = providerMeta(channel.provider).label;
-										return (
-											<OverviewIdentityIconItem key={channel.id}>
-												<Link
-													to="/channels/$id"
-													params={{ id: channel.id }}
-													aria-label={`Connected channel: ${provider}, ${channel.name}`}
-													title={`${provider}: ${channel.name} (connected)`}
-													className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-												>
-													<ProviderChip provider={channel.provider} size="sm" />
-												</Link>
-											</OverviewIdentityIconItem>
-										);
-									})}
-								</OverviewIdentityIconRail>
-							</div>
-						) : linkedChannelCount > 0 ? (
-							<p className="text-sm text-muted-foreground">Channel details unavailable</p>
 						) : undefined,
 					},
 				}}
