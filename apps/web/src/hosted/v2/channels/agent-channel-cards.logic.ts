@@ -1,4 +1,4 @@
-import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
+import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client.logic";
 import type { ChannelAccount, ChannelBotPoolItem } from "@/hosted/v2/channels/channel-types";
 
 export type AgentChannelCardItem = {

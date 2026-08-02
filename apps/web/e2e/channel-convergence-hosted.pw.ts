@@ -61,6 +61,7 @@ const links = [
 		status: "active",
 		created_at: now,
 		account: telegram,
+		binding_count: 1,
 	},
 	{
 		id: discordLinkId,
@@ -69,6 +70,7 @@ const links = [
 		status: "active",
 		created_at: now,
 		account: discord,
+		binding_count: 1,
 	},
 ];
 
@@ -186,7 +188,10 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 async function stubChannelExperience(page: Page) {
 	const bindingsRefreshStarted = deferred();
 	const releaseBindingsRefresh = deferred();
+	let agentLinkReads = 0;
+	let telegramBindingCount = 1;
 	let telegramBindingReads = 0;
+	let discordBindingReads = 0;
 	let telegramPairRequests = 0;
 
 	await page.route(`${DEPLOY_API}/**`, async (route) => {
@@ -217,7 +222,15 @@ async function stubChannelExperience(page: Page) {
 		if (path === "/v1/channels/bot-pool") {
 			return fulfillJson(route, { providers: {} });
 		}
-		if (path === "/v1/channels/agent-links") return fulfillJson(route, links);
+		if (path === "/v1/channels/agent-links") {
+			agentLinkReads += 1;
+			return fulfillJson(
+				route,
+				links.map((link) =>
+					link.id === telegramLinkId ? { ...link, binding_count: telegramBindingCount } : link,
+				),
+			);
+		}
 		if (path === "/v1/channels/health") return fulfillJson(route, { items: [health] });
 		if (path === `/v1/channels/${telegramId}`) return fulfillJson(route, telegram);
 		if (path === `/v1/channels/${discordId}`) return fulfillJson(route, discord);
@@ -239,6 +252,7 @@ async function stubChannelExperience(page: Page) {
 			);
 		}
 		if (path === `/v1/channels/${discordId}/bindings`) {
+			discordBindingReads += 1;
 			return fulfillJson(
 				route,
 				bindings.filter((binding) => binding.account_id === discordId),
@@ -312,6 +326,12 @@ async function stubChannelExperience(page: Page) {
 	return {
 		bindingsRefreshStarted,
 		releaseBindingsRefresh,
+		agentLinkReads: () => agentLinkReads,
+		incrementTelegramBindingCount: () => {
+			telegramBindingCount += 1;
+		},
+		telegramBindingReads: () => telegramBindingReads,
+		discordBindingReads: () => discordBindingReads,
 		telegramPairRequests: () => telegramPairRequests,
 	};
 }
@@ -349,23 +369,36 @@ for (const viewport of [
 
 		const telegramChats = page.locator(`[data-agent-paired-chats-trigger="${telegramLinkId}"]`);
 		await expect(telegramChats).toHaveAccessibleName("1 paired chat");
-		await api.bindingsRefreshStarted.promise;
-		try {
-			await expect(telegramCard).toContainText(telegram.name);
+		expect(api.telegramBindingReads()).toBe(0);
+		expect(api.discordBindingReads()).toBe(0);
+		for (const minimumReads of [2, 3]) {
+			await expect.poll(api.agentLinkReads).toBeGreaterThanOrEqual(minimumReads);
 			await expect(telegramChats).toHaveAccessibleName("1 paired chat");
 			await expect(telegramChats.locator(".animate-spin")).toHaveCount(0);
 			await expect(telegramCard.locator(".animate-pulse")).toHaveCount(0);
-		} finally {
-			api.releaseBindingsRefresh.resolve();
 		}
+		expect(api.telegramBindingReads()).toBe(0);
+		expect(api.discordBindingReads()).toBe(0);
 
 		await telegramChats.click();
 		const pairedChats = page.locator(`[data-agent-channel-chats-for="${telegramLinkId}"]`);
 		await expect(pairedChats.getByRole("heading", { name: "Paired chats" })).toBeVisible();
 		await expect(pairedChats).toContainText("Customer support");
+		await expect.poll(api.telegramBindingReads).toBe(1);
+		await api.bindingsRefreshStarted.promise;
+		try {
+			await expect(pairedChats).toContainText("Customer support");
+			await expect(pairedChats.getByText("Loading paired chats")).toHaveCount(0);
+			await expect(pairedChats.locator(".animate-pulse")).toHaveCount(0);
+		} finally {
+			api.releaseBindingsRefresh.resolve();
+		}
 		await page.keyboard.press("Escape");
 		await expect(pairedChats).toHaveCount(0);
 		await expect(telegramChats).toBeFocused();
+		const bindingReadsAfterClose = api.telegramBindingReads();
+		await page.waitForTimeout(3_500);
+		expect(api.telegramBindingReads()).toBe(bindingReadsAfterClose);
 
 		const telegramPair = telegramCard.getByRole("button", { name: "Pair", exact: true });
 		await telegramPair.click();
@@ -377,6 +410,19 @@ for (const viewport of [
 		await pairDialog.getByRole("button", { name: "Retry", exact: true }).click();
 		await expect.poll(api.telegramPairRequests).toBe(2);
 		await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toBeVisible();
+		api.incrementTelegramBindingCount();
+		await expect(pairDialog).toHaveCount(0);
+		await expect(page.getByText("Chat paired", { exact: true })).toBeVisible();
+		await expect(telegramChats).toHaveAccessibleName("2 paired chats");
+		expect(api.telegramBindingReads()).toBe(bindingReadsAfterClose);
+
+		await telegramPair.click();
+		pairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
+		await expect(pairDialog.getByRole("img", { name: "Telegram pairing QR code" })).toBeVisible();
+		const aggregateReadsAtReopen = api.agentLinkReads();
+		await expect.poll(api.agentLinkReads).toBeGreaterThan(aggregateReadsAtReopen);
+		await expect(pairDialog).toBeVisible();
+		expect(api.telegramBindingReads()).toBe(bindingReadsAfterClose);
 		await page.keyboard.press("Escape");
 		await expect(pairDialog).toHaveCount(0);
 		await expect(telegramPair).toBeFocused();
@@ -387,6 +433,7 @@ for (const viewport of [
 			pairDialog.getByRole("img", { name: "Discord server install QR code" }),
 		).toBeVisible();
 		await expect(pairDialog.getByRole("tab", { name: "Direct message" })).toBeEnabled();
+		expect(api.discordBindingReads()).toBe(0);
 		await page.keyboard.press("Escape");
 		await expect(pairDialog).toHaveCount(0);
 		await expectNoHorizontalOverflow(page);

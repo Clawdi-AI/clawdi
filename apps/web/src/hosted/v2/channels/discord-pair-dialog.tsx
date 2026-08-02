@@ -15,7 +15,7 @@ import {
 } from "@/hosted/v2/channels/channel-linking.logic";
 import { DISCORD_PAIR_ERROR_NORMALIZER } from "@/hosted/v2/channels/channel-pairing-errors";
 import { usePairingSuccess } from "@/hosted/v2/channels/channel-pairing-success";
-import type { ChannelBinding, ChannelPairCode } from "@/hosted/v2/channels/channel-types";
+import type { ChannelPairCode } from "@/hosted/v2/channels/channel-types";
 import { useCreatePairCode } from "@/hosted/v2/channels/channels-hooks";
 import {
 	CopyablePairingCode,
@@ -42,20 +42,22 @@ export function DiscordPairDialog({
 	open,
 	onOpenChange,
 	onCloseComplete,
+	agentId,
 	accountId,
 	agentLinkId,
 	channelName,
-	bindings,
+	bindingCount,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	onCloseComplete?: () => void;
+	agentId: string;
 	accountId: string;
 	agentLinkId: string;
 	channelName?: string;
-	bindings?: readonly ChannelBinding[];
+	bindingCount: number;
 }) {
-	const pair = useCreatePairCode(accountId, { toastOnError: false });
+	const pair = useCreatePairCode(accountId, { agentId, toastOnError: false });
 	const { copied: installLinkCopied, copy: copyInstallLink } = useCopyToClipboard({
 		success: false,
 		error: "Couldn't copy Discord install link",
@@ -86,7 +88,7 @@ export function DiscordPairDialog({
 		accountId,
 		agentLinkId,
 		provider: "discord",
-		bindings,
+		bindingCount,
 	});
 
 	const prepare = useCallback(

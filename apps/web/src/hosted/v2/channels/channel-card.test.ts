@@ -112,9 +112,9 @@ describe("shared Channel card", () => {
 		expect(pairedChatsDialog).toContain('side="bottom"');
 		expect(pairedChatsDialog).toContain("overflow-y-auto");
 		expect(pairedChatsDialog).toContain('size: "xs"');
-		expect(pairedChatsDialog).toContain("pairedChats.length === 1");
+		expect(pairedChatsDialog).toContain("bindingCount === 1");
 		expect(pairedChatsDialog).toContain('"chat" : "chats"');
-		expect(pairedChatsDialog).toContain("aria-describedby");
+		expect(pairedChatsDialog).toContain("aria-controls={panelId}");
 		expect(pairedChatsDialog).not.toContain("Show more");
 		expect(pairedChatsDialog).not.toContain("Show less");
 	});

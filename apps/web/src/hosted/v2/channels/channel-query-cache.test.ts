@@ -11,21 +11,23 @@ describe("invalidateCreatedChannelQueries", () => {
 		const qc = new QueryClient();
 		const channelId = "channel_123";
 		const agentId = "agent_123";
+		const agentLinksKey = ["generated-agent-links", { agentId }] as const;
+		const otherAgentLinksKey = ["generated-agent-links", { agentId: "agent_other" }] as const;
 		qc.setQueryData(channelKeys.list, []);
 		qc.setQueryData(channelKeys.pool, { providers: {} });
 		qc.setQueryData(channelKeys.health, { items: [] });
 		qc.setQueryData(channelKeys.agentLinks(channelId), []);
-		qc.setQueryData(["agent-channel-links", agentId], []);
-		qc.setQueryData(["agent-channel-links", "agent_other"], []);
+		qc.setQueryData(agentLinksKey, []);
+		qc.setQueryData(otherAgentLinksKey, []);
 
-		await invalidateCreatedChannelQueries(qc, { id: channelId, agent_id: agentId });
+		await invalidateCreatedChannelQueries(qc, { id: channelId, agent_id: agentId }, agentLinksKey);
 
 		expect(qc.getQueryState(channelKeys.list)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(channelKeys.pool)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(channelKeys.health)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(channelKeys.agentLinks(channelId))?.isInvalidated).toBe(true);
-		expect(qc.getQueryState(["agent-channel-links", agentId])?.isInvalidated).toBe(true);
-		expect(qc.getQueryState(["agent-channel-links", "agent_other"])?.isInvalidated).toBe(false);
+		expect(qc.getQueryState(agentLinksKey)?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(otherAgentLinksKey)?.isInvalidated).toBe(false);
 	});
 });
 
@@ -43,7 +45,8 @@ describe("removeDeletedChannelQueries", () => {
 		qc.setQueryData(channelKeys.bindings(channelId), [{ id: "binding_1" }]);
 		qc.setQueryData(channelKeys.activity(channelId), [{ id: "activity_1" }]);
 		qc.setQueryData(channelKeys.channel("channel_other"), { id: "channel_other" });
-		qc.setQueryData(["agent-channel-links", "agent_1"], [{ account_id: channelId }]);
+		const agentLinksKey = [...channelKeys.agentLinksList, { agent_id: "agent_1" }] as const;
+		qc.setQueryData(agentLinksKey, [{ account_id: channelId }]);
 
 		await removeDeletedChannelQueries(qc, channelId);
 
@@ -58,6 +61,6 @@ describe("removeDeletedChannelQueries", () => {
 		expect(qc.getQueryState(channelKeys.list)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(channelKeys.pool)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(channelKeys.health)?.isInvalidated).toBe(true);
-		expect(qc.getQueryState(["agent-channel-links", "agent_1"])?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(agentLinksKey)?.isInvalidated).toBe(true);
 	});
 });

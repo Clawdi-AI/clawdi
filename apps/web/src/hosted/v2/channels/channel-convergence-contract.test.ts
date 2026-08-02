@@ -35,9 +35,12 @@ describe("Telegram and Discord channel convergence contract", () => {
 	});
 
 	test("keeps cached bindings visible during background polling", () => {
-		expect(agentDetail).toContain("bindingsLoading={Boolean(bindingQuery?.isPending)}");
-		expect(agentDetail).not.toContain("bindingsLoading={Boolean(bindingQuery?.isFetching)}");
-		expect(agentDetail).toContain("bindingQuery?.error && bindingQuery.data === undefined");
+		expect(pairedChatsDialog).toContain("useChannelBindings(accountId, open)");
+		expect(pairedChatsDialog).toContain(
+			"open && bindings.data === undefined && bindings.isPending",
+		);
+		expect(pairedChatsDialog).not.toContain("bindings.isFetching");
+		expect(pairedChatsDialog).toContain("bindings.error && bindings.data === undefined");
 		expect(pairedChatsDialog).toContain("bindingsLoading && pairedChats.length === 0");
 	});
 

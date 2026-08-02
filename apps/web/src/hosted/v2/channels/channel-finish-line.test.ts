@@ -81,7 +81,7 @@ describe("hosted-agent channel finish line", () => {
 		expect(channelsTab).not.toContain("Fastest: use a ready-to-go bot");
 		expect(channelsTab).not.toContain("Use your own bot (advanced)");
 		expect(pairedChatsDialog).toContain("pairedChats.map");
-		expect(pairedChatsDialog).toContain("pairedChats.length === 1");
+		expect(pairedChatsDialog).toContain("bindingCount === 1");
 		expect(pairedChatsDialog).toContain('"chat" : "chats"');
 		expect(channelsTab).not.toContain("Link to start pairing chats");
 		expect(pairedChatsDialog).toContain("overflow-y-auto");
@@ -89,7 +89,7 @@ describe("hosted-agent channel finish line", () => {
 		expect(pairedChatsDialog).toContain("<Sheet");
 		expect(pairedChatsDialog).not.toContain("Show more");
 		expect(pairedChatsDialog).not.toContain("Show less");
-		expect(channelsTab).toContain("onBindingsRetry");
+		expect(pairedChatsDialog).toContain("onBindingsRetry");
 		expect(pairedChatsDialog).toContain("Loading paired chats");
 	});
 

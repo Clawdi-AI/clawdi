@@ -20,17 +20,19 @@ export const PAIRED_CHAT_ROW_CLASS =
 	"grid min-h-14 min-w-0 grid-cols-[minmax(0,1fr)_7rem] items-center gap-1.5 px-1 py-2.5";
 
 export function PairedChatRow({
+	agentId,
 	accountId,
 	binding,
 	provider,
 	className,
 }: {
+	agentId: string;
 	accountId: string;
 	binding: ChannelBinding;
 	provider: string;
 	className?: string;
 }) {
-	const unpair = useDeleteChannelBinding(accountId);
+	const unpair = useDeleteChannelBinding(accountId, agentId);
 	const chatType = binding.external_chat_type?.toLowerCase();
 	const scope = pairedChatScopeLabel(provider, binding);
 	const privateChat = chatType === "private" || scope === "direct message";

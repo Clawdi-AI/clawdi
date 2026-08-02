@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
+import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client.logic";
 import type { ChannelAccount, ChannelBotPoolItem } from "@/hosted/v2/channels/channel-types";
 import {
 	activeAgentLinkForAccount,
@@ -80,6 +80,21 @@ describe("Agent channel card normalization", () => {
 		expect(
 			canonicalAgentChannelLinks({ links: [stale], agentId, recentLinks: [recentA, recentB] }),
 		).toEqual([recentA, recentB]);
+	});
+
+	test("uses the aggregate binding count when a recent link has the same identity", () => {
+		const recent = link("same", "bot-a", "2026-08-01T01:00:00Z", {
+			binding_count: 0,
+		});
+		const aggregate = { ...recent, binding_count: 2 };
+
+		expect(
+			canonicalAgentChannelLinks({
+				links: [aggregate],
+				recentLinks: [recent],
+				agentId,
+			}),
+		).toEqual([aggregate]);
 	});
 
 	test("does not adopt another Agent's link for the same public bot", () => {
