@@ -16,7 +16,6 @@ import {
 	removeDeletedChannelQueries,
 } from "@/hosted/v2/channels/channel-query-cache";
 import type { ChannelCreate, ChannelCreated } from "@/hosted/v2/channels/channel-types";
-import { whatsappCredentialMetadataForCache } from "@/hosted/v2/channels/whatsapp-credential-cache";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
@@ -267,68 +266,5 @@ export function useSyncCommands(accountId: string) {
 				}),
 			),
 		onError: toastApiError("Couldn't sync commands"),
-	});
-}
-
-// ── WhatsApp device linking (Baileys tenant credentials) ─────────────────────
-// WhatsApp connects with NO token; a device is linked by minting a per-agent
-// tenant credential (the Baileys auth material). The live QR/pairing handshake
-// runs in the agent runtime over the credential's websocket_url.
-
-export function useWhatsappTenantCreds(accountId: string, enabled = true) {
-	const api = useApi();
-	return useQuery({
-		queryKey: keys.whatsappCreds(accountId),
-		queryFn: async () =>
-			whatsappCredentialMetadataForCache(
-				unwrap(
-					await api.GET("/v1/channels/whatsapp/{account_id}/tenant-creds", {
-						params: { path: { account_id: accountId } },
-					}),
-				),
-			),
-		enabled,
-	});
-}
-
-export function useCreateWhatsappTenantCred(accountId: string) {
-	const api = useApi();
-	const qc = useQueryClient();
-	return useSensitiveAction(async (vars: { agent_id?: string; agent_link_id?: string }) => {
-		try {
-			unwrap(
-				await api.POST("/v1/channels/whatsapp/{account_id}/tenant-creds", {
-					params: { path: { account_id: accountId } },
-					// `device` defaults to 1 server-side but the generated client types
-					// it required — send the primary device.
-					body: { device: 1, ...vars },
-				}),
-			);
-			qc.invalidateQueries({ queryKey: keys.whatsappCreds(accountId) });
-			toast.success("WhatsApp access is ready", {
-				description: "Open the agent’s Channels page to finish pairing the number.",
-			});
-		} catch (error) {
-			toastApiError("Couldn't link WhatsApp device")(error);
-			throw error;
-		}
-	});
-}
-
-export function useRevokeWhatsappTenantCred(accountId: string) {
-	const api = useApi();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (credentialId: string) =>
-			unwrap(
-				await api.DELETE("/v1/channels/whatsapp/{account_id}/tenant-creds/{credential_id}", {
-					params: { path: { account_id: accountId, credential_id: credentialId } },
-				}),
-			),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: keys.whatsappCreds(accountId) });
-			toast.success("WhatsApp device unlinked");
-		},
-		onError: toastApiError("Couldn't unlink device"),
 	});
 }

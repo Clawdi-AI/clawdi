@@ -101,7 +101,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
     background: set[asyncio.Task[None]] = set()
     whatsapp_sidecars = ConfiguredWhatsAppSidecarRegistry(
-        settings.channel_whatsapp_baileys_sidecars_json
+        settings.channel_whatsapp_baileys_sidecars_json.get_secret_value()
     )
     await start_postgres_listener()
     try:

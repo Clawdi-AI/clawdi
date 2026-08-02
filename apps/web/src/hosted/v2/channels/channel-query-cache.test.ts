@@ -42,7 +42,6 @@ describe("removeDeletedChannelQueries", () => {
 		qc.setQueryData(channelKeys.agentLinks(channelId), [{ id: "link_1" }]);
 		qc.setQueryData(channelKeys.bindings(channelId), [{ id: "binding_1" }]);
 		qc.setQueryData(channelKeys.activity(channelId), [{ id: "activity_1" }]);
-		qc.setQueryData(channelKeys.whatsappCreds(channelId), [{ id: "credential_1" }]);
 		qc.setQueryData(channelKeys.channel("channel_other"), { id: "channel_other" });
 		qc.setQueryData(["agent-channel-links", "agent_1"], [{ account_id: channelId }]);
 
@@ -53,7 +52,6 @@ describe("removeDeletedChannelQueries", () => {
 		expect(qc.getQueryData(channelKeys.agentLinks(channelId))).toBeUndefined();
 		expect(qc.getQueryData(channelKeys.bindings(channelId))).toBeUndefined();
 		expect(qc.getQueryData(channelKeys.activity(channelId))).toBeUndefined();
-		expect(qc.getQueryData(channelKeys.whatsappCreds(channelId))).toBeUndefined();
 		expect(qc.getQueryData<{ id: string }>(channelKeys.channel("channel_other"))).toEqual({
 			id: "channel_other",
 		});

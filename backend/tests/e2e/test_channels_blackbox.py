@@ -627,24 +627,6 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
             assert bluebubbles["data"]["private_api"] is True
             assert bluebubbles["data"]["server_version"] == "clawdi"
 
-            wa_creds = await _request_json(
-                client,
-                "POST",
-                f"/v1/channels/whatsapp/{whatsapp['id']}/tenant-creds",
-                expected=201,
-                headers=backend.auth_headers,
-                json={"phone_user": whatsapp_phone, "name": f"wa-{run_id}"},
-            )
-            assert wa_creds["jid"].endswith("@s.whatsapp.net")
-            assert wa_creds["auth_cert"]["ISSUER"] == "clawdi"
-            wa_cert = await _request_json(
-                client,
-                "GET",
-                f"/v1/channels/whatsapp/{whatsapp['id']}/auth-cert",
-                headers=backend.auth_headers,
-            )
-            assert wa_cert == wa_creds["auth_cert"]
-
             debug_health = await _request_json(
                 client,
                 "GET",

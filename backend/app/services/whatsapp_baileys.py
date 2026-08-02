@@ -11,7 +11,6 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
-from urllib.parse import urlencode, urlparse, urlunparse
 from uuid import UUID
 
 from cryptography.hazmat.primitives import padding, serialization
@@ -35,12 +34,6 @@ from app.models.channel import (
     ChannelWhatsAppAuthCert,
 )
 from app.services.vault_crypto import decrypt, encrypt
-
-WA_MEDIA_HOST = "mmg.whatsapp.net"
-MEDIA_PROXY_PREFIX = "/v1/channels/whatsapp/media"
-# Proxy URLs minted before the /v1 migration are persisted inside message
-# payloads; keep parsing them.
-_LEGACY_MEDIA_PROXY_PREFIX = "/api/channels/whatsapp/media"
 
 BinaryNode = dict[str, Any]
 RelayDropReason = Literal[
@@ -147,13 +140,6 @@ class StoredWhatsAppCredential:
 
 
 @dataclass(frozen=True)
-class WhatsAppCredentialReplacementKey:
-    name: str | None
-    jid: str
-    lid: str | None
-
-
-@dataclass(frozen=True)
 class RelayDecision:
     action: Literal["relay", "drop"]
     node: BinaryNode | None = None
@@ -191,26 +177,6 @@ class WhatsAppSyntheticDeliveryResult:
     signal_jid: str
     enc_type: Literal["pkmsg", "msg", "skmsg"]
     attrs: dict[str, str]
-
-
-@dataclass(frozen=True)
-class WhatsAppCloudOutboundPayload:
-    outcome: Literal["sendable", "native_required", "unsupported"]
-    kind: str
-    text: str | None = None
-    provider_payload: dict[str, Any] | None = None
-    reason: str | None = None
-
-
-@dataclass(frozen=True)
-class WhatsAppMediaReuploadCandidate:
-    kind: Literal["image", "audio"]
-    source_url: str
-    mimetype: str
-    media_key: bytes
-    file_sha256: bytes | None = None
-    file_enc_sha256: bytes | None = None
-    text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -414,49 +380,34 @@ def prepare_whatsapp_inbound_delivery(
     payload = event.payload
     if not isinstance(payload, dict):
         raise ValueError("whatsapp inbox event payload must be an object")
-    from_jid = _optional_payload_str(payload.get("fromJid")) or event.external_chat_id
-    participant_jid: str | None = None
+    if payload.get("schemaVersion") != "clawdi.whatsappBaileysProviderEvent.v1":
+        raise ValueError("whatsapp inbox event payload schema is invalid")
     key = payload.get("key")
-    if isinstance(key, dict):
-        from_jid = _optional_payload_str(key.get("remoteJid")) or from_jid
-        participant_jid = _optional_payload_str(key.get("participant"))
+    if not isinstance(key, dict):
+        raise ValueError("whatsapp inbox event key must be an object")
+    from_jid = _optional_payload_str(key.get("remoteJid"))
     if not from_jid:
         raise ValueError("whatsapp inbox event missing source jid")
-    message_id = event.provider_message_id or _optional_payload_str(payload.get("id"))
-    if message_id is None and isinstance(key, dict):
-        message_id = _optional_payload_str(key.get("id"))
+    message_id = event.provider_message_id or _optional_payload_str(key.get("id"))
     if not message_id:
         raise ValueError("whatsapp inbox event missing message id")
-    sender_lid_jid = _optional_payload_str(payload.get("senderLidJid"))
-    sender_pn_jid = _optional_payload_str(payload.get("senderPnJid"))
-    participant_lid_jid = _optional_payload_str(payload.get("participantLidJid"))
-    participant_pn_jid = (
-        _optional_payload_str(payload.get("participantPnJid"))
-        or _optional_payload_str(payload.get("participantPn"))
-        or _optional_payload_str(payload.get("participantAltJid"))
+    remote_jid_alt = _optional_payload_str(key.get("remoteJidAlt"))
+    participant_jid = _optional_payload_str(key.get("participant"))
+    participant_alt = _optional_payload_str(key.get("participantAlt"))
+    sender_lid_jid, sender_pn_jid = _whatsapp_identity_aliases(from_jid, remote_jid_alt)
+    participant_lid_jid, participant_pn_jid = _whatsapp_identity_aliases(
+        participant_jid,
+        participant_alt,
     )
-    push_name = (
-        _optional_payload_str(payload.get("pushName"))
-        or _optional_payload_str(payload.get("notify"))
-        or _optional_payload_str(payload.get("notifyName"))
-    )
+    push_name = _optional_payload_str(payload.get("pushName"))
+    timestamp_value = payload.get("messageTimestamp")
     timestamp = (
-        _optional_payload_int(payload.get("messageTimestamp"))
-        or _optional_payload_int(payload.get("timestamp"))
-        or _optional_payload_int(payload.get("t"))
+        timestamp_value
+        if isinstance(timestamp_value, int)
+        and not isinstance(timestamp_value, bool)
+        and timestamp_value > 0
+        else None
     )
-    signal_jid = participant_jid or from_jid
-    if signal_jid.endswith("@lid"):
-        if participant_jid is not None:
-            participant_lid_jid = participant_lid_jid or signal_jid
-            participant_pn_jid = participant_pn_jid or _optional_payload_str(payload.get("altJid"))
-        else:
-            sender_lid_jid = sender_lid_jid or signal_jid
-            sender_pn_jid = (
-                sender_pn_jid
-                or _optional_payload_str(payload.get("participantPn"))
-                or _optional_payload_str(payload.get("altJid"))
-            )
     return WhatsAppPreparedInboundDelivery(
         sequence=event.sequence,
         message_id=message_id,
@@ -474,588 +425,62 @@ def prepare_whatsapp_inbound_delivery(
 
 
 def whatsapp_message_proto_bytes(payload: dict[str, Any], text: str | None) -> bytes:
-    message = payload.get("message")
-    message_dict = message if isinstance(message, dict) else {}
-    encoded_message = _whatsapp_message_from_payload(message_dict)
-    if encoded_message is not None:
-        return encoded_message
-    if text is not None:
-        return _proto_bytes_field(1, text.encode("utf-8"))
-    if message_dict:
-        return json.dumps(message_dict, sort_keys=True, separators=(",", ":"), default=str).encode(
-            "utf-8"
-        )
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    del text
+    exact = payload.get("messageProtoBase64")
+    if not isinstance(exact, str):
+        raise ValueError("whatsapp inbox event is missing exact message proto")
+    try:
+        decoded = base64.b64decode(exact, validate=True)
+    except ValueError as exc:
+        raise ValueError("whatsapp inbox event contains invalid message proto") from exc
+    if not decoded:
+        raise ValueError("whatsapp inbox event contains empty message proto")
+    return decoded
 
 
-def whatsapp_cloud_outbound_payload_from_proto(
-    message_proto: bytes,
-    *,
-    conversation: str | None = None,
-) -> WhatsAppCloudOutboundPayload:
-    if conversation is not None:
-        return _whatsapp_text_cloud_payload(
-            conversation,
-            kind="conversation",
-            context_message_id=None,
-        )
+def whatsapp_text_message_proto(text: str) -> bytes:
+    return _proto_bytes_field(1, text.encode("utf-8"))
 
+
+def whatsapp_text_from_message_proto(message_proto: bytes) -> str | None:
     try:
         fields = _decode_protobuf_fields(message_proto)
     except ValueError:
-        return WhatsAppCloudOutboundPayload(
-            outcome="unsupported",
-            kind="unknown",
-            reason="proto-decode-failed",
-        )
-
-    conversation_text = _optional_proto_string(fields, 1)
-    if conversation_text is not None:
-        return _whatsapp_text_cloud_payload(
-            conversation_text,
-            kind="conversation",
-            context_message_id=None,
-        )
-
+        return None
+    conversation = _optional_proto_string(fields, 1)
+    if conversation is not None:
+        return conversation
     extended_text = fields.get(6)
-    if isinstance(extended_text, bytes):
-        return _extended_text_cloud_payload(extended_text)
-
-    image = fields.get(3)
-    if isinstance(image, bytes):
-        return _image_cloud_payload(image)
-
-    audio = fields.get(8)
-    if isinstance(audio, bytes):
-        return _audio_cloud_payload(audio)
-
-    return WhatsAppCloudOutboundPayload(
-        outcome="native_required",
-        kind="unknown",
-        reason="baileys-native-proto-required",
-    )
-
-
-def whatsapp_media_reupload_candidate_from_proto(
-    message_proto: bytes,
-) -> WhatsAppMediaReuploadCandidate | None:
+    if not isinstance(extended_text, bytes):
+        return None
     try:
-        fields = _decode_protobuf_fields(message_proto)
+        return _optional_proto_string(_decode_protobuf_fields(extended_text), 1)
     except ValueError:
         return None
-
-    image = fields.get(3)
-    if isinstance(image, bytes):
-        return _image_media_reupload_candidate(image)
-
-    audio = fields.get(8)
-    if isinstance(audio, bytes):
-        return _audio_media_reupload_candidate(audio)
-
-    return None
-
-
-def _extended_text_cloud_payload(data: bytes) -> WhatsAppCloudOutboundPayload:
-    try:
-        fields = _decode_protobuf_fields(data)
-    except ValueError:
-        return WhatsAppCloudOutboundPayload(
-            outcome="unsupported",
-            kind="extended_text",
-            reason="proto-decode-failed",
-        )
-    text = _optional_proto_string(fields, 1)
-    if text is None:
-        return WhatsAppCloudOutboundPayload(
-            outcome="unsupported",
-            kind="extended_text",
-            reason="text-missing",
-        )
-    context_message_id: str | None = None
-    context_info = fields.get(17)
-    if isinstance(context_info, bytes):
-        try:
-            context_fields = _decode_protobuf_fields(context_info)
-        except ValueError:
-            context_fields = {}
-        context_message_id = _optional_proto_string(context_fields, 1)
-    return _whatsapp_text_cloud_payload(
-        text,
-        kind="extended_text",
-        context_message_id=context_message_id,
-    )
-
-
-def _image_cloud_payload(data: bytes) -> WhatsAppCloudOutboundPayload:
-    try:
-        fields = _decode_protobuf_fields(data)
-    except ValueError:
-        return WhatsAppCloudOutboundPayload(
-            outcome="unsupported",
-            kind="image",
-            reason="proto-decode-failed",
-        )
-    url = _optional_proto_string(fields, 1)
-    caption = _optional_proto_string(fields, 3)
-    media_key = fields.get(8)
-    direct_path = _optional_proto_string(fields, 11)
-    if media_key is not None or direct_path is not None:
-        return WhatsAppCloudOutboundPayload(
-            outcome="native_required",
-            kind="image",
-            text=caption,
-            reason="media-reupload-required",
-        )
-    if url is None:
-        return WhatsAppCloudOutboundPayload(
-            outcome="unsupported",
-            kind="image",
-            text=caption,
-            reason="image-media-reference-missing",
-        )
-    payload: dict[str, Any] = {
-        "type": "image",
-        "image": {"link": url},
-    }
-    if caption:
-        payload["image"]["caption"] = caption
-    return WhatsAppCloudOutboundPayload(
-        outcome="sendable",
-        kind="image",
-        text=caption,
-        provider_payload=payload,
-    )
-
-
-def _audio_cloud_payload(data: bytes) -> WhatsAppCloudOutboundPayload:
-    try:
-        fields = _decode_protobuf_fields(data)
-    except ValueError:
-        return WhatsAppCloudOutboundPayload(
-            outcome="unsupported",
-            kind="audio",
-            reason="proto-decode-failed",
-        )
-    url = _optional_proto_string(fields, 1)
-    ptt = fields.get(6)
-    media_key = fields.get(7)
-    direct_path = _optional_proto_string(fields, 9)
-    if ptt:
-        return WhatsAppCloudOutboundPayload(
-            outcome="native_required",
-            kind="audio",
-            reason="audio-ptt-native-required",
-        )
-    if media_key is not None or direct_path is not None:
-        return WhatsAppCloudOutboundPayload(
-            outcome="native_required",
-            kind="audio",
-            reason="media-reupload-required",
-        )
-    if url is None:
-        return WhatsAppCloudOutboundPayload(
-            outcome="unsupported",
-            kind="audio",
-            reason="audio-media-reference-missing",
-        )
-    return WhatsAppCloudOutboundPayload(
-        outcome="sendable",
-        kind="audio",
-        provider_payload={
-            "type": "audio",
-            "audio": {"link": url},
-        },
-    )
-
-
-def _image_media_reupload_candidate(data: bytes) -> WhatsAppMediaReuploadCandidate | None:
-    try:
-        fields = _decode_protobuf_fields(data)
-    except ValueError:
-        return None
-    media_key = fields.get(8)
-    if not isinstance(media_key, bytes):
-        return None
-    source_url = _media_reupload_source_url(
-        _optional_proto_string(fields, 1),
-        _optional_proto_string(fields, 11),
-    )
-    if source_url is None:
-        return None
-    return WhatsAppMediaReuploadCandidate(
-        kind="image",
-        source_url=source_url,
-        mimetype=_optional_proto_string(fields, 2) or "image/jpeg",
-        media_key=media_key,
-        file_sha256=_optional_proto_bytes(fields, 4),
-        file_enc_sha256=_optional_proto_bytes(fields, 9),
-        text=_optional_proto_string(fields, 3),
-    )
-
-
-def _audio_media_reupload_candidate(data: bytes) -> WhatsAppMediaReuploadCandidate | None:
-    try:
-        fields = _decode_protobuf_fields(data)
-    except ValueError:
-        return None
-    if fields.get(6):
-        return None
-    media_key = fields.get(7)
-    if not isinstance(media_key, bytes):
-        return None
-    source_url = _media_reupload_source_url(
-        _optional_proto_string(fields, 1),
-        _optional_proto_string(fields, 9),
-    )
-    if source_url is None:
-        return None
-    return WhatsAppMediaReuploadCandidate(
-        kind="audio",
-        source_url=source_url,
-        mimetype=_optional_proto_string(fields, 2) or "audio/ogg",
-        media_key=media_key,
-        file_sha256=_optional_proto_bytes(fields, 3),
-        file_enc_sha256=_optional_proto_bytes(fields, 8),
-        text=None,
-    )
-
-
-def _media_reupload_source_url(url: str | None, direct_path: str | None) -> str | None:
-    if url:
-        return url
-    if direct_path is None:
-        return None
-    path = direct_path if direct_path.startswith("/") else f"/{direct_path}"
-    return f"https://{WA_MEDIA_HOST}{path}"
-
-
-def _whatsapp_text_cloud_payload(
-    text: str,
-    *,
-    kind: str,
-    context_message_id: str | None,
-) -> WhatsAppCloudOutboundPayload:
-    payload: dict[str, Any] = {
-        "type": "text",
-        "text": {"body": text},
-    }
-    if context_message_id is not None:
-        payload["context"] = {"message_id": context_message_id}
-    return WhatsAppCloudOutboundPayload(
-        outcome="sendable",
-        kind=kind,
-        text=text,
-        provider_payload=payload,
-    )
-
-
-def _whatsapp_message_from_payload(message: dict[str, Any]) -> bytes | None:
-    parts: list[bytes] = []
-
-    conversation = _optional_payload_str(message.get("conversation"))
-    if conversation is not None:
-        parts.append(_proto_bytes_field(1, conversation.encode("utf-8")))
-
-    sender_key_distribution = message.get("senderKeyDistributionMessage")
-    if isinstance(sender_key_distribution, dict):
-        encoded = _sender_key_distribution_message_proto(sender_key_distribution)
-        if encoded:
-            parts.append(_proto_message_field(2, encoded))
-
-    image = message.get("imageMessage")
-    if isinstance(image, dict):
-        encoded = _image_message_proto(image)
-        if encoded:
-            parts.append(_proto_message_field(3, encoded))
-
-    audio = message.get("audioMessage")
-    if isinstance(audio, dict):
-        encoded = _audio_message_proto(audio)
-        if encoded:
-            parts.append(_proto_message_field(8, encoded))
-
-    extended = message.get("extendedTextMessage")
-    if isinstance(extended, dict):
-        encoded = _extended_text_message_proto(extended)
-        if encoded:
-            parts.append(_proto_message_field(6, encoded))
-
-    message_context = message.get("messageContextInfo")
-    if isinstance(message_context, dict):
-        encoded = _message_context_info_proto(message_context)
-        if encoded:
-            parts.append(_proto_message_field(35, encoded))
-
-    if not parts:
-        return None
-    return b"".join(parts)
-
-
-def _sender_key_distribution_message_proto(message: dict[str, Any]) -> bytes:
-    parts: list[bytes] = []
-    group_id = _optional_payload_str(message.get("groupId"))
-    if group_id is not None:
-        parts.append(_proto_bytes_field(1, group_id.encode("utf-8")))
-    axolotl = _optional_payload_bytes(message.get("axolotlSenderKeyDistributionMessage"))
-    if axolotl is not None:
-        parts.append(_proto_bytes_field(2, axolotl))
-    return b"".join(parts)
-
-
-def _extended_text_message_proto(message: dict[str, Any]) -> bytes:
-    parts: list[bytes] = []
-    text = _optional_payload_str(message.get("text"))
-    if text is not None:
-        parts.append(_proto_bytes_field(1, text.encode("utf-8")))
-    matched_text = _optional_payload_str(message.get("matchedText"))
-    if matched_text is not None:
-        parts.append(_proto_bytes_field(2, matched_text.encode("utf-8")))
-    description = _optional_payload_str(message.get("description"))
-    if description is not None:
-        parts.append(_proto_bytes_field(5, description.encode("utf-8")))
-    title = _optional_payload_str(message.get("title"))
-    if title is not None:
-        parts.append(_proto_bytes_field(6, title.encode("utf-8")))
-    preview_type = _optional_payload_int(message.get("previewType"))
-    if preview_type is not None:
-        parts.append(_proto_varint_field(10, preview_type))
-    jpeg_thumbnail = _optional_payload_bytes(message.get("jpegThumbnail"))
-    if jpeg_thumbnail is not None:
-        parts.append(_proto_bytes_field(16, jpeg_thumbnail))
-    context_info = message.get("contextInfo")
-    if isinstance(context_info, dict):
-        encoded = _context_info_proto(context_info)
-        if encoded:
-            parts.append(_proto_message_field(17, encoded))
-    do_not_play_inline = _optional_payload_bool(message.get("doNotPlayInline"))
-    if do_not_play_inline is not None:
-        parts.append(_proto_varint_field(18, int(do_not_play_inline)))
-    return b"".join(parts)
-
-
-def _context_info_proto(message: dict[str, Any]) -> bytes:
-    parts: list[bytes] = []
-    stanza_id = _optional_payload_str(message.get("stanzaId"))
-    if stanza_id is not None:
-        parts.append(_proto_bytes_field(1, stanza_id.encode("utf-8")))
-    participant = _optional_payload_str(message.get("participant"))
-    if participant is not None:
-        parts.append(_proto_bytes_field(2, participant.encode("utf-8")))
-    quoted = message.get("quotedMessage")
-    if isinstance(quoted, dict):
-        encoded = _whatsapp_message_from_payload(quoted)
-        if encoded:
-            parts.append(_proto_message_field(3, encoded))
-    remote_jid = _optional_payload_str(message.get("remoteJid"))
-    if remote_jid is not None:
-        parts.append(_proto_bytes_field(4, remote_jid.encode("utf-8")))
-    mentioned = message.get("mentionedJid")
-    if isinstance(mentioned, list):
-        for jid in mentioned:
-            mentioned_jid = _optional_payload_str(jid)
-            if mentioned_jid is not None:
-                parts.append(_proto_bytes_field(15, mentioned_jid.encode("utf-8")))
-    forwarding_score = _optional_payload_int(message.get("forwardingScore"))
-    if forwarding_score is not None:
-        parts.append(_proto_varint_field(21, forwarding_score))
-    is_forwarded = _optional_payload_bool(message.get("isForwarded"))
-    if is_forwarded is not None:
-        parts.append(_proto_varint_field(22, int(is_forwarded)))
-    expiration = _optional_payload_int(message.get("expiration"))
-    if expiration is not None:
-        parts.append(_proto_varint_field(25, expiration))
-    ephemeral_setting_timestamp = _optional_payload_int(message.get("ephemeralSettingTimestamp"))
-    if ephemeral_setting_timestamp is not None:
-        parts.append(_proto_varint_field(26, ephemeral_setting_timestamp))
-    ephemeral_shared_secret = _optional_payload_bytes(message.get("ephemeralSharedSecret"))
-    if ephemeral_shared_secret is not None:
-        parts.append(_proto_bytes_field(27, ephemeral_shared_secret))
-    return b"".join(parts)
-
-
-def _image_message_proto(message: dict[str, Any]) -> bytes:
-    parts: list[bytes] = []
-    for field_number, key in ((1, "url"), (2, "mimetype"), (3, "caption")):
-        value = _optional_payload_str(message.get(key))
-        if value is not None:
-            parts.append(_proto_bytes_field(field_number, value.encode("utf-8")))
-    file_sha256 = _optional_payload_bytes(message.get("fileSha256"))
-    if file_sha256 is not None:
-        parts.append(_proto_bytes_field(4, file_sha256))
-    for field_number, key in ((5, "fileLength"), (6, "height"), (7, "width")):
-        value = _optional_payload_int(message.get(key))
-        if value is not None:
-            parts.append(_proto_varint_field(field_number, value))
-    media_key = _optional_payload_bytes(message.get("mediaKey"))
-    if media_key is not None:
-        parts.append(_proto_bytes_field(8, media_key))
-    file_enc_sha256 = _optional_payload_bytes(message.get("fileEncSha256"))
-    if file_enc_sha256 is not None:
-        parts.append(_proto_bytes_field(9, file_enc_sha256))
-    direct_path = _optional_payload_str(message.get("directPath"))
-    if direct_path is not None:
-        parts.append(_proto_bytes_field(11, direct_path.encode("utf-8")))
-    media_key_timestamp = _optional_payload_int(message.get("mediaKeyTimestamp"))
-    if media_key_timestamp is not None:
-        parts.append(_proto_varint_field(12, media_key_timestamp))
-    jpeg_thumbnail = _optional_payload_bytes(message.get("jpegThumbnail"))
-    if jpeg_thumbnail is not None:
-        parts.append(_proto_bytes_field(16, jpeg_thumbnail))
-    context_info = message.get("contextInfo")
-    if isinstance(context_info, dict):
-        encoded = _context_info_proto(context_info)
-        if encoded:
-            parts.append(_proto_message_field(17, encoded))
-    view_once = _optional_payload_bool(message.get("viewOnce"))
-    if view_once is not None:
-        parts.append(_proto_varint_field(25, int(view_once)))
-    return b"".join(parts)
-
-
-def _audio_message_proto(message: dict[str, Any]) -> bytes:
-    parts: list[bytes] = []
-    for field_number, key in ((1, "url"), (2, "mimetype")):
-        value = _optional_payload_str(message.get(key))
-        if value is not None:
-            parts.append(_proto_bytes_field(field_number, value.encode("utf-8")))
-    file_sha256 = _optional_payload_bytes(message.get("fileSha256"))
-    if file_sha256 is not None:
-        parts.append(_proto_bytes_field(3, file_sha256))
-    for field_number, key in ((4, "fileLength"), (5, "seconds")):
-        value = _optional_payload_int(message.get(key))
-        if value is not None:
-            parts.append(_proto_varint_field(field_number, value))
-    ptt = _optional_payload_bool(message.get("ptt"))
-    if ptt is not None:
-        parts.append(_proto_varint_field(6, int(ptt)))
-    media_key = _optional_payload_bytes(message.get("mediaKey"))
-    if media_key is not None:
-        parts.append(_proto_bytes_field(7, media_key))
-    file_enc_sha256 = _optional_payload_bytes(message.get("fileEncSha256"))
-    if file_enc_sha256 is not None:
-        parts.append(_proto_bytes_field(8, file_enc_sha256))
-    direct_path = _optional_payload_str(message.get("directPath"))
-    if direct_path is not None:
-        parts.append(_proto_bytes_field(9, direct_path.encode("utf-8")))
-    media_key_timestamp = _optional_payload_int(message.get("mediaKeyTimestamp"))
-    if media_key_timestamp is not None:
-        parts.append(_proto_varint_field(10, media_key_timestamp))
-    context_info = message.get("contextInfo")
-    if isinstance(context_info, dict):
-        encoded = _context_info_proto(context_info)
-        if encoded:
-            parts.append(_proto_message_field(17, encoded))
-    streaming_sidecar = _optional_payload_bytes(message.get("streamingSidecar"))
-    if streaming_sidecar is not None:
-        parts.append(_proto_bytes_field(18, streaming_sidecar))
-    waveform = _optional_payload_bytes(message.get("waveform"))
-    if waveform is not None:
-        parts.append(_proto_bytes_field(19, waveform))
-    view_once = _optional_payload_bool(message.get("viewOnce"))
-    if view_once is not None:
-        parts.append(_proto_varint_field(21, int(view_once)))
-    accessibility_label = _optional_payload_str(message.get("accessibilityLabel"))
-    if accessibility_label is not None:
-        parts.append(_proto_bytes_field(22, accessibility_label.encode("utf-8")))
-    media_key_domain = _optional_payload_int(message.get("mediaKeyDomain"))
-    if media_key_domain is not None:
-        parts.append(_proto_varint_field(23, media_key_domain))
-    return b"".join(parts)
-
-
-def _message_context_info_proto(message: dict[str, Any]) -> bytes:
-    parts: list[bytes] = []
-    message_secret = _optional_payload_bytes(message.get("messageSecret"))
-    if message_secret is not None:
-        parts.append(_proto_bytes_field(3, message_secret))
-    padding_bytes = _optional_payload_bytes(message.get("paddingBytes"))
-    if padding_bytes is not None:
-        parts.append(_proto_bytes_field(4, padding_bytes))
-    message_addon_duration = _optional_payload_int(message.get("messageAddOnDurationInSecs"))
-    if message_addon_duration is not None:
-        parts.append(_proto_varint_field(5, message_addon_duration))
-    bot_message_secret = _optional_payload_bytes(message.get("botMessageSecret"))
-    if bot_message_secret is not None:
-        parts.append(_proto_bytes_field(6, bot_message_secret))
-    reporting_token_version = _optional_payload_int(message.get("reportingTokenVersion"))
-    if reporting_token_version is not None:
-        parts.append(_proto_varint_field(8, reporting_token_version))
-    return b"".join(parts)
 
 
 def _optional_payload_str(value: Any) -> str | None:
-    if value is None:
-        return None
     if isinstance(value, str):
         stripped = value.strip()
         return stripped or None
-    if isinstance(value, int):
-        return str(value)
     return None
 
 
-def _optional_payload_bytes(value: Any) -> bytes | None:
-    if value is None:
-        return None
-    if isinstance(value, bytes):
-        return value
-    if isinstance(value, bytearray):
-        return bytes(value)
-    if isinstance(value, str):
-        stripped = value.strip()
-        for candidate in (
-            stripped,
-            stripped.rstrip("=") + ("=" * (-len(stripped.rstrip("=")) % 4)),
-        ):
-            try:
-                return base64.b64decode(candidate, validate=True)
-            except ValueError:
-                continue
-        return None
-    if isinstance(value, list) and all(isinstance(item, int) for item in value):
-        if all(0 <= item <= 255 for item in value):
-            return bytes(value)
-        return None
-    if isinstance(value, dict) and value.get("type") == "Buffer":
-        data = value.get("data")
-        if isinstance(data, list) and all(isinstance(item, int) for item in data):
-            if all(0 <= item <= 255 for item in data):
-                return bytes(data)
-    return None
-
-
-def _optional_payload_bool(value: Any) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    return None
-
-
-def _optional_payload_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value if value > 0 else None
-    if isinstance(value, str):
-        stripped = value.strip()
-        if stripped.isdigit():
-            parsed = int(stripped)
-            return parsed if parsed > 0 else None
-    return None
-
-
-def _proto_varint_field(field_number: int, value: int) -> bytes:
-    return _proto_key(field_number, 0) + _proto_varint(value)
+def _whatsapp_identity_aliases(
+    primary: str | None,
+    alternate: str | None,
+) -> tuple[str | None, str | None]:
+    candidates = (primary, alternate)
+    lid = next((jid for jid in candidates if jid and jid.endswith("@lid")), None)
+    pn = next((jid for jid in candidates if jid and jid.endswith("@s.whatsapp.net")), None)
+    return lid, pn
 
 
 def _whatsapp_inbox_message_debug(payload: dict[str, Any], text: str | None) -> dict[str, Any]:
-    message = payload.get("message")
-    message_dict = message if isinstance(message, dict) else {}
     proto_bytes = len(whatsapp_message_proto_bytes(payload, text))
     debug: dict[str, Any] = {
-        "topLevelKinds": sorted(key for key, value in message_dict.items() if value is not None),
         "protoBytes": proto_bytes,
+        "protoSha256": hashlib.sha256(whatsapp_message_proto_bytes(payload, text)).hexdigest(),
     }
     if text is not None:
         debug["textLength"] = len(text)
@@ -1097,7 +522,7 @@ async def forward_iq_over(
         response = query(upstream_node, timeout_ms)
         if inspect.isawaitable(response):
             response = await response
-    except Exception:  # noqa: BLE001 - shared runtime falls back to emulator ack on upstream failure.
+    except Exception:  # noqa: BLE001 - provider bridge falls back to emulator ack on failure.
         return None
     if not isinstance(response, dict):
         return None
@@ -1481,7 +906,7 @@ async def save_whatsapp_group_sender_keys(
     return credential
 
 
-def mint_tenant_creds(
+def mint_whatsapp_synthetic_creds(
     *,
     tenant_id: str,
     phone_user: str | None = None,
@@ -1541,23 +966,6 @@ def mint_tenant_creds(
     )
 
 
-def apply_whatsapp_self_identity(
-    creds: dict[str, Any],
-    *,
-    self_identity: dict[str, str | None],
-    fallback_name: str,
-) -> str:
-    jid = str(self_identity["id"])
-    me = {
-        "id": jid,
-        "name": self_identity.get("name") or fallback_name,
-    }
-    if self_identity.get("lid"):
-        me["lid"] = str(self_identity["lid"])
-    creds["me"] = me
-    return jid
-
-
 def parse_agent_bundle(req: BinaryNode) -> AgentBundle:
     if req.get("tag") != "iq":
         raise ValueError("agent-bundle: expected tag=iq")
@@ -1602,12 +1010,12 @@ def parse_agent_bundle(req: BinaryNode) -> AgentBundle:
 class SignalSender:
     """Persistent synthetic WhatsApp Signal sender state.
 
-    Implements the libsignal subset used by the legacy channel bridge: X3DH pre-key session
-    setup, Double Ratchet message chains, WhisperMessage/PreKeyWhisperMessage
-    framing, and serializable state. The implementation intentionally follows
-    the old Node `libsignal` package so real Baileys clients can decrypt
-    backend-synthesized inbound messages and the backend can decrypt their
-    replies without a Node runtime in production.
+    Implements the libsignal subset used by the Link-scoped Noise emulator:
+    X3DH pre-key session setup, Double Ratchet message chains,
+    WhisperMessage/PreKeyWhisperMessage framing, and serializable state. The
+    implementation intentionally follows the old Node `libsignal` package so
+    stock Baileys clients can decrypt backend-synthesized inbound messages and
+    the backend can decrypt their replies.
     """
 
     signed_pre_key_id = 1
@@ -2004,41 +1412,6 @@ def decide_whatsapp_relay(
     )
 
 
-def rewrite_whatsapp_media_to_upstream_url(
-    incoming_url: str,
-    *,
-    upstream_host: str = WA_MEDIA_HOST,
-) -> str | None:
-    parsed = urlparse(incoming_url)
-    for prefix in (MEDIA_PROXY_PREFIX, _LEGACY_MEDIA_PROXY_PREFIX):
-        if parsed.path.startswith(prefix):
-            direct_path = parsed.path[len(prefix) :]
-            break
-    else:
-        return None
-    if not direct_path.startswith("/"):
-        return None
-    return urlunparse(
-        (
-            "https",
-            upstream_host,
-            direct_path,
-            "",
-            parsed.query,
-            "",
-        )
-    )
-
-
-def rewrite_whatsapp_media_to_proxy_url(upstream_url: str, proxy_base_url: str) -> str:
-    parsed = urlparse(upstream_url)
-    if parsed.hostname != WA_MEDIA_HOST:
-        raise ValueError(f"media-proxy: refusing to rewrite non-WA url {upstream_url}")
-    base = proxy_base_url.rstrip("/")
-    query = f"?{parsed.query}" if parsed.query else ""
-    return f"{base}{MEDIA_PROXY_PREFIX}{parsed.path}{query}"
-
-
 async def find_whatsapp_binding_by_jids(
     db: AsyncSession,
     *,
@@ -2122,6 +1495,9 @@ async def load_or_create_whatsapp_auth_cert(
     *,
     account: ChannelAccount,
 ) -> WhatsAppAuthCert:
+    await db.execute(
+        select(ChannelAccount.id).where(ChannelAccount.id == account.id).with_for_update()
+    )
     result = await db.execute(
         select(ChannelWhatsAppAuthCert).where(ChannelWhatsAppAuthCert.account_id == account.id)
     )
@@ -2192,25 +1568,12 @@ async def mint_whatsapp_agent_credential(
     name: str | None = None,
     self_identity: dict[str, str | None] | None = None,
 ) -> StoredWhatsAppCredential:
-    now = datetime.now(UTC)
-    minted = mint_tenant_creds(
+    minted = mint_whatsapp_synthetic_creds(
         tenant_id=str(bot_agent_link_id),
         phone_user=phone_user,
         device=device,
         name=name,
         self_identity=self_identity,
-    )
-    replacement_key = whatsapp_credential_replacement_key(
-        name=name,
-        jid=minted.jid,
-        self_identity=self_identity,
-    )
-    await revoke_replaced_whatsapp_agent_credentials(
-        db,
-        account=account,
-        bot_agent_link_id=bot_agent_link_id,
-        replacement_key=replacement_key,
-        revoked_at=now,
     )
     serialized = serialize_creds(minted.creds)
     ciphertext, nonce = encrypt(serialized)
@@ -2229,78 +1592,11 @@ async def mint_whatsapp_agent_credential(
             name=name,
             phone_user=phone_user,
             self_identity=self_identity,
-            replacement_key=replacement_key,
         ),
     )
     db.add(credential)
     await db.flush()
     return StoredWhatsAppCredential(credential=credential, minted=minted)
-
-
-def whatsapp_credential_replacement_key(
-    *,
-    name: str | None,
-    jid: str,
-    self_identity: dict[str, str | None] | None,
-) -> WhatsAppCredentialReplacementKey:
-    return WhatsAppCredentialReplacementKey(
-        name=_clean_optional_whatsapp_text(name),
-        jid=jid,
-        lid=_clean_optional_whatsapp_text((self_identity or {}).get("lid")),
-    )
-
-
-async def revoke_replaced_whatsapp_agent_credentials(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    bot_agent_link_id: UUID,
-    replacement_key: WhatsAppCredentialReplacementKey,
-    revoked_at: datetime,
-) -> None:
-    result = await db.execute(
-        select(ChannelAgentCredential).where(
-            ChannelAgentCredential.account_id == account.id,
-            ChannelAgentCredential.bot_agent_link_id == bot_agent_link_id,
-            ChannelAgentCredential.provider == CHANNEL_PROVIDER_WHATSAPP,
-            ChannelAgentCredential.revoked_at.is_(None),
-        )
-    )
-    for credential in result.scalars():
-        if whatsapp_credential_replacement_keys_match(credential, replacement_key):
-            credential.revoked_at = revoked_at
-
-
-def whatsapp_credential_replacement_keys_match(
-    credential: ChannelAgentCredential,
-    replacement_key: WhatsAppCredentialReplacementKey,
-) -> bool:
-    existing_key = whatsapp_credential_replacement_key_for_existing_credential(credential)
-    if existing_key.name != replacement_key.name or existing_key.jid != replacement_key.jid:
-        return False
-    config = credential.config if isinstance(credential.config, dict) else {}
-    if not isinstance(config.get("replacement_key"), dict):
-        return True
-    return existing_key.lid == replacement_key.lid
-
-
-def whatsapp_credential_replacement_key_for_existing_credential(
-    credential: ChannelAgentCredential,
-) -> WhatsAppCredentialReplacementKey:
-    config = credential.config if isinstance(credential.config, dict) else {}
-    stored_key = config.get("replacement_key")
-    if isinstance(stored_key, dict):
-        jid = _clean_optional_whatsapp_text(stored_key.get("jid")) or credential.synthetic_jid
-        return WhatsAppCredentialReplacementKey(
-            name=_clean_optional_whatsapp_text(stored_key.get("name")),
-            jid=jid,
-            lid=_clean_optional_whatsapp_text(stored_key.get("lid")),
-        )
-    return WhatsAppCredentialReplacementKey(
-        name=_clean_optional_whatsapp_text(config.get("name")),
-        jid=credential.synthetic_jid,
-        lid=None,
-    )
 
 
 def whatsapp_agent_credential_config(
@@ -2309,16 +1605,10 @@ def whatsapp_agent_credential_config(
     name: str | None,
     phone_user: str | None,
     self_identity: dict[str, str | None] | None,
-    replacement_key: WhatsAppCredentialReplacementKey,
 ) -> dict[str, Any]:
     config: dict[str, Any] = {
         "device": device,
         "name": _clean_optional_whatsapp_text(name),
-        "replacement_key": {
-            "name": replacement_key.name,
-            "jid": replacement_key.jid,
-            "lid": replacement_key.lid,
-        },
     }
     clean_phone_user = _clean_optional_whatsapp_text(phone_user)
     if clean_phone_user is not None:
@@ -2373,31 +1663,8 @@ async def resolve_whatsapp_credential_by_identity(
     return result.scalar_one_or_none()
 
 
-async def revoke_whatsapp_agent_credential(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    credential_id: UUID,
-    user_id: UUID | None = None,
-) -> bool:
-    credential = await db.get(ChannelAgentCredential, credential_id)
-    if (
-        credential is None
-        or credential.account_id != account.id
-        or (user_id is not None and credential.user_id != user_id)
-        or credential.revoked_at is not None
-    ):
-        return False
-    credential.revoked_at = datetime.now(UTC)
-    return True
-
-
 def whatsapp_agent_websocket_url() -> str:
     return _public_ws_url("/v1/channels/whatsapp/baileys")
-
-
-def whatsapp_media_proxy_base_url() -> str:
-    return f"{settings.public_api_url.rstrip('/')}{MEDIA_PROXY_PREFIX}"
 
 
 def _x25519_key_pair() -> dict[str, bytes]:
@@ -2825,11 +2092,6 @@ def _optional_proto_string(fields: Mapping[int, Any], field: int) -> str | None:
     if not isinstance(value, bytes):
         return None
     return value.decode("utf-8", errors="replace")
-
-
-def _optional_proto_bytes(fields: Mapping[int, Any], field: int) -> bytes | None:
-    value = fields.get(field)
-    return value if isinstance(value, bytes) else None
 
 
 def _read_proto_varint(data: bytes, pos: int) -> tuple[int, int]:
@@ -3619,10 +2881,3 @@ def _public_ws_url(path: str) -> str:
     if base.startswith("http://"):
         return "ws://" + base.removeprefix("http://") + path
     return base + path
-
-
-def append_query(url: str, params: dict[str, str]) -> str:
-    parsed = urlparse(url)
-    query = parsed.query
-    addition = urlencode(params)
-    return urlunparse(parsed._replace(query=f"{query}&{addition}" if query else addition))

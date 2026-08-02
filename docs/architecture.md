@@ -279,8 +279,10 @@ deliveries, and agent SDK tokens remain user-owned.
 
 The product model is in
 [`designs/native-channels-product-model.md`](designs/native-channels-product-model.md).
-The WhatsApp Baileys sidecar is a protocol adapter only; routing and persistence
-stay in FastAPI/PostgreSQL.
+The package named WhatsApp Baileys sidecar is the single physical-provider
+transport per real account, not an Agent runtime connector. Real linked-device
+auth stays there; Link authorization, synthetic Noise/Signal state, routing,
+and durable inbox/outbox persistence stay in FastAPI/PostgreSQL.
 
 ## AI Providers
 

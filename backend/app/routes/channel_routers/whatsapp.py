@@ -7,99 +7,43 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-import httpx
 from fastapi import (
     APIRouter,
-    Depends,
-    Header,
     HTTPException,
-    Query,
-    Request,
-    Response,
     WebSocket,
     WebSocketDisconnect,
-    status,
 )
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import (
-    AuthContext,
-    require_user_auth,
-)
 from app.core.config import settings
-from app.core.database import async_session_factory, get_session
+from app.core.database import async_session_factory
 from app.models.channel import (
     CHANNEL_PROVIDER_WHATSAPP,
     MESSAGE_DIRECTION_INBOUND,
-    ChannelAgentCredential,
-    ChannelBotAgentLink,
     ChannelMessage,
 )
 from app.routes.channel_routers.shared import (
     _extract_bearer_token,
-    _json_object_from_bytes,
     _optional_str,
-    _request_params,
-    _require_bound_chat,
-    _required_str_param,
-    _whatsapp_graph_text,
 )
-from app.schemas.channel import (
-    TelegramWebhookResponse,
-    WhatsAppTenantCredentialCreate,
-    WhatsAppTenantCredentialMetadata,
-    WhatsAppTenantCredentialResponse,
-)
-from app.services.agent_bindings import get_owned_agent_or_404
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channels import (
-    ensure_hosted_agent_provider_link_available,
     get_active_channel_account,
-    get_channel_secret,
-    get_or_create_bot_agent_link,
-    get_owned_bot_agent_link,
-    get_strict_v2_hosted_channel_agent_or_409,
-    get_usable_channel_account,
-    list_owned_active_bot_agent_links,
-    parse_pair_command,
-    record_inbound_messages_for_bindings,
     resolve_channel_agent_by_identity,
     resolve_channel_agent_by_token,
-    resolve_inbound_binding,
-    send_channel_outbound_message,
-    send_pairing_command_reply,
-    verify_hub_signature,
-    verify_webhook_secret,
-    whatsapp_chat_from_payload,
-    whatsapp_external_user_id_from_payload,
-    whatsapp_from_me_from_payload,
-    whatsapp_jids_from_payload,
-    whatsapp_message_id_from_payload,
-    whatsapp_text_from_payload,
 )
 from app.services.whatsapp_baileys import (
     WhatsAppInboxPump,
     WhatsAppInboxPumpEvent,
-    choose_whatsapp_route_jid,
     describe_whatsapp_jid_for_log,
-    encode_buffer_json,
     load_or_create_whatsapp_auth_cert,
-    mint_whatsapp_agent_credential,
-    remember_whatsapp_binding_aliases,
-    resolve_whatsapp_binding_by_jids,
     resolve_whatsapp_credential_by_identity,
-    revoke_whatsapp_agent_credential,
-    rewrite_whatsapp_media_to_upstream_url,
     save_whatsapp_agent_bundle,
     save_whatsapp_group_sender_keys,
     save_whatsapp_signal_senders,
-    serialize_whatsapp_auth_cert,
     whatsapp_agent_bundle_from_config,
     whatsapp_agent_bundle_pre_key_count,
-    whatsapp_agent_websocket_url,
     whatsapp_group_sender_keys_from_config,
-    whatsapp_media_proxy_base_url,
     whatsapp_message_proto_bytes,
     whatsapp_signal_senders_from_config,
 )
@@ -108,186 +52,11 @@ from app.services.whatsapp_noise import (
     WhatsAppNoiseRuntimeEvent,
     WhatsAppNoiseTenant,
 )
-from app.services.whatsapp_shared_runtime import (
-    WhatsAppClawdiOutboxSharedBotRuntime,
-    get_whatsapp_shared_bot_transport,
+from app.services.whatsapp_provider_bridge import (
+    WhatsAppProviderBridge,
 )
 
 router = APIRouter(prefix="/channels/whatsapp", tags=["channels"])
-
-
-@router.post(
-    "/{account_id}/tenant-creds",
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_whatsapp_tenant_credential(
-    account_id: UUID,
-    body: WhatsAppTenantCredentialCreate,
-    auth: AuthContext = Depends(require_user_auth),
-    db: AsyncSession = Depends(get_session),
-) -> WhatsAppTenantCredentialResponse:
-    account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
-    if account.provider != CHANNEL_PROVIDER_WHATSAPP:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
-    self_identity = (
-        body.self_identity.model_dump(exclude_none=True) if body.self_identity is not None else None
-    )
-    auth_cert = await load_or_create_whatsapp_auth_cert(db, account=account)
-    link = await _resolve_whatsapp_tenant_link(db, auth=auth, account=account, body=body)
-    await ensure_hosted_agent_provider_link_available(
-        db,
-        account=account,
-        agent_id=link.agent_id,
-        user_id=link.user_id,
-    )
-    stored = await mint_whatsapp_agent_credential(
-        db,
-        account=account,
-        bot_agent_link_id=link.id,
-        user_id=link.user_id,
-        phone_user=body.phone_user,
-        device=body.device,
-        name=body.name,
-        self_identity=self_identity,
-    )
-    await db.commit()
-    await db.refresh(stored.credential)
-    return WhatsAppTenantCredentialResponse(
-        credential_id=stored.credential.id,
-        agent_link_id=link.id,
-        agent_id=link.agent_id,
-        jid=stored.minted.jid,
-        identity_pub_key_hex=stored.minted.identity_pub_key.hex(),
-        creds=encode_buffer_json(stored.minted.creds),
-        auth_cert=serialize_whatsapp_auth_cert(auth_cert),
-        websocket_url=whatsapp_agent_websocket_url(),
-        media_proxy_base_url=whatsapp_media_proxy_base_url(),
-    )
-
-
-@router.get("/{account_id}/tenant-creds")
-async def list_whatsapp_tenant_credentials(
-    account_id: UUID,
-    auth: AuthContext = Depends(require_user_auth),
-    db: AsyncSession = Depends(get_session),
-) -> list[WhatsAppTenantCredentialMetadata]:
-    account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
-    if account.provider != CHANNEL_PROVIDER_WHATSAPP:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
-    result = await db.execute(
-        select(ChannelAgentCredential, ChannelBotAgentLink)
-        .join(
-            ChannelBotAgentLink,
-            ChannelBotAgentLink.id == ChannelAgentCredential.bot_agent_link_id,
-        )
-        .where(
-            ChannelAgentCredential.account_id == account.id,
-            ChannelAgentCredential.user_id == auth.user_id,
-            ChannelBotAgentLink.user_id == auth.user_id,
-            ChannelAgentCredential.revoked_at.is_(None),
-        )
-        .order_by(ChannelAgentCredential.created_at.desc())
-    )
-    return [
-        WhatsAppTenantCredentialMetadata(
-            credential_id=credential.id,
-            agent_link_id=credential.bot_agent_link_id,
-            agent_id=link.agent_id,
-            jid=credential.synthetic_jid,
-            identity_pub_key_hex=credential.identity_public_key.hex(),
-            created_at=credential.created_at,
-        )
-        for credential, link in result.all()
-    ]
-
-
-async def _resolve_whatsapp_tenant_link(
-    db: AsyncSession,
-    *,
-    auth: AuthContext,
-    account,
-    body: WhatsAppTenantCredentialCreate,
-) -> ChannelBotAgentLink:
-    if body.agent_link_id is not None:
-        link = await get_owned_bot_agent_link(
-            db,
-            account=account,
-            link_id=body.agent_link_id,
-            user_id=auth.user_id,
-        )
-        await get_strict_v2_hosted_channel_agent_or_409(
-            db,
-            user_id=auth.user_id,
-            agent_id=link.agent_id,
-            lock_runtime_fence=True,
-        )
-        return link
-    if body.agent_id is not None:
-        await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=body.agent_id)
-        link, _agent_token = await get_or_create_bot_agent_link(
-            db,
-            account=account,
-            agent_id=body.agent_id,
-            user_id=auth.user_id,
-        )
-        await get_strict_v2_hosted_channel_agent_or_409(
-            db,
-            user_id=auth.user_id,
-            agent_id=link.agent_id,
-            lock_runtime_fence=True,
-        )
-        return link
-    links = await list_owned_active_bot_agent_links(db, account=account, user_id=auth.user_id)
-    if len(links) == 1:
-        await get_strict_v2_hosted_channel_agent_or_409(
-            db,
-            user_id=auth.user_id,
-            agent_id=links[0].agent_id,
-            lock_runtime_fence=True,
-        )
-        return links[0]
-    detail = "agent_id or agent_link_id is required"
-    if len(links) > 1:
-        detail = "agent_id or agent_link_id is required for channels with multiple agents"
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
-
-
-@router.delete(
-    "/{account_id}/tenant-creds/{credential_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def delete_whatsapp_tenant_credential(
-    account_id: UUID,
-    credential_id: UUID,
-    auth: AuthContext = Depends(require_user_auth),
-    db: AsyncSession = Depends(get_session),
-) -> None:
-    account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
-    if account.provider != CHANNEL_PROVIDER_WHATSAPP:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
-    revoked = await revoke_whatsapp_agent_credential(
-        db,
-        account=account,
-        credential_id=credential_id,
-        user_id=auth.user_id,
-    )
-    if not revoked:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="credential not found")
-    await db.commit()
-
-
-@router.get("/{account_id}/auth-cert")
-async def get_whatsapp_auth_cert(
-    account_id: UUID,
-    auth: AuthContext = Depends(require_user_auth),
-    db: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
-    if account.provider != CHANNEL_PROVIDER_WHATSAPP:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
-    auth_cert = await load_or_create_whatsapp_auth_cert(db, account=account)
-    await db.commit()
-    return serialize_whatsapp_auth_cert(auth_cert)
 
 
 @router.websocket("/baileys")
@@ -459,26 +228,33 @@ async def _run_whatsapp_baileys_websocket(
             )
             await db.commit()
 
-    shared_runtime = WhatsAppClawdiOutboxSharedBotRuntime(
+    provider_bridge = WhatsAppProviderBridge(
         async_session_factory,
         account_id=account_id,
-        transport=get_whatsapp_shared_bot_transport(account_id),
     )
 
     async def relay_outbound_message(message) -> None:
         await require_session_authority()
-        await shared_runtime.store_outbound_message(
+        await provider_bridge.store_outbound_message(
             message,
             bot_agent_link_id=bot_agent_link_id,
         )
 
     async def relay_outbound_node(node: Any, lookup_inbound_sender: Any) -> None:
         await require_session_authority()
-        await shared_runtime.relay_raw_node(node, lookup_inbound_sender)
+        await provider_bridge.relay_raw_node(
+            node,
+            lookup_inbound_sender,
+            bot_agent_link_id=bot_agent_link_id,
+        )
 
     async def forward_iq(node: Any, tenant_id: str | None) -> Any:
         await require_session_authority()
-        return await shared_runtime.forward_iq(node, tenant_id)
+        return await provider_bridge.forward_iq(
+            node,
+            tenant_id,
+            bot_agent_link_id=bot_agent_link_id,
+        )
 
     session = WhatsAppNoiseEmulatorSession(
         auth_cert=auth_cert,
@@ -501,7 +277,7 @@ async def _run_whatsapp_baileys_websocket(
             return
         inbox_pump_task = asyncio.create_task(
             _run_whatsapp_websocket_inbox_pump(
-                account_id=account.id,
+                account_id=account_id,
                 bot_agent_link_id=bot_agent_link_id,
                 tenant_id=tenant.tenant_id,
                 session=session,
@@ -751,217 +527,3 @@ async def _ack_whatsapp_websocket_inbox(
             .values(delivered_at=datetime.now(UTC))
         )
         await db.commit()
-
-
-@router.post(
-    "/graph/v{graph_version}/{phone_number_id}/messages",
-    include_in_schema=False,
-)
-async def whatsapp_graph_agent_messages(
-    graph_version: str,
-    phone_number_id: str,
-    request: Request,
-    authorization: str | None = Header(default=None),
-    db: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    token = _extract_bearer_token(authorization)
-    if token is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing access token")
-    agent = await resolve_channel_agent_by_token(
-        db,
-        provider=CHANNEL_PROVIDER_WHATSAPP,
-        token=token,
-    )
-    account = agent.account
-    config = account.config if isinstance(account.config, dict) else {}
-    configured_phone_number_id = _optional_str(config.get("phone_number_id"))
-    if configured_phone_number_id and configured_phone_number_id != phone_number_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="phone number is not assigned to this channel",
-        )
-    params = await _request_params(request)
-    recipient = _required_str_param(params, "to")
-    text = _whatsapp_graph_text(params)
-    await _require_bound_chat(
-        db,
-        account=account,
-        external_chat_id=recipient,
-        bot_agent_link_id=agent.link.id,
-    )
-    message = await send_channel_outbound_message(
-        db,
-        account=account,
-        external_chat_id=recipient,
-        text=text,
-        bot_agent_link_id=agent.link.id,
-    )
-    await db.commit()
-    return {
-        "messaging_product": "whatsapp",
-        "contacts": [{"input": recipient, "wa_id": recipient}],
-        "messages": [{"id": message.provider_message_id or str(message.id)}],
-        "clawdi_graph_version": graph_version,
-    }
-
-
-@router.api_route(
-    "/media/{direct_path:path}",
-    methods=["GET", "HEAD"],
-    include_in_schema=False,
-    response_model=None,
-)
-async def whatsapp_media_proxy(
-    direct_path: str,
-    request: Request,
-) -> Response:
-    del direct_path
-    upstream_url = rewrite_whatsapp_media_to_upstream_url(str(request.url))
-    if upstream_url is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="media not found")
-    headers = {"Origin": "https://web.whatsapp.com"}
-    range_header = request.headers.get("range")
-    if range_header:
-        headers["Range"] = range_header
-    try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            upstream = await client.request(request.method, upstream_url, headers=headers)
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="whatsapp media api unreachable",
-        ) from exc
-    response_headers = {
-        header: value
-        for header in ("content-type", "content-length", "content-range", "accept-ranges")
-        if (value := upstream.headers.get(header)) is not None
-    }
-    return Response(
-        content=b"" if request.method == "HEAD" else upstream.content,
-        status_code=upstream.status_code,
-        headers=response_headers,
-        media_type=upstream.headers.get("content-type", "application/octet-stream"),
-    )
-
-
-@router.get(
-    "/{account_id}/webhook",
-    include_in_schema=False,
-)
-async def whatsapp_webhook_verify(
-    account_id: UUID,
-    hub_mode: str | None = Query(default=None, alias="hub.mode"),
-    hub_verify_token: str | None = Query(default=None, alias="hub.verify_token"),
-    hub_challenge: str | None = Query(default=None, alias="hub.challenge"),
-    db: AsyncSession = Depends(get_session),
-) -> Response:
-    account = await get_active_channel_account(db, account_id=account_id)
-    if account.provider != CHANNEL_PROVIDER_WHATSAPP:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
-    if (
-        hub_mode == "subscribe"
-        and hub_challenge is not None
-        and verify_webhook_secret(hub_verify_token, account.webhook_secret_hash)
-    ):
-        return Response(content=hub_challenge, media_type="text/plain")
-    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid verify token")
-
-
-@router.post(
-    "/{account_id}/webhook",
-    include_in_schema=False,
-)
-async def whatsapp_webhook(
-    account_id: UUID,
-    request: Request,
-    x_clawdi_channel_secret: str | None = Header(default=None),
-    x_hub_signature_256: str | None = Header(default=None),
-    db: AsyncSession = Depends(get_session),
-) -> TelegramWebhookResponse:
-    account = await get_active_channel_account(db, account_id=account_id)
-    if account.provider != CHANNEL_PROVIDER_WHATSAPP:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
-    body = await request.body()
-    app_secret = await get_channel_secret(db, account=account, name="app_secret")
-    if not (
-        verify_webhook_secret(x_clawdi_channel_secret, account.webhook_secret_hash)
-        or verify_hub_signature(body=body, header=x_hub_signature_256, secret=app_secret)
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid webhook secret",
-        )
-
-    payload = _json_object_from_bytes(body)
-    if whatsapp_from_me_from_payload(payload):
-        return TelegramWebhookResponse(ok=True)
-    chat = whatsapp_chat_from_payload(payload)
-    if chat is None:
-        return TelegramWebhookResponse(ok=True)
-    external_chat_id, external_chat_type, external_chat_name = chat
-    remote_jid, alt_jid = whatsapp_jids_from_payload(payload)
-    if remote_jid:
-        route_jid = choose_whatsapp_route_jid(remote_jid, alt_jid)
-        external_chat_id = route_jid
-        external_chat_type = "group" if route_jid.endswith("@g.us") else "dm"
-        binding_lookup = await resolve_whatsapp_binding_by_jids(
-            db,
-            account=account,
-            remote_jid=remote_jid,
-            alt_jid=alt_jid,
-        )
-        if binding_lookup.conflict:
-            return TelegramWebhookResponse(ok=True)
-        existing_binding = binding_lookup.binding
-        if existing_binding is not None:
-            external_chat_id = existing_binding.external_chat_id
-            external_chat_type = existing_binding.external_chat_type
-            external_chat_name = existing_binding.external_chat_name
-    text = whatsapp_text_from_payload(payload)
-    command = parse_pair_command(text)
-    binding_result = await resolve_inbound_binding(
-        db,
-        account=account,
-        external_chat_id=external_chat_id,
-        external_chat_type=external_chat_type,
-        external_chat_name=external_chat_name,
-        external_user_id=whatsapp_external_user_id_from_payload(payload),
-        text=text,
-        command=command,
-    )
-
-    messages = await record_inbound_messages_for_bindings(
-        db,
-        account=account,
-        binding_result=binding_result,
-        external_chat_id=external_chat_id,
-        provider_message_id=whatsapp_message_id_from_payload(payload),
-        text=text,
-        payload=payload,
-    )
-    if remote_jid:
-        for _message, binding in messages:
-            if binding is not None:
-                await remember_whatsapp_binding_aliases(
-                    db,
-                    binding=binding,
-                    remote_jid=remote_jid,
-                    alt_jid=alt_jid,
-                )
-    await db.commit()
-    reply = await send_pairing_command_reply(
-        db,
-        account=account,
-        external_chat_id=external_chat_id,
-        command=command,
-        binding_result=binding_result,
-    )
-    if reply is not None:
-        await db.commit()
-    message = messages[0][0]
-    return TelegramWebhookResponse(
-        ok=True,
-        paired=binding_result.paired,
-        unpaired=binding_result.unpaired,
-        binding_id=message.binding_id,
-    )

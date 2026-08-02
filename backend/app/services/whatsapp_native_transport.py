@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import base64
+import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -15,6 +17,8 @@ _HEALTH_PATH = "/v1/health"
 _RELAY_MESSAGE_PATH = "/v1/relay-message"
 _RAW_NODE_PATH = "/v1/raw-node"
 _QUERY_IQ_PATH = "/v1/query-iq"
+_PROVIDER_EVENTS_PATH = "/v1/provider-events"
+_PROVIDER_EVENTS_ACK_PATH = "/v1/provider-events/ack"
 
 
 @dataclass(frozen=True)
@@ -26,29 +30,47 @@ class WhatsAppNativeRelayRequest:
 
 
 @dataclass(frozen=True)
+class WhatsAppProviderMessageEvent:
+    sequence: int
+    message_id: str
+    remote_jid: str
+    remote_jid_alt: str | None
+    participant: str | None
+    participant_alt: str | None
+    push_name: str | None
+    message_timestamp: int | None
+    message_proto: bytes
+
+
+@dataclass(frozen=True)
 class WhatsAppBaileysSidecarConfig:
     base_url: str
-    api_token: str | None = None
+    api_token: str = field(repr=False)
     timeout_seconds: float = 10.0
+
+    def __post_init__(self) -> None:
+        validate_whatsapp_sidecar_base_url(self.base_url)
+        validate_whatsapp_sidecar_api_token(self.api_token)
+        if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
+            raise ValueError("baileys sidecar timeout_seconds must be positive and finite")
 
 
 class WhatsAppNativeUpstreamClient(Protocol):
     @property
     def connected(self) -> bool: ...
 
-    async def relay_message(self, request: WhatsAppNativeRelayRequest) -> None: ...
+    async def relay_message(self, request: WhatsAppNativeRelayRequest) -> str | None: ...
 
     async def send_node(self, node: BinaryNode) -> None: ...
 
     async def query(self, node: BinaryNode, timeout_ms: int) -> BinaryNode | None: ...
 
 
-class WhatsAppNativeTransportAdapter:
-    """Adapter from Clawdi's shared-bot seam to a native WhatsApp Web runtime.
+class WhatsAppProviderTransportAdapter:
+    """Map authorized provider operations to the physical Baileys transport.
 
-    The wrapped client can be an in-process Python implementation or a narrow
-    HTTP wrapper around a Baileys sidecar. Clawdi owns product state; this seam
-    only relays Baileys-native protocol operations that Cloud API cannot express.
+    The wrapped client can be in-process or a narrow HTTP client. It never owns
+    Agent synthetic auth state and exposes no application-level channel adapter.
     """
 
     def __init__(self, client: WhatsAppNativeUpstreamClient) -> None:
@@ -63,8 +85,8 @@ class WhatsAppNativeTransportAdapter:
         mode = getattr(self._client, "transport_mode", "in_process")
         return "sidecar" if mode == "sidecar" else "in_process"
 
-    async def relay_outbound_message(self, message: WhatsAppOutboundMessage) -> None:
-        await self._client.relay_message(
+    async def relay_outbound_message(self, message: WhatsAppOutboundMessage) -> str | None:
+        return await self._client.relay_message(
             WhatsAppNativeRelayRequest(
                 jid=message.to_jid,
                 message_id=message.message_id,
@@ -96,10 +118,10 @@ class WhatsAppBaileysSidecarClient:
         *,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        base_url = config.base_url.rstrip("/")
-        if not base_url:
-            raise ValueError("baileys sidecar base_url is required")
+        base_url = validate_whatsapp_sidecar_base_url(config.base_url)
+        api_token = validate_whatsapp_sidecar_api_token(config.api_token)
         self._config = config
+        self._api_token = api_token
         self._connected = False
         self._owns_client = http_client is None
         self._client = http_client or httpx.AsyncClient(
@@ -121,8 +143,8 @@ class WhatsAppBaileysSidecarClient:
         self._connected = _sidecar_health_connected(data)
         return self._connected
 
-    async def relay_message(self, request: WhatsAppNativeRelayRequest) -> None:
-        await self._request(
+    async def relay_message(self, request: WhatsAppNativeRelayRequest) -> str | None:
+        response = await self._request(
             "POST",
             _RELAY_MESSAGE_PATH,
             json={
@@ -133,6 +155,11 @@ class WhatsAppBaileysSidecarClient:
             },
         )
         self._connected = True
+        data = response.json()
+        if not isinstance(data, Mapping):
+            raise ValueError("baileys provider relay response must be an object")
+        message_id = data.get("messageId")
+        return str(message_id) if isinstance(message_id, str) and message_id else None
 
     async def send_node(self, node: BinaryNode) -> None:
         await self._request(
@@ -160,13 +187,79 @@ class WhatsAppBaileysSidecarClient:
             raise ValueError("baileys sidecar query response must be a node object or null")
         return decoded
 
+    async def provider_events(self, *, limit: int = 100) -> list[WhatsAppProviderMessageEvent]:
+        response = await self._request("GET", _PROVIDER_EVENTS_PATH, params={"limit": limit})
+        data = response.json()
+        if not isinstance(data, Mapping) or not isinstance(data.get("events"), list):
+            raise ValueError("baileys provider events response must contain an event list")
+        return [_provider_message_event(item) for item in data["events"]]
+
+    async def acknowledge_provider_events(self, *, through_sequence: int) -> None:
+        await self._request(
+            "POST",
+            _PROVIDER_EVENTS_ACK_PATH,
+            json={"throughSequence": through_sequence},
+        )
+
     async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         headers = dict(kwargs.pop("headers", {}) or {})
-        if self._config.api_token:
-            headers["Authorization"] = f"Bearer {self._config.api_token}"
+        headers["Authorization"] = f"Bearer {self._api_token}"
         response = await self._client.request(method, path, headers=headers, **kwargs)
         response.raise_for_status()
         return response
+
+
+def validate_whatsapp_sidecar_base_url(value: str) -> str:
+    """Return a canonical internal sidecar origin or fail closed."""
+
+    candidate = value.strip()
+    try:
+        parsed = urlsplit(candidate)
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("baileys sidecar base_url must be a valid HTTP(S) origin") from exc
+    hostname = parsed.hostname
+    if (
+        not candidate
+        or candidate != value
+        or parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.netloc
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or "?" in candidate
+        or "#" in candidate
+        or any(character.isspace() for character in candidate)
+        or "\\" in candidate
+        or ";" in parsed.netloc
+        or "%" in parsed.netloc
+        or parsed.netloc.endswith(":")
+    ):
+        raise ValueError("baileys sidecar base_url must be an HTTP(S) origin without userinfo")
+    if parsed.scheme.lower() == "http" and hostname.lower() not in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }:
+        raise ValueError("baileys sidecar base_url requires HTTPS except for exact loopback hosts")
+    return candidate.rstrip("/")
+
+
+def validate_whatsapp_sidecar_api_token(value: str) -> str:
+    token = value.strip()
+    if (
+        not token
+        or token != value
+        or len(token) > 4096
+        or any(ord(character) < 0x21 or ord(character) > 0x7E for character in token)
+    ):
+        raise ValueError(
+            "baileys sidecar api_token must be a non-empty printable ASCII bearer value"
+        )
+    return token
 
 
 def _sidecar_health_connected(data: Any) -> bool:
@@ -175,6 +268,53 @@ def _sidecar_health_connected(data: Any) -> bool:
     if isinstance(data.get("connected"), bool):
         return bool(data["connected"])
     return str(data.get("status") or "").lower() == "connected"
+
+
+def _provider_message_event(value: Any) -> WhatsAppProviderMessageEvent:
+    if not isinstance(value, Mapping):
+        raise ValueError("baileys provider event must be an object")
+    sequence = value.get("sequence")
+    if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
+        raise ValueError("baileys provider event sequence must be positive")
+    if value.get("eventType") != "messages.upsert" or value.get("fromMe") is not False:
+        raise ValueError("unsupported baileys provider event")
+    message_id = _required_event_str(value, "messageId")
+    remote_jid = _required_event_str(value, "remoteJid")
+    raw_proto = _required_event_str(value, "messageProtoBase64")
+    try:
+        message_proto = base64.b64decode(raw_proto, validate=True)
+    except ValueError as exc:
+        raise ValueError("baileys provider event proto must be base64") from exc
+    if not message_proto:
+        raise ValueError("baileys provider event proto must not be empty")
+    timestamp = value.get("messageTimestamp")
+    if timestamp is not None and (
+        isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp < 1
+    ):
+        raise ValueError("baileys provider event timestamp must be positive")
+    return WhatsAppProviderMessageEvent(
+        sequence=sequence,
+        message_id=message_id,
+        remote_jid=remote_jid,
+        remote_jid_alt=_optional_event_str(value, "remoteJidAlt"),
+        participant=_optional_event_str(value, "participant"),
+        participant_alt=_optional_event_str(value, "participantAlt"),
+        push_name=_optional_event_str(value, "pushName"),
+        message_timestamp=timestamp,
+        message_proto=message_proto,
+    )
+
+
+def _required_event_str(value: Mapping[str, Any], key: str) -> str:
+    item = _optional_event_str(value, key)
+    if item is None:
+        raise ValueError(f"baileys provider event {key} is required")
+    return item
+
+
+def _optional_event_str(value: Mapping[str, Any], key: str) -> str | None:
+    item = value.get(key)
+    return item if isinstance(item, str) and item else None
 
 
 def _encode_json_value(value: Any) -> Any:

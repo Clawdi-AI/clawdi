@@ -4559,168 +4559,14 @@ async def _send_whatsapp_provider_payload(
     text: str,
     provider_payload: dict[str, Any] | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
-    token = decrypt_provider_token(account)
-    phone_number_id = _require_account_config_str(account, "phone_number_id")
-    base_url = (
-        _account_config_str(account, "graph_api_base_url")
-        or settings.channel_whatsapp_graph_api_base_url.strip()
-    )
-    await _validate_provider_endpoint_url(
-        base_url,
-        channel=CHANNEL_PROVIDER_WHATSAPP,
-        method="messages",
-        label="whatsapp graph api base url",
-    )
-    url = f"{base_url.rstrip('/')}/{phone_number_id}/messages"
-    request_payload = _whatsapp_cloud_request_payload(
+    from app.services.whatsapp_provider_bridge import relay_whatsapp_provider_payload
+
+    return await relay_whatsapp_provider_payload(
+        account=account,
         external_chat_id=external_chat_id,
         text=text,
         provider_payload=provider_payload,
     )
-    response_payload = await _post_provider_json(
-        channel=CHANNEL_PROVIDER_WHATSAPP,
-        method="messages",
-        url=url,
-        headers={"Authorization": f"Bearer {token}"},
-        json_payload=request_payload,
-        timeout_seconds=20.0,
-        unreachable_detail="whatsapp api unreachable",
-        rejected_detail="whatsapp api rejected message",
-    )
-    message_id = None
-    messages = response_payload.get("messages")
-    if isinstance(messages, list) and messages and isinstance(messages[0], dict):
-        message_id = _read_optional_str(messages[0].get("id"))
-    return message_id, response_payload
-
-
-def _whatsapp_cloud_request_payload(
-    *,
-    external_chat_id: str,
-    text: str,
-    provider_payload: dict[str, Any] | None,
-) -> dict[str, Any]:
-    if provider_payload is None:
-        return _whatsapp_cloud_text_payload(
-            to=_whatsapp_cloud_recipient_id(external_chat_id),
-            text=text,
-            context=None,
-        )
-
-    message_type = _read_optional_str(provider_payload.get("type"))
-    if message_type == "text":
-        text_payload = provider_payload.get("text")
-        if not isinstance(text_payload, dict):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="invalid whatsapp text payload",
-            )
-        body = _read_optional_str(text_payload.get("body"))
-        if body is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="invalid whatsapp text body",
-            )
-        return _whatsapp_cloud_text_payload(
-            to=_whatsapp_cloud_recipient_id(external_chat_id),
-            text=body,
-            context=_whatsapp_cloud_context_payload(provider_payload),
-        )
-
-    if message_type in {"image", "audio"}:
-        return _whatsapp_cloud_media_payload(
-            external_chat_id=external_chat_id,
-            provider_payload=provider_payload,
-            media_type=message_type,
-        )
-
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="unsupported whatsapp outbound payload type",
-    )
-
-
-def _whatsapp_cloud_text_payload(
-    *,
-    to: str,
-    text: str,
-    context: dict[str, str] | None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "text",
-        "text": {"body": text},
-    }
-    if context is not None:
-        payload["context"] = context
-    return payload
-
-
-def _whatsapp_cloud_media_payload(
-    *,
-    external_chat_id: str,
-    provider_payload: dict[str, Any],
-    media_type: str,
-) -> dict[str, Any]:
-    media_payload = provider_payload.get(media_type)
-    if not isinstance(media_payload, dict):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"invalid whatsapp {media_type} payload",
-        )
-    media_id = _read_optional_str(media_payload.get("id"))
-    media_link = _read_optional_str(media_payload.get("link"))
-    if (media_id is None and media_link is None) or (
-        media_id is not None and media_link is not None
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"whatsapp {media_type} payload requires exactly one of id or link",
-        )
-    if media_id is not None:
-        media: dict[str, str] = {"id": media_id}
-    elif media_link is not None:
-        media = {"link": media_link}
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"whatsapp {media_type} payload requires exactly one of id or link",
-        )
-    caption = _read_optional_str(media_payload.get("caption"))
-    if media_type == "image" and caption is not None:
-        media["caption"] = caption
-    payload: dict[str, Any] = {
-        "messaging_product": "whatsapp",
-        "to": _whatsapp_cloud_recipient_id(external_chat_id),
-        "type": media_type,
-        media_type: media,
-    }
-    context = _whatsapp_cloud_context_payload(provider_payload)
-    if context is not None:
-        payload["context"] = context
-    return payload
-
-
-def _whatsapp_cloud_context_payload(provider_payload: dict[str, Any]) -> dict[str, str] | None:
-    context = provider_payload.get("context")
-    if not isinstance(context, dict):
-        return None
-    message_id = _read_optional_str(context.get("message_id"))
-    if message_id is None:
-        return None
-    return {"message_id": message_id}
-
-
-def _whatsapp_cloud_recipient_id(external_chat_id: str) -> str:
-    if "@" not in external_chat_id:
-        return external_chat_id
-    user_part, server = external_chat_id.rsplit("@", 1)
-    if server not in {"s.whatsapp.net", "c.us"}:
-        return external_chat_id
-    if ":" in user_part:
-        user_part, _device = user_part.split(":", 1)
-    return user_part or external_chat_id
 
 
 async def send_imessage_message(
@@ -4937,16 +4783,6 @@ def verify_discord_signature(
 
 def verify_webhook_secret(raw: str | None, expected_hash: str) -> bool:
     return bool(raw) and verify_hashed_token(raw, expected_hash)
-
-
-def verify_hub_signature(*, body: bytes, header: str | None, secret: str | None) -> bool:
-    if not header or not secret:
-        return False
-    prefix = "sha256="
-    if not header.startswith(prefix):
-        return False
-    digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(header[len(prefix) :], digest)
 
 
 def discord_chat_from_payload(payload: dict[str, Any]) -> tuple[str, str | None, str | None] | None:
@@ -5352,113 +5188,6 @@ def imessage_external_user_id_from_payload(payload: dict[str, Any]) -> str | Non
     return None
 
 
-def whatsapp_chat_from_payload(
-    payload: dict[str, Any],
-) -> tuple[str, str | None, str | None] | None:
-    message, value = _whatsapp_message_and_value(payload)
-    if message is None:
-        return None
-    chat_id = message.get("from")
-    if chat_id is None:
-        key = message.get("key")
-        if isinstance(key, dict):
-            chat_id = key.get("remoteJid")
-    if chat_id is None:
-        return None
-    name = None
-    contacts = value.get("contacts") if isinstance(value, dict) else None
-    if isinstance(contacts, list) and contacts and isinstance(contacts[0], dict):
-        profile = contacts[0].get("profile")
-        if isinstance(profile, dict):
-            name = _read_optional_str(profile.get("name"))
-    chat_id_str = str(chat_id)
-    chat_type = "group" if chat_id_str.endswith("@g.us") else "dm"
-    return chat_id_str, chat_type, name
-
-
-def whatsapp_jids_from_payload(payload: dict[str, Any]) -> tuple[str | None, str | None]:
-    message, _value = _whatsapp_message_and_value(payload)
-    if message is None:
-        return None, None
-    remote_jid: Any = message.get("from")
-    alt_jid: Any = None
-    key = message.get("key")
-    if isinstance(key, dict):
-        remote_jid = remote_jid or key.get("remoteJid")
-        alt_jid = key.get("remoteJidAlt") or key.get("participantAlt")
-    return _read_optional_str(remote_jid), _read_optional_str(alt_jid)
-
-
-def whatsapp_text_from_payload(payload: dict[str, Any]) -> str | None:
-    message, _value = _whatsapp_message_and_value(payload)
-    if message is None:
-        return None
-    text = message.get("text")
-    if isinstance(text, dict):
-        return _read_optional_str(text.get("body"))
-    msg = message.get("message")
-    if isinstance(msg, dict):
-        return _whatsapp_text_from_message_tree(msg)
-    return None
-
-
-def whatsapp_message_id_from_payload(payload: dict[str, Any]) -> str | None:
-    message, _value = _whatsapp_message_and_value(payload)
-    if message is None:
-        return None
-    key = message.get("key")
-    if isinstance(key, dict):
-        return _read_optional_str(key.get("id"))
-    return _read_optional_str(message.get("id"))
-
-
-def whatsapp_external_user_id_from_payload(payload: dict[str, Any]) -> str | None:
-    message, _value = _whatsapp_message_and_value(payload)
-    if message is None:
-        return None
-
-    for key_name in (
-        "participant",
-        "author",
-        "sender",
-        "senderJid",
-        "senderPnJid",
-        "senderLidJid",
-    ):
-        actor_id = _read_optional_identifier(message.get(key_name))
-        if actor_id is not None:
-            return actor_id
-
-    key = message.get("key")
-    if isinstance(key, dict):
-        for key_name in (
-            "participant",
-            "participantAlt",
-            "senderPnJid",
-            "senderLidJid",
-            "participantPnJid",
-            "participantLidJid",
-        ):
-            actor_id = _read_optional_identifier(key.get(key_name))
-            if actor_id is not None:
-                return actor_id
-
-    from_id = _read_optional_identifier(message.get("from"))
-    remote_jid = _read_optional_identifier(key.get("remoteJid")) if isinstance(key, dict) else None
-    for fallback in (from_id, remote_jid):
-        if fallback is not None and not fallback.endswith("@g.us"):
-            return fallback
-    return None
-
-
-def whatsapp_from_me_from_payload(payload: dict[str, Any]) -> bool:
-    message, _value = _whatsapp_message_and_value(payload)
-    if message is None:
-        return False
-    key = message.get("key")
-    return isinstance(key, dict) and key.get("fromMe") is True
-
-
 def _telegram_update_allowed(update: dict[str, Any], allowed_updates: set[str]) -> bool:
     if not allowed_updates:
         return True
@@ -5504,35 +5233,6 @@ def _imessage_event_data(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def _whatsapp_message_and_value(
-    payload: dict[str, Any],
-) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    entry = payload.get("entry")
-    if isinstance(entry, list) and entry:
-        first_entry = entry[0]
-        if isinstance(first_entry, dict):
-            changes = first_entry.get("changes")
-            if isinstance(changes, list) and changes:
-                first_change = changes[0]
-                if isinstance(first_change, dict):
-                    value = first_change.get("value")
-                    if isinstance(value, dict):
-                        messages = value.get("messages")
-                        if (
-                            isinstance(messages, list)
-                            and messages
-                            and isinstance(messages[0], dict)
-                        ):
-                            return messages[0], value
-    message = payload.get("message")
-    if isinstance(message, dict):
-        return message, payload
-    messages = payload.get("messages")
-    if isinstance(messages, list) and messages and isinstance(messages[0], dict):
-        return messages[0], payload
-    return None, payload
-
-
 def _nested_dict_value(data: dict[str, Any], *path: str) -> Any:
     current: Any = data
     for key in path:
@@ -5540,29 +5240,6 @@ def _nested_dict_value(data: dict[str, Any], *path: str) -> Any:
             return None
         current = current.get(key)
     return current
-
-
-def _whatsapp_text_from_message_tree(message: dict[str, Any]) -> str | None:
-    stack: list[Any] = [message]
-    visited = 0
-    while stack and visited < 512:
-        current = stack.pop()
-        visited += 1
-        if isinstance(current, dict):
-            conversation = _read_optional_str(current.get("conversation"))
-            if conversation is not None:
-                return conversation
-            extended_text = current.get("extendedTextMessage")
-            if isinstance(extended_text, dict):
-                text = _read_optional_str(extended_text.get("text"))
-                if text is not None:
-                    return text
-            for value in reversed(list(current.values())):
-                if isinstance(value, (dict, list)):
-                    stack.append(value)
-        elif isinstance(current, list):
-            stack.extend(reversed(current))
-    return None
 
 
 def _response_json_or_text(response: httpx.Response) -> dict[str, Any]:

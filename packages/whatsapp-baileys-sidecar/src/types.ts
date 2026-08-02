@@ -1,4 +1,5 @@
 import type { BinaryNode } from "baileys";
+import type { ProviderMessageEvent } from "./sqlite-state.js";
 
 export type RuntimeStatus = "starting" | "connecting" | "connected" | "disconnected" | "stopped";
 
@@ -27,6 +28,8 @@ export type BaileysRuntime = {
 	relayMessage(request: RelayMessageRequest): Promise<string | undefined>;
 	sendNode(node: BinaryNode): Promise<void>;
 	query(node: BinaryNode, timeoutMs: number): Promise<BinaryNode | null>;
+	providerEvents(limit: number): ProviderMessageEvent[];
+	acknowledgeProviderEvents(throughSequence: number): void;
 };
 
 export class RuntimeNotConnectedError extends Error {

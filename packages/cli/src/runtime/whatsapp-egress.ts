@@ -20,11 +20,11 @@ export interface ManagedWhatsAppEgressLink {
 // unmarked connection is request-level passthrough to the official upstream,
 // not byte-for-byte or TLS untouched. Production gates currently install none.
 export function buildManagedWhatsAppEgressProfiles(input: {
-	cloudApiUrl: string;
+	controlPlaneApiUrl: string;
 	links: ManagedWhatsAppEgressLink[];
 }): EgressProfile[] {
 	if (input.links.length === 0) return [];
-	const upstreamBaseUrl = managedWhatsAppWebSocketUrl(input.cloudApiUrl);
+	const upstreamBaseUrl = managedWhatsAppWebSocketUrl(input.controlPlaneApiUrl);
 	const profiles = [...input.links]
 		.sort((left, right) => left.linkId.localeCompare(right.linkId))
 		.map(
@@ -90,8 +90,8 @@ export function buildManagedWhatsAppEgressProfiles(input: {
 	return profiles;
 }
 
-function managedWhatsAppWebSocketUrl(cloudApiUrl: string): string {
-	const url = new URL(cloudApiUrl);
+function managedWhatsAppWebSocketUrl(controlPlaneApiUrl: string): string {
+	const url = new URL(controlPlaneApiUrl);
 	if (url.protocol === "https:") url.protocol = "wss:";
 	else if (url.protocol === "http:") url.protocol = "ws:";
 	else throw new Error("WhatsApp egress control plane URL must use HTTP or HTTPS");

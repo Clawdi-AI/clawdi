@@ -22,13 +22,7 @@ const HERMES_MANAGED_CHANNEL_ENV = [
 	"DISCORD_ALLOW_ALL_USERS",
 	"HERMES_TELEGRAM_DISABLE_FALLBACK_IPS",
 ] as const;
-const HERMES_MANAGED_WHATSAPP_ENV = [
-	"WHATSAPP_ENABLED",
-	"WHATSAPP_MODE",
-	"WHATSAPP_ALLOWED_USERS",
-] as const;
 const HERMES_MANAGED_CHANNEL_SECRET_ENV = ["TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN"] as const;
-const HERMES_MANAGED_WHATSAPP_SECRET_ENV = ["HERMES_WA_CREDS_JSON"] as const;
 const OPENCLAW_CHANNEL_TOKEN_ENV_PREFIX = "CLAWDI_CHANNEL_";
 const OPENCLAW_CHANNEL_TOKEN_ENV_SUFFIX = "_AGENT_TOKEN";
 
@@ -64,10 +58,6 @@ interface RuntimeChannelCredentialProjection {
 	targets: {
 		openclaw?: {
 			authDir: string;
-		};
-		hermes?: {
-			sessionDir: string;
-			credsJsonEnv: "HERMES_WA_CREDS_JSON";
 		};
 	};
 }
@@ -249,7 +239,6 @@ function buildOpenClawChannelsProjection(
 			const channel = ensureAccountChannel(channels, "whatsapp", link.accountKey);
 			const credential = whatsappBaileysCredentialProjection(link, runtimeHome, {
 				openclaw: true,
-				hermes: false,
 			});
 			channel.accounts[link.accountKey] = {
 				enabled: true,
@@ -317,20 +306,9 @@ function applyHermesRuntimeChannelSettings(
 
 	const telegram = singleLinkForProvider(links, "telegram");
 	const discord = singleLinkForProvider(links, "discord");
-	const whatsapp = WHATSAPP_UPSTREAM_READY ? singleLinkForProvider(links, "whatsapp") : null;
-	const whatsappCredentials = whatsapp ? whatsappBaileysCredentials(whatsapp) : [];
-	const whatsappCredential = whatsappCredentials.find(
-		(credential) => whatsappCredentialCreds(credential) !== null,
-	);
 	const existingRun = hermes.run ?? { env: {}, prependPath: [] };
-	const env = omitKeys(existingRun.env ?? {}, [
-		...HERMES_MANAGED_CHANNEL_ENV,
-		...(WHATSAPP_UPSTREAM_READY ? HERMES_MANAGED_WHATSAPP_ENV : []),
-	]);
-	const secretEnv = omitKeys(existingRun.secretEnv ?? {}, [
-		...HERMES_MANAGED_CHANNEL_SECRET_ENV,
-		...(WHATSAPP_UPSTREAM_READY ? HERMES_MANAGED_WHATSAPP_SECRET_ENV : []),
-	]);
+	const env = omitKeys(existingRun.env ?? {}, HERMES_MANAGED_CHANNEL_ENV);
+	const secretEnv = omitKeys(existingRun.secretEnv ?? {}, HERMES_MANAGED_CHANNEL_SECRET_ENV);
 
 	if (telegram) {
 		env.TELEGRAM_ALLOW_ALL_USERS = "true";
@@ -341,16 +319,6 @@ function applyHermesRuntimeChannelSettings(
 		env.DISCORD_ALLOW_ALL_USERS = "true";
 		secretEnv.DISCORD_BOT_TOKEN = discord.placeholderSecretRef;
 	}
-	if (whatsapp && whatsappCredential) {
-		env.WHATSAPP_ENABLED = "true";
-		env.WHATSAPP_MODE = "bot";
-		env.WHATSAPP_ALLOWED_USERS = "*";
-		secretEnv.HERMES_WA_CREDS_JSON = whatsappBaileysCredsJsonSecretRef(
-			whatsapp,
-			whatsappCredential,
-		);
-	}
-
 	return {
 		...manifest,
 		runtimes: {
@@ -379,7 +347,7 @@ function singleLinkForProvider(
 }
 
 function assertSingleManagedLinkPerProvider(links: ManagedChannelLink[]): void {
-	for (const provider of ["telegram", "discord"] as const) {
+	for (const provider of ["telegram", "discord", "whatsapp"] as const) {
 		singleLinkForProvider(links, provider);
 	}
 }
@@ -681,13 +649,7 @@ function whatsappBaileysCredentialProjection(
 	if (targets.openclaw) {
 		targetProjection.openclaw = { authDir: openclawAuthDir };
 	}
-	if (targets.hermes) {
-		targetProjection.hermes = {
-			sessionDir: hermesWhatsAppSessionDir(runtimeHome),
-			credsJsonEnv: "HERMES_WA_CREDS_JSON",
-		};
-	}
-	if (!targetProjection.openclaw && !targetProjection.hermes) return null;
+	if (!targetProjection.openclaw) return null;
 	return {
 		provider: "whatsapp",
 		kind: "whatsapp_baileys_auth_state",
@@ -735,19 +697,13 @@ function openClawWhatsAppAuthDir(runtimeHome: string, accountKey: string): strin
 	return join(runtimeHome, ".openclaw", "credentials", "whatsapp", accountKey);
 }
 
-function hermesWhatsAppSessionDir(runtimeHome: string): string {
-	return join(runtimeHome, ".hermes", "platforms", "whatsapp", "session");
-}
-
 interface RuntimeCredentialTargets {
 	openclaw: boolean;
-	hermes: boolean;
 }
 
 function runtimeCredentialTargets(manifest: RuntimeManifest): RuntimeCredentialTargets {
 	return {
 		openclaw: manifest.runtimes.openclaw?.enabled === true,
-		hermes: manifest.runtimes.hermes?.enabled === true,
 	};
 }
 

@@ -7,7 +7,8 @@ those concepts to backend tables and API boundaries.
 The model intentionally does not mirror the legacy channel bridge shape. The
 backend owns the control plane, routing state, durable outboxes, and
 agent-facing SDK emulation. Provider protocol adapters may exist only where a
-provider protocol requires them, such as the WhatsApp Web Baileys sidecar.
+provider protocol requires them. The WhatsApp package is the sole physical
+provider transport, not an Agent-facing connector.
 
 ## Goals
 
@@ -35,7 +36,7 @@ provider protocol requires them, such as the WhatsApp Web Baileys sidecar.
 | Bot capabilities | The caller's allowed actions for a selectable bot account, such as link, pair, send, manage account, or sync commands. | `/v1/channels/bot-pool` response |
 | Bot pool | The authenticated user's selectable bot candidates: owned private bots and active Clawdi-managed public bots. This is a read-only view, not a separate state table. | `/v1/channels/bot-pool` |
 | Bot-agent link | A user's authorization edge from one external bot to one Clawdi agent. This is the unit that owns the mock provider SDK token. | `channel_bot_agent_links` |
-| Agent SDK token | The token an agent process uses when it calls a Telegram Bot API, Discord REST/Gateway, WhatsApp Graph/Baileys, or BlueBubbles-compatible endpoint hosted by Clawdi. Tokens are scoped to one bot-agent link. | `ChannelBotAgentLink.agent_token_hash` |
+| Agent SDK token | The token an agent process uses when it calls a Telegram Bot API, Discord REST/Gateway, WhatsApp synthetic Noise, or BlueBubbles-compatible endpoint hosted by Clawdi. Tokens are scoped to one bot-agent link. | `ChannelBotAgentLink.agent_token_hash` |
 | External chat | The provider conversation id: Telegram chat id, Discord guild/channel route id, WhatsApp JID, or iMessage chat GUID. | `ChannelBinding.external_chat_id` |
 | External actor | The provider user or sender who issued a control command in a chat. In a DM this is usually the chat itself; in a group it is the participant id. | `ChannelBinding.paired_external_user_id` |
 | Conversation route | The active routing decision for one `(external bot, external chat)` session. It points to one bot-agent link and therefore one agent. | `channel_bindings` |
@@ -44,7 +45,7 @@ provider protocol requires them, such as the WhatsApp Web Baileys sidecar.
 | Inbound message | A persisted provider message, optionally bound to a route and link. Agent inboxes replay these rows. | `channel_messages` |
 | Outbound delivery | A durable send request processed by the backend worker. | `channel_deliveries` |
 | Provider secret | Real upstream credentials or provider-specific secrets, encrypted at rest. | `channel_accounts`, `channel_secrets` |
-| WhatsApp tenant credential | A Baileys-facing credential for a specific user/link on a WhatsApp account. | `channel_agent_credentials`, `channel_whatsapp_auth_certs` |
+| WhatsApp synthetic credential | Link-scoped Baileys auth and Noise identity that contains no physical account auth state or provider token. | `channel_agent_credentials`, `channel_whatsapp_auth_certs` |
 
 ## Relationship Model
 
@@ -89,6 +90,7 @@ Cardinality rules:
 | Active binding target | Exactly one bot-agent link, therefore one agent. |
 | Binding aliases | Many aliases may resolve to one active binding, but an alias is unique per account. |
 | Pair code | One pair code targets one bot-agent link and can be claimed once. |
+| Default managed Agent profile | At most one active Link per provider is projected into one default OpenClaw or Hermes profile. |
 
 ## Hard Invariants
 
@@ -110,8 +112,11 @@ These rules define the product, not just the current implementation:
 - Pair/unpair commands are system commands and must not be delivered to agents.
 - The legacy channel bridge process does not own routing, queueing, or product
   state.
-- A WhatsApp Baileys sidecar may own protocol connectivity, but FastAPI and
-  Postgres own authorization, routing, and persistence.
+- The WhatsApp physical provider transport owns the one real-account Baileys
+  socket and durable linked-device state. FastAPI/Postgres own authorization,
+  routing, aliases, synthetic identity, and durable inbox/outbox state.
+- A WhatsApp synthetic Agent socket never receives physical auth state or a
+  real provider credential.
 
 ## Ownership And Visibility
 
@@ -134,7 +139,7 @@ Public bots:
 - User-created child state is still owned by the requesting user:
   `channel_bot_agent_links`, `channel_pair_codes`, `channel_bindings`,
   `channel_messages`, `channel_deliveries`, attachments, scheduled messages,
-  WhatsApp tenant credentials, and agent references.
+  WhatsApp synthetic credentials, and agent references.
 
 This means a public bot is shared infrastructure, but each user's route and
 agent token state is private to that user.
@@ -150,7 +155,7 @@ can access the account. The difference is account management, not runtime use:
 | Create pair code | Caller-owned link only | Caller-owned link only |
 | Pair/unpair external chat | Actor-scoped shared state machine | Actor-scoped shared state machine |
 | List bindings/messages/send | Caller-owned child state only | Caller-owned child state only |
-| WhatsApp tenant credentials/auth cert | Caller-owned child state plus shared account cert | Caller-owned child state plus shared account cert |
+| WhatsApp synthetic runtime state | Internal gated projection only | Internal gated projection only |
 | Delete account | Owner through user API | Admin API only |
 | Provider token/config/webhook secret | Owner/admin for private managed accounts | Admin API only |
 | Provider-wide command sync | Owner through user API | Admin API only |
@@ -340,7 +345,7 @@ Provider actor extraction:
 | --- | --- |
 | Telegram | `callback_query.from.id`, `message.from.id`, `sender_chat.id`, or DM chat id fallback. |
 | Discord | `author.id`, `user.id`, `member.user.id`, or interaction member user id. |
-| WhatsApp | Baileys or Cloud payload sender fields such as `participant`, `senderJid`, `senderPnJid`, `senderLidJid`, or DM `from`/`remoteJid` fallback. Group JIDs are not used as actor ids. |
+| WhatsApp | Baileys key fields such as `participant`, `participantAlt`, `remoteJid`, or `remoteJidAlt`. Group JIDs are not used as actor ids. |
 | iMessage / BlueBubbles | Sender or handle address/id fields, with DM chat GUID fallback. |
 
 ## Agent Token Model
@@ -362,7 +367,7 @@ Examples of link-scoped state:
 - Telegram and Discord agent inbox cursors.
 - Discord application command shadows visible to the agent.
 - Discord Gateway replay sessions.
-- WhatsApp tenant credentials and Baileys auth material.
+- WhatsApp synthetic credentials, Noise identity, and Signal state.
 - BlueBubbles-compatible agent webhook registration.
 
 Provider-wide state stays account-scoped:
@@ -376,8 +381,8 @@ Provider-wide state stays account-scoped:
 ## Outbound URL Security
 
 Channel accounts can carry public provider endpoint overrides, such as
-Discord REST/Gateway URLs, WhatsApp Graph API base URLs, or an
-iMessage/BlueBubbles server URL. Agent SDK emulation can also persist Telegram
+Discord REST/Gateway URLs or an iMessage/BlueBubbles server URL. Agent SDK
+emulation can also persist Telegram
 and BlueBubbles webhook URLs supplied by an agent.
 
 These values are user- or admin-supplied configuration that can drive backend
@@ -474,9 +479,6 @@ User-facing control plane:
 | `POST /v1/channels/{id}/messages` | Sends only through the caller's active binding on an active accessible bot. |
 | `DELETE /v1/channels/{id}` | Archives only caller-owned private bots. Public bots must use admin API. |
 | `POST /v1/channels/{id}/commands/sync` | Syncs commands only for caller-owned private bots. Public bots must use admin API. |
-| `POST /v1/channels/whatsapp/{id}/tenant-creds` | Creates or reuses caller-owned WhatsApp runtime credentials for an accessible WhatsApp bot. |
-| `GET /v1/channels/whatsapp/{id}/tenant-creds` | Lists only caller-owned WhatsApp runtime credentials. |
-| `GET /v1/channels/whatsapp/{id}/auth-cert` | Returns WhatsApp account public auth material for an active accessible WhatsApp bot. |
 
 CLI control plane:
 
@@ -517,11 +519,11 @@ Provider ingress:
 
 - `/v1/channels/telegram/{id}/webhook`
 - `/v1/channels/discord/{id}/webhook`
-- `/v1/channels/whatsapp/{id}/webhook`
 - `/v1/channels/imessage/{id}/webhook`
 - `/v1/channels/discord/gateway` for agent-facing replay
 - `/v1/channels/whatsapp/baileys` for Link-bearer-authenticated Baileys-compatible WhatsApp Web
-  runtime ingress
+  synthetic runtime ingress. It remains gated and is not a physical provider
+  webhook.
 
 Agent SDK emulation:
 
@@ -530,7 +532,7 @@ Agent SDK emulation:
   `<9-digit bot id>:<secret>` shape so SDKs and OpenClaw-compatible clients
   that validate token syntax continue to work.
 - Discord REST and Gateway-compatible routes under `/v1/channels/discord`.
-- WhatsApp Graph and Baileys-compatible routes under `/v1/channels/whatsapp`.
+- WhatsApp synthetic Noise websocket under `/v1/channels/whatsapp/baileys`.
 - BlueBubbles-compatible REST and Socket.IO routes under
   `/v1/channels/imessage`.
 
@@ -574,7 +576,7 @@ the shared channel service.
 | An unbound normal message arrives | It is not delivered to any agent. |
 | A bound normal message arrives | It is stored with binding/link ids and becomes visible only to that link's agent-facing inbox. |
 | Agent sends a message by mock provider SDK token | The token resolves one link; send permission is checked against that link's active binding. |
-| WhatsApp needs live Web protocol behavior | The Baileys sidecar may provide protocol transport, but routing and ownership stay in FastAPI/Postgres. |
+| WhatsApp needs live Web protocol behavior | One physical provider transport owns the real socket; stock Agent plugins use separate synthetic sockets. Routing and ownership stay in FastAPI/Postgres. |
 
 ## Non-Goals
 

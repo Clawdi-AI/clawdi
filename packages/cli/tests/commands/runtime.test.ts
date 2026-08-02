@@ -3,6 +3,7 @@ import {
 	chmodSync,
 	existsSync,
 	mkdirSync,
+	readdirSync,
 	readFileSync,
 	rmSync,
 	statSync,
@@ -795,7 +796,7 @@ channels:
 		expect(captured).toHaveLength(0);
 	});
 
-	it("skips WhatsApp Baileys credentials while upstream support is gated", async () => {
+	it("skips WhatsApp runtime outputs while upstream support is gated", async () => {
 		const manifestPath = writeManifest(`
 version: 1
 channels:
@@ -808,14 +809,9 @@ channels:
         agent_id: agent-1
         runtime:
           token_env: WHATSAPP_AGENT_TOKEN
-        whatsapp:
-          baileys_credentials_dir: .wa-creds
 outputs:
   dotenv: .env.channels
 	`);
-		const credsDir = join(tmpHome, ".wa-creds");
-		mkdirSync(credsDir, { recursive: true, mode: 0o755 });
-		if (process.platform !== "win32") chmodSync(credsDir, 0o755);
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
@@ -849,20 +845,23 @@ outputs:
 			},
 		]);
 
-		await captureStdout(() => runtimeApplyCommand({ file: manifestPath, json: true }));
+		const out = await captureStdout(() => runtimeApplyCommand({ file: manifestPath, json: true }));
 		restore();
 
 		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
 			"GET /v1/channels/channel-wa",
 			"GET /v1/channels/channel-wa/agent-links",
 		]);
-		expect(existsSync(join(tmpHome, ".wa-creds", "creds.json"))).toBe(false);
-		expect(existsSync(join(tmpHome, ".wa-creds", "auth-cert.json"))).toBe(false);
-		expect(existsSync(join(tmpHome, ".wa-creds", "clawdi-whatsapp.json"))).toBe(false);
+		expect(JSON.parse(out).applied).toMatchObject({
+			links: [{ token_written: false }],
+			pair_codes: [],
+			writes: [],
+			warnings: [],
+		});
 		expect(existsSync(join(tmpHome, ".env.channels"))).toBe(false);
-		if (process.platform !== "win32") {
-			expect(statSync(credsDir).mode & 0o777).toBe(0o755);
-		}
+		expect(readdirSync(tmpHome).filter((name) => name !== ".clawdi")).toEqual([
+			"clawdi.runtime.yaml",
+		]);
 	});
 
 	it("requires explicit confirmation before rotating every declared token", async () => {
