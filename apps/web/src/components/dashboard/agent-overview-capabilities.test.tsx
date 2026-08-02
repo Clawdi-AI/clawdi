@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+	AgentOverviewCapabilitiesSkeleton,
+	OverviewDescriptionSkeleton,
 	OverviewMetadata,
 	OverviewModuleError,
 } from "@/components/dashboard/agent-overview-capabilities";
@@ -46,6 +48,30 @@ describe("overview metadata", () => {
 });
 
 describe("overview modules", () => {
+	test("keeps loading summaries on the standard description line height", () => {
+		const markup = renderToStaticMarkup(
+			createElement(OverviewDescriptionSkeleton, { label: "projects" }),
+		);
+
+		expect(markup).toContain("h-5 w-20");
+		expect(markup).not.toContain("h-4 w-20");
+	});
+
+	test("uses the same compact Card grid for initial overview skeletons", () => {
+		const connected = renderToStaticMarkup(
+			createElement(AgentOverviewCapabilitiesSkeleton, { variant: "connected" }),
+		);
+		const hosted = renderToStaticMarkup(
+			createElement(AgentOverviewCapabilitiesSkeleton, { variant: "hosted" }),
+		);
+
+		expect(connected.match(/data-overview-module-skeleton=/g)).toHaveLength(5);
+		expect(hosted.match(/data-overview-module-skeleton=/g)).toHaveLength(7);
+		expect(hosted).toContain("h-full min-w-0 py-3");
+		expect(hosted).toContain("grid-rows-1 content-center gap-0");
+		expect(hosted).not.toContain("h-40");
+	});
+
 	test("represents module errors only as the unavailable description", () => {
 		const source = readFileSync(
 			new URL("./agent-overview-resource-bodies.tsx", import.meta.url),

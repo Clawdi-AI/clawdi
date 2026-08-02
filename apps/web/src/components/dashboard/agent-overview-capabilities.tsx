@@ -80,7 +80,7 @@ export function OverviewModuleError({ label, onRetry }: { label: string; onRetry
 }
 
 export function OverviewDescriptionSkeleton({ label }: { label: string }) {
-	return <Skeleton className="h-4 w-20" aria-label={`Loading ${label} summary`} role="status" />;
+	return <Skeleton className="h-5 w-20" aria-label={`Loading ${label} summary`} role="status" />;
 }
 
 export function OverviewModuleUnavailable() {
@@ -146,7 +146,7 @@ export function AgentOverviewCapabilities({
 									role="article"
 									key={module.id}
 									data-overview-module={module.id}
-									className="h-full min-w-0"
+									className="h-full min-w-0 py-3"
 								>
 									<CardHeader className="h-full grid-rows-1 content-center gap-0">
 										<Link
@@ -169,6 +169,52 @@ export function AgentOverviewCapabilities({
 								</Card>
 							);
 						})}
+					</div>
+				</section>
+			))}
+		</div>
+	);
+}
+
+export function AgentOverviewCapabilitiesSkeleton({
+	variant,
+}: {
+	variant: AgentNavigationVariant;
+}) {
+	const groups = agentOverviewGroups(variant);
+	return (
+		<div className="flex flex-col gap-8" aria-hidden="true" data-agent-overview-skeleton={variant}>
+			{groups.map((group) => (
+				<section key={group.id}>
+					<Skeleton className="mb-3 h-5 w-20" />
+					<div
+						data-overview-layout={group.layout}
+						className={cn(
+							"grid auto-rows-fr items-stretch gap-3",
+							group.layout === "three-column"
+								? "@2xl/main:grid-cols-2 @4xl/main:grid-cols-3"
+								: "@2xl/main:grid-cols-2",
+						)}
+					>
+						{group.modules.map((module) => (
+							<Card
+								size="sm"
+								key={module.id}
+								data-overview-module-skeleton={module.id}
+								className="h-full min-w-0 py-3"
+							>
+								<CardHeader className="h-full grid-rows-1 content-center gap-0">
+									<div className="flex min-w-0 items-center gap-3">
+										<Skeleton className="size-8 shrink-0 rounded-lg" />
+										<div className="min-w-0 flex-1">
+											<Skeleton className="h-5 w-24" />
+											<Skeleton className="h-5 w-20" />
+										</div>
+										<Skeleton className="size-4 shrink-0" />
+									</div>
+								</CardHeader>
+							</Card>
+						))}
 					</div>
 				</section>
 			))}
