@@ -5,7 +5,6 @@ import { useMemo } from "react";
 import {
 	type AgentOverviewModuleContent,
 	OverviewDescriptionSkeleton,
-	OverviewModuleError,
 } from "@/components/dashboard/agent-overview-capabilities";
 import { useAgentProjectVaults } from "@/components/vault/agent-vaults-query";
 import { unwrap, useApi } from "@/lib/api";
@@ -15,7 +14,6 @@ type SummaryState = {
 	isLoading: boolean;
 	isUnavailable?: boolean;
 	error: unknown;
-	onRetry: () => void;
 };
 
 export function overviewProjectsModule({
@@ -25,11 +23,7 @@ export function overviewProjectsModule({
 }): AgentOverviewModuleContent {
 	if (bindings.isLoading) return { description: <OverviewDescriptionSkeleton label="projects" /> };
 	if (bindings.isUnavailable) return { description: "Unavailable right now" };
-	if (bindings.error)
-		return {
-			description: "Unavailable right now",
-			error: <OverviewModuleError label="Projects" onRetry={bindings.onRetry} />,
-		};
+	if (bindings.error) return { description: "Unavailable right now" };
 	const count = bindings.count ?? 0;
 	const primary = count ? `${count} ${count === 1 ? "project" : "projects"}` : "No projects added";
 	return { description: primary };
@@ -41,11 +35,7 @@ export function overviewSkillsModule({
 }: SummaryState & { items: readonly string[] }): AgentOverviewModuleContent {
 	if (state.isLoading) return { description: <OverviewDescriptionSkeleton label="skills" /> };
 	if (state.isUnavailable) return { description: "Unavailable right now" };
-	if (state.error)
-		return {
-			description: "Unavailable right now",
-			error: <OverviewModuleError label="Skills" onRetry={state.onRetry} />,
-		};
+	if (state.error) return { description: "Unavailable right now" };
 	return {
 		description: items.length
 			? `${items.length} ${items.length === 1 ? "skill" : "skills"}`
@@ -66,11 +56,7 @@ export function useOverviewMemoriesModule({
 		enabled,
 	});
 	if (query.isLoading) return { description: <OverviewDescriptionSkeleton label="memories" /> };
-	if (query.error)
-		return {
-			description: "Unavailable right now",
-			error: <OverviewModuleError label="Memories" onRetry={() => void query.refetch()} />,
-		};
+	if (query.error) return { description: "Unavailable right now" };
 	const total = query.data?.total ?? 0;
 	return {
 		description: total ? `${total} ${total === 1 ? "memory" : "memories"}` : "No memories yet",
@@ -90,11 +76,7 @@ export function useOverviewVaultsModule({
 	if (resolution === "loading" || query.isLoading)
 		return { description: <OverviewDescriptionSkeleton label="vaults" /> };
 	if (resolution === "unavailable") return { description: "Unavailable right now" };
-	if (query.error)
-		return {
-			description: "Unavailable right now",
-			error: <OverviewModuleError label="Vaults" onRetry={() => void query.refetch()} />,
-		};
+	if (query.error) return { description: "Unavailable right now" };
 	const vaults = query.data ?? [];
 	return {
 		description: vaults.length
@@ -127,10 +109,5 @@ export function useOverviewConnectorsModule({
 	) : (
 		"No apps connected"
 	);
-	return {
-		description,
-		error: connections.error ? (
-			<OverviewModuleError label="Apps" onRetry={() => void connections.refetch()} />
-		) : undefined,
-	};
+	return { description };
 }

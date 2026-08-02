@@ -25,8 +25,10 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 			),
 		grid.locator("[data-overview-module]").evaluateAll((elements) =>
 			elements.map((element) => {
+				const cardBox = element.getBoundingClientRect();
 				const header = element.querySelector<HTMLElement>('[data-slot="card-header"]');
 				const headerLink = header?.querySelector<HTMLElement>("a");
+				const linkBox = headerLink?.getBoundingClientRect();
 				const headerStyle = header ? getComputedStyle(header) : null;
 				const linkStyle = headerLink ? getComputedStyle(headerLink) : null;
 				return {
@@ -41,6 +43,9 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 						linkStyle?.paddingBottom,
 						linkStyle?.paddingLeft,
 					],
+					verticalInsetDelta: linkBox
+						? Math.abs(linkBox.top - cardBox.top - (cardBox.bottom - linkBox.bottom))
+						: Number.POSITIVE_INFINITY,
 				};
 			}),
 		),
@@ -80,6 +85,7 @@ async function expectOverviewResourceGeometry(grid: Locator, expectedRows: reado
 	expect(new Set(shellMetrics.map((metric) => JSON.stringify(metric.linkPadding)))).toEqual(
 		new Set([JSON.stringify(["0px", "0px", "0px", "0px"])]),
 	);
+	for (const metric of shellMetrics) expect(metric.verticalInsetDelta).toBeLessThanOrEqual(1);
 }
 
 async function expectOverviewSessionSlot({
@@ -3027,6 +3033,10 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("3");
 
 	const overview = page.locator('[data-agent-overview="hosted"]');
+	const overviewHeading = page.getByRole("heading", { name: "Overview", exact: true });
+	const overviewTitleRow = overviewHeading.locator("..");
+	await expect(overviewTitleRow.getByText("Cloud", { exact: true })).toHaveCount(1);
+	await expect(overviewTitleRow.getByText("Legacy", { exact: true })).toHaveCount(0);
 	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible({
 		timeout: 12_000,
 	});
@@ -3231,8 +3241,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	}
 	const moduleHeights = [...resourceGeometry, ...toolGeometry].map((box) => box.height);
 	expect(Math.max(...moduleHeights) - Math.min(...moduleHeights)).toBeLessThanOrEqual(2);
-	expect(new Set(moduleHeights.map((height) => Math.round(height)))).toEqual(new Set([80]));
-	expect(Math.max(...moduleHeights)).toBeLessThan(128);
+	expect(new Set(moduleHeights.map((height) => Math.round(height)))).toEqual(new Set([73]));
+	expect(Math.max(...moduleHeights)).toBeLessThan(80);
 	expect((toolGeometry[1]?.x ?? 0) + (toolGeometry[1]?.width ?? 0)).toBeLessThan(
 		(resourceGeometry[2]?.x ?? 0) + 1,
 	);
@@ -3282,6 +3292,13 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		fullPage: true,
 	});
 	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}/sessions?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+	const sessionsHeading = page.getByRole("heading", { name: "Sessions", exact: true });
+	await expect(sessionsHeading).toBeVisible();
+	await expect(sessionsHeading.locator("..").getByText("Cloud", { exact: true })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Open Agent Interface" })).toHaveCount(0);
 });
 
 test("hosted overview keeps a three-row accessible session slot for zero through 3+ sessions", async ({
@@ -3953,7 +3970,9 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	await stubHostedApi(page, {
 		agentOrderRequests,
 		deployments: [railHostedDeployment],
-		cloudAgents: [railHostedCloudAgent, railConnectedCloudAgent],
+		cloudAgents: [railHostedCloudAgent, railConnectedCloudAgent, sharedLegacyCloudAgent],
+		legacyAgentEnvironmentIds: [sharedLegacyEnvironmentId],
+		canUseLegacyHostedDashboard: true,
 	});
 
 	await page.goto("/agents");
@@ -3969,6 +3988,25 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	await expectPointerCursor(connectedButton, "connected tile");
 	await expect(rail.getByRole("button", { name: /^Reorder / })).toHaveCount(0);
 	await expect(rail.getByTitle(/^Reorder /)).toHaveCount(0);
+	const cloudMarker = rail.locator('[data-agent-rail-corner-marker="cloud"]');
+	const legacyMarker = rail.locator('[data-agent-rail-corner-marker="legacy"]');
+	await expect(cloudMarker).toHaveCount(1);
+	await expect(legacyMarker).toHaveCount(1);
+	const [cloudMarkerBox, legacyMarkerBox, cloudIconBox, legacyIconBox] = await Promise.all([
+		cloudMarker.boundingBox(),
+		legacyMarker.boundingBox(),
+		cloudMarker.locator("svg").boundingBox(),
+		legacyMarker.locator("svg").boundingBox(),
+	]);
+	if (!cloudMarkerBox || !legacyMarkerBox || !cloudIconBox || !legacyIconBox) {
+		throw new Error("Cloud and Legacy rail corner markers should render.");
+	}
+	expect(cloudMarkerBox.width).toBe(legacyMarkerBox.width);
+	expect(cloudMarkerBox.height).toBe(legacyMarkerBox.height);
+	expect(cloudIconBox.width).toBe(legacyIconBox.width);
+	expect(cloudIconBox.height).toBe(legacyIconBox.height);
+	expect(cloudMarkerBox.width).toBe(16);
+	expect(cloudIconBox.width).toBe(12);
 
 	const connectedTileBox = await rail
 		.getByTestId("app-sidebar-agent-tile")
@@ -4024,6 +4062,30 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	}
 	expect(agentOrderRequests).toEqual([]);
 	expect(touchOrderRequests).toEqual([]);
+});
+
+test("legacy Overview owns its title chip and dashboard action", async ({ page }) => {
+	await stubHostedApi(page, {
+		canUseLegacyHostedDashboard: true,
+		cloudAgents: [sharedLegacyCloudAgent],
+		legacyAgentEnvironmentIds: [sharedLegacyEnvironmentId],
+	});
+	await page.goto(`/agents/${sharedLegacyEnvironmentId}`);
+
+	const main = page.locator("main");
+	const heading = main.getByRole("heading", { name: "Overview", exact: true });
+	await expect(heading).toBeVisible();
+	const titleRow = heading.locator("..");
+	await expect(titleRow.getByText("Legacy", { exact: true })).toBeVisible();
+	const legacyAction = main.getByRole("button", { name: "Open legacy dashboard" });
+	await expect(legacyAction).toHaveAttribute("href", "https://legacy.example/dashboard");
+	await expect(legacyAction).toHaveAttribute("target", "_blank");
+	await expect(main.getByText("Legacy", { exact: true })).toHaveCount(1);
+	await expect(main.getByText("Cloud", { exact: true })).toHaveCount(0);
+
+	await page.goto(`/agents/${sharedLegacyEnvironmentId}/sessions`);
+	await expect(main.getByText("Legacy", { exact: true })).toHaveCount(0);
+	await expect(main.getByRole("link", { name: "Open legacy dashboard" })).toHaveCount(0);
 });
 
 test("hosted agent sidebar renders one Resources heading in canonical order", async ({

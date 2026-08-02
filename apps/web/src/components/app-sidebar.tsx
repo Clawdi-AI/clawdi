@@ -27,7 +27,6 @@ import { Link, useLocation, useRouter, useSearch } from "@tanstack/react-router"
 import {
 	BookOpen,
 	CircleHelp,
-	Cloud,
 	ExternalLink,
 	History,
 	LayoutDashboard,
@@ -755,17 +754,17 @@ function SortableAgentRailItem({
 					<AgentIcon agent={agent.agentType} size="rail" avatarUrl={agent.avatarUrl} />
 					{kind === "cloud" ? (
 						<span
-							title="Clawdi Cloud agent"
-							className="-top-1 -right-1 pointer-events-none absolute z-20 flex size-4 items-center justify-center rounded-full bg-info text-info-foreground ring-2 ring-sidebar"
+							data-agent-rail-corner-marker="cloud"
+							className="-top-1 -right-1 pointer-events-none absolute z-10"
 						>
-							<Cloud aria-hidden="true" className="size-2.5" />
+							<AgentSourceBadge source="hosted" iconOnly />
 						</span>
 					) : kind === "legacy" ? (
 						<span
-							title="Legacy agent"
-							className="-top-1 -right-1 pointer-events-none absolute z-20 flex size-4 items-center justify-center rounded-full bg-warning text-warning-foreground ring-2 ring-sidebar"
+							data-agent-rail-corner-marker="legacy"
+							className="-top-1 -right-1 pointer-events-none absolute z-10"
 						>
-							<History aria-hidden="true" className="size-2.5" />
+							<LegacyAgentBadge iconOnly />
 						</span>
 					) : null}
 				</span>

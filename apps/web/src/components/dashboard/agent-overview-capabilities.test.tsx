@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { OverviewMetadata } from "@/components/dashboard/agent-overview-capabilities";
+import {
+	OverviewMetadata,
+	OverviewModuleError,
+} from "@/components/dashboard/agent-overview-capabilities";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 
 describe("overview card typography", () => {
@@ -38,5 +42,26 @@ describe("overview metadata", () => {
 		expect(markup).toContain("space-y-2 text-xs text-muted-foreground");
 		expect(markup).not.toContain("text-sm");
 		expect(markup).not.toContain("font-medium");
+	});
+});
+
+describe("overview modules", () => {
+	test("represents module errors only as the unavailable description", () => {
+		const source = readFileSync(
+			new URL("./agent-overview-resource-bodies.tsx", import.meta.url),
+			"utf8",
+		);
+
+		expect(source).not.toContain("error: <");
+		expect(source).not.toContain("OverviewModuleError");
+		expect(source).toContain('return { description: "Unavailable right now" }');
+	});
+
+	test("keeps retry support on the shared non-module error surface", () => {
+		const markup = renderToStaticMarkup(
+			createElement(OverviewModuleError, { label: "Sessions", onRetry: () => undefined }),
+		);
+
+		expect(markup).toContain("Retry");
 	});
 });
