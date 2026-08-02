@@ -60,6 +60,37 @@ async def test_skill_upload_happy_path(client: httpx.AsyncClient, project_id: st
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content",
+    [
+        "---\nname: invalid\ndescription: metadata\n---\n# Body\x00\n",
+        '---\nname: "invalid\\0name"\ndescription: metadata\n---\n# Body\n',
+        '---\nname: invalid\ndescription: "invalid\\0description"\n---\n# Body\n',
+    ],
+)
+async def test_skill_upload_rejects_nul_text_before_persistence(
+    client: httpx.AsyncClient,
+    project_id: str,
+    content: str,
+):
+    tar_bytes, _ = tar_from_content("invalid-nul", content)
+
+    response = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "invalid-nul"},
+        files={"file": ("invalid-nul.tar.gz", tar_bytes, "application/gzip")},
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == {
+        "code": "invalid_skill_text",
+        "message": "SKILL.md must not contain NUL characters.",
+    }
+    missing = await client.get(f"/v1/projects/{project_id}/skills/invalid-nul")
+    assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_dashboard_edit_with_stale_content_hash_returns_412(
     client: httpx.AsyncClient, project_id: str
 ):
