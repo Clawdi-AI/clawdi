@@ -140,7 +140,12 @@ export function spawnRuntimeUserCommand(
 	args: string[],
 	home: string,
 	cwd: string,
-	options: { egressSystemCaFile?: string; input?: string; timeoutMs?: number } = {},
+	options: {
+		egressSystemCaFile?: string;
+		input?: string;
+		maxBufferBytes?: number;
+		timeoutMs?: number;
+	} = {},
 ): ReturnType<typeof spawnSync> {
 	const env = runtimeUserCommandEnv(home, options);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
@@ -151,6 +156,7 @@ export function spawnRuntimeUserCommand(
 				cwd,
 				encoding: "utf8",
 				input: options.input,
+				maxBuffer: options.maxBufferBytes,
 				timeout: options.timeoutMs,
 			});
 		}
@@ -158,7 +164,14 @@ export function spawnRuntimeUserCommand(
 			return spawnSync(
 				"runuser",
 				["-u", runtimeUser, "--", "env", `HOME=${home}`, `PATH=${env.PATH}`, command, ...args],
-				{ env, cwd, encoding: "utf8", input: options.input, timeout: options.timeoutMs },
+				{
+					env,
+					cwd,
+					encoding: "utf8",
+					input: options.input,
+					maxBuffer: options.maxBufferBytes,
+					timeout: options.timeoutMs,
+				},
 			);
 		}
 		throw new Error(
@@ -170,6 +183,7 @@ export function spawnRuntimeUserCommand(
 		cwd,
 		encoding: "utf8",
 		input: options.input,
+		maxBuffer: options.maxBufferBytes,
 		timeout: options.timeoutMs,
 	});
 }
