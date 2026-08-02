@@ -1,7 +1,7 @@
 """archive agent lifecycle
 
 Revision ID: f3b7c1d9e5a2
-Revises: e8f4a1c9d2b7
+Revises: 6a9d2c4e8f10
 """
 
 import sqlalchemy as sa
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "f3b7c1d9e5a2"
-down_revision = "e8f4a1c9d2b7"
+down_revision = "6a9d2c4e8f10"
 branch_labels = None
 depends_on = None
 

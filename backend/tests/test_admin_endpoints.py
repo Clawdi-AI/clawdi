@@ -2555,10 +2555,14 @@ async def test_admin_delete_env_archives_identity_and_preserves_relationships(
     assert env is not None
     assert env.archived_at is not None
     retained_skills = (
-        await db_session.execute(
-            select(Skill).where(Skill.project_id == environment.default_project_id)
+        (
+            await db_session.execute(
+                select(Skill).where(Skill.project_id == environment.default_project_id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(retained_skills) == 2
     await db_session.refresh(seed_user)
     assert seed_user.skills_revision == revision_before
