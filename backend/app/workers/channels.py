@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from app.core.database import async_session_factory, engine
+from app.core.logging_config import configure_application_logging
 from app.services.ai_provider_oauth_revoke_worker import AiProviderOAuthRevokeWorker
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_message_retention_worker import ChannelMessageRetentionWorker
@@ -18,7 +19,7 @@ from app.services.discord_command_reconciliation_worker import (
 from app.services.discord_gateway_worker import DiscordGatewayWorker
 from app.services.runtime_observation_retention_worker import RuntimeObservationRetentionWorker
 
-logging.basicConfig(level=logging.INFO)
+configure_application_logging()
 log = logging.getLogger(__name__)
 
 CHANNEL_WORKER_HEALTH_HOST = "0.0.0.0"
