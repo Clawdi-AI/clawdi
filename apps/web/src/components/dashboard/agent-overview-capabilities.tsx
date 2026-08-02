@@ -86,10 +86,10 @@ export function OverviewModuleSkeleton({
 
 export function OverviewModuleError({ label, onRetry }: { label: string; onRetry?: () => void }) {
 	return (
-		<div className="space-y-3 text-sm" role="status">
-			<p className="font-medium">Can’t load {label.toLowerCase()}</p>
+		<div className="space-y-2 text-sm text-muted-foreground" role="status">
+			<p>Can’t load {label.toLowerCase()}</p>
 			{onRetry ? (
-				<Button type="button" variant="outline" size="sm" onClick={onRetry}>
+				<Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={onRetry}>
 					<RefreshCw /> Retry
 				</Button>
 			) : null}
@@ -129,7 +129,7 @@ export function OverviewResourceSummary({
 }) {
 	return (
 		<div className="space-y-3" data-testid="overview-resource-summary">
-			<p data-overview-primary-value className="text-base font-semibold">
+			<p data-overview-primary-value className="text-sm font-medium text-muted-foreground">
 				{primary}
 			</p>
 			{items?.length ? (
@@ -212,7 +212,7 @@ export function AgentOverviewCapabilities({
 					<div
 						data-overview-layout={group.layout}
 						className={cn(
-							"grid items-stretch gap-3",
+							"grid auto-rows-fr items-stretch gap-3",
 							group.layout === "three-column"
 								? "@2xl/main:grid-cols-2 @4xl/main:grid-cols-3"
 								: "@2xl/main:grid-cols-2",
@@ -230,7 +230,7 @@ export function AgentOverviewCapabilities({
 									role="article"
 									key={module.id}
 									data-overview-module={module.id}
-									className="h-full min-w-0 gap-0 py-0"
+									className="h-full min-h-36 min-w-0 gap-0 py-0"
 								>
 									<CardHeader className="p-0">
 										<Link

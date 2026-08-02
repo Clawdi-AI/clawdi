@@ -236,7 +236,7 @@ export function ConnectedAgentDetail({
 										<div className="flex h-full flex-col justify-between gap-4">
 											<p
 												data-overview-primary-value
-												className="inline-flex items-center gap-2 text-base font-semibold"
+												className="inline-flex items-center gap-2 text-sm font-medium"
 											>
 												<StatusDot status={syncTone} /> {syncStatus.label}
 											</p>

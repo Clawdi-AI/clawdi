@@ -200,9 +200,9 @@ import {
 	canStart as canStartDeployment,
 	canStop as canStopDeployment,
 	type DeploymentStatus,
+	deploymentRuntimeStatusPresentation,
 	deploymentStatusFromResource,
 	deploymentStatusLabel,
-	deploymentStatusTone,
 	isRunningStatus,
 } from "@/hosted/deployment-status";
 import { DeploymentStatusUnavailableState } from "@/hosted/deployment-status-unavailable";
@@ -928,7 +928,7 @@ export function OverviewComputeSummary({
 	];
 	return (
 		<div className="space-y-1.5" data-testid="overview-compute-summary">
-			<p data-overview-compute-plan className="text-sm font-semibold">
+			<p data-overview-compute-plan className="text-sm font-medium text-muted-foreground">
 				{plan} plan
 			</p>
 			<ul
@@ -1143,11 +1143,12 @@ function OverviewTab({
 			managedModelCatalog.data?.models ?? [],
 		),
 	);
-	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
+	const runtimeStatusPresentation = deploymentRuntimeStatusPresentation(deployment.resource.status);
+	const deploymentStatus = runtimeStatusPresentation.status;
 	const deploymentFailure = deploymentFailurePresentation(deployment);
 	const computeStatusPresentation = deploymentFailure?.status ?? {
-		label: deploymentStatusLabel(deploymentStatus),
-		tone: deploymentStatusTone(deploymentStatus),
+		label: runtimeStatusPresentation.label,
+		tone: runtimeStatusPresentation.tone,
 	};
 	const deploymentRunning = isRunningStatus(deploymentStatus);
 	const sessionsEmptyMessage = deploymentRunning
@@ -1220,7 +1221,7 @@ function OverviewTab({
 							<p
 								data-overview-compute-status
 								data-overview-primary-value
-								className="inline-flex items-center gap-2 text-base font-semibold"
+								className="inline-flex items-center gap-2 text-sm font-medium"
 								title={`Agent status: ${computeStatusPresentation.label}`}
 							>
 								<StatusDot status={computeStatusPresentation.tone} />
@@ -1313,11 +1314,11 @@ function OverviewTab({
 									<p
 										data-overview-primary-value
 										data-overview-tool-primary
-										className="text-base font-semibold"
+										className="text-sm font-medium text-muted-foreground"
 									>
 										{model}
 									</p>
-									<p data-overview-tool-secondary className="text-sm text-muted-foreground">
+									<p data-overview-tool-secondary className="text-xs text-muted-foreground">
 										{managedProvider
 											? "Managed by Clawdi"
 											: providerDisplayLabel(providerId ?? "", providers.data ?? [])}
@@ -1339,7 +1340,7 @@ function OverviewTab({
 								<p
 									data-overview-primary-value
 									data-overview-tool-primary
-									className="text-base font-semibold"
+									className="text-sm font-medium text-muted-foreground"
 								>
 									{linkedChannelCount === 0
 										? "No channels connected"

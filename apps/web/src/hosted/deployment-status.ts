@@ -41,6 +41,11 @@ export type UnknownDeploymentStatus =
 	  };
 
 export type DeploymentStatus = KnownDeploymentStatusModel | UnknownDeploymentStatus;
+export type DeploymentStatusPresentation = {
+	status: DeploymentStatus;
+	label: string;
+	tone: DeploymentStatusTone;
+};
 // `plan_change` is a projected failure phase; `runtime_switch` remains a live
 // legacy wire value while the hosted main rollout converges.
 export type DeploymentOperationVerb =
@@ -158,6 +163,33 @@ export function deploymentStatusTone(status: DeploymentStatus): DeploymentStatus
 		default:
 			return exhaustive(status);
 	}
+}
+
+function hasCurrentRuntimeHealthDegradation(status: HostedDeploymentStatus): boolean {
+	return (
+		status.summary_state === "running" &&
+		status.conditions.some(
+			(condition) =>
+				condition.type === "Degraded" &&
+				condition.status === "True" &&
+				condition.reason === "RuntimeHealthDegraded" &&
+				condition.observedGeneration === status.observedGeneration,
+		)
+	);
+}
+
+export function deploymentRuntimeStatusPresentation(
+	resourceStatus: HostedDeploymentStatus | null,
+): DeploymentStatusPresentation {
+	const status = deploymentStatusFromResource(resourceStatus);
+	if (resourceStatus && hasCurrentRuntimeHealthDegradation(resourceStatus)) {
+		return { status, label: "Temporarily unavailable", tone: "warning" };
+	}
+	return {
+		status,
+		label: deploymentStatusLabel(status),
+		tone: deploymentStatusTone(status),
+	};
 }
 
 export function isRunningStatus(status: DeploymentStatus): boolean {

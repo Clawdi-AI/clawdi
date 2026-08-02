@@ -25,7 +25,10 @@ import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import { type AgentDeploymentMatch, useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
-import { deploymentStatusFromResource, deploymentStatusLabel } from "@/hosted/deployment-status";
+import {
+	deploymentRuntimeStatusPresentation,
+	deploymentStatusFromResource,
+} from "@/hosted/deployment-status";
 import { defaultDeploymentRuntime, isHostedRuntime } from "@/hosted/runtimes";
 import {
 	type AgentRouteSearch,
@@ -384,7 +387,7 @@ function DeploymentChooser({
 								icon={<AgentIcon agent={match.runtime} size="lg" />}
 								title={name}
 								meta={[
-									deploymentStatusLabel(deploymentStatusFromResource(deployment.resource.status)),
+									deploymentRuntimeStatusPresentation(deployment.resource.status).label,
 									`Created ${formatShortDate(deployment.resource.metadata.createdAt)}`,
 								]}
 								titleAdornment={

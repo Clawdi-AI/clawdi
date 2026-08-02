@@ -202,8 +202,8 @@ async function expectAgentOverviewTypography(page: Page) {
 			}),
 		);
 	expect(primaryMetrics.length).toBeGreaterThan(3);
-	expect(new Set(primaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["16px"]));
-	expect(new Set(primaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["600"]));
+	expect(new Set(primaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
+	expect(new Set(primaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["500"]));
 
 	const detailMetrics = await main
 		.locator('[data-testid="overview-resource-badges"] [data-slot="badge"]')
@@ -242,8 +242,8 @@ async function expectAgentOverviewTypography(page: Page) {
 			}),
 		);
 	expect(toolPrimaryMetrics).toHaveLength(2);
-	expect(new Set(toolPrimaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["16px"]));
-	expect(new Set(toolPrimaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["600"]));
+	expect(new Set(toolPrimaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
+	expect(new Set(toolPrimaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["500"]));
 
 	const toolSecondaryMetrics = await main
 		.locator("[data-overview-tool-secondary]")
@@ -254,7 +254,7 @@ async function expectAgentOverviewTypography(page: Page) {
 			}),
 		);
 	expect(toolSecondaryMetrics).toHaveLength(1);
-	expect(new Set(toolSecondaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
+	expect(new Set(toolSecondaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["12px"]));
 	expect(new Set(toolSecondaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(
 		new Set(["400"]),
 	);
@@ -3137,7 +3137,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			const style = getComputedStyle(element);
 			return { fontSize: style.fontSize, fontWeight: style.fontWeight };
 		});
-	expect(computePlanTypography).toEqual({ fontSize: "14px", fontWeight: "600" });
+	expect(computePlanTypography).toEqual({ fontSize: "14px", fontWeight: "500" });
 	await expect(compute.getByTestId("overview-compute-summary")).not.toHaveClass(
 		/rounded|border|bg-/,
 	);
@@ -3241,6 +3241,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 			Math.abs((toolGeometry[index]?.x ?? 0) - (resourceGeometry[index]?.x ?? 0)),
 		).toBeLessThanOrEqual(2);
 	}
+	const moduleHeights = [...resourceGeometry, ...toolGeometry].map((box) => box.height);
+	expect(Math.max(...moduleHeights) - Math.min(...moduleHeights)).toBeLessThanOrEqual(2);
 	expect((toolGeometry[1]?.x ?? 0) + (toolGeometry[1]?.width ?? 0)).toBeLessThan(
 		(resourceGeometry[2]?.x ?? 0) + 1,
 	);
@@ -3336,6 +3338,79 @@ test("hosted overview keeps a three-row accessible session slot for zero through
 	}
 
 	expect(Math.max(...measurements) - Math.min(...measurements)).toBeLessThanOrEqual(2);
+});
+
+test("post-ready runtime health degradation stays navigable and surfaces consistently", async ({
+	page,
+}, testInfo) => {
+	const degradedDeployment = mutationDeploymentReadFixture(railHostedDeployment);
+	const status = degradedDeployment.resource.status;
+	if (!status) throw new Error("Expected running deployment status");
+	status.conditions = [
+		{
+			type: "Degraded",
+			status: "True",
+			observedGeneration: status.observedGeneration,
+			lastTransitionTime: "2026-08-02T12:00:00Z",
+			reason: "RuntimeHealthDegraded",
+			message: "Fresh runtime health is temporarily unavailable",
+		},
+	];
+	await stubHostedApi(page, {
+		deployments: [degradedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		sessionsPage: hostedOverviewSessionsPage(1),
+	});
+
+	await page.goto("/agents");
+	const main = page.locator("main");
+	const agentCard = main
+		.getByRole("link", { name: "Open Rail Cloud. Status: Temporarily unavailable", exact: true })
+		.locator("..");
+	await expect(agentCard).toContainText("Temporarily unavailable");
+	await expect(agentCard.getByTitle(/Status: Temporarily unavailable/)).toBeVisible();
+
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+	const compute = main.locator('[data-overview-status="compute"]');
+	const computeStatus = compute.locator("[data-overview-compute-status]");
+	await expect(computeStatus).toHaveText("Temporarily unavailable");
+	await expect(computeStatus.locator('[data-slot="status-dot"]')).toHaveAttribute(
+		"data-status",
+		"warning",
+	);
+	await expect(page.getByTestId("app-sidebar-agent-status")).toContainText(
+		"Temporarily unavailable",
+	);
+	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();
+	await expect(
+		page.getByRole("region", { name: "Recent sessions" }).locator("article"),
+	).toHaveCount(1);
+	await expect(
+		main.getByText("Agent details are unavailable right now.", { exact: true }),
+	).toHaveCount(0);
+	await expect(
+		main.getByText("Fresh runtime health is temporarily unavailable", { exact: true }),
+	).toHaveCount(0);
+	await page.setViewportSize({ width: 1280, height: 1100 });
+	await page.screenshot({
+		path: testInfo.outputPath("hosted-agent-overview-runtime-degraded.png"),
+		fullPage: true,
+	});
+	await page.locator("html").evaluate((element) => element.classList.add("dark"));
+	await page.screenshot({
+		path: testInfo.outputPath("hosted-agent-overview-runtime-degraded-dark.png"),
+		fullPage: true,
+	});
+	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+	await page.setViewportSize({ width: 390, height: 844 });
+	await expect(computeStatus).toBeVisible();
+	await page.screenshot({
+		path: testInfo.outputPath("hosted-agent-overview-runtime-degraded-mobile.png"),
+		fullPage: true,
+	});
 });
 
 test("hosted overview shows a custom provider label and gates provider catalogs", async ({

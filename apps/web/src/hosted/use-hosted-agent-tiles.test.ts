@@ -466,6 +466,32 @@ describe("hostedRuntimeStatusView", () => {
 		expect(view.secondary?.label).toBe("Sync paused");
 	});
 
+	test("shows current runtime health degradation as a warning while staying active", () => {
+		if (!getRuntimeStatusView) throw new Error("hostedRuntimeStatusView was not loaded");
+		const deployment = hostedDeploymentFixture({ status: "running" });
+		const status = deployment.resource.status;
+		if (!status) throw new Error("Expected fixture status");
+		const view = getRuntimeStatusView(
+			{
+				...status,
+				conditions: [
+					{
+						type: "Degraded",
+						status: "True",
+						observedGeneration: status.observedGeneration,
+						lastTransitionTime: "2026-08-02T12:00:00Z",
+						reason: "RuntimeHealthDegraded",
+						message: "Fresh runtime health is temporarily unavailable",
+					},
+				],
+			},
+			env(),
+		);
+
+		expect(view.primary).toMatchObject({ label: "Temporarily unavailable", tone: "warning" });
+		expect(view.active).toBe(true);
+	});
+
 	test("suppresses reassuring live sync when compute is stopped", () => {
 		const view = hostedRuntimeStatusView("stopped", env());
 

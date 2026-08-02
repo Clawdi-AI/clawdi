@@ -161,7 +161,7 @@ export function OverviewConnectorsBody() {
 	return (
 		<div className="space-y-3">
 			{!connected.connectionsLoading && !connectionsUnavailable ? (
-				<p data-overview-primary-value className="text-base font-semibold">
+				<p data-overview-primary-value className="text-sm font-medium text-muted-foreground">
 					{connectedAppCount ? `${connectedAppCount} connected` : "No apps connected"}
 				</p>
 			) : null}

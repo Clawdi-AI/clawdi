@@ -11,6 +11,7 @@ import {
 	type DeploymentOperationVerb,
 	deploymentPollingState,
 	deploymentRefetchInterval,
+	deploymentRuntimeStatusPresentation,
 	deploymentStatusFromResource,
 	deploymentStatusLabel,
 	deploymentStatusTone,
@@ -122,6 +123,39 @@ describe("DeploymentStatus", () => {
 			expect(deploymentStatusLabel(status)).toBe(label);
 			expect(deploymentStatusTone(status)).toBe(tone);
 		}
+	});
+
+	test("surfaces current post-ready runtime health degradation without changing lifecycle", () => {
+		const deployment = hostedDeploymentFixture({ status: "running" });
+		const status = deployment.resource.status;
+		if (!status) throw new Error("Expected fixture status");
+		const degradedStatus = {
+			...status,
+			conditions: [
+				{
+					type: "Degraded" as const,
+					status: "True" as const,
+					observedGeneration: status.observedGeneration,
+					lastTransitionTime: "2026-08-02T12:00:00Z",
+					reason: "RuntimeHealthDegraded",
+					message: "Fresh runtime health is temporarily unavailable",
+				},
+			],
+		};
+
+		expect(deploymentRuntimeStatusPresentation(degradedStatus)).toEqual({
+			status: { kind: "running", raw: "running", known: true },
+			label: "Temporarily unavailable",
+			tone: "warning",
+		});
+		expect(
+			deploymentRuntimeStatusPresentation({
+				...degradedStatus,
+				conditions: [
+					{ ...degradedStatus.conditions[0], observedGeneration: status.observedGeneration - 1 },
+				],
+			}).label,
+		).toBe("Running");
 	});
 
 	test("classifies terminal and transitional states", () => {
