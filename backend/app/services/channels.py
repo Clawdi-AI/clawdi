@@ -92,12 +92,22 @@ log = logging.getLogger(__name__)
 
 PAIR_COMMAND = "/clawdi_pair"
 UNPAIR_COMMAND = "/clawdi_unpair"
+HELP_COMMAND = "/clawdi_help"
+CHANNEL_CONTROL_HELP_REPLY_TEMPLATE = (
+    "To connect this chat to an agent:\n"
+    "1. Open {web_origin}.\n"
+    "2. Choose your agent, open Channels, and select Pair.\n"
+    "3. Send /clawdi_pair <code> here.\n\n"
+    "To disconnect this chat, send /clawdi_unpair."
+)
 DISCORD_PAIR_COMMAND_NAME = "clawdi_pair"
 DISCORD_UNPAIR_COMMAND_NAME = "clawdi_unpair"
+DISCORD_HELP_COMMAND_NAME = "clawdi_help"
 DISCORD_RESERVED_COMMAND_NAMES = frozenset(
     {
         DISCORD_PAIR_COMMAND_NAME,
         DISCORD_UNPAIR_COMMAND_NAME,
+        DISCORD_HELP_COMMAND_NAME,
     }
 )
 DISCORD_LEGACY_RESERVED_COMMAND_NAMES = frozenset({"bot_pair", "bot_unpair"})
@@ -129,6 +139,11 @@ DEFAULT_CHANNEL_COMMANDS: tuple[dict[str, Any], ...] = (
         "description": "Disconnect this chat from Clawdi.",
         "options": [],
     },
+    {
+        "name": "clawdi_help",
+        "description": "Show safe Clawdi pairing instructions.",
+        "options": [],
+    },
 )
 DISCORD_ADMINISTRATOR_PERMISSION = 1 << 3
 DISCORD_MANAGE_GUILD_PERMISSION = 1 << 5
@@ -136,7 +151,7 @@ DISCORD_GUILD_INSTALL = 0
 DISCORD_USER_INSTALL = 1
 DISCORD_GUILD_INTERACTION_CONTEXT = 0
 DISCORD_BOT_DM_INTERACTION_CONTEXT = 1
-DISCORD_RESERVED_COMMAND_VERSION = 3
+DISCORD_RESERVED_COMMAND_VERSION = 4
 DISCORD_RESERVED_COMMAND_VERSION_CONFIG_KEY = "discord_reserved_command_version"
 DISCORD_INSTALL_CONFIG_VERSION = 2
 DISCORD_INSTALL_CONFIG_VERSION_CONFIG_KEY = "discord_install_config_version"
@@ -1220,7 +1235,12 @@ async def archive_bot_agent_link(
             "channel agent link archived",
             use_safe_diagnostics=(
                 account is not None
-                and account.provider in {CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD}
+                and account.provider
+                in {
+                    CHANNEL_PROVIDER_TELEGRAM,
+                    CHANNEL_PROVIDER_DISCORD,
+                    CHANNEL_PROVIDER_WHATSAPP,
+                }
             ),
         )
 
@@ -1386,7 +1406,11 @@ async def archive_channel_account(db: AsyncSession, *, account: ChannelAccount) 
             delivery,
             "channel account archived",
             use_safe_diagnostics=account.provider
-            in {CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD},
+            in {
+                CHANNEL_PROVIDER_TELEGRAM,
+                CHANNEL_PROVIDER_DISCORD,
+                CHANNEL_PROVIDER_WHATSAPP,
+            },
         )
 
     await db.flush()
@@ -1604,6 +1628,14 @@ async def get_or_create_binding(
             binding.external_chat_name = candidate_name
         binding.paired_external_user_id = external_user_id
         binding.status = BINDING_STATUS_ACTIVE
+        await db.execute(
+            update(ChannelBindingAlias)
+            .where(ChannelBindingAlias.binding_id == binding.id)
+            .values(
+                bot_agent_link_id=bot_agent_link_id,
+                user_id=user_id,
+            )
+        )
         return binding
 
     binding = ChannelBinding(
@@ -1720,7 +1752,7 @@ async def find_binding(
         ChannelBinding.status == BINDING_STATUS_ACTIVE,
     ]
     if bot_agent_link_id is not None:
-        alias_filters.append(ChannelBindingAlias.bot_agent_link_id == bot_agent_link_id)
+        alias_filters.append(ChannelBinding.bot_agent_link_id == bot_agent_link_id)
     alias_result = await db.execute(
         select(ChannelBinding)
         .join(ChannelBindingAlias, ChannelBindingAlias.binding_id == ChannelBinding.id)
@@ -1831,6 +1863,41 @@ async def upsert_binding_alias(
     return alias
 
 
+async def lock_active_binding_authority(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    binding: ChannelBinding,
+    bot_agent_link_id: UUID,
+) -> ChannelBinding | None:
+    """Hold current binding authority through the caller's transaction."""
+    return (
+        await db.execute(
+            select(ChannelBinding)
+            .join(
+                ChannelBotAgentLink,
+                and_(
+                    ChannelBotAgentLink.id == ChannelBinding.bot_agent_link_id,
+                    ChannelBotAgentLink.account_id == ChannelBinding.account_id,
+                ),
+            )
+            .join(ChannelAccount, ChannelAccount.id == ChannelBinding.account_id)
+            .where(
+                ChannelBinding.id == binding.id,
+                ChannelBinding.account_id == account.id,
+                ChannelBinding.bot_agent_link_id == bot_agent_link_id,
+                ChannelBinding.status == BINDING_STATUS_ACTIVE,
+                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                ChannelBotAgentLink.archived_at.is_(None),
+                ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                ChannelAccount.archived_at.is_(None),
+            )
+            .execution_options(populate_existing=True)
+            .with_for_update(read=True, of=ChannelBinding)
+        )
+    ).scalar_one_or_none()
+
+
 async def resolve_inbound_binding(
     db: AsyncSession,
     *,
@@ -1921,6 +1988,12 @@ async def resolve_inbound_binding(
             bindings=tuple(bindings),
             command_handled=True,
             pair_failed_reason=command_denied_reason,
+        )
+    if parsed.kind == "help":
+        return InboundBindingResult(
+            binding=binding,
+            bindings=tuple(bindings),
+            command_handled=True,
         )
     if external_user_id is None and (
         command_actor_required or pairing_command_requires_actor(external_chat_type)
@@ -2020,6 +2093,10 @@ def parse_pair_command(text: str | None) -> ChannelPairCommand | None:
         if separator and rest.strip():
             return ChannelPairCommand(kind="unknown", command=command)
         return ChannelPairCommand(kind="unpair")
+    if command == HELP_COMMAND:
+        if separator and rest.strip():
+            return ChannelPairCommand(kind="unknown", command=command)
+        return ChannelPairCommand(kind="help")
     return ChannelPairCommand(kind="unknown", command=command)
 
 
@@ -2057,9 +2134,17 @@ def pairing_reply_for_command(
         if result.pair_failed_reason == "forbidden":
             return PAIRING_REPLY_FORBIDDEN
         return PAIRING_REPLY_NOT_PAIRED
+    if command.kind == "help":
+        return channel_control_help_reply()
     if command.kind == "unknown" and command.command:
         return f"Unknown command: {command.command}. Use {pair_command} <code> or {unpair_command}."
     return "Message received."
+
+
+def channel_control_help_reply() -> str:
+    return CHANNEL_CONTROL_HELP_REPLY_TEMPLATE.format(
+        web_origin=settings.web_origin.rstrip("/"),
+    )
 
 
 def discord_guild_command_denied_reason(
@@ -2733,7 +2818,7 @@ async def find_existing_inbound_provider_event(
     return result.scalar_one_or_none()
 
 
-async def pairing_command_event_was_handled(
+async def channel_control_command_event_was_handled(
     db: AsyncSession,
     *,
     account: ChannelAccount,
@@ -2742,8 +2827,17 @@ async def pairing_command_event_was_handled(
     provider_event_scope: str = PROVIDER_EVENT_SCOPE_CHAT,
     command: ChannelPairCommand | None,
 ) -> bool:
-    """Serialize pairing mutations and reject a previously handled provider event."""
-    if provider_event_id is None or command is None or command.kind not in {"pair", "unpair"}:
+    """Serialize control commands and reject a previously handled provider event."""
+    if (
+        provider_event_id is None
+        or command is None
+        or command.kind
+        not in {
+            "pair",
+            "unpair",
+            "help",
+        }
+    ):
         return False
     # The same transaction-level scope lock is acquired again by
     # resolve_inbound_binding. Taking it before the event lookup closes the
@@ -3687,7 +3781,7 @@ async def prune_channel_debug_events(
     result = await db.execute(
         select(ChannelDebugEvent)
         .where(
-            sql_text("channel_debug_events.provider IN ('telegram', 'discord')"),
+            sql_text("channel_debug_events.provider IN ('telegram', 'discord', 'whatsapp')"),
             ChannelDebugEvent.created_at < cutoff,
         )
         .order_by(ChannelDebugEvent.created_at, ChannelDebugEvent.id)
@@ -4273,7 +4367,7 @@ async def enqueue_channel_outbound_message(
         binding_id=binding.id if binding else None,
         user_id=owner_user_id,
         direction=MESSAGE_DIRECTION_OUTBOUND,
-        external_chat_id=external_chat_id,
+        external_chat_id=binding.external_chat_id if binding is not None else external_chat_id,
         provider_message_id=None,
         text=text,
         payload={"delivery": DELIVERY_STATUS_PENDING},
@@ -4410,6 +4504,7 @@ async def deliver_channel_delivery(
         use_safe_diagnostics = delivery_provider in {
             CHANNEL_PROVIDER_TELEGRAM,
             CHANNEL_PROVIDER_DISCORD,
+            CHANNEL_PROVIDER_WHATSAPP,
         }
         if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
             _schedule_delivery_retry(
@@ -4444,7 +4539,12 @@ async def deliver_channel_delivery(
             provider=account.provider,
             provider_message_id=provider_message_id,
         )
-        if account.provider in {CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD}
+        if account.provider
+        in {
+            CHANNEL_PROVIDER_TELEGRAM,
+            CHANNEL_PROVIDER_DISCORD,
+            CHANNEL_PROVIDER_WHATSAPP,
+        }
         else _provider_response
     )
     message.provider_message_id = provider_message_id
@@ -5581,11 +5681,6 @@ async def send_whatsapp_message(
     bind_to_existing: bool = True,
 ) -> ChannelMessage:
     _require_channel_provider(account, CHANNEL_PROVIDER_WHATSAPP)
-    provider_message_id, response_payload = await _send_whatsapp_provider_payload(
-        account=account,
-        external_chat_id=external_chat_id,
-        text=text,
-    )
     binding = (
         await find_binding(
             db,
@@ -5596,11 +5691,34 @@ async def send_whatsapp_message(
         if bind_to_existing
         else None
     )
+    if bot_agent_link_id is not None:
+        if (
+            binding is None
+            or await lock_active_binding_authority(
+                db,
+                account=account,
+                binding=binding,
+                bot_agent_link_id=bot_agent_link_id,
+            )
+            is None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="chat is not paired with this agent link",
+            )
+    provider_external_chat_id = (
+        binding.external_chat_id if binding is not None else external_chat_id
+    )
+    provider_message_id, response_payload = await _send_whatsapp_provider_payload(
+        account=account,
+        external_chat_id=provider_external_chat_id,
+        text=text,
+    )
     return await _record_outbound_channel_message(
         db,
         account=account,
         binding=binding,
-        external_chat_id=external_chat_id,
+        external_chat_id=provider_external_chat_id,
         provider_message_id=provider_message_id,
         text=text,
         payload=response_payload,
@@ -5930,6 +6048,11 @@ def discord_pair_command_from_payload(payload: dict[str, Any]) -> ChannelPairCom
     name = interaction_command.get("name")
     if name == DISCORD_UNPAIR_COMMAND_NAME:
         return ChannelPairCommand(kind="unpair")
+    if name == DISCORD_HELP_COMMAND_NAME:
+        options = interaction_command.get("options")
+        if isinstance(options, list) and options:
+            return ChannelPairCommand(kind="unknown", command=HELP_COMMAND)
+        return ChannelPairCommand(kind="help")
     if name != DISCORD_PAIR_COMMAND_NAME:
         return None
     options = interaction_command.get("options")
@@ -5955,6 +6078,10 @@ def _parse_discord_pair_command(text: str | None) -> ChannelPairCommand | None:
         if separator and rest.strip():
             return ChannelPairCommand(kind="unknown", command=f"/{name}")
         return ChannelPairCommand(kind="unpair")
+    if name == DISCORD_HELP_COMMAND_NAME:
+        if separator and rest.strip():
+            return ChannelPairCommand(kind="unknown", command=HELP_COMMAND)
+        return ChannelPairCommand(kind="help")
     if name != DISCORD_PAIR_COMMAND_NAME:
         return None
     code = _single_command_arg(rest) if separator else ""
@@ -6114,7 +6241,7 @@ async def record_discord_dispatch(
         return False
     command = discord_pair_command_from_payload(frame)
     provider_event_id = discord_message_id_from_payload(frame)
-    if await pairing_command_event_was_handled(
+    if await channel_control_command_event_was_handled(
         db,
         account=account,
         external_chat_id=external_chat_id,
@@ -6729,19 +6856,20 @@ def _discord_command_payload(
         # byte-for-byte unchanged. Server-side interaction checks remain the
         # authority; this only makes Discord hide the commands by default from
         # guild members without MANAGE_GUILD.
-        payload["default_member_permissions"] = str(DISCORD_MANAGE_GUILD_PERMISSION)
-        if name == DISCORD_PAIR_COMMAND_NAME:
-            payload["description"] = (
-                "Pair this server or direct message with Clawdi."
-                if discord_user_install_is_supported(account)
-                else "Pair this server with Clawdi."
-            )
-        else:
-            payload["description"] = (
-                "Disconnect this server or direct message from Clawdi."
-                if discord_user_install_is_supported(account)
-                else "Disconnect this server from Clawdi."
-            )
+        if name in {DISCORD_PAIR_COMMAND_NAME, DISCORD_UNPAIR_COMMAND_NAME}:
+            payload["default_member_permissions"] = str(DISCORD_MANAGE_GUILD_PERMISSION)
+            if name == DISCORD_PAIR_COMMAND_NAME:
+                payload["description"] = (
+                    "Pair this server or direct message with Clawdi."
+                    if discord_user_install_is_supported(account)
+                    else "Pair this server with Clawdi."
+                )
+            else:
+                payload["description"] = (
+                    "Disconnect this server or direct message from Clawdi."
+                    if discord_user_install_is_supported(account)
+                    else "Disconnect this server from Clawdi."
+                )
         if global_command:
             # Guild Install is always configured. USER_INSTALL and BOT_DM are
             # included only after /applications/@me verified that the app

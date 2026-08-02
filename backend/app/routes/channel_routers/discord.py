@@ -77,6 +77,7 @@ from app.services.channels import (
     DISCORD_REF_INTERACTION_TOKEN,
     ChannelAgentContext,
     ack_discord_gateway_messages,
+    channel_control_command_event_was_handled,
     channel_runtime_account_key,
     channel_runtime_placeholder_token,
     dequeue_discord_gateway_events,
@@ -92,7 +93,6 @@ from app.services.channels import (
     get_active_channel_account,
     get_channel_agent_reference,
     lock_active_discord_binding_lease,
-    pairing_command_event_was_handled,
     record_discord_interaction_references,
     record_discord_outbound_message,
     record_inactive_bot_agent_link_event,
@@ -1493,7 +1493,7 @@ async def discord_webhook(
     command = discord_pair_command_from_payload(payload)
     channel_id, guild_id = discord_channel_scope_from_payload(payload)
     provider_event_id = discord_message_id_from_payload(payload)
-    if await pairing_command_event_was_handled(
+    if await channel_control_command_event_was_handled(
         db,
         account=account,
         external_chat_id=external_chat_id,

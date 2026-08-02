@@ -33,6 +33,7 @@ from app.models.channel import (
     ChannelBotAgentLink,
     ChannelWhatsAppAuthCert,
 )
+from app.services.channels import upsert_binding_alias
 from app.services.vault_crypto import decrypt, encrypt
 
 BinaryNode = dict[str, Any]
@@ -1473,7 +1474,11 @@ async def resolve_whatsapp_binding_by_jids(
         alias = await _find_binding_alias(db, account=account, alias_external_chat_id=candidate)
         if alias is not None:
             alias_binding = await db.get(ChannelBinding, alias.binding_id)
-            if alias_binding is not None and alias_binding.status == BINDING_STATUS_ACTIVE:
+            if (
+                alias_binding is not None
+                and alias_binding.account_id == account.id
+                and alias_binding.status == BINDING_STATUS_ACTIVE
+            ):
                 matches.append(alias_binding)
     unique_matches = list({binding.id: binding for binding in matches}.values())
     if len({binding.bot_agent_link_id for binding in unique_matches}) > 1:
@@ -1500,23 +1505,12 @@ async def remember_whatsapp_binding_aliases(
         )
         if direct is not None:
             continue
-        existing = await _find_binding_alias(
+        await upsert_binding_alias(
             db,
-            account_id=binding.account_id,
+            binding=binding,
             alias_external_chat_id=candidate,
-        )
-        if existing is not None:
-            if existing.binding_id == binding.id:
-                continue
-            return
-        db.add(
-            ChannelBindingAlias(
-                account_id=binding.account_id,
-                bot_agent_link_id=binding.bot_agent_link_id,
-                binding_id=binding.id,
-                user_id=binding.user_id,
-                alias_external_chat_id=candidate,
-            )
+            alias_kind="jid_alias",
+            require_same_binding=True,
         )
 
 

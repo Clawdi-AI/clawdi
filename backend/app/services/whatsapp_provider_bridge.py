@@ -19,13 +19,16 @@ from app.models.channel import (
     CHANNEL_STATUS_ACTIVE,
     PROVIDER_EVENT_SCOPE_ACCOUNT,
     ChannelAccount,
+    ChannelBinding,
     ChannelBotAgentLink,
 )
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channels import (
+    channel_control_command_event_was_handled,
     enqueue_channel_outbound_message,
     find_binding,
     find_existing_inbound_provider_event,
+    lock_active_binding_authority,
     parse_pair_command,
     record_inbound_messages_for_bindings,
     resolve_inbound_binding,
@@ -100,6 +103,10 @@ class WhatsAppProviderTransport(Protocol):
 
 
 _PROVIDER_TRANSPORTS: dict[UUID, WhatsAppProviderTransport] = {}
+
+
+class WhatsAppProviderAccountRetired(Exception):
+    """The ingress owner is no longer active; reconciliation may reattach it."""
 
 
 def register_whatsapp_provider_transport(
@@ -337,14 +344,14 @@ class WhatsAppProviderBridge:
                 targets = _node_target_jids(node)
                 if not targets or any(resolve_jid(target) is None for target in targets):
                     return None
-        transport = self._transport()
-        if transport is None or self._forward_iq_inflight >= 5:
-            return None
-        self._forward_iq_inflight += 1
-        try:
-            return await forward_iq_over(_query_iq(transport), node)
-        finally:
-            self._forward_iq_inflight -= 1
+            transport = self._transport()
+            if transport is None or self._forward_iq_inflight >= 5:
+                return None
+            self._forward_iq_inflight += 1
+            try:
+                return await forward_iq_over(_query_iq(transport), node)
+            finally:
+                self._forward_iq_inflight -= 1
 
 
 async def relay_whatsapp_provider_payload(
@@ -431,6 +438,15 @@ async def persist_whatsapp_provider_event(
         external_chat_name = existing_binding.external_chat_name
     text = whatsapp_text_from_message_proto(event.message_proto)
     command = parse_pair_command(text)
+    if await channel_control_command_event_was_handled(
+        db,
+        account=account,
+        external_chat_id=external_chat_id,
+        provider_event_id=event.message_id,
+        provider_event_scope=PROVIDER_EVENT_SCOPE_ACCOUNT,
+        command=command,
+    ):
+        return
     external_user_id = event.participant or event.participant_alt
     if external_user_id is None and external_chat_type == "dm":
         external_user_id = route_jid
@@ -491,7 +507,7 @@ async def _load_active_whatsapp_account(
         )
     ).scalar_one_or_none()
     if account is None:
-        raise ValueError("whatsapp provider account is unavailable")
+        raise WhatsAppProviderAccountRetired
     return account
 
 
@@ -503,12 +519,14 @@ async def _active_link_owns_account(
 ) -> bool:
     return (
         await db.scalar(
-            select(ChannelBotAgentLink.id).where(
+            select(ChannelBotAgentLink.id)
+            .where(
                 ChannelBotAgentLink.id == bot_agent_link_id,
                 ChannelBotAgentLink.account_id == account_id,
                 ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
                 ChannelBotAgentLink.archived_at.is_(None),
             )
+            .with_for_update(read=True, of=ChannelBotAgentLink)
         )
         is not None
     )
@@ -674,15 +692,41 @@ async def _build_bound_jid_resolver(
     node: BinaryNode,
     bot_agent_link_id: UUID,
 ) -> Callable[[str], str | None]:
-    resolved: dict[str, str | None] = {}
-    for candidate in _node_target_jids(node):
+    bindings: dict[UUID, ChannelBinding] = {}
+    candidates = _node_target_jids(node)
+    for candidate in candidates:
         binding = await find_binding(
             db,
             account=account,
             external_chat_id=candidate,
             bot_agent_link_id=bot_agent_link_id,
         )
-        resolved[candidate] = binding.external_chat_id if binding is not None else None
+        if binding is not None:
+            bindings[binding.id] = binding
+    authorized: dict[UUID, ChannelBinding] = {}
+    for binding_id in sorted(bindings, key=str):
+        binding = bindings[binding_id]
+        leased = await lock_active_binding_authority(
+            db,
+            account=account,
+            binding=binding,
+            bot_agent_link_id=bot_agent_link_id,
+        )
+        if leased is not None:
+            authorized[binding_id] = leased
+    resolved: dict[str, str | None] = {}
+    for candidate in candidates:
+        binding = await find_binding(
+            db,
+            account=account,
+            external_chat_id=candidate,
+            bot_agent_link_id=bot_agent_link_id,
+        )
+        resolved[candidate] = (
+            authorized[binding.id].external_chat_id
+            if binding is not None and binding.id in authorized
+            else None
+        )
     return resolved.get
 
 

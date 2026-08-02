@@ -104,6 +104,7 @@ async def record_channel_debug_event(
         minimize_stored_diagnostics = normalized_provider in {
             CHANNEL_PROVIDER_TELEGRAM,
             CHANNEL_PROVIDER_DISCORD,
+            CHANNEL_PROVIDER_WHATSAPP,
         }
         async with db.begin_nested():
             event = ChannelDebugEvent(

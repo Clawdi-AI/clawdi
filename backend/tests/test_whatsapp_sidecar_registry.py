@@ -11,7 +11,10 @@ from app.services.whatsapp_native_transport import (
     WhatsAppBaileysSidecarConfig,
     WhatsAppProviderMessageEvent,
 )
-from app.services.whatsapp_provider_bridge import whatsapp_provider_transport_status
+from app.services.whatsapp_provider_bridge import (
+    WhatsAppProviderAccountRetired,
+    whatsapp_provider_transport_status,
+)
 from app.services.whatsapp_sidecar_registry import (
     ConfiguredWhatsAppSidecarRegistry,
     parse_whatsapp_sidecar_registrations,
@@ -320,3 +323,100 @@ async def test_provider_ingress_ack_waits_until_persistence_returns(monkeypatch)
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_provider_ingress_stops_without_ack_when_account_is_retired(monkeypatch):
+    account_id = UUID("00000000-0000-0000-0000-000000000904")
+    event = WhatsAppProviderMessageEvent(
+        sequence=8,
+        message_id="provider-8",
+        remote_jid="15550001111@s.whatsapp.net",
+        remote_jid_alt=None,
+        participant=None,
+        participant_alt=None,
+        push_name=None,
+        message_timestamp=None,
+        message_proto=b"\x0a\x05hello",
+    )
+    acknowledgements: list[int] = []
+
+    class SessionContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    async def retired(_db, *, account_id, event):
+        raise WhatsAppProviderAccountRetired
+
+    class PumpClient:
+        async def provider_events(self, *, limit=100):
+            return [event]
+
+        async def acknowledge_provider_events(self, *, through_sequence):
+            acknowledgements.append(through_sequence)
+
+    monkeypatch.setattr(sidecar_registry_module, "async_session_factory", lambda: SessionContext())
+    monkeypatch.setattr(sidecar_registry_module, "persist_whatsapp_provider_event", retired)
+
+    await ConfiguredWhatsAppSidecarRegistry("")._pump_provider_ingress(account_id, PumpClient())
+
+    assert acknowledgements == []
+
+
+@pytest.mark.asyncio
+async def test_provider_ingress_retries_transient_errors(monkeypatch):
+    account_id = UUID("00000000-0000-0000-0000-000000000905")
+    calls = 0
+    persisted = asyncio.Event()
+
+    class SessionContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    async def transient_then_wait(_db, *, account_id, event):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("temporary database failure")
+        persisted.set()
+
+    event = WhatsAppProviderMessageEvent(
+        sequence=9,
+        message_id="provider-9",
+        remote_jid="15550001111@s.whatsapp.net",
+        remote_jid_alt=None,
+        participant=None,
+        participant_alt=None,
+        push_name=None,
+        message_timestamp=None,
+        message_proto=b"\x0a\x05hello",
+    )
+
+    class PumpClient:
+        async def provider_events(self, *, limit=100):
+            return [event]
+
+        async def acknowledge_provider_events(self, *, through_sequence):
+            await asyncio.Future()
+
+    monkeypatch.setattr(sidecar_registry_module, "async_session_factory", lambda: SessionContext())
+    monkeypatch.setattr(
+        sidecar_registry_module,
+        "persist_whatsapp_provider_event",
+        transient_then_wait,
+    )
+    registry = ConfiguredWhatsAppSidecarRegistry("")
+    task = asyncio.create_task(registry._pump_provider_ingress(account_id, PumpClient()))
+    try:
+        await asyncio.wait_for(persisted.wait(), timeout=2)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    assert calls == 2

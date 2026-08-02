@@ -6746,6 +6746,7 @@ async def test_telegram_bot_commands_preserve_scope_language_and_delete(
     assert get_deleted_es.json()["result"] == [
         {"command": "clawdi_pair", "description": "Pair this chat with Clawdi."},
         {"command": "clawdi_unpair", "description": "Disconnect this chat from Clawdi."},
+        {"command": "clawdi_help", "description": "Show safe Clawdi pairing instructions."},
     ]
 
 
@@ -7023,6 +7024,7 @@ async def test_telegram_repair_and_unpair_clear_previous_link_commands(
     assert second_get.json()["result"] == [
         {"command": "clawdi_pair", "description": "Pair this chat with Clawdi."},
         {"command": "clawdi_unpair", "description": "Disconnect this chat from Clawdi."},
+        {"command": "clawdi_help", "description": "Show safe Clawdi pairing instructions."},
     ]
 
     second_commands = [{"command": "second", "description": "Second link"}]
@@ -14110,6 +14112,9 @@ def test_parse_pair_command_matches_strict_canonical_shapes():
     assert parse_pair_command("/clawdi_unpair").kind == "unpair"
     assert parse_pair_command("/clawdi_unpair@shared_bot").kind == "unpair"
     assert parse_pair_command("/clawdi_unpair now").kind == "unknown"
+    assert parse_pair_command("/clawdi_help").kind == "help"
+    assert parse_pair_command("/clawdi_help@shared_bot").kind == "help"
+    assert parse_pair_command("/clawdi_help now").kind == "unknown"
     assert parse_pair_command("/start BCDFGHJKLM").code == "BCDFGHJKLM"
     assert parse_pair_command("/start@shared_bot BCDFGHJKLM").code == "BCDFGHJKLM"
     # Pending codes issued before the shorter-code rollout remain claimable
@@ -14124,6 +14129,24 @@ def test_parse_pair_command_matches_strict_canonical_shapes():
     assert unknown is not None
     assert unknown.kind == "unknown"
     assert unknown.command == "/clawdi_foo"
+
+
+def test_channel_control_help_reply_is_shared_safe_plain_text(monkeypatch):
+    monkeypatch.setattr(channel_service.settings, "web_origin", "https://console.example.test/")
+    expected = (
+        "To connect this chat to an agent:\n"
+        "1. Open https://console.example.test.\n"
+        "2. Choose your agent, open Channels, and select Pair.\n"
+        "3. Send /clawdi_pair <code> here.\n\n"
+        "To disconnect this chat, send /clawdi_unpair."
+    )
+    command = channel_service.ChannelPairCommand(kind="help")
+    result = channel_service.InboundBindingResult(binding=None, command_handled=True)
+
+    assert channel_service.channel_control_help_reply() == expected
+    assert channel_service.pairing_reply_for_command(command, result) == expected
+    assert discord_pairing_reply_for_command(command, result, guild_id=None) == expected
+    assert discord_pairing_reply_for_command(command, result, guild_id="guild") == expected
 
 
 @pytest.mark.parametrize(
@@ -14341,6 +14364,7 @@ async def test_pair_code_concurrent_claim_is_single_use(
     [
         ("clawdi_pair", "pair"),
         ("clawdi_unpair", "unpair"),
+        ("clawdi_help", "help"),
     ],
 )
 def test_discord_interaction_parser_accepts_current_reserved_commands(
@@ -14352,7 +14376,9 @@ def test_discord_interaction_parser_accepts_current_reserved_commands(
             "type": 2,
             "data": {
                 "name": name,
-                "options": [{"name": "code", "value": "BCDFGHJKLM"}],
+                "options": (
+                    [{"name": "code", "value": "BCDFGHJKLM"}] if expected_kind == "pair" else []
+                ),
             },
         }
     )
@@ -16982,7 +17008,7 @@ async def test_discord_guild_cannot_move_to_second_link_until_explicit_unpair_an
         )
     ).scalar_one()
     assert stale_alias.binding_id == binding_id
-    assert stale_alias.bot_agent_link_id == link_a_id
+    assert stale_alias.bot_agent_link_id == UUID(link_b_body["id"])
 
     _reset_fake_provider_client(
         {
@@ -18988,6 +19014,7 @@ async def test_telegram_command_sync_uses_set_my_commands(
     assert _FakeProviderClient.calls[0]["json"]["commands"] == [
         {"command": "clawdi_pair", "description": "Pair this chat with Clawdi."},
         {"command": "clawdi_unpair", "description": "Disconnect this chat from Clawdi."},
+        {"command": "clawdi_help", "description": "Show safe Clawdi pairing instructions."},
     ]
 
 
@@ -19054,6 +19081,7 @@ async def test_discord_pair_preparation_configures_endpoint_then_global_commands
             ),
             ({"id": "810000000000000004", "name": "clawdi_pair", "type": 1}, 200),
             ({"id": "810000000000000005", "name": "clawdi_unpair", "type": 1}, 200),
+            ({"id": "810000000000000006", "name": "clawdi_help", "type": 1}, 200),
             ({}, 204),
             ({}, 204),
         ]
@@ -19088,6 +19116,7 @@ async def test_discord_pair_preparation_configures_endpoint_then_global_commands
         "GET",
         "PATCH",
         "GET",
+        "POST",
         "POST",
         "POST",
         "DELETE",
@@ -19129,8 +19158,9 @@ async def test_discord_pair_preparation_configures_endpoint_then_global_commands
     assert [call["json"]["name"] for call in post_calls] == [
         "clawdi_pair",
         "clawdi_unpair",
+        "clawdi_help",
     ]
-    pair_command, unpair_command = [call["json"] for call in post_calls]
+    pair_command, unpair_command, help_command = [call["json"] for call in post_calls]
     assert pair_command["default_member_permissions"] == "32"
     assert unpair_command["default_member_permissions"] == "32"
     assert pair_command["integration_types"] == [0, 1]
@@ -19141,6 +19171,8 @@ async def test_discord_pair_preparation_configures_endpoint_then_global_commands
     assert unpair_command["description"] == (
         "Disconnect this server or direct message from Clawdi."
     )
+    assert "default_member_permissions" not in help_command
+    assert help_command["description"] == "Show safe Clawdi pairing instructions."
     install_url = pair.json()["discord_install_url"]
     assert install_url == (
         "https://discord.com/oauth2/authorize"
@@ -19268,9 +19300,11 @@ async def test_discord_existing_account_reconciles_reserved_commands_before_pair
         "GET",
         "POST",
         "POST",
+        "POST",
         "DELETE",
         "DELETE",
         "GET",
+        "POST",
         "POST",
         "POST",
         "DELETE",
@@ -19293,6 +19327,7 @@ async def test_discord_existing_account_reconciles_reserved_commands_before_pair
         "runtime_status",
         "clawdi_pair",
         "clawdi_unpair",
+        "clawdi_help",
     }
     assert {
         command["name"] for command in _StatefulDiscordCommandClient.commands_by_path[guild_path]
@@ -19300,6 +19335,7 @@ async def test_discord_existing_account_reconciles_reserved_commands_before_pair
         "guild_runtime",
         "clawdi_pair",
         "clawdi_unpair",
+        "clawdi_help",
     }
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
@@ -19314,7 +19350,7 @@ async def test_discord_existing_account_reconciles_reserved_commands_before_pair
     )
 
     assert second_pair.status_code == 201, second_pair.text
-    assert len(_StatefulDiscordCommandClient.calls) == 10
+    assert len(_StatefulDiscordCommandClient.calls) == 12
 
 
 @pytest.mark.asyncio
@@ -19467,6 +19503,7 @@ async def test_discord_reserved_delete_not_found_is_idempotent_success(
         "GET",
         "POST",
         "POST",
+        "POST",
         "DELETE",
         "DELETE",
     ]
@@ -19476,6 +19513,7 @@ async def test_discord_reserved_delete_not_found_is_idempotent_success(
         "runtime_status",
         "clawdi_pair",
         "clawdi_unpair",
+        "clawdi_help",
     }
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
@@ -19549,6 +19587,7 @@ async def test_discord_reserved_delete_failure_retries_to_convergence(
         "GET",
         "POST",
         "POST",
+        "POST",
         "DELETE",
     ]
     assert {
@@ -19559,6 +19598,7 @@ async def test_discord_reserved_delete_failure_retries_to_convergence(
         "bot_unpair",
         "clawdi_pair",
         "clawdi_unpair",
+        "clawdi_help",
     }
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
@@ -19580,8 +19620,9 @@ async def test_discord_reserved_delete_failure_retries_to_convergence(
     )
 
     assert converged_pair.status_code == 201, converged_pair.text
-    assert [call["method"] for call in _StatefulDiscordCommandClient.calls[4:]] == [
+    assert [call["method"] for call in _StatefulDiscordCommandClient.calls[5:]] == [
         "GET",
+        "POST",
         "POST",
         "POST",
         "DELETE",
@@ -19593,6 +19634,7 @@ async def test_discord_reserved_delete_failure_retries_to_convergence(
         "runtime_status",
         "clawdi_pair",
         "clawdi_unpair",
+        "clawdi_help",
     }
     await db_session.refresh(account)
     assert (
@@ -19623,6 +19665,7 @@ async def test_discord_reserved_command_version_waits_for_global_and_guild_succe
             ),
             ({"id": "850000000000000003", "name": "clawdi_pair", "type": 1}, 200),
             ({"id": "850000000000000004", "name": "clawdi_unpair", "type": 1}, 200),
+            ({"id": "850000000000000005", "name": "clawdi_help", "type": 1}, 200),
             ({}, 204),
             ({}, 204),
             ({"message": "rate limited", "retry_after": 0}, 429),
@@ -19657,6 +19700,7 @@ async def test_discord_reserved_command_version_waits_for_global_and_guild_succe
     assert pair.headers["Retry-After"] == "0"
     assert [call["method"] for call in _DiscordPreparationProviderClient.calls] == [
         "GET",
+        "POST",
         "POST",
         "POST",
         "DELETE",
@@ -19897,6 +19941,7 @@ async def test_discord_default_command_sync_reconciles_only_reserved_commands(
         "GET",
         "POST",
         "POST",
+        "POST",
         "DELETE",
         "DELETE",
     ]
@@ -19915,7 +19960,7 @@ async def test_discord_default_command_sync_reconciles_only_reserved_commands(
     assert all("840000000000000001" not in call["url"] for call in delete_calls)
     post_calls = [call for call in _StatefulDiscordCommandClient.calls if call["method"] == "POST"]
     assert all(call["headers"]["Authorization"] == "Bot discord-token" for call in post_calls)
-    pair_command, unpair_command = [call["json"] for call in post_calls]
+    pair_command, unpair_command, help_command = [call["json"] for call in post_calls]
     assert pair_command["name"] == "clawdi_pair"
     assert pair_command["default_member_permissions"] == "32"
     assert pair_command["options"][0]["name"] == "code"
@@ -19925,12 +19970,15 @@ async def test_discord_default_command_sync_reconciles_only_reserved_commands(
     assert unpair_command["default_member_permissions"] == "32"
     assert "integration_types" not in unpair_command
     assert "contexts" not in unpair_command
+    assert help_command["name"] == "clawdi_help"
+    assert "default_member_permissions" not in help_command
     assert {
         command["name"] for command in _StatefulDiscordCommandClient.commands_by_path[guild_path]
     } == {
         "guild_runtime",
         "clawdi_pair",
         "clawdi_unpair",
+        "clawdi_help",
     }
 
 
@@ -19964,7 +20012,14 @@ async def test_discord_default_command_sync_handles_network_failure(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "name",
-    ["bot_pair", "bot_unpair", "bot_status", "clawdi_pair", "clawdi_unpair"],
+    [
+        "bot_pair",
+        "bot_unpair",
+        "bot_status",
+        "clawdi_pair",
+        "clawdi_unpair",
+        "clawdi_help",
+    ],
 )
 async def test_discord_custom_command_sync_rejects_reserved_names(
     client: httpx.AsyncClient,
@@ -21288,6 +21343,7 @@ async def test_discord_guild_only_install_capability_stays_guild_only(
             ([], 200),
             ({"id": "910000000000000001", "name": "clawdi_pair", "type": 1}, 200),
             ({"id": "910000000000000002", "name": "clawdi_unpair", "type": 1}, 200),
+            ({"id": "910000000000000003", "name": "clawdi_help", "type": 1}, 200),
         ]
     )
     monkeypatch.setattr(channel_service.httpx, "AsyncClient", _DiscordPreparationProviderClient)
@@ -21327,7 +21383,7 @@ async def test_discord_guild_only_install_capability_stays_guild_only(
     post_calls = [
         call for call in _DiscordPreparationProviderClient.calls if call["method"] == "POST"
     ]
-    assert len(post_calls) == 2
+    assert len(post_calls) == 3
     for call in post_calls:
         assert call["json"]["integration_types"] == [0]
         assert call["json"]["contexts"] == [0]

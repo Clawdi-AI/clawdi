@@ -34,6 +34,7 @@ from app.services.whatsapp_native_transport import (
     validate_whatsapp_sidecar_base_url,
 )
 from app.services.whatsapp_provider_bridge import (
+    WhatsAppProviderAccountRetired,
     persist_whatsapp_provider_event,
     register_whatsapp_provider_transport,
     unregister_whatsapp_provider_transport,
@@ -523,6 +524,8 @@ class ConfiguredWhatsAppSidecarRegistry:
                     await client.acknowledge_provider_events(through_sequence=event.sequence)
             except asyncio.CancelledError:
                 raise
+            except WhatsAppProviderAccountRetired:
+                return
             except Exception:
                 log.exception("WhatsApp provider ingress pump failed for account %s", account_id)
                 await asyncio.sleep(1.0)

@@ -65,6 +65,7 @@ from app.services.channels import (
     bot_agent_link_has_provider_cardinality_capability,
     bot_agent_link_has_strict_v2_authority,
     channel_agent_reference_exists,
+    channel_control_command_event_was_handled,
     channel_runtime_account_key,
     channel_runtime_placeholder_token,
     decrypt_provider_token,
@@ -73,7 +74,6 @@ from app.services.channels import (
     find_existing_inbound_provider_event,
     get_active_channel_account,
     lock_channel_binding_identity,
-    pairing_command_event_was_handled,
     parse_pair_command,
     pending_channel_inbox_count,
     record_channel_agent_reference,
@@ -701,7 +701,7 @@ async def telegram_webhook(
     provider_event_id = telegram_event_id_from_update(payload)
     provider_event_scope = telegram_event_scope_from_update(payload)
     external_user_id = telegram_external_user_id_from_update(payload)
-    if await pairing_command_event_was_handled(
+    if await channel_control_command_event_was_handled(
         db,
         account=account,
         external_chat_id=external_chat_id,
@@ -1241,6 +1241,7 @@ def _get_telegram_commands(
     return [
         {"command": "clawdi_pair", "description": "Pair this chat with Clawdi."},
         {"command": "clawdi_unpair", "description": "Disconnect this chat from Clawdi."},
+        {"command": "clawdi_help", "description": "Show safe Clawdi pairing instructions."},
     ]
 
 
