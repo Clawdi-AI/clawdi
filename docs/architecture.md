@@ -236,8 +236,8 @@ exists; agents or users add memories explicitly.
 The backend MCP endpoint is `POST /v1/mcp/clawdi`, a stateless JSON-RPC surface
 authenticated with a Clawdi API key. It is the single runtime authority for
 native tool schemas, scope gating, calls, and connector dispatch. Native tools
-cover memory, sessions, read-only Project metadata, and read-only Vault
-metadata/references. Tools requiring unavailable scopes are omitted from
+cover memory, sessions, read-only Project metadata, Vault metadata/references,
+and explicit single-reference Vault plaintext resolution. Tools requiring unavailable scopes are omitted from
 `tools/list`, while direct calls still fail the scope check. Connector names
 can never shadow a declared native tool, including one hidden by scope.
 
@@ -246,9 +246,11 @@ stdio-to-HTTP wrapper: it forwards MCP messages and does not declare a second
 copy of tool schemas or business logic. The backend keeps connector OAuth
 tokens and bridge credentials out of the agent process.
 
-Vault MCP tools select only attachment metadata and field names. They never
-select or decrypt `encrypted_value`, `nonce`, or credential payloads. Returned
-references use the exact canonical forms
+`vault_list` and `vault_get` select only attachment metadata and field names;
+they never select or decrypt `encrypted_value`, `nonce`, or credential payloads.
+`vault_resolve` requires the separate `vault:plaintext:read` scope plus an
+explicit `confirm_secret_access: true`, accepts one exact Project-scoped
+reference, and returns its decrypted value. Returned references use the exact canonical forms
 `clawdi://project/<project-id>/vault/<vault>/field/<field>` and
 `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`.
 Environment-bound callers see only attachments in their bound Agent Project.

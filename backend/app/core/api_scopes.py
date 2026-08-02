@@ -11,6 +11,7 @@ RUNTIME_MCP_SCOPES = (
     "skills:read",
     "skills:write",
     "vault:metadata:read",
+    "vault:plaintext:read",
 )
 
 RUNTIME_DEPLOYMENT_KEY_SCOPES = (

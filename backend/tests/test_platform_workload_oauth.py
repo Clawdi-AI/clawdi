@@ -766,6 +766,7 @@ async def test_v2_provision_precedes_scoped_deploy_key_and_retirement_replays_ex
         "skills:read",
         "skills:write",
         "vault:metadata:read",
+        "vault:plaintext:read",
     }
     provision_audit = (
         await db_session.execute(

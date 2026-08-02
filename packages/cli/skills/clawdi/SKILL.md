@@ -96,9 +96,13 @@ Two read-only MCP tools expose safe Vault metadata without secret values:
 - `vault_list` — List Vault attachments and key counts for visible Projects.
 - `vault_get` — List key names, provenance, and exact `clawdi://` references for one attached Vault.
 
-These tools never resolve or return plaintext. Never ask them for a value and
-never imply that a returned key name is a secret value. Preserve their exact
-references when passing them to an authorized runtime:
+Use `vault_resolve` only when the current task requires one referenced plaintext value. Pass
+the exact Project-scoped reference and `confirm_secret_access: true`. Treat the result as
+sensitive: never echo it, save it to Memory, or include it in logs.
+
+The metadata tools never resolve or return plaintext. Never imply that a returned key name
+is a secret value. Preserve their exact references for `vault_resolve` or when passing them
+to an authorized runtime:
 
 - `clawdi://project/<project-id>/vault/<vault>/field/<field>`
 - `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`

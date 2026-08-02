@@ -34,6 +34,7 @@ STRICT_SCOPES = [
     "skills:read",
     "skills:write",
     "vault:metadata:read",
+    "vault:plaintext:read",
 ]
 PLATFORM_PREVIOUS_SCOPES = ["sessions:write", "skills:read", "skills:write"]
 PLATFORM_SCOPES = [
@@ -47,6 +48,7 @@ PLATFORM_SCOPES = [
     "skills:read",
     "skills:write",
     "vault:metadata:read",
+    "vault:plaintext:read",
 ]
 
 

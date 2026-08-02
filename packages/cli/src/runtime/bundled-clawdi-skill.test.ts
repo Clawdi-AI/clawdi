@@ -95,6 +95,7 @@ describe("bundled Clawdi skill connector contract", () => {
 		expect(hostedSkill).toContain("`project_current`");
 		expect(hostedSkill).toContain("## Vault Metadata");
 		expect(hostedSkill).toContain("`vault_get`");
+		expect(hostedSkill).toContain("`vault_resolve`");
 		expect(hostedSkill).not.toMatch(/\bVault CLI\b|\bAI Provider CLI\b|\bsetup\b/i);
 		expect(hostedSkill).not.toMatch(/dashboard/i);
 		expect(genericSkill).toContain("## Memory");

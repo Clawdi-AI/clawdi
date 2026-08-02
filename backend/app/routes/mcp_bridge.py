@@ -5,7 +5,7 @@ import logging
 import re
 import time
 from typing import Any, Literal
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -52,6 +52,7 @@ from app.services.session_content import (
     load_session_messages,
 )
 from app.services.session_export import session_to_markdown
+from app.services.vault_crypto import decrypt
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mcp", tags=["mcp"])
@@ -167,6 +168,19 @@ class _VaultGetArguments(_ToolArguments):
             UUID(value)
         except ValueError as exc:
             raise ValueError("invalid resource id") from exc
+        return value
+
+
+class _VaultResolveArguments(_ToolArguments):
+    reference: StrictStr = Field(min_length=1, max_length=1_000)
+    confirm_secret_access: Literal[True]
+
+    @field_validator("reference")
+    @classmethod
+    def _strip_reference(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("reference is required")
         return value
 
 
@@ -398,6 +412,16 @@ _NATIVE_TOOLS.extend(
             ),
             "inputSchema": _VaultGetArguments.model_json_schema(),
         },
+        {
+            "name": "vault_resolve",
+            "description": (
+                "Resolve one exact Project-scoped clawdi:// reference to its plaintext secret. "
+                "Call only when the current task requires the value. The result is sensitive: "
+                "never echo it, store it in Memory, or include it in logs. Requires "
+                "confirm_secret_access=true. Hosted runtimes are restricted to their bound Project."
+            ),
+            "inputSchema": _VaultResolveArguments.model_json_schema(),
+        },
     ]
 )
 
@@ -588,6 +612,7 @@ _NATIVE_TOOL_SCOPES: dict[str, tuple[str, ...]] = {
     "project_get": ("projects:read",),
     "vault_list": ("vault:metadata:read",),
     "vault_get": ("vault:metadata:read",),
+    "vault_resolve": ("vault:plaintext:read",),
 }
 _DECLARED_NATIVE_TOOL_NAMES = frozenset(
     name for tool in _NATIVE_TOOLS if isinstance((name := tool.get("name")), str)
@@ -666,6 +691,8 @@ async def _call_clawdi_mcp_tool(
         return await _tool_vault_list(arguments, auth=auth, db=db)
     if name == "vault_get":
         return await _tool_vault_get(arguments, auth=auth, db=db)
+    if name == "vault_resolve":
+        return await _tool_vault_resolve(arguments, auth=auth, db=db)
     return await _tool_connector_call(name, arguments, auth=auth)
 
 
@@ -1041,6 +1068,66 @@ async def _tool_vault_get(
                 "slug": vault_slug,
             },
             "keys": keys,
+        }
+    )
+
+
+def _parse_exact_project_vault_reference(reference: str) -> tuple[UUID, str, str, str]:
+    try:
+        parsed = urlsplit(reference)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Vault reference") from None
+    if parsed.scheme != "clawdi" or parsed.netloc != "project" or parsed.query or parsed.fragment:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Vault reference")
+    raw_parts = parsed.path.removeprefix("/").split("/")
+    parts = [unquote(part) for part in raw_parts]
+    if len(parts) == 5 and parts[1] == "vault" and parts[3] == "field":
+        project_raw, _, vault_slug, _, field = parts
+        section = ""
+    elif len(parts) == 7 and parts[1] == "vault" and parts[3] == "section" and parts[5] == "field":
+        project_raw, _, vault_slug, _, section, _, field = parts
+    else:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Vault reference")
+    try:
+        project_id = UUID(project_raw)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Vault reference") from None
+    if not vault_slug or not field:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Vault reference")
+    if _exact_vault_reference(project_id, vault_slug, section, field) != reference:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Vault reference")
+    return project_id, vault_slug, section, field
+
+
+async def _tool_vault_resolve(
+    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
+) -> dict[str, Any]:
+    _require_scope(auth, "vault:plaintext:read")
+    parsed = _validate_arguments(_VaultResolveArguments, arguments)
+    project_id, vault_slug, section, field = _parse_exact_project_vault_reference(parsed.reference)
+    await _visible_project_or_404(db, auth, project_id)
+    rows = (
+        await db.execute(
+            select(VaultItem.encrypted_value, VaultItem.nonce)
+            .join(Vault, Vault.id == VaultItem.vault_id)
+            .join(VaultProjectAttachment, VaultProjectAttachment.vault_id == Vault.id)
+            .where(
+                VaultProjectAttachment.project_id == project_id,
+                Vault.slug == vault_slug,
+                VaultItem.section == section,
+                VaultItem.item_name == field,
+            )
+        )
+    ).all()
+    if not rows:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Vault reference not found")
+    if len(rows) != 1:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Vault reference is ambiguous")
+    encrypted_value, nonce = rows[0]
+    return _tool_json(
+        {
+            "reference": parsed.reference,
+            "value": decrypt(encrypted_value, nonce),
         }
     )
 

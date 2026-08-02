@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from httpx import ASGITransport
 from sqlalchemy import select
 
@@ -74,6 +75,29 @@ def _assert_no_vault_values(value: object) -> None:
     elif isinstance(value, list):
         for child in value:
             _assert_no_vault_values(child)
+
+
+def test_vault_resolve_accepts_only_canonical_project_references() -> None:
+    project_id = uuid.uuid4()
+    reference = (
+        f"clawdi://project/{project_id}/vault/runtime-a/section/stripe%20prod/field/SECRET%2FKEY"
+    )
+    assert mcp_bridge._parse_exact_project_vault_reference(reference) == (
+        project_id,
+        "runtime-a",
+        "stripe prod",
+        "SECRET/KEY",
+    )
+
+    for invalid in (
+        reference.replace("%2F", "/"),
+        reference.replace("%2F", "%2f"),
+        f"{reference}?raw=true",
+        f"{reference}#fragment",
+        reference.replace("clawdi://project/", "clawdi://vault/"),
+    ):
+        with pytest.raises(HTTPException, match="Invalid Vault reference"):
+            mcp_bridge._parse_exact_project_vault_reference(invalid)
 
 
 @pytest.mark.asyncio
@@ -188,6 +212,7 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
                 "project_get",
                 "vault_list",
                 "vault_get",
+                "vault_resolve",
             } <= names
 
             added = await _tool_call(
@@ -258,6 +283,38 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             assert "runtime-a-default-secret" not in serialized_vault_result
             assert "runtime-a-named-secret" not in serialized_vault_result
 
+            monkeypatch.setattr(
+                mcp_bridge,
+                "decrypt",
+                lambda encrypted_value, _nonce: encrypted_value.decode(),
+            )
+            default_reference = next(
+                reference for reference in references if reference.endswith("/DEFAULT_TOKEN")
+            )
+            resolved = _tool_json(
+                await _tool_call(
+                    client,
+                    81,
+                    "vault_resolve",
+                    {
+                        "reference": default_reference,
+                        "confirm_secret_access": True,
+                    },
+                )
+            )
+            assert resolved == {
+                "reference": default_reference,
+                "value": "runtime-a-default-secret",
+            }
+            missing_confirmation = await _tool_call(
+                client,
+                82,
+                "vault_resolve",
+                {"reference": default_reference},
+            )
+            assert missing_confirmation["isError"] is True
+            assert missing_confirmation["content"][0]["text"] == "Error: Invalid tool arguments"
+
             active_auth["value"] = _runtime_auth(seed_user, env_b.id)
             other_search = await _tool_call(
                 client,
@@ -287,6 +344,17 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             )
             assert inaccessible_vault["isError"] is True
             assert "Project not found" in inaccessible_vault["content"][0]["text"]
+            inaccessible_secret = await _tool_call(
+                client,
+                83,
+                "vault_resolve",
+                {
+                    "reference": default_reference,
+                    "confirm_secret_access": True,
+                },
+            )
+            assert inaccessible_secret["isError"] is True
+            assert "Project not found" in inaccessible_secret["content"][0]["text"]
             unknown_vault = await _tool_call(
                 client,
                 12,
@@ -313,7 +381,7 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             )
             cli_listed = await _rpc(client, 14, "tools/list", {})
             cli_names = {tool["name"] for tool in cli_listed["tools"]}
-            assert {"memory_search", "project_list", "vault_list"} <= cli_names
+            assert {"memory_search", "project_list", "vault_list", "vault_resolve"} <= cli_names
             cli_search = await _tool_call(
                 client,
                 15,
@@ -330,7 +398,7 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             )
             oauth_listed = await _rpc(client, 16, "tools/list", {})
             oauth_names = {tool["name"] for tool in oauth_listed["tools"]}
-            assert {"memory_search", "project_list", "vault_list"} <= oauth_names
+            assert {"memory_search", "project_list", "vault_list", "vault_resolve"} <= oauth_names
             oauth_projects = _tool_json(await _tool_call(client, 17, "project_list"))["projects"]
             oauth_project_ids = {project["id"] for project in oauth_projects}
             assert str(env_a.default_project_id) in oauth_project_ids
@@ -426,6 +494,7 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
             assert "memory_search" not in names
             assert "project_get" not in names
             assert "vault_list" not in names
+            assert "vault_resolve" not in names
 
             missing_memory = await _tool_call(
                 client,
@@ -446,6 +515,19 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
             missing_vault = await _tool_call(client, 4, "vault_list")
             assert missing_vault["isError"] is True
             assert "missing scope: vault:metadata:read" in missing_vault["content"][0]["text"]
+            missing_plaintext = await _tool_call(
+                client,
+                41,
+                "vault_resolve",
+                {
+                    "reference": (
+                        f"clawdi://project/{env.default_project_id}/vault/default/field/TOKEN"
+                    ),
+                    "confirm_secret_access": True,
+                },
+            )
+            assert missing_plaintext["isError"] is True
+            assert "missing scope: vault:plaintext:read" in missing_plaintext["content"][0]["text"]
 
             runtime_auth.api_key.scopes = ["projects:read"]
             invalid = await _tool_call(
