@@ -1,13 +1,18 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import type {
 	DeploymentOperation,
 	HostedDeployment,
 	HostedDeploymentStatus,
 } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
-import { deploymentFailureReason } from "@/hosted/deployment-failure";
+import {
+	deploymentFailurePresentation,
+	deploymentFailureReason,
+} from "@/hosted/deployment-failure";
 import {
 	DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
 	type DeploymentOperationVerb,
@@ -23,11 +28,17 @@ type ShouldShowHostedProjectionNotice =
 	typeof import("@/hosted/agents/hosted-agent-detail").shouldShowHostedProjectionNotice;
 type RunManualDeploymentRefetch =
 	typeof import("@/hosted/agents/agent-home").runManualDeploymentRefetch;
+type OverviewFailureAction =
+	typeof import("@/hosted/agents/hosted-agent-detail").OverviewFailureAction;
+type OverviewComputeStatus =
+	typeof import("@/hosted/agents/hosted-agent-detail").OverviewComputeStatus;
 
 let invalidateSnapshots: InvalidateDeploymentSnapshots | null = null;
 let projectAcceptedTransition: ProjectAcceptedDeploymentTransition | null = null;
 let shouldShowProjectionNotice: ShouldShowHostedProjectionNotice | null = null;
 let runManualDeploymentRefetch: RunManualDeploymentRefetch | null = null;
+let overviewFailureAction: OverviewFailureAction | null = null;
+let overviewComputeStatus: OverviewComputeStatus | null = null;
 
 function requiredDeploymentStatus(
 	deployment: HostedDeployment | undefined,
@@ -49,6 +60,71 @@ beforeAll(async () => {
 	runManualDeploymentRefetch = agentHomeModule.runManualDeploymentRefetch;
 	const detailModule = await import("@/hosted/agents/hosted-agent-detail");
 	shouldShowProjectionNotice = detailModule.shouldShowHostedProjectionNotice;
+	overviewFailureAction = detailModule.OverviewFailureAction;
+	overviewComputeStatus = detailModule.OverviewComputeStatus;
+});
+
+describe("deployment failure remediation rendering", () => {
+	test("renders a safe plan-change review link without internal failure details", () => {
+		if (!overviewFailureAction) throw new Error("agent detail was not loaded");
+		const deployment = hostedDeploymentFixture({
+			id: "hdep_failed",
+			status: "failed",
+			acceptedOperation: acceptedOperation("plan_change"),
+			failure: {
+				type: "https://api.clawdi.ai/problems/operation_aborted",
+				title: "MissingGreenlet during provisioning",
+				status: 409,
+				detail: "MissingGreenlet failed operations/plan-change-failed.",
+				instance: "hdep_failed",
+				code: "operation_aborted",
+				phase: "plan_change",
+				retryable: false,
+				conditionReason: "OperationAborted",
+				conditionMessage: "operations/plan-change-failed",
+				observedGeneration: 2,
+			},
+		});
+		const failure = deploymentFailurePresentation(deployment);
+		if (!failure) throw new Error("Expected failure presentation");
+
+		const markup = renderToStaticMarkup(
+			createElement(overviewFailureAction, {
+				deployment,
+				failure,
+				planChangeHref: "/agents/env_test/settings?source=on-clawdi",
+				providerSettingsHref: "/agents/env_test/model-provider?source=on-clawdi",
+				onDeleteAccepted: () => undefined,
+			}),
+		);
+
+		expect(markup).toContain("Get fresh quote");
+		expect(markup).toContain('href="/agents/env_test/settings?source=on-clawdi"');
+		expect(markup).not.toContain("MissingGreenlet");
+		expect(markup).not.toContain("operations/plan-change-failed");
+	});
+
+	test("renders a support next step when no failure reason is available", () => {
+		if (!overviewComputeStatus) throw new Error("agent detail was not loaded");
+		const markup = renderToStaticMarkup(
+			createElement(overviewComputeStatus, {
+				deployment: hostedDeploymentFixture({ status: "failed" }),
+				failure: null,
+				showActions: false,
+				planChangeHref: "/agents/env_test/settings?source=on-clawdi",
+				providerSettingsHref: "/agents/env_test/model-provider?source=on-clawdi",
+				onDeleteAccepted: () => undefined,
+				deploymentTransitionTimedOut: false,
+				isCheckingDeployment: false,
+				onCheckDeploymentAgain: () => undefined,
+			}),
+		);
+
+		expect(markup).toContain("The last compute change failed");
+		expect(markup).toContain('href="mailto:support@clawdi.ai"');
+		expect(markup).not.toContain("Deployment operation");
+		expect(markup).not.toContain("failure reason and operation");
+	});
 });
 
 describe("deployment transition timeout rendering", () => {

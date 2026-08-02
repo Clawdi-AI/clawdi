@@ -886,7 +886,7 @@ function HostedAgentSessionsTab({
 
 // ── Overview ─────────────────────────────────────────────────────────────────
 
-function OverviewFailureAction({
+export function OverviewFailureAction({
 	deployment,
 	failure,
 	planChangeHref,
@@ -944,7 +944,7 @@ function OverviewFailureAction({
 	);
 }
 
-function OverviewComputeStatus({
+export function OverviewComputeStatus({
 	deployment,
 	failure,
 	showActions,
@@ -977,7 +977,11 @@ function OverviewComputeStatus({
 				</div>
 			) : status.kind === "failed" ? (
 				<p className="text-destructive-muted-foreground" role="status">
-					The last compute change failed. Contact support before trying again.
+					The last compute change failed. Contact{" "}
+					<a className="underline underline-offset-2" href="mailto:support@clawdi.ai">
+						support
+					</a>{" "}
+					before trying again.
 				</p>
 			) : deploymentTransitionTimedOut ? (
 				<p className="text-warning-muted-foreground" role="status">
