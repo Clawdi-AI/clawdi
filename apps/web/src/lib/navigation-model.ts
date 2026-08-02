@@ -255,7 +255,7 @@ export function consoleCommandPaletteItems(
 		);
 }
 
-type AgentNavigationGroupId = "primary" | "resources" | "settings";
+type AgentNavigationGroupId = "primary" | "resources" | "operate" | "settings";
 
 export type AgentNavigationItemMetadata = Omit<NavigationItemMetadata<AgentSectionId>, "href"> & {
 	variants: readonly AgentNavigationVariant[];
@@ -374,13 +374,19 @@ const AGENT_NAVIGATION_GROUPS = [
 	{
 		id: "primary",
 		label: null,
-		itemIds: ["overview", "sessions", "memories", "console", "terminal"],
+		itemIds: ["overview", "sessions"],
 		separated: false,
 	},
 	{
 		id: "resources",
 		label: "Resources",
-		itemIds: ["channels", "ai", "connectors", "projects", "skills", "vaults"],
+		itemIds: ["projects", "skills", "memories", "vaults", "connectors"],
+		separated: false,
+	},
+	{
+		id: "operate",
+		label: "Operate",
+		itemIds: ["console", "terminal", "channels", "ai"],
 		separated: false,
 	},
 	{ id: "settings", label: null, itemIds: ["settings"], separated: true },

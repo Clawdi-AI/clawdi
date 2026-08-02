@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, Cloud, Laptop, type LucideIcon, RefreshCw, Settings2 } from "lucide-react";
+import { ArrowRight, type LucideIcon, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,43 @@ import { cn } from "@/lib/utils";
 export type AgentOverviewModuleContent = {
 	body: ReactNode;
 };
+
+export function AgentOverviewStatusCard({
+	agentId,
+	section,
+	routeSearch,
+	title,
+	icon: Icon,
+	tint,
+	children,
+}: {
+	agentId: string;
+	section: "settings";
+	routeSearch: AgentRouteSearch;
+	title: string;
+	icon: LucideIcon;
+	tint: string;
+	children: ReactNode;
+}) {
+	return (
+		<article
+			data-overview-status={title.toLowerCase().replaceAll(" ", "-")}
+			className="rounded-lg border bg-muted/20"
+		>
+			<Link
+				{...agentSectionLink(agentId, section, routeSearch)}
+				className="group flex items-center gap-3 p-4 pb-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+			>
+				<IconChip size="sm" tint={tint}>
+					<Icon />
+				</IconChip>
+				<h2 className="min-w-0 flex-1 text-sm font-semibold">{title}</h2>
+				<ArrowRight className="size-4 text-muted-foreground" />
+			</Link>
+			<div className="px-4 pb-4">{children}</div>
+		</article>
+	);
+}
 
 export function OverviewModuleSkeleton({
 	label,
@@ -125,28 +162,13 @@ const MODULE_PRESENTATION: Record<
 	AgentOverviewModuleId,
 	{ label?: string; icon?: LucideIcon; tint?: string; source?: boolean }
 > = {
-	sessions: {},
-	"live-sync": {
-		label: "Live Sync",
-		icon: Laptop,
-		tint: "bg-identity-7-bg text-identity-7-fg",
-		source: true,
-	},
-	"agent-interface": {
-		label: "Agent Interface",
-		icon: Cloud,
-		tint: "bg-identity-6-bg text-identity-6-fg",
-		source: true,
-	},
 	projects: {},
 	skills: {},
+	memories: {},
+	vaults: {},
+	connectors: {},
 	"model-provider": { label: "Model & Provider" },
 	channels: {},
-	compute: {
-		label: "Compute",
-		icon: Settings2,
-		tint: "bg-identity-4-bg text-identity-4-fg",
-	},
 };
 
 export function AgentOverviewCapabilities({
@@ -154,25 +176,13 @@ export function AgentOverviewCapabilities({
 	variant,
 	routeSearch,
 	content,
-	visibleModuleIds,
-	moduleSizeOverrides,
 }: {
 	agentId: string;
 	variant: AgentNavigationVariant;
 	routeSearch: AgentRouteSearch;
 	content: Partial<Record<AgentOverviewModuleId, AgentOverviewModuleContent>>;
-	visibleModuleIds?: readonly AgentOverviewModuleId[];
-	moduleSizeOverrides?: Partial<Record<AgentOverviewModuleId, "standard" | "wide">>;
 }) {
-	const visibleModules = visibleModuleIds ? new Set(visibleModuleIds) : null;
-	const groups = agentOverviewGroups(variant)
-		.map((group) => ({
-			...group,
-			modules: visibleModules
-				? group.modules.filter((module) => visibleModules.has(module.id))
-				: group.modules,
-		}))
-		.filter((group) => group.modules.length > 0);
+	const groups = agentOverviewGroups(variant);
 	return (
 		<div className="flex flex-col gap-8" data-agent-overview={variant}>
 			{groups.map((group) => (
@@ -183,10 +193,9 @@ export function AgentOverviewCapabilities({
 						</h2>
 					</div>
 					<div
-						className={cn("grid gap-3", group.columns === 4 ? "md:grid-cols-4" : "md:grid-cols-3")}
+						className={cn("grid gap-3", group.columns === 3 ? "md:grid-cols-3" : "md:grid-cols-2")}
 					>
 						{group.modules.map((module) => {
-							const moduleSize = moduleSizeOverrides?.[module.id] ?? module.size;
 							const item = AGENT_SECTION_NAVIGATION_ITEMS[module.section];
 							const presentation = MODULE_PRESENTATION[module.id];
 							const moduleContent = content[module.id];
@@ -199,7 +208,7 @@ export function AgentOverviewCapabilities({
 									className={cn(
 										"min-w-0 overflow-hidden rounded-lg border bg-card",
 										presentation.source && "bg-muted/20",
-										moduleSize === "wide" && "md:col-span-2",
+										module.size === "wide" && "md:col-span-2",
 									)}
 								>
 									<Link

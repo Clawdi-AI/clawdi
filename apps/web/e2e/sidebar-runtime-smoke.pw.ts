@@ -454,23 +454,25 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await page.goto("/agents/agent-smoke-1");
 
 	const overview = page.locator('[data-agent-overview="connected"]');
-	await expect(overview.getByRole("heading", { name: "Now", exact: true })).toBeVisible({
+	await expect(page.getByRole("heading", { name: "Recent sessions", exact: true })).toBeVisible({
 		timeout: 12_000,
 	});
 	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
-	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveClass(/md:col-span-2/);
-	await expect(overview.locator('[data-overview-module="projects"]')).toHaveClass(/md:col-span-2/);
+	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module="projects"]')).not.toHaveClass(
+		/md:col-span-2/,
+	);
 	await expect(overview.locator('[data-overview-module="projects"]')).toContainText(
 		"Smoke Project",
 	);
-	await expect(overview.locator('[data-overview-module="live-sync"]')).toContainText(
+	await expect(page.locator('[data-overview-status="live-sync"]')).toContainText(
 		"smoke-machine.local",
 	);
-	await expect(overview.locator('[data-overview-module="live-sync"]')).toContainText("Machine");
-	await expect(overview.locator('[data-overview-module="live-sync"]')).toContainText("Last seen");
+	await expect(page.locator('[data-overview-status="live-sync"]')).toContainText("Machine");
+	await expect(page.locator('[data-overview-status="live-sync"]')).toContainText("Last seen");
 	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("Research");
 	for (const moduleId of ["memories", "vaults", "connectors"]) {
-		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toHaveCount(0);
+		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toBeVisible();
 	}
 	const sidebar = page.getByTestId("app-sidebar");
 	for (const section of ["Memories", "Vaults", "Connectors"]) {
@@ -496,7 +498,7 @@ test("connected overview keeps project count when names fail", async ({ page }) 
 	await expect(projectsCard).toContainText("Can’t load project names");
 	await expect(projectsCard.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
 	await expect(projectsCard).not.toContainText("No projects added");
-	await expect(page.locator('[data-overview-module="vaults"]')).toHaveCount(0);
+	await expect(page.locator('[data-overview-module="vaults"]')).toBeVisible();
 });
 
 test("connected overview keeps project count while names load", async ({ page }) => {
@@ -506,7 +508,7 @@ test("connected overview keeps project count while names load", async ({ page })
 	const projectsCard = page.locator('[data-overview-module="projects"]');
 	await expect(projectsCard).toContainText("1 project");
 	await expect(projectsCard.getByLabel("Loading project names summary")).toBeVisible();
-	await expect(page.locator('[data-overview-module="vaults"]')).toHaveCount(0);
+	await expect(page.locator('[data-overview-module="vaults"]')).toBeVisible();
 });
 
 test("connected agent Memories stays account-wide with canonical detail links", async ({

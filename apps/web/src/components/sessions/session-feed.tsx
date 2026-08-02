@@ -21,6 +21,47 @@ import {
 
 type SessionLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
 
+export function OverviewSessionList({
+	sessions,
+	isLoading,
+	emptyMessage,
+	sessionLink,
+}: {
+	sessions: SessionListItem[];
+	isLoading: boolean;
+	emptyMessage: string;
+	sessionLink: (session: SessionListItem) => SessionLinkOptions;
+}) {
+	if (isLoading) {
+		return (
+			<div className="grid gap-2 sm:grid-cols-2" aria-label="Loading recent sessions" role="status">
+				{Array.from({ length: 4 }).map((_, index) => (
+					<div key={index} className={ENTITY_CARD_BASE}>
+						<Skeleton className="h-4 w-4/5" />
+						<Skeleton className="mt-3 h-3 w-1/2" />
+					</div>
+				))}
+			</div>
+		);
+	}
+	if (sessions.length === 0) {
+		return <EmptyState variant="inset" icon={MessageSquare} description={emptyMessage} />;
+	}
+	return (
+		<div className="grid gap-2 sm:grid-cols-2">
+			{sessions.slice(0, 4).map((session) => (
+				<SessionFeedCard
+					key={session.id}
+					session={session}
+					showAgent={false}
+					quietAutomated={true}
+					link={sessionLink(session)}
+				/>
+			))}
+		</div>
+	);
+}
+
 /* Human feed for sessions (journey J1): day-grouped cards with the summary
  * as the headline. The data table remains available behind the view toggle
  * for power users. */

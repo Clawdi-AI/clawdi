@@ -2641,20 +2641,23 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	);
 
 	const overview = page.locator('[data-agent-overview="hosted"]');
-	await expect(overview.getByRole("heading", { name: "Now", exact: true })).toBeVisible();
 	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
 	await expect(overview.getByRole("heading", { name: "Operate", exact: true })).toBeVisible();
-	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveClass(/md:col-span-2/);
-	await expect(overview.locator('[data-overview-module="projects"]')).toHaveClass(/md:col-span-2/);
+	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module="projects"]')).not.toHaveClass(
+		/md:col-span-2/,
+	);
 	await expect(overview.locator('[data-overview-module="projects"]')).toContainText(
 		"Hosted Agent Project",
 	);
-	await expect(overview.locator('[data-overview-module="agent-interface"]')).toContainText("Ready");
-	await expect(overview.locator('[data-overview-module="agent-interface"]')).toContainText(
-		"Hermes",
+	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Open Agent Interface" })).toHaveAttribute(
+		"href",
+		/console/,
 	);
-	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Running");
-	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Basic");
+	const compute = page.locator('[data-overview-status="compute"]');
+	await expect(compute).toContainText("Running");
+	await expect(compute).toContainText("Basic");
 	await expect(page.getByText("Your agent is running", { exact: true })).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("Daily briefing");
 	await expect(overview.locator('[data-overview-module="channels"]')).toContainText(
@@ -2665,11 +2668,11 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		"Managed by Clawdi",
 	);
 	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText("Model");
-	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("CPU");
-	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Memory");
-	await expect(overview.locator('[data-overview-module="compute"]')).toContainText("Storage");
+	await expect(compute).toContainText("CPU");
+	await expect(compute).toContainText("Memory");
+	await expect(compute).toContainText("Storage");
 	for (const moduleId of ["memories", "vaults", "connectors"]) {
-		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toHaveCount(0);
+		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toBeVisible();
 	}
 	const sidebar = page.getByTestId("app-sidebar");
 	for (const section of ["Memories", "Vaults", "Connectors"]) {
@@ -2698,7 +2701,7 @@ test("hosted projection loading uses module skeletons", async ({ page }, testInf
 
 	const overview = page.locator('[data-agent-overview="hosted"]');
 	await expect(overview.getByTestId("overview-module-skeleton").first()).toBeVisible();
-	await expect(overview.getByTestId("overview-module-skeleton")).toHaveCount(4);
+	await expect(overview.getByTestId("overview-module-skeleton").first()).toBeVisible();
 	await expect(overview.getByText("Details pending", { exact: true })).toHaveCount(0);
 	await expect(overview.getByText("Loading…", { exact: true })).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1600 });
@@ -2762,7 +2765,7 @@ test("hosted overview keeps project count when names fail", async ({ page }) => 
 	await expect(projectsCard).toContainText("Can’t load project names");
 	await expect(projectsCard.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
 	await expect(projectsCard).not.toContainText("No projects added");
-	await expect(page.locator('[data-overview-module="vaults"]')).toHaveCount(0);
+	await expect(page.locator('[data-overview-module="vaults"]')).toBeVisible();
 });
 
 test("hosted overview keeps project count while names load", async ({ page }) => {
@@ -2779,7 +2782,7 @@ test("hosted overview keeps project count while names load", async ({ page }) =>
 	const projectsCard = page.locator('[data-overview-module="projects"]');
 	await expect(projectsCard).toContainText("1 project");
 	await expect(projectsCard.getByLabel("Loading project names summary")).toBeVisible();
-	await expect(page.locator('[data-overview-module="vaults"]')).toHaveCount(0);
+	await expect(page.locator('[data-overview-module="vaults"]')).toBeVisible();
 });
 
 test("hosted provisioning stays focused on Compute", async ({ page }, testInfo) => {
@@ -2792,46 +2795,16 @@ test("hosted provisioning stays focused on Compute", async ({ page }, testInfo) 
 	await page.goto(`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${startingDeployment.id}`);
 
 	const main = page.locator("main");
-	const agentInterface = main.locator('[data-overview-module="agent-interface"]');
-	const compute = main.locator('[data-overview-module="compute"]');
-	await expect(agentInterface).toHaveClass(/md:col-span-2/);
-	await expect(compute).toHaveClass(/md:col-span-2/);
-	await expect(compute).toContainText("Starting");
-	await expect(compute).toContainText("Plan");
-	await expect(compute).toContainText("CPU");
-	await expect(compute).toContainText("Memory");
-	await expect(compute).toContainText("Storage");
-	await expect(compute).toContainText("Startup is still in progress.");
-	await expect(compute.getByRole("link", { name: "Compute", exact: true })).toBeVisible();
-	await expect(main.getByText("Starting your agent…", { exact: true })).toHaveCount(0);
-	await expect(
-		compute.getByText("Startup is still in progress.", { exact: false }),
-	).toHaveAttribute("role", "status");
-	const placeholder = main.getByTestId("hosted-overview-provisioning-placeholder");
-	await expect(placeholder).toContainText("More details will appear here");
-	await expect(placeholder).toContainText(
-		"This page will fill in automatically when your agent is ready.",
-	);
-	for (const removedModule of ["memories", "vaults", "connectors"]) {
-		await expect(placeholder).not.toContainText(removedModule);
-	}
+	const panel = main.getByTestId("hosted-initial-deployment-panel");
+	await expect(panel).toContainText("Setting up your agent");
+	for (const detail of ["Starting", "Plan", "CPU", "Memory", "Storage"])
+		await expect(panel).toContainText(detail);
+	await expect(main.locator('[data-agent-overview="hosted"]')).toHaveCount(0);
+	await expect(main.getByRole("button", { name: "Open Agent Interface" })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Resources", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Operate", exact: true })).toHaveCount(0);
 	await expect(main.locator('[data-overview-module="sessions"]')).toHaveCount(0);
 	await page.setViewportSize({ width: 1280, height: 1000 });
-	const [gridBox, interfaceBox, computeBox] = await Promise.all([
-		agentInterface.locator("..").boundingBox(),
-		agentInterface.boundingBox(),
-		compute.boundingBox(),
-	]);
-	expect(gridBox).not.toBeNull();
-	expect(interfaceBox).not.toBeNull();
-	expect(computeBox).not.toBeNull();
-	if (gridBox && interfaceBox && computeBox) {
-		expect(Math.abs(interfaceBox.width - computeBox.width)).toBeLessThan(2);
-		expect(interfaceBox.x).toBeCloseTo(gridBox.x, 0);
-		expect(computeBox.x + computeBox.width).toBeCloseTo(gridBox.x + gridBox.width, 0);
-	}
 	await page.screenshot({
 		path: testInfo.outputPath("hosted-agent-overview-provisioning.png"),
 		fullPage: true,
@@ -2855,8 +2828,7 @@ test("hosted unavailable status stays inside Compute", async ({ page }, testInfo
 
 	const main = page.locator("main");
 	const overview = main.locator('[data-agent-overview="hosted"]');
-	const compute = overview.locator('[data-overview-module="compute"]');
-	await expect(overview.getByRole("heading", { name: "Now", exact: true })).toBeVisible();
+	const compute = main.locator('[data-overview-status="compute"]');
 	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
 	await expect(overview.getByRole("heading", { name: "Operate", exact: true })).toBeVisible();
 	await expect(compute).toContainText("Status unavailable");

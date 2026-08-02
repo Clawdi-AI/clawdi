@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { Laptop } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
@@ -10,13 +11,20 @@ import {
 } from "@/components/dashboard/agent-label";
 import {
 	AgentOverviewCapabilities,
+	AgentOverviewStatusCard,
 	OverviewChips,
 	OverviewMetadata,
 	OverviewModuleError,
 	OverviewModuleSkeleton,
 	OverviewSummaryRows,
 } from "@/components/dashboard/agent-overview-capabilities";
+import {
+	OverviewConnectorsBody,
+	OverviewMemoriesBody,
+	OverviewVaultsBody,
+} from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentOverviewProjects } from "@/components/dashboard/agent-project-bindings-query";
+import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { AgentSkillsTab, useAgentProjectSkills } from "@/components/dashboard/agent-skills-tab";
@@ -27,7 +35,7 @@ import { ENTITY_CARD_BASE } from "@/components/entity-card";
 import { MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { SessionFeed } from "@/components/sessions/session-feed";
+import { OverviewSessionList, SessionFeed } from "@/components/sessions/session-feed";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusDot } from "@/components/ui/status-badge";
 import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
@@ -116,11 +124,6 @@ export function ConnectedAgentDetail({
 	const blockingSessionsError = shouldBlockQueryError(sessionsError, sessionsPage)
 		? sessionsError
 		: null;
-	const sessionTotal = blockingSessionsError ? "—" : (sessionsPage?.total ?? 0);
-	const sessionSummary =
-		typeof sessionTotal === "number" && sessionTotal > 0
-			? `${sessionTotal} recent ${sessionTotal === 1 ? "session" : "sessions"}`
-			: "No recent sessions";
 	const syncStatus = daemonStatusVisual(agent);
 	const syncTone =
 		syncStatus.kind === "live"
@@ -169,56 +172,49 @@ export function ConnectedAgentDetail({
 					/>
 
 					{activeTab === "overview" ? (
-						<div className="flex flex-col gap-5">
+						<div className="flex flex-col gap-8">
+							<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
+								<section aria-labelledby="connected-recent-sessions">
+									<h2 id="connected-recent-sessions" className="mb-3 text-sm font-semibold">
+										Recent sessions
+									</h2>
+									{blockingSessionsError ? (
+										<OverviewModuleError label="Sessions" onRetry={() => void refetchSessions()} />
+									) : (
+										<OverviewSessionList
+											sessions={sessionsPage?.items ?? []}
+											isLoading={sessionsLoading}
+											emptyMessage="No recent sessions"
+											sessionLink={(session) => scopedSessionLink(session.id)}
+										/>
+									)}
+								</section>
+								<AgentOverviewStatusCard
+									agentId={id}
+									section="settings"
+									routeSearch={routeSearch}
+									title="Live Sync"
+									icon={Laptop}
+									tint="bg-identity-7-bg text-identity-7-fg"
+								>
+									<div className="space-y-3">
+										<p className="inline-flex items-center gap-2 text-lg font-semibold">
+											<StatusDot status={syncTone} /> {syncStatus.label}
+										</p>
+										<OverviewMetadata
+											items={[
+												{ label: "Machine", value: agent.machine_name },
+												{ label: "Last seen", value: relativeTime(agent.last_seen_at) },
+											]}
+										/>
+									</div>
+								</AgentOverviewStatusCard>
+							</div>
 							<AgentOverviewCapabilities
 								agentId={id}
 								variant="connected"
 								routeSearch={routeSearch}
 								content={{
-									sessions: {
-										body: sessionsLoading ? (
-											<OverviewModuleSkeleton label="sessions" rows={3} />
-										) : blockingSessionsError ? (
-											<OverviewModuleError
-												label="Sessions"
-												onRetry={() => void refetchSessions()}
-											/>
-										) : (
-											<div className="space-y-3">
-												<div>
-													<p className="text-lg font-semibold tracking-tight">{sessionSummary}</p>
-													<p className="mt-1 text-xs text-muted-foreground">
-														Recent synced activity
-													</p>
-												</div>
-												<div className="border-t pt-3">
-													<SessionFeed
-														sessions={(sessionsPage?.items ?? []).slice(0, 3)}
-														isLoading={false}
-														emptyMessage="No sessions synced from this agent yet."
-														emptyVariant="inset"
-														showAgent={false}
-														sessionLink={(session) => scopedSessionLink(session.id)}
-													/>
-												</div>
-											</div>
-										),
-									},
-									"live-sync": {
-										body: (
-											<div className="space-y-3">
-												<p className="inline-flex items-center gap-2 text-lg font-semibold">
-													<StatusDot status={syncTone} /> {syncStatus.label}
-												</p>
-												<OverviewMetadata
-													items={[
-														{ label: "Machine", value: agent.machine_name },
-														{ label: "Last seen", value: relativeTime(agent.last_seen_at) },
-													]}
-												/>
-											</div>
-										),
-									},
 									projects: {
 										body: projectBindingsLoading ? (
 											<OverviewModuleSkeleton label="projects" rows={3} />
@@ -284,6 +280,18 @@ export function ConnectedAgentDetail({
 											</div>
 										),
 									},
+									memories: { body: <OverviewMemoriesBody /> },
+									vaults: {
+										body: (
+											<OverviewVaultsBody
+												projectIds={effectiveAgentProjectIds(projectBindings ?? [])}
+												isLoading={projectBindingsLoading}
+											error={blockingProjectBindingsError}
+												onRetry={() => void refetchProjectBindings()}
+											/>
+										),
+									},
+									connectors: { body: <OverviewConnectorsBody /> },
 								}}
 							/>
 						</div>

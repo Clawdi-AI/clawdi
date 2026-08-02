@@ -36,6 +36,7 @@ import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
 import {
 	AgentOverviewCapabilities,
+	AgentOverviewStatusCard,
 	OverviewChips,
 	OverviewMetadata,
 	OverviewMetrics,
@@ -43,11 +44,18 @@ import {
 	OverviewModuleSkeleton,
 	OverviewSummaryRows,
 } from "@/components/dashboard/agent-overview-capabilities";
+import {
+	OverviewConnectorsBody,
+	OverviewMemoriesBody,
+	OverviewVaultsBody,
+} from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentOverviewProjects } from "@/components/dashboard/agent-project-bindings-query";
+import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { AgentSkillsTab, useAgentProjectSkills } from "@/components/dashboard/agent-skills-tab";
 import { AgentVaultsTab } from "@/components/dashboard/agent-vaults-tab";
+import { DetailPanel } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import {
 	ENTITY_CHOICE_GRID_CLASS,
@@ -60,7 +68,7 @@ import { MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
-import { SessionFeed } from "@/components/sessions/session-feed";
+import { OverviewSessionList, SessionFeed } from "@/components/sessions/session-feed";
 import { SettingsSection } from "@/components/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -282,6 +290,7 @@ import {
 	type AgentSectionId,
 	agentSectionHref,
 	agentSectionLabel,
+	agentSectionLink,
 	agentSessionDetailLink,
 	HOSTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
@@ -540,6 +549,12 @@ export function HostedAgentDetail({
 	const activeNavItem = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
+	const initialProvisioning =
+		activeTab === "overview" &&
+		isStartingStatus(deploymentStatus) &&
+		projection.status !== "resolved";
+	const interfaceAvailable =
+		activeTab === "overview" && !initialProvisioning && isRunningStatus(deploymentStatus);
 	const isLiveToolTab = activeTab === "console" || activeTab === "terminal";
 	return (
 		<div
@@ -558,6 +573,18 @@ export function HostedAgentDetail({
 						title={activeTabLabel}
 						description={activeNavItem.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
+						actions={
+							interfaceAvailable ? (
+								<Button
+									render={<Link {...agentSectionLink(environmentId, "console", routeSearch)} />}
+									nativeButton={false}
+									variant="outline"
+								>
+									<MonitorPlay />
+									Open Agent Interface
+								</Button>
+							) : null
+						}
 					/>
 				)}
 				{isLiveToolTab ? null : <ComputeDunningBanner deployment={deployment} />}
@@ -581,7 +608,14 @@ export function HostedAgentDetail({
 					/>
 				) : null}
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
-					{activeTab === "overview" ? (
+					{initialProvisioning ? (
+						<InitialDeploymentPage
+							deployment={deployment}
+							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+							isCheckingDeployment={isCheckingDeployment}
+							onCheckDeploymentAgain={onCheckDeploymentAgain}
+						/>
+					) : activeTab === "overview" ? (
 						<OverviewTab
 							agentId={environmentId}
 							routeSearch={routeSearch}
@@ -590,7 +624,6 @@ export function HostedAgentDetail({
 							isPerformance={isPerformance}
 							showDeploymentActions={!deploymentRunning && !isStartingStatus(deploymentStatus)}
 							onDeleteAccepted={onDeleteAccepted}
-							projectionAvailable={projection.status === "resolved"}
 							sessions={sessions.data?.items ?? []}
 							sessionsLoading={sessions.isLoading}
 							sessionsError={
@@ -1058,15 +1091,6 @@ export function OverviewFailedPanel({
 	);
 }
 
-function runtimeConsoleLocation(url: string | null): string | null {
-	if (!url) return null;
-	try {
-		return new URL(url).host;
-	} catch {
-		return null;
-	}
-}
-
 function OverviewComputeStatus({
 	deployment,
 	failure,
@@ -1158,6 +1182,80 @@ function OverviewComputeStatus({
 	);
 }
 
+function InitialDeploymentPage({
+	deployment,
+	deploymentTransitionTimedOut,
+	isCheckingDeployment,
+	onCheckDeploymentAgain,
+}: {
+	deployment: HostedDeployment;
+	deploymentTransitionTimedOut: boolean;
+	isCheckingDeployment: boolean;
+	onCheckDeploymentAgain: () => void;
+}) {
+	const spec = deployment.resource.spec;
+	return (
+		<DetailPanel
+			className={cn(
+				"p-6 md:p-8",
+				deploymentTransitionTimedOut
+					? "border-warning/30 bg-warning-muted"
+					: "border-info-muted bg-info-muted",
+			)}
+		>
+			<div data-testid="hosted-initial-deployment-panel" className="space-y-6">
+				<div className="flex gap-4">
+					<div className="flex size-12 shrink-0 items-center justify-center rounded-lg border bg-background">
+						{deploymentTransitionTimedOut ? (
+							<AlertCircle className="size-6" />
+						) : (
+							<Spinner className="size-6" />
+						)}
+					</div>
+					<div>
+						<p className="text-sm font-medium">Starting</p>
+						<h2 className="mt-1 text-xl font-semibold">
+							{deploymentTransitionTimedOut
+								? "Setup is taking longer than expected"
+								: "Setting up your agent"}
+						</h2>
+						<p className="mt-2 text-sm text-muted-foreground">
+							{deploymentTransitionTimedOut
+								? "Your agent may still be starting. Check again now, or come back later."
+								: "This usually takes a few minutes. You can leave this page and come back later."}
+						</p>
+						{deploymentTransitionTimedOut ? (
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								className="mt-4"
+								disabled={isCheckingDeployment}
+								onClick={onCheckDeploymentAgain}
+							>
+								{isCheckingDeployment ? <Spinner className="size-3.5" /> : <RefreshCw />}Check again
+							</Button>
+						) : null}
+					</div>
+				</div>
+				<OverviewMetrics
+					columns={2}
+					items={[
+						{
+							label: "Plan",
+							value:
+								deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG ? "Performance" : "Basic",
+						},
+						{ label: "CPU", value: `${spec.resources.vcpu} vCPU` },
+						{ label: "Memory", value: formatMemoryMib(spec.resources.memory_mib) },
+						{ label: "Storage", value: `${spec.resources.disk_gib} GiB` },
+					]}
+				/>
+			</div>
+		</DetailPanel>
+	);
+}
+
 function OverviewTab({
 	agentId,
 	routeSearch,
@@ -1166,7 +1264,6 @@ function OverviewTab({
 	isPerformance,
 	showDeploymentActions,
 	onDeleteAccepted,
-	projectionAvailable,
 	sessions,
 	sessionsLoading,
 	sessionsError,
@@ -1185,7 +1282,6 @@ function OverviewTab({
 	isPerformance: boolean;
 	showDeploymentActions: boolean;
 	onDeleteAccepted: (deploymentId: string) => void;
-	projectionAvailable: boolean;
 	sessions: SessionListItem[];
 	sessionsLoading: boolean;
 	sessionsError: unknown;
@@ -1223,9 +1319,6 @@ function OverviewTab({
 	const sessionsEmptyMessage = deploymentRunning
 		? "No sessions from this agent yet."
 		: "Sessions appear once your agent is running.";
-	const sessionSummary = sessions.length
-		? `${sessions.length} recent ${sessions.length === 1 ? "session" : "sessions"}`
-		: "No recent sessions";
 	const overviewProjects = useAgentOverviewProjects(agentId, { enabled: Boolean(agent) });
 	const projectBindings = overviewProjects.bindings;
 	const projectNames = overviewProjects.nameResolution;
@@ -1242,66 +1335,71 @@ function OverviewTab({
 		const provider = providerMeta(link.account.provider).label;
 		return [`${provider}: ${link.account.name}`];
 	});
-	const consoleUrl = runtimeConsoleUrl(deployment, spec.runtime);
-	const consoleLocation = runtimeConsoleLocation(consoleUrl);
 	const providerId = primaryModelProviderId(primaryModel) ?? bindingProvider?.provider_id;
 	const projectionUnavailable = !deploymentStatus.known;
-	const provisioning = isStartingStatus(deploymentStatus) && !projectionAvailable;
 	return (
-		<div className="flex flex-col gap-5">
+		<div className="flex flex-col gap-8">
+			<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)]">
+				<section aria-labelledby="hosted-recent-sessions">
+					<h2 id="hosted-recent-sessions" className="mb-3 text-sm font-semibold">
+						Recent sessions
+					</h2>
+					{sessionsError ? (
+						<OverviewModuleError label="Sessions" onRetry={() => void onRetrySessions()} />
+					) : (
+						<OverviewSessionList
+							sessions={sessions}
+							isLoading={sessionsLoading}
+							emptyMessage={sessionsEmptyMessage}
+							sessionLink={sessionLink}
+						/>
+					)}
+				</section>
+				<AgentOverviewStatusCard
+					agentId={agentId}
+					section="settings"
+					routeSearch={routeSearch}
+					title="Compute"
+					icon={Cpu}
+					tint="bg-identity-4-bg text-identity-4-fg"
+				>
+					<div className="space-y-3">
+						<p className="inline-flex items-center gap-2 text-lg font-semibold">
+							<StatusDot status={deploymentStatusTone(deploymentStatus)} />
+							{deploymentStatusLabel(deploymentStatus)}
+						</p>
+						<OverviewMetrics
+							columns={2}
+							items={[
+								{ label: "Plan", value: isPerformance ? "Performance" : "Basic" },
+								{ label: "CPU", value: `${spec.resources.vcpu} vCPU` },
+								{ label: "Memory", value: formatMemoryMib(spec.resources.memory_mib) },
+								{ label: "Storage", value: `${spec.resources.disk_gib} GiB` },
+							]}
+						/>
+						{deploymentRunning ? null : (
+							<div className="border-t pt-3">
+								<OverviewComputeStatus
+									deployment={deployment}
+									failure={deploymentFailure}
+									showActions={showDeploymentActions}
+									planChangeHref={planChangeHref}
+									providerSettingsHref={providerSettingsHref}
+									onDeleteAccepted={onDeleteAccepted}
+									deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+									isCheckingDeployment={isCheckingDeployment}
+									onCheckDeploymentAgain={onCheckDeploymentAgain}
+								/>
+							</div>
+						)}
+					</div>
+				</AgentOverviewStatusCard>
+			</div>
 			<AgentOverviewCapabilities
 				agentId={agentId}
 				variant="hosted"
 				routeSearch={routeSearch}
-				visibleModuleIds={provisioning ? ["agent-interface", "compute"] : undefined}
-				moduleSizeOverrides={
-					provisioning ? { "agent-interface": "wide", compute: "wide" } : undefined
-				}
 				content={{
-					sessions: {
-						body: !projectionAvailable ? (
-							projectionUnavailable ? (
-								<OverviewModuleError label="Sessions" />
-							) : (
-								<OverviewModuleSkeleton label="sessions" rows={3} />
-							)
-						) : sessionsLoading ? (
-							<OverviewModuleSkeleton label="sessions" rows={3} />
-						) : sessionsError ? (
-							<OverviewModuleError label="Sessions" onRetry={() => void onRetrySessions()} />
-						) : (
-							<div className="space-y-3">
-								<div>
-									<p className="text-lg font-semibold">{sessionSummary}</p>
-									<p className="mt-1 text-xs text-muted-foreground">Managed agent activity</p>
-								</div>
-								<div className="border-t pt-3">
-									<SessionFeed
-										sessions={sessions.slice(0, 3)}
-										isLoading={false}
-										emptyMessage={sessionsEmptyMessage}
-										emptyVariant="inset"
-										showAgent={false}
-										sessionLink={sessionLink}
-									/>
-								</div>
-							</div>
-						),
-					},
-					"agent-interface": {
-						body: (
-							<div className="space-y-3">
-								<p className="text-lg font-semibold">
-									{deploymentRunning ? "Ready to open" : "Not available"}
-								</p>
-								<p className="text-sm text-muted-foreground">
-									{deploymentRunning
-										? (consoleLocation ?? runtimeDisplayName(spec.runtime))
-										: "Available when compute is running"}
-								</p>
-							</div>
-						),
-					},
 					projects: {
 						body: !agent ? (
 							projectionUnavailable ? (
@@ -1374,6 +1472,18 @@ function OverviewTab({
 							</div>
 						),
 					},
+					memories: { body: <OverviewMemoriesBody /> },
+					vaults: {
+						body: (
+							<OverviewVaultsBody
+								projectIds={effectiveAgentProjectIds(projectBindings.data ?? [])}
+								isLoading={projectBindings.isLoading}
+								error={projectBindings.error}
+								onRetry={() => void projectBindings.refetch()}
+							/>
+						),
+					},
+					connectors: { body: <OverviewConnectorsBody /> },
 					"model-provider": {
 						body: (
 							<OverviewMetadata
@@ -1406,53 +1516,8 @@ function OverviewTab({
 							</div>
 						),
 					},
-					compute: {
-						body: (
-							<div className="space-y-3">
-								<p className="inline-flex items-center gap-2 text-lg font-semibold">
-									<StatusDot status={deploymentStatusTone(deploymentStatus)} />
-									{deploymentStatusLabel(deploymentStatus)}
-								</p>
-								<OverviewMetrics
-									columns={2}
-									items={[
-										{ label: "Plan", value: isPerformance ? "Performance" : "Basic" },
-										{ label: "CPU", value: `${spec.resources.vcpu} vCPU` },
-										{ label: "Memory", value: formatMemoryMib(spec.resources.memory_mib) },
-										{ label: "Storage", value: `${spec.resources.disk_gib} GiB` },
-									]}
-								/>
-								{deploymentRunning ? null : (
-									<div className="border-t pt-3">
-										<OverviewComputeStatus
-											deployment={deployment}
-											failure={deploymentFailure}
-											showActions={showDeploymentActions}
-											planChangeHref={planChangeHref}
-											providerSettingsHref={providerSettingsHref}
-											onDeleteAccepted={onDeleteAccepted}
-											deploymentTransitionTimedOut={deploymentTransitionTimedOut}
-											isCheckingDeployment={isCheckingDeployment}
-											onCheckDeploymentAgain={onCheckDeploymentAgain}
-										/>
-									</div>
-								)}
-							</div>
-						),
-					},
 				}}
 			/>
-			{provisioning ? (
-				<div
-					data-testid="hosted-overview-provisioning-placeholder"
-					className="rounded-lg border border-dashed bg-muted/20 px-6 py-10 text-center"
-				>
-					<p className="text-sm font-medium">More details will appear here</p>
-					<p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
-						This page will fill in automatically when your agent is ready.
-					</p>
-				</div>
-			) : null}
 		</div>
 	);
 }
