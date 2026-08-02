@@ -5,15 +5,14 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { Link, useRouter } from "@tanstack/react-router";
 import {
 	AlertCircle,
+	ArrowRight,
 	Check,
-	CircleCheck,
 	Copy,
 	Cpu,
 	ExternalLink,
 	Eye,
 	EyeOff,
 	Info,
-	LifeBuoy,
 	Link2,
 	Link2Off,
 	type LucideIcon,
@@ -34,10 +33,29 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
+import {
+	AgentOverviewCapabilities,
+	AgentOverviewStatusCard,
+	OverviewMetadata,
+	OverviewModuleError,
+	OverviewModuleSkeleton,
+	OverviewModuleUnavailable,
+	OverviewSummaryRows,
+} from "@/components/dashboard/agent-overview-capabilities";
+import {
+	OverviewConnectorsBody,
+	OverviewMemoriesBody,
+	OverviewProjectsBody,
+	OverviewSkillsBody,
+	OverviewVaultsBody,
+} from "@/components/dashboard/agent-overview-resource-bodies";
+import { useAgentOverviewProjects } from "@/components/dashboard/agent-project-bindings-query";
+import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
-import { AgentSkillsTab } from "@/components/dashboard/agent-skills-tab";
+import { AgentSkillsTab, useAgentProjectSkills } from "@/components/dashboard/agent-skills-tab";
 import { AgentVaultsTab } from "@/components/dashboard/agent-vaults-tab";
+import { DetailPanel } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import {
 	ENTITY_CHOICE_GRID_CLASS,
@@ -50,7 +68,7 @@ import { MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
-import { SessionFeed } from "@/components/sessions/session-feed";
+import { OverviewSessionList, SessionFeed } from "@/components/sessions/session-feed";
 import { SettingsSection } from "@/components/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -185,6 +203,7 @@ import {
 	type DeploymentStatus,
 	deploymentStatusFromResource,
 	deploymentStatusLabel,
+	deploymentStatusTone,
 	isRunningStatus,
 } from "@/hosted/deployment-status";
 import { DeploymentStatusUnavailableState } from "@/hosted/deployment-status-unavailable";
@@ -199,7 +218,6 @@ import {
 	runtimeConsoleUrl,
 	runtimeDisplayName,
 } from "@/hosted/runtimes";
-import { hostedRuntimeStatusView } from "@/hosted/use-hosted-agent-tiles";
 import {
 	aiBindingBuildErrorCopy,
 	buildAiBindingFields,
@@ -246,6 +264,7 @@ import {
 	agentProviderHasSingleLinkLimit,
 	channelProviderLinkingReady,
 } from "@/hosted/v2/channels/channel-linking.logic";
+import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import { channelKeys } from "@/hosted/v2/channels/channel-query-cache";
 import type { ChannelBinding } from "@/hosted/v2/channels/channel-types";
 import {
@@ -271,6 +290,7 @@ import {
 	type AgentSectionId,
 	agentSectionHref,
 	agentSectionLabel,
+	agentSectionLink,
 	agentSessionDetailLink,
 	HOSTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
@@ -465,6 +485,7 @@ export function HostedAgentDetail({
 	const [isCheckingProjection, setIsCheckingProjection] = useState(false);
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
+	const hasTerminalDeploymentFailure = deploymentFailurePresentation(deployment) !== null;
 	const deploymentProjectionQueryable = canQueryDeploymentProjection(deploymentStatus);
 	const cloudEnvironmentId = isCloudEnvId(environmentId);
 	const agentQuery = $api.useQuery(
@@ -522,13 +543,20 @@ export function HostedAgentDetail({
 	});
 
 	const sessions = useQuery({
-		...sessionListQueryOptions($api, { environment_id: environmentId, page_size: 20 }),
-		enabled: deploymentRunning && projection.status === "resolved",
+		...sessionListQueryOptions($api, { environment_id: environmentId, page_size: 3 }),
+		enabled: activeTab === "overview" && deploymentRunning && projection.status === "resolved",
 	});
 
 	const activeNavItem = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
+	const showInitialStartingPage =
+		activeTab === "overview" &&
+		isStartingStatus(deploymentStatus) &&
+		!hasTerminalDeploymentFailure &&
+		projection.status !== "resolved";
+	const interfaceAvailable =
+		activeTab === "overview" && !showInitialStartingPage && isRunningStatus(deploymentStatus);
 	const isLiveToolTab = activeTab === "console" || activeTab === "terminal";
 	return (
 		<div
@@ -545,12 +573,24 @@ export function HostedAgentDetail({
 				{isLiveToolTab ? null : (
 					<PageHeader
 						title={activeTabLabel}
-						description={activeNavItem.description}
+						description={activeTab === "overview" ? undefined : activeNavItem.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
+						actions={
+							interfaceAvailable ? (
+								<Button
+									render={<Link {...agentSectionLink(environmentId, "console", routeSearch)} />}
+									nativeButton={false}
+									variant="outline"
+								>
+									<MonitorPlay />
+									Open Agent Interface
+								</Button>
+							) : null
+						}
 					/>
 				)}
 				{isLiveToolTab ? null : <ComputeDunningBanner deployment={deployment} />}
-				{!deploymentStatus.known ? (
+				{!deploymentStatus.known && activeTab !== "overview" ? (
 					<DeploymentStatusUnavailableState
 						deployment={deployment}
 						isRetrying={isCheckingDeployment}
@@ -559,6 +599,7 @@ export function HostedAgentDetail({
 				) : null}
 				{deploymentStatus.known &&
 				deploymentProjectionQueryable &&
+				!(activeTab === "overview" && isStartingStatus(deploymentStatus)) &&
 				shouldShowHostedProjectionNotice(activeTab) ? (
 					<HostedProjectionNotice
 						projection={projection}
@@ -569,14 +610,28 @@ export function HostedAgentDetail({
 					/>
 				) : null}
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
-					{deploymentStatus.known && activeTab === "overview" ? (
+					{showInitialStartingPage ? (
+						<InitialDeploymentPage
+							deployment={deployment}
+							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+							isCheckingDeployment={isCheckingDeployment}
+							onCheckDeploymentAgain={onCheckDeploymentAgain}
+						/>
+					) : activeTab === "overview" ? (
 						<OverviewTab
+							agentId={environmentId}
+							routeSearch={routeSearch}
 							deployment={deployment}
 							agent={isCloudEnvId(environmentId) ? agent : null}
+							projectionStatus={projection.status}
+							canRetryProjection={deploymentProjectionQueryable}
+							onRetryProjection={() => void agentQuery.refetch()}
 							isPerformance={isPerformance}
-							showDeploymentActions={!deploymentRunning && !isStartingStatus(deploymentStatus)}
+							showDeploymentActions={
+								!deploymentRunning &&
+								(!isStartingStatus(deploymentStatus) || hasTerminalDeploymentFailure)
+							}
 							onDeleteAccepted={onDeleteAccepted}
-							projectionAvailable={projection.status === "resolved"}
 							sessions={sessions.data?.items ?? []}
 							sessionsLoading={sessions.isLoading}
 							sessionsError={
@@ -836,134 +891,7 @@ function HostedAgentSessionsTab({
 
 // ── Overview ─────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value }: { label: string; value: React.ReactNode }) {
-	return (
-		<div className="rounded-lg border p-3">
-			<div className="text-sm font-medium">{value}</div>
-			<div className="text-xs text-muted-foreground">{label}</div>
-		</div>
-	);
-}
-
-function RuntimeStatusValue({
-	deployment,
-	agent,
-}: {
-	deployment: HostedDeployment;
-	agent: components["schemas"]["AgentResponse"] | null | undefined;
-}) {
-	const failure = deploymentFailurePresentation(deployment);
-	const status = hostedRuntimeStatusView(
-		deployment.resource.status,
-		agent,
-		failure?.failedVerb ? failure : null,
-	);
-	return (
-		<div className="flex min-w-0 flex-col gap-1">
-			<span
-				className={cn("inline-flex min-w-0 items-center gap-1.5", status.primary.textClass)}
-				title={`Agent status: ${status.primary.label}`}
-			>
-				<StatusDot status={status.primary.tone} />
-				<span className="truncate">{status.primary.label}</span>
-			</span>
-			{status.secondary ? (
-				<span
-					className={cn("truncate text-xs", status.secondary.textClass)}
-					title={status.secondary.tooltip}
-				>
-					{status.secondary.label}
-				</span>
-			) : null}
-		</div>
-	);
-}
-
-export function OverviewReadinessPanel({
-	deployment,
-	deploymentTransitionTimedOut,
-	isCheckingDeployment,
-	onCheckDeploymentAgain,
-}: {
-	deployment: HostedDeployment;
-	deploymentTransitionTimedOut: boolean;
-	isCheckingDeployment: boolean;
-	onCheckDeploymentAgain: () => void;
-}) {
-	const status = deployment.resource.status;
-	if (status === null) {
-		return (
-			<DeploymentStatusUnavailableState
-				deployment={deployment}
-				isRetrying={isCheckingDeployment}
-				onRetry={onCheckDeploymentAgain}
-			/>
-		);
-	}
-	const ready = status.summary_state === "running";
-	const title = deploymentTransitionTimedOut
-		? "Your agent is taking longer than expected"
-		: ready
-			? "Your agent is running"
-			: startingTitle();
-	const description = deploymentTransitionTimedOut
-		? "The latest status still shows your agent starting after five minutes. Startup may still be continuing. We’ll keep checking automatically once a minute while you’re here, or you can check again now."
-		: ready
-			? "It is ready to use."
-			: "This step should finish within five minutes. Startup continues if you leave this page.";
-	return (
-		<div
-			className={cn(
-				"rounded-xl border p-5",
-				deploymentTransitionTimedOut
-					? "border-warning/30 bg-warning-muted text-warning-muted-foreground"
-					: ready
-						? "border-success/30 bg-success-muted text-success-muted-foreground"
-						: "border-info-muted bg-info-muted text-info-muted-foreground",
-			)}
-		>
-			<div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-				<div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-background">
-					{deploymentTransitionTimedOut ? (
-						<AlertCircle className="size-5" />
-					) : ready ? (
-						<CircleCheck className="size-5" />
-					) : (
-						<Spinner className="size-5" />
-					)}
-				</div>
-				<div className="min-w-0 flex-1">
-					<h2 className="text-sm font-semibold text-foreground">{title}</h2>
-					<p className="mt-1 text-sm">{description}</p>
-					{deploymentTransitionTimedOut ? (
-						<div className="mt-3 flex flex-wrap gap-2">
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								disabled={isCheckingDeployment}
-								onClick={onCheckDeploymentAgain}
-							>
-								{isCheckingDeployment ? (
-									<Spinner className="size-3.5" />
-								) : (
-									<RefreshCw className="size-3.5" />
-								)}
-								Check again
-							</Button>
-						</div>
-					) : null}
-				</div>
-			</div>
-		</div>
-	);
-}
-
-function DeploymentFailureReasonText({ reason }: { reason: string }) {
-	return <p className="mt-2 whitespace-pre-wrap break-words text-sm">{reason}</p>;
-}
-
-function OverviewFailureAction({
+export function OverviewFailureAction({
 	deployment,
 	failure,
 	planChangeHref,
@@ -1021,79 +949,290 @@ function OverviewFailureAction({
 	);
 }
 
-export function OverviewFailedPanel({
+export function OverviewComputeStatus({
 	deployment,
+	failure,
+	showActions,
 	planChangeHref,
 	providerSettingsHref,
 	onDeleteAccepted,
+	deploymentTransitionTimedOut,
+	isCheckingDeployment,
+	onCheckDeploymentAgain,
 }: {
 	deployment: HostedDeployment;
+	failure: DeploymentFailurePresentation | null;
+	showActions: boolean;
 	planChangeHref: string;
 	providerSettingsHref: string;
 	onDeleteAccepted: (deploymentId: string) => void;
+	deploymentTransitionTimedOut: boolean;
+	isCheckingDeployment: boolean;
+	onCheckDeploymentAgain: () => void;
 }) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
-	const failure = deploymentFailurePresentation(deployment);
-	if (failure) {
-		return (
-			<Alert data-hosted="true" variant="destructive">
-				<AlertCircle className="size-4" />
-				<AlertTitle>{failure.title}</AlertTitle>
-				<AlertDescription className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-					<div className="min-w-0">
-						<p>
-							{failure.description} Current status: {deploymentStatusLabel(status)}.
-						</p>
-						<DeploymentFailureReasonText reason={failure.reason} />
-					</div>
-					<OverviewFailureAction
-						deployment={deployment}
-						failure={failure}
-						planChangeHref={planChangeHref}
-						providerSettingsHref={providerSettingsHref}
-						onDeleteAccepted={onDeleteAccepted}
-					/>
-				</AlertDescription>
-			</Alert>
-		);
-	}
+	const failed = failure || status.kind === "failed";
+	const retryStatus = status.kind === "unknown" || deploymentTransitionTimedOut;
 	return (
-		<div className="rounded-xl border border-destructive-muted bg-destructive-muted p-5 text-destructive-muted-foreground">
-			<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-				<div className="flex min-w-0 gap-3">
-					<div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-destructive-muted bg-background">
-						<AlertCircle className="size-5" />
-					</div>
-					<div className="min-w-0">
-						<h2 className="text-sm font-semibold text-foreground">Agent change failed</h2>
-						<p className="mt-1 text-sm">
-							Clawdi couldn’t complete the last change to this agent or determine why. It isn’t safe
-							to try again automatically. Contact support before trying again. Current status:{" "}
-							{deploymentStatusLabel(status)}.
+		<div className="space-y-3 text-xs">
+			{failure ? (
+				<div className="space-y-1 text-destructive-muted-foreground" role="status">
+					<p className="font-medium">{failure.title}</p>
+					<p className="line-clamp-2">{failure.reason}</p>
+				</div>
+			) : status.kind === "failed" ? (
+				<p className="text-destructive-muted-foreground" role="status">
+					The last compute change failed. Contact{" "}
+					<a className="underline underline-offset-2" href="mailto:support@clawdi.ai">
+						support
+					</a>{" "}
+					before trying again.
+				</p>
+			) : deploymentTransitionTimedOut ? (
+				<p className="text-warning-muted-foreground" role="status">
+					Startup is taking longer than expected.
+				</p>
+			) : isStartingStatus(status) ? (
+				<p className="inline-flex items-center gap-2 text-muted-foreground" role="status">
+					<Spinner className="size-3.5" /> Startup is still in progress.
+				</p>
+			) : status.kind === "stopped" ? (
+				<p className="text-muted-foreground" role="status">
+					Start compute to use sessions, channels, and the agent interface.
+				</p>
+			) : status.kind === "unknown" ? (
+				<p className="text-warning-muted-foreground" role="status">
+					Clawdi cannot confirm the current compute status.
+				</p>
+			) : null}
+			{showActions ? (
+				<div className="flex flex-wrap gap-2">
+					{failure ? (
+						<OverviewFailureAction
+							deployment={deployment}
+							failure={failure}
+							planChangeHref={planChangeHref}
+							providerSettingsHref={providerSettingsHref}
+							onDeleteAccepted={onDeleteAccepted}
+						/>
+					) : status.kind === "stopped" ? (
+						<StartComputeAction deployment={deployment} label="Start" />
+					) : retryStatus ? (
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							disabled={isCheckingDeployment}
+							onClick={onCheckDeploymentAgain}
+						>
+							{isCheckingDeployment ? <Spinner className="size-3.5" /> : <RefreshCw />}
+							Check again
+						</Button>
+					) : canRestartDeployment(status) && !failed ? (
+						<RestartComputeAction deployment={deployment} label="Restart" />
+					) : null}
+					{failure?.remediation.kind === "retry_delete" ? null : (
+						<DeleteComputeAction
+							deployment={deployment}
+							onDeleteAccepted={onDeleteAccepted}
+							variant="outline"
+						/>
+					)}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+export function OverviewComputeSummary({
+	plan,
+	vcpu,
+	memoryMib,
+	storageGib,
+}: {
+	plan: string;
+	vcpu: number;
+	memoryMib: number;
+	storageGib: number;
+}) {
+	const configuration = [
+		`${vcpu} vCPU`,
+		`${formatMemoryMib(memoryMib)} memory`,
+		`${storageGib} GiB storage`,
+	];
+	return (
+		<div className="space-y-1.5" data-testid="overview-compute-summary">
+			<p className="text-sm font-semibold">{plan} plan</p>
+			<ul
+				aria-label={`Configuration: ${configuration.join(", ")}`}
+				className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
+			>
+				{configuration.map((item) => (
+					<li key={item}>{item}</li>
+				))}
+			</ul>
+		</div>
+	);
+}
+
+export function InitialDeploymentPage({
+	deployment,
+	deploymentTransitionTimedOut,
+	isCheckingDeployment,
+	onCheckDeploymentAgain,
+}: {
+	deployment: HostedDeployment;
+	deploymentTransitionTimedOut: boolean;
+	isCheckingDeployment: boolean;
+	onCheckDeploymentAgain: () => void;
+}) {
+	const status = deploymentStatusFromResource(deployment.resource.status);
+	const runtimeLabel = runtimeDisplayName(deployment.resource.spec.runtime);
+	const stages = [
+		{ status: "creating", label: "Environment" },
+		{ status: "starting", label: "Install" },
+		{ status: "running", label: "Ready" },
+	] as const;
+	const activeStageIndex = status.kind === "starting" ? 1 : status.kind === "running" ? 2 : 0;
+	const activeStageLabel =
+		activeStageIndex === 0
+			? "Preparing your environment"
+			: activeStageIndex === 1
+				? `Installing ${runtimeLabel}`
+				: "Ready";
+	return (
+		<DetailPanel
+			className={cn(
+				"p-6 md:p-8",
+				deploymentTransitionTimedOut && "border-warning/30 bg-warning-muted",
+			)}
+		>
+			<div
+				data-testid="hosted-initial-deployment-panel"
+				role={deploymentTransitionTimedOut ? "alert" : undefined}
+				className="space-y-6"
+			>
+				<div>
+					<h2 className="flex items-center gap-2 text-lg font-semibold">
+						{deploymentTransitionTimedOut ? <AlertCircle className="size-5" /> : null}
+						{deploymentTransitionTimedOut
+							? "Setup is taking longer than expected"
+							: `Setting up ${runtimeLabel}`}
+					</h2>
+					<p className="mt-1 text-sm text-muted-foreground">
+						{deploymentTransitionTimedOut
+							? "Your agent may still be starting. We’ll keep checking automatically."
+							: "This page updates automatically as setup progresses."}
+					</p>
+				</div>
+				<div>
+					<div className="flex items-baseline justify-between gap-4">
+						<p
+							className="inline-flex items-center gap-2 text-base font-semibold"
+							role="status"
+							aria-live="polite"
+							aria-atomic="true"
+						>
+							{!deploymentTransitionTimedOut && status.kind !== "running" ? (
+								<span className="inline-flex" aria-hidden="true">
+									<Spinner className="size-3.5 shrink-0 text-primary" />
+								</span>
+							) : null}
+							{activeStageLabel}
+						</p>
+						<p className="shrink-0 text-xs font-medium text-muted-foreground">
+							Step {activeStageIndex + 1} of {stages.length}
 						</p>
 					</div>
+					<ol aria-label="Deployment progress" className="mt-4 grid w-full grid-cols-3 gap-2">
+						{stages.map((stage, index) => {
+							const stageState =
+								status.kind === "running" || index < activeStageIndex
+									? "completed"
+									: index === activeStageIndex
+										? "active"
+										: "pending";
+							return (
+								<li
+									key={stage.status}
+									data-deployment-stage={stage.status}
+									data-stage-state={stageState}
+									aria-current={index === activeStageIndex ? "step" : undefined}
+									aria-label={`${stage.label}, ${stageState}`}
+								>
+									<div
+										aria-hidden="true"
+										className={cn(
+											"h-2 rounded-full",
+											stageState === "active"
+												? "bg-primary"
+												: stageState === "completed"
+													? "bg-primary/50"
+													: "bg-muted",
+										)}
+									/>
+									<p
+										aria-hidden="true"
+										className={cn(
+											"mt-2 text-xs",
+											stageState === "pending"
+												? "text-muted-foreground"
+												: "font-medium text-foreground",
+										)}
+									>
+										{stage.label}
+									</p>
+								</li>
+							);
+						})}
+					</ol>
 				</div>
-				<Button
-					render={<a href="mailto:support@clawdi.ai" />}
-					nativeButton={false}
-					variant="outline"
-					size="sm"
-					className="shrink-0"
-				>
-					<LifeBuoy data-icon="inline-start" /> Contact support
-				</Button>
+				{deploymentTransitionTimedOut ? (
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						disabled={isCheckingDeployment}
+						onClick={onCheckDeploymentAgain}
+					>
+						{isCheckingDeployment ? <Spinner className="size-3.5" /> : <RefreshCw />}Check again
+					</Button>
+				) : null}
 			</div>
+		</DetailPanel>
+	);
+}
+
+function OverviewProjectionUnavailableState({
+	canRetry,
+	onRetry,
+}: {
+	canRetry: boolean;
+	onRetry: () => void;
+}) {
+	return (
+		<div className="flex h-full min-h-40 flex-col items-start justify-center gap-3 rounded-lg border bg-muted/20 p-4">
+			<p className="text-sm text-muted-foreground">Agent details are unavailable right now.</p>
+			{canRetry ? (
+				<Button type="button" variant="outline" size="sm" onClick={onRetry}>
+					<RefreshCw /> Check again
+				</Button>
+			) : null}
 		</div>
 	);
 }
 
 function OverviewTab({
+	agentId,
+	routeSearch,
 	deployment,
 	agent,
+	projectionStatus,
+	canRetryProjection,
+	onRetryProjection,
 	isPerformance,
 	showDeploymentActions,
 	onDeleteAccepted,
-	projectionAvailable,
 	sessions,
 	sessionsLoading,
 	sessionsError,
@@ -1105,12 +1244,16 @@ function OverviewTab({
 	isCheckingDeployment,
 	onCheckDeploymentAgain,
 }: {
+	agentId: string;
+	routeSearch: AgentRouteSearch;
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
+	projectionStatus: HostedProjectionResolution<unknown>["status"];
+	canRetryProjection: boolean;
+	onRetryProjection: () => void;
 	isPerformance: boolean;
 	showDeploymentActions: boolean;
 	onDeleteAccepted: (deploymentId: string) => void;
-	projectionAvailable: boolean;
 	sessions: SessionListItem[];
 	sessionsLoading: boolean;
 	sessionsError: unknown;
@@ -1126,13 +1269,15 @@ function OverviewTab({
 	onCheckDeploymentAgain: () => void;
 }) {
 	const spec = deployment.resource.spec;
-	const providers = useUserAiProviders();
-	const managedModelCatalog = useManagedModelCatalog();
 	const primaryModel = spec.runtime_configuration.primary_model;
 	const bindingProvider =
 		spec.runtime_configuration.providers.find(
 			(provider) => provider.provider_id === primaryModelProviderId(primaryModel),
 		) ?? spec.runtime_configuration.providers[0];
+	const providerId = primaryModelProviderId(primaryModel) ?? bindingProvider?.provider_id;
+	const managedProvider = !providerId || isManagedProviderId(providerId);
+	const providers = useUserAiProviders({ enabled: !managedProvider });
+	const managedModelCatalog = useManagedModelCatalog({ enabled: managedProvider });
 	const model = modelBindingDisplayName(
 		primaryModel,
 		runtimeAiProviderAuthKind(deployment) ?? bindingProvider?.auth_kind,
@@ -1145,106 +1290,209 @@ function OverviewTab({
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentFailure = deploymentFailurePresentation(deployment);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
-	const showReadinessPanel =
-		!deploymentFailure &&
-		(deploymentTransitionTimedOut ||
-			isStartingStatus(deploymentStatus) ||
-			deploymentStatus.kind === "running");
 	const sessionsEmptyMessage = deploymentRunning
 		? "No sessions from this agent yet."
 		: "Sessions appear once your agent is running.";
-	return (
-		<div className="flex flex-col gap-5">
-			{showReadinessPanel ? (
-				<OverviewReadinessPanel
-					deployment={deployment}
-					deploymentTransitionTimedOut={deploymentTransitionTimedOut}
-					isCheckingDeployment={isCheckingDeployment}
-					onCheckDeploymentAgain={onCheckDeploymentAgain}
-				/>
-			) : null}
-			{deploymentFailure || deploymentStatus.kind === "failed" ? (
-				<OverviewFailedPanel
-					deployment={deployment}
-					planChangeHref={planChangeHref}
-					providerSettingsHref={providerSettingsHref}
-					onDeleteAccepted={onDeleteAccepted}
-				/>
-			) : null}
-			{deploymentStatus.kind === "stopped" ? (
-				<StoppedAgentState deployment={deployment} variant="inset" />
-			) : null}
-			<div
-				className={cn(
-					"grid gap-2 sm:grid-cols-2",
-					showReadinessPanel ? "lg:grid-cols-4" : "lg:grid-cols-5",
-				)}
-			>
-				{showReadinessPanel ? null : (
-					<StatCard
-						label="Status"
-						value={<RuntimeStatusValue deployment={deployment} agent={agent} />}
-					/>
-				)}
-				<StatCard label="Compute" value={isPerformance ? "Performance" : "Basic"} />
-				<StatCard label="Model" value={model} />
-				<StatCard
-					label="Resources"
-					value={`${spec.resources.vcpu} vCPU · ${formatMemoryMib(spec.resources.memory_mib)} · ${spec.resources.disk_gib} GiB storage`}
-				/>
-			</div>
-			{projectionAvailable ? (
-				<div>
-					<div className="mb-2 text-sm font-medium">Recent sessions</div>
-					{sessionsError ? (
-						<ApiErrorPanel
-							error={sessionsError}
-							onRetry={onRetrySessions}
-							title="Couldn't load sessions"
-						/>
-					) : (
-						<SessionFeed
-							sessions={sessions}
-							isLoading={sessionsLoading}
-							emptyMessage={sessionsEmptyMessage}
-							emptyVariant="inset"
-							showAgent={false}
-							sessionLink={sessionLink}
-						/>
-					)}
-				</div>
-			) : null}
-			{showDeploymentActions ? (
-				<OverviewDeploymentActions deployment={deployment} onDeleteAccepted={onDeleteAccepted} />
-			) : null}
-		</div>
+	const overviewProjects = useAgentOverviewProjects(agentId, { enabled: Boolean(agent) });
+	const projectBindings = overviewProjects.bindings;
+	const projectNames = overviewProjects.nameResolution;
+	const skills = useAgentProjectSkills(
+		agentId,
+		agent?.default_project_id,
+		agentId,
+		false,
+		Boolean(agent),
 	);
-}
-
-function OverviewDeploymentActions({
-	deployment,
-	onDeleteAccepted,
-}: {
-	deployment: HostedDeployment;
-	onDeleteAccepted: (deploymentId: string) => void;
-}) {
-	const status = deploymentStatusFromResource(deployment.resource.status);
-	const failed = status.kind === "failed";
+	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
+	const linkedChannelRows = (channelLinks.data ?? []).flatMap((link) => {
+		if (!link.account) return [];
+		const provider = providerMeta(link.account.provider).label;
+		return [`${provider}: ${link.account.name}`];
+	});
+	const projectionLoading = projectionStatus === "loading";
+	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
 	return (
-		<SettingsSection
-			title="Agent actions"
-			description="These actions remain available while other agent details load."
-		>
-			<div className="flex flex-wrap gap-2.5">
-				{canRestartDeployment(status) && !failed ? (
-					<RestartComputeAction deployment={deployment} />
-				) : null}
-				{canStartDeployment(status) && !failed && status.kind !== "stopped" ? (
-					<StartComputeAction deployment={deployment} />
-				) : null}
-				<DeleteComputeAction deployment={deployment} onDeleteAccepted={onDeleteAccepted} />
+		<div className="flex flex-col gap-8">
+			<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
+				<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
+					<div className="flex items-center justify-between">
+						<h2 id="hosted-recent-sessions" className="text-sm font-semibold">
+							Recent sessions
+						</h2>
+						<Button
+							render={<Link {...agentSectionLink(agentId, "sessions", routeSearch)} />}
+							nativeButton={false}
+							variant="ghost"
+							size="sm"
+							className="text-muted-foreground"
+						>
+							View all
+							<ArrowRight />
+						</Button>
+					</div>
+					<section
+						aria-labelledby="hosted-recent-sessions"
+						className="min-h-40 min-w-0 @3xl/main:min-h-52"
+					>
+						{projectionUnavailable ? (
+							<OverviewProjectionUnavailableState
+								canRetry={canRetryProjection}
+								onRetry={onRetryProjection}
+							/>
+						) : sessionsError ? (
+							<OverviewModuleError label="Sessions" onRetry={() => void onRetrySessions()} />
+						) : (
+							<OverviewSessionList
+								sessions={sessions}
+								isLoading={projectionLoading || sessionsLoading}
+								emptyMessage={sessionsEmptyMessage}
+								sessionLink={sessionLink}
+							/>
+						)}
+					</section>
+				</div>
+				<div className="@3xl/main:row-start-2">
+					<AgentOverviewStatusCard
+						agentId={agentId}
+						section="settings"
+						routeSearch={routeSearch}
+						title="Compute"
+						icon={Cpu}
+						tint="bg-identity-4-bg text-identity-4-fg"
+					>
+						<div className="flex h-full flex-col gap-4">
+							<p
+								className="inline-flex items-center gap-2 text-lg font-semibold"
+								title={`Agent status: ${deploymentStatusLabel(deploymentStatus)}`}
+							>
+								<StatusDot status={deploymentStatusTone(deploymentStatus)} />
+								{deploymentStatusLabel(deploymentStatus)}
+							</p>
+							<OverviewComputeSummary
+								plan={isPerformance ? "Performance" : "Basic"}
+								vcpu={spec.resources.vcpu}
+								memoryMib={spec.resources.memory_mib}
+								storageGib={spec.resources.disk_gib}
+							/>
+							{deploymentRunning ? null : (
+								<div className="mt-auto border-t pt-3">
+									<OverviewComputeStatus
+										deployment={deployment}
+										failure={deploymentFailure}
+										showActions={showDeploymentActions}
+										planChangeHref={planChangeHref}
+										providerSettingsHref={providerSettingsHref}
+										onDeleteAccepted={onDeleteAccepted}
+										deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+										isCheckingDeployment={isCheckingDeployment}
+										onCheckDeploymentAgain={onCheckDeploymentAgain}
+									/>
+								</div>
+							)}
+						</div>
+					</AgentOverviewStatusCard>
+				</div>
 			</div>
-		</SettingsSection>
+			<AgentOverviewCapabilities
+				agentId={agentId}
+				variant="hosted"
+				routeSearch={routeSearch}
+				content={{
+					projects: {
+						body: (
+							<OverviewProjectsBody
+								bindings={{
+									count: agent ? (projectBindings.data?.length ?? null) : null,
+									isLoading: projectionLoading || projectBindings.isLoading,
+									isUnavailable: projectionUnavailable,
+									error: projectBindings.error,
+									onRetry: () => void projectBindings.refetch(),
+								}}
+								names={{
+									items: projectNames.names,
+									unresolvedCount: projectNames.unresolvedCount,
+									isLoading: projectNames.isLoading,
+									error: projectNames.error,
+									onRetry: () => void projectNames.refetch(),
+								}}
+							/>
+						),
+					},
+					skills: {
+						body: (
+							<OverviewSkillsBody
+								items={(skills.skills ?? []).map((skill) => skill.name)}
+								isLoading={projectionLoading || skills.isLoading}
+								isUnavailable={projectionUnavailable}
+								error={skills.error}
+								onRetry={() => void skills.refetch()}
+							/>
+						),
+					},
+					memories: { body: <OverviewMemoriesBody /> },
+					vaults: {
+						body: (
+							<OverviewVaultsBody
+								projectIds={effectiveAgentProjectIds(projectBindings.data ?? [])}
+								resolution={
+									projectionLoading || projectBindings.isLoading
+										? "loading"
+										: projectionUnavailable || projectBindings.error
+											? "unavailable"
+											: "ready"
+								}
+							/>
+						),
+					},
+					connectors: { body: <OverviewConnectorsBody /> },
+					"model-provider": {
+						body:
+							providers.isLoading || managedModelCatalog.isLoading ? (
+								<OverviewModuleSkeleton label="model and provider" rows={2} showHeading={false} />
+							) : providers.error || managedModelCatalog.error ? (
+								<OverviewModuleError
+									label="Model & Provider"
+									onRetry={() =>
+										void (managedProvider ? managedModelCatalog.refetch() : providers.refetch())
+									}
+								/>
+							) : (
+								<OverviewMetadata
+									items={[
+										{ label: "Model", value: model },
+										{
+											label: "Provider",
+											value: managedProvider
+												? "Managed by Clawdi"
+												: providerDisplayLabel(providerId ?? "", providers.data ?? []),
+										},
+									]}
+								/>
+							),
+					},
+					channels: {
+						body: projectionLoading ? (
+							<OverviewModuleSkeleton label="channels" rows={2} />
+						) : projectionUnavailable ? (
+							<OverviewModuleUnavailable />
+						) : channelLinks.isLoading ? (
+							<OverviewModuleSkeleton label="channels" rows={2} />
+						) : channelLinks.error ? (
+							<OverviewModuleError label="Channels" onRetry={() => void channelLinks.refetch()} />
+						) : (
+							<div className="space-y-3">
+								<p className="text-lg font-semibold">
+									{(channelLinks.data?.length ?? 0) > 0
+										? `${channelLinks.data?.length} connected ${channelLinks.data?.length === 1 ? "channel" : "channels"}`
+										: "No channels connected"}
+								</p>
+								<OverviewSummaryRows items={linkedChannelRows} empty="No channels connected" />
+							</div>
+						),
+					},
+				}}
+			/>
+		</div>
 	);
 }
 

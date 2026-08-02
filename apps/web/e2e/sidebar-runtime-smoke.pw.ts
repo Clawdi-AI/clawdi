@@ -1,4 +1,39 @@
-import { expect, type Page, type Route, test } from "@playwright/test";
+import { expect, type Locator, type Page, type Route, test } from "@playwright/test";
+
+async function expectOverviewResourceGeometry(grid: Locator, expectedRows: readonly number[]) {
+	const [gridBox, cards] = await Promise.all([
+		grid.boundingBox(),
+		grid
+			.locator("[data-overview-module]")
+			.evaluateAll((elements) =>
+				elements.map((element) => element.getBoundingClientRect().toJSON()),
+			),
+	]);
+	expect(gridBox).not.toBeNull();
+	const rowYs = [...new Set(cards.map((card) => Math.round(card.y)))];
+	const rows = rowYs.map((rowY) => cards.filter((card) => Math.abs(card.y - rowY) <= 2));
+	expect(rows.map((row) => row.length)).toEqual(expectedRows);
+	expect(
+		Math.max(...cards.map((card) => card.width)) - Math.min(...cards.map((card) => card.width)),
+	).toBeLessThanOrEqual(2);
+	for (const row of rows) {
+		expect(
+			Math.max(...row.map((card) => card.height)) - Math.min(...row.map((card) => card.height)),
+		).toBeLessThanOrEqual(2);
+	}
+	for (const card of cards) {
+		expect(card.x).toBeGreaterThanOrEqual((gridBox?.x ?? 0) - 1);
+		expect(card.x + card.width).toBeLessThanOrEqual((gridBox?.x ?? 0) + (gridBox?.width ?? 0) + 1);
+	}
+	const finalRow = rows.at(-1) ?? [];
+	expect(finalRow).not.toHaveLength(0);
+	expect(Math.abs((finalRow[0]?.x ?? 0) - (gridBox?.x ?? 0))).toBeLessThanOrEqual(2);
+	const overflow = await grid.evaluate((element) => ({
+		clientWidth: element.clientWidth,
+		scrollWidth: element.scrollWidth,
+	}));
+	expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
+}
 
 const now = new Date("2026-07-04T12:00:00.000Z");
 
@@ -162,6 +197,27 @@ const sessions = {
 	page: 1,
 	page_size: 25,
 };
+const overviewSessions = {
+	...sessions,
+	items: Array.from({ length: 5 }, (_, index) => ({
+		...sessions.items[0],
+		id: `session-overview-${index + 1}`,
+		local_session_id: `local-overview-${index + 1}`,
+		summary: [
+			"Plan release",
+			"Review customer notes before the quarterly planning meeting",
+			"Investigate a very long synchronization issue affecting several workspaces and prepare a clear remediation plan for the team before the next release review with every regional owner",
+			"Draft update",
+			"Fifth hidden session",
+		][index],
+		message_count: index + 2,
+		input_tokens: [8, 1200, 18_500, 420][index],
+		output_tokens: [4, 340, 9200, 80][index],
+		last_activity_at: new Date(now.getTime() - index * 60 * 60 * 1000).toISOString(),
+	})),
+	total: 5,
+	page_size: 3,
+};
 
 const memories = {
 	items: [
@@ -191,10 +247,31 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 }
 
 type DashboardApiStubOptions = {
+	sessionsPage?: unknown;
+	sessionRequests?: string[];
+	connectorConnections?: readonly unknown[];
+	connectorConnectionsGate?: Promise<void>;
+	connectorConnectionsResponse?: { body: unknown; status: number };
+	connectorCatalog?: readonly {
+		name: string;
+		display_name: string;
+		logo: string;
+		description: string;
+		auth_type: string;
+		connect_disabled: boolean;
+		connect_disabled_reason: null;
+	}[];
+	connectorCatalogGate?: Promise<void>;
+	connectorCatalogResponse?: { body: unknown; status: number };
+	connectorMetadataRequests?: string[];
+	projectBindingRequests?: string[];
+	projectRequests?: string[];
 	projectBindings?: readonly unknown[];
 	projectBindingsError?: { status: number; detail: string };
 	projectBindingsGate?: Promise<void>;
 	projects?: readonly unknown[];
+	projectsGate?: Promise<void>;
+	projectsResponse?: { body: unknown; status: number };
 	skillRequests?: string[];
 	skillsByProjectId?: Readonly<Record<string, readonly unknown[]>>;
 	vaultRequests?: string[];
@@ -231,6 +308,7 @@ async function stubDashboardApi(
 			return;
 		}
 		if (url.pathname === "/v1/agents/agent-smoke-1/project-bindings") {
+			options.projectBindingRequests?.push(route.request().url());
 			await options.projectBindingsGate;
 			if (options.projectBindingsError) {
 				await fulfillJson(
@@ -248,6 +326,12 @@ async function stubDashboardApi(
 			return;
 		}
 		if (url.pathname === "/v1/projects") {
+			options.projectRequests?.push(route.request().url());
+			await options.projectsGate;
+			if (options.projectsResponse) {
+				await fulfillJson(route, options.projectsResponse.body, options.projectsResponse.status);
+				return;
+			}
 			await fulfillJson(route, options.projects ?? projects);
 			return;
 		}
@@ -282,12 +366,39 @@ async function stubDashboardApi(
 			return;
 		}
 		if (url.pathname === "/v1/connectors") {
-			await fulfillJson(route, []);
+			await options.connectorConnectionsGate;
+			if (options.connectorConnectionsResponse) {
+				await fulfillJson(
+					route,
+					options.connectorConnectionsResponse.body,
+					options.connectorConnectionsResponse.status,
+				);
+				return;
+			}
+			await fulfillJson(route, options.connectorConnections ?? []);
+			return;
+		}
+		const connectorAppMatch = url.pathname.match(/^\/v1\/connectors\/available\/([^/]+)$/);
+		if (connectorAppMatch) {
+			options.connectorMetadataRequests?.push(route.request().url());
+			const app = options.connectorCatalog?.find(
+				(item) => item.name === decodeURIComponent(connectorAppMatch[1]),
+			);
+			await fulfillJson(route, app ?? { detail: "App not found" }, app ? 200 : 404);
 			return;
 		}
 		if (url.pathname === "/v1/connectors/available") {
+			await options.connectorCatalogGate;
+			if (options.connectorCatalogResponse) {
+				await fulfillJson(
+					route,
+					options.connectorCatalogResponse.body,
+					options.connectorCatalogResponse.status,
+				);
+				return;
+			}
 			await fulfillJson(route, {
-				items: [
+				items: options.connectorCatalog ?? [
 					{
 						name: "gmail",
 						display_name: "Gmail",
@@ -305,7 +416,8 @@ async function stubDashboardApi(
 			return;
 		}
 		if (url.pathname === "/v1/sessions") {
-			await fulfillJson(route, sessions);
+			options.sessionRequests?.push(route.request().url());
+			await fulfillJson(route, options.sessionsPage ?? sessions);
 			return;
 		}
 		if (url.pathname === "/v1/memories") {
@@ -412,10 +524,364 @@ test("Console and connected agents use the scoped navigation grammar", async ({ 
 
 	await page.goto("/agents/agent-smoke-1");
 	await expectSidebarNavigationGroups(page, [
-		{ label: null, items: ["Overview", "Sessions", "Memories"] },
-		{ label: "Resources", items: ["Connectors", "Projects", "Skills", "Vaults"] },
+		{ label: null, items: ["Overview", "Sessions"] },
+		{ label: "Resources", items: ["Projects", "Skills", "Memories", "Vaults", "Connectors"] },
 		{ label: null, items: ["Settings"] },
 	]);
+});
+
+test("connected agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
+	await stubDashboardApi(page, [], {
+		sessionsPage: overviewSessions,
+		connectorConnections: [
+			{ id: "conn-github", app_name: "github", status: "ACTIVE" },
+			{ id: "conn-slack", app_name: "slack", status: "ACTIVE" },
+		],
+		connectorCatalog: ["github", "slack", "gmail", "notion", "linear", "dropbox", "calendar"].map(
+			(name) => ({
+				name,
+				display_name: name[0]?.toUpperCase() + name.slice(1),
+				logo: "",
+				description: `${name} connector`,
+				auth_type: "oauth",
+				connect_disabled: false,
+				connect_disabled_reason: null,
+			}),
+		),
+		skillsByProjectId: {
+			"project-smoke": [
+				{
+					id: "skill-smoke-research",
+					skill_key: "research",
+					name: "Research",
+					description: "Research workflow",
+					version: 1,
+					source: "cloud",
+					authority: "cloud",
+					source_repo: null,
+					agent_types: ["codex"],
+					file_count: 1,
+					content_hash: "a".repeat(64),
+					is_active: true,
+					created_at: now.toISOString(),
+					updated_at: now.toISOString(),
+					project_id: "project-smoke",
+					project_name: "Smoke Project",
+					project_kind: "environment",
+				},
+			],
+		},
+	});
+	await page.goto("/agents/agent-smoke-1");
+
+	const overview = page.locator('[data-agent-overview="connected"]');
+	await expect(page.getByRole("heading", { name: "Recent sessions", exact: true })).toBeVisible({
+		timeout: 12_000,
+	});
+	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
+	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module="projects"]')).toContainText(
+		"Smoke Project",
+	);
+	await expect(page.locator('[data-overview-status="live-sync"]')).toContainText(
+		"smoke-machine.local",
+	);
+	await expect(page.locator('[data-overview-status="live-sync"]')).toContainText("Machine");
+	await expect(page.locator('[data-overview-status="live-sync"]')).toContainText("Last seen");
+	const viewAllSessions = page
+		.locator("#connected-recent-sessions")
+		.locator("..")
+		.getByRole("button", { name: "View all", exact: true });
+	await expect(viewAllSessions).toHaveAttribute("href", "/agents/agent-smoke-1/sessions");
+	const recentSessions = page.getByRole("region", { name: "Recent sessions" });
+	await expect(recentSessions.locator("article")).toHaveCount(3);
+	await expect(recentSessions).not.toContainText("Draft update");
+	const sessionBoxes = await recentSessions.locator("article").evaluateAll((cards) =>
+		cards.map((card) => {
+			const rect = card.getBoundingClientRect();
+			const title = card.querySelector<HTMLElement>('[data-testid="overview-session-title"]');
+			const meta = card.querySelector<HTMLElement>('[data-testid="overview-session-meta"]');
+			const titleStyle = title ? getComputedStyle(title) : null;
+			return {
+				x: rect.x,
+				y: rect.y,
+				width: rect.width,
+				height: rect.height,
+				metaOffset: (meta?.getBoundingClientRect().y ?? rect.y) - rect.y,
+				titleWhiteSpace: titleStyle?.whiteSpace,
+				titleOverflow: titleStyle?.overflow,
+				titleTextOverflow: titleStyle?.textOverflow,
+				titleClipped: (title?.scrollWidth ?? 0) > (title?.clientWidth ?? 0),
+			};
+		}),
+	);
+	expect(
+		Math.max(...sessionBoxes.map((box) => box.height)) -
+			Math.min(...sessionBoxes.map((box) => box.height)),
+	).toBeLessThanOrEqual(2);
+	expect(Math.min(...sessionBoxes.map((box) => box.height))).toBeGreaterThanOrEqual(64);
+	expect(Math.max(...sessionBoxes.map((box) => box.height))).toBeLessThanOrEqual(72);
+	expect(sessionBoxes[2]?.titleWhiteSpace).toBe("nowrap");
+	expect(sessionBoxes[2]?.titleOverflow).toBe("hidden");
+	expect(sessionBoxes[2]?.titleTextOverflow).toBe("ellipsis");
+	expect(sessionBoxes[2]?.titleClipped).toBe(true);
+	expect(
+		Math.max(...sessionBoxes.map((box) => box.metaOffset)) -
+			Math.min(...sessionBoxes.map((box) => box.metaOffset)),
+	).toBeLessThanOrEqual(1);
+	for (let index = 1; index < sessionBoxes.length; index += 1) {
+		expect(Math.abs(sessionBoxes[index].x - sessionBoxes[0].x)).toBeLessThanOrEqual(1);
+		expect(Math.abs(sessionBoxes[index].width - sessionBoxes[0].width)).toBeLessThanOrEqual(1);
+		expect(sessionBoxes[index].y).toBeGreaterThanOrEqual(
+			sessionBoxes[index - 1].y + sessionBoxes[index - 1].height,
+		);
+	}
+	const [recentSessionsBox, liveSyncBox, viewAllBox] = await Promise.all([
+		recentSessions.boundingBox(),
+		page.locator('[data-overview-status="live-sync"]').boundingBox(),
+		viewAllSessions.boundingBox(),
+	]);
+	expect(
+		Math.abs(
+			(viewAllBox?.x ?? 0) +
+				(viewAllBox?.width ?? 0) -
+				((recentSessionsBox?.x ?? 0) + (recentSessionsBox?.width ?? 0)),
+		),
+	).toBeLessThanOrEqual(2);
+	expect(Math.abs((liveSyncBox?.y ?? 0) - (recentSessionsBox?.y ?? 0))).toBeLessThanOrEqual(2);
+	expect(
+		Math.abs(
+			(liveSyncBox?.y ?? 0) +
+				(liveSyncBox?.height ?? 0) -
+				((recentSessionsBox?.y ?? 0) + (recentSessionsBox?.height ?? 0)),
+		),
+	).toBeLessThanOrEqual(2);
+	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("Research");
+	for (const moduleId of ["memories", "vaults", "connectors"]) {
+		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toBeVisible();
+	}
+	const connectors = overview.locator('[data-overview-module="connectors"]');
+	await expect(connectors).toContainText("2 connected");
+	const connectorLinks = connectors.getByTestId("overview-connector-rail").getByRole("link");
+	await expect(connectorLinks).toHaveCount(5);
+	await expect(connectorLinks.nth(0)).toHaveAccessibleName("Connected app: Github");
+	await expect(connectorLinks.nth(1)).toHaveAccessibleName("Connected app: Slack");
+	await expect(connectorLinks.nth(2)).toHaveAccessibleName("Suggested app: Gmail");
+	await expect(connectors.getByRole("link", { name: "Suggested app: Github" })).toHaveCount(0);
+	const sidebar = page.getByTestId("app-sidebar");
+	await expect(sidebar.getByText("Paused", { exact: true })).toBeVisible();
+	await expect(sidebar.getByText(/last seen/i)).toBeVisible();
+	for (const section of ["Memories", "Vaults", "Connectors"]) {
+		await expect(sidebar.getByRole("link", { name: section, exact: true })).toBeVisible();
+	}
+	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
+	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
+	const resourceGrid = overview.locator('[data-overview-layout="three-column"]');
+	const resourceGeometry = await resourceGrid
+		.locator("[data-overview-module]")
+		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
+	expect(resourceGeometry).toHaveLength(5);
+	expect(
+		Math.max(...resourceGeometry.map((box) => box.width)) -
+			Math.min(...resourceGeometry.map((box) => box.width)),
+	).toBeLessThanOrEqual(2);
+	for (const rowY of new Set(resourceGeometry.map((box) => Math.round(box.y)))) {
+		const row = resourceGeometry.filter((box) => Math.abs(box.y - rowY) <= 2);
+		expect(
+			Math.max(...row.map((box) => box.height)) - Math.min(...row.map((box) => box.height)),
+		).toBeLessThanOrEqual(2);
+	}
+	expect(
+		await resourceGrid
+			.locator("[data-overview-module]")
+			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
+	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
+	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
+	await page.setViewportSize({ width: 1024, height: 1200 });
+	await expectOverviewResourceGeometry(resourceGrid, [2, 2, 1]);
+	await page.setViewportSize({ width: 768, height: 1200 });
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
+	await page.setViewportSize({ width: 390, height: 844 });
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
+	const mobileSessionBoxes = await recentSessions
+		.locator("article")
+		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
+	expect(mobileSessionBoxes).toHaveLength(3);
+	for (let index = 1; index < mobileSessionBoxes.length; index += 1) {
+		expect(Math.abs(mobileSessionBoxes[index].x - mobileSessionBoxes[0].x)).toBeLessThanOrEqual(1);
+		expect(mobileSessionBoxes[index].y).toBeGreaterThanOrEqual(
+			mobileSessionBoxes[index - 1].y + mobileSessionBoxes[index - 1].height,
+		);
+	}
+	const [mobileSessionsBox, mobileViewAllBox] = await Promise.all([
+		recentSessions.boundingBox(),
+		viewAllSessions.boundingBox(),
+	]);
+	expect((mobileViewAllBox?.y ?? 0) + (mobileViewAllBox?.height ?? 0)).toBeLessThanOrEqual(
+		(mobileSessionsBox?.y ?? 0) + 1,
+	);
+	expect(
+		Math.abs(
+			(mobileViewAllBox?.x ?? 0) +
+				(mobileViewAllBox?.width ?? 0) -
+				((mobileSessionsBox?.x ?? 0) + (mobileSessionsBox?.width ?? 0)),
+		),
+	).toBeLessThanOrEqual(2);
+	await page.setViewportSize({ width: 1280, height: 1400 });
+	await page.screenshot({
+		path: testInfo.outputPath("connected-agent-overview.png"),
+		fullPage: true,
+	});
+});
+
+test("connected detail only requests overview data on Overview", async ({ page }) => {
+	const sessionRequests: string[] = [];
+	const projectBindingRequests: string[] = [];
+	const projectRequests: string[] = [];
+	const skillRequests: string[] = [];
+	await stubDashboardApi(page, [], {
+		sessionRequests,
+		projectBindingRequests,
+		projectRequests,
+		skillRequests,
+	});
+
+	await page.goto("/agents/agent-smoke-1/settings");
+	await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+	await page.waitForTimeout(100);
+	expect(sessionRequests).toEqual([]);
+	expect(projectBindingRequests).toEqual([]);
+	expect(projectRequests).toEqual([]);
+	expect(skillRequests).toEqual([]);
+
+	await page.goto("/agents/agent-smoke-1/sessions");
+	await expect(page.getByRole("heading", { name: "Sessions", level: 1 })).toBeVisible();
+	await expect.poll(() => sessionRequests.length).toBe(1);
+	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("50");
+	expect(projectBindingRequests).toEqual([]);
+	expect(projectRequests).toEqual([]);
+	expect(skillRequests).toEqual([]);
+});
+
+test("connected Overview requests and renders three recent sessions", async ({ page }) => {
+	const sessionRequests: string[] = [];
+	await stubDashboardApi(page, [], { sessionRequests, sessionsPage: overviewSessions });
+	await page.goto("/agents/agent-smoke-1");
+	await expect(page.getByRole("heading", { name: "Recent sessions", exact: true })).toBeVisible();
+	await expect.poll(() => sessionRequests.length).toBe(1);
+	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("3");
+	await expect(page.getByTestId("overview-session-grid").locator("article")).toHaveCount(3);
+});
+
+test("connected Overview resolves connector metadata from catalog before fan-out", async ({
+	page,
+}) => {
+	const connectorMetadataRequests: string[] = [];
+	const catalogApp = (name: string) => ({
+		name,
+		display_name: name,
+		logo: "",
+		description: `${name} connector`,
+		auth_type: "oauth",
+		connect_disabled: false,
+		connect_disabled_reason: null,
+	});
+	await stubDashboardApi(page, [], {
+		connectorMetadataRequests,
+		connectorConnections: [
+			{ id: "conn-github", app_name: "github", status: "ACTIVE" },
+			{ id: "conn-slack", app_name: "slack", status: "ACTIVE" },
+		],
+		connectorCatalog: [catalogApp("github"), catalogApp("gmail")],
+	});
+
+	await page.goto("/agents/agent-smoke-1");
+	await expect(page.locator('[data-overview-module="connectors"]')).toContainText("2 connected");
+	await expect.poll(() => connectorMetadataRequests.length).toBe(1);
+	expect(new URL(connectorMetadataRequests[0] ?? "http://invalid").pathname).toBe(
+		"/v1/connectors/available/slack",
+	);
+});
+
+test("connected overview keeps connector and catalog states independent", async ({ page }) => {
+	await stubDashboardApi(page, [], {
+		connectorConnectionsGate: new Promise<void>(() => {}),
+		connectorCatalog: [
+			{
+				name: "gmail",
+				display_name: "Gmail",
+				logo: "",
+				description: "Email",
+				auth_type: "oauth",
+				connect_disabled: false,
+				connect_disabled_reason: null,
+			},
+		],
+	});
+	await page.goto("/agents/agent-smoke-1");
+	const card = page.locator('[data-overview-module="connectors"]');
+	await expect(card.getByLabel("Loading connected apps")).toBeVisible();
+	await expect(card.getByRole("link", { name: "Available app: Gmail" })).toBeVisible();
+	await expect(card).not.toContainText("No apps connected");
+});
+
+test("connected overview reports connector errors without a false empty state", async ({
+	page,
+}) => {
+	await stubDashboardApi(page, [], {
+		connectorConnectionsResponse: { body: { detail: "failed" }, status: 500 },
+		connectorCatalogResponse: { body: { detail: "failed" }, status: 500 },
+	});
+	await page.goto("/agents/agent-smoke-1");
+	const card = page.locator('[data-overview-module="connectors"]');
+	await expect(card).toContainText("Can’t load apps", { timeout: 12_000 });
+	await expect(card).not.toContainText("No apps connected");
+});
+
+test("connected overview preserves active count while popular apps load", async ({ page }) => {
+	await stubDashboardApi(page, [], {
+		connectorConnections: [{ id: "conn-github", app_name: "github", status: "ACTIVE" }],
+		connectorCatalogGate: new Promise<void>(() => {}),
+		connectorCatalog: [
+			{
+				name: "github",
+				display_name: "Github",
+				logo: "",
+				description: "Source",
+				auth_type: "oauth",
+				connect_disabled: false,
+				connect_disabled_reason: null,
+			},
+		],
+	});
+	await page.goto("/agents/agent-smoke-1");
+	const card = page.locator('[data-overview-module="connectors"]');
+	await expect(card).toContainText("1 connected");
+	await expect(card.getByLabel("Loading app").first()).toBeVisible();
+});
+
+test("connected overview keeps project count when names fail", async ({ page }) => {
+	await stubDashboardApi(page, [], {
+		projectsResponse: { status: 500, body: { detail: "project list failed" } },
+	});
+	await page.goto("/agents/agent-smoke-1");
+
+	const projectsCard = page.locator('[data-overview-module="projects"]');
+	await expect(projectsCard).toContainText("1 project");
+	await expect(projectsCard).toContainText("Can’t load project names");
+	await expect(projectsCard.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+	await expect(projectsCard).not.toContainText("No projects added");
+	await expect(page.locator('[data-overview-module="vaults"]')).toBeVisible();
+});
+
+test("connected overview keeps project count while names load", async ({ page }) => {
+	await stubDashboardApi(page, [], { projectsGate: new Promise<void>(() => {}) });
+	await page.goto("/agents/agent-smoke-1");
+
+	const projectsCard = page.locator('[data-overview-module="projects"]');
+	await expect(projectsCard).toContainText("1 project");
+	await expect(projectsCard.getByLabel("Loading project names summary")).toBeVisible();
+	await expect(page.locator('[data-overview-module="vaults"]')).toBeVisible();
 });
 
 test("connected agent Memories stays account-wide with canonical detail links", async ({

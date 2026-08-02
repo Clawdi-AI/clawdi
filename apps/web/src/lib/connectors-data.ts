@@ -25,7 +25,34 @@ export const CONNECTOR_CATALOG_PAGE_SIZE = 24;
 export const CONNECTOR_CATALOG_STALE_TIME_MS = 10 * 60 * 1000;
 export const CONNECTOR_CATALOG_GC_TIME_MS = CONNECTOR_CATALOG_STALE_TIME_MS;
 
-type ConnectorAvailableApp = components["schemas"]["ConnectorAvailableAppResponse"];
+export type ConnectorAvailableApp = components["schemas"]["ConnectorAvailableAppResponse"];
+
+export type ConnectedAppCatalogSnapshot = {
+	apps: readonly ConnectorAvailableApp[] | undefined;
+	isLoading: boolean;
+	error: unknown;
+};
+
+type ConnectedAppMetadataPlan = {
+	catalogApps: ConnectorAvailableApp[];
+	missingNames: string[];
+};
+
+export function resolveConnectedAppMetadataPlan(
+	names: readonly string[],
+	catalog?: ConnectedAppCatalogSnapshot,
+): ConnectedAppMetadataPlan {
+	if (!catalog) return { catalogApps: [], missingNames: [...names] };
+	if (catalog.isLoading && !catalog.apps) return { catalogApps: [], missingNames: [] };
+	const byName = new Map((catalog.apps ?? []).map((app) => [app.name, app]));
+	return {
+		catalogApps: names.flatMap((name) => {
+			const app = byName.get(name);
+			return app ? [app] : [];
+		}),
+		missingNames: names.filter((name) => !byName.has(name)),
+	};
+}
 
 export type AvailableAppsQueryArgs = {
 	page: number;
@@ -175,12 +202,11 @@ export function useDisconnect() {
  * without this rail, they'd never find their connections without
  * searching.
  *
- * Fan-out: one `/available/{name}` query per unique active app.
- * Active connection count is small in practice (single-digit per
- * user), and React Query dedupes against the catalog cache so a
- * page that already loaded the connector also has its metadata.
+ * Fan-out: one `/available/{name}` query per unique active app not
+ * covered by a supplied catalog snapshot. Other callers keep the
+ * existing detail-query behavior when no snapshot is supplied.
  */
-export function useConnectedAppCards() {
+export function useConnectedAppCards(catalog?: ConnectedAppCatalogSnapshot) {
 	const connectionsQ = useConnections();
 	const api = useOpenApi();
 
@@ -200,14 +226,32 @@ export function useConnectedAppCards() {
 		() => Array.from(new Set(activeConnections.flatMap((c) => (c.app_name ? [c.app_name] : [])))),
 		[activeConnections],
 	);
+	const metadataPlan = useMemo(
+		() => resolveConnectedAppMetadataPlan(names, catalog),
+		[names, catalog?.apps, catalog?.error, catalog?.isLoading],
+	);
 
 	const lookup = useQueries({
-		queries: names.map((name) => availableAppQueryOptions(api, name)),
+		queries: metadataPlan.missingNames.map((name) => availableAppQueryOptions(api, name)),
 	});
 
-	const data = useMemo(() => lookup.flatMap((q) => (q.data ? [q.data] : [])), [lookup]);
-	const isLoading = connectionsQ.isLoading || lookup.some((q) => q.isLoading);
-	const error = connectionsQ.error ?? lookup.find((q) => q.error)?.error ?? null;
+	const data = useMemo(() => {
+		const byName = new Map(metadataPlan.catalogApps.map((app) => [app.name, app]));
+		for (const query of lookup) {
+			if (query.data) byName.set(query.data.name, query.data);
+		}
+		return names.flatMap((name) => {
+			const app = byName.get(name);
+			return app ? [app] : [];
+		});
+	}, [lookup, metadataPlan.catalogApps, names]);
+	const waitingForCatalog = Boolean(catalog?.isLoading && !catalog.apps && names.length > 0);
+	const isLoading = connectionsQ.isLoading || waitingForCatalog || lookup.some((q) => q.isLoading);
+	const connectionsLoading = connectionsQ.isLoading;
+	const metadataLoading = waitingForCatalog || lookup.some((q) => q.isLoading);
+	const connectionsError = connectionsQ.error;
+	const metadataError = lookup.find((q) => q.error)?.error ?? null;
+	const error = connectionsError ?? metadataError;
 	const hasData =
 		connectionsQ.data !== undefined && lookup.every((query) => query.data !== undefined);
 	const refetch = () => {
@@ -215,7 +259,18 @@ export function useConnectedAppCards() {
 		for (const q of lookup) void q.refetch();
 	};
 
-	return { activeConnections, data, hasData, isLoading, error, refetch };
+	return {
+		activeConnections,
+		data,
+		hasData,
+		isLoading,
+		connectionsLoading,
+		metadataLoading,
+		error,
+		connectionsError,
+		metadataError,
+		refetch,
+	};
 }
 
 // ─────────────────────────────────────────────────────────────────────

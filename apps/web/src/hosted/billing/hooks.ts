@@ -124,12 +124,13 @@ export function useHostedUser() {
 	});
 }
 
-export function useManagedModelCatalog() {
+export function useManagedModelCatalog({ enabled = true }: { enabled?: boolean } = {}) {
 	const client = useBillingClient();
 	return useBillingQuery({
 		queryKey: billingKeys.managedModelCatalog,
 		queryFn: () => client.getManagedModelCatalog(),
 		staleTime: 5 * 60_000,
+		enabled,
 	});
 }
 

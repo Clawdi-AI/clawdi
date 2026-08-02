@@ -207,6 +207,7 @@ describe("structural secret boundaries without the denylist", () => {
 		).toHaveLength(7);
 
 		const walletConsumers = [
+			"hosted/global-wallet-balance.tsx",
 			"hosted/billing/deploy/deploy-wizard.tsx",
 			"hosted/billing/wallet/wallet-page.tsx",
 			"hosted/billing/subscription/welcome-wallet-card.tsx",

@@ -30,8 +30,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
+import { useAgentProjectVaults } from "@/components/vault/agent-vaults-query";
 import { vaultDetailSearch } from "@/components/vault/vault-detail-identity";
-import { fetchAgentProjectVaults } from "@/components/vault/vault-scope";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
@@ -54,7 +54,6 @@ export function VaultsSurface({
 	embedded?: boolean;
 	agentProjectIds?: readonly string[];
 }) {
-	const api = useApi();
 	const $api = useOpenApi();
 	const [search, setSearch] = useState("");
 	const [projectFilter, setProjectFilter] = useState<string>("all");
@@ -70,17 +69,8 @@ export function VaultsSurface({
 			enabled: agentProjectIds === undefined,
 		},
 	);
-	const agentVaults = useQuery({
-		queryKey: ["vaults", "agent-projects", ...(agentProjectIds ?? [])],
-		queryFn: async () =>
-			fetchAgentProjectVaults(agentProjectIds ?? [], async (projectId, page, pageSize) =>
-				unwrap(
-					await api.GET("/v1/vault", {
-						params: { query: { project_id: projectId, page, page_size: pageSize } },
-					}),
-				),
-			),
-		enabled: agentProjectIds !== undefined && agentProjectIds.length > 0,
+	const agentVaults = useAgentProjectVaults(agentProjectIds ?? [], {
+		enabled: agentProjectIds !== undefined,
 	});
 	const vaultsQuery = agentProjectIds === undefined ? accountVaults : agentVaults;
 

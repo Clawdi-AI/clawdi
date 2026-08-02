@@ -15,6 +15,42 @@ declare global {
 	}
 }
 
+async function expectOverviewResourceGeometry(grid: Locator, expectedRows: readonly number[]) {
+	const [gridBox, cards] = await Promise.all([
+		grid.boundingBox(),
+		grid
+			.locator("[data-overview-module]")
+			.evaluateAll((elements) =>
+				elements.map((element) => element.getBoundingClientRect().toJSON()),
+			),
+	]);
+	expect(gridBox).not.toBeNull();
+	expect(cards).toHaveLength(expectedRows.reduce((total, count) => total + count, 0));
+	const rowYs = [...new Set(cards.map((card) => Math.round(card.y)))];
+	const rows = rowYs.map((rowY) => cards.filter((card) => Math.abs(card.y - rowY) <= 2));
+	expect(rows.map((row) => row.length)).toEqual(expectedRows);
+	expect(
+		Math.max(...cards.map((card) => card.width)) - Math.min(...cards.map((card) => card.width)),
+	).toBeLessThanOrEqual(2);
+	for (const row of rows) {
+		expect(
+			Math.max(...row.map((card) => card.height)) - Math.min(...row.map((card) => card.height)),
+		).toBeLessThanOrEqual(2);
+	}
+	for (const card of cards) {
+		expect(card.x).toBeGreaterThanOrEqual((gridBox?.x ?? 0) - 1);
+		expect(card.x + card.width).toBeLessThanOrEqual((gridBox?.x ?? 0) + (gridBox?.width ?? 0) + 1);
+	}
+	const finalRow = rows.at(-1) ?? [];
+	expect(finalRow).not.toHaveLength(0);
+	expect(Math.abs((finalRow[0]?.x ?? 0) - (gridBox?.x ?? 0))).toBeLessThanOrEqual(2);
+	const overflow = await grid.evaluate((element) => ({
+		clientWidth: element.clientWidth,
+		scrollWidth: element.scrollWidth,
+	}));
+	expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
+}
+
 // HOSTED (Clawdi Cloud) smoke against the vite dev server with dev-auth-bypass
 // (NO Clerk key needed) + deploy-api enabled so /deploy renders. Exercises the
 // deploy wizard's Base UI Select asserting ZERO browser console/page errors.
@@ -1119,10 +1155,24 @@ function isStubResponse(value: unknown): value is StubResponse {
 }
 
 type HostedApiStubOptions = {
+	sessionsPage?: unknown;
+	sessionRequests?: string[];
+	connectorConnections?: readonly unknown[];
+	connectorCatalog?: readonly {
+		name: string;
+		display_name: string;
+		logo: string;
+		description: string;
+		auth_type: string;
+		connect_disabled: boolean;
+		connect_disabled_reason: null;
+	}[];
 	aiProviders?: readonly unknown[];
+	aiProviderRequests?: string[];
 	agentProjectBindings?: readonly unknown[];
 	agentProjectBindingRequests?: string[];
 	agentProjects?: readonly unknown[];
+	agentProjectsResponse?: StubResponse;
 	agentResourceFixtures?: boolean;
 	agentOrderRequests?: string[];
 	autoReloadRequests?: string[];
@@ -1187,6 +1237,7 @@ type HostedApiStubOptions = {
 	ledgerResponses?: unknown[];
 	legacyAgentEnvironmentIds?: readonly string[];
 	managedModels?: typeof managedModelCatalog;
+	managedModelRequests?: string[];
 	planRequests?: string[];
 	mutationOrder?: string[];
 	plans?: readonly unknown[];
@@ -1370,6 +1421,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			return fulfillJson(r, plans);
 		}
 		if (p === "/v2/ai-providers/managed/models") {
+			options.managedModelRequests?.push(r.request().url());
 			return fulfillJson(r, options.managedModels ?? managedModelCatalog);
 		}
 		if (p === "/v2/wallet" && r.request().method() === "GET") {
@@ -1870,7 +1922,10 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p.startsWith("/v1/agents/") && r.request().method() === "GET") {
 			const id = decodeURIComponent(p.slice("/v1/agents/".length));
 			const response = options.cloudAgentResponses?.[id]?.shift();
-			if (response) return fulfillJson(r, response.body, response.status);
+			if (response) {
+				if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+				return fulfillJson(r, response.body, response.status);
+			}
 			const error = options.cloudAgentErrors?.[id];
 			if (error) return fulfillJson(r, { detail: error.detail }, error.status);
 			if (options.cloudAgentNotFoundIds?.includes(id)) {
@@ -1900,6 +1955,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			});
 		}
 		if (p === "/v1/ai-providers") {
+			options.aiProviderRequests?.push(r.request().url());
 			return fulfillJson(r, { providers: options.aiProviders ?? [] });
 		}
 		if (p === "/v1/ai-providers/accept" && r.request().method() === "POST") {
@@ -2091,6 +2147,18 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			return fulfillJson(r, { items: [] });
 		}
 		if (p === "/v1/projects") {
+			if (options.agentProjectsResponse) {
+				if (options.agentProjectsResponse.delayMs) {
+					await new Promise((resolve) =>
+						setTimeout(resolve, options.agentProjectsResponse?.delayMs),
+					);
+				}
+				return fulfillJson(
+					r,
+					options.agentProjectsResponse.body,
+					options.agentProjectsResponse.status,
+				);
+			}
 			if (options.agentProjects) return fulfillJson(r, options.agentProjects);
 			if (!options.agentResourceFixtures) return fulfillJson(r, []);
 			return fulfillJson(r, [
@@ -2154,13 +2222,20 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				page_size: Number(url.searchParams.get("page_size") ?? "25"),
 			});
 		}
-		if (p === "/v1/connectors") return fulfillJson(r, []);
+		if (p === "/v1/connectors") return fulfillJson(r, options.connectorConnections ?? []);
+		const connectorAppMatch = p.match(/^\/v1\/connectors\/available\/([^/]+)$/);
+		if (connectorAppMatch) {
+			const app = options.connectorCatalog?.find(
+				(item) => item.name === decodeURIComponent(connectorAppMatch[1] ?? ""),
+			);
+			return fulfillJson(r, app ?? { detail: "App not found" }, app ? 200 : 404);
+		}
 		if (p === "/v1/connectors/available") {
 			if (!options.agentResourceFixtures) {
 				return fulfillJson(r, { items: [], total: 0, page: 1, page_size: 24 });
 			}
 			return fulfillJson(r, {
-				items: [
+				items: options.connectorCatalog ?? [
 					{
 						name: "github",
 						display_name: "GitHub",
@@ -2176,7 +2251,10 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				page_size: 24,
 			});
 		}
-		if (p === "/v1/sessions") return fulfillJson(r, emptyPage);
+		if (p === "/v1/sessions") {
+			options.sessionRequests?.push(r.request().url());
+			return fulfillJson(r, options.sessionsPage ?? emptyPage);
+		}
 		if (p === "/v1/memories") return fulfillJson(r, hostedMemories);
 		if (p === "/v1/settings") {
 			return fulfillJson(r, { memory_provider: "builtin", mem0_api_key: null });
@@ -2574,14 +2652,749 @@ test("returning users can deploy on Clawdi or connect another machine", async ({
 	await expect(page.getByRole("dialog", { name: "Add agent" })).toBeVisible();
 });
 
+test("global Hosted Wallet balance lives in chrome and reuses its cached query", async ({
+	page,
+}, testInfo) => {
+	const walletRequests: string[] = [];
+	await stubHostedApi(page, { deployments: [], walletRequests });
+	await page.goto("/channels");
+
+	const walletEntry = page.getByTestId("global-wallet-balance");
+	await expect(walletEntry).toHaveCount(1);
+	await expect(walletEntry).not.toContainText("Wallet");
+	await expect(walletEntry).toContainText("$25.00");
+	await expect(walletEntry).toHaveAccessibleName("Wallet balance $25.00. Open Wallet settings");
+	await expect.poll(() => walletRequests.length).toBe(1);
+	await page.screenshot({
+		path: testInfo.outputPath("hosted-global-wallet-channels.png"),
+		fullPage: true,
+	});
+
+	await walletEntry.click();
+	await expect(page).toHaveURL(/settings=billing-wallet/);
+	const settingsDialog = page.getByTestId("settings-dialog");
+	await expect(settingsDialog.getByRole("heading", { name: "Wallet", level: 1 })).toBeVisible();
+	await expect(settingsDialog.getByText("$25.00", { exact: true })).toBeVisible();
+	await page.waitForTimeout(250);
+	expect(walletRequests).toHaveLength(1);
+});
+
+test("hosted agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
+	const sessionRequests: string[] = [];
+	const aiProviderRequests: string[] = [];
+	const managedModelRequests: string[] = [];
+	const telegramAccount = {
+		id: "channel-overview-telegram",
+		provider: "telegram",
+		name: "Research Telegram",
+		status: "active",
+		created_at: "2026-07-15T00:00:00Z",
+	};
+	await stubHostedApi(page, {
+		sessionRequests,
+		aiProviderRequests,
+		managedModelRequests,
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		agentResourceFixtures: true,
+		sessionsPage: {
+			items: Array.from({ length: 5 }, (_, index) => ({
+				id: `hosted-overview-session-${index + 1}`,
+				local_session_id: `hosted-local-${index + 1}`,
+				project_path: "/hosted",
+				agent_name: "rail-cloud",
+				agent_display_name: "Rail Cloud",
+				agent_default_name: "Rail Cloud",
+				agent_type: "hermes",
+				machine_name: "rail-cloud",
+				started_at: `2026-07-15T0${index}:00:00Z`,
+				ended_at: null,
+				updated_at: `2026-07-15T0${index}:30:00Z`,
+				last_activity_at: `2026-07-15T0${index}:30:00Z`,
+				duration_seconds: 1800,
+				message_count: index + 3,
+				input_tokens: (index + 1) * 200,
+				output_tokens: (index + 1) * 100,
+				cache_read_tokens: 0,
+				model: "gpt-5",
+				models_used: ["gpt-5"],
+				summary: [
+					"Prepare launch brief",
+					"Research customer feedback before the product planning review",
+					"Investigate a long-running customer issue across several projects and write a detailed plan for the next release review with every regional owner and support lead",
+					"Review risks",
+					"Fifth hosted session",
+				][index],
+				tags: [],
+				status: "active",
+				content_hash: `hosted-hash-${index}`,
+			})),
+			total: 5,
+			page: 1,
+			page_size: 3,
+		},
+		connectorConnections: [
+			{ id: "hosted-conn-github", app_name: "github", status: "ACTIVE" },
+			{ id: "hosted-conn-slack", app_name: "slack", status: "ACTIVE" },
+		],
+		connectorCatalog: ["github", "slack", "gmail", "notion", "linear", "dropbox", "calendar"].map(
+			(name) => ({
+				name,
+				display_name: name[0]?.toUpperCase() + name.slice(1),
+				logo: "",
+				description: `${name} connector`,
+				auth_type: "oauth",
+				connect_disabled: false,
+				connect_disabled_reason: null,
+			}),
+		),
+		skillsByProjectId: {
+			"project-hosted": [
+				{
+					id: "skill-hosted-briefing",
+					skill_key: "briefing",
+					name: "Daily briefing",
+					description: "Prepare daily briefings",
+					version: 1,
+					source: "cloud",
+					authority: "cloud",
+					source_repo: null,
+					agent_types: ["hermes"],
+					file_count: 1,
+					content_hash: "b".repeat(64),
+					is_active: true,
+					created_at: "2026-07-15T00:00:00Z",
+					updated_at: "2026-07-15T00:00:00Z",
+					project_id: "project-hosted",
+					project_name: "Hosted Agent Project",
+					project_kind: "environment",
+				},
+			],
+		},
+		channelAgentLinks: [
+			{
+				id: "link-overview-telegram",
+				account_id: telegramAccount.id,
+				agent_id: railHostedEnvironmentId,
+				status: "active",
+				created_at: "2026-07-15T00:00:00Z",
+				account: telegramAccount,
+			},
+		],
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+	await expect.poll(() => sessionRequests.length).toBe(1);
+	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("3");
+
+	const overview = page.locator('[data-agent-overview="hosted"]');
+	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Tools", exact: true })).toBeVisible();
+	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module="projects"]')).toContainText(
+		"Hosted Agent Project",
+	);
+	const viewAllSessions = page
+		.locator("#hosted-recent-sessions")
+		.locator("..")
+		.getByRole("button", { name: "View all", exact: true });
+	const viewAllHref = await viewAllSessions.getAttribute("href");
+	const viewAllUrl = new URL(viewAllHref ?? "", page.url());
+	expect(viewAllUrl.pathname).toBe(`/agents/${railHostedEnvironmentId}/sessions`);
+	expect(viewAllUrl.searchParams.get("source")).toBe("on-clawdi");
+	expect(viewAllUrl.searchParams.get("d")).toBe(railHostedDeployment.id);
+	const recentSessions = page.getByRole("region", { name: "Recent sessions" });
+	await expect(recentSessions.locator("article")).toHaveCount(3);
+	await expect(recentSessions).not.toContainText("Review risks");
+	const sessionBoxes = await recentSessions.locator("article").evaluateAll((cards) =>
+		cards.map((card) => {
+			const rect = card.getBoundingClientRect();
+			const title = card.querySelector<HTMLElement>('[data-testid="overview-session-title"]');
+			const meta = card.querySelector<HTMLElement>('[data-testid="overview-session-meta"]');
+			const titleStyle = title ? getComputedStyle(title) : null;
+			return {
+				x: rect.x,
+				y: rect.y,
+				width: rect.width,
+				height: rect.height,
+				metaOffset: (meta?.getBoundingClientRect().y ?? rect.y) - rect.y,
+				titleWhiteSpace: titleStyle?.whiteSpace,
+				titleOverflow: titleStyle?.overflow,
+				titleTextOverflow: titleStyle?.textOverflow,
+				titleClipped: (title?.scrollWidth ?? 0) > (title?.clientWidth ?? 0),
+			};
+		}),
+	);
+	expect(
+		Math.max(...sessionBoxes.map((box) => box.height)) -
+			Math.min(...sessionBoxes.map((box) => box.height)),
+	).toBeLessThanOrEqual(2);
+	expect(Math.min(...sessionBoxes.map((box) => box.height))).toBeGreaterThanOrEqual(64);
+	expect(Math.max(...sessionBoxes.map((box) => box.height))).toBeLessThanOrEqual(72);
+	expect(sessionBoxes[2]?.titleWhiteSpace).toBe("nowrap");
+	expect(sessionBoxes[2]?.titleOverflow).toBe("hidden");
+	expect(sessionBoxes[2]?.titleTextOverflow).toBe("ellipsis");
+	expect(sessionBoxes[2]?.titleClipped).toBe(true);
+	expect(
+		Math.max(...sessionBoxes.map((box) => box.metaOffset)) -
+			Math.min(...sessionBoxes.map((box) => box.metaOffset)),
+	).toBeLessThanOrEqual(1);
+	for (let index = 1; index < sessionBoxes.length; index += 1) {
+		expect(Math.abs(sessionBoxes[index].x - sessionBoxes[0].x)).toBeLessThanOrEqual(1);
+		expect(Math.abs(sessionBoxes[index].width - sessionBoxes[0].width)).toBeLessThanOrEqual(1);
+		expect(sessionBoxes[index].y).toBeGreaterThanOrEqual(
+			sessionBoxes[index - 1].y + sessionBoxes[index - 1].height,
+		);
+	}
+	const [recentSessionsBox, computeBox, viewAllBox] = await Promise.all([
+		recentSessions.boundingBox(),
+		page.locator('[data-overview-status="compute"]').boundingBox(),
+		viewAllSessions.boundingBox(),
+	]);
+	expect(
+		Math.abs(
+			(viewAllBox?.x ?? 0) +
+				(viewAllBox?.width ?? 0) -
+				((recentSessionsBox?.x ?? 0) + (recentSessionsBox?.width ?? 0)),
+		),
+	).toBeLessThanOrEqual(2);
+	expect(Math.abs((computeBox?.y ?? 0) - (recentSessionsBox?.y ?? 0))).toBeLessThanOrEqual(2);
+	expect(
+		Math.abs(
+			(computeBox?.y ?? 0) +
+				(computeBox?.height ?? 0) -
+				((recentSessionsBox?.y ?? 0) + (recentSessionsBox?.height ?? 0)),
+		),
+	).toBeLessThanOrEqual(2);
+	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Open Agent Interface" })).toHaveAttribute(
+		"href",
+		/console/,
+	);
+	const compute = page.locator('[data-overview-status="compute"]');
+	await expect(compute).toContainText("Running");
+	await expect(compute).toContainText("Basic plan");
+	await expect(compute.getByTestId("overview-compute-summary")).not.toHaveClass(
+		/rounded|border|bg-/,
+	);
+	await expect(
+		compute.getByRole("list", {
+			name: "Configuration: 2 vCPU, 4 GiB memory, 20 GiB storage",
+		}),
+	).toBeVisible();
+	await expect(page.getByText("Your agent is running", { exact: true })).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("Daily briefing");
+	await expect(overview.locator('[data-overview-module="channels"]')).toContainText(
+		"Research Telegram",
+	);
+	await expect(overview.locator('[data-overview-module="channels"]')).toContainText("Telegram");
+	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText(
+		"Managed by Clawdi",
+	);
+	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText("Model");
+	expect(aiProviderRequests).toEqual([]);
+	await expect.poll(() => managedModelRequests.length).toBe(1);
+	for (const configuration of ["2 vCPU", "4 GiB memory", "20 GiB storage"])
+		await expect(compute.getByText(configuration, { exact: true })).toBeVisible();
+	await expect(compute.getByText("Plan", { exact: true })).toHaveCount(0);
+	await expect(compute.getByText("CPU", { exact: true })).toHaveCount(0);
+	await expect(compute.getByText("Memory", { exact: true })).toHaveCount(0);
+	await expect(compute.getByText("Storage", { exact: true })).toHaveCount(0);
+	for (const moduleId of ["memories", "vaults", "connectors"]) {
+		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toBeVisible();
+	}
+	const flatResourceSummaries = overview.getByTestId("overview-summary-list");
+	await expect(flatResourceSummaries).toHaveCount(3);
+	for (const summary of await flatResourceSummaries.all())
+		await expect(summary).not.toHaveClass(/rounded|border|divide-y|bg-/);
+	const connectors = overview.locator('[data-overview-module="connectors"]');
+	await expect(connectors).toContainText("2 connected");
+	const connectorLinks = connectors.getByTestId("overview-connector-rail").getByRole("link");
+	await expect(connectorLinks).toHaveCount(5);
+	await expect(connectorLinks.nth(0)).toHaveAccessibleName("Connected app: Github");
+	await expect(connectorLinks.nth(1)).toHaveAccessibleName("Connected app: Slack");
+	await expect(connectorLinks.nth(2)).toHaveAccessibleName("Suggested app: Gmail");
+	await expect(connectors.getByRole("link", { name: "Suggested app: Github" })).toHaveCount(0);
+	const sidebar = page.getByTestId("app-sidebar");
+	await expect(sidebar.getByText("Running", { exact: true })).toBeVisible();
+	await expect(sidebar.getByText("Paused", { exact: true })).toHaveCount(0);
+	await expect(sidebar.getByText(/last seen/i)).toHaveCount(0);
+	for (const section of ["Memories", "Vaults", "Connectors"]) {
+		await expect(sidebar.getByRole("link", { name: section, exact: true })).toBeVisible();
+	}
+	await expect(overview.getByText("Scope", { exact: true })).toHaveCount(0);
+	await expect(overview.getByText("Access", { exact: true })).toHaveCount(0);
+	await expect(overview.getByText("Managed", { exact: true })).toHaveCount(0);
+	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module="live-sync"]')).toHaveCount(0);
+	const resourceGrid = overview.locator(
+		'section[aria-labelledby="agent-overview-resources"] [data-overview-layout="three-column"]',
+	);
+	const toolsGrid = overview.locator(
+		'section[aria-labelledby="agent-overview-operate"] [data-overview-layout="three-column"]',
+	);
+	const resourceGeometry = await resourceGrid
+		.locator("[data-overview-module]")
+		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
+	expect(resourceGeometry).toHaveLength(5);
+	expect(
+		Math.max(...resourceGeometry.map((box) => box.width)) -
+			Math.min(...resourceGeometry.map((box) => box.width)),
+	).toBeLessThanOrEqual(2);
+	for (const rowY of new Set(resourceGeometry.map((box) => Math.round(box.y)))) {
+		const row = resourceGeometry.filter((box) => Math.abs(box.y - rowY) <= 2);
+		expect(
+			Math.max(...row.map((box) => box.height)) - Math.min(...row.map((box) => box.height)),
+		).toBeLessThanOrEqual(2);
+	}
+	expect(
+		await resourceGrid
+			.locator("[data-overview-module]")
+			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
+	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
+	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
+	await expectOverviewResourceGeometry(toolsGrid, [2]);
+	expect(
+		Math.abs(
+			(resourceGeometry[0]?.width ?? 0) -
+				((await toolsGrid.locator("[data-overview-module]").first().boundingBox())?.width ?? 0),
+		),
+	).toBeLessThanOrEqual(2);
+	await page.setViewportSize({ width: 1024, height: 1200 });
+	await expectOverviewResourceGeometry(resourceGrid, [2, 2, 1]);
+	await expectOverviewResourceGeometry(toolsGrid, [2]);
+	await page.setViewportSize({ width: 768, height: 1200 });
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
+	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
+	await page.setViewportSize({ width: 390, height: 1200 });
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
+	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
+	const [mobileSessionsBox, mobileViewAllBox] = await Promise.all([
+		recentSessions.boundingBox(),
+		viewAllSessions.boundingBox(),
+	]);
+	expect((mobileViewAllBox?.y ?? 0) + (mobileViewAllBox?.height ?? 0)).toBeLessThanOrEqual(
+		(mobileSessionsBox?.y ?? 0) + 1,
+	);
+	expect(
+		Math.abs(
+			(mobileViewAllBox?.x ?? 0) +
+				(mobileViewAllBox?.width ?? 0) -
+				((mobileSessionsBox?.x ?? 0) + (mobileSessionsBox?.width ?? 0)),
+		),
+	).toBeLessThanOrEqual(2);
+	await page.setViewportSize({ width: 1280, height: 1600 });
+	await page.screenshot({ path: testInfo.outputPath("hosted-agent-overview.png"), fullPage: true });
+});
+
+test("hosted overview shows a custom provider label and gates provider catalogs", async ({
+	page,
+}) => {
+	const aiProviderRequests: string[] = [];
+	const managedModelRequests: string[] = [];
+	const deployment: DeploymentMutationFixture = {
+		...railHostedDeployment,
+		id: "hdep_overview_custom_provider",
+		config_info: {
+			...railHostedDeployment.config_info,
+			ai_provider_auth_kind: "api_key",
+			clawdi_cloud_environments: { hermes: railHostedEnvironmentId },
+			runtime_configuration: {
+				providers: [
+					{
+						provider_id: deepSeekProvider.provider_id,
+						auth_kind: "secret_reference",
+						base_url: deepSeekProvider.base_url,
+						models: ["deepseek-v4-flash"],
+					},
+				],
+				primary_model: { provider_id: deepSeekProvider.provider_id, model: "deepseek-v4-flash" },
+				features: [],
+			},
+		},
+	};
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		cloudAgents: [railHostedCloudAgent],
+		aiProviders: [deepSeekProvider],
+		aiProviderRequests,
+		managedModelRequests,
+	});
+	await page.goto(`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${deployment.id}`);
+	const card = page.locator('[data-overview-module="model-provider"]');
+	await expect(card).toContainText("Research DeepSeek");
+	await expect(card).not.toContainText(deepSeekProvider.provider_id);
+	await expect.poll(() => aiProviderRequests.length).toBe(1);
+	expect(managedModelRequests).toEqual([]);
+});
+
+test("hosted projection loading uses module skeletons", async ({ page }, testInfo) => {
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		cloudAgentResponses: {
+			[railHostedEnvironmentId]: [{ body: railHostedCloudAgent, status: 200, delayMs: 5_000 }],
+		},
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+
+	const overview = page.locator('[data-agent-overview="hosted"]');
+	await expect(overview.getByTestId("overview-module-skeleton").first()).toBeVisible();
+	await expect(overview.locator('[data-overview-module="vaults"]')).not.toContainText(
+		"No vaults available",
+	);
+	await expect(overview.getByText("Details pending", { exact: true })).toHaveCount(0);
+	await expect(overview.getByText("Loading…", { exact: true })).toHaveCount(0);
+	await page.setViewportSize({ width: 1280, height: 1600 });
+	await page.screenshot({
+		path: testInfo.outputPath("hosted-agent-overview-loading.png"),
+		fullPage: true,
+	});
+});
+
+for (const projectionFailure of [
+	{ name: "missing", response: { status: 404, body: { detail: "Agent not found" } } },
+	{ name: "error", response: { status: 500, body: { detail: "projection gateway failed" } } },
+] as const) {
+	test(`hosted overview keeps ${projectionFailure.name} projection unknown until one agent retry resolves`, async ({
+		page,
+	}) => {
+		const sessionRequests: string[] = [];
+		const agentProjectBindingRequests: string[] = [];
+		const skillRequests: string[] = [];
+		const projectionRequests: string[] = [];
+		page.on("request", (request) => {
+			const url = new URL(request.url());
+			if (
+				url.origin === CLOUD_API &&
+				url.pathname === `/v1/agents/${missingProjectionEnvironmentId}`
+			)
+				projectionRequests.push(url.pathname);
+		});
+		await stubHostedApi(page, {
+			deployments: [runningMissingProjectionDeployment],
+			cloudAgentResponses:
+				projectionFailure.name === "missing"
+					? { [missingProjectionEnvironmentId]: [projectionFailure.response] }
+					: undefined,
+			cloudAgentErrors:
+				projectionFailure.name === "error"
+					? {
+							[missingProjectionEnvironmentId]: {
+								status: 500,
+								detail: "projection gateway failed",
+							},
+						}
+					: undefined,
+			sessionRequests,
+			agentProjectBindingRequests,
+			skillRequests,
+		});
+		await page.goto(
+			`/agents/${missingProjectionEnvironmentId}?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+		);
+		const main = page.locator("main");
+		await expect(
+			main.getByText("Agent details are unavailable right now.", { exact: true }),
+		).toBeVisible();
+		await expect(main.getByText("No sessions from this agent yet.", { exact: true })).toHaveCount(
+			0,
+		);
+		await expect(main.getByText("No recent sessions", { exact: true })).toHaveCount(0);
+		await expect(main.getByText("Unavailable right now", { exact: true })).toHaveCount(4);
+		await expect(main.getByRole("button", { name: "Check again", exact: true })).toHaveCount(1);
+		expect(sessionRequests).toEqual([]);
+		expect(agentProjectBindingRequests).toEqual([]);
+		expect(skillRequests).toEqual([]);
+		const requestsBeforeRetry = projectionRequests.length;
+		await main.getByRole("button", { name: "Check again", exact: true }).click();
+		await expect.poll(() => projectionRequests.length).toBeGreaterThan(requestsBeforeRetry);
+		if (projectionFailure.name === "missing") {
+			await expect(
+				main.getByText("Agent details are unavailable right now.", { exact: true }),
+			).toHaveCount(0);
+			await expect.poll(() => sessionRequests.length).toBe(1);
+			await expect.poll(() => agentProjectBindingRequests.length).toBe(1);
+		} else {
+			await expect(
+				main.getByText("Agent details are unavailable right now.", { exact: true }),
+			).toBeVisible();
+			expect(sessionRequests).toEqual([]);
+			expect(agentProjectBindingRequests).toEqual([]);
+		}
+		await expect(main).not.toContainText("projection gateway failed");
+	});
+}
+
+test("hosted Sessions tab uses its own pagination without the Overview request", async ({
+	page,
+}) => {
+	const sessionRequests: string[] = [];
+	await stubHostedApi(page, {
+		sessionRequests,
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}/sessions?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+	await expect(page.getByRole("heading", { name: "Sessions", level: 1 })).toBeVisible();
+	await expect.poll(() => sessionRequests.length).toBe(1);
+	expect(new URL(sessionRequests[0] ?? "http://invalid").searchParams.get("page_size")).toBe("20");
+});
+
+test("hosted overview distinguishes empty skills and channels from loading", async ({ page }) => {
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		agentResourceFixtures: true,
+		skillsByProjectId: { "project-hosted": [] },
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+
+	const overview = page.locator('[data-agent-overview="hosted"]');
+	await expect(overview.locator('[data-overview-module="skills"]')).toContainText(
+		"No skills available",
+	);
+	await expect(overview.locator('[data-overview-module="channels"]')).toContainText(
+		"No channels connected",
+	);
+	await expect(overview.getByTestId("overview-module-skeleton")).toHaveCount(0);
+});
+
+test("hosted overview shows a true empty Projects state", async ({ page }) => {
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		agentProjectBindings: [],
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+
+	await expect(
+		page
+			.locator('[data-overview-module="projects"]')
+			.getByText("No projects added", { exact: true }),
+	).toBeVisible();
+	await expect(page.locator('[data-overview-module="vaults"]')).toContainText(
+		"No vaults available",
+	);
+});
+
+test("hosted overview keeps project count when names fail", async ({ page }) => {
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		agentResourceFixtures: true,
+		agentProjectsResponse: { status: 500, body: { detail: "project list failed" } },
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+
+	const projectsCard = page.locator('[data-overview-module="projects"]');
+	await expect(projectsCard).toContainText("1 project");
+	await expect(projectsCard).toContainText("Can’t load project names");
+	await expect(projectsCard.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+	await expect(projectsCard).not.toContainText("No projects added");
+	await expect(page.locator('[data-overview-module="vaults"]')).toBeVisible();
+});
+
+test("hosted overview keeps project count while names load", async ({ page }) => {
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		agentResourceFixtures: true,
+		agentProjectsResponse: { status: 200, body: [], delayMs: 5_000 },
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${railHostedDeployment.id}`,
+	);
+
+	const projectsCard = page.locator('[data-overview-module="projects"]');
+	await expect(projectsCard).toContainText("1 project");
+	await expect(projectsCard.getByLabel("Loading project names summary")).toBeVisible();
+	await expect(page.locator('[data-overview-module="vaults"]')).toBeVisible();
+});
+
+for (const deploymentStatus of ["creating", "starting"] as const) {
+	test(`hosted initial ${deploymentStatus} stays concise and status-grounded`, async ({
+		page,
+	}, testInfo) => {
+		const deployment = { ...railHostedDeployment, status: deploymentStatus };
+		const sessionRequests: string[] = [];
+		await stubHostedApi(page, {
+			sessionRequests,
+			deployments: [deployment],
+			cloudAgents: [railHostedCloudAgent],
+			cloudAgentNotFoundIds: [railHostedEnvironmentId],
+		});
+		await page.goto(`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${deployment.id}`);
+
+		const main = page.locator("main");
+		const panel = main.getByTestId("hosted-initial-deployment-panel");
+		const activeLabel =
+			deploymentStatus === "creating" ? "Preparing your environment" : "Installing Hermes";
+		const stepLabel = deploymentStatus === "creating" ? "Step 1 of 3" : "Step 2 of 3";
+		const expectedStates =
+			deploymentStatus === "creating"
+				? { creating: "active", starting: "pending", running: "pending" }
+				: { creating: "completed", starting: "active", running: "pending" };
+		await expect(panel.getByRole("heading", { name: "Setting up Hermes" })).toBeVisible();
+		await expect(panel).not.toContainText("Current status");
+		await expect(panel).toContainText("This page updates automatically as setup progresses.");
+		await expect(panel.getByText(stepLabel, { exact: true })).toBeVisible();
+		const progress = panel.getByRole("list", { name: "Deployment progress" });
+		await expect(progress).toBeVisible();
+		for (const shortLabel of ["Environment", "Install", "Ready"])
+			await expect(progress.getByText(shortLabel, { exact: true })).toBeVisible();
+		await expect(progress).not.toContainText("Preparing your environment");
+		await expect(progress).not.toContainText("Installing Hermes");
+		await expect(panel.getByRole("status").filter({ hasText: activeLabel })).toHaveCount(1);
+		for (const [stage, state] of Object.entries(expectedStates)) {
+			const segment = panel.locator(`[data-deployment-stage="${stage}"]`);
+			await expect(segment).toHaveAttribute("data-stage-state", state);
+			if (state === "active") await expect(segment).toHaveAttribute("aria-current", "step");
+		}
+		const spinner = panel.locator('[data-slot="spinner"]');
+		await expect(spinner).toHaveCount(1);
+		await expect(spinner.locator("..")).toHaveAttribute("aria-hidden", "true");
+		for (const detail of ["Plan", "CPU", "Memory", "Storage"])
+			await expect(panel.getByText(detail, { exact: true })).toHaveCount(0);
+		await expect(main.locator('[data-agent-overview="hosted"]')).toHaveCount(0);
+		await expect(main.getByRole("button", { name: "Open Agent Interface" })).toHaveCount(0);
+		await expect(main.getByRole("heading", { name: "Resources", exact: true })).toHaveCount(0);
+		await expect(main.getByRole("heading", { name: "Tools", exact: true })).toHaveCount(0);
+		await expect(main.locator('[data-overview-module="sessions"]')).toHaveCount(0);
+		expect(sessionRequests).toEqual([]);
+		const sidebar = page.getByTestId("app-sidebar");
+		await expect(sidebar.getByText("Starting", { exact: true })).toBeVisible();
+		await expect(sidebar.getByText("Paused", { exact: true })).toHaveCount(0);
+		await expect(sidebar.getByText(/last seen/i)).toHaveCount(0);
+		await page.setViewportSize({ width: 1280, height: 1000 });
+		await page.screenshot({
+			path: testInfo.outputPath(`hosted-agent-overview-initial-${deploymentStatus}.png`),
+			fullPage: true,
+		});
+	});
+}
+
+test("starting with an existing projection keeps lifecycle status in Compute", async ({ page }) => {
+	const restartingDeployment = { ...railHostedDeployment, status: "starting" };
+	await stubHostedApi(page, {
+		deployments: [restartingDeployment],
+		cloudAgents: [railHostedCloudAgent],
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${restartingDeployment.id}`,
+	);
+	const main = page.locator("main");
+	await expect(main.locator('[data-overview-status="compute"]')).toContainText("Starting");
+	await expect(main.getByTestId("hosted-initial-deployment-panel")).toHaveCount(0);
+	await expect(main.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
+});
+
+test("hosted unavailable status stays inside Compute", async ({ page }, testInfo) => {
+	const sessionRequests: string[] = [];
+	const runningRead = mutationDeploymentReadFixture(railHostedDeployment);
+	const unavailableDeployment = {
+		...runningRead,
+		resource: { ...runningRead.resource, status: null },
+	};
+	await stubHostedApi(page, {
+		sessionRequests,
+		deployments: [unavailableDeployment],
+		deploymentDetailResponses: [{ body: unavailableDeployment, status: 200 }],
+		cloudAgents: [railHostedCloudAgent],
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${unavailableDeployment.resource.id}`,
+	);
+
+	const main = page.locator("main");
+	const overview = main.locator('[data-agent-overview="hosted"]');
+	const compute = main.locator('[data-overview-status="compute"]');
+	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
+	await expect(overview.getByRole("heading", { name: "Tools", exact: true })).toBeVisible();
+	await expect(compute).toContainText("Status unavailable");
+	await expect(compute).toContainText("Clawdi cannot confirm the current compute status.");
+	await expect(compute.getByRole("button", { name: "Check again", exact: true })).toBeVisible();
+	await expect(overview.locator('[data-overview-module="vaults"]')).toContainText(
+		"Unavailable right now",
+	);
+	await expect(overview.locator('[data-overview-module="vaults"]')).not.toContainText(
+		"No vaults available",
+	);
+	await expect(main.getByTestId("deployment-status-unavailable")).toHaveCount(0);
+	expect(sessionRequests).toEqual([]);
+	await expect(main.getByText("No sessions from this agent yet.", { exact: true })).toHaveCount(0);
+	await page.setViewportSize({ width: 1280, height: 1600 });
+	await page.screenshot({
+		path: testInfo.outputPath("hosted-agent-overview-unavailable.png"),
+		fullPage: true,
+	});
+});
+
+test("raw offline stays a Compute-only status and does not become status unavailable", async ({
+	page,
+}) => {
+	const sessionRequests: string[] = [];
+	const cloudRequests: string[] = [];
+	page.on("request", (request) => {
+		const url = new URL(request.url());
+		if (url.origin === CLOUD_API) cloudRequests.push(url.pathname);
+	});
+	const runningDeployment = mutationDeploymentReadFixture(railHostedDeployment);
+	if (!runningDeployment.resource.status) throw new Error("Expected deployment status fixture");
+	const offlineDeployment = {
+		...runningDeployment,
+		resource: {
+			...runningDeployment.resource,
+			status: { ...runningDeployment.resource.status, summary_state: "offline" },
+		},
+	};
+	await stubHostedApi(page, {
+		deployments: [offlineDeployment],
+		deploymentDetailResponses: [{ body: offlineDeployment, status: 200 }],
+		sessionRequests,
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${offlineDeployment.resource.id}`,
+	);
+	const main = page.locator("main");
+	const compute = main.locator('[data-overview-status="compute"]');
+	await expect(compute).toContainText("Offline");
+	await expect(compute).not.toContainText("Status unavailable");
+	await expect(compute.getByRole("button", { name: "Check again", exact: true })).toBeVisible();
+	await expect(main.getByTestId("deployment-status-unavailable")).toHaveCount(0);
+	await expect(
+		main.getByText("Agent details are unavailable right now.", { exact: true }),
+	).toBeVisible();
+	await expect(main.getByText("No sessions from this agent yet.", { exact: true })).toHaveCount(0);
+	expect(sessionRequests).toEqual([]);
+	expect(cloudRequests.filter((path) => path === `/v1/agents/${railHostedEnvironmentId}`)).toEqual(
+		[],
+	);
+});
+
 test("empty accounts without deploy access only get the connected-agent path", async ({ page }) => {
+	const walletRequests: string[] = [];
 	await stubHostedApi(page, {
 		canCreateCloudAgents: false,
 		deployments: [],
 		cloudAgents: [],
+		walletRequests,
 	});
 	await page.goto("/");
 
+	await expect(page.getByTestId("global-wallet-balance")).toHaveCount(0);
+	expect(walletRequests).toEqual([]);
 	await expect(page.getByText("Let's connect your first agent", { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Deploy on Clawdi", exact: true })).toHaveCount(0);
 	await expect(page.getByText("Node.js 22.5+ is required.", { exact: true })).toHaveCount(0);
@@ -3332,13 +4145,17 @@ test("whole agent tile drag does not navigate and the next click does", async ({
 test("existing Cloud customers keep billing settings when new deploys are disabled", async ({
 	page,
 }) => {
+	const walletRequests: string[] = [];
 	await stubHostedApi(page, {
 		canCreateCloudAgents: false,
 		deployments: [includedBasicDeployment],
+		walletRequests,
 	});
 	await page.goto("/channels");
 	await page.waitForLoadState("networkidle");
 
+	await expect(page.getByTestId("global-wallet-balance")).toContainText("$25.00");
+	await expect.poll(() => walletRequests.length).toBe(1);
 	await page.getByRole("button", { name: "Settings", exact: true }).click();
 	const dialog = page.getByTestId("settings-dialog");
 	await expect(dialog).toBeVisible();
@@ -4612,7 +5429,7 @@ test("free Basic Deploy recovers hydration before authoritative first frame", as
 	expect(new URL(page.url()).searchParams.has("setup")).toBe(false);
 	await expect(page.getByLabel("Agent ownership loading")).toHaveCount(0);
 	await expect(page.locator('[data-hosted="true"] [data-slot="skeleton"]')).toHaveCount(0);
-	await expect(page.getByText("Starting your agent…", { exact: true })).toBeVisible();
+	await expect(page.getByText("Setting up Hermes", { exact: true })).toBeVisible();
 	const detail = page.locator("main");
 	await expect(detail.getByText("Basic", { exact: true })).toBeVisible();
 	await expect(detail.getByText("GPT-5.6 Luna", { exact: true })).toBeVisible();
@@ -4677,7 +5494,7 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	await checkoutDialog.getByRole("button", { name: "Subscribe", exact: true }).click();
 
 	await expect(page).toHaveURL(/\/agents\/hdep_created/);
-	await expect(page.getByText("Starting your agent…", { exact: true })).toBeVisible();
+	await expect(page.getByText("Setting up Hermes", { exact: true })).toBeVisible();
 	await expect(
 		page.getByText("This step should finish within five minutes.", { exact: false }),
 	).toBeVisible();
@@ -5357,7 +6174,9 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 		main.getByText("The Clawdi service could not complete this request.", { exact: true }),
 	).toBeVisible();
 	await expect(main.getByText("Failed", { exact: true })).toBeVisible();
-	await expect(main.getByText("Basic", { exact: true })).toBeVisible();
+	await expect(main.locator('[data-overview-status="compute"]')).toContainText("Failed");
+	await expect(main.getByRole("alert")).toHaveCount(0);
+	await expect(main.getByText("Basic plan", { exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
@@ -5421,9 +6240,19 @@ test("stopped detail stays recoverable without querying its removed projection",
 	for (const section of ["", "/sessions", "/channel-links", "/console"]) {
 		await page.goto(`${detailPath}${section}${detailQuery}`);
 		const main = page.locator("main");
-		await expect(
-			main.locator('[data-slot="empty-title"]').getByText("Stopped", { exact: true }),
-		).toBeVisible();
+		if (section === "") {
+			await expect(main.locator('[data-overview-status="compute"]')).toContainText("Stopped");
+			await expect(
+				main.getByText("Agent details are unavailable right now.", { exact: true }),
+			).toBeVisible();
+			await expect(main.getByText("No sessions from this agent yet.", { exact: true })).toHaveCount(
+				0,
+			);
+		} else {
+			await expect(
+				main.locator('[data-slot="empty-title"]').getByText("Stopped", { exact: true }),
+			).toBeVisible();
+		}
 		await expect(main.getByRole("button", { name: "Start", exact: true })).toBeVisible();
 		await expect(main.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
 		await expect(main.getByText("Some agent details are not ready", { exact: true })).toHaveCount(
@@ -5470,7 +6299,7 @@ test("failed deployment with a retained projection keeps status-authoritative na
 		main.getByText("The Clawdi service could not complete this request.", { exact: true }),
 	).toBeVisible();
 	await expect(main.getByText("Failed", { exact: true })).toBeVisible();
-	await expect(main.getByText("Basic", { exact: true })).toBeVisible();
+	await expect(main.getByText("Basic plan", { exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
@@ -5530,7 +6359,7 @@ test("terminal provider failure replaces Starting with provider recovery", async
 			exact: true,
 		}),
 	).toBeVisible();
-	await expect(main.getByText("Starting your agent…", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("Setting up Hermes", { exact: true })).toHaveCount(0);
 	await main.getByRole("button", { name: "Fix provider", exact: true }).click();
 	await expect(page).toHaveURL(new RegExp(`/agents/${starting.id}/model-provider`));
 });
@@ -5610,7 +6439,7 @@ test("deployment detail stays put, becomes running, and keeps manual Runtime UI 
 
 	await page.goto(`/agents/${pendingRuntimeUiDeployment.id}?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect(main.getByText("Starting your agent…", { exact: true })).toBeVisible();
+	await expect(main.getByText("Setting up Hermes", { exact: true })).toBeVisible();
 	await expect(page).toHaveURL(
 		(url) => url.pathname === `/agents/${pendingRuntimeUiDeployment.id}`,
 	);

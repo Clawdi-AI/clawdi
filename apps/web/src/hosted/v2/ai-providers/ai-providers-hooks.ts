@@ -25,13 +25,14 @@ export function useAiProviders() {
 	return useOpenApi().useQuery("get", "/v1/ai-providers", {});
 }
 
-export function useUserAiProviders() {
+export function useUserAiProviders({ enabled = true }: { enabled?: boolean } = {}) {
 	return useOpenApi().useQuery(
 		"get",
 		"/v1/ai-providers",
 		{},
 		{
 			select: selectUserAiProviders,
+			enabled,
 		},
 	);
 }

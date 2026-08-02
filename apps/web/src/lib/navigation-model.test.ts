@@ -29,10 +29,11 @@ function groupShape(
 
 function expectSingleResourcesHeading(
 	groups: ReadonlyArray<{ label: string | null; items: readonly unknown[] }>,
+	expected = ["Resources"],
 ) {
-	expect(groups.filter((group) => group.label !== null).map((group) => group.label)).toEqual([
-		"Resources",
-	]);
+	expect(groups.filter((group) => group.label !== null).map((group) => group.label)).toEqual(
+		expected,
+	);
 	expect(groups.every((group) => group.items.length > 0)).toBe(true);
 }
 
@@ -110,7 +111,6 @@ describe("sidebar navigation model", () => {
 				items: [
 					{ id: "overview", label: "Overview" },
 					{ id: "sessions", label: "Sessions" },
-					{ id: "memories", label: "Memories" },
 				],
 			},
 			{
@@ -118,10 +118,11 @@ describe("sidebar navigation model", () => {
 				label: "Resources",
 				separated: false,
 				items: [
-					{ id: "connectors", label: "Connectors" },
 					{ id: "projects", label: "Projects" },
 					{ id: "skills", label: "Skills" },
+					{ id: "memories", label: "Memories" },
 					{ id: "vaults", label: "Vaults" },
+					{ id: "connectors", label: "Connectors" },
 				],
 			},
 			{
@@ -142,9 +143,6 @@ describe("sidebar navigation model", () => {
 				items: [
 					{ id: "overview", label: "Overview" },
 					{ id: "sessions", label: "Sessions" },
-					{ id: "memories", label: "Memories" },
-					{ id: "console", label: "Agent Interface" },
-					{ id: "terminal", label: "Terminal" },
 				],
 			},
 			{
@@ -152,12 +150,22 @@ describe("sidebar navigation model", () => {
 				label: "Resources",
 				separated: false,
 				items: [
-					{ id: "channels", label: "Channels" },
-					{ id: "ai", label: "AI Providers" },
-					{ id: "connectors", label: "Connectors" },
 					{ id: "projects", label: "Projects" },
 					{ id: "skills", label: "Skills" },
+					{ id: "memories", label: "Memories" },
 					{ id: "vaults", label: "Vaults" },
+					{ id: "connectors", label: "Connectors" },
+				],
+			},
+			{
+				id: "operate",
+				label: "Tools",
+				separated: false,
+				items: [
+					{ id: "console", label: "Agent Interface" },
+					{ id: "terminal", label: "Terminal" },
+					{ id: "channels", label: "Channels" },
+					{ id: "ai", label: "AI Providers" },
 				],
 			},
 			{
@@ -167,30 +175,30 @@ describe("sidebar navigation model", () => {
 				items: [{ id: "settings", label: "Settings" }],
 			},
 		]);
-		expectSingleResourcesHeading(hostedGroups);
+		expectSingleResourcesHeading(hostedGroups, ["Resources", "Tools"]);
 
 		expect(CONNECTED_AGENT_SECTION_IDS).toEqual([
 			"overview",
 			"sessions",
-			"memories",
-			"connectors",
 			"projects",
 			"skills",
+			"memories",
 			"vaults",
+			"connectors",
 			"settings",
 		]);
 		expect(HOSTED_AGENT_SECTION_IDS).toEqual([
 			"overview",
 			"sessions",
+			"projects",
+			"skills",
 			"memories",
+			"vaults",
+			"connectors",
 			"console",
 			"terminal",
 			"channels",
 			"ai",
-			"connectors",
-			"projects",
-			"skills",
-			"vaults",
 			"settings",
 		]);
 
