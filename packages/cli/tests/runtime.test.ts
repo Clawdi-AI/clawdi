@@ -10122,6 +10122,7 @@ chmod +x "$prefix/bin/clawdi"
 
 	it("runtime watch fences an old process after durably handing off a trusted activation", async () => {
 		const runningVersion = getCliVersion();
+		const bootstrapVersion = runningVersion === "999.0.0" ? "999.0.1" : "999.0.0";
 		const state = join(root, "state-cli-external-bootstrap-old-process");
 		const run = join(root, "run-cli-external-bootstrap-old-process");
 		process.env.HOME = join(root, "home-cli-external-bootstrap-old-process");
@@ -10129,7 +10130,7 @@ chmod +x "$prefix/bin/clawdi"
 		const { paths, bootstrapIdentity } = seedExternalCliBootstrapRecoveryFixture(
 			state,
 			run,
-			"0.13.34",
+			bootstrapVersion,
 		);
 		const before = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
 		const logs: string[] = [];
