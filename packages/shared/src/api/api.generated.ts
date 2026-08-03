@@ -2009,6 +2009,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/platform/principals/terminate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Platform Terminate Principal
+         * @description Fence a Clerk principal before transactionally revoking local authority.
+         */
+        post: operations["platform_terminate_principal_v1_platform_principals_terminate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/platform/agents": {
         parameters: {
             query?: never;
@@ -5956,6 +5976,18 @@ export interface components {
             /** Scopes */
             scopes?: string[];
         };
+        /** PlatformClerkPrincipal */
+        PlatformClerkPrincipal: {
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "clerk";
+            /** Issuer */
+            issuer: string;
+            /** Subject */
+            subject: string;
+        };
         /** PlatformMutationBody */
         PlatformMutationBody: {
             owner: components["schemas"]["PlatformOwner"];
@@ -5991,6 +6023,40 @@ export interface components {
             kind: "clerk" | "partner_tenant";
             /** Ref */
             ref: string;
+        };
+        /** PlatformPrincipalTermination */
+        PlatformPrincipalTermination: {
+            principal: components["schemas"]["PlatformClerkPrincipal"];
+            /** Revision */
+            revision: number;
+            /** Command Id */
+            command_id: string;
+        };
+        /** PlatformPrincipalTerminationResponse */
+        PlatformPrincipalTerminationResponse: {
+            principal: components["schemas"]["PlatformClerkPrincipal"];
+            /** Command Id */
+            command_id: string;
+            /** Requested Revision */
+            requested_revision: number;
+            /** Accepted Revision */
+            accepted_revision: number;
+            /** Advanced */
+            advanced: boolean;
+            /**
+             * Status
+             * @default terminated
+             * @constant
+             */
+            status: "terminated";
+            /**
+             * Cleanup State
+             * @default complete
+             * @constant
+             */
+            cleanup_state: "complete";
+            /** User Disabled */
+            user_disabled: boolean;
         };
         /** PlatformRuntimeStateResponse */
         PlatformRuntimeStateResponse: {
@@ -11460,6 +11526,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlatformOAuthErrorResponse"];
+                };
+            };
+        };
+    };
+    platform_terminate_principal_v1_platform_principals_terminate_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlatformPrincipalTermination"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformPrincipalTerminationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

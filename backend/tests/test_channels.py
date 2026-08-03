@@ -409,7 +409,9 @@ async def _create_admin_channel(
 ) -> httpx.Response:
     admin_key = f"admin-{uuid4().hex}"
     original_admin_key = settings.admin_api_key
+    original_clerk_issuer = settings.clerk_jwt_issuer
     settings.admin_api_key = admin_key
+    settings.clerk_jwt_issuer = "https://channel-tests.clerk.example.test"
     try:
         payload: dict[str, Any] = {
             "provider": provider,
@@ -429,6 +431,7 @@ async def _create_admin_channel(
         )
     finally:
         settings.admin_api_key = original_admin_key
+        settings.clerk_jwt_issuer = original_clerk_issuer
 
 
 async def _create_public_telegram_account_for_user(

@@ -13,6 +13,7 @@ from app.services.discord_command_reconciliation_worker import (
     DiscordCommandReconciliationWorker,
 )
 from app.services.discord_gateway_worker import DiscordGatewayWorker
+from app.services.principal_lifecycle_cleanup_worker import PrincipalLifecycleCleanupWorker
 from app.services.runtime_observation_retention_worker import RuntimeObservationRetentionWorker
 from app.workers.channels import ChannelWorkerHealth, _handle_health_request, build_channel_workers
 
@@ -28,6 +29,7 @@ def test_channel_worker_stack_runs_revoke_delivery_webhook_gateway_and_retention
         ChannelWebhookDeliveryWorker,
         DiscordCommandReconciliationWorker,
         DiscordGatewayWorker,
+        PrincipalLifecycleCleanupWorker,
         ChannelMessageRetentionWorker,
         RuntimeObservationRetentionWorker,
     )

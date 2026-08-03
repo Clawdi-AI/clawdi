@@ -34,6 +34,12 @@ from app.models.user import (
     PRINCIPAL_KIND_PARTNER_TENANT,
     User,
 )
+from app.services.principal_lifecycle import (
+    PrincipalIdentityConflictError,
+    PrincipalTerminatedError,
+    assert_clerk_principal_active,
+    load_clerk_user_for_issuer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +48,12 @@ async def lazy_create_user_with_personal_project(
     db: AsyncSession,
     *,
     clerk_id: str,
+    clerk_issuer: str | None = None,
     email: str | None,
     name: str | None,
     avatar_url: str | None = None,
     race_loser_status: int,
+    inactive_status: int = status.HTTP_403_FORBIDDEN,
 ) -> User:
     """Insert a User row + Personal project for `clerk_id`, race-safe.
 
@@ -80,8 +88,18 @@ async def lazy_create_user_with_personal_project(
         HTTPException 500 — Personal project insert failed. Bizarre
         states only (partial unique index, mid-flush connection drop).
     """
+    try:
+        issuer = await assert_clerk_principal_active(
+            db,
+            subject=clerk_id,
+            issuer=clerk_issuer,
+        )
+    except PrincipalTerminatedError:
+        raise HTTPException(inactive_status, "account has been terminated") from None
+
     new_user = User(
         clerk_id=clerk_id,
+        clerk_issuer=issuer,
         principal_kind=PRINCIPAL_KIND_CLERK,
         partner_tenant_ref=None,
         email=email,
@@ -98,9 +116,21 @@ async def lazy_create_user_with_personal_project(
         await db.flush()
     except IntegrityError:
         await db.rollback()
-        target = (
-            await db.execute(select(User).where(User.clerk_id == clerk_id))
-        ).scalar_one_or_none()
+        try:
+            if issuer is None:
+                target = (
+                    await db.execute(select(User).where(User.clerk_id == clerk_id))
+                ).scalar_one_or_none()
+            else:
+                await assert_clerk_principal_active(db, subject=clerk_id, issuer=issuer)
+                target = await load_clerk_user_for_issuer(
+                    db,
+                    issuer=issuer,
+                    subject=clerk_id,
+                    bind_legacy=True,
+                )
+        except (PrincipalIdentityConflictError, PrincipalTerminatedError):
+            raise HTTPException(inactive_status, "account has been terminated") from None
         if target is None:
             raise HTTPException(
                 race_loser_status,

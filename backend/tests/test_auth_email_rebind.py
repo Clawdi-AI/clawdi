@@ -39,7 +39,9 @@ from sqlalchemy import select
 from app.core import auth as auth_module
 from app.core.auth import _auth_via_clerk_jwt
 from app.core.config import settings
+from app.models.principal_lifecycle import PrincipalLifecycle
 from app.models.user import User
+from app.services.principal_lifecycle import fence_principal_termination
 
 
 def _rsa_keypair() -> tuple[str, str]:
@@ -73,9 +75,19 @@ def signing_key(monkeypatch):
     yield private_pem
 
 
-def _sign(private_pem: str, sub: str, email: str | None) -> str:
+def _sign(
+    private_pem: str,
+    sub: str,
+    email: str | None,
+    *,
+    issuer: str | None = None,
+) -> str:
     return jwt.encode(
-        {"sub": sub, **({"email": email} if email else {})},
+        {
+            "sub": sub,
+            **({"email": email} if email else {}),
+            **({"iss": issuer} if issuer else {}),
+        },
         private_pem,
         algorithm="RS256",
     )
@@ -88,24 +100,77 @@ def _sign(private_pem: str, sub: str, email: str | None) -> str:
 
 @pytest.mark.asyncio
 async def test_rebind_swaps_clerk_id_when_jwt_email_matches(db_session, signing_key, monkeypatch):
+    issuer = "https://snapshot-rebind.clerk.example.test"
     monkeypatch.setattr(settings, "enable_snapshot_email_rebind", True)
+    monkeypatch.setattr(settings, "clerk_jwt_issuer", issuer)
     email = f"rebind_{uuid.uuid4().hex[:8]}@example.test"
-    original = User(clerk_id=f"orig_{uuid.uuid4().hex[:8]}", email=email, name="Rebind")
+    original = User(
+        clerk_id=f"orig_{uuid.uuid4().hex[:8]}",
+        clerk_issuer=issuer,
+        email=email,
+        name="Rebind",
+    )
     db_session.add(original)
     await db_session.commit()
     await db_session.refresh(original)
     original_id = original.id
 
     new_sub = f"new_{uuid.uuid4().hex[:8]}"
-    token = _sign(signing_key, sub=new_sub, email=email)
+    token = _sign(signing_key, sub=new_sub, email=email, issuer=issuer)
     ctx = await _auth_via_clerk_jwt(token, db_session)
 
     assert ctx is not None
     assert ctx.user.id == original_id  # same row, snapshot data still attached
     assert ctx.user.clerk_id == new_sub  # rebound to new Clerk's sub
+    assert ctx.user.clerk_issuer == issuer
 
     await db_session.delete(ctx.user)
     await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_rebind_refuses_tombstoned_new_subject_without_mutating_snapshot_user(
+    db_session,
+    signing_key,
+    monkeypatch,
+):
+    issuer = "https://snapshot-tombstone.clerk.example.test"
+    monkeypatch.setattr(settings, "enable_snapshot_email_rebind", True)
+    monkeypatch.setattr(settings, "clerk_jwt_issuer", issuer)
+    email = f"tombstone_{uuid.uuid4().hex[:8]}@example.test"
+    old_sub = f"old_{uuid.uuid4().hex[:8]}"
+    original = User(
+        clerk_id=old_sub,
+        clerk_issuer=issuer,
+        email=email,
+        name="Tombstone Rebind",
+    )
+    db_session.add(original)
+    await db_session.commit()
+
+    new_sub = f"terminated_{uuid.uuid4().hex[:8]}"
+    receipt = await fence_principal_termination(
+        db_session,
+        issuer=issuer,
+        subject=new_sub,
+        revision=1,
+        command_id=f"snapshot-tombstone-{uuid.uuid4().hex}",
+    )
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        await _auth_via_clerk_jwt(
+            _sign(signing_key, sub=new_sub, email=email, issuer=issuer),
+            db_session,
+        )
+    assert exc.value.status_code == 401
+    await db_session.rollback()
+    await db_session.refresh(original)
+    lifecycle = await db_session.get(PrincipalLifecycle, receipt.lifecycle_id)
+    assert lifecycle is not None
+    assert lifecycle.cleanup_completed_at is None
+    assert original.clerk_id == old_sub
+    assert original.clerk_issuer == issuer
 
 
 @pytest.mark.asyncio

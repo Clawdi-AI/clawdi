@@ -14,17 +14,25 @@ import jwt
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
+from app.core.config import canonical_clerk_issuer, settings
 from app.core.database import get_session
 from app.models.api_key import ApiKey
+from app.models.principal_lifecycle import PrincipalLifecycle
 from app.models.user import PRINCIPAL_KIND_CLERK, User
 from app.services.app_setting_registry import CLERK_CLI_OAUTH_SPEC
 from app.services.app_settings import AppSettingUnavailable, resolve_app_setting
 from app.services.clerk_cli_oauth_settings import ClerkCliOAuthSetting
+from app.services.principal_lifecycle import (
+    PrincipalIdentityConflictError,
+    PrincipalTerminatedError,
+    assert_clerk_principal_active,
+    assert_user_authority_active,
+    load_clerk_user_for_issuer,
+)
 from app.services.user_provisioning import lazy_create_user_with_personal_project
 
 bearer_scheme = HTTPBearer()
@@ -98,6 +106,7 @@ class _CachedApiKeyAuth:
     managed: bool
     expires_at: datetime | None
     user_clerk_id: str | None
+    user_clerk_issuer: str | None
     user_principal_kind: str
     user_partner_tenant_ref: str | None
     user_email: str | None
@@ -110,6 +119,7 @@ class _CachedApiKeyAuth:
         user = User(
             id=self.user_id,
             clerk_id=self.user_clerk_id,
+            clerk_issuer=self.user_clerk_issuer,
             principal_kind=self.user_principal_kind,
             partner_tenant_ref=self.user_partner_tenant_ref,
             email=self.user_email,
@@ -183,6 +193,7 @@ def _cache_api_key_auth(
             managed=api_key.managed,
             expires_at=api_key.expires_at,
             user_clerk_id=user.clerk_id,
+            user_clerk_issuer=user.clerk_issuer,
             user_principal_kind=user.principal_kind,
             user_partner_tenant_ref=user.partner_tenant_ref,
             user_email=user.email,
@@ -198,6 +209,20 @@ def invalidate_api_key_auth_cache(api_key_id: UUID) -> None:
     for key_hash, (_, snapshot) in list(_api_key_auth_cache.items()):
         if snapshot.api_key_id == api_key_id:
             _api_key_auth_cache.pop(key_hash, None)
+
+
+def invalidate_user_api_key_auth_cache(user_id: UUID) -> None:
+    for key_hash, (_, snapshot) in list(_api_key_auth_cache.items()):
+        if snapshot.user_id == user_id:
+            _api_key_auth_cache.pop(key_hash, None)
+
+
+async def _assert_active_user_or_401(db: AsyncSession, user_id: UUID) -> None:
+    try:
+        await assert_user_authority_active(db, user_id)
+    except PrincipalTerminatedError:
+        invalidate_user_api_key_auth_cache(user_id)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated") from None
 
 
 class AuthContext:
@@ -239,6 +264,7 @@ async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
     key_hash = hashlib.sha256(token.encode()).hexdigest()
     cached = _get_cached_api_key_auth(key_hash)
     if cached is not None:
+        await _assert_active_user_or_401(db, cached.user_id)
         # Bound Agent keys are an operational authority boundary. Revalidate
         # their durable key + Agent lifecycle on every cache hit so a request
         # racing archive commit cannot re-cache authority after the caller's
@@ -275,16 +301,20 @@ async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
     if api_key.expires_at and api_key.expires_at < now:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has expired")
 
+    result = await db.execute(select(User).where(User.id == api_key.user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+    await _assert_active_user_or_401(db, user.id)
+
     # Throttle last_used_at writes: once per LAST_USED_THROTTLE per key.
     last = api_key.last_used_at
     if last is None or (now - last) > LAST_USED_THROTTLE:
         api_key.last_used_at = now
         await db.commit()
-
-    result = await db.execute(select(User).where(User.id == api_key.user_id))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+        # Commit releases the authority lock. Reacquire and recheck before
+        # returning a credential snapshot to the route.
+        await _assert_active_user_or_401(db, user.id)
 
     api_key_project_id = None
     if api_key.environment_id is not None:
@@ -333,25 +363,44 @@ async def _auth_via_dev_bypass(token: str, db: AsyncSession) -> AuthContext | No
         )
 
     clerk_id = settings.dev_auth_clerk_id
-    result = await db.execute(
-        select(User).where(
-            User.principal_kind == PRINCIPAL_KIND_CLERK,
-            User.clerk_id == clerk_id,
-        )
-    )
-    user = result.scalar_one_or_none()
+    try:
+        issuer = await assert_clerk_principal_active(db, subject=clerk_id)
+    except PrincipalTerminatedError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated") from None
+    if issuer is None:
+        user = (
+            await db.execute(
+                select(User).where(
+                    User.principal_kind == PRINCIPAL_KIND_CLERK,
+                    User.clerk_id == clerk_id,
+                )
+            )
+        ).scalar_one_or_none()
+    else:
+        try:
+            user = await load_clerk_user_for_issuer(
+                db,
+                issuer=issuer,
+                subject=clerk_id,
+                bind_legacy=True,
+            )
+        except PrincipalIdentityConflictError:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid account identity") from None
     if user is None:
         user = await lazy_create_user_with_personal_project(
             db,
             clerk_id=clerk_id,
+            clerk_issuer=issuer,
             email=settings.dev_auth_email,
             name=settings.dev_auth_name,
             avatar_url=None,
             race_loser_status=status.HTTP_401_UNAUTHORIZED,
+            inactive_status=status.HTTP_401_UNAUTHORIZED,
         )
         await db.commit()
         await db.refresh(user)
         logger.info("dev_auth_user_created clerk_id=%s user_id=%s", clerk_id, user.id)
+    await _assert_active_user_or_401(db, user.id)
     return AuthContext(user=user)
 
 
@@ -599,14 +648,45 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
     clerk_id = payload.get("sub")
     if not isinstance(clerk_id, str) or not clerk_id:
         return None
-
-    result = await db.execute(
-        select(User).where(
-            User.principal_kind == PRINCIPAL_KIND_CLERK,
-            User.clerk_id == clerk_id,
+    # OAuth access tokens are independently bound to the issuer stored in the
+    # validated Public App setting. Browser sessions use the configured Clerk
+    # JWT issuer (or, for the legacy PEM-only mode, their verified claim).
+    issuer = oauth_setting.issuer if oauth_setting is not None else settings.clerk_jwt_issuer
+    if not issuer:
+        claimed_issuer = payload.get("iss")
+        if isinstance(claimed_issuer, str):
+            try:
+                issuer = canonical_clerk_issuer(claimed_issuer)
+            except ValueError:
+                return None
+    try:
+        await assert_clerk_principal_active(
+            db,
+            subject=clerk_id,
+            issuer=issuer or None,
         )
-    )
-    user = result.scalar_one_or_none()
+        if issuer:
+            user = await load_clerk_user_for_issuer(
+                db,
+                issuer=issuer,
+                subject=clerk_id,
+                bind_legacy=True,
+            )
+        else:
+            user = (
+                await db.execute(
+                    select(User).where(
+                        User.principal_kind == PRINCIPAL_KIND_CLERK,
+                        User.clerk_id == clerk_id,
+                    )
+                )
+            ).scalar_one_or_none()
+    except PrincipalTerminatedError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated") from None
+    except PrincipalIdentityConflictError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid account identity") from None
+    if user is not None:
+        await _assert_active_user_or_401(db, user.id)
 
     raw_email = payload.get("email") or payload.get("email_address")
     email = raw_email if isinstance(raw_email, str) and raw_email else None
@@ -683,6 +763,15 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
             .where(
                 User.principal_kind == PRINCIPAL_KIND_CLERK,
                 User.email == email,
+                ~select(PrincipalLifecycle.id)
+                .where(PrincipalLifecycle.user_id == User.id)
+                .exists(),
+                or_(
+                    User.clerk_issuer.is_(None),
+                    User.clerk_issuer == issuer,
+                )
+                if issuer
+                else User.clerk_issuer.is_(None),
             )
             .order_by(User.created_at)
             .limit(2)
@@ -696,6 +785,7 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
             )
         if candidates:
             user = candidates[0]
+            await _assert_active_user_or_401(db, user.id)
             logger.info(
                 "snapshot rebind: user %s clerk_id %s -> %s (email match)",
                 user.id,
@@ -703,6 +793,7 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
                 clerk_id,
             )
             user.clerk_id = clerk_id
+            user.clerk_issuer = issuer or None
             # Concurrent rebind race: two requests carrying the
             # same Clerk JWT can both read the same candidate
             # row, both write the same `clerk_id`, and the
@@ -719,13 +810,24 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
                 await db.refresh(user)
             except IntegrityError:
                 await db.rollback()
-                result = await db.execute(
-                    select(User).where(
-                        User.principal_kind == PRINCIPAL_KIND_CLERK,
-                        User.clerk_id == clerk_id,
+                if issuer:
+                    try:
+                        user = await load_clerk_user_for_issuer(
+                            db,
+                            issuer=issuer,
+                            subject=clerk_id,
+                            bind_legacy=True,
+                        )
+                    except PrincipalIdentityConflictError:
+                        user = None
+                else:
+                    result = await db.execute(
+                        select(User).where(
+                            User.principal_kind == PRINCIPAL_KIND_CLERK,
+                            User.clerk_id == clerk_id,
+                        )
                     )
-                )
-                user = result.scalar_one_or_none()
+                    user = result.scalar_one_or_none()
                 if user is None:
                     # Both writers somehow lost the row — extremely
                     # unlikely (would require a concurrent delete
@@ -750,10 +852,12 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
         user = await lazy_create_user_with_personal_project(
             db,
             clerk_id=clerk_id,
+            clerk_issuer=issuer or None,
             email=email,
             name=name,
             avatar_url=picture,
             race_loser_status=status.HTTP_401_UNAUTHORIZED,
+            inactive_status=status.HTTP_401_UNAUTHORIZED,
         )
         # Helper leaves rows flushed-not-committed so admin callers
         # can bundle their own writes. The JWT path has nothing else
@@ -793,6 +897,15 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
             # timestamps as invalid auth instead of turning them into a 500.
             return None
 
+    try:
+        await assert_clerk_principal_active(
+            db,
+            subject=clerk_id,
+            issuer=issuer or None,
+        )
+    except PrincipalTerminatedError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated") from None
+    await _assert_active_user_or_401(db, user.id)
     return AuthContext(
         user=user,
         oauth_cli=oauth_cli,

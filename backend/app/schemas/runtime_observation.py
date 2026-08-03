@@ -18,6 +18,13 @@ from app.schemas.runtime_observed import (
 )
 
 RUNTIME_OBSERVATION_WRITE_SCOPE = "runtime-observations:write"
+RuntimeObservationIngestOutcome = Literal[
+    "accepted_head_created",
+    "accepted_head_advanced",
+    "accepted_non_advance_sequence",
+    "accepted_non_advance_captured_at",
+    "duplicate_replay",
+]
 
 
 class RuntimeObservationRequestModel(BaseModel):
@@ -119,13 +126,7 @@ class RuntimeObservationReadRequest(RuntimeObservationRequestModel):
 class RuntimeObservationIngestResponse(RuntimeObservationRequestModel):
     event_id: str = Field(alias="eventId")
     stream_position: int = Field(alias="streamPosition")
-    outcome: Literal[
-        "accepted_head_created",
-        "accepted_head_advanced",
-        "accepted_non_advance_sequence",
-        "accepted_non_advance_captured_at",
-        "duplicate_replay",
-    ]
+    outcome: RuntimeObservationIngestOutcome
 
 
 class RuntimeObservationResponseModel(BaseModel):

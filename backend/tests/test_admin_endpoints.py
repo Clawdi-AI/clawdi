@@ -45,6 +45,12 @@ _ADMIN_KEY = "test-admin-secret-do-not-use-in-prod"
 # (auth-gate regression tests) build their own dict inline so the
 # tampering stays visible at the call site.
 _AUTH = {"X-Admin-Key": _ADMIN_KEY}
+_CLERK_ISSUER = "https://admin-tests.clerk.example.test"
+
+
+@pytest.fixture(autouse=True)
+def _configured_clerk_issuer(monkeypatch):
+    monkeypatch.setattr(settings, "clerk_jwt_issuer", _CLERK_ISSUER)
 
 
 class _ManagedOnboardingSidecar:

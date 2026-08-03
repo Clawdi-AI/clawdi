@@ -44,6 +44,14 @@ from app.services.platform_contract import (
     read_platform_replay,
     store_platform_response,
 )
+from app.services.principal_lifecycle import (
+    PrincipalIdentityConflictError,
+    PrincipalLifecycleConfigurationError,
+    PrincipalTerminatedError,
+    assert_user_authority_active,
+    load_clerk_user_for_issuer,
+    resolve_clerk_owner_issuer,
+)
 from app.services.runtime_observation import (
     RuntimeApplyIdentity,
     RuntimeObservationProtocolError,
@@ -94,6 +102,8 @@ async def require_runtime_observation_writer(
             rejection_reason = "deployment_binding_missing"
         else:
             rejection_reason = "runtime_credential_required"
+    elif api_key is None:
+        rejection_reason = "runtime_credential_required"
     elif api_key.environment_id != environment_id:
         rejection_reason = "environment_binding_mismatch"
     elif api_key.scopes is None or RUNTIME_OBSERVATION_WRITE_SCOPE not in api_key.scopes:
@@ -128,19 +138,37 @@ async def require_runtime_observation_writer(
 
 async def _resolve_owner(db: AsyncSession, owner: PlatformOwner) -> User:
     if owner.kind == PRINCIPAL_KIND_CLERK:
-        filters = (
-            User.principal_kind == PRINCIPAL_KIND_CLERK,
-            User.clerk_id == owner.ref,
-        )
+        try:
+            issuer = await resolve_clerk_owner_issuer(db, subject=owner.ref)
+            resolved = await load_clerk_user_for_issuer(
+                db,
+                issuer=issuer,
+                subject=owner.ref,
+                bind_legacy=False,
+            )
+        except (PrincipalIdentityConflictError, PrincipalTerminatedError):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Owner has been terminated") from None
+        except PrincipalLifecycleConfigurationError:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Clerk owner issuer is not configured",
+            ) from None
     else:
-        filters = (
-            User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
-            User.partner_tenant_ref == owner.ref,
-            User.clerk_id.is_(None),
-        )
-    resolved = (await db.execute(select(User).where(*filters))).scalar_one_or_none()
+        resolved = (
+            await db.execute(
+                select(User).where(
+                    User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
+                    User.partner_tenant_ref == owner.ref,
+                    User.clerk_id.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
     if resolved is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Owner not found")
+    try:
+        await assert_user_authority_active(db, resolved.id)
+    except PrincipalTerminatedError:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Owner has been terminated") from None
     return resolved
 
 
