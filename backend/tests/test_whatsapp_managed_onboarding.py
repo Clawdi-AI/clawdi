@@ -11,18 +11,21 @@ from app.models.channel import (
     CHANNEL_STATUS_ACTIVE,
     CHANNEL_VISIBILITY_PUBLIC,
     WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
+    WHATSAPP_ONBOARDING_OWNERSHIP_PLATFORM,
     WHATSAPP_ONBOARDING_STATE_GENERATING,
     ChannelAccount,
     ChannelWhatsAppOnboardingSession,
 )
 from app.services.channels import archive_channel_account
-from app.services.whatsapp_device_onboarding import stop_whatsapp_pairing
+from app.services.whatsapp_device_onboarding import (
+    require_whatsapp_logout_for_archive,
+    stop_whatsapp_pairing,
+)
 from app.services.whatsapp_managed_onboarding import (
-    cancel_managed_whatsapp_onboarding,
-    expire_stale_managed_whatsapp_onboarding_sessions,
-    get_managed_whatsapp_onboarding,
-    require_managed_whatsapp_logout_for_archive,
-    start_managed_whatsapp_onboarding,
+    cancel_platform_whatsapp_pairing,
+    expire_stale_platform_whatsapp_pairing_sessions,
+    get_platform_whatsapp_pairing,
+    start_platform_whatsapp_pairing,
 )
 from app.services.whatsapp_native_transport import (
     WhatsAppSidecarCapabilities,
@@ -126,11 +129,10 @@ def _registry(account_id: UUID, fake: FakeManagedSidecar) -> ConfiguredWhatsAppS
     )
 
 
-async def _start(db_session, seed_user, registry, account_id, *, request_id=None, name="Shared"):
-    return await start_managed_whatsapp_onboarding(
+async def _start(db_session, registry, account_id, *, request_id=None, name="Shared"):
+    return await start_platform_whatsapp_pairing(
         db_session,
         account_id=account_id,
-        user_id=seed_user.id,
         request_id=request_id or uuid4(),
         name=name,
         registry=registry,
@@ -140,7 +142,6 @@ async def _start(db_session, seed_user, registry, account_id, *, request_id=None
 @pytest.mark.asyncio
 async def test_multiple_shared_accounts_use_distinct_sessions_on_one_service(
     db_session,
-    seed_user,
 ) -> None:
     first_id = uuid4()
     second_id = uuid4()
@@ -160,19 +161,22 @@ async def test_multiple_shared_accounts_use_distinct_sessions_on_one_service(
     )
     await registry.start()
     try:
-        first = await _start(db_session, seed_user, registry, first_id, name="Shared Alpha")
-        second = await _start(db_session, seed_user, registry, second_id, name="Shared Beta")
+        first = await _start(db_session, registry, first_id, name="Shared Alpha")
+        second = await _start(db_session, registry, second_id, name="Shared Beta")
         assert set(clients) == {first_id, second_id}
         assert clients[first_id] is not clients[second_id]
+        first_session = await db_session.get(ChannelWhatsAppOnboardingSession, first.id)
+        assert first_session.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_PLATFORM
+        assert first_session.user_id is None
 
         clients[first_id].connected = clients[first_id].registered = True
         clients[second_id].connected = clients[second_id].registered = True
-        await get_managed_whatsapp_onboarding(
+        await get_platform_whatsapp_pairing(
             db_session,
             session_id=first.id,
             registry=registry,
         )
-        await get_managed_whatsapp_onboarding(
+        await get_platform_whatsapp_pairing(
             db_session,
             session_id=second.id,
             registry=registry,
@@ -180,22 +184,24 @@ async def test_multiple_shared_accounts_use_distinct_sessions_on_one_service(
 
         assert registry.managed_is_bound(first_id)
         assert registry.managed_is_bound(second_id)
-        assert await db_session.get(ChannelAccount, first_id) is not None
-        assert await db_session.get(ChannelAccount, second_id) is not None
+        first_account = await db_session.get(ChannelAccount, first_id)
+        second_account = await db_session.get(ChannelAccount, second_id)
+        assert first_account is not None and first_account.user_id is None
+        assert second_account is not None and second_account.user_id is None
     finally:
         await registry.stop()
 
 
 @pytest.mark.asyncio
 async def test_bind_failure_rolls_back_promotion_and_marks_reservation_error(
-    db_session, seed_user, monkeypatch
+    db_session, monkeypatch
 ):
     account_id = uuid4()
     fake = FakeManagedSidecar()
     registry = _registry(account_id, fake)
     await registry.start()
     try:
-        started = await _start(db_session, seed_user, registry, account_id)
+        started = await _start(db_session, registry, account_id)
         fake.connected = fake.registered = True
 
         async def fail_bind(*_args, **_kwargs):
@@ -203,7 +209,7 @@ async def test_bind_failure_rolls_back_promotion_and_marks_reservation_error(
 
         monkeypatch.setattr(registry, "bind_managed_account", fail_bind)
         with pytest.raises(HTTPException) as exc_info:
-            await get_managed_whatsapp_onboarding(
+            await get_platform_whatsapp_pairing(
                 db_session, session_id=started.id, registry=registry
             )
         assert exc_info.value.status_code == 503
@@ -218,15 +224,15 @@ async def test_bind_failure_rolls_back_promotion_and_marks_reservation_error(
 
 
 @pytest.mark.asyncio
-async def test_registered_disconnected_cancel_recovers_with_logout(db_session, seed_user):
+async def test_registered_disconnected_cancel_recovers_with_logout(db_session):
     account_id = uuid4()
     fake = FakeManagedSidecar()
     registry = _registry(account_id, fake)
     await registry.start()
     try:
-        started = await _start(db_session, seed_user, registry, account_id)
+        started = await _start(db_session, registry, account_id)
         fake.registered = True
-        canceled = await cancel_managed_whatsapp_onboarding(
+        canceled = await cancel_platform_whatsapp_pairing(
             db_session, session_id=started.id, registry=registry
         )
         assert canceled.state == "canceled"
@@ -238,16 +244,16 @@ async def test_registered_disconnected_cancel_recovers_with_logout(db_session, s
 
 
 @pytest.mark.asyncio
-async def test_cancel_failure_retains_ownership_until_confirmed_retry(db_session, seed_user):
+async def test_cancel_failure_retains_ownership_until_confirmed_retry(db_session):
     account_id = uuid4()
     fake = FakeManagedSidecar()
     registry = _registry(account_id, fake)
     await registry.start()
     try:
-        started = await _start(db_session, seed_user, registry, account_id)
+        started = await _start(db_session, registry, account_id)
         fake.cancel_fails = True
         with pytest.raises(HTTPException) as exc_info:
-            await cancel_managed_whatsapp_onboarding(
+            await cancel_platform_whatsapp_pairing(
                 db_session, session_id=started.id, registry=registry
             )
         assert exc_info.value.status_code == 503
@@ -255,7 +261,7 @@ async def test_cancel_failure_retains_ownership_until_confirmed_retry(db_session
         assert session.state == "error"
 
         fake.cancel_fails = False
-        canceled = await cancel_managed_whatsapp_onboarding(
+        canceled = await cancel_platform_whatsapp_pairing(
             db_session, session_id=started.id, registry=registry
         )
         assert canceled.state == "canceled"
@@ -264,18 +270,18 @@ async def test_cancel_failure_retains_ownership_until_confirmed_retry(db_session
 
 
 @pytest.mark.asyncio
-async def test_expired_managed_reservation_confirms_stop(db_session, seed_user):
+async def test_expired_platform_reservation_confirms_stop(db_session):
     account_id = uuid4()
     fake = FakeManagedSidecar()
     registry = _registry(account_id, fake)
     await registry.start()
     try:
-        started = await _start(db_session, seed_user, registry, account_id)
+        started = await _start(db_session, registry, account_id)
         session = await db_session.get(ChannelWhatsAppOnboardingSession, started.id)
         session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
         await db_session.commit()
         assert (
-            await expire_stale_managed_whatsapp_onboarding_sessions(db_session, registry=registry)
+            await expire_stale_platform_whatsapp_pairing_sessions(db_session, registry=registry)
             == 1
         )
         await db_session.refresh(session)
@@ -286,20 +292,20 @@ async def test_expired_managed_reservation_confirms_stop(db_session, seed_user):
 
 
 @pytest.mark.asyncio
-async def test_expired_reservation_promotes_connected_registered_sidecar(db_session, seed_user):
+async def test_expired_reservation_promotes_connected_registered_sidecar(db_session):
     account_id = uuid4()
     fake = FakeManagedSidecar()
     registry = _registry(account_id, fake)
     await registry.start()
     try:
-        started = await _start(db_session, seed_user, registry, account_id)
+        started = await _start(db_session, registry, account_id)
         session = await db_session.get(ChannelWhatsAppOnboardingSession, started.id)
         session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
         await db_session.commit()
         fake.connected = fake.registered = True
 
         assert (
-            await expire_stale_managed_whatsapp_onboarding_sessions(db_session, registry=registry)
+            await expire_stale_platform_whatsapp_pairing_sessions(db_session, registry=registry)
             == 0
         )
         account = await db_session.get(ChannelAccount, account_id)
@@ -313,24 +319,24 @@ async def test_expired_reservation_promotes_connected_registered_sidecar(db_sess
 
 
 @pytest.mark.asyncio
-async def test_logout_then_archive_rollback_is_idempotent_on_retry(db_session, seed_user):
+async def test_logout_then_archive_rollback_is_idempotent_on_retry(db_session):
     account_id = uuid4()
     fake = FakeManagedSidecar()
     registry = _registry(account_id, fake)
     await registry.start()
     try:
-        started = await _start(db_session, seed_user, registry, account_id)
+        started = await _start(db_session, registry, account_id)
         fake.connected = fake.registered = True
-        await get_managed_whatsapp_onboarding(db_session, session_id=started.id, registry=registry)
+        await get_platform_whatsapp_pairing(db_session, session_id=started.id, registry=registry)
         account = await db_session.get(ChannelAccount, account_id)
-        await require_managed_whatsapp_logout_for_archive(account=account, registry=registry)
+        await require_whatsapp_logout_for_archive(db_session, account=account, registry=registry)
         assert fake.logout_calls == 1
         await archive_channel_account(db_session, account=account)
         await db_session.rollback()
 
         account = await db_session.get(ChannelAccount, account_id)
         assert account.archived_at is None
-        await require_managed_whatsapp_logout_for_archive(account=account, registry=registry)
+        await require_whatsapp_logout_for_archive(db_session, account=account, registry=registry)
         assert fake.logout_calls == 1
         assert fake.cancel_calls == 0
         await archive_channel_account(db_session, account=account)
@@ -341,7 +347,7 @@ async def test_logout_then_archive_rollback_is_idempotent_on_retry(db_session, s
 
 
 @pytest.mark.asyncio
-async def test_custom_and_managed_request_ids_are_isolated_and_duplicate_name_is_controlled(
+async def test_custom_and_platform_request_ids_are_isolated_and_duplicate_name_is_controlled(
     db_session, seed_user
 ):
     account_id = uuid4()
@@ -367,7 +373,7 @@ async def test_custom_and_managed_request_ids_are_isolated_and_duplicate_name_is
     await registry.start()
     try:
         existing = ChannelAccount(
-            user_id=seed_user.id,
+            user_id=None,
             provider=CHANNEL_PROVIDER_WHATSAPP,
             name="Existing",
             status=CHANNEL_STATUS_ACTIVE,
@@ -380,7 +386,6 @@ async def test_custom_and_managed_request_ids_are_isolated_and_duplicate_name_is
         with pytest.raises(HTTPException) as start_conflict:
             await _start(
                 db_session,
-                seed_user,
                 registry,
                 account_id,
                 request_id=uuid4(),
@@ -389,7 +394,6 @@ async def test_custom_and_managed_request_ids_are_isolated_and_duplicate_name_is
         assert start_conflict.value.status_code == 409
         started = await _start(
             db_session,
-            seed_user,
             registry,
             account_id,
             request_id=request_id,
@@ -397,7 +401,7 @@ async def test_custom_and_managed_request_ids_are_isolated_and_duplicate_name_is
         )
         db_session.add(
             ChannelAccount(
-                user_id=seed_user.id,
+                user_id=None,
                 provider=CHANNEL_PROVIDER_WHATSAPP,
                 name="Duplicate",
                 status=CHANNEL_STATUS_ACTIVE,
@@ -409,7 +413,7 @@ async def test_custom_and_managed_request_ids_are_isolated_and_duplicate_name_is
         await db_session.commit()
         fake.connected = fake.registered = True
         with pytest.raises(HTTPException) as exc_info:
-            await get_managed_whatsapp_onboarding(
+            await get_platform_whatsapp_pairing(
                 db_session, session_id=started.id, registry=registry
             )
         assert exc_info.value.status_code == 409
@@ -422,7 +426,7 @@ async def test_custom_and_managed_request_ids_are_isolated_and_duplicate_name_is
 
 @pytest.mark.asyncio
 async def test_restart_reconciliation_fails_closed_on_revision_and_physical_drift(
-    db_session, seed_user
+    db_session,
 ):
     account_id = uuid4()
     fake = FakeManagedSidecar()
@@ -430,7 +434,7 @@ async def test_restart_reconciliation_fails_closed_on_revision_and_physical_drif
     revision = registry.managed_account_revision(account_id)
     account = ChannelAccount(
         id=account_id,
-        user_id=seed_user.id,
+        user_id=None,
         provider=CHANNEL_PROVIDER_WHATSAPP,
         name="Shared",
         status=CHANNEL_STATUS_ACTIVE,

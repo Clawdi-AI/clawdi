@@ -33,6 +33,7 @@ from app.models.channel import (
     BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_STATUS_ACTIVE,
+    CHANNEL_VISIBILITY_PUBLIC,
     MESSAGE_DIRECTION_OUTBOUND,
     ChannelAccount,
     ChannelBinding,
@@ -72,6 +73,7 @@ from app.services.channels import (
     drop_pending_telegram_updates,
     find_binding,
     find_existing_inbound_provider_event,
+    find_platform_channel_runtime_marker,
     get_active_channel_account,
     lock_channel_binding_identity,
     parse_channel_control_command,
@@ -79,10 +81,12 @@ from app.services.channels import (
     record_channel_agent_reference,
     record_inactive_bot_agent_link_event,
     record_inbound_messages_for_bindings,
+    record_platform_channel_runtime_marker,
     record_telegram_update_references,
     resolve_channel_agent_by_token,
     resolve_inbound_binding,
     send_control_command_reply,
+    send_platform_unbound_channel_message,
     send_telegram_message,
     telegram_chat_from_update,
     telegram_direct_messages_topic_id_from_update,
@@ -769,11 +773,9 @@ async def telegram_webhook(
             provider_event_id=provider_event_id,
             provider_event_scope=provider_event_scope,
         )
-        return TelegramWebhookResponse(
-            ok=True,
-            binding_id=existing.binding_id if existing is not None else None,
-        )
-    message = messages[0][0]
+        if existing is not None:
+            return TelegramWebhookResponse(ok=True, binding_id=existing.binding_id)
+    message = messages[0][0] if messages else None
     for routed_message, binding in messages:
         await record_telegram_update_references(
             db,
@@ -815,7 +817,7 @@ async def telegram_webhook(
             unpaired=binding_result.unpaired,
         )
         await db.commit()
-    if messages and message.binding_id and not binding_result.command_handled:
+    if message is not None and message.binding_id and not binding_result.command_handled:
         delivered_at = datetime.now(UTC)
         for routed_message, binding in messages:
             delivered = await _deliver_telegram_agent_webhook_for_binding(
@@ -831,7 +833,7 @@ async def telegram_webhook(
         ok=True,
         paired=binding_result.paired,
         unpaired=binding_result.unpaired,
-        binding_id=message.binding_id,
+        binding_id=message.binding_id if message is not None else None,
     )
 
 
@@ -845,7 +847,7 @@ async def _send_telegram_unpaired_tutorial(
     payload: dict[str, Any],
     command: ChannelControlCommand | None,
     binding_result: InboundBindingResult,
-) -> ChannelMessage | None:
+) -> bool:
     message = payload.get("message")
     if (
         not isinstance(message, dict)
@@ -853,10 +855,10 @@ async def _send_telegram_unpaired_tutorial(
         or binding_result.binding is not None
         or binding_result.bindings
     ):
-        return None
+        return False
     sender = message.get("from")
     if isinstance(sender, dict) and sender.get("is_bot") is True:
-        return None
+        return False
 
     direct_messages_topic_id = telegram_direct_messages_topic_id_from_update(payload)
     if external_chat_type == "private":
@@ -864,7 +866,7 @@ async def _send_telegram_unpaired_tutorial(
     elif external_chat_type == "direct_messages" and direct_messages_topic_id is not None:
         cooldown_scope = f"direct_messages:{external_chat_id}:{direct_messages_topic_id}"
     else:
-        return None
+        return False
 
     marker = {
         "kind": _TELEGRAM_UNPAIRED_TUTORIAL_KIND,
@@ -889,7 +891,39 @@ async def _send_telegram_unpaired_tutorial(
                     external_user_id=external_user_id,
                 )
             ):
-                return None
+                return False
+            if account.visibility == CHANNEL_VISIBILITY_PUBLIC and account.user_id is None:
+                now = datetime.now(UTC)
+                runtime_marker = await find_platform_channel_runtime_marker(
+                    db,
+                    account=account,
+                    kind=_TELEGRAM_UNPAIRED_TUTORIAL_KIND,
+                    scope=cooldown_scope,
+                )
+                if (
+                    runtime_marker is not None
+                    and runtime_marker.outcome == "sent"
+                    and runtime_marker.updated_at + TELEGRAM_UNPAIRED_TUTORIAL_COOLDOWN > now
+                ):
+                    return False
+                await send_platform_unbound_channel_message(
+                    account=account,
+                    external_chat_id=external_chat_id,
+                    text=TELEGRAM_UNPAIRED_TUTORIAL,
+                    telegram_message_thread_id=telegram_message_thread_id_from_update(payload),
+                    telegram_direct_messages_topic_id=direct_messages_topic_id,
+                )
+                record_platform_channel_runtime_marker(
+                    db,
+                    account=account,
+                    marker=runtime_marker,
+                    kind=_TELEGRAM_UNPAIRED_TUTORIAL_KIND,
+                    scope=cooldown_scope,
+                    outcome="sent",
+                    occurred_at=datetime.now(UTC),
+                )
+                await db.flush()
+                return True
             recent_tutorial = await db.scalar(
                 select(ChannelMessage.id)
                 .where(
@@ -903,7 +937,7 @@ async def _send_telegram_unpaired_tutorial(
                 .limit(1)
             )
             if recent_tutorial is not None:
-                return None
+                return False
             tutorial = await send_telegram_message(
                 db,
                 account=account,
@@ -917,7 +951,7 @@ async def _send_telegram_unpaired_tutorial(
             tutorial_payload["clawdi_system"] = marker
             tutorial.payload = tutorial_payload
             await db.flush()
-            return tutorial
+            return True
     except HTTPException as exc:
         log.warning(
             "telegram_unpaired_tutorial_failed account_id=%s chat_id=%s status=%s",
@@ -931,7 +965,7 @@ async def _send_telegram_unpaired_tutorial(
             account.id,
             external_chat_id,
         )
-    return None
+    return False
 
 
 def _telegram_error_response(description: str, error_code: int) -> JSONResponse:

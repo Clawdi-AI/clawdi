@@ -33,7 +33,7 @@ from app.models.channel import (
     ChannelBotAgentLink,
     ChannelWhatsAppAuthCert,
 )
-from app.services.channels import upsert_binding_alias
+from app.services.channels import require_channel_tenant_user_id, upsert_binding_alias
 from app.services.vault_crypto import decrypt, encrypt
 
 BinaryNode = dict[str, Any]
@@ -1604,7 +1604,7 @@ async def mint_whatsapp_agent_credential(
     credential = ChannelAgentCredential(
         account_id=account.id,
         bot_agent_link_id=bot_agent_link_id,
-        user_id=user_id or account.user_id,
+        user_id=require_channel_tenant_user_id(account, tenant_user_id=user_id),
         provider=CHANNEL_PROVIDER_WHATSAPP,
         identity_pub_key_hash=hashlib.sha256(minted.identity_pub_key).hexdigest(),
         identity_public_key=minted.identity_pub_key,
@@ -1679,7 +1679,6 @@ async def resolve_whatsapp_credential_by_identity(
             ChannelBotAgentLink.user_id == ChannelAgentCredential.user_id,
             ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
             ChannelBotAgentLink.archived_at.is_(None),
-            ChannelAccount.user_id == ChannelAgentCredential.user_id,
             ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
             ChannelAccount.archived_at.is_(None),
         )

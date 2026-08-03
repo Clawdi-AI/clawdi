@@ -27,6 +27,7 @@ from app.middleware.request_timing import RequestTimingMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.skill_upload_preflight import SkillUploadPreflightMiddleware
 from app.routes.admin import router as admin_router
+from app.routes.admin import whatsapp_pairing_router as admin_whatsapp_pairing_router
 from app.routes.agent_project_bindings import router as agent_project_bindings_router
 from app.routes.ai_providers import router as ai_providers_router
 from app.routes.audit import router as audit_router
@@ -68,7 +69,7 @@ from app.services.embedding import LocalEmbedder
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
 from app.services.whatsapp_device_onboarding import expire_stale_whatsapp_onboarding_sessions
 from app.services.whatsapp_managed_onboarding import (
-    expire_stale_managed_whatsapp_onboarding_sessions,
+    expire_stale_platform_whatsapp_pairing_sessions,
 )
 from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegistry
 
@@ -138,7 +139,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                             db,
                             registry=whatsapp_sidecars,
                         )
-                        await expire_stale_managed_whatsapp_onboarding_sessions(
+                        await expire_stale_platform_whatsapp_pairing_sessions(
                             db,
                             registry=whatsapp_sidecars,
                         )
@@ -374,6 +375,8 @@ for _router in _VERSIONED_ROUTERS:
     app.include_router(_router, prefix="/v1")
     if _router not in (runtime_router, platform_router):
         app.include_router(_router, prefix="/api", include_in_schema=False)
+
+app.include_router(admin_whatsapp_pairing_router, prefix="/v1")
 # The declarative runtime observation companion is a clean-v2 contract. It is
 # mounted directly and intentionally has neither a /v1 nor a hidden /api alias.
 app.include_router(runtime_observation_v2_router)
@@ -441,8 +444,7 @@ def _is_whatsapp_onboarding_request(request: Request) -> bool:
         (
             "/api/channels/whatsapp/onboarding/",
             "/v1/channels/whatsapp/onboarding/",
-            "/api/admin/channels/whatsapp/onboarding",
-            "/v1/admin/channels/whatsapp/onboarding",
+            "/v1/admin/channels/whatsapp/pairing-sessions",
         )
     )
 

@@ -100,6 +100,7 @@ from app.services.channels import (
     archive_bot_agent_link,
     archive_channel_account,
     bot_agent_link_has_strict_v2_authority,
+    build_channel_account,
     channel_bot_link_limit,
     channel_webhook_url,
     configure_discord_application,
@@ -148,7 +149,7 @@ from app.services.whatsapp_baileys import (
     mint_whatsapp_agent_credential,
     whatsapp_agent_websocket_url,
 )
-from app.services.whatsapp_device_onboarding import require_whatsapp_custom_logout_for_archive
+from app.services.whatsapp_device_onboarding import require_whatsapp_logout_for_archive
 from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_registry
 
 router = APIRouter(prefix="/channels", tags=["channels"])
@@ -546,8 +547,14 @@ async def list_channel_bot_pool(
             ChannelAccount.archived_at.is_(None),
             ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
             or_(
-                ChannelAccount.user_id == auth.user_id,
-                ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
+                and_(
+                    ChannelAccount.user_id == auth.user_id,
+                    ChannelAccount.visibility == CHANNEL_VISIBILITY_PRIVATE,
+                ),
+                and_(
+                    ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
+                    ChannelAccount.user_id.is_(None),
+                ),
             ),
         )
         .order_by(ChannelAccount.provider, ChannelAccount.visibility.desc(), ChannelAccount.name)
@@ -631,10 +638,11 @@ async def create_channel(
         if body.provider == CHANNEL_PROVIDER_DISCORD
         else body.config
     )
-    account = ChannelAccount(
-        user_id=auth.user_id,
+    account = build_channel_account(
+        owner_user_id=auth.user_id,
         provider=body.provider,
         name=body.name,
+        visibility=CHANNEL_VISIBILITY_PRIVATE,
         encrypted_provider_token=ciphertext,
         provider_token_nonce=nonce,
         webhook_secret_hash=hash_token(webhook_secret),
@@ -822,7 +830,7 @@ async def delete_channel(
             )
         ).scalars()
     )
-    await require_whatsapp_custom_logout_for_archive(
+    await require_whatsapp_logout_for_archive(
         db,
         account=account,
         registry=get_active_whatsapp_sidecar_registry(),
@@ -1597,6 +1605,15 @@ async def _health_accounts(
     result = await db.execute(
         select(ChannelAccount)
         .outerjoin(
+            ChannelBotAgentLink,
+            and_(
+                ChannelBotAgentLink.account_id == ChannelAccount.id,
+                ChannelBotAgentLink.user_id == user_id,
+                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                ChannelBotAgentLink.archived_at.is_(None),
+            ),
+        )
+        .outerjoin(
             ChannelBinding,
             and_(
                 ChannelBinding.account_id == ChannelAccount.id,
@@ -1607,11 +1624,18 @@ async def _health_accounts(
         .where(
             ChannelAccount.archived_at.is_(None),
             or_(
-                ChannelAccount.user_id == user_id,
+                and_(
+                    ChannelAccount.user_id == user_id,
+                    ChannelAccount.visibility == CHANNEL_VISIBILITY_PRIVATE,
+                ),
                 and_(
                     ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
+                    ChannelAccount.user_id.is_(None),
                     ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
-                    ChannelBinding.id.is_not(None),
+                    or_(
+                        ChannelBotAgentLink.id.is_not(None),
+                        ChannelBinding.id.is_not(None),
+                    ),
                 ),
             ),
         )

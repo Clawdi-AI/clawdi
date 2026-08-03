@@ -50,6 +50,7 @@ from app.models.channel import (
     PROVIDER_EVENT_SCOPE_ACCOUNT,
     PROVIDER_EVENT_SCOPE_CHAT,
     ChannelAccount,
+    ChannelAccountRuntimeMarker,
     ChannelAgentCredential,
     ChannelAgentReference,
     ChannelBinding,
@@ -502,6 +503,74 @@ def normalize_telegram_bot_username(value: Any) -> str | None:
     return username if TELEGRAM_BOT_USERNAME_PATTERN.fullmatch(username) else None
 
 
+def build_channel_account(
+    *,
+    owner_user_id: UUID | None,
+    provider: str,
+    name: str,
+    visibility: str,
+    webhook_secret_hash: str,
+    account_id: UUID | None = None,
+    status_value: str = CHANNEL_STATUS_ACTIVE,
+    encrypted_provider_token: bytes | None = None,
+    provider_token_nonce: bytes | None = None,
+    config: dict[str, Any] | None = None,
+) -> ChannelAccount:
+    """Build an account while enforcing the inventory ownership boundary."""
+
+    if visibility == CHANNEL_VISIBILITY_PRIVATE:
+        if owner_user_id is None:
+            raise ValueError("private channel accounts require a tenant owner")
+    elif visibility == CHANNEL_VISIBILITY_PUBLIC:
+        if owner_user_id is not None:
+            raise ValueError("public channel accounts are platform-owned")
+    else:
+        raise ValueError("unsupported channel visibility")
+    values: dict[str, Any] = {
+        "user_id": owner_user_id,
+        "provider": provider,
+        "name": name,
+        "status": status_value,
+        "visibility": visibility,
+        "encrypted_provider_token": encrypted_provider_token,
+        "provider_token_nonce": provider_token_nonce,
+        "webhook_secret_hash": webhook_secret_hash,
+        "config": config,
+    }
+    if account_id is not None:
+        values["id"] = account_id
+    return ChannelAccount(**values)
+
+
+def require_channel_tenant_user_id(
+    account: ChannelAccount,
+    *,
+    tenant_user_id: UUID | None = None,
+) -> UUID:
+    """Resolve tenant-scoped child ownership without borrowing platform inventory ownership."""
+
+    if account.visibility == CHANNEL_VISIBILITY_PRIVATE:
+        if account.user_id is None or (
+            tenant_user_id is not None and tenant_user_id != account.user_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="channel tenant authority does not match",
+            )
+        return account.user_id
+    if account.visibility == CHANNEL_VISIBILITY_PUBLIC:
+        if account.user_id is not None or tenant_user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="channel tenant authority is required",
+            )
+        return tenant_user_id
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="channel ownership state is invalid",
+    )
+
+
 async def store_channel_secrets(
     db: AsyncSession,
     *,
@@ -583,7 +652,7 @@ async def get_or_create_bot_agent_link(
     user_id: UUID | None = None,
     agent_token: str | None = None,
 ) -> tuple[ChannelBotAgentLink, str | None]:
-    link_user_id = user_id or account.user_id
+    link_user_id = require_channel_tenant_user_id(account, tenant_user_id=user_id)
     # Serialize against both Link creation and runtime retirement. The fence is
     # the retirement authority; locking only AgentEnvironment leaves a window
     # where retirement can commit before this transaction creates a Link.
@@ -1259,9 +1328,8 @@ async def get_owned_private_channel_account(
 ) -> ChannelAccount:
     """Resolve a user-owned mutable channel account.
 
-    Public channel accounts are Clawdi-managed infrastructure even when their
-    database owner is a target user row. User-facing mutable operations must
-    only apply to private accounts created by that user.
+    Public channel accounts are platform-owned infrastructure. User-facing
+    mutable operations apply only to private accounts created by that user.
     """
     result = await db.execute(
         select(ChannelAccount).where(
@@ -1288,9 +1356,13 @@ async def get_accessible_channel_account(
             ChannelAccount.id == account_id,
             ChannelAccount.archived_at.is_(None),
             or_(
-                ChannelAccount.user_id == user_id,
+                and_(
+                    ChannelAccount.user_id == user_id,
+                    ChannelAccount.visibility == CHANNEL_VISIBILITY_PRIVATE,
+                ),
                 and_(
                     ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
+                    ChannelAccount.user_id.is_(None),
                     ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
                 ),
             ),
@@ -1314,8 +1386,14 @@ async def get_usable_channel_account(
             ChannelAccount.archived_at.is_(None),
             ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
             or_(
-                ChannelAccount.user_id == user_id,
-                ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
+                and_(
+                    ChannelAccount.user_id == user_id,
+                    ChannelAccount.visibility == CHANNEL_VISIBILITY_PRIVATE,
+                ),
+                and_(
+                    ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
+                    ChannelAccount.user_id.is_(None),
+                ),
             ),
         )
     )
@@ -1943,16 +2021,28 @@ async def _lock_active_link_for_account(
     account: ChannelAccount,
     bot_agent_link_id: UUID,
 ) -> ChannelBotAgentLink | None:
+    link_owner_filter = None
+    if account.visibility == CHANNEL_VISIBILITY_PRIVATE:
+        if account.user_id is None:
+            return None
+        link_owner_filter = ChannelBotAgentLink.user_id == account.user_id
+    elif account.visibility == CHANNEL_VISIBILITY_PUBLIC:
+        if account.user_id is not None:
+            return None
+    else:
+        return None
+    filters = [
+        ChannelBotAgentLink.id == bot_agent_link_id,
+        ChannelBotAgentLink.account_id == account.id,
+        ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+        ChannelBotAgentLink.archived_at.is_(None),
+    ]
+    if link_owner_filter is not None:
+        filters.append(link_owner_filter)
     return (
         await db.execute(
             select(ChannelBotAgentLink)
-            .where(
-                ChannelBotAgentLink.id == bot_agent_link_id,
-                ChannelBotAgentLink.account_id == account.id,
-                ChannelBotAgentLink.user_id == account.user_id,
-                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
-                ChannelBotAgentLink.archived_at.is_(None),
-            )
+            .where(*filters)
             .with_for_update(read=True, of=ChannelBotAgentLink)
         )
     ).scalar_one_or_none()
@@ -2516,6 +2606,19 @@ async def send_control_command_reply(
     )
     bind_reply_to_existing = reply_link_id is not None
     try:
+        if (
+            reply_link_id is None
+            and account.visibility == CHANNEL_VISIBILITY_PUBLIC
+            and account.user_id is None
+        ):
+            await send_platform_unbound_channel_message(
+                account=account,
+                external_chat_id=send_external_chat_id or external_chat_id,
+                text=reply_text,
+                telegram_message_thread_id=telegram_message_thread_id,
+                telegram_direct_messages_topic_id=telegram_direct_messages_topic_id,
+            )
+            return None
         return await send_channel_outbound_message(
             db,
             account=account,
@@ -2543,6 +2646,82 @@ async def send_control_command_reply(
             external_chat_id,
         )
     return None
+
+
+async def send_platform_unbound_channel_message(
+    *,
+    account: ChannelAccount,
+    external_chat_id: str,
+    text: str,
+    telegram_message_thread_id: int | None = None,
+    telegram_direct_messages_topic_id: int | None = None,
+) -> None:
+    """Send an account-level provider reply without inventing tenant Message state."""
+
+    if account.visibility != CHANNEL_VISIBILITY_PUBLIC or account.user_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="platform channel ownership is required",
+        )
+    if account.provider == CHANNEL_PROVIDER_TELEGRAM:
+        await _send_telegram_provider_payload(
+            account=account,
+            external_chat_id=external_chat_id,
+            text=text,
+            message_thread_id=telegram_message_thread_id,
+            direct_messages_topic_id=telegram_direct_messages_topic_id,
+        )
+        return
+    await send_provider_outbound_payload(
+        account=account,
+        external_chat_id=external_chat_id,
+        text=text,
+    )
+
+
+async def find_platform_channel_runtime_marker(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    kind: str,
+    scope: str,
+) -> ChannelAccountRuntimeMarker | None:
+    if account.visibility != CHANNEL_VISIBILITY_PUBLIC or account.user_id is not None:
+        raise ValueError("platform channel ownership is required")
+    return await db.scalar(
+        select(ChannelAccountRuntimeMarker).where(
+            ChannelAccountRuntimeMarker.account_id == account.id,
+            ChannelAccountRuntimeMarker.kind == kind,
+            ChannelAccountRuntimeMarker.scope == scope,
+        )
+    )
+
+
+def record_platform_channel_runtime_marker(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    marker: ChannelAccountRuntimeMarker | None,
+    kind: str,
+    scope: str,
+    outcome: str,
+    occurred_at: datetime,
+) -> ChannelAccountRuntimeMarker:
+    if account.visibility != CHANNEL_VISIBILITY_PUBLIC or account.user_id is not None:
+        raise ValueError("platform channel ownership is required")
+    if marker is None:
+        marker = ChannelAccountRuntimeMarker(
+            account_id=account.id,
+            kind=kind,
+            scope=scope,
+            outcome=outcome,
+            updated_at=occurred_at,
+        )
+        db.add(marker)
+    else:
+        marker.outcome = outcome
+        marker.updated_at = occurred_at
+    return marker
 
 
 def telegram_chat_from_update(payload: dict[str, Any]) -> tuple[str, str | None, str | None] | None:
@@ -2791,7 +2970,10 @@ async def _record_inbound_message_with_status(
         )
         if existing is not None:
             return existing, False
-    owner_user_id = binding.user_id if binding is not None else account.user_id
+    owner_user_id = require_channel_tenant_user_id(
+        account,
+        tenant_user_id=binding.user_id if binding is not None else None,
+    )
     message = ChannelMessage(
         account_id=account.id,
         bot_agent_link_id=binding.bot_agent_link_id if binding else None,
@@ -2956,6 +3138,15 @@ async def record_inbound_messages_for_bindings(
         target_bindings = (binding_result.binding,)
     else:
         target_bindings = (None,)
+
+    if (
+        target_bindings == (None,)
+        and account.visibility == CHANNEL_VISIBILITY_PUBLIC
+        and account.user_id is None
+    ):
+        # Unbound provider traffic has no tenant authority. Keep platform
+        # inventory free of fake tenant-owned Message rows.
+        return []
 
     if require_active_authority:
         bound_targets = tuple(binding for binding in target_bindings if binding is not None)
@@ -3139,7 +3330,7 @@ async def record_channel_agent_reference(
     }
     if len(owner_user_ids) > 1:
         raise ValueError("channel reference owner context does not match")
-    owner_user_id = next(iter(owner_user_ids), account.user_id)
+    owner_user_id = next(iter(owner_user_ids), None)
 
     if bot_agent_link_id is not None:
         link_user_id = (
@@ -3156,6 +3347,11 @@ async def record_channel_agent_reference(
             raise ValueError("channel reference owner context does not match")
         if not owner_user_ids:
             owner_user_id = link_user_id
+
+    owner_user_id = require_channel_tenant_user_id(
+        account,
+        tenant_user_id=owner_user_id,
+    )
 
     if scoped_link_id is None:
         # PostgreSQL NULLs do not conflict under the Link-scoped constraint.
@@ -4411,7 +4607,10 @@ async def enqueue_channel_outbound_message(
         external_chat_id=external_chat_id,
         bot_agent_link_id=bot_agent_link_id,
     )
-    owner_user_id = binding.user_id if binding is not None else account.user_id
+    owner_user_id = require_channel_tenant_user_id(
+        account,
+        tenant_user_id=binding.user_id if binding is not None else None,
+    )
     message = ChannelMessage(
         account_id=account.id,
         bot_agent_link_id=binding.bot_agent_link_id if binding else None,
@@ -5863,7 +6062,10 @@ async def _record_outbound_channel_message(
     payload: dict[str, Any] | None,
     delivered_at: datetime | None = None,
 ) -> ChannelMessage:
-    owner_user_id = binding.user_id if binding is not None else account.user_id
+    owner_user_id = require_channel_tenant_user_id(
+        account,
+        tenant_user_id=binding.user_id if binding is not None else None,
+    )
     message = ChannelMessage(
         account_id=account.id,
         bot_agent_link_id=binding.bot_agent_link_id if binding else None,
@@ -6453,6 +6655,79 @@ async def _record_discord_unpaired_message_and_maybe_instruct(
     if await find_binding(db, account=account, external_chat_id=authority_chat_id) is not None:
         return False
 
+    tutorial = (
+        "This Discord server is not paired. Create a Discord pairing code in Clawdi, "
+        "then run /clawdi_pair <code>."
+        if guild_id is not None
+        else "This Discord chat is not paired. Create a Discord pairing code in Clawdi, "
+        "then run /clawdi_pair <code>."
+    )
+    if account.visibility == CHANNEL_VISIBILITY_PUBLIC and account.user_id is None:
+        now = datetime.now(UTC)
+        runtime_marker = await find_platform_channel_runtime_marker(
+            db,
+            account=account,
+            kind=_DISCORD_UNPAIRED_TUTORIAL_KIND,
+            scope=channel_id,
+        )
+        if runtime_marker is not None:
+            cooldown = (
+                _DISCORD_UNPAIRED_TUTORIAL_SUCCESS_COOLDOWN
+                if runtime_marker.outcome == "sent"
+                else _DISCORD_UNPAIRED_TUTORIAL_FAILURE_BACKOFF
+            )
+            if runtime_marker.updated_at + cooldown > now:
+                return True
+        try:
+            await send_platform_unbound_channel_message(
+                account=account,
+                external_chat_id=channel_id,
+                text=tutorial,
+            )
+        except HTTPException as exc:
+            record_platform_channel_runtime_marker(
+                db,
+                account=account,
+                marker=runtime_marker,
+                kind=_DISCORD_UNPAIRED_TUTORIAL_KIND,
+                scope=channel_id,
+                outcome="failed",
+                occurred_at=now,
+            )
+            log.warning(
+                "discord_unpaired_tutorial_failed account_id=%s channel_id=%s status=%s",
+                account.id,
+                channel_id,
+                exc.status_code,
+            )
+        except Exception:
+            record_platform_channel_runtime_marker(
+                db,
+                account=account,
+                marker=runtime_marker,
+                kind=_DISCORD_UNPAIRED_TUTORIAL_KIND,
+                scope=channel_id,
+                outcome="failed",
+                occurred_at=now,
+            )
+            log.exception(
+                "discord_unpaired_tutorial_failed account_id=%s channel_id=%s",
+                account.id,
+                channel_id,
+            )
+        else:
+            record_platform_channel_runtime_marker(
+                db,
+                account=account,
+                marker=runtime_marker,
+                kind=_DISCORD_UNPAIRED_TUTORIAL_KIND,
+                scope=channel_id,
+                outcome="sent",
+                occurred_at=now,
+            )
+        await db.flush()
+        return True
+
     now = datetime.now(UTC)
     marker_result = InboundBindingResult(binding=None, bindings=())
     messages = await record_inbound_messages_for_bindings(
@@ -6498,13 +6773,6 @@ async def _record_discord_unpaired_message_and_maybe_instruct(
             marker.payload = {"kind": _DISCORD_UNPAIRED_TUTORIAL_KIND, "outcome": "suppressed"}
             return True
 
-    tutorial = (
-        "This Discord server is not paired. Create a Discord pairing code in Clawdi, "
-        "then run /clawdi_pair <code>."
-        if guild_id is not None
-        else "This Discord chat is not paired. Create a Discord pairing code in Clawdi, "
-        "then run /clawdi_pair <code>."
-    )
     try:
         await send_discord_message(
             db,

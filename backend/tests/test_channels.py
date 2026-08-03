@@ -48,6 +48,7 @@ from app.models.channel import (
     PAIR_CODE_STATUS_PENDING,
     PAIR_CODE_STATUS_REVOKED,
     ChannelAccount,
+    ChannelAccountRuntimeMarker,
     ChannelAgentCredential,
     ChannelAgentReference,
     ChannelBinding,
@@ -384,11 +385,12 @@ async def _create_admin_channel(
     settings.admin_api_key = admin_key
     try:
         payload: dict[str, Any] = {
-            "target_clerk_id": target_clerk_id,
             "provider": provider,
             "name": name,
             "visibility": visibility,
         }
+        if visibility == "private":
+            payload["target_clerk_id"] = target_clerk_id
         if provider_token is not None:
             payload["provider_token"] = provider_token
         if config is not None:
@@ -1465,12 +1467,15 @@ async def test_public_channel_activity_is_scoped_to_event_owner(
     ).json()
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
+    tenant_user_id = account.user_id
+    assert tenant_user_id is not None
     account.visibility = CHANNEL_VISIBILITY_PUBLIC
+    account.user_id = None
     db_session.add(
         ChannelMessage(
             account_id=account.id,
             bot_agent_link_id=UUID(created["agent_link_id"]),
-            user_id=account.user_id,
+            user_id=tenant_user_id,
             direction=MESSAGE_DIRECTION_OUTBOUND,
             external_chat_id="owner-chat",
             provider_message_id=None,
@@ -1662,6 +1667,7 @@ async def test_channel_health_includes_public_bound_channels_without_cross_user_
     ).json()
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
+    account.user_id = None
     account.visibility = CHANNEL_VISIBILITY_PUBLIC
     owner_message = ChannelMessage(
         account_id=account.id,
@@ -1686,13 +1692,19 @@ async def test_channel_health_includes_public_bound_channels_without_cross_user_
             last_error="owner-only failure",
         )
     )
-    other_user, _other_agent = await _create_user_with_channel_agent(
+    other_user, other_agent = await _create_user_with_channel_agent(
         db_session,
         label="health-other",
     )
+    async with _client_for_user(db_session, other_user) as other_client:
+        other_link_response = await other_client.post(
+            f"/v1/channels/{account.id}/agent-links",
+            json={"agent_id": str(other_agent.id)},
+        )
+    assert other_link_response.status_code == 201, other_link_response.text
     other_binding = ChannelBinding(
         account_id=account.id,
-        bot_agent_link_id=UUID(created["agent_link_id"]),
+        bot_agent_link_id=UUID(other_link_response.json()["id"]),
         user_id=other_user.id,
         external_chat_id="other-health-chat",
         external_chat_type="private",
@@ -1703,7 +1715,7 @@ async def test_channel_health_includes_public_bound_channels_without_cross_user_
     db_session.add(
         ChannelMessage(
             account_id=account.id,
-            bot_agent_link_id=UUID(created["agent_link_id"]),
+            bot_agent_link_id=UUID(other_link_response.json()["id"]),
             binding_id=other_binding.id,
             user_id=other_user.id,
             direction=MESSAGE_DIRECTION_INBOUND,
@@ -3637,7 +3649,7 @@ async def test_explicit_link_channel_reference_uses_public_link_owner(
     link_id = UUID(linked.json()["id"])
     account = await db_session.get(ChannelAccount, account_id)
     assert account is not None
-    assert account.user_id != link_user.id
+    assert account.user_id is None
 
     reference = await channel_service.record_channel_agent_reference(
         db_session,
@@ -3651,7 +3663,7 @@ async def test_explicit_link_channel_reference_uses_public_link_owner(
     assert reference.user_id == link_user.id
     assert reference.bot_agent_link_id == link_id
 
-    reference.user_id = account.user_id
+    reference.user_id = seed_user.id
     await db_session.commit()
     repaired_reference = await channel_service.record_channel_agent_reference(
         db_session,
@@ -8837,10 +8849,11 @@ async def test_discord_gateway_shared_account_link_bearers_are_isolated(
     link_b = await db_session.get(ChannelBotAgentLink, UUID(second["id"]))
     assert account is not None and link_a is not None and link_b is not None
     account.visibility = CHANNEL_VISIBILITY_PUBLIC
+    account.user_id = None
     binding_a = ChannelBinding(
         account_id=account.id,
         bot_agent_link_id=link_a.id,
-        user_id=account.user_id,
+        user_id=link_a.user_id,
         external_chat_id="shared-gateway-channel-a",
         external_chat_type="guild_text",
         external_chat_name="shared-gateway-guild-a",
@@ -8848,7 +8861,7 @@ async def test_discord_gateway_shared_account_link_bearers_are_isolated(
     binding_b = ChannelBinding(
         account_id=account.id,
         bot_agent_link_id=link_b.id,
-        user_id=account.user_id,
+        user_id=link_b.user_id,
         external_chat_id="shared-gateway-channel-b",
         external_chat_type="guild_text",
         external_chat_name="shared-gateway-guild-b",
@@ -8860,7 +8873,7 @@ async def test_discord_gateway_shared_account_link_bearers_are_isolated(
             ChannelBindingAlias(
                 account_id=account.id,
                 bot_agent_link_id=link_a.id,
-                user_id=account.user_id,
+                user_id=link_a.user_id,
                 binding_id=binding_a.id,
                 alias_kind="discord_channel",
                 alias_external_chat_id="shared-gateway-channel-a",
@@ -8868,7 +8881,7 @@ async def test_discord_gateway_shared_account_link_bearers_are_isolated(
             ChannelBindingAlias(
                 account_id=account.id,
                 bot_agent_link_id=link_b.id,
-                user_id=account.user_id,
+                user_id=link_b.user_id,
                 binding_id=binding_b.id,
                 alias_kind="discord_channel",
                 alias_external_chat_id="shared-gateway-channel-b",
@@ -9466,13 +9479,16 @@ async def test_shared_discord_account_command_shadows_and_fanout_are_link_scoped
     link_b = link_b_response.json()
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
+    tenant_user_id = account.user_id
+    assert tenant_user_id is not None
     account.visibility = CHANNEL_VISIBILITY_PUBLIC
+    account.user_id = None
     db_session.add_all(
         [
             ChannelBinding(
                 account_id=account.id,
                 bot_agent_link_id=UUID(created["agent_link_id"]),
-                user_id=account.user_id,
+                user_id=tenant_user_id,
                 external_chat_id="shared-link-channel-a",
                 external_chat_type="guild_text",
                 external_chat_name="shared-link-guild-a",
@@ -9480,7 +9496,7 @@ async def test_shared_discord_account_command_shadows_and_fanout_are_link_scoped
             ChannelBinding(
                 account_id=account.id,
                 bot_agent_link_id=UUID(link_b["id"]),
-                user_id=account.user_id,
+                user_id=tenant_user_id,
                 external_chat_id="shared-link-channel-b",
                 external_chat_type="guild_text",
                 external_chat_name="shared-link-guild-b",
@@ -13150,6 +13166,84 @@ async def test_telegram_unpaired_private_tutorial_is_idempotent_cooled_down_and_
 
 
 @pytest.mark.asyncio
+async def test_public_telegram_unpaired_tutorial_keeps_cooldown_without_tenant_messages(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    _reset_fake_provider_client({"ok": True, "result": {"username": "platform_test_bot"}})
+    created_response = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        name=f"telegram-platform-unpaired-{uuid4().hex}",
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+    account_id = UUID(created["id"])
+    account = await db_session.get(ChannelAccount, account_id)
+    assert account is not None
+    account.encrypted_provider_token, account.provider_token_nonce = encrypt_optional_token(
+        "123456:telegram-platform-secret"
+    )
+    await db_session.commit()
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 107}})
+
+    webhook_url = f"/v1/channels/telegram/{account_id}/webhook"
+    headers = {"x-telegram-bot-api-secret-token": created["webhook_secret"]}
+
+    def update(update_id: int) -> dict[str, Any]:
+        return {
+            "update_id": update_id,
+            "message": {
+                "message_id": update_id,
+                "text": "help me pair",
+                "chat": {"id": 987654411, "type": "private"},
+                "from": {"id": 987654411, "is_bot": False},
+            },
+        }
+
+    assert (await client.post(webhook_url, headers=headers, json=update(7_611))).status_code == 200
+    assert (await client.post(webhook_url, headers=headers, json=update(7_612))).status_code == 200
+    assert (
+        len([call for call in _FakeProviderClient.calls if call["url"].endswith("/sendMessage")])
+        == 1
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(ChannelMessage)
+            .where(ChannelMessage.account_id == account_id)
+        )
+        == 0
+    )
+    marker = (
+        await db_session.execute(
+            select(ChannelAccountRuntimeMarker).where(
+                ChannelAccountRuntimeMarker.account_id == account_id,
+                ChannelAccountRuntimeMarker.kind == "telegram_unpaired_tutorial",
+            )
+        )
+    ).scalar_one()
+    assert marker.scope == "private:987654411"
+    assert marker.outcome == "sent"
+
+    marker.updated_at = (
+        datetime.now(UTC)
+        - telegram_router.TELEGRAM_UNPAIRED_TUTORIAL_COOLDOWN
+        - timedelta(seconds=1)
+    )
+    await db_session.commit()
+    assert (await client.post(webhook_url, headers=headers, json=update(7_613))).status_code == 200
+    assert (
+        len([call for call in _FakeProviderClient.calls if call["url"].endswith("/sendMessage")])
+        == 2
+    )
+
+
+@pytest.mark.asyncio
 async def test_telegram_unpaired_tutorial_failure_does_not_expose_internal_error(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -16009,6 +16103,89 @@ async def test_discord_unpaired_tutorial_failure_has_short_retry_then_success_co
         assert await record_discord_dispatch(db_session, account=account, frame=frame(message_id))
         await db_session.commit()
     assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_public_discord_unpaired_tutorial_keeps_backoff_without_tenant_messages(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def configure_discord_application(account: ChannelAccount) -> dict[str, Any]:
+        return {"id": DISCORD_TEST_APPLICATION_ID}
+
+    async def sync_channel_commands(**kwargs) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(
+        admin_router, "configure_discord_application", configure_discord_application
+    )
+    monkeypatch.setattr(admin_router, "sync_channel_commands", sync_channel_commands)
+    created_response = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=CHANNEL_PROVIDER_DISCORD,
+        name=f"discord-platform-unpaired-{uuid4().hex}",
+        provider_token="discord-platform-token",
+        config=_discord_ready_config(),
+    )
+    assert created_response.status_code == 201, created_response.text
+    account = await db_session.get(ChannelAccount, UUID(created_response.json()["id"]))
+    assert account is not None
+    assert account.user_id is None
+    attempts = 0
+
+    async def send_tutorial(**kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise HTTPException(status_code=502, detail="private provider failure")
+        return "tutorial-message", {"id": "tutorial-message", "channel_id": "dm-channel"}
+
+    monkeypatch.setattr(channel_service, "_send_discord_provider_payload", send_tutorial)
+
+    def frame(message_id: str) -> dict[str, Any]:
+        return {
+            "t": "MESSAGE_CREATE",
+            "d": {
+                "id": message_id,
+                "channel_id": "dm-channel",
+                "content": "hello",
+                "author": {"id": "discord-user", "bot": False},
+            },
+        }
+
+    for message_id in ("platform-failed", "platform-backoff"):
+        assert await record_discord_dispatch(db_session, account=account, frame=frame(message_id))
+        await db_session.commit()
+    assert attempts == 1
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(ChannelMessage)
+            .where(ChannelMessage.account_id == account.id)
+        )
+        == 0
+    )
+    marker = (
+        await db_session.execute(
+            select(ChannelAccountRuntimeMarker).where(
+                ChannelAccountRuntimeMarker.account_id == account.id,
+                ChannelAccountRuntimeMarker.kind == "discord_unpaired_tutorial",
+            )
+        )
+    ).scalar_one()
+    assert marker.scope == "dm-channel"
+    assert marker.outcome == "failed"
+
+    marker.updated_at = datetime.now(UTC) - timedelta(seconds=31)
+    await db_session.commit()
+    for message_id in ("platform-retry", "platform-success-cooldown"):
+        assert await record_discord_dispatch(db_session, account=account, frame=frame(message_id))
+        await db_session.commit()
+    assert attempts == 2
+    assert marker.outcome == "sent"
 
 
 @pytest.mark.asyncio

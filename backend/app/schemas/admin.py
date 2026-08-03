@@ -20,6 +20,7 @@ from pydantic import (
     JsonValue,
     SecretStr,
     field_validator,
+    model_validator,
 )
 
 from app.schemas.ai_provider import AiProviderAuth, AiProviderModel
@@ -249,14 +250,13 @@ class AdminDeploymentManagedAiProviderResponse(BaseModel):
 class AdminChannelCreate(BaseModel):
     """Create a provider bot account through the admin control plane.
 
-    `target_clerk_id` supplies the backing user row for bookkeeping and
-    private managed bots. Public bots remain admin-managed shared
-    infrastructure: authenticated users can create their own links and pair
-    codes, but cannot mutate provider credentials or destructive bot-level
-    state through user APIs.
+    Private accounts require a target tenant owner. Public accounts are
+    platform inventory and reject a target tenant owner.
     """
 
-    target_clerk_id: str
+    model_config = ConfigDict(extra="forbid")
+
+    target_clerk_id: AdminClerkId | None = None
     provider: AdminChannelProvider
     name: str = Field(min_length=1, max_length=120)
     visibility: AdminChannelVisibility = "public"
@@ -277,10 +277,19 @@ class AdminChannelCreate(BaseModel):
     def _validate_secrets(cls, value: dict[str, str] | None) -> dict[str, str] | None:
         return _clean_channel_secret_values(value)
 
+    @model_validator(mode="after")
+    def _validate_ownership(self) -> AdminChannelCreate:
+        if self.visibility == "private" and self.target_clerk_id is None:
+            raise ValueError("private channels require target_clerk_id")
+        if self.visibility == "public" and self.target_clerk_id is not None:
+            raise ValueError("public channels must not specify target_clerk_id")
+        return self
 
-class AdminManagedWhatsAppOnboardingCreate(BaseModel):
+
+class AdminPlatformWhatsAppPairingSessionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     account_id: UUID
-    target_clerk_id: str = Field(min_length=1, max_length=255)
     request_id: UUID
     name: str = Field(min_length=1, max_length=120)
 
@@ -325,7 +334,7 @@ class AdminChannelUpdate(BaseModel):
 
 class AdminChannelResponse(BaseModel):
     id: UUID
-    owner_user_id: UUID
+    owner_user_id: UUID | None
     owner_clerk_id: str | None
     provider: str
     name: str
