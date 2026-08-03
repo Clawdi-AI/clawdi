@@ -47,6 +47,7 @@ class FakeManagedSidecar:
         self.logout_calls = 0
         self.stopped = False
         self.cancel_fails = False
+        self.qr_starting = False
 
     async def refresh_health(self) -> bool:
         return self.connected
@@ -69,6 +70,9 @@ class FakeManagedSidecar:
 
     async def pairing_qr(self) -> WhatsAppSidecarPairingStatus:
         self.stopped = False
+        if self.qr_starting:
+            self.qr_starting = False
+            return WhatsAppSidecarPairingStatus(status="starting", registered=False)
         return await self.pairing_status()
 
     async def pairing_status(self) -> WhatsAppSidecarPairingStatus:
@@ -137,6 +141,27 @@ async def _start(db_session, registry, account_id, *, request_id=None, name="Sha
         name=name,
         registry=registry,
     )
+
+
+@pytest.mark.asyncio
+async def test_async_qr_generation_remains_pollable(db_session) -> None:
+    account_id = uuid4()
+    fake = FakeManagedSidecar()
+    fake.qr_starting = True
+    registry = _registry(account_id, fake)
+    await registry.start()
+    try:
+        started = await _start(db_session, registry, account_id)
+        assert started.state == WHATSAPP_ONBOARDING_STATE_GENERATING
+        assert started.qr is None
+
+        ready = await get_platform_whatsapp_pairing(
+            db_session, session_id=started.id, registry=registry
+        )
+        assert ready.state == "ready"
+        assert ready.qr == "ephemeral-qr"
+    finally:
+        await registry.stop()
 
 
 @pytest.mark.asyncio

@@ -25,6 +25,7 @@ describe("physical Baileys runtime", () => {
 		expect(harness.socketConfigurations).toHaveLength(1);
 		const firstQrObservedAt = Date.now();
 		harness.events.emit("connection.update", { qr: "sensitive-qr-value" });
+		await runtime.start();
 		const ready = runtime.pairingStatus();
 		expect(ready).toMatchObject({
 			status: "pairing_qr",
@@ -33,6 +34,7 @@ describe("physical Baileys runtime", () => {
 			qr: "sensitive-qr-value",
 		});
 		expect(Date.parse(ready.qrExpiresAt ?? "") - firstQrObservedAt).toBeWithin(59_000, 61_000);
+		expect(harness.socketConfigurations).toHaveLength(1);
 
 		const rotatedQrObservedAt = Date.now();
 		harness.events.emit("connection.update", { qr: "sensitive-qr-value-rotated" });
