@@ -218,6 +218,72 @@ async def test_multiple_shared_accounts_use_distinct_sessions_on_one_service(
 
 
 @pytest.mark.asyncio
+async def test_existing_shared_account_reauth_preserves_inventory_and_history(
+    db_session,
+) -> None:
+    account_id = uuid4()
+    fake = FakeManagedSidecar()
+    registry = _registry(account_id, fake)
+    revision = registry.managed_account_revision(account_id)
+    account = ChannelAccount(
+        id=account_id,
+        user_id=None,
+        provider=CHANNEL_PROVIDER_WHATSAPP,
+        name="Shared",
+        status=CHANNEL_STATUS_ACTIVE,
+        visibility=CHANNEL_VISIBILITY_PUBLIC,
+        webhook_secret_hash="0" * 64,
+        config={
+            "connection_mode": "baileys_managed",
+            "sidecar_config_revision": revision,
+        },
+    )
+    previous = ChannelWhatsAppOnboardingSession(
+        ownership_kind=WHATSAPP_ONBOARDING_OWNERSHIP_PLATFORM,
+        sidecar_account_id=account_id,
+        sidecar_config_revision=revision,
+        channel_account_id=account_id,
+        user_id=None,
+        request_id=uuid4(),
+        name="Shared",
+        state="connected",
+        method="qr",
+        started_at=datetime.now(UTC) - timedelta(hours=1),
+        expires_at=datetime.now(UTC) - timedelta(minutes=55),
+        completed_at=datetime.now(UTC) - timedelta(minutes=59),
+    )
+    db_session.add_all((account, previous))
+    await db_session.commit()
+    await registry.start()
+    try:
+        fake.connected = fake.registered = True
+        with pytest.raises(HTTPException) as exc_info:
+            await _start(db_session, registry, account_id, name="Shared")
+        assert exc_info.value.status_code == 409
+        assert "already authenticated" in exc_info.value.detail
+
+        fake.connected = fake.registered = False
+        started = await _start(db_session, registry, account_id, name="Shared")
+        assert started.state == "ready"
+        assert started.channel_account_id == account_id
+        assert started.id != previous.id
+
+        fake.connected = fake.registered = True
+        connected = await get_platform_whatsapp_pairing(
+            db_session, session_id=started.id, registry=registry
+        )
+        assert connected.state == "connected"
+        assert await db_session.get(ChannelAccount, account_id) is account
+        assert registry.managed_is_bound(account_id)
+
+        await db_session.refresh(previous)
+        assert previous.state == "connected"
+        assert previous.channel_account_id == account_id
+    finally:
+        await registry.stop()
+
+
+@pytest.mark.asyncio
 async def test_bind_failure_rolls_back_promotion_and_marks_reservation_error(
     db_session, monkeypatch
 ):
@@ -505,6 +571,62 @@ async def test_restart_reconciliation_fails_closed_on_revision_and_physical_drif
         await db_session.commit()
         await registry.reconcile_managed_ownership(db_session)
         assert not registry.managed_is_bound(account_id)
+    finally:
+        await registry.stop()
+
+
+@pytest.mark.asyncio
+async def test_managed_attach_failure_logs_only_on_transition(db_session, caplog) -> None:
+    account_id = uuid4()
+    fake = FakeManagedSidecar()
+    registry = _registry(account_id, fake)
+    revision = registry.managed_account_revision(account_id)
+    db_session.add(
+        ChannelAccount(
+            id=account_id,
+            user_id=None,
+            provider=CHANNEL_PROVIDER_WHATSAPP,
+            name="Shared",
+            status=CHANNEL_STATUS_ACTIVE,
+            visibility=CHANNEL_VISIBILITY_PUBLIC,
+            webhook_secret_hash="0" * 64,
+            config={},
+        )
+    )
+    await db_session.commit()
+    await registry.start()
+    try:
+        await registry.reconcile_managed_ownership(db_session)
+        await registry.reconcile_managed_ownership(db_session)
+        invalid = [
+            record
+            for record in caplog.records
+            if record.message.endswith("invalid_physical_identity")
+        ]
+        assert len(invalid) == 1
+
+        account = await db_session.get(ChannelAccount, account_id)
+        assert account is not None
+        account.config = {
+            "connection_mode": "baileys_managed",
+            "sidecar_config_revision": revision,
+        }
+        await db_session.commit()
+        await registry.reconcile_managed_ownership(db_session)
+        await registry.reconcile_managed_ownership(db_session)
+        failures = [
+            record
+            for record in caplog.records
+            if record.message.endswith("physical_auth_unavailable")
+        ]
+        assert len(failures) == 1
+
+        fake.connected = fake.registered = True
+        await registry.reconcile_managed_ownership(db_session)
+        recoveries = [
+            record for record in caplog.records if record.message.endswith("attachment recovered")
+        ]
+        assert len(recoveries) == 1
     finally:
         await registry.stop()
 

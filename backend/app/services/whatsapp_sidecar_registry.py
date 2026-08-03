@@ -110,6 +110,7 @@ class ConfiguredWhatsAppSidecarRegistry:
         self._service_client: WhatsAppSidecarClient | None = None
         self._clients_by_session: dict[UUID, WhatsAppSidecarClient] = {}
         self._bound_managed_accounts: set[UUID] = set()
+        self._managed_attach_failures: dict[UUID, str] = {}
         self._custom_session_to_account: dict[UUID, UUID] = {}
         self._custom_account_to_session: dict[UUID, UUID] = {}
         self._blocked_custom_sessions: set[UUID] = set()
@@ -178,6 +179,7 @@ class ConfiguredWhatsAppSidecarRegistry:
         for account_id in (*self._bound_managed_accounts, *self._custom_account_to_session):
             unregister_whatsapp_provider_transport(account_id)
         self._bound_managed_accounts.clear()
+        self._managed_attach_failures.clear()
         self._custom_session_to_account.clear()
         self._custom_account_to_session.clear()
         self._blocked_custom_sessions.clear()
@@ -234,15 +236,18 @@ class ConfiguredWhatsAppSidecarRegistry:
         else:
             accounts = await self._managed_accounts(db)
         desired: dict[UUID, str] = {}
+        account_ids = {account.id for account in accounts}
         for account in accounts:
             config = account.config if isinstance(account.config, dict) else {}
             revision = config.get("sidecar_config_revision")
             if config.get("connection_mode") != "baileys_managed" or not isinstance(revision, str):
-                log.error("WhatsApp managed account %s has invalid physical identity", account.id)
+                self._record_managed_attach_failure(account.id, "invalid_physical_identity")
                 continue
             desired[account.id] = revision
         for account_id in tuple(self._bound_managed_accounts - desired.keys()):
             await self.unbind_managed_account(account_id)
+        for account_id in tuple(self._managed_attach_failures.keys() - account_ids):
+            self._managed_attach_failures.pop(account_id, None)
         for account_id, revision in desired.items():
             try:
                 client = self._client(account_id)
@@ -260,10 +265,22 @@ class ConfiguredWhatsAppSidecarRegistry:
                         "managed Baileys physical auth is unavailable"
                     )
                 await self.bind_managed_account(account_id, config_revision=revision)
+                if self._managed_attach_failures.pop(account_id, None) is not None:
+                    log.info("WhatsApp managed account %s attachment recovered", account_id)
             except WhatsAppSidecarError:
                 if account_id in self._bound_managed_accounts:
                     await self.unbind_managed_account(account_id)
-                log.error("WhatsApp managed account %s is not safe to attach", account_id)
+                self._record_managed_attach_failure(account_id, "physical_auth_unavailable")
+
+    def _record_managed_attach_failure(self, account_id: UUID, reason: str) -> None:
+        if self._managed_attach_failures.get(account_id) == reason:
+            return
+        self._managed_attach_failures[account_id] = reason
+        log.error(
+            "WhatsApp managed account %s is not safe to attach: %s",
+            account_id,
+            reason,
+        )
 
     async def _managed_accounts(self, db: AsyncSession) -> list[ChannelAccount]:
         return list(
