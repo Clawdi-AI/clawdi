@@ -3353,19 +3353,19 @@ async def test_historical_pending_pair_code_cannot_create_new_chat_binding(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("agent_type", ["hermes", "openclaw"])
-async def test_whatsapp_managed_link_admission_remains_gated(
+async def test_whatsapp_managed_link_and_pair_admission_is_enabled_with_single_account_limit(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     agent_type: str,
 ):
     account = await _seed_historical_platform_whatsapp_account(
         db_session,
-        name=f"{agent_type}-whatsapp-gated-{uuid4().hex}",
+        name=f"{agent_type}-whatsapp-enabled-{uuid4().hex}",
     )
     account_id = str(account.id)
     user, agent = await _create_user_with_channel_agent(
         db_session,
-        label=f"{agent_type}-whatsapp-gated",
+        label=f"{agent_type}-whatsapp-enabled",
         agent_type=agent_type,
     )
 
@@ -3374,9 +3374,26 @@ async def test_whatsapp_managed_link_admission_remains_gated(
             f"/v1/channels/{account_id}/agent-links",
             json={"agent_id": str(agent.id)},
         )
+        pair = await user_client.post(
+            f"/v1/channels/{account_id}/pair-codes",
+            json={"agent_link_id": link.json()["id"], "ttl_seconds": 900},
+        )
+        second_account = await _seed_historical_platform_whatsapp_account(
+            db_session,
+            name=f"{agent_type}-whatsapp-second-{uuid4().hex}",
+        )
+        second_link = await user_client.post(
+            f"/v1/channels/{second_account.id}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
 
-    assert link.status_code == 409
-    assert link.json()["detail"] == channel_service.WHATSAPP_COMING_SOON_DETAIL
+    assert link.status_code == 201, link.text
+    assert pair.status_code == 201, pair.text
+    assert pair.json()["agent_link_id"] == link.json()["id"]
+    assert second_link.status_code == 409
+    assert second_link.json()["detail"] == (
+        "This Agent already has a WhatsApp bot. Unlink it before connecting another."
+    )
     existing = list(
         (
             await db_session.execute(
@@ -3388,7 +3405,8 @@ async def test_whatsapp_managed_link_admission_remains_gated(
             )
         ).scalars()
     )
-    assert existing == []
+    assert len(existing) == 1
+    assert str(existing[0].id) == link.json()["id"]
 
 
 @pytest.mark.asyncio
@@ -4424,11 +4442,15 @@ async def test_agent_bound_runtime_contract_issues_only_synthetic_whatsapp_state
         )
     assert created_response.status_code == 201, created_response.text
     created = created_response.json()
-    link, agent_token = await _seed_existing_channel_link(
-        db_session,
-        account_id=created["id"],
-        agent=agent,
-    )
+    async with _client_for_user(db_session, user) as user_client:
+        linked = await user_client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
+    assert linked.status_code == 201, linked.text
+    link = await db_session.get(ChannelBotAgentLink, UUID(linked.json()["id"]))
+    assert link is not None
+    agent_token = linked.json()["agent_token"]
 
     api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="hosted-wa-runtime")
     async with _client_for_api_key(db_session, user, api_key) as runtime_client:

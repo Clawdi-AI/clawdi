@@ -1,6 +1,6 @@
 # WhatsApp Physical Provider Transport and Native-Agent Noise Boundary
 
-Status: gated; no production projection
+Status: implemented physical transport and managed native projection
 Date: 2026-08-02
 
 The package name `packages/whatsapp-baileys-sidecar` is retained to avoid
@@ -30,12 +30,13 @@ or Hermes channel connector and not a second agent runtime.
 
 The two downstream patch seams and two stock consumer auth-persistence audit
 fields are true. Only the persistence fields are native upstream behavior; none
-claims a native upstream managed identity capability. The aggregate WhatsApp
-linking, runtime, and upstream readiness constants remain false in
-`packages/cli/src/runtime/whatsapp-upstream-contract.ts`. Native-plugin E2E and
-the live-account drill are still unproven. No managed marker, compatibility
-patch, credential projection, or interception profile is installed in
-production.
+claims a native upstream managed identity capability. Fixed-artifact stock
+OpenClaw and Hermes native-plugin E2E runs from
+`scripts/test-managed-whatsapp-native-e2e.sh`; the real live-account drill has
+not been executed and does not control local projection. Managed
+projection uses Link-scoped markers, audited compatibility patches, synthetic
+credentials, and the generic interception profile after ordinary authority and
+compatibility checks.
 
 ## Data Flow
 
@@ -251,8 +252,9 @@ matching both audited consumer call chains:
 5. OpenClaw-style `BufferJSON` persistence and Hermes `saveCreds` both preserve
    the namespace and Buffer, and reconstruction rereads changed Link metadata.
 
-This is executable compatibility-seam evidence, not full native-plugin E2E.
-The native-plugin and live-account gates therefore remain false.
+This focused harness remains compatibility-seam coverage. Stock native-plugin
+E2E is the separate fixed-artifact script; a real live-account drill has not
+been executed.
 
 The CLI reconciler is a narrow static compatibility exception to the general
 ban on runtime monkey-patching and source forks. It performs no fuzzy or

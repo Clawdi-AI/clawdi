@@ -15,7 +15,7 @@ export interface ManagedWhatsAppEgressLink {
 // Installing one of these profiles adds web.whatsapp.com to the proxy's SNI
 // interception set. The marker is visible only after TLS inspection, so an
 // unmarked connection is request-level passthrough to the official upstream,
-// not byte-for-byte or TLS untouched. Production gates currently install none.
+// not byte-for-byte or TLS untouched.
 export function buildManagedWhatsAppEgressProfiles(input: {
 	controlPlaneApiUrl: string;
 	links: ManagedWhatsAppEgressLink[];

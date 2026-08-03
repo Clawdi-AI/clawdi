@@ -1195,21 +1195,6 @@ class SignalSender:
             ),
         )
 
-    def mirror_session(
-        self,
-        from_user: str,
-        from_device: int,
-        to_user: str,
-        to_device: int,
-    ) -> None:
-        if from_user == to_user and from_device == to_device:
-            return
-        from_address = _signal_address(from_user, from_device)
-        record = self.records.get(from_address)
-        if record is None:
-            raise ValueError(f"signal session {from_address} not found")
-        self.records[_signal_address(to_user, to_device)] = _copy_signal_session(record)
-
 
 class GroupCipherBackend:
     def __init__(
@@ -1369,6 +1354,9 @@ async def respond_to_iq(
         )
 
     if xmlns == "usync" and iq_type == "get":
+        forwarded = await _maybe_forward_iq(forward_iq, req, tenant_id)
+        if forwarded is not None:
+            return forwarded
         return _usync_devices_result(
             req,
             agent_user=agent_user,
@@ -2629,8 +2617,10 @@ def _usync_devices_result(
             is_agent_self = (agent_user is not None and jid_user == agent_user) or (
                 agent_lid_user is not None and jid_user == agent_lid_user
             )
-            lid = resolve_recipient_lid(jid) if resolve_recipient_lid else None
-            lid = lid or f"{jid_user}@lid"
+            lid = strip_whatsapp_device(agent_lid) if is_agent_self and agent_lid else None
+            lid = lid or (resolve_recipient_lid(jid) if resolve_recipient_lid else None)
+            if lid is None:
+                continue
             users.append(
                 {
                     "tag": "user",
@@ -2668,6 +2658,118 @@ def _usync_devices_result(
             }
         ],
     )
+
+
+def whatsapp_usync_device_result(
+    req: BinaryNode,
+    *,
+    recipient_lids: Mapping[str, str],
+) -> BinaryNode:
+    """Build the stock Baileys device/LID result from authorized durable mappings."""
+    return _usync_devices_result(
+        req,
+        agent_user=None,
+        agent_lid=None,
+        resolve_recipient_lid=recipient_lids.get,
+    )
+
+
+def parse_whatsapp_usync_device_targets(req: BinaryNode) -> tuple[str, ...] | None:
+    """Parse the exact stock rc13 device/LID USync query shape."""
+    if req.get("tag") != "iq" or set(req).difference({"tag", "attrs", "content"}):
+        return None
+    attrs = _strict_string_attrs(req.get("attrs"))
+    if attrs is None or set(attrs) != {"id", "type", "xmlns", "to"}:
+        return None
+    if (
+        not attrs["id"]
+        or attrs["type"] != "get"
+        or attrs["xmlns"] != "usync"
+        or attrs["to"] != "s.whatsapp.net"
+    ):
+        return None
+    content = req.get("content")
+    if not isinstance(content, list) or len(content) != 1:
+        return None
+    usync = content[0]
+    if not isinstance(usync, dict) or set(usync).difference({"tag", "attrs", "content"}):
+        return None
+    usync_attrs = _strict_string_attrs(usync.get("attrs"))
+    if (
+        usync.get("tag") != "usync"
+        or usync_attrs is None
+        or set(usync_attrs) != {"context", "mode", "sid", "last", "index"}
+        or usync_attrs["context"] != "message"
+        or usync_attrs["mode"] != "query"
+        or not usync_attrs["sid"]
+        or usync_attrs["last"] != "true"
+        or usync_attrs["index"] != "0"
+    ):
+        return None
+    usync_content = usync.get("content")
+    if not isinstance(usync_content, list) or len(usync_content) != 2:
+        return None
+    query, user_list = usync_content
+    if not isinstance(query, dict) or not isinstance(user_list, dict):
+        return None
+    if (
+        set(query).difference({"tag", "attrs", "content"})
+        or query.get("tag") != "query"
+        or query.get("attrs") != {}
+    ):
+        return None
+    protocols = query.get("content")
+    if not isinstance(protocols, list) or len(protocols) != 2:
+        return None
+    devices, lid = protocols
+    if devices != {"tag": "devices", "attrs": {"version": "2"}}:
+        return None
+    if lid != {"tag": "lid", "attrs": {}}:
+        return None
+    if (
+        set(user_list).difference({"tag", "attrs", "content"})
+        or user_list.get("tag") != "list"
+        or user_list.get("attrs") != {}
+    ):
+        return None
+    users = user_list.get("content")
+    if not isinstance(users, list) or not users:
+        return None
+    targets: list[str] = []
+    for user in users:
+        if not isinstance(user, dict) or set(user).difference({"tag", "attrs", "content"}):
+            return None
+        user_attrs = _strict_string_attrs(user.get("attrs"))
+        if (
+            user.get("tag") != "user"
+            or user_attrs is None
+            or set(user_attrs) != {"jid"}
+            or user.get("content") not in (None, [])
+        ):
+            return None
+        target = user_attrs["jid"]
+        parsed = parse_whatsapp_jid(target)
+        if (
+            parsed is None
+            or parsed.server not in {"s.whatsapp.net", "lid"}
+            or parsed.device is not None
+            or not parsed.user.isascii()
+            or not parsed.user.isdecimal()
+        ):
+            return None
+        targets.append(target)
+    return tuple(dict.fromkeys(targets))
+
+
+def _strict_string_attrs(value: object) -> dict[str, str] | None:
+    if not isinstance(value, dict):
+        return None
+    attrs: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not isinstance(item, str):
+            return None
+        attrs[key] = item
+    return attrs
 
 
 def _group_metadata_result(

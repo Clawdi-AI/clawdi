@@ -8,6 +8,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+import xeddsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from sqlalchemy import select
 from starlette.websockets import WebSocketDisconnect
@@ -55,11 +56,13 @@ from app.services.whatsapp_noise import (
     _message_field,
     _pad_random_max16,
     _proto_conversation_text,
+    _read_fields,
     _shared_key,
     _unpad_random_max16,
     decode_binary_node_minimal,
     decode_handshake_message,
     encode_binary_node_minimal,
+    encode_cert_chain,
     encode_handshake_message,
     generate_key_pair,
     pack_frame,
@@ -171,6 +174,32 @@ def test_whatsapp_noise_server_handshake_and_transport_round_trip():
 
     client_ciphertext = client.transport.encrypt(b"client-transport")
     assert server.decrypt_frame(client_ciphertext) == b"client-transport"
+
+
+def test_whatsapp_noise_cert_chain_has_verifiable_x25519_key_signatures():
+    cert = _auth_cert()
+    static = generate_key_pair()
+
+    chain = {
+        field: value
+        for field, wire_type, value in _read_fields(encode_cert_chain(cert, static.public))
+        if wire_type == 2
+    }
+    leaf = {field: value for field, wire_type, value in _read_fields(chain[1]) if wire_type == 2}
+    intermediate = {
+        field: value for field, wire_type, value in _read_fields(chain[2]) if wire_type == 2
+    }
+
+    for signed, public_key in (
+        (leaf, cert.intermediate_public_key),
+        (intermediate, cert.root_public_key),
+    ):
+        details = signed[1]
+        signature = signed[2]
+        assert signature != bytes(64)
+        assert signature[63] & 0x80 == 0
+        ed25519_public = xeddsa.curve25519_pub_to_ed25519_pub(public_key, False)
+        assert xeddsa.ed25519_verify(signature, ed25519_public, details)
 
 
 def test_whatsapp_minimal_wabinary_encoder_uses_raw_strings():
@@ -386,7 +415,7 @@ def test_whatsapp_noise_emulator_session_persists_uploaded_agent_bundle():
     assert pushed["tag"] == "message"
     assert pushed["attrs"]["id"] == "inbound-1"
     assert pushed["attrs"]["from"] == "15551112222@s.whatsapp.net"
-    assert pushed["attrs"]["sender_lid"] == "15551112222@lid"
+    assert "sender_lid" not in pushed["attrs"]
     assert pushed["attrs"]["addressing_mode"] == "pn"
     assert pushed["attrs"]["notify"] == "Alice"
     enc = pushed["content"][0]
@@ -579,6 +608,9 @@ def test_whatsapp_noise_emulator_session_acks_agent_message_stanzas():
         lid="16693773518:2@s.whatsapp.net",
         on_event=events.append,
         on_outbound_message=outbound_messages.append,
+        resolve_recipient_lid=lambda jid: (
+            "184207372460253@lid" if jid == "15551112222@s.whatsapp.net" else None
+        ),
     )
     client = _MiniNoiseClient()
 
@@ -605,25 +637,47 @@ def test_whatsapp_noise_emulator_session_acks_agent_message_stanzas():
     upload_ciphertext, _rest = unpack_frame(upload_frames[0]) or (b"", b"")
     client.transport.decrypt(upload_ciphertext)
 
-    push_frame, _push_result = _run(
+    push_frame, push_result = _run(
         session.push_inbound_message(
             from_jid="15551112222@s.whatsapp.net",
             message_id="inbound-before-reply",
             message_proto=_bytes_field(1, b"provider hello"),
+            sender_lid_jid="184207372460253@lid",
+            sender_pn_jid="15551112222@s.whatsapp.net",
         )
     )
     push_ciphertext, _rest = unpack_frame(push_frame) or (b"", b"")
-    client.transport.decrypt(push_ciphertext)
+    pushed = decode_binary_node_minimal(client.transport.decrypt(push_ciphertext))
+    assert push_result.signal_jid == "184207372460253@lid"
+    assert pushed["attrs"]["from"] == "15551112222@s.whatsapp.net"
+    assert pushed["attrs"]["sender_lid"] == "184207372460253@lid"
+    assert pushed["attrs"]["addressing_mode"] == "pn"
 
-    sender = session._signal_senders["15551112222:0@s.whatsapp.net"]
+    sender = session._signal_senders["184207372460253:0@lid"]
     reply_proto = _bytes_field(1, b"agent reply")
-    reply = sender.encrypt_from_established_session("16693773518", 2, reply_proto)
+    reply = sender.encrypt_from_established_session("184207372460253", 0, reply_proto)
     message = encode_binary_node_minimal(
         {
             "tag": "message",
             "attrs": {"id": "m-1", "to": "15551112222@s.whatsapp.net"},
             "content": [
-                {"tag": "enc", "attrs": {"type": reply.type}, "content": reply.ciphertext},
+                {
+                    "tag": "participants",
+                    "attrs": {},
+                    "content": [
+                        {
+                            "tag": "to",
+                            "attrs": {"jid": "15551112222@s.whatsapp.net"},
+                            "content": [
+                                {
+                                    "tag": "enc",
+                                    "attrs": {"type": reply.type},
+                                    "content": reply.ciphertext,
+                                }
+                            ],
+                        }
+                    ],
+                },
                 {"tag": "meta", "attrs": {"polltype": "creation"}},
                 {"tag": "device-identity", "attrs": {}, "content": b"not-forwarded"},
             ],
@@ -650,7 +704,7 @@ def test_whatsapp_noise_emulator_session_acks_agent_message_stanzas():
         "protoBytes": len(reply_proto),
         "protoSha256": hashlib.sha256(reply_proto).hexdigest(),
         "conversationPresent": True,
-        "children": ["enc", "meta", "device-identity"],
+        "children": ["participants", "meta", "device-identity"],
     }
     assert outbound_messages == [
         WhatsAppOutboundMessage(
@@ -719,7 +773,7 @@ def test_whatsapp_noise_emulator_session_decodes_agent_group_message_stanzas():
         2,
         _bytes_field(1, group_jid.encode("utf-8")) + _bytes_field(2, axolotl),
     )
-    skdm = sender.encrypt_from_established_session("16693773518", 2, skdm_proto)
+    skdm = sender.encrypt_from_established_session("15551112222", 0, skdm_proto)
     group_proto = _bytes_field(1, b"group reply")
     skmsg = encrypt_whatsapp_group_message_for_sender_key(
         axolotl_bytes=axolotl,
@@ -927,7 +981,7 @@ def test_whatsapp_noise_emulator_session_restores_signal_sender_snapshots():
 
     restored_sender = SignalSender(snapshots["15551112222:0@s.whatsapp.net"])
     reply_proto = _bytes_field(1, b"restored reply")
-    reply = restored_sender.encrypt_from_established_session("16693773518", 2, reply_proto)
+    reply = restored_sender.encrypt_from_established_session("15551112222", 0, reply_proto)
     message = encode_binary_node_minimal(
         {
             "tag": "message",
@@ -1436,7 +1490,7 @@ async def test_whatsapp_baileys_websocket_records_noise_runtime_debug_events(
     snapshots = whatsapp_signal_senders_from_config(active_credential.config)
     reply_sender = SignalSender(snapshots["15551112222:0@s.whatsapp.net"])
     reply_proto = _bytes_field(1, b"agent websocket reply")
-    reply = reply_sender.encrypt_from_established_session("16693773518", 2, reply_proto)
+    reply = reply_sender.encrypt_from_established_session("15551112222", 0, reply_proto)
     reply_node = encode_binary_node_minimal(
         {
             "tag": "message",

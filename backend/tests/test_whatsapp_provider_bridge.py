@@ -118,6 +118,47 @@ async def _seed_whatsapp_link_and_binding(
     return account, link, binding
 
 
+def _stock_usync_device_iq(*jids: str) -> dict[str, Any]:
+    return {
+        "tag": "iq",
+        "attrs": {
+            "id": "stock-usync-devices",
+            "to": "s.whatsapp.net",
+            "type": "get",
+            "xmlns": "usync",
+        },
+        "content": [
+            {
+                "tag": "usync",
+                "attrs": {
+                    "context": "message",
+                    "mode": "query",
+                    "sid": "stock-usync-sid",
+                    "last": "true",
+                    "index": "0",
+                },
+                "content": [
+                    {
+                        "tag": "query",
+                        "attrs": {},
+                        "content": [
+                            {"tag": "devices", "attrs": {"version": "2"}},
+                            {"tag": "lid", "attrs": {}},
+                        ],
+                    },
+                    {
+                        "tag": "list",
+                        "attrs": {},
+                        "content": [
+                            {"tag": "user", "attrs": {"jid": jid}, "content": []} for jid in jids
+                        ],
+                    },
+                ],
+            }
+        ],
+    }
+
+
 def test_whatsapp_provider_transport_registration_is_exclusive_per_account():
     account_id = uuid4()
     first = _FakeProviderTransport()
@@ -471,6 +512,105 @@ async def test_whatsapp_provider_bridge_authorizes_raw_nodes_and_bounded_iq(
         "tag": "iq",
         "attrs": {"xmlns": "privacy", "type": "get", "to": "s.whatsapp.net"},
         "content": [{"tag": "privacy", "attrs": {}}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_provider_usync_requires_link_binding_and_uses_durable_lid_alias(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    second_channel_agent,
+):
+    account, link, binding = await _seed_whatsapp_link_and_binding(
+        client,
+        db_session,
+        channel_agent,
+        name="wa-stock-usync-authority",
+        external_chat_id="15551112222@s.whatsapp.net",
+    )
+    lid_jid = "184207372460253@lid"
+    await remember_whatsapp_binding_aliases(
+        db_session,
+        binding=binding,
+        remote_jid=binding.external_chat_id,
+        alt_jid=lid_jid,
+    )
+    other_link = ChannelBotAgentLink(
+        account_id=account.id,
+        user_id=account.user_id,
+        agent_id=second_channel_agent.id,
+    )
+    store_agent_link_token(other_link, generate_agent_token("whatsapp"))
+    db_session.add(other_link)
+    await db_session.flush()
+    other_binding = ChannelBinding(
+        account_id=account.id,
+        bot_agent_link_id=other_link.id,
+        user_id=account.user_id,
+        external_chat_id="15559999999@s.whatsapp.net",
+        external_chat_type="dm",
+        external_chat_name="Bob",
+    )
+    db_session.add(other_binding)
+    await db_session.commit()
+
+    class UnavailableUsyncTransport(_FakeProviderTransport):
+        async def query_iq(self, node, timeout_ms):
+            self.iq_queries.append((node, timeout_ms))
+            return None
+
+    transport = UnavailableUsyncTransport()
+    bridge = WhatsAppProviderBridge(
+        async_sessionmaker(db_session.bind, expire_on_commit=False),
+        account_id=account.id,
+        transport=transport,
+    )
+
+    unbound = await bridge.forward_iq(
+        _stock_usync_device_iq("15550000000@s.whatsapp.net"),
+        tenant_id=str(link.id),
+        bot_agent_link_id=link.id,
+    )
+    cross_link = await bridge.forward_iq(
+        _stock_usync_device_iq(other_binding.external_chat_id),
+        tenant_id=str(link.id),
+        bot_agent_link_id=link.id,
+    )
+    resolved = await bridge.forward_iq(
+        _stock_usync_device_iq(binding.external_chat_id),
+        tenant_id=str(link.id),
+        bot_agent_link_id=link.id,
+    )
+
+    assert unbound is None
+    assert cross_link is None
+    assert len(transport.iq_queries) == 1
+    assert transport.iq_queries[0][0]["attrs"] == {
+        "to": "s.whatsapp.net",
+        "type": "get",
+        "xmlns": "usync",
+    }
+    assert resolved is not None
+    assert resolved["attrs"]["id"] == "stock-usync-devices"
+    resolved_user = resolved["content"][0]["content"][0]["content"][0]
+    assert resolved_user == {
+        "tag": "user",
+        "attrs": {"jid": binding.external_chat_id},
+        "content": [
+            {"tag": "lid", "attrs": {"val": lid_jid}},
+            {
+                "tag": "devices",
+                "attrs": {},
+                "content": [
+                    {
+                        "tag": "device-list",
+                        "attrs": {},
+                        "content": [{"tag": "device", "attrs": {"id": "0"}}],
+                    }
+                ],
+            },
+        ],
     }
 
 

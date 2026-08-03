@@ -81,7 +81,6 @@ import {
 	loadTransparentEgressEnvConfig,
 	type TransparentEgressEnvConfig,
 } from "../runtime/transparent-egress";
-import { WHATSAPP_UPSTREAM_READY } from "../runtime/whatsapp-gate";
 import { consumeSse } from "../serve/sse-client";
 
 type ChannelAccount = components["schemas"]["ChannelAccountResponse"];
@@ -558,7 +557,6 @@ async function applyLink(
 
 	let token = link.agent_token ?? null;
 	let tokenWritten = false;
-	const runtimeOutputGated = channel.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY;
 	if (
 		ctx.rotateAllTokens ||
 		(ctx.rotateMissingTokens &&
@@ -586,10 +584,10 @@ async function applyLink(
 		});
 	}
 
-	if (token && !runtimeOutputGated) {
+	if (token) {
 		addRuntimeEnv(ctx, channel.provider, linkManifest, token);
 		tokenWritten = true;
-	} else if (!runtimeOutputGated) {
+	} else {
 		const existingToken = readDotenvValue(
 			ctx.manifestDir,
 			ctx.manifest.outputs.dotenv,
@@ -605,7 +603,7 @@ async function applyLink(
 		}
 	}
 
-	if (linkManifest.pair_code && !runtimeOutputGated) {
+	if (linkManifest.pair_code) {
 		const pairCode = unwrap(
 			await ctx.api.POST("/v1/channels/{account_id}/pair-codes", {
 				params: { path: { account_id: account.id } },
@@ -730,7 +728,6 @@ function preflightRuntimeOutputs(manifest: RuntimeManifest): void {
 
 	for (const channel of manifest.channels) {
 		for (const link of channel.links) {
-			if (channel.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 			claim(link.runtime.token_env, `token:${link.ref}`, link.ref);
 			if (link.pair_code?.command_env) {
 				claim(link.pair_code.command_env, `pair-code:${link.ref}`, link.ref);

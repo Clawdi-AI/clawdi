@@ -624,7 +624,10 @@ async def create_channel(
         validate_required_discord_interactions_config(body.config)
     initial_agent_id = (
         None
-        if "agent_id" in body.model_fields_set and body.agent_id is None
+        if (
+            (body.provider == CHANNEL_PROVIDER_WHATSAPP and "agent_id" not in body.model_fields_set)
+            or ("agent_id" in body.model_fields_set and body.agent_id is None)
+        )
         else await _resolve_initial_agent_id(
             db,
             auth=auth,

@@ -24,7 +24,6 @@ import {
 	autoLinkAgentIdForNewCustomBot,
 	CONNECTABLE_BOT_PROVIDERS,
 	type ConnectableBotProvider,
-	channelProviderLinkingReady,
 } from "@/hosted/v2/channels/channel-linking.logic";
 import { PROVIDER_META } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelCreate, ChannelCreated } from "@/hosted/v2/channels/channel-types";
@@ -93,12 +92,15 @@ export function ConnectBotDialog({
 	const meta = PROVIDER_META[provider];
 	const discordSelected = provider === "discord";
 	const whatsappSelected = provider === "whatsapp";
-	const providerLinkingReady = channelProviderLinkingReady(provider);
 	const providerLinkConflict = Boolean(
-		agentId && agentProviderLinkReplacementRequired(agentType, provider, linkedProviders),
+		agentId &&
+			!whatsappSelected &&
+			agentProviderLinkReplacementRequired(agentType, provider, linkedProviders),
 	);
 	const agentLinkStatusUnknown = Boolean(
-		agentId && agentProviderLinkStatusUnknown(agentType, provider, linkedProviders),
+		agentId &&
+			!whatsappSelected &&
+			agentProviderLinkStatusUnknown(agentType, provider, linkedProviders),
 	);
 	const autoLinkAgentId = autoLinkAgentIdForNewCustomBot(
 		agentId,
@@ -347,7 +349,7 @@ export function ConnectBotDialog({
 											Adding this bot will ask you to replace this Agent&apos;s existing{" "}
 											{meta.label} link.
 										</p>
-									) : providerLinkingReady && agentId ? (
+									) : autoLinkAgentId ? (
 										<p role="status" className="text-xs text-muted-foreground" aria-live="polite">
 											The new Custom bot will be linked to this Agent automatically.
 										</p>

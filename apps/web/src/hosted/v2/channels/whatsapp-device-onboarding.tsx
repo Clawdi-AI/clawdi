@@ -16,7 +16,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { WHATSAPP_LINKING_READY } from "@/hosted/v2/channels/channel-linking.logic";
 import type { WhatsAppOnboardingSession } from "@/hosted/v2/channels/channel-types";
 import {
 	useWhatsAppOnboardingActions,
@@ -86,9 +85,7 @@ export function WhatsAppDeviceOnboarding({ onDone }: { onDone: () => void }) {
 				Connect your account
 			</Button>
 			<p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-				{WHATSAPP_LINKING_READY
-					? "This adds the account under Custom bots. Agent Link and chat Pair are separate next steps."
-					: "This adds the account under Custom bots. Agent Link and chat Pair remain gated until native runtime activation is enabled."}
+				This adds the account under Custom bots. Agent Link and chat Pair are separate next steps.
 			</p>
 		</div>
 	);
@@ -372,11 +369,7 @@ export function WhatsAppSessionState({
 			<CenteredState
 				icon={<CheckCircle2 className="size-7 text-success" />}
 				title="WhatsApp account connected"
-				description={
-					WHATSAPP_LINKING_READY
-						? "It is now under Custom bots, but is not ready on an Agent yet. Next, Link it to an Agent, then Pair an authorized chat."
-						: "It is now under Custom bots, but is not ready on an Agent. Agent Link and chat Pair remain gated until native runtime activation is enabled."
-				}
+				description="It is now under Custom bots, but is not ready on an Agent yet. Next, Link it to an Agent, then Pair an authorized chat."
 			/>
 		);
 	}

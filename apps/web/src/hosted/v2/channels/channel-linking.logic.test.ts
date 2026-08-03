@@ -7,7 +7,6 @@ import {
 	agentProviderLinkReplacementRequired,
 	agentProviderLinkStatusUnknown,
 	autoLinkAgentIdForNewCustomBot,
-	channelProviderLinkingReady,
 	pairCodeExpired,
 	pairingCommand,
 	verifiedDiscordInstallUrl,
@@ -29,7 +28,7 @@ function productionTypeScriptFiles(directory: string): string[] {
 	});
 }
 
-describe("hosted channel instructions and gates", () => {
+describe("hosted channel instructions and admission rules", () => {
 	test("renders the exact command accepted by the channel backend", () => {
 		expect(pairingCommand("BCDFGHJKLM")).toBe("/clawdi_pair BCDFGHJKLM");
 	});
@@ -115,16 +114,12 @@ describe("hosted channel instructions and gates", () => {
 		expect(agentProviderLinkStatusUnknown("openclaw", "telegram", undefined)).toBe(true);
 	});
 
-	test("keeps WhatsApp gated now and applies replacement semantics when linking is ready", () => {
+	test("uses explicit WhatsApp linking with the same replacement semantics", () => {
 		expect(autoLinkAgentIdForNewCustomBot("agent-1", "openclaw", "whatsapp", new Set())).toBeNull();
 		expect(
 			agentProviderLinkReplacementRequired("openclaw", "whatsapp", new Set(["whatsapp"])),
-		).toBe(false);
-		expect(agentProviderLinkStatusUnknown("openclaw", "whatsapp", undefined)).toBe(false);
-		expect(
-			agentProviderLinkReplacementRequired("openclaw", "whatsapp", new Set(["whatsapp"]), true),
 		).toBe(true);
-		expect(agentProviderLinkStatusUnknown("openclaw", "whatsapp", undefined, true)).toBe(true);
+		expect(agentProviderLinkStatusUnknown("openclaw", "whatsapp", undefined)).toBe(true);
 	});
 
 	test("expires pairing actions exactly at the server deadline", () => {
@@ -133,12 +128,6 @@ describe("hosted channel instructions and gates", () => {
 		expect(pairCodeExpired(deadline, Date.parse(deadline))).toBe(true);
 		expect(pairCodeExpired(deadline, Date.parse("2026-07-30T12:00:01Z"))).toBe(true);
 		expect(pairCodeExpired("not-a-timestamp", Date.parse(deadline))).toBe(true);
-	});
-
-	test("keeps unavailable providers out of direct Agent linking", () => {
-		expect(channelProviderLinkingReady("telegram")).toBe(true);
-		expect(channelProviderLinkingReady("discord")).toBe(true);
-		expect(channelProviderLinkingReady("whatsapp")).toBe(false);
 	});
 
 	test("describes the single-account runtime capability for both hosted runtimes", () => {

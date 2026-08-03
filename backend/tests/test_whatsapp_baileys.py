@@ -94,7 +94,7 @@ async def _create_whatsapp_channel_with_existing_links(
     name: str,
     agents: tuple,
 ) -> tuple[dict[str, Any], list[ChannelBotAgentLink]]:
-    """Seed pre-gate WhatsApp links while exercising current runtime routes."""
+    """Seed WhatsApp links while exercising current runtime routes."""
     response = await client.post(
         "/v1/channels",
         json={"provider": "whatsapp", "name": name},
@@ -217,10 +217,10 @@ def test_signal_sender_preserves_session_and_snapshot_contract():
     assert second.type == "pkmsg"
     assert [pre_key.id for pre_key in bundle.pre_keys] == [4]
 
-    sender.mirror_session("15551112222", 0, "15557770000", 1)
-    reply = sender.encrypt_from_established_session("15557770000", 1, b"agent reply")
+    reply = sender.encrypt_from_established_session("15551112222", 0, b"agent reply")
     assert reply.type == "msg"
-    assert sender.decrypt_from("15557770000", 1, reply) == b"agent reply"
+    assert sender.decrypt_from("15551112222", 0, reply) == b"agent reply"
+    assert len(sender.snapshot().records) == 1
 
     restored = SignalSender(sender.snapshot())
     after_restart = restored.encrypt_for("15551112222", 0, bundle, b"after restart")
@@ -634,6 +634,43 @@ async def test_respond_to_iq_handles_key_usync_and_group_shapes():
     )
     assert key_response["attrs"]["id"] == "keys"
     assert key_response["content"][0]["content"][0]["tag"] == "registration"
+
+    usync_response = await respond_to_iq(
+        {
+            "tag": "iq",
+            "attrs": {"id": "usync", "xmlns": "usync", "type": "get"},
+            "content": [
+                {
+                    "tag": "usync",
+                    "attrs": {"sid": "sid-1", "mode": "query", "last": "true"},
+                    "content": [
+                        {
+                            "tag": "list",
+                            "attrs": {},
+                            "content": [
+                                {
+                                    "tag": "user",
+                                    "attrs": {"jid": "15551112222@s.whatsapp.net"},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+        pre_key_count=0,
+        agent_user="15557770000",
+        agent_lid="900000000000004:1@lid",
+        resolve_recipient_lid=lambda jid: (
+            "184207372460253@lid" if jid == "15551112222@s.whatsapp.net" else None
+        ),
+    )
+    usync_user = usync_response["content"][0]["content"][0]["content"][0]
+    assert usync_user["attrs"]["jid"] == "15551112222@s.whatsapp.net"
+    assert usync_user["content"][0] == {
+        "tag": "lid",
+        "attrs": {"val": "184207372460253@lid"},
+    }
 
     group_response = await respond_to_iq(
         {

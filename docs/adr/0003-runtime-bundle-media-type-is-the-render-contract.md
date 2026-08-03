@@ -114,7 +114,7 @@ permanent dual-track protocol.
 - Missing or unsupported media-type `406` responses vary on `Accept` and are
   not cached.
 - Database mutation fan-out and cross-table revision triggers are unnecessary.
-- WhatsApp remains outside v2 while its CLI projection gate is disabled.
+- WhatsApp uses the same v2 render contract and Link-scoped CLI projection.
 - Offline recovery caches the effective projected manifest. Secret persistence
   remains limited to the existing root-only, reference-scoped secret cache; the
   plaintext bundle is never persisted as a whole.

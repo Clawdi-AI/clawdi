@@ -67,6 +67,7 @@ import {
 	buildOpenClawHostedProviderPatch,
 	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
 	loadRuntimeManifest as loadRuntimeManifestFromContext,
+	materializeHostedChannelCredentials,
 	type RuntimeConvergenceResult,
 	type RuntimeManifest,
 } from "../src/runtime/manifest";
@@ -1074,6 +1075,28 @@ function openClawDiscordPluginInspectFixture(pluginSource: string): Record<strin
 			resolvedName: "@openclaw/discord",
 			resolvedVersion: "1.2.3",
 			integrity: "sha512-test",
+		},
+	};
+}
+
+function openClawWhatsAppPluginInspectFixture(pluginSource: string): Record<string, unknown> {
+	return {
+		plugin: {
+			id: "whatsapp",
+			source: pluginSource,
+			origin: "global",
+			status: "loaded",
+			version: "2026.7.1",
+			enabled: true,
+		},
+		install: {
+			source: "clawhub",
+			spec: "clawhub:@openclaw/whatsapp",
+			installPath: dirname(pluginSource),
+			version: "2026.7.1",
+			integrity: "sha256-test",
+			npmIntegrity: "sha512-test",
+			clawpackSha256: "sha256-test-clawpack",
 		},
 	};
 }
@@ -6428,7 +6451,7 @@ exit 64
 		}
 	});
 
-	it("projects an empty runtime channel list as an empty projection", () => {
+	it("projects an empty runtime channel list with the invalid WhatsApp capability deny rule", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
 				schemaVersion: "clawdi.runtimeDesiredState.v1",
@@ -6458,7 +6481,12 @@ exit 64
 		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
 
 		expect(projected.manifest.projection?.channels).toEqual({});
-		expect(projected.manifest.egressProfiles?.profiles ?? []).toEqual([]);
+		expect(projected.manifest.egressProfiles?.profiles ?? []).toEqual([
+			expect.objectContaining({
+				id: "native-whatsapp-baileys-invalid-capability",
+				kind: "deny",
+			}),
+		]);
 		expect(projected.secretValues).toEqual({ "secret://provider.default.apiKey": "sk-provider" });
 	});
 
@@ -6557,13 +6585,18 @@ exit 64
 		expect(active.manifest.projection?.channels).toMatchObject({
 			telegram: { defaultAccount: accountKey, accounts: { [accountKey]: { enabled: true } } },
 		});
-		expect(active.manifest.egressProfiles?.profiles).toHaveLength(2);
+		expect(active.manifest.egressProfiles?.profiles).toHaveLength(3);
 		expect(JSON.stringify(active.manifest)).not.toContain("agent-token-v1");
 		expect(JSON.stringify(active)).not.toContain("provider-token");
 		expect(rotated.sourceRevision).toBe("b".repeat(64));
 		expect(rotated.secretValues?.[agentRef]).toBe("agent-token-v2");
 		expect(removed.manifest.projection?.channels).toEqual({});
-		expect(removed.manifest.egressProfiles?.profiles).toEqual([]);
+		expect(removed.manifest.egressProfiles?.profiles).toEqual([
+			expect.objectContaining({
+				id: "native-whatsapp-baileys-invalid-capability",
+				kind: "deny",
+			}),
+		]);
 		expect(removed.manifest.runtimes.openclaw?.run?.secretEnv ?? {}).toEqual({});
 		expect(removed.secretValues).toEqual({});
 	});
@@ -6625,23 +6658,6 @@ exit 64
 					],
 					runtime_credentials: [],
 				},
-				{
-					id: "acct-whatsapp-1",
-					provider: "whatsapp",
-					name: "Runtime WhatsApp",
-					status: "active",
-					visibility: "private",
-					runtime_links: [
-						{
-							id: "link-whatsapp-1",
-							account_id: "acct-whatsapp-1",
-							agent_id: "env_channel_secret_boundary",
-							status: "active",
-							agent_token: "whatsapp-agent-token",
-						},
-					],
-					runtime_credentials: [],
-				},
 			],
 			source: "remote-datasource",
 			sourcePath: "https://runtime.test/v1/channels",
@@ -6649,12 +6665,6 @@ exit 64
 		};
 
 		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
-		const withoutDormantWhatsApp = applyRuntimeChannelsToManifestLoad(loaded, {
-			...channels,
-			channels: channels.channels.filter((account) => account.provider !== "whatsapp"),
-		});
-
-		expect(projected).toEqual(withoutDormantWhatsApp);
 		expect(projected.secretValues).toMatchObject({
 			"secret://provider.default.apiKey": "sk-provider",
 			"secret://channels/telegram/clawdi_accttelegram/links/link-telegram-1/agent-token":
@@ -6700,12 +6710,6 @@ exit 64
 			},
 			logging: { redactHeaders: ["authorization"] },
 		});
-		expect(
-			projected.secretValues?.["secret://channels/whatsapp/clawdi_acctwhatsapp/agent-token"],
-		).toBeUndefined();
-		expect(
-			projected.secretValues?.["secret://channels/whatsapp/clawdi_acctwhatsapp/placeholder-token"],
-		).toBeUndefined();
 		expect(projected.manifest.projection?.channels).toMatchObject({
 			telegram: { enabled: true },
 			discord: {
@@ -6730,10 +6734,9 @@ exit 64
 				},
 			},
 		});
-		expect(JSON.stringify(projected.manifest.projection?.channels ?? {})).not.toContain("whatsapp");
 	});
 
-	it("gates WhatsApp runtime channel projection until upstream support is ready", () => {
+	it("projects managed WhatsApp auth, Link-scoped egress, and stock OpenClaw config", () => {
 		const accountId = "00000000-0000-0000-0000-000000000001";
 		const linkId = "link-whatsapp-1";
 		const credentialId = "credential-whatsapp-1";
@@ -6792,6 +6795,14 @@ exit 64
 									advSecretKey: "wa-adv-secret",
 									me: { id: "15551234567:1@s.whatsapp.net" },
 								},
+								authCert: {
+									SERIAL: 7,
+									ISSUER: "clawdi",
+									PUBLIC_KEY: {
+										type: "Buffer",
+										data: Buffer.alloc(32, 7).toString("base64"),
+									},
+								},
 							},
 						},
 					],
@@ -6803,16 +6814,38 @@ exit 64
 		};
 
 		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
-
-		expect(projected.manifest.projection?.channels).toEqual({});
-		expect(projected.manifest.projection?.channelCredentials).toEqual([]);
-		expect(projected.manifest.egressProfiles?.profiles).toEqual([]);
-		expect(JSON.stringify(projected.manifest)).not.toContain(accountId);
-		expect(JSON.stringify(projected.manifest)).not.toContain("baileys");
+		const accountKey = "clawdi_000000000000";
+		expect(projected.manifest.projection?.channels).toMatchObject({
+			whatsapp: {
+				enabled: true,
+				defaultAccount: accountKey,
+				accounts: {
+					[accountKey]: {
+						enabled: true,
+						dmPolicy: "allowlist",
+						allowFrom: ["*"],
+					},
+				},
+			},
+		});
+		expect(projected.manifest.projection?.channelCredentials).toEqual([
+			expect.objectContaining({
+				provider: "whatsapp",
+				kind: "whatsapp_baileys_auth_state",
+				accountId,
+				accountKey,
+				linkId,
+				credentialId,
+			}),
+		]);
+		expect(projected.manifest.egressProfiles?.profiles.map((profile) => profile.id)).toEqual([
+			expect.stringMatching(/^native-whatsapp-baileys-[a-f0-9]{16}$/),
+			"native-whatsapp-baileys-invalid-capability",
+		]);
 		expect(JSON.stringify(projected.manifest)).not.toContain("wa-agent-token");
 		expect(JSON.stringify(projected.manifest)).not.toContain("wa-adv-secret");
-		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("wa-agent-token");
-		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("wa-adv-secret");
+		expect(JSON.stringify(projected.secretValues ?? {})).toContain("wa-agent-token");
+		expect(JSON.stringify(projected.secretValues ?? {})).toContain("wa-adv-secret");
 	});
 
 	it("removes stale channel-driven egress profiles when runtime channels are disabled", () => {
@@ -6909,6 +6942,7 @@ exit 64
 
 		expect(projected.manifest.egressProfiles?.profiles.map((profile) => profile.id)).toEqual([
 			"explicit-provider-profile",
+			"native-whatsapp-baileys-invalid-capability",
 		]);
 	});
 
@@ -6978,6 +7012,7 @@ exit 64
 		expect(projected.manifest.egressProfiles?.profiles.map((profile) => profile.id)).toEqual([
 			"native-telegram-clawdi_accttelegram-managed",
 			"native-telegram-clawdi_accttelegram-file-managed",
+			"native-whatsapp-baileys-invalid-capability",
 		]);
 	});
 
@@ -12685,6 +12720,13 @@ exit 64
 		};
 
 		const projected = applyRuntimeChannelsToManifestLoad(load, channels, paths);
+		const projectedChannels = projected.manifest.projection?.channels;
+		if (!projectedChannels) throw new Error("missing managed channel projection");
+		projectedChannels.whatsapp = {
+			enabled: true,
+			defaultAccount: "clawdi_acctwhatsapp",
+			accounts: { clawdi_acctwhatsapp: { enabled: true } },
+		};
 		const convergence = convergeRuntimeManifest(projected, paths);
 
 		expect(convergence.installErrors).toEqual([]);
@@ -12705,6 +12747,32 @@ exit 64
 		expect(parsedHermesConfig.thread_sessions_per_user).toBe(false);
 		expect(parsedHermesConfig).not.toHaveProperty("discord.allow_from");
 		expect(parsedHermesConfig).not.toHaveProperty("discord.group_allow_from");
+		expect(parsedHermesConfig).toMatchObject({
+			whatsapp: {
+				enabled: true,
+				dm_policy: "allowlist",
+				group_policy: "open",
+				allow_from: ["*"],
+				group_allow_from: ["*"],
+			},
+			platforms: {
+				whatsapp: {
+					enabled: true,
+					extra: {
+						dm_policy: "allowlist",
+						group_policy: "open",
+						allow_from: ["*"],
+						group_allow_from: ["*"],
+					},
+				},
+			},
+		});
+		expect(
+			JSON.stringify({
+				whatsapp: parsedHermesConfig.whatsapp,
+				platformWhatsapp: parsedHermesConfig.platforms?.whatsapp,
+			}),
+		).not.toContain('"dm_policy":"open"');
 		expect(parsedHermesConfig).not.toHaveProperty("streaming.transport");
 		expect(parsedHermesConfig).toMatchObject({
 			custom_root: "keep",
@@ -12822,7 +12890,7 @@ exit 64
 		expect(clearedHermesConfig).not.toHaveProperty("display.platforms.telegram.streaming");
 	});
 
-	it("keeps Hermes native WhatsApp disabled until upstream websocket support is ready", () => {
+	it("projects and removes Hermes native WhatsApp through the stock adapter config", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -12916,6 +12984,14 @@ exit 64
 							material: {
 								schemaVersion: "clawdi.whatsappBaileysAuthState.v1",
 								creds,
+								authCert: {
+									SERIAL: 7,
+									ISSUER: "clawdi",
+									PUBLIC_KEY: {
+										type: "Buffer",
+										data: Buffer.alloc(32, 7).toString("base64"),
+									},
+								},
 							},
 						},
 					],
@@ -12928,63 +13004,49 @@ exit 64
 
 		const projected = applyRuntimeChannelsToManifestLoad(load, channels);
 		const credentialProjection = projected.manifest.projection?.channelCredentials as unknown[];
-		expect(credentialProjection).toEqual([]);
-		expect(JSON.stringify(projected.manifest)).not.toContain("wa-hermes-secret");
-		expect(JSON.stringify(projected)).not.toContain("CLAWDI_WHATSAPP_LINK_CAPABILITY");
-		expect(JSON.stringify(projected)).not.toContain("x-clawdi-whatsapp-link-capability");
-		expect(projected.secretValues?.[credentialSecretRef]).toBeUndefined();
-		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("wa-hermes-secret");
-
-		const convergence = convergeRuntimeManifest(projected, getRuntimePaths());
-
-		expect(convergence.installErrors).toEqual([]);
-		expect(existsSync(sessionDir)).toBe(false);
-		const hermesConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
-		expect(hermesConfig).not.toContain("whatsapp:");
-		expect(hermesConfig).not.toContain(`session_path: ${sessionDir}`);
-		expect(hermesConfig).not.toContain("/v1/channels/whatsapp/baileys");
-		expect(hermesConfig).not.toContain("wa-hermes-secret");
-
-		const runConfig = JSON.parse(
-			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
-		);
-		expect(runConfig.env.HERMES_EXISTING_ENV).toBe("kept");
-		expect(runConfig.env.WHATSAPP_ENABLED).toBeUndefined();
-		expect(runConfig.env.WHATSAPP_MODE).toBeUndefined();
-		expect(runConfig.env.WHATSAPP_ALLOWED_USERS).toBeUndefined();
-		expect(runConfig.secretEnv.HERMES_WA_CREDS_JSON).toBeUndefined();
-		expect(JSON.stringify(runConfig)).not.toContain("wa-hermes-secret");
-		const hermesEnv = readSystemdEnvFile(getRuntimePaths(), "hermes-gateway");
-		expect(hermesEnv).not.toContain("WHATSAPP_ENABLED");
-		expect(hermesEnv).not.toContain("WHATSAPP_MODE");
-		expect(hermesEnv).not.toContain("WHATSAPP_ALLOWED_USERS");
-		expect(hermesEnv).not.toContain("HERMES_WA_CREDS_JSON");
-		expect(hermesEnv).not.toContain("CLAWDI_WHATSAPP_LINK_CAPABILITY");
-		expect(hermesEnv).not.toContain("wa-hermes-secret");
-
-		const removed = convergeRuntimeManifest(
-			applyRuntimeChannelsToManifestLoad(load, {
-				channels: [],
-				source: "remote-datasource",
-				sourcePath: "https://runtime.test/v1/channels",
-				etag: testBundleEtag("empty-hermes-whatsapp"),
+		expect(credentialProjection).toEqual([
+			expect.objectContaining({
+				provider: "whatsapp",
+				kind: "whatsapp_baileys_auth_state",
+				accountId,
+				accountKey,
+				linkId: "link-whatsapp-hermes",
+				credentialId,
+				authDir: sessionDir,
+				targets: { hermes: { authDir: sessionDir } },
 			}),
-			getRuntimePaths(),
-		);
+		]);
+		expect(JSON.stringify(projected.manifest)).not.toContain("wa-hermes-secret");
+		expect(JSON.stringify(projected)).toContain("x-clawdi-whatsapp-link-capability");
+		expect(projected.secretValues?.[credentialSecretRef]).toContain("wa-hermes-secret");
+		expect(projected.manifest.projection?.channels).toMatchObject({
+			whatsapp: {
+				accounts: {
+					[accountKey]: {
+						dmPolicy: "allowlist",
+						allowFrom: ["*"],
+					},
+				},
+			},
+		});
+		expect(projected.manifest.runtimes.hermes?.run?.env).toMatchObject({
+			HERMES_EXISTING_ENV: "kept",
+			WHATSAPP_MODE: "bot",
+			WHATSAPP_ALLOWED_USERS: "*",
+		});
+		materializeHostedChannelCredentials(projected.manifest, projected.secretValues, home);
+		expect(existsSync(sessionDir)).toBe(true);
 
-		expect(removed.installErrors).toEqual([]);
+		const removed = applyRuntimeChannelsToManifestLoad(load, {
+			channels: [],
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/v1/channels",
+			etag: testBundleEtag("empty-hermes-whatsapp"),
+		});
+		materializeHostedChannelCredentials(removed.manifest, removed.secretValues, home);
 		expect(existsSync(sessionDir)).toBe(false);
-		const clearedConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
-		expect(clearedConfig).not.toContain("whatsapp:");
-		expect(clearedConfig).not.toContain(sessionDir);
-		const clearedRunConfig = JSON.parse(
-			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
-		);
-		expect(clearedRunConfig.env.WHATSAPP_ENABLED).toBeUndefined();
-		expect(clearedRunConfig.secretEnv.HERMES_WA_CREDS_JSON).toBeUndefined();
-		expect(readSystemdEnvFile(getRuntimePaths(), "hermes-gateway")).not.toContain(
-			"HERMES_WA_CREDS_JSON",
-		);
+		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_MODE).toBeUndefined();
+		expect(removed.manifest.runtimes.hermes?.run?.env?.WHATSAPP_ALLOWED_USERS).toBeUndefined();
 	});
 
 	it("clears managed Hermes channels without touching user-owned WhatsApp settings", () => {
@@ -13112,8 +13174,8 @@ exit 64
 		expect(runConfig.env.TELEGRAM_ALLOW_ALL_USERS).toBeUndefined();
 		expect(runConfig.env.DISCORD_ALLOW_ALL_USERS).toBeUndefined();
 		expect(runConfig.env.WHATSAPP_ENABLED).toBe("true");
-		expect(runConfig.env.WHATSAPP_MODE).toBe("bot");
-		expect(runConfig.env.WHATSAPP_ALLOWED_USERS).toBe("*");
+		expect(runConfig.env.WHATSAPP_MODE).toBeUndefined();
+		expect(runConfig.env.WHATSAPP_ALLOWED_USERS).toBeUndefined();
 		expect(runConfig.secretEnv.TELEGRAM_BOT_TOKEN).toBeUndefined();
 		expect(runConfig.secretEnv.DISCORD_BOT_TOKEN).toBeUndefined();
 		expect(runConfig.secretEnv.HERMES_WA_CREDS_JSON).toBe(
@@ -13124,15 +13186,25 @@ exit 64
 		expect(hermesEnv).not.toContain("DISCORD_BOT_TOKEN");
 		expect(hermesEnv).toContain("HERMES_WA_CREDS_JSON");
 		expect(hermesEnv).toContain("WHATSAPP_ENABLED");
+		expect(hermesEnv).not.toContain("WHATSAPP_MODE");
+		expect(hermesEnv).not.toContain("WHATSAPP_ALLOWED_USERS");
 	});
 
-	it("does not emit an OpenClaw WhatsApp delete while the native gate is false", () => {
+	it("isolates OpenClaw WhatsApp DMs and clears stale managed config", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "clawdi");
 		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
 		const openclawPatch = join(root, "openclaw-channel-delete-patch.jsonl");
+		const openclawPluginSource = join(
+			home,
+			".openclaw",
+			"extensions",
+			"whatsapp",
+			"dist",
+			"index.js",
+		);
 		mkdirSync(join(home, ".openclaw", "bin"), { recursive: true });
 		mkdirSync(workspace, { recursive: true });
 		writeFileSync(
@@ -13144,9 +13216,18 @@ if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin
   printf '\\n---\\n' >> '${openclawPatch}'
   exit 0
 fi
+if [ "\${1:-}" = "--version" ]; then
+  printf 'openclaw 2026.7.1\\n'
+  exit 0
+fi
 if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
-  echo "plugin install should not run for empty channels" >&2
-  exit 64
+  mkdir -p '${dirname(openclawPluginSource)}'
+  printf 'export const whatsappPlugin = true;\\n' > '${openclawPluginSource}'
+  exit 0
+fi
+if [ "$*" = "plugins inspect whatsapp --json" ]; then
+  printf '%s\\n' '${JSON.stringify(openClawWhatsAppPluginInspectFixture(openclawPluginSource))}'
+  exit 0
 fi
 exit 0
 `,
@@ -13180,7 +13261,18 @@ exit 0
 				},
 				projection: {
 					system: { home, workspace },
-					channels: {},
+					channels: {
+						whatsapp: {
+							enabled: true,
+							defaultAccount: "clawdi_whatsapp",
+							accounts: {
+								clawdi_whatsapp: {
+									enabled: true,
+									authDir: join(home, ".openclaw", "credentials", "whatsapp"),
+								},
+							},
+						},
+					},
 				},
 				recovery: {},
 			},
@@ -13191,15 +13283,27 @@ exit 0
 		};
 
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+		const removed: RuntimeManifestLoad = {
+			...loaded,
+			manifest: {
+				...loaded.manifest,
+				generation: 9,
+				projection: { ...loaded.manifest.projection, channels: {} },
+			},
+		};
+		const removedConvergence = convergeRuntimeManifest(removed, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		const patchText = readFileSync(openclawPatch, "utf-8");
-		expect(patchText).toContain('"telegram": null');
-		expect(patchText).toContain('"discord": null');
-		expect(patchText).not.toContain('"whatsapp"');
-		expect(patchText).not.toContain('"$patch"');
-		expect(patchText).not.toContain('"botToken"');
-		expect(patchText).toContain('"dmScope": null');
+		expect(removedConvergence.installErrors).toEqual([]);
+		const patches = readFileSync(openclawPatch, "utf-8")
+			.split("\n---\n")
+			.filter((entry) => entry.trim().length > 0)
+			.map((entry) => JSON.parse(entry));
+		expect(patches).toHaveLength(2);
+		expect(patches[0].channels.whatsapp.accounts).toHaveProperty("clawdi_whatsapp");
+		expect(patches[0].session).toEqual({ dmScope: "per-account-channel-peer" });
+		expect(patches[1].channels.whatsapp).toBeNull();
+		expect(patches[1].session).toEqual({ dmScope: null });
 	});
 
 	it("does not mutate live config when an OpenClaw channel plugin install fails", () => {
@@ -13293,41 +13397,25 @@ exit 0
 		}
 	});
 
-	it("keeps OpenClaw WhatsApp materialization disabled until upstream support is ready", () => {
+	it("materializes, rotates, and removes OpenClaw managed WhatsApp auth", () => {
 		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "clawdi");
 		const accountKey = "clawdi_whatsapp_runtime";
 		const accountId = "00000000-0000-0000-0000-000000000001";
 		const authDir = join(home, ".openclaw", "credentials", "whatsapp", accountKey);
-		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
-		const openclawPatch = join(root, "openclaw-whatsapp-auth-patch.jsonl");
-		const openclawPluginInstalls = join(root, "openclaw-whatsapp-plugin-installs.txt");
-		mkdirSync(dirname(openclawBin), { recursive: true });
 		mkdirSync(workspace, { recursive: true });
-		writeFileSync(
-			openclawBin,
-			`#!/usr/bin/env bash
-set -euo pipefail
-if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
-  cat >> '${openclawPatch}'
-  printf '\\n---\\n' >> '${openclawPatch}'
-  exit 0
-fi
-if [ "\${1:-}" = "plugins" ] && [ "\${2:-}" = "install" ]; then
-  printf '%s\\n' "\${3:-}" >> '${openclawPluginInstalls}'
-  exit 0
-fi
-printf 'unexpected openclaw command: %s\\n' "$*" >&2
-exit 64
-`,
-		);
-		chmodSync(openclawBin, 0o700);
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
+		const managedMetadata = {
+			schemaVersion: "clawdi.managedWhatsAppSocket.v1",
+			capability: `clawdi_${"a".repeat(32)}`,
+			authCert: {
+				SERIAL: 7,
+				ISSUER: "clawdi",
+				PUBLIC_KEY: {
+					type: "Buffer",
+					data: Buffer.alloc(32, 7).toString("base64"),
+				},
+			},
+		};
 
 		const credentialSecretRef = (credentialId: string) =>
 			`secret://channels/whatsapp/${accountKey}/credentials/${credentialId}/creds-json`;
@@ -13367,8 +13455,6 @@ exit 64
 								accounts: {
 									[accountKey]: {
 										enabled: true,
-										wsUrl: "wss://cloud-api.test/v1/channels/whatsapp/baileys",
-										token: "wa-runtime-agent-token",
 										authDir,
 									},
 								},
@@ -13433,42 +13519,37 @@ exit 64
 			advSecretKey: "wa-materialized-secret",
 			me: { id: "15551234567:1@s.whatsapp.net" },
 			noiseKey: { private: { type: "Buffer", data: "AQID" } },
+			additionalData: { "clawdi.managedWhatsAppSocket": managedMetadata },
 		};
 		const rotatedCreds = {
 			advSecretKey: "wa-rotated-secret",
 			me: { id: "15557654321:1@s.whatsapp.net" },
 			noiseKey: { private: { type: "Buffer", data: "BAUG" } },
+			additionalData: { "clawdi.managedWhatsAppSocket": managedMetadata },
 		};
 
-		const initial = convergeRuntimeManifest(
-			manifestWithCredential("credential-whatsapp-1", initialCreds, 10),
-			getRuntimePaths(),
+		const initial = manifestWithCredential("credential-whatsapp-1", initialCreds, 10);
+		materializeHostedChannelCredentials(initial.manifest, initial.secretValues, home);
+		expect(readFileSync(join(authDir, "creds.json"), "utf8")).toContain("wa-materialized-secret");
+
+		const rotated = manifestWithCredential("credential-whatsapp-2", rotatedCreds, 11);
+		materializeHostedChannelCredentials(rotated.manifest, rotated.secretValues, home);
+		const rotatedFile = readFileSync(join(authDir, "creds.json"), "utf8");
+		expect(rotatedFile).toContain("wa-rotated-secret");
+		expect(rotatedFile).not.toContain("wa-materialized-secret");
+		expect(readFileSync(join(authDir, ".clawdi-managed-whatsapp-auth.json"), "utf8")).toContain(
+			"credential-whatsapp-2",
 		);
-		const rotated = convergeRuntimeManifest(
-			manifestWithCredential("credential-whatsapp-2", rotatedCreds, 11),
-			getRuntimePaths(),
+
+		materializeHostedChannelCredentials(
+			unlinkedManifest.manifest,
+			unlinkedManifest.secretValues,
+			home,
 		);
-
-		expect(initial.installErrors).toEqual([]);
-		expect(rotated.installErrors).toEqual([]);
-		const patchText = readFileSync(openclawPatch, "utf-8");
-		expect(patchText).not.toContain('"whatsapp"');
-		expect(patchText).not.toContain('"wsUrl"');
-		expect(patchText).not.toContain('"authDir"');
-		expect(patchText).not.toContain(authDir);
-		expect(patchText).not.toContain("wa-runtime-agent-token");
-		expect(patchText).not.toContain("wa-materialized-secret");
-		expect(patchText).not.toContain("wa-rotated-secret");
-		expect(existsSync(openclawPluginInstalls)).toBe(false);
-		expect(existsSync(authDir)).toBe(false);
-
-		const removed = convergeRuntimeManifest(unlinkedManifest, getRuntimePaths());
-
-		expect(removed.installErrors).toEqual([]);
 		expect(existsSync(authDir)).toBe(false);
 	});
 
-	it("removes stale OpenClaw WhatsApp auth state while upstream support is gated", () => {
+	it("preserves the last good OpenClaw WhatsApp auth when the next secret is missing", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -13548,8 +13629,6 @@ exit 64
 							accounts: {
 								[accountKey]: {
 									enabled: true,
-									wsUrl: "wss://cloud-api.test/v1/channels/whatsapp/baileys",
-									token: "wa-runtime-agent-token",
 									authDir,
 								},
 							},
@@ -13574,16 +13653,13 @@ exit 64
 			secretValues: {},
 		};
 
-		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
-
-		expect(convergence.installErrors).toEqual([]);
-		expect(existsSync(authDir)).toBe(false);
-		const patchText = readFileSync(openclawPatch, "utf-8");
-		expect(patchText).not.toContain('"whatsapp"');
-		expect(patchText).not.toContain('"wsUrl"');
-		expect(patchText).not.toContain("wa-runtime-agent-token");
+		expect(() => convergeRuntimeManifest(loaded, getRuntimePaths())).toThrow(
+			`missing WhatsApp auth state secret for ${accountKey}/credential-missing`,
+		);
+		expect(existsSync(authDir)).toBe(true);
+		expect(readFileSync(join(authDir, "creds.json"), "utf8")).toContain("stale-whatsapp-secret");
+		expect(existsSync(openclawPatch)).toBe(false);
 		expect(existsSync(openclawPluginInstalls)).toBe(false);
-		expect(JSON.stringify(convergence.manifest)).not.toContain("stale-whatsapp-secret");
 	});
 
 	it("removes stale native channels when a later projection omits them", () => {

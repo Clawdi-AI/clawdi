@@ -90,7 +90,7 @@ describe("WhatsApp linked-device onboarding", () => {
 		expect(connected).toContain("WhatsApp account connected");
 		expect(connected).toContain("is not ready on an Agent");
 		expect(connected).toContain("under Custom bots");
-		expect(connected).toContain("Agent Link and chat Pair remain gated");
+		expect(connected).toContain("Link it to an Agent, then Pair an authorized chat");
 	});
 
 	test("renders a directly copyable manual code and terminal recovery states", () => {

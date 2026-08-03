@@ -194,12 +194,13 @@ HERMES_AGENT_TYPE = "hermes"
 OPENCLAW_AGENT_TYPE = "openclaw"
 HOSTED_RUNTIME_AGENT_TYPES = frozenset({HERMES_AGENT_TYPE, OPENCLAW_AGENT_TYPE})
 HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS = frozenset(
-    {CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD, CHANNEL_PROVIDER_WHATSAPP}
+    {
+        CHANNEL_PROVIDER_TELEGRAM,
+        CHANNEL_PROVIDER_DISCORD,
+        CHANNEL_PROVIDER_WHATSAPP,
+    }
 )
 STRICT_V2_AGENT_LINK_DETAIL = "Only Cloud Agents can be linked or paired with channels."
-WHATSAPP_COMING_SOON_DETAIL = (
-    "WhatsApp channels are coming soon for hosted agents. Telegram and Discord are available now."
-)
 TELEGRAM_UPDATE_RETENTION = timedelta(hours=24)
 
 
@@ -207,6 +208,7 @@ def hosted_agent_provider_link_limit_detail(provider: str, *, duplicate: bool = 
     label = {
         CHANNEL_PROVIDER_TELEGRAM: "Telegram",
         CHANNEL_PROVIDER_DISCORD: "Discord",
+        CHANNEL_PROVIDER_WHATSAPP: "WhatsApp",
     }.get(provider, provider.title())
     if duplicate:
         return (
@@ -981,8 +983,6 @@ async def list_strict_v2_hosted_channel_agent_ids(
     for agent, state, fence in rows:
         if not is_strict_v2_hosted_channel_agent(agent, state, fence):
             continue
-        if provider == CHANNEL_PROVIDER_WHATSAPP:
-            continue
         if provider in HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS:
             existing_link_ids = await _active_bot_agent_link_ids_for_provider(
                 db,
@@ -1017,15 +1017,6 @@ async def ensure_hosted_agent_provider_link_available(
     ).scalar_one_or_none()
     if agent is None:
         return
-
-    if (
-        account.provider == CHANNEL_PROVIDER_WHATSAPP
-        and agent.agent_type in HOSTED_RUNTIME_AGENT_TYPES
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=WHATSAPP_COMING_SOON_DETAIL,
-        )
 
     if (
         agent.agent_type not in HOSTED_RUNTIME_AGENT_TYPES
