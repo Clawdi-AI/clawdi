@@ -8,9 +8,11 @@ import {
 	QrCode,
 	RefreshCw,
 	Smartphone,
+	TriangleAlert,
 	Unplug,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -72,6 +74,15 @@ export function WhatsAppDeviceOnboarding({ onDone }: { onDone: () => void }) {
 					</p>
 				</div>
 			</div>
+			<Alert data-whatsapp-account-warning className="border-warning/30 bg-warning-muted py-2.5">
+				<TriangleAlert aria-hidden />
+				<AlertTitle>Use a dedicated WhatsApp account</AlertTitle>
+				<AlertDescription className="text-xs">
+					Clawdi connects as a linked device. Messages to this account may be handled by the Agent,
+					and replies are sent as this account. Use a separate WhatsApp account and phone number—not
+					your primary personal account.
+				</AlertDescription>
+			</Alert>
 			<p className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" role="status">
 				{readiness.isLoading ? "Checking linked-device availability…" : readinessMessage}
 			</p>

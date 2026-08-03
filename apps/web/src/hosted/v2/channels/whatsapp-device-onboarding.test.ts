@@ -9,6 +9,7 @@ process.env.VITE_CLERK_PUBLISHABLE_KEY = "pk_test_dummy";
 const { WhatsAppSessionState } = await import("./whatsapp-device-onboarding");
 
 const source = readFileSync(new URL("./whatsapp-device-onboarding.tsx", import.meta.url), "utf8");
+const normalizedSource = source.replace(/\s+/g, " ");
 const connectDialog = readFileSync(new URL("./connect-bot-dialog.tsx", import.meta.url), "utf8");
 
 function session(overrides: Partial<WhatsAppOnboardingSession> = {}): WhatsAppOnboardingSession {
@@ -52,6 +53,16 @@ describe("WhatsApp linked-device onboarding", () => {
 		expect(source).not.toContain("sm:grid-cols-2");
 		expect(source).toContain("This adds the account under Custom bots");
 		expect(source).toContain("linked-device QR");
+		expect(source).toContain("data-whatsapp-account-warning");
+		expect(source).toContain('className="border-warning/30 bg-warning-muted py-2.5"');
+		expect(normalizedSource).toContain("Use a dedicated WhatsApp account");
+		expect(normalizedSource).toContain("Clawdi connects as a linked device");
+		expect(normalizedSource).toContain("Messages to this account may be handled by the Agent");
+		expect(normalizedSource).toContain("replies are sent as this account");
+		expect(normalizedSource).toContain("not your primary personal account");
+		expect(source.indexOf("Use a dedicated WhatsApp account")).toBeLessThan(
+			source.indexOf("Connect your account"),
+		);
 		expect(connectDialog).toContain("<WhatsAppDeviceOnboarding");
 		expect(connectDialog).toContain("whitespace-normal break-words");
 		expect(connectDialog).not.toContain("min-w-0 truncate text-left");

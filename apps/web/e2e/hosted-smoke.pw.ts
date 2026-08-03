@@ -9654,6 +9654,14 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 	await expect(dialog.getByText("Your WhatsApp", { exact: true })).toBeVisible();
 	await expect(dialog.getByText("Clawdi WhatsApp", { exact: true })).toHaveCount(0);
 	await expect(dialog.locator("[data-whatsapp-account-choice] section")).toHaveCount(0);
+	let accountWarning = dialog.locator("[data-whatsapp-account-warning]");
+	await expect(accountWarning).toHaveAttribute("role", "alert");
+	await expect(
+		accountWarning.getByText("Use a dedicated WhatsApp account", { exact: true }),
+	).toBeVisible();
+	await expect(accountWarning).toContainText("Clawdi connects as a linked device");
+	await expect(accountWarning).toContainText("replies are sent as this account");
+	await expect(accountWarning).toContainText("not your primary personal account");
 	await expect(dialog.getByRole("button", { name: "Connect your account" })).toBeDisabled();
 	await expect(dialog).toContainText("isn't compatible with this deployment");
 	await expect(dialog.getByLabel("Bot token")).toHaveCount(0);
@@ -9664,6 +9672,8 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 	await page.getByRole("button", { name: "Add channel", exact: true }).click();
 	dialog = page.getByRole("dialog", { name: "Add channel" });
 	await dialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ }).click();
+	accountWarning = dialog.locator("[data-whatsapp-account-warning]");
+	await expect(accountWarning).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Connect your account" })).toBeEnabled();
 	await expect(dialog.getByRole("button", { name: "Choose from an Agent" })).toHaveCount(0);
 	await expectNoHorizontalOverflow(dialog, "WhatsApp Custom setup desktop");
@@ -9706,6 +9716,15 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 	);
 	await mobileWhatsAppProvider.click();
 	await expect(dialog.locator("[data-whatsapp-account-choice] section")).toHaveCount(0);
+	accountWarning = dialog.locator("[data-whatsapp-account-warning]");
+	await expect(accountWarning).toHaveAttribute("role", "alert");
+	await expect(
+		accountWarning.getByText("Use a dedicated WhatsApp account", { exact: true }),
+	).toBeVisible();
+	await expect(accountWarning).toContainText(
+		"Messages to this account may be handled by the Agent",
+	);
+	await expect(accountWarning).toContainText("not your primary personal account");
 	await expectNoHorizontalOverflow(dialog, "WhatsApp Custom setup at 320x568");
 	await expectNoHorizontalOverflow(page.locator("html"), "WhatsApp Custom document at 320x568");
 	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-custom-setup-320x568.png") });
