@@ -78,9 +78,9 @@ export function WhatsAppDeviceOnboarding({ onDone }: { onDone: () => void }) {
 				<TriangleAlert aria-hidden />
 				<AlertTitle>Use a dedicated WhatsApp account</AlertTitle>
 				<AlertDescription className="text-xs">
-					Clawdi connects as a linked device. Messages to this account may be handled by the Agent,
-					and replies are sent as this account. Use a separate WhatsApp account and phone number—not
-					your primary personal account.
+					Clawdi connects as a linked device. Once linked to an Agent, messages to this account may
+					be handled by the Agent, and replies are sent as this account. Use a separate WhatsApp
+					account and phone number—not your primary personal account.
 				</AlertDescription>
 			</Alert>
 			<p className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" role="status">

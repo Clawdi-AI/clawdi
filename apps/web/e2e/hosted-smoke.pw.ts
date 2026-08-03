@@ -9659,7 +9659,10 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 	await expect(
 		accountWarning.getByText("Use a dedicated WhatsApp account", { exact: true }),
 	).toBeVisible();
-	await expect(accountWarning).toContainText("Clawdi connects as a linked device");
+	await expect(accountWarning).toContainText("Clawdi connects as a linked device.");
+	await expect(accountWarning).toContainText(
+		"Once linked to an Agent, messages to this account may be handled by the Agent",
+	);
 	await expect(accountWarning).toContainText("replies are sent as this account");
 	await expect(accountWarning).toContainText("not your primary personal account");
 	await expect(dialog.getByRole("button", { name: "Connect your account" })).toBeDisabled();
@@ -9722,8 +9725,9 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 		accountWarning.getByText("Use a dedicated WhatsApp account", { exact: true }),
 	).toBeVisible();
 	await expect(accountWarning).toContainText(
-		"Messages to this account may be handled by the Agent",
+		"Once linked to an Agent, messages to this account may be handled by the Agent",
 	);
+	await expect(accountWarning).toContainText("replies are sent as this account");
 	await expect(accountWarning).toContainText("not your primary personal account");
 	await expectNoHorizontalOverflow(dialog, "WhatsApp Custom setup at 320x568");
 	await expectNoHorizontalOverflow(page.locator("html"), "WhatsApp Custom document at 320x568");
