@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import time
@@ -15,8 +14,6 @@ from fastapi import (
     Request,
     Response,
     UploadFile,
-    WebSocket,
-    WebSocketDisconnect,
     status,
 )
 from sqlalchemy import func, select
@@ -1542,32 +1539,6 @@ def _public_ws_url(path: str) -> str:
     if base.startswith("http://"):
         return "ws://" + base.removeprefix("http://") + path
     return base + path
-
-
-async def _socketio_ping_loop(websocket: WebSocket) -> None:
-    try:
-        while True:
-            await asyncio.sleep(25)
-            await websocket.send_text("2")
-    except (WebSocketDisconnect, RuntimeError):
-        return
-
-
-def _socketio_auth_token(packet: str) -> str | None:
-    payload = packet[2:]
-    if not payload:
-        return None
-    try:
-        parsed = json.loads(payload)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return (
-        _optional_str(parsed.get("apiKey"))
-        or _optional_str(parsed.get("password"))
-        or _optional_str(parsed.get("token"))
-    )
 
 
 def _binding_response(

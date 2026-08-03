@@ -3,6 +3,9 @@
 Status: implemented baseline; WhatsApp native runtime gated
 Date: 2026-08-01
 
+> iMessage/BlueBubbles portions are historical. Clawdi v2 retired that provider
+> on 2026-08-03; current provider surfaces are Telegram, Discord, and WhatsApp.
+
 This document records the implemented native-channel boundary. Product
 semantics live in
 [`../designs/native-channels-product-model.md`](../designs/native-channels-product-model.md).
@@ -23,7 +26,7 @@ requests resolve one active Link and must match that binding. Provider-wide
 credentials stay account-scoped; Agent credentials and replay state stay
 Link-scoped.
 
-Telegram, Discord, and iMessage keep their existing native backend adapters.
+Telegram and Discord keep their existing native backend adapters.
 Generic delivery, retention, and ownership code must not acquire WhatsApp-only
 payload assumptions.
 

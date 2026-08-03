@@ -17,6 +17,7 @@ from app.models.channel import (
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDER_WHATSAPP,
+    CHANNEL_PROVIDERS,
     CHANNEL_STATUS_ACTIVE,
     CHANNEL_VISIBILITY_PRIVATE,
     CHANNEL_VISIBILITY_PUBLIC,
@@ -166,7 +167,10 @@ async def list_channel_debug_events(
     db: AsyncSession,
     filters: ChannelDebugEventFilters,
 ) -> list[ChannelDebugEvent]:
-    query = select(ChannelDebugEvent).where(ChannelDebugEvent.user_id == filters.user_id)
+    query = select(ChannelDebugEvent).where(
+        ChannelDebugEvent.user_id == filters.user_id,
+        ChannelDebugEvent.provider.in_(CHANNEL_PROVIDERS),
+    )
     if filters.account_id is not None:
         query = query.where(ChannelDebugEvent.account_id == filters.account_id)
     if filters.provider:

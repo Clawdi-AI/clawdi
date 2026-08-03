@@ -1,5 +1,8 @@
 # Native Channels Product Model
 
+> **Retirement note (2026-08-03):** Clawdi v2 no longer supports iMessage or
+> BlueBubbles.
+
 This document is the product model for Clawdi-native channels. It describes
 what a "bot", "agent", "pairing", and "session" mean in the product, then maps
 those concepts to backend tables and API boundaries.
@@ -195,7 +198,7 @@ Pair flow:
 1. A user chooses an accessible channel account and one of their agents.
 2. Clawdi creates or reuses a `channel_bot_agent_links` row.
 3. Clawdi returns the one-time `/clawdi_pair <code>` command. Telegram,
-   Discord, WhatsApp, and iMessage all use this canonical spelling.
+   Discord, and WhatsApp all use this canonical spelling.
 4. The user sends the code into the external chat.
 5. Provider ingress extracts:
    - external bot account from the webhook route,
@@ -357,8 +360,8 @@ adapter exposes that tool.
 
 Unpair flow:
 
-1. The external actor sends `/clawdi_unpair`. Telegram, Discord, WhatsApp, and
-   iMessage all use this canonical spelling.
+1. The external actor sends `/clawdi_unpair`. Telegram, Discord, and WhatsApp
+   all use this canonical spelling.
 2. Provider ingress resolves the active binding for the chat.
 3. The backend verifies the command actor matches
    `ChannelBinding.paired_external_user_id`.
@@ -401,7 +404,6 @@ Provider actor extraction:
 | Telegram | `callback_query.from.id`, `message.from.id`, `sender_chat.id`, or DM chat id fallback. |
 | Discord | `author.id`, `user.id`, `member.user.id`, or interaction member user id. |
 | WhatsApp | Baileys key fields such as `participant`, `participantAlt`, `remoteJid`, or `remoteJidAlt`. Group JIDs are not used as actor ids. |
-| iMessage / BlueBubbles | Sender or handle address/id fields, with DM chat GUID fallback. |
 
 ## Agent Token Model
 
@@ -423,7 +425,6 @@ Examples of link-scoped state:
 - Discord application command shadows visible to the agent.
 - Discord Gateway replay sessions.
 - WhatsApp synthetic credentials, Noise identity, and Signal state.
-- BlueBubbles-compatible agent webhook registration.
 
 Provider-wide state stays account-scoped:
 
@@ -487,9 +488,8 @@ exits 0.
 ## Outbound URL Security
 
 Channel accounts can carry public provider endpoint overrides, such as
-Discord REST/Gateway URLs or an iMessage/BlueBubbles server URL. Agent SDK
-emulation can also persist Telegram
-and BlueBubbles webhook URLs supplied by an agent.
+Discord REST/Gateway URLs. Agent SDK emulation can also persist Telegram
+webhook URLs supplied by an agent.
 
 These values are user- or admin-supplied configuration that can drive backend
 egress. The backend must therefore validate them at both boundaries:
@@ -507,11 +507,10 @@ Required behavior:
 - Literal loopback/private/link-local/CGNAT hosts, local hostname aliases,
   `.local`/`.localhost` names, private DNS results, and unresolved DNS names
   are rejected.
-- Telegram and BlueBubbles webhook delivery only acknowledges messages after a
-  successful `2xx` or `3xx` response. Telegram makes one inline delivery attempt
-  and leaves `5xx`, network, `4xx`, and DNS failures pending for
-  `ChannelWebhookDeliveryWorker` retry or TTL drop. BlueBubbles keeps short
-  in-process retries for `5xx` or network failures.
+- Telegram webhook delivery only acknowledges messages after a successful
+  `2xx` or `3xx` response. Telegram makes one inline delivery attempt and
+  leaves `5xx`, network, `4xx`, and DNS failures pending for
+  `ChannelWebhookDeliveryWorker` retry or TTL drop.
 
 ## Message Routing Model
 
@@ -523,8 +522,8 @@ Inbound provider messages:
 4. The message is stored in `channel_messages`.
 5. If bound, the message carries `binding_id`, `bot_agent_link_id`, and the
    binding owner `user_id`.
-6. Agent-facing inbox, webhook redelivery, Gateway replay, and BlueBubbles
-   queries only read messages scoped to the token's bot-agent link.
+6. Agent-facing inbox, webhook redelivery, and Gateway replay only read
+   messages scoped to the token's bot-agent link.
 
 Unbound inbound messages:
 
@@ -628,7 +627,6 @@ Provider ingress:
 
 - `/v1/channels/telegram/{id}/webhook`
 - `/v1/channels/discord/{id}/webhook`
-- `/v1/channels/imessage/{id}/webhook`
 - `/v1/channels/discord/gateway` for agent-facing replay
 - `/v1/channels/whatsapp/baileys` for Link-bearer-authenticated Baileys-compatible WhatsApp Web
   synthetic runtime ingress. It remains gated and is not a physical provider
@@ -642,8 +640,6 @@ Agent SDK emulation:
   that validate token syntax continue to work.
 - Discord REST and Gateway-compatible routes under `/v1/channels/discord`.
 - WhatsApp synthetic Noise websocket under `/v1/channels/whatsapp/baileys`.
-- BlueBubbles-compatible REST and Socket.IO routes under
-  `/v1/channels/imessage`.
 
 ## Provider Adapter Contract
 
