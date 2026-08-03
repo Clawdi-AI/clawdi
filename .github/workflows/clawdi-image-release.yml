@@ -250,9 +250,6 @@ jobs:
              test \"\$(realpath -e '/home/phala/clawdi-whatsapp/run')\" = \
                '/home/phala/clawdi-whatsapp/run' && \
              test \"\$(stat -c '%u:%g:%a' '/home/phala/clawdi-whatsapp/run')\" = '1000:1000:770'"
-          whatsapp_cutover="$(bun run scripts/cutover-whatsapp-sidecar-containers.ts)"
-          test -n "$whatsapp_cutover"
-          kamal server exec "$whatsapp_cutover"
           kamal accessory reboot whatsapp-baileys
           kamal server exec \
             "test \"\$(docker container inspect --format '{{.Config.Image}}' 'clawdi-whatsapp-baileys')\" = \

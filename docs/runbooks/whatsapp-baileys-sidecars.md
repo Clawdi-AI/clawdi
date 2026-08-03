@@ -56,62 +56,23 @@ restrict them to the operator identity, and test restore on an isolated host.
 Done: the storage-gate command exits 0 and reports the exact fixed state and
 run directories.
 
-## One-time account-sidecar cutover
+## Release order
 
-The release workflow runs
-`scripts/cutover-whatsapp-sidecar-containers.ts` through `kamal server exec`
-before it boots the singleton. The remote script:
-
-1. read-only lists every Docker container by full immutable ID;
-2. reads only its exact container name and `service` label;
-3. accepts the singleton only as the exact pair
-   `clawdi-whatsapp-baileys` / `clawdi-whatsapp-baileys`;
-4. accepts a legacy container only when both identities exactly equal
-   `clawdi-whatsapp-baileys-<canonical-compact-uuid>`;
-5. rejects malformed, mismatched, duplicate, or otherwise unexpected Clawdi
-   WhatsApp identities before stopping anything;
-6. gracefully stops each validated legacy ID with a 30-second timeout, removes
-   only that exact container, then performs the same read-only scan again and
-   requires zero legacy containers;
-7. validates that the retired pilot root is the real, non-symlink directory
-   `/home/phala/clawdi-whatsapp-sidecars`, removes that exact root, and verifies
-   it is absent.
-
-The retired account-scoped pilot was never paired, so there is intentionally no
-state copy or migration. The script removes its one fixed host root only after
-all validated legacy containers are gone. It never removes a Docker volume and
-never targets the singleton's clean `/home/phala/clawdi-whatsapp/state` root,
-where each new session is stored directly at `/data/<provider-session-id>`.
-
-After the cutover scan succeeds, Kamal 2.12 reboots the exact singleton,
-verifies its full-SHA image, and requires its authenticated UDS healthcheck.
-Only then does the workflow deploy the new backend and channels worker. A
-failure before backend deploy leaves no legacy physical owner; it never boots
-old and new account owners together. On repeat releases, zero legacy
-containers and one exact singleton are normal.
+Kamal 2.12 reboots the exact singleton, verifies its full-SHA image, and
+requires its authenticated UDS healthcheck. Only then does the workflow deploy
+the new backend and channels worker. The singleton uses the clean fixed
+`/home/phala/clawdi-whatsapp/state` root and stores each session directly at
+`/data/<provider-session-id>`.
 
 Done: the release job exits 0 only after the exact singleton image and
 authenticated healthcheck pass, then starts `kamal deploy` for the backend.
 
 ## Rollback boundary
 
-The release permanently retires the unused account-scoped pilot containers and
-state root before booting the singleton. Do not roll back to that topology or
-recreate its directories. If the singleton or backend deployment fails, fix
-forward or deploy a backend revision that retains the singleton protocol and
-fixed state root. Never boot a legacy container while the singleton exists.
-
-## Post-success repository cleanup
-
-The same post-success review may delete these obsolete repository settings:
-
-```bash
-gh secret delete CHANNEL_WHATSAPP_BAILEYS_SIDECARS_JSON --repo Clawdi-AI/clawdi
-gh variable delete WHATSAPP_BAILEYS_HOST_ROOT --repo Clawdi-AI/clawdi
-```
-
-Deleting them is an operator follow-up, not part of this PR or release
-workflow. Never print their prior values.
+Keep the singleton protocol and fixed state root across rollback revisions.
+Once a session is paired, its directory is the sole durable credential
+authority; never boot another physical owner or restore credentials into a
+second service.
 
 ## Session lifecycle limitation
 

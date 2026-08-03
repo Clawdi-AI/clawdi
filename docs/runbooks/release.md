@@ -274,15 +274,12 @@ discoverable from account state and should be reconciled separately with
 
 ## Production Deployment Checks
 
-Managed physical WhatsApp sessions use one exact-SHA Kamal accessory and an
-explicit fail-closed account-sidecar cutover before the singleton boots. The
+Managed physical WhatsApp sessions use one exact-SHA Kamal accessory. The
 singleton must pass its authenticated healthcheck before the app deploy.
 Configure, scan, rotate, back up, restore, retire, or roll it back only through
 [`whatsapp-baileys-sidecars.md`](whatsapp-baileys-sidecars.md). Kamal does not
 update accessories as part of `kamal deploy`; the workflow's accessory reboot
-and authenticated readiness loop are required release steps. Malformed,
-mismatched, duplicate, or unexpected Clawdi WhatsApp names and service labels
-abort before any legacy container is stopped. The cutover never deletes state.
+and authenticated readiness loop are required release steps.
 
 ### Production values
 
