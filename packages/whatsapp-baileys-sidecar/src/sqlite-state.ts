@@ -6,6 +6,7 @@ import {
 	BufferJSON,
 	type CacheStore,
 	initAuthCreds,
+	jidDecode,
 	proto,
 	type SignalDataSet,
 	type SignalDataTypeMap,
@@ -770,9 +771,63 @@ function credentialsForPersistence(creds: AuthenticationCreds): AuthenticationCr
 		// survive in the physical auth database.
 		pairingCode: undefined,
 		// requestPairingCode temporarily stores the raw phone JID in `me` before
-		// authentication. A crash restarts pairing instead of retaining that input.
-		...(creds.registered ? {} : { me: undefined }),
+		// authentication. Retain it only with the complete identity evidence that
+		// rc14 produces after it verifies a successful pairing.
+		...(isLinkedAuthenticationCreds(creds) ? {} : { me: undefined }),
 	};
+}
+
+export function isLinkedAuthenticationCreds(creds: AuthenticationCreds): boolean {
+	if (creds.registered) return true;
+	return (
+		validContactIdentity(creds.me) &&
+		validSignedDeviceIdentity(creds.account) &&
+		Array.isArray(creds.signalIdentities) &&
+		creds.signalIdentities.length > 0 &&
+		creds.signalIdentities.every(validSignalIdentity)
+	);
+}
+
+function validContactIdentity(value: unknown): boolean {
+	return isRecord(value) && validIdentityJid(value.id);
+}
+
+function validSignedDeviceIdentity(value: unknown): boolean {
+	return (
+		isRecord(value) &&
+		validNonemptyBytes(value.details) &&
+		validNonemptyBytes(value.accountSignatureKey) &&
+		validNonemptyBytes(value.accountSignature) &&
+		validNonemptyBytes(value.deviceSignature)
+	);
+}
+
+function validSignalIdentity(value: unknown): boolean {
+	return (
+		isRecord(value) &&
+		isRecord(value.identifier) &&
+		validIdentityJid(value.identifier.name) &&
+		nonNegativeSafeInteger(value.identifier.deviceId) &&
+		validNonemptyBytes(value.identifierKey)
+	);
+}
+
+function validIdentityJid(value: unknown): boolean {
+	if (typeof value !== "string" || value.length === 0 || value.length > 512) return false;
+	const separator = value.indexOf("@");
+	if (separator < 1 || separator !== value.lastIndexOf("@")) return false;
+	if (!/^[^@:\s]+(?::[0-9]+)?$/.test(value.slice(0, separator))) return false;
+	const decoded = jidDecode(value);
+	return (
+		decoded !== undefined &&
+		decoded.user.length > 0 &&
+		["s.whatsapp.net", "lid", "hosted", "hosted.lid"].includes(decoded.server) &&
+		(decoded.device === undefined || nonNegativeSafeInteger(decoded.device))
+	);
+}
+
+function validNonemptyBytes(value: unknown): boolean {
+	return isByteArray(value) && value.byteLength > 0;
 }
 
 function validKeyPair(value: unknown): boolean {

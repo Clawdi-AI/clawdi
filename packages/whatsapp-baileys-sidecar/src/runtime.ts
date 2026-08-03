@@ -15,6 +15,7 @@ import pino, { type Logger } from "pino";
 import { AUDITED_PROVIDER_RELEASE } from "./audited-version.js";
 import type { SidecarSessionConfig } from "./config.js";
 import {
+	isLinkedAuthenticationCreds,
 	type ProviderMessageEvent,
 	type ProviderMessageEventInput,
 	type ProviderStateFailureOperation,
@@ -137,7 +138,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		// An unregistered socket may already be generating or displaying a QR;
 		// preserve that sole physical owner instead of resetting its lifecycle.
 		if (this.socket) return;
-		if (!this.providerState.state.creds.registered) {
+		if (!isLinkedAuthenticationCreds(this.providerState.state.creds)) {
 			this.status = "stopped";
 			return;
 		}
@@ -177,7 +178,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		return {
 			status: this.status,
 			connected: this.status === "connected",
-			registered: this.providerState.state.creds.registered,
+			registered: isLinkedAuthenticationCreds(this.providerState.state.creds),
 			sessionId: this.config.sessionId,
 			advertisedRelease: AUDITED_PROVIDER_RELEASE,
 			uptimeSeconds: Math.floor((Date.now() - this.startedAt) / 1000),
@@ -191,7 +192,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	}
 
 	pairingStatus(): PairingStatus {
-		const registered = this.providerState.state.creds.registered;
+		const registered = isLinkedAuthenticationCreds(this.providerState.state.creds);
 		if (registered) this.clearPairingSecrets();
 		const qrIsCurrent =
 			this.pairingQr !== undefined &&
@@ -256,7 +257,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 
 	async cancelPairing(): Promise<PairingStatus> {
 		return await this.runLifecycle(async () => {
-			if (this.providerState.state.creds.registered) {
+			if (isLinkedAuthenticationCreds(this.providerState.state.creds)) {
 				throw new PairingLifecycleError("registered_session_requires_logout");
 			}
 			return await this.cancelPairingUnsafe();
@@ -265,7 +266,9 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 
 	async logoutPairing(): Promise<PairingStatus> {
 		return await this.runLifecycle(async () => {
-			if (!this.providerState.state.creds.registered) return await this.cancelPairingUnsafe();
+			if (!isLinkedAuthenticationCreds(this.providerState.state.creds)) {
+				return await this.cancelPairingUnsafe();
+			}
 			const socket = this.socket;
 			if (!socket || this.status !== "connected") {
 				throw new PairingLifecycleError("registered_session_not_connected");
@@ -276,7 +279,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			} catch (error: unknown) {
 				// A failed request does not confirm companion-device removal. Keep
 				// this socket so a retry cannot create a second physical owner.
-				if (!this.providerState.state.creds.registered) {
+				if (!isLinkedAuthenticationCreds(this.providerState.state.creds)) {
 					if (this.physicalAuthResetGeneration === resetGeneration) this.resetPhysicalAuth();
 					if (this.socket === socket) this.socket = null;
 					this.clearPairingSecrets();
@@ -297,7 +300,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 
 	async retryPairing(): Promise<PairingStatus> {
 		return await this.runLifecycle(async () => {
-			if (!this.providerState.state.creds.registered) {
+			if (!isLinkedAuthenticationCreds(this.providerState.state.creds)) {
 				throw new PairingLifecycleError("unregistered_session_requires_pairing");
 			}
 			if (!this.socket) {
@@ -373,7 +376,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		socket.ev.on("creds.update", (update) => {
 			try {
 				this.providerState.saveCreds(update);
-				if (update.registered === true || this.providerState.state.creds.registered) {
+				if (isLinkedAuthenticationCreds(this.providerState.state.creds)) {
 					this.clearPairingSecrets();
 				}
 			} catch (error: unknown) {
@@ -483,7 +486,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		if (this.stateClosed || this.fatalReason) {
 			throw new PairingLifecycleError("provider_state_unavailable");
 		}
-		if (this.providerState.state.creds.registered) {
+		if (isLinkedAuthenticationCreds(this.providerState.state.creds)) {
 			throw new PairingLifecycleError("physical_account_already_registered");
 		}
 	}
