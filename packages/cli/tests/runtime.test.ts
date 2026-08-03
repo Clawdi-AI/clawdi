@@ -7678,6 +7678,34 @@ fi
 					applyReceiptId: "apply-receipt-generation-0031",
 					bootNonce: "boot-nonce-generation-0001",
 				},
+				{
+					...CANONICAL_TEST_CONTEXT,
+					cliPackageSpec: "clawdi@0.13.1-test",
+				},
+			);
+			const committedBeforeMismatchedCliPackage = readFileSync(paths.appliedState, "utf-8");
+			writeFileSync(systemctlLog, "");
+			process.exitCode = undefined;
+			await runtimeWatch({ once: true, json: true });
+
+			expect(process.exitCode).toBe(1);
+			expect(JSON.parse(logs.at(-1) ?? "{}")).toMatchObject({
+				status: "error",
+				mode: "manifest-rejected",
+			});
+			expect(JSON.parse(logs.at(-1) ?? "{}").error).toContain(
+				"runtime context CLI package clawdi@0.13.1-test does not match manifest CLI package clawdi@0.13.0-test",
+			);
+			expect(readFileSync(paths.appliedState, "utf-8")).toBe(committedBeforeMismatchedCliPackage);
+			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
+
+			setRuntimeApplyContextFixture(
+				{
+					generation,
+					manifestETag: '"hosted-control-plane-generation-31"',
+					applyReceiptId: "apply-receipt-generation-0031",
+					bootNonce: "boot-nonce-generation-0001",
+				},
 				CANONICAL_TEST_CONTEXT,
 			);
 			process.exitCode = undefined;
@@ -7720,7 +7748,7 @@ fi
 				applyReceiptId: "apply-receipt-generation-0031",
 				bootNonce: "boot-nonce-generation-0001",
 			});
-			expect(watchFetch.captured).toHaveLength(10);
+			expect(watchFetch.captured).toHaveLength(12);
 			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
 				"--user restart openclaw-gateway.service",
 			);
@@ -8928,7 +8956,6 @@ fi
 
 	it("runtime watch hands off before convergence and the new CLI completes the transaction", async () => {
 		installSuccessfulSystemctlFixture();
-		setRuntimeApplyGeneration(13, CANONICAL_TEST_CONTEXT);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -8938,6 +8965,11 @@ fi
 		const previousLog = console.log;
 		const previousPath = process.env.PATH;
 		const currentVersion = getCliVersion();
+		const cliContext = {
+			...CANONICAL_TEST_CONTEXT,
+			cliPackageSpec: `clawdi@${currentVersion}`,
+		};
+		setRuntimeApplyGeneration(13, cliContext);
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
@@ -9067,7 +9099,7 @@ chmod +x "$prefix/bin/clawdi"
 
 			logs.length = 0;
 			process.exitCode = undefined;
-			setRuntimeApplyGeneration(13, CANONICAL_TEST_CONTEXT);
+			setRuntimeApplyGeneration(13, cliContext);
 			await runtimeWatch({ once: true, json: true });
 
 			expect(process.exitCode ?? 0).toBe(0);
@@ -9621,7 +9653,6 @@ fi
 
 	it("runtime watch reapplies transparent egress across CLI self-upgrade", async () => {
 		installSuccessfulSystemctlFixture();
-		setRuntimeApplyGeneration(1, CANONICAL_TEST_CONTEXT);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -9631,6 +9662,11 @@ fi
 		const previousLog = console.log;
 		const previousPath = process.env.PATH;
 		const currentVersion = getCliVersion();
+		const cliContext = {
+			...CANONICAL_TEST_CONTEXT,
+			cliPackageSpec: `clawdi@${currentVersion}`,
+		};
+		setRuntimeApplyGeneration(1, cliContext);
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
@@ -9825,7 +9861,7 @@ fi
 		]);
 
 		try {
-			setRuntimeApplyGeneration(2, CANONICAL_TEST_CONTEXT);
+			setRuntimeApplyGeneration(2, cliContext);
 			await runtimeWatch({ once: true, json: true });
 
 			if (process.exitCode !== undefined && process.exitCode !== 0) {
@@ -10879,7 +10915,10 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("runtime watch never enters a failing projection after CLI activation", async () => {
-		setRuntimeApplyGeneration(16, CANONICAL_TEST_CONTEXT);
+		setRuntimeApplyGeneration(16, {
+			...CANONICAL_TEST_CONTEXT,
+			cliPackageSpec: "clawdi@0.13.3-beta.0",
+		});
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -11027,7 +11066,6 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 	});
 
 	it("rolls back a CLI upgrade when first converge fails for an already-applied manifest", async () => {
-		setRuntimeApplyGeneration(18, CANONICAL_TEST_CONTEXT);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -11038,6 +11076,10 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 		const previousLog = console.log;
 		const previousPath = process.env.PATH;
 		const currentVersion = getCliVersion();
+		setRuntimeApplyGeneration(18, {
+			...CANONICAL_TEST_CONTEXT,
+			cliPackageSpec: `clawdi@${currentVersion}`,
+		});
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
@@ -11218,7 +11260,6 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("runtime watch keeps npm ETARGET retryable without converging or marking the version bad", async () => {
-		setRuntimeApplyGeneration(17, CANONICAL_TEST_CONTEXT);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -11227,6 +11268,10 @@ chmod +x "$prefix/bin/clawdi"
 		const previousLog = console.log;
 		const previousPath = process.env.PATH;
 		const currentVersion = getCliVersion();
+		setRuntimeApplyGeneration(17, {
+			...CANONICAL_TEST_CONTEXT,
+			cliPackageSpec: `clawdi@${currentVersion}`,
+		});
 		const firstAttempt = join(root, "npm-etarget-first-attempt");
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
@@ -11363,7 +11408,10 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("hands off before evaluating minimumCliVersion under old code", async () => {
-		setRuntimeApplyGeneration(19, CANONICAL_TEST_CONTEXT);
+		setRuntimeApplyGeneration(19, {
+			...CANONICAL_TEST_CONTEXT,
+			cliPackageSpec: "clawdi@0.13.10-beta.0",
+		});
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -12031,6 +12079,11 @@ chmod +x "$prefix/bin/clawdi"
 		const previousLog = console.log;
 		const previousPath = process.env.PATH;
 		const currentVersion = getCliVersion();
+		const cliContext = {
+			...CANONICAL_TEST_CONTEXT,
+			cliPackageSpec: `clawdi@${currentVersion}`,
+		};
+		setRuntimeApplyGeneration(1, cliContext);
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(dirname(policyPath), { recursive: true });
@@ -12121,7 +12174,7 @@ chmod +x "$prefix/bin/clawdi"
 
 			logs.length = 0;
 			process.exitCode = undefined;
-			setRuntimeApplyGeneration(1, CANONICAL_TEST_CONTEXT);
+			setRuntimeApplyGeneration(1, cliContext);
 			await runtimeInit({ nonInteractive: true, json: true });
 
 			if (process.exitCode !== undefined && process.exitCode !== 0) {
@@ -12420,8 +12473,10 @@ exit 64
 				"utf-8",
 			),
 		) as {
+			applyGeneration: number;
 			sourceRevision: string;
 			manifest: {
+				clawdiCli: { packageSpec: string };
 				runtime: string;
 				system: Record<string, unknown>;
 				runtimes: Record<string, unknown>;
@@ -12436,6 +12491,10 @@ exit 64
 			manifest: bundle.manifest,
 			channelBindings: bundle.channelBindings,
 			secretValues: bundle.secretValues,
+		});
+		setRuntimeApplyGeneration(bundle.applyGeneration, {
+			...CANONICAL_TEST_CONTEXT,
+			cliPackageSpec: bundle.manifest.clawdiCli.packageSpec,
 		});
 
 		mkdirSync(join(run, "secrets"), { recursive: true });
