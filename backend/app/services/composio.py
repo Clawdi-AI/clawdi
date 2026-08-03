@@ -33,6 +33,7 @@ import jwt
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, ListToolsResult
+from pydantic import JsonValue
 
 from app.core.config import settings
 
@@ -252,7 +253,7 @@ async def _create_tool_router_mcp_session(
     )
 
 
-async def get_connected_accounts(user_id: str) -> list[dict]:
+async def get_connected_accounts(user_id: str) -> list[dict[str, JsonValue]]:
     """List active connected accounts for a Composio user."""
     client = get_composio_client()
     accounts: list[Any] = []
@@ -275,9 +276,9 @@ async def get_connected_accounts(user_id: str) -> list[dict]:
     return [_serialize_connected_account(account) for account in accounts]
 
 
-def _serialize_connected_account(account: Any) -> dict:
+def _serialize_connected_account(account: Any) -> dict[str, JsonValue]:
     toolkit = _value(account, "toolkit", default={})
-    return {
+    serialized: dict[str, JsonValue] = {
         "id": str(_value(account, "id", default="")),
         "app_name": _str_or_none(_value(toolkit, "slug"))
         or _str_or_none(_value(account, "appName", "app_name"))
@@ -286,6 +287,7 @@ def _serialize_connected_account(account: Any) -> dict:
         "created_at": _str_or_none(_value(account, "created_at", "createdAt")) or "",
         "account_display": _account_display_label(account),
     }
+    return serialized
 
 
 def _account_display_label(account: Any) -> str | None:

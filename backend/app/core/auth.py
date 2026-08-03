@@ -13,6 +13,7 @@ import httpx
 import jwt
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,6 +42,25 @@ API_KEY_PREFIX = "clawdi_"
 _OAUTH_ACCESS_JWT_TYPES = frozenset({"at+jwt", "application/at+jwt"})
 _CLERK_JWKS_LIFESPAN_SECONDS = 300
 _CLERK_JWKS_TIMEOUT_SECONDS = 5
+
+type _JwtClaims = dict[str, JsonValue]
+_JWT_CLAIMS_ADAPTER: TypeAdapter[_JwtClaims] = TypeAdapter(dict[str, JsonValue])
+
+
+class ClerkEmailVerification(BaseModel):
+    status: str | None = None
+
+
+class ClerkEmailAddress(BaseModel):
+    id: str
+    email_address: str
+    verification: ClerkEmailVerification | None = None
+
+
+class ClerkUserResponse(BaseModel):
+    primary_email_address_id: str | None = None
+    email_addresses: list[ClerkEmailAddress] = Field(default_factory=list)
+
 
 _clerk_jwks_client = (
     jwt.PyJWKClient(
@@ -362,27 +382,27 @@ async def _fetch_clerk_primary_email(clerk_user_id: str) -> str | None:
                 clerk_user_id,
             )
             return None
-        data = resp.json()
-    except (httpx.HTTPError, ValueError) as e:
+        data = ClerkUserResponse.model_validate_json(resp.content)
+    except (httpx.HTTPError, ValidationError) as e:
         logger.warning("clerk backend api lookup failed for %s: %s", clerk_user_id, e)
         return None
 
-    primary_id = data.get("primary_email_address_id")
+    primary_id = data.primary_email_address_id
     if not primary_id:
         logger.warning("clerk user %s has no primary_email_address_id", clerk_user_id)
         return None
-    for entry in data.get("email_addresses") or []:
-        if entry.get("id") != primary_id:
+    for entry in data.email_addresses:
+        if entry.id != primary_id:
             continue
-        verification = entry.get("verification") or {}
-        if verification.get("status") != "verified":
+        verification_status = entry.verification.status if entry.verification is not None else None
+        if verification_status != "verified":
             logger.warning(
                 "clerk primary email for %s is not verified (status=%s)",
                 clerk_user_id,
-                verification.get("status"),
+                verification_status,
             )
             return None
-        return entry.get("email_address")
+        return entry.email_address
     logger.warning(
         "clerk user %s primary_email_address_id %s not in email_addresses",
         clerk_user_id,
@@ -401,10 +421,11 @@ def _is_oauth_access_jwt(token: str) -> bool:
         header = jwt.get_unverified_header(token)
     except jwt.InvalidTokenError:
         return False
-    return header.get("typ") in _OAUTH_ACCESS_JWT_TYPES
+    token_type: object = header.get("typ")
+    return token_type in _OAUTH_ACCESS_JWT_TYPES
 
 
-def _oauth_audience_matches(payload: dict, oauth_setting: ClerkCliOAuthSetting) -> bool:
+def _oauth_audience_matches(payload: _JwtClaims, oauth_setting: ClerkCliOAuthSetting) -> bool:
     expected = oauth_setting.audience
     audience = payload.get("aud")
     if not expected or audience is None:
@@ -421,7 +442,9 @@ def _oauth_audience_matches(payload: dict, oauth_setting: ClerkCliOAuthSetting) 
     return expected in token_audiences
 
 
-def _oauth_authorized_party_matches(payload: dict, oauth_setting: ClerkCliOAuthSetting) -> bool:
+def _oauth_authorized_party_matches(
+    payload: _JwtClaims, oauth_setting: ClerkCliOAuthSetting
+) -> bool:
     expected = set(oauth_setting.authorized_parties)
     if not expected:
         return True
@@ -431,7 +454,7 @@ def _oauth_authorized_party_matches(payload: dict, oauth_setting: ClerkCliOAuthS
     return authorized_party in expected
 
 
-def _session_claims_match_configured_clerk_values(payload: dict) -> bool:
+def _session_claims_match_configured_clerk_values(payload: _JwtClaims) -> bool:
     """Apply independently configured claim binding to browser sessions.
 
     Browser session JWTs predate the OAuth Public App integration, so an empty
@@ -492,15 +515,17 @@ async def _resolve_clerk_signing_key(token: str) -> str | jwt.PyJWK | None:
         ) from error
 
 
-def _decode_clerk_session_jwt(token: str, signing_key: str | jwt.PyJWK) -> dict | None:
+def _decode_clerk_session_jwt(token: str, signing_key: str | jwt.PyJWK) -> _JwtClaims | None:
     try:
-        payload = jwt.decode(
-            token,
-            signing_key,
-            algorithms=["RS256"],
-            options={"verify_aud": False, "verify_iss": False},
+        payload = _JWT_CLAIMS_ADAPTER.validate_python(
+            jwt.decode(
+                token,
+                signing_key,
+                algorithms=["RS256"],
+                options={"verify_aud": False, "verify_iss": False},
+            )
         )
-    except jwt.InvalidTokenError:
+    except (jwt.InvalidTokenError, ValidationError):
         return None
     return payload if _session_claims_match_configured_clerk_values(payload) else None
 
@@ -509,26 +534,28 @@ def _decode_clerk_oauth_access_jwt(
     token: str,
     signing_key: str | jwt.PyJWK,
     oauth_setting: ClerkCliOAuthSetting,
-) -> dict | None:
+) -> _JwtClaims | None:
     try:
-        payload = jwt.decode(
-            token,
-            signing_key,
-            algorithms=["RS256"],
-            issuer=oauth_setting.issuer,
-            leeway=5,
-            options={
-                "require": ["iss", "exp", "sub", "client_id"],
-                # Clerk OAuth JWTs do not always include aud. Match Clerk's
-                # SDK contract: validate it only when the claim is present.
-                "verify_aud": False,
-                "verify_exp": True,
-                "verify_iat": True,
-                "verify_iss": True,
-                "verify_nbf": True,
-            },
+        payload = _JWT_CLAIMS_ADAPTER.validate_python(
+            jwt.decode(
+                token,
+                signing_key,
+                algorithms=["RS256"],
+                issuer=oauth_setting.issuer,
+                leeway=5,
+                options={
+                    "require": ["iss", "exp", "sub", "client_id"],
+                    # Clerk OAuth JWTs do not always include aud. Match Clerk's
+                    # SDK contract: validate it only when the claim is present.
+                    "verify_aud": False,
+                    "verify_exp": True,
+                    "verify_iat": True,
+                    "verify_iss": True,
+                    "verify_nbf": True,
+                },
+            )
         )
-    except jwt.InvalidTokenError:
+    except (jwt.InvalidTokenError, ValidationError):
         return None
 
     clerk_id = payload.get("sub")
@@ -570,7 +597,7 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
         return None
 
     clerk_id = payload.get("sub")
-    if not clerk_id:
+    if not isinstance(clerk_id, str) or not clerk_id:
         return None
 
     result = await db.execute(
@@ -581,8 +608,12 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
     )
     user = result.scalar_one_or_none()
 
-    email = payload.get("email") or payload.get("email_address")
-    name = payload.get("name")
+    raw_email = payload.get("email") or payload.get("email_address")
+    email = raw_email if isinstance(raw_email, str) and raw_email else None
+    raw_name = payload.get("name")
+    name = raw_name if isinstance(raw_name, str) and raw_name else None
+    raw_picture = payload.get("picture")
+    picture = raw_picture if isinstance(raw_picture, str) and raw_picture else None
 
     # Backfill email/name on rows that were lazy-created via the
     # admin path (`_resolve_or_create_user` in routes/admin.py) — that
@@ -721,7 +752,7 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
             clerk_id=clerk_id,
             email=email,
             name=name,
-            avatar_url=payload.get("picture"),
+            avatar_url=picture,
             race_loser_status=status.HTTP_401_UNAUTHORIZED,
         )
         # Helper leaves rows flushed-not-committed so admin callers
@@ -737,7 +768,7 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
     # synced here: the contract elsewhere (see backfill tests) is that
     # user.name is one-way — once set, it's user-owned and not
     # clobbered by Clerk on subsequent logins.
-    new_avatar = payload.get("picture")
+    new_avatar = picture
     if new_avatar and user.avatar_url != new_avatar:
         user.avatar_url = new_avatar
         try:
@@ -911,7 +942,7 @@ def is_runtime_deployment_principal(auth: AuthContext) -> bool:
     )
 
 
-def _is_env_bound_api_key(auth: AuthContext) -> bool:
+def is_env_bound_api_key(auth: AuthContext) -> bool:
     """An api_key pinned to a specific `environment_id` —
     independent of whether its `scopes` list is narrow or full.
     Legacy v1 Agent keys may have `scopes=None` (full account
@@ -1072,7 +1103,7 @@ async def require_admin_api_key(
 class ShareTokenContext:
     """What require_share_token returns."""
 
-    def __init__(self, project_id, link_id):
+    def __init__(self, project_id: UUID, link_id: UUID) -> None:
         self.project_id = project_id
         self.link_id = link_id
 

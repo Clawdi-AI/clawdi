@@ -35,6 +35,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import and_, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import UploadFile
 
 from app.core.config import settings
 from app.core.database import (
@@ -63,14 +64,14 @@ from app.routes.channel_routers.shared import (
     _fan_out_discord_global_commands,
     _handle_discord_application_commands,
     _json_object_from_bytes,
-    _optional_int_param,
-    _optional_str,
     _proxy_discord_request,
     _public_ws_url,
     _request_discord_provider,
-    _request_params,
     _require_bound_chat,
     _resolve_discord_agent_context,
+    optional_int_param,
+    optional_str,
+    request_params,
 )
 from app.services.channels import (
     DISCORD_REF_INTERACTION_ID_TOKEN,
@@ -366,13 +367,19 @@ async def discord_agent_rest(
         }
     if segments == ["users", "@me"]:
         if request.method == "PATCH":
-            params = await _request_params(request)
+            params = await request_params(request)
             config = dict(account.config) if isinstance(account.config, dict) else {}
-            username = _optional_str(params.get("username"))
+            username = optional_str(params.get("username"))
             if username:
                 config["bot_username"] = username
             if "avatar" in params:
-                config["bot_avatar"] = params.get("avatar")
+                avatar = params.get("avatar")
+                if isinstance(avatar, UploadFile):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="avatar must be a JSON value",
+                    )
+                config["bot_avatar"] = avatar
             account.config = config
             await db.commit()
         return _discord_bot_user(account)
@@ -590,9 +597,9 @@ async def _authorize_discord_channel_request(
             headers={"Retry-After": str(retry_after)} if retry_after is not None else None,
         )
     payload = preflight.json_object() if preflight.status_code == status.HTTP_200_OK else None
-    if payload is None or _optional_str(payload.get("id")) != channel_id:
+    if payload is None or optional_str(payload.get("id")) != channel_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="channel is not paired")
-    guild_id = _optional_str(payload.get("guild_id"))
+    guild_id = optional_str(payload.get("guild_id"))
     binding = await _discord_revalidated_channel_binding(
         db,
         agent=agent,
@@ -673,7 +680,7 @@ def _discord_reference_identity(reference: _DiscordJsonObject, name: str) -> str
     value = _discord_unique_json_member(reference, name)
     if value is None:
         return None
-    identity = _optional_str(value) if not isinstance(value, bool) else None
+    identity = optional_str(value) if not isinstance(value, bool) else None
     if identity is None:
         raise _DiscordCreateMessageParseError
     return identity
@@ -975,7 +982,7 @@ async def discord_agent_gateway(
             if not isinstance(data, dict):
                 await websocket.close(code=4002)
                 return
-            token = _optional_str(data.get("token"))
+            token = optional_str(data.get("token"))
             if not token:
                 await websocket.close(code=4004)
                 return
@@ -1039,7 +1046,7 @@ async def discord_agent_gateway(
                 resolved_account = resolved_agent.account
                 resolved_link_id = resolved_agent.link.id
             if op == 6:
-                resume_session_id = _optional_str(data.get("session_id"))
+                resume_session_id = optional_str(data.get("session_id"))
                 if resume_session_id is None:
                     await send_gateway_frame({"op": 9, "d": False}, record=False)
                     continue
@@ -1073,7 +1080,7 @@ async def discord_agent_gateway(
                 bot_agent_link_id = resolved_link_id
                 session_id = resume_session_id
                 session_state = resume_state
-                resume_sequence = _optional_int_param(data.get("seq"))
+                resume_sequence = optional_int_param(data.get("seq"))
                 frames = [
                     retained
                     for retained in session_state.get("frames", [])
@@ -1159,22 +1166,22 @@ async def discord_agent_gateway(
                         for private in event_data.get("private_channels", []):
                             if not isinstance(private, dict):
                                 continue
-                            private_id = _optional_str(private.get("id"))
+                            private_id = optional_str(private.get("id"))
                             if private_id in resume_channels:
                                 projected_channels[private_id] = private
                     elif event_type == "GUILD_CREATE":
-                        retained_guild_id = _optional_str(event_data.get("id"))
+                        retained_guild_id = optional_str(event_data.get("id"))
                         if retained_guild_id in resume_guilds:
                             projected_guilds.add(retained_guild_id)
                     elif event_type == "GUILD_DELETE":
-                        projected_guilds.discard(_optional_str(event_data.get("id")) or "")
+                        projected_guilds.discard(optional_str(event_data.get("id")) or "")
                     elif event_type in {
                         "CHANNEL_CREATE",
                         "CHANNEL_UPDATE",
                         "THREAD_CREATE",
                         "THREAD_UPDATE",
                     }:
-                        retained_channel_id = _optional_str(event_data.get("id"))
+                        retained_channel_id = optional_str(event_data.get("id"))
                         if retained_channel_id in resume_channels:
                             thread_metadata = event_data.get("thread_metadata")
                             if (
@@ -1186,7 +1193,7 @@ async def discord_agent_gateway(
                             else:
                                 projected_channels[retained_channel_id] = event_data
                     elif event_type in {"CHANNEL_DELETE", "THREAD_DELETE"}:
-                        projected_channels.pop(_optional_str(event_data.get("id")) or "", None)
+                        projected_channels.pop(optional_str(event_data.get("id")) or "", None)
                 for replayed in frames:
                     if replayed["s"] <= resume_sequence:
                         continue
@@ -1312,13 +1319,13 @@ async def discord_agent_gateway(
                         )
                         projected_guilds.discard(removed_guild_id)
                         for projected_id, projected in list(projected_channels.items()):
-                            if _optional_str(projected.get("guild_id")) == removed_guild_id:
+                            if optional_str(projected.get("guild_id")) == removed_guild_id:
                                 projected_channels.pop(projected_id, None)
                     for removed_channel_id in set(projected_channels) - set(channels):
                         projected_channels.pop(removed_channel_id, None)
                     for removed_channel_id in set(deferred_channels) - set(channels):
                         deferred_channels.pop(removed_channel_id, None)
-                    event_type = _optional_str(payload.get("t"))
+                    event_type = optional_str(payload.get("t"))
                     lifecycle = bool(
                         event_type and event_type.startswith(("GUILD_", "CHANNEL_", "THREAD_"))
                     )
@@ -1438,7 +1445,7 @@ async def discord_agent_gateway(
                     timeout=max(0.001, settings.discord_gateway_poll_interval_seconds),
                 )
                 if isinstance(frame, dict) and frame.get("op") == 1:
-                    await acknowledge_gateway_sequence(_optional_int_param(frame.get("d")))
+                    await acknowledge_gateway_sequence(optional_int_param(frame.get("d")))
                     await send_gateway_frame({"op": 11, "d": None}, record=False)
             except TimeoutError:
                 pass
@@ -1956,12 +1963,12 @@ def _discord_gateway_channel(
     channel_type = payload.get("type") if payload is not None else None
     if (
         payload is None
-        or _optional_str(payload.get("id")) != channel_id
+        or optional_str(payload.get("id")) != channel_id
         or isinstance(channel_type, bool)
         or not isinstance(channel_type, int)
     ):
         return None
-    payload_guild_id = _optional_str(payload.get("guild_id"))
+    payload_guild_id = optional_str(payload.get("guild_id"))
     if (guild_id is None and (payload_guild_id is not None or channel_type not in {1, 3})) or (
         guild_id is not None and (payload_guild_id != guild_id or channel_type in {1, 3})
     ):
@@ -1998,13 +2005,13 @@ def _discord_gateway_scope(payload: dict[str, Any]) -> tuple[str | None, str | N
     data = payload.get("d")
     if not isinstance(data, dict):
         return None, None
-    event_type = _optional_str(payload.get("t"))
-    guild_id = _optional_str(data.get("guild_id"))
-    channel_id = _optional_str(data.get("channel_id"))
+    event_type = optional_str(payload.get("t"))
+    guild_id = optional_str(data.get("guild_id"))
+    channel_id = optional_str(data.get("channel_id"))
     if event_type and event_type.startswith("GUILD_"):
-        guild_id = _optional_str(data.get("id")) or guild_id
+        guild_id = optional_str(data.get("id")) or guild_id
     elif event_type and event_type.startswith(("CHANNEL_", "THREAD_")):
-        channel_id = _optional_str(data.get("id")) or channel_id
+        channel_id = optional_str(data.get("id")) or channel_id
     return guild_id, channel_id
 
 

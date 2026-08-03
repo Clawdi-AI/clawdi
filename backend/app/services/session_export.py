@@ -16,7 +16,10 @@ context.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from typing import Any
+
+from pydantic import JsonValue
 
 from app.core.config import settings
 from app.models.session import Session
@@ -101,7 +104,7 @@ def public_session_base_fields(
 
 def session_to_markdown(
     session: Session,
-    messages: list[dict[str, Any]],
+    messages: Sequence[JsonValue],
     *,
     agent_type: str | None = None,
     public: bool = False,
@@ -160,10 +163,17 @@ def session_to_markdown(
 
     body_lines: list[str] = ["", f"# {title}", ""]
 
-    for m in messages:
-        role = m.get("role") or "unknown"
-        model = m.get("model")
-        ts = m.get("timestamp")
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role_value = message.get("role")
+        role = role_value if isinstance(role_value, str) and role_value else "unknown"
+        model_value = message.get("model")
+        model = model_value if isinstance(model_value, str) and model_value else None
+        timestamp_value = message.get("timestamp")
+        timestamp = (
+            timestamp_value if isinstance(timestamp_value, str) and timestamp_value else None
+        )
 
         # Heading: capitalized role, optional model badge, optional timestamp.
         # Format is stable so an LLM consuming the body can parse turn
@@ -171,12 +181,13 @@ def session_to_markdown(
         heading_parts: list[str] = [f"## {role.capitalize()}"]
         if role == "assistant" and model:
             heading_parts.append(f"({model})")
-        if ts:
-            heading_parts.append(f"· {ts}")
+        if timestamp:
+            heading_parts.append(f"· {timestamp}")
         body_lines.append(" ".join(heading_parts))
         body_lines.append("")
 
-        content = m.get("content") or ""
+        content_value = message.get("content")
+        content = content_value if isinstance(content_value, str) else ""
         # Content is raw — adapter has already normalized to a string.
         # NOT wrapped in a fence; many messages are already Markdown
         # (or contain fences themselves), and double-fencing produces

@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID, uuid4
 
@@ -135,6 +136,32 @@ TELEGRAM_AGENT_TOKEN_RE = re.compile(r"^[1-9][0-9]{8}:[A-Za-z0-9_-]{32,}$")
 DISCORD_TEST_APPLICATION_ID = "123456789012345678"
 DISCORD_TEST_PUBLIC_KEY = "11" * 32
 _REAL_DISCORD_BOT_GUILD_MEMBERSHIP_CHECK = channel_service.discord_bot_guild_membership_check
+
+
+async def _wait_for_postgres_lock_wait(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    backend_pid: int,
+) -> None:
+    async with sessionmaker() as observer:
+        while True:
+            waiting = await observer.scalar(
+                text(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM pg_stat_activity
+                        WHERE pid = :backend_pid
+                          AND state = 'active'
+                          AND wait_event_type = 'Lock'
+                    )
+                    """
+                ),
+                {"backend_pid": backend_pid},
+            )
+            if waiting is True:
+                return
+            await observer.rollback()
+            await asyncio.sleep(0.01)
 
 
 def _discord_ready_config(
@@ -2743,7 +2770,7 @@ async def test_historical_duplicate_managed_accounts_are_visible_but_fail_closed
 
     monkeypatch.setattr(
         telegram_router,
-        "_deliver_telegram_agent_webhook",
+        "deliver_telegram_agent_webhook",
         _record_agent_delivery,
     )
     ingress_delivered = await telegram_router._deliver_telegram_agent_webhook_for_binding(
@@ -7026,7 +7053,7 @@ def test_telegram_binding_command_projection_follows_provider_precedence(
         external_chat_type=chat_type,
     )
 
-    projections = telegram_router._telegram_binding_command_projections(shadow, binding)
+    projections = telegram_router.telegram_binding_command_projections(shadow, binding)
     projected = {
         (payload["scope"]["type"], payload.get("language_code", "")): payload["commands"][3][
             "command"
@@ -7064,10 +7091,11 @@ async def test_telegram_legacy_oversized_shadow_does_not_block_cleanup_or_pair_r
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ):
+    ciphertext, nonce = encrypt_optional_token("telegram-provider-token")
     account = ChannelAccount(
         id=uuid4(),
-        encrypted_provider_token=b"token",
-        provider_token_nonce=b"nonce",
+        encrypted_provider_token=ciphertext,
+        provider_token_nonce=nonce,
     )
     link = ChannelBotAgentLink(
         id=uuid4(),
@@ -7087,17 +7115,25 @@ async def test_telegram_legacy_oversized_shadow_does_not_block_cleanup_or_pair_r
         external_chat_id="42",
         external_chat_type="private",
     )
-    calls: list[tuple[str, dict[str, Any]]] = []
+    requests: list[httpx.Request] = []
+    real_client = httpx.AsyncClient
 
-    async def post_payload(*, account, method, payload):
-        calls.append((method, payload))
+    def provider_handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
         return httpx.Response(200, json={"ok": True, "result": True})
 
-    class FakeSession:
-        async def get(self, model, identity):
-            return link
+    transport = httpx.MockTransport(provider_handler)
 
-    monkeypatch.setattr(telegram_router, "_post_telegram_bot_payload", post_payload)
+    def client_factory(*_args: object, **_kwargs: object) -> httpx.AsyncClient:
+        return real_client(transport=transport)
+
+    async def allow_test_url(_url: str, *, label: str) -> None:
+        assert label == "telegram api base url"
+
+    monkeypatch.setattr(telegram_router.httpx, "AsyncClient", client_factory)
+    monkeypatch.setattr(telegram_router, "validate_channel_http_url", allow_test_url)
+    db = AsyncMock(spec=AsyncSession)
+    db.get.return_value = link
 
     assert await telegram_router._clear_telegram_commands_for_binding(
         account=account,
@@ -7105,12 +7141,13 @@ async def test_telegram_legacy_oversized_shadow_does_not_block_cleanup_or_pair_r
         binding=binding,
     )
     await telegram_router._replay_telegram_commands_on_pair(
-        FakeSession(),
+        db,
         account=account,
         binding=binding,
     )
 
-    assert calls == [("deleteMyCommands", {"scope": {"type": "chat", "chat_id": "42"}})]
+    assert [request.url.path.rsplit("/", 1)[-1] for request in requests] == ["deleteMyCommands"]
+    assert json.loads(requests[0].content) == {"scope": {"type": "chat", "chat_id": "42"}}
     assert "telegram_pair_command_replay_skipped_oversized_projection" in caplog.text
 
 
@@ -13278,19 +13315,15 @@ async def test_telegram_inbound_lease_makes_ui_unpair_wait_and_consume_inserted_
         "record_inbound_messages_for_bindings",
         pause_after_ordinary_inbound_lease,
     )
-    original_identity_lock = public_router.lock_channel_binding_identity
-    unpair_started = asyncio.Event()
-
-    async def observe_unpair_start(*args: Any, **kwargs: Any):
-        unpair_started.set()
-        return await original_identity_lock(*args, **kwargs)
-
-    monkeypatch.setattr(public_router, "lock_channel_binding_identity", observe_unpair_start)
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    business_backend_pids: asyncio.Queue[int] = asyncio.Queue()
     previous_session_override = app.dependency_overrides[get_session]
 
     async def independent_request_session() -> AsyncIterator[AsyncSession]:
         async with sessionmaker() as request_db:
+            backend_pid = await request_db.scalar(select(func.pg_backend_pid()))
+            assert isinstance(backend_pid, int)
+            business_backend_pids.put_nowait(backend_pid)
             yield request_db
 
     await db_session.rollback()
@@ -13314,13 +13347,17 @@ async def test_telegram_inbound_lease_makes_ui_unpair_wait_and_consume_inserted_
                 },
             )
         )
+        inbound_backend_pid = await asyncio.wait_for(business_backend_pids.get(), timeout=2)
         await asyncio.wait_for(lease_acquired.wait(), timeout=2)
         unpair_task = asyncio.create_task(
             client.delete(f"/v1/channels/{created['id']}/bindings/{binding_id}")
         )
-        await asyncio.wait_for(unpair_started.wait(), timeout=2)
-        await asyncio.sleep(0.05)
-        assert not unpair_task.done()
+        unpair_backend_pid = await asyncio.wait_for(business_backend_pids.get(), timeout=2)
+        assert unpair_backend_pid != inbound_backend_pid
+        await asyncio.wait_for(
+            _wait_for_postgres_lock_wait(sessionmaker, unpair_backend_pid),
+            timeout=2,
+        )
         release_inbound_commit.set()
         inbound, deleted = await asyncio.wait_for(
             asyncio.gather(inbound_task, unpair_task),
@@ -13332,6 +13369,8 @@ async def test_telegram_inbound_lease_makes_ui_unpair_wait_and_consume_inserted_
             task for task in (inbound_task, unpair_task) if task is not None and not task.done()
         ]
         if pending_tasks:
+            for task in pending_tasks:
+                task.cancel()
             await asyncio.gather(*pending_tasks, return_exceptions=True)
         app.dependency_overrides[get_session] = previous_session_override
 
@@ -15208,8 +15247,12 @@ async def _archive_discord_binding_with_identity_lock(
     account_id: UUID,
     binding_id: UUID,
     external_chat_id: str,
+    backend_pids: asyncio.Queue[int],
 ) -> None:
     async with sessionmaker() as db:
+        backend_pid = await db.scalar(select(func.pg_backend_pid()))
+        assert isinstance(backend_pid, int)
+        backend_pids.put_nowait(backend_pid)
         await channel_service.lock_channel_binding_identity(
             db,
             account_id=account_id,
@@ -15258,6 +15301,7 @@ async def test_discord_gateway_send_and_unpair_are_linearized(
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     send_started = asyncio.Event()
     allow_send = asyncio.Event()
+    business_backend_pids: asyncio.Queue[int] = asyncio.Queue()
     frames: list[str] = []
 
     async def send() -> int:
@@ -15266,29 +15310,45 @@ async def test_discord_gateway_send_and_unpair_are_linearized(
         await allow_send.wait()
         return 42
 
-    send_task = asyncio.create_task(
-        discord_router._send_discord_gateway_message(
-            account_id=account_id,
-            bot_agent_link_id=link_id,
-            message=message,
-            send=send,
+    send_task: asyncio.Task[tuple[str, int | None]] | None = None
+    unpair_task: asyncio.Task[None] | None = None
+    try:
+        send_task = asyncio.create_task(
+            discord_router._send_discord_gateway_message(
+                account_id=account_id,
+                bot_agent_link_id=link_id,
+                message=message,
+                send=send,
+            )
         )
-    )
-    await send_started.wait()
-    unpair_task = asyncio.create_task(
-        _archive_discord_binding_with_identity_lock(
-            sessionmaker,
-            account_id=account_id,
-            binding_id=binding.id,
-            external_chat_id=binding.external_chat_id,
+        await asyncio.wait_for(send_started.wait(), timeout=2)
+        unpair_task = asyncio.create_task(
+            _archive_discord_binding_with_identity_lock(
+                sessionmaker,
+                account_id=account_id,
+                binding_id=binding.id,
+                external_chat_id=binding.external_chat_id,
+                backend_pids=business_backend_pids,
+            )
         )
-    )
-    await asyncio.sleep(0.05)
-    assert not unpair_task.done()
-    allow_send.set()
+        unpair_backend_pid = await asyncio.wait_for(business_backend_pids.get(), timeout=2)
+        await asyncio.wait_for(
+            _wait_for_postgres_lock_wait(sessionmaker, unpair_backend_pid),
+            timeout=2,
+        )
+        allow_send.set()
+        assert await asyncio.wait_for(send_task, timeout=2) == ("sent", 42)
+        await asyncio.wait_for(unpair_task, timeout=2)
+    finally:
+        allow_send.set()
+        pending_tasks = [
+            task for task in (send_task, unpair_task) if task is not None and not task.done()
+        ]
+        if pending_tasks:
+            for task in pending_tasks:
+                task.cancel()
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
 
-    assert await send_task == ("sent", 42)
-    await unpair_task
     assert frames == ["frame"]
     await db_session.refresh(message)
     assert message.delivered_at is None
@@ -15403,16 +15463,16 @@ async def test_discord_inbound_record_and_unpair_are_linearized(
         )
     ).scalar_one()
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    producer_started = asyncio.Event()
-    allow_record = asyncio.Event()
+    producer_has_lease = asyncio.Event()
+    release_producer_commit = asyncio.Event()
+    business_backend_pids: asyncio.Queue[int] = asyncio.Queue()
     original_record = channel_service.record_inbound_messages_for_bindings
 
     async def paused_record(*args, **kwargs):
-        producer_started.set()
-        await allow_record.wait()
-        return await original_record(*args, **kwargs)
-
-    monkeypatch.setattr(channel_service, "record_inbound_messages_for_bindings", paused_record)
+        messages = await original_record(*args, **kwargs)
+        producer_has_lease.set()
+        await release_producer_commit.wait()
+        return messages
 
     async def produce(provider_message_id: str) -> bool:
         async with sessionmaker() as db:
@@ -15435,23 +15495,46 @@ async def test_discord_inbound_record_and_unpair_are_linearized(
             await db.commit()
             return recorded
 
-    producer_task = asyncio.create_task(produce("producer-first"))
-    await producer_started.wait()
-    unpair_task = asyncio.create_task(
-        _archive_discord_binding_with_identity_lock(
-            sessionmaker,
-            account_id=account_id,
-            binding_id=binding.id,
-            external_chat_id=binding.external_chat_id,
+    with monkeypatch.context() as paused_delivery:
+        paused_delivery.setattr(
+            channel_service,
+            "record_inbound_messages_for_bindings",
+            paused_record,
         )
-    )
-    await asyncio.sleep(0.05)
-    assert not unpair_task.done()
-    allow_record.set()
-    assert await producer_task is True
-    await unpair_task
+        producer_task: asyncio.Task[bool] | None = None
+        unpair_task: asyncio.Task[None] | None = None
+        try:
+            producer_task = asyncio.create_task(produce("producer-first"))
+            await asyncio.wait_for(producer_has_lease.wait(), timeout=2)
+            unpair_task = asyncio.create_task(
+                _archive_discord_binding_with_identity_lock(
+                    sessionmaker,
+                    account_id=account_id,
+                    binding_id=binding.id,
+                    external_chat_id=binding.external_chat_id,
+                    backend_pids=business_backend_pids,
+                )
+            )
+            unpair_backend_pid = await asyncio.wait_for(business_backend_pids.get(), timeout=2)
+            await asyncio.wait_for(
+                _wait_for_postgres_lock_wait(sessionmaker, unpair_backend_pid),
+                timeout=2,
+            )
+            release_producer_commit.set()
+            assert await asyncio.wait_for(producer_task, timeout=2) is True
+            await asyncio.wait_for(unpair_task, timeout=2)
+        finally:
+            release_producer_commit.set()
+            pending_tasks = [
+                task
+                for task in (producer_task, unpair_task)
+                if task is not None and not task.done()
+            ]
+            if pending_tasks:
+                for task in pending_tasks:
+                    task.cancel()
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
 
-    monkeypatch.setattr(channel_service, "record_inbound_messages_for_bindings", original_record)
     assert await produce("unpair-first") is False
     rows = list(
         (

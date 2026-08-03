@@ -550,7 +550,7 @@ async def test_whatsapp_inbox_pump_records_safe_debug_and_prepares_lid_alias():
         wait_for_events=wait_for_events,
         ack=ack,
         deliver=deliver,
-        debug_events=debug_events,
+        debug_events=debug_events.record,
     )
 
     result = await pump.run_once()

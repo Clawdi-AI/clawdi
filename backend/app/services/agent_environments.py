@@ -268,7 +268,7 @@ async def _refresh_agent_environment(
     env.os = os_name
     env.last_seen_at = datetime.now(UTC)
     env.registration_key = registration_key
-    if env.default_project_id is None:
+    if not env.default_project_id:
         project_name = env.default_name or _agent_project_label(machine_name, agent_type)
         healing_project = Project(
             user_id=user_id,

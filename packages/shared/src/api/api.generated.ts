@@ -3300,13 +3300,13 @@ export interface components {
              * @constant
              */
             type: "api_key";
+            /** Profile */
+            profile?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             source: "env";
-            /** Profile */
-            profile?: string | null;
             /** Ref */
             ref: string;
         };
@@ -3322,13 +3322,13 @@ export interface components {
              * @constant
              */
             type: "api_key";
+            /** Profile */
+            profile?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             source: "managed";
-            /** Profile */
-            profile?: string | null;
         };
         /** AiProviderManagedApiKeyRequest */
         AiProviderManagedApiKeyRequest: {
@@ -3581,7 +3581,7 @@ export interface components {
             runtime_env_name?: string | null;
             /** Capabilities */
             capabilities?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Models */
             models?: components["schemas"]["AiProviderModel"][] | null;
@@ -3641,7 +3641,7 @@ export interface components {
             runtime_env_name?: string | null;
             /** Capabilities */
             capabilities?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Models */
             models?: components["schemas"]["AiProviderModel"][] | null;
@@ -3719,7 +3719,7 @@ export interface components {
             runtime_env_name?: string | null;
             /** Capabilities */
             capabilities?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Models */
             models?: components["schemas"]["AiProviderModel"][] | null;
@@ -3750,13 +3750,13 @@ export interface components {
              * @constant
              */
             type: "api_key";
+            /** Profile */
+            profile?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             source: "vault";
-            /** Profile */
-            profile?: string | null;
             /** Ref */
             ref: string;
         };
@@ -7574,6 +7574,9 @@ export interface components {
             field: string;
             /** Project Id */
             project_id?: string | null;
+        };
+        VaultResolutionRecord: {
+            [key: string]: unknown;
         };
         /** VaultResolveResponse */
         VaultResolveResponse: {

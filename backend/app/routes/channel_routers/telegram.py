@@ -4,9 +4,10 @@ import hmac
 import json
 import logging
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TypeGuard
 from urllib.parse import unquote_plus
 from uuid import UUID
 
@@ -21,6 +22,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse
+from pydantic import JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile
@@ -41,19 +43,21 @@ from app.models.channel import (
     ChannelMessage,
 )
 from app.routes.channel_routers.shared import (
-    _allowed_updates,
-    _deliver_telegram_agent_webhook,
-    _json_object,
-    _optional_int_param,
-    _optional_str,
-    _request_params,
-    _telegram_error,
-    _telegram_link_webhook_url,
-    _telegram_me,
-    _telegram_ok,
-    _validate_agent_webhook_url,
+    allowed_updates,
+    json_object,
+    optional_int_param,
+    optional_str,
+    request_params,
+    telegram_error,
+    telegram_me,
+    telegram_ok,
 )
 from app.schemas.channel import TelegramWebhookResponse
+from app.services.channel_webhooks import (
+    deliver_telegram_agent_webhook,
+    telegram_link_webhook_url,
+    validate_agent_webhook_url,
+)
 from app.services.channels import (
     DEFAULT_CHANNEL_COMMANDS,
     TELEGRAM_REF_CALLBACK_QUERY_ID,
@@ -120,6 +124,12 @@ TELEGRAM_UNPAIRED_TUTORIAL = (
 )
 TELEGRAM_UNPAIRED_TUTORIAL_COOLDOWN = timedelta(minutes=10)
 _TELEGRAM_UNPAIRED_TUTORIAL_KIND = "telegram_unpaired_tutorial"
+_JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+_JSON_OBJECT_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
+type _TelegramJsonObject = dict[str, JsonValue]
+type _TelegramCommands = list[_TelegramJsonObject]
+type _TelegramParam = JsonValue | UploadFile
+type _TelegramParams = dict[str, _TelegramParam]
 
 
 # Keep this list explicit. Telegram ignores parameters it doesn't use, so the
@@ -372,7 +382,7 @@ async def telegram_bot_api(
     request: Request,
     authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_session),
-) -> dict[str, Any] | Response:
+) -> _TelegramJsonObject | Response:
     agent, _agent_token = await _resolve_telegram_agent(
         db,
         routing_id=routing_id,
@@ -380,7 +390,7 @@ async def telegram_bot_api(
     )
     account = agent.account
     raw_body = await request.body()
-    params = await _request_params(request)
+    params = await _telegram_request_params(request)
     duplicate_parameter = await _telegram_duplicate_security_parameter(request, raw_body, params)
     if duplicate_parameter is not None:
         return _telegram_error_response(
@@ -400,16 +410,16 @@ async def telegram_bot_api(
                 request=request,
                 raw_body=raw_body,
             )
-        return _telegram_ok(_telegram_me(account))
+        return telegram_ok(telegram_me(account))
     if method_key == "getupdates":
-        if _telegram_link_webhook_url(agent.link):
+        if telegram_link_webhook_url(agent.link):
             return _telegram_error_response(
                 "Conflict: can't use getUpdates method while webhook is active",
                 409,
             )
-        offset = _optional_int_param(params.get("offset"))
-        limit = max(1, min(_optional_int_param(params.get("limit")) or 100, 100))
-        timeout = _optional_int_param(params.get("timeout"))
+        offset = optional_int_param(params.get("offset"))
+        limit = max(1, min(optional_int_param(params.get("limit")) or 100, 100))
+        timeout = optional_int_param(params.get("timeout"))
         timeout_seconds = max(
             0.0,
             min(float(timeout or 0), settings.channel_long_poll_max_seconds),
@@ -420,13 +430,13 @@ async def telegram_bot_api(
             bot_agent_link_id=agent.link.id,
             offset=offset,
             limit=limit,
-            allowed_updates=_allowed_updates(params.get("allowed_updates")),
+            allowed_updates=allowed_updates(params.get("allowed_updates")),
             timeout_seconds=timeout_seconds,
         )
         await db.commit()
-        return _telegram_ok(updates)
+        return telegram_ok(updates)
     if method_key == "setwebhook":
-        webhook_url = _optional_str(params.get("url"))
+        webhook_url = optional_str(params.get("url"))
         if webhook_url is None:
             return _telegram_error_response("Bad Request: url is required", 400)
         webhook_error = await _validate_telegram_webhook_url(account, webhook_url)
@@ -437,12 +447,12 @@ async def telegram_bot_api(
             {
                 "telegram_webhook": {
                     "url": webhook_url,
-                    "secret_token": _optional_str(params.get("secret_token")),
+                    "secret_token": optional_str(params.get("secret_token")),
                 },
             },
         )
         await db.commit()
-        return _telegram_ok(True)
+        return telegram_ok(True)
     if method_key == "deletewebhook":
         config = dict(agent.link.config) if isinstance(agent.link.config, dict) else {}
         config.pop("telegram_webhook", None)
@@ -454,12 +464,12 @@ async def telegram_bot_api(
                 bot_agent_link_id=agent.link.id,
             )
         await db.commit()
-        return _telegram_ok(True)
+        return telegram_ok(True)
     if method_key == "getwebhookinfo":
         config = agent.link.config if isinstance(agent.link.config, dict) else {}
         webhook = config.get("telegram_webhook")
         webhook_url = webhook.get("url") if isinstance(webhook, dict) else ""
-        return _telegram_ok(
+        return telegram_ok(
             {
                 "url": webhook_url or "",
                 "has_custom_certificate": False,
@@ -481,7 +491,7 @@ async def telegram_bot_api(
             return command_error
         commands = _telegram_json_parameter(params.get("commands"))
         try:
-            _telegram_physical_commands(commands if isinstance(commands, list) else [])
+            _telegram_physical_commands(commands if _is_object_list(commands) else [])
         except ValueError:
             return _telegram_error_response(
                 "Bad Request: merged command list exceeds 100 commands",
@@ -499,7 +509,7 @@ async def telegram_bot_api(
         if fanout_error is not None:
             return fanout_error
         await db.commit()
-        return _telegram_ok(True)
+        return telegram_ok(True)
     if method_key == "deletemycommands":
         command_error = await _validate_telegram_command_scope(
             db,
@@ -521,7 +531,7 @@ async def telegram_bot_api(
         if fanout_error is not None:
             return fanout_error
         await db.commit()
-        return _telegram_ok(True)
+        return telegram_ok(True)
     if method_key == "getmycommands":
         command_error = await _validate_telegram_command_scope(
             db,
@@ -531,7 +541,7 @@ async def telegram_bot_api(
         )
         if command_error is not None:
             return command_error
-        return _telegram_ok(_get_telegram_commands(agent.link, params=params))
+        return telegram_ok(_get_telegram_commands(agent.link, params=params))
 
     profile_result = await _handle_telegram_profile_shadow(
         db, account, agent.link, method_key, params
@@ -569,7 +579,7 @@ async def telegram_bot_api(
     )
     if outbound_error is not None:
         return outbound_error
-    chat_id = _optional_str(params.get("chat_id"))
+    chat_id = optional_str(params.get("chat_id"))
     if chat_id is not None:
         rate_limit = telegram_rate_limiter.check_and_consume(
             account_id=str(account.id),
@@ -711,7 +721,7 @@ async def telegram_webhook(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid webhook secret"
         )
 
-    payload = await _json_object(request)
+    payload = await _telegram_json_object(request)
     _ensure_telegram_bot_command_entities(payload)
     chat = telegram_chat_from_update(payload)
     if chat is None:
@@ -813,7 +823,7 @@ async def telegram_webhook(
         binding_result=binding_result,
     )
     if reply is None:
-        reply = await _send_telegram_unpaired_tutorial(
+        await _send_telegram_unpaired_tutorial(
             db,
             account=account,
             external_chat_id=external_chat_id,
@@ -823,8 +833,7 @@ async def telegram_webhook(
             command=command,
             binding_result=binding_result,
         )
-    if reply is not None:
-        await db.commit()
+    await db.commit()
     if binding_result.paired or binding_result.unpaired:
         await _reconcile_telegram_link_state_after_binding_change(
             db,
@@ -862,7 +871,7 @@ async def _send_telegram_unpaired_tutorial(
     external_chat_id: str,
     external_chat_type: str | None,
     external_user_id: str | None,
-    payload: dict[str, Any],
+    payload: _TelegramJsonObject,
     command: ChannelControlCommand | None,
     binding_result: InboundBindingResult,
 ) -> bool:
@@ -886,7 +895,7 @@ async def _send_telegram_unpaired_tutorial(
     else:
         return False
 
-    marker = {
+    marker: dict[str, JsonValue] = {
         "kind": _TELEGRAM_UNPAIRED_TUTORIAL_KIND,
         "scope": cooldown_scope,
     }
@@ -989,7 +998,7 @@ async def _send_telegram_unpaired_tutorial(
 def _telegram_error_response(description: str, error_code: int) -> JSONResponse:
     return JSONResponse(
         status_code=error_code,
-        content=_telegram_error(description, error_code),
+        content=telegram_error(description, error_code),
     )
 
 
@@ -998,9 +1007,9 @@ async def _deliver_telegram_agent_webhook_for_binding(
     *,
     account: ChannelAccount,
     binding: ChannelBinding | None,
-    payload: dict[str, Any],
+    payload: _TelegramJsonObject,
 ) -> bool:
-    if binding is None or binding.bot_agent_link_id is None:
+    if binding is None:
         return False
     authority = (
         await db.execute(
@@ -1051,46 +1060,92 @@ async def _deliver_telegram_agent_webhook_for_binding(
         link=current_link,
     ):
         return False
-    return await _deliver_telegram_agent_webhook(current_account, current_link, payload)
+    return await deliver_telegram_agent_webhook(current_account, current_link, payload)
 
 
-async def _validate_telegram_webhook_url(account: Any, url: str) -> JSONResponse | None:
+async def _validate_telegram_webhook_url(account: ChannelAccount, url: str) -> JSONResponse | None:
     try:
-        await _validate_agent_webhook_url(account, url)
+        await validate_agent_webhook_url(account, url)
     except HTTPException as exc:
-        detail = exc.detail if isinstance(exc.detail, str) else "invalid webhook url"
-        return _telegram_error_response(f"Bad Request: {detail}", 400)
+        return _telegram_error_response(f"Bad Request: {exc.detail}", 400)
     return None
 
 
-def _set_link_config(link: ChannelBotAgentLink, updates: dict[str, Any]) -> None:
+def _set_link_config(link: ChannelBotAgentLink, updates: _TelegramJsonObject) -> None:
     config = dict(link.config) if isinstance(link.config, dict) else {}
     config.update(updates)
     link.config = config
 
 
-def _telegram_json_parameter(value: Any) -> Any:
+def _telegram_json_parameter(value: object) -> object:
     if not isinstance(value, str) or not value.strip().startswith(("{", "[")):
         return value
     try:
-        return json.loads(value)
-    except json.JSONDecodeError:
+        return _JSON_VALUE_ADAPTER.validate_json(value)
+    except ValidationError:
         return value
 
 
-class _TelegramJsonObjectPairs(list[tuple[str, Any]]):
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
+def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
+    return isinstance(value, Mapping)
+
+
+def _json_object_or_none(value: object) -> dict[str, JsonValue] | None:
+    try:
+        return _JSON_OBJECT_ADAPTER.validate_python(value)
+    except ValidationError:
+        return None
+
+
+def _telegram_response_json(response: httpx.Response) -> JsonValue | None:
+    try:
+        return _JSON_VALUE_ADAPTER.validate_json(response.content)
+    except ValidationError:
+        return None
+
+
+def _telegram_json_value(value: object) -> JsonValue:
+    try:
+        return _JSON_VALUE_ADAPTER.validate_python(value)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid telegram parameter",
+        ) from exc
+
+
+async def _telegram_request_params(request: Request) -> _TelegramParams:
+    raw_params = await request_params(request)
+    params: _TelegramParams = {}
+    for key, value in raw_params.items():
+        if isinstance(value, UploadFile):
+            params[key] = value
+            continue
+        params[key] = _telegram_json_value(value)
+    return params
+
+
+async def _telegram_json_object(request: Request) -> _TelegramJsonObject:
+    return _JSON_OBJECT_ADAPTER.validate_python(await json_object(request))
+
+
+class _TelegramJsonObjectPairs(list[tuple[str, object]]):
     pass
 
 
 async def _telegram_duplicate_security_parameter(
     request: Request,
     raw_body: bytes,
-    params: dict[str, Any],
+    params: _TelegramParams,
 ) -> str | None:
     content_type = request.headers.get("content-type", "").lower()
     is_form = "application/x-www-form-urlencoded" in content_type
     is_multipart = "multipart/form-data" in content_type
-    values: list[tuple[str, str | UploadFile]] = list(request.query_params.multi_items())
+    values: list[tuple[str, object]] = list(request.query_params.multi_items())
     if request.method != "GET":
         if is_form or is_multipart:
             values.extend((await request.form()).multi_items())
@@ -1129,7 +1184,7 @@ def _telegram_json_duplicate_security_key(
 
 
 def _telegram_duplicate_security_key_in_value(
-    value: Any,
+    value: object,
     *,
     parameter_name: str | None,
     request_root: bool = False,
@@ -1152,7 +1207,7 @@ def _telegram_duplicate_security_key_in_value(
             )
             if duplicate_key is not None:
                 return duplicate_key
-    elif isinstance(value, list):
+    elif _is_object_list(value):
         for item in value:
             duplicate_key = _telegram_duplicate_security_key_in_value(
                 item,
@@ -1163,23 +1218,23 @@ def _telegram_duplicate_security_key_in_value(
     return None
 
 
-def _telegram_command_scope_key(params: dict[str, Any]) -> str:
-    scope = _telegram_json_parameter(params.get("scope"))
-    if not isinstance(scope, dict):
+def _telegram_command_scope_key(params: _TelegramParams) -> str:
+    scope = _json_object_or_none(_telegram_json_parameter(params.get("scope")))
+    if scope is None:
         return "default"
-    scope_type = _optional_str(scope.get("type"))
+    scope_type = optional_str(scope.get("type"))
     if scope_type in _TELEGRAM_BROAD_COMMAND_SCOPE_TYPES:
         return "default" if scope_type == "default" else scope_type
-    chat_id = _optional_str(scope.get("chat_id"))
+    chat_id = optional_str(scope.get("chat_id"))
     if scope_type in {"chat", "chat_administrators"} and chat_id:
         return f"{scope_type}:{chat_id}"
-    user_id = _optional_str(scope.get("user_id"))
+    user_id = optional_str(scope.get("user_id"))
     if scope_type == "chat_member" and chat_id and user_id:
         return f"chat_member:{chat_id}:{user_id}"
     return json.dumps(scope, sort_keys=True, separators=(",", ":"))
 
 
-def _ensure_telegram_bot_command_entities(update: dict[str, Any]) -> None:
+def _ensure_telegram_bot_command_entities(update: _TelegramJsonObject) -> None:
     for container_key in ("message", "edited_message", "channel_post", "edited_channel_post"):
         message = update.get(container_key)
         if not isinstance(message, dict):
@@ -1215,32 +1270,32 @@ def _telegram_command_length(text: str) -> int:
     return len(text)
 
 
-def _telegram_language_code(params: dict[str, Any]) -> str:
-    return _optional_str(params.get("language_code")) or ""
+def _telegram_language_code(params: _TelegramParams) -> str:
+    return optional_str(params.get("language_code")) or ""
 
 
 async def _validate_telegram_command_scope(
     db: AsyncSession,
     *,
-    account: Any,
+    account: ChannelAccount,
     bot_agent_link_id: UUID,
-    params: dict[str, Any],
+    params: _TelegramParams,
 ) -> JSONResponse | None:
     raw_scope = params.get("scope")
     if raw_scope is None:
         return None
-    scope = _telegram_json_parameter(raw_scope)
-    if not isinstance(scope, dict):
+    scope = _json_object_or_none(_telegram_json_parameter(raw_scope))
+    if scope is None:
         return _telegram_error_response("Bad Request: invalid scope", 400)
-    scope_type = _optional_str(scope.get("type"))
+    scope_type = optional_str(scope.get("type"))
     if scope_type in _TELEGRAM_BROAD_COMMAND_SCOPE_TYPES:
         return None
     if scope_type not in _TELEGRAM_CHAT_COMMAND_SCOPE_TYPES:
         return _telegram_error_response("Bad Request: invalid scope", 400)
-    chat_id = _optional_str(scope.get("chat_id"))
+    chat_id = optional_str(scope.get("chat_id"))
     if chat_id is None:
         return _telegram_error_response("Bad Request: invalid scope", 400)
-    if scope_type == "chat_member" and _optional_str(scope.get("user_id")) is None:
+    if scope_type == "chat_member" and optional_str(scope.get("user_id")) is None:
         return _telegram_error_response("Bad Request: invalid scope", 400)
     if (
         await find_binding(
@@ -1255,22 +1310,28 @@ async def _validate_telegram_command_scope(
     return None
 
 
-def _store_telegram_commands(link: ChannelBotAgentLink, *, params: dict[str, Any]) -> None:
+def _store_telegram_commands(link: ChannelBotAgentLink, *, params: _TelegramParams) -> None:
     commands = _telegram_json_parameter(params.get("commands"))
-    stored_commands = (
-        [command for command in commands if isinstance(command, dict)]
-        if isinstance(commands, list)
-        else []
-    )
+    stored_commands = _telegram_command_objects(commands)
     config = dict(link.config) if isinstance(link.config, dict) else {}
-    shadow = config.get("telegram_agent_commands")
-    command_shadow = dict(shadow) if isinstance(shadow, dict) else {}
+    command_shadow = _telegram_command_shadow(link)
     command_shadow[_telegram_command_shadow_key(params)] = stored_commands
-    config["telegram_agent_commands"] = command_shadow
+    config["telegram_agent_commands"] = _JSON_VALUE_ADAPTER.validate_python(command_shadow)
     link.config = config
 
 
-def _delete_telegram_commands(link: ChannelBotAgentLink, *, params: dict[str, Any]) -> None:
+def _telegram_command_objects(value: object) -> _TelegramCommands:
+    if not _is_object_list(value):
+        return []
+    commands: _TelegramCommands = []
+    for item in value:
+        command = _json_object_or_none(item)
+        if command is not None:
+            commands.append(command)
+    return commands
+
+
+def _delete_telegram_commands(link: ChannelBotAgentLink, *, params: _TelegramParams) -> None:
     config = dict(link.config) if isinstance(link.config, dict) else {}
     shadow = config.get("telegram_agent_commands")
     command_shadow = dict(shadow) if isinstance(shadow, dict) else {}
@@ -1282,68 +1343,67 @@ def _delete_telegram_commands(link: ChannelBotAgentLink, *, params: dict[str, An
 def _get_telegram_commands(
     link: ChannelBotAgentLink,
     *,
-    params: dict[str, Any],
-) -> list[dict[str, Any]]:
+    params: _TelegramParams,
+) -> _TelegramCommands:
     config = link.config if isinstance(link.config, dict) else {}
     shadow = config.get("telegram_agent_commands")
     command_shadow = shadow if isinstance(shadow, dict) else {}
     commands = command_shadow.get(_telegram_command_shadow_key(params))
     if isinstance(commands, list):
-        return [command for command in commands if isinstance(command, dict)]
+        return _telegram_command_objects(commands)
     return [dict(command) for command in _TELEGRAM_RESERVED_COMMANDS]
 
 
 def _telegram_command_shadow(
     link: ChannelBotAgentLink,
-) -> dict[str, list[dict[str, Any]]]:
+) -> dict[str, _TelegramCommands]:
     config = link.config if isinstance(link.config, dict) else {}
     shadow = config.get("telegram_agent_commands")
     if not isinstance(shadow, dict):
         return {}
     return {
-        key: [command for command in commands if isinstance(command, dict)]
+        key: _telegram_command_objects(commands)
         for key, commands in shadow.items()
-        if isinstance(key, str) and isinstance(commands, list)
+        if isinstance(commands, list)
     }
 
 
-def _telegram_physical_commands(
-    agent_commands: list[Any] | None,
-) -> list[dict[str, Any]]:
+def _telegram_physical_commands(agent_commands: Sequence[object] | None) -> _TelegramCommands:
     """Merge service and Link command ownership into one physical projection."""
     merged = [dict(command) for command in _TELEGRAM_RESERVED_COMMANDS]
     seen = set(_TELEGRAM_RESERVED_COMMAND_NAMES)
     for command in agent_commands or []:
-        if not isinstance(command, dict):
+        parsed_command = _json_object_or_none(command)
+        if parsed_command is None:
             continue
-        name = command.get("command")
+        name = parsed_command.get("command")
         if isinstance(name, str) and name in seen:
             continue
         if isinstance(name, str):
             seen.add(name)
-        merged.append(dict(command))
+        merged.append(parsed_command)
     if len(merged) > 100:
         raise ValueError("telegram command projection exceeds provider limit")
     return merged
 
 
-def _telegram_command_shadow_key(params: dict[str, Any]) -> str:
+def _telegram_command_shadow_key(params: _TelegramParams) -> str:
     return f"{_telegram_command_scope_key(params)}:{_telegram_language_code(params)}"
 
 
 def _telegram_shadow_commands(
-    shadow: dict[str, list[dict[str, Any]]],
+    shadow: dict[str, _TelegramCommands],
     *,
     scope_key: str,
     language_code: str,
-) -> list[dict[str, Any]] | None:
+) -> _TelegramCommands | None:
     return shadow.get(f"{scope_key}:{language_code}")
 
 
 def _telegram_resolve_shadow_commands(
-    shadow: dict[str, list[dict[str, Any]]],
+    shadow: dict[str, _TelegramCommands],
     candidates: list[tuple[str, str]],
-) -> list[dict[str, Any]] | None:
+) -> _TelegramCommands | None:
     for scope_key, language_code in candidates:
         commands = _telegram_shadow_commands(
             shadow,
@@ -1356,9 +1416,9 @@ def _telegram_resolve_shadow_commands(
 
 
 def _telegram_binding_command_targets(
-    shadow: dict[str, list[dict[str, Any]]],
+    shadow: dict[str, _TelegramCommands],
     binding: ChannelBinding,
-) -> list[dict[str, Any]]:
+) -> list[_TelegramJsonObject]:
     """Resolve Telegram's documented scope/language precedence for one chat."""
     languages = sorted(
         {
@@ -1371,11 +1431,11 @@ def _telegram_binding_command_targets(
     chat_id = binding.external_chat_id
     chat_type = (binding.external_chat_type or "").lower()
     is_group = chat_type in {"group", "supergroup"}
-    projections: list[dict[str, Any]] = []
+    projections: list[_TelegramJsonObject] = []
 
     def add_resolved(
         *,
-        scope: dict[str, Any],
+        scope: _TelegramJsonObject,
         language_code: str,
         scope_precedence: list[str],
     ) -> None:
@@ -1387,7 +1447,10 @@ def _telegram_binding_command_targets(
         commands = _telegram_resolve_shadow_commands(shadow, candidates)
         if commands is None:
             return
-        payload: dict[str, Any] = {"agent_commands": commands, "scope": scope}
+        payload: _TelegramJsonObject = {
+            "agent_commands": _JSON_VALUE_ADAPTER.validate_python(commands),
+            "scope": scope,
+        }
         if language_code:
             payload["language_code"] = language_code
         projections.append(payload)
@@ -1424,8 +1487,8 @@ def _telegram_binding_command_targets(
         parts = scope_key.split(":")
         if len(parts) != 3 or parts[0] != "chat_member" or parts[1] != chat_id:
             continue
-        payload = {
-            "agent_commands": commands,
+        payload: _TelegramJsonObject = {
+            "agent_commands": _JSON_VALUE_ADAPTER.validate_python(commands),
             "scope": {
                 "type": "chat_member",
                 "chat_id": chat_id,
@@ -1438,27 +1501,33 @@ def _telegram_binding_command_targets(
     return projections
 
 
-def _telegram_materialize_command_target(target: dict[str, Any]) -> dict[str, Any]:
-    payload = {
-        "commands": _telegram_physical_commands(target.get("agent_commands")),
+def _telegram_materialize_command_target(target: _TelegramJsonObject) -> _TelegramJsonObject:
+    agent_commands = target.get("agent_commands")
+    payload: _TelegramJsonObject = {
+        "commands": _JSON_VALUE_ADAPTER.validate_python(
+            _telegram_physical_commands(
+                agent_commands if isinstance(agent_commands, list) else None
+            )
+        ),
         "scope": target["scope"],
     }
-    if language_code := target.get("language_code"):
+    language_code = target.get("language_code")
+    if isinstance(language_code, str) and language_code:
         payload["language_code"] = language_code
     return payload
 
 
-def _telegram_binding_command_projections(
-    shadow: dict[str, list[dict[str, Any]]],
+def telegram_binding_command_projections(
+    shadow: dict[str, _TelegramCommands],
     binding: ChannelBinding,
-) -> list[dict[str, Any]]:
+) -> list[_TelegramJsonObject]:
     return [
         _telegram_materialize_command_target(target)
         for target in _telegram_binding_command_targets(shadow, binding)
     ]
 
 
-def _telegram_projection_identity(payload: dict[str, Any]) -> str:
+def _telegram_projection_identity(payload: _TelegramJsonObject) -> str:
     return json.dumps(
         [payload.get("scope"), payload.get("language_code", "")],
         sort_keys=True,
@@ -1466,9 +1535,9 @@ def _telegram_projection_identity(payload: dict[str, Any]) -> str:
     )
 
 
-def _telegram_command_provider_options(params: dict[str, Any]) -> dict[str, Any]:
+def _telegram_command_provider_options(params: _TelegramParams) -> _TelegramJsonObject:
     return {
-        key: _telegram_json_parameter(value)
+        key: _telegram_json_value(_telegram_json_parameter(value))
         for key, value in params.items()
         if key not in {"commands", "scope", "language_code"}
     }
@@ -1477,10 +1546,10 @@ def _telegram_command_provider_options(params: dict[str, Any]) -> dict[str, Any]
 async def _reconcile_telegram_commands_for_link(
     db: AsyncSession,
     *,
-    account: Any,
+    account: ChannelAccount,
     link: ChannelBotAgentLink,
-    previous_shadow: dict[str, list[dict[str, Any]]] | None = None,
-    provider_options: dict[str, Any] | None = None,
+    previous_shadow: dict[str, _TelegramCommands] | None = None,
+    provider_options: _TelegramJsonObject | None = None,
 ) -> Response | None:
     if not account.encrypted_provider_token or not account.provider_token_nonce:
         return None
@@ -1494,9 +1563,9 @@ async def _reconcile_telegram_commands_for_link(
     desired_shadow = _telegram_command_shadow(link)
     reconciliations: list[
         tuple[
-            dict[str, dict[str, Any]],
-            dict[str, dict[str, Any]],
-            dict[str, dict[str, Any]],
+            dict[str, _TelegramJsonObject],
+            dict[str, _TelegramJsonObject],
+            dict[str, _TelegramJsonObject],
         ]
     ] = []
     for binding in result.scalars().all():
@@ -1596,7 +1665,7 @@ async def _clear_telegram_commands_for_binding(
     succeeded = True
     targets = _telegram_binding_command_targets(_telegram_command_shadow(link), binding)
     for target in targets:
-        payload: dict[str, Any] = {"scope": target["scope"]}
+        payload: _TelegramJsonObject = {"scope": target["scope"]}
         if language_code := target.get("language_code"):
             payload["language_code"] = language_code
         try:
@@ -1666,7 +1735,7 @@ async def _reconcile_telegram_menu_button_after_binding_change(
         or not account.provider_token_nonce
     ):
         return True
-    menu_button: dict[str, Any] = {"type": "default"}
+    menu_button: _TelegramJsonObject = {"type": "default"}
     if paired:
         link = await db.get(ChannelBotAgentLink, binding.bot_agent_link_id)
         if link is not None and link.status == BOT_AGENT_LINK_STATUS_ACTIVE:
@@ -1791,10 +1860,7 @@ async def reconcile_telegram_link_unlink(
 def _telegram_provider_call_succeeded(response: httpx.Response) -> bool:
     if response.status_code >= 400:
         return False
-    try:
-        payload = response.json()
-    except ValueError:
-        return False
+    payload = _telegram_response_json(response)
     return isinstance(payload, dict) and payload.get("ok") is not False
 
 
@@ -1807,9 +1873,9 @@ def _telegram_command_shadow_parts(key: str) -> tuple[str, str]:
 
 async def _post_telegram_bot_payload(
     *,
-    account: Any,
+    account: ChannelAccount,
     method: str,
-    payload: dict[str, Any],
+    payload: _TelegramJsonObject,
 ) -> httpx.Response:
     provider_token = decrypt_provider_token(account)
     base_url = settings.channel_telegram_api_base_url.strip()
@@ -1827,11 +1893,11 @@ async def _post_telegram_bot_payload(
 
 async def _handle_telegram_profile_shadow(
     db: AsyncSession,
-    account: Any,
+    account: ChannelAccount,
     link: ChannelBotAgentLink,
     method_key: str,
-    params: dict[str, Any],
-) -> dict[str, Any] | Response | None:
+    params: _TelegramParams,
+) -> _TelegramJsonObject | Response | None:
     if method_key == "setchatmenubutton":
         return await _set_telegram_chat_menu_button(db, account, link, params)
     if method_key == "getchatmenubutton":
@@ -1850,7 +1916,7 @@ async def _handle_telegram_profile_shadow(
             )
         field_key, value = value_result
         _set_telegram_profile_value(link, params=params, field_key=field_key, value=value)
-        return _telegram_ok(True)
+        return telegram_ok(True)
 
     if method_key in {
         "getmyname",
@@ -1861,7 +1927,7 @@ async def _handle_telegram_profile_shadow(
         allow_legacy_fallback = await _telegram_profile_legacy_fallback_is_safe(
             db, account_id=link.account_id
         )
-        return _telegram_ok(
+        return telegram_ok(
             _telegram_profile_get_value(
                 account,
                 link,
@@ -1877,13 +1943,13 @@ async def _set_telegram_chat_menu_button(
     db: AsyncSession,
     account: ChannelAccount,
     link: ChannelBotAgentLink,
-    params: dict[str, Any],
-) -> dict[str, Any] | Response:
+    params: _TelegramParams,
+) -> _TelegramJsonObject | Response:
     raw_menu_button = params.get("menu_button", {"type": "default"})
     menu_button = _normalize_telegram_menu_button(raw_menu_button)
     if menu_button is None:
         return _telegram_error_response("Bad Request: invalid menu_button", 400)
-    chat_id = _optional_str(params.get("chat_id"))
+    chat_id = optional_str(params.get("chat_id"))
     bindings: list[ChannelBinding]
     if chat_id is not None:
         binding = await find_binding(
@@ -1914,7 +1980,10 @@ async def _set_telegram_chat_menu_button(
         ]
 
     if account.encrypted_provider_token and account.provider_token_nonce:
-        provider_params = {key: _telegram_json_parameter(value) for key, value in params.items()}
+        provider_params: _TelegramJsonObject = {
+            key: _telegram_json_value(_telegram_json_parameter(value))
+            for key, value in params.items()
+        }
         for binding in bindings:
             response = await _post_telegram_bot_payload(
                 account=account,
@@ -1930,23 +1999,23 @@ async def _set_telegram_chat_menu_button(
 
     field_key = _telegram_menu_button_field_key(chat_id)
     _set_telegram_profile_value(link, params={}, field_key=field_key, value=menu_button)
-    return _telegram_ok(True)
+    return telegram_ok(True)
 
 
-def _normalize_telegram_menu_button(value: Any) -> dict[str, Any] | None:
-    value = _telegram_json_parameter(value)
-    if not isinstance(value, dict):
+def _normalize_telegram_menu_button(value: object) -> _TelegramJsonObject | None:
+    parsed = _json_object_or_none(_telegram_json_parameter(value))
+    if parsed is None:
         return None
-    return dict(value) if _optional_str(value.get("type")) is not None else None
+    return parsed if optional_str(parsed.get("type")) is not None else None
 
 
 async def _get_telegram_chat_menu_button(
     db: AsyncSession,
     account: ChannelAccount,
     link: ChannelBotAgentLink,
-    params: dict[str, Any],
-) -> dict[str, Any] | JSONResponse:
-    chat_id = _optional_str(params.get("chat_id"))
+    params: _TelegramParams,
+) -> _TelegramJsonObject | JSONResponse:
+    chat_id = optional_str(params.get("chat_id"))
     if chat_id is not None:
         binding = await find_binding(
             db,
@@ -1960,13 +2029,13 @@ async def _get_telegram_chat_menu_button(
             return _telegram_error_response(
                 "Bad Request: chat_id must identify a private chat", 400
             )
-    return _telegram_ok(_telegram_menu_button_value(link, chat_id=chat_id))
+    return telegram_ok(_telegram_menu_button_value(link, chat_id=chat_id))
 
 
 def _telegram_profile_set_value(
     method_key: str,
-    params: dict[str, Any],
-) -> tuple[str, Any] | None:
+    params: _TelegramParams,
+) -> tuple[str, JsonValue] | None:
     if method_key == "setmyname":
         value = params.get("name")
         return ("name", value) if isinstance(value, str) else None
@@ -1979,8 +2048,8 @@ def _telegram_profile_set_value(
     if method_key == "setmydefaultadministratorrights":
         if "rights" not in params:
             return None
-        rights = _telegram_json_parameter(params.get("rights"))
-        if not isinstance(rights, dict):
+        rights = _json_object_or_none(_telegram_json_parameter(params.get("rights")))
+        if rights is None:
             return None
         field_key = (
             "default_admin_rights:channels"
@@ -2003,9 +2072,9 @@ def _telegram_profile_required_hint(method_key: str) -> str:
 def _set_telegram_profile_value(
     link: ChannelBotAgentLink,
     *,
-    params: dict[str, Any],
+    params: _TelegramParams,
     field_key: str,
-    value: Any,
+    value: JsonValue,
 ) -> None:
     config = dict(link.config) if isinstance(link.config, dict) else {}
     profile = config.get("telegram_bot_profile")
@@ -2016,13 +2085,13 @@ def _set_telegram_profile_value(
 
 
 def _telegram_profile_get_value(
-    account: Any,
+    account: ChannelAccount,
     link: ChannelBotAgentLink,
     method_key: str,
-    params: dict[str, Any],
+    params: _TelegramParams,
     *,
     allow_legacy_fallback: bool,
-) -> dict[str, Any]:
+) -> _TelegramJsonObject:
     field_key = {
         "getmyname": "name",
         "getmydescription": "description",
@@ -2071,7 +2140,7 @@ async def _telegram_profile_legacy_fallback_is_safe(
     return len(result.scalars().all()) == 1
 
 
-def _telegram_profile_key(params: dict[str, Any], field_key: str) -> str:
+def _telegram_profile_key(params: _TelegramParams, field_key: str) -> str:
     return f"{field_key}:{_telegram_language_code(params)}"
 
 
@@ -2083,7 +2152,7 @@ def _telegram_menu_button_value(
     link: ChannelBotAgentLink,
     *,
     chat_id: str | None,
-) -> dict[str, Any]:
+) -> _TelegramJsonObject:
     config = link.config if isinstance(link.config, dict) else {}
     profile = config.get("telegram_bot_profile")
     shadow = profile if isinstance(profile, dict) else {}
@@ -2103,13 +2172,13 @@ def _telegram_binding_supports_menu_button(binding: ChannelBinding) -> bool:
 async def _handle_telegram_get_file(
     db: AsyncSession,
     *,
-    account: Any,
+    account: ChannelAccount,
     bot_agent_link_id: UUID,
-    params: dict[str, Any],
+    params: _TelegramParams,
     raw_body: bytes,
     request: Request,
 ) -> Response:
-    file_id = _optional_str(params.get("file_id"))
+    file_id = optional_str(params.get("file_id"))
     if file_id is None:
         return _telegram_error_response("Bad Request: file_id is required", 400)
     if not await channel_agent_reference_exists(
@@ -2129,12 +2198,9 @@ async def _handle_telegram_get_file(
         request=request,
         raw_body=raw_body,
     )
-    response_payload: Any = None
+    response_payload: JsonValue | None = None
     if 200 <= response.status_code < 300:
-        try:
-            response_payload = response.json()
-        except ValueError:
-            pass
+        response_payload = _telegram_response_json(response)
     result = response_payload.get("result") if isinstance(response_payload, dict) else None
     file_path = result.get("file_path") if isinstance(result, dict) else None
     if (
@@ -2171,14 +2237,14 @@ async def _handle_telegram_get_file(
 async def _handle_telegram_callback_answer(
     db: AsyncSession,
     *,
-    account: Any,
+    account: ChannelAccount,
     bot_agent_link_id: UUID,
     method: str,
-    params: dict[str, Any],
+    params: _TelegramParams,
     raw_body: bytes,
     request: Request,
 ) -> Response:
-    callback_query_id = _optional_str(params.get("callback_query_id"))
+    callback_query_id = optional_str(params.get("callback_query_id"))
     if callback_query_id is None:
         return _telegram_error_response("Bad Request: callback_query_id is required", 400)
     if not await channel_agent_reference_exists(
@@ -2204,21 +2270,21 @@ async def _handle_telegram_callback_answer(
 async def _authorize_telegram_chat_method(
     db: AsyncSession,
     *,
-    account: Any,
+    account: ChannelAccount,
     bot_agent_link_id: UUID,
     method_key: str,
-    params: dict[str, Any],
+    params: _TelegramParams,
 ) -> JSONResponse | None:
     if method_key not in _TELEGRAM_CHAT_SCOPED_METHODS:
         return _telegram_error_response("Forbidden: method is not available to this bot", 403)
 
-    business_connection_id = _optional_str(params.get("business_connection_id"))
+    business_connection_id = optional_str(params.get("business_connection_id"))
     if business_connection_id is not None:
         return _telegram_error_response(
             "Forbidden: business_connection_id is not bound to this bot",
             403,
         )
-    inline_message_id = _optional_str(params.get("inline_message_id"))
+    inline_message_id = optional_str(params.get("inline_message_id"))
     if inline_message_id is not None:
         return _telegram_error_response(
             "Forbidden: inline_message_id is not bound to this bot",
@@ -2230,7 +2296,7 @@ async def _authorize_telegram_chat_method(
             403,
         )
 
-    chat_id = _optional_str(params.get("chat_id"))
+    chat_id = optional_str(params.get("chat_id"))
     if chat_id is None:
         return _telegram_error_response("Forbidden: method requires a bound chat_id", 403)
     binding = await find_binding(
@@ -2261,7 +2327,7 @@ async def _authorize_telegram_chat_method(
                 400,
             )
         if topic_value is not None:
-            topic_id = _optional_int_param(topic_value)
+            topic_id = optional_int_param(topic_value)
             if topic_id is None or topic_id <= 0:
                 return _telegram_error_response(
                     "Bad Request: invalid direct message topic",
@@ -2318,7 +2384,7 @@ async def _authorize_telegram_chat_method(
                 403,
             )
 
-    callback_query_id = _optional_str(params.get("callback_query_id"))
+    callback_query_id = optional_str(params.get("callback_query_id"))
     if callback_query_id is not None and not await channel_agent_reference_exists(
         db,
         account=account,
@@ -2351,21 +2417,25 @@ async def _authorize_telegram_chat_method(
 
 def _telegram_outbound_file_references(
     method_key: str,
-    params: dict[str, Any],
+    params: _TelegramParams,
 ) -> tuple[set[str], str | None]:
     del method_key
     references: set[str] = set()
-    stack: list[Any] = [params]
+    stack: list[object] = [params]
     while stack:
         current = _telegram_json_parameter(stack.pop())
-        if isinstance(current, list):
+        if _is_object_list(current):
             stack.extend(current)
             continue
-        if not isinstance(current, dict):
+        if not _is_object_mapping(current):
             continue
         for field_name, value in current.items():
             parsed = _telegram_json_parameter(value)
-            if field_name in _TELEGRAM_FILE_FIELD_NAMES and isinstance(parsed, str):
+            if (
+                isinstance(field_name, str)
+                and field_name in _TELEGRAM_FILE_FIELD_NAMES
+                and isinstance(parsed, str)
+            ):
                 file_reference = parsed.strip()
                 if (
                     file_reference
@@ -2373,15 +2443,15 @@ def _telegram_outbound_file_references(
                     and "://" not in file_reference
                 ):
                     references.add(file_reference)
-            elif isinstance(parsed, (dict, list)):
+            elif _is_object_mapping(parsed) or _is_object_list(parsed):
                 stack.append(parsed)
     return references, None
 
 
-def _referenced_telegram_chat_ids(params: dict[str, Any]) -> set[str]:
+def _referenced_telegram_chat_ids(params: _TelegramParams) -> set[str]:
     chat_ids: set[str] = set()
     for path in _TELEGRAM_REFERENCED_CHAT_PATHS:
-        chat_id = _optional_str(_telegram_param_at_path(params, path))
+        chat_id = optional_str(_telegram_param_at_path(params, path))
         if chat_id is not None:
             chat_ids.add(chat_id)
     return chat_ids
@@ -2389,11 +2459,11 @@ def _referenced_telegram_chat_ids(params: dict[str, Any]) -> set[str]:
 
 def _telegram_message_references(
     method_key: str,
-    params: dict[str, Any],
+    params: _TelegramParams,
     *,
     chat_id: str,
 ) -> tuple[set[tuple[str, int]], str | None]:
-    source_chat_id = _optional_str(params.get("from_chat_id"))
+    source_chat_id = optional_str(params.get("from_chat_id"))
     primary_reference_chat_id = (
         source_chat_id
         if method_key in _TELEGRAM_SOURCE_MESSAGE_METHODS and source_chat_id is not None
@@ -2401,41 +2471,43 @@ def _telegram_message_references(
     )
     references: set[tuple[str, int]] = set()
     if "message_id" in params:
-        message_id = _optional_int_param(params.get("message_id"))
+        message_id = optional_int_param(params.get("message_id"))
         if message_id is None or message_id <= 0:
             return references, "invalid message_id"
         references.add((primary_reference_chat_id, message_id))
     if "message_ids" in params:
         message_ids = _telegram_json_parameter(params.get("message_ids"))
-        if not isinstance(message_ids, list) or not message_ids:
+        if not _is_object_list(message_ids) or not message_ids:
             return references, "invalid message_ids"
         for value in message_ids:
-            message_id = _optional_int_param(value)
+            message_id = optional_int_param(value)
             if message_id is None or message_id <= 0:
                 return references, "invalid message_ids"
             references.add((primary_reference_chat_id, message_id))
 
-    reply_parameters = _telegram_json_parameter(params.get("reply_parameters"))
-    if isinstance(reply_parameters, dict) and "message_id" in reply_parameters:
-        message_id = _optional_int_param(reply_parameters.get("message_id"))
-        reply_chat_id = _optional_str(reply_parameters.get("chat_id")) or chat_id
+    reply_parameters = _json_object_or_none(
+        _telegram_json_parameter(params.get("reply_parameters"))
+    )
+    if reply_parameters is not None and "message_id" in reply_parameters:
+        message_id = optional_int_param(reply_parameters.get("message_id"))
+        reply_chat_id = optional_str(reply_parameters.get("chat_id")) or chat_id
         if message_id is None or message_id <= 0:
             return references, "invalid reply_parameters"
         references.add((reply_chat_id, message_id))
     return references, None
 
 
-def _telegram_param_at_path(params: dict[str, Any], path: tuple[str, ...]) -> Any:
-    value: Any = params
+def _telegram_param_at_path(params: _TelegramParams, path: tuple[str, ...]) -> object:
+    value: object = params
     for key in path:
         value = _telegram_json_parameter(value)
-        if not isinstance(value, dict):
+        if not _is_object_mapping(value):
             return None
         value = value.get(key)
     return value
 
 
-def _telegram_boolean_param_is_true(value: Any) -> bool:
+def _telegram_boolean_param_is_true(value: object) -> bool:
     if value is True or value == 1:
         return True
     return isinstance(value, str) and value.strip().lower() in {"1", "true", "yes"}
@@ -2444,16 +2516,16 @@ def _telegram_boolean_param_is_true(value: Any) -> bool:
 async def _proxy_telegram_bot_method(
     db: AsyncSession,
     *,
-    account: Any,
+    account: ChannelAccount,
     bot_agent_link_id: UUID,
     method: str,
     request: Request,
     raw_body: bytes,
 ) -> Response:
-    request_params = await _request_params(request)
+    request_params = await _telegram_request_params(request)
     if request.method != "GET":
         request_params = {**dict(request.query_params), **request_params}
-    chat_id = _optional_str(request_params.get("chat_id"))
+    chat_id = optional_str(request_params.get("chat_id"))
     translate_direct_topic = False
     if chat_id is not None:
         binding = await find_binding(
@@ -2477,10 +2549,7 @@ async def _proxy_telegram_bot_method(
         translate_direct_topic=translate_direct_topic,
     )
     if 200 <= response.status_code < 300:
-        try:
-            payload = response.json()
-        except ValueError:
-            payload = None
+        payload = _telegram_response_json(response)
         if isinstance(payload, dict) and payload.get("ok") is True:
             file_ids = telegram_file_ids(payload.get("result"))
             message_references = _telegram_result_message_references(
@@ -2541,12 +2610,12 @@ async def _rollback_telegram_reference_recording(
 
 
 def _telegram_result_message_references(
-    value: Any,
+    value: JsonValue,
     *,
     fallback_chat_id: str | None,
 ) -> set[tuple[str, int]]:
     references: set[tuple[str, int]] = set()
-    stack = [value]
+    stack: list[JsonValue] = [value]
     while stack:
         current = stack.pop()
         if isinstance(current, list):
@@ -2554,10 +2623,10 @@ def _telegram_result_message_references(
             continue
         if not isinstance(current, dict):
             continue
-        message_id = _optional_int_param(current.get("message_id"))
+        message_id = optional_int_param(current.get("message_id"))
         chat = current.get("chat")
         result_chat_id = (
-            _optional_str(chat.get("id")) if isinstance(chat, dict) else fallback_chat_id
+            optional_str(chat.get("id")) if isinstance(chat, dict) else fallback_chat_id
         )
         if message_id is not None and message_id > 0 and result_chat_id is not None:
             references.add((result_chat_id, message_id))
@@ -2567,7 +2636,7 @@ def _telegram_result_message_references(
 
 async def _telegram_provider_response(
     *,
-    account: Any,
+    account: ChannelAccount,
     method: str,
     request: Request,
     raw_body: bytes,
@@ -2577,7 +2646,7 @@ async def _telegram_provider_response(
     base_url = settings.channel_telegram_api_base_url.strip()
     await _validate_telegram_provider_base_url(base_url)
     url = httpx.URL(f"{base_url.rstrip('/')}/bot{provider_token}/{method}")
-    headers = {}
+    headers: dict[str, str] = {}
     content_type = request.headers.get("content-type")
     if content_type:
         headers["content-type"] = content_type
@@ -2754,8 +2823,8 @@ async def _validate_telegram_provider_base_url(base_url: str) -> None:
         ) from exc
 
 
-def _telegram_passthrough_headers(response: Any) -> dict[str, str]:
-    headers = getattr(response, "headers", {}) or {}
+def _telegram_passthrough_headers(response: httpx.Response) -> dict[str, str]:
+    headers = response.headers
     passthrough: dict[str, str] = {}
     for key in (
         "content-type",
@@ -2779,7 +2848,7 @@ def _telegram_passthrough_headers(response: Any) -> dict[str, str]:
     return passthrough
 
 
-def _telegram_proxy_response(response: Any) -> Response:
+def _telegram_proxy_response(response: httpx.Response) -> Response:
     return Response(
         content=response.content,
         status_code=response.status_code,
