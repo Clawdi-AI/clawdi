@@ -35,7 +35,6 @@ from app.models.channel import (
     BOT_AGENT_LINK_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ARCHIVED,
     CHANNEL_PROVIDER_DISCORD,
-    CHANNEL_PROVIDER_IMESSAGE,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_DISABLED,
@@ -77,7 +76,6 @@ from app.routes.channel_routers.discord import (
 from app.routes.channel_routers.shared import _discord_gateway_dispatch
 from app.services import channel_config as channel_config_service
 from app.services import channels as channel_service
-from app.services.bluebubbles_socket import BlueBubblesSocketManager
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
@@ -1852,16 +1850,27 @@ async def test_env_bound_list_channels_filters_non_v2_runtime_providers(
         },
     )
     assert telegram.status_code == 201, telegram.text
-    imessage = await client.post(
-        "/v1/channels",
-        json={
-            "provider": CHANNEL_PROVIDER_IMESSAGE,
-            "name": f"runtime-imessage-{uuid4().hex}",
-            "provider_token": "bluebubbles-password",
-            "config": {"server_url": "https://bluebubbles.example"},
-        },
+    ciphertext, nonce = encrypt_optional_token("legacy-imessage-agent-token")
+    legacy_account = ChannelAccount(
+        user_id=seed_user.id,
+        provider="imessage",
+        name=f"runtime-imessage-{uuid4().hex}",
+        webhook_secret_hash=hash_token("legacy-imessage-webhook-secret"),
+        config={"bluebubbles_webhook": {"url": "https://legacy.invalid"}},
     )
-    assert imessage.status_code == 201, imessage.text
+    db_session.add(legacy_account)
+    await db_session.flush()
+    db_session.add(
+        ChannelBotAgentLink(
+            account_id=legacy_account.id,
+            user_id=seed_user.id,
+            agent_id=channel_agent.id,
+            agent_token_hash=hash_token("legacy-imessage-agent-token"),
+            encrypted_agent_token=ciphertext,
+            agent_token_nonce=nonce,
+        )
+    )
+    await db_session.commit()
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=channel_agent.id, label="hosted")
     async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
@@ -1870,8 +1879,48 @@ async def test_env_bound_list_channels_filters_non_v2_runtime_providers(
     assert listed.status_code == 200, listed.text
     providers = {item["provider"] for item in listed.json()}
     assert providers == {CHANNEL_PROVIDER_TELEGRAM}
-    assert imessage.json()["id"] not in listed.text
-    assert "bluebubbles-password" not in listed.text
+    assert str(legacy_account.id) not in listed.text
+    assert "legacy-imessage-agent-token" not in listed.text
+
+
+@pytest.mark.asyncio
+async def test_create_channel_rejects_retired_imessage_provider(client: httpx.AsyncClient):
+    response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": "imessage",
+            "name": "retired-provider",
+            "provider_token": "legacy-password",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "imessage" not in response.json()["detail"][0]["ctx"]["expected"]
+
+
+@pytest.mark.asyncio
+async def test_bot_pool_filters_stale_imessage_account(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    stale = ChannelAccount(
+        user_id=seed_user.id,
+        provider="imessage",
+        name="stale-imessage",
+        webhook_secret_hash=hash_token("legacy-secret"),
+    )
+    db_session.add(stale)
+    await db_session.commit()
+
+    serialized = public_router._account_response(stale)
+    assert serialized.provider == "imessage"
+
+    response = await client.get("/v1/channels/bot-pool")
+
+    assert response.status_code == 200
+    assert "imessage" not in response.json()["providers"]
+    assert str(stale.id) not in response.text
 
 
 @pytest.mark.asyncio
@@ -11133,30 +11182,6 @@ async def test_bluebubbles_socketio_auth_packets_match_advanced_imessagekit(
             )
             with pytest.raises(WebSocketDisconnect):
                 websocket.receive_text()
-
-
-@pytest.mark.asyncio
-async def test_bluebubbles_socket_manager_emits_only_to_account():
-    manager = BlueBubblesSocketManager()
-    account_a = UUID("00000000-0000-0000-0000-0000000000aa")
-    account_b = UUID("00000000-0000-0000-0000-0000000000bb")
-    socket_a = _SocketProbe()
-    socket_b = _SocketProbe()
-
-    await manager.connect(socket_a, account_a)  # type: ignore[arg-type]
-    await manager.connect(socket_b, account_b)  # type: ignore[arg-type]
-    delivered = await manager.emit(
-        account_a,
-        "new-message",
-        {"guid": "msg-1", "text": "hello"},
-    )
-
-    assert delivered == 1
-    assert json.loads(socket_a.sent[-1][2:]) == [
-        "new-message",
-        {"guid": "msg-1", "text": "hello"},
-    ]
-    assert all("new-message" not in packet for packet in socket_b.sent)
 
 
 @pytest.mark.asyncio

@@ -29,15 +29,15 @@ provider transport, not an Agent-facing connector.
 | --- | --- | --- |
 | User | A Clawdi account. The user owns private bots, agent links, pair codes, bindings, messages, deliveries, and provider-specific credentials they create. | `users` plus `user_id` columns on channel tables |
 | Agent | A Clawdi runtime endpoint that can receive channel messages and send replies through an SDK-compatible surface. Channels bind to `AgentEnvironment`, not Projects. | `agent_environments` |
-| Provider | The external network family: Telegram, Discord, WhatsApp, or iMessage/BlueBubbles. | `ChannelAccount.provider` |
-| External bot | A concrete external bot identity or provider endpoint, such as one Telegram bot token, one Discord application, one WhatsApp phone identity, or one BlueBubbles server. | `channel_accounts` |
+| Provider | The external network family: Telegram, Discord, or WhatsApp. | `ChannelAccount.provider` |
+| External bot | A concrete external bot identity or provider endpoint, such as one Telegram bot token, one Discord application, or one WhatsApp phone identity. | `channel_accounts` |
 | Visibility | Whether an external bot is private to its owner or available as a Clawdi-managed public bot. Private rows have a tenant `user_id`; public rows have `user_id = NULL`. | `ChannelAccount.visibility`, `ChannelAccount.user_id` |
 | Bot access | The caller's effective relationship to a selectable bot account: `owner` for caller-owned private bots, `public` for Clawdi-managed public bots. | `/v1/channels/bot-pool` response |
 | Bot capabilities | The caller's allowed actions for a selectable bot account, such as link, pair, send, manage account, or sync commands. | `/v1/channels/bot-pool` response |
 | Bot pool | The authenticated user's selectable bot candidates: owned private bots and active Clawdi-managed public bots. This is a read-only view, not a separate state table. | `/v1/channels/bot-pool` |
 | Bot-agent link | A user's authorization edge from one external bot to one Clawdi agent. This is the unit that owns the mock provider SDK token. | `channel_bot_agent_links` |
-| Agent SDK token | The token an agent process uses when it calls a Telegram Bot API, Discord REST/Gateway, WhatsApp synthetic Noise, or BlueBubbles-compatible endpoint hosted by Clawdi. Tokens are scoped to one bot-agent link. | `ChannelBotAgentLink.agent_token_hash` |
-| External chat | The provider conversation id: Telegram chat id, Discord guild/channel route id, WhatsApp JID, or iMessage chat GUID. | `ChannelBinding.external_chat_id` |
+| Agent SDK token | The token an agent process uses when it calls a Telegram Bot API, Discord REST/Gateway, or WhatsApp synthetic Noise endpoint hosted by Clawdi. Tokens are scoped to one bot-agent link. | `ChannelBotAgentLink.agent_token_hash` |
+| External chat | The provider conversation id: Telegram chat id, Discord guild/channel route id, or WhatsApp JID. | `ChannelBinding.external_chat_id` |
 | External actor | The provider user or sender who issued a control command in a chat. In a DM this is usually the chat itself; in a group it is the participant id. | `ChannelBinding.paired_external_user_id` |
 | Conversation route | The active routing decision for one `(external bot, external chat)` session. It points to one bot-agent link and therefore one agent. | `channel_bindings` |
 | Route alias | A provider-specific alternate id for the same conversation, such as WhatsApp LID/PN aliases or Discord guild/channel aliases. | `channel_binding_aliases` |

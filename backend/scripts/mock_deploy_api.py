@@ -125,7 +125,6 @@ def _base_config() -> dict[str, Any]:
         "telegram_mux_enabled": True,
         "discord_mux_enabled": False,
         "whatsapp_mux_enabled": False,
-        "imessage_mux_enabled": False,
         "kobb_available": True,
         "channel": "telegram",
         "primary_model": "openai/gpt-4o-mini",

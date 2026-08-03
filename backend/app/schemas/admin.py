@@ -41,7 +41,7 @@ from app.schemas.runtime import (
     validate_hosted_runtime_secret_values,
 )
 
-AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
+AdminChannelProvider = Literal["telegram", "discord", "whatsapp"]
 AdminChannelVisibility = Literal["private", "public"]
 AdminChannelStatus = Literal["active", "disabled"]
 _SUPPORTED_HOSTED_RUNTIMES = {"hermes", "openclaw"}

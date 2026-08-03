@@ -480,6 +480,7 @@ async def list_channels(
             ChannelAccount.archived_at.is_(None),
             ChannelAccount.user_id == auth.user_id,
             ChannelAccount.visibility == CHANNEL_VISIBILITY_PRIVATE,
+            ChannelAccount.provider.in_(CHANNEL_PROVIDERS),
         )
         .order_by(
             ChannelAccount.provider,
@@ -546,6 +547,7 @@ async def list_channel_bot_pool(
         .where(
             ChannelAccount.archived_at.is_(None),
             ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+            ChannelAccount.provider.in_(CHANNEL_PROVIDERS),
             or_(
                 and_(
                     ChannelAccount.user_id == auth.user_id,

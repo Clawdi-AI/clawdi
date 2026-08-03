@@ -7,7 +7,6 @@ from fastapi import HTTPException, status
 
 from app.models.channel import (
     CHANNEL_PROVIDER_DISCORD,
-    CHANNEL_PROVIDER_IMESSAGE,
     ChannelAccount,
 )
 from app.services.url_security import (
@@ -77,8 +76,6 @@ async def validate_channel_account_config_urls(
             "discord gateway_url",
             unsafe_detail="discord gateway_url must be a public wss URL",
         )
-    if provider == CHANNEL_PROVIDER_IMESSAGE:
-        await _validate_optional_http_config(config, "server_url", "imessage server_url")
 
 
 async def _validate_optional_http_config(

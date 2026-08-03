@@ -268,7 +268,7 @@ behind `POST /v1/mcp/clawdi`; neither is a user-manageable MCP inventory row.
 ## Channels
 
 Native Channels are owned by the FastAPI backend and PostgreSQL. They support
-Telegram, Discord, WhatsApp, and iMessage/BlueBubbles provider families through
+Telegram, Discord, and WhatsApp provider families through
 channel accounts, bot-agent links, pair codes, bindings, message rows,
 delivery outbox rows, credentials, and provider-specific adapters.
 

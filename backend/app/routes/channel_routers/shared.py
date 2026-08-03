@@ -33,7 +33,6 @@ from app.models.channel import (
     ChannelBinding,
     ChannelBindingAlias,
     ChannelBotAgentLink,
-    ChannelMessage,
 )
 from app.schemas.channel import (
     ChannelAccountResponse,
@@ -41,15 +40,7 @@ from app.schemas.channel import (
     ChannelMessageResponse,
     ChannelVisibility,
 )
-from app.services.bluebubbles_compat import (
-    bluebubbles_message_client_payload,
-    count_imessage_messages,
-    normalize_bluebubbles_attachments,
-    sanitize_bluebubbles_data_for_client,
-)
 from app.services.channel_webhooks import (
-    bluebubbles_webhook_config,
-    deliver_bluebubbles_agent_webhook,
     deliver_telegram_agent_webhook,
     telegram_link_webhook_config,
     telegram_link_webhook_url,
@@ -224,194 +215,8 @@ async def _set_account_config(account: ChannelAccount, updates: dict[str, Any]) 
     account.config = config
 
 
-def _bluebubbles_ok(data: Any) -> dict[str, Any]:
-    return {"status": 200, "message": "OK", "data": sanitize_bluebubbles_data_for_client(data)}
-
-
-def _bluebubbles_webhook_config(account: ChannelAccount) -> dict[str, Any]:
-    return bluebubbles_webhook_config(account)
-
-
-def _bluebubbles_webhook_events() -> list[str]:
-    return [
-        "new-message",
-        "updated-message",
-        "message-updated",
-        "message-send-error",
-        "group-name-change",
-        "participant-added",
-        "participant-removed",
-        "participant-left",
-        "typing-indicator",
-        "message-reaction",
-    ]
-
-
 async def _validate_agent_webhook_url(account: ChannelAccount, url: str) -> None:
     await validate_agent_webhook_url(account, url)
-
-
-async def _list_imessage_bindings(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    bot_agent_link_id: UUID | None = None,
-) -> list[ChannelBinding]:
-    filters = [
-        ChannelBinding.account_id == account.id,
-        ChannelBinding.status == BINDING_STATUS_ACTIVE,
-    ]
-    if bot_agent_link_id is not None:
-        filters.append(ChannelBinding.bot_agent_link_id == bot_agent_link_id)
-    result = await db.execute(
-        select(ChannelBinding).where(*filters).order_by(ChannelBinding.created_at.desc())
-    )
-    return list(result.scalars().all())
-
-
-async def _list_imessage_messages(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    chat_guid: str | None,
-    limit: int,
-    offset: int,
-    bot_agent_link_id: UUID | None = None,
-) -> list[ChannelMessage]:
-    filters = [
-        ChannelMessage.account_id == account.id,
-        ChannelBinding.status == BINDING_STATUS_ACTIVE,
-    ]
-    if bot_agent_link_id is not None:
-        filters.append(ChannelMessage.bot_agent_link_id == bot_agent_link_id)
-    query = (
-        select(ChannelMessage)
-        .join(ChannelBinding, ChannelMessage.binding_id == ChannelBinding.id)
-        .where(*filters)
-        .order_by(ChannelMessage.created_at.desc(), ChannelMessage.inbox_sequence.desc())
-        .offset(offset)
-        .limit(limit)
-    )
-    if chat_guid:
-        query = query.where(ChannelMessage.external_chat_id == chat_guid)
-    result = await db.execute(query)
-    return list(result.scalars().all())
-
-
-async def _bluebubbles_message_count(
-    db: AsyncSession,
-    *,
-    chat_guid: str,
-    account: ChannelAccount,
-    scope: str,
-    bot_agent_link_id: UUID | None = None,
-) -> dict[str, Any]:
-    await _require_bound_chat(
-        db,
-        account=account,
-        external_chat_id=chat_guid,
-        bot_agent_link_id=bot_agent_link_id,
-    )
-    total = await count_imessage_messages(
-        db,
-        account=account,
-        chat_guid=chat_guid,
-        scope=scope,
-        bot_agent_link_id=bot_agent_link_id,
-    )
-    return _bluebubbles_ok({"total": total})
-
-
-async def _get_imessage_message(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    message_guid: str,
-    bot_agent_link_id: UUID | None = None,
-) -> ChannelMessage:
-    filters = [
-        ChannelMessage.account_id == account.id,
-        ChannelMessage.provider_message_id == message_guid,
-    ]
-    try:
-        parsed_uuid = UUID(message_guid)
-    except ValueError:
-        parsed_uuid = None
-    if parsed_uuid is not None:
-        filters = [
-            ChannelMessage.account_id == account.id,
-            ChannelMessage.id == parsed_uuid,
-        ]
-    if bot_agent_link_id is not None:
-        filters.append(ChannelMessage.bot_agent_link_id == bot_agent_link_id)
-    result = await db.execute(
-        select(ChannelMessage)
-        .join(ChannelBinding, ChannelMessage.binding_id == ChannelBinding.id)
-        .where(*filters, ChannelBinding.status == BINDING_STATUS_ACTIVE)
-    )
-    message = result.scalar_one_or_none()
-    if message is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="message not found")
-    return message
-
-
-def _bluebubbles_chat(binding: ChannelBinding) -> dict[str, Any]:
-    return {
-        "guid": binding.external_chat_id,
-        "chatIdentifier": binding.external_chat_id,
-        "displayName": binding.external_chat_name,
-        "style": 43 if binding.external_chat_type == "group" else 45,
-        "participants": [{"address": binding.external_chat_id}],
-    }
-
-
-def _bluebubbles_handle(handle_guid: str) -> dict[str, Any]:
-    return {
-        "guid": handle_guid,
-        "address": handle_guid,
-        "country": None,
-        "service": "iMessage",
-        "uncanonicalizedId": handle_guid,
-    }
-
-
-def _bluebubbles_message(message: ChannelMessage) -> dict[str, Any]:
-    created_ms = int(message.created_at.timestamp() * 1000)
-    payload = message.payload if isinstance(message.payload, dict) else {}
-    client_payload = bluebubbles_message_client_payload(payload)
-    response = {
-        **client_payload,
-        "guid": message.provider_message_id or str(message.id),
-        "text": message.text,
-        "dateCreated": client_payload.get("dateCreated") or created_ms,
-        "dateRead": client_payload.get("dateRead"),
-        "dateDelivered": client_payload.get("dateDelivered") or created_ms,
-        "dateEdited": client_payload.get("dateEdited"),
-        "dateRetracted": client_payload.get("dateRetracted"),
-        "isEdited": client_payload.get("isEdited") is True,
-        "isUnsent": client_payload.get("isUnsent") is True,
-        "isFromMe": message.direction == "outbound",
-        "chats": [{"guid": message.external_chat_id}],
-        "handle": {"address": message.external_chat_id},
-        "attachments": normalize_bluebubbles_attachments(payload),
-        "reactions": client_payload.get("reactions")
-        if isinstance(client_payload.get("reactions"), list)
-        else [],
-        "clawdi": {
-            "messageId": str(message.id),
-            "accountId": str(message.account_id),
-            "bindingId": str(message.binding_id) if message.binding_id else None,
-        },
-    }
-    return sanitize_bluebubbles_data_for_client(response)
-
-
-async def _deliver_bluebubbles_agent_webhook(
-    account: ChannelAccount,
-    event_type: str,
-    data: dict[str, Any],
-) -> bool:
-    return await deliver_bluebubbles_agent_webhook(account, event_type, data)
 
 
 async def _require_bound_chat(

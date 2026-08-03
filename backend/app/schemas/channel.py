@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
-ChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
+ChannelProvider = Literal["telegram", "discord", "whatsapp"]
 ChannelVisibility = Literal["private", "public"]
 ChannelBotPoolAccess = Literal["owner", "public"]
 ChannelHealthStatus = Literal["ok", "warning", "error"]

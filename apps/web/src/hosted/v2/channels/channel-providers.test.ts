@@ -12,10 +12,10 @@ describe("channel provider registry", () => {
 		expect(isChannelProvider("imessage")).toBe(false);
 	});
 
-	test("keeps legacy iMessage accounts renderable as unavailable", () => {
+	test("does not retain provider-specific metadata for retired accounts", () => {
 		expect(providerMeta("imessage")).toMatchObject({
 			id: "imessage",
-			label: "iMessage (unavailable)",
+			label: "imessage",
 			unavailable: true,
 		});
 	});
