@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { ExternalLink, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { EntityChoiceCard } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -110,8 +111,8 @@ export function ConnectBotDialog({
 	const agentLinkWarning =
 		!whatsappSelected && providerLinkConflict
 			? {
-					title: "Won’t link automatically",
-					description: `This Agent already has a ${meta.label} bot. The new Custom bot will be added to Custom bots without being linked to this Agent.`,
+					title: `${meta.label} is already linked`,
+					description: `This Agent already has a ${meta.label} link. The new bot will be added to Custom bots without linking to this Agent.`,
 				}
 			: !whatsappSelected && agentLinkStatusUnknown
 				? {
@@ -218,28 +219,6 @@ export function ConnectBotDialog({
 		if (!nextOpen) setCreated(null);
 	}
 
-	const providerChoices = (
-		<fieldset className="grid grid-cols-1 gap-2 border-0 p-0 sm:grid-cols-3" aria-label="Provider">
-			{CONNECTABLE_BOT_PROVIDERS.map((item) => {
-				return (
-					<Button
-						key={item}
-						type="button"
-						variant={provider === item ? "secondary" : "outline"}
-						className="h-auto min-h-12 min-w-0 justify-start gap-1.5 px-2 sm:gap-2 sm:px-2.5"
-						disabled={isSubmitting}
-						aria-pressed={provider === item}
-						onClick={() => changeProvider(item)}
-					>
-						<EntityIcon kind="channel" id={item} label={PROVIDER_META[item].label} size="sm" />
-						<span className="min-w-0 whitespace-normal break-words text-left text-xs leading-tight [overflow-wrap:anywhere] sm:text-sm">
-							{PROVIDER_META[item].label}
-						</span>
-					</Button>
-				);
-			})}
-		</fieldset>
-	);
 	const otherProviderHint = (
 		<p
 			data-other-provider-hint
@@ -263,6 +242,28 @@ export function ConnectBotDialog({
 			)}
 		</p>
 	);
+	const providerChoices = (
+		<fieldset className="min-w-0 space-y-2 border-0 p-0" data-provider-chooser>
+			<legend className="mb-2 text-sm font-medium">Choose provider</legend>
+			<div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+				{CONNECTABLE_BOT_PROVIDERS.map((item) => (
+					<EntityChoiceCard
+						key={item}
+						variant="compact"
+						className="gap-2 p-2"
+						icon={
+							<EntityIcon kind="channel" id={item} label={PROVIDER_META[item].label} size="sm" />
+						}
+						title={PROVIDER_META[item].label}
+						selected={provider === item}
+						disabled={isSubmitting}
+						onClick={() => changeProvider(item)}
+					/>
+				))}
+			</div>
+			{otherProviderHint}
+		</fieldset>
+	);
 
 	return (
 		<Dialog
@@ -273,7 +274,7 @@ export function ConnectBotDialog({
 			<DialogContent
 				data-hosted="true"
 				data-v2="true"
-				className="max-h-[calc(100dvh-2rem)] min-w-0 overflow-x-hidden overflow-y-auto sm:max-w-md [&>*]:min-w-0"
+				className="max-h-[calc(100dvh-2rem)] min-w-0 overflow-x-hidden overflow-y-auto sm:max-w-lg [&>*]:min-w-0"
 			>
 				{created ? (
 					<>
@@ -288,7 +289,7 @@ export function ConnectBotDialog({
 								{created.linkOutcome === "linked"
 									? "was added to Custom bots and linked to this Agent."
 									: created.linkOutcome === "inventory-only-provider-conflict"
-										? `was added to Custom bots. It was not linked because this Agent already has a ${providerMeta(created.provider).label} bot.`
+										? `was added to Custom bots. It was not linked because ${providerMeta(created.provider).label} is already linked to this Agent.`
 										: agentId
 											? "was added to Custom bots without linking to this Agent."
 											: "was added to Custom bots. Link it from an Agent when you’re ready."}
@@ -322,149 +323,163 @@ export function ConnectBotDialog({
 							</DialogDescription>
 						</DialogHeader>
 
-						<div className="flex min-w-0 flex-col gap-3">
+						<div className="flex min-w-0 flex-col gap-4">
 							{providerChoices}
-							{otherProviderHint}
-							{agentLinkWarning ? (
-								<Alert
-									data-agent-link-warning
-									className="border-warning/30 bg-warning-muted py-2.5"
-								>
-									<TriangleAlert aria-hidden />
-									<AlertTitle>{agentLinkWarning.title}</AlertTitle>
-									<AlertDescription className="text-xs">
-										{agentLinkWarning.description}
-									</AlertDescription>
-								</Alert>
-							) : !whatsappSelected && agentId ? (
-								<p role="status" className="text-xs text-muted-foreground" aria-live="polite">
-									The new Custom bot will be linked to this Agent automatically.
-								</p>
-							) : null}
-							{whatsappSelected ? (
-								<WhatsAppDeviceOnboarding onDone={() => handleOpenChange(false)} />
-							) : (
-								<>
-									<p className="min-w-0 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
-										{provider === "telegram" ? "Need a bot token? " : "Need app credentials? "}
-										<a
-											href={meta.setupUrl}
-											target="_blank"
-											rel="noreferrer"
-											className="inline-flex min-w-0 flex-wrap items-center gap-1 font-medium text-foreground underline underline-offset-4"
+							<section
+								className="min-w-0 border-t pt-4"
+								aria-labelledby="provider-configuration-title"
+								data-provider-configuration
+							>
+								<h3 id="provider-configuration-title" className="mb-3 text-sm font-medium">
+									Configure {meta.label}
+								</h3>
+								<div className="flex min-w-0 flex-col gap-3">
+									{agentLinkWarning ? (
+										<Alert
+											data-agent-link-warning
+											className="border-warning/30 bg-warning-muted py-2.5"
 										>
-											{provider === "telegram"
-												? "Create a bot with @BotFather"
-												: "Open Discord Developer Portal"}
-											<ExternalLink className="size-3" />
-										</a>
-									</p>
-
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="connect-name">Name</Label>
-										<Input
-											id="connect-name"
-											value={name}
-											onChange={(event) => setName(event.target.value)}
-											placeholder="Support Bot"
-											autoComplete="off"
-										/>
-									</div>
-
-									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="connect-token">Bot token</Label>
-										<Input
-											id="connect-token"
-											type="password"
-											value={token}
-											onChange={(event) => setToken(event.target.value)}
-											placeholder={meta.tokenPlaceholder}
-											autoComplete="off"
-											spellCheck={false}
-											required
-											aria-invalid={Boolean(tokenError)}
-											aria-describedby={tokenError ? "connect-token-error" : undefined}
-										/>
-										{tokenError ? (
-											<p
-												id="connect-token-error"
-												className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
-											>
-												{tokenError}
-											</p>
-										) : null}
-									</div>
-
-									{discordSelected ? (
-										<>
-											<div className="flex flex-col gap-1.5">
-												<Label htmlFor="connect-app-id">Application ID</Label>
-												<Input
-													id="connect-app-id"
-													value={applicationId}
-													onChange={(event) => setApplicationId(event.target.value)}
-													placeholder="Application ID"
-													autoComplete="off"
-													spellCheck={false}
-													required
-													aria-invalid={Boolean(applicationIdError)}
-													aria-describedby={applicationIdError ? "connect-app-id-error" : undefined}
-												/>
-												{applicationIdError ? (
-													<p
-														id="connect-app-id-error"
-														className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
-													>
-														{applicationIdError}
-													</p>
-												) : null}
-											</div>
-											<div className="flex flex-col gap-1.5">
-												<Label htmlFor="connect-public-key">Public key</Label>
-												<Input
-													id="connect-public-key"
-													value={publicKey}
-													onChange={(event) => setPublicKey(event.target.value)}
-													placeholder="64-character hex public key"
-													autoComplete="off"
-													spellCheck={false}
-													required
-													aria-invalid={Boolean(publicKeyError)}
-													aria-describedby={publicKeyError ? "connect-public-key-error" : undefined}
-												/>
-												{publicKeyError ? (
-													<p
-														id="connect-public-key-error"
-														className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
-													>
-														{publicKeyError}
-													</p>
-												) : null}
-											</div>
-										</>
+											<TriangleAlert aria-hidden />
+											<AlertTitle>{agentLinkWarning.title}</AlertTitle>
+											<AlertDescription className="text-xs">
+												{agentLinkWarning.description}
+											</AlertDescription>
+										</Alert>
+									) : !whatsappSelected && agentId ? (
+										<p role="status" className="text-xs text-muted-foreground" aria-live="polite">
+											The new Custom bot will be linked to this Agent automatically.
+										</p>
 									) : null}
-								</>
-							)}
-						</div>
+									{whatsappSelected ? (
+										<WhatsAppDeviceOnboarding onDone={() => handleOpenChange(false)} />
+									) : (
+										<>
+											<p className="min-w-0 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
+												{provider === "telegram" ? "Need a bot token? " : "Need app credentials? "}
+												<a
+													href={meta.setupUrl}
+													target="_blank"
+													rel="noreferrer"
+													className="inline-flex min-w-0 flex-wrap items-center gap-1 font-medium text-foreground underline underline-offset-4"
+												>
+													{provider === "telegram"
+														? "Create a bot with @BotFather"
+														: "Open Discord Developer Portal"}
+													<ExternalLink className="size-3" />
+												</a>
+											</p>
 
-						{!whatsappSelected ? (
-							<DialogFooter>
-								<Button
-									variant="outline"
-									className="min-w-0 whitespace-normal"
-									onClick={() => handleOpenChange(false)}
-								>
-									{isSubmitting ? "Close" : "Cancel"}
-								</Button>
-								<Button
-									className="min-w-0 whitespace-normal"
-									onClick={() => void submit()}
-									disabled={!canSubmit || isSubmitting}
-								>
-									{isSubmitting ? "Adding…" : "Add custom bot"}
-								</Button>
-							</DialogFooter>
-						) : null}
+											<div className="flex flex-col gap-1.5">
+												<Label htmlFor="connect-name">Name</Label>
+												<Input
+													id="connect-name"
+													value={name}
+													onChange={(event) => setName(event.target.value)}
+													placeholder="Support Bot"
+													autoComplete="off"
+												/>
+											</div>
+
+											<div className="flex flex-col gap-1.5">
+												<Label htmlFor="connect-token">Bot token</Label>
+												<Input
+													id="connect-token"
+													type="password"
+													value={token}
+													onChange={(event) => setToken(event.target.value)}
+													placeholder={meta.tokenPlaceholder}
+													autoComplete="off"
+													spellCheck={false}
+													required
+													aria-invalid={Boolean(tokenError)}
+													aria-describedby={tokenError ? "connect-token-error" : undefined}
+												/>
+												{tokenError ? (
+													<p
+														id="connect-token-error"
+														className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
+													>
+														{tokenError}
+													</p>
+												) : null}
+											</div>
+
+											{discordSelected ? (
+												<>
+													<div className="flex flex-col gap-1.5">
+														<Label htmlFor="connect-app-id">Application ID</Label>
+														<Input
+															id="connect-app-id"
+															value={applicationId}
+															onChange={(event) => setApplicationId(event.target.value)}
+															placeholder="Application ID"
+															autoComplete="off"
+															spellCheck={false}
+															required
+															aria-invalid={Boolean(applicationIdError)}
+															aria-describedby={
+																applicationIdError ? "connect-app-id-error" : undefined
+															}
+														/>
+														{applicationIdError ? (
+															<p
+																id="connect-app-id-error"
+																className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
+															>
+																{applicationIdError}
+															</p>
+														) : null}
+													</div>
+													<div className="flex flex-col gap-1.5">
+														<Label htmlFor="connect-public-key">Public key</Label>
+														<Input
+															id="connect-public-key"
+															value={publicKey}
+															onChange={(event) => setPublicKey(event.target.value)}
+															placeholder="64-character hex public key"
+															autoComplete="off"
+															spellCheck={false}
+															required
+															aria-invalid={Boolean(publicKeyError)}
+															aria-describedby={
+																publicKeyError ? "connect-public-key-error" : undefined
+															}
+														/>
+														{publicKeyError ? (
+															<p
+																id="connect-public-key-error"
+																className="break-words text-xs text-destructive [overflow-wrap:anywhere]"
+															>
+																{publicKeyError}
+															</p>
+														) : null}
+													</div>
+												</>
+											) : null}
+										</>
+									)}
+
+									{!whatsappSelected ? (
+										<DialogFooter>
+											<Button
+												variant="outline"
+												className="min-w-0 whitespace-normal"
+												onClick={() => handleOpenChange(false)}
+											>
+												{isSubmitting ? "Close" : "Cancel"}
+											</Button>
+											<Button
+												className="min-w-0 whitespace-normal"
+												onClick={() => void submit()}
+												disabled={!canSubmit || isSubmitting}
+											>
+												{isSubmitting ? "Adding…" : "Add custom bot"}
+											</Button>
+										</DialogFooter>
+									) : null}
+								</div>
+							</section>
+						</div>
 					</>
 				)}
 			</DialogContent>

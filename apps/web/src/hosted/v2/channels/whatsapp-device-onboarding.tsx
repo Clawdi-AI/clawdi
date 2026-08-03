@@ -7,7 +7,6 @@ import {
 	CircleAlert,
 	QrCode,
 	RefreshCw,
-	Smartphone,
 	TriangleAlert,
 	Unplug,
 } from "lucide-react";
@@ -63,24 +62,15 @@ export function WhatsAppDeviceOnboarding({ onDone }: { onDone: () => void }) {
 			data-v2="true"
 			data-whatsapp-account-choice
 		>
-			<div className="flex min-w-0 items-start gap-3">
-				<div className="shrink-0 rounded-md bg-identity-2-bg p-2 text-identity-2-fg">
-					<Smartphone className="size-4" aria-hidden="true" />
-				</div>
-				<div className="min-w-0 flex-1">
-					<h3 className="font-medium [overflow-wrap:anywhere]">Your WhatsApp</h3>
-					<p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
-						Add a WhatsApp account you own by scanning a linked-device QR.
-					</p>
-				</div>
-			</div>
+			<p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+				Add a WhatsApp account you own by scanning a linked-device QR.
+			</p>
 			<Alert data-whatsapp-account-warning className="border-warning/30 bg-warning-muted py-2.5">
 				<TriangleAlert aria-hidden />
-				<AlertTitle>Use a dedicated WhatsApp account</AlertTitle>
+				<AlertTitle>Use a dedicated number</AlertTitle>
 				<AlertDescription className="text-xs">
-					Clawdi connects as a linked device. Once linked to an Agent, messages to this account may
-					be handled by the Agent, and replies are sent as this account. Use a separate WhatsApp
-					account and phone number—not your primary personal account.
+					Clawdi uses WhatsApp’s linked-device feature. When linked to an Agent, replies are sent
+					from this account—use a separate number, not your primary personal one.
 				</AlertDescription>
 			</Alert>
 			<p className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" role="status">

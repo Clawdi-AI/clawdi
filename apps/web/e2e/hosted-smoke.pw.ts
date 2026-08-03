@@ -9332,21 +9332,49 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 	await expect(
 		connectDialog.getByRole("link", { name: "Agent Interface", exact: true }),
 	).toHaveCount(0);
-	await expect(connectDialog.getByRole("button", { name: /^Telegram Telegram$/ })).toHaveAttribute(
-		"aria-pressed",
-		"true",
+	const providerChooser = connectDialog.getByRole("group", { name: "Choose provider" });
+	const providerConfiguration = connectDialog.locator("[data-provider-configuration]");
+	const telegramProvider = providerChooser.getByRole("button", { name: "Telegram", exact: true });
+	const discordProvider = providerChooser.getByRole("button", { name: "Discord", exact: true });
+	await expect(providerChooser).toBeVisible();
+	await expect(providerConfiguration).toHaveAccessibleName("Configure Telegram");
+	await expect(providerConfiguration).toHaveClass(/border-t/);
+	await expect(providerChooser.locator("[data-other-provider-hint]")).toBeVisible();
+	await expect(telegramProvider).toHaveAttribute("aria-pressed", "true");
+	await expect(telegramProvider).toHaveClass(/border-primary/);
+	await expect(telegramProvider).toHaveClass(/bg-primary\/5/);
+	await expect(telegramProvider).toHaveClass(/ring-1/);
+	await expect(telegramProvider).toHaveClass(/ring-primary\/30/);
+	await expect(telegramProvider.locator("svg.lucide-check")).toBeVisible();
+	await expect(discordProvider.locator("svg.lucide-check")).toHaveCount(0);
+	const [providerChooserBox, providerConfigurationBox] = await Promise.all([
+		providerChooser.boundingBox(),
+		providerConfiguration.boundingBox(),
+	]);
+	expect(providerConfigurationBox?.y ?? 0).toBeGreaterThan(
+		(providerChooserBox?.y ?? 0) + (providerChooserBox?.height ?? 0),
 	);
 	await expect(connectDialog.getByLabel("Application ID")).toHaveCount(0);
 	await expect(
 		connectDialog.getByText("Create a bot with @BotFather", { exact: true }),
 	).toBeVisible();
 	await connectDialog.screenshot({ path: testInfo.outputPath("connect-bot-telegram-desktop.png") });
-	await connectDialog.getByRole("button", { name: /^Discord Discord$/ }).click();
+	await page.locator("html").evaluate((element) => element.classList.add("dark"));
+	await expect(page.locator("html")).toHaveClass(/dark/);
+	await connectDialog.screenshot({
+		path: testInfo.outputPath("connect-bot-telegram-dark-desktop.png"),
+	});
+	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+	await discordProvider.click();
+	await expect(discordProvider).toHaveAttribute("aria-pressed", "true");
+	await expect(discordProvider.locator("svg.lucide-check")).toBeVisible();
+	await expect(telegramProvider.locator("svg.lucide-check")).toHaveCount(0);
+	await expect(providerConfiguration).toHaveAccessibleName("Configure Discord");
 	await expect(connectDialog.getByLabel("Application ID")).toBeVisible();
 	await expect(connectDialog.getByLabel("Public key")).toBeVisible();
 	await expect(connectDialog.getByText(/Server ID/i)).toHaveCount(0);
 	await connectDialog.screenshot({ path: testInfo.outputPath("connect-bot-discord-desktop.png") });
-	await connectDialog.getByRole("button", { name: /^Telegram Telegram$/ }).click();
+	await telegramProvider.click();
 	await connectDialog.getByLabel("Name").fill("Inventory Telegram");
 	await connectDialog.getByLabel("Bot token").fill("123456:console-inventory-token");
 	await connectDialog.getByRole("button", { name: "Add custom bot", exact: true }).click();
@@ -9390,6 +9418,10 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 	});
 	await page.getByRole("button", { name: "Add channel", exact: true }).click();
 	connectDialog = page.getByRole("dialog", { name: "Add channel" });
+	await expect(connectDialog.getByRole("group", { name: "Choose provider" })).toBeVisible();
+	await expect(connectDialog.locator("[data-provider-configuration]")).toHaveAccessibleName(
+		"Configure Telegram",
+	);
 	await expectNoHorizontalOverflow(connectDialog, "Telegram credentials dialog at 320px");
 	await expectContainedInOwnerAndViewport(
 		page,
@@ -9404,7 +9436,10 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 		"Telegram credentials Add custom bot",
 	);
 	await connectDialog.screenshot({ path: testInfo.outputPath("connect-bot-telegram-320.png") });
-	await connectDialog.getByRole("button", { name: /^Discord Discord$/ }).click();
+	await connectDialog.getByRole("button", { name: "Discord", exact: true }).click();
+	await expect(connectDialog.locator("[data-provider-configuration]")).toHaveAccessibleName(
+		"Configure Discord",
+	);
 	await connectDialog.getByLabel("Bot token").fill("!".repeat(300));
 	await connectDialog.getByLabel("Application ID").fill("9".repeat(300));
 	await connectDialog.getByLabel("Public key").fill("z".repeat(300));
@@ -9650,21 +9685,18 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 	await page.goto("/channels");
 	await page.getByRole("button", { name: "Add channel", exact: true }).click();
 	let dialog = page.getByRole("dialog", { name: "Add channel" });
-	await dialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ }).click();
-	await expect(dialog.getByText("Your WhatsApp", { exact: true })).toBeVisible();
+	await dialog.getByRole("button", { name: "WhatsApp", exact: true }).click();
+	await expect(dialog.getByRole("heading", { name: "Configure WhatsApp" })).toBeVisible();
+	await expect(dialog.getByText("Your WhatsApp", { exact: true })).toHaveCount(0);
 	await expect(dialog.getByText("Clawdi WhatsApp", { exact: true })).toHaveCount(0);
 	await expect(dialog.locator("[data-whatsapp-account-choice] section")).toHaveCount(0);
 	let accountWarning = dialog.locator("[data-whatsapp-account-warning]");
 	await expect(accountWarning).toHaveAttribute("role", "alert");
-	await expect(
-		accountWarning.getByText("Use a dedicated WhatsApp account", { exact: true }),
-	).toBeVisible();
-	await expect(accountWarning).toContainText("Clawdi connects as a linked device.");
+	await expect(accountWarning.getByText("Use a dedicated number", { exact: true })).toBeVisible();
 	await expect(accountWarning).toContainText(
-		"Once linked to an Agent, messages to this account may be handled by the Agent",
+		"Clawdi uses WhatsApp’s linked-device feature. When linked to an Agent, replies are sent from this account—use a separate number, not your primary personal one.",
 	);
-	await expect(accountWarning).toContainText("replies are sent as this account");
-	await expect(accountWarning).toContainText("not your primary personal account");
+	await expect(accountWarning).not.toContainText("messages to this account may be handled");
 	await expect(dialog.getByRole("button", { name: "Connect your account" })).toBeDisabled();
 	await expect(dialog).toContainText("isn't compatible with this deployment");
 	await expect(dialog.getByLabel("Bot token")).toHaveCount(0);
@@ -9674,7 +9706,7 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 	await page.reload();
 	await page.getByRole("button", { name: "Add channel", exact: true }).click();
 	dialog = page.getByRole("dialog", { name: "Add channel" });
-	await dialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ }).click();
+	await dialog.getByRole("button", { name: "WhatsApp", exact: true }).click();
 	accountWarning = dialog.locator("[data-whatsapp-account-warning]");
 	await expect(accountWarning).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Connect your account" })).toBeEnabled();
@@ -9711,24 +9743,19 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 	await page.setViewportSize({ width: 320, height: 568 });
 	await page.getByRole("button", { name: "Add channel", exact: true }).click();
 	dialog = page.getByRole("dialog", { name: "Add channel" });
-	const mobileWhatsAppProvider = dialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ });
+	const mobileWhatsAppProvider = dialog.getByRole("button", { name: "WhatsApp", exact: true });
 	await expect(mobileWhatsAppProvider).toContainText("WhatsApp");
-	await expect(mobileWhatsAppProvider.locator("span").filter({ hasText: /^WhatsApp$/ })).toHaveCSS(
-		"text-overflow",
-		"clip",
-	);
 	await mobileWhatsAppProvider.click();
+	await expect(mobileWhatsAppProvider).toHaveAttribute("aria-pressed", "true");
+	await expect(mobileWhatsAppProvider.locator("svg.lucide-check")).toBeVisible();
+	await expect(dialog.getByRole("heading", { name: "Configure WhatsApp" })).toBeVisible();
 	await expect(dialog.locator("[data-whatsapp-account-choice] section")).toHaveCount(0);
 	accountWarning = dialog.locator("[data-whatsapp-account-warning]");
 	await expect(accountWarning).toHaveAttribute("role", "alert");
-	await expect(
-		accountWarning.getByText("Use a dedicated WhatsApp account", { exact: true }),
-	).toBeVisible();
+	await expect(accountWarning.getByText("Use a dedicated number", { exact: true })).toBeVisible();
 	await expect(accountWarning).toContainText(
-		"Once linked to an Agent, messages to this account may be handled by the Agent",
+		"Clawdi uses WhatsApp’s linked-device feature. When linked to an Agent, replies are sent from this account—use a separate number, not your primary personal one.",
 	);
-	await expect(accountWarning).toContainText("replies are sent as this account");
-	await expect(accountWarning).toContainText("not your primary personal account");
 	await expectNoHorizontalOverflow(dialog, "WhatsApp Custom setup at 320x568");
 	await expectNoHorizontalOverflow(page.locator("html"), "WhatsApp Custom document at 320x568");
 	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-custom-setup-320x568.png") });
@@ -9779,7 +9806,7 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 	await expect(dialog.getByText("Couldn't connect WhatsApp", { exact: true })).toBeVisible();
 	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-error-320x568.png") });
 	await dialog.getByRole("button", { name: "Back", exact: true }).click();
-	await expect(dialog.getByText("Your WhatsApp", { exact: true })).toBeVisible();
+	await expect(dialog.getByRole("heading", { name: "Configure WhatsApp" })).toBeVisible();
 	expect(cancelCalls).toBe(1);
 
 	await dialog.getByRole("button", { name: "Connect your account" }).click();
@@ -9787,7 +9814,7 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 	await dialog.getByRole("button", { name: "Generate QR" }).click();
 	await expect(dialog.getByRole("button", { name: "Cancel connection" })).toBeVisible();
 	await dialog.getByRole("button", { name: "Cancel connection" }).click();
-	await expect(dialog.getByText("Your WhatsApp", { exact: true })).toBeVisible();
+	await expect(dialog.getByRole("heading", { name: "Configure WhatsApp" })).toBeVisible();
 	expect(cancelCalls).toBe(2);
 	await expectNoHorizontalOverflow(dialog, "WhatsApp canceled flow at 320x568");
 	const unexpectedErrors = errors.filter(
@@ -10038,13 +10065,13 @@ for (const firstTimeViewport of [
 		await expect(connectDialog.getByRole("status")).toContainText(
 			"The new Custom bot will be linked to this Agent automatically.",
 		);
-		await connectDialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ }).click();
-		await expect(connectDialog.getByText("Your WhatsApp", { exact: true })).toBeVisible();
+		await connectDialog.getByRole("button", { name: "WhatsApp", exact: true }).click();
+		await expect(connectDialog.getByRole("heading", { name: "Configure WhatsApp" })).toBeVisible();
 		await expect(connectDialog.getByText("Clawdi WhatsApp", { exact: true })).toHaveCount(0);
 		await expect(connectDialog.locator("[data-whatsapp-account-choice] section")).toHaveCount(0);
-		await connectDialog.getByRole("button", { name: /^Telegram Telegram$/ }).click();
+		await connectDialog.getByRole("button", { name: "Telegram", exact: true }).click();
 		await expect(
-			connectDialog.getByRole("button", { name: /^Telegram Telegram$/ }),
+			connectDialog.getByRole("button", { name: "Telegram", exact: true }),
 		).toHaveAttribute("aria-pressed", "true");
 		await connectDialog.getByLabel("Name").fill("Browser Telegram");
 		await connectDialog.getByLabel("Bot token").fill("123456:browser-test-token");
@@ -10077,6 +10104,12 @@ for (const firstTimeViewport of [
 		await submitCustomBot.click();
 		const connecting = connectDialog.getByRole("button", { name: "Adding…", exact: true });
 		await expect(connecting).toBeVisible();
+		for (const providerChoice of await connectDialog
+			.getByRole("group", { name: "Choose provider" })
+			.getByRole("button")
+			.all()) {
+			await expect(providerChoice).toBeDisabled();
+		}
 		await expectContainedInOwnerAndViewport(
 			page,
 			connecting,
@@ -10242,19 +10275,25 @@ test("Add channel keeps already-linked Telegram and Discord available as invento
 	const addChannel = page.locator("[data-agent-add-custom-bot]");
 	await addChannel.click();
 	let dialog = page.getByRole("dialog", { name: "Add channel" });
-	const telegramProvider = dialog.getByRole("button", { name: /^Telegram Telegram$/ });
-	const discordProvider = dialog.getByRole("button", { name: /^Discord Discord$/ });
+	const providerChooser = dialog.getByRole("group", { name: "Choose provider" });
+	const providerConfiguration = dialog.locator("[data-provider-configuration]");
+	const telegramProvider = providerChooser.getByRole("button", {
+		name: "Telegram",
+		exact: true,
+	});
+	const discordProvider = providerChooser.getByRole("button", { name: "Discord", exact: true });
 	await expect(telegramProvider).toBeEnabled();
 	await expect(discordProvider).toBeEnabled();
-	let linkWarning = dialog.locator("[data-agent-link-warning]");
+	await expect(providerConfiguration).toHaveAccessibleName("Configure Telegram");
+	let linkWarning = providerConfiguration.locator("[data-agent-link-warning]");
 	await expect(linkWarning).toHaveAttribute("role", "alert");
-	await expect(linkWarning.getByText("Won’t link automatically", { exact: true })).toBeVisible();
+	await expect(linkWarning.getByText("Telegram is already linked", { exact: true })).toBeVisible();
 	await expect(linkWarning).toContainText(
-		"This Agent already has a Telegram bot. The new Custom bot will be added to Custom bots without being linked to this Agent.",
+		"This Agent already has a Telegram link. The new bot will be added to Custom bots without linking to this Agent.",
 	);
 	await expect(dialog.getByRole("status")).toHaveCount(0);
 	await expect(
-		dialog.locator("[data-other-provider-hint]").getByRole("link", {
+		providerChooser.locator("[data-other-provider-hint]").getByRole("link", {
 			name: "Agent Interface",
 		}),
 	).toHaveAttribute(
@@ -10263,7 +10302,13 @@ test("Add channel keeps already-linked Telegram and Discord available as invento
 	);
 	await dialog.getByLabel("Name").fill("Additional Telegram");
 	await dialog.getByLabel("Bot token").fill("123456:additional-telegram-token");
-	await dialog.screenshot({ path: testInfo.outputPath("already-linked-telegram-form-320.png") });
+	await expectNoHorizontalOverflow(dialog, "inventory-only Telegram form at 320px");
+	await page.locator("html").evaluate((element) => element.classList.add("dark"));
+	await expect(page.locator("html")).toHaveClass(/dark/);
+	await dialog.screenshot({
+		path: testInfo.outputPath("already-linked-telegram-form-dark-320.png"),
+	});
+	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
 	await dialog.getByRole("button", { name: "Add custom bot", exact: true }).click();
 	await expect.poll(() => createChannelRequests.length).toBe(1);
 	expect(JSON.parse(createChannelRequests[0] ?? "{}")).toEqual({
@@ -10274,7 +10319,7 @@ test("Add channel keeps already-linked Telegram and Discord available as invento
 	});
 	dialog = page.getByRole("dialog", { name: "Custom bot added" });
 	await expect(dialog).toContainText(
-		"Additional Telegram was added to Custom bots. It was not linked because this Agent already has a Telegram bot.",
+		"Additional Telegram was added to Custom bots. It was not linked because Telegram is already linked to this Agent.",
 	);
 	await expect(page.getByRole("dialog", { name: "Pair Telegram" })).toHaveCount(0);
 	await expectNoHorizontalOverflow(dialog, "inventory-only Telegram result at 320px");
@@ -10283,12 +10328,15 @@ test("Add channel keeps already-linked Telegram and Discord available as invento
 
 	await addChannel.click();
 	dialog = page.getByRole("dialog", { name: "Add channel" });
-	await dialog.getByRole("button", { name: /^Discord Discord$/ }).click();
-	linkWarning = dialog.locator("[data-agent-link-warning]");
+	await dialog.getByRole("button", { name: "Discord", exact: true }).click();
+	await expect(dialog.locator("[data-provider-configuration]")).toHaveAccessibleName(
+		"Configure Discord",
+	);
+	linkWarning = dialog.locator("[data-provider-configuration] [data-agent-link-warning]");
 	await expect(linkWarning).toHaveAttribute("role", "alert");
-	await expect(linkWarning.getByText("Won’t link automatically", { exact: true })).toBeVisible();
+	await expect(linkWarning.getByText("Discord is already linked", { exact: true })).toBeVisible();
 	await expect(linkWarning).toContainText(
-		"This Agent already has a Discord bot. The new Custom bot will be added to Custom bots without being linked to this Agent.",
+		"This Agent already has a Discord link. The new bot will be added to Custom bots without linking to this Agent.",
 	);
 	await dialog.getByLabel("Name").fill("Additional Discord");
 	await dialog.getByLabel("Bot token").fill("A".repeat(50));
@@ -10310,7 +10358,7 @@ test("Add channel keeps already-linked Telegram and Discord available as invento
 	});
 	dialog = page.getByRole("dialog", { name: "Custom bot added" });
 	await expect(dialog).toContainText(
-		"Additional Discord was added to Custom bots. It was not linked because this Agent already has a Discord bot.",
+		"Additional Discord was added to Custom bots. It was not linked because Discord is already linked to this Agent.",
 	);
 	await expect(page.getByRole("dialog", { name: "Pair Discord" })).toHaveCount(0);
 	await expectNoHorizontalOverflow(dialog, "inventory-only Discord result at 320px");

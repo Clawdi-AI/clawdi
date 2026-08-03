@@ -46,7 +46,6 @@ describe("WhatsApp linked-device onboarding", () => {
 	test("keeps Custom WhatsApp setup flat and separate from Clawdi-managed bots", () => {
 		expect(source).toContain('data-hosted="true"');
 		expect(source).toContain('data-v2="true"');
-		expect(source).toContain("Your WhatsApp");
 		expect(source).not.toContain("Clawdi WhatsApp");
 		expect(source).not.toContain("WhatsAppOptionCard");
 		expect(source).not.toContain("sm:grid-cols-2");
@@ -56,8 +55,6 @@ describe("WhatsApp linked-device onboarding", () => {
 		const warningMarkerIndex = source.indexOf("data-whatsapp-account-warning");
 		expect(warningMarkerIndex).toBeLessThan(source.indexOf("Connect your account"));
 		expect(connectDialog).toContain("<WhatsAppDeviceOnboarding");
-		expect(connectDialog).toContain("whitespace-normal break-words");
-		expect(connectDialog).not.toContain("min-w-0 truncate text-left");
 		expect(connectDialog).not.toContain("phone-number ID");
 		expect(connectDialog).not.toContain("Graph API");
 	});
