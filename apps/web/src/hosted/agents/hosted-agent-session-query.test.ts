@@ -8,6 +8,8 @@ import {
 } from "@tanstack/react-query";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
+	canQueryHostedAgentSessions,
+	HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE,
 	HOSTED_AGENT_SESSIONS_REFETCH_INTERVAL_MS,
 	HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
 } from "./hosted-agent-session-query";
@@ -19,6 +21,12 @@ const sharedSessionQuerySource = readFileSync(
 );
 
 describe("hosted agent sessions refresh", () => {
+	test("uses the stable environment identity as the only backend query prerequisite", () => {
+		expect(canQueryHostedAgentSessions("4f4f8630-5a38-4d31-89ad-2e5451f6ba8f")).toBe(true);
+		expect(canQueryHostedAgentSessions("hdep_starting")).toBe(false);
+		expect(canQueryHostedAgentSessions("")).toBe(false);
+	});
+
 	test("preserves successful data and stays non-blocking after a refetch error", async () => {
 		const error = new Error("background refresh failed");
 		const cachedData = { items: [{ id: "session-1" }], total: 1 };
@@ -122,11 +130,9 @@ describe("hosted agent sessions refresh", () => {
 	});
 
 	test("mounts the polling query only in the active Sessions branch", () => {
-		const sessionsBranchStart = detailSource.indexOf(
-			'{deploymentStatus.known && activeTab === "sessions" ? (',
-		);
+		const sessionsBranchStart = detailSource.indexOf('{activeTab === "sessions" ? (');
 		const sessionsBranchEnd = detailSource.indexOf(
-			'{activeTab === "skills" ? (',
+			'{activeTab === "memories" ?',
 			sessionsBranchStart,
 		);
 		const sessionsBranch = detailSource.slice(sessionsBranchStart, sessionsBranchEnd);
@@ -134,6 +140,62 @@ describe("hosted agent sessions refresh", () => {
 		expect(sessionsBranchStart).toBeGreaterThan(-1);
 		expect(sessionsBranchEnd).toBeGreaterThan(sessionsBranchStart);
 		expect(sessionsBranch).toContain("<HostedAgentSessionsTab");
+		expect(sessionsBranch).not.toContain("deploymentStatus");
+		expect(sessionsBranch).not.toContain("deploymentProjectionQueryable");
+		expect(sessionsBranch).not.toContain("projection.status");
+		expect(sessionsBranch).not.toContain("StoppedAgentState");
+		expect(sessionsBranch).not.toContain("ProjectionDependentUnavailable");
 		expect(detailSource.match(/<HostedAgentSessionsTab/g) ?? []).toHaveLength(1);
+	});
+
+	test("keeps the Sessions tab query and copy independent of runtime lifecycle", () => {
+		const componentStart = detailSource.indexOf("function HostedAgentSessionsTab(");
+		const componentEnd = detailSource.indexOf("\nfunction ", componentStart + 1);
+		const componentSource = detailSource.slice(componentStart, componentEnd);
+
+		expect(componentSource).toContain(
+			"const sessionsQueryable = canQueryHostedAgentSessions(environmentId);",
+		);
+		expect(componentSource).toContain("enabled: sessionsQueryable");
+		expect(componentSource).not.toContain("DeploymentStatus");
+		expect(componentSource).not.toContain("projection");
+		expect(componentSource).toContain("emptyMessage={HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE}");
+		expect(componentSource).toContain("Sessions will appear after this agent is created.");
+		expect(HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE).toBe("No sessions from this agent yet.");
+	});
+
+	test("keeps Overview sessions visible during starting, updating, stopped, and failed states", () => {
+		const detailStart = detailSource.indexOf("export function HostedAgentDetail(");
+		const sessionsQueryStart = detailSource.indexOf("const sessions = useQuery({", detailStart);
+		const sessionsQueryEnd = detailSource.indexOf("\n\t});", sessionsQueryStart) + "\n\t});".length;
+		const sessionsQuerySource = detailSource.slice(sessionsQueryStart, sessionsQueryEnd);
+		const initialPageStart = detailSource.indexOf("const showInitialStartingPage", detailStart);
+		const initialPageEnd = detailSource.indexOf("const interfaceAvailable", initialPageStart);
+		const initialPageSource = detailSource.slice(initialPageStart, initialPageEnd);
+		const overviewStart = detailSource.indexOf("function OverviewTab(");
+		const recentSessionsStart = detailSource.indexOf(
+			'<h2 id="hosted-recent-sessions"',
+			overviewStart,
+		);
+		const recentSessionsEnd = detailSource.indexOf(
+			'<div className="@3xl/main:row-start-2">',
+			recentSessionsStart,
+		);
+		const recentSessionsSource = detailSource.slice(recentSessionsStart, recentSessionsEnd);
+
+		expect(sessionsQueryStart).toBeGreaterThan(detailStart);
+		expect(sessionsQueryEnd).toBeGreaterThan(sessionsQueryStart);
+		expect(sessionsQuerySource).toContain('enabled: activeTab === "overview" && sessionsQueryable');
+		expect(sessionsQuerySource).not.toContain("deploymentStatus");
+		expect(sessionsQuerySource).not.toContain("projection.status");
+		expect(initialPageSource).toContain("!cloudEnvironmentId");
+		expect(initialPageSource).not.toContain('projection.status !== "resolved"');
+		expect(recentSessionsStart).toBeGreaterThan(overviewStart);
+		expect(recentSessionsEnd).toBeGreaterThan(recentSessionsStart);
+		expect(recentSessionsSource).not.toContain("projectionUnavailable");
+		expect(recentSessionsSource).not.toContain("projectionLoading");
+		expect(recentSessionsSource).toContain("isLoading={sessionsLoading}");
+		expect(recentSessionsSource).toContain("emptyMessage={HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE}");
+		expect(detailSource).not.toContain("Sessions appear once your agent is running.");
 	});
 });
