@@ -12,7 +12,11 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { identityFor } from "@/lib/identity";
-import { type ResourceNavigationOrigin, resourceOriginSearch } from "@/lib/resource-navigation";
+import {
+	LIBRARY_RESOURCE_SCOPE,
+	projectDetailLink,
+	type ResourceNavigationScope,
+} from "@/lib/resource-navigation";
 import { cn } from "@/lib/utils";
 
 /**
@@ -25,14 +29,14 @@ export function ProjectResourceCard({
 	footer,
 	actions,
 	showKind = false,
-	navigationOrigin,
+	navigationScope = LIBRARY_RESOURCE_SCOPE,
 	className,
 }: {
 	project: ProjectMetadata;
 	footer?: ReactNode | ReactNode[];
 	actions?: ReactNode;
 	showKind?: boolean;
-	navigationOrigin?: ResourceNavigationOrigin;
+	navigationScope?: ResourceNavigationScope;
 	className?: string;
 }) {
 	const projectName = displayProjectName(project);
@@ -58,15 +62,7 @@ export function ProjectResourceCard({
 			descriptionClassName="truncate font-mono"
 			footer={footer}
 			actions={actions}
-			link={
-				project.id
-					? {
-							to: "/projects/$id",
-							params: { id: project.id },
-							search: navigationOrigin ? resourceOriginSearch(navigationOrigin) : undefined,
-						}
-					: undefined
-			}
+			link={project.id ? projectDetailLink(navigationScope, project.id) : undefined}
 			ariaLabel={`Open ${projectName}`}
 			className={className}
 		/>

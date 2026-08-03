@@ -20,8 +20,6 @@ import {
 import {
 	overviewProjectsModule,
 	overviewSkillsModule,
-	useOverviewConnectorsModule,
-	useOverviewMemoriesModule,
 	useOverviewVaultsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
@@ -169,8 +167,6 @@ export function ConnectedAgentDetail({
 	const scopedSessionLink = (sessionId: string) => ({
 		...agentSessionDetailLink(id, sessionId, routeSearch),
 	});
-	const memoriesModule = useOverviewMemoriesModule({ enabled: overviewEnabled });
-	const connectorsModule = useOverviewConnectorsModule({ enabled: overviewEnabled });
 	const vaultsModule = useOverviewVaultsModule({
 		projectIds: effectiveAgentProjectIds(projectBindings ?? []),
 		resolution: projectBindingsLoading
@@ -301,9 +297,7 @@ export function ConnectedAgentDetail({
 										isLoading: skillsLoading,
 										error: blockingSkillsError,
 									}),
-									memories: memoriesModule,
 									vaults: vaultsModule,
-									connectors: connectorsModule,
 								}}
 							/>
 						</div>

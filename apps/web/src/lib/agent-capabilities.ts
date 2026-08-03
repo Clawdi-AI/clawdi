@@ -7,9 +7,7 @@ import {
 export type AgentOverviewModuleId =
 	| "projects"
 	| "skills"
-	| "memories"
 	| "vaults"
-	| "connectors"
 	| "model-provider"
 	| "channels";
 

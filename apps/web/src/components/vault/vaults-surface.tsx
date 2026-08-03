@@ -32,7 +32,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { useAgentProjectVaults } from "@/components/vault/agent-vaults-query";
-import { vaultDetailSearch } from "@/components/vault/vault-detail-identity";
 import { vaultsForSelectedProject } from "@/components/vault/vault-scope";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
@@ -40,7 +39,11 @@ import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import type { ResourceNavigationOrigin } from "@/lib/resource-navigation";
+import {
+	LIBRARY_RESOURCE_SCOPE,
+	type ResourceNavigationScope,
+	vaultDetailLink,
+} from "@/lib/resource-navigation";
 import { cn, errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
@@ -53,11 +56,11 @@ const VAULTS_RESOURCE = getProjectResourceDefinition("vaults");
 export function VaultsSurface({
 	embedded = false,
 	agentProjectIds,
-	navigationOrigin,
+	navigationScope = LIBRARY_RESOURCE_SCOPE,
 }: {
 	embedded?: boolean;
 	agentProjectIds?: readonly string[];
-	navigationOrigin?: ResourceNavigationOrigin;
+	navigationScope?: ResourceNavigationScope;
 }) {
 	const $api = useOpenApi();
 	const [search, setSearch] = useState("");
@@ -253,7 +256,7 @@ export function VaultsSurface({
 								projectNameById={projectNameById}
 								projectNamesUnavailable={projectNamesUnavailable}
 								visibleProjectIds={visibleProjectIds}
-								navigationOrigin={navigationOrigin}
+								navigationScope={navigationScope}
 							/>
 						))}
 					</div>
@@ -271,7 +274,7 @@ export function VaultsSurface({
 										projectNameById={projectNameById}
 										projectNamesUnavailable={projectNamesUnavailable}
 										visibleProjectIds={visibleProjectIds}
-										navigationOrigin={navigationOrigin}
+										navigationScope={navigationScope}
 										shared
 									/>
 								))}
@@ -289,14 +292,14 @@ function VaultCard({
 	projectNameById,
 	projectNamesUnavailable,
 	visibleProjectIds,
-	navigationOrigin,
+	navigationScope,
 	shared = false,
 }: {
 	vault: VaultSummary;
 	projectNameById: ReadonlyMap<string, string>;
 	projectNamesUnavailable: boolean;
 	visibleProjectIds: ReadonlySet<string> | null;
-	navigationOrigin?: ResourceNavigationOrigin;
+	navigationScope: ResourceNavigationScope;
 	shared?: boolean;
 }) {
 	const api = useApi();
@@ -363,11 +366,7 @@ function VaultCard({
 					"not in any Project yet"
 				),
 			]}
-			link={{
-				to: "/vaults/$slug",
-				params: { slug: vault.slug },
-				search: vaultDetailSearch(vault, navigationOrigin),
-			}}
+			link={vaultDetailLink(navigationScope, vault.slug, vault.id)}
 			ariaLabel={`Open vault ${vault.name}`}
 		/>
 	);

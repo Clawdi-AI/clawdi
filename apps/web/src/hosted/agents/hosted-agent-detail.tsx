@@ -41,8 +41,6 @@ import {
 import {
 	overviewProjectsModule,
 	overviewSkillsModule,
-	useOverviewConnectorsModule,
-	useOverviewMemoriesModule,
 	useOverviewVaultsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
@@ -1135,8 +1133,6 @@ function OverviewTab({
 	const linkedChannelCount = channelLinks.data?.length ?? 0;
 	const projectionLoading = projectionStatus === "loading";
 	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
-	const memoriesModule = useOverviewMemoriesModule();
-	const connectorsModule = useOverviewConnectorsModule();
 	const vaultsModule = useOverviewVaultsModule({
 		projectIds: effectiveAgentProjectIds(projectBindings.data ?? []),
 		resolution:
@@ -1236,9 +1232,7 @@ function OverviewTab({
 						isUnavailable: projectionUnavailable,
 						error: skills.error,
 					}),
-					memories: memoriesModule,
 					vaults: vaultsModule,
-					connectors: connectorsModule,
 					"model-provider": {
 						description:
 							providers.isLoading || managedModelCatalog.isLoading ? (

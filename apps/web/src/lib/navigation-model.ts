@@ -373,9 +373,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 export const AGENT_RESOURCE_SECTION_IDS = [
 	"projects",
 	"skills",
-	"memories",
 	"vaults",
-	"connectors",
 ] as const satisfies readonly AgentSectionId[];
 
 const AGENT_NAVIGATION_GROUPS = [
@@ -411,10 +409,33 @@ export function agentNavigationSectionIds(variant: AgentNavigationVariant): Agen
 	);
 }
 
+// Memories and Connectors were released as Agent section URLs before their
+// account-wide ownership was made explicit. Keep those deep links routable,
+// but do not use this compatibility registry to build visible navigation.
+const AGENT_ROUTE_SECTION_IDS = [
+	"overview",
+	"sessions",
+	"projects",
+	"skills",
+	"memories",
+	"vaults",
+	"connectors",
+	"console",
+	"terminal",
+	"channels",
+	"ai",
+	"settings",
+] as const satisfies readonly AgentSectionId[];
+
+function agentRouteSectionIds(variant: AgentNavigationVariant): AgentSectionId[] {
+	return AGENT_ROUTE_SECTION_IDS.filter((id) =>
+		AGENT_SECTION_NAVIGATION_ITEMS[id].variants.includes(variant),
+	);
+}
+
 export const CONNECTED_AGENT_SECTION_IDS: readonly AgentSectionId[] =
-	agentNavigationSectionIds("connected");
-export const HOSTED_AGENT_SECTION_IDS: readonly AgentSectionId[] =
-	agentNavigationSectionIds("hosted");
+	agentRouteSectionIds("connected");
+export const HOSTED_AGENT_SECTION_IDS: readonly AgentSectionId[] = agentRouteSectionIds("hosted");
 
 export function agentNavigationGroups(
 	variant: AgentNavigationVariant,

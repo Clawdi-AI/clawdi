@@ -3,12 +3,11 @@
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
-import { ResourceContextBackLink } from "@/components/resource-context-back-link";
 import { Skeleton } from "@/components/ui/skeleton";
 import { VaultsSurface } from "@/components/vault/vaults-surface";
 import type { AgentRouteSearch } from "@/lib/agent-routes";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { agentResourceReturnTarget } from "@/lib/resource-navigation";
+import { agentResourceScope } from "@/lib/resource-navigation";
 
 export function AgentVaultsTab({
 	agentId,
@@ -47,13 +46,10 @@ export function AgentVaultsTab({
 
 	const projectIds = effectiveAgentProjectIds(bindings.data ?? []);
 	return (
-		<div className="space-y-4">
-			<ResourceContextBackLink target={agentResourceReturnTarget(routeSearch)} />
-			<VaultsSurface
-				embedded
-				agentProjectIds={projectIds}
-				navigationOrigin={{ type: "agent-vaults", agentId, agentQuery: routeSearch }}
-			/>
-		</div>
+		<VaultsSurface
+			embedded
+			agentProjectIds={projectIds}
+			navigationScope={agentResourceScope(agentId, routeSearch)}
+		/>
 	);
 }

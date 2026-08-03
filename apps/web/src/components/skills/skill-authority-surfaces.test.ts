@@ -38,6 +38,8 @@ describe("Skill authority across Web mutation surfaces", () => {
 		expect(detail).toContain("if (!capabilities?.canUpdate)");
 		expect(detail).toContain("if (!capabilities?.canDelete)");
 		expect(project).toContain("isBrowserWritableSkillProject(project)");
-		expect(project).toContain("capabilitiesFor={(skill) => skillCapabilities(skill, project)}");
+		expect(project).toContain("const capabilities = skillCapabilities(skill, project)");
+		expect(project).toContain("isAgentScope && capabilities.canUpdate");
+		expect(project).toContain("canUpdate: false");
 	});
 });

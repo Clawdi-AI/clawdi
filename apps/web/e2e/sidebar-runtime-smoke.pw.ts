@@ -253,7 +253,7 @@ async function expectAgentOverviewTypography(page: Page) {
 				return { fontSize: style.fontSize, fontWeight: style.fontWeight };
 			}),
 		);
-	expect(primaryMetrics.length).toBeGreaterThan(3);
+	expect(primaryMetrics.length).toBeGreaterThanOrEqual(3);
 	expect(new Set(primaryMetrics.map(({ fontSize }) => fontSize))).toEqual(new Set(["14px"]));
 	expect(new Set(primaryMetrics.map(({ fontWeight }) => fontWeight))).toEqual(new Set(["400"]));
 
@@ -609,6 +609,16 @@ async function stubDashboardApi(
 			});
 			return;
 		}
+		if (url.pathname === "/v1/vault/detail") {
+			const vaultId = url.searchParams.get("vault_id");
+			const vault = vaults.items.find((candidate) => candidate.id === vaultId);
+			await fulfillJson(route, vault ?? { detail: "Vault not found" }, vault ? 200 : 404);
+			return;
+		}
+		if (/^\/v1\/vault\/[^/]+\/items$/.test(url.pathname)) {
+			await fulfillJson(route, { "(default)": ["API_KEY", "ACCESS_TOKEN"] });
+			return;
+		}
 		if (url.pathname === "/v1/connectors") {
 			await options.connectorConnectionsGate;
 			if (options.connectorConnectionsResponse) {
@@ -770,7 +780,7 @@ test("Console and connected agents use the scoped navigation grammar", async ({ 
 	await page.goto("/agents/agent-smoke-1");
 	await expectSidebarNavigationGroups(page, [
 		{ label: null, items: ["Overview", "Sessions"] },
-		{ label: "Resources", items: ["Projects", "Skills", "Memories", "Vaults", "Connectors"] },
+		{ label: "Resources", items: ["Projects", "Skills", "Vaults"] },
 		{ label: null, items: ["Settings"] },
 	]);
 });
@@ -825,19 +835,19 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(page.getByRole("heading", { name: "Recent sessions", exact: true })).toBeVisible({
 		timeout: 12_000,
 	});
-	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(5);
+	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(3);
 	await expect(
 		overview.locator('[data-overview-module] [data-slot="card-description"]'),
-	).toHaveCount(5);
+	).toHaveCount(3);
 	expect(
 		await overview
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) =>
 				cards.map((card) => card.querySelectorAll(':scope > [data-slot="card-content"]').length),
 			),
-	).toEqual([0, 0, 0, 0, 0]);
+	).toEqual([0, 0, 0]);
 	await expect(overview.locator('[data-overview-module] > [data-slot="card-header"]')).toHaveCount(
-		5,
+		3,
 	);
 	await expect(overview.locator("[data-overview-module-error]")).toHaveCount(0);
 	await expect(
@@ -928,18 +938,18 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(overview.locator('[data-overview-module="skills"]')).not.toContainText("Research");
 	await expect(overview.locator('[data-slot="badge"]')).toHaveCount(0);
 	await expect(overview.getByTestId("overview-connector-rail")).toHaveCount(0);
-	for (const moduleId of ["memories", "vaults", "connectors"]) {
-		await expect(overview.locator(`[data-overview-module="${moduleId}"]`)).toBeVisible();
-	}
-	const connectors = overview.locator('[data-overview-module="connectors"]');
-	await expect(connectors).toContainText("2 connected");
-	await expect(connectors.locator("a, button")).toHaveCount(1);
+	await expect(overview.locator('[data-overview-module="vaults"]')).toBeVisible();
+	await expect(overview.locator('[data-overview-module="memories"]')).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module="connectors"]')).toHaveCount(0);
 	const sidebar = page.getByTestId("app-sidebar");
 	await expect(sidebar.getByText("Paused", { exact: true })).toBeVisible();
 	await expect(sidebar.getByText(/last seen/i)).toBeVisible();
 	await expectInlineSidebarStatus(sidebar, "connected");
-	for (const section of ["Memories", "Vaults", "Connectors"]) {
+	for (const section of ["Projects", "Skills", "Vaults"]) {
 		await expect(sidebar.getByRole("link", { name: section, exact: true })).toBeVisible();
+	}
+	for (const section of ["Memories", "Connectors"]) {
+		await expect(sidebar.getByRole("link", { name: section, exact: true })).toHaveCount(0);
 	}
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
@@ -947,7 +957,7 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	const resourceGeometry = await resourceGrid
 		.locator("[data-overview-module]")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(resourceGeometry).toHaveLength(5);
+	expect(resourceGeometry).toHaveLength(3);
 	expect(
 		Math.max(...resourceGeometry.map((box) => box.width)) -
 			Math.min(...resourceGeometry.map((box) => box.width)),
@@ -969,15 +979,15 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		await resourceGrid
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
-	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
+	).toEqual(["projects", "skills", "vaults"]);
+	await expectOverviewResourceGeometry(resourceGrid, [3]);
 	await expectAgentOverviewTypography(page);
 	await page.setViewportSize({ width: 1024, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [2, 2, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [2, 1]);
 	await page.setViewportSize({ width: 768, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1]);
 	await page.setViewportSize({ width: 390, height: 844 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1]);
 	const mobileSessionBoxes = await recentSessions
 		.locator("article")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
@@ -1164,72 +1174,20 @@ test("connected Overview keeps a three-row accessible session slot for zero thro
 	expect(Math.max(...measurements) - Math.min(...measurements)).toBeLessThanOrEqual(2);
 });
 
-test("connected Overview counts unique active apps without requesting connector metadata", async ({
-	page,
-}) => {
-	const connectorMetadataRequests: string[] = [];
-	const catalogRequests: string[] = [];
+test("connected Overview does not query account-wide Memories or Connectors", async ({ page }) => {
+	const accountResourceRequests: string[] = [];
 	page.on("request", (request) => {
-		if (new URL(request.url()).pathname === "/v1/connectors/available")
-			catalogRequests.push(request.url());
+		const pathname = new URL(request.url()).pathname;
+		if (pathname === "/v1/memories" || pathname.startsWith("/v1/connectors")) {
+			accountResourceRequests.push(pathname);
+		}
 	});
-	await stubDashboardApi(page, [], {
-		connectorMetadataRequests,
-		connectorConnections: [
-			{ id: "conn-github", app_name: "github", status: "ACTIVE" },
-			{ id: "conn-slack", app_name: "slack", status: "ACTIVE" },
-			{ id: "conn-gmail", app_name: "gmail", status: "ACTIVE" },
-			{ id: "conn-notion", app_name: "notion", status: "ACTIVE" },
-			{ id: "conn-linear", app_name: "linear", status: "ACTIVE" },
-			{ id: "conn-github-duplicate", app_name: "github", status: "ACTIVE" },
-		],
-	});
+	await stubDashboardApi(page);
 
 	await page.goto("/agents/agent-smoke-1");
-	const card = page.locator('[data-overview-module="connectors"]');
-	await expect(card).toContainText("5 connected");
-	await expect(card.locator("a, button")).toHaveCount(1);
-	expect(connectorMetadataRequests).toEqual([]);
-	expect(catalogRequests).toEqual([]);
-});
-
-test("connected overview keeps the count pending while connections load", async ({ page }) => {
-	await stubDashboardApi(page, [], {
-		connectorConnectionsGate: new Promise<void>(() => {}),
-		connectorCatalog: [
-			{
-				name: "gmail",
-				display_name: "Gmail",
-				logo: "",
-				description: "Email",
-				auth_type: "oauth",
-				connect_disabled: false,
-				connect_disabled_reason: null,
-			},
-		],
-	});
-	await page.goto("/agents/agent-smoke-1");
-	const card = page.locator('[data-overview-module="connectors"]');
-	await expect(card.getByLabel("Loading apps summary")).toBeVisible();
-	await expect(card.getByRole("link")).toHaveCount(1);
-	await expect(card.getByLabel("Loading app", { exact: true })).toHaveCount(0);
-	await expect(card).not.toContainText("No apps connected");
-});
-
-test("connected overview reports connector errors without a false empty state", async ({
-	page,
-}) => {
-	await stubDashboardApi(page, [], {
-		connectorConnectionsResponse: { body: { detail: "failed" }, status: 500 },
-		connectorCatalogResponse: { body: { detail: "failed" }, status: 500 },
-	});
-	await page.goto("/agents/agent-smoke-1");
-	const card = page.locator('[data-overview-module="connectors"]');
-	await expect(card).toContainText("Unavailable right now", { timeout: 12_000 });
-	await expect(card.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
-	await expect(card.locator("a, button")).toHaveCount(1);
-	await expect(card.locator("a button, button a")).toHaveCount(0);
-	await expect(card).not.toContainText("No apps connected");
+	await expect(page.locator('[data-agent-overview="connected"]')).toBeVisible();
+	await page.waitForTimeout(100);
+	expect(accountResourceRequests).toEqual([]);
 });
 
 test("connected agent Memories stays account-wide with canonical detail links", async ({
@@ -1251,9 +1209,9 @@ test("connected agent Memories stays account-wide with canonical detail links", 
 	await expect(memoryCard.getByRole("link")).toHaveAttribute("href", "/memories/memory-smoke-1");
 
 	const sidebar = page.getByTestId("app-sidebar");
-	const memoriesLink = sidebar.getByRole("link", { name: "Memories", exact: true });
 	const sessionsLink = sidebar.getByRole("link", { name: "Sessions", exact: true });
-	expect(await memoriesLink.evaluate((element) => element.hasAttribute("data-active"))).toBe(true);
+	await expect(sidebar.getByRole("link", { name: "Memories", exact: true })).toHaveCount(0);
+	await expect(sidebar.getByRole("link", { name: "Connectors", exact: true })).toHaveCount(0);
 	expect(await sessionsLink.evaluate((element) => element.hasAttribute("data-active"))).toBe(false);
 });
 
@@ -1359,7 +1317,7 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 	await expect(projectCards.nth(0).getByRole("button")).toHaveCount(0);
 	await expect(
 		projectCards.nth(0).getByRole("link", { name: "Open Smoke Project" }),
-	).toHaveAttribute("href", "/projects/project-smoke");
+	).toHaveAttribute("href", "/agents/agent-smoke-1/project-access/project-smoke");
 	await expect(projectCards.nth(1)).toContainText("Team Knowledge");
 	await expect(projectCards.nth(1)).toContainText("Read order 2");
 	await expect(projectCards.nth(1)).toContainText("Viewer");
@@ -1461,7 +1419,23 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 	await primaryProjectLink.focus();
 	await expect(primaryProjectLink).toBeFocused();
 	await page.keyboard.press("Enter");
-	await expect(page).toHaveURL(/\/projects\/project-smoke$/);
+	await expect(page).toHaveURL(/\/agents\/agent-smoke-1\/project-access\/project-smoke$/);
+	await expect(main.getByRole("heading", { name: "Smoke Project", level: 1 })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Agent Projects" })).toHaveAttribute(
+		"href",
+		"/agents/agent-smoke-1/project-access",
+	);
+	await expect(main.getByRole("button", { name: "Manage in resource library" })).toHaveAttribute(
+		"href",
+		"/projects/project-smoke",
+	);
+	await expect(main.getByRole("button", { name: /Add to agent/i })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: /Install skill/i })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: /New vault/i })).toHaveCount(0);
+	await expect(main.getByRole("link", { name: "Open vault Scoped Vault" })).toHaveAttribute(
+		"href",
+		"/agents/agent-smoke-1/vaults/scoped-vault?vault=vault-scoped",
+	);
 
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.goto("/projects");
@@ -1505,6 +1479,30 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 	await expect(main.getByText("Unrelated Vault", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /New vault/i })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /Add keys/i })).toHaveCount(0);
+	const scopedVaultLink = main.getByRole("link", { name: "Open vault Scoped Vault" });
+	await expect(scopedVaultLink).toHaveAttribute(
+		"href",
+		"/agents/agent-smoke-1/vaults/scoped-vault?vault=vault-scoped",
+	);
+	await scopedVaultLink.click();
+	await expect(page).toHaveURL(
+		/\/agents\/agent-smoke-1\/vaults\/scoped-vault\?vault=vault-scoped$/,
+	);
+	await expect(main.getByRole("heading", { name: "Scoped Vault", level: 1 })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Agent Vaults" })).toHaveAttribute(
+		"href",
+		"/agents/agent-smoke-1/vaults",
+	);
+	await expect(main.getByRole("button", { name: "Manage in resource library" })).toHaveAttribute(
+		"href",
+		"/vaults/scoped-vault?vault=vault-scoped",
+	);
+	await expect(main.getByRole("button", { name: /^Delete$/ })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: /Add keys/i })).toHaveCount(0);
+	await expect(main.getByRole("link", { name: "Smoke Project" })).toHaveAttribute(
+		"href",
+		"/agents/agent-smoke-1/project-access/project-smoke",
+	);
 	const vaultRequest = vaultRequests[0];
 	if (!vaultRequest) throw new Error("Agent Vault inventory was not requested");
 	const vaultRequestUrl = new URL(vaultRequest);

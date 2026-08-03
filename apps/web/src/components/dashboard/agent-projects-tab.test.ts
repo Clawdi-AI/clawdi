@@ -38,9 +38,22 @@ describe("agent Projects presentation", () => {
 		expect(source).toContain('showViewer ? <Badge variant="outline">Viewer</Badge> : null');
 		expect(source).toContain("showKind ? <ProjectKindBadge");
 		expect(source).toContain("description={projectAlias(project)}");
-		expect(source).toContain('to: "/projects/$id"');
+		expect(source).toContain("projectDetailLink(navigationScope, project.id)");
 		expect(source).toContain("ariaLabel={");
 		expect(source).toContain("Open ");
+	});
+
+	test("routes Agent cards through nested detail scope instead of the library", () => {
+		const tabSource = readFileSync(new URL("./agent-projects-tab.tsx", import.meta.url), "utf8");
+		const cardSource = readFileSync(
+			new URL("../projects/project-resource-card.tsx", import.meta.url),
+			"utf8",
+		);
+
+		expect(tabSource).toContain("agentResourceScope(agentId, routeSearch)");
+		expect(tabSource).toContain("navigationScope={navigationScope}");
+		expect(cardSource).toContain("projectDetailLink(navigationScope, project.id)");
+		expect(tabSource).not.toContain('from: "agent-projects"');
 	});
 
 	test("keeps Project selection behind the compact toolbar dialog", () => {

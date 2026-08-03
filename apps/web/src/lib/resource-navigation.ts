@@ -1,174 +1,184 @@
-import type { AgentRouteQuery } from "@/lib/agent-routes";
-import { agentDeploymentRouteQuery, agentSectionHref } from "@/lib/agent-routes";
+import { linkOptions } from "@tanstack/react-router";
+import {
+	type AgentRouteQuery,
+	agentDeploymentRouteQuery,
+	agentProjectDetailHref,
+	agentProjectDetailLink,
+	agentSectionHref,
+	agentVaultDetailHref,
+	agentVaultDetailLink,
+} from "@/lib/agent-routes";
 import {
 	PROJECT_RESOURCE_LIST_PATHS,
 	projectDetailHref,
 	vaultDetailHref,
 } from "@/lib/project-resource-model";
 
-const RESOURCE_ORIGIN_QUERY_KEY = "from";
-const RESOURCE_ORIGIN_AGENT_QUERY_KEY = "agent";
-const RESOURCE_ORIGIN_AGENT_SOURCE_QUERY_KEY = "agentSource";
-const RESOURCE_ORIGIN_AGENT_DEPLOYMENT_QUERY_KEY = "agentDeployment";
-const RESOURCE_ORIGIN_PROJECT_QUERY_KEY = "originProject";
-const RESOURCE_ORIGIN_VAULT_SLUG_QUERY_KEY = "vaultSlug";
-const RESOURCE_ORIGIN_VAULT_ID_QUERY_KEY = "originVault";
+export type ResourceNavigationScope =
+	| { kind: "library" }
+	| { kind: "agent"; agentId: string; agentQuery?: AgentRouteQuery };
 
-export type ResourceNavigationOrigin =
-	| {
-			type: "agent-projects" | "agent-vaults";
-			agentId: string;
-			agentQuery?: AgentRouteQuery;
-	  }
-	| { type: "project"; projectId: string }
-	| { type: "vault"; vaultSlug: string; vaultId?: string | null };
+export type ResourceCollection = "projects" | "vaults";
 
-export type ResourceReturnTarget = {
+export type ResourceNavigationTarget = {
 	href: string;
 	label: string;
 };
 
-type ResourceNavigationQuery =
+export const LIBRARY_RESOURCE_SCOPE = {
+	kind: "library",
+} as const satisfies ResourceNavigationScope;
+
+export function agentResourceScope(
+	agentId: string,
+	agentQuery?: AgentRouteQuery,
+): ResourceNavigationScope {
+	return { kind: "agent", agentId, agentQuery };
+}
+
+export function resourceCollectionTarget(
+	scope: ResourceNavigationScope,
+	resource: ResourceCollection,
+): ResourceNavigationTarget {
+	if (scope.kind === "library") {
+		return {
+			href: PROJECT_RESOURCE_LIST_PATHS[resource],
+			label: resource === "projects" ? "Projects" : "Vaults",
+		};
+	}
+	return {
+		href: agentSectionHref(scope.agentId, resource, agentDeploymentRouteQuery(scope.agentQuery)),
+		label: resource === "projects" ? "Agent Projects" : "Agent Vaults",
+	};
+}
+
+export function projectDetailHrefForScope(
+	scope: ResourceNavigationScope,
+	projectId: string,
+): string {
+	return scope.kind === "agent"
+		? agentProjectDetailHref(scope.agentId, projectId, agentDeploymentRouteQuery(scope.agentQuery))
+		: projectDetailHref(projectId);
+}
+
+export function projectDetailLink(scope: ResourceNavigationScope, projectId: string) {
+	return scope.kind === "agent"
+		? agentProjectDetailLink(scope.agentId, projectId, agentDeploymentRouteQuery(scope.agentQuery))
+		: linkOptions({ to: "/projects/$id", params: { id: projectId } });
+}
+
+export function vaultDetailHrefForScope(
+	scope: ResourceNavigationScope,
+	vaultSlug: string,
+	vaultId?: string | null,
+): string {
+	return scope.kind === "agent"
+		? agentVaultDetailHref(
+				scope.agentId,
+				vaultSlug,
+				vaultId,
+				agentDeploymentRouteQuery(scope.agentQuery),
+			)
+		: vaultDetailHref(vaultSlug, vaultId);
+}
+
+export function vaultDetailLink(
+	scope: ResourceNavigationScope,
+	vaultSlug: string,
+	vaultId?: string | null,
+) {
+	return scope.kind === "agent"
+		? agentVaultDetailLink(
+				scope.agentId,
+				vaultSlug,
+				vaultId,
+				agentDeploymentRouteQuery(scope.agentQuery),
+			)
+		: linkOptions({
+				to: "/vaults/$slug",
+				params: { slug: vaultSlug },
+				search: vaultId ? { vault: vaultId } : undefined,
+			});
+}
+
+export function libraryManagementTarget(
+	resource: ResourceCollection,
+	identity: { projectId: string } | { vaultSlug: string; vaultId?: string | null },
+): ResourceNavigationTarget {
+	return {
+		href:
+			resource === "projects" && "projectId" in identity
+				? projectDetailHref(identity.projectId)
+				: "vaultSlug" in identity
+					? vaultDetailHref(identity.vaultSlug, identity.vaultId)
+					: PROJECT_RESOURCE_LIST_PATHS[resource],
+		label: "Manage in resource library",
+	};
+}
+
+type LegacyResourceNavigationQuery =
 	| URLSearchParams
 	| Readonly<Record<string, unknown>>
 	| null
 	| undefined;
 
-function queryValue(query: ResourceNavigationQuery, key: string): string | undefined {
+function queryValue(query: LegacyResourceNavigationQuery, key: string): string | undefined {
 	if (!query) return undefined;
 	if (query instanceof URLSearchParams) return query.get(key)?.trim() || undefined;
 	const value = query[key];
 	return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-export function resourceOriginSearch(
-	origin?: ResourceNavigationOrigin | null,
-): Record<string, string> {
-	if (!origin) return {};
-	if (origin.type === "project") {
-		return {
-			[RESOURCE_ORIGIN_QUERY_KEY]: origin.type,
-			[RESOURCE_ORIGIN_PROJECT_QUERY_KEY]: origin.projectId,
-		};
-	}
-	if (origin.type === "vault") {
-		return {
-			[RESOURCE_ORIGIN_QUERY_KEY]: origin.type,
-			[RESOURCE_ORIGIN_VAULT_SLUG_QUERY_KEY]: origin.vaultSlug,
-			...(origin.vaultId ? { [RESOURCE_ORIGIN_VAULT_ID_QUERY_KEY]: origin.vaultId } : {}),
-		};
-	}
-
-	const agentQuery = agentDeploymentRouteQuery(origin.agentQuery);
-	const source = typeof agentQuery?.source === "string" ? agentQuery.source : undefined;
-	const deployment = typeof agentQuery?.d === "string" ? agentQuery.d : undefined;
+/**
+ * Compatibility bridge for links emitted by the first navigation-context PR.
+ * New Agent navigation uses nested paths and never writes these query keys.
+ */
+export function legacyAgentResourceScope(
+	query: LegacyResourceNavigationQuery,
+	resource: ResourceCollection,
+): ResourceNavigationScope | null {
+	const expectedOrigin = resource === "projects" ? "agent-projects" : "agent-vaults";
+	if (queryValue(query, "from") !== expectedOrigin) return null;
+	const agentId = queryValue(query, "agent");
+	if (!agentId) return null;
+	const source = queryValue(query, "agentSource");
+	const deployment = queryValue(query, "agentDeployment");
 	return {
-		[RESOURCE_ORIGIN_QUERY_KEY]: origin.type,
-		[RESOURCE_ORIGIN_AGENT_QUERY_KEY]: origin.agentId,
-		...(source ? { [RESOURCE_ORIGIN_AGENT_SOURCE_QUERY_KEY]: source } : {}),
-		...(deployment ? { [RESOURCE_ORIGIN_AGENT_DEPLOYMENT_QUERY_KEY]: deployment } : {}),
+		kind: "agent",
+		agentId,
+		agentQuery: source || deployment ? { source, d: deployment } : undefined,
 	};
 }
 
-export function parseResourceNavigationOrigin(
-	query: ResourceNavigationQuery,
-): ResourceNavigationOrigin | null {
-	const type = queryValue(query, RESOURCE_ORIGIN_QUERY_KEY);
-	if (type === "project") {
-		const projectId = queryValue(query, RESOURCE_ORIGIN_PROJECT_QUERY_KEY);
-		return projectId ? { type, projectId } : null;
-	}
-	if (type === "vault") {
-		const vaultSlug = queryValue(query, RESOURCE_ORIGIN_VAULT_SLUG_QUERY_KEY);
-		if (!vaultSlug) return null;
-		return {
-			type,
-			vaultSlug,
-			vaultId: queryValue(query, RESOURCE_ORIGIN_VAULT_ID_QUERY_KEY),
-		};
-	}
-	if (type === "agent-projects" || type === "agent-vaults") {
-		const agentId = queryValue(query, RESOURCE_ORIGIN_AGENT_QUERY_KEY);
-		if (!agentId) return null;
-		const source = queryValue(query, RESOURCE_ORIGIN_AGENT_SOURCE_QUERY_KEY);
-		const deployment = queryValue(query, RESOURCE_ORIGIN_AGENT_DEPLOYMENT_QUERY_KEY);
-		return {
-			type,
-			agentId,
-			agentQuery: source || deployment ? { source, d: deployment } : undefined,
-		};
-	}
-	return null;
-}
+export type ResourceDetailSearch = Record<string, unknown> & {
+	vault?: string;
+	project?: string;
+	useWithAgent?: string;
+	joined?: string;
+	from?: string;
+	agent?: string;
+	agentSource?: string;
+	agentDeployment?: string;
+};
 
-function withSearch(path: string, search: Record<string, string>): string {
-	const params = new URLSearchParams(search);
-	const query = params.toString().replace(/\+/g, "%20");
-	return query ? `${path}${path.includes("?") ? "&" : "?"}${query}` : path;
-}
-
-export function projectDetailHrefFrom(
-	projectId: string,
-	origin?: ResourceNavigationOrigin | null,
-): string {
-	return withSearch(projectDetailHref(projectId), resourceOriginSearch(origin));
-}
-
-export function vaultDetailHrefFrom(
-	slug: string,
-	vaultId?: string | null,
-	origin?: ResourceNavigationOrigin | null,
-): string {
-	return withSearch(vaultDetailHref(slug, vaultId), resourceOriginSearch(origin));
-}
-
-function agentOriginQuery(origin: Extract<ResourceNavigationOrigin, { agentId: string }>) {
-	return agentDeploymentRouteQuery(origin.agentQuery);
-}
-
-export function projectReturnTarget(query: ResourceNavigationQuery): ResourceReturnTarget {
-	const origin = parseResourceNavigationOrigin(query);
-	if (origin?.type === "agent-projects") {
-		return {
-			href: agentSectionHref(origin.agentId, "projects", agentOriginQuery(origin)),
-			label: "Agent Projects",
-		};
+export function validateResourceDetailSearch(
+	search: Record<string, unknown>,
+): ResourceDetailSearch {
+	const optionalString = (value: unknown) => (typeof value === "string" ? value : undefined);
+	const validated: ResourceDetailSearch = { ...search };
+	for (const key of [
+		"vault",
+		"project",
+		"useWithAgent",
+		"joined",
+		"from",
+		"agent",
+		"agentSource",
+		"agentDeployment",
+	] as const) {
+		const value = optionalString(search[key]);
+		if (value === undefined) delete validated[key];
+		else validated[key] = value;
 	}
-	if (origin?.type === "vault") {
-		return {
-			href: `${vaultDetailHref(origin.vaultSlug, origin.vaultId)}#projects`,
-			label: "Vault",
-		};
-	}
-	return { href: PROJECT_RESOURCE_LIST_PATHS.projects, label: "Projects" };
-}
-
-export function vaultReturnTarget(query: ResourceNavigationQuery): ResourceReturnTarget {
-	const origin = parseResourceNavigationOrigin(query);
-	if (origin?.type === "agent-vaults") {
-		return {
-			href: agentSectionHref(origin.agentId, "vaults", agentOriginQuery(origin)),
-			label: "Agent Vaults",
-		};
-	}
-	if (origin?.type === "project") {
-		return { href: `${projectDetailHref(origin.projectId)}#vaults`, label: "Project" };
-	}
-	return { href: PROJECT_RESOURCE_LIST_PATHS.vaults, label: "Vaults" };
-}
-
-export function agentResourceReturnTarget(
-	query: ResourceNavigationQuery,
-): ResourceReturnTarget | null {
-	const origin = parseResourceNavigationOrigin(query);
-	if (origin?.type === "project") {
-		return { href: `${projectDetailHref(origin.projectId)}#agents`, label: "Project" };
-	}
-	if (origin?.type === "vault") {
-		return {
-			href: vaultDetailHref(origin.vaultSlug, origin.vaultId),
-			label: "Vault",
-		};
-	}
-	return null;
+	return validated;
 }

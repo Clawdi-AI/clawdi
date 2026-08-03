@@ -1,14 +1,10 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
 import {
 	type AgentOverviewModuleContent,
 	OverviewDescriptionSkeleton,
 } from "@/components/dashboard/agent-overview-capabilities";
 import { useAgentProjectVaults } from "@/components/vault/agent-vaults-query";
-import { unwrap, useApi } from "@/lib/api";
-import { isActiveConnection, useConnections } from "@/lib/connectors-data";
 
 type SummaryState = {
 	isLoading: boolean;
@@ -43,26 +39,6 @@ export function overviewSkillsModule({
 	};
 }
 
-export function useOverviewMemoriesModule({
-	enabled = true,
-}: {
-	enabled?: boolean;
-} = {}): AgentOverviewModuleContent {
-	const api = useApi();
-	const query = useQuery({
-		queryKey: ["memories", "", "", 0, 1],
-		queryFn: async () =>
-			unwrap(await api.GET("/v1/memories", { params: { query: { page: 1, page_size: 1 } } })),
-		enabled,
-	});
-	if (query.isLoading) return { description: <OverviewDescriptionSkeleton label="memories" /> };
-	if (query.error) return { description: "Unavailable right now" };
-	const total = query.data?.total ?? 0;
-	return {
-		description: total ? `${total} ${total === 1 ? "memory" : "memories"}` : "No memories yet",
-	};
-}
-
 export function useOverviewVaultsModule({
 	projectIds,
 	resolution,
@@ -83,31 +59,4 @@ export function useOverviewVaultsModule({
 			? `${vaults.length} ${vaults.length === 1 ? "vault" : "vaults"}`
 			: "No vaults available",
 	};
-}
-
-export function useOverviewConnectorsModule({
-	enabled = true,
-}: {
-	enabled?: boolean;
-} = {}): AgentOverviewModuleContent {
-	const connections = useConnections({ enabled });
-	const connectedAppCount = useMemo(
-		() =>
-			new Set(
-				(connections.data ?? [])
-					.filter(isActiveConnection)
-					.flatMap((connection) => (connection.app_name ? [connection.app_name] : [])),
-			).size,
-		[connections.data],
-	);
-	const description = connections.isLoading ? (
-		<OverviewDescriptionSkeleton label="apps" />
-	) : connections.error ? (
-		"Unavailable right now"
-	) : connectedAppCount ? (
-		`${connectedAppCount} connected`
-	) : (
-		"No apps connected"
-	);
-	return { description };
 }

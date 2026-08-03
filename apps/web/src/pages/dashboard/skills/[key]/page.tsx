@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import {
 	BookOpen,
 	ExternalLink,
@@ -50,7 +50,11 @@ import {
 } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
-import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
+import {
+	decodeResourceRouteParam,
+	projectResourceHref,
+	skillDetailHref,
+} from "@/lib/project-resource-model";
 import { skillCapabilities } from "@/lib/skill-authority";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 import {
@@ -109,6 +113,7 @@ export function SkillDetailContent({
 	// there's only one row, so the resolver is unambiguous).
 	const [projectIdParam] = useQueryState("project", parseAsString.withDefault(""));
 	const selectedProjectId = projectIdParam;
+	const isAgentScope = Boolean(agentId);
 	const skillListHref = agentId
 		? agentSectionHref(agentId, "skills", agentDeploymentRouteQuery(routeSearch))
 		: projectResourceHref("skills");
@@ -199,7 +204,11 @@ export function SkillDetailContent({
 		skill.authority === "agent_sync" ||
 		skill.project_kind === "environment" ||
 		projects !== undefined;
-	const isReadOnly = capabilities ? !capabilities.canUpdate : true;
+	const isReadOnly = isAgentScope || (capabilities ? !capabilities.canUpdate : true);
+	const libraryDetailHref = skillDetailHref(
+		skillKey,
+		selectedProjectId || skill?.project_id || undefined,
+	);
 
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState("");
@@ -370,7 +379,18 @@ export function SkillDetailContent({
 								<DetailTitle className="truncate">{skill.name}</DetailTitle>
 							</div>
 							<div className="flex w-full shrink-0 flex-wrap gap-2 sm:w-auto sm:justify-end">
-								{!accessKnown ? null : isReadOnly ? (
+								{isAgentScope ? (
+									<Button
+										render={<Link to={libraryDetailHref} />}
+										nativeButton={false}
+										variant="ghost"
+										size="sm"
+										className="text-muted-foreground"
+									>
+										<ExternalLink className="size-3.5" />
+										Manage in resource library
+									</Button>
+								) : !accessKnown ? null : isReadOnly ? (
 									<Badge
 										variant="secondary"
 										title="Cloud mutations are disabled for this Skill's authority or Project."

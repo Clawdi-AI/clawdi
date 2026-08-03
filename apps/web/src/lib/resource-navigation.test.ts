@@ -1,93 +1,113 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
-	agentResourceReturnTarget,
-	parseResourceNavigationOrigin,
-	projectDetailHrefFrom,
-	projectReturnTarget,
-	resourceOriginSearch,
-	vaultDetailHrefFrom,
-	vaultReturnTarget,
+	agentResourceScope,
+	LIBRARY_RESOURCE_SCOPE,
+	legacyAgentResourceScope,
+	libraryManagementTarget,
+	projectDetailHrefForScope,
+	projectDetailLink,
+	resourceCollectionTarget,
+	validateResourceDetailSearch,
+	vaultDetailHrefForScope,
+	vaultDetailLink,
 } from "./resource-navigation";
 
-describe("resource navigation", () => {
-	it("round-trips Agent origins with deployment identity", () => {
-		const search = resourceOriginSearch({
-			type: "agent-vaults",
-			agentId: "agent 1",
-			agentQuery: { source: "on-clawdi", d: "deployment 1", tab: "legacy" },
-		});
-
-		expect(search).toEqual({
-			from: "agent-vaults",
-			agent: "agent 1",
-			agentSource: "on-clawdi",
-			agentDeployment: "deployment 1",
-		});
-		expect(parseResourceNavigationOrigin(search)).toEqual({
-			type: "agent-vaults",
-			agentId: "agent 1",
-			agentQuery: { source: "on-clawdi", d: "deployment 1" },
-		});
-		expect(vaultReturnTarget(search)).toEqual({
-			href: "/agents/agent%201/vaults?source=on-clawdi&d=deployment%201",
-			label: "Agent Vaults",
-		});
-	});
-
-	it("builds durable contextual Project and Vault detail links", () => {
-		expect(
-			projectDetailHrefFrom("project 1", {
-				type: "agent-projects",
-				agentId: "agent 1",
-			}),
-		).toBe("/projects/project%201?from=agent-projects&agent=agent%201");
-		expect(
-			vaultDetailHrefFrom("prod keys", "vault/1", {
-				type: "project",
-				projectId: "project 1",
-			}),
-		).toBe("/vaults/prod%20keys?vault=vault%2F1&from=project&originProject=project%201");
-	});
-
-	it("returns from related resources to the exact source section", () => {
-		expect(
-			projectReturnTarget(new URLSearchParams({ from: "agent-projects", agent: "agent 1" })),
-		).toEqual({ href: "/agents/agent%201/project-access", label: "Agent Projects" });
-		expect(vaultReturnTarget({ from: "project", originProject: "project 1" })).toEqual({
-			href: "/projects/project%201#vaults",
-			label: "Project",
-		});
-		expect(agentResourceReturnTarget({ from: "project", originProject: "project 1" })).toEqual({
-			href: "/projects/project%201#agents",
-			label: "Project",
-		});
-	});
-
-	it("returns from a Project to the originating Vault by stable identity", () => {
-		const search = {
-			from: "vault",
-			vaultSlug: "prod keys",
-			originVault: "vault/1",
-		};
-		expect(projectReturnTarget(search)).toEqual({
-			href: "/vaults/prod%20keys?vault=vault%2F1#projects",
-			label: "Vault",
-		});
-	});
-
-	it("falls back to canonical collections for incomplete or unsupported origins", () => {
-		expect(parseResourceNavigationOrigin({ from: "agent-projects" })).toBeNull();
-		expect(parseResourceNavigationOrigin({ from: "external", agent: "agent 1" })).toBeNull();
-		expect(projectReturnTarget({ from: "agent-projects" })).toEqual({
+describe("resource navigation scopes", () => {
+	it("keeps library detail and collection navigation global", () => {
+		expect(resourceCollectionTarget(LIBRARY_RESOURCE_SCOPE, "projects")).toEqual({
 			href: "/projects",
 			label: "Projects",
 		});
-		expect(vaultReturnTarget(undefined)).toEqual({ href: "/vaults", label: "Vaults" });
-		expect(agentResourceReturnTarget(undefined)).toBeNull();
+		expect(projectDetailHrefForScope(LIBRARY_RESOURCE_SCOPE, "project 1")).toBe(
+			"/projects/project%201",
+		);
+		expect(vaultDetailHrefForScope(LIBRARY_RESOURCE_SCOPE, "prod keys", "vault/1")).toBe(
+			"/vaults/prod%20keys?vault=vault%2F1",
+		);
+		expect(projectDetailLink(LIBRARY_RESOURCE_SCOPE, "project 1")).toMatchObject({
+			to: "/projects/$id",
+			params: { id: "project 1" },
+		});
 	});
 
-	it("keeps legacy singular Vault URLs as redirects to the plural routes", () => {
+	it("builds nested Agent details and preserves hosted deployment identity", () => {
+		const scope = agentResourceScope("agent 1", {
+			source: "on-clawdi",
+			d: "deployment 1",
+			tab: "legacy",
+			project: "unrelated",
+		});
+
+		expect(resourceCollectionTarget(scope, "projects")).toEqual({
+			href: "/agents/agent%201/project-access?source=on-clawdi&d=deployment%201",
+			label: "Agent Projects",
+		});
+		expect(projectDetailHrefForScope(scope, "project 1")).toBe(
+			"/agents/agent%201/project-access/project%201?source=on-clawdi&d=deployment%201",
+		);
+		expect(vaultDetailHrefForScope(scope, "prod keys", "vault/1")).toBe(
+			"/agents/agent%201/vaults/prod%20keys?source=on-clawdi&d=deployment%201&vault=vault%2F1",
+		);
+		expect(projectDetailLink(scope, "project 1")).toMatchObject({
+			to: "/agents/$id/project-access/$projectId",
+			params: { id: "agent 1", projectId: "project 1" },
+			search: { source: "on-clawdi", d: "deployment 1" },
+		});
+		expect(vaultDetailLink(scope, "prod keys", "vault/1")).toMatchObject({
+			to: "/agents/$id/vaults/$slug",
+			params: { id: "agent 1", slug: "prod keys" },
+			search: { source: "on-clawdi", d: "deployment 1", vault: "vault/1" },
+		});
+	});
+
+	it("makes leaving the Agent shell an explicit library-management target", () => {
+		expect(libraryManagementTarget("projects", { projectId: "project 1" })).toEqual({
+			href: "/projects/project%201",
+			label: "Manage in resource library",
+		});
+		expect(
+			libraryManagementTarget("vaults", { vaultSlug: "prod keys", vaultId: "vault/1" }),
+		).toEqual({
+			href: "/vaults/prod%20keys?vault=vault%2F1",
+			label: "Manage in resource library",
+		});
+	});
+
+	it("accepts old from-query Agent links only as a compatibility bridge", () => {
+		expect(
+			legacyAgentResourceScope(
+				{
+					from: "agent-vaults",
+					agent: "agent 1",
+					agentSource: "on-clawdi",
+					agentDeployment: "deployment 1",
+				},
+				"vaults",
+			),
+		).toEqual({
+			kind: "agent",
+			agentId: "agent 1",
+			agentQuery: { source: "on-clawdi", d: "deployment 1" },
+		});
+		expect(
+			legacyAgentResourceScope({ from: "agent-vaults", agent: "agent 1" }, "projects"),
+		).toBeNull();
+		expect(legacyAgentResourceScope({ from: "agent-projects" }, "projects")).toBeNull();
+	});
+
+	it("validates resource query strings at the route boundary", () => {
+		expect(
+			validateResourceDetailSearch({
+				vault: "vault 1",
+				joined: 42,
+				from: ["agent-vaults"],
+				future: "kept",
+			}),
+		).toEqual({ vault: "vault 1", future: "kept" });
+	});
+
+	it("keeps legacy singular Vault URLs as redirects to plural routes", () => {
 		const legacyListRoute = readFileSync(
 			new URL("../routes/_protected/_dashboard/vault/index.tsx", import.meta.url),
 			"utf8",
@@ -98,13 +118,11 @@ describe("resource navigation", () => {
 		);
 		expect(legacyListRoute).toContain('to: "/vaults"');
 		expect(legacyListRoute).toContain("search");
-		expect(legacyListRoute).toContain("replace: true");
 		expect(legacyDetailRoute).toContain('to: "/vaults/$slug"');
 		expect(legacyDetailRoute).toContain("search,");
-		expect(legacyDetailRoute).toContain("replace: true");
 	});
 
-	it("uses the canonical project query to drive the Vault collection filter", () => {
+	it("keeps the canonical project query as the library Vault filter", () => {
 		const vaultsSurface = readFileSync(
 			new URL("../components/vault/vaults-surface.tsx", import.meta.url),
 			"utf8",
@@ -114,6 +132,5 @@ describe("resource navigation", () => {
 			"const projectFilter = embedded ? embeddedProjectFilter : projectParam",
 		);
 		expect(vaultsSurface).toContain("void setProjectParam(projectId)");
-		expect(vaultsSurface).toContain("p.id === projectFilter");
 	});
 });

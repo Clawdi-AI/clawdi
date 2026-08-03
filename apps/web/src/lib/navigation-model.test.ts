@@ -120,9 +120,7 @@ describe("sidebar navigation model", () => {
 				items: [
 					{ id: "projects", label: "Projects" },
 					{ id: "skills", label: "Skills" },
-					{ id: "memories", label: "Memories" },
 					{ id: "vaults", label: "Vaults" },
-					{ id: "connectors", label: "Connectors" },
 				],
 			},
 			{
@@ -152,9 +150,7 @@ describe("sidebar navigation model", () => {
 				items: [
 					{ id: "projects", label: "Projects" },
 					{ id: "skills", label: "Skills" },
-					{ id: "memories", label: "Memories" },
 					{ id: "vaults", label: "Vaults" },
-					{ id: "connectors", label: "Connectors" },
 				],
 			},
 			{
@@ -266,6 +262,10 @@ describe("sidebar navigation model", () => {
 			new URL("../pages/dashboard/vault/page.tsx", import.meta.url),
 			"utf8",
 		);
+		const overviewBodies = readFileSync(
+			new URL("../components/dashboard/agent-overview-resource-bodies.tsx", import.meta.url),
+			"utf8",
+		);
 		for (const source of [connectedDetail, hostedDetail]) {
 			expect(source).toContain("AGENT_SECTION_NAVIGATION_ITEMS[activeTab]");
 			expect(source).toContain("<AgentProjectsTab");
@@ -282,6 +282,8 @@ describe("sidebar navigation model", () => {
 		expect(vaultPage).not.toContain("useQuery");
 		expect(memoriesPage).toContain("@/components/memories/memories-surface");
 		expect(memoriesPage).not.toContain("useQuery");
+		expect(overviewBodies).not.toContain("useOverviewMemoriesModule");
+		expect(overviewBodies).not.toContain("useOverviewConnectorsModule");
 		expect(connectedDetail).not.toContain("function AgentProjectsPanel");
 	});
 });

@@ -11,6 +11,7 @@ export type AgentRouteSearch = Record<string, unknown> & {
 	d?: string;
 	tab?: string;
 	project?: string;
+	vault?: string;
 };
 export type AgentRouteQuery =
 	| string
@@ -48,6 +49,8 @@ export type ParsedAgentPathname = {
 	section: AgentSectionId;
 	sessionId?: string;
 	skillKey?: string;
+	projectId?: string;
+	vaultSlug?: string;
 };
 
 export function agentSectionSegment(section: AgentSectionId): string {
@@ -79,21 +82,27 @@ export function parseAgentPathname(pathname: string): ParsedAgentPathname | null
 	if (!section) return null;
 	if (section === "overview" && parts.length !== 2) return null;
 	if (section === "sessions" && parts.length > 4) return null;
-	if (
-		section !== "overview" &&
-		section !== "sessions" &&
-		section !== "skills" &&
-		parts.length !== 3
-	) {
-		return null;
+	if (section !== "overview" && !["sessions", "skills", "projects", "vaults"].includes(section)) {
+		if (parts.length !== 3) return null;
 	}
+	if ((section === "projects" || section === "vaults") && parts.length > 4) return null;
 	const sessionId =
 		section === "sessions" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
 	const skillKey =
 		section === "skills" && parts[3]
 			? parts.slice(3).map(safeDecodeURIComponent).join("/")
 			: undefined;
-	return { agentId, section, sessionId, skillKey };
+	const projectId =
+		section === "projects" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
+	const vaultSlug = section === "vaults" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
+	return {
+		agentId,
+		section,
+		sessionId,
+		skillKey,
+		...(projectId ? { projectId } : {}),
+		...(vaultSlug ? { vaultSlug } : {}),
+	};
 }
 
 /**
@@ -120,7 +129,9 @@ export function agentRouteOwnsSection(
 		agentRouteIdsEqual(route?.agentId, agentId) &&
 		route?.section === section &&
 		!route.sessionId &&
-		!route.skillKey
+		!route.skillKey &&
+		!route.projectId &&
+		!route.vaultSlug
 	);
 }
 
@@ -167,6 +178,7 @@ export function validateAgentRouteSearch(search: Record<string, unknown>): Agent
 		d: optionalSearchString(search.d),
 		tab: optionalSearchString(search.tab),
 		project: optionalSearchString(search.project),
+		vault: optionalSearchString(search.vault),
 	};
 }
 
@@ -327,6 +339,56 @@ export function agentSkillDetailLink(
 	return linkOptions({
 		to: "/agents/$id/skills/$",
 		params: { id: agentId, _splat: skillKey },
+		search: Object.keys(search).length > 0 ? search : undefined,
+	});
+}
+
+export function agentProjectDetailHref(
+	agentId: string,
+	projectId: string,
+	query?: AgentRouteQuery,
+): string {
+	const path = `${agentSectionHref(agentId, "projects")}/${encodeURIComponent(projectId)}`;
+	return agentDetailHref(path, query);
+}
+
+/** Typed TanStack Router options for an agent-scoped Project detail link. */
+export function agentProjectDetailLink(
+	agentId: string,
+	projectId: string,
+	query?: AgentRouteQuery,
+) {
+	return linkOptions({
+		to: "/agents/$id/project-access/$projectId",
+		params: { id: agentId, projectId },
+		search: agentRouteSearch(query),
+	});
+}
+
+export function agentVaultDetailHref(
+	agentId: string,
+	vaultSlug: string,
+	vaultId?: string | null,
+	query?: AgentRouteQuery,
+): string {
+	const path = `${agentSectionHref(agentId, "vaults")}/${encodeURIComponent(vaultSlug)}`;
+	const search = agentRouteSearch(query) ?? {};
+	if (vaultId) search.vault = vaultId;
+	return agentDetailHref(path, search);
+}
+
+/** Typed TanStack Router options for an agent-scoped Vault detail link. */
+export function agentVaultDetailLink(
+	agentId: string,
+	vaultSlug: string,
+	vaultId?: string | null,
+	query?: AgentRouteQuery,
+) {
+	const search = agentRouteSearch(query) ?? {};
+	if (vaultId) search.vault = vaultId;
+	return linkOptions({
+		to: "/agents/$id/vaults/$slug",
+		params: { id: agentId, slug: vaultSlug },
 		search: Object.keys(search).length > 0 ? search : undefined,
 	});
 }
