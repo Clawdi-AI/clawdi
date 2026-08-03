@@ -33,7 +33,7 @@ describe("channel mutation feedback", () => {
 		expectFeedbackBeforeRequest(
 			detail,
 			"setLinkingAccountIds((current) => new Set(current).add(channelId))",
-			"await link.execute(channelId)",
+			"await link.execute({ channelId, replaceExistingProviderLink })",
 		);
 		expectFeedbackBeforeRequest(
 			detail,

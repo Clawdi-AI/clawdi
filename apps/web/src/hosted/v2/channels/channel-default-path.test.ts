@@ -50,7 +50,8 @@ describe("global Channels inventory", () => {
 		const connectDialog = source("./connect-bot-dialog.tsx");
 		const agentDetail = source("../../agents/hosted-agent-detail.tsx");
 
-		expect(connectDialog).toContain("agent_id: autoLinkAgentId");
+		expect(connectDialog).toContain("replace_existing_provider_link: true");
+		expect(connectDialog).toContain("<ProviderLinkReplacementConfirm");
 		expect(connectDialog).toContain("onAgentConnected");
 		expect(connectDialog).toContain("autoLinkAgentIdForNewCustomBot");
 		expect(agentDetail).not.toContain("<AddChannelDialog");
@@ -62,7 +63,6 @@ describe("global Channels inventory", () => {
 		expect(agentDetail).toContain("Add channel");
 		expect(agentDetail).toContain('title="Clawdi bots"');
 		expect(agentDetail).toContain('title="Custom bots"');
-		expect(agentDetail).toContain("body: { agent_id: environmentId }");
 		expect(agentDetail).toContain("setTelegramPair({");
 	});
 
@@ -82,7 +82,6 @@ describe("global Channels inventory", () => {
 		expect(connectDialog).toContain("data-agent-link-warning");
 		expect(connectDialog).toContain('className="border-warning/30 bg-warning-muted py-2.5"');
 		expect(connectDialog).toContain("<TriangleAlert aria-hidden />");
-		expect(connectDialog).toContain('title: "Won’t link automatically"');
 		expect(connectDialog).toContain('title: "Agent link status unavailable"');
 		expect(connectDialog).toContain(
 			"The new Custom bot will be linked to this Agent automatically.",

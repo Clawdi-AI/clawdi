@@ -9332,21 +9332,49 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 	await expect(
 		connectDialog.getByRole("link", { name: "Agent Interface", exact: true }),
 	).toHaveCount(0);
-	await expect(connectDialog.getByRole("button", { name: /^Telegram Telegram$/ })).toHaveAttribute(
-		"aria-pressed",
-		"true",
+	const providerChooser = connectDialog.getByRole("group", { name: "Choose provider" });
+	const providerConfiguration = connectDialog.locator("[data-provider-configuration]");
+	const telegramProvider = providerChooser.getByRole("button", { name: "Telegram", exact: true });
+	const discordProvider = providerChooser.getByRole("button", { name: "Discord", exact: true });
+	await expect(providerChooser).toBeVisible();
+	await expect(providerConfiguration).toHaveAccessibleName("Configure Telegram");
+	await expect(providerConfiguration).toHaveClass(/border-t/);
+	await expect(providerChooser.locator("[data-other-provider-hint]")).toBeVisible();
+	await expect(telegramProvider).toHaveAttribute("aria-pressed", "true");
+	await expect(telegramProvider).toHaveClass(/border-primary/);
+	await expect(telegramProvider).toHaveClass(/bg-primary\/5/);
+	await expect(telegramProvider).toHaveClass(/ring-1/);
+	await expect(telegramProvider).toHaveClass(/ring-primary\/30/);
+	await expect(telegramProvider.locator("svg.lucide-check")).toBeVisible();
+	await expect(discordProvider.locator("svg.lucide-check")).toHaveCount(0);
+	const [providerChooserBox, providerConfigurationBox] = await Promise.all([
+		providerChooser.boundingBox(),
+		providerConfiguration.boundingBox(),
+	]);
+	expect(providerConfigurationBox?.y ?? 0).toBeGreaterThan(
+		(providerChooserBox?.y ?? 0) + (providerChooserBox?.height ?? 0),
 	);
 	await expect(connectDialog.getByLabel("Application ID")).toHaveCount(0);
 	await expect(
 		connectDialog.getByText("Create a bot with @BotFather", { exact: true }),
 	).toBeVisible();
 	await connectDialog.screenshot({ path: testInfo.outputPath("connect-bot-telegram-desktop.png") });
-	await connectDialog.getByRole("button", { name: /^Discord Discord$/ }).click();
+	await page.locator("html").evaluate((element) => element.classList.add("dark"));
+	await expect(page.locator("html")).toHaveClass(/dark/);
+	await connectDialog.screenshot({
+		path: testInfo.outputPath("connect-bot-telegram-dark-desktop.png"),
+	});
+	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+	await discordProvider.click();
+	await expect(discordProvider).toHaveAttribute("aria-pressed", "true");
+	await expect(discordProvider.locator("svg.lucide-check")).toBeVisible();
+	await expect(telegramProvider.locator("svg.lucide-check")).toHaveCount(0);
+	await expect(providerConfiguration).toHaveAccessibleName("Configure Discord");
 	await expect(connectDialog.getByLabel("Application ID")).toBeVisible();
 	await expect(connectDialog.getByLabel("Public key")).toBeVisible();
 	await expect(connectDialog.getByText(/Server ID/i)).toHaveCount(0);
 	await connectDialog.screenshot({ path: testInfo.outputPath("connect-bot-discord-desktop.png") });
-	await connectDialog.getByRole("button", { name: /^Telegram Telegram$/ }).click();
+	await telegramProvider.click();
 	await connectDialog.getByLabel("Name").fill("Inventory Telegram");
 	await connectDialog.getByLabel("Bot token").fill("123456:console-inventory-token");
 	await connectDialog.getByRole("button", { name: "Add custom bot", exact: true }).click();
@@ -9390,6 +9418,10 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 	});
 	await page.getByRole("button", { name: "Add channel", exact: true }).click();
 	connectDialog = page.getByRole("dialog", { name: "Add channel" });
+	await expect(connectDialog.getByRole("group", { name: "Choose provider" })).toBeVisible();
+	await expect(connectDialog.locator("[data-provider-configuration]")).toHaveAccessibleName(
+		"Configure Telegram",
+	);
 	await expectNoHorizontalOverflow(connectDialog, "Telegram credentials dialog at 320px");
 	await expectContainedInOwnerAndViewport(
 		page,
@@ -9404,7 +9436,10 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 		"Telegram credentials Add custom bot",
 	);
 	await connectDialog.screenshot({ path: testInfo.outputPath("connect-bot-telegram-320.png") });
-	await connectDialog.getByRole("button", { name: /^Discord Discord$/ }).click();
+	await connectDialog.getByRole("button", { name: "Discord", exact: true }).click();
+	await expect(connectDialog.locator("[data-provider-configuration]")).toHaveAccessibleName(
+		"Configure Discord",
+	);
 	await connectDialog.getByLabel("Bot token").fill("!".repeat(300));
 	await connectDialog.getByLabel("Application ID").fill("9".repeat(300));
 	await connectDialog.getByLabel("Public key").fill("z".repeat(300));
@@ -9650,21 +9685,18 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 	await page.goto("/channels");
 	await page.getByRole("button", { name: "Add channel", exact: true }).click();
 	let dialog = page.getByRole("dialog", { name: "Add channel" });
-	await dialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ }).click();
-	await expect(dialog.getByText("Your WhatsApp", { exact: true })).toBeVisible();
+	await dialog.getByRole("button", { name: "WhatsApp", exact: true }).click();
+	await expect(dialog.getByRole("heading", { name: "Configure WhatsApp" })).toBeVisible();
+	await expect(dialog.getByText("Your WhatsApp", { exact: true })).toHaveCount(0);
 	await expect(dialog.getByText("Clawdi WhatsApp", { exact: true })).toHaveCount(0);
 	await expect(dialog.locator("[data-whatsapp-account-choice] section")).toHaveCount(0);
 	let accountWarning = dialog.locator("[data-whatsapp-account-warning]");
 	await expect(accountWarning).toHaveAttribute("role", "alert");
-	await expect(
-		accountWarning.getByText("Use a dedicated WhatsApp account", { exact: true }),
-	).toBeVisible();
-	await expect(accountWarning).toContainText("Clawdi connects as a linked device.");
+	await expect(accountWarning.getByText("Use a dedicated number", { exact: true })).toBeVisible();
 	await expect(accountWarning).toContainText(
-		"Once linked to an Agent, messages to this account may be handled by the Agent",
+		"Clawdi uses WhatsApp’s linked-device feature. When linked to an Agent, replies are sent from this account—use a separate number, not your primary personal one.",
 	);
-	await expect(accountWarning).toContainText("replies are sent as this account");
-	await expect(accountWarning).toContainText("not your primary personal account");
+	await expect(accountWarning).not.toContainText("messages to this account may be handled");
 	await expect(dialog.getByRole("button", { name: "Connect your account" })).toBeDisabled();
 	await expect(dialog).toContainText("isn't compatible with this deployment");
 	await expect(dialog.getByLabel("Bot token")).toHaveCount(0);
@@ -9674,7 +9706,7 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 	await page.reload();
 	await page.getByRole("button", { name: "Add channel", exact: true }).click();
 	dialog = page.getByRole("dialog", { name: "Add channel" });
-	await dialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ }).click();
+	await dialog.getByRole("button", { name: "WhatsApp", exact: true }).click();
 	accountWarning = dialog.locator("[data-whatsapp-account-warning]");
 	await expect(accountWarning).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Connect your account" })).toBeEnabled();
@@ -9711,24 +9743,19 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 	await page.setViewportSize({ width: 320, height: 568 });
 	await page.getByRole("button", { name: "Add channel", exact: true }).click();
 	dialog = page.getByRole("dialog", { name: "Add channel" });
-	const mobileWhatsAppProvider = dialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ });
+	const mobileWhatsAppProvider = dialog.getByRole("button", { name: "WhatsApp", exact: true });
 	await expect(mobileWhatsAppProvider).toContainText("WhatsApp");
-	await expect(mobileWhatsAppProvider.locator("span").filter({ hasText: /^WhatsApp$/ })).toHaveCSS(
-		"text-overflow",
-		"clip",
-	);
 	await mobileWhatsAppProvider.click();
+	await expect(mobileWhatsAppProvider).toHaveAttribute("aria-pressed", "true");
+	await expect(mobileWhatsAppProvider.locator("svg.lucide-check")).toBeVisible();
+	await expect(dialog.getByRole("heading", { name: "Configure WhatsApp" })).toBeVisible();
 	await expect(dialog.locator("[data-whatsapp-account-choice] section")).toHaveCount(0);
 	accountWarning = dialog.locator("[data-whatsapp-account-warning]");
 	await expect(accountWarning).toHaveAttribute("role", "alert");
-	await expect(
-		accountWarning.getByText("Use a dedicated WhatsApp account", { exact: true }),
-	).toBeVisible();
+	await expect(accountWarning.getByText("Use a dedicated number", { exact: true })).toBeVisible();
 	await expect(accountWarning).toContainText(
-		"Once linked to an Agent, messages to this account may be handled by the Agent",
+		"Clawdi uses WhatsApp’s linked-device feature. When linked to an Agent, replies are sent from this account—use a separate number, not your primary personal one.",
 	);
-	await expect(accountWarning).toContainText("replies are sent as this account");
-	await expect(accountWarning).toContainText("not your primary personal account");
 	await expectNoHorizontalOverflow(dialog, "WhatsApp Custom setup at 320x568");
 	await expectNoHorizontalOverflow(page.locator("html"), "WhatsApp Custom document at 320x568");
 	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-custom-setup-320x568.png") });
@@ -9779,7 +9806,7 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 	await expect(dialog.getByText("Couldn't connect WhatsApp", { exact: true })).toBeVisible();
 	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-error-320x568.png") });
 	await dialog.getByRole("button", { name: "Back", exact: true }).click();
-	await expect(dialog.getByText("Your WhatsApp", { exact: true })).toBeVisible();
+	await expect(dialog.getByRole("heading", { name: "Configure WhatsApp" })).toBeVisible();
 	expect(cancelCalls).toBe(1);
 
 	await dialog.getByRole("button", { name: "Connect your account" }).click();
@@ -9787,7 +9814,7 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 	await dialog.getByRole("button", { name: "Generate QR" }).click();
 	await expect(dialog.getByRole("button", { name: "Cancel connection" })).toBeVisible();
 	await dialog.getByRole("button", { name: "Cancel connection" }).click();
-	await expect(dialog.getByText("Your WhatsApp", { exact: true })).toBeVisible();
+	await expect(dialog.getByRole("heading", { name: "Configure WhatsApp" })).toBeVisible();
 	expect(cancelCalls).toBe(2);
 	await expectNoHorizontalOverflow(dialog, "WhatsApp canceled flow at 320x568");
 	const unexpectedErrors = errors.filter(
@@ -10038,13 +10065,13 @@ for (const firstTimeViewport of [
 		await expect(connectDialog.getByRole("status")).toContainText(
 			"The new Custom bot will be linked to this Agent automatically.",
 		);
-		await connectDialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ }).click();
-		await expect(connectDialog.getByText("Your WhatsApp", { exact: true })).toBeVisible();
+		await connectDialog.getByRole("button", { name: "WhatsApp", exact: true }).click();
+		await expect(connectDialog.getByRole("heading", { name: "Configure WhatsApp" })).toBeVisible();
 		await expect(connectDialog.getByText("Clawdi WhatsApp", { exact: true })).toHaveCount(0);
 		await expect(connectDialog.locator("[data-whatsapp-account-choice] section")).toHaveCount(0);
-		await connectDialog.getByRole("button", { name: /^Telegram Telegram$/ }).click();
+		await connectDialog.getByRole("button", { name: "Telegram", exact: true }).click();
 		await expect(
-			connectDialog.getByRole("button", { name: /^Telegram Telegram$/ }),
+			connectDialog.getByRole("button", { name: "Telegram", exact: true }),
 		).toHaveAttribute("aria-pressed", "true");
 		await connectDialog.getByLabel("Name").fill("Browser Telegram");
 		await connectDialog.getByLabel("Bot token").fill("123456:browser-test-token");
@@ -10077,6 +10104,12 @@ for (const firstTimeViewport of [
 		await submitCustomBot.click();
 		const connecting = connectDialog.getByRole("button", { name: "Adding…", exact: true });
 		await expect(connecting).toBeVisible();
+		for (const providerChoice of await connectDialog
+			.getByRole("group", { name: "Choose provider" })
+			.getByRole("button")
+			.all()) {
+			await expect(providerChoice).toBeDisabled();
+		}
 		await expectContainedInOwnerAndViewport(
 			page,
 			connecting,
@@ -10162,7 +10195,7 @@ for (const firstTimeViewport of [
 	});
 }
 
-test("Add channel keeps already-linked Telegram and Discord available as inventory-only additions", async ({
+test("Add channel confirms atomic Telegram and Discord link replacement", async ({
 	page,
 }, testInfo) => {
 	await page.setViewportSize({ width: 320, height: 844 });
@@ -10186,6 +10219,8 @@ test("Add channel keeps already-linked Telegram and Discord available as invento
 		webhook_url: "https://cloud.example.test/channels/existing-discord",
 	};
 	const createChannelRequests: string[] = [];
+	const linkAgentRequests: Array<{ accountId: string; body: string }> = [];
+	const unlinkAgentRequests: string[] = [];
 	await stubHostedApi(page, {
 		deployments: [runningMissingProjectionDeployment],
 		channelAccounts: [telegramAccount, discordAccount],
@@ -10208,6 +10243,8 @@ test("Add channel keeps already-linked Telegram and Discord available as invento
 			},
 		],
 		createChannelRequests,
+		linkAgentRequests,
+		unlinkAgentRequests,
 		createChannelResponses: [
 			{
 				status: 201,
@@ -10216,10 +10253,14 @@ test("Add channel keeps already-linked Telegram and Discord available as invento
 					id: "5a555555-5555-4555-8555-555555555555",
 					name: "Additional Telegram",
 					webhook_secret: "telegram-webhook-secret-must-not-render",
-					agent_link_id: null,
-					agent_id: null,
+					agent_link_id: "5a777777-7777-4777-8777-777777777777",
+					agent_id: agentId,
 					agent_token: null,
 				},
+			},
+			{
+				status: 503,
+				body: { detail: "Replacement transaction temporarily unavailable" },
 			},
 			{
 				status: 201,
@@ -10228,8 +10269,8 @@ test("Add channel keeps already-linked Telegram and Discord available as invento
 					id: "5a666666-6666-4666-8666-666666666666",
 					name: "Additional Discord",
 					webhook_secret: "discord-webhook-secret-must-not-render",
-					agent_link_id: null,
-					agent_id: null,
+					agent_link_id: "5a888888-8888-4888-8888-888888888888",
+					agent_id: agentId,
 					agent_token: null,
 				},
 			},
@@ -10242,19 +10283,22 @@ test("Add channel keeps already-linked Telegram and Discord available as invento
 	const addChannel = page.locator("[data-agent-add-custom-bot]");
 	await addChannel.click();
 	let dialog = page.getByRole("dialog", { name: "Add channel" });
-	const telegramProvider = dialog.getByRole("button", { name: /^Telegram Telegram$/ });
-	const discordProvider = dialog.getByRole("button", { name: /^Discord Discord$/ });
+	const providerChooser = dialog.getByRole("group", { name: "Choose provider" });
+	const providerConfiguration = dialog.locator("[data-provider-configuration]");
+	const telegramProvider = providerChooser.getByRole("button", {
+		name: "Telegram",
+		exact: true,
+	});
+	const discordProvider = providerChooser.getByRole("button", { name: "Discord", exact: true });
 	await expect(telegramProvider).toBeEnabled();
 	await expect(discordProvider).toBeEnabled();
-	let linkWarning = dialog.locator("[data-agent-link-warning]");
-	await expect(linkWarning).toHaveAttribute("role", "alert");
-	await expect(linkWarning.getByText("Won’t link automatically", { exact: true })).toBeVisible();
-	await expect(linkWarning).toContainText(
-		"This Agent already has a Telegram bot. The new Custom bot will be added to Custom bots without being linked to this Agent.",
-	);
-	await expect(dialog.getByRole("status")).toHaveCount(0);
+	await expect(providerConfiguration).toHaveAccessibleName("Configure Telegram");
+	await expect(providerConfiguration.locator("[data-agent-link-warning]")).toHaveCount(0);
 	await expect(
-		dialog.locator("[data-other-provider-hint]").getByRole("link", {
+		providerConfiguration.getByRole("status").getByText(/replace.*existing Telegram link/i),
+	).toBeVisible();
+	await expect(
+		providerChooser.locator("[data-other-provider-hint]").getByRole("link", {
 			name: "Agent Interface",
 		}),
 	).toHaveAttribute(
@@ -10263,59 +10307,111 @@ test("Add channel keeps already-linked Telegram and Discord available as invento
 	);
 	await dialog.getByLabel("Name").fill("Additional Telegram");
 	await dialog.getByLabel("Bot token").fill("123456:additional-telegram-token");
-	await dialog.screenshot({ path: testInfo.outputPath("already-linked-telegram-form-320.png") });
+	await expectNoHorizontalOverflow(dialog, "Telegram replacement form at 320px");
 	await dialog.getByRole("button", { name: "Add custom bot", exact: true }).click();
+	let replacementDialog = page.getByRole("alertdialog", {
+		name: "Replace this Agent’s Telegram link?",
+	});
+	await expect(replacementDialog).toBeVisible();
+	await expect(replacementDialog).toContainText("one Telegram bot at a time");
+	await expect(replacementDialog).toContainText("Additional Telegram");
+	await expect(createChannelRequests).toHaveLength(0);
+	await expect(linkAgentRequests).toHaveLength(0);
+	await expect(unlinkAgentRequests).toHaveLength(0);
+	await page.locator("html").evaluate((element) => element.classList.add("dark"));
+	await expect(page.locator("html")).toHaveClass(/dark/);
+	await expectNoHorizontalOverflow(replacementDialog, "Telegram replacement confirmation at 320px");
+	await replacementDialog.screenshot({
+		path: testInfo.outputPath("replace-telegram-link-confirm-dark-320.png"),
+	});
+	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+	await replacementDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+	await expect(replacementDialog).toHaveCount(0);
+	await expect(createChannelRequests).toHaveLength(0);
+	await expect(linkAgentRequests).toHaveLength(0);
+	await expect(unlinkAgentRequests).toHaveLength(0);
+
+	await dialog.getByRole("button", { name: "Add custom bot", exact: true }).click();
+	replacementDialog = page.getByRole("alertdialog", {
+		name: "Replace this Agent’s Telegram link?",
+	});
+	await replacementDialog
+		.getByRole("button", { name: "Replace Telegram link", exact: true })
+		.click();
 	await expect.poll(() => createChannelRequests.length).toBe(1);
 	expect(JSON.parse(createChannelRequests[0] ?? "{}")).toEqual({
 		provider: "telegram",
 		name: "Additional Telegram",
 		provider_token: "123456:additional-telegram-token",
-		agent_id: null,
+		agent_id: agentId,
+		replace_existing_provider_link: true,
 	});
-	dialog = page.getByRole("dialog", { name: "Custom bot added" });
-	await expect(dialog).toContainText(
-		"Additional Telegram was added to Custom bots. It was not linked because this Agent already has a Telegram bot.",
-	);
-	await expect(page.getByRole("dialog", { name: "Pair Telegram" })).toHaveCount(0);
-	await expectNoHorizontalOverflow(dialog, "inventory-only Telegram result at 320px");
-	await dialog.screenshot({ path: testInfo.outputPath("inventory-only-telegram-result-320.png") });
-	await dialog.getByRole("button", { name: "Done", exact: true }).click();
+	const telegramPairDialog = page.getByRole("dialog", { name: "Pair Telegram" });
+	await expect(telegramPairDialog).toBeVisible();
+	await expect(page.getByRole("dialog", { name: "Add channel" })).toHaveCount(0);
+	await telegramPairDialog.getByRole("button", { name: "Close", exact: true }).click();
+	await expect(telegramPairDialog).toHaveCount(0);
 
 	await addChannel.click();
 	dialog = page.getByRole("dialog", { name: "Add channel" });
-	await dialog.getByRole("button", { name: /^Discord Discord$/ }).click();
-	linkWarning = dialog.locator("[data-agent-link-warning]");
-	await expect(linkWarning).toHaveAttribute("role", "alert");
-	await expect(linkWarning.getByText("Won’t link automatically", { exact: true })).toBeVisible();
-	await expect(linkWarning).toContainText(
-		"This Agent already has a Discord bot. The new Custom bot will be added to Custom bots without being linked to this Agent.",
+	await dialog.getByRole("button", { name: "Discord", exact: true }).click();
+	await expect(dialog.locator("[data-provider-configuration]")).toHaveAccessibleName(
+		"Configure Discord",
 	);
+	await expect(dialog.locator("[data-agent-link-warning]")).toHaveCount(0);
+	await expect(
+		dialog.getByRole("status").getByText(/replace.*existing Discord link/i),
+	).toBeVisible();
 	await dialog.getByLabel("Name").fill("Additional Discord");
 	await dialog.getByLabel("Bot token").fill("A".repeat(50));
 	await dialog.getByLabel("Application ID").fill("123456789012345678");
 	await dialog.getByLabel("Public key").fill("a".repeat(64));
-	await expectNoHorizontalOverflow(dialog, "inventory-only Discord form at 320px");
-	await dialog.screenshot({ path: testInfo.outputPath("already-linked-discord-form-320.png") });
+	await expectNoHorizontalOverflow(dialog, "Discord replacement form at 320px");
 	await dialog.getByRole("button", { name: "Add custom bot", exact: true }).click();
+	replacementDialog = page.getByRole("alertdialog", {
+		name: "Replace this Agent’s Discord link?",
+	});
+	await expect(replacementDialog).toContainText("paired chats will be removed");
+	await replacementDialog
+		.getByRole("button", { name: "Replace Discord link", exact: true })
+		.click();
 	await expect.poll(() => createChannelRequests.length).toBe(2);
-	expect(JSON.parse(createChannelRequests[1] ?? "{}")).toEqual({
+	await expect(replacementDialog).toBeVisible();
+	await expect(
+		page.locator("[data-sonner-toast]").filter({ hasText: "Couldn't add Custom bot" }),
+	).toBeVisible();
+	await expect(
+		replacementDialog.getByRole("button", { name: "Cancel", exact: true }),
+	).toBeEnabled();
+	await expect(dialog.getByLabel("Name")).toHaveValue("Additional Discord");
+	expect(JSON.parse(createChannelRequests[1] ?? "{}")).toMatchObject({
+		agent_id: agentId,
+		replace_existing_provider_link: true,
+	});
+	await replacementDialog
+		.getByRole("button", { name: "Replace Discord link", exact: true })
+		.click();
+	await expect.poll(() => createChannelRequests.length).toBe(3);
+	expect(JSON.parse(createChannelRequests[2] ?? "{}")).toEqual({
 		provider: "discord",
 		name: "Additional Discord",
 		provider_token: "A".repeat(50),
-		agent_id: null,
+		agent_id: agentId,
+		replace_existing_provider_link: true,
 		config: {
 			application_id: "123456789012345678",
 			public_key: "a".repeat(64),
 		},
 	});
-	dialog = page.getByRole("dialog", { name: "Custom bot added" });
-	await expect(dialog).toContainText(
-		"Additional Discord was added to Custom bots. It was not linked because this Agent already has a Discord bot.",
-	);
-	await expect(page.getByRole("dialog", { name: "Pair Discord" })).toHaveCount(0);
-	await expectNoHorizontalOverflow(dialog, "inventory-only Discord result at 320px");
+	const discordPairDialog = page.getByRole("dialog", { name: "Pair Discord" });
+	await expect(discordPairDialog).toBeVisible();
+	await expect(page.getByRole("alertdialog")).toHaveCount(0);
+	await discordPairDialog.getByRole("button", { name: "Close", exact: true }).click();
+	await expect(discordPairDialog).toHaveCount(0);
 	await expect(page.locator("body")).not.toContainText("webhook-secret-must-not-render");
-	await dialog.getByRole("button", { name: "Done", exact: true }).click();
+	await expect(linkAgentRequests).toHaveLength(0);
+	await expect(unlinkAgentRequests).toHaveLength(0);
+
 	await addChannel.click();
 	dialog = page.getByRole("dialog", { name: "Add channel" });
 	await dialog
@@ -10328,7 +10424,11 @@ test("Add channel keeps already-linked Telegram and Discord available as invento
 		`/agents/${agentId}/console?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
 	);
 	await expect(page.getByRole("dialog", { name: "Add channel" })).toHaveCount(0);
-	expect(errors, `inventory-only Custom bot errors: ${errors.join(" | ")}`).toEqual([]);
+	const unexpectedErrors = errors.filter((error) => !error.includes("status of 503"));
+	expect(
+		unexpectedErrors,
+		`replacement Custom bot errors: ${unexpectedErrors.join(" | ")}`,
+	).toEqual([]);
 });
 
 test("Add channel warns and adds to inventory when Agent link status is unavailable", async ({
@@ -10337,14 +10437,26 @@ test("Add channel warns and adds to inventory when Agent link status is unavaila
 	await page.setViewportSize({ width: 320, height: 568 });
 	const agentId = missingProjectionEnvironmentId;
 	const createChannelRequests: string[] = [];
+	const linkAgentRequests: Array<{ accountId: string; body: string }> = [];
+	const unknownTelegramAccount = {
+		id: "5a999999-9999-4999-8999-999999999999",
+		provider: "telegram",
+		name: "Unknown-status Telegram",
+		status: "active",
+		visibility: "private",
+		has_provider_token: true,
+		webhook_url: "https://cloud.example.test/channels/unknown-status-telegram",
+		created_at: "2026-08-03T00:02:00Z",
+	};
 	await stubHostedApi(page, {
 		deployments: [runningMissingProjectionDeployment],
-		channelAccounts: [],
+		channelAccounts: [unknownTelegramAccount],
 		channelAgentLinksResponse: {
 			status: 503,
 			body: { detail: "Agent link projection is temporarily unavailable" },
 		},
 		createChannelRequests,
+		linkAgentRequests,
 		createChannelResponse: {
 			status: 201,
 			body: {
@@ -10367,6 +10479,12 @@ test("Add channel warns and adds to inventory when Agent link status is unavaila
 	await page.goto(
 		`/agents/${agentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
 	);
+	const unknownStatusCard = page.locator(
+		`[data-agent-channel-account-id="${unknownTelegramAccount.id}"]`,
+	);
+	await expect(unknownStatusCard).toContainText("Agent link status unavailable");
+	await expect(unknownStatusCard.getByRole("button", { name: "Link", exact: true })).toBeDisabled();
+	await expect(linkAgentRequests).toHaveLength(0);
 	await page.locator("[data-agent-add-custom-bot]").click();
 	let dialog = page.getByRole("dialog", { name: "Add channel" });
 	const linkWarning = dialog.locator("[data-agent-link-warning]");
@@ -10401,9 +10519,10 @@ test("Add channel warns and adds to inventory when Agent link status is unavaila
 	await expect(page.locator("body")).not.toContainText(
 		"conservative-webhook-secret-must-not-render",
 	);
+	await expect(linkAgentRequests).toHaveLength(0);
 });
 
-test("Agent bot groups keep every bot visible and gate provider conflicts in place", async ({
+test("Agent bot groups keep every bot visible and confirm provider replacement", async ({
 	page,
 }, testInfo) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
@@ -10414,6 +10533,9 @@ test("Agent bot groups keep every bot visible and gate provider conflicts in pla
 	const replacementTelegramId = "6ccccccc-cccc-4ccc-8ccc-cccccccccccc";
 	const discordId = "6ddddddd-dddd-4ddd-8ddd-dddddddddddd";
 	const clawdiDiscordId = "6eeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+	const replacementTelegramLinkId = "6a111111-1111-4111-8111-111111111111";
+	const linkAgentRequests: Array<{ accountId: string; body: string }> = [];
+	const unlinkAgentRequests: string[] = [];
 	const telegramAccount = {
 		id: telegramId,
 		provider: "telegram",
@@ -10475,10 +10597,27 @@ test("Agent bot groups keep every bot visible and gate provider conflicts in pla
 				agent_id: agentId,
 				status: "active",
 				created_at: "2026-07-31T00:01:00Z",
+				binding_count: 1,
 				account: telegramAccount,
 			},
 		],
 		channelBotPool: { providers: { discord: [clawdiDiscord] } },
+		linkAgentRequests,
+		unlinkAgentRequests,
+		linkAgentResponses: [
+			{ status: 503, body: { detail: "Atomic replacement temporarily unavailable" } },
+			{
+				status: 201,
+				body: {
+					id: replacementTelegramLinkId,
+					account_id: replacementTelegramId,
+					agent_id: agentId,
+					status: "active",
+					created_at: "2026-08-03T00:04:00Z",
+					agent_token: null,
+				},
+			},
+		],
 		channelHealthItems: [
 			{
 				account_id: telegramId,
@@ -10516,12 +10655,10 @@ test("Agent bot groups keep every bot visible and gate provider conflicts in pla
 	await expect(customSection.getByText("Custom bots", { exact: true })).toBeVisible();
 	await expect(linkedTelegramRow).toBeVisible();
 	await expect(replacementTelegramRow).toBeVisible();
-	await expect(replacementTelegramRow).toContainText(
-		"Another bot from this provider is already linked",
-	);
+	await expect(replacementTelegramRow).toContainText("Replaces current link");
 	await expect(
 		replacementTelegramRow.getByRole("button", { name: "Link", exact: true }),
-	).toBeDisabled();
+	).toBeEnabled();
 	await expect(discordRow).toBeVisible();
 	await expect(clawdiDiscordRow).toBeVisible();
 	await expect(discordRow.locator(`[title="${discordAccount.name}"]`)).toBeVisible();
@@ -10540,9 +10677,7 @@ test("Agent bot groups keep every bot visible and gate provider conflicts in pla
 	await expect(unlinkedDiscordHeader.getByText("Available", { exact: true })).toBeVisible();
 	await expect(unlinkedDiscordHeader).not.toContainText("1 chat");
 	await expect(unlinkedDiscordHeader).not.toContainText("Paired");
-	await expect(unavailableTelegramHeader).toContainText(
-		"Another bot from this provider is already linked",
-	);
+	await expect(unavailableTelegramHeader).toContainText("Replaces current link");
 	await expect(unavailableTelegramHeader).not.toContainText("Available");
 	await expect(linkedTelegramChats).toHaveAccessibleName("1 paired chat");
 	const desktopPairedChatLabel = linkedTelegramChats.locator("[data-agent-paired-chats-label]");
@@ -10636,7 +10771,61 @@ test("Agent bot groups keep every bot visible and gate provider conflicts in pla
 		path: testInfo.outputPath("agent-bot-groups-provider-limits-320x568.png"),
 		fullPage: false,
 	});
-	expect(errors, `Agent bot group provider limit errors: ${errors.join(" | ")}`).toEqual([]);
+
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await replacementTelegramRow.evaluate((element) => element.scrollIntoView({ block: "center" }));
+	const replaceLinkButton = replacementTelegramRow.getByRole("button", {
+		name: "Link",
+		exact: true,
+	});
+	await replaceLinkButton.click();
+	let replacementDialog = page.getByRole("alertdialog", {
+		name: "Replace this Agent’s Telegram link?",
+	});
+	await expect(replacementDialog).toContainText("Replacement Telegram");
+	await expectNoHorizontalOverflow(replacementDialog, "Telegram Link replacement confirmation");
+	await replacementDialog.screenshot({
+		path: testInfo.outputPath("replace-existing-bot-link-confirm-desktop.png"),
+	});
+	await replacementDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+	await expect(linkAgentRequests).toHaveLength(0);
+	await expect(unlinkAgentRequests).toHaveLength(0);
+
+	await replaceLinkButton.click();
+	replacementDialog = page.getByRole("alertdialog", {
+		name: "Replace this Agent’s Telegram link?",
+	});
+	await replacementDialog
+		.getByRole("button", { name: "Replace Telegram link", exact: true })
+		.click();
+	await expect.poll(() => linkAgentRequests.length).toBe(1);
+	await expect(replacementDialog).toBeVisible();
+	await expect(
+		page.locator("[data-sonner-toast]").filter({ hasText: "Couldn't link bot" }),
+	).toBeVisible();
+	await expect(
+		replacementDialog.getByRole("button", { name: "Replace Telegram link", exact: true }),
+	).toBeEnabled();
+	await replacementDialog
+		.getByRole("button", { name: "Replace Telegram link", exact: true })
+		.click();
+	await expect.poll(() => linkAgentRequests.length).toBe(2);
+	for (const request of linkAgentRequests) {
+		expect(request).toEqual({
+			accountId: replacementTelegramId,
+			body: JSON.stringify({
+				agent_id: agentId,
+				replace_existing_provider_link: true,
+			}),
+		});
+	}
+	await expect(page.getByRole("dialog", { name: "Pair Telegram" })).toBeVisible();
+	await expect(unlinkAgentRequests).toHaveLength(0);
+	const unexpectedErrors = errors.filter((error) => !error.includes("status of 503"));
+	expect(
+		unexpectedErrors,
+		`Agent bot group provider limit errors: ${unexpectedErrors.join(" | ")}`,
+	).toEqual([]);
 });
 
 test("Agent bot card deduplicates records and reconciles a repeated conflict in place", async ({
@@ -11381,6 +11570,24 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 		webhook_url: "https://cloud.example.test/channels/my-telegram",
 		created_at: "2026-07-27T12:10:00Z",
 	};
+	const telegramAgentLink = {
+		id: telegramLinkId,
+		account_id: telegramId,
+		agent_id: agentId,
+		status: "active",
+		created_at: "2026-07-27T12:15:00Z",
+		binding_count: 1,
+		account: telegramAccount,
+	};
+	const discordAgentLink = {
+		id: discordLinkId,
+		account_id: discordId,
+		agent_id: agentId,
+		status: "active",
+		created_at: "2026-07-27T12:20:00Z",
+		binding_count: 12,
+		account: discordAccount,
+	};
 	const pairCodeRequests: string[] = [];
 	const deleteBindingRequests: string[] = [];
 	const unlinkAgentRequests: string[] = [];
@@ -11508,14 +11715,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 		channelAccounts: [telegramAccount, discordAccount, ownedAccount],
 		channelBindings,
 		channelAgentLinks: [
-			{
-				id: telegramLinkId,
-				account_id: telegramId,
-				agent_id: agentId,
-				status: "active",
-				created_at: "2026-07-27T12:15:00Z",
-				account: telegramAccount,
-			},
+			telegramAgentLink,
 			{
 				id: otherTelegramLinkId,
 				account_id: telegramId,
@@ -11524,14 +11724,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 				created_at: "2026-07-27T12:17:00Z",
 				account: telegramAccount,
 			},
-			{
-				id: discordLinkId,
-				account_id: discordId,
-				agent_id: agentId,
-				status: "active",
-				created_at: "2026-07-27T12:20:00Z",
-				account: discordAccount,
-			},
+			discordAgentLink,
 		],
 		channelBotPool: {
 			providers: {
@@ -11836,10 +12029,10 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 	const ownedCard = customSection.locator(`[data-agent-channel-account-id="${ownedId}"]`);
 	await expect(readyCard).toBeVisible();
 	await expect(ownedCard).toBeVisible();
-	await expect(readyCard).toContainText("Another bot from this provider is already linked");
-	await expect(ownedCard).toContainText("Another bot from this provider is already linked");
-	await expect(readyCard.getByRole("button", { name: "Link", exact: true })).toBeDisabled();
-	await expect(ownedCard.getByRole("button", { name: "Link", exact: true })).toBeDisabled();
+	await expect(readyCard).toContainText("Replaces current link");
+	await expect(ownedCard).toContainText("Replaces current link");
+	await expect(readyCard.getByRole("button", { name: "Link", exact: true })).toBeEnabled();
+	await expect(ownedCard.getByRole("button", { name: "Link", exact: true })).toBeEnabled();
 	await expect(page.getByRole("button", { name: /^Access .* Dashboard$/ })).toHaveCount(0);
 	const currentBindingRow = page.locator(`[data-channel-binding-id="${currentBindingId}"]`);
 	const telegramChatsTrigger = telegramGroup.locator(
@@ -12204,6 +12397,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 		status: "active",
 		created_at: "2026-07-30T10:10:00Z",
 	});
+	telegramAgentLink.binding_count = 2;
 	await expect(telegramChatsTrigger).toHaveAccessibleName("2 paired chats", {
 		timeout: 5_000,
 	});
@@ -12714,6 +12908,7 @@ test("Agent Channels uses compact task-ordered cards and the shared Telegram pai
 		`/v1/channels/${discordId}/bindings/${discordServerBindingId}`,
 	);
 	await discordUnpairClick;
+	discordAgentLink.binding_count = 11;
 	await expect(discordServerRow).toHaveCount(0);
 	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 	await pairedChatsPanel.getByRole("button", { name: "Close", exact: true }).click();

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 ChannelProvider = Literal["telegram", "discord", "whatsapp"]
 ChannelVisibility = Literal["private", "public"]
@@ -31,6 +31,10 @@ class ChannelAccountCreate(BaseModel):
     provider: ChannelProvider
     name: str = Field(min_length=1, max_length=120)
     agent_id: UUID | None = None
+    replace_existing_provider_link: bool = Field(
+        default_factory=bool,
+        description="Explicit opt-in to replace this Agent's active link for the same provider.",
+    )
     provider_token: str | None = Field(default=None, min_length=1, max_length=2000)
     config: dict[str, Any] | None = None
     secrets: dict[str, str] | None = None
@@ -57,6 +61,12 @@ class ChannelAccountCreate(BaseModel):
                 raise ValueError("secret values cannot be blank")
             cleaned[name] = secret
         return cleaned
+
+    @model_validator(mode="after")
+    def _validate_provider_link_replacement(self) -> ChannelAccountCreate:
+        if self.replace_existing_provider_link and self.agent_id is None:
+            raise ValueError("agent_id is required to replace an existing provider link")
+        return self
 
 
 class ChannelAccountResponse(BaseModel):
@@ -164,6 +174,16 @@ class ChannelWhatsAppOnboardingSessionResponse(BaseModel):
 
 class ChannelAgentLinkCreate(BaseModel):
     agent_id: UUID | None = None
+    replace_existing_provider_link: bool = Field(
+        default_factory=bool,
+        description="Explicit opt-in to replace this Agent's active link for the same provider.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_provider_link_replacement(self) -> ChannelAgentLinkCreate:
+        if self.replace_existing_provider_link and self.agent_id is None:
+            raise ValueError("agent_id is required to replace an existing provider link")
+        return self
 
 
 class ChannelAgentLinkResponse(BaseModel):

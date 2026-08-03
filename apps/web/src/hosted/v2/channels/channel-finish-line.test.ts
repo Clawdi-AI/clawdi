@@ -30,7 +30,6 @@ describe("hosted-agent channel finish line", () => {
 		expect(channelsTab).toContain('<ChannelStatusBadge key="status" status={link.status} />');
 		expect(channelsTab).not.toContain("HealthBadge");
 		expect(channelsTab).not.toContain("channel health");
-		expect(channelsTab).toContain('state={unavailableReason ?? "Available"}');
 		expect(channelsTab).toContain("!isNormalChannelStatus(link.status)");
 		expect(channelsTab).toContain("pairedChatsControl");
 		expect(channelsTab).not.toContain("Link to start pairing chats");

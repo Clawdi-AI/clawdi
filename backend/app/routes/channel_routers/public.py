@@ -664,6 +664,7 @@ async def create_channel(
             account=account,
             agent_id=initial_agent_id,
             user_id=auth.user_id,
+            replace_existing_provider_link=body.replace_existing_provider_link,
         )
     db.add(account)
     try:
@@ -688,6 +689,7 @@ async def create_channel(
                 agent_id=initial_agent_id,
                 user_id=auth.user_id,
                 agent_token=link_agent_token,
+                replace_existing_provider_link=body.replace_existing_provider_link,
             )
             link_agent_token = created_token or link_agent_token
             await _queue_agent_link_runtime_changed(db, account=account, link=link)
@@ -707,6 +709,7 @@ async def create_channel(
                 "provider": account.provider,
                 "visibility": account.visibility,
                 "initial_agent_id": str(initial_agent_id) if initial_agent_id else None,
+                "replace_existing_provider_link": body.replace_existing_provider_link,
                 "has_provider_credential": body.provider_token is not None,
                 "secret_names": sorted((body.secrets or {}).keys()),
             },
@@ -999,6 +1002,7 @@ async def create_channel_agent_link(
         account=account,
         agent_id=agent_id,
         user_id=auth.user_id,
+        replace_existing_provider_link=body.replace_existing_provider_link,
     )
     if agent_token is not None:
         await _queue_agent_link_runtime_changed(db, account=account, link=link)
@@ -1017,6 +1021,7 @@ async def create_channel_agent_link(
             "provider": account.provider,
             "agent_id": str(agent_id),
             "created": agent_token is not None,
+            "replace_existing_provider_link": body.replace_existing_provider_link,
         },
     )
     await db.commit()

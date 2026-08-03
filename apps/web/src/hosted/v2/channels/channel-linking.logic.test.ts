@@ -4,6 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	agentProviderHasSingleLinkLimit,
+	agentProviderLinkReplacementRequired,
+	agentProviderLinkStatusUnknown,
 	autoLinkAgentIdForNewCustomBot,
 	channelProviderLinkingReady,
 	pairCodeExpired,
@@ -90,10 +92,13 @@ describe("hosted channel instructions and gates", () => {
 		}
 	});
 
-	test("adds conflicting Custom bots to inventory without changing the existing Agent link", () => {
+	test("requires replacement confirmation for known single-provider conflicts", () => {
 		for (const provider of ["telegram", "discord"] as const) {
 			expect(autoLinkAgentIdForNewCustomBot("agent-1", "openclaw", provider, new Set())).toBe(
 				"agent-1",
+			);
+			expect(agentProviderLinkReplacementRequired("openclaw", provider, new Set([provider]))).toBe(
+				true,
 			);
 			expect(
 				autoLinkAgentIdForNewCustomBot("agent-1", "openclaw", provider, new Set([provider])),
@@ -107,10 +112,19 @@ describe("hosted channel instructions and gates", () => {
 			autoLinkAgentIdForNewCustomBot(undefined, undefined, "telegram", new Set(["telegram"])),
 		).toBeNull();
 		expect(autoLinkAgentIdForNewCustomBot("agent-1", "openclaw", "telegram", undefined)).toBeNull();
+		expect(agentProviderLinkStatusUnknown("openclaw", "telegram", undefined)).toBe(true);
 	});
 
-	test("keeps WhatsApp inventory onboarding separate from Agent linking", () => {
+	test("keeps WhatsApp gated now and applies replacement semantics when linking is ready", () => {
 		expect(autoLinkAgentIdForNewCustomBot("agent-1", "openclaw", "whatsapp", new Set())).toBeNull();
+		expect(
+			agentProviderLinkReplacementRequired("openclaw", "whatsapp", new Set(["whatsapp"])),
+		).toBe(false);
+		expect(agentProviderLinkStatusUnknown("openclaw", "whatsapp", undefined)).toBe(false);
+		expect(
+			agentProviderLinkReplacementRequired("openclaw", "whatsapp", new Set(["whatsapp"]), true),
+		).toBe(true);
+		expect(agentProviderLinkStatusUnknown("openclaw", "whatsapp", undefined, true)).toBe(true);
 	});
 
 	test("expires pairing actions exactly at the server deadline", () => {
