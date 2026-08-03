@@ -1528,6 +1528,7 @@ export function writeRuntimeSystemdState(input: {
 					...Object.fromEntries(Object.keys(watchSecretEnvironment).map((name) => [name, ""])),
 					CLAWDI_AUTH_TOKEN: "",
 				},
+				extraServiceLines: ["TasksMax=infinity"],
 			}),
 		);
 	}

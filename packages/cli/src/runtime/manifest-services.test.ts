@@ -532,6 +532,7 @@ describe("runtime manifest services", () => {
 			"utf8",
 		);
 		expect(runtimeWatchUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "watch"`);
+		expect(runtimeWatchUnit).toContain("TasksMax=infinity");
 		expect(runtimeWatchUnit).not.toContain("ConditionPathExists=");
 		expect(runtimeWatchEnv).toContain('BYOK_RUNTIME_SECRET="runtime-byok-value"');
 		expect(runtimeWatchEnv).toContain('BYOK_SERVICE_SECRET="service-byok-value"');
