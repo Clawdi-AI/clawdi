@@ -1,9 +1,9 @@
-import { describe, expect, it } from "bun:test";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type BinaryNode, DisconnectReason, initAuthCreds, proto } from "baileys";
+import { describe, expect, it } from "vitest";
 
 import { parseAuditedWhatsAppWebVersion } from "./audited-version.js";
 import type { SidecarSessionConfig } from "./config.js";
@@ -33,14 +33,18 @@ describe("physical Baileys runtime", () => {
 			method: "qr",
 			qr: "sensitive-qr-value",
 		});
-		expect(Date.parse(ready.qrExpiresAt ?? "") - firstQrObservedAt).toBeWithin(59_000, 61_000);
+		expect(Date.parse(ready.qrExpiresAt ?? "") - firstQrObservedAt).toBeGreaterThanOrEqual(59_000);
+		expect(Date.parse(ready.qrExpiresAt ?? "") - firstQrObservedAt).toBeLessThanOrEqual(61_000);
 		expect(harness.socketConfigurations).toHaveLength(1);
 
 		const rotatedQrObservedAt = Date.now();
 		harness.events.emit("connection.update", { qr: "sensitive-qr-value-rotated" });
 		const rotated = runtime.pairingStatus();
 		expect(rotated).toMatchObject({ qr: "sensitive-qr-value-rotated" });
-		expect(Date.parse(rotated.qrExpiresAt ?? "") - rotatedQrObservedAt).toBeWithin(19_000, 21_000);
+		expect(Date.parse(rotated.qrExpiresAt ?? "") - rotatedQrObservedAt).toBeGreaterThanOrEqual(
+			19_000,
+		);
+		expect(Date.parse(rotated.qrExpiresAt ?? "") - rotatedQrObservedAt).toBeLessThanOrEqual(21_000);
 		expect(Date.parse(rotated.qrExpiresAt ?? "")).toBeLessThan(Date.parse(ready.qrExpiresAt ?? ""));
 
 		harness.events.emit("creds.update", { registered: true });

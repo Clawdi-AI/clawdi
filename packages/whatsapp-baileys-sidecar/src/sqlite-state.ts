@@ -1,4 +1,3 @@
-import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, lstatSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
@@ -15,6 +14,7 @@ import {
 
 import { AUDITED_BAILEYS_RELEASE, AUDITED_WHATSAPP_WEB_VERSION_TEXT } from "./audited-version.js";
 import { assertOwnedDirectory } from "./filesystem-security.js";
+import { Database } from "./sqlite-database.js";
 
 export type ProviderMessageEvent = {
 	sequence: number;
@@ -115,7 +115,7 @@ export class SQLiteProviderState {
 		secureStateFiles(sessionDir);
 		this.databasePath = join(sessionDir, STATE_DATABASE_FILE);
 		const databaseExisted = existsSync(this.databasePath);
-		const db = new Database(this.databasePath, { create: true, strict: true });
+		const db = new Database(this.databasePath);
 		try {
 			chmodSync(this.databasePath, 0o600);
 			configureDatabase(db);
@@ -641,11 +641,9 @@ function validateOrBindMetadata(
 	const currentProvenance = [AUDITED_BAILEYS_RELEASE, input.webVersion.join(".")] as const;
 	if (!input.databaseExisted) {
 		const insert = db.query("INSERT INTO provider_metadata (key, value) VALUES (?, ?)");
-		db.transaction(() => {
-			for (const [key, value] of expectedIdentity) insert.run(key, value);
-			insert.run("baileys_release", currentProvenance[0]);
-			insert.run("whatsapp_web_version", currentProvenance[1]);
-		})();
+		for (const [key, value] of expectedIdentity) insert.run(key, value);
+		insert.run("baileys_release", currentProvenance[0]);
+		insert.run("whatsapp_web_version", currentProvenance[1]);
 		return;
 	}
 	const rows = db

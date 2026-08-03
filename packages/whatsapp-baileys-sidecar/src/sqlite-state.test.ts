@@ -1,5 +1,3 @@
-import { Database } from "bun:sqlite";
-import { afterEach, describe, expect, it } from "bun:test";
 import {
 	chmodSync,
 	mkdtempSync,
@@ -12,8 +10,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { proto } from "baileys";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { parseAuditedWhatsAppWebVersion } from "./audited-version.js";
+import { Database } from "./sqlite-database.js";
 import {
 	ProviderInboxCapacityError,
 	type ProviderMessageEventInput,
@@ -30,7 +30,7 @@ const temporaryDirectories: string[] = [];
 afterEach(() => {
 	for (const directory of temporaryDirectories.splice(0)) {
 		try {
-			const database = new Database(join(directory, "provider-state.sqlite"), { strict: true });
+			const database = new Database(join(directory, "provider-state.sqlite"));
 			database.close();
 		} catch {
 			// The database may not exist or may intentionally be corrupt.
@@ -180,7 +180,7 @@ describe("SQLite provider state", () => {
 		expect(first.providerEvents(100)).toEqual([]);
 		first.close();
 		first = undefined;
-		Bun.gc(true);
+		globalThis.gc?.();
 
 		const second = makeState(directory);
 		expect(second.state.creds.registered).toBe(false);
@@ -446,7 +446,7 @@ function internalDatabase(state: SQLiteProviderState): Database {
 }
 
 function mutateDatabase(directory: string, action: (database: Database) => void): void {
-	const database = new Database(join(directory, "provider-state.sqlite"), { strict: true });
+	const database = new Database(join(directory, "provider-state.sqlite"));
 	try {
 		action(database);
 	} finally {
