@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
     AuthContext,
-    _is_env_bound_api_key,
+    is_env_bound_api_key,
     require_scope,
 )
 from app.core.database import get_session
@@ -223,7 +223,7 @@ async def create_memory(
     provider = await get_memory_provider(str(auth.user_id), db)
     source_environment_id = (
         auth.api_key.environment_id
-        if _is_env_bound_api_key(auth) and auth.api_key is not None
+        if is_env_bound_api_key(auth) and auth.api_key is not None
         else None
     )
     return MemoryCreatedResponse.model_validate(
@@ -270,7 +270,7 @@ async def embed_backfill(
     part of ordinary Memory read/write behavior. Environment-bound runtimes may
     recall account Memory but cannot trigger account-wide re-embedding work.
     """
-    if _is_env_bound_api_key(auth):
+    if is_env_bound_api_key(auth):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "Embed backfill is a user-level maintenance op; Agent API keys cannot run it.",

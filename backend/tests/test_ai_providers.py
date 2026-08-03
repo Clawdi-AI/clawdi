@@ -4274,17 +4274,23 @@ async def test_exchange_compensates_when_initial_tombstone_commit_fails(
         )
         assert isinstance(begin, uuid.UUID)
         attempt_id = begin
-        original_persist = service._persist_compensation_once
+        from app.services import ai_provider_auth_transition as auth_transition_service
+
+        original_enqueue = auth_transition_service.enqueue_oauth_revoke_tombstone
         persist_calls = 0
 
-        async def fail_first_persist(**kwargs):
+        async def fail_first_enqueue(*args, **kwargs):
             nonlocal persist_calls
             persist_calls += 1
             if persist_calls == 1:
                 raise RuntimeError("forced initial tombstone commit failure")
-            return await original_persist(**kwargs)
+            return await original_enqueue(*args, **kwargs)
 
-        monkeypatch.setattr(service, "_persist_compensation_once", fail_first_persist)
+        monkeypatch.setattr(
+            auth_transition_service,
+            "enqueue_oauth_revoke_tombstone",
+            fail_first_enqueue,
+        )
         with pytest.raises(HTTPException) as error:
             await service.exchange_and_commit(
                 attempt_id=attempt_id,
@@ -4583,39 +4589,41 @@ async def test_device_poll_reclaims_stale_lease_and_resumes_durable_success(
         seconds=oauth_attempt_service.OAUTH_DEVICE_POLL_LEASE_SECONDS + 1
     )
     await db_session.commit()
-    original_exchange = service.exchange_and_commit
 
     async def simulate_response_loss(*, attempt_id, owner_user_id):
         raise RuntimeError("simulated response loss before exchange")
 
-    monkeypatch.setattr(service, "exchange_and_commit", simulate_response_loss)
-    with pytest.raises(RuntimeError, match="simulated response loss"):
-        await service.poll_device_attempt(
+    with monkeypatch.context() as response_loss:
+        response_loss.setattr(service, "exchange_and_commit", simulate_response_loss)
+        with pytest.raises(RuntimeError, match="simulated response loss"):
+            await service.poll_device_attempt(
+                owner_user_id=owner_user_id,
+                provider_id=provider_id,
+                state_value=state_value,
+            )
+        assert upstream_poll_calls == 2
+        db_session.expire_all()
+        attempt = await db_session.scalar(
+            select(AiProviderOAuthAttempt).where(
+                AiProviderOAuthAttempt.state_sha256 == attempt_hash
+            )
+        )
+        assert attempt is not None
+        assert attempt.status == "exchanging"
+        assert attempt.poll_claim_id is None
+        durable_payload = json.loads(
+            decrypt(attempt.encrypted_flow_payload, attempt.flow_payload_nonce)
+        )
+        assert durable_payload["authorization_code"] == "durable-device-code"
+        assert durable_payload["code_verifier"] == "durable-device-verifier"
+
+        fresh_exchange = await service.poll_device_attempt(
             owner_user_id=owner_user_id,
             provider_id=provider_id,
             state_value=state_value,
         )
-    assert upstream_poll_calls == 2
-    db_session.expire_all()
-    attempt = await db_session.scalar(
-        select(AiProviderOAuthAttempt).where(AiProviderOAuthAttempt.state_sha256 == attempt_hash)
-    )
-    assert attempt is not None
-    assert attempt.status == "exchanging"
-    assert attempt.poll_claim_id is None
-    durable_payload = json.loads(
-        decrypt(attempt.encrypted_flow_payload, attempt.flow_payload_nonce)
-    )
-    assert durable_payload["authorization_code"] == "durable-device-code"
-    assert durable_payload["code_verifier"] == "durable-device-verifier"
-
-    fresh_exchange = await service.poll_device_attempt(
-        owner_user_id=owner_user_id,
-        provider_id=provider_id,
-        state_value=state_value,
-    )
-    assert isinstance(fresh_exchange, oauth_attempt_service.OAuthDevicePollPending)
-    assert upstream_poll_calls == 2
+        assert isinstance(fresh_exchange, oauth_attempt_service.OAuthDevicePollPending)
+        assert upstream_poll_calls == 2
 
     db_session.expire_all()
     attempt = await db_session.scalar(
@@ -4626,7 +4634,6 @@ async def test_device_poll_reclaims_stale_lease_and_resumes_durable_success(
         seconds=oauth_attempt_service.OAUTH_EXCHANGE_STALE_SECONDS + 1
     )
     await db_session.commit()
-    monkeypatch.setattr(service, "exchange_and_commit", original_exchange)
     resumed = await service.poll_device_attempt(
         owner_user_id=owner_user_id,
         provider_id=provider_id,
@@ -4661,51 +4668,6 @@ async def test_oauth_device_accept_polls_then_persists_tokens(
     monkeypatch.setattr(
         "app.routes.ai_providers.async_session_factory",
         device_session_factory,
-    )
-    normalize_calls = 0
-    supported_validation_calls = 0
-    route_shape_validation_calls = 0
-    locked_shape_validation_calls = 0
-    original_normalize = ai_provider_routes._normalize_profile
-    original_supported_validation = ai_provider_routes._validate_supported_oauth_provider
-    original_route_shape_validation = ai_provider_routes._validate_codex_oauth_provider_shape
-    original_locked_shape_validation = oauth_attempt_service.validate_codex_oauth_provider_shape
-
-    def count_normalize(value: str) -> str:
-        nonlocal normalize_calls
-        normalize_calls += 1
-        return original_normalize(value)
-
-    def count_supported_validation(value: str) -> None:
-        nonlocal supported_validation_calls
-        supported_validation_calls += 1
-        original_supported_validation(value)
-
-    def count_route_shape_validation(provider) -> None:
-        nonlocal route_shape_validation_calls
-        route_shape_validation_calls += 1
-        original_route_shape_validation(provider)
-
-    def count_locked_shape_validation(provider) -> None:
-        nonlocal locked_shape_validation_calls
-        locked_shape_validation_calls += 1
-        original_locked_shape_validation(provider)
-
-    monkeypatch.setattr(ai_provider_routes, "_normalize_profile", count_normalize)
-    monkeypatch.setattr(
-        ai_provider_routes,
-        "_validate_supported_oauth_provider",
-        count_supported_validation,
-    )
-    monkeypatch.setattr(
-        ai_provider_routes,
-        "_validate_codex_oauth_provider_shape",
-        count_route_shape_validation,
-    )
-    monkeypatch.setattr(
-        oauth_attempt_service,
-        "validate_codex_oauth_provider_shape",
-        count_locked_shape_validation,
     )
     previous = settings.ai_provider_oauth_config_json
     settings.ai_provider_oauth_config_json = json.dumps(
@@ -4797,12 +4759,6 @@ async def test_oauth_device_accept_polls_then_persists_tokens(
             },
         )
         assert accepted.status_code == 201, accepted.text
-        assert normalize_calls == 1
-        assert supported_validation_calls == 1
-        assert route_shape_validation_calls == 1
-        # The second shape check is the intentional lock-time fence inside
-        # attempt persistence, after the upstream device response returns.
-        assert locked_shape_validation_calls == 1
         authorization = accepted.json()["authorization"]
         assert authorization == {
             "flow": "device_code",

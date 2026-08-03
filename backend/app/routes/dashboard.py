@@ -276,7 +276,12 @@ async def _cached_connectors_count(clerk_id: str) -> int:
         log.warning("dashboard connectors count unavailable: %s", exc)
         return cached[1] if cached else 0
 
-    connectors_count = sum(1 for a in accounts if (a.get("status") or "").upper() == "ACTIVE")
+    connectors_count = sum(
+        1
+        for account in accounts
+        if isinstance(status_value := account.get("status"), str)
+        and status_value.upper() == "ACTIVE"
+    )
     _remember_connectors_count(clerk_id, connectors_count, now=now)
     return connectors_count
 

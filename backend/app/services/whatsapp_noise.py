@@ -4,15 +4,16 @@ import hashlib
 import inspect
 import secrets
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal, TypeGuard
 
 import xeddsa
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from pydantic import JsonValue, TypeAdapter
 
 from app.services.whatsapp_baileys import (
     AgentBundle,
@@ -39,6 +40,7 @@ NOISE_MODE = b"Noise_XX_25519_AESGCM_SHA256\0\0\0\0"
 NOISE_WA_HEADER = bytes([87, 65, 6, 3])
 IV_LENGTH = 12
 GCM_TAG_LENGTH = 16
+_JSON_OBJECT_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 
 
 @dataclass(frozen=True)
@@ -99,7 +101,7 @@ class WhatsAppNoiseTenant:
 class WhatsAppNoiseRuntimeEvent:
     stage: str
     outcome: str
-    details: dict[str, Any]
+    details: dict[str, JsonValue]
     tenant_id: str | None = None
     external_chat_id: str | None = None
 
@@ -754,7 +756,8 @@ class WhatsAppNoiseEmulatorSession:
             )
             return None
         enc, signal_jid = encrypted_recipient
-        if not isinstance(enc.get("content"), bytes):
+        ciphertext = enc.get("content")
+        if not isinstance(ciphertext, bytes):
             await self._emit_outbound_drop(
                 reason="missing-enc",
                 node=node,
@@ -771,7 +774,6 @@ class WhatsAppNoiseEmulatorSession:
                 message_id=message_id,
             )
             return None
-        ciphertext = enc["content"]
         enc_type = _attrs(enc).get("type")
         if enc_type not in {"pkmsg", "msg"}:
             await self._emit_outbound_drop(
@@ -856,7 +858,8 @@ class WhatsAppNoiseEmulatorSession:
             )
             return None
         skmsg = _find_top_level_enc_by_type(node, "skmsg")
-        if skmsg is None or not isinstance(skmsg.get("content"), bytes):
+        ciphertext = skmsg.get("content") if skmsg is not None else None
+        if not isinstance(ciphertext, bytes):
             await self._emit_outbound_drop(
                 reason="missing-enc",
                 node=node,
@@ -882,7 +885,7 @@ class WhatsAppNoiseEmulatorSession:
                 group_jid=group_jid,
                 author_user=self._agent_user,
                 author_device=self._agent_device,
-                ciphertext=skmsg["content"],
+                ciphertext=ciphertext,
             )
         except Exception:
             await self._emit_outbound_drop(
@@ -921,10 +924,10 @@ class WhatsAppNoiseEmulatorSession:
             if sender is None:
                 continue
             enc = next((child for child in _children(to_node) if child.get("tag") == "enc"), None)
-            if enc is None or not isinstance(enc.get("content"), bytes):
+            ciphertext = enc.get("content") if enc is not None else None
+            if not isinstance(ciphertext, bytes):
                 continue
-            ciphertext = enc["content"]
-            enc_type = _attrs(enc).get("type")
+            enc_type = _attrs(enc).get("type") if enc is not None else None
             if enc_type not in {"pkmsg", "msg"}:
                 continue
             participant = parse_whatsapp_jid(participant_jid)
@@ -967,7 +970,7 @@ class WhatsAppNoiseEmulatorSession:
         message_id: str,
         error: Exception | None = None,
     ) -> None:
-        details: dict[str, Any] = {
+        details: dict[str, object] = {
             "reason": reason,
             "id": message_id,
             "children": _child_tags(node),
@@ -1030,7 +1033,7 @@ class WhatsAppNoiseEmulatorSession:
         self,
         stage: str,
         outcome: str,
-        details: dict[str, Any],
+        details: Mapping[str, object],
         *,
         tenant_id: str | None = None,
         external_chat_id: str | None = None,
@@ -1041,7 +1044,7 @@ class WhatsAppNoiseEmulatorSession:
             WhatsAppNoiseRuntimeEvent(
                 stage=stage,
                 outcome=outcome,
-                details=details,
+                details=_JSON_OBJECT_ADAPTER.validate_python(details),
                 tenant_id=tenant_id,
                 external_chat_id=external_chat_id,
             )
@@ -1168,28 +1171,42 @@ class WhatsAppNoiseEmulatorSession:
 
 
 def _child_tags(node: BinaryNode) -> list[str]:
-    content = node.get("content")
-    if not isinstance(content, list):
+    content: object = node.get("content")
+    if not _is_object_list(content):
         return []
     return [
         str(child.get("tag"))
         for child in content
-        if isinstance(child, dict) and child.get("tag") is not None
+        if _is_object_mapping(child) and child.get("tag") is not None
     ]
 
 
 def _children(node: BinaryNode) -> list[BinaryNode]:
-    content = node.get("content")
-    if not isinstance(content, list):
+    content: object = node.get("content")
+    if not _is_object_list(content):
         return []
-    return [child for child in content if isinstance(child, dict)]
+    return [child for child in content if _is_string_object_dict(child)]
 
 
 def _attrs(node: BinaryNode) -> dict[str, str]:
-    attrs = node.get("attrs")
-    if not isinstance(attrs, dict):
+    attrs: object = node.get("attrs")
+    if not _is_object_mapping(attrs):
         return {}
     return {str(key): str(value) for key, value in attrs.items()}
+
+
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
+def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
+    return isinstance(value, Mapping)
+
+
+def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
+    if not _is_object_mapping(value):
+        return False
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
 
 
 def _has_child_tag(node: BinaryNode, tag: str) -> bool:
@@ -1380,7 +1397,7 @@ def _write_binary_node(node: dict[str, object], out: bytearray) -> None:
     if not isinstance(tag, str):
         raise ValueError("wabinary: node tag is required")
     attr_items = []
-    if isinstance(attrs, dict):
+    if _is_object_mapping(attrs):
         attr_items = [
             (str(key), str(value))
             for key, value in attrs.items()
@@ -1396,8 +1413,8 @@ def _write_binary_node(node: dict[str, object], out: bytearray) -> None:
         _write_string_raw(out, content)
     elif isinstance(content, (bytes, bytearray)):
         _write_bytes(out, bytes(content))
-    elif isinstance(content, list):
-        valid_children = [item for item in content if isinstance(item, dict)]
+    elif _is_object_list(content):
+        valid_children = [item for item in content if _is_string_object_dict(item)]
         _write_list_start(out, len(valid_children))
         for child in valid_children:
             _write_binary_node(child, out)
@@ -1525,10 +1542,7 @@ class _BinaryNodeDecoder:
     def decode(self) -> BinaryNode:
         if self._read_byte() != 0:
             raise ValueError("wabinary: expected uncompressed frame")
-        node = self._read_node()
-        if not isinstance(node, dict):
-            raise ValueError("wabinary: root node is not a dictionary")
-        return node
+        return self._read_node()
 
     def _read_node(self) -> BinaryNode:
         list_size = self._read_list_size()
@@ -1547,7 +1561,7 @@ class _BinaryNodeDecoder:
             node["content"] = self._read_content()
         return node
 
-    def _read_content(self) -> Any:
+    def _read_content(self) -> str | bytes | list[BinaryNode]:
         tag = self._peek_byte()
         if tag in {0, 248, 249}:
             count = self._read_list_size()

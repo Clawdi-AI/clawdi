@@ -1,11 +1,13 @@
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal, TypeGuard
 from uuid import UUID
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    JsonValue,
     RootModel,
     SecretStr,
     field_validator,
@@ -69,20 +71,30 @@ SecretRef = Annotated[
 ]
 
 
-def _reject_explicit_nulls(value: Any, fields: frozenset[str]) -> Any:
-    if isinstance(value, dict):
+def _reject_explicit_nulls(value: object, fields: frozenset[str]) -> object:
+    if _is_string_object_dict(value):
         null_fields = sorted(field for field in fields if field in value and value[field] is None)
         if null_fields:
             raise ValueError(f"fields cannot be null: {', '.join(null_fields)}")
     return value
 
 
-def _reject_normal_upsert_oauth(value: Any) -> Any:
-    if isinstance(value, dict):
+def _reject_normal_upsert_oauth(value: object) -> object:
+    if _is_string_object_dict(value):
         auth = value.get("auth")
-        if isinstance(auth, dict) and auth.get("type") == "oauth_profile":
+        if _is_string_object_dict(auth) and auth.get("type") == "oauth_profile":
             raise ValueError("oauth_profile auth is not supported; use Codex OAuth connect")
     return value
+
+
+def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
+    if not _is_object_mapping(value):
+        return False
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
+def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
+    return isinstance(value, Mapping)
 
 
 class AiProviderModelCost(BaseModel):
@@ -95,7 +107,7 @@ class AiProviderModelCost(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_null_optional_fields(cls, value: Any) -> Any:
+    def _reject_null_optional_fields(cls, value: object) -> object:
         return _reject_explicit_nulls(value, frozenset({"cache_read", "cache_write"}))
 
 
@@ -104,14 +116,14 @@ class _AiProviderAuthVariant(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _redact_rejected_plaintext_value(cls, value: Any) -> Any:
-        if isinstance(value, dict) and isinstance(value.get("value"), str):
+    def _redact_rejected_plaintext_value(cls, value: object) -> object:
+        if _is_string_object_dict(value) and isinstance(plaintext := value.get("value"), str):
             sanitized = dict(value)
-            sanitized["value"] = SecretStr(value["value"])
+            sanitized["value"] = SecretStr(plaintext)
             return sanitized
         return value
 
-    def persistence_fields(self) -> tuple[str | None, dict[str, str] | None]:
+    def persistence_fields(self) -> tuple[str | None, dict[str, JsonValue] | None]:
         raise NotImplementedError
 
 
@@ -125,37 +137,36 @@ class AiProviderSecretRefAuth(_AiProviderAuthVariant):
 
 class _AiProviderApiKeyAuth(_AiProviderAuthVariant):
     type: Literal["api_key"]
-    source: Literal["env", "vault", "managed"]
     profile: AuthProfile | None = None
 
-    def _metadata(self) -> dict[str, str]:
-        metadata = {"source": self.source}
+    def _metadata(self, source: Literal["env", "vault", "managed"]) -> dict[str, JsonValue]:
+        metadata: dict[str, JsonValue] = {"source": source}
         if self.profile is not None:
             metadata["profile"] = self.profile
         return metadata
 
 
 class AiProviderEnvApiKeyAuth(_AiProviderApiKeyAuth):
-    source: Literal["env"]  # pyright: ignore[reportIncompatibleVariableOverride]
+    source: Literal["env"]
     ref: EnvSecretRef
 
-    def persistence_fields(self) -> tuple[str, dict[str, str]]:
-        return self.ref, self._metadata()
+    def persistence_fields(self) -> tuple[str, dict[str, JsonValue]]:
+        return self.ref, self._metadata(self.source)
 
 
 class AiProviderVaultApiKeyAuth(_AiProviderApiKeyAuth):
-    source: Literal["vault"]  # pyright: ignore[reportIncompatibleVariableOverride]
+    source: Literal["vault"]
     ref: VaultSecretRef
 
-    def persistence_fields(self) -> tuple[str, dict[str, str]]:
-        return self.ref, self._metadata()
+    def persistence_fields(self) -> tuple[str, dict[str, JsonValue]]:
+        return self.ref, self._metadata(self.source)
 
 
 class AiProviderManagedApiKeyAuth(_AiProviderApiKeyAuth):
-    source: Literal["managed"]  # pyright: ignore[reportIncompatibleVariableOverride]
+    source: Literal["managed"]
 
-    def persistence_fields(self) -> tuple[None, dict[str, str]]:
-        return None, self._metadata()
+    def persistence_fields(self) -> tuple[None, dict[str, JsonValue]]:
+        return None, self._metadata(self.source)
 
 
 type AiProviderApiKeyAuth = Annotated[
@@ -169,7 +180,7 @@ class AiProviderOAuthProfileAuth(_AiProviderAuthVariant):
     provider: AuthProfile
     profile: AuthProfile
 
-    def persistence_fields(self) -> tuple[None, dict[str, str]]:
+    def persistence_fields(self) -> tuple[None, dict[str, JsonValue]]:
         return None, {"provider": self.provider, "profile": self.profile}
 
 
@@ -178,7 +189,7 @@ class AiProviderAgentProfileAuth(_AiProviderAuthVariant):
     tool: AuthProfile
     profile: AuthProfile
 
-    def persistence_fields(self) -> tuple[None, dict[str, str]]:
+    def persistence_fields(self) -> tuple[None, dict[str, JsonValue]]:
         return None, {"tool": self.tool, "profile": self.profile}
 
 
@@ -209,14 +220,14 @@ type AiProviderAuth = Annotated[
 def ai_provider_auth_from_persistence(
     auth_type: str,
     auth_ref: str | None,
-    auth_metadata: dict | None,
+    auth_metadata: Mapping[str, JsonValue] | None,
 ) -> AiProviderAuth:
     metadata = auth_metadata or {}
     if auth_type == "secret_ref":
         return AiProviderSecretRefAuth.model_validate({"type": auth_type, "ref": auth_ref})
     if auth_type == "api_key":
         source = metadata.get("source")
-        payload = {
+        payload: dict[str, JsonValue] = {
             "type": auth_type,
             "source": source,
             "profile": metadata.get("profile"),
@@ -265,7 +276,7 @@ class AiProviderModelCapabilities(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_null_optional_fields(cls, value: Any) -> Any:
+    def _reject_null_optional_fields(cls, value: object) -> object:
         return _reject_explicit_nulls(
             value,
             frozenset(
@@ -300,7 +311,7 @@ class AiProviderModel(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_null_optional_fields(cls, value: Any) -> Any:
+    def _reject_null_optional_fields(cls, value: object) -> object:
         return _reject_explicit_nulls(
             value,
             frozenset(
@@ -329,7 +340,7 @@ class AiProviderBase(BaseModel):
     api_mode: ApiMode | None = None
     managed_by: Literal["user", "clawdi"] = "user"
     runtime_env_name: str | None = Field(default=None, max_length=128)
-    capabilities: dict[str, Any] | None = None
+    capabilities: dict[str, JsonValue] | None = None
     models: list[AiProviderModel] | None = None
 
 
@@ -339,7 +350,7 @@ class AiProviderUpsert(AiProviderBase):
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_unsupported_oauth_profile(cls, value: Any) -> Any:
+    def _reject_unsupported_oauth_profile(cls, value: object) -> object:
         return _reject_normal_upsert_oauth(value)
 
 
@@ -351,12 +362,12 @@ class AiProviderPatch(BaseModel):
     auth: AiProviderUpsertAuth | None = None
     managed_by: Literal["user", "clawdi"] | None = None
     runtime_env_name: str | None = Field(default=None, max_length=128)
-    capabilities: dict[str, Any] | None = None
+    capabilities: dict[str, JsonValue] | None = None
     models: list[AiProviderModel] | None = None
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_unsupported_oauth_profile(cls, value: Any) -> Any:
+    def _reject_unsupported_oauth_profile(cls, value: object) -> object:
         return _reject_normal_upsert_oauth(value)
 
 
@@ -463,10 +474,10 @@ class _AiProviderAuthImportRequest(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _redact_payload_before_validation(cls, value: Any) -> Any:
-        if isinstance(value, dict) and isinstance(value.get("payload"), str):
+    def _redact_payload_before_validation(cls, value: object) -> object:
+        if _is_string_object_dict(value) and isinstance(payload := value.get("payload"), str):
             sanitized = dict(value)
-            sanitized["payload"] = SecretStr(value["payload"])
+            sanitized["payload"] = SecretStr(payload)
             return sanitized
         return value
 

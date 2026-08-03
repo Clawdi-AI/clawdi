@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Protocol
 from uuid import UUID
 
@@ -572,7 +572,7 @@ def get_active_whatsapp_sidecar_registry() -> ConfiguredWhatsAppSidecarRegistry 
     return _active_registry
 
 
-def _configured_session_id(config: dict[str, object]) -> UUID | None:
+def _configured_session_id(config: Mapping[str, object]) -> UUID | None:
     raw = config.get("sidecar_account_id")
     try:
         return UUID(raw) if isinstance(raw, str) else None

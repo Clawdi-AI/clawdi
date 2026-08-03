@@ -26,8 +26,8 @@ from sqlalchemy.types import String
 
 from app.core.auth import (
     AuthContext,
-    _is_env_bound_api_key,
     get_auth,
+    is_env_bound_api_key,
     is_runtime_deployment_principal,
     require_auth_scopes,
     require_clerk_id,
@@ -731,7 +731,7 @@ async def _tool_memory_add(
     provider = await get_memory_provider(str(auth.user_id), db)
     source_environment_id = (
         auth.api_key.environment_id
-        if _is_env_bound_api_key(auth) and auth.api_key is not None
+        if is_env_bound_api_key(auth) and auth.api_key is not None
         else None
     )
     result = await provider.add(
@@ -758,9 +758,7 @@ def _user_sessions_stmt(auth: AuthContext):
     )
     bound_env = (
         auth.api_key.environment_id
-        if _is_env_bound_api_key(auth)
-        and not is_runtime_deployment_principal(auth)
-        and auth.api_key
+        if is_env_bound_api_key(auth) and not is_runtime_deployment_principal(auth) and auth.api_key
         else None
     )
     if bound_env is not None:
@@ -819,7 +817,7 @@ async def _tool_session_read(
             "reference must be a session UUID or a Clawdi share URL",
         ) from None
     if match:
-        if _is_env_bound_api_key(auth) and not is_runtime_deployment_principal(auth):
+        if is_env_bound_api_key(auth) and not is_runtime_deployment_principal(auth):
             # No owner-bypass for env-bound agent keys: a share URL for a
             # same-user session in another environment must not sidestep
             # the bare-UUID env filter. Own-environment sessions resolve

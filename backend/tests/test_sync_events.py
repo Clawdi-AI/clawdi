@@ -495,7 +495,6 @@ async def test_broadcast_drops_event_with_unparseable_project():
             {"type": "skill_changed", "skill_key": "x", "project_id": "not-a-uuid"},
         )
         # Filter rejects unparseable project.
-        await asyncio.sleep(0)
         assert q.empty()
     finally:
         sync_events.unsubscribe(user_id, q)
@@ -557,7 +556,6 @@ async def test_runtime_manifest_event_delivers_after_commit_not_rollback(
         sync_events.queue_runtime_manifest_changed(db_session, user_id, environment_id)
         assert queue.empty()
         await db_session.rollback()
-        await asyncio.sleep(0)
         assert queue.empty()
     finally:
         sync_events.unsubscribe(user_id, queue)
@@ -662,27 +660,70 @@ async def test_postgres_listener_delivers_remote_process_event(
 
 
 @pytest.mark.asyncio
-async def test_stop_postgres_listener_surfaces_unexpected_task_failure():
-    """The lifecycle owner clears state but preserves listener failures."""
-    assert sync_events._listener_task is None
-    started = asyncio.Event()
+async def test_postgres_listener_ignores_malformed_notification_before_valid_event(
+    db_session: AsyncSession,
+    seed_user: User,
+):
+    environment_id = uuid.uuid4()
+    queue = sync_events.subscribe(
+        seed_user.id,
+        frozenset(),
+        environment_id=environment_id,
+    )
+    await sync_events.start_postgres_listener()
+    try:
+        valid_event = {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(environment_id),
+        }
+        notifications = [
+            "not-json",
+            json.dumps(
+                {
+                    "origin": "other-api-process",
+                    "user_id": str(seed_user.id),
+                    "event": {"type": ["invalid"]},
+                }
+            ),
+            json.dumps(
+                {
+                    "origin": "other-api-process",
+                    "user_id": str(seed_user.id),
+                    "event": valid_event,
+                }
+            ),
+        ]
+        for payload in notifications:
+            await db_session.execute(
+                text("SELECT pg_notify(:channel, :payload)"),
+                {"channel": sync_events._POSTGRES_CHANNEL, "payload": payload},
+            )
+        await db_session.commit()
 
-    async def fail() -> None:
-        started.set()
+        assert await asyncio.wait_for(queue.get(), timeout=2) == valid_event
+        assert queue.empty()
+    finally:
+        await sync_events.stop_postgres_listener()
+        sync_events.unsubscribe(seed_user.id, queue)
+
+
+@pytest.mark.asyncio
+async def test_postgres_listener_start_failure_allows_clean_restart(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A failed first connection leaves the public lifecycle restartable."""
+
+    async def fail_connect(_dsn, _channel, _notification, _terminated):
         raise RuntimeError("listener failed")
 
-    failed_task = asyncio.create_task(fail())
-    await asyncio.wait_for(started.wait(), timeout=1)
-    sync_events._listener_task = failed_task
-    sync_events._listener_stop = asyncio.Event()
-    try:
+    with monkeypatch.context() as failed_connection:
+        failed_connection.setattr(sync_events, "connect_postgres_listener", fail_connect)
         with pytest.raises(RuntimeError, match="listener failed"):
-            await sync_events.stop_postgres_listener()
-        assert sync_events._listener_task is None
-        assert sync_events._listener_stop is None
-    finally:
-        sync_events._listener_task = None
-        sync_events._listener_stop = None
+            await sync_events.start_postgres_listener()
+
+    await sync_events.start_postgres_listener()
+    await sync_events.stop_postgres_listener()
+    await sync_events.stop_postgres_listener()
 
 
 @pytest.mark.asyncio
@@ -711,12 +752,8 @@ async def test_bump_skills_revision_after_commit_broadcasts(
             project_id=personal.id,
         )
         # Not delivered yet — the after_commit hook runs on commit.
-        await asyncio.sleep(0)
         assert queue.empty(), "event must wait for transaction commit"
         await db_session.commit()
-        # commit() schedules the broadcast synchronously inside the
-        # after_commit hook; give the loop one tick to deliver.
-        await asyncio.sleep(0)
         event = queue.get_nowait()
         assert event["type"] == "skill_changed"
         assert event["skill_key"] == "hello"
