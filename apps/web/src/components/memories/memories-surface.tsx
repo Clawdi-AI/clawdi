@@ -342,8 +342,8 @@ function MemoryNotesGrid({
 							title="Delete this memory?"
 							description={
 								<p>
-									Deleting it removes this account-wide memory from every agent. All agents will
-									stop recalling it within seconds.
+									Deleting it removes this memory from every agent. All agents will stop recalling
+									it within seconds.
 								</p>
 							}
 							confirmLabel="Delete memory"

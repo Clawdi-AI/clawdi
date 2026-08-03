@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import { ArrowLeft, Brain, ExternalLink, Laptop, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { AccountWideScopeBadge } from "@/components/account-wide-scope";
+import { AllAgentsAccessBadge } from "@/components/all-agents-access-badge";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { DetailMeta, DetailNotFound, DetailPanel } from "@/components/detail/layout";
@@ -15,17 +15,17 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ACCOUNT_WIDE_SCOPE_DESCRIPTION } from "@/lib/account-wide-resources";
+import { ALL_AGENTS_ACCESS_DESCRIPTION } from "@/lib/agent-resource-access";
 import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { Memory } from "@/lib/api-schemas";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
-	accountLibraryDetailTarget,
-	accountWideResourceCollectionTarget,
 	LIBRARY_RESOURCE_SCOPE,
 	type ResourceNavigationScope,
+	resourceCollectionTarget,
+	resourceLibraryDetailTarget,
 } from "@/lib/resource-navigation";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
@@ -56,8 +56,8 @@ export default function MemoryDetailPage({
 	useSetBreadcrumbTitle(memoryTitle);
 	const blockingError =
 		isApiNotFoundError(error) || shouldBlockQueryError(error, memory) ? error : null;
-	const collectionTarget = accountWideResourceCollectionTarget(scope, "memories");
-	const libraryTarget = accountLibraryDetailTarget("memories", memoryId);
+	const collectionTarget = resourceCollectionTarget(scope, "memories");
+	const libraryTarget = resourceLibraryDetailTarget("memories", memoryId);
 
 	const deleteMemory = api.useMutation("delete", "/v1/memories/{memory_id}", {
 		onSuccess: () => {
@@ -103,10 +103,9 @@ export default function MemoryDetailPage({
 			) : memory ? (
 				<DetailPanel className="space-y-4">
 					<div className="space-y-1">
-						<h2 className="text-sm font-semibold">Recall Scope</h2>
+						<h2 className="text-sm font-semibold">Agent access</h2>
 						<p className="text-xs text-muted-foreground">
-							This is account-level context. Every agent can recall it across runs; it is not owned
-							by this Agent or shared through Projects.
+							Every agent can recall this memory across runs.
 						</p>
 					</div>
 					{memory.tags?.length ? (
@@ -179,8 +178,8 @@ function MemoryPageHeader({
 		<PageHeader
 			title={memory?.content ?? "Memory"}
 			icon={<Brain className="size-5 text-muted-foreground" />}
-			titleAdornment={scope.kind === "agent" ? <AccountWideScopeBadge /> : null}
-			description={scope.kind === "agent" ? ACCOUNT_WIDE_SCOPE_DESCRIPTION : undefined}
+			titleAdornment={scope.kind === "agent" ? <AllAgentsAccessBadge /> : null}
+			description={scope.kind === "agent" ? ALL_AGENTS_ACCESS_DESCRIPTION : undefined}
 			status={
 				memory ? (
 					<DetailMeta>
@@ -223,7 +222,7 @@ function MemoryPageHeader({
 							</Button>
 						) : null}
 						<ConfirmAction
-							title="Delete this account-wide memory?"
+							title="Delete this memory for every agent?"
 							description={
 								<>
 									<p>

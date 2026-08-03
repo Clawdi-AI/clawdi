@@ -1,9 +1,9 @@
-import { ACCOUNT_WIDE_SCOPE_LABEL } from "@/lib/account-wide-resources";
+import { ALL_AGENTS_ACCESS_LABEL } from "@/lib/agent-resource-access";
 import {
-	AGENT_ACCOUNT_WIDE_SECTION_IDS,
 	AGENT_RESOURCE_SECTION_IDS,
 	type AgentNavigationVariant,
 	type AgentSectionId,
+	isAllAgentsSection,
 } from "@/lib/navigation-model";
 
 export type AgentOverviewModuleId =
@@ -15,24 +15,25 @@ export type AgentOverviewModuleId =
 	| "model-provider"
 	| "channels";
 
-export type AgentOverviewGroupId = "resources" | "account-wide" | "operate";
+export type AgentOverviewGroupId = "resources" | "operate";
 
 export type AgentOverviewModule = {
 	id: AgentOverviewModuleId;
 	section: AgentSectionId;
+	accessLabel?: string;
 };
 
 export type AgentOverviewGroup = {
 	id: AgentOverviewGroupId;
 	label: string;
-	layout: "three-column" | "two-column";
+	layout: "three-column";
 	modules: readonly AgentOverviewModule[];
 };
 
-const SHARED_RESOURCES = AGENT_RESOURCE_SECTION_IDS.map((section) => ({ id: section, section }));
-const ACCOUNT_WIDE_RESOURCES = AGENT_ACCOUNT_WIDE_SECTION_IDS.map((section) => ({
+const AGENT_RESOURCES = AGENT_RESOURCE_SECTION_IDS.map((section) => ({
 	id: section,
 	section,
+	...(isAllAgentsSection(section) ? { accessLabel: ALL_AGENTS_ACCESS_LABEL } : {}),
 }));
 
 const AGENT_OVERVIEW_GROUPS = {
@@ -41,13 +42,7 @@ const AGENT_OVERVIEW_GROUPS = {
 			id: "resources",
 			label: "Resources",
 			layout: "three-column",
-			modules: SHARED_RESOURCES,
-		},
-		{
-			id: "account-wide",
-			label: ACCOUNT_WIDE_SCOPE_LABEL,
-			layout: "two-column",
-			modules: ACCOUNT_WIDE_RESOURCES,
+			modules: AGENT_RESOURCES,
 		},
 	],
 	hosted: [
@@ -55,13 +50,7 @@ const AGENT_OVERVIEW_GROUPS = {
 			id: "resources",
 			label: "Resources",
 			layout: "three-column",
-			modules: SHARED_RESOURCES,
-		},
-		{
-			id: "account-wide",
-			label: ACCOUNT_WIDE_SCOPE_LABEL,
-			layout: "two-column",
-			modules: ACCOUNT_WIDE_RESOURCES,
+			modules: AGENT_RESOURCES,
 		},
 		{
 			id: "operate",

@@ -101,7 +101,7 @@ describe("sidebar navigation model", () => {
 		]);
 	});
 
-	test("separates Agent resources from account-wide navigation", () => {
+	test("keeps all Agent resources in one navigation group", () => {
 		const connectedGroups = agentNavigationGroups("connected");
 		expect(groupShape(connectedGroups)).toEqual([
 			{
@@ -121,13 +121,6 @@ describe("sidebar navigation model", () => {
 					{ id: "projects", label: "Projects" },
 					{ id: "skills", label: "Skills" },
 					{ id: "vaults", label: "Vaults" },
-				],
-			},
-			{
-				id: "account-wide",
-				label: "Account-wide",
-				separated: false,
-				items: [
 					{ id: "memories", label: "Memories" },
 					{ id: "connectors", label: "Connectors" },
 				],
@@ -139,7 +132,7 @@ describe("sidebar navigation model", () => {
 				items: [{ id: "settings", label: "Settings" }],
 			},
 		]);
-		expectNavigationHeadings(connectedGroups, ["Resources", "Account-wide"]);
+		expectNavigationHeadings(connectedGroups, ["Resources"]);
 
 		const hostedGroups = agentNavigationGroups("hosted");
 		expect(groupShape(hostedGroups)).toEqual([
@@ -160,13 +153,6 @@ describe("sidebar navigation model", () => {
 					{ id: "projects", label: "Projects" },
 					{ id: "skills", label: "Skills" },
 					{ id: "vaults", label: "Vaults" },
-				],
-			},
-			{
-				id: "account-wide",
-				label: "Account-wide",
-				separated: false,
-				items: [
 					{ id: "memories", label: "Memories" },
 					{ id: "connectors", label: "Connectors" },
 				],
@@ -189,7 +175,7 @@ describe("sidebar navigation model", () => {
 				items: [{ id: "settings", label: "Settings" }],
 			},
 		]);
-		expectNavigationHeadings(hostedGroups, ["Resources", "Account-wide", "Tools"]);
+		expectNavigationHeadings(hostedGroups, ["Resources", "Tools"]);
 
 		expect(CONNECTED_AGENT_SECTION_IDS).toEqual([
 			"overview",
@@ -250,7 +236,7 @@ describe("sidebar navigation model", () => {
 			"AI provider and primary model used by this agent.",
 		);
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.memories.description).toBe(
-			"Shared across every agent in this account. Changes here affect all agents.",
+			"Available to every agent in this account. Changes here affect every agent.",
 		);
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.settings.icon).toBe(Settings);
 	});
@@ -307,7 +293,7 @@ describe("sidebar navigation model", () => {
 
 	test("keeps the pure navigation model independent from React components", () => {
 		const source = readFileSync(new URL("./navigation-model.ts", import.meta.url), "utf8");
-		expect(source).toContain("@/lib/account-wide-resources");
-		expect(source).not.toContain("@/components/account-wide-scope");
+		expect(source).toContain("@/lib/agent-resource-access");
+		expect(source).not.toContain("@/components/all-agents-access-badge");
 	});
 });

@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { AccountWideScopeBadge } from "@/components/account-wide-scope";
+import { AllAgentsAccessBadge } from "@/components/all-agents-access-badge";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
@@ -293,7 +293,7 @@ import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
-import { AGENT_SECTION_NAVIGATION_ITEMS, isAccountWideAgentSection } from "@/lib/navigation-model";
+import { AGENT_SECTION_NAVIGATION_ITEMS, isAllAgentsSection } from "@/lib/navigation-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { agentResourceScope } from "@/lib/resource-navigation";
 import { sessionListQueryOptions } from "@/lib/session-queries";
@@ -533,8 +533,8 @@ export function HostedAgentDetail({
 						titleAdornment={
 							activeTab === "overview" ? (
 								<AgentSourceBadge source="hosted" compact />
-							) : isAccountWideAgentSection(activeTab) ? (
-								<AccountWideScopeBadge />
+							) : isAllAgentsSection(activeTab) ? (
+								<AllAgentsAccessBadge />
 							) : null
 						}
 						description={activeTab === "overview" ? undefined : activeNavItem.description}

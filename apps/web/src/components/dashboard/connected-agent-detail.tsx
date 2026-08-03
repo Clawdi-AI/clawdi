@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, ExternalLink, Laptop } from "lucide-react";
-import { AccountWideScopeBadge } from "@/components/account-wide-scope";
+import { AllAgentsAccessBadge } from "@/components/all-agents-access-badge";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
@@ -57,7 +57,7 @@ import {
 import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
-import { AGENT_SECTION_NAVIGATION_ITEMS, isAccountWideAgentSection } from "@/lib/navigation-model";
+import { AGENT_SECTION_NAVIGATION_ITEMS, isAllAgentsSection } from "@/lib/navigation-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { agentResourceScope } from "@/lib/resource-navigation";
 import { sessionListQueryOptions } from "@/lib/session-queries";
@@ -166,8 +166,8 @@ export function ConnectedAgentDetail({
 	const titleAdornment =
 		activeTab === "overview" && agent && showSourceBadge ? (
 			<AgentSourceBadgeForEnvironment env={agent} ownershipKind={ownershipKind} compact />
-		) : isAccountWideAgentSection(activeTab) ? (
-			<AccountWideScopeBadge />
+		) : isAllAgentsSection(activeTab) ? (
+			<AllAgentsAccessBadge />
 		) : null;
 	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;
 	const scopedSessionLink = (sessionId: string) => ({

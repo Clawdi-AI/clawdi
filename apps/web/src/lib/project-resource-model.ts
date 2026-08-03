@@ -8,7 +8,7 @@ export type ProjectResourceId =
 	| "memories"
 	| "connectors";
 
-export type ProjectResourceScope = "container" | "project-managed" | "activity" | "account-wide";
+export type ProjectResourceScope = "container" | "project-managed" | "activity" | "all-agents";
 export type ProjectResourceGroup = "project-registry" | "project-resources" | "user-resources";
 
 export const PROJECT_RESOURCE_LIST_PATHS = {
@@ -115,13 +115,12 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Memories",
 		singularLabel: "Memory",
 		navLabel: "Memories",
-		description: "Account-level notes agents can recall when they run.",
-		managementDescription:
-			"Memories are account-level context agents can recall. Project resources stay in Projects.",
+		description: "Notes every agent in this account can recall when they run.",
+		managementDescription: "Memories are available to every agent in this account.",
 		href: PROJECT_RESOURCE_LIST_PATHS.memories,
 		emptyCta: "Add Memory",
 		routeGroup: "user-resources",
-		projectScope: "account-wide",
+		projectScope: "all-agents",
 		pathSegments: ["Account resources", "Memory"],
 		statsKey: "memories_count",
 		countLabel: "memories",
@@ -131,13 +130,12 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Connectors",
 		singularLabel: "Connector",
 		navLabel: "Connectors",
-		description: "Account-wide app connections that agents can use after approval.",
-		managementDescription:
-			"Connect apps once at the account level. Agents can use approved connectors through tools.",
+		description: "App connections every agent can use after approval.",
+		managementDescription: "Connect apps once so every agent can use approved tools.",
 		href: PROJECT_RESOURCE_LIST_PATHS.connectors,
 		emptyCta: "Connect App",
 		routeGroup: "user-resources",
-		projectScope: "account-wide",
+		projectScope: "all-agents",
 		pathSegments: ["Account resources", "Connectors"],
 		statsKey: "connectors_count",
 		countLabel: "connectors",
@@ -246,8 +244,8 @@ export function projectResourceScopeLabel(scope: ProjectResourceScope): string {
 			return "Saved in a Project";
 		case "activity":
 			return "Account resources";
-		case "account-wide":
-			return "Account resources";
+		case "all-agents":
+			return "All agents";
 	}
 }
 
@@ -259,8 +257,8 @@ export function projectResourceScopeDescription(resource: ProjectResourceDefinit
 			return "Saved in a Project. Pick the Project before you add, edit, or remove it.";
 		case "activity":
 			return "Activity from agents, shown with the agent that produced it.";
-		case "account-wide":
-			return "Managed for your account, not inside a specific Project.";
+		case "all-agents":
+			return "Available to every agent in this account. Changes here affect every agent.";
 	}
 }
 

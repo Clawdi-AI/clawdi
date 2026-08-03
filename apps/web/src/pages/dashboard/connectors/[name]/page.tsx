@@ -5,7 +5,7 @@ import { AlertCircle, ArrowLeft, Check, ExternalLink, Link2Off, Plug, Wrench } f
 import { parseAsString, useQueryStates } from "nuqs";
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { AccountWideScopeBadge } from "@/components/account-wide-scope";
+import { AllAgentsAccessBadge } from "@/components/all-agents-access-badge";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
@@ -25,7 +25,7 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { ACCOUNT_WIDE_SCOPE_DESCRIPTION } from "@/lib/account-wide-resources";
+import { ALL_AGENTS_ACCESS_DESCRIPTION } from "@/lib/agent-resource-access";
 import { unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { ConnectorTool } from "@/lib/api-schemas";
@@ -38,10 +38,10 @@ import {
 } from "@/lib/connectors-data";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
-	accountLibraryDetailTarget,
-	accountWideResourceCollectionTarget,
 	LIBRARY_RESOURCE_SCOPE,
 	type ResourceNavigationScope,
+	resourceCollectionTarget,
+	resourceLibraryDetailTarget,
 } from "@/lib/resource-navigation";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn, errorMessage } from "@/lib/utils";
@@ -490,12 +490,12 @@ function ConnectorPageHeader({
 	scope: ResourceNavigationScope;
 	showCollectionAction?: boolean;
 }) {
-	const libraryTarget = accountLibraryDetailTarget("connectors", name);
-	const collectionTarget = accountWideResourceCollectionTarget(scope, "connectors");
+	const libraryTarget = resourceLibraryDetailTarget("connectors", name);
+	const collectionTarget = resourceCollectionTarget(scope, "connectors");
 	const titleAdornment =
 		scope.kind === "agent" || isReady ? (
 			<>
-				{scope.kind === "agent" ? <AccountWideScopeBadge /> : null}
+				{scope.kind === "agent" ? <AllAgentsAccessBadge /> : null}
 				{isReady ? (
 					<Badge variant="secondary">
 						<Check />
@@ -509,7 +509,7 @@ function ConnectorPageHeader({
 			title={displayName}
 			icon={<ConnectorIcon logo={logo} name={displayName} size="lg" />}
 			titleAdornment={titleAdornment}
-			description={scope.kind === "agent" ? ACCOUNT_WIDE_SCOPE_DESCRIPTION : description || name}
+			description={scope.kind === "agent" ? ALL_AGENTS_ACCESS_DESCRIPTION : description || name}
 			status={
 				scope.kind === "agent" && description ? (
 					<p className="line-clamp-2 text-sm text-muted-foreground">{description}</p>
@@ -576,8 +576,8 @@ function ConnectAccountAction({
 			title={`Connect ${displayName} for every agent?`}
 			description={
 				<p>
-					This account-wide connection makes approved {displayName} tools available to every agent
-					in this account. Changes affect all agents.
+					This connection makes approved {displayName} tools available to every agent in this
+					account. Changes affect all agents.
 				</p>
 			}
 			confirmLabel="Continue to Sign In"

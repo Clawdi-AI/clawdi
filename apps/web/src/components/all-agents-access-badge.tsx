@@ -1,10 +1,10 @@
 import { Badge } from "@/components/ui/badge";
-import { ACCOUNT_WIDE_SCOPE_LABEL } from "@/lib/account-wide-resources";
+import { ALL_AGENTS_ACCESS_LABEL } from "@/lib/agent-resource-access";
 
-export function AccountWideScopeBadge() {
+export function AllAgentsAccessBadge() {
 	return (
 		<Badge variant="outline" className="font-normal text-muted-foreground">
-			{ACCOUNT_WIDE_SCOPE_LABEL}
+			{ALL_AGENTS_ACCESS_LABEL}
 		</Badge>
 	);
 }

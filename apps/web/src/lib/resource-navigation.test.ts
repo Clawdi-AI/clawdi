@@ -1,8 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
-	accountLibraryDetailTarget,
-	accountWideResourceCollectionTarget,
 	agentResourceScope,
 	connectorDetailHrefForScope,
 	connectorDetailLink,
@@ -14,6 +12,7 @@ import {
 	projectDetailHrefForScope,
 	projectDetailLink,
 	resourceCollectionTarget,
+	resourceLibraryDetailTarget,
 	validateResourceDetailSearch,
 	vaultDetailHrefForScope,
 	vaultDetailLink,
@@ -37,11 +36,11 @@ describe("resource navigation scopes", () => {
 		expect(connectorDetailHrefForScope(LIBRARY_RESOURCE_SCOPE, "google drive")).toBe(
 			"/connectors/google%20drive",
 		);
-		expect(accountWideResourceCollectionTarget(LIBRARY_RESOURCE_SCOPE, "memories")).toEqual({
+		expect(resourceCollectionTarget(LIBRARY_RESOURCE_SCOPE, "memories")).toEqual({
 			href: "/memories",
 			label: "Memories",
 		});
-		expect(accountWideResourceCollectionTarget(LIBRARY_RESOURCE_SCOPE, "connectors")).toEqual({
+		expect(resourceCollectionTarget(LIBRARY_RESOURCE_SCOPE, "connectors")).toEqual({
 			href: "/connectors",
 			label: "Connectors",
 		});
@@ -77,13 +76,13 @@ describe("resource navigation scopes", () => {
 		expect(vaultDetailHrefForScope(scope, "prod keys", "vault/1")).toBe(
 			"/agents/agent%201/vaults/prod%20keys?source=on-clawdi&d=deployment%201&vault=vault%2F1",
 		);
-		expect(accountWideResourceCollectionTarget(scope, "memories")).toEqual({
+		expect(resourceCollectionTarget(scope, "memories")).toEqual({
 			href: "/agents/agent%201/memories?source=on-clawdi&d=deployment%201",
-			label: "Account-wide Memories",
+			label: "Memories",
 		});
-		expect(accountWideResourceCollectionTarget(scope, "connectors")).toEqual({
+		expect(resourceCollectionTarget(scope, "connectors")).toEqual({
 			href: "/agents/agent%201/connectors?source=on-clawdi&d=deployment%201",
-			label: "Account-wide Connectors",
+			label: "Connectors",
 		});
 		expect(memoryDetailHrefForScope(scope, "memory 1")).toBe(
 			"/agents/agent%201/memories/memory%201?source=on-clawdi&d=deployment%201",
@@ -124,13 +123,13 @@ describe("resource navigation scopes", () => {
 			href: "/vaults/prod%20keys?vault=vault%2F1",
 			label: "Manage in resource library",
 		});
-		expect(accountLibraryDetailTarget("memories", "memory 1")).toEqual({
+		expect(resourceLibraryDetailTarget("memories", "memory 1")).toEqual({
 			href: "/memories/memory%201",
-			label: "Open in account library",
+			label: "Open in resource library",
 		});
-		expect(accountLibraryDetailTarget("connectors", "google drive")).toEqual({
+		expect(resourceLibraryDetailTarget("connectors", "google drive")).toEqual({
 			href: "/connectors/google%20drive",
-			label: "Open in account library",
+			label: "Open in resource library",
 		});
 	});
 

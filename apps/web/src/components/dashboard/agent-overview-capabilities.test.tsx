@@ -7,6 +7,7 @@ import {
 	OverviewDescriptionSkeleton,
 	OverviewMetadata,
 	OverviewModuleError,
+	overviewModuleAccessibleName,
 } from "@/components/dashboard/agent-overview-capabilities";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 
@@ -70,6 +71,11 @@ describe("overview modules", () => {
 		expect(hosted).toContain("h-full min-w-0 py-3");
 		expect(hosted).toContain("grid-rows-1 content-center gap-0");
 		expect(hosted).not.toContain("h-40");
+	});
+
+	test("includes all-agent access in scoped card accessible names", () => {
+		expect(overviewModuleAccessibleName("Memories", "All agents")).toBe("Memories, All agents");
+		expect(overviewModuleAccessibleName("Projects")).toBe("Projects");
 	});
 
 	test("represents module errors only as the unavailable description", () => {

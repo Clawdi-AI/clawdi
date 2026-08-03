@@ -3078,7 +3078,22 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible({
 		timeout: 12_000,
 	});
-	await expect(overview.getByRole("heading", { name: "Account-wide", exact: true })).toBeVisible();
+	await expect(overview.locator("[data-overview-access-scope]")).toHaveCount(2);
+	await expect(
+		overview.locator('[data-overview-module="memories"] [data-overview-access-scope]'),
+	).toHaveText("All agents");
+	await expect(
+		overview.locator('[data-overview-module="connectors"] [data-overview-access-scope]'),
+	).toHaveText("All agents");
+	await expect(
+		overview.getByRole("link", { name: "Memories, All agents", exact: true }),
+	).toBeVisible();
+	await expect(
+		overview.getByRole("link", { name: "Connectors, All agents", exact: true }),
+	).toBeVisible();
+	await expect(
+		overview.locator('[data-overview-module="vaults"] [data-overview-access-scope]'),
+	).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(7);
 	await expect(
 		overview.locator('[data-overview-module] [data-slot="card-description"]'),
@@ -3244,13 +3259,10 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const toolsGrid = overview.locator(
 		'section[aria-labelledby="agent-overview-operate"] [data-overview-layout="three-column"]',
 	);
-	const accountWideGrid = overview.locator(
-		'section[aria-labelledby="agent-overview-account-wide"] [data-overview-layout="two-column"]',
-	);
 	const resourceGeometry = await resourceGrid
 		.locator("[data-overview-module]")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(resourceGeometry).toHaveLength(3);
+	expect(resourceGeometry).toHaveLength(5);
 	expect(
 		Math.max(...resourceGeometry.map((box) => box.width)) -
 			Math.min(...resourceGeometry.map((box) => box.width)),
@@ -3265,9 +3277,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		await resourceGrid
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "skills", "vaults"]);
-	await expectOverviewResourceGeometry(resourceGrid, [3]);
-	await expectOverviewResourceGeometry(accountWideGrid, [2]);
+	).toEqual(["projects", "skills", "vaults", "memories", "connectors"]);
+	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
 	await expectOverviewResourceGeometry(toolsGrid, [2]);
 	const toolGeometry = await toolsGrid
 		.locator("[data-overview-module]")
@@ -3291,16 +3302,13 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	);
 	await expectAgentOverviewTypography(page);
 	await page.setViewportSize({ width: 1024, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [2, 1]);
-	await expectOverviewResourceGeometry(accountWideGrid, [2]);
+	await expectOverviewResourceGeometry(resourceGrid, [2, 2, 1]);
 	await expectOverviewResourceGeometry(toolsGrid, [2]);
 	await page.setViewportSize({ width: 768, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1]);
-	await expectOverviewResourceGeometry(accountWideGrid, [1, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
 	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
 	await page.setViewportSize({ width: 390, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1]);
-	await expectOverviewResourceGeometry(accountWideGrid, [1, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
 	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
 	const [mobileSessionsBox, mobileViewAllBox] = await Promise.all([
 		recentSessions.boundingBox(),
@@ -4271,32 +4279,34 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	const groups = page
 		.getByTestId("app-sidebar")
 		.locator('[data-slot="sidebar-content"] > [data-slot="sidebar-group"]');
-	await expect(groups).toHaveCount(5);
+	await expect(groups).toHaveCount(4);
 	await expect(groups.nth(0).locator('[data-slot="sidebar-group-label"]')).toHaveCount(0);
 	await expect(groups.nth(0).getByRole("link")).toHaveText(["Overview", "Sessions"]);
 	await expect(groups.nth(1).locator('[data-slot="sidebar-group-label"]')).toHaveText("Resources");
-	await expect(groups.nth(1).getByRole("link")).toHaveText(["Projects", "Skills", "Vaults"]);
-	await expect(groups.nth(2).locator('[data-slot="sidebar-group-label"]')).toHaveText(
-		"Account-wide",
-	);
-	await expect(groups.nth(2).getByRole("link")).toHaveText(["Memories", "Connectors"]);
-	await expect(groups.nth(3).locator('[data-slot="sidebar-group-label"]')).toHaveText("Tools");
-	await expect(groups.nth(3).getByRole("link")).toHaveText([
+	await expect(groups.nth(1).getByRole("link")).toHaveText([
+		"Projects",
+		"Skills",
+		"Vaults",
+		"Memories",
+		"Connectors",
+	]);
+	await expect(groups.nth(2).locator('[data-slot="sidebar-group-label"]')).toHaveText("Tools");
+	await expect(groups.nth(2).getByRole("link")).toHaveText([
 		"Agent Interface",
 		"Terminal",
 		"Channels",
 		"AI Providers",
 	]);
-	await expect(groups.nth(4).locator('[data-slot="sidebar-group-label"]')).toHaveCount(0);
-	await expect(groups.nth(4).getByRole("link")).toHaveText(["Settings"]);
-	await expect(groups.locator('[data-slot="sidebar-group-label"]')).toHaveCount(3);
+	await expect(groups.nth(3).locator('[data-slot="sidebar-group-label"]')).toHaveCount(0);
+	await expect(groups.nth(3).getByRole("link")).toHaveText(["Settings"]);
+	await expect(groups.locator('[data-slot="sidebar-group-label"]')).toHaveCount(2);
 	await expect(groups.locator('[data-slot="sidebar-group-label"]:empty')).toHaveCount(0);
 
 	const query = `?source=on-clawdi&d=${railHostedDeployment.id}`;
 	const main = page.locator("main");
 	await page.setViewportSize({ width: 2000, height: 1000 });
-	await expect(groups.nth(2).getByRole("link", { name: "Memories", exact: true })).toBeVisible();
-	await expect(groups.nth(2).getByRole("link", { name: "Connectors", exact: true })).toBeVisible();
+	await expect(groups.nth(1).getByRole("link", { name: "Memories", exact: true })).toBeVisible();
+	await expect(groups.nth(1).getByRole("link", { name: "Connectors", exact: true })).toBeVisible();
 	await page.goto(`/agents/${railHostedEnvironmentId}/memories${query}`);
 	await expect(page).toHaveURL(
 		(url) =>
@@ -4308,11 +4318,11 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(page).toHaveTitle("Memories · Clawdi");
 	await expect(page.locator('[data-slot="breadcrumb-page"]')).toHaveText("Memories");
 	await expect(
-		main.getByText("Shared across every agent in this account. Changes here affect all agents.", {
+		main.getByText("Available to every agent in this account. Changes here affect every agent.", {
 			exact: true,
 		}),
 	).toHaveCount(1);
-	await expect(main.getByText("Account-wide", { exact: true })).toBeVisible();
+	await expect(main.getByText("All agents", { exact: true })).toBeVisible();
 	const memoriesSurface = main.getByTestId("memories-surface");
 	await expect(
 		memoriesSurface.getByText("Hosted and connected agents share this memory"),
@@ -4343,7 +4353,11 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 			level: 1,
 		}),
 	).toBeVisible();
-	await expect(main.getByText("Account-wide", { exact: true })).toBeVisible();
+	await expect(main.getByText("All agents", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Open in resource library" })).toHaveAttribute(
+		"href",
+		"/memories/memory-hosted-shared",
+	);
 	const hostedMemoriesLink = page
 		.getByTestId("app-sidebar")
 		.getByRole("link", { name: "Memories", exact: true });
@@ -4372,11 +4386,11 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(main.getByRole("heading", { name: "Connectors", level: 1 })).toBeVisible();
 	await expect(page).toHaveTitle("Connectors · Clawdi");
 	await expect(
-		main.getByText("Shared across every agent in this account. Changes here affect all agents.", {
+		main.getByText("Available to every agent in this account. Changes here affect every agent.", {
 			exact: true,
 		}),
 	).toBeVisible();
-	await expect(main.getByText("Account-wide", { exact: true })).toBeVisible();
+	await expect(main.getByText("All agents", { exact: true })).toBeVisible();
 	const githubLink = main.getByRole("link", { name: "GitHub" });
 	await expect(githubLink).toHaveAttribute(
 		"href",
@@ -4390,7 +4404,11 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 			url.searchParams.get("d") === railHostedDeployment.id,
 	);
 	await expect(main.getByRole("heading", { name: "GitHub", level: 1 })).toBeVisible();
-	await expect(main.getByText("Account-wide", { exact: true })).toBeVisible();
+	await expect(main.getByText("All agents", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Open in resource library" })).toHaveAttribute(
+		"href",
+		"/connectors/github",
+	);
 	const hostedConnectorsLink = page
 		.getByTestId("app-sidebar")
 		.getByRole("link", { name: "Connectors", exact: true });

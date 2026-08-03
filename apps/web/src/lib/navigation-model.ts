@@ -8,10 +8,7 @@ import {
 	TerminalSquare,
 } from "lucide-react";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
-import {
-	ACCOUNT_WIDE_SCOPE_DESCRIPTION,
-	ACCOUNT_WIDE_SCOPE_LABEL,
-} from "@/lib/account-wide-resources";
+import { ALL_AGENTS_ACCESS_DESCRIPTION } from "@/lib/agent-resource-access";
 import {
 	getProjectResourceDefinition,
 	projectResourcePathLabel,
@@ -259,7 +256,7 @@ export function consoleCommandPaletteItems(
 		);
 }
 
-type AgentNavigationGroupId = "primary" | "resources" | "account-wide" | "operate" | "settings";
+type AgentNavigationGroupId = "primary" | "resources" | "operate" | "settings";
 
 export type AgentNavigationItemMetadata = Omit<NavigationItemMetadata<AgentSectionId>, "href"> & {
 	variants: readonly AgentNavigationVariant[];
@@ -312,8 +309,8 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "memories",
 		...CANONICAL_NAVIGATION_IDENTITIES.memories,
 		tint: RESOURCE_TINT_CLASSES.memories,
-		description: ACCOUNT_WIDE_SCOPE_DESCRIPTION,
-		tooltip: "Account-wide memories available across all agents",
+		description: ALL_AGENTS_ACCESS_DESCRIPTION,
+		tooltip: "Memories available to every agent",
 		variants: ["connected", "hosted"],
 	},
 	skills: {
@@ -344,8 +341,8 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "connectors",
 		...CANONICAL_NAVIGATION_IDENTITIES.connectors,
 		tint: RESOURCE_TINT_CLASSES.connectors,
-		description: ACCOUNT_WIDE_SCOPE_DESCRIPTION,
-		tooltip: "Account-wide connectors available across all agents",
+		description: ALL_AGENTS_ACCESS_DESCRIPTION,
+		tooltip: "Connectors available to every agent",
 		variants: ["connected", "hosted"],
 	},
 	ai: {
@@ -378,17 +375,19 @@ export const AGENT_RESOURCE_SECTION_IDS = [
 	"projects",
 	"skills",
 	"vaults",
-] as const satisfies readonly AgentSectionId[];
-
-export const AGENT_ACCOUNT_WIDE_SECTION_IDS = [
 	"memories",
 	"connectors",
 ] as const satisfies readonly AgentSectionId[];
 
-export function isAccountWideAgentSection(
+export const AGENT_ALL_AGENTS_SECTION_IDS = [
+	"memories",
+	"connectors",
+] as const satisfies readonly AgentSectionId[];
+
+export function isAllAgentsSection(
 	section: AgentSectionId,
-): section is (typeof AGENT_ACCOUNT_WIDE_SECTION_IDS)[number] {
-	return AGENT_ACCOUNT_WIDE_SECTION_IDS.some((candidate) => candidate === section);
+): section is (typeof AGENT_ALL_AGENTS_SECTION_IDS)[number] {
+	return AGENT_ALL_AGENTS_SECTION_IDS.some((candidate) => candidate === section);
 }
 
 const AGENT_NAVIGATION_GROUPS = [
@@ -402,12 +401,6 @@ const AGENT_NAVIGATION_GROUPS = [
 		id: "resources",
 		label: "Resources",
 		itemIds: AGENT_RESOURCE_SECTION_IDS,
-		separated: false,
-	},
-	{
-		id: "account-wide",
-		label: ACCOUNT_WIDE_SCOPE_LABEL,
-		itemIds: AGENT_ACCOUNT_WIDE_SECTION_IDS,
 		separated: false,
 	},
 	{

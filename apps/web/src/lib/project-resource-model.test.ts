@@ -46,10 +46,10 @@ describe("project resource model", () => {
 		expect(getProjectResourceDefinition("skills").projectScope).toBe("project-managed");
 		expect(getProjectResourceDefinition("vaults").projectScope).toBe("project-managed");
 		expect(getProjectResourceDefinition("sessions").projectScope).toBe("activity");
-		expect(getProjectResourceDefinition("memories").projectScope).toBe("account-wide");
+		expect(getProjectResourceDefinition("memories").projectScope).toBe("all-agents");
 	});
 
-	it("keeps navigation order grouped by resource ownership", () => {
+	it("keeps navigation order grouped by management flow", () => {
 		expect(PROJECT_RESOURCE_NAV_IDS).toEqual([
 			"projects",
 			"skills",
@@ -69,7 +69,10 @@ describe("project resource model", () => {
 		expect(projectResourceScopeLabel("container")).toBe("Project home");
 		expect(projectResourceScopeLabel("project-managed")).toBe("Saved in a Project");
 		expect(projectResourceScopeLabel("activity")).toBe("Account resources");
-		expect(projectResourceScopeLabel("account-wide")).toBe("Account resources");
+		expect(projectResourceScopeLabel("all-agents")).toBe("All agents");
+		expect(projectResourceScopeDescription(getProjectResourceDefinition("memories"))).toContain(
+			"every agent",
+		);
 		expect(projectResourceScopeDescription(getProjectResourceDefinition("skills"))).toContain(
 			"Pick the Project",
 		);

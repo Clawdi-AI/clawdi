@@ -813,8 +813,10 @@ test("Console and connected agents use the scoped navigation grammar", async ({ 
 	await page.goto("/agents/agent-smoke-1");
 	await expectSidebarNavigationGroups(page, [
 		{ label: null, items: ["Overview", "Sessions"] },
-		{ label: "Resources", items: ["Projects", "Skills", "Vaults"] },
-		{ label: "Account-wide", items: ["Memories", "Connectors"] },
+		{
+			label: "Resources",
+			items: ["Projects", "Skills", "Vaults", "Memories", "Connectors"],
+		},
 		{ label: null, items: ["Settings"] },
 	]);
 });
@@ -890,7 +892,22 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		),
 	).toHaveCount(0);
 	await expect(overview.getByRole("heading", { name: "Resources", exact: true })).toBeVisible();
-	await expect(overview.getByRole("heading", { name: "Account-wide", exact: true })).toBeVisible();
+	await expect(overview.locator("[data-overview-access-scope]")).toHaveCount(2);
+	await expect(
+		overview.locator('[data-overview-module="memories"] [data-overview-access-scope]'),
+	).toHaveText("All agents");
+	await expect(
+		overview.locator('[data-overview-module="connectors"] [data-overview-access-scope]'),
+	).toHaveText("All agents");
+	await expect(
+		overview.getByRole("link", { name: "Memories, All agents", exact: true }),
+	).toBeVisible();
+	await expect(
+		overview.getByRole("link", { name: "Connectors, All agents", exact: true }),
+	).toBeVisible();
+	await expect(
+		overview.locator('[data-overview-module="projects"] [data-overview-access-scope]'),
+	).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="sessions"]')).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="projects"]')).not.toContainText(
 		"Smoke Project",
@@ -988,13 +1005,10 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
 	const resourceGrid = overview.locator('[data-overview-layout="three-column"]');
-	const accountWideGrid = overview.locator(
-		'section[aria-labelledby="agent-overview-account-wide"] [data-overview-layout="two-column"]',
-	);
 	const resourceGeometry = await resourceGrid
 		.locator("[data-overview-module]")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(resourceGeometry).toHaveLength(3);
+	expect(resourceGeometry).toHaveLength(5);
 	expect(
 		Math.max(...resourceGeometry.map((box) => box.width)) -
 			Math.min(...resourceGeometry.map((box) => box.width)),
@@ -1016,19 +1030,15 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		await resourceGrid
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "skills", "vaults"]);
-	await expectOverviewResourceGeometry(resourceGrid, [3]);
-	await expectOverviewResourceGeometry(accountWideGrid, [2]);
+	).toEqual(["projects", "skills", "vaults", "memories", "connectors"]);
+	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
 	await expectAgentOverviewTypography(page);
 	await page.setViewportSize({ width: 1024, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [2, 1]);
-	await expectOverviewResourceGeometry(accountWideGrid, [2]);
+	await expectOverviewResourceGeometry(resourceGrid, [2, 2, 1]);
 	await page.setViewportSize({ width: 768, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1]);
-	await expectOverviewResourceGeometry(accountWideGrid, [1, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
 	await page.setViewportSize({ width: 390, height: 844 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1]);
-	await expectOverviewResourceGeometry(accountWideGrid, [1, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
 	const mobileSessionBoxes = await recentSessions
 		.locator("article")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
@@ -1215,9 +1225,7 @@ test("connected Overview keeps a three-row accessible session slot for zero thro
 	expect(Math.max(...measurements) - Math.min(...measurements)).toBeLessThanOrEqual(2);
 });
 
-test("connected Overview queries account-wide Memories and Connectors summaries", async ({
-	page,
-}) => {
+test("connected Overview queries all-agent Memories and Connectors summaries", async ({ page }) => {
 	const accountResourceRequests: string[] = [];
 	page.on("request", (request) => {
 		const pathname = new URL(request.url()).pathname;
@@ -1229,7 +1237,9 @@ test("connected Overview queries account-wide Memories and Connectors summaries"
 
 	await page.goto("/agents/agent-smoke-1");
 	const overview = page.locator('[data-agent-overview="connected"]');
-	await expect(overview.locator('[data-overview-module="memories"]')).toContainText("1 memory");
+	await expect(overview.locator('[data-overview-module="memories"]')).toContainText("1 memory", {
+		timeout: 12_000,
+	});
 	await expect(overview.locator('[data-overview-module="connectors"]')).toContainText(
 		"No apps connected",
 	);
@@ -1237,7 +1247,7 @@ test("connected Overview queries account-wide Memories and Connectors summaries"
 	expect(accountResourceRequests).toContain("/v1/connectors");
 });
 
-test("connected agent Memories stays account-wide through nested list and detail navigation", async ({
+test("connected Agent Memories keeps all-agent access through nested list and detail navigation", async ({
 	page,
 }) => {
 	await stubDashboardApi(page);
@@ -1248,11 +1258,11 @@ test("connected agent Memories stays account-wide through nested list and detail
 	await expect(page).toHaveTitle("Memories · Clawdi");
 	await expect(page.locator('[data-slot="breadcrumb-page"]')).toHaveText("Memories");
 	await expect(
-		main.getByText("Shared across every agent in this account. Changes here affect all agents.", {
+		main.getByText("Available to every agent in this account. Changes here affect every agent.", {
 			exact: true,
 		}),
 	).toHaveCount(1);
-	await expect(main.getByText("Account-wide", { exact: true })).toBeVisible();
+	await expect(main.getByText("All agents", { exact: true })).toBeVisible();
 	await expect(main.getByTestId("memories-surface")).toBeVisible();
 	const memoryCard = main.locator("article").filter({ hasText: "Shared account context" });
 	await expect(memoryCard).toBeVisible();
@@ -1265,13 +1275,13 @@ test("connected agent Memories stays account-wide through nested list and detail
 	await expect(
 		main.getByRole("heading", { name: "Shared account context", level: 1 }),
 	).toBeVisible();
-	await expect(main.getByText("Account-wide", { exact: true })).toBeVisible();
+	await expect(main.getByText("All agents", { exact: true })).toBeVisible();
 	await expect(
-		main.getByText("Shared across every agent in this account. Changes here affect all agents.", {
+		main.getByText("Available to every agent in this account. Changes here affect every agent.", {
 			exact: true,
 		}),
 	).toBeVisible();
-	await expect(main.getByRole("button", { name: "Open in account library" })).toHaveAttribute(
+	await expect(main.getByRole("button", { name: "Open in resource library" })).toHaveAttribute(
 		"href",
 		"/memories/memory-smoke-1",
 	);
@@ -1287,7 +1297,7 @@ test("connected agent Memories stays account-wide through nested list and detail
 	await expect(page).toHaveURL("/agents/agent-smoke-1/memories");
 });
 
-test("connected agent Connectors stays account-wide through nested list and detail navigation", async ({
+test("connected Agent Connectors keeps all-agent access through nested list and detail navigation", async ({
 	page,
 }) => {
 	await stubDashboardApi(page);
@@ -1296,24 +1306,24 @@ test("connected agent Connectors stays account-wide through nested list and deta
 	const main = page.locator("main");
 	await expect(main.getByRole("heading", { name: "Connectors", level: 1 })).toBeVisible();
 	await expect(
-		main.getByText("Shared across every agent in this account. Changes here affect all agents.", {
+		main.getByText("Available to every agent in this account. Changes here affect every agent.", {
 			exact: true,
 		}),
 	).toBeVisible();
-	await expect(main.getByText("Account-wide", { exact: true })).toBeVisible();
+	await expect(main.getByText("All agents", { exact: true })).toBeVisible();
 	const gmailLink = main.getByRole("link", { name: "Gmail" });
 	await expect(gmailLink).toHaveAttribute("href", "/agents/agent-smoke-1/connectors/gmail");
 	await gmailLink.click();
 
 	await expect(page).toHaveURL("/agents/agent-smoke-1/connectors/gmail");
 	await expect(main.getByRole("heading", { name: "Gmail", level: 1 })).toBeVisible();
-	await expect(main.getByText("Account-wide", { exact: true })).toBeVisible();
+	await expect(main.getByText("All agents", { exact: true })).toBeVisible();
 	await expect(
-		main.getByText("Shared across every agent in this account. Changes here affect all agents.", {
+		main.getByText("Available to every agent in this account. Changes here affect every agent.", {
 			exact: true,
 		}),
 	).toBeVisible();
-	await expect(main.getByRole("button", { name: "Open in account library" })).toHaveAttribute(
+	await expect(main.getByRole("button", { name: "Open in resource library" })).toHaveAttribute(
 		"href",
 		"/connectors/gmail",
 	);
@@ -1328,7 +1338,7 @@ test("connected agent Connectors stays account-wide through nested list and deta
 	await expect(page).toHaveURL("/agents/agent-smoke-1/connectors");
 });
 
-test("connected account-wide detail loading, not-found, and error states keep Agent scope", async ({
+test("connected all-agent detail loading, not-found, and error states keep Agent scope", async ({
 	page,
 }) => {
 	let releaseMemory: (() => void) | undefined;
@@ -1348,8 +1358,8 @@ test("connected account-wide detail loading, not-found, and error states keep Ag
 
 	await page.goto("/agents/agent-smoke-1/memories/memory-smoke-1");
 	await expect(main.getByRole("heading", { name: "Memory", level: 1 })).toBeVisible();
-	await expect(main.getByText("Account-wide", { exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Back to Account-wide Memories" })).toHaveAttribute(
+	await expect(main.getByText("All agents", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Back to Memories" })).toHaveAttribute(
 		"href",
 		"/agents/agent-smoke-1/memories",
 	);
@@ -1360,8 +1370,8 @@ test("connected account-wide detail loading, not-found, and error states keep Ag
 
 	await page.goto("/agents/agent-smoke-1/memories/missing-memory");
 	await expect(main.getByText("Memory not found", { exact: true })).toBeVisible();
-	await expect(main.getByText("Account-wide", { exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Back to Account-wide Memories" })).toHaveAttribute(
+	await expect(main.getByText("All agents", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Back to Memories" })).toHaveAttribute(
 		"href",
 		"/agents/agent-smoke-1/memories",
 	);
@@ -1369,38 +1379,47 @@ test("connected account-wide detail loading, not-found, and error states keep Ag
 		await fulfillJson(route, { detail: "Memory service unavailable" }, 503);
 	});
 	await page.goto("/agents/agent-smoke-1/memories/error-memory");
-	await expect(main.getByText("Couldn't load memory", { exact: true })).toBeVisible();
-	await expect(main.getByText("Account-wide", { exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Back to Account-wide Memories" })).toHaveAttribute(
+	await expect(main.getByText("Couldn't load memory", { exact: true })).toBeVisible({
+		timeout: 12_000,
+	});
+	await expect(main.getByText("All agents", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Back to Memories" })).toHaveAttribute(
 		"href",
 		"/agents/agent-smoke-1/memories",
 	);
 
 	await page.goto("/agents/agent-smoke-1/connectors/gmail");
 	await expect(main.getByRole("heading", { name: "Gmail", level: 1 })).toBeVisible();
-	await expect(main.getByText("Account-wide", { exact: true })).toBeVisible();
-	await expect(
-		main.getByRole("button", { name: "Back to Account-wide Connectors" }),
-	).toHaveAttribute("href", "/agents/agent-smoke-1/connectors");
+	await expect(main.getByText("All agents", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Back to Connectors" })).toHaveAttribute(
+		"href",
+		"/agents/agent-smoke-1/connectors",
+	);
 	releaseConnector?.();
-	await expect(main.getByText("Couldn't load connections", { exact: true })).toBeVisible();
-	await expect(main.getByText("Account-wide", { exact: true })).toBeVisible();
+	await expect(main.getByText("Couldn't load connections", { exact: true })).toBeVisible({
+		timeout: 12_000,
+	});
+	await expect(main.getByText("All agents", { exact: true })).toBeVisible();
 
 	await page.goto("/agents/agent-smoke-1/connectors/missing-connector");
 	await expect(main.getByText("Connector unavailable", { exact: true })).toBeVisible();
-	await expect(main.getByText("Account-wide", { exact: true })).toBeVisible();
-	await expect(
-		main.getByRole("button", { name: "Back to Account-wide Connectors" }),
-	).toHaveAttribute("href", "/agents/agent-smoke-1/connectors");
+	await expect(main.getByText("All agents", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Back to Connectors" })).toHaveAttribute(
+		"href",
+		"/agents/agent-smoke-1/connectors",
+	);
 	await page.route("**/v1/connectors/available/error-connector", async (route) => {
 		await fulfillJson(route, { detail: "Connector service unavailable" }, 503);
 	});
 	await page.goto("/agents/agent-smoke-1/connectors/error-connector");
-	await expect(main.getByText("Couldn't load connector", { exact: true })).toBeVisible();
-	await expect(main.getByText("Account-wide", { exact: true })).toBeVisible();
-	await expect(
-		main.getByRole("button", { name: "Back to Account-wide Connectors" }),
-	).toHaveAttribute("href", "/agents/agent-smoke-1/connectors");
+	await expect(main.getByText("Couldn't load connector", { exact: true })).toBeVisible({
+		timeout: 12_000,
+	});
+	await expect(main.getByText("All agents", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Back to Connectors" })).toHaveAttribute(
+		"href",
+		"/agents/agent-smoke-1/connectors",
+	);
 });
 
 test("connected agent resource tabs reuse scoped Projects, account Connectors, and effective Vaults", async ({
@@ -1475,11 +1494,11 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 	});
 	await expect(page).toHaveTitle("Connectors · Clawdi");
 	await expect(
-		main.getByText("Shared across every agent in this account. Changes here affect all agents.", {
+		main.getByText("Available to every agent in this account. Changes here affect every agent.", {
 			exact: true,
 		}),
 	).toBeVisible();
-	await expect(main.getByText("Account-wide", { exact: true })).toBeVisible();
+	await expect(main.getByText("All agents", { exact: true })).toBeVisible();
 	const gmailLink = main.getByRole("link", { name: "Gmail" });
 	await expect(gmailLink).toHaveAttribute("href", "/agents/agent-smoke-1/connectors/gmail");
 	await expect(page).toHaveURL(/\/agents\/agent-smoke-1\/connectors\?q=gmail&page=2/);

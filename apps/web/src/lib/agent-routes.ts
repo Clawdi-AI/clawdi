@@ -416,7 +416,7 @@ export function agentMemoryDetailHref(
 	return agentDetailHref(path, query);
 }
 
-/** Typed TanStack Router options for an account-wide Memory viewed in the Agent shell. */
+/** Typed TanStack Router options for a Memory viewed in the Agent shell. */
 export function agentMemoryDetailLink(agentId: string, memoryId: string, query?: AgentRouteQuery) {
 	return linkOptions({
 		to: "/agents/$id/memories/$memoryId",
@@ -434,7 +434,7 @@ export function agentConnectorDetailHref(
 	return agentDetailHref(path, query);
 }
 
-/** Typed TanStack Router options for an account-wide Connector viewed in the Agent shell. */
+/** Typed TanStack Router options for a Connector viewed in the Agent shell. */
 export function agentConnectorDetailLink(
 	agentId: string,
 	connectorName: string,

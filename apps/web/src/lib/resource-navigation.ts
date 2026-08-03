@@ -24,8 +24,9 @@ export type ResourceNavigationScope =
 	| { kind: "library" }
 	| { kind: "agent"; agentId: string; agentQuery?: AgentRouteQuery };
 
-export type ResourceCollection = "projects" | "vaults";
-export type AccountWideResource = "memories" | "connectors";
+export type ResourceCollection = "projects" | "vaults" | "memories" | "connectors";
+type ProjectAssignedResource = Extract<ResourceCollection, "projects" | "vaults">;
+type DirectDetailResource = Exclude<ResourceCollection, ProjectAssignedResource>;
 
 export type ResourceNavigationTarget = {
 	href: string;
@@ -50,13 +51,31 @@ export function resourceCollectionTarget(
 	if (scope.kind === "library") {
 		return {
 			href: PROJECT_RESOURCE_LIST_PATHS[resource],
-			label: resource === "projects" ? "Projects" : "Vaults",
+			label: getResourceCollectionLabel(resource),
 		};
 	}
 	return {
 		href: agentSectionHref(scope.agentId, resource, agentDeploymentRouteQuery(scope.agentQuery)),
-		label: resource === "projects" ? "Agent Projects" : "Agent Vaults",
+		label:
+			resource === "projects"
+				? "Agent Projects"
+				: resource === "vaults"
+					? "Agent Vaults"
+					: getResourceCollectionLabel(resource),
 	};
+}
+
+function getResourceCollectionLabel(resource: ResourceCollection): string {
+	switch (resource) {
+		case "projects":
+			return "Projects";
+		case "vaults":
+			return "Vaults";
+		case "memories":
+			return "Memories";
+		case "connectors":
+			return "Connectors";
+	}
 }
 
 export function projectDetailHrefForScope(
@@ -108,22 +127,6 @@ export function vaultDetailLink(
 			});
 }
 
-export function accountWideResourceCollectionTarget(
-	scope: ResourceNavigationScope,
-	resource: AccountWideResource,
-): ResourceNavigationTarget {
-	if (scope.kind === "library") {
-		return {
-			href: PROJECT_RESOURCE_LIST_PATHS[resource],
-			label: resource === "memories" ? "Memories" : "Connectors",
-		};
-	}
-	return {
-		href: agentSectionHref(scope.agentId, resource, agentDeploymentRouteQuery(scope.agentQuery)),
-		label: resource === "memories" ? "Account-wide Memories" : "Account-wide Connectors",
-	};
-}
-
 export function memoryDetailHrefForScope(scope: ResourceNavigationScope, memoryId: string): string {
 	return scope.kind === "agent"
 		? agentMemoryDetailHref(scope.agentId, memoryId, agentDeploymentRouteQuery(scope.agentQuery))
@@ -159,18 +162,18 @@ export function connectorDetailLink(scope: ResourceNavigationScope, connectorNam
 		: linkOptions({ to: "/connectors/$name", params: { name: connectorName } });
 }
 
-export function accountLibraryDetailTarget(
-	resource: AccountWideResource,
+export function resourceLibraryDetailTarget(
+	resource: DirectDetailResource,
 	identity: string,
 ): ResourceNavigationTarget {
 	return {
 		href: resource === "memories" ? memoryDetailHref(identity) : connectorDetailHref(identity),
-		label: "Open in account library",
+		label: "Open in resource library",
 	};
 }
 
 export function libraryManagementTarget(
-	resource: ResourceCollection,
+	resource: ProjectAssignedResource,
 	identity: { projectId: string } | { vaultSlug: string; vaultId?: string | null },
 ): ResourceNavigationTarget {
 	return {
@@ -203,7 +206,7 @@ function queryValue(query: LegacyResourceNavigationQuery, key: string): string |
  */
 export function legacyAgentResourceScope(
 	query: LegacyResourceNavigationQuery,
-	resource: ResourceCollection,
+	resource: ProjectAssignedResource,
 ): ResourceNavigationScope | null {
 	const expectedOrigin = resource === "projects" ? "agent-projects" : "agent-vaults";
 	if (queryValue(query, "from") !== expectedOrigin) return null;

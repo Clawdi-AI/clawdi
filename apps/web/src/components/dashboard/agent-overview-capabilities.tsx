@@ -17,6 +17,10 @@ export type AgentOverviewModuleContent = {
 	description: ReactNode;
 };
 
+export function overviewModuleAccessibleName(title: string, accessLabel?: string): string {
+	return accessLabel ? `${title}, ${accessLabel}` : title;
+}
+
 export function AgentOverviewStatusCard({
 	agentId,
 	section,
@@ -129,9 +133,7 @@ export function AgentOverviewCapabilities({
 						data-overview-layout={group.layout}
 						className={cn(
 							"grid auto-rows-fr items-stretch gap-3",
-							group.layout === "three-column"
-								? "@2xl/main:grid-cols-2 @4xl/main:grid-cols-3"
-								: "@2xl/main:grid-cols-2",
+							"@2xl/main:grid-cols-2 @4xl/main:grid-cols-3",
 						)}
 					>
 						{group.modules.map((module) => {
@@ -151,14 +153,24 @@ export function AgentOverviewCapabilities({
 									<CardHeader className="h-full grid-rows-1 content-center gap-0">
 										<Link
 											{...agentSectionLink(agentId, module.section, routeSearch)}
-											aria-label={title}
+											aria-label={overviewModuleAccessibleName(title, module.accessLabel)}
 											className="group flex min-w-0 items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 										>
 											<IconChip size="sm" tint={item.tint}>
 												<Icon />
 											</IconChip>
 											<div className="min-w-0 flex-1">
-												<CardTitle>{title}</CardTitle>
+												<div className="flex min-w-0 items-baseline gap-2">
+													<CardTitle>{title}</CardTitle>
+													{module.accessLabel ? (
+														<span
+															data-overview-access-scope
+															className="truncate text-xs font-normal text-muted-foreground"
+														>
+															{module.accessLabel}
+														</span>
+													) : null}
+												</div>
 												<CardDescription data-overview-primary-value>
 													{moduleContent.description}
 												</CardDescription>
@@ -191,9 +203,7 @@ export function AgentOverviewCapabilitiesSkeleton({
 						data-overview-layout={group.layout}
 						className={cn(
 							"grid auto-rows-fr items-stretch gap-3",
-							group.layout === "three-column"
-								? "@2xl/main:grid-cols-2 @4xl/main:grid-cols-3"
-								: "@2xl/main:grid-cols-2",
+							"@2xl/main:grid-cols-2 @4xl/main:grid-cols-3",
 						)}
 					>
 						{group.modules.map((module) => (
