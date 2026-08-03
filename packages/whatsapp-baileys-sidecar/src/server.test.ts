@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from "bun:test";
 import type { AddressInfo } from "node:net";
 import type { BinaryNode } from "baileys";
+import { afterEach, describe, expect, it } from "vitest";
 import { AUDITED_PROVIDER_RELEASE } from "./audited-version.js";
 import { createSidecarServer, type SidecarSessionService } from "./server.js";
 import type { ProviderMessageEvent } from "./sqlite-state.js";

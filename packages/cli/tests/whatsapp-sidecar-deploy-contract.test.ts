@@ -28,7 +28,7 @@ describe("WhatsApp sidecar production deployment contract", () => {
 
 	test("health-checks the singleton before deploying the backend", () => {
 		const reboot = workflow.indexOf("kamal accessory reboot whatsapp-baileys");
-		const health = workflow.indexOf("src/healthcheck.ts", reboot);
+		const health = workflow.indexOf("dist/healthcheck.js", reboot);
 		const appDeploy = workflow.indexOf(
 			`kamal deploy -P --version "\${{ needs.build.outputs.image_tag }}"`,
 		);
@@ -57,10 +57,14 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(deploy).toContain("security-opt: no-new-privileges:true");
 	});
 
-	test("builds a non-root bounded image from the repository Bun toolchain", () => {
+	test("builds with the repository toolchain and runs on non-root Node", () => {
 		expect(dockerfile).toContain("FROM oven/bun:1.3.14-alpine");
 		expect(dockerfile).toContain("bun install --frozen-lockfile --production");
-		expect(dockerfile).toContain("USER bun:bun");
+		expect(dockerfile).toContain("FROM node:24.18.0-alpine AS runtime");
+		expect(dockerfile).toContain("USER node:node");
+		expect(dockerfile).toContain(
+			'CMD ["node", "/app/packages/whatsapp-baileys-sidecar/dist/index.js"]',
+		);
 		expect(dockerfile).toContain("HEALTHCHECK");
 		expect(dockerfile).not.toContain("latest");
 	});

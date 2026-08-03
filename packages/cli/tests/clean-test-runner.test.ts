@@ -126,7 +126,7 @@ describe("clean runner suite contract", () => {
 		});
 		expect(sidecarScripts).toMatchObject({
 			test: "../../scripts/test.sh sidecar",
-			"test:internal": "bun test",
+			"test:internal": "vitest run",
 		});
 		expect(cliScripts["test:native-linux-lifecycle:internal"]).toContain(
 			"native-installer.e2e.test.ts",
