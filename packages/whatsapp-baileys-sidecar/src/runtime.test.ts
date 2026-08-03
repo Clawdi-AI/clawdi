@@ -2,7 +2,13 @@ import { EventEmitter } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type BinaryNode, DisconnectReason, initAuthCreds, proto } from "baileys";
+import {
+	type AuthenticationCreds,
+	type BinaryNode,
+	DisconnectReason,
+	initAuthCreds,
+	proto,
+} from "baileys";
 import { describe, expect, it } from "vitest";
 
 import { parseAuditedWhatsAppWebVersion } from "./audited-version.js";
@@ -13,45 +19,95 @@ import type { ProviderMessageEventInput } from "./sqlite-state.js";
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("physical Baileys runtime", () => {
-	it("keeps an unregistered provider session idle until authenticated pairing starts", async () => {
+	it("retains verified rc14 QR identity through restart and SQLite reopen", async () => {
+		const sessionDir = mkdtempSync(join(tmpdir(), "clawdi-wa-runtime-qr-"));
+		const config = { ...sidecarConfig(), sessionDir };
 		const harness = createHarness({ registered: false });
-		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
-
-		await runtime.start();
-		expect(harness.socketConfigurations).toHaveLength(0);
-		expect(runtime.health()).toMatchObject({ status: "stopped", registered: false });
-
-		await runtime.startQrPairing();
-		expect(harness.socketConfigurations).toHaveLength(1);
-		const firstQrObservedAt = Date.now();
-		harness.events.emit("connection.update", { qr: "sensitive-qr-value" });
-		await runtime.start();
-		const ready = runtime.pairingStatus();
-		expect(ready).toMatchObject({
-			status: "pairing_qr",
-			registered: false,
-			method: "qr",
-			qr: "sensitive-qr-value",
+		const runtime = new BaileysSocketRuntime(config, {
+			socketFactory: harness.dependencies.socketFactory,
 		});
-		expect(Date.parse(ready.qrExpiresAt ?? "") - firstQrObservedAt).toBeGreaterThanOrEqual(59_000);
-		expect(Date.parse(ready.qrExpiresAt ?? "") - firstQrObservedAt).toBeLessThanOrEqual(61_000);
-		expect(harness.socketConfigurations).toHaveLength(1);
+		let reopenedRuntime: BaileysSocketRuntime | undefined;
+		try {
+			await runtime.start();
+			expect(harness.socketConfigurations).toHaveLength(0);
+			expect(runtime.health()).toMatchObject({ status: "stopped", registered: false });
 
-		const rotatedQrObservedAt = Date.now();
-		harness.events.emit("connection.update", { qr: "sensitive-qr-value-rotated" });
-		const rotated = runtime.pairingStatus();
-		expect(rotated).toMatchObject({ qr: "sensitive-qr-value-rotated" });
-		expect(Date.parse(rotated.qrExpiresAt ?? "") - rotatedQrObservedAt).toBeGreaterThanOrEqual(
-			19_000,
-		);
-		expect(Date.parse(rotated.qrExpiresAt ?? "") - rotatedQrObservedAt).toBeLessThanOrEqual(21_000);
-		expect(Date.parse(rotated.qrExpiresAt ?? "")).toBeLessThan(Date.parse(ready.qrExpiresAt ?? ""));
+			await runtime.startQrPairing();
+			expect(harness.socketConfigurations).toHaveLength(1);
+			const firstQrObservedAt = Date.now();
+			harness.events.emit("connection.update", { qr: "sensitive-qr-value" });
+			const ready = runtime.pairingStatus();
+			expect(ready).toMatchObject({
+				status: "pairing_qr",
+				registered: false,
+				method: "qr",
+				qr: "sensitive-qr-value",
+			});
+			expect(Date.parse(ready.qrExpiresAt ?? "") - firstQrObservedAt).toBeGreaterThanOrEqual(
+				59_000,
+			);
+			expect(Date.parse(ready.qrExpiresAt ?? "") - firstQrObservedAt).toBeLessThanOrEqual(61_000);
+			const rotatedQrObservedAt = Date.now();
+			harness.events.emit("connection.update", { qr: "sensitive-qr-value-rotated" });
+			const rotated = runtime.pairingStatus();
+			expect(rotated).toMatchObject({ qr: "sensitive-qr-value-rotated" });
+			expect(Date.parse(rotated.qrExpiresAt ?? "") - rotatedQrObservedAt).toBeGreaterThanOrEqual(
+				19_000,
+			);
+			expect(Date.parse(rotated.qrExpiresAt ?? "") - rotatedQrObservedAt).toBeLessThanOrEqual(
+				21_000,
+			);
+			expect(Date.parse(rotated.qrExpiresAt ?? "")).toBeLessThan(
+				Date.parse(ready.qrExpiresAt ?? ""),
+			);
 
-		harness.events.emit("creds.update", { registered: true });
-		expect(runtime.pairingStatus()).toEqual({ status: "starting", registered: true });
-		harness.events.emit("connection.update", { connection: "open" });
-		expect(runtime.pairingStatus()).toEqual({ status: "connected", registered: true });
-		await runtime.stop();
+			harness.events.emit("creds.update", verifiedQrUpdate());
+			harness.events.emit("connection.update", { isNewLogin: true, qr: undefined });
+			expect(harness.socketConfigurations[0]?.auth.creds.registered).toBe(false);
+			expect(runtime.pairingStatus()).toEqual({ status: "starting", registered: true });
+			await expect(runtime.startQrPairing()).rejects.toThrow("physical_account_already_registered");
+			await expect(runtime.cancelPairing()).rejects.toThrow("registered_session_requires_logout");
+
+			harness.events.emit("connection.update", {
+				connection: "close",
+				lastDisconnect: { error: { output: { statusCode: DisconnectReason.restartRequired } } },
+			});
+			expect(runtime.health()).toMatchObject({ status: "disconnected", registered: true });
+			await runtime.retryPairing();
+			expect(harness.socketConfigurations).toHaveLength(2);
+			harness.events.emit("connection.update", { connection: "open" });
+			expect(runtime.pairingStatus()).toEqual({ status: "connected", registered: true });
+			await runtime.stop();
+
+			const reopenedHarness = createHarness({ registered: false });
+			reopenedRuntime = new BaileysSocketRuntime(config, {
+				socketFactory: reopenedHarness.dependencies.socketFactory,
+			});
+			await reopenedRuntime.start();
+			expect(reopenedHarness.socketConfigurations).toHaveLength(1);
+			const restoredCreds = reopenedHarness.socketConfigurations[0]?.auth.creds;
+			expect(restoredCreds?.registered).toBe(false);
+			expect(restoredCreds?.me).toEqual({
+				id: "15550001111:1@s.whatsapp.net",
+				name: "Test account",
+				lid: "15550001111@lid",
+			});
+			expect(reopenedRuntime.health()).toMatchObject({ status: "connecting", registered: true });
+			reopenedHarness.events.emit("connection.update", { connection: "open" });
+			expect(reopenedRuntime.health()).toMatchObject({ status: "connected", registered: true });
+			await expect(reopenedRuntime.cancelPairing()).rejects.toThrow(
+				"registered_session_requires_logout",
+			);
+			expect(await reopenedRuntime.logoutPairing()).toEqual({
+				status: "stopped",
+				registered: false,
+			});
+			expect(reopenedHarness.logoutCalls).toBe(1);
+		} finally {
+			await reopenedRuntime?.stop();
+			await runtime.stop();
+			rmSync(sessionDir, { recursive: true, force: true });
+		}
 	});
 
 	it("supports the pinned rc14 pairing-code method without retaining phone input", async () => {
@@ -481,6 +537,9 @@ function createHarness(options: HarnessOptions = {}) {
 			},
 			async requestPairingCode(phoneNumber) {
 				pairingCodePhones.push(phoneNumber);
+				creds.me = { id: `${phoneNumber}@s.whatsapp.net`, name: "~" };
+				creds.pairingCode = "12345678";
+				events.emit("creds.update", creds);
 				return "12345678";
 			},
 			async relayMessage(jid, _message, relayOptions) {
@@ -532,5 +591,27 @@ function sidecarConfig(): SidecarSessionConfig {
 		logLevel: "silent",
 		webVersion: parseAuditedWhatsAppWebVersion("2.3000.1043857760"),
 		providerInbox: { maxEvents: 100, maxBytes: 1024 * 1024 },
+	};
+}
+
+function verifiedQrUpdate(): Partial<AuthenticationCreds> {
+	return {
+		account: {
+			details: Buffer.from([1]),
+			accountSignatureKey: Buffer.from([2]),
+			accountSignature: Buffer.from([3]),
+			deviceSignature: Buffer.from([4]),
+		},
+		me: {
+			id: "15550001111:1@s.whatsapp.net",
+			name: "Test account",
+			lid: "15550001111@lid",
+		},
+		signalIdentities: [
+			{
+				identifier: { name: "15550001111@lid", deviceId: 0 },
+				identifierKey: Buffer.from([5]),
+			},
+		],
 	};
 }

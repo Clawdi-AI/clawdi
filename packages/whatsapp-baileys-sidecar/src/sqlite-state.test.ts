@@ -9,12 +9,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { proto } from "baileys";
+import { type AuthenticationCreds, proto } from "baileys";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { parseAuditedWhatsAppWebVersion } from "./audited-version.js";
 import { Database } from "./sqlite-database.js";
 import {
+	isLinkedAuthenticationCreds,
 	ProviderInboxCapacityError,
 	type ProviderMessageEventInput,
 	type ProviderStateFailureOperation,
@@ -40,15 +41,16 @@ afterEach(() => {
 });
 
 describe("SQLite provider state", () => {
-	it("round-trips creds, Signal keys, app-state proto, retries, and clears across restart", async () => {
+	it("round-trips verified rc14 QR creds, Signal state, and retries across restart", async () => {
 		const directory = makeDirectory();
 		const first = makeState(directory);
 		first.saveCreds({
-			registered: true,
+			...verifiedQrUpdate(),
 			registrationId: 0,
-			me: REGISTERED_ME,
 			routingInfo: Buffer.from([1, 2, 3]),
 		});
+		expect(first.state.creds.registered).toBe(false);
+		expect(isLinkedAuthenticationCreds(first.state.creds)).toBe(true);
 		const appStateKey = proto.Message.AppStateSyncKeyData.create({
 			keyData: Buffer.from([9, 8, 7]),
 			fingerprint: { rawId: 4, currentIndex: 2, deviceIndexes: [0, 1] },
@@ -67,7 +69,12 @@ describe("SQLite provider state", () => {
 
 		const second = makeState(directory);
 		expect(second.state.creds.registrationId).toBe(0);
-		expect(second.state.creds.registered).toBe(true);
+		expect(second.state.creds.registered).toBe(false);
+		expect(second.state.creds.me).toEqual({
+			...REGISTERED_ME,
+			lid: "15550001111@lid",
+		});
+		expect(isLinkedAuthenticationCreds(second.state.creds)).toBe(true);
 		expect(second.state.creds.routingInfo).toEqual(Buffer.from([1, 2, 3]));
 		expect(await second.state.keys.get("pre-key", ["one"])).toEqual({
 			one: { public: Buffer.from([1, 2]), private: Buffer.from([3, 4]) },
@@ -95,17 +102,25 @@ describe("SQLite provider state", () => {
 		second.close();
 	});
 
-	it("keeps manual phone and pairing-code input out of unregistered auth snapshots", () => {
+	it("keeps temporary pairing-code and malformed identity input unlinked and out of snapshots", () => {
 		const directory = makeDirectory();
 		const phoneJid = "14155550123@s.whatsapp.net";
 		const first = makeState(directory);
 		first.saveCreds({
 			me: { id: phoneJid, name: "~" },
 			pairingCode: "12345678",
+			account: verifiedQrUpdate().account,
+			signalIdentities: [
+				{
+					identifier: { name: "", deviceId: -1 },
+					identifierKey: Buffer.alloc(0),
+				},
+			],
 		});
 
 		expect(first.state.creds.me?.id).toBe(phoneJid);
 		expect(first.state.creds.pairingCode).toBe("12345678");
+		expect(isLinkedAuthenticationCreds(first.state.creds)).toBe(false);
 		const stored = internalDatabase(first)
 			.query<{ value: string }, []>("SELECT value FROM auth_creds WHERE singleton = 1")
 			.get();
@@ -116,6 +131,7 @@ describe("SQLite provider state", () => {
 		const second = makeState(directory);
 		expect(second.state.creds.me).toBeUndefined();
 		expect(second.state.creds.pairingCode).toBeUndefined();
+		expect(isLinkedAuthenticationCreds(second.state.creds)).toBe(false);
 		second.close();
 	});
 
@@ -436,6 +452,24 @@ function providerEvent(messageId: string): ProviderMessageEventInput {
 		messageProtoBase64: Buffer.from(
 			proto.Message.encode({ conversation: messageId }).finish(),
 		).toString("base64"),
+	};
+}
+
+function verifiedQrUpdate(): Partial<AuthenticationCreds> {
+	return {
+		account: {
+			details: Buffer.from([1]),
+			accountSignatureKey: Buffer.from([2]),
+			accountSignature: Buffer.from([3]),
+			deviceSignature: Buffer.from([4]),
+		},
+		me: { ...REGISTERED_ME, lid: "15550001111@lid" },
+		signalIdentities: [
+			{
+				identifier: { name: "15550001111@lid", deviceId: 0 },
+				identifierKey: Buffer.from([5]),
+			},
+		],
 	};
 }
 
