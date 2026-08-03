@@ -98,16 +98,23 @@ async def _run_whatsapp_baileys_websocket(
 ) -> None:
     async with async_session_factory() as db:
         try:
-            account = await get_active_channel_account(db, account_id=account_id)
+            agent = await resolve_channel_agent_by_identity(
+                db,
+                provider=CHANNEL_PROVIDER_WHATSAPP,
+                account_id=account_id,
+                link_id=bot_agent_link_id,
+                agent_token_hash=agent_token_hash,
+            )
         except HTTPException:
             await websocket.close(code=1008)
             return
+        account = agent.account
         if account.provider != CHANNEL_PROVIDER_WHATSAPP:
             await websocket.close(code=1008)
             return
         auth_cert = await load_or_create_whatsapp_auth_cert(db, account=account)
         await db.commit()
-        account_user_id = account.user_id
+        tenant_user_id = agent.link.user_id
 
     session_revoked = asyncio.Event()
     session_revocation_lock = asyncio.Lock()
@@ -218,7 +225,7 @@ async def _run_whatsapp_baileys_websocket(
             await record_channel_debug_event(
                 db,
                 account=account,
-                user_id=account_user_id,
+                user_id=tenant_user_id,
                 provider=CHANNEL_PROVIDER_WHATSAPP,
                 direction="agent",
                 stage=event.stage,
@@ -279,6 +286,7 @@ async def _run_whatsapp_baileys_websocket(
             _run_whatsapp_websocket_inbox_pump(
                 account_id=account_id,
                 bot_agent_link_id=bot_agent_link_id,
+                tenant_user_id=tenant_user_id,
                 tenant_id=tenant.tenant_id,
                 session=session,
                 websocket=websocket,
@@ -373,6 +381,7 @@ async def _run_whatsapp_websocket_inbox_pump(
     *,
     account_id: UUID,
     bot_agent_link_id: UUID,
+    tenant_user_id: UUID,
     tenant_id: str,
     session: WhatsAppNoiseEmulatorSession,
     websocket: WebSocket,
@@ -428,6 +437,7 @@ async def _run_whatsapp_websocket_inbox_pump(
         deliver=deliver,
         debug_events=_WhatsAppWebsocketInboxDebugEvents(
             account_id,
+            user_id=tenant_user_id,
             require_session_authority=require_session_authority,
         ),
     )
@@ -439,9 +449,11 @@ class _WhatsAppWebsocketInboxDebugEvents:
         self,
         account_id: UUID,
         *,
+        user_id: UUID,
         require_session_authority: Callable[[], Awaitable[None]],
     ) -> None:
         self._account_id = account_id
+        self._user_id = user_id
         self._require_session_authority = require_session_authority
 
     async def record(self, payload: dict[str, Any]) -> None:
@@ -451,7 +463,7 @@ class _WhatsAppWebsocketInboxDebugEvents:
             await record_channel_debug_event(
                 db,
                 account=account,
-                user_id=account.user_id,
+                user_id=self._user_id,
                 provider=CHANNEL_PROVIDER_WHATSAPP,
                 direction=_optional_str(payload.get("direction")) or "agent",
                 stage=_optional_str(payload.get("stage")) or "inbox_delivery",

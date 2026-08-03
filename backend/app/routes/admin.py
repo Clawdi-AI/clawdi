@@ -27,6 +27,7 @@ can land in this file under the same auth dep.
 """
 
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Annotated, Any, Never, cast
 from uuid import UUID
@@ -46,6 +47,7 @@ from app.models.channel import (
     BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_TELEGRAM,
+    CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_PROVIDERS,
     CHANNEL_VISIBILITY_PUBLIC,
     ChannelAccount,
@@ -75,7 +77,7 @@ from app.schemas.admin import (
     AdminEnvironmentCreate,
     AdminManagedAiProviderResponse,
     AdminManagedAiProviderUpsert,
-    AdminManagedWhatsAppOnboardingCreate,
+    AdminPlatformWhatsAppPairingSessionCreate,
     AdminRuntimeStateResponse,
     AdminRuntimeStateUpsert,
 )
@@ -119,6 +121,7 @@ from app.services.channel_config import (
 )
 from app.services.channels import (
     archive_channel_account,
+    build_channel_account,
     channel_webhook_url,
     configure_discord_application,
     configure_telegram_provider_webhook,
@@ -174,12 +177,11 @@ from app.services.user_provisioning import (
     lazy_create_partner_user_with_personal_project,
     lazy_create_user_with_personal_project,
 )
-from app.services.whatsapp_device_onboarding import require_whatsapp_custom_logout_for_archive
+from app.services.whatsapp_device_onboarding import require_whatsapp_logout_for_archive
 from app.services.whatsapp_managed_onboarding import (
-    cancel_managed_whatsapp_onboarding,
-    get_managed_whatsapp_onboarding,
-    require_managed_whatsapp_logout_for_archive,
-    start_managed_whatsapp_onboarding,
+    cancel_platform_whatsapp_pairing,
+    get_platform_whatsapp_pairing,
+    start_platform_whatsapp_pairing,
 )
 from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_registry
 
@@ -192,6 +194,11 @@ logger = logging.getLogger(__name__)
 # tell admin endpoints exist let alone what header they expect. The
 # routes themselves stay live — gating is `require_admin_api_key`.
 router = APIRouter(prefix="/admin", tags=["admin"], include_in_schema=False)
+whatsapp_pairing_router = APIRouter(
+    prefix="/admin",
+    tags=["admin"],
+    include_in_schema=False,
+)
 
 
 def _no_store(response: Response) -> None:
@@ -1066,7 +1073,7 @@ async def admin_list_channels(
 
     result = await db.execute(
         select(ChannelAccount, User)
-        .join(User, User.id == ChannelAccount.user_id)
+        .outerjoin(User, User.id == ChannelAccount.user_id)
         .where(*filters)
         .order_by(ChannelAccount.provider, ChannelAccount.visibility, ChannelAccount.name)
     )
@@ -1084,6 +1091,11 @@ async def admin_create_channel(
     db: AsyncSession = Depends(get_session),
 ) -> AdminChannelCreatedResponse:
     await validate_channel_account_config_urls(provider=body.provider, config=body.config)
+    if body.provider == CHANNEL_PROVIDER_WHATSAPP and body.visibility == CHANNEL_VISIBILITY_PUBLIC:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Public WhatsApp accounts require a physical pairing session.",
+        )
     if body.provider == CHANNEL_PROVIDER_DISCORD:
         if body.provider_token is None:
             raise HTTPException(
@@ -1091,7 +1103,11 @@ async def admin_create_channel(
                 detail="Discord channels require a bot token.",
             )
         validate_required_discord_interactions_config(body.config)
-    target = await _resolve_or_create_user(db, body.target_clerk_id)
+    target = (
+        await _resolve_or_create_user(db, body.target_clerk_id)
+        if body.target_clerk_id is not None
+        else None
+    )
     ciphertext, nonce = encrypt_optional_token(body.provider_token)
     webhook_secret = generate_webhook_secret()
     account_config = (
@@ -1099,8 +1115,8 @@ async def admin_create_channel(
         if body.provider == CHANNEL_PROVIDER_DISCORD
         else body.config
     )
-    account = ChannelAccount(
-        user_id=target.id,
+    account = build_channel_account(
+        owner_user_id=target.id if target is not None else None,
         provider=body.provider,
         name=body.name,
         visibility=body.visibility,
@@ -1135,7 +1151,7 @@ async def admin_create_channel(
             resource_type="channel_account",
             resource_id=str(account.id),
             channel_account_id=account.id,
-            target_user_id=target.id,
+            target_user_id=target.id if target is not None else None,
             source="api.admin",
             details={
                 "provider": account.provider,
@@ -1172,11 +1188,11 @@ async def admin_create_channel(
         await db.commit()
     await db.refresh(account)
     logger.info(
-        "admin_channel_created target_clerk_id=%s channel_id=%s provider=%s visibility=%s",
-        body.target_clerk_id,
+        "admin_channel_created channel_id=%s provider=%s visibility=%s owner_user_id=%s",
         account.id,
         account.provider,
         account.visibility,
+        account.user_id,
     )
     return AdminChannelCreatedResponse(
         **_admin_channel_response(account, target).model_dump(),
@@ -1184,22 +1200,21 @@ async def admin_create_channel(
     )
 
 
-@router.post(
-    "/channels/whatsapp/onboarding",
+@whatsapp_pairing_router.post(
+    "/channels/whatsapp/pairing-sessions",
     response_model=ChannelWhatsAppOnboardingSessionResponse,
+    status_code=status.HTTP_201_CREATED,
 )
-async def admin_start_managed_whatsapp_onboarding(
-    body: AdminManagedWhatsAppOnboardingCreate,
+async def admin_start_platform_whatsapp_pairing(
+    body: AdminPlatformWhatsAppPairingSessionCreate,
     response: Response,
     _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     _no_store(response)
-    target = await _resolve_or_create_user(db, body.target_clerk_id)
-    result = await start_managed_whatsapp_onboarding(
+    result = await start_platform_whatsapp_pairing(
         db,
         account_id=body.account_id,
-        user_id=target.id,
         request_id=body.request_id,
         name=body.name,
         registry=get_active_whatsapp_sidecar_registry(),
@@ -1207,11 +1222,10 @@ async def admin_start_managed_whatsapp_onboarding(
     record_control_plane_audit(
         db,
         actor_type="admin",
-        action="channel.whatsapp.onboarding.start",
-        resource_type="channel_whatsapp_onboarding",
+        action="channel.whatsapp.pairing.start",
+        resource_type="channel_whatsapp_pairing_session",
         resource_id=str(result.id),
         channel_account_id=result.channel_account_id,
-        target_user_id=target.id,
         source="api.admin",
         details={"account_id": str(body.account_id), "state": result.state},
     )
@@ -1219,42 +1233,42 @@ async def admin_start_managed_whatsapp_onboarding(
     return result
 
 
-@router.get(
-    "/channels/whatsapp/onboarding/{session_id}",
+@whatsapp_pairing_router.get(
+    "/channels/whatsapp/pairing-sessions/{session_id}",
     response_model=ChannelWhatsAppOnboardingSessionResponse,
 )
-async def admin_get_managed_whatsapp_onboarding(
+async def admin_get_platform_whatsapp_pairing(
     session_id: UUID,
     response: Response,
     _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     _no_store(response)
-    result = await get_managed_whatsapp_onboarding(
+    result = await get_platform_whatsapp_pairing(
         db, session_id=session_id, registry=get_active_whatsapp_sidecar_registry()
     )
     return result
 
 
-@router.delete(
-    "/channels/whatsapp/onboarding/{session_id}",
+@whatsapp_pairing_router.delete(
+    "/channels/whatsapp/pairing-sessions/{session_id}",
     response_model=ChannelWhatsAppOnboardingSessionResponse,
 )
-async def admin_cancel_managed_whatsapp_onboarding(
+async def admin_cancel_platform_whatsapp_pairing(
     session_id: UUID,
     response: Response,
     _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     _no_store(response)
-    result = await cancel_managed_whatsapp_onboarding(
+    result = await cancel_platform_whatsapp_pairing(
         db, session_id=session_id, registry=get_active_whatsapp_sidecar_registry()
     )
     record_control_plane_audit(
         db,
         actor_type="admin",
-        action="channel.whatsapp.onboarding.cancel",
-        resource_type="channel_whatsapp_onboarding",
+        action="channel.whatsapp.pairing.cancel",
+        resource_type="channel_whatsapp_pairing_session",
         resource_id=str(result.id),
         channel_account_id=result.channel_account_id,
         source="api.admin",
@@ -1282,13 +1296,18 @@ async def admin_update_channel(
     db: AsyncSession = Depends(get_session),
 ) -> AdminChannelResponse:
     account, owner = await _admin_get_channel_row(db, account_id=account_id)
-    updates = body.model_fields_set
+    updates = set(body.model_fields_set)
     if "name" in updates:
         account.name = body.name or account.name
     if "status" in updates and body.status is not None:
         account.status = body.status
-    if "visibility" in updates and body.visibility is not None:
-        account.visibility = body.visibility
+    if "visibility" in updates:
+        if body.visibility != account.visibility:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Channel visibility cannot be changed in place; recreate the channel.",
+            )
+        updates.remove("visibility")
     current_telegram_bot_username = (
         normalize_telegram_bot_username(
             account.config.get("bot_username") if isinstance(account.config, dict) else None
@@ -1490,12 +1509,8 @@ async def admin_delete_channel(
             )
         ).scalars()
     )
-    await require_whatsapp_custom_logout_for_archive(
+    await require_whatsapp_logout_for_archive(
         db,
-        account=account,
-        registry=get_active_whatsapp_sidecar_registry(),
-    )
-    await require_managed_whatsapp_logout_for_archive(
         account=account,
         registry=get_active_whatsapp_sidecar_registry(),
     )
@@ -2038,12 +2053,14 @@ async def _admin_get_channel_row(
     *,
     account_id: UUID,
     include_archived: bool = False,
-) -> tuple[ChannelAccount, User]:
+) -> tuple[ChannelAccount, User | None]:
     filters = [ChannelAccount.id == account_id]
     if not include_archived:
         filters.append(ChannelAccount.archived_at.is_(None))
     result = await db.execute(
-        select(ChannelAccount, User).join(User, User.id == ChannelAccount.user_id).where(*filters)
+        select(ChannelAccount, User)
+        .outerjoin(User, User.id == ChannelAccount.user_id)
+        .where(*filters)
     )
     row = result.one_or_none()
     if row is None:
@@ -2052,11 +2069,11 @@ async def _admin_get_channel_row(
     return account, owner
 
 
-def _admin_channel_response(account: ChannelAccount, owner: User) -> AdminChannelResponse:
+def _admin_channel_response(account: ChannelAccount, owner: User | None) -> AdminChannelResponse:
     return AdminChannelResponse(
         id=account.id,
         owner_user_id=account.user_id,
-        owner_clerk_id=owner.clerk_id,
+        owner_clerk_id=owner.clerk_id if owner is not None else None,
         provider=account.provider,
         name=account.name,
         status=account.status,
@@ -2070,7 +2087,7 @@ def _admin_channel_response(account: ChannelAccount, owner: User) -> AdminChanne
     )
 
 
-def _enabled_runtime_names(runtimes: dict[str, object]) -> list[str]:
+def _enabled_runtime_names(runtimes: Mapping[str, object]) -> list[str]:
     return sorted(
         name
         for name, value in runtimes.items()

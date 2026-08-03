@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.channel import (
     CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_ACTIVE,
+    CHANNEL_VISIBILITY_PRIVATE,
     PROVIDER_EVENT_SCOPE_ACCOUNT,
     ChannelAccount,
     ChannelBinding,
@@ -30,6 +31,7 @@ from app.services.channels import (
     lock_active_link_authority,
     parse_channel_control_command,
     record_inbound_messages_for_bindings,
+    require_channel_tenant_user_id,
     resolve_inbound_binding,
     send_control_command_reply,
 )
@@ -189,7 +191,7 @@ class WhatsAppProviderBridge:
             await record_channel_debug_event(
                 db,
                 account=account,
-                user_id=account.user_id,
+                user_id=queued.user_id,
                 provider=CHANNEL_PROVIDER_WHATSAPP,
                 direction="agent",
                 stage="outbound_delivery",
@@ -222,6 +224,19 @@ class WhatsAppProviderBridge:
         external_chat_id = attrs.get("to") or attrs.get("recipient")
         async with self._sessionmaker() as db:
             account = await _load_active_whatsapp_account(db, account_id=self._account_id)
+            link = await lock_active_link_authority(
+                db,
+                account=account,
+                bot_agent_link_id=bot_agent_link_id,
+            )
+            if link is None:
+                return WhatsAppProviderNodeRelayResult(
+                    outcome="dropped",
+                    tag=tag,
+                    external_chat_id=external_chat_id,
+                    reason="link-authority-missing",
+                )
+            tenant_user_id = link.user_id
             resolve_jid = await _build_bound_jid_resolver(
                 db,
                 account=account,
@@ -238,7 +253,7 @@ class WhatsAppProviderBridge:
                 await record_channel_debug_event(
                     db,
                     account=account,
-                    user_id=account.user_id,
+                    user_id=tenant_user_id,
                     provider=CHANNEL_PROVIDER_WHATSAPP,
                     direction="agent",
                     stage="outbound_relay",
@@ -259,7 +274,7 @@ class WhatsAppProviderBridge:
                 await record_channel_debug_event(
                     db,
                     account=account,
-                    user_id=account.user_id,
+                    user_id=tenant_user_id,
                     provider=CHANNEL_PROVIDER_WHATSAPP,
                     direction="agent",
                     stage="outbound_relay",
@@ -281,7 +296,7 @@ class WhatsAppProviderBridge:
                 await record_channel_debug_event(
                     db,
                     account=account,
-                    user_id=account.user_id,
+                    user_id=tenant_user_id,
                     provider=CHANNEL_PROVIDER_WHATSAPP,
                     direction="agent",
                     stage="outbound_relay",
@@ -300,7 +315,7 @@ class WhatsAppProviderBridge:
             await record_channel_debug_event(
                 db,
                 account=account,
-                user_id=account.user_id,
+                user_id=tenant_user_id,
                 provider=CHANNEL_PROVIDER_WHATSAPP,
                 direction="agent",
                 stage="outbound_relay",
@@ -417,17 +432,18 @@ async def persist_whatsapp_provider_event(
         alt_jid=alt_jid,
     )
     if binding_lookup.conflict:
-        await record_channel_debug_event(
-            db,
-            account=account,
-            user_id=account.user_id,
-            provider=CHANNEL_PROVIDER_WHATSAPP,
-            direction="inbound",
-            stage="provider_ingress",
-            outcome="dropped",
-            external_chat_id=route_jid,
-            details={"reason": "binding-alias-conflict", "messageId": event.message_id},
-        )
+        if account.visibility == CHANNEL_VISIBILITY_PRIVATE:
+            await record_channel_debug_event(
+                db,
+                account=account,
+                user_id=require_channel_tenant_user_id(account),
+                provider=CHANNEL_PROVIDER_WHATSAPP,
+                direction="inbound",
+                stage="provider_ingress",
+                outcome="dropped",
+                external_chat_id=route_jid,
+                details={"reason": "binding-alias-conflict", "messageId": event.message_id},
+            )
         await db.commit()
         return
     existing_binding = binding_lookup.binding

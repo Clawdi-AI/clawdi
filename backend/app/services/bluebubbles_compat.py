@@ -17,6 +17,7 @@ from app.models.channel import (
     ChannelMessage,
     ChannelScheduledMessage,
 )
+from app.services.channels import require_channel_tenant_user_id
 from app.services.file_store import FileStore
 
 BLUEBUBBLES_ATTACHMENT_MAX_BYTES = 100 * 1024 * 1024
@@ -417,7 +418,7 @@ async def stage_attachment_upload(
     await file_store.put(file_key, data)
     upload = ChannelAttachmentUpload(
         account_id=account.id,
-        user_id=user_id or account.user_id,
+        user_id=require_channel_tenant_user_id(account, tenant_user_id=user_id),
         upload_path=upload_path,
         file_key=file_key,
         file_name=safe_name,

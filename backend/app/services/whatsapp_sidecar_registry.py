@@ -272,6 +272,7 @@ class ConfiguredWhatsAppSidecarRegistry:
                     select(ChannelAccount).where(
                         ChannelAccount.provider == CHANNEL_PROVIDER_WHATSAPP,
                         ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
+                        ChannelAccount.user_id.is_(None),
                         ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
                         ChannelAccount.archived_at.is_(None),
                     )

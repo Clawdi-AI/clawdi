@@ -14,6 +14,11 @@ from httpx import ASGITransport
 
 from app.main import app
 
+_CANONICAL_ONLY_V1_PREFIXES = (
+    "/v1/platform/",
+    "/v1/admin/channels/whatsapp/pairing-sessions",
+)
+
 
 def _routes_by_path() -> dict[str, set[str]]:
     routes: dict[str, set[str]] = {}
@@ -31,7 +36,7 @@ def test_every_legacy_v1_route_has_api_alias():
         for path in routes
         if path.startswith("/v1/")
         and path != "/v1/runtime/manifest"
-        and not path.startswith("/v1/platform/")
+        and not path.startswith(_CANONICAL_ONLY_V1_PREFIXES)
     ]
     assert v1_paths, "expected /v1 routes to be mounted"
     missing = [

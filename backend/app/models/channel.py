@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -44,7 +45,7 @@ WHATSAPP_ONBOARDING_STATE_EXPIRED = "expired"
 WHATSAPP_ONBOARDING_STATE_CANCELED = "canceled"
 WHATSAPP_ONBOARDING_STATE_ERROR = "error"
 WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM = "custom"
-WHATSAPP_ONBOARDING_OWNERSHIP_MANAGED = "managed"
+WHATSAPP_ONBOARDING_OWNERSHIP_PLATFORM = "platform"
 WHATSAPP_ONBOARDING_ACTIVE_STATES = (
     WHATSAPP_ONBOARDING_STATE_GENERATING,
     WHATSAPP_ONBOARDING_STATE_READY,
@@ -80,10 +81,10 @@ class ChannelAccount(Base, TimestampMixin):
     __tablename__ = "channel_accounts"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     provider: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
@@ -109,25 +110,65 @@ class ChannelAccount(Base, TimestampMixin):
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
+        CheckConstraint(
+            "(visibility = 'private' AND user_id IS NOT NULL) OR "
+            "(visibility = 'public' AND user_id IS NULL)",
+            name="ck_channel_accounts_visibility_owner",
+        ),
         Index(
             "uq_channel_accounts_user_provider_name_active",
             "user_id",
             "provider",
             "name",
             unique=True,
-            postgresql_where=sql_text("archived_at IS NULL"),
+            postgresql_where=sql_text("visibility = 'private' AND archived_at IS NULL"),
+        ),
+        Index(
+            "uq_channel_accounts_platform_provider_name_active",
+            "provider",
+            "name",
+            unique=True,
+            postgresql_where=sql_text(
+                "visibility = 'public' AND user_id IS NULL AND archived_at IS NULL"
+            ),
+        ),
+    )
+
+
+class ChannelAccountRuntimeMarker(Base, TimestampMixin):
+    """Account-scoped provider runtime state that carries no tenant authority."""
+
+    __tablename__ = "channel_account_runtime_markers"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("channel_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope: Mapped[str] = mapped_column(String(400), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id",
+            "kind",
+            "scope",
+            name="uq_channel_account_runtime_markers_account_kind_scope",
         ),
     )
 
 
 class ChannelWhatsAppOnboardingSession(Base, TimestampMixin):
-    """Non-secret ownership and lifecycle metadata for a Custom device login.
+    """Non-secret ownership and lifecycle metadata for a physical device login.
 
     ``sidecar_account_id`` is the legacy column name for an opaque provider
     session UUID. A separate ChannelAccount is created only after Baileys reports
     an authenticated socket, so pending/failed device sessions never appear in
     bot inventory. Session UUIDs are not reused. QR values, pairing codes, phone
-    numbers, and provider auth state never enter this row.
+    numbers, and provider auth state never enter this row. Custom sessions belong
+    to a tenant; platform sessions have no tenant owner.
     """
 
     __tablename__ = "channel_whatsapp_onboarding_sessions"
@@ -148,10 +189,10 @@ class ChannelWhatsAppOnboardingSession(Base, TimestampMixin):
         ForeignKey("channel_accounts.id", ondelete="SET NULL"),
         index=True,
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
@@ -165,11 +206,23 @@ class ChannelWhatsAppOnboardingSession(Base, TimestampMixin):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
-        UniqueConstraint(
-            "ownership_kind",
+        CheckConstraint(
+            "(ownership_kind = 'custom' AND user_id IS NOT NULL) OR "
+            "(ownership_kind = 'platform' AND user_id IS NULL)",
+            name="ck_channel_whatsapp_onboarding_owner",
+        ),
+        Index(
+            "uq_channel_whatsapp_onboarding_custom_user_request",
             "user_id",
             "request_id",
-            name="uq_channel_whatsapp_onboarding_kind_user_request",
+            unique=True,
+            postgresql_where=sql_text("ownership_kind = 'custom'"),
+        ),
+        Index(
+            "uq_channel_whatsapp_onboarding_platform_request",
+            "request_id",
+            unique=True,
+            postgresql_where=sql_text("ownership_kind = 'platform'"),
         ),
         Index(
             "uq_channel_whatsapp_onboarding_active_sidecar_account",
@@ -180,11 +233,21 @@ class ChannelWhatsAppOnboardingSession(Base, TimestampMixin):
             ),
         ),
         Index(
-            "uq_channel_whatsapp_onboarding_active_user_name",
+            "uq_channel_whatsapp_onboarding_active_custom_user_name",
             "user_id",
             "name",
             unique=True,
             postgresql_where=sql_text(
+                "ownership_kind = 'custom' AND "
+                "state IN ('generating', 'ready', 'scanned', 'connected', 'error')"
+            ),
+        ),
+        Index(
+            "uq_channel_whatsapp_onboarding_active_platform_name",
+            "name",
+            unique=True,
+            postgresql_where=sql_text(
+                "ownership_kind = 'platform' AND "
                 "state IN ('generating', 'ready', 'scanned', 'connected', 'error')"
             ),
         ),
@@ -251,10 +314,10 @@ class ChannelSecret(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     name: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -808,10 +871,10 @@ class ChannelWhatsAppAuthCert(Base, TimestampMixin):
         unique=True,
         index=True,
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     root_public_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)

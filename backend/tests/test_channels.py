@@ -37,6 +37,7 @@ from app.models.channel import (
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_IMESSAGE,
     CHANNEL_PROVIDER_TELEGRAM,
+    CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_DISABLED,
     CHANNEL_VISIBILITY_PUBLIC,
     DELIVERY_STATUS_FAILED,
@@ -384,11 +385,12 @@ async def _create_admin_channel(
     settings.admin_api_key = admin_key
     try:
         payload: dict[str, Any] = {
-            "target_clerk_id": target_clerk_id,
             "provider": provider,
             "name": name,
             "visibility": visibility,
         }
+        if visibility == "private":
+            payload["target_clerk_id"] = target_clerk_id
         if provider_token is not None:
             payload["provider_token"] = provider_token
         if config is not None:
@@ -416,6 +418,26 @@ async def _create_public_telegram_account_for_user(
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+async def _seed_historical_platform_whatsapp_account(
+    db_session: AsyncSession,
+    *,
+    name: str,
+) -> ChannelAccount:
+    """Seed the retired generic-create shape for historical-state projections."""
+
+    account = channel_service.build_channel_account(
+        owner_user_id=None,
+        provider=CHANNEL_PROVIDER_WHATSAPP,
+        name=name,
+        visibility=CHANNEL_VISIBILITY_PUBLIC,
+        webhook_secret_hash=hash_token(uuid4().hex),
+    )
+    db_session.add(account)
+    await db_session.commit()
+    await db_session.refresh(account)
+    return account
 
 
 async def _seed_existing_channel_link(
@@ -1465,12 +1487,15 @@ async def test_public_channel_activity_is_scoped_to_event_owner(
     ).json()
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
+    tenant_user_id = account.user_id
+    assert tenant_user_id is not None
     account.visibility = CHANNEL_VISIBILITY_PUBLIC
+    account.user_id = None
     db_session.add(
         ChannelMessage(
             account_id=account.id,
             bot_agent_link_id=UUID(created["agent_link_id"]),
-            user_id=account.user_id,
+            user_id=tenant_user_id,
             direction=MESSAGE_DIRECTION_OUTBOUND,
             external_chat_id="owner-chat",
             provider_message_id=None,
@@ -1662,6 +1687,7 @@ async def test_channel_health_includes_public_bound_channels_without_cross_user_
     ).json()
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
+    account.user_id = None
     account.visibility = CHANNEL_VISIBILITY_PUBLIC
     owner_message = ChannelMessage(
         account_id=account.id,
@@ -1686,13 +1712,19 @@ async def test_channel_health_includes_public_bound_channels_without_cross_user_
             last_error="owner-only failure",
         )
     )
-    other_user, _other_agent = await _create_user_with_channel_agent(
+    other_user, other_agent = await _create_user_with_channel_agent(
         db_session,
         label="health-other",
     )
+    async with _client_for_user(db_session, other_user) as other_client:
+        other_link_response = await other_client.post(
+            f"/v1/channels/{account.id}/agent-links",
+            json={"agent_id": str(other_agent.id)},
+        )
+    assert other_link_response.status_code == 201, other_link_response.text
     other_binding = ChannelBinding(
         account_id=account.id,
-        bot_agent_link_id=UUID(created["agent_link_id"]),
+        bot_agent_link_id=UUID(other_link_response.json()["id"]),
         user_id=other_user.id,
         external_chat_id="other-health-chat",
         external_chat_type="private",
@@ -1703,7 +1735,7 @@ async def test_channel_health_includes_public_bound_channels_without_cross_user_
     db_session.add(
         ChannelMessage(
             account_id=account.id,
-            bot_agent_link_id=UUID(created["agent_link_id"]),
+            bot_agent_link_id=UUID(other_link_response.json()["id"]),
             binding_id=other_binding.id,
             user_id=other_user.id,
             direction=MESSAGE_DIRECTION_INBOUND,
@@ -3047,9 +3079,8 @@ async def test_historical_local_link_remains_listable_and_cleanable_but_cannot_p
                 ChannelMessage.provider_event_id == "update:9001",
             )
         )
-    ).scalar_one()
-    assert inbound_message.binding_id is None
-    assert inbound_message.bot_agent_link_id is None
+    ).scalar_one_or_none()
+    assert inbound_message is None
     assert unpair.status_code == 200, unpair.text
     assert unpair.json()["unpaired"] is True
     assert unlink.status_code == 204
@@ -3126,17 +3157,13 @@ async def test_historical_pending_pair_code_cannot_create_new_chat_binding(
 async def test_whatsapp_managed_link_admission_remains_gated(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
-    seed_user,
     agent_type: str,
 ):
-    created = await _create_admin_channel(
-        client,
-        target_clerk_id=seed_user.clerk_id,
-        provider="whatsapp",
+    account = await _seed_historical_platform_whatsapp_account(
+        db_session,
         name=f"{agent_type}-whatsapp-gated-{uuid4().hex}",
     )
-    assert created.status_code == 201, created.text
-    account_id = created.json()["id"]
+    account_id = str(account.id)
     user, agent = await _create_user_with_channel_agent(
         db_session,
         label=f"{agent_type}-whatsapp-gated",
@@ -3637,7 +3664,7 @@ async def test_explicit_link_channel_reference_uses_public_link_owner(
     link_id = UUID(linked.json()["id"])
     account = await db_session.get(ChannelAccount, account_id)
     assert account is not None
-    assert account.user_id != link_user.id
+    assert account.user_id is None
 
     reference = await channel_service.record_channel_agent_reference(
         db_session,
@@ -3651,7 +3678,7 @@ async def test_explicit_link_channel_reference_uses_public_link_owner(
     assert reference.user_id == link_user.id
     assert reference.bot_agent_link_id == link_id
 
-    reference.user_id = account.user_id
+    reference.user_id = seed_user.id
     await db_session.commit()
     repaired_reference = await channel_service.record_channel_agent_reference(
         db_session,
@@ -4084,16 +4111,12 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
 async def test_env_bound_list_channels_hides_historical_local_whatsapp_credentials(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
-    seed_user,
 ):
-    created = await _create_admin_channel(
-        client,
-        target_clerk_id=seed_user.clerk_id,
-        provider="whatsapp",
+    seeded_account = await _seed_historical_platform_whatsapp_account(
+        db_session,
         name=f"runtime-whatsapp-{uuid4().hex}",
     )
-    assert created.status_code == 201, created.text
-    account_id = created.json()["id"]
+    account_id = str(seeded_account.id)
     user, agent = await _create_user_with_channel_agent(
         db_session,
         label="runtime-wa-creds",
@@ -4364,9 +4387,8 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
             .order_by(ChannelMessage.created_at.desc())
             .limit(1)
         )
-    ).scalar_one()
-    assert bob_unpair_reply.binding_id is None
-    assert bob_unpair_reply.bot_agent_link_id is None
+    ).scalar_one_or_none()
+    assert bob_unpair_reply is None
 
     bob_takeover = await client.post(
         f"/v1/channels/telegram/{account_id}/webhook",
@@ -4389,9 +4411,8 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
             .order_by(ChannelMessage.created_at.desc())
             .limit(1)
         )
-    ).scalar_one()
-    assert bob_takeover_reply.binding_id is None
-    assert bob_takeover_reply.bot_agent_link_id is None
+    ).scalar_one_or_none()
+    assert bob_takeover_reply is None
 
     pair_code_b = (
         await db_session.execute(
@@ -8837,10 +8858,11 @@ async def test_discord_gateway_shared_account_link_bearers_are_isolated(
     link_b = await db_session.get(ChannelBotAgentLink, UUID(second["id"]))
     assert account is not None and link_a is not None and link_b is not None
     account.visibility = CHANNEL_VISIBILITY_PUBLIC
+    account.user_id = None
     binding_a = ChannelBinding(
         account_id=account.id,
         bot_agent_link_id=link_a.id,
-        user_id=account.user_id,
+        user_id=link_a.user_id,
         external_chat_id="shared-gateway-channel-a",
         external_chat_type="guild_text",
         external_chat_name="shared-gateway-guild-a",
@@ -8848,7 +8870,7 @@ async def test_discord_gateway_shared_account_link_bearers_are_isolated(
     binding_b = ChannelBinding(
         account_id=account.id,
         bot_agent_link_id=link_b.id,
-        user_id=account.user_id,
+        user_id=link_b.user_id,
         external_chat_id="shared-gateway-channel-b",
         external_chat_type="guild_text",
         external_chat_name="shared-gateway-guild-b",
@@ -8860,7 +8882,7 @@ async def test_discord_gateway_shared_account_link_bearers_are_isolated(
             ChannelBindingAlias(
                 account_id=account.id,
                 bot_agent_link_id=link_a.id,
-                user_id=account.user_id,
+                user_id=link_a.user_id,
                 binding_id=binding_a.id,
                 alias_kind="discord_channel",
                 alias_external_chat_id="shared-gateway-channel-a",
@@ -8868,7 +8890,7 @@ async def test_discord_gateway_shared_account_link_bearers_are_isolated(
             ChannelBindingAlias(
                 account_id=account.id,
                 bot_agent_link_id=link_b.id,
-                user_id=account.user_id,
+                user_id=link_b.user_id,
                 binding_id=binding_b.id,
                 alias_kind="discord_channel",
                 alias_external_chat_id="shared-gateway-channel-b",
@@ -9466,13 +9488,16 @@ async def test_shared_discord_account_command_shadows_and_fanout_are_link_scoped
     link_b = link_b_response.json()
     account = await db_session.get(ChannelAccount, UUID(created["id"]))
     assert account is not None
+    tenant_user_id = account.user_id
+    assert tenant_user_id is not None
     account.visibility = CHANNEL_VISIBILITY_PUBLIC
+    account.user_id = None
     db_session.add_all(
         [
             ChannelBinding(
                 account_id=account.id,
                 bot_agent_link_id=UUID(created["agent_link_id"]),
-                user_id=account.user_id,
+                user_id=tenant_user_id,
                 external_chat_id="shared-link-channel-a",
                 external_chat_type="guild_text",
                 external_chat_name="shared-link-guild-a",
@@ -9480,7 +9505,7 @@ async def test_shared_discord_account_command_shadows_and_fanout_are_link_scoped
             ChannelBinding(
                 account_id=account.id,
                 bot_agent_link_id=UUID(link_b["id"]),
-                user_id=account.user_id,
+                user_id=tenant_user_id,
                 external_chat_id="shared-link-channel-b",
                 external_chat_type="guild_text",
                 external_chat_name="shared-link-guild-b",

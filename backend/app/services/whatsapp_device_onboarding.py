@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.channel import (
     CHANNEL_PROVIDER_WHATSAPP,
-    CHANNEL_STATUS_ACTIVE,
     CHANNEL_VISIBILITY_PRIVATE,
     WHATSAPP_ONBOARDING_ACTIVE_STATES,
     WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
@@ -31,7 +30,12 @@ from app.schemas.channel import (
     ChannelWhatsAppOnboardingSessionResponse,
     WhatsAppOnboardingState,
 )
-from app.services.channels import generate_webhook_secret, hash_token
+from app.services.channels import (
+    build_channel_account,
+    generate_webhook_secret,
+    hash_token,
+    require_channel_tenant_user_id,
+)
 from app.services.whatsapp_native_transport import (
     WhatsAppSidecarCapabilities,
     WhatsAppSidecarError,
@@ -135,6 +139,7 @@ async def start_whatsapp_onboarding(
         select(ChannelAccount.id).where(
             ChannelAccount.user_id == user_id,
             ChannelAccount.provider == CHANNEL_PROVIDER_WHATSAPP,
+            ChannelAccount.visibility == CHANNEL_VISIBILITY_PRIVATE,
             ChannelAccount.name == name,
             ChannelAccount.archived_at.is_(None),
         )
@@ -426,7 +431,7 @@ async def retry_whatsapp_onboarding(
     return response
 
 
-async def require_whatsapp_custom_logout_for_archive(
+async def require_whatsapp_logout_for_archive(
     db: AsyncSession,
     *,
     account: ChannelAccount,
@@ -435,8 +440,41 @@ async def require_whatsapp_custom_logout_for_archive(
     if account.provider != CHANNEL_PROVIDER_WHATSAPP:
         return
     config = account.config if isinstance(account.config, dict) else {}
-    if config.get("connection_mode") != "baileys_custom":
+    connection_mode = config.get("connection_mode")
+    if connection_mode == "baileys_managed":
+        if registry is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="WhatsApp disconnect could not be confirmed",
+            )
+        revision = config.get("sidecar_config_revision")
+        client = registry.get_managed_client(account.id)
+        if (
+            client is None
+            or not isinstance(revision, str)
+            or registry.managed_account_revision(account.id) != revision
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="WhatsApp disconnect could not be confirmed",
+            )
+        try:
+            disconnected = await stop_whatsapp_pairing(client)
+        except WhatsAppSidecarError:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="WhatsApp disconnect could not be confirmed",
+            ) from None
+        if disconnected.status != "stopped" or disconnected.registered:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="WhatsApp disconnect could not be confirmed",
+            )
+        await registry.unbind_managed_account(account.id)
         return
+    if connection_mode != "baileys_custom":
+        return
+    owner_user_id = require_channel_tenant_user_id(account)
     raw_sidecar_account_id = config.get("sidecar_account_id")
     sidecar_config_revision = config.get("sidecar_config_revision")
     try:
@@ -497,7 +535,7 @@ async def require_whatsapp_custom_logout_for_archive(
         select(ChannelWhatsAppOnboardingSession).where(
             ChannelWhatsAppOnboardingSession.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
             ChannelWhatsAppOnboardingSession.channel_account_id == account.id,
-            ChannelWhatsAppOnboardingSession.user_id == account.user_id,
+            ChannelWhatsAppOnboardingSession.user_id == owner_user_id,
             ChannelWhatsAppOnboardingSession.state == WHATSAPP_ONBOARDING_STATE_CONNECTED,
         )
     )
@@ -660,11 +698,12 @@ async def _finalize_connected_account(
         )
         if existing is None and onboarding.channel_account_id is None:
             webhook_secret = generate_webhook_secret()
-            existing = ChannelAccount(
-                user_id=onboarding.user_id,
+            if onboarding.user_id is None:
+                raise WhatsAppSidecarProtocolError("custom sidecar tenant owner is missing")
+            existing = build_channel_account(
+                owner_user_id=onboarding.user_id,
                 provider=CHANNEL_PROVIDER_WHATSAPP,
                 name=onboarding.name,
-                status=CHANNEL_STATUS_ACTIVE,
                 visibility=CHANNEL_VISIBILITY_PRIVATE,
                 webhook_secret_hash=hash_token(webhook_secret),
                 config={
@@ -866,6 +905,8 @@ async def _mark_session_error(
 ) -> ChannelWhatsAppOnboardingSessionResponse:
     session_id = onboarding.id
     user_id = onboarding.user_id
+    if user_id is None:
+        raise WhatsAppSidecarProtocolError("custom sidecar tenant owner is missing")
     await db.rollback()
     current = await _owned_session(db, user_id=user_id, session_id=session_id)
     if current.state in {

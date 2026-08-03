@@ -31,7 +31,7 @@ provider transport, not an Agent-facing connector.
 | Agent | A Clawdi runtime endpoint that can receive channel messages and send replies through an SDK-compatible surface. Channels bind to `AgentEnvironment`, not Projects. | `agent_environments` |
 | Provider | The external network family: Telegram, Discord, WhatsApp, or iMessage/BlueBubbles. | `ChannelAccount.provider` |
 | External bot | A concrete external bot identity or provider endpoint, such as one Telegram bot token, one Discord application, one WhatsApp phone identity, or one BlueBubbles server. | `channel_accounts` |
-| Visibility | Whether an external bot is private to its owner or available as a Clawdi-managed public bot. | `ChannelAccount.visibility` |
+| Visibility | Whether an external bot is private to its owner or available as a Clawdi-managed public bot. Private rows have a tenant `user_id`; public rows have `user_id = NULL`. | `ChannelAccount.visibility`, `ChannelAccount.user_id` |
 | Bot access | The caller's effective relationship to a selectable bot account: `owner` for caller-owned private bots, `public` for Clawdi-managed public bots. | `/v1/channels/bot-pool` response |
 | Bot capabilities | The caller's allowed actions for a selectable bot account, such as link, pair, send, manage account, or sync commands. | `/v1/channels/bot-pool` response |
 | Bot pool | The authenticated user's selectable bot candidates: owned private bots and active Clawdi-managed public bots. This is a read-only view, not a separate state table. | `/v1/channels/bot-pool` |
@@ -57,6 +57,7 @@ User
 
 ChannelAccount (external bot)
   has one provider and one visibility
+  belongs to one User when private; is ownerless platform inventory when public
   has many ChannelBotAgentLink rows
   has many ChannelBinding rows
   has many ChannelMessage and ChannelDelivery rows
@@ -131,11 +132,13 @@ Private bots:
 Public bots:
 
 - Created and managed only through `/v1/admin/channels`.
-- Stored as `visibility = public`.
+- Stored as `visibility = public` with `user_id = NULL`; they do not cascade
+  with any tenant `User`.
 - Visible to authenticated users for linking and pairing.
 - Provider credentials, webhook secret rotation, archive, and provider-wide
-  command sync remain admin operations. The backing `user_id` is not product
-  ownership and does not grant mutable user API access.
+  command sync remain admin operations. Account-level encrypted secrets and
+  WhatsApp auth certificates are platform-owned and likewise have no tenant
+  `user_id`.
 - User-created child state is still owned by the requesting user:
   `channel_bot_agent_links`, `channel_pair_codes`, `channel_bindings`,
   `channel_messages`, `channel_deliveries`, attachments, scheduled messages,
@@ -611,12 +614,15 @@ Admin control plane:
 | API | Scope |
 | --- | --- |
 | `GET /v1/admin/channels` | Lists managed channel accounts. |
-| `POST /v1/admin/channels` | Creates private or public managed channel accounts. |
+| `POST /v1/admin/channels` | Creates Telegram/Discord accounts. Private creation requires `target_clerk_id`; public creation rejects it. Public WhatsApp uses physical pairing below. |
 | `GET /v1/admin/channels/{id}` | Reads a managed channel account. |
-| `PATCH /v1/admin/channels/{id}` | Updates account metadata, provider token, config, and encrypted secrets. |
+| `PATCH /v1/admin/channels/{id}` | Updates account metadata, provider token, config, and encrypted secrets. Visibility cannot change in place; recreate the account instead. |
 | `POST /v1/admin/channels/{id}/webhook-secret/rotate` | Rotates provider ingress secret. |
 | `POST /v1/admin/channels/{id}/commands/sync` | Syncs provider-wide pair/unpair commands. |
 | `DELETE /v1/admin/channels/{id}` | Archives the account and active child state. |
+| `POST /v1/admin/channels/whatsapp/pairing-sessions` | Starts an ownerless platform WhatsApp physical QR session for `{account_id, request_id, name}`. |
+| `GET /v1/admin/channels/whatsapp/pairing-sessions/{id}` | Reads QR/pairing status and promotes a connected session into the same public `ChannelAccount` inventory. |
+| `DELETE /v1/admin/channels/whatsapp/pairing-sessions/{id}` | Cancels an unconnected physical session after confirmed logout. Connected accounts use the ordinary admin archive route. |
 
 Provider ingress:
 

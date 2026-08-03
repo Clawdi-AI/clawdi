@@ -18,6 +18,8 @@ from app.models.channel import (
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_ACTIVE,
+    CHANNEL_VISIBILITY_PRIVATE,
+    CHANNEL_VISIBILITY_PUBLIC,
     MESSAGE_DIRECTION_INBOUND,
     ChannelAccount,
     ChannelBinding,
@@ -193,10 +195,42 @@ async def channel_debug_health(
         (
             await db.execute(
                 select(ChannelAccount)
-                .where(
-                    ChannelAccount.user_id == user_id,
-                    ChannelAccount.archived_at.is_(None),
+                .outerjoin(
+                    ChannelBotAgentLink,
+                    and_(
+                        ChannelBotAgentLink.account_id == ChannelAccount.id,
+                        ChannelBotAgentLink.user_id == user_id,
+                        ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                        ChannelBotAgentLink.archived_at.is_(None),
+                    ),
                 )
+                .outerjoin(
+                    ChannelBinding,
+                    and_(
+                        ChannelBinding.account_id == ChannelAccount.id,
+                        ChannelBinding.user_id == user_id,
+                        ChannelBinding.status == BINDING_STATUS_ACTIVE,
+                    ),
+                )
+                .where(
+                    ChannelAccount.archived_at.is_(None),
+                    or_(
+                        and_(
+                            ChannelAccount.user_id == user_id,
+                            ChannelAccount.visibility == CHANNEL_VISIBILITY_PRIVATE,
+                        ),
+                        and_(
+                            ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
+                            ChannelAccount.user_id.is_(None),
+                            ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                            or_(
+                                ChannelBotAgentLink.id.is_not(None),
+                                ChannelBinding.id.is_not(None),
+                            ),
+                        ),
+                    ),
+                )
+                .distinct()
                 .order_by(ChannelAccount.provider, ChannelAccount.name)
             )
         )
