@@ -79,6 +79,14 @@ describe("global Channels inventory", () => {
 		expect(connectDialog).toContain("Need a provider that Clawdi Channels");
 		expect(connectDialog).toContain('agentSectionLink(agentId, "console", agentRouteQuery)');
 		expect(connectDialog).toContain("Open the relevant Agent's Agent Interface");
+		expect(connectDialog).toContain("data-agent-link-warning");
+		expect(connectDialog).toContain('className="border-warning/30 bg-warning-muted py-2.5"');
+		expect(connectDialog).toContain("<TriangleAlert aria-hidden />");
+		expect(connectDialog).toContain('title: "Won’t link automatically"');
+		expect(connectDialog).toContain('title: "Agent link status unavailable"');
+		expect(connectDialog).toContain(
+			"The new Custom bot will be linked to this Agent automatically.",
+		);
 		expect(connectDialog).not.toContain("Server ID");
 		expect(connectDialog).not.toContain("Guild ID");
 	});

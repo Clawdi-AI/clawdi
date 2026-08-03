@@ -1,10 +1,11 @@
 "use client";
 
 import { Link } from "@tanstack/react-router";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { EntityIcon } from "@/components/entity-icon";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -106,6 +107,19 @@ export function ConnectBotDialog({
 	const applicationIdError = discordSelected ? discordApplicationIdError(applicationId) : null;
 	const publicKeyError = discordSelected ? discordPublicKeyError(publicKey) : null;
 	const isSubmitting = submitting || create.isPending;
+	const agentLinkWarning =
+		!whatsappSelected && providerLinkConflict
+			? {
+					title: "Won’t link automatically",
+					description: `This Agent already has a ${meta.label} bot. The new Custom bot will be added to Custom bots without being linked to this Agent.`,
+				}
+			: !whatsappSelected && agentLinkStatusUnknown
+				? {
+						title: "Agent link status unavailable",
+						description:
+							"Clawdi can’t confirm this Agent’s existing links right now. The new Custom bot will be added to Custom bots without being linked to this Agent.",
+					}
+				: null;
 
 	function changeProvider(next: ConnectableBotProvider) {
 		if (isSubmitting) return;
@@ -311,13 +325,20 @@ export function ConnectBotDialog({
 						<div className="flex min-w-0 flex-col gap-3">
 							{providerChoices}
 							{otherProviderHint}
-							{!whatsappSelected && agentId ? (
+							{agentLinkWarning ? (
+								<Alert
+									data-agent-link-warning
+									className="border-warning/30 bg-warning-muted py-2.5"
+								>
+									<TriangleAlert aria-hidden />
+									<AlertTitle>{agentLinkWarning.title}</AlertTitle>
+									<AlertDescription className="text-xs">
+										{agentLinkWarning.description}
+									</AlertDescription>
+								</Alert>
+							) : !whatsappSelected && agentId ? (
 								<p role="status" className="text-xs text-muted-foreground" aria-live="polite">
-									{providerLinkConflict
-										? `This Agent already has a ${meta.label} bot. The new Custom bot will be added to Custom bots without being linked to this Agent.`
-										: agentLinkStatusUnknown
-											? "Agent link status is unavailable. The new Custom bot will be added to Custom bots without being linked to this Agent."
-											: "The new Custom bot will be linked to this Agent automatically."}
+									The new Custom bot will be linked to this Agent automatically.
 								</p>
 							) : null}
 							{whatsappSelected ? (

@@ -10010,6 +10010,11 @@ for (const firstTimeViewport of [
 			"href",
 			`/agents/${missingProjectionEnvironmentId}/console?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
 		);
+		await expect(agentInterfaceHint.locator('[data-slot="alert"]')).toHaveCount(0);
+		await expect(connectDialog.locator("[data-agent-link-warning]")).toHaveCount(0);
+		await expect(connectDialog.getByRole("status")).toContainText(
+			"The new Custom bot will be linked to this Agent automatically.",
+		);
 		await connectDialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ }).click();
 		await expect(connectDialog.getByText("Your WhatsApp", { exact: true })).toBeVisible();
 		await expect(connectDialog.getByText("Clawdi WhatsApp", { exact: true })).toHaveCount(0);
@@ -10218,9 +10223,13 @@ test("Add channel keeps already-linked Telegram and Discord available as invento
 	const discordProvider = dialog.getByRole("button", { name: /^Discord Discord$/ });
 	await expect(telegramProvider).toBeEnabled();
 	await expect(discordProvider).toBeEnabled();
-	await expect(dialog.getByRole("status")).toContainText(
+	let linkWarning = dialog.locator("[data-agent-link-warning]");
+	await expect(linkWarning).toHaveAttribute("role", "alert");
+	await expect(linkWarning.getByText("Won’t link automatically", { exact: true })).toBeVisible();
+	await expect(linkWarning).toContainText(
 		"This Agent already has a Telegram bot. The new Custom bot will be added to Custom bots without being linked to this Agent.",
 	);
+	await expect(dialog.getByRole("status")).toHaveCount(0);
 	await expect(
 		dialog.locator("[data-other-provider-hint]").getByRole("link", {
 			name: "Agent Interface",
@@ -10252,7 +10261,10 @@ test("Add channel keeps already-linked Telegram and Discord available as invento
 	await addChannel.click();
 	dialog = page.getByRole("dialog", { name: "Add channel" });
 	await dialog.getByRole("button", { name: /^Discord Discord$/ }).click();
-	await expect(dialog.getByRole("status")).toContainText(
+	linkWarning = dialog.locator("[data-agent-link-warning]");
+	await expect(linkWarning).toHaveAttribute("role", "alert");
+	await expect(linkWarning.getByText("Won’t link automatically", { exact: true })).toBeVisible();
+	await expect(linkWarning).toContainText(
 		"This Agent already has a Discord bot. The new Custom bot will be added to Custom bots without being linked to this Agent.",
 	);
 	await dialog.getByLabel("Name").fill("Additional Discord");
@@ -10294,6 +10306,78 @@ test("Add channel keeps already-linked Telegram and Discord available as invento
 	);
 	await expect(page.getByRole("dialog", { name: "Add channel" })).toHaveCount(0);
 	expect(errors, `inventory-only Custom bot errors: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("Add channel warns and adds to inventory when Agent link status is unavailable", async ({
+	page,
+}, testInfo) => {
+	await page.setViewportSize({ width: 320, height: 568 });
+	const agentId = missingProjectionEnvironmentId;
+	const createChannelRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [runningMissingProjectionDeployment],
+		channelAccounts: [],
+		channelAgentLinksResponse: {
+			status: 503,
+			body: { detail: "Agent link projection is temporarily unavailable" },
+		},
+		createChannelRequests,
+		createChannelResponse: {
+			status: 201,
+			body: {
+				id: "5a777777-7777-4777-8777-777777777777",
+				provider: "telegram",
+				name: "Conservative Telegram",
+				status: "active",
+				visibility: "private",
+				has_provider_token: true,
+				webhook_url: "https://cloud.example.test/channels/conservative-telegram",
+				created_at: "2026-08-03T00:03:00Z",
+				webhook_secret: "conservative-webhook-secret-must-not-render",
+				agent_link_id: null,
+				agent_id: null,
+				agent_token: null,
+			},
+		},
+	});
+
+	await page.goto(
+		`/agents/${agentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+	);
+	await page.locator("[data-agent-add-custom-bot]").click();
+	let dialog = page.getByRole("dialog", { name: "Add channel" });
+	const linkWarning = dialog.locator("[data-agent-link-warning]");
+	await expect(linkWarning).toHaveAttribute("role", "alert");
+	await expect(
+		linkWarning.getByText("Agent link status unavailable", { exact: true }),
+	).toBeVisible();
+	await expect(linkWarning).toContainText(
+		"Clawdi can’t confirm this Agent’s existing links right now. The new Custom bot will be added to Custom bots without being linked to this Agent.",
+	);
+	await expect(dialog.getByRole("status")).toHaveCount(0);
+	await expect(dialog.locator("[data-other-provider-hint]")).toBeVisible();
+	await expect(dialog.locator('[data-other-provider-hint] [data-slot="alert"]')).toHaveCount(0);
+	await expectNoHorizontalOverflow(dialog, "unavailable Agent link warning at 320px");
+	await dialog.screenshot({ path: testInfo.outputPath("agent-link-status-unavailable-320.png") });
+
+	await dialog.getByLabel("Name").fill("Conservative Telegram");
+	await dialog.getByLabel("Bot token").fill("123456:conservative-telegram-token");
+	await dialog.getByRole("button", { name: "Add custom bot", exact: true }).click();
+	await expect.poll(() => createChannelRequests.length).toBe(1);
+	expect(JSON.parse(createChannelRequests[0] ?? "{}")).toEqual({
+		provider: "telegram",
+		name: "Conservative Telegram",
+		provider_token: "123456:conservative-telegram-token",
+		agent_id: null,
+	});
+	dialog = page.getByRole("dialog", { name: "Custom bot added" });
+	await expect(dialog).toContainText(
+		"Conservative Telegram was added to Custom bots without linking to this Agent.",
+	);
+	await expect(page.getByRole("dialog", { name: "Pair Telegram" })).toHaveCount(0);
+	await expect(page.locator("body")).not.toContainText(
+		"conservative-webhook-secret-must-not-render",
+	);
 });
 
 test("Agent bot groups keep every bot visible and gate provider conflicts in place", async ({
