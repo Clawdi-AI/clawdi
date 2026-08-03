@@ -612,7 +612,7 @@ export function HostedAgentDetail({
 					{activeTab === "connectors" ? <ConnectorsSurface embedded /> : null}
 					{activeTab === "projects" ? (
 						projection.status === "resolved" ? (
-							<AgentProjectsTab agentId={environmentId} />
+							<AgentProjectsTab agentId={environmentId} routeSearch={routeSearch} />
 						) : (
 							<ProjectionDependentUnavailable label="Projects" />
 						)
@@ -631,7 +631,7 @@ export function HostedAgentDetail({
 					) : null}
 					{activeTab === "vaults" ? (
 						projection.status === "resolved" ? (
-							<AgentVaultsTab agentId={environmentId} />
+							<AgentVaultsTab agentId={environmentId} routeSearch={routeSearch} />
 						) : (
 							<ProjectionDependentUnavailable label="Vaults" />
 						)

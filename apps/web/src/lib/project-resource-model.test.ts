@@ -14,18 +14,21 @@ import {
 	projectResourceScopeLabel,
 	sessionDetailHref,
 	skillDetailHref,
+	vaultDetailHref,
 } from "./project-resource-model";
 
 describe("project resource model", () => {
 	it("builds Project-scoped links only for managed resources", () => {
 		expect(projectResourceHref("skills", "proj_1")).toBe("/skills?project=proj_1");
-		expect(projectResourceHref("vaults", "proj 1")).toBe("/vault?project=proj%201");
+		expect(projectResourceHref("vaults", "proj 1")).toBe("/vaults?project=proj%201");
 		expect(projectResourceHref("memories", "proj_1")).toBe("/memories");
 		expect(projectResourceHref("sessions", "proj_1")).toBe("/sessions");
 	});
 
 	it("builds stable detail links for resource rows", () => {
 		expect(projectDetailHref("proj 1")).toBe("/projects/proj%201");
+		expect(vaultDetailHref("prod keys", "vault/1")).toBe("/vaults/prod%20keys?vault=vault%2F1");
+		expect(vaultDetailHref("prod keys")).toBe("/vaults/prod%20keys");
 		expect(skillDetailHref("team/foo", "proj 1")).toBe("/skills/team%2Ffoo?project=proj%201");
 		expect(skillDetailHref("team/foo")).toBe("/skills/team%2Ffoo");
 		expect(sessionDetailHref("session 1")).toBe("/sessions/session%201");
@@ -90,5 +93,6 @@ describe("project resource model", () => {
 			"Account resources / Connectors",
 		);
 		expect(getProjectResourceDefinition("vaults").navLabel).toBe("Vaults");
+		expect(getProjectResourceDefinition("vaults").href).toBe("/vaults");
 	});
 });

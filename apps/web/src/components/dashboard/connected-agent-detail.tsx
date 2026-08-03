@@ -342,9 +342,13 @@ export function ConnectedAgentDetail({
 
 					{activeTab === "connectors" ? <ConnectorsSurface embedded /> : null}
 
-					{activeTab === "projects" ? <AgentProjectsTab agentId={id} /> : null}
+					{activeTab === "projects" ? (
+						<AgentProjectsTab agentId={id} routeSearch={routeSearch} />
+					) : null}
 
-					{activeTab === "vaults" ? <AgentVaultsTab agentId={id} /> : null}
+					{activeTab === "vaults" ? (
+						<AgentVaultsTab agentId={id} routeSearch={routeSearch} />
+					) : null}
 
 					{activeTab === "settings" ? <AgentSettingsPanel environmentId={id} /> : null}
 				</section>

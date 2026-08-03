@@ -11,6 +11,14 @@ type FetchVaultPage = (
 	pageSize: number,
 ) => Promise<PaginatedPage<VaultSummary>>;
 
+export function vaultsForSelectedProject(
+	vaults: readonly VaultSummary[],
+	projectId: string,
+): VaultSummary[] {
+	if (projectId === "all") return [...vaults];
+	return vaults.filter((vault) => (vault.project_ids ?? []).includes(projectId));
+}
+
 /** Never return a Vault unless it is attached to at least one effective Agent Project. */
 export function vaultsForProjectIds(
 	vaults: readonly VaultSummary[],

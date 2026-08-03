@@ -76,7 +76,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { vaultDetailSearch } from "@/components/vault/vault-detail-identity";
-import { agentSectionHref, agentSectionLabel } from "@/lib/agent-routes";
+import { agentSectionHref, agentSectionLabel, agentSectionLink } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { formatApiError, isApiNotFoundError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
@@ -85,6 +85,11 @@ import { formatShortDate } from "@/lib/format";
 import { identityFor } from "@/lib/identity";
 import { projectDetailHref, projectResourceHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import {
+	projectReturnTarget,
+	resourceOriginSearch,
+	vaultDetailHrefFrom,
+} from "@/lib/resource-navigation";
 import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -106,6 +111,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	const router = useRouter();
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr]);
+	const backTarget = projectReturnTarget(searchParams);
 	const [useWithAgentOpen, setUseWithAgentOpen] = useState(
 		searchParams.get("useWithAgent") === "1",
 	);
@@ -131,8 +137,11 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	const handleUseWithAgentOpenChange = (open: boolean) => {
 		setUseWithAgentOpen(open);
 		if (!open && searchParams.get("useWithAgent") === "1") {
+			const nextSearch = new URLSearchParams(searchParams);
+			nextSearch.delete("useWithAgent");
+			const nextQuery = nextSearch.toString();
 			void router.navigate({
-				href: projectDetailHref(projectId),
+				href: `${projectDetailHref(projectId)}${nextQuery ? `?${nextQuery}` : ""}`,
 				replace: true,
 				resetScroll: false,
 			});
@@ -276,14 +285,14 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<Button
-					render={<Link to="/projects" />}
+					render={<Link to={backTarget.href} />}
 					nativeButton={false}
 					variant="ghost"
 					size="sm"
 					className="w-fit"
 				>
 					<ArrowLeft className="mr-1.5 size-4" />
-					Projects
+					{backTarget.label}
 				</Button>
 				{isApiNotFoundError(projects.error) ? (
 					<DetailNotFound
@@ -307,14 +316,14 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<Button
-					render={<Link to="/projects" />}
+					render={<Link to={backTarget.href} />}
 					nativeButton={false}
 					variant="ghost"
 					size="sm"
 					className="w-fit"
 				>
 					<ArrowLeft className="mr-1.5 size-4" />
-					Projects
+					{backTarget.label}
 				</Button>
 				<DetailNotFound
 					title="Project not found"
@@ -370,14 +379,14 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
 			<Button
-				render={<Link to="/projects" />}
+				render={<Link to={backTarget.href} />}
 				nativeButton={false}
 				variant="ghost"
 				size="sm"
 				className="w-fit"
 			>
 				<ArrowLeft className="mr-1.5 size-4" />
-				Projects
+				{backTarget.label}
 			</Button>
 
 			{/* Hub identity header — who this project is, in one glance. */}
@@ -671,8 +680,11 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 									</Badge>
 								)}
 								<Link
-									to="/agents/$id"
-									params={{ id: env.id }}
+									{...agentSectionLink(
+										env.id,
+										"projects",
+										resourceOriginSearch({ type: "project", projectId: project.id }),
+									)}
 									className="absolute inset-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 								>
 									<span className="sr-only">Open agent {displayAgentName(env)}</span>
@@ -683,7 +695,9 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 				)}
 			</HubSection>
 
-			{isOwner && isManaged ? <ManagedProjectPanel project={project} agent={projectAgent} /> : null}
+			{isOwner && isManaged ? (
+				<ManagedProjectPanel project={project} agent={projectAgent} returnTarget={backTarget} />
+			) : null}
 		</div>
 	);
 }
@@ -770,9 +784,11 @@ function projectDetailDescription(project: ProjectRow, isOwner: boolean, typeLab
 function ManagedProjectPanel({
 	project,
 	agent,
+	returnTarget,
 }: {
 	project: ProjectRow;
 	agent?: ProjectAgentMetadata | null;
+	returnTarget: { href: string; label: string };
 }) {
 	const description =
 		project.kind === "environment"
@@ -791,13 +807,13 @@ function ManagedProjectPanel({
 				<ProjectIdentity project={project} agent={agent} showKind={false} />
 			</div>
 			<Button
-				render={<Link to="/projects" />}
+				render={<Link to={returnTarget.href} />}
 				nativeButton={false}
 				variant="outline"
 				size="sm"
 				className="w-full"
 			>
-				Back to Projects
+				Back to {returnTarget.label}
 			</Button>
 		</DetailPanel>
 	);
@@ -1208,6 +1224,7 @@ function CreateVaultInProjectForm({
 	onChanged: () => void;
 }) {
 	const api = useApi();
+	const router = useRouter();
 	const [slug, setSlug] = useState("");
 	const create = useMutation({
 		mutationFn: async (nextSlug: string) =>
@@ -1217,10 +1234,13 @@ function CreateVaultInProjectForm({
 					body: { slug: nextSlug, name: nextSlug },
 				}),
 			),
-		onSuccess: () => {
+		onSuccess: (created) => {
 			setSlug("");
 			onChanged();
-			toast.success("Vault created", { description: "Added to this Project." });
+			toast.success("Vault created", { description: "Added to this Project. Add keys next." });
+			void router.navigate({
+				href: vaultDetailHrefFrom(created.slug, created.id, { type: "project", projectId }),
+			});
 		},
 		onError: (e) => toast.error("Couldn't create vault", { description: errorMessage(e) }),
 	});
@@ -1256,13 +1276,13 @@ function CreateVaultInProjectForm({
 				</Button>
 			</div>
 			<p className="text-xs text-muted-foreground">
-				Use lowercase letters, numbers, and hyphens. Add keys from the Vaults page after creation.
+				Use lowercase letters, numbers, and hyphens. The new Vault opens so you can add keys.
 			</p>
 		</div>
 	);
 }
 
-function VaultRow({ vault }: { vault: VaultSummary; ownProjectId: string }) {
+function VaultRow({ vault, ownProjectId }: { vault: VaultSummary; ownProjectId: string }) {
 	const id = identityFor(vault.name);
 	return (
 		<div className="group relative flex items-center gap-3 p-3 transition-colors hover:bg-muted/30">
@@ -1280,9 +1300,9 @@ function VaultRow({ vault }: { vault: VaultSummary; ownProjectId: string }) {
 			</div>
 			<ChevronRight className="size-4 shrink-0 text-muted-foreground/50 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
 			<Link
-				to="/vault/$slug"
+				to="/vaults/$slug"
 				params={{ slug: vault.slug }}
-				search={vaultDetailSearch(vault)}
+				search={vaultDetailSearch(vault, { type: "project", projectId: ownProjectId })}
 				aria-label={`Open vault ${vault.name}`}
 				className="absolute inset-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 			/>

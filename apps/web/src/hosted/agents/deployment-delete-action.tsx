@@ -70,7 +70,7 @@ export function HostedDeploymentDeleteAction({
 				if (onAccepted) {
 					await onAccepted();
 				} else {
-					await router.navigate({ href: "/", replace: true });
+					await router.navigate({ href: "/agents", replace: true });
 				}
 			} catch {
 				toast.error("Agent removed, but navigation failed", {

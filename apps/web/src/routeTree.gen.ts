@@ -39,6 +39,8 @@ import { Route as ProtectedDashboardSkillsIndexRouteImport } from './routes/_pro
 import { Route as ProtectedDashboardSkillsKeyRouteImport } from './routes/_protected/_dashboard/skills/$key'
 import { Route as ProtectedDashboardVaultIndexRouteImport } from './routes/_protected/_dashboard/vault/index'
 import { Route as ProtectedDashboardVaultSlugRouteImport } from './routes/_protected/_dashboard/vault/$slug'
+import { Route as ProtectedDashboardVaultsIndexRouteImport } from './routes/_protected/_dashboard/vaults/index'
+import { Route as ProtectedDashboardVaultsSlugRouteImport } from './routes/_protected/_dashboard/vaults/$slug'
 import { Route as ProtectedOauthCodexCallbackRouteImport } from './routes/_protected/oauth/codex/callback'
 import { Route as ProtectedDashboardAgentsIdIndexRouteImport } from './routes/_protected/_dashboard/agents/$id/index'
 import { Route as ProtectedDashboardAgentsIdSectionRouteImport } from './routes/_protected/_dashboard/agents/$id/$section'
@@ -213,6 +215,18 @@ const ProtectedDashboardVaultSlugRoute =
     path: '/vault/$slug',
     getParentRoute: () => ProtectedDashboardRoute,
   } as any)
+const ProtectedDashboardVaultsIndexRoute =
+  ProtectedDashboardVaultsIndexRouteImport.update({
+    id: '/vaults/',
+    path: '/vaults/',
+    getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
+const ProtectedDashboardVaultsSlugRoute =
+  ProtectedDashboardVaultsSlugRouteImport.update({
+    id: '/vaults/$slug',
+    path: '/vaults/$slug',
+    getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
 const ProtectedOauthCodexCallbackRoute =
   ProtectedOauthCodexCallbackRouteImport.update({
     id: '/oauth/codex/callback',
@@ -271,6 +285,7 @@ export interface FileRoutesByFullPath {
   '/sessions/$id': typeof ProtectedDashboardSessionsIdRoute
   '/skills/$key': typeof ProtectedDashboardSkillsKeyRoute
   '/vault/$slug': typeof ProtectedDashboardVaultSlugRoute
+  '/vaults/$slug': typeof ProtectedDashboardVaultsSlugRoute
   '/oauth/codex/callback': typeof ProtectedOauthCodexCallbackRoute
   '/agents/': typeof ProtectedDashboardAgentsIndexRoute
   '/channels/': typeof ProtectedDashboardChannelsIndexRoute
@@ -280,6 +295,7 @@ export interface FileRoutesByFullPath {
   '/sessions/': typeof ProtectedDashboardSessionsIndexRoute
   '/skills/': typeof ProtectedDashboardSkillsIndexRoute
   '/vault/': typeof ProtectedDashboardVaultIndexRoute
+  '/vaults/': typeof ProtectedDashboardVaultsIndexRoute
   '/agents/$id/$section': typeof ProtectedDashboardAgentsIdSectionRoute
   '/agents/$id/': typeof ProtectedDashboardAgentsIdIndexRoute
   '/agents/$id/sessions/$sessionId': typeof ProtectedDashboardAgentsIdSessionsSessionIdRoute
@@ -306,6 +322,7 @@ export interface FileRoutesByTo {
   '/sessions/$id': typeof ProtectedDashboardSessionsIdRoute
   '/skills/$key': typeof ProtectedDashboardSkillsKeyRoute
   '/vault/$slug': typeof ProtectedDashboardVaultSlugRoute
+  '/vaults/$slug': typeof ProtectedDashboardVaultsSlugRoute
   '/oauth/codex/callback': typeof ProtectedOauthCodexCallbackRoute
   '/agents': typeof ProtectedDashboardAgentsIndexRoute
   '/channels': typeof ProtectedDashboardChannelsIndexRoute
@@ -315,6 +332,7 @@ export interface FileRoutesByTo {
   '/sessions': typeof ProtectedDashboardSessionsIndexRoute
   '/skills': typeof ProtectedDashboardSkillsIndexRoute
   '/vault': typeof ProtectedDashboardVaultIndexRoute
+  '/vaults': typeof ProtectedDashboardVaultsIndexRoute
   '/agents/$id/$section': typeof ProtectedDashboardAgentsIdSectionRoute
   '/agents/$id': typeof ProtectedDashboardAgentsIdIndexRoute
   '/agents/$id/sessions/$sessionId': typeof ProtectedDashboardAgentsIdSessionsSessionIdRoute
@@ -345,6 +363,7 @@ export interface FileRoutesById {
   '/_protected/_dashboard/sessions/$id': typeof ProtectedDashboardSessionsIdRoute
   '/_protected/_dashboard/skills/$key': typeof ProtectedDashboardSkillsKeyRoute
   '/_protected/_dashboard/vault/$slug': typeof ProtectedDashboardVaultSlugRoute
+  '/_protected/_dashboard/vaults/$slug': typeof ProtectedDashboardVaultsSlugRoute
   '/_protected/oauth/codex/callback': typeof ProtectedOauthCodexCallbackRoute
   '/_protected/_dashboard/agents/': typeof ProtectedDashboardAgentsIndexRoute
   '/_protected/_dashboard/channels/': typeof ProtectedDashboardChannelsIndexRoute
@@ -354,6 +373,7 @@ export interface FileRoutesById {
   '/_protected/_dashboard/sessions/': typeof ProtectedDashboardSessionsIndexRoute
   '/_protected/_dashboard/skills/': typeof ProtectedDashboardSkillsIndexRoute
   '/_protected/_dashboard/vault/': typeof ProtectedDashboardVaultIndexRoute
+  '/_protected/_dashboard/vaults/': typeof ProtectedDashboardVaultsIndexRoute
   '/_protected/_dashboard/agents/$id/$section': typeof ProtectedDashboardAgentsIdSectionRoute
   '/_protected/_dashboard/agents/$id/': typeof ProtectedDashboardAgentsIdIndexRoute
   '/_protected/_dashboard/agents/$id/sessions/$sessionId': typeof ProtectedDashboardAgentsIdSessionsSessionIdRoute
@@ -383,6 +403,7 @@ export interface FileRouteTypes {
     | '/sessions/$id'
     | '/skills/$key'
     | '/vault/$slug'
+    | '/vaults/$slug'
     | '/oauth/codex/callback'
     | '/agents/'
     | '/channels/'
@@ -392,6 +413,7 @@ export interface FileRouteTypes {
     | '/sessions/'
     | '/skills/'
     | '/vault/'
+    | '/vaults/'
     | '/agents/$id/$section'
     | '/agents/$id/'
     | '/agents/$id/sessions/$sessionId'
@@ -418,6 +440,7 @@ export interface FileRouteTypes {
     | '/sessions/$id'
     | '/skills/$key'
     | '/vault/$slug'
+    | '/vaults/$slug'
     | '/oauth/codex/callback'
     | '/agents'
     | '/channels'
@@ -427,6 +450,7 @@ export interface FileRouteTypes {
     | '/sessions'
     | '/skills'
     | '/vault'
+    | '/vaults'
     | '/agents/$id/$section'
     | '/agents/$id'
     | '/agents/$id/sessions/$sessionId'
@@ -456,6 +480,7 @@ export interface FileRouteTypes {
     | '/_protected/_dashboard/sessions/$id'
     | '/_protected/_dashboard/skills/$key'
     | '/_protected/_dashboard/vault/$slug'
+    | '/_protected/_dashboard/vaults/$slug'
     | '/_protected/oauth/codex/callback'
     | '/_protected/_dashboard/agents/'
     | '/_protected/_dashboard/channels/'
@@ -465,6 +490,7 @@ export interface FileRouteTypes {
     | '/_protected/_dashboard/sessions/'
     | '/_protected/_dashboard/skills/'
     | '/_protected/_dashboard/vault/'
+    | '/_protected/_dashboard/vaults/'
     | '/_protected/_dashboard/agents/$id/$section'
     | '/_protected/_dashboard/agents/$id/'
     | '/_protected/_dashboard/agents/$id/sessions/$sessionId'
@@ -694,6 +720,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProtectedDashboardVaultSlugRouteImport
       parentRoute: typeof ProtectedDashboardRoute
     }
+    '/_protected/_dashboard/vaults/': {
+      id: '/_protected/_dashboard/vaults/'
+      path: '/vaults'
+      fullPath: '/vaults/'
+      preLoaderRoute: typeof ProtectedDashboardVaultsIndexRouteImport
+      parentRoute: typeof ProtectedDashboardRoute
+    }
+    '/_protected/_dashboard/vaults/$slug': {
+      id: '/_protected/_dashboard/vaults/$slug'
+      path: '/vaults/$slug'
+      fullPath: '/vaults/$slug'
+      preLoaderRoute: typeof ProtectedDashboardVaultsSlugRouteImport
+      parentRoute: typeof ProtectedDashboardRoute
+    }
     '/_protected/oauth/codex/callback': {
       id: '/_protected/oauth/codex/callback'
       path: '/oauth/codex/callback'
@@ -777,6 +817,7 @@ interface ProtectedDashboardRouteChildren {
   ProtectedDashboardSessionsIdRoute: typeof ProtectedDashboardSessionsIdRoute
   ProtectedDashboardSkillsKeyRoute: typeof ProtectedDashboardSkillsKeyRoute
   ProtectedDashboardVaultSlugRoute: typeof ProtectedDashboardVaultSlugRoute
+  ProtectedDashboardVaultsSlugRoute: typeof ProtectedDashboardVaultsSlugRoute
   ProtectedDashboardAgentsIndexRoute: typeof ProtectedDashboardAgentsIndexRoute
   ProtectedDashboardChannelsIndexRoute: typeof ProtectedDashboardChannelsIndexRoute
   ProtectedDashboardConnectorsIndexRoute: typeof ProtectedDashboardConnectorsIndexRoute
@@ -785,6 +826,7 @@ interface ProtectedDashboardRouteChildren {
   ProtectedDashboardSessionsIndexRoute: typeof ProtectedDashboardSessionsIndexRoute
   ProtectedDashboardSkillsIndexRoute: typeof ProtectedDashboardSkillsIndexRoute
   ProtectedDashboardVaultIndexRoute: typeof ProtectedDashboardVaultIndexRoute
+  ProtectedDashboardVaultsIndexRoute: typeof ProtectedDashboardVaultsIndexRoute
 }
 
 const ProtectedDashboardRouteChildren: ProtectedDashboardRouteChildren = {
@@ -799,6 +841,7 @@ const ProtectedDashboardRouteChildren: ProtectedDashboardRouteChildren = {
   ProtectedDashboardSessionsIdRoute: ProtectedDashboardSessionsIdRoute,
   ProtectedDashboardSkillsKeyRoute: ProtectedDashboardSkillsKeyRoute,
   ProtectedDashboardVaultSlugRoute: ProtectedDashboardVaultSlugRoute,
+  ProtectedDashboardVaultsSlugRoute: ProtectedDashboardVaultsSlugRoute,
   ProtectedDashboardAgentsIndexRoute: ProtectedDashboardAgentsIndexRoute,
   ProtectedDashboardChannelsIndexRoute: ProtectedDashboardChannelsIndexRoute,
   ProtectedDashboardConnectorsIndexRoute:
@@ -808,6 +851,7 @@ const ProtectedDashboardRouteChildren: ProtectedDashboardRouteChildren = {
   ProtectedDashboardSessionsIndexRoute: ProtectedDashboardSessionsIndexRoute,
   ProtectedDashboardSkillsIndexRoute: ProtectedDashboardSkillsIndexRoute,
   ProtectedDashboardVaultIndexRoute: ProtectedDashboardVaultIndexRoute,
+  ProtectedDashboardVaultsIndexRoute: ProtectedDashboardVaultsIndexRoute,
 }
 
 const ProtectedDashboardRouteWithChildren =

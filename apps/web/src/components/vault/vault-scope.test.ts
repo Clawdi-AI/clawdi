@@ -4,6 +4,7 @@ import {
 	effectiveAgentProjectIds,
 	fetchAgentProjectVaults,
 	vaultsForProjectIds,
+	vaultsForSelectedProject,
 } from "./vault-scope";
 
 type Binding = components["schemas"]["AgentProjectBindingResponse"];
@@ -39,6 +40,20 @@ function vault(id: string, projectIds: string[]): Vault {
 }
 
 describe("agent Vault scope", () => {
+	test("filters the canonical Vault inventory by its URL-selected Project", () => {
+		const vaults = [
+			vault("primary-vault", ["project_primary"]),
+			vault("shared-vault", ["project_primary", "project_context"]),
+			vault("context-vault", ["project_context"]),
+		];
+
+		expect(vaultsForSelectedProject(vaults, "project_primary").map((item) => item.id)).toEqual([
+			"primary-vault",
+			"shared-vault",
+		]);
+		expect(vaultsForSelectedProject(vaults, "all")).toEqual(vaults);
+	});
+
 	test("orders the primary Project before ordered context bindings and deduplicates ids", () => {
 		expect(
 			effectiveAgentProjectIds([

@@ -106,7 +106,7 @@ async function expectNoErrors(page: Page, errors: string[], label: string) {
 	expect(errors, `${label}: ${errors.join(" | ")}`).toEqual([]);
 }
 
-for (const path of ["/skills", "/sessions", "/connectors", "/memories", "/vault", "/projects"]) {
+for (const path of ["/skills", "/sessions", "/connectors", "/memories", "/vaults", "/projects"]) {
 	test(`page ${path} renders without browser errors`, async ({ page }) => {
 		const errors = collectBrowserErrors(page);
 		await stubApi(page);

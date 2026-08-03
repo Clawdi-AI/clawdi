@@ -11,6 +11,15 @@ export type ProjectResourceId =
 export type ProjectResourceScope = "container" | "project-managed" | "activity" | "account-wide";
 export type ProjectResourceGroup = "project-registry" | "project-resources" | "user-resources";
 
+export const PROJECT_RESOURCE_LIST_PATHS = {
+	projects: "/projects",
+	skills: "/skills",
+	vaults: "/vaults",
+	sessions: "/sessions",
+	memories: "/memories",
+	connectors: "/connectors",
+} as const satisfies Record<ProjectResourceId, string>;
+
 type DashboardStatCountKey = {
 	[K in keyof DashboardStats]: DashboardStats[K] extends number ? K : never;
 }[keyof DashboardStats];
@@ -44,7 +53,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		description: PROJECT_CANONICAL_DEFINITION,
 		managementDescription:
 			"Create Projects to share resources with teammates. Use the Global Project for account defaults. Agent Projects belong to one connected agent and cannot be shared.",
-		href: "/projects",
+		href: PROJECT_RESOURCE_LIST_PATHS.projects,
 		emptyCta: "Create Project",
 		routeGroup: "project-registry",
 		projectScope: "container",
@@ -59,7 +68,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		description: "Reusable instructions agents can read from a Project.",
 		managementDescription:
 			"Skills are Project resources. Choose a Project, then install or remove its skills.",
-		href: "/skills",
+		href: PROJECT_RESOURCE_LIST_PATHS.skills,
 		emptyCta: "Browse Marketplace",
 		routeGroup: "project-resources",
 		projectScope: "project-managed",
@@ -76,7 +85,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		description: "Encrypted key collections that can be added to one or more Projects.",
 		managementDescription:
 			"Store API keys once, then add Vaults to the Projects where agents should use those keys.",
-		href: "/vault",
+		href: PROJECT_RESOURCE_LIST_PATHS.vaults,
 		emptyCta: "Create Vault",
 		routeGroup: "project-resources",
 		projectScope: "project-managed",
@@ -93,7 +102,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		description: "Conversation history synced from connected agents.",
 		managementDescription:
 			"Sessions are agent activity. Browse conversations and filter by the agent that produced them.",
-		href: "/sessions",
+		href: PROJECT_RESOURCE_LIST_PATHS.sessions,
 		emptyCta: "Start Syncing",
 		routeGroup: "user-resources",
 		projectScope: "activity",
@@ -109,7 +118,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		description: "Account-level notes agents can recall when they run.",
 		managementDescription:
 			"Memories are account-level context agents can recall. Project resources stay in Projects.",
-		href: "/memories",
+		href: PROJECT_RESOURCE_LIST_PATHS.memories,
 		emptyCta: "Add Memory",
 		routeGroup: "user-resources",
 		projectScope: "account-wide",
@@ -125,7 +134,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		description: "Account-wide app connections that agents can use after approval.",
 		managementDescription:
 			"Connect apps once at the account level. Agents can use approved connectors through tools.",
-		href: "/connectors",
+		href: PROJECT_RESOURCE_LIST_PATHS.connectors,
 		emptyCta: "Connect App",
 		routeGroup: "user-resources",
 		projectScope: "account-wide",
@@ -197,6 +206,11 @@ export function projectResourceHref(id: ProjectResourceId, projectId?: string): 
 
 export function projectDetailHref(projectId: string): string {
 	return `/projects/${encodeURIComponent(projectId)}`;
+}
+
+export function vaultDetailHref(slug: string, vaultId?: string | null): string {
+	const path = `${PROJECT_RESOURCE_LIST_PATHS.vaults}/${encodeURIComponent(slug)}`;
+	return vaultId ? `${path}?vault=${encodeURIComponent(vaultId)}` : path;
 }
 
 export function skillDetailHref(skillKey: string, projectId?: string | null): string {

@@ -26,6 +26,7 @@ import {
 	ProjectResourceCardSkeleton,
 	UnavailableProjectResourceCard,
 } from "@/components/projects/project-resource-card";
+import { ResourceContextBackLink } from "@/components/resource-context-back-link";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
@@ -38,17 +39,24 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import type { AgentRouteSearch } from "@/lib/agent-routes";
 import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import {
+	agentResourceReturnTarget,
+	type ResourceNavigationOrigin,
+} from "@/lib/resource-navigation";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
 
 export function AgentProjectsTab({
 	agentId,
+	routeSearch,
 	enabled = true,
 }: {
 	agentId: string;
+	routeSearch: AgentRouteSearch;
 	enabled?: boolean;
 }) {
 	const $api = useOpenApi();
@@ -63,25 +71,34 @@ export function AgentProjectsTab({
 	);
 	const bindings = useAgentProjectBindings(agentId, { enabled });
 
+	const navigationOrigin: ResourceNavigationOrigin = {
+		type: "agent-projects",
+		agentId,
+		agentQuery: routeSearch,
+	};
 	return (
-		<AgentProjectsPanel
-			agentId={agentId}
-			bindings={bindings.data ?? []}
-			projects={projects.data ?? []}
-			isLoading={bindings.isLoading || projects.isLoading}
-			bindingsError={shouldBlockQueryError(bindings.error, bindings.data) ? bindings.error : null}
-			onRetryBindings={() => {
-				void bindings.refetch();
-			}}
-			projectsError={shouldBlockQueryError(projects.error, projects.data) ? projects.error : null}
-			onRetryProjects={() => {
-				void projects.refetch();
-			}}
-			onChanged={() => {
-				void queryClient.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(agentId) });
-				void queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
-			}}
-		/>
+		<div className="space-y-4">
+			<ResourceContextBackLink target={agentResourceReturnTarget(routeSearch)} />
+			<AgentProjectsPanel
+				agentId={agentId}
+				bindings={bindings.data ?? []}
+				projects={projects.data ?? []}
+				isLoading={bindings.isLoading || projects.isLoading}
+				bindingsError={shouldBlockQueryError(bindings.error, bindings.data) ? bindings.error : null}
+				onRetryBindings={() => {
+					void bindings.refetch();
+				}}
+				projectsError={shouldBlockQueryError(projects.error, projects.data) ? projects.error : null}
+				onRetryProjects={() => {
+					void projects.refetch();
+				}}
+				navigationOrigin={navigationOrigin}
+				onChanged={() => {
+					void queryClient.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(agentId) });
+					void queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
+				}}
+			/>
+		</div>
 	);
 }
 
@@ -94,6 +111,7 @@ function AgentProjectsPanel({
 	onRetryBindings,
 	projectsError,
 	onRetryProjects,
+	navigationOrigin,
 	onChanged,
 }: {
 	agentId: string;
@@ -104,6 +122,7 @@ function AgentProjectsPanel({
 	onRetryBindings?: () => void;
 	projectsError?: unknown;
 	onRetryProjects?: () => void;
+	navigationOrigin: ResourceNavigationOrigin;
 	onChanged: () => void;
 }) {
 	const api = useApi();
@@ -259,6 +278,7 @@ function AgentProjectsPanel({
 									binding={binding}
 									project={project}
 									position={position}
+									navigationOrigin={navigationOrigin}
 									actions={
 										binding.binding_type === "context" ? (
 											<div className="flex items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
@@ -378,11 +398,13 @@ function AgentProjectCard({
 	binding,
 	project,
 	position,
+	navigationOrigin,
 	actions,
 }: {
 	binding: AgentProjectBinding;
 	project: ProjectRow | undefined;
 	position: number;
+	navigationOrigin: ResourceNavigationOrigin;
 	actions?: React.ReactNode;
 }) {
 	const footer = [
@@ -398,5 +420,13 @@ function AgentProjectCard({
 			/>
 		);
 	}
-	return <ProjectResourceCard project={project} footer={footer} actions={actions} showKind />;
+	return (
+		<ProjectResourceCard
+			project={project}
+			footer={footer}
+			actions={actions}
+			showKind
+			navigationOrigin={navigationOrigin}
+		/>
+	);
 }

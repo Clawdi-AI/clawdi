@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useRouter } from "@tanstack/react-router";
+import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import {
 	ArrowLeft,
 	Check,
@@ -57,6 +57,7 @@ import { isApiNotFoundError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { resourceOriginSearch, vaultReturnTarget } from "@/lib/resource-navigation";
 import { cn, errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
@@ -84,6 +85,9 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const router = useRouter();
+	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr]);
+	const backTarget = vaultReturnTarget(searchParams);
 
 	// UUID links use an exact authorized metadata lookup. Slug-only deep links
 	// remain a compatibility fallback for bookmarks created before stable IDs.
@@ -268,7 +272,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 			toast.success("Vault deleted", {
 				description: `${vault?.name ?? slug} and its keys were removed.`,
 			});
-			void router.navigate({ href: "/vault" });
+			void router.navigate({ href: backTarget.href });
 		},
 		onError: (e) => toast.error("Couldn't delete vault", { description: errorMessage(e) }),
 	});
@@ -297,14 +301,14 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<Button
-					render={<Link to="/vault" />}
+					render={<Link to={backTarget.href} />}
 					nativeButton={false}
 					variant="ghost"
 					size="sm"
 					className="w-fit"
 				>
 					<ArrowLeft className="mr-1.5 size-4" />
-					Vaults
+					{backTarget.label}
 				</Button>
 				{isApiNotFoundError(blockingVaultDetailError) ? (
 					<DetailNotFound
@@ -328,14 +332,14 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<Button
-					render={<Link to="/vault" />}
+					render={<Link to={backTarget.href} />}
 					nativeButton={false}
 					variant="ghost"
 					size="sm"
 					className="w-fit"
 				>
 					<ArrowLeft className="mr-1.5 size-4" />
-					Vaults
+					{backTarget.label}
 				</Button>
 				<DetailNotFound
 					title="Vault not found"
@@ -352,14 +356,14 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
 			<Button
-				render={<Link to="/vault" />}
+				render={<Link to={backTarget.href} />}
 				nativeButton={false}
 				variant="ghost"
 				size="sm"
 				className="w-fit"
 			>
 				<ArrowLeft className="mr-1.5 size-4" />
-				Vaults
+				{backTarget.label}
 			</Button>
 
 			<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -647,7 +651,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 			</BulkActionBar>
 
 			{/* Projects */}
-			<section className="space-y-3">
+			<section id="projects" className="scroll-mt-20 space-y-3">
 				<div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
 					<div className="min-w-0">
 						<div className="flex items-center gap-2">
@@ -696,6 +700,11 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 								<Link
 									to="/projects/$id"
 									params={{ id: project.id }}
+									search={resourceOriginSearch({
+										type: "vault",
+										vaultSlug: slug,
+										vaultId: vault.id,
+									})}
 									className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
 								>
 									{displayProjectName(project)}

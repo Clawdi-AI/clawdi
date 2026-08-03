@@ -636,9 +636,9 @@ describe("deployment mutation settlement", () => {
 		expect(hooksSource).toContain('toast.message("Agent removed", {');
 		expect(hooksSource).toContain('description: "Cleanup continues in the background."');
 		expect(homeSource).toContain(
-			'onDeleteAccepted={() => router.navigate({ href: "/", replace: true })}',
+			'onDeleteAccepted={() => router.navigate({ href: "/agents", replace: true })}',
 		);
-		expect(actionSource).toContain('await router.navigate({ href: "/", replace: true });');
+		expect(actionSource).toContain('await router.navigate({ href: "/agents", replace: true });');
 	});
 
 	test("retires old runtime windows only after restart, access reset, or delete is accepted", () => {
