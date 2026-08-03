@@ -257,7 +257,7 @@ jobs:
           ready=false
           for _attempt in $(seq 1 30); do
             if kamal accessory exec whatsapp-baileys --reuse \
-              "bun run /app/packages/whatsapp-baileys-sidecar/src/healthcheck.ts" \
+              "node /app/packages/whatsapp-baileys-sidecar/dist/healthcheck.js" \
               >/dev/null 2>&1; then
               ready=true
               break
