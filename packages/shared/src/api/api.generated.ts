@@ -3917,7 +3917,7 @@ export interface components {
              * Provider
              * @enum {string}
              */
-            provider: "telegram" | "discord" | "whatsapp" | "imessage";
+            provider: "telegram" | "discord" | "whatsapp";
             /** Name */
             name: string;
             /** Agent Id */

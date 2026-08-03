@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 from fastapi import HTTPException, status
@@ -10,7 +9,6 @@ from pydantic import TypeAdapter, ValidationError
 from app.models.channel import ChannelAccount, ChannelBotAgentLink
 from app.services.metrics import webhook_deliveries
 from app.services.url_security import UnsafeOutboundUrlError, validate_outbound_url
-from app.services.vault_crypto import decrypt_field, encrypt_field
 
 _CONFIG_OBJECT_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
 
@@ -31,34 +29,6 @@ def _config_object(value: object) -> dict[str, object]:
         return _CONFIG_OBJECT_ADAPTER.validate_python(value, strict=True)
     except ValidationError:
         return {}
-
-
-def _account_config(account: ChannelAccount) -> dict[str, object]:
-    return _config_object(account.config)
-
-
-def bluebubbles_webhook_config(account: ChannelAccount) -> dict[str, object]:
-    return _config_object(_account_config(account).get("bluebubbles_webhook"))
-
-
-def bluebubbles_webhook_password(account: ChannelAccount) -> str | None:
-    encrypted = _optional_str(bluebubbles_webhook_config(account).get("password_encrypted"))
-    if encrypted is None:
-        return _optional_str(bluebubbles_webhook_config(account).get("password"))
-    return decrypt_field(encrypted)
-
-
-def bluebubbles_webhook_update(
-    *,
-    url: str,
-    events: list[object],
-    password: str,
-) -> dict[str, object]:
-    return {
-        "url": url,
-        "events": events,
-        "password_encrypted": encrypt_field(password),
-    }
 
 
 def telegram_link_webhook_config(link: ChannelBotAgentLink) -> dict[str, object]:
@@ -82,43 +52,6 @@ async def validate_agent_webhook_url(_account: ChannelAccount, url: str) -> None
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-
-
-async def deliver_bluebubbles_agent_webhook(
-    account: ChannelAccount,
-    event_type: str,
-    data: dict[str, Any],
-) -> bool:
-    webhook = bluebubbles_webhook_config(account)
-    url = _optional_str(webhook.get("url"))
-    if not url:
-        return False
-    password = bluebubbles_webhook_password(account)
-    delivery_url = _webhook_url_with_password(url, password) if password else url
-    headers = {"x-password": password} if password else None
-    try:
-        await validate_agent_webhook_url(account, url)
-    except HTTPException:
-        return False
-    for _attempt in range(3):
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(
-                    delivery_url,
-                    headers=headers,
-                    json={"type": event_type, "data": data},
-                )
-        except httpx.HTTPError:
-            webhook_deliveries.labels(outcome="failure").inc()
-            continue
-        if response.status_code < 400:
-            webhook_deliveries.labels(outcome="success").inc()
-            return True
-        if response.status_code < 500:
-            webhook_deliveries.labels(outcome="failure").inc()
-            return False
-        webhook_deliveries.labels(outcome="failure").inc()
-    return False
 
 
 async def deliver_telegram_agent_webhook(
@@ -150,14 +83,3 @@ async def deliver_telegram_agent_webhook(
         return True
     webhook_deliveries.labels(outcome="failure").inc()
     return False
-
-
-def _webhook_url_with_password(url: str, password: str) -> str:
-    parsed = urlparse(url)
-    query = [
-        (key, value)
-        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-        if key != "password"
-    ]
-    query.append(("password", password))
-    return urlunparse(parsed._replace(query=urlencode(query)))

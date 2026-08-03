@@ -132,7 +132,6 @@ or test fixtures. They are not Clawdi's legacy route prefix and must not be
 rewritten mechanically. Examples in this repository include:
 
 - Discord REST paths such as `/api/v10/*`.
-- BlueBubbles-compatible paths such as `/api/v1/*`.
 - OpenAI-compatible base URLs ending in `/api/v1`.
 - Composio API URLs.
 - Captured provider fixtures under `backend/tests/fixtures/`.

@@ -40,7 +40,7 @@ describe("owned bot inventory", () => {
 			{ id: "discord-1", provider: "discord" },
 			{ id: "telegram-1", provider: "telegram" },
 			{ id: "discord-2", provider: "discord" },
-			{ id: "legacy-1", provider: "imessage" },
+			{ id: "custom-1", provider: "custom" },
 			{ id: "telegram-2", provider: "telegram" },
 			{ id: "whatsapp-1", provider: "whatsapp" },
 		];
@@ -51,7 +51,7 @@ describe("owned bot inventory", () => {
 			"discord-1",
 			"discord-2",
 			"whatsapp-1",
-			"legacy-1",
+			"custom-1",
 		]);
 		expect(orderedChannelsForFilter(channels, "discord").map((item) => item.id)).toEqual([
 			"discord-1",
@@ -64,7 +64,7 @@ describe("owned bot inventory", () => {
 			{ provider: "telegram" },
 			{ provider: "telegram" },
 			{ provider: "discord" },
-			{ provider: "imessage" },
+			{ provider: "custom" },
 		]);
 
 		expect(counts).toEqual({ telegram: 2, discord: 1, whatsapp: 0 });

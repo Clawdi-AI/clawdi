@@ -5,7 +5,6 @@ from fastapi import APIRouter
 from app.routes.channel_routers import (
     debug,
     discord,
-    imessage,
     public,
     telegram,
     whatsapp,
@@ -24,5 +23,4 @@ router.include_router(public.router)
 # /v1/channels/{provider}/*.
 router.include_router(whatsapp.router)
 router.include_router(telegram.router)
-router.include_router(imessage.router)
 router.include_router(discord.router)

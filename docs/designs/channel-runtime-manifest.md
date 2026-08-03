@@ -122,7 +122,7 @@ outputs:
 | Field | Meaning |
 | --- | --- |
 | `channels[].ref` | Manifest-local stable name. Not a database id. |
-| `provider` | `telegram`, `discord`, `whatsapp`, or `imessage`. |
+| `provider` | `telegram`, `discord`, or `whatsapp`. |
 | `account.id` | Existing accessible channel account id, usually a public bot or pre-created private bot. |
 | `account.visibility` | Optional assertion: `public` or `private`. Apply fails if the backend returns a different visibility. |
 | `account.private` | Create or reuse a user-owned private bot by `(provider, name)`. |
@@ -219,14 +219,6 @@ WhatsApp deliberately has no dotenv application-API projection. Its gated
 managed path uses the runtime's stock native Baileys plugin, a private auth
 directory, and the generic managed-upgrade egress profile.
 
-iMessage / BlueBubbles-compatible runtime:
-
-```dotenv
-BLUEBUBBLES_SERVER_URL=https://channels.example.test/v1/channels/imessage/bluebubbles
-BLUEBUBBLES_API_BASE_URL=https://channels.example.test/v1/channels/imessage/bluebubbles/v1
-BLUEBUBBLES_PASSWORD=<agent-sdk-token>
-```
-
 The dotenv projection is not allowed to resurrect old root routes such as
 `/bot<token>/*`, `/api/v10/*`, `/api/v1/*`, or `/socket.io/*`. Those roots are
 intentionally absent. SDK compatibility should use provider-prefixed routes or
@@ -247,11 +239,6 @@ The Telegram `agent_token` is intentionally generated in Bot API-looking
 `<9-digit bot id>:<secret>` form. Keep that shape stable because SDKs and
 OpenClaw-compatible clients may validate it before sending requests.
 
-For BlueBubbles, many clients append `/api/v1` under `BLUEBUBBLES_SERVER_URL`.
-Full drop-in compatibility needs either
-`/v1/channels/imessage/bluebubbles/api/v1/*` aliases or a target adapter that
-uses the existing `/v1/channels/imessage/bluebubbles/v1/*` routes directly.
-
 ### OpenClaw Projection
 
 OpenClaw projection patches the same official runtime config shape OpenClaw uses
@@ -261,7 +248,6 @@ for channel accounts:
 - Discord token, REST base URL, and Gateway URL.
 - WhatsApp official native-plugin account and synthetic auth directory, only
   after all gates are enabled. It does not set a custom websocket URL.
-- iMessage server URL and password.
 
 The managed default Agent profile accepts at most one Link per provider. The
 WhatsApp projection must not install a custom ChannelPlugin connector.
@@ -402,15 +388,13 @@ webhooks, or recreate the legacy channel bridge tenant router.
 | `DISCORD_BOT_API_BASE_URL` | Runtime projection output. |
 | `DISCORD_GATEWAY_URL` | Runtime projection output. |
 | WhatsApp application relay env | No equivalent; the stock native plugin uses managed egress. |
-| `BLUEBUBBLES_SERVER_URL` / `BLUEBUBBLES_PASSWORD` | iMessage projection output. |
 
 ## Endpoint Security Boundary
 
 The runtime manifest describes agent-facing configuration: SDK tokens,
 pair-code setup, dotenv projection, and gated synthetic credential files. It
 must not expose backend provider egress knobs such as Discord REST/Gateway
-base URLs or iMessage server URLs as ordinary
-runtime fields.
+base URLs as ordinary runtime fields.
 
 Provider endpoint overrides live on channel account config and are validated by
 the backend when accounts are created or updated, then again before each

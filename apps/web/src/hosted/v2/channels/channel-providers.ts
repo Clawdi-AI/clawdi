@@ -54,15 +54,6 @@ export const PROVIDER_META: Record<ChannelProviderId, SupportedChannelProviderMe
 	},
 };
 
-const LEGACY_PROVIDER_META: Record<string, ChannelProviderMeta> = {
-	imessage: {
-		id: "imessage",
-		label: "iMessage (unavailable)",
-		tint: "bg-muted text-muted-foreground",
-		unavailable: true,
-	},
-};
-
 function unknownProviderMeta(id: string): ChannelProviderMeta {
 	return {
 		id,
@@ -73,9 +64,7 @@ function unknownProviderMeta(id: string): ChannelProviderMeta {
 }
 
 export function providerMeta(id: string): ChannelProviderMeta {
-	return (
-		PROVIDER_META[id as ChannelProviderId] ?? LEGACY_PROVIDER_META[id] ?? unknownProviderMeta(id)
-	);
+	return PROVIDER_META[id as ChannelProviderId] ?? unknownProviderMeta(id);
 }
 
 export function isChannelProvider(id: string): id is ChannelProviderId {

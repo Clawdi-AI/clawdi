@@ -447,10 +447,10 @@ function capabilitySummary(
 }
 
 function parseProvider(value: string): ChannelProvider {
-	if (value === "telegram" || value === "discord" || value === "whatsapp" || value === "imessage") {
+	if (value === "telegram" || value === "discord" || value === "whatsapp") {
 		return value;
 	}
-	throw new Error("provider must be one of: telegram, discord, whatsapp, imessage");
+	throw new Error("provider must be one of: telegram, discord, whatsapp");
 }
 
 function parseTtl(raw: string | undefined): number {

@@ -13196,7 +13196,6 @@ exit 0
 		expect(patchText).toContain('"telegram": null');
 		expect(patchText).toContain('"discord": null');
 		expect(patchText).not.toContain('"whatsapp"');
-		expect(patchText).not.toContain("bluebubbles");
 		expect(patchText).not.toContain('"$patch"');
 		expect(patchText).not.toContain('"botToken"');
 		expect(patchText).toContain('"dmScope": null');

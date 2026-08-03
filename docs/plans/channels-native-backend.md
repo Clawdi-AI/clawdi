@@ -23,7 +23,7 @@ requests resolve one active Link and must match that binding. Provider-wide
 credentials stay account-scoped; Agent credentials and replay state stay
 Link-scoped.
 
-Telegram, Discord, and iMessage keep their existing native backend adapters.
+Telegram and Discord keep their existing native backend adapters.
 Generic delivery, retention, and ownership code must not acquire WhatsApp-only
 payload assumptions.
 

@@ -31,7 +31,6 @@ from app.models.channel import (
     BOT_AGENT_LINK_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ARCHIVED,
     CHANNEL_PROVIDER_DISCORD,
-    CHANNEL_PROVIDER_IMESSAGE,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_ACTIVE,
@@ -75,10 +74,6 @@ from app.services.channel_config import (
 )
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.discord_rate_limiter import discord_rate_limiter
-from app.services.imessage_routing import (
-    list_imessage_outbound_chat_guids,
-    resolve_imessage_send_chat_guid,
-)
 from app.services.metrics import (
     inbound_messages,
     outbound_errors,
@@ -394,8 +389,6 @@ def generate_agent_token(provider: str) -> str:
         return secrets.token_urlsafe(48)
     if provider == CHANNEL_PROVIDER_WHATSAPP:
         return f"wa_{secrets.token_urlsafe(36)}"
-    if provider == CHANNEL_PROVIDER_IMESSAGE:
-        return f"im_{secrets.token_urlsafe(36)}"
     return secrets.token_urlsafe(48)
 
 
@@ -1877,30 +1870,6 @@ async def find_bindings(
             bindings.append(binding)
             seen.add(binding.id)
     return bindings
-
-
-async def find_imessage_binding_for_send(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    requested_chat_guid: str,
-    bot_agent_link_id: UUID | None = None,
-) -> ChannelBinding | None:
-    for candidate in list_imessage_outbound_chat_guids(to=requested_chat_guid):
-        binding = await find_binding(
-            db,
-            account=account,
-            external_chat_id=candidate,
-            bot_agent_link_id=bot_agent_link_id,
-        )
-        if binding is not None:
-            return binding
-    return await find_binding(
-        db,
-        account=account,
-        external_chat_id=requested_chat_guid,
-        bot_agent_link_id=bot_agent_link_id,
-    )
 
 
 async def upsert_binding_alias(
@@ -4862,12 +4831,6 @@ async def send_provider_outbound_payload(
             text=text,
             provider_payload=provider_payload,
         )
-    if account.provider == CHANNEL_PROVIDER_IMESSAGE:
-        return await _send_imessage_provider_payload(
-            account=account,
-            external_chat_id=external_chat_id,
-            text=text,
-        )
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
         detail=f"{account.provider} send is not implemented yet",
@@ -4907,15 +4870,6 @@ async def send_channel_outbound_message(
         )
     if account.provider == CHANNEL_PROVIDER_WHATSAPP:
         return await send_whatsapp_message(
-            db,
-            account=account,
-            external_chat_id=external_chat_id,
-            text=text,
-            bot_agent_link_id=bot_agent_link_id,
-            bind_to_existing=bind_to_existing,
-        )
-    if account.provider == CHANNEL_PROVIDER_IMESSAGE:
-        return await send_imessage_message(
             db,
             account=account,
             external_chat_id=external_chat_id,
@@ -6001,47 +5955,6 @@ async def _send_whatsapp_provider_payload(
     )
 
 
-async def send_imessage_message(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    external_chat_id: str,
-    text: str,
-    bot_agent_link_id: UUID | None = None,
-    bind_to_existing: bool = True,
-) -> ChannelMessage:
-    _require_channel_provider(account, CHANNEL_PROVIDER_IMESSAGE)
-    binding = (
-        await find_imessage_binding_for_send(
-            db,
-            account=account,
-            requested_chat_guid=external_chat_id,
-            bot_agent_link_id=bot_agent_link_id,
-        )
-        if bind_to_existing
-        else None
-    )
-    bound_chat_guid = binding.external_chat_id if binding is not None else external_chat_id
-    provider_chat_guid = resolve_imessage_send_chat_guid(
-        requested_chat_guid=external_chat_id,
-        bound_chat_guid=bound_chat_guid,
-    )
-    provider_message_id, response_payload = await _send_imessage_provider_payload(
-        account=account,
-        external_chat_id=provider_chat_guid,
-        text=text,
-    )
-    return await _record_outbound_channel_message(
-        db,
-        account=account,
-        binding=binding,
-        external_chat_id=bound_chat_guid,
-        provider_message_id=provider_message_id,
-        text=text,
-        payload=response_payload,
-    )
-
-
 def _require_channel_provider(account: ChannelAccount, expected: str) -> None:
     if account.provider == expected:
         return
@@ -6081,55 +5994,6 @@ async def _record_outbound_channel_message(
     db.add(message)
     await db.flush()
     return message
-
-
-async def _send_imessage_provider_payload(
-    *,
-    account: ChannelAccount,
-    external_chat_id: str,
-    text: str,
-) -> tuple[str | None, dict[str, Any]]:
-    server_url = _require_account_config_str(account, "server_url")
-    await _validate_provider_endpoint_url(
-        server_url,
-        channel=CHANNEL_PROVIDER_IMESSAGE,
-        method="message/text",
-        label="imessage server url",
-    )
-    token = decrypt_provider_token(account)
-    auth_mode = _account_config_str(account, "auth_mode") or "password_query"
-    headers: dict[str, str] = {"Content-Type": "application/json"}
-    params: dict[str, str] = {}
-    if auth_mode == "x_api_key":
-        headers["X-API-Key"] = token
-    elif auth_mode == "bearer":
-        headers["Authorization"] = f"Bearer {token}"
-    else:
-        params["password"] = token
-    request_payload = {
-        "chatGuid": external_chat_id,
-        "message": text,
-        "text": text,
-        "method": _account_config_str(account, "send_method") or "private-api",
-    }
-    response_payload = await _post_provider_json(
-        channel=CHANNEL_PROVIDER_IMESSAGE,
-        method="message/text",
-        url=f"{server_url.rstrip('/')}/api/v1/message/text",
-        params=params,
-        headers=headers,
-        json_payload=request_payload,
-        timeout_seconds=30.0,
-        unreachable_detail="imessage api unreachable",
-        rejected_detail="imessage api rejected message",
-    )
-    data = response_payload.get("data")
-    provider_message_id = None
-    if isinstance(data, dict):
-        provider_message_id = _read_optional_str(data.get("guid")) or _read_optional_str(
-            data.get("messageId")
-        )
-    return provider_message_id, response_payload
 
 
 async def _post_provider_json(
@@ -6801,73 +6665,6 @@ async def _record_discord_unpaired_message_and_maybe_instruct(
     return True
 
 
-def imessage_chat_from_payload(
-    payload: dict[str, Any],
-) -> tuple[str, str | None, str | None] | None:
-    data = _imessage_event_data(payload)
-    chat_guid = _read_optional_str(data.get("chatGuid")) or _read_optional_str(
-        data.get("chat_guid")
-    )
-    chat_name = _read_optional_str(data.get("displayName")) or _read_optional_str(
-        data.get("chatIdentifier")
-    )
-    chats = data.get("chats")
-    if not chat_guid and isinstance(chats, list) and chats and isinstance(chats[0], dict):
-        chat_guid = _read_optional_str(chats[0].get("guid"))
-        chat_name = chat_name or _read_optional_str(chats[0].get("displayName"))
-    if not chat_guid:
-        chat = data.get("chat")
-        if isinstance(chat, dict):
-            chat_guid = _read_optional_str(chat.get("guid"))
-            chat_name = chat_name or _read_optional_str(chat.get("displayName"))
-    if not chat_guid:
-        return None
-    chat_type = "group" if "chat" in chat_guid.lower() else "dm"
-    return chat_guid, chat_type, chat_name
-
-
-def imessage_text_from_payload(payload: dict[str, Any]) -> str | None:
-    data = _imessage_event_data(payload)
-    return _read_optional_str(data.get("text")) or _read_optional_str(data.get("message"))
-
-
-def imessage_message_id_from_payload(payload: dict[str, Any]) -> str | None:
-    data = _imessage_event_data(payload)
-    return _read_optional_str(data.get("guid")) or _read_optional_str(data.get("messageGuid"))
-
-
-def imessage_external_user_id_from_payload(payload: dict[str, Any]) -> str | None:
-    data = _imessage_event_data(payload)
-    for key in (
-        "sender",
-        "from",
-        "fromAddress",
-        "handleAddress",
-        "handleId",
-        "handleGuid",
-        "address",
-    ):
-        actor_id = _read_optional_identifier(data.get(key))
-        if actor_id is not None:
-            return actor_id
-
-    for key in ("handle", "sender", "from"):
-        actor = data.get(key)
-        actor_id = (
-            _dict_identifier(actor, "address")
-            or _dict_identifier(actor, "id")
-            or _dict_identifier(actor, "guid")
-            or _dict_identifier(actor, "uncanonicalizedId")
-        )
-        if actor_id is not None:
-            return actor_id
-
-    chat = imessage_chat_from_payload(payload)
-    if chat is not None and chat[1] == "dm":
-        return chat[0]
-    return None
-
-
 def _telegram_update_allowed(update: dict[str, Any], allowed_updates: set[str]) -> bool:
     if not allowed_updates:
         return True
@@ -6904,13 +6701,6 @@ def _discord_channel_type_name(value: int | None, fallback: str) -> str:
 
 def _optional_int(value: Any) -> int | None:
     return value if isinstance(value, int) else None
-
-
-def _imessage_event_data(payload: dict[str, Any]) -> dict[str, Any]:
-    data = payload.get("data")
-    if isinstance(data, dict):
-        return data
-    return payload
 
 
 def _nested_dict_value(data: dict[str, Any], *path: str) -> Any:

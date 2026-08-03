@@ -95,7 +95,7 @@ type ChannelProvider = ChannelAccountCreate["provider"];
 const DOTENV_BLOCK_START = "# >>> clawdi channel runtime >>>";
 const DOTENV_BLOCK_END = "# <<< clawdi channel runtime <<<";
 
-const providerSchema = z.enum(["telegram", "discord", "whatsapp", "imessage"]);
+const providerSchema = z.enum(["telegram", "discord", "whatsapp"]);
 const envNameSchema = z
 	.string()
 	.regex(/^[A-Z_][A-Z0-9_]*$/, "must be an environment variable name");
@@ -670,19 +670,6 @@ function addRuntimeEnv(
 			`${toWebSocketUrl(baseUrl)}/v1/channels/discord/gateway`,
 		);
 	}
-	if (provider === "imessage") {
-		setRuntimeEnv(ctx, runtimeEnvName(link, "password", "BLUEBUBBLES_PASSWORD"), token);
-		setRuntimeEnv(
-			ctx,
-			runtimeEnvName(link, "api_base_url", "BLUEBUBBLES_API_BASE_URL"),
-			`${baseUrl}/v1/channels/imessage/bluebubbles/v1`,
-		);
-		setRuntimeEnv(
-			ctx,
-			runtimeEnvName(link, "websocket_url", "BLUEBUBBLES_SERVER_URL"),
-			`${baseUrl}/v1/channels/imessage/bluebubbles`,
-		);
-	}
 }
 
 function runtimeEnvName(
@@ -764,23 +751,6 @@ function preflightRuntimeOutputs(manifest: RuntimeManifest): void {
 				claim(
 					runtimeEnvName(link, "gateway_url", "DISCORD_GATEWAY_URL"),
 					`${toWebSocketUrl(baseUrl)}/v1/channels/discord/gateway`,
-					link.ref,
-				);
-			}
-			if (channel.provider === "imessage") {
-				claim(
-					runtimeEnvName(link, "password", "BLUEBUBBLES_PASSWORD"),
-					`imessage-password:${link.ref}`,
-					link.ref,
-				);
-				claim(
-					runtimeEnvName(link, "api_base_url", "BLUEBUBBLES_API_BASE_URL"),
-					`${baseUrl}/v1/channels/imessage/bluebubbles/v1`,
-					link.ref,
-				);
-				claim(
-					runtimeEnvName(link, "websocket_url", "BLUEBUBBLES_SERVER_URL"),
-					`${baseUrl}/v1/channels/imessage/bluebubbles`,
 					link.ref,
 				);
 			}

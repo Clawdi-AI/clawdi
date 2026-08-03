@@ -1,9 +1,8 @@
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from http import HTTPStatus
-from typing import Any, Literal
+from typing import Literal
 
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -406,14 +405,7 @@ async def clawdi_http_exception_handler(
     request: Request,
     exc: StarletteHTTPException,
 ):
-    if _is_bluebubbles_request(request):
-        response = _bluebubbles_error_response(
-            status_code=exc.status_code,
-            detail=exc.detail,
-            headers=exc.headers,
-        )
-    else:
-        response = await http_exception_handler(request, exc)
+    response = await http_exception_handler(request, exc)
     return _apply_whatsapp_onboarding_cache_policy(
         request,
         _apply_public_session_export_cache_policy(request, response),
@@ -425,18 +417,7 @@ async def clawdi_request_validation_exception_handler(
     request: Request,
     exc: RequestValidationError,
 ):
-    if _is_bluebubbles_request(request):
-        return _bluebubbles_error_response(
-            status_code=422,
-            detail="validation error",
-        )
     return await request_validation_exception_handler(request, exc)
-
-
-def _is_bluebubbles_request(request: Request) -> bool:
-    return request.url.path.startswith(
-        ("/api/channels/imessage/bluebubbles/", "/v1/channels/imessage/bluebubbles/")
-    )
 
 
 def _is_whatsapp_onboarding_request(request: Request) -> bool:
@@ -447,33 +428,6 @@ def _is_whatsapp_onboarding_request(request: Request) -> bool:
             "/v1/admin/channels/whatsapp/pairing-sessions",
         )
     )
-
-
-def _bluebubbles_error_response(
-    *,
-    status_code: int,
-    detail: Any,
-    headers: Mapping[str, str] | None = None,
-) -> JSONResponse:
-    message = _bluebubbles_error_message(status_code=status_code, detail=detail)
-    return JSONResponse(
-        status_code=status_code,
-        content={"status": status_code, "message": message, "data": None},
-        headers=headers,
-    )
-
-
-def _bluebubbles_error_message(*, status_code: int, detail: Any) -> str:
-    if isinstance(detail, str) and detail:
-        return detail
-    if isinstance(detail, dict):
-        message = detail.get("message") or detail.get("detail")
-        if isinstance(message, str) and message:
-            return message
-    try:
-        return HTTPStatus(status_code).phrase
-    except ValueError:
-        return "Error"
 
 
 @app.get("/health", response_model=HealthResponse)

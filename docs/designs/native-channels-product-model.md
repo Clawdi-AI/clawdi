@@ -29,15 +29,15 @@ provider transport, not an Agent-facing connector.
 | --- | --- | --- |
 | User | A Clawdi account. The user owns private bots, agent links, pair codes, bindings, messages, deliveries, and provider-specific credentials they create. | `users` plus `user_id` columns on channel tables |
 | Agent | A Clawdi runtime endpoint that can receive channel messages and send replies through an SDK-compatible surface. Channels bind to `AgentEnvironment`, not Projects. | `agent_environments` |
-| Provider | The external network family: Telegram, Discord, WhatsApp, or iMessage/BlueBubbles. | `ChannelAccount.provider` |
-| External bot | A concrete external bot identity or provider endpoint, such as one Telegram bot token, one Discord application, one WhatsApp phone identity, or one BlueBubbles server. | `channel_accounts` |
+| Provider | The external network family: Telegram, Discord, or WhatsApp. | `ChannelAccount.provider` |
+| External bot | A concrete external bot identity or provider endpoint, such as one Telegram bot token, one Discord application, or one WhatsApp phone identity. | `channel_accounts` |
 | Visibility | Whether an external bot is private to its owner or available as a Clawdi-managed public bot. Private rows have a tenant `user_id`; public rows have `user_id = NULL`. | `ChannelAccount.visibility`, `ChannelAccount.user_id` |
 | Bot access | The caller's effective relationship to a selectable bot account: `owner` for caller-owned private bots, `public` for Clawdi-managed public bots. | `/v1/channels/bot-pool` response |
 | Bot capabilities | The caller's allowed actions for a selectable bot account, such as link, pair, send, manage account, or sync commands. | `/v1/channels/bot-pool` response |
 | Bot pool | The authenticated user's selectable bot candidates: owned private bots and active Clawdi-managed public bots. This is a read-only view, not a separate state table. | `/v1/channels/bot-pool` |
 | Bot-agent link | A user's authorization edge from one external bot to one Clawdi agent. This is the unit that owns the mock provider SDK token. | `channel_bot_agent_links` |
-| Agent SDK token | The token an agent process uses when it calls a Telegram Bot API, Discord REST/Gateway, WhatsApp synthetic Noise, or BlueBubbles-compatible endpoint hosted by Clawdi. Tokens are scoped to one bot-agent link. | `ChannelBotAgentLink.agent_token_hash` |
-| External chat | The provider conversation id: Telegram chat id, Discord guild/channel route id, WhatsApp JID, or iMessage chat GUID. | `ChannelBinding.external_chat_id` |
+| Agent SDK token | The token an agent process uses when it calls a Telegram Bot API, Discord REST/Gateway, or WhatsApp synthetic Noise endpoint hosted by Clawdi. Tokens are scoped to one bot-agent link. | `ChannelBotAgentLink.agent_token_hash` |
+| External chat | The provider conversation id: Telegram chat id, Discord guild/channel route id, or WhatsApp JID. | `ChannelBinding.external_chat_id` |
 | External actor | The provider user or sender who issued a control command in a chat. In a DM this is usually the chat itself; in a group it is the participant id. | `ChannelBinding.paired_external_user_id` |
 | Conversation route | The active routing decision for one `(external bot, external chat)` session. It points to one bot-agent link and therefore one agent. | `channel_bindings` |
 | Route alias | A provider-specific alternate id for the same conversation, such as WhatsApp LID/PN aliases or Discord guild/channel aliases. | `channel_binding_aliases` |
@@ -195,7 +195,7 @@ Pair flow:
 1. A user chooses an accessible channel account and one of their agents.
 2. Clawdi creates or reuses a `channel_bot_agent_links` row.
 3. Clawdi returns the one-time `/clawdi_pair <code>` command. Telegram,
-   Discord, WhatsApp, and iMessage all use this canonical spelling.
+   Discord, and WhatsApp all use this canonical spelling.
 4. The user sends the code into the external chat.
 5. Provider ingress extracts:
    - external bot account from the webhook route,
@@ -357,8 +357,8 @@ adapter exposes that tool.
 
 Unpair flow:
 
-1. The external actor sends `/clawdi_unpair`. Telegram, Discord, WhatsApp, and
-   iMessage all use this canonical spelling.
+1. The external actor sends `/clawdi_unpair`. Telegram, Discord, and WhatsApp
+   all use this canonical spelling.
 2. Provider ingress resolves the active binding for the chat.
 3. The backend verifies the command actor matches
    `ChannelBinding.paired_external_user_id`.
@@ -401,7 +401,6 @@ Provider actor extraction:
 | Telegram | `callback_query.from.id`, `message.from.id`, `sender_chat.id`, or DM chat id fallback. |
 | Discord | `author.id`, `user.id`, `member.user.id`, or interaction member user id. |
 | WhatsApp | Baileys key fields such as `participant`, `participantAlt`, `remoteJid`, or `remoteJidAlt`. Group JIDs are not used as actor ids. |
-| iMessage / BlueBubbles | Sender or handle address/id fields, with DM chat GUID fallback. |
 
 ## Agent Token Model
 
@@ -423,7 +422,6 @@ Examples of link-scoped state:
 - Discord application command shadows visible to the agent.
 - Discord Gateway replay sessions.
 - WhatsApp synthetic credentials, Noise identity, and Signal state.
-- BlueBubbles-compatible agent webhook registration.
 
 Provider-wide state stays account-scoped:
 
@@ -487,9 +485,8 @@ exits 0.
 ## Outbound URL Security
 
 Channel accounts can carry public provider endpoint overrides, such as
-Discord REST/Gateway URLs or an iMessage/BlueBubbles server URL. Agent SDK
-emulation can also persist Telegram
-and BlueBubbles webhook URLs supplied by an agent.
+Discord REST/Gateway URLs. Agent SDK emulation can also persist Telegram
+webhook URLs supplied by an agent.
 
 These values are user- or admin-supplied configuration that can drive backend
 egress. The backend must therefore validate them at both boundaries:
@@ -507,11 +504,10 @@ Required behavior:
 - Literal loopback/private/link-local/CGNAT hosts, local hostname aliases,
   `.local`/`.localhost` names, private DNS results, and unresolved DNS names
   are rejected.
-- Telegram and BlueBubbles webhook delivery only acknowledges messages after a
-  successful `2xx` or `3xx` response. Telegram makes one inline delivery attempt
-  and leaves `5xx`, network, `4xx`, and DNS failures pending for
-  `ChannelWebhookDeliveryWorker` retry or TTL drop. BlueBubbles keeps short
-  in-process retries for `5xx` or network failures.
+- Telegram webhook delivery only acknowledges messages after a successful
+  `2xx` or `3xx` response. Telegram makes one inline delivery attempt and
+  leaves `5xx`, network, `4xx`, and DNS failures pending for
+  `ChannelWebhookDeliveryWorker` retry or TTL drop.
 
 ## Message Routing Model
 
@@ -523,8 +519,8 @@ Inbound provider messages:
 4. The message is stored in `channel_messages`.
 5. If bound, the message carries `binding_id`, `bot_agent_link_id`, and the
    binding owner `user_id`.
-6. Agent-facing inbox, webhook redelivery, Gateway replay, and BlueBubbles
-   queries only read messages scoped to the token's bot-agent link.
+6. Agent-facing inbox, webhook redelivery, and Gateway replay only read
+   messages scoped to the token's bot-agent link.
 
 Unbound inbound messages:
 
@@ -628,7 +624,6 @@ Provider ingress:
 
 - `/v1/channels/telegram/{id}/webhook`
 - `/v1/channels/discord/{id}/webhook`
-- `/v1/channels/imessage/{id}/webhook`
 - `/v1/channels/discord/gateway` for agent-facing replay
 - `/v1/channels/whatsapp/baileys` for Link-bearer-authenticated Baileys-compatible WhatsApp Web
   synthetic runtime ingress. It remains gated and is not a physical provider
@@ -642,8 +637,6 @@ Agent SDK emulation:
   that validate token syntax continue to work.
 - Discord REST and Gateway-compatible routes under `/v1/channels/discord`.
 - WhatsApp synthetic Noise websocket under `/v1/channels/whatsapp/baileys`.
-- BlueBubbles-compatible REST and Socket.IO routes under
-  `/v1/channels/imessage`.
 
 ## Provider Adapter Contract
 
