@@ -106,7 +106,11 @@ import {
 	useResetRuntimeUiAccess,
 	useUpdateDeployment,
 } from "@/hosted/agents/deployment-hooks";
-import { HOSTED_AGENT_SESSIONS_REFRESH_POLICY } from "@/hosted/agents/hosted-agent-session-query";
+import {
+	canQueryHostedAgentSessions,
+	HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE,
+	HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
+} from "@/hosted/agents/hosted-agent-session-query";
 import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
@@ -317,9 +321,7 @@ function parseHostedAgentTab(value: AgentSectionId | string | null): HostedAgent
 
 /** Only surfaces whose primary content needs the cloud-agent projection own its notice. */
 export function shouldShowHostedProjectionNotice(section: AgentSectionId): boolean {
-	return (
-		section === "sessions" || section === "projects" || section === "skills" || section === "vaults"
-	);
+	return section === "projects" || section === "skills" || section === "vaults";
 }
 
 function LiveNote({ children }: { children: React.ReactNode }) {
@@ -439,10 +441,10 @@ export function HostedAgentDetail({
 	const $api = useOpenApi();
 	const [isCheckingProjection, setIsCheckingProjection] = useState(false);
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
-	const deploymentRunning = isRunningStatus(deploymentStatus);
 	const hasTerminalDeploymentFailure = deploymentFailurePresentation(deployment) !== null;
 	const deploymentProjectionQueryable = canQueryDeploymentProjection(deploymentStatus);
 	const cloudEnvironmentId = isCloudEnvId(environmentId);
+	const sessionsQueryable = canQueryHostedAgentSessions(environmentId);
 	const agentQuery = $api.useQuery(
 		"get",
 		"/v1/agents/{agent_id}",
@@ -496,7 +498,7 @@ export function HostedAgentDetail({
 
 	const sessions = useQuery({
 		...sessionListQueryOptions($api, { environment_id: environmentId, page_size: 3 }),
-		enabled: activeTab === "overview" && deploymentRunning && projection.status === "resolved",
+		enabled: activeTab === "overview" && sessionsQueryable,
 	});
 
 	const activeNavItem = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
@@ -506,7 +508,7 @@ export function HostedAgentDetail({
 		activeTab === "overview" &&
 		isStartingStatus(deploymentStatus) &&
 		!hasTerminalDeploymentFailure &&
-		projection.status !== "resolved";
+		!cloudEnvironmentId;
 	const interfaceAvailable =
 		activeTab === "overview" && !showInitialStartingPage && isRunningStatus(deploymentStatus);
 	const isLiveToolTab = activeTab === "console" || activeTab === "terminal";
@@ -579,8 +581,6 @@ export function HostedAgentDetail({
 							deployment={deployment}
 							agent={isCloudEnvId(environmentId) ? agent : null}
 							projectionStatus={projection.status}
-							canRetryProjection={deploymentProjectionQueryable}
-							onRetryProjection={() => void agentQuery.refetch()}
 							isPerformance={isPerformance}
 							sessions={sessions.data?.items ?? []}
 							sessionsLoading={sessions.isLoading}
@@ -605,18 +605,8 @@ export function HostedAgentDetail({
 					{deploymentStatus.known && activeTab === "terminal" ? (
 						<TerminalTab deployment={deployment} />
 					) : null}
-					{deploymentStatus.known && activeTab === "sessions" ? (
-						!deploymentProjectionQueryable ? (
-							<StoppedAgentState deployment={deployment} />
-						) : projection.status === "resolved" ? (
-							<HostedAgentSessionsTab
-								environmentId={environmentId}
-								enabled={deploymentProjectionQueryable}
-								routeSearch={routeSearch}
-							/>
-						) : (
-							<ProjectionDependentUnavailable label="Sessions" />
-						)
+					{activeTab === "sessions" ? (
+						<HostedAgentSessionsTab environmentId={environmentId} routeSearch={routeSearch} />
 					) : null}
 					{activeTab === "memories" ? <MemoriesSurface /> : null}
 					{activeTab === "connectors" ? <ConnectorsSurface embedded /> : null}
@@ -709,8 +699,8 @@ function HostedProjectionNotice({
 				<AlertTitle>Some agent details are not ready</AlertTitle>
 				<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<span>
-						Sessions, Projects, Skills, Vaults, and Channels will appear when this agent is ready.
-						Available actions and tools still work.
+						Projects, Skills, Vaults, and Channels will appear when this agent is ready. Available
+						actions and tools still work.
 					</span>
 					<Button type="button" variant="outline" size="sm" disabled={isChecking} onClick={onRetry}>
 						{isChecking ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
@@ -770,16 +760,15 @@ function StoppedAgentState({
 
 function HostedAgentSessionsTab({
 	environmentId,
-	enabled,
 	routeSearch,
 }: {
 	environmentId: string;
-	enabled: boolean;
 	routeSearch: AgentRouteSearch;
 }) {
 	const $api = useOpenApi();
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
+	const sessionsQueryable = canQueryHostedAgentSessions(environmentId);
 
 	useEffect(() => {
 		setPage(1);
@@ -787,7 +776,7 @@ function HostedAgentSessionsTab({
 
 	const sessions = useQuery({
 		...sessionListQueryOptions($api, { environment_id: environmentId, page, page_size: pageSize }),
-		enabled: enabled && isCloudEnvId(environmentId),
+		enabled: sessionsQueryable,
 		placeholderData: keepPreviousData,
 		// staleTime only controls freshness; this mounted-tab observer owns visibility refreshes.
 		...HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
@@ -809,12 +798,21 @@ function HostedAgentSessionsTab({
 		);
 	}
 
+	if (!sessionsQueryable) {
+		return (
+			<EmptyState
+				title="Sessions unavailable"
+				description="Sessions will appear after this agent is created."
+			/>
+		);
+	}
+
 	return (
 		<div className="space-y-4">
 			<SessionFeed
 				sessions={sessions.data?.items ?? []}
 				isLoading={sessions.isLoading && !sessions.data}
-				emptyMessage="No sessions from this agent yet."
+				emptyMessage={HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE}
 				showAgent={false}
 				sessionLink={(session) => agentSessionDetailLink(environmentId, session.id, routeSearch)}
 			/>
@@ -884,7 +882,7 @@ export function OverviewComputeStatus({
 				</p>
 			) : status.kind === "stopped" ? (
 				<p className="text-muted-foreground" role="status">
-					Compute is stopped. Sessions, channels, and the agent interface are unavailable.
+					Compute is stopped. Channels and the agent interface are unavailable.
 				</p>
 			) : status.kind === "deleting" ? (
 				<p className="text-muted-foreground" role="status">
@@ -1064,33 +1062,12 @@ export function InitialDeploymentPage({
 	);
 }
 
-function OverviewProjectionUnavailableState({
-	canRetry,
-	onRetry,
-}: {
-	canRetry: boolean;
-	onRetry: () => void;
-}) {
-	return (
-		<div className="flex h-full min-h-40 flex-col items-start justify-center gap-3 rounded-lg border bg-muted/20 p-4">
-			<p className="text-sm text-muted-foreground">Agent details are unavailable right now.</p>
-			{canRetry ? (
-				<Button type="button" variant="outline" size="sm" onClick={onRetry}>
-					<RefreshCw /> Check again
-				</Button>
-			) : null}
-		</div>
-	);
-}
-
 function OverviewTab({
 	agentId,
 	routeSearch,
 	deployment,
 	agent,
 	projectionStatus,
-	canRetryProjection,
-	onRetryProjection,
 	isPerformance,
 	sessions,
 	sessionsLoading,
@@ -1104,8 +1081,6 @@ function OverviewTab({
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
 	projectionStatus: HostedProjectionResolution<unknown>["status"];
-	canRetryProjection: boolean;
-	onRetryProjection: () => void;
 	isPerformance: boolean;
 	sessions: SessionListItem[];
 	sessionsLoading: boolean;
@@ -1143,10 +1118,6 @@ function OverviewTab({
 		label: runtimeStatusPresentation.label,
 		tone: runtimeStatusPresentation.tone,
 	};
-	const deploymentRunning = isRunningStatus(deploymentStatus);
-	const sessionsEmptyMessage = deploymentRunning
-		? "No sessions from this agent yet."
-		: "Sessions appear once your agent is running.";
 	const projectBindings = useAgentProjectBindings(agentId, { enabled: Boolean(agent) });
 	const skills = useAgentProjectSkills(
 		agentId,
@@ -1190,18 +1161,13 @@ function OverviewTab({
 						</Button>
 					</div>
 					<section aria-labelledby="hosted-recent-sessions" className="min-w-0">
-						{projectionUnavailable ? (
-							<OverviewProjectionUnavailableState
-								canRetry={canRetryProjection}
-								onRetry={onRetryProjection}
-							/>
-						) : sessionsError ? (
+						{sessionsError ? (
 							<OverviewModuleError label="Sessions" onRetry={() => void onRetrySessions()} />
 						) : (
 							<OverviewSessionList
 								sessions={sessions}
-								isLoading={projectionLoading || sessionsLoading}
-								emptyMessage={sessionsEmptyMessage}
+								isLoading={sessionsLoading}
+								emptyMessage={HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE}
 								sessionLink={sessionLink}
 							/>
 						)}

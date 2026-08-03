@@ -46,6 +46,9 @@ describe("hosted agent detail header", () => {
 		const source = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
 
 		expect(source).toContain(
+			"Projects, Skills, Vaults, and Channels will appear when this agent is ready.",
+		);
+		expect(source).not.toContain(
 			"Sessions, Projects, Skills, Vaults, and Channels will appear when this agent is ready.",
 		);
 		expect(source).not.toContain("Vaults, profile, and channels");

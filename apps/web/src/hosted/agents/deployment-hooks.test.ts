@@ -198,7 +198,7 @@ describe("deployment failure status rendering", () => {
 			{ status: "restarting", copy: "Restarting", spinner: true },
 			{
 				status: "stopped",
-				copy: "Compute is stopped. Sessions, channels, and the agent interface are unavailable.",
+				copy: "Compute is stopped. Channels and the agent interface are unavailable.",
 				spinner: false,
 			},
 			{
@@ -354,7 +354,7 @@ describe("deployment transition timeout rendering", () => {
 		expect(shouldShowProjectionNotice("terminal")).toBe(false);
 		expect(shouldShowProjectionNotice("ai")).toBe(false);
 		expect(shouldShowProjectionNotice("settings")).toBe(false);
-		expect(shouldShowProjectionNotice("sessions")).toBe(true);
+		expect(shouldShowProjectionNotice("sessions")).toBe(false);
 		expect(shouldShowProjectionNotice("skills")).toBe(true);
 	});
 
