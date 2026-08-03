@@ -5417,7 +5417,7 @@ test("AI provider chooser and auth dialogs preserve hierarchy in dark mode", asy
 	await expect(openAiChoice.locator(':scope > [aria-hidden="true"]')).toHaveCount(1);
 	const anthropicIcon = anthropicChoice.locator(':scope > [aria-hidden="true"]');
 	await expect(anthropicIcon).toHaveCount(1);
-	await expect(anthropicIcon.locator("img")).toHaveAttribute("alt", "Anthropic");
+	await expect(anthropicIcon.locator('svg[data-icon-source="lobehub"]')).toBeVisible();
 	const chooserBody = chooserDialog.getByTestId("provider-dialog-body");
 	const mobileScroll = await chooserBody.evaluate((element) => ({
 		clientHeight: element.clientHeight,
