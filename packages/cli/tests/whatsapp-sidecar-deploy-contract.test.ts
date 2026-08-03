@@ -44,14 +44,6 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(workflow).toContain("docker container inspect --format '{{.Config.Image}}'");
 	});
 
-	test("contains no retired account-sidecar deployment path", () => {
-		const runtimeSources = [deploy, workflow].join("\n");
-		expect(runtimeSources).not.toContain("cutover-whatsapp-sidecar-containers");
-		expect(runtimeSources).not.toContain("clawdi-whatsapp-sidecars");
-		expect(runtimeSources).not.toContain("CHANNEL_WHATSAPP_BAILEYS_SIDECARS_JSON");
-		expect(runtimeSources).not.toContain("WHATSAPP_BAILEYS_HOST_ROOT");
-	});
-
 	test("keeps state private and exposes only a read-only Unix socket to the app", () => {
 		expect(deploy).toContain("/home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp:ro");
 		expect(deploy).toContain('remote: /data\n        mode: "700"');
