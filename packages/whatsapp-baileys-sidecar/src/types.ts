@@ -14,7 +14,7 @@ export type RuntimeHealth = {
 	status: RuntimeStatus;
 	connected: boolean;
 	registered: boolean;
-	accountId: string;
+	sessionId: string;
 	advertisedRelease: {
 		packageName: string;
 		packageVersion: string;
@@ -42,6 +42,12 @@ export type SidecarCapabilities = {
 	schemaVersion: "clawdi.whatsapp.sidecar-capabilities.v1";
 	pairing: readonly ["qr", "code", "cancel", "logout", "retry"];
 	rawProviderAccess: false;
+};
+
+export const SIDECAR_CAPABILITIES: SidecarCapabilities = {
+	schemaVersion: "clawdi.whatsapp.sidecar-capabilities.v1",
+	pairing: ["qr", "code", "cancel", "logout", "retry"],
+	rawProviderAccess: false,
 };
 
 export type RelayMessageRequest = {

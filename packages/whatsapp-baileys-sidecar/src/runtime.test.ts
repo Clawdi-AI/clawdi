@@ -6,14 +6,14 @@ import { join } from "node:path";
 import { type BinaryNode, DisconnectReason, initAuthCreds, proto } from "baileys";
 
 import { parseAuditedWhatsAppWebVersion } from "./audited-version.js";
-import type { SidecarConfig } from "./config.js";
+import type { SidecarSessionConfig } from "./config.js";
 import { BaileysSocketRuntime, type ProviderSocketFactory } from "./runtime.js";
 import type { ProviderMessageEventInput } from "./sqlite-state.js";
 
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("physical Baileys runtime", () => {
-	it("keeps an unregistered capacity slot idle until authenticated pairing starts", async () => {
+	it("keeps an unregistered provider session idle until authenticated pairing starts", async () => {
 		const harness = createHarness({ registered: false });
 		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
 
@@ -516,9 +516,9 @@ function createHarness(options: HarnessOptions = {}) {
 	};
 }
 
-function sidecarConfig(): SidecarConfig {
+function sidecarConfig(): SidecarSessionConfig {
 	return {
-		accountId: ACCOUNT_ID,
+		sessionId: ACCOUNT_ID,
 		host: "127.0.0.1",
 		port: 8787,
 		apiToken: "test-token",

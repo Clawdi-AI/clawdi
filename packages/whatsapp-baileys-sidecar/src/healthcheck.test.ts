@@ -7,7 +7,6 @@ import { join } from "node:path";
 
 import { checkSidecarHealth } from "./healthcheck.js";
 
-const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 const TOKEN = "test-sidecar-token";
 const servers: Server[] = [];
 const temporaryDirectories: string[] = [];
@@ -24,14 +23,13 @@ afterEach(async () => {
 });
 
 describe("sidecar healthcheck", () => {
-	it("authenticates and verifies identity over an account-scoped Unix socket", async () => {
+	it("authenticates and verifies the service over one Unix socket", async () => {
 		const socketPath = await startUnixHealthServer();
 
 		await expect(
 			checkSidecarHealth({
-				CLAWDI_WA_PROVIDER_ACCOUNT_ID: ACCOUNT_ID,
 				CLAWDI_WA_SIDECAR_SOCKET_PATH: socketPath,
-				CLAWDI_WA_SIDECAR_TOKEN: TOKEN,
+				CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: TOKEN,
 			}),
 		).resolves.toBeUndefined();
 	});
@@ -41,10 +39,9 @@ describe("sidecar healthcheck", () => {
 
 		await expect(
 			checkSidecarHealth({
-				CLAWDI_WA_PROVIDER_ACCOUNT_ID: ACCOUNT_ID,
 				CLAWDI_WA_SIDECAR_HOST: "127.0.0.1",
 				CLAWDI_WA_SIDECAR_PORT: String(port),
-				CLAWDI_WA_SIDECAR_TOKEN: TOKEN,
+				CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: TOKEN,
 			}),
 		).resolves.toBeUndefined();
 	});
@@ -52,9 +49,8 @@ describe("sidecar healthcheck", () => {
 	it("rejects mixed UDS/TCP endpoints and non-loopback TCP", async () => {
 		const socketPath = await startUnixHealthServer();
 		const base = {
-			CLAWDI_WA_PROVIDER_ACCOUNT_ID: ACCOUNT_ID,
 			CLAWDI_WA_SIDECAR_SOCKET_PATH: socketPath,
-			CLAWDI_WA_SIDECAR_TOKEN: TOKEN,
+			CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: TOKEN,
 		};
 
 		await expect(
@@ -65,9 +61,8 @@ describe("sidecar healthcheck", () => {
 		);
 		await expect(
 			checkSidecarHealth({
-				CLAWDI_WA_PROVIDER_ACCOUNT_ID: ACCOUNT_ID,
 				CLAWDI_WA_SIDECAR_HOST: "0.0.0.0",
-				CLAWDI_WA_SIDECAR_TOKEN: TOKEN,
+				CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: TOKEN,
 			}),
 		).rejects.toThrow("exact loopback host");
 	});
@@ -76,46 +71,40 @@ describe("sidecar healthcheck", () => {
 		for (const port of ["0", "65536", "8787x", "1.5", "-1"]) {
 			await expect(
 				checkSidecarHealth({
-					CLAWDI_WA_PROVIDER_ACCOUNT_ID: ACCOUNT_ID,
 					CLAWDI_WA_SIDECAR_PORT: port,
-					CLAWDI_WA_SIDECAR_TOKEN: TOKEN,
+					CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: TOKEN,
 				}),
 			).rejects.toThrow("valid port");
 		}
 		await expect(checkSidecarHealth({})).rejects.toThrow("missing sidecar token");
-		await expect(checkSidecarHealth({ CLAWDI_WA_SIDECAR_TOKEN: TOKEN })).rejects.toThrow(
-			"missing account id",
-		);
 	});
 
-	it("fails on a wrong bearer or returned account identity", async () => {
+	it("fails on a wrong bearer or returned service identity", async () => {
 		const wrongBearerPort = await startTcpHealthServer();
 		await expect(
 			checkSidecarHealth({
-				CLAWDI_WA_PROVIDER_ACCOUNT_ID: ACCOUNT_ID,
 				CLAWDI_WA_SIDECAR_PORT: String(wrongBearerPort),
-				CLAWDI_WA_SIDECAR_TOKEN: "wrong-token",
+				CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: "wrong-token",
 			}),
 		).rejects.toThrow("identity mismatch");
 
-		const wrongIdentityPort = await startTcpHealthServer("22222222-2222-4222-8222-222222222222");
+		const wrongIdentityPort = await startTcpHealthServer(false);
 		await expect(
 			checkSidecarHealth({
-				CLAWDI_WA_PROVIDER_ACCOUNT_ID: ACCOUNT_ID,
 				CLAWDI_WA_SIDECAR_PORT: String(wrongIdentityPort),
-				CLAWDI_WA_SIDECAR_TOKEN: TOKEN,
+				CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: TOKEN,
 			}),
 		).rejects.toThrow("identity mismatch");
 	});
 });
 
-async function startUnixHealthServer(accountId = ACCOUNT_ID): Promise<string> {
+async function startUnixHealthServer(): Promise<string> {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-healthcheck-"));
 	temporaryDirectories.push(root);
-	const socketDirectory = join(root, ACCOUNT_ID);
+	const socketDirectory = join(root, "run");
 	mkdirSync(socketDirectory);
 	const socketPath = join(socketDirectory, "sidecar.sock");
-	const server = createHealthServer(accountId);
+	const server = createHealthServer();
 	await new Promise<void>((resolve, reject) => {
 		server.once("error", reject);
 		server.listen(socketPath, resolve);
@@ -123,8 +112,8 @@ async function startUnixHealthServer(accountId = ACCOUNT_ID): Promise<string> {
 	return socketPath;
 }
 
-async function startTcpHealthServer(accountId = ACCOUNT_ID): Promise<number> {
-	const server = createHealthServer(accountId);
+async function startTcpHealthServer(validIdentity = true): Promise<number> {
+	const server = createHealthServer(validIdentity);
 	await new Promise<void>((resolve, reject) => {
 		server.once("error", reject);
 		server.listen(0, "127.0.0.1", resolve);
@@ -132,7 +121,7 @@ async function startTcpHealthServer(accountId = ACCOUNT_ID): Promise<number> {
 	return (server.address() as AddressInfo).port;
 }
 
-function createHealthServer(accountId: string): Server {
+function createHealthServer(validIdentity = true): Server {
 	const server = createServer((request, response) => {
 		response.setHeader("content-type", "application/json");
 		if (request.url !== "/v1/health" || request.headers.authorization !== `Bearer ${TOKEN}`) {
@@ -140,7 +129,13 @@ function createHealthServer(accountId: string): Server {
 			response.end(JSON.stringify({ error: "unauthorized" }));
 			return;
 		}
-		response.end(JSON.stringify({ accountId }));
+		response.end(
+			JSON.stringify(
+				validIdentity
+					? { schemaVersion: "clawdi.whatsapp.sidecar-health.v1", ready: true }
+					: { schemaVersion: "unexpected", ready: true },
+			),
+		);
 	});
 	servers.push(server);
 	return server;

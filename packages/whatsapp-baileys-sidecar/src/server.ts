@@ -9,8 +9,8 @@ import {
 	parseBinaryNode,
 	parseStringRecord,
 } from "./json-bytes.js";
+import { type BaileysSessionSupervisor, InvalidSessionIdError } from "./session-supervisor.js";
 import {
-	type BaileysRuntime,
 	PairingLifecycleError,
 	type RelayMessageRequest,
 	RuntimeNotConnectedError,
@@ -21,9 +21,31 @@ export type ServerConfig = {
 	maxBodyBytes?: number;
 };
 
-const DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024;
+export type SidecarSessionService = Pick<
+	BaileysSessionSupervisor,
+	"health" | "capabilities" | "session"
+>;
 
-export function createSidecarServer(runtime: BaileysRuntime, config: ServerConfig): Server {
+const DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024;
+const SESSION_RUNTIME_METHODS = new Map([
+	["/v1/health", "GET"],
+	["/v1/pairing/status", "GET"],
+	["/v1/pairing/qr", "POST"],
+	["/v1/pairing/code", "POST"],
+	["/v1/pairing/cancel", "POST"],
+	["/v1/pairing/logout", "POST"],
+	["/v1/pairing/retry", "POST"],
+	["/v1/relay-message", "POST"],
+	["/v1/raw-node", "POST"],
+	["/v1/query-iq", "POST"],
+	["/v1/provider-events", "GET"],
+	["/v1/provider-events/ack", "POST"],
+]);
+
+export function createSidecarServer(
+	supervisor: SidecarSessionService,
+	config: ServerConfig,
+): Server {
 	if (!config.apiToken.trim()) {
 		throw new Error("apiToken is required");
 	}
@@ -35,13 +57,28 @@ export function createSidecarServer(runtime: BaileysRuntime, config: ServerConfi
 				return;
 			}
 			const method = request.method ?? "GET";
-			const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+			let path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
 			if (method === "GET" && path === "/v1/health") {
-				writeJson(response, 200, runtime.health());
+				writeJson(response, 200, supervisor.health());
 				return;
 			}
 			if (method === "GET" && path === "/v1/capabilities") {
-				writeJson(response, 200, runtime.capabilities());
+				writeJson(response, 200, supervisor.capabilities());
+				return;
+			}
+			const sessionRoute = parseSessionRoute(path);
+			if (!sessionRoute) {
+				writeJson(response, 404, { error: "not_found" });
+				return;
+			}
+			if (SESSION_RUNTIME_METHODS.get(sessionRoute.runtimePath) !== method) {
+				writeJson(response, 404, { error: "not_found" });
+				return;
+			}
+			const runtime = await supervisor.session(sessionRoute.sessionId);
+			path = sessionRoute.runtimePath;
+			if (method === "GET" && path === "/v1/health") {
+				writeJson(response, 200, runtime.health());
 				return;
 			}
 			if (method === "GET" && path === "/v1/pairing/status") {
@@ -107,6 +144,15 @@ export function createSidecarServer(runtime: BaileysRuntime, config: ServerConfi
 			writeError(response, error);
 		}
 	});
+}
+
+function parseSessionRoute(path: string): { sessionId: string; runtimePath: string } | undefined {
+	const match = /^\/v1\/sessions\/([^/]+)(\/.*)$/.exec(path);
+	if (!match) return undefined;
+	const sessionId = match[1];
+	const suffix = match[2];
+	if (!sessionId || !suffix) return undefined;
+	return { sessionId, runtimePath: `/v1${suffix}` };
 }
 
 function authorized(request: IncomingMessage, token: string): boolean {
@@ -252,6 +298,10 @@ function parseEventAckBody(body: unknown): number {
 function writeError(response: ServerResponse, error: unknown): void {
 	if (error instanceof HttpError) {
 		writeJson(response, error.status, { error: error.message });
+		return;
+	}
+	if (error instanceof InvalidSessionIdError) {
+		writeJson(response, 400, { error: error.message });
 		return;
 	}
 	if (error instanceof RuntimeNotConnectedError) {

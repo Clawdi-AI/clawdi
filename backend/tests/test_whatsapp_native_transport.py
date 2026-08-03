@@ -15,6 +15,7 @@ import pytest
 from app.services.whatsapp_native_transport import (
     WhatsAppBaileysSidecarClient,
     WhatsAppBaileysSidecarConfig,
+    WhatsAppBaileysSidecarService,
     WhatsAppNativeRelayRequest,
     WhatsAppProviderTransportAdapter,
     WhatsAppSidecarUnavailableError,
@@ -25,6 +26,10 @@ from app.services.whatsapp_provider_bridge import (
     whatsapp_provider_transport_status,
 )
 from app.services.whatsapp_runtime_types import WhatsAppOutboundMessage
+
+TEST_ACCOUNT_ID = UUID("11111111-1111-4111-8111-111111111111")
+SESSION_PREFIX = f"/v1/sessions/{TEST_ACCOUNT_ID}"
+SECOND_TEST_ACCOUNT_ID = UUID("22222222-2222-4222-8222-222222222222")
 
 
 class _FakeNativeUpstreamClient:
@@ -118,15 +123,79 @@ def test_whatsapp_provider_transport_health_reports_disconnected_adapter():
 
 
 @pytest.mark.asyncio
+async def test_sidecar_service_reuses_one_http_pool_for_concurrent_session_views():
+    seen_paths: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        session_id = request.url.path.split("/")[3]
+        await asyncio.sleep(0)
+        return httpx.Response(
+            200,
+            json={
+                "status": "stopped",
+                "connected": False,
+                "registered": False,
+                "sessionId": session_id,
+                "advertisedRelease": {
+                    "packageName": "@whiskeysockets/baileys",
+                    "packageVersion": "7.0.0-rc14",
+                    "sourceCommit": "7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a",
+                    "version": [2, 3000, 1043857760],
+                },
+            },
+        )
+
+    config = WhatsAppBaileysSidecarConfig(
+        base_url="http://127.0.0.1:43191",
+        api_token="sidecar-secret",
+    )
+    async with httpx.AsyncClient(
+        base_url=config.base_url,
+        transport=httpx.MockTransport(handler),
+    ) as http_client:
+        service = WhatsAppBaileysSidecarService(config, http_client=http_client)
+        first = service.session_client(TEST_ACCOUNT_ID)
+        second = service.session_client(SECOND_TEST_ACCOUNT_ID)
+        first_health, second_health = await asyncio.gather(first.health(), second.health())
+        await first.aclose()
+        await second.aclose()
+        await service.aclose()
+
+        assert first_health.registered is False
+        assert second_health.registered is False
+        assert http_client.is_closed is False
+
+    assert set(seen_paths) == {
+        f"/v1/sessions/{TEST_ACCOUNT_ID}/health",
+        f"/v1/sessions/{SECOND_TEST_ACCOUNT_ID}/health",
+    }
+
+
+@pytest.mark.asyncio
 async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
     requests: list[httpx.Request] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         assert request.headers["authorization"] == "Bearer sidecar-secret"
-        if request.url.path == "/v1/health":
-            return httpx.Response(200, json={"status": "connected"})
-        if request.url.path == "/v1/relay-message":
+        if request.url.path == f"{SESSION_PREFIX}/health":
+            return httpx.Response(
+                200,
+                json={
+                    "sessionId": str(TEST_ACCOUNT_ID),
+                    "status": "connected",
+                    "connected": True,
+                    "registered": True,
+                    "advertisedRelease": {
+                        "packageName": "@whiskeysockets/baileys",
+                        "packageVersion": "7.0.0-rc14",
+                        "sourceCommit": "7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a",
+                        "version": [2, 3000, 1043857760],
+                    },
+                },
+            )
+        if request.url.path == f"{SESSION_PREFIX}/relay-message":
             body = _json_body(request)
             assert body == {
                 "jid": "15551114444@s.whatsapp.net",
@@ -136,14 +205,14 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
                 "additionalNodes": [],
             }
             return httpx.Response(200, json={"ok": True, "messageId": "provider-native-1"})
-        if request.url.path == "/v1/raw-node":
+        if request.url.path == f"{SESSION_PREFIX}/raw-node":
             body = _json_body(request)
             assert body["node"]["content"][0]["content"] == {
                 "$type": "base64-bytes",
                 "base64": base64.b64encode(b"payload").decode("ascii"),
             }
             return httpx.Response(200, json={"ok": True})
-        if request.url.path == "/v1/query-iq":
+        if request.url.path == f"{SESSION_PREFIX}/query-iq":
             body = _json_body(request)
             assert body["timeoutMs"] == 15_000
             return httpx.Response(
@@ -156,7 +225,7 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
                     }
                 },
             )
-        if request.url.path == "/v1/provider-events":
+        if request.url.path == f"{SESSION_PREFIX}/provider-events":
             assert dict(request.url.params) == {"limit": "25"}
             return httpx.Response(
                 200,
@@ -180,7 +249,7 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
                     ]
                 },
             )
-        if request.url.path == "/v1/provider-events/ack":
+        if request.url.path == f"{SESSION_PREFIX}/provider-events/ack":
             assert _json_body(request) == {"throughSequence": 7}
             return httpx.Response(200, json={"ok": True})
         raise AssertionError(f"unexpected path {request.url.path}")
@@ -193,6 +262,7 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
         WhatsAppBaileysSidecarConfig(
             base_url="https://baileys-sidecar.internal",
             api_token="sidecar-secret",
+            account_id=TEST_ACCOUNT_ID,
         ),
         http_client=http_client,
     )
@@ -231,12 +301,12 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
     await http_client.aclose()
 
     assert [request.url.path for request in requests] == [
-        "/v1/health",
-        "/v1/relay-message",
-        "/v1/raw-node",
-        "/v1/query-iq",
-        "/v1/provider-events",
-        "/v1/provider-events/ack",
+        f"{SESSION_PREFIX}/health",
+        f"{SESSION_PREFIX}/relay-message",
+        f"{SESSION_PREFIX}/raw-node",
+        f"{SESSION_PREFIX}/query-iq",
+        f"{SESSION_PREFIX}/provider-events",
+        f"{SESSION_PREFIX}/provider-events/ack",
     ]
     assert relayed_message_id == "provider-native-1"
     assert events[0].message_id == "provider-inbound-1"
@@ -279,6 +349,7 @@ async def test_whatsapp_baileys_sidecar_client_rejects_invalid_query_json(
             WhatsAppBaileysSidecarConfig(
                 base_url="https://baileys-sidecar.internal",
                 api_token="sidecar-secret",
+                account_id=TEST_ACCOUNT_ID,
             ),
             http_client=http_client,
         )
@@ -296,6 +367,7 @@ async def test_whatsapp_provider_transport_health_reports_sidecar_mode():
         WhatsAppBaileysSidecarConfig(
             base_url="https://baileys-sidecar.internal",
             api_token="sidecar-secret",
+            account_id=account_id,
         )
     )
     client._connected = True
@@ -358,7 +430,7 @@ def test_whatsapp_sidecar_config_requires_and_redacts_api_token():
 
 
 def test_whatsapp_sidecar_config_selects_strict_unix_socket_without_weakening_https():
-    socket_path = "/run/clawdi-whatsapp/11111111-1111-4111-8111-111111111111/sidecar.sock"
+    socket_path = "/run/clawdi-whatsapp/sidecar.sock"
     config = WhatsAppBaileysSidecarConfig(
         account_id=UUID("11111111-1111-4111-8111-111111111111"),
         unix_socket_path=socket_path,
@@ -383,8 +455,11 @@ def test_whatsapp_sidecar_config_selects_strict_unix_socket_without_weakening_ht
             unix_socket_path="/run/clawdi-whatsapp/provider.sock",
             api_token="secret",
         )
-    with pytest.raises(ValueError, match="requires account_id"):
-        WhatsAppBaileysSidecarConfig(unix_socket_path=socket_path, api_token="secret")
+    service_config = WhatsAppBaileysSidecarConfig(
+        unix_socket_path=socket_path,
+        api_token="secret",
+    )
+    assert service_config.account_id is None
     with pytest.raises(ValueError, match="requires HTTPS"):
         WhatsAppBaileysSidecarConfig(base_url="http://sidecar.internal", api_token="secret")
 
@@ -394,18 +469,18 @@ async def test_whatsapp_sidecar_client_uses_authenticated_strict_unix_socket() -
     account_id = UUID("11111111-1111-4111-8111-111111111111")
     token = "uds-test-token"
     temporary_root = tempfile.TemporaryDirectory(prefix="w", dir="/tmp")
-    socket_directory = Path(temporary_root.name) / str(account_id)
+    socket_directory = Path(temporary_root.name) / "run"
     socket_directory.mkdir(mode=0o770)
     os.chmod(socket_directory, 0o770)
     socket_path = socket_directory / "sidecar.sock"
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         request = await reader.readuntil(b"\r\n\r\n")
-        assert b"GET /v1/health HTTP/1.1" in request
+        assert f"GET /v1/sessions/{account_id}/health HTTP/1.1".encode() in request
         assert f"authorization: bearer {token}\r\n".encode() in request.lower()
         body = json.dumps(
             {
-                "accountId": str(account_id),
+                "sessionId": str(account_id),
                 "status": "connected",
                 "connected": True,
                 "registered": True,

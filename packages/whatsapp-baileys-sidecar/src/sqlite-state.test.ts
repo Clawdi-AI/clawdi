@@ -311,7 +311,7 @@ describe("SQLite provider state", () => {
 		});
 		reopened.close();
 
-		expect(() => makeState(directory, { accountId: ACCOUNT_B })).toThrow(
+		expect(() => makeState(directory, { sessionId: ACCOUNT_B })).toThrow(
 			"immutably bound to a different account id",
 		);
 
@@ -409,7 +409,7 @@ function makeDirectory(): string {
 function makeState(
 	directory: string,
 	options: {
-		accountId?: string;
+		sessionId?: string;
 		maxEvents?: number;
 		maxBytes?: number;
 		onFailure?: (operation: ProviderStateFailureOperation, error: Error) => void;
@@ -417,7 +417,7 @@ function makeState(
 ): SQLiteProviderState {
 	return new SQLiteProviderState(
 		directory,
-		options.accountId ?? ACCOUNT_A,
+		options.sessionId ?? ACCOUNT_A,
 		WEB_VERSION,
 		{
 			maxEvents: options.maxEvents ?? 100,

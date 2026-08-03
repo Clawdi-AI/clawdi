@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -121,14 +120,8 @@ class FakeManagedSidecar:
 
 def _registry(account_id: UUID, fake: FakeManagedSidecar) -> ConfiguredWhatsAppSidecarRegistry:
     return ConfiguredWhatsAppSidecarRegistry(
-        json.dumps(
-            {
-                str(account_id): {
-                    "base_url": "http://127.0.0.1:43193",
-                    "api_token": "fake",
-                }
-            }
-        ),
+        "fake",
+        base_url="http://127.0.0.1:43193",
         client_factory=lambda _config: fake,
     )
 
@@ -142,6 +135,55 @@ async def _start(db_session, seed_user, registry, account_id, *, request_id=None
         name=name,
         registry=registry,
     )
+
+
+@pytest.mark.asyncio
+async def test_multiple_shared_accounts_use_distinct_sessions_on_one_service(
+    db_session,
+    seed_user,
+) -> None:
+    first_id = uuid4()
+    second_id = uuid4()
+    clients: dict[UUID, FakeManagedSidecar] = {}
+
+    def factory(config):
+        if config.account_id is None:
+            raise AssertionError("managed onboarding requires a provider session id")
+        client = FakeManagedSidecar()
+        clients[config.account_id] = client
+        return client
+
+    registry = ConfiguredWhatsAppSidecarRegistry(
+        "fake",
+        base_url="http://127.0.0.1:43193",
+        client_factory=factory,
+    )
+    await registry.start()
+    try:
+        first = await _start(db_session, seed_user, registry, first_id, name="Shared Alpha")
+        second = await _start(db_session, seed_user, registry, second_id, name="Shared Beta")
+        assert set(clients) == {first_id, second_id}
+        assert clients[first_id] is not clients[second_id]
+
+        clients[first_id].connected = clients[first_id].registered = True
+        clients[second_id].connected = clients[second_id].registered = True
+        await get_managed_whatsapp_onboarding(
+            db_session,
+            session_id=first.id,
+            registry=registry,
+        )
+        await get_managed_whatsapp_onboarding(
+            db_session,
+            session_id=second.id,
+            registry=registry,
+        )
+
+        assert registry.managed_is_bound(first_id)
+        assert registry.managed_is_bound(second_id)
+        assert await db_session.get(ChannelAccount, first_id) is not None
+        assert await db_session.get(ChannelAccount, second_id) is not None
+    finally:
+        await registry.stop()
 
 
 @pytest.mark.asyncio

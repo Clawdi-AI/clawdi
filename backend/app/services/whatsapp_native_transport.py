@@ -7,7 +7,7 @@ import math
 import os
 import stat
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Literal, Protocol, cast
 from urllib.parse import urlsplit
@@ -145,20 +145,18 @@ class WhatsAppBaileysSidecarConfig:
             validate_whatsapp_sidecar_base_url(self.base_url)
         if self.unix_socket_path is not None:
             validate_whatsapp_sidecar_unix_socket_path(self.unix_socket_path)
-            if self.account_id is None:
-                raise ValueError("baileys sidecar unix_socket_path requires account_id")
-            if os.path.basename(os.path.dirname(self.unix_socket_path)) != str(self.account_id):
-                raise ValueError("baileys sidecar unix_socket_path must be account-scoped")
         validate_whatsapp_sidecar_api_token(self.api_token)
         if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
             raise ValueError("baileys sidecar timeout_seconds must be positive and finite")
 
     @property
     def binding_revision(self) -> str:
-        """Stable, non-secret identity for one configured physical slot revision."""
+        """Stable, non-secret identity for one provider session revision."""
 
         if self.account_id is None:
-            raise ValueError("baileys sidecar account_id is required for slot ownership")
+            raise ValueError("baileys sidecar account_id is required for session ownership")
+        # Preserve the deployed v1 domain separator so existing durable
+        # revisions remain valid; "slot" is not a current architecture concept.
         material = f"clawdi-whatsapp-slot-v1\0{self.account_id}\0{self.endpoint_identity}"
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
@@ -242,22 +240,8 @@ class WhatsAppBaileysSidecarClient:
         self._owns_client = http_client is None
         if http_client is not None:
             self._client = http_client
-        elif config.unix_socket_path is not None:
-            self._client = httpx.AsyncClient(
-                base_url="http://localhost",
-                transport=httpx.AsyncHTTPTransport(
-                    uds=validate_whatsapp_sidecar_unix_socket_path(config.unix_socket_path),
-                    trust_env=False,
-                ),
-                timeout=httpx.Timeout(config.timeout_seconds),
-            )
         else:
-            if config.base_url is None:  # pragma: no cover - guarded by config
-                raise ValueError("baileys sidecar transport endpoint unavailable")
-            self._client = httpx.AsyncClient(
-                base_url=validate_whatsapp_sidecar_base_url(config.base_url),
-                timeout=httpx.Timeout(config.timeout_seconds),
-            )
+            self._client = _build_whatsapp_sidecar_http_client(config)
 
     @property
     def connected(self) -> bool:
@@ -268,28 +252,37 @@ class WhatsAppBaileysSidecarClient:
             await self._client.aclose()
 
     async def refresh_health(self) -> bool:
-        if self._config.account_id is not None:
-            health = await self.health()
-            self._connected = health.connected
-            return self._connected
-        response = await self._request("GET", _HEALTH_PATH)
-        data = _response_json(response)
-        self._connected = _sidecar_health_connected(data)
+        health = await self.health()
+        self._connected = health.connected
         return self._connected
+
+    async def service_ready(self) -> bool:
+        payload = await self._request_json("GET", _HEALTH_PATH, session_scoped=False)
+        active_sessions = payload.get("activeSessions")
+        if (
+            payload.get("schemaVersion") != "clawdi.whatsapp.sidecar-health.v1"
+            or payload.get("ready") is not True
+            or not isinstance(active_sessions, int)
+            or isinstance(active_sessions, bool)
+            or active_sessions < 0
+            or payload.get("advertisedRelease") != _EXPECTED_BAILEYS_RELEASE
+        ):
+            raise WhatsAppSidecarProtocolError("unexpected Baileys sidecar service identity")
+        return True
 
     async def health(self) -> WhatsAppSidecarHealth:
         payload = await self._request_json("GET", _HEALTH_PATH)
         expected_account_id = self._config.account_id
-        raw_account_id = payload.get("accountId")
+        raw_session_id = payload.get("sessionId")
         try:
-            account_matches = (
+            session_matches = (
                 expected_account_id is not None
-                and isinstance(raw_account_id, str)
-                and UUID(raw_account_id) == expected_account_id
+                and isinstance(raw_session_id, str)
+                and UUID(raw_session_id) == expected_account_id
             )
         except ValueError:
-            account_matches = False
-        if not account_matches or payload.get("advertisedRelease") != _EXPECTED_BAILEYS_RELEASE:
+            session_matches = False
+        if not session_matches or payload.get("advertisedRelease") != _EXPECTED_BAILEYS_RELEASE:
             raise WhatsAppSidecarProtocolError("unexpected Baileys sidecar identity")
         connected = _required_bool(payload, "connected")
         self._connected = connected
@@ -300,7 +293,7 @@ class WhatsAppBaileysSidecarClient:
         )
 
     async def capabilities(self) -> WhatsAppSidecarCapabilities:
-        payload = await self._request_json("GET", _CAPABILITIES_PATH)
+        payload = await self._request_json("GET", _CAPABILITIES_PATH, session_scoped=False)
         pairing = payload.get("pairing")
         pairing_strings = (
             [item for item in pairing if isinstance(item, str)] if isinstance(pairing, list) else []
@@ -428,22 +421,24 @@ class WhatsAppBaileysSidecarClient:
         *,
         json_body: JsonValue = None,
         params: Mapping[str, str | int] | None = None,
+        session_scoped: bool = True,
     ) -> httpx.Response:
         headers = {"Authorization": f"Bearer {self._api_token}"}
+        request_path = self._session_path(path) if session_scoped else path
         try:
             if self._config.unix_socket_path is not None:
                 _assert_whatsapp_sidecar_unix_socket_ready(self._config.unix_socket_path)
             if json_body is None:
                 response = await self._client.request(
                     method,
-                    path,
+                    request_path,
                     headers=headers,
                     params=params,
                 )
             else:
                 response = await self._client.request(
                     method,
-                    path,
+                    request_path,
                     headers=headers,
                     json=json_body,
                     params=params,
@@ -467,8 +462,14 @@ class WhatsAppBaileysSidecarClient:
         path: str,
         *,
         json_body: JsonValue = None,
+        session_scoped: bool = True,
     ) -> Mapping[str, JsonValue]:
-        response = await self._request(method, path, json_body=json_body)
+        response = await self._request(
+            method,
+            path,
+            json_body=json_body,
+            session_scoped=session_scoped,
+        )
         if len(response.content) > _MAX_PAIRING_JSON_BYTES:
             raise WhatsAppSidecarProtocolError("Baileys sidecar response too large")
         try:
@@ -478,6 +479,75 @@ class WhatsAppBaileysSidecarClient:
         if not isinstance(value, dict):
             raise WhatsAppSidecarProtocolError("invalid Baileys sidecar response")
         return value
+
+    def _session_path(self, path: str) -> str:
+        account_id = self._config.account_id
+        if account_id is None:  # pragma: no cover - guarded by config
+            raise WhatsAppSidecarProtocolError("Baileys sidecar session identity unavailable")
+        if not path.startswith("/v1/"):
+            raise WhatsAppSidecarProtocolError("invalid Baileys sidecar request path")
+        return f"/v1/sessions/{account_id}/{path.removeprefix('/v1/')}"
+
+
+class WhatsAppBaileysSidecarService:
+    """Own one reusable HTTP pool and create lightweight session-scoped views."""
+
+    def __init__(
+        self,
+        config: WhatsAppBaileysSidecarConfig,
+        *,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        if config.account_id is not None:
+            raise ValueError("baileys sidecar service config must not contain a session identity")
+        self._config = config
+        self._owns_client = http_client is None
+        self._http_client = http_client or _build_whatsapp_sidecar_http_client(config)
+        self._probe = WhatsAppBaileysSidecarClient(config, http_client=self._http_client)
+
+    def session_client(self, session_id: UUID) -> WhatsAppBaileysSidecarClient:
+        return WhatsAppBaileysSidecarClient(
+            replace(self._config, account_id=session_id),
+            http_client=self._http_client,
+        )
+
+    async def service_ready(self) -> bool:
+        return await self._probe.service_ready()
+
+    async def capabilities(self) -> WhatsAppSidecarCapabilities:
+        return await self._probe.capabilities()
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self._http_client.aclose()
+
+
+def _build_whatsapp_sidecar_http_client(
+    config: WhatsAppBaileysSidecarConfig,
+) -> httpx.AsyncClient:
+    limits = httpx.Limits(
+        max_connections=256,
+        max_keepalive_connections=64,
+        keepalive_expiry=30.0,
+    )
+    if config.unix_socket_path is not None:
+        return httpx.AsyncClient(
+            base_url="http://localhost",
+            transport=httpx.AsyncHTTPTransport(
+                uds=validate_whatsapp_sidecar_unix_socket_path(config.unix_socket_path),
+                trust_env=False,
+                limits=limits,
+            ),
+            timeout=httpx.Timeout(config.timeout_seconds),
+        )
+    if config.base_url is None:  # pragma: no cover - guarded by config
+        raise ValueError("baileys sidecar transport endpoint unavailable")
+    return httpx.AsyncClient(
+        base_url=validate_whatsapp_sidecar_base_url(config.base_url),
+        timeout=httpx.Timeout(config.timeout_seconds),
+        limits=limits,
+        trust_env=False,
+    )
 
 
 def validate_whatsapp_sidecar_base_url(value: str) -> str:
@@ -520,7 +590,7 @@ def validate_whatsapp_sidecar_base_url(value: str) -> str:
 
 
 def validate_whatsapp_sidecar_unix_socket_path(value: str) -> str:
-    """Return a canonical per-account UDS path without relaxing TCP origin policy."""
+    """Return a canonical service UDS path without relaxing TCP origin policy."""
 
     if (
         not value
@@ -583,15 +653,6 @@ def _response_json(response: httpx.Response) -> JsonValue:
         return _JSON_VALUE_ADAPTER.validate_json(response.content)
     except ValidationError as exc:
         raise ValueError("baileys sidecar response must be valid JSON") from exc
-
-
-def _sidecar_health_connected(data: JsonValue) -> bool:
-    if not isinstance(data, dict):
-        return False
-    connected = data.get("connected")
-    if isinstance(connected, bool):
-        return connected
-    return str(data.get("status") or "").lower() == "connected"
 
 
 def _runtime_status(value: object) -> WhatsAppSidecarRuntimeStatus:

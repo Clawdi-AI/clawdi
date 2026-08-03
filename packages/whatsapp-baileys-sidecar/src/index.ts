@@ -4,19 +4,18 @@ import { createConnection } from "node:net";
 
 import { loadConfigFromEnv } from "./config.js";
 import { createSharedShutdown } from "./graceful-shutdown.js";
-import { BaileysSocketRuntime } from "./runtime.js";
 import { createSidecarServer } from "./server.js";
+import { BaileysSessionSupervisor } from "./session-supervisor.js";
 
 const config = loadConfigFromEnv();
-const runtime = new BaileysSocketRuntime(config);
-const server = createSidecarServer(runtime, { apiToken: config.apiToken });
+const supervisor = new BaileysSessionSupervisor(config);
+const server = createSidecarServer(supervisor, { apiToken: config.apiToken });
 
 try {
-	await runtime.start();
 	if (config.socketPath) await removeStaleSocket(config.socketPath);
 	await listen();
 } catch (error: unknown) {
-	await runtime.stop().catch(() => undefined);
+	await supervisor.stop().catch(() => undefined);
 	throw error;
 }
 
@@ -42,7 +41,6 @@ function listen(): Promise<void> {
 				console.log(
 					JSON.stringify({
 						event: "clawdi_whatsapp_provider_transport_started",
-						accountId: config.accountId,
 						...endpoint,
 					}),
 				);
@@ -98,12 +96,11 @@ const shutdown = createSharedShutdown(async (signal: "SIGINT" | "SIGTERM"): Prom
 	console.log(
 		JSON.stringify({
 			event: "clawdi_whatsapp_provider_transport_stopping",
-			accountId: config.accountId,
 			signal,
 		}),
 	);
 	await new Promise<void>((resolve) => server.close(() => resolve()));
-	await runtime.stop();
+	await supervisor.stop();
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

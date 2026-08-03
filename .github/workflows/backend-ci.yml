@@ -7,8 +7,6 @@ on:
       - "packages/whatsapp-baileys-sidecar/**"
       - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
       - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
-      - "scripts/prepare-whatsapp-sidecar-deploy.ts"
-      - "scripts/whatsapp-sidecar-container-preflight.ts"
       - "config/deploy.yml"
       - "deploy/self-host/**"
       - "apps/web/Dockerfile"
@@ -17,6 +15,8 @@ on:
       - "package.json"
       - "bun.lock"
       - "scripts/openapi-typescript.sh"
+      - "scripts/cutover-whatsapp-sidecar-containers.ts"
+      - "scripts/test-kamal-whatsapp-sidecar-render.sh"
       - "tools/openapi-typescript/**"
       - ".github/actions/setup-bun-ci/**"
       - ".github/workflows/backend-ci.yml"
@@ -28,8 +28,6 @@ on:
       - "packages/whatsapp-baileys-sidecar/**"
       - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
       - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
-      - "scripts/prepare-whatsapp-sidecar-deploy.ts"
-      - "scripts/whatsapp-sidecar-container-preflight.ts"
       - "config/deploy.yml"
       - "deploy/self-host/**"
       - "apps/web/Dockerfile"
@@ -38,6 +36,8 @@ on:
       - "package.json"
       - "bun.lock"
       - "scripts/openapi-typescript.sh"
+      - "scripts/cutover-whatsapp-sidecar-containers.ts"
+      - "scripts/test-kamal-whatsapp-sidecar-render.sh"
       - "tools/openapi-typescript/**"
       - ".github/actions/setup-bun-ci/**"
       - ".github/workflows/backend-ci.yml"
@@ -84,8 +84,8 @@ jobs:
               - "packages/whatsapp-baileys-sidecar/**"
               - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
               - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
-              - "scripts/prepare-whatsapp-sidecar-deploy.ts"
-              - "scripts/whatsapp-sidecar-container-preflight.ts"
+              - "scripts/cutover-whatsapp-sidecar-containers.ts"
+              - "scripts/test-kamal-whatsapp-sidecar-render.sh"
               - "config/deploy.yml"
             test:
               - "backend/app/**"
@@ -99,8 +99,8 @@ jobs:
               - "packages/whatsapp-baileys-sidecar/**"
               - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
               - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
-              - "scripts/prepare-whatsapp-sidecar-deploy.ts"
-              - "scripts/whatsapp-sidecar-container-preflight.ts"
+              - "scripts/cutover-whatsapp-sidecar-containers.ts"
+              - "scripts/test-kamal-whatsapp-sidecar-render.sh"
               - "config/deploy.yml"
               - "package.json"
               - "bun.lock"
@@ -231,6 +231,13 @@ jobs:
           bun run --cwd packages/cli test:internal
           tests/whatsapp-sidecar-deploy-contract.test.ts
           tests/clawdi-image-release-workflow.test.ts
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+      - name: Kamal 2.12 render contract
+        run: |
+          gem install kamal -v '2.12.0' --no-document
+          scripts/test-kamal-whatsapp-sidecar-render.sh
       - name: Build production sidecar image
         run: >-
           docker build

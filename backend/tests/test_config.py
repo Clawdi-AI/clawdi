@@ -57,20 +57,13 @@ def test_settings_normalizes_line_continuation_clerk_pem_from_env(monkeypatch):
     load_pem_public_key(settings.clerk_pem_public_key.encode("utf-8"))
 
 
-def test_settings_redacts_whatsapp_sidecar_registration_tokens():
-    raw_config = (
-        '{"00000000-0000-0000-0000-000000000777":'
-        '{"base_url":"https://sidecar.example.test","api_token":"sidecar-secret"}}'
-    )
-
+def test_settings_redacts_whatsapp_sidecar_service_token():
     settings = Settings(
         _env_file=None,
-        channel_whatsapp_baileys_sidecars_json=raw_config,
-        channel_whatsapp_custom_baileys_sidecars_json=raw_config,
+        channel_whatsapp_baileys_sidecar_token="sidecar-secret",
     )
 
-    assert settings.channel_whatsapp_baileys_sidecars_json.get_secret_value() == raw_config
-    assert settings.channel_whatsapp_custom_baileys_sidecars_json.get_secret_value() == raw_config
+    assert settings.channel_whatsapp_baileys_sidecar_token.get_secret_value() == "sidecar-secret"
     assert "sidecar-secret" not in repr(settings)
 
 
