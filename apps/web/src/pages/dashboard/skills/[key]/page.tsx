@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import {
+	ArrowLeft,
 	BookOpen,
 	ExternalLink,
 	FileText,
@@ -21,6 +22,12 @@ import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { agentDisplayName, cleanMachineName } from "@/components/dashboard/agent-label";
+import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
+import { resolveAgentProjectScope } from "@/components/dashboard/agent-project-scope";
+import {
+	fetchAgentScopedSkillDetail,
+	resolveAgentSkillProjectAccess,
+} from "@/components/dashboard/agent-skill-detail-scope";
 import {
 	AGENT_PROJECT_SKILLS_REFRESH_POLICY,
 	agentSkillForegroundRefetchInterval,
@@ -43,11 +50,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import {
-	type AgentRouteSearch,
-	agentDeploymentRouteQuery,
-	agentSectionHref,
-} from "@/lib/agent-routes";
+import { type AgentRouteSearch, agentSectionHref } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import {
@@ -55,6 +58,7 @@ import {
 	projectResourceHref,
 	skillDetailHref,
 } from "@/lib/project-resource-model";
+import { shouldBlockQueryError } from "@/lib/query-state";
 import { skillCapabilities } from "@/lib/skill-authority";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 import {
@@ -102,38 +106,68 @@ export function SkillDetailContent({
 	const $api = useOpenApi();
 	const queryClient = useQueryClient();
 
-	// `?project=<project_id>` is set by the skills list page when the
-	// row knows its project. Without it, the legacy GET /api/skills/{key}
-	// resolves multi-project by "most-recently-updated", which means a
-	// multi-machine user clicking machine-B's row could load
-	// machine-A's content and silently overwrite the wrong copy on
-	// save. Routing the fetch through the project-explicit endpoint
-	// when we have the project_id removes that ambiguity. Falls back
-	// to the legacy endpoint for single-machine accounts (where
-	// there's only one row, so the resolver is unambiguous).
+	// Library routes keep their legacy resolver fallback for backwards
+	// compatibility. Agent routes must resolve bindings first and only call
+	// Project-explicit endpoints within the effective Agent Project scope.
 	const [projectIdParam] = useQueryState("project", parseAsString.withDefault(""));
-	const selectedProjectId = projectIdParam;
 	const isAgentScope = Boolean(agentId);
+	const selectedProjectId =
+		isAgentScope && typeof routeSearch?.project === "string" ? routeSearch.project : projectIdParam;
 	const skillListHref = agentId
-		? agentSectionHref(agentId, "skills", agentDeploymentRouteQuery(routeSearch))
+		? agentSectionHref(agentId, "skills", {
+				source: routeSearch?.source,
+				d: routeSearch?.d,
+			})
 		: projectResourceHref("skills");
+	const scopedBindings = useAgentProjectBindings(agentId, { enabled: isAgentScope });
+	const scopedProjectScope = useMemo<{ projectIds: string[]; error: unknown | null }>(() => {
+		if (!isAgentScope || !scopedBindings.data) return { projectIds: [], error: null };
+		try {
+			return {
+				projectIds: resolveAgentProjectScope(scopedBindings.data).projectIds,
+				error: null,
+			};
+		} catch (error) {
+			return { projectIds: [], error };
+		}
+	}, [isAgentScope, scopedBindings.data]);
+	const scopedProjectAccess = useMemo(
+		() => resolveAgentSkillProjectAccess(scopedProjectScope.projectIds, selectedProjectId),
+		[scopedProjectScope.projectIds, selectedProjectId],
+	);
+	const bindingsResolved = !isAgentScope || scopedBindings.data !== undefined;
+	const scopedSkillQueryEnabled =
+		!isAgentScope ||
+		(bindingsResolved &&
+			!scopedProjectScope.error &&
+			scopedProjectAccess.kind === "bound" &&
+			scopedProjectAccess.projectIds.length > 0);
+	const projectionScope = agentId
+		? `agent:${JSON.stringify([agentId, ...scopedProjectScope.projectIds])}`
+		: "cloud";
 
-	const {
-		data: skill,
-		isLoading,
-		error,
-		refetch,
-	} = useQuery({
-		queryKey: skillDetailQueryKey(
-			skillKey,
-			selectedProjectId,
-			agentId ? `agent:${agentId}` : "cloud",
-		),
+	const skillQuery = useQuery({
+		queryKey: skillDetailQueryKey(skillKey, selectedProjectId, projectionScope),
 		// An empty key would interpolate to `GET /v1/skills/`, which the
 		// backend's `{skill_key:path}` catch-all rejects with a 422.
 		// Nothing useful can load without a key, so don't fire at all.
-		enabled: skillKey.length > 0,
+		enabled: skillKey.length > 0 && scopedSkillQueryEnabled,
 		queryFn: async () => {
+			if (isAgentScope) {
+				if (scopedProjectAccess.kind !== "bound") {
+					throw new Error("This Project is not available to this Agent.");
+				}
+				return fetchAgentScopedSkillDetail(
+					scopedProjectAccess.projectIds,
+					async (projectId) =>
+						unwrap(
+							await api.GET("/v1/projects/{project_id}/skills/{skill_key}", {
+								params: { path: { project_id: projectId, skill_key: skillKey } },
+							}),
+						),
+					isApiNotFoundError,
+				);
+			}
 			if (selectedProjectId) {
 				return unwrap(
 					await api.GET("/v1/projects/{project_id}/skills/{skill_key}", {
@@ -152,6 +186,21 @@ export function SkillDetailContent({
 		refetchIntervalInBackground: AGENT_PROJECT_SKILLS_REFRESH_POLICY.refetchIntervalInBackground,
 		refetchOnWindowFocus: AGENT_PROJECT_SKILLS_REFRESH_POLICY.refetchOnWindowFocus,
 	});
+	const skill = skillQuery.data;
+	const blockingBindingsError = isAgentScope
+		? shouldBlockQueryError(scopedBindings.error, scopedBindings.data)
+			? scopedBindings.error
+			: null
+		: null;
+	const agentAccessError = blockingBindingsError ?? scopedProjectScope.error;
+	const isUnboundAgentProject =
+		isAgentScope &&
+		bindingsResolved &&
+		!scopedProjectScope.error &&
+		scopedProjectAccess.kind === "unbound";
+	const skillIsLoading =
+		(isAgentScope && !bindingsResolved && !agentAccessError) ||
+		(!agentAccessError && !isUnboundAgentProject && skillQuery.isLoading);
 
 	const agentEnvironmentId = agentId ?? skill?.environment_id ?? null;
 	const { data: skillAgent } = $api.useQuery(
@@ -176,6 +225,8 @@ export function SkillDetailContent({
 	const { data: defaultProject, error: projectError } = $api.useQuery(
 		"get",
 		"/v1/projects/default",
+		{},
+		{ enabled: !isAgentScope },
 	);
 	// Edits land in the skill's own project when the detail response
 	// carries one (multi-machine accounts), falling back to the
@@ -343,27 +394,59 @@ export function SkillDetailContent({
 	const skillBody = useMemo(() => stripFrontmatter(skill?.content ?? "").trim(), [skill?.content]);
 	const viewState = skillDetailViewState({
 		skillKey,
-		error,
+		error: skillQuery.error,
 		hasSkill: Boolean(skill),
-		isLoading,
+		isLoading: skillIsLoading,
 	});
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			{viewState === "missing-key" ? (
+			{isAgentScope ? (
+				<Button
+					render={<Link to={skillListHref} />}
+					nativeButton={false}
+					variant="ghost"
+					size="sm"
+					className="w-fit"
+				>
+					<ArrowLeft className="mr-1.5 size-4" />
+					Agent Skills
+				</Button>
+			) : null}
+			{agentAccessError ? (
+				<ApiErrorPanel
+					error={agentAccessError}
+					onRetry={() => {
+						void scopedBindings.refetch();
+					}}
+					title="Couldn't load Agent Skill access"
+				/>
+			) : isUnboundAgentProject ? (
+				<DetailNotFound
+					title="Skill not available to this Agent"
+					message="The requested Project is not available through this Agent. Return to Agent Skills to choose an available Skill."
+				/>
+			) : viewState === "missing-key" ? (
 				<DetailNotFound title="Skill not found" message="The URL is missing a skill key." />
 			) : viewState === "not-found" ? (
-				<DetailNotFound title="Skill not found" message={errorMessage(error)} />
+				<DetailNotFound
+					title="Skill not found"
+					message={
+						isAgentScope
+							? "This Skill was not found in this Agent's Projects."
+							: errorMessage(skillQuery.error)
+					}
+				/>
 			) : viewState === "error" ? (
 				<ApiErrorPanel
-					error={error}
+					error={skillQuery.error}
 					onRetry={() => {
-						void refetch();
+						void skillQuery.refetch();
 					}}
 					title="Couldn't load skill"
 				/>
 			) : viewState === "loading" ? (
-				<div className="space-y-3 py-2">
+				<div className="space-y-3 py-2" data-testid="agent-skill-detail-loading">
 					<Skeleton className="h-6 w-48" />
 					<Skeleton className="h-4 w-64" />
 				</div>

@@ -1421,6 +1421,9 @@ function isStubResponse(value: unknown): value is StubResponse {
 type HostedApiStubOptions = {
 	sessionsPage?: unknown;
 	sessionRequests?: string[];
+	legacySkillDetailRequests?: string[];
+	skillDetailRequests?: string[];
+	skillDetailResponses?: Readonly<Record<string, StubResponse>>;
 	connectorConnections?: readonly unknown[];
 	connectorCatalog?: readonly {
 		name: string;
@@ -2463,6 +2466,22 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				page,
 				page_size: pageSize,
 			});
+		}
+		const projectSkillDetailMatch = p.match(/^\/v1\/projects\/([^/]+)\/skills\/(.+)$/);
+		if (projectSkillDetailMatch && r.request().method() === "GET") {
+			options.skillDetailRequests?.push(r.request().url());
+			const projectId = decodeURIComponent(projectSkillDetailMatch[1] ?? "");
+			const skillKey = decodeURIComponent(projectSkillDetailMatch[2] ?? "");
+			const response = options.skillDetailResponses?.[`${projectId}/${skillKey}`];
+			return fulfillJson(
+				r,
+				response?.body ?? { detail: "Skill not found" },
+				response?.status ?? 404,
+			);
+		}
+		if (/^\/v1\/skills\/.+/.test(p) && r.request().method() === "GET") {
+			options.legacySkillDetailRequests?.push(r.request().url());
+			return fulfillJson(r, { detail: "Skill not found" }, 404);
 		}
 		if (p === "/v1/vault") {
 			if (!options.agentResourceFixtures) {
@@ -4835,6 +4854,142 @@ test("hosted Hermes Skills include context Projects without exposing runtime inf
 		return url.searchParams.get("project_id");
 	});
 	expect(requestedProjects).toEqual(["project-hosted", contextProjectId]);
+});
+
+test("hosted Agent Skill details retain deployment context and stay inside bound Projects", async ({
+	page,
+}) => {
+	const contextProjectId = "project-hosted-context";
+	const skillDetailRequests: string[] = [];
+	const legacySkillDetailRequests: string[] = [];
+	const hostedSkill = {
+		id: "skill-hosted-detail",
+		skill_key: "hosted-detail",
+		name: "Hosted detail Skill",
+		description: "Available through the hosted Agent Project",
+		version: 2,
+		source: "cloud",
+		authority: "cloud",
+		source_repo: null,
+		file_count: 1,
+		content: "Follow the hosted instructions.\n",
+		agent_types: ["hermes"],
+		created_at: "2026-07-15T00:00:00Z",
+		content_hash: "c".repeat(64),
+		updated_at: "2026-07-15T00:00:00Z",
+		project_id: "project-hosted",
+		project_name: "Rail Cloud Agent Project",
+		project_kind: "environment",
+		environment_id: railHostedEnvironmentId,
+		machine_name: "rail-cloud.local",
+	};
+	const contextSkill = {
+		...hostedSkill,
+		id: "skill-hosted-context",
+		skill_key: "hosted-context-only",
+		name: "Hosted context-only Skill",
+		description: "Available through a hosted context Project",
+		content: "Follow the hosted context instructions.\n",
+		project_id: contextProjectId,
+		project_name: "Hosted Context Project",
+		project_kind: "workspace",
+		environment_id: null,
+		machine_name: null,
+	};
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		agentProjectBindings: [
+			{
+				id: "binding-hosted-primary-detail",
+				agent_id: railHostedEnvironmentId,
+				project_id: "project-hosted",
+				binding_type: "primary",
+				priority: 0,
+				default_write_enabled: true,
+				created_at: "2026-07-15T00:00:00Z",
+			},
+			{
+				id: "binding-hosted-context-detail",
+				agent_id: railHostedEnvironmentId,
+				project_id: contextProjectId,
+				binding_type: "context",
+				priority: 1,
+				default_write_enabled: false,
+				created_at: "2026-07-15T00:01:00Z",
+			},
+		],
+		agentProjects: [
+			{
+				id: "project-hosted",
+				name: "Rail Cloud Agent Project",
+				slug: "rail-cloud-agent-project",
+				kind: "environment",
+				origin_environment_id: railHostedEnvironmentId,
+				archived_at: null,
+				created_at: "2026-07-15T00:00:00Z",
+				is_owner: true,
+				owner_display: "Hosted User",
+				owner_handle: "hosted-user",
+			},
+			{
+				id: contextProjectId,
+				name: "Hosted Context Project",
+				slug: "hosted-context-project",
+				kind: "workspace",
+				origin_environment_id: null,
+				archived_at: null,
+				created_at: "2026-07-15T00:01:00Z",
+				is_owner: true,
+				owner_display: "Hosted User",
+				owner_handle: "hosted-user",
+			},
+		],
+		skillDetailRequests,
+		legacySkillDetailRequests,
+		skillDetailResponses: {
+			"project-hosted/hosted-detail": { body: hostedSkill, status: 200 },
+			[`${contextProjectId}/hosted-context-only`]: { body: contextSkill, status: 200 },
+		},
+	});
+
+	const deploymentQuery = `source=on-clawdi&d=${railHostedDeployment.id}`;
+	const main = page.locator("main");
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}/skills/hosted-detail?project=project-hosted&${deploymentQuery}`,
+	);
+	await expect(main.getByRole("heading", { name: "Hosted detail Skill", level: 1 })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Agent Skills" })).toHaveAttribute(
+		"href",
+		`/agents/${railHostedEnvironmentId}/skills?${deploymentQuery}`,
+	);
+	await expect(main.getByRole("button", { name: "Manage in resource library" })).toHaveAttribute(
+		"href",
+		"/skills/hosted-detail?project=project-hosted",
+	);
+	expect(legacySkillDetailRequests).toEqual([]);
+
+	const requestsBeforeTamperedProject = skillDetailRequests.length;
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}/skills/hosted-detail?project=project-other&${deploymentQuery}`,
+	);
+	await expect(main.getByText("Skill not available to this Agent", { exact: true })).toBeVisible();
+	expect(skillDetailRequests).toHaveLength(requestsBeforeTamperedProject);
+
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}/skills/hosted-context-only?${deploymentQuery}`,
+	);
+	await expect(
+		main.getByRole("heading", { name: "Hosted context-only Skill", level: 1 }),
+	).toBeVisible();
+	const omittedProjectRequests = skillDetailRequests.filter((request) =>
+		new URL(request).pathname.endsWith("/skills/hosted-context-only"),
+	);
+	expect(omittedProjectRequests.map((request) => new URL(request).pathname)).toEqual([
+		"/v1/projects/project-hosted/skills/hosted-context-only",
+		`/v1/projects/${contextProjectId}/skills/hosted-context-only`,
+	]);
+	expect(legacySkillDetailRequests).toEqual([]);
 });
 
 test("hosted Skills empty state stays neutral and excludes infrastructure summaries", async ({

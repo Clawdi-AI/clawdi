@@ -518,6 +518,9 @@ type DashboardApiStubOptions = {
 	projects?: readonly unknown[];
 	projectsGate?: Promise<void>;
 	projectsResponse?: { body: unknown; status: number };
+	legacySkillDetailRequests?: string[];
+	skillDetailRequests?: string[];
+	skillDetailResponses?: Readonly<Record<string, { body: unknown; status: number }>>;
 	skillRequests?: string[];
 	skillsByProjectId?: Readonly<Record<string, readonly unknown[]>>;
 	vaultRequests?: string[];
@@ -594,6 +597,24 @@ async function stubDashboardApi(
 				page: pageNumber,
 				page_size: pageSize,
 			});
+			return;
+		}
+		const projectSkillDetailMatch = url.pathname.match(/^\/v1\/projects\/([^/]+)\/skills\/(.+)$/);
+		if (projectSkillDetailMatch && route.request().method() === "GET") {
+			options.skillDetailRequests?.push(route.request().url());
+			const projectId = decodeURIComponent(projectSkillDetailMatch[1] ?? "");
+			const skillKey = decodeURIComponent(projectSkillDetailMatch[2] ?? "");
+			const response = options.skillDetailResponses?.[`${projectId}/${skillKey}`];
+			await fulfillJson(
+				route,
+				response?.body ?? { detail: "Skill not found" },
+				response?.status ?? 404,
+			);
+			return;
+		}
+		if (/^\/v1\/skills\/.+/.test(url.pathname) && route.request().method() === "GET") {
+			options.legacySkillDetailRequests?.push(route.request().url());
+			await fulfillJson(route, { detail: "Skill not found" }, 404);
 			return;
 		}
 		if (url.pathname === "/v1/vault") {
@@ -1783,6 +1804,164 @@ test("agent Skills wait for effective Project bindings and fail closed on bindin
 			errorPage.locator("main").getByText("Couldn't load agent Skills", { exact: true }),
 		).toBeVisible({ timeout: 15_000 });
 		expect(errorSkillRequests).toEqual([]);
+	} finally {
+		await errorPage.close();
+	}
+});
+
+test("agent Skill details resolve only through effective Projects", async ({ page }) => {
+	let releaseBindings: (() => void) | undefined;
+	const projectBindingsGate = new Promise<void>((resolve) => {
+		releaseBindings = resolve;
+	});
+	const skillDetailRequests: string[] = [];
+	const legacySkillDetailRequests: string[] = [];
+	const contextProjectId = "project-context";
+	const scopedSkill = {
+		id: "skill-scoped",
+		skill_key: "scoped-skill",
+		name: "Scoped Skill",
+		description: "Available through the primary Project",
+		version: 1,
+		source: "cloud",
+		authority: "cloud",
+		source_repo: null,
+		file_count: 1,
+		content: "Follow the scoped instructions.\n",
+		agent_types: ["codex"],
+		created_at: now.toISOString(),
+		content_hash: "a".repeat(64),
+		updated_at: now.toISOString(),
+		project_id: "project-smoke",
+		project_name: "Smoke Project",
+		project_kind: "environment",
+		environment_id: "agent-smoke-1",
+		machine_name: "smoke-machine.local",
+	};
+	const contextSkill = {
+		...scopedSkill,
+		id: "skill-context",
+		skill_key: "context-only",
+		name: "Context-only Skill",
+		description: "Available through an added Project",
+		content: "Follow the context instructions.\n",
+		project_id: contextProjectId,
+		project_name: "Context Project",
+		project_kind: "workspace",
+		environment_id: null,
+		machine_name: null,
+	};
+	await stubDashboardApi(page, [], {
+		projectBindingsGate,
+		projectBindings: [
+			...projectBindings,
+			{
+				id: "binding-context",
+				agent_id: "agent-smoke-1",
+				project_id: contextProjectId,
+				binding_type: "context",
+				priority: 1,
+				default_write_enabled: false,
+				created_at: now.toISOString(),
+			},
+		],
+		projects: [
+			...projects,
+			{
+				id: contextProjectId,
+				name: "Context Project",
+				slug: "context-project",
+				kind: "workspace",
+				origin_environment_id: null,
+				archived_at: null,
+				created_at: now.toISOString(),
+				is_owner: true,
+				owner_display: "Dev User",
+				owner_handle: "dev-user",
+			},
+		],
+		skillDetailRequests,
+		legacySkillDetailRequests,
+		skillDetailResponses: {
+			"project-smoke/scoped-skill": { body: scopedSkill, status: 200 },
+			[`${contextProjectId}/context-only`]: { body: contextSkill, status: 200 },
+		},
+	});
+
+	const deploymentQuery = "source=on-clawdi&d=deployment-smoke";
+	await page.goto(
+		`/agents/agent-smoke-1/skills/scoped-skill?project=project-smoke&${deploymentQuery}`,
+	);
+	const main = page.locator("main");
+	await expect(main.getByTestId("agent-skill-detail-loading")).toBeVisible();
+	expect(skillDetailRequests).toEqual([]);
+	if (!releaseBindings) throw new Error("Project binding gate was not initialized");
+	releaseBindings();
+	await expect.poll(() => skillDetailRequests.length).toBe(1);
+	await expect(main.getByRole("heading", { name: "Scoped Skill", level: 1 })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Agent Skills" })).toHaveAttribute(
+		"href",
+		`/agents/agent-smoke-1/skills?${deploymentQuery}`,
+	);
+	await expect(main.getByRole("button", { name: "Manage in resource library" })).toHaveAttribute(
+		"href",
+		"/skills/scoped-skill?project=project-smoke",
+	);
+	expect(
+		skillDetailRequests.some(
+			(request) => new URL(request).pathname === "/v1/projects/project-smoke/skills/scoped-skill",
+		),
+	).toBe(true);
+	expect(legacySkillDetailRequests).toEqual([]);
+
+	const requestsBeforeTamperedProject = skillDetailRequests.length;
+	await page.goto(
+		`/agents/agent-smoke-1/skills/scoped-skill?project=project-unrelated&${deploymentQuery}`,
+	);
+	await expect(main.getByText("Skill not available to this Agent", { exact: true })).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Scoped Skill", level: 1 })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: "Agent Skills" })).toHaveAttribute(
+		"href",
+		`/agents/agent-smoke-1/skills?${deploymentQuery}`,
+	);
+	expect(skillDetailRequests).toHaveLength(requestsBeforeTamperedProject);
+	expect(legacySkillDetailRequests).toEqual([]);
+
+	await page.goto(`/agents/agent-smoke-1/skills/context-only?${deploymentQuery}`);
+	await expect(main.getByRole("heading", { name: "Context-only Skill", level: 1 })).toBeVisible();
+	const contextRequests = skillDetailRequests.filter((request) =>
+		new URL(request).pathname.endsWith("/skills/context-only"),
+	);
+	expect(contextRequests.map((request) => new URL(request).pathname)).toEqual([
+		"/v1/projects/project-smoke/skills/context-only",
+		`/v1/projects/${contextProjectId}/skills/context-only`,
+	]);
+	expect(legacySkillDetailRequests).toEqual([]);
+
+	await page.goto(`/agents/agent-smoke-1/skills/missing-skill?${deploymentQuery}`);
+	await expect(main.getByText("Skill not found", { exact: true })).toBeVisible();
+	await expect(main.getByText("This Skill was not found in this Agent's Projects.")).toBeVisible();
+	expect(legacySkillDetailRequests).toEqual([]);
+
+	const errorPage = await page.context().newPage();
+	const errorSkillDetailRequests: string[] = [];
+	try {
+		await stubDashboardApi(errorPage, [], {
+			projectBindingsError: { status: 503, detail: "bindings unavailable" },
+			skillDetailRequests: errorSkillDetailRequests,
+		});
+		await errorPage.goto(
+			`/agents/agent-smoke-1/skills/scoped-skill?project=project-smoke&${deploymentQuery}`,
+		);
+		const errorMain = errorPage.locator("main");
+		await expect(
+			errorMain.getByText("Couldn't load Agent Skill access", { exact: true }),
+		).toBeVisible({ timeout: 15_000 });
+		await expect(errorMain.getByRole("button", { name: "Agent Skills" })).toHaveAttribute(
+			"href",
+			`/agents/agent-smoke-1/skills?${deploymentQuery}`,
+		);
+		expect(errorSkillDetailRequests).toEqual([]);
 	} finally {
 		await errorPage.close();
 	}
