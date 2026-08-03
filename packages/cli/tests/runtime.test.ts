@@ -46,6 +46,7 @@ import {
 } from "../src/runtime/channels";
 import {
 	applyRuntimeCliDesiredState,
+	completePendingRuntimeCliUpgrade,
 	reconcilePendingRuntimeCliUpgrade,
 	rollbackPendingRuntimeCliUpgrade,
 } from "../src/runtime/cli-update";
@@ -472,8 +473,8 @@ function currentCliFixtureIdentity(
 function createVersionedCliFixture(
 	paths: RuntimePaths,
 	version: string,
+	npmPrefix = join(paths.cliNpmPrefix, "packages", version),
 ): RuntimeCliFixtureIdentity {
-	const npmPrefix = join(paths.cliNpmPrefix, "packages", version);
 	const activeTarget = join(npmPrefix, "bin", "clawdi");
 	mkdirSync(dirname(activeTarget), { recursive: true });
 	writeFileSync(
@@ -580,6 +581,34 @@ function seedCliRecoveryFixture(state: string, run: string) {
 		previousIdentity: currentCliFixtureIdentity(paths, "0.13.30"),
 		newIdentity: createVersionedCliFixture(paths, "0.13.31"),
 	};
+}
+
+function seedExternalCliBootstrapRecoveryFixture(
+	state: string,
+	run: string,
+	bootstrapVersion = "0.13.33",
+) {
+	process.env.CLAWDI_RUNTIME_MODE = "hosted";
+	process.env.CLAWDI_SERVICE_STATE_DIR = state;
+	process.env.CLAWDI_RUN_DIR = run;
+	const paths = getRuntimePaths();
+	const previousIdentity = createVersionedCliFixture(paths, "0.13.28");
+	const newIdentity = createVersionedCliFixture(paths, "0.13.32");
+	const bootstrapIdentity = createVersionedCliFixture(
+		paths,
+		bootstrapVersion,
+		join(paths.cliNpmPrefix, "installs", "install-external-bootstrap"),
+	);
+	pointManagedCliAt(paths, bootstrapIdentity);
+	writeCliBootstrapFixture(paths, bootstrapIdentity);
+	writeCliTransactionFixture(paths, {
+		phase: "activated",
+		previousIdentity,
+		newIdentity,
+		badVersions: [{ version: "0.13.27", reason: "existing rollback" }],
+	});
+	rmSync(previousIdentity.npmPrefix, { recursive: true, force: true });
+	return { paths, previousIdentity, newIdentity, bootstrapIdentity };
 }
 
 function cliManifest(version: string): RuntimeManifest {
@@ -9998,6 +10027,230 @@ chmod +x "$prefix/bin/clawdi"
 		});
 	});
 
+	it("accepts a verified external bootstrap that supersedes a stale activated transaction", () => {
+		const { paths, previousIdentity, newIdentity, bootstrapIdentity } =
+			seedExternalCliBootstrapRecoveryFixture(
+				join(root, "state-cli-external-bootstrap"),
+				join(root, "run-cli-external-bootstrap"),
+			);
+		const before = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+		expect(existsSync(previousIdentity.npmPrefix)).toBe(false);
+
+		const recovered = reconcilePendingRuntimeCliUpgrade(paths, bootstrapIdentity.version);
+		const handedOff = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+		const bootstrap = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+
+		expect(recovered).toEqual({ status: "activated", selfReexec: false });
+		expect(readlinkSync(paths.cliManagedBin)).toBe(bootstrapIdentity.activeTarget);
+		expect(handedOff.transaction).toMatchObject({
+			phase: "activated",
+			previousIdentity: null,
+			newIdentity: bootstrapIdentity,
+			rollbackEligible: false,
+			rollback: null,
+		});
+		expect(handedOff.badVersions).toEqual(before.badVersions);
+		expect(bootstrap).toMatchObject({
+			packageSpec: bootstrapIdentity.packageSpec,
+			npmPrefix: bootstrapIdentity.npmPrefix,
+			activeTarget: bootstrapIdentity.activeTarget,
+			version: bootstrapIdentity.version,
+			verification: {
+				verifiedAt: expect.any(String),
+				device: expect.any(Number),
+				inode: expect.any(Number),
+				size: expect.any(Number),
+				modifiedAtMs: expect.any(Number),
+			},
+		});
+		expect(existsSync(bootstrapIdentity.npmPrefix)).toBe(true);
+		expect(existsSync(newIdentity.npmPrefix)).toBe(false);
+
+		const journalAfterHandoff = readFileSync(paths.cliUpgradeState, "utf-8");
+		const staleOwnerRollback = rollbackPendingRuntimeCliUpgrade(
+			paths,
+			"stale self-upgrade owner must not roll back bootstrap",
+		);
+		expect(staleOwnerRollback.status).toBe("not_pending");
+		expect(readFileSync(paths.cliUpgradeState, "utf-8")).toBe(journalAfterHandoff);
+
+		const replayed = reconcilePendingRuntimeCliUpgrade(paths, bootstrapIdentity.version);
+		expect(replayed).toEqual({ status: "unchanged", selfReexec: false });
+		expect(readFileSync(paths.cliUpgradeState, "utf-8")).toBe(journalAfterHandoff);
+
+		completePendingRuntimeCliUpgrade(paths, bootstrapIdentity.version);
+		const completed = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+		expect(completed.transaction).toBeNull();
+		expect(completed.badVersions).toEqual(before.badVersions);
+	});
+
+	it("runtime watch fences an old process after durably handing off a trusted activation", async () => {
+		const runningVersion = getCliVersion();
+		const state = join(root, "state-cli-external-bootstrap-old-process");
+		const run = join(root, "run-cli-external-bootstrap-old-process");
+		process.env.HOME = join(root, "home-cli-external-bootstrap-old-process");
+		process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = join(run, "systemd", "system");
+		const { paths, bootstrapIdentity } = seedExternalCliBootstrapRecoveryFixture(
+			state,
+			run,
+			"0.13.34",
+		);
+		const before = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+		const logs: string[] = [];
+		const previousLog = console.log;
+		const previousExitCode = process.exitCode;
+		const { captured, restore } = mockFetch([]);
+		expect(bootstrapIdentity.version).not.toBe(runningVersion);
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+		};
+		process.exitCode = undefined;
+
+		try {
+			await runtimeWatch({ once: true, json: true, notifications: false });
+
+			const event = JSON.parse(logs[0]);
+			const handedOff = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+			expect(process.exitCode ?? 0).toBe(0);
+			expect(event).toMatchObject({
+				status: "cli_handoff",
+				handoff: "cli_reexec",
+				reconciliation: { status: "activated", selfReexec: true },
+				selfReexec: true,
+			});
+			expect(captured).toHaveLength(0);
+			expect(readlinkSync(paths.cliManagedBin)).toBe(bootstrapIdentity.activeTarget);
+			expect(handedOff).toMatchObject({
+				transaction: {
+					phase: "activated",
+					previousIdentity: null,
+					newIdentity: bootstrapIdentity,
+					rollbackEligible: false,
+					rollback: null,
+				},
+				badVersions: before.badVersions,
+			});
+			expect(existsSync(paths.manifestLastGood)).toBe(false);
+			expect(existsSync(paths.appliedState)).toBe(false);
+		} finally {
+			restore();
+			console.log = previousLog;
+			process.exitCode = previousExitCode;
+		}
+	});
+
+	it("hands off by verified identity without using version ordering", () => {
+		const { paths, bootstrapIdentity } = seedExternalCliBootstrapRecoveryFixture(
+			join(root, "state-cli-external-bootstrap-lower-version"),
+			join(root, "run-cli-external-bootstrap-lower-version"),
+			"0.13.20",
+		);
+
+		const recovered = reconcilePendingRuntimeCliUpgrade(paths, bootstrapIdentity.version);
+		const handedOff = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+
+		expect(recovered).toEqual({ status: "activated", selfReexec: false });
+		expect(handedOff.transaction).toMatchObject({
+			newIdentity: bootstrapIdentity,
+			rollbackEligible: false,
+		});
+	});
+
+	it("fails closed when a bootstrap-owned handoff journal replays a tampered target", () => {
+		const { paths, bootstrapIdentity } = seedExternalCliBootstrapRecoveryFixture(
+			join(root, "state-cli-external-bootstrap-replay-tampered"),
+			join(root, "run-cli-external-bootstrap-replay-tampered"),
+		);
+		reconcilePendingRuntimeCliUpgrade(paths, bootstrapIdentity.version);
+		writeFileSync(bootstrapIdentity.activeTarget, "#!/usr/bin/env bash\nexit 1\n", {
+			mode: 0o700,
+		});
+		const handoffJournal = readFileSync(paths.cliUpgradeState, "utf-8");
+
+		expect(() => reconcilePendingRuntimeCliUpgrade(paths, bootstrapIdentity.version)).toThrow(
+			"clawdi CLI transaction cannot restore a verified previous identity",
+		);
+		expect(readFileSync(paths.cliUpgradeState, "utf-8")).toBe(handoffJournal);
+		expect(readlinkSync(paths.cliManagedBin)).toBe(bootstrapIdentity.activeTarget);
+	});
+
+	it("fails closed when an external bootstrap target was tampered", () => {
+		const { paths, bootstrapIdentity } = seedExternalCliBootstrapRecoveryFixture(
+			join(root, "state-cli-external-bootstrap-tampered"),
+			join(root, "run-cli-external-bootstrap-tampered"),
+		);
+		writeFileSync(bootstrapIdentity.activeTarget, "#!/usr/bin/env bash\nexit 1\n", {
+			mode: 0o700,
+		});
+		const before = readFileSync(paths.cliUpgradeState, "utf-8");
+
+		expect(() => reconcilePendingRuntimeCliUpgrade(paths, bootstrapIdentity.version)).toThrow(
+			"clawdi CLI transaction cannot restore a verified previous identity",
+		);
+		expect(readFileSync(paths.cliUpgradeState, "utf-8")).toBe(before);
+		expect(readlinkSync(paths.cliManagedBin)).toBe(bootstrapIdentity.activeTarget);
+	});
+
+	it("fails closed when bootstrap status is stale for the externally active target", () => {
+		const { paths, newIdentity, bootstrapIdentity } = seedExternalCliBootstrapRecoveryFixture(
+			join(root, "state-cli-external-bootstrap-stale-status"),
+			join(root, "run-cli-external-bootstrap-stale-status"),
+		);
+		writeCliBootstrapFixture(paths, newIdentity);
+		const before = readFileSync(paths.cliUpgradeState, "utf-8");
+
+		expect(() => reconcilePendingRuntimeCliUpgrade(paths, bootstrapIdentity.version)).toThrow(
+			"clawdi CLI transaction cannot restore a verified previous identity",
+		);
+		expect(readFileSync(paths.cliUpgradeState, "utf-8")).toBe(before);
+		expect(readlinkSync(paths.cliManagedBin)).toBe(bootstrapIdentity.activeTarget);
+	});
+
+	it("fails closed when bootstrap identity mismatches the externally active version", () => {
+		const { paths, bootstrapIdentity } = seedExternalCliBootstrapRecoveryFixture(
+			join(root, "state-cli-external-bootstrap-mismatch"),
+			join(root, "run-cli-external-bootstrap-mismatch"),
+		);
+		const bootstrap = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+		bootstrap.version = "0.13.32";
+		writeFileSync(paths.cliBootstrapStatus, `${JSON.stringify(bootstrap)}\n`);
+		const before = readFileSync(paths.cliUpgradeState, "utf-8");
+
+		expect(() => reconcilePendingRuntimeCliUpgrade(paths, bootstrapIdentity.version)).toThrow(
+			"clawdi CLI transaction cannot restore a verified previous identity",
+		);
+		expect(readFileSync(paths.cliUpgradeState, "utf-8")).toBe(before);
+		expect(readlinkSync(paths.cliManagedBin)).toBe(bootstrapIdentity.activeTarget);
+	});
+
+	it("completes a normal activated transaction without changing bad-version history", () => {
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state-cli-normal-completion");
+		process.env.CLAWDI_RUN_DIR = join(root, "run-cli-normal-completion");
+		const paths = getRuntimePaths();
+		const previousIdentity = createVersionedCliFixture(paths, "0.13.30");
+		const newIdentity = createVersionedCliFixture(paths, "0.13.31");
+		pointManagedCliAt(paths, newIdentity);
+		writeCliBootstrapFixture(paths, newIdentity);
+		writeCliTransactionFixture(paths, {
+			phase: "activated",
+			previousIdentity,
+			newIdentity,
+			badVersions: [{ version: "0.13.29", reason: "existing rollback" }],
+		});
+		const before = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+
+		const completed = completePendingRuntimeCliUpgrade(paths, newIdentity.version);
+		const after = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+
+		expect(completed).toEqual({ status: "unchanged", selfReexec: false });
+		expect(after.transaction).toBeNull();
+		expect(after.badVersions).toEqual(before.badVersions);
+		expect(readlinkSync(paths.cliManagedBin)).toBe(newIdentity.activeTarget);
+		expect(existsSync(previousIdentity.npmPrefix)).toBe(false);
+		expect(existsSync(newIdentity.npmPrefix)).toBe(true);
+	});
+
 	it("rolls back an activated CLI transaction whose new target is invalid", () => {
 		const { paths, previousIdentity, newIdentity } = seedCliRecoveryFixture(
 			join(root, "state-cli-activated-invalid"),
@@ -10009,6 +10262,7 @@ chmod +x "$prefix/bin/clawdi"
 			phase: "activated",
 			previousIdentity,
 			newIdentity,
+			badVersions: [{ version: "0.13.29", reason: "existing rollback" }],
 		});
 		writeFileSync(newIdentity.activeTarget, "#!/usr/bin/env bash\nexit 1\n", { mode: 0o700 });
 
@@ -10020,6 +10274,9 @@ chmod +x "$prefix/bin/clawdi"
 		expect(transactionState.transaction).toBeNull();
 		expect(transactionState.badVersions).toContainEqual(
 			expect.objectContaining({ version: newIdentity.version }),
+		);
+		expect(transactionState.badVersions).toContainEqual(
+			expect.objectContaining({ version: "0.13.29", reason: "existing rollback" }),
 		);
 	});
 

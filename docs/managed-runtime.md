@@ -668,6 +668,17 @@ root-only shim, the matching exact CLI package, and workload replacement or
 recreation. Manifest reconciliation alone cannot retrofit an old read-only
 container.
 
+The image bootstrap and CLI self-upgrade are independent atomic activation
+owners. If the image bootstrap replaces the active CLI while an older activated
+self-upgrade transaction remains, the transaction controller compares the full
+old transaction as its fence, verifies that bootstrap status exactly matches
+the active managed link, and atomically replaces the journal with an activated,
+non-rollbackable transaction owned by that verified identity. Replay is
+idempotent, and ordinary post-convergence completion retires the handoff
+journal. `badVersions` is preserved. Missing, stale, tampered, or mismatched
+bootstrap identity continues through verified rollback and otherwise fails
+closed; version ordering is not an ownership signal.
+
 ## Commands
 
 Root runtime operators can use these commands in controlled environments:
