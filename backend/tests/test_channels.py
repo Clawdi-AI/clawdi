@@ -1307,6 +1307,7 @@ async def test_channel_control_plane_actions_write_redacted_audit_events(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
+    monkeypatch,
 ):
     provider_token = "123456:telegram-secret"
     extra_secret = "channel-extra-secret"
@@ -1329,10 +1330,13 @@ async def test_channel_control_plane_actions_write_redacted_audit_events(
     assert rotated_response.status_code == 200, rotated_response.text
     rotated_agent_token = rotated_response.json()["agent_token"]
 
-    pair_response = await client.post(
-        f"/v1/channels/{created['id']}/pair-codes",
-        json={"agent_link_id": created["agent_link_id"], "ttl_seconds": 900},
-    )
+    _reset_fake_provider_client({"ok": True, "result": True})
+    with monkeypatch.context() as provider_mock:
+        provider_mock.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+        pair_response = await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": created["agent_link_id"], "ttl_seconds": 900},
+        )
     assert pair_response.status_code == 201, pair_response.text
     pair_code = pair_response.json()["code"]
 
@@ -3627,7 +3631,13 @@ async def test_public_bot_account_is_admin_managed_even_for_seed_owner(
     assert link.json()["agent_id"] == str(channel_agent.id)
     assert pair.status_code == 201
     assert pair.json()["agent_id"] == str(channel_agent.id)
-    assert _FakeProviderClient.calls == []
+    assert len(_FakeProviderClient.calls) == 1
+    assert _FakeProviderClient.calls[0]["url"].endswith("/bot123456:telegram-secret/setMyCommands")
+    assert _FakeProviderClient.calls[0]["json"]["commands"] == [
+        {"command": "clawdi_pair", "description": "Pair this chat with Clawdi."},
+        {"command": "clawdi_unpair", "description": "Disconnect this chat from Clawdi."},
+        {"command": "clawdi_help", "description": "Show safe Clawdi pairing instructions."},
+    ]
     account = (
         await db_session.execute(
             select(ChannelAccount).where(ChannelAccount.id == UUID(account_id))
@@ -4309,15 +4319,18 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     channel = created.json()
     account_id = UUID(channel["id"])
     webhook_secret = channel["webhook_secret"]
+    _reset_fake_provider_client({"ok": True, "result": True})
 
     user_a, agent_a = await _create_user_with_channel_agent(db_session, label="pair-owner-a")
     user_b, agent_b = await _create_user_with_channel_agent(db_session, label="pair-owner-b")
 
     async with _client_for_user(db_session, user_a) as client_a:
-        pair_a = await client_a.post(
-            f"/v1/channels/{account_id}/pair-codes",
-            json={"agent_id": str(agent_a.id), "ttl_seconds": 900},
-        )
+        with monkeypatch.context() as provider_mock:
+            provider_mock.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+            pair_a = await client_a.post(
+                f"/v1/channels/{account_id}/pair-codes",
+                json={"agent_id": str(agent_a.id), "ttl_seconds": 900},
+            )
         pair_a_again = await client_a.post(
             f"/v1/channels/{account_id}/pair-codes",
             json={"agent_id": str(agent_a.id), "ttl_seconds": 900},
@@ -18334,6 +18347,7 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     channel_agent,
+    monkeypatch,
 ):
     shared_chat_id = "15550001111@s.whatsapp.net"
     channel_specs = [
@@ -18380,6 +18394,8 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
         created=created_by_provider["whatsapp"],
         agent=channel_agent,
     )
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     pair_codes = {
         provider: (
             await client.post(
@@ -18468,7 +18484,7 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
 
 
 @pytest.mark.asyncio
-async def test_send_channel_message_uses_binding(client: httpx.AsyncClient):
+async def test_send_channel_message_uses_binding(client: httpx.AsyncClient, monkeypatch):
     created = (
         await client.post(
             "/v1/channels",
@@ -18479,6 +18495,8 @@ async def test_send_channel_message_uses_binding(client: httpx.AsyncClient):
             },
         )
     ).json()
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     pair = (
         await client.post(
             f"/v1/channels/{created['id']}/pair-codes",

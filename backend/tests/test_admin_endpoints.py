@@ -38,6 +38,7 @@ from app.services.whatsapp_native_transport import (
     WhatsAppSidecarUnavailableError,
 )
 from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegistry
+from tests.test_channels import _FakeProviderClient, _reset_fake_provider_client
 
 _ADMIN_KEY = "test-admin-secret-do-not-use-in-prod"
 # Shared header dict for the bulk of tests that exercise the happy-path
@@ -1849,6 +1850,8 @@ async def test_admin_channel_lifecycle_manages_public_bot(
         json={"agent_id": str(channel_agent.id)},
     )
     assert linked.status_code == 201, linked.text
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     pair = await client.post(
         f"/v1/channels/{body['id']}/pair-codes",
         json={"agent_link_id": linked.json()["id"], "ttl_seconds": 900},
