@@ -154,6 +154,8 @@ DISCORD_GUILD_INTERACTION_CONTEXT = 0
 DISCORD_BOT_DM_INTERACTION_CONTEXT = 1
 DISCORD_RESERVED_COMMAND_VERSION = 4
 DISCORD_RESERVED_COMMAND_VERSION_CONFIG_KEY = "discord_reserved_command_version"
+TELEGRAM_RESERVED_COMMAND_VERSION = 1
+TELEGRAM_RESERVED_COMMAND_VERSION_CONFIG_KEY = "telegram_reserved_command_version"
 DISCORD_INSTALL_CONFIG_VERSION = 2
 DISCORD_INSTALL_CONFIG_VERSION_CONFIG_KEY = "discord_install_config_version"
 DISCORD_USER_INSTALL_SUPPORTED_CONFIG_KEY = "discord_user_install_supported"
@@ -4929,6 +4931,25 @@ async def send_channel_outbound_message(
     )
 
 
+def _telegram_account_command_specs(
+    commands: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    merged = [dict(command) for command in DEFAULT_CHANNEL_COMMANDS]
+    seen = {_command_name(command) for command in merged}
+    for command in commands or []:
+        name = _command_name(command)
+        if name in seen:
+            continue
+        seen.add(name)
+        merged.append(command)
+    if len(merged) > 100:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="telegram merged command list exceeds provider limit of 100",
+        )
+    return merged
+
+
 async def sync_channel_commands(
     *,
     account: ChannelAccount,
@@ -4939,7 +4960,10 @@ async def sync_channel_commands(
     using_default_commands = commands is None
     command_specs = commands or [dict(command) for command in DEFAULT_CHANNEL_COMMANDS]
     if account.provider == CHANNEL_PROVIDER_TELEGRAM:
-        return await sync_telegram_commands(account=account, commands=command_specs)
+        return await sync_telegram_commands(
+            account=account,
+            commands=_telegram_account_command_specs(commands),
+        )
     if account.provider == CHANNEL_PROVIDER_DISCORD:
         if not using_default_commands:
             for command in command_specs:
@@ -5312,6 +5336,23 @@ def discord_reserved_commands_are_current(account: ChannelAccount) -> bool:
 def mark_discord_reserved_commands_current(account: ChannelAccount) -> None:
     config = dict(account.config) if isinstance(account.config, dict) else {}
     config[DISCORD_RESERVED_COMMAND_VERSION_CONFIG_KEY] = DISCORD_RESERVED_COMMAND_VERSION
+    account.config = config
+
+
+def telegram_reserved_commands_are_current(account: ChannelAccount) -> bool:
+    if not isinstance(account.config, dict):
+        return False
+    version = account.config.get(TELEGRAM_RESERVED_COMMAND_VERSION_CONFIG_KEY)
+    return (
+        isinstance(version, int)
+        and not isinstance(version, bool)
+        and version == TELEGRAM_RESERVED_COMMAND_VERSION
+    )
+
+
+def mark_telegram_reserved_commands_current(account: ChannelAccount) -> None:
+    config = dict(account.config) if isinstance(account.config, dict) else {}
+    config[TELEGRAM_RESERVED_COMMAND_VERSION_CONFIG_KEY] = TELEGRAM_RESERVED_COMMAND_VERSION
     account.config = config
 
 
