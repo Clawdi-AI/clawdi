@@ -19,12 +19,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-	agentProviderHasSingleLinkLimit,
+	agentProviderLinkReplacementRequired,
+	agentProviderLinkStatusUnknown,
 	autoLinkAgentIdForNewCustomBot,
 	CONNECTABLE_BOT_PROVIDERS,
 	type ConnectableBotProvider,
+	channelProviderLinkingReady,
 } from "@/hosted/v2/channels/channel-linking.logic";
-import { PROVIDER_META, providerMeta } from "@/hosted/v2/channels/channel-providers";
+import { PROVIDER_META } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelCreate, ChannelCreated } from "@/hosted/v2/channels/channel-types";
 import { useCreateChannel } from "@/hosted/v2/channels/channels-hooks";
 import {
@@ -32,6 +34,7 @@ import {
 	discordBotTokenError,
 	discordPublicKeyError,
 } from "@/hosted/v2/channels/connect-bot-dialog.logic";
+import { ProviderLinkReplacementConfirm } from "@/hosted/v2/channels/provider-link-replacement-confirm";
 import { WhatsAppDeviceOnboarding } from "@/hosted/v2/channels/whatsapp-device-onboarding";
 import { type AgentRouteQuery, agentSectionLink } from "@/lib/agent-routes";
 
@@ -39,7 +42,7 @@ type CreatedCustomBot = Pick<
 	ChannelCreated,
 	"id" | "name" | "provider" | "agent_link_id" | "agent_id"
 > & {
-	linkOutcome: "linked" | "inventory-only" | "inventory-only-provider-conflict";
+	linkOutcome: "linked" | "inventory-only";
 };
 
 export function ConnectBotDialog({
@@ -90,13 +93,12 @@ export function ConnectBotDialog({
 	const meta = PROVIDER_META[provider];
 	const discordSelected = provider === "discord";
 	const whatsappSelected = provider === "whatsapp";
+	const providerLinkingReady = channelProviderLinkingReady(provider);
 	const providerLinkConflict = Boolean(
-		agentId &&
-			agentProviderHasSingleLinkLimit(agentType, provider) &&
-			linkedProviders?.has(provider),
+		agentId && agentProviderLinkReplacementRequired(agentType, provider, linkedProviders),
 	);
 	const agentLinkStatusUnknown = Boolean(
-		agentId && agentProviderHasSingleLinkLimit(agentType, provider) && !linkedProviders,
+		agentId && agentProviderLinkStatusUnknown(agentType, provider, linkedProviders),
 	);
 	const autoLinkAgentId = autoLinkAgentIdForNewCustomBot(
 		agentId,
@@ -108,19 +110,13 @@ export function ConnectBotDialog({
 	const applicationIdError = discordSelected ? discordApplicationIdError(applicationId) : null;
 	const publicKeyError = discordSelected ? discordPublicKeyError(publicKey) : null;
 	const isSubmitting = submitting || create.isPending;
-	const agentLinkWarning =
-		!whatsappSelected && providerLinkConflict
-			? {
-					title: `${meta.label} is already linked`,
-					description: `This Agent already has a ${meta.label} link. The new bot will be added to Custom bots without linking to this Agent.`,
-				}
-			: !whatsappSelected && agentLinkStatusUnknown
-				? {
-						title: "Agent link status unavailable",
-						description:
-							"Clawdi can’t confirm this Agent’s existing links right now. The new Custom bot will be added to Custom bots without being linked to this Agent.",
-					}
-				: null;
+	const agentLinkWarning = agentLinkStatusUnknown
+		? {
+				title: "Agent link status unavailable",
+				description:
+					"Clawdi can’t confirm this Agent’s existing links right now. The new Custom bot will be added to Custom bots without being linked to this Agent.",
+			}
+		: null;
 
 	function changeProvider(next: ConnectableBotProvider) {
 		if (isSubmitting) return;
@@ -142,12 +138,13 @@ export function ConnectBotDialog({
 				!applicationIdError &&
 				!publicKeyError));
 
-	function buildBody(): ChannelCreate {
-		const base = {
+	function buildBody(replaceExistingProviderLink: boolean): ChannelCreate {
+		const base: ChannelCreate = {
 			provider,
 			name: name.trim(),
 			provider_token: token.trim(),
-			agent_id: autoLinkAgentId,
+			agent_id: replaceExistingProviderLink ? agentId : autoLinkAgentId,
+			...(replaceExistingProviderLink ? { replace_existing_provider_link: true } : {}),
 		};
 		if (!discordSelected) return base;
 		return {
@@ -159,22 +156,17 @@ export function ConnectBotDialog({
 		};
 	}
 
-	async function submit() {
+	async function submit(replaceExistingProviderLink = false): Promise<void> {
 		if (!canSubmit || submitLocked.current) return;
 		submitLocked.current = true;
 		setSubmitting(true);
 		const dialogSession = dialogSessionRef.current;
-		const body = buildBody();
-		const skippedLinkForProviderConflict = providerLinkConflict;
+		const body = buildBody(replaceExistingProviderLink);
 		try {
 			const data = await create.execute(body);
 			const result: CreatedCustomBot = {
 				...data,
-				linkOutcome: data.agent_link_id
-					? "linked"
-					: skippedLinkForProviderConflict
-						? "inventory-only-provider-conflict"
-						: "inventory-only",
+				linkOutcome: data.agent_link_id ? "linked" : "inventory-only",
 			};
 			setToken("");
 			if (openRef.current && dialogSessionRef.current === dialogSession) {
@@ -199,8 +191,6 @@ export function ConnectBotDialog({
 								: `${data.name} was added to Custom bots.`,
 				});
 			}
-		} catch {
-			// useCreateChannel surfaces the API error; retain inputs for retry.
 		} finally {
 			submitLocked.current = false;
 			setSubmitting(false);
@@ -264,6 +254,15 @@ export function ConnectBotDialog({
 			{otherProviderHint}
 		</fieldset>
 	);
+	const addCustomBotButton = (
+		<Button
+			className="min-w-0 whitespace-normal"
+			onClick={providerLinkConflict ? undefined : () => void submit().catch(() => undefined)}
+			disabled={!canSubmit || isSubmitting}
+		>
+			{isSubmitting ? "Adding…" : "Add custom bot"}
+		</Button>
+	);
 
 	return (
 		<Dialog
@@ -288,11 +287,9 @@ export function ConnectBotDialog({
 								</span>{" "}
 								{created.linkOutcome === "linked"
 									? "was added to Custom bots and linked to this Agent."
-									: created.linkOutcome === "inventory-only-provider-conflict"
-										? `was added to Custom bots. It was not linked because ${providerMeta(created.provider).label} is already linked to this Agent.`
-										: agentId
-											? "was added to Custom bots without linking to this Agent."
-											: "was added to Custom bots. Link it from an Agent when you’re ready."}
+									: agentId
+										? "was added to Custom bots without linking to this Agent."
+										: "was added to Custom bots. Link it from an Agent when you’re ready."}
 							</DialogDescription>
 						</DialogHeader>
 						<DialogFooter>
@@ -345,7 +342,12 @@ export function ConnectBotDialog({
 												{agentLinkWarning.description}
 											</AlertDescription>
 										</Alert>
-									) : !whatsappSelected && agentId ? (
+									) : providerLinkConflict ? (
+										<p role="status" className="text-xs text-muted-foreground" aria-live="polite">
+											Adding this bot will ask you to replace this Agent&apos;s existing{" "}
+											{meta.label} link.
+										</p>
+									) : providerLinkingReady && agentId ? (
 										<p role="status" className="text-xs text-muted-foreground" aria-live="polite">
 											The new Custom bot will be linked to this Agent automatically.
 										</p>
@@ -468,13 +470,17 @@ export function ConnectBotDialog({
 											>
 												{isSubmitting ? "Close" : "Cancel"}
 											</Button>
-											<Button
-												className="min-w-0 whitespace-normal"
-												onClick={() => void submit()}
-												disabled={!canSubmit || isSubmitting}
-											>
-												{isSubmitting ? "Adding…" : "Add custom bot"}
-											</Button>
+											{providerLinkConflict ? (
+												<ProviderLinkReplacementConfirm
+													provider={provider}
+													targetName={name.trim()}
+													onConfirm={() => submit(true)}
+												>
+													{addCustomBotButton}
+												</ProviderLinkReplacementConfirm>
+											) : (
+												addCustomBotButton
+											)}
 										</DialogFooter>
 									) : null}
 								</div>

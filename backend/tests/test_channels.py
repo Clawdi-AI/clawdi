@@ -17,6 +17,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -74,6 +75,7 @@ from app.routes.channel_routers.discord import (
     cleanup_discord_guild_commands_after_authority_revoked,
 )
 from app.routes.channel_routers.shared import _discord_gateway_dispatch
+from app.schemas.channel import ChannelAccountCreate, ChannelAgentLinkCreate
 from app.services import channel_config as channel_config_service
 from app.services import channels as channel_service
 from app.services.channel_debug_events import record_channel_debug_event
@@ -1017,6 +1019,27 @@ async def test_create_channel_masks_provider_token(client: httpx.AsyncClient):
     assert TELEGRAM_AGENT_TOKEN_RE.fullmatch(created["agent_token"])
     assert created["webhook_secret"]
     assert "telegram-secret" not in response.text
+
+
+def test_provider_link_replace_opt_in_is_non_nullable_and_defaults_false():
+    account = ChannelAccountCreate(provider=CHANNEL_PROVIDER_TELEGRAM, name="Schema test")
+    link = ChannelAgentLinkCreate()
+
+    assert account.replace_existing_provider_link is False
+    assert link.replace_existing_provider_link is False
+
+    with pytest.raises(ValidationError):
+        ChannelAccountCreate.model_validate(
+            {
+                "provider": CHANNEL_PROVIDER_TELEGRAM,
+                "name": "Schema test",
+                "replace_existing_provider_link": None,
+            }
+        )
+    with pytest.raises(ValidationError):
+        ChannelAgentLinkCreate.model_validate({"replace_existing_provider_link": None})
+    with pytest.raises(ValidationError, match="agent_id is required"):
+        ChannelAgentLinkCreate(replace_existing_provider_link=True)
 
 
 @pytest.mark.asyncio
@@ -2166,6 +2189,278 @@ async def test_hosted_agent_rejects_second_provider_account_but_keeps_existing_l
     assert agent.id not in eligible_agent_ids
     assert runtime_channels.status_code == 200, runtime_channels.text
     assert [item["id"] for item in runtime_channels.json()] == [first_account.json()["id"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent_type", "provider"),
+    [
+        ("hermes", CHANNEL_PROVIDER_TELEGRAM),
+        ("hermes", CHANNEL_PROVIDER_DISCORD),
+        ("openclaw", CHANNEL_PROVIDER_TELEGRAM),
+        ("openclaw", CHANNEL_PROVIDER_DISCORD),
+    ],
+)
+async def test_agent_link_replace_opt_in_atomically_archives_the_existing_provider_link(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+    agent_type: str,
+    provider: str,
+):
+    if provider == CHANNEL_PROVIDER_DISCORD:
+
+        async def fake_configure_discord_application(account: ChannelAccount):
+            return {"id": DISCORD_TEST_APPLICATION_ID}
+
+        async def fake_sync_channel_commands(**kwargs):
+            return []
+
+        monkeypatch.setattr(
+            "app.routes.admin.configure_discord_application",
+            fake_configure_discord_application,
+        )
+        monkeypatch.setattr(
+            "app.routes.admin.sync_channel_commands",
+            fake_sync_channel_commands,
+        )
+    discord_credentials = (
+        {
+            "provider_token": f"discord-replacement-token-{uuid4().hex}",
+            "config": _discord_ready_config(),
+        }
+        if provider == CHANNEL_PROVIDER_DISCORD
+        else {}
+    )
+    first_account_response = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=provider,
+        name=f"{agent_type}-{provider}-replace-first-{uuid4().hex}",
+        **discord_credentials,
+    )
+    second_account_response = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=provider,
+        name=f"{agent_type}-{provider}-replace-second-{uuid4().hex}",
+        **discord_credentials,
+    )
+    assert first_account_response.status_code == 201, first_account_response.text
+    assert second_account_response.status_code == 201, second_account_response.text
+    first_account_id = UUID(first_account_response.json()["id"])
+    second_account_id = UUID(second_account_response.json()["id"])
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label=f"{agent_type}-{provider}-replace",
+        agent_type=agent_type,
+    )
+
+    async with _client_for_user(db_session, user) as user_client:
+        first_response = await user_client.post(
+            f"/v1/channels/{first_account_id}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
+    assert first_response.status_code == 201, first_response.text
+    first_link = await db_session.get(ChannelBotAgentLink, UUID(first_response.json()["id"]))
+    assert first_link is not None
+    binding = ChannelBinding(
+        account_id=first_account_id,
+        bot_agent_link_id=first_link.id,
+        user_id=user.id,
+        external_chat_id=f"replacement-chat-{uuid4().hex}",
+        external_chat_type="private",
+        external_chat_name="Replacement cleanup",
+    )
+    pair_code = ChannelPairCode(
+        account_id=first_account_id,
+        bot_agent_link_id=first_link.id,
+        user_id=user.id,
+        code_hash=hash_token(f"replacement-{uuid4()}"),
+        expires_at=datetime.now(UTC) + timedelta(minutes=15),
+    )
+    credential = ChannelAgentCredential(
+        account_id=first_account_id,
+        bot_agent_link_id=first_link.id,
+        user_id=user.id,
+        provider=provider,
+        identity_pub_key_hash=hash_token(f"replacement-credential-{uuid4()}"),
+        identity_public_key=b"replacement-public-key",
+        synthetic_jid=f"replacement-{uuid4().hex}@example.test",
+        encrypted_credentials=b"replacement-encrypted-credentials",
+        credential_nonce=b"replacement-credential-nonce",
+    )
+    db_session.add_all((binding, pair_code, credential))
+    await db_session.commit()
+
+    async with _client_for_user(db_session, user) as user_client:
+        replacement = await user_client.post(
+            f"/v1/channels/{second_account_id}/agent-links",
+            json={
+                "agent_id": str(agent.id),
+                "replace_existing_provider_link": True,
+            },
+        )
+        idempotent = await user_client.post(
+            f"/v1/channels/{second_account_id}/agent-links",
+            json={
+                "agent_id": str(agent.id),
+                "replace_existing_provider_link": True,
+            },
+        )
+        active_links = await user_client.get(
+            "/v1/channels/agent-links",
+            params={"agent_id": str(agent.id)},
+        )
+
+    assert replacement.status_code == 201, replacement.text
+    assert replacement.json()["account_id"] == str(second_account_id)
+    assert replacement.json()["agent_token"] is not None
+    assert idempotent.status_code == 201, idempotent.text
+    assert idempotent.json()["id"] == replacement.json()["id"]
+    assert idempotent.json()["agent_token"] is None
+    assert active_links.status_code == 200, active_links.text
+    assert [item["account_id"] for item in active_links.json()] == [str(second_account_id)]
+
+    for row in (first_link, binding, pair_code, credential):
+        await db_session.refresh(row)
+    assert first_link.status == BOT_AGENT_LINK_STATUS_ARCHIVED
+    assert first_link.archived_at is not None
+    assert first_link.agent_token_hash is None
+    assert first_link.encrypted_agent_token is None
+    assert first_link.agent_token_nonce is None
+    assert binding.status == BINDING_STATUS_ARCHIVED
+    assert pair_code.status == PAIR_CODE_STATUS_REVOKED
+    assert credential.revoked_at is not None
+
+
+@pytest.mark.asyncio
+async def test_create_channel_replace_opt_in_links_the_new_custom_bot(
+    db_session: AsyncSession,
+):
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="create-channel-provider-replace",
+        agent_type="openclaw",
+    )
+    async with _client_for_user(db_session, user) as user_client:
+        first = await user_client.post(
+            "/v1/channels",
+            json={
+                "provider": CHANNEL_PROVIDER_TELEGRAM,
+                "name": f"create-replace-first-{uuid4().hex}",
+                "agent_id": str(agent.id),
+            },
+        )
+        replacement = await user_client.post(
+            "/v1/channels",
+            json={
+                "provider": CHANNEL_PROVIDER_TELEGRAM,
+                "name": f"create-replace-second-{uuid4().hex}",
+                "agent_id": str(agent.id),
+                "replace_existing_provider_link": True,
+            },
+        )
+
+    assert first.status_code == 201, first.text
+    assert replacement.status_code == 201, replacement.text
+    assert replacement.json()["agent_id"] == str(agent.id)
+    assert replacement.json()["agent_link_id"] is not None
+    first_link = await db_session.get(ChannelBotAgentLink, UUID(first.json()["agent_link_id"]))
+    replacement_link = await db_session.get(
+        ChannelBotAgentLink,
+        UUID(replacement.json()["agent_link_id"]),
+    )
+    assert first_link is not None
+    assert first_link.status == BOT_AGENT_LINK_STATUS_ARCHIVED
+    assert first_link.archived_at is not None
+    assert replacement_link is not None
+    assert replacement_link.status == BOT_AGENT_LINK_STATUS_ACTIVE
+    assert replacement_link.archived_at is None
+
+
+@pytest.mark.asyncio
+async def test_provider_link_replacement_rolls_back_when_a_downstream_step_fails(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    first_account_response = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        name=f"rollback-replace-first-{uuid4().hex}",
+    )
+    second_account_response = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        name=f"rollback-replace-second-{uuid4().hex}",
+    )
+    assert first_account_response.status_code == 201, first_account_response.text
+    assert second_account_response.status_code == 201, second_account_response.text
+    first_account_id = UUID(first_account_response.json()["id"])
+    second_account_id = UUID(second_account_response.json()["id"])
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="rollback-provider-replace",
+        agent_type="openclaw",
+    )
+    first_link, first_token = await _seed_existing_channel_link(
+        db_session,
+        account_id=str(first_account_id),
+        agent=agent,
+    )
+    binding = ChannelBinding(
+        account_id=first_account_id,
+        bot_agent_link_id=first_link.id,
+        user_id=user.id,
+        external_chat_id=f"rollback-chat-{uuid4().hex}",
+        external_chat_type="private",
+    )
+    db_session.add(binding)
+    await db_session.commit()
+    session_factory = async_sessionmaker(db_session.bind, expire_on_commit=False)
+
+    with pytest.raises(RuntimeError, match="downstream replacement failure"):
+        async with session_factory() as replacement_session:
+            async with replacement_session.begin():
+                replacement_account = await replacement_session.get(
+                    ChannelAccount,
+                    second_account_id,
+                )
+                assert replacement_account is not None
+                await channel_service.get_or_create_bot_agent_link(
+                    replacement_session,
+                    account=replacement_account,
+                    agent_id=agent.id,
+                    user_id=user.id,
+                    replace_existing_provider_link=True,
+                )
+                raise RuntimeError("downstream replacement failure")
+
+    async with session_factory() as verification_session:
+        restored_link = await verification_session.get(ChannelBotAgentLink, first_link.id)
+        restored_binding = await verification_session.get(ChannelBinding, binding.id)
+        replacement_links = list(
+            (
+                await verification_session.execute(
+                    select(ChannelBotAgentLink).where(
+                        ChannelBotAgentLink.account_id == second_account_id,
+                        ChannelBotAgentLink.agent_id == agent.id,
+                        ChannelBotAgentLink.archived_at.is_(None),
+                    )
+                )
+            ).scalars()
+        )
+    assert restored_link is not None
+    assert restored_link.status == BOT_AGENT_LINK_STATUS_ACTIVE
+    assert restored_link.archived_at is None
+    assert decrypt_agent_link_token(restored_link) == first_token
+    assert restored_binding is not None
+    assert restored_binding.status == BINDING_STATUS_ACTIVE
+    assert replacement_links == []
 
 
 @pytest.mark.asyncio

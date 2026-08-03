@@ -19,6 +19,30 @@ export function agentProviderHasSingleLinkLimit(
 	return Boolean(agentType && SINGLE_LINK_PROVIDERS_BY_AGENT_TYPE[agentType]?.has(provider));
 }
 
+export function agentProviderLinkReplacementRequired(
+	agentType: string | null | undefined,
+	provider: string,
+	linkedProviders: ReadonlySet<string> | null | undefined,
+	linkingReady = channelProviderLinkingReady(provider),
+): boolean {
+	return Boolean(
+		linkingReady &&
+			agentProviderHasSingleLinkLimit(agentType, provider) &&
+			linkedProviders?.has(provider),
+	);
+}
+
+export function agentProviderLinkStatusUnknown(
+	agentType: string | null | undefined,
+	provider: string,
+	linkedProviders: ReadonlySet<string> | null | undefined,
+	linkingReady = channelProviderLinkingReady(provider),
+): boolean {
+	return Boolean(
+		linkingReady && agentProviderHasSingleLinkLimit(agentType, provider) && !linkedProviders,
+	);
+}
+
 /**
  * Return the Agent id only when creating this bot can safely preserve the
  * hosted runtime's provider cardinality. A null value is sent explicitly so

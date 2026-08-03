@@ -3922,6 +3922,11 @@ export interface components {
             name: string;
             /** Agent Id */
             agent_id?: string | null;
+            /**
+             * Replace Existing Provider Link
+             * @description Explicit opt-in to replace this Agent's active link for the same provider.
+             */
+            replace_existing_provider_link?: boolean;
             /** Provider Token */
             provider_token?: string | null;
             /** Config */
@@ -4072,6 +4077,11 @@ export interface components {
         ChannelAgentLinkCreate: {
             /** Agent Id */
             agent_id?: string | null;
+            /**
+             * Replace Existing Provider Link
+             * @description Explicit opt-in to replace this Agent's active link for the same provider.
+             */
+            replace_existing_provider_link?: boolean;
         };
         /** ChannelAgentLinkResponse */
         ChannelAgentLinkResponse: {
