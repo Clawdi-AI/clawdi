@@ -130,8 +130,8 @@ export function ConnectorCredentialsDialog({
 				<DialogHeader>
 					<DialogTitle>Connect {displayName}</DialogTitle>
 					<DialogDescription>
-						Enter the credentials this app expects. They are stored in Composio and used when
-						connector tools run.
+						Connecting this account makes approved tools available to every agent in this account.
+						The credentials are stored in Composio and used when connector tools run.
 					</DialogDescription>
 				</DialogHeader>
 

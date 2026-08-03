@@ -1,4 +1,6 @@
+import { ACCOUNT_WIDE_SCOPE_LABEL } from "@/lib/account-wide-resources";
 import {
+	AGENT_ACCOUNT_WIDE_SECTION_IDS,
 	AGENT_RESOURCE_SECTION_IDS,
 	type AgentNavigationVariant,
 	type AgentSectionId,
@@ -7,11 +9,13 @@ import {
 export type AgentOverviewModuleId =
 	| "projects"
 	| "skills"
+	| "memories"
 	| "vaults"
+	| "connectors"
 	| "model-provider"
 	| "channels";
 
-export type AgentOverviewGroupId = "resources" | "operate";
+export type AgentOverviewGroupId = "resources" | "account-wide" | "operate";
 
 export type AgentOverviewModule = {
 	id: AgentOverviewModuleId;
@@ -26,6 +30,10 @@ export type AgentOverviewGroup = {
 };
 
 const SHARED_RESOURCES = AGENT_RESOURCE_SECTION_IDS.map((section) => ({ id: section, section }));
+const ACCOUNT_WIDE_RESOURCES = AGENT_ACCOUNT_WIDE_SECTION_IDS.map((section) => ({
+	id: section,
+	section,
+}));
 
 const AGENT_OVERVIEW_GROUPS = {
 	connected: [
@@ -35,6 +43,12 @@ const AGENT_OVERVIEW_GROUPS = {
 			layout: "three-column",
 			modules: SHARED_RESOURCES,
 		},
+		{
+			id: "account-wide",
+			label: ACCOUNT_WIDE_SCOPE_LABEL,
+			layout: "two-column",
+			modules: ACCOUNT_WIDE_RESOURCES,
+		},
 	],
 	hosted: [
 		{
@@ -42,6 +56,12 @@ const AGENT_OVERVIEW_GROUPS = {
 			label: "Resources",
 			layout: "three-column",
 			modules: SHARED_RESOURCES,
+		},
+		{
+			id: "account-wide",
+			label: ACCOUNT_WIDE_SCOPE_LABEL,
+			layout: "two-column",
+			modules: ACCOUNT_WIDE_RESOURCES,
 		},
 		{
 			id: "operate",

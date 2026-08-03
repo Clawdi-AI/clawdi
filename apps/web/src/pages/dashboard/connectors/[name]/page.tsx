@@ -1,17 +1,22 @@
 "use client";
 
-import { AlertCircle, Check, Link2Off, Plug, Wrench } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { AlertCircle, ArrowLeft, Check, ExternalLink, Link2Off, Plug, Wrench } from "lucide-react";
 import { parseAsString, useQueryStates } from "nuqs";
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { AccountWideScopeBadge } from "@/components/account-wide-scope";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { getConnectorAuthFlow } from "@/components/connectors/auth-flow.logic";
+import {
+	type ConnectorAuthFlow,
+	getConnectorAuthFlow,
+} from "@/components/connectors/auth-flow.logic";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { ConnectorCredentialsDialog } from "@/components/connectors/credentials-dialog";
 import { DashboardSection, DashboardSectionHeader } from "@/components/dashboard/section";
-import { DetailTitle } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
+import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +25,7 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { ACCOUNT_WIDE_SCOPE_DESCRIPTION } from "@/lib/account-wide-resources";
 import { unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { ConnectorTool } from "@/lib/api-schemas";
@@ -31,6 +37,12 @@ import {
 	useDisconnect,
 } from "@/lib/connectors-data";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import {
+	accountLibraryDetailTarget,
+	accountWideResourceCollectionTarget,
+	LIBRARY_RESOURCE_SCOPE,
+	type ResourceNavigationScope,
+} from "@/lib/resource-navigation";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -47,23 +59,30 @@ function formatName(raw: string): string {
  * `useQueryStates` reads URL state under the hood. Wrapping the body keeps
  * the shell renderable and defers only the URL-state-dependent code.
  */
-export default function ConnectorDetailPage({ name }: { name: string }) {
+export default function ConnectorDetailPage({
+	name,
+	scope = LIBRARY_RESOURCE_SCOPE,
+}: {
+	name: string;
+	scope?: ResourceNavigationScope;
+}) {
 	return (
-		<Suspense fallback={<DetailSkeletonShell />}>
-			<ConnectorDetail name={name} />
+		<Suspense fallback={<DetailSkeletonShell name={name} scope={scope} />}>
+			<ConnectorDetail name={name} scope={scope} />
 		</Suspense>
 	);
 }
 
-function DetailSkeletonShell() {
+function DetailSkeletonShell({ name, scope }: { name: string; scope: ResourceNavigationScope }) {
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
+			<ConnectorPageHeader name={name} scope={scope} showCollectionAction />
 			<DetailSkeleton />
 		</div>
 	);
 }
 
-function ConnectorDetail({ name }: { name: string }) {
+function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigationScope }) {
 	// OAuth from hosted mode redirects directly back to this page (no
 	// intermediary callback route). Composio sometimes signals failure
 	// via `?error=…` and sometimes via `?status=error|failed` with no
@@ -248,11 +267,7 @@ function ConnectorDetail({ name }: { name: string }) {
 	useSetBreadcrumbTitle(displayName);
 
 	if (isLoading) {
-		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
-				<DetailSkeleton />
-			</div>
-		);
+		return <DetailSkeletonShell name={name} scope={scope} />;
 	}
 
 	// `appQ.error` covers both "connector not found" (404 from cloud-api,
@@ -262,6 +277,7 @@ function ConnectorDetail({ name }: { name: string }) {
 	if (isApiNotFoundError(appQ.error) || shouldBlockQueryError(appQ.error, appQ.data)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
+				<ConnectorPageHeader name={name} scope={scope} showCollectionAction />
 				{isApiNotFoundError(appQ.error) ? (
 					<EmptyState
 						icon={Plug}
@@ -283,24 +299,15 @@ function ConnectorDetail({ name }: { name: string }) {
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
-			{/* Header — matches clawdi ConnectorHeader */}
-			<div className="flex items-start gap-5">
-				<ConnectorIcon logo={app?.logo} name={displayName} size="lg" />
-				<div className="min-w-0 flex-1">
-					<div className="flex items-center gap-2">
-						<DetailTitle>{displayName}</DetailTitle>
-						{isReady && (
-							<Badge variant="secondary">
-								<Check />
-								{usesNoAuth ? "Ready" : "Connected"}
-							</Badge>
-						)}
-					</div>
-					<p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-						{app?.description || name}
-					</p>
-				</div>
-			</div>
+			<ConnectorPageHeader
+				name={name}
+				displayName={displayName}
+				description={app?.description}
+				logo={app?.logo}
+				isReady={isReady}
+				readyLabel={usesNoAuth ? "Ready" : "Connected"}
+				scope={scope}
+			/>
 
 			<DashboardSection priority="primary">
 				<DashboardSectionHeader
@@ -323,15 +330,14 @@ function ConnectorDetail({ name }: { name: string }) {
 						!isSetupBlocked &&
 						!isConnectionsLoading &&
 						activeConnections.length > 0 ? (
-							<Button
-								variant="outline"
-								size="sm"
-								onClick={startConnect}
+							<ConnectAccountAction
+								displayName={displayName}
+								authFlow={authFlow}
+								isStarting={isStarting}
 								disabled={isConnectDisabled}
-							>
-								{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
-								Connect Account
-							</Button>
+								onConnect={startConnect}
+								variant="outline"
+							/>
 						) : null
 					}
 				/>
@@ -380,10 +386,13 @@ function ConnectorDetail({ name }: { name: string }) {
 								variant="inset"
 								description="No connected accounts yet."
 								action={
-									<Button onClick={startConnect} disabled={isConnectDisabled}>
-										{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
-										{isStarting ? "Connecting…" : "Connect Account"}
-									</Button>
+									<ConnectAccountAction
+										displayName={displayName}
+										authFlow={authFlow}
+										isStarting={isStarting}
+										disabled={isConnectDisabled}
+										onConnect={startConnect}
+									/>
 								}
 							/>
 						)
@@ -407,7 +416,10 @@ function ConnectorDetail({ name }: { name: string }) {
 									<ConfirmAction
 										title={`Disconnect ${c.account_display || "this account"}?`}
 										description={
-											<p>Your AI will lose access immediately. To get it back, sign in again.</p>
+											<p>
+												Disconnecting removes this account from the connector for every agent. All
+												agents lose access immediately; sign in again to restore it.
+											</p>
 										}
 										confirmLabel="Disconnect"
 										destructive
@@ -458,6 +470,123 @@ function ConnectorDetail({ name }: { name: string }) {
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
+
+function ConnectorPageHeader({
+	name,
+	displayName = formatName(name),
+	description,
+	logo,
+	isReady = false,
+	readyLabel = "Connected",
+	scope,
+	showCollectionAction = false,
+}: {
+	name: string;
+	displayName?: string;
+	description?: string;
+	logo?: string;
+	isReady?: boolean;
+	readyLabel?: string;
+	scope: ResourceNavigationScope;
+	showCollectionAction?: boolean;
+}) {
+	const libraryTarget = accountLibraryDetailTarget("connectors", name);
+	const collectionTarget = accountWideResourceCollectionTarget(scope, "connectors");
+	const titleAdornment =
+		scope.kind === "agent" || isReady ? (
+			<>
+				{scope.kind === "agent" ? <AccountWideScopeBadge /> : null}
+				{isReady ? (
+					<Badge variant="secondary">
+						<Check />
+						{readyLabel}
+					</Badge>
+				) : null}
+			</>
+		) : null;
+	return (
+		<PageHeader
+			title={displayName}
+			icon={<ConnectorIcon logo={logo} name={displayName} size="lg" />}
+			titleAdornment={titleAdornment}
+			description={scope.kind === "agent" ? ACCOUNT_WIDE_SCOPE_DESCRIPTION : description || name}
+			status={
+				scope.kind === "agent" && description ? (
+					<p className="line-clamp-2 text-sm text-muted-foreground">{description}</p>
+				) : null
+			}
+			actions={
+				scope.kind === "agent" ? (
+					showCollectionAction ? (
+						<Button
+							render={<Link to={collectionTarget.href} />}
+							nativeButton={false}
+							variant="outline"
+							size="sm"
+						>
+							<ArrowLeft />
+							Back to {collectionTarget.label}
+						</Button>
+					) : (
+						<Button
+							render={<Link to={libraryTarget.href} />}
+							nativeButton={false}
+							variant="outline"
+							size="sm"
+						>
+							<ExternalLink />
+							{libraryTarget.label}
+						</Button>
+					)
+				) : null
+			}
+		/>
+	);
+}
+
+function ConnectAccountAction({
+	displayName,
+	authFlow,
+	isStarting,
+	disabled,
+	onConnect,
+	variant = "default",
+}: {
+	displayName: string;
+	authFlow: ConnectorAuthFlow | null;
+	isStarting: boolean;
+	disabled: boolean;
+	onConnect: () => void;
+	variant?: "default" | "outline";
+}) {
+	const button = (
+		<Button
+			variant={variant}
+			size="sm"
+			onClick={authFlow === "redirect" ? undefined : onConnect}
+			disabled={disabled}
+		>
+			{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
+			{isStarting ? "Connecting…" : "Connect Account"}
+		</Button>
+	);
+	if (authFlow !== "redirect") return button;
+	return (
+		<ConfirmAction
+			title={`Connect ${displayName} for every agent?`}
+			description={
+				<p>
+					This account-wide connection makes approved {displayName} tools available to every agent
+					in this account. Changes affect all agents.
+				</p>
+			}
+			confirmLabel="Continue to Sign In"
+			onConfirm={onConnect}
+		>
+			{button}
+		</ConfirmAction>
+	);
+}
 
 function DetailSkeleton() {
 	return (

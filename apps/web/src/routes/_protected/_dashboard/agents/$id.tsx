@@ -1,5 +1,7 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import {
+	agentConnectorDetailLink,
+	agentMemoryDetailLink,
 	agentProjectDetailLink,
 	agentRouteIdsEqual,
 	agentSectionLink,
@@ -49,6 +51,18 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id")({
 						typeof legacy.search?.vault === "string" ? legacy.search.vault : undefined,
 						legacy.search,
 					),
+					replace: true,
+				});
+			}
+			if (currentRoute?.memoryId) {
+				throw redirect({
+					...agentMemoryDetailLink(params.id, currentRoute.memoryId, legacy.search),
+					replace: true,
+				});
+			}
+			if (currentRoute?.connectorName) {
+				throw redirect({
+					...agentConnectorDetailLink(params.id, currentRoute.connectorName, legacy.search),
 					replace: true,
 				});
 			}

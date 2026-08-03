@@ -9,6 +9,10 @@ import {
 } from "lucide-react";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import {
+	ACCOUNT_WIDE_SCOPE_DESCRIPTION,
+	ACCOUNT_WIDE_SCOPE_LABEL,
+} from "@/lib/account-wide-resources";
+import {
 	getProjectResourceDefinition,
 	projectResourcePathLabel,
 	projectResourceScopeLabel,
@@ -255,7 +259,7 @@ export function consoleCommandPaletteItems(
 		);
 }
 
-type AgentNavigationGroupId = "primary" | "resources" | "operate" | "settings";
+type AgentNavigationGroupId = "primary" | "resources" | "account-wide" | "operate" | "settings";
 
 export type AgentNavigationItemMetadata = Omit<NavigationItemMetadata<AgentSectionId>, "href"> & {
 	variants: readonly AgentNavigationVariant[];
@@ -308,7 +312,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "memories",
 		...CANONICAL_NAVIGATION_IDENTITIES.memories,
 		tint: RESOURCE_TINT_CLASSES.memories,
-		description: "Memories are account-wide and available across all agents.",
+		description: ACCOUNT_WIDE_SCOPE_DESCRIPTION,
 		tooltip: "Account-wide memories available across all agents",
 		variants: ["connected", "hosted"],
 	},
@@ -340,7 +344,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "connectors",
 		...CANONICAL_NAVIGATION_IDENTITIES.connectors,
 		tint: RESOURCE_TINT_CLASSES.connectors,
-		description: "Account-wide connectors available across all agents.",
+		description: ACCOUNT_WIDE_SCOPE_DESCRIPTION,
 		tooltip: "Account-wide connectors available across all agents",
 		variants: ["connected", "hosted"],
 	},
@@ -376,6 +380,17 @@ export const AGENT_RESOURCE_SECTION_IDS = [
 	"vaults",
 ] as const satisfies readonly AgentSectionId[];
 
+export const AGENT_ACCOUNT_WIDE_SECTION_IDS = [
+	"memories",
+	"connectors",
+] as const satisfies readonly AgentSectionId[];
+
+export function isAccountWideAgentSection(
+	section: AgentSectionId,
+): section is (typeof AGENT_ACCOUNT_WIDE_SECTION_IDS)[number] {
+	return AGENT_ACCOUNT_WIDE_SECTION_IDS.some((candidate) => candidate === section);
+}
+
 const AGENT_NAVIGATION_GROUPS = [
 	{
 		id: "primary",
@@ -387,6 +402,12 @@ const AGENT_NAVIGATION_GROUPS = [
 		id: "resources",
 		label: "Resources",
 		itemIds: AGENT_RESOURCE_SECTION_IDS,
+		separated: false,
+	},
+	{
+		id: "account-wide",
+		label: ACCOUNT_WIDE_SCOPE_LABEL,
+		itemIds: AGENT_ACCOUNT_WIDE_SECTION_IDS,
 		separated: false,
 	},
 	{
@@ -409,16 +430,13 @@ export function agentNavigationSectionIds(variant: AgentNavigationVariant): Agen
 	);
 }
 
-// Memories and Connectors were released as Agent section URLs before their
-// account-wide ownership was made explicit. Keep those deep links routable,
-// but do not use this compatibility registry to build visible navigation.
 const AGENT_ROUTE_SECTION_IDS = [
 	"overview",
 	"sessions",
 	"projects",
 	"skills",
-	"memories",
 	"vaults",
+	"memories",
 	"connectors",
 	"console",
 	"terminal",

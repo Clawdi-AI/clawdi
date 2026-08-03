@@ -25,6 +25,7 @@ import {
 } from "@/lib/connectors-data";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { LIBRARY_RESOURCE_SCOPE, type ResourceNavigationScope } from "@/lib/resource-navigation";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { cn } from "@/lib/utils";
 
@@ -51,10 +52,16 @@ const parseAsPositivePage = createParser({
  * renderable while the URL-state-dependent body mounts. Fallback mirrors the
  * loading skeleton the body renders once mounted.
  */
-export function ConnectorsSurface({ embedded = false }: { embedded?: boolean }) {
+export function ConnectorsSurface({
+	embedded = false,
+	scope = LIBRARY_RESOURCE_SCOPE,
+}: {
+	embedded?: boolean;
+	scope?: ResourceNavigationScope;
+}) {
 	return (
 		<Suspense fallback={<ConnectorsListSkeleton embedded={embedded} />}>
-			<ConnectorsList embedded={embedded} />
+			<ConnectorsList embedded={embedded} scope={scope} />
 		</Suspense>
 	);
 }
@@ -93,7 +100,13 @@ function ConnectorsListSkeleton({ embedded }: { embedded: boolean }) {
 	);
 }
 
-function ConnectorsList({ embedded }: { embedded: boolean }) {
+function ConnectorsList({
+	embedded,
+	scope,
+}: {
+	embedded: boolean;
+	scope: ResourceNavigationScope;
+}) {
 	// Page + search live in the URL via nuqs so a deep-link reproduces
 	// the user's filtered view, and the back button restores the prior
 	// page after a detail-page round-trip. `clearOnDefault: true` keeps
@@ -202,6 +215,7 @@ function ConnectorsList({ embedded }: { embedded: boolean }) {
 					isLoading={connected.isLoading}
 					error={connectedError}
 					onRetry={connected.refetch}
+					scope={scope}
 				/>
 			) : null}
 
@@ -219,6 +233,7 @@ function ConnectorsList({ embedded }: { embedded: boolean }) {
 				}}
 				onPrev={() => setPage((p) => Math.max(1, p - 1))}
 				onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
+				scope={scope}
 			/>
 		</div>
 	);
@@ -235,12 +250,14 @@ function ConnectedRail({
 	isLoading,
 	error,
 	onRetry,
+	scope,
 }: {
 	apps: { name: string; display_name: string; description: string; logo: string }[];
 	activeCount: number;
 	isLoading: boolean;
 	error: Error | null;
 	onRetry: () => void;
+	scope: ResourceNavigationScope;
 }) {
 	return (
 		<section className="space-y-3">
@@ -261,7 +278,7 @@ function ConnectedRail({
 			) : (
 				<div className={CONNECTOR_GRID_CLASS}>
 					{apps.map((app) => (
-						<ConnectorCard key={app.name} app={app} isConnected />
+						<ConnectorCard key={app.name} app={app} isConnected scope={scope} />
 					))}
 				</div>
 			)}
@@ -281,6 +298,7 @@ function CatalogSection({
 	onRetry,
 	onPrev,
 	onNext,
+	scope,
 }: {
 	items: { name: string; display_name: string; description: string; logo: string }[];
 	total: number;
@@ -293,6 +311,7 @@ function CatalogSection({
 	onRetry: () => void;
 	onPrev: () => void;
 	onNext: () => void;
+	scope: ResourceNavigationScope;
 }) {
 	const count = !isLoading && total > 0 ? `${total.toLocaleString()} available` : undefined;
 	let content: ReactNode;
@@ -323,7 +342,12 @@ function CatalogSection({
 			<>
 				<div className={CONNECTOR_GRID_CLASS}>
 					{items.map((app) => (
-						<ConnectorCard key={app.name} app={app} isConnected={connectedNames.has(app.name)} />
+						<ConnectorCard
+							key={app.name}
+							app={app}
+							isConnected={connectedNames.has(app.name)}
+							scope={scope}
+						/>
 					))}
 				</div>
 				{totalPages > 1 ? (

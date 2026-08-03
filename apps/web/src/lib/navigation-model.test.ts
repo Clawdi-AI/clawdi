@@ -27,7 +27,7 @@ function groupShape(
 	}));
 }
 
-function expectSingleResourcesHeading(
+function expectNavigationHeadings(
 	groups: ReadonlyArray<{ label: string | null; items: readonly unknown[] }>,
 	expected = ["Resources"],
 ) {
@@ -66,7 +66,7 @@ describe("sidebar navigation model", () => {
 				],
 			},
 		]);
-		expectSingleResourcesHeading(cloudGroups);
+		expectNavigationHeadings(cloudGroups);
 
 		const ossGroups = consoleNavigationGroups(false);
 		expect(ossGroups[1]?.items.map((item) => item.id)).toEqual([
@@ -75,7 +75,7 @@ describe("sidebar navigation model", () => {
 			"skills",
 			"vaults",
 		]);
-		expectSingleResourcesHeading(ossGroups);
+		expectNavigationHeadings(ossGroups);
 	});
 
 	test("preserves command palette availability in the rendered navigation order", () => {
@@ -101,7 +101,7 @@ describe("sidebar navigation model", () => {
 		]);
 	});
 
-	test("locks connected and hosted blocks with one visible Resources heading", () => {
+	test("separates Agent resources from account-wide navigation", () => {
 		const connectedGroups = agentNavigationGroups("connected");
 		expect(groupShape(connectedGroups)).toEqual([
 			{
@@ -124,13 +124,22 @@ describe("sidebar navigation model", () => {
 				],
 			},
 			{
+				id: "account-wide",
+				label: "Account-wide",
+				separated: false,
+				items: [
+					{ id: "memories", label: "Memories" },
+					{ id: "connectors", label: "Connectors" },
+				],
+			},
+			{
 				id: "settings",
 				label: null,
 				separated: true,
 				items: [{ id: "settings", label: "Settings" }],
 			},
 		]);
-		expectSingleResourcesHeading(connectedGroups);
+		expectNavigationHeadings(connectedGroups, ["Resources", "Account-wide"]);
 
 		const hostedGroups = agentNavigationGroups("hosted");
 		expect(groupShape(hostedGroups)).toEqual([
@@ -154,6 +163,15 @@ describe("sidebar navigation model", () => {
 				],
 			},
 			{
+				id: "account-wide",
+				label: "Account-wide",
+				separated: false,
+				items: [
+					{ id: "memories", label: "Memories" },
+					{ id: "connectors", label: "Connectors" },
+				],
+			},
+			{
 				id: "operate",
 				label: "Tools",
 				separated: false,
@@ -171,15 +189,15 @@ describe("sidebar navigation model", () => {
 				items: [{ id: "settings", label: "Settings" }],
 			},
 		]);
-		expectSingleResourcesHeading(hostedGroups, ["Resources", "Tools"]);
+		expectNavigationHeadings(hostedGroups, ["Resources", "Account-wide", "Tools"]);
 
 		expect(CONNECTED_AGENT_SECTION_IDS).toEqual([
 			"overview",
 			"sessions",
 			"projects",
 			"skills",
-			"memories",
 			"vaults",
+			"memories",
 			"connectors",
 			"settings",
 		]);
@@ -188,8 +206,8 @@ describe("sidebar navigation model", () => {
 			"sessions",
 			"projects",
 			"skills",
-			"memories",
 			"vaults",
+			"memories",
 			"connectors",
 			"console",
 			"terminal",
@@ -232,7 +250,7 @@ describe("sidebar navigation model", () => {
 			"AI provider and primary model used by this agent.",
 		);
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.memories.description).toBe(
-			"Memories are account-wide and available across all agents.",
+			"Shared across every agent in this account. Changes here affect all agents.",
 		);
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.settings.icon).toBe(Settings);
 	});
@@ -282,8 +300,14 @@ describe("sidebar navigation model", () => {
 		expect(vaultPage).not.toContain("useQuery");
 		expect(memoriesPage).toContain("@/components/memories/memories-surface");
 		expect(memoriesPage).not.toContain("useQuery");
-		expect(overviewBodies).not.toContain("useOverviewMemoriesModule");
-		expect(overviewBodies).not.toContain("useOverviewConnectorsModule");
+		expect(overviewBodies).toContain("useOverviewMemoriesModule");
+		expect(overviewBodies).toContain("useOverviewConnectorsModule");
 		expect(connectedDetail).not.toContain("function AgentProjectsPanel");
+	});
+
+	test("keeps the pure navigation model independent from React components", () => {
+		const source = readFileSync(new URL("./navigation-model.ts", import.meta.url), "utf8");
+		expect(source).toContain("@/lib/account-wide-resources");
+		expect(source).not.toContain("@/components/account-wide-scope");
 	});
 });

@@ -1,7 +1,11 @@
 import { linkOptions } from "@tanstack/react-router";
 import {
 	type AgentRouteQuery,
+	agentConnectorDetailHref,
+	agentConnectorDetailLink,
 	agentDeploymentRouteQuery,
+	agentMemoryDetailHref,
+	agentMemoryDetailLink,
 	agentProjectDetailHref,
 	agentProjectDetailLink,
 	agentSectionHref,
@@ -9,6 +13,8 @@ import {
 	agentVaultDetailLink,
 } from "@/lib/agent-routes";
 import {
+	connectorDetailHref,
+	memoryDetailHref,
 	PROJECT_RESOURCE_LIST_PATHS,
 	projectDetailHref,
 	vaultDetailHref,
@@ -19,6 +25,7 @@ export type ResourceNavigationScope =
 	| { kind: "agent"; agentId: string; agentQuery?: AgentRouteQuery };
 
 export type ResourceCollection = "projects" | "vaults";
+export type AccountWideResource = "memories" | "connectors";
 
 export type ResourceNavigationTarget = {
 	href: string;
@@ -99,6 +106,67 @@ export function vaultDetailLink(
 				params: { slug: vaultSlug },
 				search: vaultId ? { vault: vaultId } : undefined,
 			});
+}
+
+export function accountWideResourceCollectionTarget(
+	scope: ResourceNavigationScope,
+	resource: AccountWideResource,
+): ResourceNavigationTarget {
+	if (scope.kind === "library") {
+		return {
+			href: PROJECT_RESOURCE_LIST_PATHS[resource],
+			label: resource === "memories" ? "Memories" : "Connectors",
+		};
+	}
+	return {
+		href: agentSectionHref(scope.agentId, resource, agentDeploymentRouteQuery(scope.agentQuery)),
+		label: resource === "memories" ? "Account-wide Memories" : "Account-wide Connectors",
+	};
+}
+
+export function memoryDetailHrefForScope(scope: ResourceNavigationScope, memoryId: string): string {
+	return scope.kind === "agent"
+		? agentMemoryDetailHref(scope.agentId, memoryId, agentDeploymentRouteQuery(scope.agentQuery))
+		: memoryDetailHref(memoryId);
+}
+
+export function memoryDetailLink(scope: ResourceNavigationScope, memoryId: string) {
+	return scope.kind === "agent"
+		? agentMemoryDetailLink(scope.agentId, memoryId, agentDeploymentRouteQuery(scope.agentQuery))
+		: linkOptions({ to: "/memories/$id", params: { id: memoryId } });
+}
+
+export function connectorDetailHrefForScope(
+	scope: ResourceNavigationScope,
+	connectorName: string,
+): string {
+	return scope.kind === "agent"
+		? agentConnectorDetailHref(
+				scope.agentId,
+				connectorName,
+				agentDeploymentRouteQuery(scope.agentQuery),
+			)
+		: connectorDetailHref(connectorName);
+}
+
+export function connectorDetailLink(scope: ResourceNavigationScope, connectorName: string) {
+	return scope.kind === "agent"
+		? agentConnectorDetailLink(
+				scope.agentId,
+				connectorName,
+				agentDeploymentRouteQuery(scope.agentQuery),
+			)
+		: linkOptions({ to: "/connectors/$name", params: { name: connectorName } });
+}
+
+export function accountLibraryDetailTarget(
+	resource: AccountWideResource,
+	identity: string,
+): ResourceNavigationTarget {
+	return {
+		href: resource === "memories" ? memoryDetailHref(identity) : connectorDetailHref(identity),
+		label: "Open in account library",
+	};
 }
 
 export function libraryManagementTarget(

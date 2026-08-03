@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { AccountWideScopeBadge } from "@/components/account-wide-scope";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
@@ -41,6 +42,8 @@ import {
 import {
 	overviewProjectsModule,
 	overviewSkillsModule,
+	useOverviewConnectorsModule,
+	useOverviewMemoriesModule,
 	useOverviewVaultsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
@@ -290,8 +293,9 @@ import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
-import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
+import { AGENT_SECTION_NAVIGATION_ITEMS, isAccountWideAgentSection } from "@/lib/navigation-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { agentResourceScope } from "@/lib/resource-navigation";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn } from "@/lib/utils";
@@ -502,6 +506,7 @@ export function HostedAgentDetail({
 	const activeNavItem = AGENT_SECTION_NAVIGATION_ITEMS[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
+	const resourceScope = agentResourceScope(environmentId, routeSearch);
 	const showInitialStartingPage =
 		activeTab === "overview" &&
 		isStartingStatus(deploymentStatus) &&
@@ -526,7 +531,11 @@ export function HostedAgentDetail({
 					<PageHeader
 						title={activeTabLabel}
 						titleAdornment={
-							activeTab === "overview" ? <AgentSourceBadge source="hosted" compact /> : null
+							activeTab === "overview" ? (
+								<AgentSourceBadge source="hosted" compact />
+							) : isAccountWideAgentSection(activeTab) ? (
+								<AccountWideScopeBadge />
+							) : null
 						}
 						description={activeTab === "overview" ? undefined : activeNavItem.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
@@ -606,8 +615,8 @@ export function HostedAgentDetail({
 					{activeTab === "sessions" ? (
 						<HostedAgentSessionsTab environmentId={environmentId} routeSearch={routeSearch} />
 					) : null}
-					{activeTab === "memories" ? <MemoriesSurface /> : null}
-					{activeTab === "connectors" ? <ConnectorsSurface embedded /> : null}
+					{activeTab === "memories" ? <MemoriesSurface scope={resourceScope} /> : null}
+					{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
 					{activeTab === "projects" ? (
 						projection.status === "resolved" ? (
 							<AgentProjectsTab agentId={environmentId} routeSearch={routeSearch} />
@@ -1133,6 +1142,8 @@ function OverviewTab({
 	const linkedChannelCount = channelLinks.data?.length ?? 0;
 	const projectionLoading = projectionStatus === "loading";
 	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
+	const memoriesModule = useOverviewMemoriesModule();
+	const connectorsModule = useOverviewConnectorsModule();
 	const vaultsModule = useOverviewVaultsModule({
 		projectIds: effectiveAgentProjectIds(projectBindings.data ?? []),
 		resolution:
@@ -1232,7 +1243,9 @@ function OverviewTab({
 						isUnavailable: projectionUnavailable,
 						error: skills.error,
 					}),
+					memories: memoriesModule,
 					vaults: vaultsModule,
+					connectors: connectorsModule,
 					"model-provider": {
 						description:
 							providers.isLoading || managedModelCatalog.isLoading ? (

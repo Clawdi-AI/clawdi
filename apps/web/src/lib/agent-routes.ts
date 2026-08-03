@@ -51,6 +51,8 @@ export type ParsedAgentPathname = {
 	skillKey?: string;
 	projectId?: string;
 	vaultSlug?: string;
+	memoryId?: string;
+	connectorName?: string;
 };
 
 export function agentSectionSegment(section: AgentSectionId): string {
@@ -82,10 +84,14 @@ export function parseAgentPathname(pathname: string): ParsedAgentPathname | null
 	if (!section) return null;
 	if (section === "overview" && parts.length !== 2) return null;
 	if (section === "sessions" && parts.length > 4) return null;
-	if (section !== "overview" && !["sessions", "skills", "projects", "vaults"].includes(section)) {
+	if (
+		section !== "overview" &&
+		!["sessions", "skills", "projects", "vaults", "memories", "connectors"].includes(section)
+	) {
 		if (parts.length !== 3) return null;
 	}
-	if ((section === "projects" || section === "vaults") && parts.length > 4) return null;
+	if (["projects", "vaults", "memories", "connectors"].includes(section) && parts.length > 4)
+		return null;
 	const sessionId =
 		section === "sessions" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
 	const skillKey =
@@ -95,6 +101,10 @@ export function parseAgentPathname(pathname: string): ParsedAgentPathname | null
 	const projectId =
 		section === "projects" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
 	const vaultSlug = section === "vaults" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
+	const memoryId =
+		section === "memories" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
+	const connectorName =
+		section === "connectors" && parts[3] ? safeDecodeURIComponent(parts[3]) : undefined;
 	return {
 		agentId,
 		section,
@@ -102,6 +112,8 @@ export function parseAgentPathname(pathname: string): ParsedAgentPathname | null
 		skillKey,
 		...(projectId ? { projectId } : {}),
 		...(vaultSlug ? { vaultSlug } : {}),
+		...(memoryId ? { memoryId } : {}),
+		...(connectorName ? { connectorName } : {}),
 	};
 }
 
@@ -131,7 +143,9 @@ export function agentRouteOwnsSection(
 		!route.sessionId &&
 		!route.skillKey &&
 		!route.projectId &&
-		!route.vaultSlug
+		!route.vaultSlug &&
+		!route.memoryId &&
+		!route.connectorName
 	);
 }
 
@@ -390,6 +404,46 @@ export function agentVaultDetailLink(
 		to: "/agents/$id/vaults/$slug",
 		params: { id: agentId, slug: vaultSlug },
 		search: Object.keys(search).length > 0 ? search : undefined,
+	});
+}
+
+export function agentMemoryDetailHref(
+	agentId: string,
+	memoryId: string,
+	query?: AgentRouteQuery,
+): string {
+	const path = `${agentSectionHref(agentId, "memories")}/${encodeURIComponent(memoryId)}`;
+	return agentDetailHref(path, query);
+}
+
+/** Typed TanStack Router options for an account-wide Memory viewed in the Agent shell. */
+export function agentMemoryDetailLink(agentId: string, memoryId: string, query?: AgentRouteQuery) {
+	return linkOptions({
+		to: "/agents/$id/memories/$memoryId",
+		params: { id: agentId, memoryId },
+		search: agentRouteSearch(query),
+	});
+}
+
+export function agentConnectorDetailHref(
+	agentId: string,
+	connectorName: string,
+	query?: AgentRouteQuery,
+): string {
+	const path = `${agentSectionHref(agentId, "connectors")}/${encodeURIComponent(connectorName)}`;
+	return agentDetailHref(path, query);
+}
+
+/** Typed TanStack Router options for an account-wide Connector viewed in the Agent shell. */
+export function agentConnectorDetailLink(
+	agentId: string,
+	connectorName: string,
+	query?: AgentRouteQuery,
+) {
+	return linkOptions({
+		to: "/agents/$id/connectors/$name",
+		params: { id: agentId, name: connectorName },
+		search: agentRouteSearch(query),
 	});
 }
 

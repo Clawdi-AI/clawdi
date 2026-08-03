@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, ExternalLink, Laptop } from "lucide-react";
+import { AccountWideScopeBadge } from "@/components/account-wide-scope";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
@@ -20,6 +21,8 @@ import {
 import {
 	overviewProjectsModule,
 	overviewSkillsModule,
+	useOverviewConnectorsModule,
+	useOverviewMemoriesModule,
 	useOverviewVaultsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
@@ -54,8 +57,9 @@ import {
 import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
-import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
+import { AGENT_SECTION_NAVIGATION_ITEMS, isAccountWideAgentSection } from "@/lib/navigation-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { agentResourceScope } from "@/lib/resource-navigation";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
@@ -159,14 +163,19 @@ export function ConnectedAgentDetail({
 	const ownershipKind = agent ? agentOwnershipKindFromId(agent.id, ownership) : "connected";
 	const agentTitle = agent ? agentDisplayName(agent) : null;
 	useSetAgentBreadcrumbTitle({ agentId: id, agentTitle, section: activeTab });
-	const headerStatus =
+	const titleAdornment =
 		activeTab === "overview" && agent && showSourceBadge ? (
 			<AgentSourceBadgeForEnvironment env={agent} ownershipKind={ownershipKind} compact />
+		) : isAccountWideAgentSection(activeTab) ? (
+			<AccountWideScopeBadge />
 		) : null;
 	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;
 	const scopedSessionLink = (sessionId: string) => ({
 		...agentSessionDetailLink(id, sessionId, routeSearch),
 	});
+	const resourceScope = agentResourceScope(id, routeSearch);
+	const memoriesModule = useOverviewMemoriesModule({ enabled: overviewEnabled });
+	const connectorsModule = useOverviewConnectorsModule({ enabled: overviewEnabled });
 	const vaultsModule = useOverviewVaultsModule({
 		projectIds: effectiveAgentProjectIds(projectBindings ?? []),
 		resolution: projectBindingsLoading
@@ -196,7 +205,7 @@ export function ConnectedAgentDetail({
 				<section className="flex flex-col gap-4">
 					<PageHeader
 						title={activeTabLabel}
-						titleAdornment={headerStatus}
+						titleAdornment={titleAdornment}
 						description={activeTab === "overview" ? undefined : activeTabMeta.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
 						actions={
@@ -297,7 +306,9 @@ export function ConnectedAgentDetail({
 										isLoading: skillsLoading,
 										error: blockingSkillsError,
 									}),
+									memories: memoriesModule,
 									vaults: vaultsModule,
+									connectors: connectorsModule,
 								}}
 							/>
 						</div>
@@ -323,7 +334,7 @@ export function ConnectedAgentDetail({
 						)
 					) : null}
 
-					{activeTab === "memories" ? <MemoriesSurface /> : null}
+					{activeTab === "memories" ? <MemoriesSurface scope={resourceScope} /> : null}
 
 					{activeTab === "skills" ? (
 						<AgentSkillsTab
@@ -334,7 +345,7 @@ export function ConnectedAgentDetail({
 						/>
 					) : null}
 
-					{activeTab === "connectors" ? <ConnectorsSurface embedded /> : null}
+					{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
 
 					{activeTab === "projects" ? (
 						<AgentProjectsTab agentId={id} routeSearch={routeSearch} />

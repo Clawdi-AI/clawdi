@@ -14,7 +14,11 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenApi } from "@/lib/api";
 import { availableAppQueryOptions, connectorToolsQueryOptions } from "@/lib/connectors-data";
-import { connectorDetailHref } from "@/lib/project-resource-model";
+import {
+	connectorDetailLink,
+	LIBRARY_RESOURCE_SCOPE,
+	type ResourceNavigationScope,
+} from "@/lib/resource-navigation";
 import { cn } from "@/lib/utils";
 
 /**
@@ -26,9 +30,11 @@ import { cn } from "@/lib/utils";
 export function ConnectorCard({
 	app,
 	isConnected = false,
+	scope = LIBRARY_RESOURCE_SCOPE,
 }: {
 	app: { name: string; display_name: string; description: string; logo: string };
 	isConnected?: boolean;
+	scope?: ResourceNavigationScope;
 }) {
 	const api = useOpenApi();
 	const queryClient = useQueryClient();
@@ -36,7 +42,6 @@ export function ConnectorCard({
 		void queryClient.prefetchQuery(availableAppQueryOptions(api, app.name));
 		void queryClient.prefetchQuery(connectorToolsQueryOptions(api, app.name));
 	}, [api, app.name, queryClient]);
-	const href = connectorDetailHref(app.name);
 
 	return (
 		<div className="group relative z-0 min-w-0">
@@ -54,7 +59,7 @@ export function ConnectorCard({
 				className="transition-colors group-hover:bg-muted/50"
 			/>
 			<Link
-				to={href}
+				{...connectorDetailLink(scope, app.name)}
 				className={ENTITY_STRETCHED_LINK_CLASS}
 				onMouseEnter={prefetchDetail}
 				onFocus={prefetchDetail}
