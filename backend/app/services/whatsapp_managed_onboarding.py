@@ -226,6 +226,10 @@ async def _refresh(
     if health.connected and pairing.status == "connected" and pairing.registered:
         await _promote(db, onboarding=onboarding, registry=registry)
         return _response(onboarding)
+    if pairing.status == "starting" and not pairing.registered:
+        onboarding.state = WHATSAPP_ONBOARDING_STATE_GENERATING
+        await db.commit()
+        return _response(onboarding)
     if datetime.now(UTC) >= onboarding.expires_at:
         try:
             stopped = await stop_whatsapp_pairing(client, current=pairing)

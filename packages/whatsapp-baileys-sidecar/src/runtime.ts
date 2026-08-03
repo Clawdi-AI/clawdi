@@ -133,9 +133,10 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			throw new Error(`WhatsApp provider requires operator recovery: ${this.fatalReason}`);
 		}
 		if (this.stateClosed) throw new Error("WhatsApp provider state is closed");
-		if (this.status === "connected" || this.status === "connecting" || this.status === "starting") {
-			return;
-		}
+		// Session-scoped status and health requests call start() before dispatch.
+		// An unregistered socket may already be generating or displaying a QR;
+		// preserve that sole physical owner instead of resetting its lifecycle.
+		if (this.socket) return;
 		if (!this.providerState.state.creds.registered) {
 			this.status = "stopped";
 			return;
