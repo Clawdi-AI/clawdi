@@ -1,6 +1,6 @@
 # Native Channels Backend Status
 
-Status: implemented baseline; WhatsApp native runtime gated
+Status: implemented baseline, including WhatsApp native runtime
 Date: 2026-08-01
 
 This document records the implemented native-channel boundary. Product
@@ -90,7 +90,7 @@ credential revocation, or auth-certificate authority endpoints.
 
 ## Removed WhatsApp Compatibility Surface
 
-The gated product no longer includes the former hosted compatibility layer for
+The product no longer includes the former hosted compatibility layer for
 Meta Cloud/Graph request shapes, webhook delivery assumptions, payload
 conversion, provider media upload/reupload, media proxying, or the shared
 application-runtime relay. The old public tenant credential and auth-certificate
@@ -102,10 +102,10 @@ Baileys proto bytes and BinaryNode bytes cross the provider boundary directly.
 The backend inspects only the narrow ids and attributes needed for Link,
 binding, alias, and relay policy.
 
-## Gating
+## Compatibility Constraints
 
-The managed WhatsApp path is not usable yet. The pinned `7.0.0-rc13` artifacts
-`baileys` and `@whiskeysockets/baileys` lack the required configurable Noise
+The pinned `7.0.0-rc13` artifacts `baileys` and
+`@whiskeysockets/baileys` lack the required configurable Noise
 trust authority and a WebSocket-only managed marker header, so the CLI owns an
 expected-name and SemVer-major-7 static compatibility patch for those two
 Baileys aliases. Every audited before/after context hunk must match uniquely and
@@ -113,14 +113,13 @@ exactly with fuzz zero; unrelated bytes outside those hunks are preserved. It
 reads strictly validated namespaced metadata from stock `creds.additionalData`;
 no OpenClaw or Hermes source is patched. These are explicitly downstream CLI
 patch capabilities, not native upstream managed capabilities. Executable rc13
-seam and stock auth-persistence tests do not replace OpenClaw/Hermes
-native-plugin E2E proof or a live drill.
+seam and stock auth-persistence tests complement the fixed OpenClaw/Hermes
+native-plugin E2E script. A real live-account drill has not been executed.
 
-The isolated artifact-seam evidence is true, but the aggregate constants in
-`packages/cli/src/runtime/whatsapp-upstream-contract.ts` remain false. Runtime
-projection does not materialize synthetic auth, reconcile the patch, or install
-a WhatsApp egress profile. Fuzzy replacement, runtime monkey-patching, package
-override, broad fork, and custom adapters remain outside the accepted design.
+Runtime projection materializes Link-scoped synthetic auth, reconciles the
+audited patch, and installs the WhatsApp egress profile. Fuzzy replacement,
+runtime monkey-patching, package override, broad fork, and custom adapters
+remain outside the accepted design.
 
 ## Acceptance Evidence
 
@@ -131,12 +130,12 @@ override, broad fork, and custom adapters remain outside the accepted design.
   raw-node policy, bounded IQ forwarding, and Link revocation tests;
 - managed/unmarked/invalid marker tests through the generic egress engine;
 - executable patched rc13 WebSocket, HTTP, Noise trust, malformed-metadata, and
-  stock consumer auth save/reconstruction evidence, without claiming
+  stock consumer auth save/reconstruction coverage plus fixed-artifact stock
   native-plugin E2E;
 - Link-removal stale-marker denial plus backend revoked/cross-Link authority
   denial;
-- source invariants for no WhatsApp Graph/Cloud production path, no custom
-  runtime adapter, and disabled readiness gates.
+- source invariants for no WhatsApp Graph/Cloud production path and no custom
+  runtime adapter or runtime master enablement switch.
 
 The file-by-file decision record is
 [`../designs/whatsapp-native-baileys-cleanup-audit.md`](../designs/whatsapp-native-baileys-cleanup-audit.md).

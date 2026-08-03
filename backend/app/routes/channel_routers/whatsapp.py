@@ -263,6 +263,13 @@ async def _run_whatsapp_baileys_websocket(
             bot_agent_link_id=bot_agent_link_id,
         )
 
+    async def resolve_outbound_signal_jid(jid: str) -> str | None:
+        await require_session_authority()
+        return await provider_bridge.resolve_recipient_lid(
+            jid,
+            bot_agent_link_id=bot_agent_link_id,
+        )
+
     session = WhatsAppNoiseEmulatorSession(
         auth_cert=auth_cert,
         lid="0:0@lid",
@@ -271,6 +278,7 @@ async def _run_whatsapp_baileys_websocket(
         on_outbound_message=relay_outbound_message,
         on_outbound_relay=relay_outbound_node,
         forward_iq=forward_iq,
+        resolve_outbound_signal_jid=resolve_outbound_signal_jid,
     )
     send_lock = asyncio.Lock()
     inbox_pump_task: asyncio.Task[None] | None = None

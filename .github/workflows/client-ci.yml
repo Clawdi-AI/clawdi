@@ -7,7 +7,12 @@ on:
       - "packages/shared/**"
       - "packages/cli/**"
       - "packages/whatsapp-baileys-sidecar/**"
+      - "backend/app/routes/channel_routers/whatsapp.py"
+      - "backend/app/services/whatsapp_*.py"
+      - "backend/pyproject.toml"
+      - "backend/uv.lock"
       - "install.sh"
+      - "scripts/test-managed-whatsapp-native-e2e.sh"
       - "scripts/filter-deploy-openapi.py"
       - "scripts/openapi-typescript.sh"
       - "scripts/generate-deploy-api.sh"
@@ -26,7 +31,12 @@ on:
       - "packages/shared/**"
       - "packages/cli/**"
       - "packages/whatsapp-baileys-sidecar/**"
+      - "backend/app/routes/channel_routers/whatsapp.py"
+      - "backend/app/services/whatsapp_*.py"
+      - "backend/pyproject.toml"
+      - "backend/uv.lock"
       - "install.sh"
+      - "scripts/test-managed-whatsapp-native-e2e.sh"
       - "scripts/filter-deploy-openapi.py"
       - "scripts/openapi-typescript.sh"
       - "scripts/generate-deploy-api.sh"
@@ -60,6 +70,7 @@ jobs:
     outputs:
       client: ${{ steps.filter.outputs.client }}
       deploy_contract: ${{ steps.filter.outputs.deploy_contract }}
+      whatsapp_native: ${{ steps.filter.outputs.whatsapp_native }}
     steps:
       - uses: actions/checkout@v7
       - id: filter
@@ -86,6 +97,24 @@ jobs:
               - "scripts/generate-deploy-api.sh"
               - "scripts/check-deploy-generated-api.sh"
               - "apps/web/package.json"
+              - ".github/workflows/client-ci.yml"
+            whatsapp_native:
+              - "backend/app/routes/channel_routers/whatsapp.py"
+              - "backend/app/services/whatsapp_*.py"
+              - "backend/pyproject.toml"
+              - "backend/uv.lock"
+              - "packages/cli/egress-addon/**"
+              - "packages/cli/src/runtime/channels.ts"
+              - "packages/cli/src/runtime/egress-*.ts"
+              - "packages/cli/src/runtime/managed-baileys-compat.ts"
+              - "packages/cli/src/runtime/manifest.ts"
+              - "packages/cli/src/runtime/transparent-egress.ts"
+              - "packages/cli/src/runtime/whatsapp-*.ts"
+              - "packages/cli/tests/fixtures/managed-whatsapp-native-e2e/**"
+              - "scripts/test-managed-whatsapp-native-e2e.sh"
+              - ".dockerignore"
+              - "package.json"
+              - "bun.lock"
               - ".github/workflows/client-ci.yml"
 
   # Lint, typecheck, build, and client package tests in one job.
@@ -151,6 +180,20 @@ jobs:
           DEPLOY_OPENAPI_SOURCE: https://api.clawdi.ai/openapi.json
           DEPLOY_CONTRACT_FETCH_MODE: warn
         run: scripts/check-deploy-generated-api.sh
+
+  whatsapp-native-e2e:
+    needs: changes
+    if: >-
+      github.event_name != 'schedule' &&
+      needs.changes.outputs.whatsapp_native == 'true'
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check Docker availability
+        run: docker version
+      - name: Test stock OpenClaw and Hermes WhatsApp plugins
+        run: scripts/test-managed-whatsapp-native-e2e.sh
 
   deploy-contract-drift-daily:
     if: github.event_name == 'schedule'

@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+import xeddsa
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -348,9 +349,23 @@ def encode_cert_chain(cert: WhatsAppAuthCert, static_public_key: bytes) -> bytes
         issuer_serial=serial,
         key=static_public_key,
     )
-    intermediate = _message_field(1, intermediate_details) + _bytes_field(2, b"\0" * 64)
-    leaf = _message_field(1, leaf_details) + _bytes_field(2, b"\0" * 64)
+    intermediate = _message_field(1, intermediate_details) + _bytes_field(
+        2,
+        _sign_x25519_key(cert.root_private_key, intermediate_details),
+    )
+    leaf = _message_field(1, leaf_details) + _bytes_field(
+        2,
+        _sign_x25519_key(cert.intermediate_private_key, leaf_details),
+    )
     return _message_field(1, leaf) + _message_field(2, intermediate)
+
+
+def _sign_x25519_key(private_key: bytes, message: bytes) -> bytes:
+    # Baileys rc13 verifies Noise certificates with libsignal's X25519-key
+    # XEdDSA primitive. Choose the equivalent Ed25519 public-key encoding with
+    # a zero sign bit, which is exactly the bit Baileys restores from byte 63.
+    signing_key = xeddsa.priv_force_sign(private_key, False)
+    return xeddsa.ed25519_priv_sign(signing_key, message)
 
 
 def encode_binary_node_minimal(node: dict[str, object]) -> bytes:
@@ -377,6 +392,9 @@ class WhatsAppNoiseEmulatorSession:
         on_outbound_message: WhatsAppOutboundMessageCallback | None = None,
         on_outbound_relay: WhatsAppOutboundRelayCallback | None = None,
         forward_iq: WhatsAppForwardIqCallback | None = None,
+        resolve_recipient_lid: Callable[[str], str | None] | None = None,
+        resolve_outbound_signal_jid: Callable[[str], str | Awaitable[str | None] | None]
+        | None = None,
     ) -> None:
         self._noise = NoiseServer(auth_cert=auth_cert)
         self._noise.init()
@@ -388,6 +406,8 @@ class WhatsAppNoiseEmulatorSession:
         self._on_outbound_message = on_outbound_message
         self._on_outbound_relay = on_outbound_relay
         self._forward_iq = forward_iq
+        self._resolve_recipient_lid = resolve_recipient_lid
+        self._resolve_outbound_signal_jid = resolve_outbound_signal_jid or resolve_recipient_lid
         self._buffer = b""
         self._intro_consumed = False
         self._hello_handled = False
@@ -587,7 +607,6 @@ class WhatsAppNoiseEmulatorSession:
                     "frameBytes": len(frame),
                     "plainBytes": len(plaintext),
                     "errorType": exc.__class__.__name__,
-                    "reason": _safe_error_reason(exc),
                 },
                 tenant_id=self.tenant.tenant_id if self.tenant else None,
                 external_chat_id=self._lid,
@@ -670,6 +689,7 @@ class WhatsAppNoiseEmulatorSession:
                 agent_lid=self._lid,
                 tenant_id=self.tenant.tenant_id if self.tenant else None,
                 resolve_recipient_bundle=self._resolve_recipient_bundle,
+                resolve_recipient_lid=self._resolve_recipient_lid,
                 forward_iq=self._forward_iq,
             )
         except Exception as exc:
@@ -682,7 +702,6 @@ class WhatsAppNoiseEmulatorSession:
                     "type": str(attrs.get("type") or ""),
                     "children": children,
                     "errorType": exc.__class__.__name__,
-                    "reason": _safe_error_reason(exc),
                 },
                 tenant_id=self.tenant.tenant_id if self.tenant else None,
                 external_chat_id=self._lid,
@@ -725,10 +744,28 @@ class WhatsAppNoiseEmulatorSession:
             return None
         if parsed.server == "g.us":
             return await self._extract_outbound_group_message(node, to_jid, message_id)
-        enc = _find_outbound_enc(node, [to_jid])
-        if enc is None or not isinstance(enc.get("content"), bytes):
+        encrypted_recipient = _find_outbound_enc_recipient(node, [to_jid])
+        if encrypted_recipient is None:
             await self._emit_outbound_drop(
                 reason="missing-enc",
+                node=node,
+                to_jid=to_jid,
+                message_id=message_id,
+            )
+            return None
+        enc, signal_jid = encrypted_recipient
+        if not isinstance(enc.get("content"), bytes):
+            await self._emit_outbound_drop(
+                reason="missing-enc",
+                node=node,
+                to_jid=to_jid,
+                message_id=message_id,
+            )
+            return None
+        signal_recipient = parse_whatsapp_jid(signal_jid)
+        if signal_recipient is None:
+            await self._emit_outbound_drop(
+                reason="invalid-jid",
                 node=node,
                 to_jid=to_jid,
                 message_id=message_id,
@@ -753,7 +790,21 @@ class WhatsAppNoiseEmulatorSession:
                 message_id=message_id,
             )
             return None
-        sender = self._signal_senders.get(_signal_sender_key(to_jid))
+        sender = self._signal_senders.get(_signal_sender_key(signal_jid))
+        if sender is None and self._resolve_outbound_signal_jid is not None:
+            try:
+                resolved_signal_jid = self._resolve_outbound_signal_jid(signal_jid)
+                if inspect.isawaitable(resolved_signal_jid):
+                    resolved_signal_jid = await resolved_signal_jid
+            except Exception:  # noqa: BLE001 - alias resolution fails closed below.
+                resolved_signal_jid = None
+            if isinstance(resolved_signal_jid, str):
+                resolved_recipient = parse_whatsapp_jid(resolved_signal_jid)
+                resolved_sender = self._signal_senders.get(_signal_sender_key(resolved_signal_jid))
+                if resolved_recipient is not None and resolved_sender is not None:
+                    signal_jid = resolved_signal_jid
+                    signal_recipient = resolved_recipient
+                    sender = resolved_sender
         if sender is None:
             await self._emit_outbound_drop(
                 reason="missing-sender-session",
@@ -764,19 +815,20 @@ class WhatsAppNoiseEmulatorSession:
             return None
         try:
             message_proto = sender.decrypt_from(
-                self._agent_user,
-                self._agent_device,
+                signal_recipient.user,
+                signal_recipient.device or 0,
                 EncryptedSignalEnvelope(
                     type=envelope_type,
                     ciphertext=ciphertext,
                 ),
             )
-        except Exception:
+        except Exception as exc:
             await self._emit_outbound_drop(
                 reason="decrypt-failed",
                 node=node,
                 to_jid=to_jid,
                 message_id=message_id,
+                error=exc,
             )
             return None
         return WhatsAppOutboundMessage(
@@ -875,11 +927,14 @@ class WhatsAppNoiseEmulatorSession:
             enc_type = _attrs(enc).get("type")
             if enc_type not in {"pkmsg", "msg"}:
                 continue
+            participant = parse_whatsapp_jid(participant_jid)
+            if participant is None:
+                continue
             envelope_type: Literal["pkmsg", "msg"] = "pkmsg" if enc_type == "pkmsg" else "msg"
             try:
                 skdm_proto = sender.decrypt_from(
-                    self._agent_user or "",
-                    self._agent_device,
+                    participant.user,
+                    participant.device or 0,
                     EncryptedSignalEnvelope(type=envelope_type, ciphertext=ciphertext),
                 )
                 parsed = _parse_sender_key_distribution_message(skdm_proto)
@@ -910,15 +965,19 @@ class WhatsAppNoiseEmulatorSession:
         node: BinaryNode,
         to_jid: str,
         message_id: str,
+        error: Exception | None = None,
     ) -> None:
+        details: dict[str, Any] = {
+            "reason": reason,
+            "id": message_id,
+            "children": _child_tags(node),
+        }
+        if error is not None:
+            details["errorType"] = error.__class__.__name__
         await self._emit_event(
             "outbound_message",
             "dropped",
-            {
-                "reason": reason,
-                "id": message_id,
-                "children": _child_tags(node),
-            },
+            details,
             tenant_id=self.tenant.tenant_id if self.tenant else None,
             external_chat_id=to_jid or self._lid,
         )
@@ -1018,10 +1077,17 @@ class WhatsAppNoiseEmulatorSession:
             raise ValueError("whatsapp-emulator: push_inbound_message before transport start")
         if self.bundle is None:
             raise ValueError("whatsapp-emulator: no agent bundle captured")
-        signal_jid = participant_jid or from_jid
+        addressing_jid = participant_jid or from_jid
+        signal_jid = _signal_delivery_jid(
+            addressing_jid,
+            participant_lid_jid if participant_jid is not None else sender_lid_jid,
+        )
         parsed = parse_whatsapp_jid(signal_jid)
         if parsed is None:
             raise ValueError(f"whatsapp-emulator: invalid sender jid {signal_jid}")
+        addressing = parse_whatsapp_jid(addressing_jid)
+        if addressing is None:
+            raise ValueError(f"whatsapp-emulator: invalid addressing jid {addressing_jid}")
         sender_key = _signal_sender_key(signal_jid)
         sender = self._signal_senders.get(sender_key)
         if sender is None:
@@ -1035,13 +1101,6 @@ class WhatsAppNoiseEmulatorSession:
             self.bundle,
             _pad_random_max16(message_proto),
         )
-        if self._agent_user is not None:
-            sender.mirror_session(
-                parsed.user,
-                parsed.device or 0,
-                self._agent_user,
-                self._agent_device,
-            )
         if len(self.bundle.pre_keys) != pre_key_count:
             await self._emit_event(
                 "agent_bundle",
@@ -1058,8 +1117,7 @@ class WhatsAppNoiseEmulatorSession:
         attrs = _inbound_message_attrs(
             from_jid=from_jid,
             message_id=message_id,
-            signal_jid=signal_jid,
-            signal_server=parsed.server,
+            addressing_server=addressing.server,
             participant_jid=participant_jid,
             push_name=push_name,
             timestamp=timestamp,
@@ -1134,13 +1192,6 @@ def _attrs(node: BinaryNode) -> dict[str, str]:
     return {str(key): str(value) for key, value in attrs.items()}
 
 
-def _safe_error_reason(exc: Exception) -> str:
-    reason = str(exc).strip()
-    if not reason:
-        return exc.__class__.__name__
-    return reason[:160]
-
-
 def _has_child_tag(node: BinaryNode, tag: str) -> bool:
     for child in _children(node):
         if child.get("tag") == tag:
@@ -1150,25 +1201,32 @@ def _has_child_tag(node: BinaryNode, tag: str) -> bool:
     return False
 
 
-def _find_outbound_enc(node: BinaryNode, recipient_candidates: list[str]) -> BinaryNode | None:
+def _find_outbound_enc_recipient(
+    node: BinaryNode,
+    recipient_candidates: list[str],
+) -> tuple[BinaryNode, str] | None:
+    outer_recipient = recipient_candidates[0] if recipient_candidates else ""
     for child in _children(node):
         if child.get("tag") == "enc":
-            return child
+            return (child, outer_recipient) if outer_recipient else None
     candidates = set(recipient_candidates)
     for participants in _children(node):
         if participants.get("tag") != "participants":
             continue
-        fallback: BinaryNode | None = None
+        fallback: tuple[BinaryNode, str] | None = None
         for to_node in _children(participants):
             if to_node.get("tag") != "to":
                 continue
             to_attrs = _attrs(to_node)
+            recipient_jid = to_attrs.get("jid") or outer_recipient
+            if not recipient_jid:
+                continue
             enc = next((child for child in _children(to_node) if child.get("tag") == "enc"), None)
             if enc is None:
                 continue
-            if to_attrs.get("jid") in candidates:
-                return enc
-            fallback = fallback or enc
+            if recipient_jid in candidates:
+                return enc, recipient_jid
+            fallback = fallback or (enc, recipient_jid)
         if fallback is not None:
             return fallback
     return None
@@ -1195,6 +1253,14 @@ def _signal_sender_key(jid: str) -> str:
     if parsed is None:
         return jid
     return f"{parsed.user}:{parsed.device or 0}@{parsed.server}"
+
+
+def _signal_delivery_jid(primary_jid: str, lid_jid: str | None) -> str:
+    primary = parse_whatsapp_jid(primary_jid)
+    lid = parse_whatsapp_jid(lid_jid) if lid_jid else None
+    if primary is not None and primary.server != "lid" and lid is not None and lid.server == "lid":
+        return lid_jid or primary_jid
+    return primary_jid
 
 
 def _pad_random_max16(message_proto: bytes) -> bytes:
@@ -1267,8 +1333,7 @@ def _inbound_message_attrs(
     *,
     from_jid: str,
     message_id: str,
-    signal_jid: str,
-    signal_server: str,
+    addressing_server: str,
     participant_jid: str | None,
     push_name: str | None,
     timestamp: int | None,
@@ -1286,15 +1351,15 @@ def _inbound_message_attrs(
         attrs["participant"] = participant_jid
     if push_name:
         attrs["notify"] = push_name
-    peer_user = signal_jid.split("@", 1)[0].split(":", 1)[0]
-    signal_is_lid = signal_server == "lid"
+    signal_is_lid = addressing_server == "lid"
     if participant_jid is not None:
         if signal_is_lid:
             if participant_pn_jid:
                 attrs["participant_pn"] = participant_pn_jid
             attrs["addressing_mode"] = "lid"
         else:
-            attrs["participant_lid"] = participant_lid_jid or f"{peer_user}@lid"
+            if participant_lid_jid:
+                attrs["participant_lid"] = participant_lid_jid
             attrs["addressing_mode"] = "pn"
         return attrs
     if signal_is_lid:
@@ -1302,7 +1367,8 @@ def _inbound_message_attrs(
             attrs["sender_pn"] = sender_pn_jid
         attrs["addressing_mode"] = "lid"
     else:
-        attrs["sender_lid"] = sender_lid_jid or f"{peer_user}@lid"
+        if sender_lid_jid:
+            attrs["sender_lid"] = sender_lid_jid
         attrs["addressing_mode"] = "pn"
     return attrs
 

@@ -13,7 +13,6 @@ import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runtimeSecretValue } from "./secret-values";
 import { buildManagedWhatsAppEgressProfiles } from "./whatsapp-egress";
-import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 import {
 	CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY,
 	CLAWDI_MANAGED_WHATSAPP_SOCKET_SCHEMA,
@@ -28,6 +27,8 @@ const HERMES_MANAGED_CHANNEL_ENV = [
 	"TELEGRAM_ALLOW_ALL_USERS",
 	"DISCORD_ALLOW_ALL_USERS",
 	"HERMES_TELEGRAM_DISABLE_FALLBACK_IPS",
+	"WHATSAPP_MODE",
+	"WHATSAPP_ALLOWED_USERS",
 ] as const;
 const HERMES_MANAGED_CHANNEL_SECRET_ENV = ["TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN"] as const;
 const OPENCLAW_CHANNEL_TOKEN_ENV_PREFIX = "CLAWDI_CHANNEL_";
@@ -148,7 +149,6 @@ function managedChannelLinks(channels: RuntimeChannelAccount[]): ManagedChannelL
 	const links: ManagedChannelLink[] = [];
 	for (const account of channels) {
 		if (account.status !== "active") continue;
-		if (account.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		for (const link of account.runtime_links) {
 			if (link.status !== "active" || !link.agent_token) continue;
 			const accountKey = channelAccountKey(account);
@@ -209,7 +209,6 @@ function buildOpenClawChannelsProjection(
 	const channels: Record<string, unknown> = {};
 	for (const link of links) {
 		const provider = link.account.provider;
-		if (provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		if (provider === "telegram") {
 			const channel = ensureAccountChannel(channels, "telegram", link.accountKey);
 			channel.accounts[link.accountKey] = {
@@ -260,6 +259,11 @@ function buildOpenClawChannelsProjection(
 			channel.accounts[link.accountKey] = {
 				enabled: true,
 				...(credential?.targets.openclaw ? { authDir: credential.targets.openclaw.authDir } : {}),
+				dmPolicy: "allowlist",
+				allowFrom: ["*"],
+				groupPolicy: "open",
+				groupAllowFrom: ["*"],
+				groups: { "*": { requireMention: false } },
 			};
 		}
 	}
@@ -292,7 +296,6 @@ function applyOpenClawRuntimeChannelSettings(
 	const existingRun = openclaw.run ?? { env: {}, prependPath: [] };
 	const secretEnv = omitOpenClawManagedChannelSecretEnv(existingRun.secretEnv ?? {});
 	for (const link of links) {
-		if (link.account.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		secretEnv[openClawChannelTokenEnvName(link)] = link.placeholderSecretRef;
 	}
 	if (!openclaw.run && Object.keys(secretEnv).length === 0) {
@@ -323,6 +326,7 @@ function applyHermesRuntimeChannelSettings(
 
 	const telegram = singleLinkForProvider(links, "telegram");
 	const discord = singleLinkForProvider(links, "discord");
+	const whatsapp = singleLinkForProvider(links, "whatsapp");
 	const existingRun = hermes.run ?? { env: {}, prependPath: [] };
 	const env = omitKeys(existingRun.env ?? {}, HERMES_MANAGED_CHANNEL_ENV);
 	const secretEnv = omitKeys(existingRun.secretEnv ?? {}, HERMES_MANAGED_CHANNEL_SECRET_ENV);
@@ -335,6 +339,10 @@ function applyHermesRuntimeChannelSettings(
 	if (discord) {
 		env.DISCORD_ALLOW_ALL_USERS = "true";
 		secretEnv.DISCORD_BOT_TOKEN = discord.placeholderSecretRef;
+	}
+	if (whatsapp) {
+		env.WHATSAPP_MODE = "bot";
+		env.WHATSAPP_ALLOWED_USERS = "*";
 	}
 	return {
 		...manifest,
@@ -560,25 +568,23 @@ function buildManagedChannelEgressProfiles(
 		}
 	}
 	const whatsapp = singleLinkForProvider(links, "whatsapp");
-	if (WHATSAPP_UPSTREAM_READY) {
-		if (whatsapp && !whatsappBaileysCredentialMaterial(whatsapp)) {
-			throw new Error(`managed WhatsApp Link ${whatsapp.linkId} has no valid synthetic auth`);
-		}
-		profiles.push(
-			...buildManagedWhatsAppEgressProfiles({
-				controlPlaneApiUrl: cloudApiUrl,
-				links: whatsapp
-					? [
-							{
-								linkId: whatsapp.linkId,
-								agentTokenSecretRef: whatsapp.secretRef,
-								capabilitySecretRef: whatsapp.placeholderSecretRef,
-							},
-						]
-					: [],
-			}),
-		);
+	if (whatsapp && !whatsappBaileysCredentialMaterial(whatsapp)) {
+		throw new Error(`managed WhatsApp Link ${whatsapp.linkId} has no valid synthetic auth`);
 	}
+	profiles.push(
+		...buildManagedWhatsAppEgressProfiles({
+			controlPlaneApiUrl: cloudApiUrl,
+			links: whatsapp
+				? [
+						{
+							linkId: whatsapp.linkId,
+							agentTokenSecretRef: whatsapp.secretRef,
+							capabilitySecretRef: whatsapp.placeholderSecretRef,
+						},
+					]
+				: [],
+		}),
+	);
 	return profiles;
 }
 
@@ -697,7 +703,6 @@ function whatsappBaileysCredentialProjection(
 	runtimeHome: string,
 	targets: RuntimeCredentialTargets,
 ): RuntimeChannelCredentialProjection | null {
-	if (!WHATSAPP_UPSTREAM_READY) return null;
 	const material = whatsappBaileysCredentialMaterial(link);
 	if (!material) return null;
 	const openclawAuthDir = openClawWhatsAppAuthDir(runtimeHome, link.accountKey);

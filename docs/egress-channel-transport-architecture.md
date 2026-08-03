@@ -1,6 +1,6 @@
 # Generic Egress and Native Channel Transport
 
-Status: implemented; WhatsApp projection gated
+Status: implemented, including WhatsApp stock-native projection
 Date: 2026-08-01
 
 Clawdi uses one generic, default-allow, profile-driven egress engine for model
@@ -71,6 +71,11 @@ validates its own resource identity:
 Invalid or revoked Link authority is rejected even for an already established
 session. Local selector lifecycle is not the revocation mechanism.
 
+Stock-plugin wildcard allowlists are transport acceptance only. Pair remains
+the backend authority: active Link and binding checks decide every inbound
+delivery and outbound target. Agent projection contains placeholders and
+Link-scoped synthetic WhatsApp auth, never the physical provider credential.
+
 ## WhatsApp Topology
 
 The WhatsApp egress profile routes only synthetic Agent sockets. It does not
@@ -82,7 +87,7 @@ emulator. See
 
 The audited Baileys release lacks managed credential metadata and a safe
 WebSocket-only header seam. The CLI owns a static compatibility patch for the
-two installed Baileys aliases, gated by expected package name, rigorously parsed
+two installed Baileys aliases, conditioned on the expected package name, rigorously parsed
 SemVer major 7, and unique exact before/after context for every audited hunk
 with fuzz zero. Whole-file rc13 hashes are audit fixtures rather than
 compatibility gates, so unrelated changes outside those hunks are preserved.
@@ -92,10 +97,12 @@ reconnect. Valid managed metadata forces Baileys' official WebSocket URL, adds
 the marker only to a derived upgrade config, and supplies the Noise trust;
 absent metadata preserves consumer URL/options and official trust. This is a
 downstream CLI capability, not a native upstream managed capability.
-Executable seam tests are not native-plugin E2E, and live-account drills remain
-unproven, so the aggregate WhatsApp linking, runtime, and upstream gates remain
-false. Current production convergence therefore installs no WhatsApp
-credentials, compatibility patch, or interception profile.
+Fixed-artifact stock OpenClaw and Hermes native-plugin E2E covers auth
+reconstruction, reconnect, inbound, outbound, and representative protocol
+envelopes. The real live-account message drill has not been executed and does
+not control projection. Runtime convergence installs
+Link-scoped WhatsApp credentials, the audited compatibility patch, and the
+managed interception profile after ordinary authority and compatibility checks.
 
 ## Source Of Truth
 
@@ -106,5 +113,5 @@ credentials, compatibility patch, or interception profile.
 - WhatsApp builder: `packages/cli/src/runtime/whatsapp-egress.ts`
 - Static compatibility reconciler:
   `packages/cli/src/runtime/managed-baileys-compat.ts`
-- WhatsApp gates and upstream audit:
+- WhatsApp marker and metadata contract:
   `packages/cli/src/runtime/whatsapp-upstream-contract.ts`

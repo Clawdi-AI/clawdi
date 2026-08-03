@@ -1,6 +1,6 @@
 # WhatsApp Custom Linked-Device Onboarding
 
-Status: physical account onboarding implemented; Agent activation gated
+Status: physical account onboarding and Agent activation implemented
 Date: 2026-08-02
 
 This flow connects a user-owned WhatsApp account as a linked device. It extends
@@ -71,18 +71,18 @@ error bodies. Physical auth, Signal keys, retry data, and provider inbox data
 remain in the sidecar's account-bound SQLite state and are never returned to
 the browser.
 
-## Product Gate
+## Agent Activation
 
 Physical linked-device scan, account inventory, provider transport registration,
-ingress, logout, and restart recovery do not depend on managed Agent activation.
-`WHATSAPP_LINKING_READY` remains false, so a connected Custom account is shown
-as connected but not ready on an Agent. Agent Link, chat Pair, and native Agent
-traffic must remain gated until managed compatibility PR #738 and native
-end-to-end verification are ready. This onboarding does not depend on the
-rejected PR #713 application-adapter architecture.
+ingress, logout, and restart recovery remain separate from Agent Link and Pair.
+A connected Custom account enters inventory first; the user then explicitly
+Links it to an Agent and Pairs an authorized chat. Managed native traffic is
+enabled without a runtime master feature flag after exact pinned OpenClaw and
+Hermes stock-plugin E2E. Tenant/account/binding authority, provider connection
+state, and compatibility validation continue to fail closed. A real live-account
+message drill remains post-activation evidence and is not claimed here. This
+onboarding does not depend on the rejected PR #713 application-adapter
+architecture.
 
-Done: `scripts/test.sh sidecar` reports 42 passing tests, and
-`scripts/test.sh backend tests/test_whatsapp_custom_onboarding.py
-tests/test_whatsapp_sidecar_registry.py tests/test_whatsapp_native_transport.py
-tests/test_whatsapp_provider_bridge.py` reports 60 passing tests in isolated
-runners.
+Done: the sidecar and focused backend onboarding, registry, transport, and
+provider-bridge suites pass in isolated runners.

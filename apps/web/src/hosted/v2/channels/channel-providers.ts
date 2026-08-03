@@ -4,7 +4,7 @@
  *   - telegram:  bot token (BotFather)                → provider_token
  *   - discord:   bot token + application_id + interactions public_key
  *                                                       → provider_token + config
- *   - whatsapp:  no token; agent/device linking is gated during the beta
+ *   - whatsapp:  no token; linked-device onboarding creates the account first
  * Tints reuse the app identity palette so channel chips match the chrome.
  */
 export const CHANNEL_PROVIDERS = ["telegram", "discord", "whatsapp"] as const;

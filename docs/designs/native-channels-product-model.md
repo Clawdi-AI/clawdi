@@ -158,7 +158,7 @@ can access the account. The difference is account management, not runtime use:
 | Create pair code | Caller-owned link only | Caller-owned link only |
 | Pair/unpair external chat | Actor-scoped shared state machine | Actor-scoped shared state machine |
 | List bindings/messages/send | Caller-owned child state only | Caller-owned child state only |
-| WhatsApp synthetic runtime state | Internal gated projection only | Internal gated projection only |
+| WhatsApp synthetic runtime state | Internal Link-scoped projection only | Internal Link-scoped projection only |
 | Delete account | Owner through user API | Admin API only |
 | Provider token/config/webhook secret | Owner/admin for private managed accounts | Admin API only |
 | Provider-wide command sync | Owner through user API | Admin API only |
@@ -626,8 +626,7 @@ Provider ingress:
 - `/v1/channels/discord/{id}/webhook`
 - `/v1/channels/discord/gateway` for agent-facing replay
 - `/v1/channels/whatsapp/baileys` for Link-bearer-authenticated Baileys-compatible WhatsApp Web
-  synthetic runtime ingress. It remains gated and is not a physical provider
-  webhook.
+  synthetic runtime ingress. It is not a physical provider webhook.
 
 Agent SDK emulation:
 

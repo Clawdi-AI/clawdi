@@ -3,7 +3,6 @@ import {
 	chmodSync,
 	existsSync,
 	mkdirSync,
-	readdirSync,
 	readFileSync,
 	rmSync,
 	statSync,
@@ -796,7 +795,7 @@ channels:
 		expect(captured).toHaveLength(0);
 	});
 
-	it("skips WhatsApp runtime outputs while upstream support is gated", async () => {
+	it("writes WhatsApp runtime outputs", async () => {
 		const manifestPath = writeManifest(`
 version: 1
 channels:
@@ -853,15 +852,14 @@ outputs:
 			"GET /v1/channels/channel-wa/agent-links",
 		]);
 		expect(JSON.parse(out).applied).toMatchObject({
-			links: [{ token_written: false }],
+			links: [{ token_written: true }],
 			pair_codes: [],
-			writes: [],
+			writes: [join(tmpHome, ".env.channels")],
 			warnings: [],
 		});
-		expect(existsSync(join(tmpHome, ".env.channels"))).toBe(false);
-		expect(readdirSync(tmpHome).filter((name) => name !== ".clawdi")).toEqual([
-			"clawdi.runtime.yaml",
-		]);
+		expect(readFileSync(join(tmpHome, ".env.channels"), "utf8")).toContain(
+			"WHATSAPP_AGENT_TOKEN=wa-token",
+		);
 	});
 
 	it("requires explicit confirmation before rotating every declared token", async () => {
@@ -943,7 +941,7 @@ outputs:
 		expect(captured).toHaveLength(0);
 	});
 
-	it("skips WhatsApp runtime env conflict preflight while upstream support is gated", async () => {
+	it("writes distinct WhatsApp runtime token outputs", async () => {
 		const manifestPath = writeManifest(`
 version: 1
 channels:
@@ -1035,106 +1033,9 @@ outputs:
 		restore();
 
 		expect(captured).toHaveLength(4);
-		expect(existsSync(join(tmpHome, ".env.channels"))).toBe(false);
-	});
-
-	it("skips explicit WhatsApp runtime env names while upstream support is gated", async () => {
-		const manifestPath = writeManifest(`
-version: 1
-channels:
-  - ref: wa-a
-    provider: whatsapp
-    account:
-      id: channel-wa-a
-    links:
-      - ref: wa-a-main
-        agent_id: agent-1
-        runtime:
-          token_env: WHATSAPP_AGENT_TOKEN_A
-          env:
-            websocket_url: WA_A_WEBSOCKET_URL
-  - ref: wa-b
-    provider: whatsapp
-    account:
-      id: channel-wa-b
-    links:
-      - ref: wa-b-main
-        agent_id: agent-2
-        runtime:
-          token_env: WHATSAPP_AGENT_TOKEN_B
-          env:
-            websocket_url: WA_B_WEBSOCKET_URL
-outputs:
-  dotenv: .env.channels
-`);
-		const { captured, restore } = mockFetch([
-			{
-				method: "GET",
-				path: /^\/v1\/channels\/channel-wa-a$/,
-				response: () =>
-					jsonResponse({
-						id: "channel-wa-a",
-						provider: "whatsapp",
-						name: "wa-a",
-						status: "active",
-						visibility: "public",
-						has_provider_token: true,
-						webhook_url: "https://api.test/v1/channels/whatsapp/channel-wa-a/webhook",
-						created_at: "2026-06-08T00:00:00Z",
-					}),
-			},
-			{
-				method: "GET",
-				path: /^\/v1\/channels\/channel-wa-a\/agent-links$/,
-				response: () =>
-					jsonResponse([
-						{
-							id: "link-a",
-							account_id: "channel-wa-a",
-							agent_id: "agent-1",
-							status: "active",
-							created_at: "2026-06-08T00:00:01Z",
-							agent_token: "token-a",
-						},
-					]),
-			},
-			{
-				method: "GET",
-				path: /^\/v1\/channels\/channel-wa-b$/,
-				response: () =>
-					jsonResponse({
-						id: "channel-wa-b",
-						provider: "whatsapp",
-						name: "wa-b",
-						status: "active",
-						visibility: "public",
-						has_provider_token: true,
-						webhook_url: "https://api.test/v1/channels/whatsapp/channel-wa-b/webhook",
-						created_at: "2026-06-08T00:00:00Z",
-					}),
-			},
-			{
-				method: "GET",
-				path: /^\/v1\/channels\/channel-wa-b\/agent-links$/,
-				response: () =>
-					jsonResponse([
-						{
-							id: "link-b",
-							account_id: "channel-wa-b",
-							agent_id: "agent-2",
-							status: "active",
-							created_at: "2026-06-08T00:00:01Z",
-							agent_token: "token-b",
-						},
-					]),
-			},
-		]);
-
-		await captureStdout(() => runtimeApplyCommand({ file: manifestPath, json: true }));
-		restore();
-
-		expect(captured).toHaveLength(4);
-		expect(existsSync(join(tmpHome, ".env.channels"))).toBe(false);
+		const dotenv = readFileSync(join(tmpHome, ".env.channels"), "utf8");
+		expect(dotenv).toContain("WHATSAPP_AGENT_TOKEN_A=token-a");
+		expect(dotenv).toContain("WHATSAPP_AGENT_TOKEN_B=token-b");
 	});
 
 	it("reuses account link reads across multiple links for the same bot", async () => {

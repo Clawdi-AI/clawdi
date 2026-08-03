@@ -259,7 +259,6 @@ import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client.
 import {
 	agentProviderLinkReplacementRequired,
 	agentProviderLinkStatusUnknown,
-	channelProviderLinkingReady,
 } from "@/hosted/v2/channels/channel-linking.logic";
 import { channelKeys } from "@/hosted/v2/channels/channel-query-cache";
 import {
@@ -2312,7 +2311,6 @@ function agentChannelLinkUnavailableReason({
 	agentType: HostedRuntime;
 	linkedProviders: ReadonlySet<string> | undefined;
 }): string | null {
-	if (!channelProviderLinkingReady(bot.provider)) return "Coming soon";
 	if (!bot.available || !bot.canLink || bot.status.toLowerCase() !== "active") {
 		return bot.maxLinks !== null ? "At capacity" : "Unavailable";
 	}
@@ -2766,7 +2764,6 @@ function AgentChannelBotCard({
 	onUnlink: () => void;
 }) {
 	const unavailableReason = agentChannelLinkUnavailableReason({ bot, agentType, linkedProviders });
-	const activationGated = unavailableReason === "Coming soon";
 	const replacementRequired = agentProviderLinkReplacementRequired(
 		agentType,
 		bot.provider,
@@ -2805,12 +2802,7 @@ function AgentChannelBotCard({
 					title={bot.name}
 					state={replacementRequired ? "Replaces current link" : (unavailableReason ?? "Available")}
 					actions={
-						activationGated ? (
-							<p className="flex min-w-0 items-center justify-center gap-1.5 text-xs text-muted-foreground [overflow-wrap:anywhere] sm:w-28">
-								<Info className="size-3.5 shrink-0" />
-								Agent Link gated
-							</p>
-						) : replacementRequired ? (
+						replacementRequired ? (
 							<ProviderLinkReplacementConfirm
 								provider={bot.provider}
 								targetName={bot.name}

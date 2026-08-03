@@ -262,8 +262,6 @@ describe("channel IA boundary", () => {
 		expect(pairedChatsDialog).toContain("bindingCount === 1");
 		expect(pairedChatsDialog).toContain('"chat" : "chats"');
 		expect(agentDetail).not.toContain("Link to start pairing chats");
-		expect(agentDetail).toContain("Agent Link gated");
-		expect(agentDetail).toContain("activationGated ? (");
 		expect(pairedChatsDialog).toContain("aria-controls={panelId}");
 		expect(pairedChatsDialog).toContain('role="status"');
 		expect(pairedChatsDialog).toContain('role="alert"');
