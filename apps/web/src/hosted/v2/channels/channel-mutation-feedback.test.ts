@@ -13,15 +13,12 @@ function expectFeedbackBeforeRequest(contents: string, feedback: string, request
 }
 
 describe("channel mutation feedback", () => {
-	test("acknowledges bot connection before starting its request", () => {
+	test("acknowledges bot addition before starting its request", () => {
 		const connect = source("./connect-bot-dialog.tsx");
 
-		expectFeedbackBeforeRequest(
-			connect,
-			"setSubmitting(true)",
-			"await create.execute(buildBody())",
-		);
+		expectFeedbackBeforeRequest(connect, "setSubmitting(true)", "await create.execute(body)");
 		expect(connect).toContain('{isSubmitting ? "Close" : "Cancel"}');
+		expect(connect).toContain('{isSubmitting ? "Adding…" : "Add custom bot"}');
 		expect(connect).not.toContain("channelDialogOpenChangeAllowed");
 	});
 

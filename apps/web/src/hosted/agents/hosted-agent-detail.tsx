@@ -647,7 +647,12 @@ export function HostedAgentDetail({
 						!deploymentProjectionQueryable ? (
 							<StoppedAgentState deployment={deployment} />
 						) : projection.status === "resolved" ? (
-							<ChannelsTab environmentId={environmentId} agentType={runtime} agentName={name} />
+							<ChannelsTab
+								environmentId={environmentId}
+								agentType={runtime}
+								agentName={name}
+								routeSearch={routeSearch}
+							/>
 						) : (
 							<ChannelsSyncState
 								isChecking={isCheckingDeployment || isCheckingProjection}
@@ -2322,10 +2327,12 @@ function ChannelsTab({
 	environmentId,
 	agentType,
 	agentName,
+	routeSearch,
 }: {
 	environmentId: string;
 	agentType: HostedRuntime;
 	agentName: string;
+	routeSearch: AgentRouteSearch;
 }) {
 	const api = useApi();
 	const openApi = useOpenApi();
@@ -2541,12 +2548,6 @@ function ChannelsTab({
 			/>
 		);
 	}
-	function focusClawdiBots() {
-		const section = document.querySelector<HTMLElement>('[data-agent-channel-section="clawdi"]');
-		section?.scrollIntoView({ behavior: "smooth", block: "start" });
-		section?.focus({ preventScroll: true });
-	}
-
 	return (
 		<div data-agent-channels className="flex flex-col gap-8">
 			<AgentChannelBotsSection
@@ -2598,8 +2599,8 @@ function ChannelsTab({
 				onOpenChange={setCustomBotDialogOpen}
 				agentId={environmentId}
 				agentType={agentType}
-				linkedProviders={linkedProviders}
-				onChooseClawdiWhatsapp={focusClawdiBots}
+				linkedProviders={linked.data ? linkedProviders : undefined}
+				agentRouteQuery={routeSearch}
 				onAgentConnected={(bot) => {
 					setRecentLinks((current) =>
 						new Map(current).set(bot.id, {

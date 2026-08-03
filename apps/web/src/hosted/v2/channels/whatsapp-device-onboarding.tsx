@@ -1,6 +1,5 @@
 "use client";
 
-import { Link } from "@tanstack/react-router";
 import {
 	Bot,
 	CheckCircle2,
@@ -9,9 +8,11 @@ import {
 	QrCode,
 	RefreshCw,
 	Smartphone,
+	TriangleAlert,
 	Unplug,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,26 +38,17 @@ import {
 	whatsappQrExpiryLabel,
 	whatsappReadinessMessage,
 } from "@/hosted/v2/channels/whatsapp-device-onboarding.logic";
-import { cn } from "@/lib/utils";
 
-type WhatsAppConnectMode = "choose" | "custom";
+type WhatsAppConnectMode = "overview" | "custom";
 
-export function WhatsAppDeviceOnboarding({
-	agentId,
-	onChooseClawdi,
-	onDone,
-}: {
-	agentId?: string;
-	onChooseClawdi?: () => void;
-	onDone: () => void;
-}) {
-	const [mode, setMode] = useState<WhatsAppConnectMode>("choose");
+export function WhatsAppDeviceOnboarding({ onDone }: { onDone: () => void }) {
+	const [mode, setMode] = useState<WhatsAppConnectMode>("overview");
 	const readiness = useWhatsAppOnboardingReadiness(true);
 
 	if (mode === "custom") {
 		return (
 			<div data-hosted="true" data-v2="true">
-				<YourWhatsAppFlow onBack={() => setMode("choose")} onDone={onDone} />
+				<YourWhatsAppFlow onBack={() => setMode("overview")} onDone={onDone} />
 			</div>
 		);
 	}
@@ -71,101 +63,44 @@ export function WhatsAppDeviceOnboarding({
 			data-v2="true"
 			data-whatsapp-account-choice
 		>
-			<div className="grid min-w-0 gap-3 sm:grid-cols-2">
-				<WhatsAppOptionCard
-					icon={Bot}
-					title="Clawdi WhatsApp"
-					badge="Shared"
-					description="Use a Clawdi-managed WhatsApp account. You never scan its device QR."
-				>
-					{agentId ? (
-						<Button
-							type="button"
-							variant="outline"
-							className="w-full min-w-0 whitespace-normal"
-							onClick={onChooseClawdi}
-						>
-							<Bot className="size-4 shrink-0" />
-							View Clawdi bots
-						</Button>
-					) : (
-						<Button
-							render={<Link to="/agents" />}
-							nativeButton={false}
-							variant="outline"
-							className="w-full min-w-0 whitespace-normal"
-						>
-							<Bot className="size-4 shrink-0" />
-							Choose from an Agent
-						</Button>
-					)}
-				</WhatsAppOptionCard>
-
-				<WhatsAppOptionCard
-					icon={Smartphone}
-					title="Your WhatsApp"
-					badge="Custom"
-					description="Link a WhatsApp account you own by scanning a linked-device QR."
-					muted={customUnavailable}
-				>
-					<p className="min-h-8 text-xs text-muted-foreground" role="status">
-						{readiness.isLoading ? "Checking linked-device availability…" : readinessMessage}
-					</p>
-					<Button
-						type="button"
-						className="w-full min-w-0 whitespace-normal"
-						disabled={customUnavailable || readiness.isLoading}
-						onClick={() => setMode("custom")}
-					>
-						<QrCode className="size-4 shrink-0" />
-						Connect your account
-					</Button>
-				</WhatsAppOptionCard>
-			</div>
-			<p className="text-xs text-muted-foreground">
-				Linking a bot to an Agent and pairing an authorized chat are separate next steps.
-			</p>
-		</div>
-	);
-}
-
-function WhatsAppOptionCard({
-	icon: Icon,
-	title,
-	badge,
-	description,
-	muted = false,
-	children,
-}: {
-	icon: typeof Bot;
-	title: string;
-	badge: string;
-	description: string;
-	muted?: boolean;
-	children: React.ReactNode;
-}) {
-	return (
-		<section
-			className={cn("flex min-w-0 flex-col gap-3 rounded-lg border p-3", muted && "bg-muted/20")}
-		>
-			<div className="flex min-w-0 items-start gap-2.5">
+			<div className="flex min-w-0 items-start gap-3">
 				<div className="shrink-0 rounded-md bg-identity-2-bg p-2 text-identity-2-fg">
-					<Icon className="size-4" aria-hidden="true" />
+					<Smartphone className="size-4" aria-hidden="true" />
 				</div>
 				<div className="min-w-0 flex-1">
-					<div className="flex min-w-0 flex-wrap items-center gap-1.5">
-						<h3 className="font-medium [overflow-wrap:anywhere]">{title}</h3>
-						<span className="rounded-full border px-1.5 py-0.5 text-[0.65rem] text-muted-foreground">
-							{badge}
-						</span>
-					</div>
+					<h3 className="font-medium [overflow-wrap:anywhere]">Your WhatsApp</h3>
 					<p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
-						{description}
+						Add a WhatsApp account you own by scanning a linked-device QR.
 					</p>
 				</div>
 			</div>
-			<div className="mt-auto min-w-0 space-y-2">{children}</div>
-		</section>
+			<Alert data-whatsapp-account-warning className="border-warning/30 bg-warning-muted py-2.5">
+				<TriangleAlert aria-hidden />
+				<AlertTitle>Use a dedicated WhatsApp account</AlertTitle>
+				<AlertDescription className="text-xs">
+					Clawdi connects as a linked device. Once linked to an Agent, messages to this account may
+					be handled by the Agent, and replies are sent as this account. Use a separate WhatsApp
+					account and phone number—not your primary personal account.
+				</AlertDescription>
+			</Alert>
+			<p className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" role="status">
+				{readiness.isLoading ? "Checking linked-device availability…" : readinessMessage}
+			</p>
+			<Button
+				type="button"
+				className="w-full min-w-0 whitespace-normal sm:w-fit"
+				disabled={customUnavailable || readiness.isLoading}
+				onClick={() => setMode("custom")}
+			>
+				<QrCode className="size-4 shrink-0" />
+				Connect your account
+			</Button>
+			<p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+				{WHATSAPP_LINKING_READY
+					? "This adds the account under Custom bots. Agent Link and chat Pair are separate next steps."
+					: "This adds the account under Custom bots. Agent Link and chat Pair remain gated until native runtime activation is enabled."}
+			</p>
+		</div>
 	);
 }
 
@@ -300,7 +235,7 @@ function YourWhatsAppFlow({ onBack, onDone }: { onBack: () => void; onDone: () =
 					onClick={onBack}
 				>
 					<ChevronLeft className="size-4" />
-					WhatsApp options
+					WhatsApp setup
 				</button>
 				<div className="space-y-1.5">
 					<Label htmlFor="whatsapp-account-name">Account name</Label>

@@ -43,13 +43,18 @@ function render(state: WhatsAppOnboardingSession): string {
 }
 
 describe("WhatsApp linked-device onboarding", () => {
-	test("keeps Clawdi shared accounts distinct from user-owned accounts", () => {
+	test("keeps Custom WhatsApp setup flat and separate from Clawdi-managed bots", () => {
 		expect(source).toContain('data-hosted="true"');
 		expect(source).toContain('data-v2="true"');
-		expect(source).toContain("Clawdi WhatsApp");
 		expect(source).toContain("Your WhatsApp");
-		expect(source).toContain("You never scan its device QR");
+		expect(source).not.toContain("Clawdi WhatsApp");
+		expect(source).not.toContain("WhatsAppOptionCard");
+		expect(source).not.toContain("sm:grid-cols-2");
+		expect(source).toContain("This adds the account under Custom bots");
 		expect(source).toContain("linked-device QR");
+		expect(source).toMatch(/<Alert\s+data-whatsapp-account-warning/);
+		const warningMarkerIndex = source.indexOf("data-whatsapp-account-warning");
+		expect(warningMarkerIndex).toBeLessThan(source.indexOf("Connect your account"));
 		expect(connectDialog).toContain("<WhatsAppDeviceOnboarding");
 		expect(connectDialog).toContain("whitespace-normal break-words");
 		expect(connectDialog).not.toContain("min-w-0 truncate text-left");
