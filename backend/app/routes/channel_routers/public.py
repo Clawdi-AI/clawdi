@@ -132,11 +132,13 @@ from app.services.channels import (
     list_strict_v2_hosted_channel_agent_ids,
     lock_channel_binding_identity,
     mark_discord_reserved_commands_current,
+    mark_telegram_reserved_commands_current,
     normalize_telegram_bot_username,
     rearm_discord_command_reconciliation,
     rotate_bot_agent_link_token,
     store_channel_secrets,
     sync_channel_commands,
+    telegram_reserved_commands_are_current,
 )
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.sync_events import queue_environment_runtime_manifest_changed
@@ -861,6 +863,14 @@ async def create_channel_pair_code(
     db: AsyncSession = Depends(get_session),
 ) -> ChannelPairCodeResponse:
     account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    if (
+        account.provider == CHANNEL_PROVIDER_TELEGRAM
+        and account.encrypted_provider_token
+        and account.provider_token_nonce
+        and not telegram_reserved_commands_are_current(account)
+    ):
+        await sync_channel_commands(account=account)
+        mark_telegram_reserved_commands_current(account)
     if account.provider == CHANNEL_PROVIDER_DISCORD:
         await ensure_discord_application_identity_available(db, account=account)
         config_error = discord_interactions_config_error(account.config)
@@ -1385,6 +1395,9 @@ async def sync_channel_commands_route(
     )
     if account.provider == CHANNEL_PROVIDER_DISCORD and commands is None and body.guild_id is None:
         mark_discord_reserved_commands_current(account)
+        await db.commit()
+    if account.provider == CHANNEL_PROVIDER_TELEGRAM:
+        mark_telegram_reserved_commands_current(account)
         await db.commit()
     return ChannelCommandSyncResponse(provider=account.provider, commands=synced)
 

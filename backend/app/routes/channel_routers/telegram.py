@@ -55,6 +55,7 @@ from app.routes.channel_routers.shared import (
 )
 from app.schemas.channel import TelegramWebhookResponse
 from app.services.channels import (
+    DEFAULT_CHANNEL_COMMANDS,
     TELEGRAM_REF_CALLBACK_QUERY_ID,
     TELEGRAM_REF_FILE_ID,
     TELEGRAM_REF_FILE_PATH,
@@ -281,6 +282,13 @@ _TELEGRAM_BROAD_COMMAND_SCOPE_TYPES = frozenset(
 )
 _TELEGRAM_CHAT_COMMAND_SCOPE_TYPES = frozenset({"chat", "chat_administrators", "chat_member"})
 TELEGRAM_UI_UNPAIR_REPLY = "Unpaired. This chat is no longer connected to an agent."
+_TELEGRAM_RESERVED_COMMANDS = tuple(
+    {"command": command["name"], "description": command["description"]}
+    for command in DEFAULT_CHANNEL_COMMANDS
+)
+_TELEGRAM_RESERVED_COMMAND_NAMES = frozenset(
+    command["command"] for command in _TELEGRAM_RESERVED_COMMANDS
+)
 
 
 @dataclass(frozen=True)
@@ -471,13 +479,22 @@ async def telegram_bot_api(
         )
         if command_error is not None:
             return command_error
+        commands = _telegram_json_parameter(params.get("commands"))
+        try:
+            _telegram_physical_commands(commands if isinstance(commands, list) else [])
+        except ValueError:
+            return _telegram_error_response(
+                "Bad Request: merged command list exceeds 100 commands",
+                400,
+            )
+        previous_shadow = _telegram_command_shadow(agent.link)
         _store_telegram_commands(agent.link, params=params)
-        fanout_error = await _fan_out_telegram_commands(
+        fanout_error = await _reconcile_telegram_commands_for_link(
             db,
             account=account,
-            bot_agent_link_id=agent.link.id,
-            method="setMyCommands",
-            params=params,
+            link=agent.link,
+            previous_shadow=previous_shadow,
+            provider_options=_telegram_command_provider_options(params),
         )
         if fanout_error is not None:
             return fanout_error
@@ -492,13 +509,14 @@ async def telegram_bot_api(
         )
         if command_error is not None:
             return command_error
+        previous_shadow = _telegram_command_shadow(agent.link)
         _delete_telegram_commands(agent.link, params=params)
-        fanout_error = await _fan_out_telegram_commands(
+        fanout_error = await _reconcile_telegram_commands_for_link(
             db,
             account=account,
-            bot_agent_link_id=agent.link.id,
-            method="deleteMyCommands",
-            params=params,
+            link=agent.link,
+            previous_shadow=previous_shadow,
+            provider_options=_telegram_command_provider_options(params),
         )
         if fanout_error is not None:
             return fanout_error
@@ -1272,63 +1290,258 @@ def _get_telegram_commands(
     commands = command_shadow.get(_telegram_command_shadow_key(params))
     if isinstance(commands, list):
         return [command for command in commands if isinstance(command, dict)]
-    return [
-        {"command": "clawdi_pair", "description": "Pair this chat with Clawdi."},
-        {"command": "clawdi_unpair", "description": "Disconnect this chat from Clawdi."},
-        {"command": "clawdi_help", "description": "Show safe Clawdi pairing instructions."},
-    ]
+    return [dict(command) for command in _TELEGRAM_RESERVED_COMMANDS]
+
+
+def _telegram_command_shadow(
+    link: ChannelBotAgentLink,
+) -> dict[str, list[dict[str, Any]]]:
+    config = link.config if isinstance(link.config, dict) else {}
+    shadow = config.get("telegram_agent_commands")
+    if not isinstance(shadow, dict):
+        return {}
+    return {
+        key: [command for command in commands if isinstance(command, dict)]
+        for key, commands in shadow.items()
+        if isinstance(key, str) and isinstance(commands, list)
+    }
+
+
+def _telegram_physical_commands(
+    agent_commands: list[Any] | None,
+) -> list[dict[str, Any]]:
+    """Merge service and Link command ownership into one physical projection."""
+    merged = [dict(command) for command in _TELEGRAM_RESERVED_COMMANDS]
+    seen = set(_TELEGRAM_RESERVED_COMMAND_NAMES)
+    for command in agent_commands or []:
+        if not isinstance(command, dict):
+            continue
+        name = command.get("command")
+        if isinstance(name, str) and name in seen:
+            continue
+        if isinstance(name, str):
+            seen.add(name)
+        merged.append(dict(command))
+    if len(merged) > 100:
+        raise ValueError("telegram command projection exceeds provider limit")
+    return merged
 
 
 def _telegram_command_shadow_key(params: dict[str, Any]) -> str:
     return f"{_telegram_command_scope_key(params)}:{_telegram_language_code(params)}"
 
 
-async def _fan_out_telegram_commands(
+def _telegram_shadow_commands(
+    shadow: dict[str, list[dict[str, Any]]],
+    *,
+    scope_key: str,
+    language_code: str,
+) -> list[dict[str, Any]] | None:
+    return shadow.get(f"{scope_key}:{language_code}")
+
+
+def _telegram_resolve_shadow_commands(
+    shadow: dict[str, list[dict[str, Any]]],
+    candidates: list[tuple[str, str]],
+) -> list[dict[str, Any]] | None:
+    for scope_key, language_code in candidates:
+        commands = _telegram_shadow_commands(
+            shadow,
+            scope_key=scope_key,
+            language_code=language_code,
+        )
+        if commands is not None:
+            return commands
+    return None
+
+
+def _telegram_binding_command_targets(
+    shadow: dict[str, list[dict[str, Any]]],
+    binding: ChannelBinding,
+) -> list[dict[str, Any]]:
+    """Resolve Telegram's documented scope/language precedence for one chat."""
+    languages = sorted(
+        {
+            language_code
+            for key in shadow
+            for _, language_code in [_telegram_command_shadow_parts(key)]
+            if language_code
+        }
+    )
+    chat_id = binding.external_chat_id
+    chat_type = (binding.external_chat_type or "").lower()
+    is_group = chat_type in {"group", "supergroup"}
+    projections: list[dict[str, Any]] = []
+
+    def add_resolved(
+        *,
+        scope: dict[str, Any],
+        language_code: str,
+        scope_precedence: list[str],
+    ) -> None:
+        candidates: list[tuple[str, str]] = []
+        for scope_key in scope_precedence:
+            if language_code:
+                candidates.append((scope_key, language_code))
+            candidates.append((scope_key, ""))
+        commands = _telegram_resolve_shadow_commands(shadow, candidates)
+        if commands is None:
+            return
+        payload: dict[str, Any] = {"agent_commands": commands, "scope": scope}
+        if language_code:
+            payload["language_code"] = language_code
+        projections.append(payload)
+
+    language_variants = ["", *languages]
+    if is_group:
+        for language_code in language_variants:
+            add_resolved(
+                scope={"type": "chat_administrators", "chat_id": chat_id},
+                language_code=language_code,
+                scope_precedence=[
+                    f"chat_administrators:{chat_id}",
+                    f"chat:{chat_id}",
+                    "all_chat_administrators",
+                    "all_group_chats",
+                    "default",
+                ],
+            )
+            add_resolved(
+                scope={"type": "chat", "chat_id": chat_id},
+                language_code=language_code,
+                scope_precedence=[f"chat:{chat_id}", "all_group_chats", "default"],
+            )
+    else:
+        for language_code in language_variants:
+            add_resolved(
+                scope={"type": "chat", "chat_id": chat_id},
+                language_code=language_code,
+                scope_precedence=[f"chat:{chat_id}", "all_private_chats", "default"],
+            )
+
+    for key, commands in sorted(shadow.items()):
+        scope_key, language_code = _telegram_command_shadow_parts(key)
+        parts = scope_key.split(":")
+        if len(parts) != 3 or parts[0] != "chat_member" or parts[1] != chat_id:
+            continue
+        payload = {
+            "agent_commands": commands,
+            "scope": {
+                "type": "chat_member",
+                "chat_id": chat_id,
+                "user_id": parts[2],
+            },
+        }
+        if language_code:
+            payload["language_code"] = language_code
+        projections.append(payload)
+    return projections
+
+
+def _telegram_materialize_command_target(target: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "commands": _telegram_physical_commands(target.get("agent_commands")),
+        "scope": target["scope"],
+    }
+    if language_code := target.get("language_code"):
+        payload["language_code"] = language_code
+    return payload
+
+
+def _telegram_binding_command_projections(
+    shadow: dict[str, list[dict[str, Any]]],
+    binding: ChannelBinding,
+) -> list[dict[str, Any]]:
+    return [
+        _telegram_materialize_command_target(target)
+        for target in _telegram_binding_command_targets(shadow, binding)
+    ]
+
+
+def _telegram_projection_identity(payload: dict[str, Any]) -> str:
+    return json.dumps(
+        [payload.get("scope"), payload.get("language_code", "")],
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _telegram_command_provider_options(params: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: _telegram_json_parameter(value)
+        for key, value in params.items()
+        if key not in {"commands", "scope", "language_code"}
+    }
+
+
+async def _reconcile_telegram_commands_for_link(
     db: AsyncSession,
     *,
     account: Any,
-    bot_agent_link_id: UUID,
-    method: str,
-    params: dict[str, Any],
+    link: ChannelBotAgentLink,
+    previous_shadow: dict[str, list[dict[str, Any]]] | None = None,
+    provider_options: dict[str, Any] | None = None,
 ) -> Response | None:
     if not account.encrypted_provider_token or not account.provider_token_nonce:
         return None
-
-    scope = _telegram_json_parameter(params.get("scope"))
-    scope_type = _optional_str(scope.get("type")) if isinstance(scope, dict) else None
-    if isinstance(scope, dict) and scope_type not in _TELEGRAM_BROAD_COMMAND_SCOPE_TYPES:
-        response = await _post_telegram_bot_payload(
-            account=account,
-            method=method,
-            payload=_telegram_command_provider_payload(method, params, scope=scope),
-        )
-        if not _telegram_provider_call_succeeded(response):
-            return _telegram_proxy_response(response)
-        return None
-
     result = await db.execute(
         select(ChannelBinding).where(
             ChannelBinding.account_id == account.id,
-            ChannelBinding.bot_agent_link_id == bot_agent_link_id,
+            ChannelBinding.bot_agent_link_id == link.id,
             ChannelBinding.status == BINDING_STATUS_ACTIVE,
         )
     )
-    scope_key = scope_type if isinstance(scope_type, str) and scope_type != "default" else "default"
+    desired_shadow = _telegram_command_shadow(link)
+    reconciliations: list[
+        tuple[
+            dict[str, dict[str, Any]],
+            dict[str, dict[str, Any]],
+            dict[str, dict[str, Any]],
+        ]
+    ] = []
     for binding in result.scalars().all():
-        fanout_scope = _telegram_command_fanout_scope(binding, scope_key=scope_key)
-        if fanout_scope is None:
-            continue
-        response = await _post_telegram_bot_payload(
-            account=account,
-            method=method,
-            payload=_telegram_command_provider_payload(
-                method,
-                params,
-                scope=fanout_scope,
-            ),
-        )
-        if not _telegram_provider_call_succeeded(response):
-            return _telegram_proxy_response(response)
+        desired_targets = {
+            _telegram_projection_identity(target): target
+            for target in _telegram_binding_command_targets(desired_shadow, binding)
+        }
+        try:
+            desired = {
+                identity: _telegram_materialize_command_target(target)
+                for identity, target in desired_targets.items()
+            }
+        except ValueError:
+            return _telegram_error_response(
+                "Bad Request: merged command list exceeds 100 commands",
+                400,
+            )
+        previous = {
+            _telegram_projection_identity(target): target
+            for target in _telegram_binding_command_targets(previous_shadow or {}, binding)
+        }
+        reconciliations.append((desired, desired_targets, previous))
+    for desired, desired_targets, previous in reconciliations:
+        for identity in sorted(desired):
+            if desired_targets.get(identity) == previous.get(identity) and not provider_options:
+                continue
+            response = await _post_telegram_bot_payload(
+                account=account,
+                method="setMyCommands",
+                payload={**(provider_options or {}), **desired[identity]},
+            )
+            if not _telegram_provider_call_succeeded(response):
+                return _telegram_proxy_response(response)
+        for identity in sorted(previous.keys() - desired.keys()):
+            stale = previous[identity]
+            payload = {"scope": stale["scope"]}
+            if language_code := stale.get("language_code"):
+                payload["language_code"] = language_code
+            response = await _post_telegram_bot_payload(
+                account=account,
+                method="deleteMyCommands",
+                payload={**(provider_options or {}), **payload},
+            )
+            if not _telegram_provider_call_succeeded(response):
+                return _telegram_proxy_response(response)
     return None
 
 
@@ -1380,25 +1593,11 @@ async def _clear_telegram_commands_for_binding(
 ) -> bool:
     if not account.encrypted_provider_token or not account.provider_token_nonce:
         return True
-    config = link.config if isinstance(link.config, dict) else {}
-    shadow = config.get("telegram_agent_commands")
-    if not isinstance(shadow, dict):
-        return True
-    cleared: set[str] = set()
     succeeded = True
-    for key in shadow:
-        if not isinstance(key, str):
-            continue
-        scope_key, language_code = _telegram_command_shadow_parts(key)
-        scope = _telegram_command_scope_for_binding(binding, scope_key=scope_key)
-        if scope is None:
-            continue
-        identity = json.dumps([scope, language_code], sort_keys=True, separators=(",", ":"))
-        if identity in cleared:
-            continue
-        cleared.add(identity)
-        payload: dict[str, Any] = {"scope": scope}
-        if language_code:
+    targets = _telegram_binding_command_targets(_telegram_command_shadow(link), binding)
+    for target in targets:
+        payload: dict[str, Any] = {"scope": target["scope"]}
+        if language_code := target.get("language_code"):
             payload["language_code"] = language_code
         try:
             response = await _post_telegram_bot_payload(
@@ -1430,25 +1629,20 @@ async def _replay_telegram_commands_on_pair(
     link = await db.get(ChannelBotAgentLink, binding.bot_agent_link_id)
     if link is None or link.status != BOT_AGENT_LINK_STATUS_ACTIVE:
         return
-    config = link.config if isinstance(link.config, dict) else {}
-    shadow = config.get("telegram_agent_commands")
-    if not isinstance(shadow, dict):
-        return
-    for key, commands in shadow.items():
-        if not isinstance(key, str) or not isinstance(commands, list):
+    for target in _telegram_binding_command_targets(
+        _telegram_command_shadow(link),
+        binding,
+    ):
+        try:
+            payload = _telegram_materialize_command_target(target)
+        except ValueError:
+            log.warning(
+                "telegram_pair_command_replay_skipped_oversized_projection "
+                "account_id=%s binding_id=%s",
+                account.id,
+                binding.id,
+            )
             continue
-        scope_key, language_code = _telegram_command_shadow_parts(key)
-        if scope_key not in _TELEGRAM_BROAD_COMMAND_SCOPE_TYPES:
-            continue
-        scope = _telegram_command_fanout_scope(binding, scope_key=scope_key)
-        if scope is None:
-            continue
-        payload: dict[str, Any] = {
-            "commands": [command for command in commands if isinstance(command, dict)],
-            "scope": scope,
-        }
-        if language_code:
-            payload["language_code"] = language_code
         try:
             await _post_telegram_bot_payload(
                 account=account,
@@ -1609,61 +1803,6 @@ def _telegram_command_shadow_parts(key: str) -> tuple[str, str]:
     if not separator:
         return key, ""
     return scope_key, language_code
-
-
-def _telegram_command_fanout_scope(
-    binding: ChannelBinding,
-    *,
-    scope_key: str,
-) -> dict[str, Any] | None:
-    chat_type = (binding.external_chat_type or "").lower()
-    is_group = chat_type in {"group", "supergroup"}
-    is_private = chat_type == "private" or not chat_type
-    if scope_key == "default":
-        return {
-            "type": "chat_administrators" if is_group else "chat",
-            "chat_id": binding.external_chat_id,
-        }
-    if scope_key == "all_private_chats" and is_private:
-        return {"type": "chat", "chat_id": binding.external_chat_id}
-    if scope_key == "all_group_chats" and is_group:
-        return {"type": "chat", "chat_id": binding.external_chat_id}
-    if scope_key == "all_chat_administrators" and is_group:
-        return {"type": "chat_administrators", "chat_id": binding.external_chat_id}
-    return None
-
-
-def _telegram_command_scope_for_binding(
-    binding: ChannelBinding,
-    *,
-    scope_key: str,
-) -> dict[str, Any] | None:
-    broad_scope = _telegram_command_fanout_scope(binding, scope_key=scope_key)
-    if broad_scope is not None:
-        return broad_scope
-    parts = scope_key.split(":")
-    if len(parts) == 2 and parts[0] in {"chat", "chat_administrators"}:
-        if parts[1] == binding.external_chat_id:
-            return {"type": parts[0], "chat_id": parts[1]}
-        return None
-    if len(parts) == 3 and parts[0] == "chat_member":
-        if parts[1] == binding.external_chat_id:
-            return {"type": "chat_member", "chat_id": parts[1], "user_id": parts[2]}
-    return None
-
-
-def _telegram_command_provider_payload(
-    method: str,
-    params: dict[str, Any],
-    *,
-    scope: dict[str, Any],
-) -> dict[str, Any]:
-    payload = {key: _telegram_json_parameter(value) for key, value in params.items()}
-    payload["scope"] = scope
-    if method.lower() == "setmycommands":
-        commands = _telegram_json_parameter(params.get("commands"))
-        payload["commands"] = commands if isinstance(commands, list) else []
-    return payload
 
 
 async def _post_telegram_bot_payload(

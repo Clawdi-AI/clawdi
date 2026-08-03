@@ -133,6 +133,7 @@ from app.services.channels import (
     get_telegram_bot_username,
     hash_token,
     mark_discord_reserved_commands_current,
+    mark_telegram_reserved_commands_current,
     normalize_telegram_bot_username,
     rearm_discord_command_reconciliation,
     require_unchanged_discord_application_identity,
@@ -1487,6 +1488,9 @@ async def admin_sync_channel_commands(
         account.config = config
         if body.guild_id is None:
             mark_discord_reserved_commands_current(account)
+        await db.commit()
+    if account.provider == CHANNEL_PROVIDER_TELEGRAM:
+        mark_telegram_reserved_commands_current(account)
         await db.commit()
     return ChannelCommandSyncResponse(provider=account.provider, commands=synced)
 

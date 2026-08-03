@@ -1849,6 +1849,11 @@ async def test_admin_channel_lifecycle_manages_public_bot(
         json={"agent_id": str(channel_agent.id)},
     )
     assert linked.status_code == 201, linked.text
+
+    async def sync_commands(**_kwargs):
+        return []
+
+    monkeypatch.setattr("app.routes.channel_routers.public.sync_channel_commands", sync_commands)
     pair = await client.post(
         f"/v1/channels/{body['id']}/pair-codes",
         json={"agent_link_id": linked.json()["id"], "ttl_seconds": 900},
