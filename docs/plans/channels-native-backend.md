@@ -3,9 +3,6 @@
 Status: implemented baseline; WhatsApp native runtime gated
 Date: 2026-08-01
 
-> iMessage/BlueBubbles portions are historical. Clawdi v2 retired that provider
-> on 2026-08-03; current provider surfaces are Telegram, Discord, and WhatsApp.
-
 This document records the implemented native-channel boundary. Product
 semantics live in
 [`../designs/native-channels-product-model.md`](../designs/native-channels-product-model.md).

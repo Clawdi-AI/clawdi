@@ -3,8 +3,6 @@
 Status: implemented baseline
 Date: 2026-06-08
 
-> Clawdi v2 retired iMessage/BlueBubbles on 2026-08-03.
-
 ## Current State
 
 The CLI now has baseline runtime manifest support for Clawdi-native channels.

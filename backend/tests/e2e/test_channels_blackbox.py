@@ -465,8 +465,10 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
                 headers={"Authorization": f"Bot {discord['agent_token']}"},
             )
             assert legacy_discord.status_code == 404
-            retired_imessage = await client.get("/v1/channels/imessage/bluebubbles/v1/server/info")
-            assert retired_imessage.status_code == 404
+            unsupported_imessage = await client.get(
+                "/v1/channels/imessage/bluebubbles/v1/server/info"
+            )
+            assert unsupported_imessage.status_code == 404
 
             telegram_chat_id = 880000 + int(run_id[:4], 16) % 10_000
             discord_guild_id = f"guild-{run_id}"

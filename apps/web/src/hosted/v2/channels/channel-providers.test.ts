@@ -12,10 +12,10 @@ describe("channel provider registry", () => {
 		expect(isChannelProvider("imessage")).toBe(false);
 	});
 
-	test("does not retain provider-specific metadata for retired accounts", () => {
-		expect(providerMeta("imessage")).toMatchObject({
-			id: "imessage",
-			label: "imessage",
+	test("falls back to unavailable metadata for unknown providers", () => {
+		expect(providerMeta("custom")).toMatchObject({
+			id: "custom",
+			label: "custom",
 			unavailable: true,
 		});
 	});
@@ -25,12 +25,12 @@ describe("channel provider registry", () => {
 		expect(providerMeta("discord").setupUrl).toBe("https://discord.com/developers/applications");
 	});
 
-	test("orders supported providers first and appends legacy providers from data", () => {
-		expect(orderedProviderIds(["imessage", "discord", "telegram", "custom", "telegram"])).toEqual([
+	test("orders supported providers first and appends unknown providers from data", () => {
+		expect(orderedProviderIds(["custom", "discord", "telegram", "other", "telegram"])).toEqual([
 			"telegram",
 			"discord",
-			"imessage",
 			"custom",
+			"other",
 		]);
 	});
 });

@@ -1775,129 +1775,18 @@ async def test_account_level_managed_key_lists_runtime_channels_with_environment
 
 
 @pytest.mark.asyncio
-async def test_env_bound_list_channels_filters_non_v2_runtime_providers(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    seed_user,
-    channel_agent,
-):
-    telegram = await client.post(
-        "/v1/channels",
-        json={
-            "provider": CHANNEL_PROVIDER_TELEGRAM,
-            "name": f"runtime-allowlisted-{uuid4().hex}",
-            "provider_token": "123456:telegram-secret",
-        },
-    )
-    assert telegram.status_code == 201, telegram.text
-    ciphertext, nonce = encrypt_optional_token("legacy-imessage-agent-token")
-    legacy_account = ChannelAccount(
-        user_id=seed_user.id,
-        provider="imessage",
-        name=f"runtime-imessage-{uuid4().hex}",
-        webhook_secret_hash=hash_token("legacy-imessage-webhook-secret"),
-        config={"bluebubbles_webhook": {"url": "https://legacy.invalid"}},
-    )
-    db_session.add(legacy_account)
-    await db_session.flush()
-    db_session.add(
-        ChannelBotAgentLink(
-            account_id=legacy_account.id,
-            user_id=seed_user.id,
-            agent_id=channel_agent.id,
-            agent_token_hash=hash_token("legacy-imessage-agent-token"),
-            encrypted_agent_token=ciphertext,
-            agent_token_nonce=nonce,
-        )
-    )
-    await db_session.commit()
-
-    api_key = ApiKey(user_id=seed_user.id, environment_id=channel_agent.id, label="hosted")
-    async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
-        listed = await runtime_client.get("/v1/channels")
-
-    assert listed.status_code == 200, listed.text
-    providers = {item["provider"] for item in listed.json()}
-    assert providers == {CHANNEL_PROVIDER_TELEGRAM}
-    assert str(legacy_account.id) not in listed.text
-    assert "legacy-imessage-agent-token" not in listed.text
-
-
-@pytest.mark.asyncio
-async def test_create_channel_rejects_retired_imessage_provider(client: httpx.AsyncClient):
+async def test_create_channel_rejects_unsupported_imessage_provider(client: httpx.AsyncClient):
     response = await client.post(
         "/v1/channels",
         json={
             "provider": "imessage",
-            "name": "retired-provider",
+            "name": "unsupported-provider",
             "provider_token": "legacy-password",
         },
     )
 
     assert response.status_code == 422
     assert "imessage" not in response.json()["detail"][0]["ctx"]["expected"]
-
-
-@pytest.mark.asyncio
-async def test_bot_pool_filters_stale_imessage_account(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    seed_user,
-    channel_agent,
-):
-    stale = ChannelAccount(
-        user_id=seed_user.id,
-        provider="imessage",
-        name="stale-imessage",
-        webhook_secret_hash=hash_token("legacy-secret"),
-    )
-    db_session.add(stale)
-    await db_session.flush()
-    db_session.add(
-        ChannelBotAgentLink(
-            account_id=stale.id,
-            user_id=seed_user.id,
-            agent_id=channel_agent.id,
-            agent_token_hash=hash_token("stale-link-token"),
-        )
-    )
-    await db_session.commit()
-
-    serialized = public_router._account_response(stale)
-    assert serialized.provider == "imessage"
-
-    listed = await client.get("/v1/channels")
-    health = await client.get("/v1/channels/health")
-    pool = await client.get("/v1/channels/bot-pool")
-    fetched = await client.get(f"/v1/channels/{stale.id}")
-    links = await client.get(f"/v1/channels/{stale.id}/agent-links")
-    agent_links = await client.get(
-        "/v1/channels/agent-links",
-        params={"agent_id": str(channel_agent.id)},
-    )
-    create_link = await client.post(
-        f"/v1/channels/{stale.id}/agent-links",
-        json={"agent_id": str(channel_agent.id)},
-    )
-
-    assert listed.status_code == 200
-    assert str(stale.id) not in listed.text
-    assert health.status_code == 200
-    assert str(stale.id) not in health.text
-    assert pool.status_code == 200
-    assert "imessage" not in pool.json()["providers"]
-    assert str(stale.id) not in pool.text
-    assert fetched.status_code == 404
-    assert links.status_code == 404
-    assert agent_links.status_code == 200
-    assert str(stale.id) not in agent_links.text
-    assert create_link.status_code == 404
-
-    deleted = await client.delete(f"/v1/channels/{stale.id}")
-    assert deleted.status_code == 204
-    await db_session.refresh(stale)
-    assert stale.status == CHANNEL_STATUS_DISABLED
-    assert stale.archived_at is not None
 
 
 @pytest.mark.asyncio
@@ -17226,49 +17115,6 @@ async def test_delete_channel_fails_pending_outbound_deliveries(
         )
         == 0
     )
-
-
-@pytest.mark.asyncio
-async def test_channel_delivery_worker_fails_retired_provider_once(
-    db_session: AsyncSession,
-    seed_user,
-):
-    account = ChannelAccount(
-        user_id=seed_user.id,
-        provider="imessage",
-        name=f"retired-delivery-{uuid4().hex}",
-        webhook_secret_hash=hash_token("retired-delivery-secret"),
-    )
-    db_session.add(account)
-    await db_session.flush()
-    message = ChannelMessage(
-        account_id=account.id,
-        user_id=seed_user.id,
-        direction=MESSAGE_DIRECTION_OUTBOUND,
-        external_chat_id="legacy-chat",
-        text="must not send",
-    )
-    db_session.add(message)
-    await db_session.flush()
-    delivery = ChannelDelivery(
-        account_id=account.id,
-        message_id=message.id,
-        user_id=seed_user.id,
-        next_attempt_at=datetime.now(UTC),
-    )
-    db_session.add(delivery)
-    await db_session.commit()
-
-    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    assert await ChannelDeliveryWorker(sessionmaker).run_once() == delivery.id
-    await db_session.refresh(delivery)
-
-    assert delivery.status == DELIVERY_STATUS_FAILED
-    assert delivery.attempts == 1
-    assert delivery.last_error == "channel provider retired"
-    assert delivery.locked_at is None
-    assert delivery.locked_by is None
-    assert await ChannelDeliveryWorker(sessionmaker).run_once() is None
 
 
 @pytest.mark.asyncio

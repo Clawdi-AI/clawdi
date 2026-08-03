@@ -124,7 +124,6 @@ from app.services.channels import (
     get_or_create_bot_agent_link,
     get_owned_bot_agent_link,
     get_owned_private_channel_account,
-    get_owned_private_channel_account_for_retirement,
     get_strict_v2_hosted_channel_agent_or_409,
     get_usable_channel_account,
     hash_token,
@@ -481,7 +480,6 @@ async def list_channels(
             ChannelAccount.archived_at.is_(None),
             ChannelAccount.user_id == auth.user_id,
             ChannelAccount.visibility == CHANNEL_VISIBILITY_PRIVATE,
-            ChannelAccount.provider.in_(CHANNEL_PROVIDERS),
         )
         .order_by(
             ChannelAccount.provider,
@@ -548,7 +546,6 @@ async def list_channel_bot_pool(
         .where(
             ChannelAccount.archived_at.is_(None),
             ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
-            ChannelAccount.provider.in_(CHANNEL_PROVIDERS),
             or_(
                 and_(
                     ChannelAccount.user_id == auth.user_id,
@@ -817,7 +814,7 @@ async def delete_channel(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> None:
-    account = await get_owned_private_channel_account_for_retirement(
+    account = await get_owned_private_channel_account(
         db,
         account_id=account_id,
         user_id=auth.user_id,
@@ -1626,7 +1623,6 @@ async def _health_accounts(
         )
         .where(
             ChannelAccount.archived_at.is_(None),
-            ChannelAccount.provider.in_(CHANNEL_PROVIDERS),
             or_(
                 and_(
                     ChannelAccount.user_id == user_id,

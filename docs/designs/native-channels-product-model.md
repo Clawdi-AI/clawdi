@@ -1,8 +1,5 @@
 # Native Channels Product Model
 
-> **Retirement note (2026-08-03):** Clawdi v2 no longer supports iMessage or
-> BlueBubbles.
-
 This document is the product model for Clawdi-native channels. It describes
 what a "bot", "agent", "pairing", and "session" mean in the product, then maps
 those concepts to backend tables and API boundaries.

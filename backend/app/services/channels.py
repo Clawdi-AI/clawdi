@@ -33,7 +33,6 @@ from app.models.channel import (
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDER_WHATSAPP,
-    CHANNEL_PROVIDERS,
     CHANNEL_STATUS_ACTIVE,
     CHANNEL_STATUS_DISABLED,
     CHANNEL_VISIBILITY_PRIVATE,
@@ -1208,7 +1207,6 @@ async def list_owned_active_bot_agent_links_for_agent(
             ChannelBotAgentLink.archived_at.is_(None),
             ChannelAccount.archived_at.is_(None),
             ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
-            ChannelAccount.provider.in_(CHANNEL_PROVIDERS),
         )
         .order_by(
             ChannelAccount.provider,
@@ -1332,28 +1330,6 @@ async def get_owned_private_channel_account(
             ChannelAccount.user_id == user_id,
             ChannelAccount.visibility == CHANNEL_VISIBILITY_PRIVATE,
             ChannelAccount.archived_at.is_(None),
-            ChannelAccount.provider.in_(CHANNEL_PROVIDERS),
-        )
-    )
-    account = result.scalar_one_or_none()
-    if account is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
-    return account
-
-
-async def get_owned_private_channel_account_for_retirement(
-    db: AsyncSession,
-    *,
-    account_id: UUID,
-    user_id: UUID,
-) -> ChannelAccount:
-    """Resolve an owned private row solely for archival, including retired providers."""
-    result = await db.execute(
-        select(ChannelAccount).where(
-            ChannelAccount.id == account_id,
-            ChannelAccount.user_id == user_id,
-            ChannelAccount.visibility == CHANNEL_VISIBILITY_PRIVATE,
-            ChannelAccount.archived_at.is_(None),
         )
     )
     account = result.scalar_one_or_none()
@@ -1372,7 +1348,6 @@ async def get_accessible_channel_account(
         select(ChannelAccount).where(
             ChannelAccount.id == account_id,
             ChannelAccount.archived_at.is_(None),
-            ChannelAccount.provider.in_(CHANNEL_PROVIDERS),
             or_(
                 and_(
                     ChannelAccount.user_id == user_id,
@@ -1403,7 +1378,6 @@ async def get_usable_channel_account(
             ChannelAccount.id == account_id,
             ChannelAccount.archived_at.is_(None),
             ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
-            ChannelAccount.provider.in_(CHANNEL_PROVIDERS),
             or_(
                 and_(
                     ChannelAccount.user_id == user_id,
@@ -4705,11 +4679,6 @@ async def deliver_channel_delivery(
     account: ChannelAccount | None = None
     try:
         account = await _delivery_account(db, delivery)
-        if account.provider not in CHANNEL_PROVIDERS:
-            raise HTTPException(
-                status_code=status.HTTP_410_GONE,
-                detail="channel provider retired",
-            )
         link = await _lock_active_delivery_link(db, delivery)
         if link is not None:
             if not await bot_agent_link_has_strict_v2_authority(db, link=link):

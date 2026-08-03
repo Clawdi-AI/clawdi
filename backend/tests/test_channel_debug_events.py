@@ -86,17 +86,6 @@ async def test_channel_debug_events_are_sanitized_and_filterable(
             "opaque": object(),
         },
     )
-    stale_event = await record_channel_debug_event(
-        db_session,
-        account=None,
-        user_id=seed_user.id,
-        provider="imessage",
-        direction="inbound",
-        stage="webhook",
-        outcome="failure",
-        external_chat_id="retired-chat",
-    )
-    assert stale_event is not None
     await db_session.commit()
     await db_session.refresh(seed_user)
 
@@ -129,19 +118,6 @@ async def test_channel_debug_events_are_sanitized_and_filterable(
     ).scalar_one()
     assert stored.error == "channel_operation_failed"
     assert "debug-secret-marker" not in str(stored.details)
-
-    unfiltered_response = await client.get("/v1/channels/debug/events")
-    assert unfiltered_response.status_code == 200
-    assert [item["provider"] for item in unfiltered_response.json()] == ["telegram"]
-
-    retired_response = await client.get(
-        "/v1/channels/debug/events",
-        params={"provider": "imessage"},
-    )
-    assert retired_response.status_code == 200
-    assert retired_response.json() == []
-
-    assert await db_session.get(ChannelDebugEvent, stale_event.id) is not None
 
 
 @pytest.mark.asyncio
