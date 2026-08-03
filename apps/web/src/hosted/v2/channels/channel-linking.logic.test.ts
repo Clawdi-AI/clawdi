@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	agentProviderHasSingleLinkLimit,
-	availableBotProvidersForAgent,
+	autoLinkAgentIdForNewCustomBot,
 	channelProviderLinkingReady,
 	pairCodeExpired,
 	pairingCommand,
@@ -90,22 +90,27 @@ describe("hosted channel instructions and gates", () => {
 		}
 	});
 
-	test("keeps WhatsApp account onboarding separate from Agent link cardinality", () => {
-		expect(availableBotProvidersForAgent("agent-1", "openclaw", new Set())).toEqual([
-			"telegram",
-			"discord",
-			"whatsapp",
-		]);
-		expect(availableBotProvidersForAgent("agent-1", "openclaw", new Set(["telegram"]))).toEqual([
-			"discord",
-			"whatsapp",
-		]);
+	test("adds conflicting Custom bots to inventory without changing the existing Agent link", () => {
+		for (const provider of ["telegram", "discord"] as const) {
+			expect(autoLinkAgentIdForNewCustomBot("agent-1", "openclaw", provider, new Set())).toBe(
+				"agent-1",
+			);
+			expect(
+				autoLinkAgentIdForNewCustomBot("agent-1", "openclaw", provider, new Set([provider])),
+			).toBeNull();
+		}
+
 		expect(
-			availableBotProvidersForAgent("agent-1", "openclaw", new Set(["telegram", "discord"])),
-		).toEqual(["whatsapp"]);
+			autoLinkAgentIdForNewCustomBot("agent-1", "codex", "telegram", new Set(["telegram"])),
+		).toBe("agent-1");
 		expect(
-			availableBotProvidersForAgent(undefined, undefined, new Set(["telegram", "discord"])),
-		).toEqual(["telegram", "discord", "whatsapp"]);
+			autoLinkAgentIdForNewCustomBot(undefined, undefined, "telegram", new Set(["telegram"])),
+		).toBeNull();
+		expect(autoLinkAgentIdForNewCustomBot("agent-1", "openclaw", "telegram", undefined)).toBeNull();
+	});
+
+	test("keeps WhatsApp inventory onboarding separate from Agent linking", () => {
+		expect(autoLinkAgentIdForNewCustomBot("agent-1", "openclaw", "whatsapp", new Set())).toBeNull();
 	});
 
 	test("expires pairing actions exactly at the server deadline", () => {

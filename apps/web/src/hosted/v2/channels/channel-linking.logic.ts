@@ -19,18 +19,25 @@ export function agentProviderHasSingleLinkLimit(
 	return Boolean(agentType && SINGLE_LINK_PROVIDERS_BY_AGENT_TYPE[agentType]?.has(provider));
 }
 
-export function availableBotProvidersForAgent(
+/**
+ * Return the Agent id only when creating this bot can safely preserve the
+ * hosted runtime's provider cardinality. A null value is sent explicitly so
+ * the API adds the bot to inventory without selecting or linking an Agent.
+ */
+export function autoLinkAgentIdForNewCustomBot(
 	agentId: string | null | undefined,
 	agentType: string | null | undefined,
+	provider: string,
 	linkedProviders: ReadonlySet<string> | null | undefined,
-): ConnectableBotProvider[] {
-	return CONNECTABLE_BOT_PROVIDERS.filter(
-		(provider) =>
-			provider === "whatsapp" ||
-			!agentId ||
-			!agentProviderHasSingleLinkLimit(agentType, provider) ||
-			!linkedProviders?.has(provider),
-	);
+): string | null {
+	if (!agentId || !channelProviderLinkingReady(provider)) return null;
+	if (
+		agentProviderHasSingleLinkLimit(agentType, provider) &&
+		(!linkedProviders || linkedProviders.has(provider))
+	) {
+		return null;
+	}
+	return agentId;
 }
 
 export function pairingCommand(code: string): string {

@@ -1469,6 +1469,7 @@ type HostedApiStubOptions = {
 	onLinkAgent?: (response: unknown) => void;
 	createChannelRequests?: string[];
 	createChannelResponse?: unknown;
+	createChannelResponses?: StubResponse[];
 	deleteBindingRequests?: string[];
 	deleteBindingResponses?: StubResponse[];
 	onCreateChannel?: (response: unknown) => void;
@@ -2295,7 +2296,8 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p === "/v1/channels" && r.request().method() === "POST") {
 			options.createChannelRequests?.push(r.request().postData() ?? "");
-			const configured = options.createChannelResponse ?? {};
+			const configured =
+				options.createChannelResponses?.shift() ?? options.createChannelResponse ?? {};
 			const response = isStubResponse(configured) ? configured : { body: configured, status: 201 };
 			if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
 			if (response.status < 400) options.onCreateChannel?.(response.body);
@@ -9324,6 +9326,12 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 
 	await page.getByRole("button", { name: "Add channel", exact: true }).click();
 	let connectDialog = page.getByRole("dialog", { name: "Add channel" });
+	await expect(
+		connectDialog.getByText("Open the relevant Agent's Agent Interface", { exact: false }),
+	).toBeVisible();
+	await expect(
+		connectDialog.getByRole("link", { name: "Agent Interface", exact: true }),
+	).toHaveCount(0);
 	await expect(connectDialog.getByRole("button", { name: /^Telegram Telegram$/ })).toHaveAttribute(
 		"aria-pressed",
 		"true",
@@ -9341,7 +9349,7 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 	await connectDialog.getByRole("button", { name: /^Telegram Telegram$/ }).click();
 	await connectDialog.getByLabel("Name").fill("Inventory Telegram");
 	await connectDialog.getByLabel("Bot token").fill("123456:console-inventory-token");
-	await connectDialog.getByRole("button", { name: "Connect custom bot", exact: true }).click();
+	await connectDialog.getByRole("button", { name: "Add custom bot", exact: true }).click();
 	await expect.poll(() => createChannelRequests.length).toBe(1);
 	expect(JSON.parse(createChannelRequests[0] ?? "{}")).toEqual({
 		provider: "telegram",
@@ -9349,7 +9357,7 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 		provider_token: "123456:console-inventory-token",
 		agent_id: null,
 	});
-	const successDialog = page.getByRole("dialog", { name: "Custom bot connected" });
+	const successDialog = page.getByRole("dialog", { name: "Custom bot added" });
 	await expect(successDialog).toBeVisible();
 	await expect(
 		successDialog.getByRole("button", { name: "View Custom bot", exact: true }),
@@ -9391,9 +9399,9 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 	);
 	await expectContainedInOwnerAndViewport(
 		page,
-		connectDialog.getByRole("button", { name: "Connect custom bot", exact: true }),
+		connectDialog.getByRole("button", { name: "Add custom bot", exact: true }),
 		connectDialog,
-		"Telegram credentials Connect custom bot",
+		"Telegram credentials Add custom bot",
 	);
 	await connectDialog.screenshot({ path: testInfo.outputPath("connect-bot-telegram-320.png") });
 	await connectDialog.getByRole("button", { name: /^Discord Discord$/ }).click();
@@ -9416,9 +9424,9 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 	}
 	await expectContainedInOwnerAndViewport(
 		page,
-		connectDialog.getByRole("button", { name: "Connect custom bot", exact: true }),
+		connectDialog.getByRole("button", { name: "Add custom bot", exact: true }),
 		connectDialog,
-		"Discord credentials Connect custom bot",
+		"Discord credentials Add custom bot",
 	);
 	await connectDialog.screenshot({ path: testInfo.outputPath("connect-bot-discord-320.png") });
 	expect(errors, `Channels inventory browser errors: ${errors.join(" | ")}`).toEqual([]);
@@ -9643,9 +9651,9 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 	await page.getByRole("button", { name: "Add channel", exact: true }).click();
 	let dialog = page.getByRole("dialog", { name: "Add channel" });
 	await dialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ }).click();
-	await expect(dialog.getByText("Clawdi WhatsApp", { exact: true })).toBeVisible();
 	await expect(dialog.getByText("Your WhatsApp", { exact: true })).toBeVisible();
-	await expect(dialog.getByText("You never scan its device QR.", { exact: false })).toBeVisible();
+	await expect(dialog.getByText("Clawdi WhatsApp", { exact: true })).toHaveCount(0);
+	await expect(dialog.locator("[data-whatsapp-account-choice] section")).toHaveCount(0);
 	await expect(dialog.getByRole("button", { name: "Connect your account" })).toBeDisabled();
 	await expect(dialog).toContainText("isn't compatible with this deployment");
 	await expect(dialog.getByLabel("Bot token")).toHaveCount(0);
@@ -9656,10 +9664,10 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 	await page.getByRole("button", { name: "Add channel", exact: true }).click();
 	dialog = page.getByRole("dialog", { name: "Add channel" });
 	await dialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ }).click();
-	await expect(dialog.getByRole("button", { name: "Choose from an Agent" })).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Connect your account" })).toBeEnabled();
-	await expectNoHorizontalOverflow(dialog, "WhatsApp account choice desktop");
-	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-account-choice-desktop.png") });
+	await expect(dialog.getByRole("button", { name: "Choose from an Agent" })).toHaveCount(0);
+	await expectNoHorizontalOverflow(dialog, "WhatsApp Custom setup desktop");
+	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-custom-setup-desktop.png") });
 
 	await dialog.getByRole("button", { name: "Connect your account" }).click();
 	await dialog.getByLabel("Account name").fill(longAccountName);
@@ -9697,9 +9705,10 @@ test("WhatsApp Custom onboarding uses a real gated linked-device lifecycle", asy
 		"clip",
 	);
 	await mobileWhatsAppProvider.click();
-	await expectNoHorizontalOverflow(dialog, "WhatsApp account choice at 320x568");
-	await expectNoHorizontalOverflow(page.locator("html"), "WhatsApp choice document at 320x568");
-	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-account-choice-320x568.png") });
+	await expect(dialog.locator("[data-whatsapp-account-choice] section")).toHaveCount(0);
+	await expectNoHorizontalOverflow(dialog, "WhatsApp Custom setup at 320x568");
+	await expectNoHorizontalOverflow(page.locator("html"), "WhatsApp Custom document at 320x568");
+	await dialog.screenshot({ path: testInfo.outputPath("whatsapp-custom-setup-320x568.png") });
 	await dialog.getByRole("button", { name: "Connect your account" }).click();
 	await dialog.getByLabel("Account name").fill("Phone viewport WhatsApp");
 	await dialog.getByRole("button", { name: "Generate QR" }).click();
@@ -9906,6 +9915,7 @@ for (const firstTimeViewport of [
 			agent_id: missingProjectionEnvironmentId,
 			status: "active",
 			created_at: "2026-07-27T12:00:00Z",
+			binding_count: 0,
 			account: channelAccount,
 		};
 		await stubHostedApi(page, {
@@ -9986,25 +9996,25 @@ for (const firstTimeViewport of [
 		});
 
 		await connectCustom.click();
-		let connectDialog = page.getByRole("dialog", { name: "Add channel" });
+		const connectDialog = page.getByRole("dialog", { name: "Add channel" });
 		await expect(connectDialog).toBeVisible();
 		await expect(page.getByRole("dialog")).toHaveCount(1);
 		await expect(connectDialog).toContainText(
-			"Add a Custom bot you manage, or choose a Clawdi bot for this Agent.",
+			"Add a Custom bot you manage. When possible, it will be linked to this Agent automatically.",
+		);
+		const agentInterfaceHint = connectDialog.locator("[data-other-provider-hint]");
+		await expect(agentInterfaceHint).toContainText(
+			"Need a provider that Clawdi Channels doesn't support?",
+		);
+		await expect(agentInterfaceHint.getByRole("link", { name: "Agent Interface" })).toHaveAttribute(
+			"href",
+			`/agents/${missingProjectionEnvironmentId}/console?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
 		);
 		await connectDialog.getByRole("button", { name: /^WhatsApp WhatsApp$/ }).click();
-		await expect(connectDialog.getByText("Clawdi WhatsApp", { exact: true })).toBeVisible();
 		await expect(connectDialog.getByText("Your WhatsApp", { exact: true })).toBeVisible();
-		await expect(
-			connectDialog.getByText("You never scan its device QR.", { exact: false }),
-		).toBeVisible();
-		await connectDialog.getByRole("button", { name: "View Clawdi bots", exact: true }).click();
-		await expect(connectDialog).toHaveCount(0);
-		await expect(clawdiSection).toBeFocused();
-
-		await connectCustom.click();
-		connectDialog = page.getByRole("dialog", { name: "Add channel" });
-		await expect(connectDialog).toBeVisible();
+		await expect(connectDialog.getByText("Clawdi WhatsApp", { exact: true })).toHaveCount(0);
+		await expect(connectDialog.locator("[data-whatsapp-account-choice] section")).toHaveCount(0);
+		await connectDialog.getByRole("button", { name: /^Telegram Telegram$/ }).click();
 		await expect(
 			connectDialog.getByRole("button", { name: /^Telegram Telegram$/ }),
 		).toHaveAttribute("aria-pressed", "true");
@@ -10023,7 +10033,7 @@ for (const firstTimeViewport of [
 			);
 		}
 		const submitCustomBot = connectDialog.getByRole("button", {
-			name: "Connect custom bot",
+			name: "Add custom bot",
 			exact: true,
 		});
 		await expectContainedInOwnerAndViewport(
@@ -10037,7 +10047,7 @@ for (const firstTimeViewport of [
 		});
 
 		await submitCustomBot.click();
-		const connecting = connectDialog.getByRole("button", { name: "Connecting…", exact: true });
+		const connecting = connectDialog.getByRole("button", { name: "Adding…", exact: true });
 		await expect(connecting).toBeVisible();
 		await expectContainedInOwnerAndViewport(
 			page,
@@ -10093,10 +10103,11 @@ for (const firstTimeViewport of [
 			created_at: "2026-08-01T01:00:00Z",
 			last_message_at: null,
 		});
+		channelLink.binding_count = 1;
 		await expect(pairDialog).toHaveCount(0, { timeout: 5_000 });
 		const successToast = page.locator("[data-sonner-toast]").filter({ hasText: "Chat paired" });
 		await expect(successToast).toHaveCount(1);
-		await expect(successToast).toContainText("Telegram private chat is ready.");
+		await expect(successToast).toContainText("Telegram chat is ready.");
 		await expectNoHorizontalOverflow(
 			successToast,
 			`${firstTimeViewport.label} first-time pair success toast`,
@@ -10122,6 +10133,168 @@ for (const firstTimeViewport of [
 		).toEqual([]);
 	});
 }
+
+test("Add channel keeps already-linked Telegram and Discord available as inventory-only additions", async ({
+	page,
+}, testInfo) => {
+	await page.setViewportSize({ width: 320, height: 844 });
+	const errors = collectBrowserErrors(page);
+	const agentId = missingProjectionEnvironmentId;
+	const telegramAccount = {
+		id: "5a111111-1111-4111-8111-111111111111",
+		provider: "telegram",
+		name: "Existing Telegram",
+		status: "active",
+		visibility: "private",
+		has_provider_token: true,
+		webhook_url: "https://cloud.example.test/channels/existing-telegram",
+		created_at: "2026-08-03T00:00:00Z",
+	};
+	const discordAccount = {
+		...telegramAccount,
+		id: "5a222222-2222-4222-8222-222222222222",
+		provider: "discord",
+		name: "Existing Discord",
+		webhook_url: "https://cloud.example.test/channels/existing-discord",
+	};
+	const createChannelRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [runningMissingProjectionDeployment],
+		channelAccounts: [telegramAccount, discordAccount],
+		channelAgentLinks: [
+			{
+				id: "5a333333-3333-4333-8333-333333333333",
+				account_id: telegramAccount.id,
+				agent_id: agentId,
+				status: "active",
+				created_at: "2026-08-03T00:01:00Z",
+				account: telegramAccount,
+			},
+			{
+				id: "5a444444-4444-4444-8444-444444444444",
+				account_id: discordAccount.id,
+				agent_id: agentId,
+				status: "active",
+				created_at: "2026-08-03T00:02:00Z",
+				account: discordAccount,
+			},
+		],
+		createChannelRequests,
+		createChannelResponses: [
+			{
+				status: 201,
+				body: {
+					...telegramAccount,
+					id: "5a555555-5555-4555-8555-555555555555",
+					name: "Additional Telegram",
+					webhook_secret: "telegram-webhook-secret-must-not-render",
+					agent_link_id: null,
+					agent_id: null,
+					agent_token: null,
+				},
+			},
+			{
+				status: 201,
+				body: {
+					...discordAccount,
+					id: "5a666666-6666-4666-8666-666666666666",
+					name: "Additional Discord",
+					webhook_secret: "discord-webhook-secret-must-not-render",
+					agent_link_id: null,
+					agent_id: null,
+					agent_token: null,
+				},
+			},
+		],
+	});
+
+	await page.goto(
+		`/agents/${agentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+	);
+	const addChannel = page.locator("[data-agent-add-custom-bot]");
+	await addChannel.click();
+	let dialog = page.getByRole("dialog", { name: "Add channel" });
+	const telegramProvider = dialog.getByRole("button", { name: /^Telegram Telegram$/ });
+	const discordProvider = dialog.getByRole("button", { name: /^Discord Discord$/ });
+	await expect(telegramProvider).toBeEnabled();
+	await expect(discordProvider).toBeEnabled();
+	await expect(dialog.getByRole("status")).toContainText(
+		"This Agent already has a Telegram bot. The new Custom bot will be added to Custom bots without being linked to this Agent.",
+	);
+	await expect(
+		dialog.locator("[data-other-provider-hint]").getByRole("link", {
+			name: "Agent Interface",
+		}),
+	).toHaveAttribute(
+		"href",
+		`/agents/${agentId}/console?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+	);
+	await dialog.getByLabel("Name").fill("Additional Telegram");
+	await dialog.getByLabel("Bot token").fill("123456:additional-telegram-token");
+	await dialog.screenshot({ path: testInfo.outputPath("already-linked-telegram-form-320.png") });
+	await dialog.getByRole("button", { name: "Add custom bot", exact: true }).click();
+	await expect.poll(() => createChannelRequests.length).toBe(1);
+	expect(JSON.parse(createChannelRequests[0] ?? "{}")).toEqual({
+		provider: "telegram",
+		name: "Additional Telegram",
+		provider_token: "123456:additional-telegram-token",
+		agent_id: null,
+	});
+	dialog = page.getByRole("dialog", { name: "Custom bot added" });
+	await expect(dialog).toContainText(
+		"Additional Telegram was added to Custom bots. It was not linked because this Agent already has a Telegram bot.",
+	);
+	await expect(page.getByRole("dialog", { name: "Pair Telegram" })).toHaveCount(0);
+	await expectNoHorizontalOverflow(dialog, "inventory-only Telegram result at 320px");
+	await dialog.screenshot({ path: testInfo.outputPath("inventory-only-telegram-result-320.png") });
+	await dialog.getByRole("button", { name: "Done", exact: true }).click();
+
+	await addChannel.click();
+	dialog = page.getByRole("dialog", { name: "Add channel" });
+	await dialog.getByRole("button", { name: /^Discord Discord$/ }).click();
+	await expect(dialog.getByRole("status")).toContainText(
+		"This Agent already has a Discord bot. The new Custom bot will be added to Custom bots without being linked to this Agent.",
+	);
+	await dialog.getByLabel("Name").fill("Additional Discord");
+	await dialog.getByLabel("Bot token").fill("A".repeat(50));
+	await dialog.getByLabel("Application ID").fill("123456789012345678");
+	await dialog.getByLabel("Public key").fill("a".repeat(64));
+	await expectNoHorizontalOverflow(dialog, "inventory-only Discord form at 320px");
+	await dialog.screenshot({ path: testInfo.outputPath("already-linked-discord-form-320.png") });
+	await dialog.getByRole("button", { name: "Add custom bot", exact: true }).click();
+	await expect.poll(() => createChannelRequests.length).toBe(2);
+	expect(JSON.parse(createChannelRequests[1] ?? "{}")).toEqual({
+		provider: "discord",
+		name: "Additional Discord",
+		provider_token: "A".repeat(50),
+		agent_id: null,
+		config: {
+			application_id: "123456789012345678",
+			public_key: "a".repeat(64),
+		},
+	});
+	dialog = page.getByRole("dialog", { name: "Custom bot added" });
+	await expect(dialog).toContainText(
+		"Additional Discord was added to Custom bots. It was not linked because this Agent already has a Discord bot.",
+	);
+	await expect(page.getByRole("dialog", { name: "Pair Discord" })).toHaveCount(0);
+	await expectNoHorizontalOverflow(dialog, "inventory-only Discord result at 320px");
+	await expect(page.locator("body")).not.toContainText("webhook-secret-must-not-render");
+	await dialog.getByRole("button", { name: "Done", exact: true }).click();
+	await addChannel.click();
+	dialog = page.getByRole("dialog", { name: "Add channel" });
+	await dialog
+		.locator("[data-other-provider-hint]")
+		.getByRole("link", {
+			name: "Agent Interface",
+		})
+		.click();
+	await expect(page).toHaveURL(
+		`/agents/${agentId}/console?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+	);
+	await expect(page.getByRole("dialog", { name: "Add channel" })).toHaveCount(0);
+	expect(errors, `inventory-only Custom bot errors: ${errors.join(" | ")}`).toEqual([]);
+});
 
 test("Agent bot groups keep every bot visible and gate provider conflicts in place", async ({
 	page,

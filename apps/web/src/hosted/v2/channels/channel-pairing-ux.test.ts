@@ -75,8 +75,8 @@ describe("channel IA boundary", () => {
 	});
 
 	test("keeps Discord inventory in Console and Add/Pair actions on the Agent", () => {
-		expect(connectDialog).toContain("agent_id: agentId ?? null");
-		expect(connectDialog).toContain("Connect custom bot");
+		expect(connectDialog).toContain("agent_id: autoLinkAgentId");
+		expect(connectDialog).toContain("Add custom bot");
 		expect(connectDialog).toContain("onAgentConnected");
 		expect(agentDetail).toContain('linking ? "Linking…" : "Link"');
 		expect(agentDetail).toContain("body: { agent_id: environmentId }");
