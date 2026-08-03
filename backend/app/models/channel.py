@@ -226,9 +226,7 @@ class ChannelWhatsAppOnboardingSession(Base, TimestampMixin):
             "uq_channel_whatsapp_onboarding_active_sidecar_account",
             "sidecar_account_id",
             unique=True,
-            postgresql_where=sql_text(
-                "state IN ('generating', 'ready', 'scanned', 'connected', 'error')"
-            ),
+            postgresql_where=sql_text("state IN ('generating', 'ready', 'scanned', 'error')"),
         ),
         Index(
             "uq_channel_whatsapp_onboarding_active_custom_user_name",
@@ -236,8 +234,7 @@ class ChannelWhatsAppOnboardingSession(Base, TimestampMixin):
             "name",
             unique=True,
             postgresql_where=sql_text(
-                "ownership_kind = 'custom' AND "
-                "state IN ('generating', 'ready', 'scanned', 'connected', 'error')"
+                "ownership_kind = 'custom' AND state IN ('generating', 'ready', 'scanned', 'error')"
             ),
         ),
         Index(
@@ -246,7 +243,7 @@ class ChannelWhatsAppOnboardingSession(Base, TimestampMixin):
             unique=True,
             postgresql_where=sql_text(
                 "ownership_kind = 'platform' AND "
-                "state IN ('generating', 'ready', 'scanned', 'connected', 'error')"
+                "state IN ('generating', 'ready', 'scanned', 'error')"
             ),
         ),
     )
