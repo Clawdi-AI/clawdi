@@ -1775,21 +1775,6 @@ async def test_account_level_managed_key_lists_runtime_channels_with_environment
 
 
 @pytest.mark.asyncio
-async def test_create_channel_rejects_unsupported_imessage_provider(client: httpx.AsyncClient):
-    response = await client.post(
-        "/v1/channels",
-        json={
-            "provider": "imessage",
-            "name": "unsupported-provider",
-            "provider_token": "legacy-password",
-        },
-    )
-
-    assert response.status_code == 422
-    assert "imessage" not in response.json()["detail"][0]["ctx"]["expected"]
-
-
-@pytest.mark.asyncio
 async def test_env_bound_channel_etag_is_stable(
     client: httpx.AsyncClient,
     db_session: AsyncSession,

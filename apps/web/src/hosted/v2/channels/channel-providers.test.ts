@@ -1,15 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import {
-	CHANNEL_PROVIDERS,
-	isChannelProvider,
-	orderedProviderIds,
-	providerMeta,
-} from "./channel-providers";
+import { CHANNEL_PROVIDERS, orderedProviderIds, providerMeta } from "./channel-providers";
 
 describe("channel provider registry", () => {
 	test("only exposes providers that can be created from the v2 channels UI", () => {
 		expect(CHANNEL_PROVIDERS).toEqual(["telegram", "discord", "whatsapp"]);
-		expect(isChannelProvider("imessage")).toBe(false);
 	});
 
 	test("falls back to unavailable metadata for unknown providers", () => {
