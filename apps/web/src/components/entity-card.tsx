@@ -67,7 +67,7 @@ export function entityChoiceCardClass({
 }) {
 	return cn(
 		variant === "compact"
-			? "min-w-0 rounded-md border border-transparent bg-muted/30 p-2.5"
+			? "min-w-0 rounded-md border border-border bg-muted/30 p-2.5"
 			: ENTITY_CARD_BASE,
 		"flex w-full text-left transition-colors",
 		variant === "compact" ? "items-center gap-2.5" : "items-start gap-3",

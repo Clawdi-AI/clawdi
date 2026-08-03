@@ -5417,7 +5417,7 @@ test("AI provider chooser and auth dialogs preserve hierarchy in dark mode", asy
 	await expect(openAiChoice.locator(':scope > [aria-hidden="true"]')).toHaveCount(1);
 	const anthropicIcon = anthropicChoice.locator(':scope > [aria-hidden="true"]');
 	await expect(anthropicIcon).toHaveCount(1);
-	await expect(anthropicIcon.locator("img")).toHaveAttribute("alt", "Anthropic");
+	await expect(anthropicIcon.locator('svg[data-icon-source="lobehub"]')).toBeVisible();
 	const chooserBody = chooserDialog.getByTestId("provider-dialog-body");
 	const mobileScroll = await chooserBody.evaluate((element) => ({
 		clientHeight: element.clientHeight,
@@ -9346,6 +9346,7 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 	await expect(telegramProvider).toHaveClass(/ring-1/);
 	await expect(telegramProvider).toHaveClass(/ring-primary\/30/);
 	await expect(telegramProvider.locator("svg.lucide-check")).toBeVisible();
+	await expect(discordProvider).toHaveClass(/border-border/);
 	await expect(discordProvider.locator("svg.lucide-check")).toHaveCount(0);
 	const [providerChooserBox, providerConfigurationBox] = await Promise.all([
 		providerChooser.boundingBox(),
