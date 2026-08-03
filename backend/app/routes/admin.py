@@ -27,6 +27,7 @@ can land in this file under the same auth dep.
 """
 
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Annotated, Any, Never, cast
 from uuid import UUID
@@ -2086,7 +2087,7 @@ def _admin_channel_response(account: ChannelAccount, owner: User | None) -> Admi
     )
 
 
-def _enabled_runtime_names(runtimes: dict[str, object]) -> list[str]:
+def _enabled_runtime_names(runtimes: Mapping[str, object]) -> list[str]:
     return sorted(
         name
         for name, value in runtimes.items()
