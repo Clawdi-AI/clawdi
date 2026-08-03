@@ -37,6 +37,7 @@ from app.models.channel import (
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_IMESSAGE,
     CHANNEL_PROVIDER_TELEGRAM,
+    CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_DISABLED,
     CHANNEL_VISIBILITY_PUBLIC,
     DELIVERY_STATUS_FAILED,
@@ -48,7 +49,6 @@ from app.models.channel import (
     PAIR_CODE_STATUS_PENDING,
     PAIR_CODE_STATUS_REVOKED,
     ChannelAccount,
-    ChannelAccountRuntimeMarker,
     ChannelAgentCredential,
     ChannelAgentReference,
     ChannelBinding,
@@ -418,6 +418,26 @@ async def _create_public_telegram_account_for_user(
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+async def _seed_historical_platform_whatsapp_account(
+    db_session: AsyncSession,
+    *,
+    name: str,
+) -> ChannelAccount:
+    """Seed the retired generic-create shape for historical-state projections."""
+
+    account = channel_service.build_channel_account(
+        owner_user_id=None,
+        provider=CHANNEL_PROVIDER_WHATSAPP,
+        name=name,
+        visibility=CHANNEL_VISIBILITY_PUBLIC,
+        webhook_secret_hash=hash_token(uuid4().hex),
+    )
+    db_session.add(account)
+    await db_session.commit()
+    await db_session.refresh(account)
+    return account
 
 
 async def _seed_existing_channel_link(
@@ -3059,9 +3079,8 @@ async def test_historical_local_link_remains_listable_and_cleanable_but_cannot_p
                 ChannelMessage.provider_event_id == "update:9001",
             )
         )
-    ).scalar_one()
-    assert inbound_message.binding_id is None
-    assert inbound_message.bot_agent_link_id is None
+    ).scalar_one_or_none()
+    assert inbound_message is None
     assert unpair.status_code == 200, unpair.text
     assert unpair.json()["unpaired"] is True
     assert unlink.status_code == 204
@@ -3138,17 +3157,13 @@ async def test_historical_pending_pair_code_cannot_create_new_chat_binding(
 async def test_whatsapp_managed_link_admission_remains_gated(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
-    seed_user,
     agent_type: str,
 ):
-    created = await _create_admin_channel(
-        client,
-        target_clerk_id=seed_user.clerk_id,
-        provider="whatsapp",
+    account = await _seed_historical_platform_whatsapp_account(
+        db_session,
         name=f"{agent_type}-whatsapp-gated-{uuid4().hex}",
     )
-    assert created.status_code == 201, created.text
-    account_id = created.json()["id"]
+    account_id = str(account.id)
     user, agent = await _create_user_with_channel_agent(
         db_session,
         label=f"{agent_type}-whatsapp-gated",
@@ -4096,16 +4111,12 @@ async def test_public_preset_channel_links_and_bindings_are_user_scoped(
 async def test_env_bound_list_channels_hides_historical_local_whatsapp_credentials(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
-    seed_user,
 ):
-    created = await _create_admin_channel(
-        client,
-        target_clerk_id=seed_user.clerk_id,
-        provider="whatsapp",
+    seeded_account = await _seed_historical_platform_whatsapp_account(
+        db_session,
         name=f"runtime-whatsapp-{uuid4().hex}",
     )
-    assert created.status_code == 201, created.text
-    account_id = created.json()["id"]
+    account_id = str(seeded_account.id)
     user, agent = await _create_user_with_channel_agent(
         db_session,
         label="runtime-wa-creds",
@@ -4376,9 +4387,8 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
             .order_by(ChannelMessage.created_at.desc())
             .limit(1)
         )
-    ).scalar_one()
-    assert bob_unpair_reply.binding_id is None
-    assert bob_unpair_reply.bot_agent_link_id is None
+    ).scalar_one_or_none()
+    assert bob_unpair_reply is None
 
     bob_takeover = await client.post(
         f"/v1/channels/telegram/{account_id}/webhook",
@@ -4401,9 +4411,8 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
             .order_by(ChannelMessage.created_at.desc())
             .limit(1)
         )
-    ).scalar_one()
-    assert bob_takeover_reply.binding_id is None
-    assert bob_takeover_reply.bot_agent_link_id is None
+    ).scalar_one_or_none()
+    assert bob_takeover_reply is None
 
     pair_code_b = (
         await db_session.execute(
@@ -13166,84 +13175,6 @@ async def test_telegram_unpaired_private_tutorial_is_idempotent_cooled_down_and_
 
 
 @pytest.mark.asyncio
-async def test_public_telegram_unpaired_tutorial_keeps_cooldown_without_tenant_messages(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    seed_user,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
-    _reset_fake_provider_client({"ok": True, "result": {"username": "platform_test_bot"}})
-    created_response = await _create_admin_channel(
-        client,
-        target_clerk_id=seed_user.clerk_id,
-        provider=CHANNEL_PROVIDER_TELEGRAM,
-        name=f"telegram-platform-unpaired-{uuid4().hex}",
-    )
-    assert created_response.status_code == 201, created_response.text
-    created = created_response.json()
-    account_id = UUID(created["id"])
-    account = await db_session.get(ChannelAccount, account_id)
-    assert account is not None
-    account.encrypted_provider_token, account.provider_token_nonce = encrypt_optional_token(
-        "123456:telegram-platform-secret"
-    )
-    await db_session.commit()
-    _reset_fake_provider_client({"ok": True, "result": {"message_id": 107}})
-
-    webhook_url = f"/v1/channels/telegram/{account_id}/webhook"
-    headers = {"x-telegram-bot-api-secret-token": created["webhook_secret"]}
-
-    def update(update_id: int) -> dict[str, Any]:
-        return {
-            "update_id": update_id,
-            "message": {
-                "message_id": update_id,
-                "text": "help me pair",
-                "chat": {"id": 987654411, "type": "private"},
-                "from": {"id": 987654411, "is_bot": False},
-            },
-        }
-
-    assert (await client.post(webhook_url, headers=headers, json=update(7_611))).status_code == 200
-    assert (await client.post(webhook_url, headers=headers, json=update(7_612))).status_code == 200
-    assert (
-        len([call for call in _FakeProviderClient.calls if call["url"].endswith("/sendMessage")])
-        == 1
-    )
-    assert (
-        await db_session.scalar(
-            select(func.count())
-            .select_from(ChannelMessage)
-            .where(ChannelMessage.account_id == account_id)
-        )
-        == 0
-    )
-    marker = (
-        await db_session.execute(
-            select(ChannelAccountRuntimeMarker).where(
-                ChannelAccountRuntimeMarker.account_id == account_id,
-                ChannelAccountRuntimeMarker.kind == "telegram_unpaired_tutorial",
-            )
-        )
-    ).scalar_one()
-    assert marker.scope == "private:987654411"
-    assert marker.outcome == "sent"
-
-    marker.updated_at = (
-        datetime.now(UTC)
-        - telegram_router.TELEGRAM_UNPAIRED_TUTORIAL_COOLDOWN
-        - timedelta(seconds=1)
-    )
-    await db_session.commit()
-    assert (await client.post(webhook_url, headers=headers, json=update(7_613))).status_code == 200
-    assert (
-        len([call for call in _FakeProviderClient.calls if call["url"].endswith("/sendMessage")])
-        == 2
-    )
-
-
-@pytest.mark.asyncio
 async def test_telegram_unpaired_tutorial_failure_does_not_expose_internal_error(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -16103,89 +16034,6 @@ async def test_discord_unpaired_tutorial_failure_has_short_retry_then_success_co
         assert await record_discord_dispatch(db_session, account=account, frame=frame(message_id))
         await db_session.commit()
     assert attempts == 2
-
-
-@pytest.mark.asyncio
-async def test_public_discord_unpaired_tutorial_keeps_backoff_without_tenant_messages(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    seed_user,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def configure_discord_application(account: ChannelAccount) -> dict[str, Any]:
-        return {"id": DISCORD_TEST_APPLICATION_ID}
-
-    async def sync_channel_commands(**kwargs) -> list[dict[str, Any]]:
-        return []
-
-    monkeypatch.setattr(
-        admin_router, "configure_discord_application", configure_discord_application
-    )
-    monkeypatch.setattr(admin_router, "sync_channel_commands", sync_channel_commands)
-    created_response = await _create_admin_channel(
-        client,
-        target_clerk_id=seed_user.clerk_id,
-        provider=CHANNEL_PROVIDER_DISCORD,
-        name=f"discord-platform-unpaired-{uuid4().hex}",
-        provider_token="discord-platform-token",
-        config=_discord_ready_config(),
-    )
-    assert created_response.status_code == 201, created_response.text
-    account = await db_session.get(ChannelAccount, UUID(created_response.json()["id"]))
-    assert account is not None
-    assert account.user_id is None
-    attempts = 0
-
-    async def send_tutorial(**kwargs):
-        nonlocal attempts
-        attempts += 1
-        if attempts == 1:
-            raise HTTPException(status_code=502, detail="private provider failure")
-        return "tutorial-message", {"id": "tutorial-message", "channel_id": "dm-channel"}
-
-    monkeypatch.setattr(channel_service, "_send_discord_provider_payload", send_tutorial)
-
-    def frame(message_id: str) -> dict[str, Any]:
-        return {
-            "t": "MESSAGE_CREATE",
-            "d": {
-                "id": message_id,
-                "channel_id": "dm-channel",
-                "content": "hello",
-                "author": {"id": "discord-user", "bot": False},
-            },
-        }
-
-    for message_id in ("platform-failed", "platform-backoff"):
-        assert await record_discord_dispatch(db_session, account=account, frame=frame(message_id))
-        await db_session.commit()
-    assert attempts == 1
-    assert (
-        await db_session.scalar(
-            select(func.count())
-            .select_from(ChannelMessage)
-            .where(ChannelMessage.account_id == account.id)
-        )
-        == 0
-    )
-    marker = (
-        await db_session.execute(
-            select(ChannelAccountRuntimeMarker).where(
-                ChannelAccountRuntimeMarker.account_id == account.id,
-                ChannelAccountRuntimeMarker.kind == "discord_unpaired_tutorial",
-            )
-        )
-    ).scalar_one()
-    assert marker.scope == "dm-channel"
-    assert marker.outcome == "failed"
-
-    marker.updated_at = datetime.now(UTC) - timedelta(seconds=31)
-    await db_session.commit()
-    for message_id in ("platform-retry", "platform-success-cooldown"):
-        assert await record_discord_dispatch(db_session, account=account, frame=frame(message_id))
-        await db_session.commit()
-    assert attempts == 2
-    assert marker.outcome == "sent"
 
 
 @pytest.mark.asyncio

@@ -27,6 +27,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.auth import AuthContext, get_auth, get_auth_short_session, optional_web_auth
@@ -293,7 +294,30 @@ async def seed_user(
     fallback target. Without this, write paths that resolve project
     server-side would 500 on a fresh test user.
     """
+    from app.models.channel import (
+        WHATSAPP_ONBOARDING_OWNERSHIP_PLATFORM,
+        ChannelAccount,
+        ChannelWhatsAppOnboardingSession,
+    )
     from app.models.project import PROJECT_KIND_PERSONAL, Project
+
+    uses_committed_db = request.node.get_closest_marker("committed_db") is not None
+    platform_account_ids_before: set[uuid.UUID] = set()
+    platform_session_ids_before: set[uuid.UUID] = set()
+    if uses_committed_db:
+        platform_account_ids_before = set(
+            await db_session.scalars(
+                select(ChannelAccount.id).where(ChannelAccount.user_id.is_(None))
+            )
+        )
+        platform_session_ids_before = set(
+            await db_session.scalars(
+                select(ChannelWhatsAppOnboardingSession.id).where(
+                    ChannelWhatsAppOnboardingSession.ownership_kind
+                    == WHATSAPP_ONBOARDING_OWNERSHIP_PLATFORM
+                )
+            )
+        )
 
     user = User(
         clerk_id=f"test_{test_identity}",
@@ -312,11 +336,43 @@ async def seed_user(
     db_session.add(personal)
     await db_session.commit()
     await db_session.refresh(user)
+    seed_user_id = user.id
     try:
         yield user
     finally:
-        if request.node.get_closest_marker("committed_db"):
-            await db_session.delete(user)
+        if uses_committed_db:
+            # A failed flush leaves the committed lane unusable until rollback.
+            # Public channel inventory is platform-owned, so deleting the test
+            # tenant no longer cascades through accounts created by the test.
+            await db_session.rollback()
+            platform_account_ids_after = set(
+                await db_session.scalars(
+                    select(ChannelAccount.id).where(ChannelAccount.user_id.is_(None))
+                )
+            )
+            platform_session_ids_after = set(
+                await db_session.scalars(
+                    select(ChannelWhatsAppOnboardingSession.id).where(
+                        ChannelWhatsAppOnboardingSession.ownership_kind
+                        == WHATSAPP_ONBOARDING_OWNERSHIP_PLATFORM
+                    )
+                )
+            )
+            created_platform_session_ids = platform_session_ids_after - platform_session_ids_before
+            created_platform_account_ids = platform_account_ids_after - platform_account_ids_before
+            if created_platform_session_ids:
+                await db_session.execute(
+                    delete(ChannelWhatsAppOnboardingSession).where(
+                        ChannelWhatsAppOnboardingSession.id.in_(created_platform_session_ids)
+                    )
+                )
+            if created_platform_account_ids:
+                await db_session.execute(
+                    delete(ChannelAccount).where(
+                        ChannelAccount.id.in_(created_platform_account_ids)
+                    )
+                )
+            await db_session.execute(delete(User).where(User.id == seed_user_id))
             await db_session.commit()
 
 

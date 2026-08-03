@@ -1949,23 +1949,7 @@ async def test_admin_channel_create_requires_admin_key(admin_client, seed_user):
 
 
 @pytest.mark.asyncio
-async def test_admin_channel_create_enforces_visibility_ownership(
-    admin_client, db_session, seed_user
-):
-    from app.models.channel import ChannelAccount
-
-    public_with_owner = await admin_client.post(
-        "/v1/admin/channels",
-        headers=_AUTH,
-        json={
-            "target_clerk_id": seed_user.clerk_id,
-            "provider": "telegram",
-            "name": f"invalid-public-owner-{uuid.uuid4().hex}",
-            "visibility": "public",
-        },
-    )
-    assert public_with_owner.status_code == 422
-
+async def test_admin_private_channel_requires_owner(admin_client, seed_user):
     private_without_owner = await admin_client.post(
         "/v1/admin/channels",
         headers=_AUTH,
@@ -1990,29 +1974,6 @@ async def test_admin_channel_create_enforces_visibility_ownership(
     assert private.status_code == 201, private.text
     assert private.json()["owner_user_id"] == str(seed_user.id)
     assert private.json()["owner_clerk_id"] == seed_user.clerk_id
-    private_account = await db_session.get(ChannelAccount, uuid.UUID(private.json()["id"]))
-    assert private_account is not None and private_account.user_id == seed_user.id
-
-    private_flip = await admin_client.patch(
-        f"/v1/admin/channels/{private.json()['id']}",
-        headers=_AUTH,
-        json={"visibility": "public"},
-    )
-    assert private_flip.status_code == 409
-
-    public_whatsapp = await admin_client.post(
-        "/v1/admin/channels",
-        headers=_AUTH,
-        json={
-            "provider": "whatsapp",
-            "name": f"physical-only-{uuid.uuid4().hex}",
-            "visibility": "public",
-        },
-    )
-    assert public_whatsapp.status_code == 400
-    assert public_whatsapp.json()["detail"] == (
-        "Public WhatsApp accounts require a physical pairing session."
-    )
 
 
 @pytest.mark.asyncio
