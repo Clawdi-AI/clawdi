@@ -9346,6 +9346,7 @@ test("Channels separates Custom and Clawdi bots with compact connect forms", asy
 	await expect(telegramProvider).toHaveClass(/ring-1/);
 	await expect(telegramProvider).toHaveClass(/ring-primary\/30/);
 	await expect(telegramProvider.locator("svg.lucide-check")).toBeVisible();
+	await expect(discordProvider).toHaveClass(/border-border/);
 	await expect(discordProvider.locator("svg.lucide-check")).toHaveCount(0);
 	const [providerChooserBox, providerConfigurationBox] = await Promise.all([
 		providerChooser.boundingBox(),
