@@ -17,19 +17,23 @@ export function ProviderLinkReplacementConfirm({
 }) {
 	const providerLabel = providerMeta(provider).label;
 	return (
-		<ConfirmAction
-			title={`Replace this Agent’s ${providerLabel} link?`}
-			description={
-				<>
-					This Agent can use one {providerLabel} bot at a time.{" "}
-					<span className="font-medium text-foreground [overflow-wrap:anywhere]">{targetName}</span>{" "}
-					will replace the current bot, and its paired chats will be removed from this Agent.
-				</>
-			}
-			confirmLabel={`Replace ${providerLabel} link`}
-			onConfirm={onConfirm}
-		>
-			{children}
-		</ConfirmAction>
+		<div data-hosted="true" data-v2="true" className="contents">
+			<ConfirmAction
+				title={`Replace this Agent’s ${providerLabel} link?`}
+				description={
+					<>
+						This Agent can use one {providerLabel} bot at a time.{" "}
+						<span className="font-medium text-foreground [overflow-wrap:anywhere]">
+							{targetName}
+						</span>{" "}
+						will replace the current bot, and its paired chats will be removed from this Agent.
+					</>
+				}
+				confirmLabel={`Replace ${providerLabel} link`}
+				onConfirm={onConfirm}
+			>
+				{children}
+			</ConfirmAction>
+		</div>
 	);
 }

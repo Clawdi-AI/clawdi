@@ -50,7 +50,8 @@ describe("global Channels inventory", () => {
 		const connectDialog = source("./connect-bot-dialog.tsx");
 		const agentDetail = source("../../agents/hosted-agent-detail.tsx");
 
-		expect(connectDialog).toContain("agent_id: autoLinkAgentId");
+		expect(connectDialog).toContain("replace_existing_provider_link: true");
+		expect(connectDialog).toContain("<ProviderLinkReplacementConfirm");
 		expect(connectDialog).toContain("onAgentConnected");
 		expect(connectDialog).toContain("autoLinkAgentIdForNewCustomBot");
 		expect(agentDetail).not.toContain("<AddChannelDialog");
@@ -62,7 +63,6 @@ describe("global Channels inventory", () => {
 		expect(agentDetail).toContain("Add channel");
 		expect(agentDetail).toContain('title="Clawdi bots"');
 		expect(agentDetail).toContain('title="Custom bots"');
-		expect(agentDetail).toContain("body: { agent_id: environmentId }");
 		expect(agentDetail).toContain("setTelegramPair({");
 	});
 
