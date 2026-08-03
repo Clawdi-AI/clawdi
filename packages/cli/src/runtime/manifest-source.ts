@@ -18,6 +18,7 @@ import {
 	isClawdiManagedProviderProjection,
 } from "./hosted-egress-profiles";
 import {
+	HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
 	type HostedRuntimeManifest,
 	hostedCliPayloadPolicySchema,
 	hostedRuntimeBundleV2ManifestSchema,
@@ -393,6 +394,15 @@ function assertRuntimeApplyContextMatchesManifest(
 	) {
 		throw new Error(
 			`runtime apply identity generation ${applyContext.identity.generation} does not match resolved manifest apply generation ${resolveRuntimeApplyGeneration(manifest)}`,
+		);
+	}
+	const manifestCliPackageSpec = manifest.clawdiCli?.packageSpec;
+	const pairedFixtureMatch =
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS === "1" &&
+		applyContext.cliPackageSpec === HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE;
+	if (applyContext.cliPackageSpec !== manifestCliPackageSpec && !pairedFixtureMatch) {
+		throw new Error(
+			`runtime context CLI package ${applyContext.cliPackageSpec} does not match manifest CLI package ${manifestCliPackageSpec ?? "missing"}`,
 		);
 	}
 }

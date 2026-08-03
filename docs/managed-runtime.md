@@ -679,6 +679,18 @@ journal. `badVersions` is preserved. Missing, stale, tampered, or mismatched
 bootstrap identity continues through verified rollback and otherwise fails
 closed; version ordering is not an ownership signal.
 
+When only the exact CLI package changes and the capability image remains
+compatible, the substrate may rotate the fixed runtime-context directory in
+place without replacing the workload. The running watcher first requires the
+context `cliPackageSpec` to match the fetched manifest package, installs and
+verifies that exact package, atomically activates it, and exits cleanly. The
+`Restart=always` systemd unit then starts the watcher from the absolute managed
+CLI path. The new CLI performs the complete manifest and systemd convergence;
+the old applied authority remains current until that convergence commits the
+new Apply identity. A failed first convergence rolls back to the previously
+verified CLI. This is a process handoff inside the existing workload, not a
+workload restart or replacement.
+
 ## Commands
 
 Root runtime operators can use these commands in controlled environments:
@@ -870,8 +882,10 @@ the sole authority for exact manifest `secret://` references. API URLs that are
 already in the manifest, auth selectors, paths, mode, runtime user, and process
 environment are not duplicated in the context. A missing or malformed context
 fails closed, and no field falls back to ambient process environment. The
-applied generation must match the manifest and is validated before convergence
-can mutate live state. `manifestETag` names the
+applied generation and exact CLI package must match the fetched manifest and
+are validated before CLI installation, systemd mutation, or applied-authority
+commit can occur. The paired-image local tarball exception exists only when the
+explicit test-installer gate is enabled. `manifestETag` names the
 Hosted control-plane snapshot and is persisted separately from the fetched
 bundle's HTTP ETag, which remains the strong validator derived from
 `sourceRevision`; the two values are intentionally independent. This lets one
