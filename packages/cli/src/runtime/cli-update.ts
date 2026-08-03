@@ -44,15 +44,18 @@ export interface RuntimeCliUpdateResult {
 }
 
 interface RuntimeCliBootstrapStatus {
+	schemaVersion?: string;
 	status?: string;
 	source?: string;
 	packageSpec?: string;
 	registry?: string | null;
 	npmPrefix?: string;
+	npmCache?: string;
 	activePath?: string;
 	activeTarget?: string;
 	version?: string;
 	verification?: RuntimeCliVerification;
+	error?: string | null;
 }
 
 type RuntimeCliInstallIdentity = Required<
@@ -1108,8 +1111,119 @@ function reconcileCliUpgradeTransaction(
 		finishCliRollback(paths, rollbackTransaction);
 		return cliReconciliationResult(paths, "rolled_back", opts.runningVersion);
 	}
+	// The root image bootstrap is an independent activation owner. Transfer the
+	// journal to its exact identity before ordinary reconciliation may continue.
+	if (handoffCliUpgradeTransactionToBootstrap(paths, transaction)) {
+		return cliReconciliationResult(paths, "activated", opts.runningVersion);
+	}
 	rollBackInvalidTransaction(paths, transaction);
 	return cliReconciliationResult(paths, "rolled_back", opts.runningVersion);
+}
+
+function handoffCliUpgradeTransactionToBootstrap(
+	paths: RuntimePaths,
+	expectedTransaction: RuntimeCliUpgradeTransaction,
+): boolean {
+	const bootstrapIdentity = verifiedActiveBootstrapIdentity(paths);
+	if (!bootstrapIdentity) return false;
+
+	// cli-upgrade-state has one writer under the runtime convergence lock. The
+	// complete prior transaction is the fence for this compare-and-replace.
+	const currentState = readCliUpgradeState(paths);
+	if (!cliUpgradeTransactionsMatch(currentState.transaction ?? null, expectedTransaction)) {
+		throw new Error("clawdi CLI transaction changed during bootstrap ownership handoff");
+	}
+	const currentBootstrapIdentity = verifiedActiveBootstrapIdentity(paths);
+	if (
+		!currentBootstrapIdentity ||
+		!cliInstallIdentitiesMatch(currentBootstrapIdentity, bootstrapIdentity)
+	) {
+		throw new Error("clawdi CLI bootstrap identity changed during ownership handoff");
+	}
+
+	writeCliUpgradeState(paths, {
+		...currentState,
+		transaction: {
+			phase: "activated",
+			previousIdentity: null,
+			newIdentity: bootstrapIdentity,
+			rollbackEligible: false,
+			installedAt: new Date().toISOString(),
+			rollback: null,
+		},
+	});
+	if (activeLinkTarget(paths.cliManagedBin) !== bootstrapIdentity.activeTarget) {
+		throw new Error("clawdi CLI bootstrap identity changed after ownership handoff");
+	}
+	pruneCliPackagePrefixes(paths, [bootstrapIdentity.npmPrefix]);
+	return true;
+}
+
+function cliUpgradeTransactionsMatch(
+	left: RuntimeCliUpgradeTransaction | null,
+	right: RuntimeCliUpgradeTransaction | null,
+): boolean {
+	if (left === null || right === null) return left === right;
+	return (
+		left.phase === right.phase &&
+		cliInstallIdentitiesMatch(left.previousIdentity, right.previousIdentity) &&
+		cliInstallIdentitiesMatch(left.newIdentity, right.newIdentity) &&
+		left.rollbackEligible === right.rollbackEligible &&
+		left.installedAt === right.installedAt &&
+		left.rollback?.reason === right.rollback?.reason &&
+		left.rollback?.markedAt === right.rollback?.markedAt
+	);
+}
+
+function cliInstallIdentitiesMatch(
+	left: RuntimeCliInstallIdentity | null,
+	right: RuntimeCliInstallIdentity | null,
+): boolean {
+	if (left === null || right === null) return left === right;
+	return (
+		left.packageSpec === right.packageSpec &&
+		left.registry === right.registry &&
+		left.npmPrefix === right.npmPrefix &&
+		left.activeTarget === right.activeTarget &&
+		left.version === right.version
+	);
+}
+
+function verifiedActiveBootstrapIdentity(paths: RuntimePaths): RuntimeCliInstallIdentity | null {
+	const status = readBootstrapStatus(paths.cliBootstrapStatus);
+	const activeTarget = activeLinkTarget(paths.cliManagedBin);
+	if (
+		status?.schemaVersion !== "clawdi.cliNpmBootstrapStatus.v1" ||
+		status.status !== "installed" ||
+		status.source !== "npm" ||
+		status.error !== null ||
+		status.activePath !== paths.cliManagedBin ||
+		status.activeTarget !== activeTarget ||
+		status.npmCache !== paths.cliNpmCache ||
+		typeof status.packageSpec !== "string" ||
+		(status.registry !== null && typeof status.registry !== "string") ||
+		typeof status.npmPrefix !== "string" ||
+		typeof status.activeTarget !== "string" ||
+		typeof status.version !== "string"
+	) {
+		return null;
+	}
+	const identity: RuntimeCliInstallIdentity = {
+		packageSpec: status.packageSpec,
+		registry: status.registry,
+		npmPrefix: status.npmPrefix,
+		activeTarget: status.activeTarget,
+		version: status.version,
+	};
+	if (!verifyStoredCliIdentity(paths, identity)) return null;
+	const currentStatus = readBootstrapStatus(paths.cliBootstrapStatus);
+	return activeLinkTarget(paths.cliManagedBin) === identity.activeTarget &&
+		statusMatchesIdentity(currentStatus, paths, identity) &&
+		currentStatus?.schemaVersion === "clawdi.cliNpmBootstrapStatus.v1" &&
+		currentStatus.error === null &&
+		currentStatus.npmCache === paths.cliNpmCache
+		? identity
+		: null;
 }
 
 function cliReconciliationResult(
