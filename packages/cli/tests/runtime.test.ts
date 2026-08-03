@@ -6451,7 +6451,7 @@ exit 64
 		}
 	});
 
-	it("projects an empty runtime channel list with the stale WhatsApp capability deny rule", () => {
+	it("projects an empty runtime channel list with the invalid WhatsApp capability deny rule", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
 				schemaVersion: "clawdi.runtimeDesiredState.v1",
