@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 from fastapi import HTTPException, status
@@ -30,10 +29,6 @@ def _config_object(value: object) -> dict[str, object]:
         return _CONFIG_OBJECT_ADAPTER.validate_python(value, strict=True)
     except ValidationError:
         return {}
-
-
-def _account_config(account: ChannelAccount) -> dict[str, object]:
-    return _config_object(account.config)
 
 
 def telegram_link_webhook_config(link: ChannelBotAgentLink) -> dict[str, object]:
@@ -88,14 +83,3 @@ async def deliver_telegram_agent_webhook(
         return True
     webhook_deliveries.labels(outcome="failure").inc()
     return False
-
-
-def _webhook_url_with_password(url: str, password: str) -> str:
-    parsed = urlparse(url)
-    query = [
-        (key, value)
-        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-        if key != "password"
-    ]
-    query.append(("password", password))
-    return urlunparse(parsed._replace(query=urlencode(query)))
