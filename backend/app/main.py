@@ -1,10 +1,10 @@
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -66,6 +66,7 @@ from app.routes.vault import router as vault_router
 from app.services.ai_provider_auth_transition import OAuthCredentialPayloadCorruptError
 from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
+from app.services.memory_types import MemoryProviderUnavailableError, MemoryProviderUpstreamError
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
 from app.services.whatsapp_device_onboarding import expire_stale_whatsapp_onboarding_sessions
 from app.services.whatsapp_managed_onboarding import (
@@ -95,7 +96,7 @@ class HealthResponse(BaseModel):
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """ASGI lifespan — warm slow singletons at startup so the first request
     path isn't the one that pays for them.
 
@@ -161,8 +162,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             try:
                 await asyncio.to_thread(LocalEmbedder.get)
                 log.info("Local embedder warmed.")
-            except Exception as e:  # noqa: BLE001 — never block startup on embedder
-                log.warning("Local embedder warmup failed: %s", e)
+            except (OSError, RuntimeError, ValueError) as exc:
+                log.warning("Local embedder warmup failed: %s", exc)
 
         # Hold a strong reference — asyncio.create_task returns a weak-ref'd
         # Task and the GC can reap it mid-flight otherwise. Python docs
@@ -401,6 +402,28 @@ async def oauth_credential_payload_corrupt_exception_handler(
     return _apply_whatsapp_onboarding_cache_policy(
         request,
         _apply_public_session_export_cache_policy(request, response),
+    )
+
+
+@app.exception_handler(MemoryProviderUnavailableError)
+async def memory_provider_unavailable_exception_handler(
+    _request: Request,
+    _exc: MemoryProviderUnavailableError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "Memory provider temporarily unavailable"},
+    )
+
+
+@app.exception_handler(MemoryProviderUpstreamError)
+async def memory_provider_upstream_exception_handler(
+    _request: Request,
+    _exc: MemoryProviderUpstreamError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        content={"detail": "Memory provider request failed"},
     )
 
 

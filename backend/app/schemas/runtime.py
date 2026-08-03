@@ -1,6 +1,6 @@
 import re
 from collections.abc import Mapping
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypeGuard
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -8,6 +8,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    JsonValue,
     SecretStr,
     TypeAdapter,
     field_validator,
@@ -87,7 +88,7 @@ def validate_hosted_runtime_secret_values(
 
 
 def validate_no_plaintext_tool_secrets(value: object, path: str = "") -> None:
-    if isinstance(value, dict):
+    if _is_object_dict(value):
         for key, child in value.items():
             normalized = str(key).replace("-", "_").lower()
             if normalized in _FORBIDDEN_TOOL_SECRET_KEYS:
@@ -99,9 +100,21 @@ def validate_no_plaintext_tool_secrets(value: object, path: str = "") -> None:
                 child,
                 f"{path}.{key}" if path else str(key),
             )
-    elif isinstance(value, list):
+    elif _is_object_list(value):
         for index, child in enumerate(value):
             validate_no_plaintext_tool_secrets(child, f"{path}[{index}]")
+
+
+def _is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
+    return isinstance(value, dict)
+
+
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
+def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
+    return _is_object_dict(value) and all(isinstance(key, str) for key in value)
 
 
 def _parse_exact_semver(value: str) -> tuple[int, int, int, tuple[str, ...]] | None:
@@ -189,7 +202,7 @@ class _StrictHostedWireModel(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _reject_explicit_null_fields(cls, value: object) -> object:
-        if isinstance(value, dict):
+        if _is_string_object_dict(value):
             null_fields = sorted(key for key, field_value in value.items() if field_value is None)
             if null_fields:
                 raise ValueError(f"explicit null is not supported for: {', '.join(null_fields)}")
@@ -679,8 +692,8 @@ class PersistedHostedRuntimeMcp(HostedRuntimeMcp):
 
 
 def validate_hosted_runtime_mcp_desired_state(
-    value: dict[str, object] | None,
-) -> dict[str, object] | None:
+    value: dict[str, JsonValue] | None,
+) -> dict[str, JsonValue] | None:
     if value is None:
         return None
     HostedRuntimeMcp.model_validate(value)
@@ -813,7 +826,9 @@ HostedRuntimeDesiredState = Annotated[
     HostedRuntimeConfiguredDesiredState | HostedRuntimeUnmanagedDesiredState,
     Field(discriminator="providerMode"),
 ]
-_HOSTED_RUNTIME_DESIRED_STATE_ADAPTER = TypeAdapter(HostedRuntimeDesiredState)
+_HOSTED_RUNTIME_DESIRED_STATE_ADAPTER: TypeAdapter[HostedRuntimeDesiredState] = TypeAdapter(
+    HostedRuntimeDesiredState
+)
 
 
 def validate_hosted_runtime_desired_state(value: object) -> HostedRuntimeDesiredState:

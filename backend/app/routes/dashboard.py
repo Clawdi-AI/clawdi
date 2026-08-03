@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.models.session import Session
 from app.schemas.dashboard import ContributionDayResponse, DashboardStatsResponse
+from app.services import composio
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 log = logging.getLogger(__name__)
@@ -265,23 +266,19 @@ async def _cached_connectors_count(clerk_id: str) -> int:
         return cached[1]
 
     try:
-        from app.services.composio import get_connected_accounts
-
         # Composio entity_id is the Clerk user id, not the local PG UUID.
         accounts = await asyncio.wait_for(
-            get_connected_accounts(clerk_id),
+            composio.get_connected_accounts(clerk_id),
             timeout=_CONNECTORS_COUNT_TIMEOUT_SECONDS,
         )
-    except Exception as exc:
-        log.warning("dashboard connectors count unavailable: %s", exc)
+    except (composio.ComposioRouteError, TimeoutError) as exc:
+        log.warning(
+            "dashboard connectors count unavailable: error_type=%s",
+            type(exc).__name__,
+        )
         return cached[1] if cached else 0
 
-    connectors_count = sum(
-        1
-        for account in accounts
-        if isinstance(status_value := account.get("status"), str)
-        and status_value.upper() == "ACTIVE"
-    )
+    connectors_count = sum(1 for account in accounts if account.status.upper() == "ACTIVE")
     _remember_connectors_count(clerk_id, connectors_count, now=now)
     return connectors_count
 

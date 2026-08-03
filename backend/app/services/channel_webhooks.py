@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import HTTPException, status
-from pydantic import TypeAdapter, ValidationError
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from app.models.channel import ChannelAccount, ChannelBotAgentLink
 from app.services.metrics import webhook_deliveries
@@ -11,6 +9,7 @@ from app.services.safe_public_http import SafePublicHttpClient, SafePublicHttpEr
 from app.services.url_security import UnsafeOutboundUrlError, validate_outbound_url
 
 _CONFIG_OBJECT_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
+type JsonObject = dict[str, JsonValue]
 
 
 def _optional_str(value: object) -> str | None:
@@ -57,7 +56,7 @@ async def validate_agent_webhook_url(_account: ChannelAccount, url: str) -> None
 async def deliver_telegram_agent_webhook(
     _account: ChannelAccount,
     link: ChannelBotAgentLink,
-    payload: dict[str, Any],
+    payload: JsonObject,
 ) -> bool:
     webhook = telegram_link_webhook_config(link)
     url = _optional_str(webhook.get("url"))

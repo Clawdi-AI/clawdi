@@ -21,19 +21,22 @@ from app.schemas.memory import (
     MemoryDeleteResponse,
     MemoryResponse,
 )
-from app.services.embedding import resolve_embedder
+from app.services.embedding import EmbeddingUpstreamError, resolve_embedder
 from app.services.memory_provider import get_memory_provider, memory_to_dict
 from app.services.memory_recall import (
     bump_recall_counts,
     recall_counting_enabled,
     recall_ids_from_hits,
 )
+from app.services.memory_types import MemoryItem
 from app.services.secret_detection import find_likely_secret, secret_memory_warning
 
 
-async def _attach_source_machines(
-    db: AsyncSession, auth: AuthContext, items: list[dict]
-) -> list[dict]:
+async def attach_source_machines(
+    db: AsyncSession,
+    auth: AuthContext,
+    items: list[MemoryItem],
+) -> list[MemoryItem]:
     """Bulk-fetch machine_name + environment_id for memories that came
     from a session, mutating each item in place.
 
@@ -50,19 +53,19 @@ async def _attach_source_machines(
     """
     environment_ids: set[UUID] = set()
     sids: set[UUID] = set()
-    for d in items:
-        raw_environment_id = d.get("source_environment_id")
-        if raw_environment_id:
+    for item in items:
+        raw_environment_id = item.get("source_environment_id")
+        if isinstance(raw_environment_id, str):
             try:
-                environment_ids.add(UUID(str(raw_environment_id)))
-            except (TypeError, ValueError):
+                environment_ids.add(UUID(raw_environment_id))
+            except ValueError:
                 pass
-        raw = d.get("source_session_id")
-        if not raw:
+        raw_session_id = item.get("source_session_id")
+        if not isinstance(raw_session_id, str):
             continue
         try:
-            sids.add(UUID(str(raw)))
-        except (TypeError, ValueError):
+            sids.add(UUID(raw_session_id))
+        except ValueError:
             continue
     if not environment_ids and not sids:
         return items
@@ -79,11 +82,11 @@ async def _attach_source_machines(
         machine_by_environment = {
             environment_id: machine_name for environment_id, machine_name in environment_rows
         }
-    rows = []
+    by_session: dict[UUID, tuple[UUID | None, str | None]] = {}
     if sids:
         # Historical Session enrichment retains archived Agent identity; this
         # outer join grants no runtime or mutation authority.
-        rows = (
+        session_rows = (
             await db.execute(
                 select(
                     Session.id,
@@ -94,30 +97,31 @@ async def _attach_source_machines(
                 .where(Session.id.in_(sids), Session.user_id == auth.user_id)
             )
         ).all()
-    by_session: dict[UUID, tuple[UUID | None, str | None]] = {
-        sid: (env_id, machine_name) for (sid, env_id, machine_name) in rows
-    }
-    for d in items:
-        raw_environment_id = d.get("source_environment_id")
-        if raw_environment_id:
+        by_session = {
+            session_id: (environment_id, machine_name)
+            for session_id, environment_id, machine_name in session_rows
+        }
+    for item in items:
+        raw_environment_id = item.get("source_environment_id")
+        if isinstance(raw_environment_id, str):
             try:
-                environment_id = UUID(str(raw_environment_id))
-            except (TypeError, ValueError):
+                environment_id = UUID(raw_environment_id)
+            except ValueError:
                 environment_id = None
             if environment_id is not None and environment_id in machine_by_environment:
-                d["source_environment_id"] = str(environment_id)
-                d["source_machine_name"] = machine_by_environment[environment_id]
+                item["source_environment_id"] = str(environment_id)
+                item["source_machine_name"] = machine_by_environment[environment_id]
                 continue
-        raw = d.get("source_session_id")
-        if not raw:
+        raw_session_id = item.get("source_session_id")
+        if not isinstance(raw_session_id, str):
             continue
         try:
-            sid_u = UUID(str(raw))
-        except (TypeError, ValueError):
+            session_id = UUID(raw_session_id)
+        except ValueError:
             continue
-        env_id, mn = by_session.get(sid_u, (None, None))
-        d["source_environment_id"] = str(env_id) if env_id else None
-        d["source_machine_name"] = mn
+        environment_id, machine_name = by_session.get(session_id, (None, None))
+        item["source_environment_id"] = str(environment_id) if environment_id is not None else None
+        item["source_machine_name"] = machine_name
     return items
 
 
@@ -150,7 +154,7 @@ async def list_memories(
             limit=page_size,
             category=category,
         )
-        await _attach_source_machines(db, auth, hits)
+        await attach_source_machines(db, auth, hits)
         # Re-cap to page_size so the response shape stays predictable
         # regardless of how much we overfetched.
         hits = hits[:page_size]
@@ -175,7 +179,7 @@ async def list_memories(
         category=category,
         order=order,
     )
-    await _attach_source_machines(db, auth, rows)
+    await attach_source_machines(db, auth, rows)
     return Paginated[MemoryResponse](
         items=[MemoryResponse.model_validate(m) for m in rows],
         total=total,
@@ -200,7 +204,7 @@ async def get_memory(
     if not memory:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Memory not found")
     payload = memory_to_dict(memory)
-    await _attach_source_machines(db, auth, [payload])
+    await attach_source_machines(db, auth, [payload])
     return MemoryResponse.model_validate(payload)
 
 
@@ -308,8 +312,8 @@ async def embed_backfill(
                 vec = await embedder.embed(mem.content)
                 mem.embedding = vec
                 processed += 1
-            except Exception as e:
-                log.warning("backfill embed failed for %s: %s", mem.id, e)
+            except EmbeddingUpstreamError as exc:
+                log.warning("backfill embed failed for %s: %s", mem.id, exc)
                 failed += 1
         await db.commit()
     return EmbedBackfillResponse(processed=processed, failed=failed)

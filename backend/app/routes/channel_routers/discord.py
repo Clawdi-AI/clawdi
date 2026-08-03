@@ -15,7 +15,7 @@ from email import policy
 from email.message import Message
 from email.parser import BytesParser
 from time import monotonic
-from typing import Any
+from typing import NotRequired, TypedDict
 from urllib.parse import quote
 from uuid import UUID
 
@@ -32,6 +32,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse, Response
+from pydantic import JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import and_, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,24 +55,24 @@ from app.models.channel import (
     ChannelMessage,
 )
 from app.routes.channel_routers.shared import (
-    _clear_discord_guild_commands,
-    _discord_application_id,
-    _discord_bot_user,
-    _discord_gateway_dispatch,
-    _discord_interaction_content,
-    _discord_retry_after_seconds,
-    _DiscordProviderResult,
-    _fan_out_discord_global_commands,
-    _handle_discord_application_commands,
-    _json_object_from_bytes,
-    _proxy_discord_request,
-    _public_ws_url,
-    _request_discord_provider,
-    _require_bound_chat,
-    _resolve_discord_agent_context,
+    DiscordProviderResult,
+    clear_discord_guild_commands,
+    discord_application_id,
+    discord_bot_user,
+    discord_gateway_dispatch,
+    discord_interaction_content,
+    discord_retry_after_seconds,
+    fan_out_discord_global_commands,
+    handle_discord_application_commands,
+    json_object_from_bytes,
     optional_int_param,
     optional_str,
+    proxy_discord_request,
+    public_ws_url,
+    request_discord_provider,
     request_params,
+    require_bound_chat,
+    resolve_discord_agent_context,
 )
 from app.services.channels import (
     DISCORD_REF_INTERACTION_ID_TOKEN,
@@ -117,6 +118,9 @@ _DISCORD_GATEWAY_MAX_SESSIONS = 256
 _DISCORD_GATEWAY_SESSION_TTL_SECONDS = 5 * 60.0
 _DISCORD_GATEWAY_CAPABILITY_SUBJECT = "clawdi_discord_gateway"
 _DISCORD_GATEWAY_CAPABILITY_AUDIENCE = "clawdi_discord_gateway"
+type JsonObject = dict[str, JsonValue]
+_JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+_JSON_OBJECT_ADAPTER: TypeAdapter[JsonObject] = TypeAdapter(dict[str, JsonValue])
 
 
 @dataclass(frozen=True)
@@ -129,7 +133,7 @@ class _DiscordGatewayCapability:
 @dataclass(frozen=True)
 class _DiscordChannelAuthorization:
     binding: ChannelBinding
-    preflight: _DiscordProviderResult | None = None
+    preflight: DiscordProviderResult | None = None
 
 
 @dataclass(frozen=True)
@@ -140,9 +144,22 @@ class _DiscordMessageReferenceIdentity:
 
 @dataclass
 class _DiscordGatewaySessionEntry:
-    state: dict[str, Any]
+    state: _DiscordGatewaySessionState
     touched_at: float
     connection_count: int
+
+
+class _DiscordGatewaySessionState(TypedDict):
+    account_id: UUID
+    bot_agent_link_id: UUID
+    frames: list[JsonObject]
+    identified: bool
+    projected_guilds: set[str]
+    projected_channels: dict[str, JsonObject]
+    message_checkpoints: OrderedDict[int, tuple[UUID, int]]
+    last_inbox_sequence: int
+    last_sequence: NotRequired[int]
+    dropped_through_sequence: NotRequired[int]
 
 
 class _DiscordGatewaySessionStore:
@@ -163,7 +180,7 @@ class _DiscordGatewaySessionStore:
         self._entries: OrderedDict[str, _DiscordGatewaySessionEntry] = OrderedDict()
         self._lock = threading.Lock()
 
-    def put(self, session_id: str, state: dict[str, Any]) -> None:
+    def put(self, session_id: str, state: _DiscordGatewaySessionState) -> None:
         now = self._now()
         with self._lock:
             self._prune(now)
@@ -174,7 +191,7 @@ class _DiscordGatewaySessionStore:
             )
             self._entries.move_to_end(session_id)
 
-    def connect(self, session_id: str) -> dict[str, Any] | None:
+    def connect(self, session_id: str) -> _DiscordGatewaySessionState | None:
         """Claim a disconnected Resume session for one live connection."""
         now = self._now()
         with self._lock:
@@ -201,7 +218,7 @@ class _DiscordGatewaySessionStore:
             self._prune(now)
             self._enforce_bound()
 
-    def get(self, session_id: str) -> dict[str, Any] | None:
+    def get(self, session_id: str) -> _DiscordGatewaySessionState | None:
         now = self._now()
         with self._lock:
             self._prune(now)
@@ -275,7 +292,7 @@ class _DiscordCreateMessageParseError(ValueError):
     pass
 
 
-class _DiscordJsonObject(list[tuple[str, Any]]):
+class _DiscordJsonObject(list[tuple[str, object]]):
     pass
 
 
@@ -301,11 +318,13 @@ def _discord_gateway_capability(agent: ChannelAgentContext) -> str:
 
 def _decode_discord_gateway_capability(raw: str) -> _DiscordGatewayCapability:
     try:
-        payload = jwt.decode(
-            raw,
-            settings.encryption_key,
-            algorithms=["HS256"],
-            audience=_DISCORD_GATEWAY_CAPABILITY_AUDIENCE,
+        payload = _JSON_OBJECT_ADAPTER.validate_python(
+            jwt.decode(
+                raw,
+                settings.encryption_key,
+                algorithms=["HS256"],
+                audience=_DISCORD_GATEWAY_CAPABILITY_AUDIENCE,
+            )
         )
         if payload.get("sub") != _DISCORD_GATEWAY_CAPABILITY_SUBJECT:
             raise ValueError("invalid subject")
@@ -314,7 +333,7 @@ def _decode_discord_gateway_capability(raw: str) -> _DiscordGatewayCapability:
         agent_token_hash = payload["agent_token_hash"]
         if not isinstance(agent_token_hash, str) or not agent_token_hash:
             raise ValueError("invalid credential fingerprint")
-    except (jwt.PyJWTError, KeyError, TypeError, ValueError) as exc:
+    except (jwt.PyJWTError, ValidationError, KeyError, TypeError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid discord gateway capability",
@@ -328,7 +347,7 @@ def _decode_discord_gateway_capability(raw: str) -> _DiscordGatewayCapability:
 
 def _discord_gateway_url(agent: ChannelAgentContext) -> str:
     capability = quote(_discord_gateway_capability(agent), safe="")
-    return _public_ws_url(f"/v1/channels/discord/gateway/{capability}")
+    return public_ws_url(f"/v1/channels/discord/gateway/{capability}")
 
 
 @router.api_route(
@@ -348,8 +367,8 @@ async def discord_agent_rest(
     request: Request,
     authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_session),
-) -> Any:
-    agent = await _resolve_discord_agent_context(db, authorization)
+) -> object:
+    agent = await resolve_discord_agent_context(db, authorization)
     account = agent.account
     account_id = account.id
     link_id = agent.link.id
@@ -382,8 +401,8 @@ async def discord_agent_rest(
                 config["bot_avatar"] = avatar
             account.config = config
             await db.commit()
-        return _discord_bot_user(account)
-    command_response = await _handle_discord_application_commands(
+        return discord_bot_user(account)
+    command_response = await handle_discord_application_commands(
         db,
         agent=agent,
         request=request,
@@ -392,7 +411,7 @@ async def discord_agent_rest(
     if command_response is not None:
         return command_response
     if segments in (["oauth2", "applications", "@me"], ["applications", "@me"]):
-        user = _discord_bot_user(account)
+        user = discord_bot_user(account)
         return {
             "id": user["id"],
             "name": user["username"],
@@ -461,7 +480,7 @@ async def discord_agent_rest(
             request=request,
         ):
             return _discord_rest_error("Unknown Message", 10008, 404)
-        provider_result = await _request_discord_provider(
+        provider_result = await request_discord_provider(
             account=account,
             method=request.method,
             path=discord_path,
@@ -532,7 +551,7 @@ async def discord_agent_rest(
             raise
         if original_is_channel_get and channel_authorization.preflight is not None:
             return channel_authorization.preflight.as_response()
-        return await _proxy_discord_request(account=account, request=request, path=discord_path)
+        return await proxy_discord_request(account=account, request=request, path=discord_path)
     if segments and segments[0] == "guilds" and len(segments) >= 2:
         if not await _discord_guild_is_bound(
             db,
@@ -541,7 +560,7 @@ async def discord_agent_rest(
             bot_agent_link_id=agent.link.id,
         ):
             return _discord_rest_error("Missing Access", 50001, 403)
-        return await _proxy_discord_request(account=account, request=request, path=discord_path)
+        return await proxy_discord_request(account=account, request=request, path=discord_path)
     return _discord_rest_error("Missing Access", 50001, 403)
 
 
@@ -561,7 +580,7 @@ async def _authorize_discord_channel_request(
     A Channel without ``guild_id`` can only use a direct DM Binding.
     """
     try:
-        binding = await _require_bound_chat(
+        binding = await require_bound_chat(
             db,
             account=agent.account,
             external_chat_id=channel_id,
@@ -573,7 +592,7 @@ async def _authorize_discord_channel_request(
             raise
 
     path = f"channels/{channel_id}"
-    preflight = await _request_discord_provider(
+    preflight = await request_discord_provider(
         account=agent.account,
         method="GET",
         path=path,
@@ -585,7 +604,7 @@ async def _authorize_discord_channel_request(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="channel is not paired",
             )
-        retry_after = _discord_retry_after_seconds(preflight)
+        retry_after = discord_retry_after_seconds(preflight)
         raise HTTPException(
             status_code=preflight.status_code,
             detail=(
@@ -669,7 +688,7 @@ def _discord_json_object(body: bytes) -> _DiscordJsonObject:
     return payload
 
 
-def _discord_unique_json_member(payload: _DiscordJsonObject, name: str) -> Any:
+def _discord_unique_json_member(payload: _DiscordJsonObject, name: str) -> object:
     values = [value for key, value in payload if key == name]
     if len(values) > 1:
         raise _DiscordCreateMessageParseError
@@ -860,33 +879,39 @@ async def discord_agent_gateway(
     last_inbox_sequence = 0
     gateway_sequence = 0
     session_id = secrets.token_urlsafe(18)
-    session_state: dict[str, Any] | None = None
+    session_state: _DiscordGatewaySessionState | None = None
     projected_guilds: set[str] = set()
-    projected_channels: dict[str, dict[str, Any]] = {}
+    projected_channels: dict[str, JsonObject] = {}
     deferred_channels: dict[str, float] = {}
     consumer_lease: AbstractAsyncContextManager[bool] | None = None
     consumer_lease_entered = False
     owns_session_entry = False
 
     async def send_gateway_frame(
-        payload: dict[str, Any],
+        payload: JsonObject,
         *,
         record: bool = True,
         message_checkpoint: tuple[UUID, int] | None = None,
     ) -> None:
-        if session_state is not None and payload.get("op") == 0:
-            session_state["last_sequence"] = payload["s"]
+        sequence = payload.get("s")
+        if (
+            session_state is not None
+            and payload.get("op") == 0
+            and isinstance(sequence, int)
+            and not isinstance(sequence, bool)
+        ):
+            session_state["last_sequence"] = sequence
             if record:
-                frames = session_state.setdefault("frames", [])
+                frames = session_state["frames"]
                 frames.append(payload)
                 if message_checkpoint is not None:
-                    checkpoints = session_state.get("message_checkpoints")
-                    if isinstance(checkpoints, OrderedDict):
-                        checkpoints[payload["s"]] = message_checkpoint
+                    session_state["message_checkpoints"][sequence] = message_checkpoint
                 if len(frames) > _DISCORD_GATEWAY_RESUME_BUFFER_SIZE:
                     dropped = frames[:-_DISCORD_GATEWAY_RESUME_BUFFER_SIZE]
                     del frames[:-_DISCORD_GATEWAY_RESUME_BUFFER_SIZE]
-                    session_state["dropped_through_sequence"] = dropped[-1]["s"]
+                    dropped_sequence = dropped[-1].get("s")
+                    if isinstance(dropped_sequence, int) and not isinstance(dropped_sequence, bool):
+                        session_state["dropped_through_sequence"] = dropped_sequence
         if compressor is None:
             await websocket.send_json(payload)
         else:
@@ -899,7 +924,7 @@ async def discord_agent_gateway(
 
     async def send_dispatch(
         event_type: str,
-        data: dict[str, Any],
+        data: JsonObject,
         *,
         record: bool = True,
         message_checkpoint: tuple[UUID, int] | None = None,
@@ -923,22 +948,16 @@ async def discord_agent_gateway(
         ):
             return
         last_sequence = session_state.get("last_sequence", 0)
-        if not isinstance(last_sequence, int) or sequence > last_sequence:
+        if sequence > last_sequence:
             return
-        checkpoints = session_state.get("message_checkpoints")
-        if not isinstance(checkpoints, OrderedDict):
-            return
+        checkpoints = session_state["message_checkpoints"]
         acknowledged_sequences = [
             gateway_sequence for gateway_sequence in checkpoints if gateway_sequence <= sequence
         ]
         message_ids = [
             checkpoint[0]
             for gateway_sequence in acknowledged_sequences
-            if (
-                isinstance((checkpoint := checkpoints.get(gateway_sequence)), tuple)
-                and len(checkpoint) == 2
-                and isinstance(checkpoint[0], UUID)
-            )
+            if (checkpoint := checkpoints.get(gateway_sequence)) is not None
         ]
         if message_ids:
             async with async_session_factory() as db:
@@ -958,10 +977,13 @@ async def discord_agent_gateway(
             guild_name=guild_name,
             sequence=0,
         )
-        await send_dispatch("GUILD_CREATE", payload["d"])
+        data = payload.get("d")
+        if not isinstance(data, dict):
+            raise RuntimeError("discord guild payload has no dispatch data")
+        await send_dispatch("GUILD_CREATE", data)
         projected_guilds.add(guild_id)
 
-    async def send_channel(payload: dict[str, Any]) -> None:
+    async def send_channel(payload: JsonObject) -> None:
         event_type = _discord_gateway_channel_event(payload)
         data = dict(payload)
         if event_type == "THREAD_CREATE":
@@ -971,8 +993,10 @@ async def discord_agent_gateway(
     await send_gateway_frame({"op": 10, "d": {"heartbeat_interval": 45_000}}, record=False)
     try:
         while account is None:
-            frame = await websocket.receive_json()
-            op = frame.get("op") if isinstance(frame, dict) else None
+            frame = _JSON_VALUE_ADAPTER.validate_python(await websocket.receive_json())
+            if not isinstance(frame, dict):
+                continue
+            op = frame.get("op")
             if op == 1:
                 await send_gateway_frame({"op": 11, "d": None}, record=False)
                 continue
@@ -1081,13 +1105,17 @@ async def discord_agent_gateway(
                 session_id = resume_session_id
                 session_state = resume_state
                 resume_sequence = optional_int_param(data.get("seq"))
-                frames = [
-                    retained
-                    for retained in session_state.get("frames", [])
-                    if isinstance(retained, dict) and isinstance(retained.get("s"), int)
-                ]
+                frames = session_state["frames"]
                 latest_sequence = max(
-                    max((retained["s"] for retained in frames), default=0),
+                    max(
+                        (
+                            sequence
+                            for retained in frames
+                            if isinstance((sequence := retained.get("s")), int)
+                            and not isinstance(sequence, bool)
+                        ),
+                        default=0,
+                    ),
                     session_state.get("last_sequence", 0),
                 )
                 dropped_through_sequence = session_state.get("dropped_through_sequence")
@@ -1114,40 +1142,17 @@ async def discord_agent_gateway(
                     continue
                 await acknowledge_gateway_sequence(resume_sequence)
                 gateway_sequence = latest_sequence
-                stored_inbox_sequence = session_state.get("last_inbox_sequence", 0)
-                last_inbox_sequence = (
-                    stored_inbox_sequence if isinstance(stored_inbox_sequence, int) else 0
+                last_inbox_sequence = max(
+                    (
+                        session_state["last_inbox_sequence"],
+                        *(
+                            checkpoint[1]
+                            for checkpoint in session_state["message_checkpoints"].values()
+                        ),
+                    )
                 )
-                remaining_checkpoints = session_state.get("message_checkpoints")
-                if isinstance(remaining_checkpoints, OrderedDict):
-                    last_inbox_sequence = max(
-                        (
-                            last_inbox_sequence,
-                            *(
-                                checkpoint[1]
-                                for checkpoint in remaining_checkpoints.values()
-                                if (
-                                    isinstance(checkpoint, tuple)
-                                    and len(checkpoint) == 2
-                                    and isinstance(checkpoint[1], int)
-                                )
-                            ),
-                        )
-                    )
-                stored_guilds = session_state.get("projected_guilds")
-                if isinstance(stored_guilds, set):
-                    projected_guilds.update(
-                        guild_id for guild_id in stored_guilds if isinstance(guild_id, str)
-                    )
-                stored_channels = session_state.get("projected_channels")
-                if isinstance(stored_channels, dict):
-                    projected_channels.update(
-                        {
-                            channel_id: dict(channel)
-                            for channel_id, channel in stored_channels.items()
-                            if isinstance(channel_id, str) and isinstance(channel, dict)
-                        }
-                    )
+                projected_guilds.update(session_state["projected_guilds"])
+                projected_channels.update(session_state["projected_channels"])
                 async with async_session_factory() as db:
                     resume_guilds, resume_channels = await _discord_gateway_authority(
                         db,
@@ -1158,24 +1163,27 @@ async def discord_agent_gateway(
                 for projected_channel_id in set(projected_channels) - set(resume_channels):
                     projected_channels.pop(projected_channel_id, None)
                 for retained in frames:
-                    event_type = retained.get("t")
+                    retained_event_type = retained.get("t")
                     event_data = retained.get("d")
                     if not isinstance(event_data, dict):
                         continue
-                    if event_type == "READY":
-                        for private in event_data.get("private_channels", []):
+                    if retained_event_type == "READY":
+                        private_channels = event_data.get("private_channels")
+                        if not isinstance(private_channels, list):
+                            continue
+                        for private in private_channels:
                             if not isinstance(private, dict):
                                 continue
                             private_id = optional_str(private.get("id"))
                             if private_id in resume_channels:
                                 projected_channels[private_id] = private
-                    elif event_type == "GUILD_CREATE":
+                    elif retained_event_type == "GUILD_CREATE":
                         retained_guild_id = optional_str(event_data.get("id"))
                         if retained_guild_id in resume_guilds:
                             projected_guilds.add(retained_guild_id)
-                    elif event_type == "GUILD_DELETE":
+                    elif retained_event_type == "GUILD_DELETE":
                         projected_guilds.discard(optional_str(event_data.get("id")) or "")
-                    elif event_type in {
+                    elif retained_event_type in {
                         "CHANNEL_CREATE",
                         "CHANNEL_UPDATE",
                         "THREAD_CREATE",
@@ -1185,17 +1193,22 @@ async def discord_agent_gateway(
                         if retained_channel_id in resume_channels:
                             thread_metadata = event_data.get("thread_metadata")
                             if (
-                                event_type == "THREAD_UPDATE"
+                                retained_event_type == "THREAD_UPDATE"
                                 and isinstance(thread_metadata, dict)
                                 and thread_metadata.get("archived") is True
                             ):
                                 projected_channels.pop(retained_channel_id, None)
                             else:
                                 projected_channels[retained_channel_id] = event_data
-                    elif event_type in {"CHANNEL_DELETE", "THREAD_DELETE"}:
+                    elif retained_event_type in {"CHANNEL_DELETE", "THREAD_DELETE"}:
                         projected_channels.pop(optional_str(event_data.get("id")) or "", None)
                 for replayed in frames:
-                    if replayed["s"] <= resume_sequence:
+                    replayed_sequence = replayed.get("s")
+                    if not isinstance(replayed_sequence, int) or isinstance(
+                        replayed_sequence, bool
+                    ):
+                        continue
+                    if replayed_sequence <= resume_sequence:
                         continue
                     await send_gateway_frame(replayed, record=False)
                 session_state["projected_guilds"] = projected_guilds
@@ -1237,7 +1250,7 @@ async def discord_agent_gateway(
                     )
                 for channel_id, guild_id in channels.items():
                     try:
-                        result = await _request_discord_provider(
+                        result = await request_discord_provider(
                             account=account,
                             method="GET",
                             path=f"channels/{channel_id}",
@@ -1262,11 +1275,11 @@ async def discord_agent_gateway(
                             else (
                                 settings.channel_discord_gateway_url.strip().rstrip("/")
                                 if link_token is not None
-                                else _public_ws_url("/v1/channels/discord/gateway")
+                                else public_ws_url("/v1/channels/discord/gateway")
                             )
                         ),
-                        "user": _discord_bot_user(account),
-                        "application": {"id": _discord_application_id(account)},
+                        "user": discord_bot_user(account),
+                        "application": {"id": discord_application_id(account)},
                         "guilds": [{"id": guild_id, "unavailable": False} for guild_id in guilds],
                         "private_channels": [
                             payload
@@ -1303,7 +1316,7 @@ async def discord_agent_gateway(
                     )
             if events:
                 for message in events:
-                    payload = _discord_gateway_dispatch(message)
+                    payload = discord_gateway_dispatch(message)
                     guild_id, channel_id = _discord_gateway_scope(payload)
                     async with async_session_factory() as db:
                         guilds, channels = await _discord_gateway_authority(
@@ -1342,17 +1355,17 @@ async def discord_agent_gateway(
                             retry_at = deferred_channels.get(channel_id, 0.0)
                             if monotonic() < retry_at:
                                 break
-                            result: _DiscordProviderResult | None = None
+                            result: DiscordProviderResult | None = None
                             try:
-                                result = await _request_discord_provider(
+                                result = await request_discord_provider(
                                     account=account,
                                     method="GET",
                                     path=f"channels/{channel_id}",
                                 )
                             except HTTPException as exc:
                                 if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
-                                    retry_after = _discord_retry_after_seconds(
-                                        _DiscordProviderResult(
+                                    retry_after = discord_retry_after_seconds(
+                                        DiscordProviderResult(
                                             content=b"",
                                             status_code=exc.status_code,
                                             media_type="application/json",
@@ -1370,7 +1383,7 @@ async def discord_agent_gateway(
                                 result is not None
                                 and result.status_code == status.HTTP_429_TOO_MANY_REQUESTS
                             ):
-                                retry_after = _discord_retry_after_seconds(result)
+                                retry_after = discord_retry_after_seconds(result)
                                 deferred_channels[channel_id] = monotonic() + (
                                     retry_after if retry_after is not None else 1.0
                                 )
@@ -1440,9 +1453,11 @@ async def discord_agent_gateway(
                     continue
 
             try:
-                frame = await asyncio.wait_for(
-                    websocket.receive_json(),
-                    timeout=max(0.001, settings.discord_gateway_poll_interval_seconds),
+                frame = _JSON_VALUE_ADAPTER.validate_python(
+                    await asyncio.wait_for(
+                        websocket.receive_json(),
+                        timeout=max(0.001, settings.discord_gateway_poll_interval_seconds),
+                    )
                 )
                 if isinstance(frame, dict) and frame.get("op") == 1:
                     await acknowledge_gateway_sequence(optional_int_param(frame.get("d")))
@@ -1461,6 +1476,7 @@ async def discord_agent_gateway(
 @router.post(
     "/{account_id}/webhook",
     include_in_schema=False,
+    response_model=None,
 )
 async def discord_webhook(
     account_id: UUID,
@@ -1470,7 +1486,7 @@ async def discord_webhook(
     x_signature_ed25519: str | None = Header(default=None),
     x_signature_timestamp: str | None = Header(default=None),
     db: AsyncSession = Depends(get_session),
-) -> Any:
+) -> JsonObject | Response:
     account = await get_active_channel_account(db, account_id=account_id)
     if account.provider != CHANNEL_PROVIDER_DISCORD:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
@@ -1489,7 +1505,7 @@ async def discord_webhook(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid webhook secret",
         )
-    payload = _json_object_from_bytes(body)
+    payload = json_object_from_bytes(body)
     if payload.get("type") == 1:
         return {"type": 1}
 
@@ -1647,7 +1663,7 @@ async def discord_webhook(
         return {
             "type": 4,
             "data": {
-                "content": _discord_interaction_content(
+                "content": discord_interaction_content(
                     command=command,
                     paired=binding_result.paired,
                     unpaired=binding_result.unpaired,
@@ -1664,7 +1680,7 @@ async def discord_webhook(
             if binding_result.binding is not None
             else None
         ),
-        application_id=_discord_application_id(account),
+        application_id=discord_application_id(account),
         guild_id=guild_id,
         paired=binding_result.paired,
     )
@@ -1715,7 +1731,7 @@ async def _replay_discord_commands_on_pair(
     if not isinstance(commands, list):
         return
     try:
-        await _fan_out_discord_global_commands(
+        await fan_out_discord_global_commands(
             db,
             account=account,
             bot_agent_link_id=link.id,
@@ -1742,7 +1758,7 @@ async def _replay_discord_commands_for_paired_guild(
                 db,
                 account=account,
                 link=link,
-                application_id=_discord_application_id(account),
+                application_id=discord_application_id(account),
                 guild_id=guild_id,
                 paired=True,
             )
@@ -1770,11 +1786,11 @@ async def cleanup_discord_guild_commands_after_authority_revoked(
             link = await db.get(ChannelBotAgentLink, bot_agent_link_id)
             if link is None or link.account_id != account.id:
                 return False
-            return await _clear_discord_guild_commands(
+            return await clear_discord_guild_commands(
                 db,
                 account=account,
                 link=link,
-                application_id=_discord_application_id(account),
+                application_id=discord_application_id(account),
                 guild_ids=guild_ids,
             )
     except (HTTPException, SQLAlchemyError):
@@ -1794,7 +1810,7 @@ async def _handle_discord_interaction_callback(
     request: Request,
     path: str,
     segments: list[str],
-) -> Any:
+) -> object:
     if len(segments) < 4 or segments[3] != "callback":
         return _discord_rest_error("Unknown Interaction", 10062, 404)
     interaction_id = segments[1]
@@ -1808,7 +1824,7 @@ async def _handle_discord_interaction_callback(
     )
     if reference is None:
         return _discord_rest_error("Unknown Interaction", 10062, 404)
-    return await _proxy_discord_request(account=account, request=request, path=path)
+    return await proxy_discord_request(account=account, request=request, path=path)
 
 
 async def _handle_discord_webhook_followup(
@@ -1819,7 +1835,7 @@ async def _handle_discord_webhook_followup(
     request: Request,
     path: str,
     segments: list[str],
-) -> Any:
+) -> object:
     if len(segments) < 3:
         return _discord_rest_error("Unknown Webhook", 10015, 404)
     application_id = segments[1]
@@ -1835,7 +1851,7 @@ async def _handle_discord_webhook_followup(
     recorded_application_id = metadata.get("application_id") if isinstance(metadata, dict) else None
     if reference is None or recorded_application_id != application_id:
         return _discord_rest_error("Unknown Webhook", 10015, 404)
-    return await _proxy_discord_request(account=account, request=request, path=path)
+    return await proxy_discord_request(account=account, request=request, path=path)
 
 
 def _discord_rest_error(message: str, code: int, status_code: int) -> JSONResponse:
@@ -1861,63 +1877,6 @@ async def _discord_guild_is_bound(
         filters.append(ChannelBinding.bot_agent_link_id == bot_agent_link_id)
     result = await db.execute(select(ChannelBinding.id).where(*filters))
     return result.scalar_one_or_none() is not None
-
-
-async def _discord_bound_guilds(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    bot_agent_link_id: UUID | None = None,
-) -> list[str]:
-    filters = [
-        ChannelBinding.account_id == account.id,
-        ChannelBinding.status == BINDING_STATUS_ACTIVE,
-    ]
-    if bot_agent_link_id is not None:
-        filters.append(ChannelBinding.bot_agent_link_id == bot_agent_link_id)
-    result = await db.execute(select(ChannelBinding).where(*filters))
-    guilds: set[str] = set()
-    for binding in result.scalars().all():
-        chat_type = (binding.external_chat_type or "").lower()
-        if binding.external_chat_id and chat_type == "guild":
-            guilds.add(binding.external_chat_id)
-        elif binding.external_chat_name and ("guild" in chat_type or "thread" in chat_type):
-            guilds.add(binding.external_chat_name)
-    return sorted(guilds)
-
-
-async def _discord_bound_guild_channels(
-    db: AsyncSession,
-    *,
-    account: ChannelAccount,
-    bot_agent_link_id: UUID | None = None,
-) -> dict[str, list[str]]:
-    filters = [
-        ChannelBinding.account_id == account.id,
-        ChannelBinding.status == BINDING_STATUS_ACTIVE,
-        ChannelBindingAlias.account_id == account.id,
-        ChannelBindingAlias.alias_kind == "discord_channel",
-    ]
-    if bot_agent_link_id is not None:
-        filters.append(ChannelBindingAlias.bot_agent_link_id == bot_agent_link_id)
-    result = await db.execute(
-        select(ChannelBinding, ChannelBindingAlias)
-        .join(ChannelBindingAlias, ChannelBindingAlias.binding_id == ChannelBinding.id)
-        .where(*filters)
-        .order_by(ChannelBindingAlias.updated_at.desc(), ChannelBindingAlias.created_at.desc())
-    )
-    channels_by_guild: dict[str, list[str]] = {}
-    seen_by_guild: dict[str, set[str]] = {}
-    for binding, alias in result.all():
-        guild_id = _discord_binding_guild_id(binding)
-        if guild_id is None:
-            continue
-        seen = seen_by_guild.setdefault(guild_id, set())
-        if alias.alias_external_chat_id in seen:
-            continue
-        seen.add(alias.alias_external_chat_id)
-        channels_by_guild.setdefault(guild_id, []).append(alias.alias_external_chat_id)
-    return channels_by_guild
 
 
 def _discord_binding_guild_id(binding: ChannelBinding) -> str | None:
@@ -1989,11 +1948,11 @@ async def _discord_gateway_authority(
 
 
 def _discord_gateway_channel(
-    result: _DiscordProviderResult,
+    result: DiscordProviderResult,
     *,
     channel_id: str,
     guild_id: str | None,
-) -> dict[str, Any] | None:
+) -> JsonObject | None:
     payload = result.json_object() if result.status_code == status.HTTP_200_OK else None
     channel_type = payload.get("type") if payload is not None else None
     if (
@@ -2011,7 +1970,7 @@ def _discord_gateway_channel(
     return dict(payload)
 
 
-def _discord_gateway_channel_event(payload: dict[str, Any]) -> str:
+def _discord_gateway_channel_event(payload: JsonObject) -> str:
     return "THREAD_CREATE" if payload.get("type") in {10, 11, 12} else "CHANNEL_CREATE"
 
 
@@ -2020,7 +1979,7 @@ def _discord_guild_create_payload(
     guild_id: str,
     guild_name: str,
     sequence: int,
-) -> dict[str, Any]:
+) -> JsonObject:
     return {
         "op": 0,
         "t": "GUILD_CREATE",
@@ -2036,7 +1995,7 @@ def _discord_guild_create_payload(
     }
 
 
-def _discord_gateway_scope(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+def _discord_gateway_scope(payload: JsonObject) -> tuple[str | None, str | None]:
     data = payload.get("d")
     if not isinstance(data, dict):
         return None, None

@@ -33,10 +33,11 @@ from typing import Annotated, Any, Never, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.auth import invalidate_api_key_auth_cache, require_admin_api_key
 from app.core.database import get_session
@@ -226,9 +227,11 @@ def _admin_app_setting_response(setting: AppSetting) -> AdminAppSettingResponse:
     )
 
 
-def _setting_enabled(value: object | None) -> bool | None:
-    if isinstance(value, dict) and isinstance(value.get("enabled"), bool):
-        return value["enabled"]
+def _setting_enabled(value: JsonValue | None) -> bool | None:
+    if isinstance(value, dict):
+        enabled = value.get("enabled")
+        if isinstance(enabled, bool):
+            return enabled
     return None
 
 
@@ -1122,7 +1125,7 @@ async def admin_list_channels(
 ) -> list[AdminChannelResponse]:
     if provider is not None and provider not in CHANNEL_PROVIDERS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "unsupported provider")
-    filters = []
+    filters: list[ColumnElement[bool]] = []
     if provider is not None:
         filters.append(ChannelAccount.provider == provider)
     if visibility is not None:
@@ -1950,7 +1953,7 @@ async def _admin_upsert_runtime_state(
             "enabled_runtimes": _enabled_runtime_names(desired_state["runtimes"]),
             "has_mcp": body.mcp is not None,
             "has_skills": body.skills is not None,
-            "has_tools": body.tools is not None,
+            "has_tools": True,
             "has_secret_values": bool(body.secret_values),
             "secret_refs": sorted(body.secret_values),
             "changed_fields": changed_fields,
@@ -2149,7 +2152,7 @@ def _admin_channel_response(account: ChannelAccount, owner: User | None) -> Admi
     )
 
 
-def _enabled_runtime_names(runtimes: Mapping[str, object]) -> list[str]:
+def _enabled_runtime_names(runtimes: Mapping[str, JsonValue]) -> list[str]:
     return sorted(
         name
         for name, value in runtimes.items()
@@ -2186,11 +2189,7 @@ def _runtime_state_values(
         "egress_profiles": optional_wire_value("egress_profiles"),
         "mcp": optional_wire_value("mcp"),
         "skills": optional_wire_value("skills"),
-        "tools": (
-            body.tools.model_dump(exclude_none=True, exclude_unset=True, mode="json")
-            if body.tools is not None
-            else None
-        ),
+        "tools": body.tools.model_dump(exclude_none=True, exclude_unset=True, mode="json"),
     }
 
 

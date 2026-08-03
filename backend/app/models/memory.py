@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
+from pydantic import JsonValue
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -27,7 +28,7 @@ class Memory(Base, TimestampMixin):
         index=True,
     )
     tags: Mapped[list[str] | None] = mapped_column(ARRAY(String))
-    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB)
+    metadata_: Mapped[dict[str, JsonValue] | None] = mapped_column("metadata", JSONB)
     access_count: Mapped[int] = mapped_column(Integer, server_default="0")
     last_accessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # 768-dim vector: matches paraphrase-multilingual-mpnet-base-v2 (local

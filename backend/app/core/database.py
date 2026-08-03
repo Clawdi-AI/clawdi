@@ -1,4 +1,4 @@
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -49,7 +49,7 @@ async def get_runtime_observation_session() -> AsyncGenerator[AsyncSession, None
 
 
 @asynccontextmanager
-async def runtime_snapshot_session() -> AsyncIterator[AsyncSession]:
+async def runtime_snapshot_session() -> AsyncGenerator[AsyncSession, None]:
     """Open the consistent read-only snapshot shared by runtime renderers."""
     async with async_session_factory() as session:
         await _configure_runtime_snapshot(session)

@@ -153,7 +153,7 @@ class ChannelWebhookDeliveryWorker:
     ) -> ChannelWebhookDeliveryResult:
         now = datetime.now(UTC)
         created_at = message.created_at
-        if created_at is not None and now - created_at > self._ttl:
+        if now - created_at > self._ttl:
             message.delivered_at = now
             webhook_ttl_drops.inc()
             return ChannelWebhookDeliveryResult(

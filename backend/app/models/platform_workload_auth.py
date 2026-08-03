@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 
+from pydantic import JsonValue
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -64,7 +65,9 @@ class PlatformWorkloadClient(Base, TimestampMixin):
     client_id: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
     assertion_kid: Mapped[str] = mapped_column(String(200), nullable=False)
     assertion_algorithm: Mapped[str] = mapped_column(String(16), nullable=False)
-    public_jwk: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
+    public_jwk: Mapped[dict[str, JsonValue]] = mapped_column(
+        JSONB(none_as_null=True), nullable=False
+    )
     status: Mapped[str] = mapped_column(
         String(32),
         default=PLATFORM_WORKLOAD_CLIENT_ACTIVE,

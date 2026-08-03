@@ -252,7 +252,7 @@ async def upgrade(
     ctx: ShareTokenContext = Depends(require_share_token),
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
-) -> dict:
+) -> ShareUpgradeResponse:
     return await upgrade_share_token(ctx=ctx, body=body, auth=auth, db=db)
 
 
@@ -262,7 +262,7 @@ async def upgrade_share_token(
     body: UpgradeBody | None,
     auth: AuthContext,
     db: AsyncSession,
-) -> dict:
+) -> ShareUpgradeResponse:
     body = body or UpgradeBody()
     project = (
         await db.execute(select(Project).where(Project.id == ctx.project_id).with_for_update())
@@ -308,12 +308,12 @@ async def upgrade_share_token(
         ctx.project_id,
         bound_agent_ids,
     )
-    return {
-        "membership_id": str(membership.id),
-        "project_id": str(membership.project_id),
-        "role": membership.role,
-        "joined_via": membership.joined_via,
-        "joined_at": membership.joined_at.isoformat(),
-        "resolved_owner_handle": membership.resolved_owner_handle,
-        "bound_agent_ids": bound_agent_ids,
-    }
+    return ShareUpgradeResponse(
+        membership_id=str(membership.id),
+        project_id=str(membership.project_id),
+        role=membership.role,
+        joined_via=membership.joined_via,
+        joined_at=membership.joined_at,
+        resolved_owner_handle=membership.resolved_owner_handle,
+        bound_agent_ids=bound_agent_ids,
+    )

@@ -5,10 +5,10 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypeGuard
 from uuid import UUID
 
-from pydantic import ValidationError
+from pydantic import JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -68,6 +68,7 @@ _MANAGED_PROVIDER_RUNTIME_ENV = "OPENAI_API_KEY"
 _CODEX_TOOL_SECRET_REF = "secret://tool.codex.apiKey"
 _CODEX_TOOL_API_MODE = "openai_responses"
 _CODEX_PROVIDER_SOURCE_API_MODES = {"openai_chat", "openai_responses"}
+_AI_PROVIDER_MODELS_ADAPTER: TypeAdapter[list[AiProviderModel]] = TypeAdapter(list[AiProviderModel])
 
 
 class RuntimeSourceError(ValueError):
@@ -547,7 +548,7 @@ def render_runtime_source(
                 binding["provider"], binding["accountKey"]
             )
 
-    descriptor = {
+    descriptor: dict[str, object] = {
         "schemaVersion": RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
         "manifest": manifest,
         "channelBindings": bindings,
@@ -566,7 +567,7 @@ def render_runtime_source(
 
 
 def render_runtime_bundle(source: RenderedRuntimeSource) -> dict[str, Any]:
-    bundle = {
+    bundle: dict[str, object] = {
         "schemaVersion": RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
         "sourceRevision": source.source_revision,
         "manifest": source.manifest,
@@ -582,7 +583,9 @@ def vault_key_identity(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def _runtime(value: dict | None) -> tuple[HostedRuntimeName, dict[str, Any]]:
+def _runtime(
+    value: dict[str, JsonValue] | None,
+) -> tuple[HostedRuntimeName, dict[str, Any]]:
     if not isinstance(value, dict) or len(value) != 1:
         raise RuntimeSourceError("hosted runtime state must select exactly one enabled runtime")
     name, raw = next(iter(value.items()))
@@ -611,12 +614,23 @@ def _agent_runtime_binding(runtime: dict[str, Any]) -> dict[str, Any]:
         )
     projected = {**runtime, "provider_ids": provider_ids}
     primary_model = runtime.get("primary_model")
-    if isinstance(primary_model, dict):
+    if _is_string_object_dict(primary_model):
+        provider_id = primary_model.get("provider_id")
+        if not isinstance(provider_id, str):
+            raise RuntimeSourceError("Runtime primary model provider id is invalid")
         projected["primary_model"] = {
             **primary_model,
-            "provider_id": runtime_managed_provider_id(primary_model["provider_id"]),
+            "provider_id": runtime_managed_provider_id(provider_id),
         }
     return projected
+
+
+def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
+    return _is_object_dict(value) and all(isinstance(key, str) for key in value)
+
+
+def _is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
+    return isinstance(value, dict)
 
 
 def _agent_codex_tool(codex_tool: dict[str, Any]) -> dict[str, Any]:
@@ -709,12 +723,10 @@ def _provider_entry(
     if provider.managed_by == "clawdi":
         result["managed_by"] = provider.managed_by
     if provider.models is not None:
-        if not isinstance(provider.models, list):
-            raise RuntimeSourceError("Stored AI provider model metadata is invalid")
         try:
             models = [
-                AiProviderModel.model_validate(item).model_dump(exclude_none=True)
-                for item in provider.models
+                model.model_dump(exclude_none=True)
+                for model in _AI_PROVIDER_MODELS_ADAPTER.validate_python(provider.models)
             ]
         except ValidationError as exc:
             raise RuntimeSourceError("Stored AI provider model metadata is invalid") from exc
@@ -804,10 +816,14 @@ def _add_secret_source(
 
 
 def runtime_manifest_issued_at(state: HostedRuntimeState) -> str:
-    value = state.updated_at if isinstance(state.updated_at, datetime) else state.created_at
+    value = _runtime_manifest_timestamp(state.updated_at, state.created_at)
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.astimezone(UTC).isoformat()
+
+
+def _runtime_manifest_timestamp(updated_at: object, created_at: datetime) -> datetime:
+    return updated_at if isinstance(updated_at, datetime) else created_at
 
 
 def _canonical(value: Any) -> str:

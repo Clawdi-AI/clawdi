@@ -5,7 +5,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.project import Project  # noqa: F401 — register `projects` table for FK resolution
+from app.models.project import Project
 
 SKILL_AUTHORITY_AGENT_SYNC = "agent_sync"
 SKILL_AUTHORITY_CLOUD = "cloud"
@@ -30,7 +30,7 @@ class Skill(Base, TimestampMixin):
         # and its env-local project is archived) takes its skills
         # with it. Otherwise the project delete would be RESTRICTed
         # by every child skill and turn into a manual cleanup chore.
-        ForeignKey("projects.id", ondelete="CASCADE"),
+        ForeignKey(Project.id, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

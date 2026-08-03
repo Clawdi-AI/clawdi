@@ -161,8 +161,18 @@ jobs:
       # and flags drift. Config in `pyproject.toml [tool.deptry]`.
       - name: Dependency drift check
         run: uv run deptry app
+      - name: External API import ownership
+        run: uv run python scripts/outbound_api_governance.py
+      # Keep Mem0 out of the default dev/test environment while loading the
+      # locked optional SDK for its direct-import typing boundary.
+      - name: Install optional SDK type-audit lane
+        run: uv sync --frozen --no-install-project --extra mem0
+      - name: Pinned Mem0 public-client contract
+        run: uv run pytest -q tests/test_memory_provider_mem0_contract.py
       - name: Owned-path type ratchet
         run: uv run python scripts/type_governance.py owned
+      - name: Strict typing exception audit
+        run: uv run python scripts/type_governance.py exceptions
       - name: Changed-production type gate
         env:
           TYPE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}

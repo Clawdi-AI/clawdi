@@ -11,14 +11,14 @@ import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from time import monotonic
-from typing import Any
+from typing import TypeGuard
 from uuid import UUID, uuid4
 
 import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import HTTPException, status
-from pydantic import JsonValue
+from pydantic import JsonValue, StrictStr, TypeAdapter, ValidationError
 from sqlalchemy import and_, delete, exists, func, or_, select, union_all, update
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
@@ -86,6 +86,16 @@ from app.services.url_security import UnsafeOutboundUrlError, validate_channel_h
 from app.services.vault_crypto import decrypt, encrypt
 
 log = logging.getLogger(__name__)
+type JsonObject = dict[str, JsonValue]
+_JSON_OBJECT_ADAPTER: TypeAdapter[JsonObject] = TypeAdapter(dict[str, JsonValue])
+
+
+def _is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
+    return isinstance(value, dict)
+
+
+_JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+_HTTP_EXCEPTION_DETAIL_ADAPTER: TypeAdapter[str] = TypeAdapter(StrictStr)
 
 PAIR_COMMAND = "/clawdi_pair"
 UNPAIR_COMMAND = "/clawdi_unpair"
@@ -118,7 +128,7 @@ PAIR_CODE_PATTERN = re.compile(
     rf"^(?:[{PAIR_CODE_ALPHABET}]{{{PAIR_CODE_LENGTH}}}|PAIR[A-Z0-9]{{8,}})$"
 )
 TELEGRAM_BOT_USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{5,32}bot$", re.IGNORECASE)
-DEFAULT_CHANNEL_COMMANDS: tuple[dict[str, Any], ...] = (
+DEFAULT_CHANNEL_COMMANDS: tuple[JsonObject, ...] = (
     {
         "name": "clawdi_pair",
         "description": "Pair this chat with Clawdi.",
@@ -494,7 +504,7 @@ async def get_telegram_bot_username(provider_token: str) -> str:
     return normalized
 
 
-def normalize_telegram_bot_username(value: Any) -> str | None:
+def normalize_telegram_bot_username(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     username = value.strip().lstrip("@")
@@ -512,7 +522,7 @@ def build_channel_account(
     status_value: str = CHANNEL_STATUS_ACTIVE,
     encrypted_provider_token: bytes | None = None,
     provider_token_nonce: bytes | None = None,
-    config: dict[str, Any] | None = None,
+    config: JsonObject | None = None,
 ) -> ChannelAccount:
     """Build an account while enforcing the inventory ownership boundary."""
 
@@ -524,7 +534,7 @@ def build_channel_account(
             raise ValueError("public channel accounts are platform-owned")
     else:
         raise ValueError("unsupported channel visibility")
-    values: dict[str, Any] = {
+    values: dict[str, object] = {
         "user_id": owner_user_id,
         "provider": provider,
         "name": name,
@@ -752,8 +762,8 @@ def is_strict_v2_hosted_channel_agent(
         or agent.agent_type not in HOSTED_RUNTIME_AGENT_TYPES
     ):
         return False
-    runtimes = state.runtimes
-    if not isinstance(runtimes, dict) or list(runtimes) != [agent.agent_type]:
+    runtimes: object = state.runtimes
+    if not _is_object_dict(runtimes) or list(runtimes) != [agent.agent_type]:
         return False
     try:
         validate_hosted_runtime_desired_state(runtimes[agent.agent_type])
@@ -2328,7 +2338,7 @@ def channel_control_help_reply() -> str:
 
 
 def discord_guild_command_denied_reason(
-    payload: dict[str, Any],
+    payload: JsonObject,
     *,
     command: ChannelControlCommand | None,
     guild_id: str | None,
@@ -2360,7 +2370,7 @@ def discord_guild_command_denied_reason(
 
 
 def discord_pair_install_denied_reason(
-    payload: dict[str, Any],
+    payload: JsonObject,
     *,
     command: ChannelControlCommand | None,
     guild_id: str | None,
@@ -2388,7 +2398,7 @@ def discord_pair_install_denied_reason(
 
 
 def _discord_pair_install_admission(
-    payload: dict[str, Any],
+    payload: JsonObject,
     *,
     command: ChannelControlCommand | None,
     guild_id: str | None,
@@ -2431,7 +2441,7 @@ def _discord_pair_install_admission(
         )
     raw_owners = data.get("authorizing_integration_owners")
     if raw_owners is None and "authorizing_integration_owners" not in data:
-        owners: dict[str, Any] = {}
+        owners: JsonObject = {}
     elif isinstance(raw_owners, dict):
         owners = raw_owners
     else:
@@ -2521,7 +2531,7 @@ async def discord_bot_guild_membership_check(
 
 async def discord_control_command_admission(
     account: ChannelAccount,
-    payload: dict[str, Any],
+    payload: JsonObject,
     *,
     command: ChannelControlCommand | None,
     guild_id: str | None,
@@ -2753,7 +2763,7 @@ def record_platform_channel_runtime_marker(
     return marker
 
 
-def telegram_chat_from_update(payload: dict[str, Any]) -> tuple[str, str | None, str | None] | None:
+def telegram_chat_from_update(payload: JsonObject) -> tuple[str, str | None, str | None] | None:
     chat = _telegram_chat_object_from_update(payload)
     if isinstance(chat, dict):
         chat_id = chat.get("id")
@@ -2774,7 +2784,7 @@ def telegram_chat_from_update(payload: dict[str, Any]) -> tuple[str, str | None,
     return None
 
 
-def telegram_text_from_update(payload: dict[str, Any]) -> str | None:
+def telegram_text_from_update(payload: JsonObject) -> str | None:
     callback_query = payload.get("callback_query")
     if isinstance(callback_query, dict):
         data = _read_optional_str(callback_query.get("data"))
@@ -2786,7 +2796,7 @@ def telegram_text_from_update(payload: dict[str, Any]) -> str | None:
     return _read_optional_str(message.get("text"))
 
 
-def telegram_message_id_from_update(payload: dict[str, Any]) -> str | None:
+def telegram_message_id_from_update(payload: JsonObject) -> str | None:
     message = _telegram_message_from_update(payload)
     if not isinstance(message, dict):
         return None
@@ -2794,7 +2804,7 @@ def telegram_message_id_from_update(payload: dict[str, Any]) -> str | None:
     return str(message_id) if message_id is not None else None
 
 
-def telegram_message_thread_id_from_update(payload: dict[str, Any]) -> int | None:
+def telegram_message_thread_id_from_update(payload: JsonObject) -> int | None:
     """Return a true Telegram topic for replies, never as binding identity."""
     message = _telegram_message_from_update(payload)
     if not isinstance(message, dict):
@@ -2820,7 +2830,7 @@ def telegram_message_thread_id_from_update(payload: dict[str, Any]) -> int | Non
     return None
 
 
-def telegram_direct_messages_topic_id_from_update(payload: dict[str, Any]) -> int | None:
+def telegram_direct_messages_topic_id_from_update(payload: JsonObject) -> int | None:
     """Return a channel direct-message topic for replies, never as binding identity."""
     message = _telegram_message_from_update(payload)
     if not isinstance(message, dict):
@@ -2841,7 +2851,7 @@ def telegram_direct_messages_topic_id_from_update(payload: dict[str, Any]) -> in
     return topic_id
 
 
-def telegram_event_id_from_update(payload: dict[str, Any]) -> str | None:
+def telegram_event_id_from_update(payload: JsonObject) -> str | None:
     update_id = payload.get("update_id")
     if isinstance(update_id, (int, str)) and str(update_id).strip():
         return f"update:{str(update_id).strip()}"
@@ -2854,7 +2864,7 @@ def telegram_event_id_from_update(payload: dict[str, Any]) -> str | None:
     return f"message:{message_id}" if message_id is not None else None
 
 
-def telegram_event_scope_from_update(payload: dict[str, Any]) -> str:
+def telegram_event_scope_from_update(payload: JsonObject) -> str:
     update_id = payload.get("update_id")
     if isinstance(update_id, (int, str)) and str(update_id).strip():
         return PROVIDER_EVENT_SCOPE_ACCOUNT
@@ -2866,7 +2876,7 @@ def telegram_event_scope_from_update(payload: dict[str, Any]) -> str:
     return PROVIDER_EVENT_SCOPE_CHAT
 
 
-def telegram_external_user_id_from_update(payload: dict[str, Any]) -> str | None:
+def telegram_external_user_id_from_update(payload: JsonObject) -> str | None:
     # The Bot API server defines a channel direct-message topic id as the
     # topic user's id. Use that stable topic owner instead of the immediate
     # message sender so one chat-level Binding cannot cross DM actors.
@@ -2914,20 +2924,24 @@ def telegram_external_user_id_from_update(payload: dict[str, Any]) -> str | None
     return None
 
 
-def _telegram_message_from_update(payload: dict[str, Any]) -> dict[str, Any] | None:
+def _telegram_message_from_update(payload: JsonObject) -> JsonObject | None:
     message = payload.get("message") or payload.get("edited_message")
     if isinstance(message, dict):
         return message
     callback_query = payload.get("callback_query")
-    if isinstance(callback_query, dict) and isinstance(callback_query.get("message"), dict):
-        return callback_query["message"]
+    if isinstance(callback_query, dict):
+        callback_message = callback_query.get("message")
+        if isinstance(callback_message, dict):
+            return callback_message
     return None
 
 
-def _telegram_chat_object_from_update(payload: dict[str, Any]) -> dict[str, Any] | None:
+def _telegram_chat_object_from_update(payload: JsonObject) -> JsonObject | None:
     message = _telegram_message_from_update(payload)
-    if isinstance(message, dict) and isinstance(message.get("chat"), dict):
-        return message["chat"]
+    if isinstance(message, dict):
+        message_chat = message.get("chat")
+        if isinstance(message_chat, dict):
+            return message_chat
 
     for update_key in (
         "channel_post",
@@ -2944,8 +2958,10 @@ def _telegram_chat_object_from_update(payload: dict[str, Any]) -> dict[str, Any]
         "deleted_business_messages",
     ):
         update_value = payload.get(update_key)
-        if isinstance(update_value, dict) and isinstance(update_value.get("chat"), dict):
-            return update_value["chat"]
+        if isinstance(update_value, dict):
+            update_chat = update_value.get("chat")
+            if isinstance(update_chat, dict):
+                return update_chat
 
     return None
 
@@ -2958,7 +2974,7 @@ async def record_inbound_message(
     external_chat_id: str,
     provider_message_id: str | None,
     text: str | None,
-    payload: dict[str, Any],
+    payload: JsonObject,
     provider_event_id: str | None = None,
     provider_event_scope: str = PROVIDER_EVENT_SCOPE_CHAT,
 ) -> ChannelMessage:
@@ -2984,7 +3000,7 @@ async def _record_inbound_message_with_status(
     external_chat_id: str,
     provider_message_id: str | None,
     text: str | None,
-    payload: dict[str, Any],
+    payload: JsonObject,
     provider_event_id: str | None = None,
     provider_event_scope: str = PROVIDER_EVENT_SCOPE_CHAT,
 ) -> tuple[ChannelMessage, bool]:
@@ -3154,7 +3170,7 @@ async def record_inbound_messages_for_bindings(
     external_chat_id: str,
     provider_message_id: str | None,
     text: str | None,
-    payload: dict[str, Any],
+    payload: JsonObject,
     provider_event_id: str | None = None,
     provider_event_scope: str = PROVIDER_EVENT_SCOPE_CHAT,
     suppress_duplicate_event: bool = False,
@@ -3274,7 +3290,7 @@ async def record_inactive_bot_agent_link_event(
     binding: ChannelBinding | None,
     link: ChannelBotAgentLink | None = None,
 ) -> None:
-    if binding is None or binding.bot_agent_link_id is None:
+    if binding is None:
         return
     if link is None:
         link = await db.get(ChannelBotAgentLink, binding.bot_agent_link_id)
@@ -3329,7 +3345,7 @@ async def record_channel_agent_reference(
     binding: ChannelBinding | None = None,
     message: ChannelMessage | None = None,
     bot_agent_link_id: UUID | None = None,
-    metadata: dict[str, Any] | None = None,
+    metadata: JsonObject | None = None,
 ) -> ChannelAgentReference:
     if binding is not None and binding.account_id != account.id:
         raise ValueError("channel binding does not belong to channel account")
@@ -3527,7 +3543,7 @@ async def record_telegram_update_references(
     account: ChannelAccount,
     binding: ChannelBinding | None,
     message: ChannelMessage,
-    payload: dict[str, Any],
+    payload: JsonObject,
 ) -> None:
     if account.provider != CHANNEL_PROVIDER_TELEGRAM or binding is None:
         return
@@ -3558,7 +3574,7 @@ def telegram_message_reference_value(chat_id: str, message_id: str | int) -> str
     return json.dumps([str(chat_id), str(message_id)], separators=(",", ":"))
 
 
-def _telegram_update_references(payload: dict[str, Any]) -> set[tuple[str, str]]:
+def _telegram_update_references(payload: JsonObject) -> set[tuple[str, str]]:
     references: set[tuple[str, str]] = set()
     callback_query = payload.get("callback_query")
     if isinstance(callback_query, dict):
@@ -3575,7 +3591,7 @@ def _telegram_update_references(payload: dict[str, Any]) -> set[tuple[str, str]]
     return references
 
 
-def telegram_file_ids(payload: Any) -> set[str]:
+def telegram_file_ids(payload: JsonValue) -> set[str]:
     file_ids: set[str] = set()
     for node in _walk_json_dicts(payload):
         file_id = node.get("file_id")
@@ -3584,8 +3600,8 @@ def telegram_file_ids(payload: Any) -> set[str]:
     return file_ids
 
 
-def _walk_json_dicts(value: Any) -> list[dict[str, Any]]:
-    nodes: list[dict[str, Any]] = []
+def _walk_json_dicts(value: JsonValue) -> list[JsonObject]:
+    nodes: list[JsonObject] = []
     stack = [value]
     while stack:
         current = stack.pop()
@@ -3603,7 +3619,7 @@ async def record_discord_interaction_references(
     account: ChannelAccount,
     binding: ChannelBinding | None,
     message: ChannelMessage,
-    payload: dict[str, Any],
+    payload: JsonObject,
 ) -> None:
     data = _discord_event_data(payload)
     interaction_id = _read_optional_str(data.get("id"))
@@ -3611,7 +3627,9 @@ async def record_discord_interaction_references(
     if interaction_id is None or token is None:
         return
     application_id = _read_optional_str(data.get("application_id"))
-    metadata = {"application_id": application_id} if application_id is not None else None
+    metadata: JsonObject | None = (
+        {"application_id": application_id} if application_id is not None else None
+    )
     await record_channel_agent_reference(
         db,
         account=account,
@@ -3642,26 +3660,28 @@ def telegram_update_id(message: ChannelMessage) -> int:
     return int(message.inbox_sequence)
 
 
-def telegram_update_payload(message: ChannelMessage) -> dict[str, Any]:
+def telegram_update_payload(message: ChannelMessage) -> JsonObject:
     payload = dict(message.payload) if isinstance(message.payload, dict) else {}
     payload.setdefault("update_id", telegram_update_id(message))
     _virtualize_telegram_direct_message_topics(payload)
     return payload
 
 
-def _virtualize_telegram_direct_message_topics(payload: dict[str, Any]) -> None:
+def _virtualize_telegram_direct_message_topics(payload: JsonObject) -> None:
     for container_key in ("message", "edited_message"):
         value = payload.get(container_key)
         if isinstance(value, dict):
             payload[container_key] = _virtualized_telegram_direct_message(value)
     callback_query = payload.get("callback_query")
-    if isinstance(callback_query, dict) and isinstance(callback_query.get("message"), dict):
-        callback_copy = dict(callback_query)
-        callback_copy["message"] = _virtualized_telegram_direct_message(callback_query["message"])
-        payload["callback_query"] = callback_copy
+    if isinstance(callback_query, dict):
+        callback_message = callback_query.get("message")
+        if isinstance(callback_message, dict):
+            callback_copy: JsonObject = {key: value for key, value in callback_query.items()}
+            callback_copy["message"] = _virtualized_telegram_direct_message(callback_message)
+            payload["callback_query"] = callback_copy
 
 
-def _virtualized_telegram_direct_message(message: dict[str, Any]) -> dict[str, Any]:
+def _virtualized_telegram_direct_message(message: JsonObject) -> JsonObject:
     chat = message.get("chat")
     topic = message.get("direct_messages_topic")
     if (
@@ -3688,7 +3708,7 @@ async def dequeue_telegram_updates(
     offset: int | None,
     limit: int,
     allowed_updates: set[str] | None = None,
-) -> list[dict[str, Any]]:
+) -> list[JsonObject]:
     now = datetime.now(UTC)
     filters = [
         ChannelMessage.account_id == account.id,
@@ -3744,7 +3764,7 @@ async def dequeue_telegram_updates(
             of=ChannelBinding,
         )
     )
-    updates: list[dict[str, Any]] = []
+    updates: list[JsonObject] = []
     for message in result.scalars().all():
         update_payload = telegram_update_payload(message)
         update_id = telegram_update_id(message)
@@ -3774,7 +3794,7 @@ async def wait_for_telegram_updates(
     allowed_updates: set[str] | None = None,
     timeout_seconds: int | float | None = None,
     poll_interval_seconds: float | None = None,
-) -> list[dict[str, Any]]:
+) -> list[JsonObject]:
     timeout = max(0.0, min(float(timeout_seconds or 0), 30.0))
     poll_interval = _channel_long_poll_interval(poll_interval_seconds)
     deadline = monotonic() + timeout
@@ -4306,8 +4326,8 @@ async def scrub_discord_interaction_payload_tokens(
     return scrubbed
 
 
-def _without_discord_interaction_token(payload: dict[str, Any]) -> dict[str, Any]:
-    scrubbed_payload: dict[str, Any] | None = None
+def _without_discord_interaction_token(payload: JsonObject) -> JsonObject:
+    scrubbed_payload: JsonObject | None = None
     if "token" in payload and "application_id" in payload:
         scrubbed_payload = dict(payload)
         scrubbed_payload.pop("token", None)
@@ -4839,7 +4859,7 @@ async def deliver_channel_delivery(
     return delivery
 
 
-def _channel_message_provider_payload(message: ChannelMessage) -> dict[str, Any] | None:
+def _channel_message_provider_payload(message: ChannelMessage) -> JsonObject | None:
     payload = message.payload
     if not isinstance(payload, dict):
         return None
@@ -4850,14 +4870,15 @@ def _channel_message_provider_payload(message: ChannelMessage) -> dict[str, Any]
 
 
 def _delivery_success_payload(
-    existing_payload: Any,
-    provider_response: dict[str, Any],
-) -> dict[str, Any]:
-    if not isinstance(existing_payload, dict):
+    existing_payload: object,
+    provider_response: JsonObject,
+) -> JsonObject:
+    try:
+        payload = dict(_JSON_OBJECT_ADAPTER.validate_python(existing_payload, strict=True))
+    except ValidationError:
         return provider_response
-    if "delivery" not in existing_payload and "providerPayload" not in existing_payload:
+    if "delivery" not in payload and "providerPayload" not in payload:
         return provider_response
-    payload = dict(existing_payload)
     payload["delivery"] = DELIVERY_STATUS_SUCCEEDED
     payload["providerResponse"] = provider_response
     return payload
@@ -4868,9 +4889,9 @@ async def send_provider_outbound_payload(
     account: ChannelAccount,
     external_chat_id: str,
     text: str,
-    provider_payload: dict[str, Any] | None = None,
+    provider_payload: JsonObject | None = None,
     discord_nonce: str | None = None,
-) -> tuple[str | None, dict[str, Any]]:
+) -> tuple[str | None, JsonObject]:
     if account.provider == CHANNEL_PROVIDER_TELEGRAM:
         return await _send_telegram_provider_payload(
             account=account,
@@ -4944,8 +4965,8 @@ async def send_channel_outbound_message(
 
 
 def _telegram_account_command_specs(
-    commands: list[dict[str, Any]] | None,
-) -> list[dict[str, Any]]:
+    commands: list[JsonObject] | None,
+) -> list[JsonObject]:
     merged = [dict(command) for command in DEFAULT_CHANNEL_COMMANDS]
     seen = {_command_name(command) for command in merged}
     for command in commands or []:
@@ -4965,10 +4986,10 @@ def _telegram_account_command_specs(
 async def sync_channel_commands(
     *,
     account: ChannelAccount,
-    commands: list[dict[str, Any]] | None = None,
+    commands: list[JsonObject] | None = None,
     guild_id: str | None = None,
     use_configured_discord_guild: bool | None = None,
-) -> list[dict[str, Any]]:
+) -> list[JsonObject]:
     using_default_commands = commands is None
     command_specs = commands or [dict(command) for command in DEFAULT_CHANNEL_COMMANDS]
     if account.provider == CHANNEL_PROVIDER_TELEGRAM:
@@ -5002,7 +5023,7 @@ async def sync_channel_commands(
     )
 
 
-async def configure_discord_application(account: ChannelAccount) -> dict[str, Any]:
+async def configure_discord_application(account: ChannelAccount) -> JsonObject:
     """Configure and validate the account's Discord HTTP interaction endpoint.
 
     The account row must already be committed before this runs: Discord
@@ -5028,17 +5049,17 @@ async def configure_discord_application(account: ChannelAccount) -> dict[str, An
     )
     _require_discord_message_content_intent(identity)
     raw_integration_config = identity.get("integration_types_config")
-    integration_config = (
+    integration_config: dict[str, JsonObject] = (
         {
-            str(key): dict(value)
+            key: dict(value)
             for key, value in raw_integration_config.items()
-            if isinstance(key, str) and isinstance(value, dict)
+            if isinstance(value, dict)
         }
         if isinstance(raw_integration_config, dict)
         else {}
     )
-    guild_install_params = {
-        "scopes": ["applications.commands", "bot"],
+    guild_install_params: JsonObject = {
+        "scopes": list[JsonValue](["applications.commands", "bot"]),
         "permissions": str(DISCORD_MINIMAL_BOT_PERMISSIONS),
     }
     guild_install_config = dict(integration_config.get(str(DISCORD_GUILD_INSTALL), {}))
@@ -5075,7 +5096,9 @@ async def configure_discord_application(account: ChannelAccount) -> dict[str, An
         json_payload={
             "interactions_endpoint_url": channel_webhook_url(account.id, account.provider),
             "install_params": guild_install_params,
-            "integration_types_config": integration_config,
+            "integration_types_config": _JSON_OBJECT_ADAPTER.validate_python(
+                integration_config, strict=True
+            ),
         },
     )
     _verify_discord_application_identity(configured, expected_application_id=application_id)
@@ -5087,7 +5110,7 @@ async def configure_discord_application(account: ChannelAccount) -> dict[str, An
     return configured
 
 
-def _verify_discord_install_configuration(payload: dict[str, Any]) -> bool:
+def _verify_discord_install_configuration(payload: JsonObject) -> bool:
     """Verify the exact install defaults Discord persisted after PATCH."""
     integration_types = payload.get("integration_types_config")
     if not isinstance(integration_types, dict):
@@ -5121,14 +5144,16 @@ def _verify_discord_install_configuration(payload: dict[str, Any]) -> bool:
 
 
 def _discord_install_params_match(
-    config: Any,
+    config: object,
     *,
     expected_scopes: set[str],
     expected_permissions: str,
 ) -> bool:
-    if not isinstance(config, dict):
+    try:
+        config_value = _JSON_OBJECT_ADAPTER.validate_python(config, strict=True)
+    except ValidationError:
         return False
-    install_params = config.get("oauth2_install_params")
+    install_params = config_value.get("oauth2_install_params")
     if not isinstance(install_params, dict):
         return False
     scopes = install_params.get("scopes")
@@ -5136,7 +5161,7 @@ def _discord_install_params_match(
         isinstance(scopes, list)
         and len(scopes) == len(expected_scopes)
         and all(isinstance(scope, str) for scope in scopes)
-        and set(scopes) == expected_scopes
+        and {scope for scope in scopes if isinstance(scope, str)} == expected_scopes
         and install_params.get("permissions") == expected_permissions
     )
 
@@ -5145,9 +5170,9 @@ async def verify_discord_application_token_identity(
     *,
     application_id: str,
     provider_token: str,
-    config: dict[str, Any] | None,
+    config: JsonObject | None,
     rate_limit_scope: str | None = None,
-) -> dict[str, Any]:
+) -> JsonObject:
     """Verify a Discord credential without mutating the Developer Portal."""
     raw_base_url = config.get("api_base_url") if isinstance(config, dict) else None
     base_url = (
@@ -5174,8 +5199,8 @@ async def verify_discord_application_token_identity(
     return identity
 
 
-def discord_application_id_from_config(config: dict[str, Any] | None) -> str | None:
-    if not isinstance(config, dict):
+def discord_application_id_from_config(config: JsonObject | None) -> str | None:
+    if not _is_object_dict(config):
         return None
     return _read_optional_str(config.get("application_id")) or _read_optional_str(
         config.get("app_id")
@@ -5184,7 +5209,7 @@ def discord_application_id_from_config(config: dict[str, Any] | None) -> str | N
 
 def require_unchanged_discord_application_identity(
     account: ChannelAccount,
-    config: dict[str, Any] | None,
+    config: JsonObject | None,
 ) -> None:
     """Prevent replacing an identity whose old projections cannot be retired."""
     current_application_id = discord_application_id_from_config(account.config)
@@ -5266,35 +5291,39 @@ def discord_user_install_url(account: ChannelAccount) -> str | None:
 
 
 def discord_install_config_is_current(account: ChannelAccount) -> bool:
-    if not isinstance(account.config, dict):
+    config: object = account.config
+    if not _is_object_dict(config):
         return False
-    version = account.config.get(DISCORD_INSTALL_CONFIG_VERSION_CONFIG_KEY)
+    version = config.get(DISCORD_INSTALL_CONFIG_VERSION_CONFIG_KEY)
     return (
         isinstance(version, int)
         and not isinstance(version, bool)
         and version == DISCORD_INSTALL_CONFIG_VERSION
         and isinstance(
-            account.config.get(DISCORD_USER_INSTALL_SUPPORTED_CONFIG_KEY),
+            config.get(DISCORD_USER_INSTALL_SUPPORTED_CONFIG_KEY),
             bool,
         )
     )
 
 
 def discord_user_install_is_supported(account: ChannelAccount) -> bool:
+    config: object = account.config
+    if not isinstance(config, dict):
+        return False
     return (
         discord_install_config_is_current(account)
-        and isinstance(account.config, dict)
-        and account.config.get(DISCORD_USER_INSTALL_SUPPORTED_CONFIG_KEY) is True
+        and config.get(DISCORD_USER_INSTALL_SUPPORTED_CONFIG_KEY) is True
     )
 
 
 def discord_config_without_unverified_install_state(
-    config: dict[str, Any] | None,
-) -> dict[str, Any] | None:
+    config: JsonObject | None,
+) -> JsonObject | None:
     """Remove Discord capability state that only provider verification may set."""
-    if not isinstance(config, dict):
+    config_value: object = config
+    if not _is_object_dict(config_value):
         return None
-    sanitized = dict(config)
+    sanitized = _JSON_OBJECT_ADAPTER.validate_python(config_value, strict=True)
     sanitized.pop(DISCORD_INSTALL_CONFIG_VERSION_CONFIG_KEY, None)
     sanitized.pop(DISCORD_USER_INSTALL_SUPPORTED_CONFIG_KEY, None)
     return sanitized
@@ -5318,7 +5347,7 @@ async def rearm_discord_command_reconciliation(
         retries = {
             guild_id: dict(retry)
             for guild_id, retry in raw_retries.items()
-            if isinstance(guild_id, str) and isinstance(retry, dict)
+            if isinstance(retry, dict)
         }
         changed = False
         for retry in retries.values():
@@ -5329,10 +5358,9 @@ async def rearm_discord_command_reconciliation(
             changed = True
             rearmed += 1
         if changed:
-            json_retries: dict[str, JsonValue] = {}
-            for guild_id, retry in retries.items():
-                json_retries[guild_id] = retry
-            config["discord_command_retries"] = json_retries
+            config["discord_command_retries"] = _JSON_OBJECT_ADAPTER.validate_python(
+                retries, strict=True
+            )
             link.config = config
     return rearmed
 
@@ -5377,8 +5405,8 @@ async def _discord_application_request(
     method: str,
     url: str,
     headers: dict[str, str],
-    json_payload: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+    json_payload: JsonObject | None = None,
+) -> JsonObject:
     path = "/applications/@me"
     decision = discord_rate_limiter.check(account_scope, method, path)
     if not decision.allowed:
@@ -5436,17 +5464,15 @@ async def _discord_application_request(
                 "public key, and endpoint, then retry."
             ),
         )
-    payload = _response_json_or_text(response)
-    if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Discord returned an invalid application response.",
-        )
+    payload = _response_json_object(
+        response,
+        detail="Discord returned an invalid application response.",
+    )
     return payload
 
 
 def _verify_discord_application_identity(
-    payload: dict[str, Any],
+    payload: JsonObject,
     *,
     expected_application_id: str,
 ) -> None:
@@ -5463,7 +5489,7 @@ def _verify_discord_application_identity(
         )
 
 
-def _require_discord_message_content_intent(payload: dict[str, Any]) -> None:
+def _require_discord_message_content_intent(payload: JsonObject) -> None:
     """Require the privileged intent that the native Gateway always identifies with."""
     flags = payload.get("flags")
     approved = DISCORD_GATEWAY_MESSAGE_CONTENT_FLAG
@@ -5527,11 +5553,11 @@ async def _send_telegram_provider_payload(
     text: str,
     message_thread_id: int | None = None,
     direct_messages_topic_id: int | None = None,
-) -> tuple[str | None, dict[str, Any]]:
+) -> tuple[str, JsonObject]:
     token = decrypt_provider_token(account)
     base_url = settings.channel_telegram_api_base_url.strip()
     url = f"{base_url.rstrip('/')}/bot{token}/sendMessage"
-    request_payload: dict[str, Any] = {"chat_id": external_chat_id, "text": text}
+    request_payload: JsonObject = {"chat_id": external_chat_id, "text": text}
     if message_thread_id is not None:
         request_payload["message_thread_id"] = message_thread_id
     if direct_messages_topic_id is not None:
@@ -5545,14 +5571,20 @@ async def _send_telegram_provider_payload(
         unreachable_detail="telegram api unreachable",
         rejected_detail="telegram api rejected message",
     )
-    return _telegram_sent_message_id(payload), payload
+    provider_message_id = _telegram_sent_message_id(payload)
+    if provider_message_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="telegram api returned an invalid message",
+        )
+    return provider_message_id, payload
 
 
 async def sync_telegram_commands(
     *,
     account: ChannelAccount,
-    commands: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
+    commands: list[JsonObject],
+) -> list[JsonObject]:
     if account.provider != CHANNEL_PROVIDER_TELEGRAM:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -5567,15 +5599,16 @@ async def sync_telegram_commands(
         label="telegram api base url",
     )
     url = f"{base_url.rstrip('/')}/bot{token}/setMyCommands"
-    request_payload = {
-        "commands": [
-            {
-                "command": _command_name(command),
-                "description": _command_description(command),
-            }
-            for command in commands
-        ],
-    }
+    request_commands: list[JsonObject] = [
+        {
+            "command": _command_name(command),
+            "description": _command_description(command),
+        }
+        for command in commands
+    ]
+    request_payload = _JSON_OBJECT_ADAPTER.validate_python(
+        {"commands": request_commands}, strict=True
+    )
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(url, json=request_payload)
@@ -5584,13 +5617,21 @@ async def sync_telegram_commands(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="telegram api unreachable",
         ) from exc
-    response_payload = _response_json_or_text(response)
-    if response.status_code >= 400 or response_payload.get("ok") is False:
+    if response.status_code >= 400:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="telegram api rejected commands",
         )
-    return request_payload["commands"]
+    response_payload = _response_json_object(
+        response,
+        detail="telegram api returned invalid commands",
+    )
+    if response_payload.get("ok") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="telegram api returned invalid commands",
+        )
+    return request_commands
 
 
 async def send_discord_message(
@@ -5639,7 +5680,7 @@ async def record_discord_outbound_message(
     account: ChannelAccount,
     binding: ChannelBinding,
     external_chat_id: str,
-    provider_response: dict[str, Any],
+    provider_response: JsonObject,
 ) -> ChannelMessage:
     _require_channel_provider(account, CHANNEL_PROVIDER_DISCORD)
     if binding.account_id != account.id:
@@ -5667,7 +5708,7 @@ async def _send_discord_provider_payload(
     external_chat_id: str,
     text: str,
     nonce: str | None = None,
-) -> tuple[str | None, dict[str, Any]]:
+) -> tuple[str, JsonObject]:
     token = decrypt_provider_token(account)
     base_url = (
         _account_config_str(account, "api_base_url")
@@ -5681,9 +5722,9 @@ async def _send_discord_provider_payload(
     )
     path = f"/channels/{external_chat_id}/messages"
     url = f"{base_url.rstrip('/')}{path}"
-    payload = {
+    payload: JsonObject = {
         "content": text,
-        "allowed_mentions": {"parse": []},
+        "allowed_mentions": {"parse": list[JsonValue]()},
     }
     if nonce is not None:
         payload["nonce"] = nonce
@@ -5741,18 +5782,27 @@ async def _send_discord_provider_payload(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="discord api rejected message",
         )
-    response_payload = _response_json_or_text(response)
-    return _read_optional_str(response_payload.get("id")), response_payload
+    response_payload = _response_json_object(
+        response,
+        detail="discord api returned an invalid message",
+    )
+    provider_message_id = _read_optional_str(response_payload.get("id"))
+    if provider_message_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="discord api returned an invalid message",
+        )
+    return provider_message_id, response_payload
 
 
 async def sync_discord_commands(
     *,
     account: ChannelAccount,
-    commands: list[dict[str, Any]],
+    commands: list[JsonObject],
     guild_id: str | None,
     reconcile_reserved_commands: bool = False,
     use_configured_guild: bool = True,
-) -> list[dict[str, Any]]:
+) -> list[JsonObject]:
     if account.provider != CHANNEL_PROVIDER_DISCORD:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="not a discord channel")
     token = decrypt_provider_token(account)
@@ -5790,7 +5840,7 @@ async def sync_discord_commands(
         )
         for command in commands
     ]
-    synced: list[dict[str, Any]] = []
+    synced: list[JsonObject] = []
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             if reconcile_reserved_commands:
@@ -5817,7 +5867,10 @@ async def sync_discord_commands(
                     headers=headers,
                 )
                 _raise_for_discord_command_sync_response(response)
-                existing_commands = _response_json_or_text(response).get("data")
+                existing_commands = _response_json_value(
+                    response,
+                    detail="discord api returned invalid commands",
+                )
                 if not isinstance(existing_commands, list) or not all(
                     isinstance(command, dict) for command in existing_commands
                 ):
@@ -5827,6 +5880,11 @@ async def sync_discord_commands(
                     )
                 legacy_command_ids: list[str] = []
                 for existing_command in existing_commands:
+                    if not isinstance(existing_command, dict):
+                        raise HTTPException(
+                            status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="discord api returned invalid commands",
+                        )
                     existing_name = _read_optional_str(existing_command.get("name"))
                     if existing_name not in DISCORD_LEGACY_RESERVED_COMMAND_NAMES:
                         continue
@@ -5856,18 +5914,10 @@ async def sync_discord_commands(
                         json_payload=command_payload,
                     )
                     _raise_for_discord_command_sync_response(response)
-                    synced_command = _response_json_or_text(response)
-                    synced_command_id = _read_optional_str(synced_command.get("id"))
-                    if (
-                        _read_optional_str(synced_command.get("name")) != command_payload["name"]
-                        or synced_command.get("type") != 1
-                        or synced_command_id is None
-                        or not valid_discord_application_id(synced_command_id)
-                    ):
-                        raise HTTPException(
-                            status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail="discord api returned invalid commands",
-                        )
+                    synced_command = _validated_synced_discord_command(
+                        response,
+                        expected_name=_command_name(command_payload),
+                    )
                     synced.append(synced_command)
                 for command_id in legacy_command_ids:
                     response = await _discord_command_request(
@@ -5900,7 +5950,12 @@ async def sync_discord_commands(
                     json_payload=command_payload,
                 )
                 _raise_for_discord_command_sync_response(response)
-                synced.append(_response_json_or_text(response))
+                synced.append(
+                    _validated_synced_discord_command(
+                        response,
+                        expected_name=_command_name(command_payload),
+                    )
+                )
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -5917,7 +5972,7 @@ async def _discord_command_request(
     url: str,
     path: str,
     headers: dict[str, str],
-    json_payload: dict[str, Any] | None = None,
+    json_payload: JsonObject | None = None,
 ) -> httpx.Response:
     decision = discord_rate_limiter.check(account_scope, method, path)
     if not decision.allowed:
@@ -5975,6 +6030,29 @@ def _raise_for_discord_command_sync_response(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="discord api rejected commands",
         )
+
+
+def _validated_synced_discord_command(
+    response: httpx.Response,
+    *,
+    expected_name: str,
+) -> JsonObject:
+    command = _response_json_object(
+        response,
+        detail="discord api returned invalid commands",
+    )
+    command_id = _read_optional_str(command.get("id"))
+    if (
+        _read_optional_str(command.get("name")) != expected_name
+        or command.get("type") != 1
+        or command_id is None
+        or not valid_discord_application_id(command_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="discord api returned invalid commands",
+        )
+    return command
 
 
 async def send_whatsapp_message(
@@ -6045,8 +6123,8 @@ async def _send_whatsapp_provider_payload(
     account: ChannelAccount,
     external_chat_id: str,
     text: str,
-    provider_payload: dict[str, Any] | None = None,
-) -> tuple[str | None, dict[str, Any]]:
+    provider_payload: JsonObject | None = None,
+) -> tuple[str | None, JsonObject]:
     from app.services.whatsapp_provider_bridge import relay_whatsapp_provider_payload
 
     return await relay_whatsapp_provider_payload(
@@ -6074,7 +6152,7 @@ async def _record_outbound_channel_message(
     external_chat_id: str,
     provider_message_id: str | None,
     text: str,
-    payload: dict[str, Any] | None,
+    payload: JsonObject | None,
     delivered_at: datetime | None = None,
 ) -> ChannelMessage:
     owner_user_id = require_channel_tenant_user_id(
@@ -6103,13 +6181,13 @@ async def _post_provider_json(
     channel: str,
     method: str,
     url: str,
-    json_payload: dict[str, Any],
+    json_payload: JsonObject,
     timeout_seconds: float,
     unreachable_detail: str,
     rejected_detail: str,
     headers: dict[str, str] | None = None,
     params: dict[str, str] | None = None,
-) -> dict[str, Any]:
+) -> JsonObject:
     await _validate_provider_endpoint_url(
         url,
         channel=channel,
@@ -6150,18 +6228,29 @@ async def _post_provider_json(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=rejected_detail,
         )
-    return response_payload
+    response_object = _response_json_object(
+        response,
+        detail=f"{channel} provider returned an invalid response",
+    )
+    if channel == CHANNEL_PROVIDER_TELEGRAM and response_object.get("ok") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=rejected_detail,
+        )
+    return response_object
 
 
 def _telegram_retry_after_seconds(
     response: httpx.Response,
-    payload: dict[str, Any],
+    payload: JsonObject,
 ) -> float | None:
     raw_header = response.headers.get("retry-after")
     parameters = payload.get("parameters")
     raw_parameter = parameters.get("retry_after") if isinstance(parameters, dict) else None
     for value in (raw_header, raw_parameter):
         if value is None:
+            continue
+        if not isinstance(value, (str, int, float)) or isinstance(value, bool):
             continue
         try:
             seconds = float(value)
@@ -6194,12 +6283,14 @@ async def _validate_provider_endpoint_url(
         ) from exc
 
 
-def _telegram_sent_message_id(payload: dict[str, Any]) -> str | None:
+def _telegram_sent_message_id(payload: JsonObject) -> str | None:
     result = payload.get("result")
     if not isinstance(result, dict):
         return None
     message_id = result.get("message_id")
-    return str(message_id) if message_id is not None else None
+    if isinstance(message_id, bool) or not isinstance(message_id, int) or message_id < 1:
+        return None
+    return str(message_id)
 
 
 def verify_discord_signature(
@@ -6224,7 +6315,7 @@ def verify_webhook_secret(raw: str | None, expected_hash: str) -> bool:
     return bool(raw) and verify_hashed_token(raw, expected_hash)
 
 
-def discord_chat_from_payload(payload: dict[str, Any]) -> tuple[str, str | None, str | None] | None:
+def discord_chat_from_payload(payload: JsonObject) -> tuple[str, str | None, str | None] | None:
     data = _discord_event_data(payload)
     channel_id = data.get("channel_id")
     if channel_id is None:
@@ -6248,7 +6339,7 @@ def discord_chat_from_payload(payload: dict[str, Any]) -> tuple[str, str | None,
     )
 
 
-def discord_text_from_payload(payload: dict[str, Any]) -> str | None:
+def discord_text_from_payload(payload: JsonObject) -> str | None:
     data = _discord_event_data(payload)
     content = _read_optional_str(data.get("content"))
     if content is not None:
@@ -6260,12 +6351,12 @@ def discord_text_from_payload(payload: dict[str, Any]) -> str | None:
     return None
 
 
-def discord_pair_code_from_payload(payload: dict[str, Any]) -> str | None:
+def discord_pair_code_from_payload(payload: JsonObject) -> str | None:
     command = discord_control_command_from_payload(payload)
     return command.code if command is not None and command.kind == "pair" else None
 
 
-def discord_control_command_from_payload(payload: dict[str, Any]) -> ChannelControlCommand | None:
+def discord_control_command_from_payload(payload: JsonObject) -> ChannelControlCommand | None:
     data = _discord_event_data(payload)
     text_command = _parse_discord_control_command(_read_optional_str(data.get("content")))
     if text_command is not None:
@@ -6316,11 +6407,11 @@ def _parse_discord_control_command(text: str | None) -> ChannelControlCommand | 
     return ChannelControlCommand(kind="pair", code=code or "")
 
 
-def discord_message_id_from_payload(payload: dict[str, Any]) -> str | None:
+def discord_message_id_from_payload(payload: JsonObject) -> str | None:
     return _read_optional_str(_discord_event_data(payload).get("id"))
 
 
-def discord_external_user_id_from_payload(payload: dict[str, Any]) -> str | None:
+def discord_external_user_id_from_payload(payload: JsonObject) -> str | None:
     data = _discord_event_data(payload)
     return (
         _dict_identifier(data.get("author"), "id")
@@ -6334,7 +6425,7 @@ def discord_external_user_id_from_payload(payload: dict[str, Any]) -> str | None
 
 
 def discord_user_display_name_from_payload(
-    payload: dict[str, Any],
+    payload: JsonObject,
     *,
     external_user_id: str | None,
 ) -> str | None:
@@ -6397,7 +6488,7 @@ def update_discord_binding_display_name_from_trusted_event(
     return changed
 
 
-def discord_channel_scope_from_payload(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+def discord_channel_scope_from_payload(payload: JsonObject) -> tuple[str | None, str | None]:
     data = _discord_event_data(payload)
     channel_id = _read_optional_str(data.get("channel_id"))
     if channel_id is None:
@@ -6407,7 +6498,7 @@ def discord_channel_scope_from_payload(payload: dict[str, Any]) -> tuple[str | N
     return channel_id, _read_optional_str(data.get("guild_id"))
 
 
-def extract_discord_routing_key(frame: dict[str, Any]) -> DiscordRoutingKey | None:
+def extract_discord_routing_key(frame: JsonObject) -> DiscordRoutingKey | None:
     data = frame.get("d")
     if not isinstance(data, dict):
         return None
@@ -6451,7 +6542,7 @@ async def record_discord_dispatch(
     db: AsyncSession,
     *,
     account: ChannelAccount,
-    frame: dict[str, Any],
+    frame: JsonObject,
 ) -> bool:
     if frame.get("t") == "INTERACTION_CREATE":
         return False
@@ -6532,7 +6623,7 @@ async def record_discord_dispatch(
             provider_event_id=provider_event_id,
         )
     data = frame.get("d")
-    payload = frame if isinstance(data, dict) else {"d": data}
+    payload: JsonObject = frame if isinstance(data, dict) else {"d": data}
     messages = await record_inbound_messages_for_bindings(
         db,
         account=account,
@@ -6583,7 +6674,7 @@ async def _record_discord_unpaired_message_and_maybe_instruct(
     db: AsyncSession,
     *,
     account: ChannelAccount,
-    frame: dict[str, Any],
+    frame: JsonObject,
     authority_chat_id: str,
     channel_id: str | None,
     guild_id: str | None,
@@ -6771,7 +6862,7 @@ async def _record_discord_unpaired_message_and_maybe_instruct(
     return True
 
 
-def _telegram_update_allowed(update: dict[str, Any], allowed_updates: set[str]) -> bool:
+def _telegram_update_allowed(update: JsonObject, allowed_updates: set[str]) -> bool:
     if not allowed_updates:
         return True
     for update_type in allowed_updates:
@@ -6780,7 +6871,7 @@ def _telegram_update_allowed(update: dict[str, Any], allowed_updates: set[str]) 
     return False
 
 
-def _discord_event_data(payload: dict[str, Any]) -> dict[str, Any]:
+def _discord_event_data(payload: JsonObject) -> JsonObject:
     data = payload.get("d")
     if isinstance(data, dict):
         return data
@@ -6805,12 +6896,12 @@ def _discord_channel_type_name(value: int | None, fallback: str) -> str:
     }.get(value, fallback)
 
 
-def _optional_int(value: Any) -> int | None:
+def _optional_int(value: object) -> int | None:
     return value if isinstance(value, int) else None
 
 
-def _nested_dict_value(data: dict[str, Any], *path: str) -> Any:
-    current: Any = data
+def _nested_dict_value(data: JsonObject, *path: str) -> JsonValue:
+    current: JsonValue = data
     for key in path:
         if not isinstance(current, dict):
             return None
@@ -6818,12 +6909,32 @@ def _nested_dict_value(data: dict[str, Any], *path: str) -> Any:
     return current
 
 
-def _response_json_or_text(response: httpx.Response) -> dict[str, Any]:
+def _response_json_or_text(response: httpx.Response) -> JsonObject:
     try:
-        payload = response.json()
-    except ValueError:
+        payload = _JSON_VALUE_ADAPTER.validate_json(response.content, strict=True)
+    except ValidationError:
         return {"raw": response.text}
     return payload if isinstance(payload, dict) else {"data": payload}
+
+
+def _response_json_value(response: httpx.Response, *, detail: str) -> JsonValue:
+    try:
+        return _JSON_VALUE_ADAPTER.validate_json(response.content, strict=True)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=detail,
+        ) from exc
+
+
+def _response_json_object(response: httpx.Response, *, detail: str) -> JsonObject:
+    payload = _response_json_value(response, detail=detail)
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=detail,
+        )
+    return payload
 
 
 async def _delivery_account(db: AsyncSession, delivery: ChannelDelivery) -> ChannelAccount:
@@ -6992,7 +7103,10 @@ def _is_delivery_link_lock_contention(exc: HTTPException, *, error: str) -> bool
 
 
 def _http_exception_detail(exc: HTTPException) -> str:
-    return exc.detail if isinstance(exc.detail, str) else "channel delivery failed"
+    try:
+        return _HTTP_EXCEPTION_DETAIL_ADAPTER.validate_python(exc.detail, strict=True)
+    except ValidationError:
+        return "channel delivery failed"
 
 
 def _http_retry_after_seconds(exc: HTTPException) -> float | None:
@@ -7040,8 +7154,8 @@ def _safe_delivery_provider_response(
     *,
     provider: str,
     provider_message_id: str | None,
-) -> dict[str, Any]:
-    response: dict[str, Any] = {"provider": provider, "accepted": True}
+) -> JsonObject:
+    response: JsonObject = {"provider": provider, "accepted": True}
     if provider_message_id is not None:
         response["provider_message_id"] = provider_message_id[:300]
     return response
@@ -7053,24 +7167,24 @@ def _discord_delivery_nonce(message_id: UUID) -> str:
     return base64.urlsafe_b64encode(message_id.bytes).rstrip(b"=").decode("ascii")
 
 
-def _command_name(command: dict[str, Any]) -> str:
+def _command_name(command: JsonObject) -> str:
     value = command.get("name")
     return value if isinstance(value, str) and value else "command"
 
 
-def _command_description(command: dict[str, Any]) -> str:
+def _command_description(command: JsonObject) -> str:
     value = command.get("description")
     return value if isinstance(value, str) and value else _command_name(command)
 
 
 def _discord_command_payload(
-    command: dict[str, Any],
+    command: JsonObject,
     *,
     account: ChannelAccount,
     global_command: bool,
-) -> dict[str, Any]:
+) -> JsonObject:
     name = _command_name(command)
-    payload: dict[str, Any] = {
+    payload: JsonObject = {
         "name": name,
         "description": _command_description(command),
         "type": 1,
@@ -7102,11 +7216,13 @@ def _discord_command_payload(
             # from guild-scoped writes.
             # https://discord.com/developers/docs/resources/application#application-object-application-integration-types
             # https://discord.com/developers/docs/interactions/receiving-and-responding#interaction-object-interaction-context-types
-            payload["integration_types"] = [DISCORD_GUILD_INSTALL]
-            payload["contexts"] = [DISCORD_GUILD_INTERACTION_CONTEXT]
+            integration_types: list[JsonValue] = [DISCORD_GUILD_INSTALL]
+            contexts: list[JsonValue] = [DISCORD_GUILD_INTERACTION_CONTEXT]
             if discord_user_install_is_supported(account):
-                payload["integration_types"].append(DISCORD_USER_INSTALL)
-                payload["contexts"].append(DISCORD_BOT_DM_INTERACTION_CONTEXT)
+                integration_types.append(DISCORD_USER_INSTALL)
+                contexts.append(DISCORD_BOT_DM_INTERACTION_CONTEXT)
+            payload["integration_types"] = integration_types
+            payload["contexts"] = contexts
     options = command.get("options")
     if isinstance(options, list):
         payload["options"] = [option for option in options if isinstance(option, dict)]
@@ -7114,33 +7230,24 @@ def _discord_command_payload(
 
 
 def _account_config_str(account: ChannelAccount, key: str) -> str | None:
-    if not isinstance(account.config, dict):
+    config: object = account.config
+    if not _is_object_dict(config):
         return None
-    return _read_optional_str(account.config.get(key))
+    return _read_optional_str(config.get(key))
 
 
-def _require_account_config_str(account: ChannelAccount, key: str) -> str:
-    value = _account_config_str(account, key)
-    if value is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"channel account config.{key} is required",
-        )
-    return value
-
-
-def _read_optional_str(value: Any) -> str | None:
+def _read_optional_str(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _read_optional_display_name(value: Any) -> str | None:
+def _read_optional_display_name(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     normalized = value.strip()
     return normalized or None
 
 
-def _read_optional_identifier(value: Any) -> str | None:
+def _read_optional_identifier(value: object) -> str | None:
     if isinstance(value, str):
         return value or None
     if isinstance(value, int):
@@ -7148,11 +7255,13 @@ def _read_optional_identifier(value: Any) -> str | None:
     return None
 
 
-def _dict_identifier(value: Any, key: str) -> str | None:
-    if not isinstance(value, dict):
+def _dict_identifier(value: object, key: str) -> str | None:
+    try:
+        data = _JSON_OBJECT_ADAPTER.validate_python(value, strict=True)
+    except ValidationError:
         return None
-    return _read_optional_identifier(value.get(key))
+    return _read_optional_identifier(data.get(key))
 
 
-def _nested_identifier(data: dict[str, Any], *path: str) -> str | None:
+def _nested_identifier(data: JsonObject, *path: str) -> str | None:
     return _read_optional_identifier(_nested_dict_value(data, *path))

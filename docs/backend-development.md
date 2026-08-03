@@ -64,7 +64,12 @@ Run these before sending backend changes for review:
 cd backend
 uv lock --check
 uv run python scripts/check_dependency_authority.py
+uv run python scripts/outbound_api_governance.py
+# Load the locked optional SDK only for its direct-import type audit.
+uv sync --frozen --no-install-project --extra mem0
 uv run python scripts/type_governance.py owned
+uv run python scripts/type_governance.py strict
+uv run python scripts/type_governance.py exceptions
 uv run ruff check .
 uv run ruff format --check .
 uv run python -m compileall app scripts tests alembic
@@ -72,35 +77,143 @@ uv run python -m compileall app scripts tests alembic
 
 ## Python type governance
 
-BasedPyright runs in standard mode from the uv development environment. The
-owned-path gate is a zero-diagnostic ratchet for the small explicit `include`
-list in `pyproject.toml`. CI also sends every changed `backend/app/**/*.py`
-file to the fail-closed exact-path gate. The gate rejects empty, missing,
-partial, or malformed analysis rather than treating it as success.
+BasedPyright runs from the uv development environment. The owned gate covers
+all 185 production modules in standard mode and applies strict mode to 182 of
+them. CI also sends every changed `backend/app/**/*.py` file to the fail-closed
+exact-path gate. The gate rejects empty, missing, partial, or malformed
+analysis rather than treating it as success. Its production-file discovery is
+dynamic, so a new `app/**/*.py` module cannot silently fall outside the gate.
+
+The default development and test dependency set intentionally omits Mem0. Type
+audits install the locked `[mem0]` optional extra explicitly so BasedPyright can
+inspect the adapter's official lazy imports; the optional extra remains the
+single dependency authority for that SDK.
 
 Generate the complete non-gating inventory with:
 
 ```bash
 cd backend
-uv run python scripts/type_governance.py inventory
+uv run --extra mem0 python scripts/type_governance.py inventory
 ```
 
-The inventory at the initial BasedPyright 1.39.9 standard-mode baseline is:
+The current CI Python 3.14 non-gating BasedPyright 1.39.9 inventory is:
 
 | Area | Files | Errors |
 | --- | ---: | ---: |
-| `app` | 177 | 157 |
-| `tests` | 111 | 177 |
-| `scripts` | 11 | 2 |
-| `alembic` | 54 | 4 |
-| **Total** | **353** | **340** |
+| `app` | 185 | 0 |
+| `tests` | 138 | 615 |
+| `scripts` | 13 | 2 |
+| `alembic` | 65 | 4 |
+| **Total** | **401** | **621** |
 
 Warnings and information diagnostics are both zero in every area. This table
 records inventory, not accepted debt: no baseline or suppression file is
-used, and only the explicit zero-diagnostic owned paths gate existing code.
+used. Non-production counts may vary in a host-local environment with a
+different interpreter; the production `app` result is the zero-diagnostic
+invariant. Every first-party production module is clean in its owned gate.
 
-Done: the `owned` command exits 0 with `filesAnalyzed` equal to 3 and all
-diagnostic counts equal to 0; the `inventory` command reports all four areas.
+The strict-equivalent production audit reports 36 diagnostics across two
+retained standard-mode adapters and one explicitly frozen legacy module; the
+other 182 production files are strict-clean. The five reviewed SDK boundary
+owners have these exact gates:
+
+| SDK boundary | Gate / diagnostics | Locked upstream and first-party normalization |
+| --- | --- | --- |
+| `core/sentry.py` | strict / 0 | `sentry-sdk==2.66.1`; typed `Event`/`Hint` enter one recursive object boundary, credential-shaped keys are redacted, and no SDK response enters application state. |
+| `services/composio.py` | strict / 0 | `composio==0.18.1`, `composio-client==1.43.0`, `mcp==2.0.0`; generated request types and exact first-party Pydantic wire models cover every consumed SDK/MCP result, while SDK error families map to sanitized domain failures. |
+| `services/file_store_s3.py` | standard / 2 | `boto3==1.43.14`, `botocore==1.43.14`, `boto3-stubs==1.43.14`, `botocore-stubs==1.43.14`, and `mypy-boto3-s3==1.43.14`; only the two untyped `boto3.client("s3")` construction calls remain Unknown. The adapter retains the generated `S3Client` internally and validates operation metadata, error payloads, `StreamingBody`, and bytes before returning. |
+| `services/memory_provider_mem0.py` | standard / 19 | Optional `mem0ai==2.0.14` publishes no `py.typed`; strict-mode missing-stub and Unknown diagnostics stay localized to the two official lazy import blocks and the five public operation callables. Construction uses the public `MemoryClient` path, each consumed operation is checked for existence and callability, and strict Pydantic wire models validate add/search/list/count/get/delete results before domain conversion. See the [official export](https://github.com/mem0ai/mem0/blob/v2.0.14/mem0/__init__.py) and [client source](https://github.com/mem0ai/mem0/blob/v2.0.14/mem0/client/main.py). |
+| `services/postgres_listener.py` | strict / 0 | `asyncpg==0.31.0`, `asyncpg-stubs==0.31.3`; listener callbacks accept a validated string payload only, and connection/listener failures map to `PostgresListenerError`. |
+
+The five Boto distributions use their latest common public patch, 1.43.14:
+[boto3](https://pypi.org/pypi/boto3/1.43.14/json),
+[botocore](https://pypi.org/pypi/botocore/1.43.14/json),
+[boto3-stubs](https://pypi.org/pypi/boto3-stubs/1.43.14/json),
+[botocore-stubs](https://pypi.org/pypi/botocore-stubs/1.43.14/json), and
+[mypy-boto3-s3](https://pypi.org/pypi/mypy-boto3-s3/1.43.14/json).
+The official botocore 1.43.14 and formerly pinned 1.43.62 S3 models have the
+same `PutObject`, `GetObject`, `HeadObject`, and `DeleteObject` operation
+shapes used by this adapter. Their only transitive shape difference for those
+operations is the unused `Expires` field (`string` versus `timestamp`); the
+adapter neither sends nor consumes it, so the common-version pin does not
+change its Bucket, Key, Body, ContentType, status, or stream contract.
+
+No local SDK stub or mirrored overload is used to hide diagnostics.
+`STANDARD_ONLY` contains exactly S3 and Mem0, and the owned production
+exclusion set is empty. The exception audit pins the per-file strict diagnostic
+counts (S3 2, Mem0 19, frozen legacy 15), so either added debt or a typing
+improvement fails until the exact allowlist is reviewed. The public
+`S3ObjectStoreClient` protocol is a first-party storage facade, not a substitute
+type for boto: the adapter itself retains the generated official `S3Client`.
+
+`app/routes/sessions.py` is separately listed in `FROZEN_LEGACY_ONLY` with 15
+strict diagnostics. Its v1 runtime-observation symbols are protected by the
+repository byte-freeze, and this wave was explicitly authorized to defer that
+legacy deployment boundary instead of changing even type annotations inside
+the frozen symbols. This is not an SDK adapter and is not claimed as strict.
+The exception audit keeps the categories disjoint, rejects missing paths, and
+requires the exact diagnostic inventory so stale exceptions cannot linger.
+
+Done: `owned` reports 185 files and `strict` reports 182 files, with every
+diagnostic count equal to zero; `exceptions` reports the exact 36-diagnostic
+strict debt above; `inventory` reports all four areas above.
+
+## External API import ownership and contracts
+
+`scripts/outbound_api_governance.py` mechanically parses import statements in
+all 185 production modules. It requires exact equality for the 26 third-party
+import roots and 14 reviewed external/network import families, and confines
+SDKs with dynamic or incomplete upstream typing to five first-party boundary
+owners. A new or stale root or owner fails until it is explicitly reviewed.
+Unreviewed stacks including `requests`, `aiohttp`, `urllib3`,
+`urllib.request`, `http.client`, `grpc`, `ftplib`, `imaplib`, `poplib`,
+`smtplib`, `telnetlib`, and `xmlrpc.client` are rejected in production code.
+
+This AST check is deliberately only an import and ownership inventory. It does
+not resolve receivers, aliases, calls, lexical scopes, or control flow, and it
+does not claim to statically interpret arbitrary Python. Those semantic safety
+claims instead come from the BasedPyright owned/strict gates above, official
+SDK types or pinned official source, typed request construction, runtime
+validation of every consumed response, narrow sanitized exception mapping, and
+contract tests using real official clients, models, or transports.
+
+S3 and Mem0 are the only standard-mode production adapters. Their exact files
+and exact strict diagnostic counts are ratcheted by `type_governance.py`; the
+import inventory prevents their dynamic SDKs from gaining another owner. S3
+uses the generated official client/stubs and validates metadata, error bodies,
+streams, and returned bytes. Mem0 calls the pinned public `MemoryClient`, keeps
+its untyped operation results as `object`, and validates every consumed result
+with strict Pydantic wire models. Tests exercise the official S3 model/pins and
+the real Mem0 client over an official HTTPX transport. No scanner-side inferred
+type, homemade upstream protocol, suppression, or unchecked provider response
+is accepted as evidence.
+
+The maintained boundary contracts are:
+
+| Provider / boundary | Typed request boundary | Response normalization and failure mapping |
+| --- | --- | --- |
+| Clerk JWT/JWKS and Backend API (`core/auth.py`, `routes/clerk_webhooks.py`, `routes/cli_auth.py`) | Typed JWT claims, fixed algorithms/audience/issuer, Clerk API-version headers, and explicit request bodies | `PyJWK` plus `ClerkUserResponse`/`ClerkAuthorityResponse`/JSON adapters; invalid keys, payloads, HTTP, and lifecycle states fail closed through sanitized auth or 502/503 mappings. |
+| Codex/Clerk OAuth (`routes/ai_providers.py`, `services/codex_oauth.py`, OAuth attempt/revoke services) | First-party dataclasses, bounded form fields, `JsonObject`, and secret-bearing request fields | Bounded `TypeAdapter` JSON parsing and required token fields; pending/rate-limit/provider/network states map without provider body leakage. Revocation consumes status only. |
+| Discord and Telegram REST (`channel_routers/shared.py`, `channel_routers/telegram.py`, `services/channels.py`) | `JsonValue` payloads and provider-specific command/message shapes | Success requires exact `ok`, message/application/command ids, names, and command type where used. Malformed 2xx responses become controlled 502s; rate-limit and provider failures retain established sanitized mappings. Telegram file proxying is an intentional authority-checked opaque byte/status path. |
+| Discord Gateway (`services/discord_gateway_worker.py`) | Pinned `websockets==17.0.1` frames are emitted from typed first-party gateway payloads | Every received frame crosses `TypeAdapter[JsonValue]` and exact opcode/sequence validation; protocol/network errors remain inside the reconnect boundary. |
+| WhatsApp first-party sidecar (`services/whatsapp_native_transport.py`) | Typed runtime commands and recursively encoded `JsonValue` node payloads | Response JSON is size-bounded and validated into mappings with exact required booleans, ids, events, and runtime status; unavailable/rejected/protocol errors are distinct and redacted. |
+| Generic AI provider probes and agent webhooks (`services/ai_provider_connection.py`, `services/channel_webhooks.py`, `services/safe_public_http.py`) | SSRF-pinned public URLs, typed headers, and `JsonValue` request bodies | Bounded bytes plus exact provider-shape JSON validation for probes; webhook delivery intentionally consumes status only. DNS/TLS/connect/timeout/size errors use narrow first-party classes. |
+| OpenAI-compatible embeddings and extraction (`services/embedding.py`, `services/memory_extraction.py`) | Official `openai==2.52.0` request models, fixed 768 dimensions, generated chat params, and strict JSON schema | Exactly one finite 768-vector or one non-empty completion is required, then Pydantic validates the extraction domain. Official API exception subclasses map to sanitized 502/503 semantics. |
+| Local FastEmbed (`services/embedding.py`) | Locked `fastembed==0.8.0` model name and a single-string batch | The SDK iterable is normalized to exactly 768 finite real floats; malformed vectors and documented model/runtime failures become `EmbeddingUpstreamError`. |
+| GitHub Contents/raw downloads (`services/skill_installer.py`) | Parsed owner/repo/ref/path and HTTPS-only GitHub URLs | Strict Pydantic Contents entries, exact raw-host/repo/ref prefix, UTF-8, response and archive size caps; 404 is the only absence fallback and all other failures are sanitized. |
+| Composio generated SDK, high-level session API, and MCP (`services/composio.py`) | Generated `AuthConfigCreateParams`/`ConnectedAccountCreateParams`, typed domain arguments, and first-party MCP session data | Every consumed generated model is revalidated by an exact first-party Pydantic wire model; MCP results are revalidated by official MCP models. SDK families map to `ComposioFailure` without leaking secrets/details. |
+| S3 (`services/file_store_s3.py`) | Generated `S3Client` operations with typed bucket/key/bytes/content type | Every consumed operation validates 2xx response metadata; `StreamingBody`, error payloads, and body bytes are strict-validated and streams always close. Botocore/client failures become `S3ObjectStoreError` or exact not-found. |
+| Mem0 (`services/memory_provider_mem0.py`) | The pinned official `MemoryClient` signatures accept typed messages, filters, metadata, pagination, and ids | Strict Pydantic add/search/list/get/count models require real ids and field types; delete must still return a JSON object even though its contents are status-only. Missing SDK, transient/network, provider, and malformed-response failures map to distinct sanitized first-party errors. |
+| PostgreSQL notifications (`services/postgres_listener.py`) | Typed DSN/channel/callback inputs and pinned asyncpg listener signatures | Notification payload must be a string before leaving the adapter; registration/connection/close failures become `PostgresListenerError`. |
+| Sentry (`core/sentry.py`) | Typed configuration and official event/hint types | Recursive redaction is applied before SDK delivery; Sentry produces no response consumed by Clawdi domain code. |
+
+Run the executable import inventory and its direct invariant tests with:
+
+```bash
+cd backend
+uv run python scripts/outbound_api_governance.py
+uv run pytest -q tests/test_outbound_api_governance.py
+```
 
 Backend tests require a real PostgreSQL database with `pgvector` and `pg_trgm`
 available. The pytest fixtures read `DATABASE_URL` and do not create or migrate

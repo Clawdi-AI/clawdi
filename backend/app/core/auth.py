@@ -528,7 +528,7 @@ async def warm_clerk_jwks() -> None:
         return
     try:
         await asyncio.to_thread(_clerk_jwks_client.get_signing_keys)
-    except Exception:  # noqa: BLE001 - warmup must never prevent startup
+    except (jwt.PyJWTError, OSError, TimeoutError, ValueError):
         logger.warning("Clerk JWKS warmup failed.", exc_info=True)
     else:
         logger.info("Clerk JWKS cache warmed.")
@@ -554,7 +554,7 @@ async def _resolve_clerk_signing_key(token: str) -> str | jwt.PyJWK | None:
         ) from error
     except (jwt.InvalidTokenError, jwt.PyJWKClientError):
         return None
-    except Exception as error:  # noqa: BLE001 - external JWKS failures must be clean auth errors
+    except (OSError, TimeoutError, ValueError) as error:
         logger.exception("Clerk JWKS signing-key lookup failed.")
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1030,7 +1030,7 @@ async def require_oauth_cli_auth(auth: AuthContext = Depends(get_auth)) -> AuthC
     return auth
 
 
-def _is_scoped_api_key(auth: AuthContext) -> bool:
+def is_scoped_api_key(auth: AuthContext) -> bool:
     """Any api_key with an explicit scope list is treated as
     "narrow capability" and rejected from user-only routes. Today
     that's just Agent API keys with narrow scopes, but the
@@ -1064,7 +1064,7 @@ def is_env_bound_api_key(auth: AuthContext) -> bool:
     account session history; legacy environment keys retain environment-local
     session visibility. The environment id remains provenance for Memory.
 
-    Distinct from `_is_scoped_api_key`: the latter is about
+    Distinct from `is_scoped_api_key`: the latter is about
     capability narrowing (used to reject from user-only routes);
     this one is about env-project identity and visibility."""
     return auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None
@@ -1088,7 +1088,7 @@ async def require_user_auth(auth: AuthContext = Depends(get_auth)) -> AuthContex
     rejected — those are deliberate capability narrowing and
     have no business hitting the user's full surface.
     """
-    if _is_scoped_api_key(auth):
+    if is_scoped_api_key(auth):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "This endpoint is not available to scoped api keys",
@@ -1136,7 +1136,7 @@ async def require_user_cli(auth: AuthContext = Depends(get_auth)) -> AuthContext
     Per-env data filtering is enforced inside the resolve handler."""
     if not auth.is_cli and not auth.oauth_cli:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "This endpoint requires CLI authentication")
-    if _is_scoped_api_key(auth):
+    if is_scoped_api_key(auth):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "Vault plaintext is not available to scoped api keys",

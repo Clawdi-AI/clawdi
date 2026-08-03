@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.session import AgentEnvironment  # noqa: F401 - register FK target
+from app.models.session import AgentEnvironment
 
 
 class HostedRuntimeState(Base, TimestampMixin):
@@ -29,7 +29,7 @@ class HostedRuntimeState(Base, TimestampMixin):
 
     environment_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("agent_environments.id", ondelete="CASCADE"),
+        ForeignKey(AgentEnvironment.id, ondelete="CASCADE"),
         primary_key=True,
     )
     deployment_id: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -37,15 +37,17 @@ class HostedRuntimeState(Base, TimestampMixin):
     generation: Mapped[int] = mapped_column(Integer, nullable=False)
     apply_generation: Mapped[int | None] = mapped_column(Integer)
     cli_package_spec: Mapped[str] = mapped_column(String(200), nullable=False)
-    locale: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
-    system: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
-    egress_engine: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    locale: Mapped[dict[str, JsonValue]] = mapped_column(JSONB(none_as_null=True), nullable=False)
+    system: Mapped[dict[str, JsonValue]] = mapped_column(JSONB(none_as_null=True), nullable=False)
+    egress_engine: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
     runtimes: Mapped[dict[str, JsonValue]] = mapped_column(JSONB(none_as_null=True), nullable=False)
-    live_sync: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
-    recovery: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
-    egress_profiles: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
-    mcp: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
-    skills: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    live_sync: Mapped[dict[str, JsonValue]] = mapped_column(
+        JSONB(none_as_null=True), nullable=False
+    )
+    recovery: Mapped[dict[str, JsonValue]] = mapped_column(JSONB(none_as_null=True), nullable=False)
+    egress_profiles: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
+    mcp: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
+    skills: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
     tools: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
 
 

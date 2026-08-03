@@ -259,7 +259,7 @@ def _check_device_rate_limit(bucket_key: str) -> None:
                     detail="device flow rate limit exceeded",
                     headers={"Retry-After": str(int(_DEVICE_RATE_WINDOW_S))},
                 )
-            attempts = deque()
+            attempts = deque[float]()
             _device_per_ip_attempts[bucket_key] = attempts
         while attempts and attempts[0] < cutoff:
             attempts.popleft()

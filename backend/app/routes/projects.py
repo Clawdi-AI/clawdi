@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
@@ -75,7 +76,7 @@ class ProjectCreate(BaseModel):
 
 def _project_response(
     project: Project,
-    caller_user_id,
+    caller_user_id: UUID,
     *,
     owner: User | None = None,
     membership: ProjectMembership | None = None,
@@ -111,7 +112,7 @@ def _slugify(value: str) -> str:
 
 async def _unique_slug(
     db: AsyncSession,
-    user_id,
+    user_id: UUID,
     preferred: str,
     *,
     allow_suffix: bool = True,

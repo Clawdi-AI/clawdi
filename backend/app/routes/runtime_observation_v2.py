@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, JsonValue, TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,6 +66,7 @@ from app.services.runtime_observation import (
 )
 
 router = APIRouter(prefix="/v2/runtime", tags=["v2-runtime-observations"])
+_JSON_OBJECT_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 
 IdempotencyKey = Annotated[
     str,
@@ -196,14 +198,13 @@ async def _begin_idempotent_mutation(
     return request_hash, read_platform_replay(existing)
 
 
-def _canonical_response_body(value: Any) -> dict[str, Any]:
-    if hasattr(value, "model_dump"):
-        body = value.model_dump(mode="json", by_alias=True)
-    elif isinstance(value, dict):
-        body = value
-    else:
-        raise TypeError("v2 runtime response must be an object")
-    return json.loads(json.dumps(body, sort_keys=True, separators=(",", ":")))
+def _canonical_response_body(value: BaseModel) -> dict[str, JsonValue]:
+    encoded = json.dumps(
+        value.model_dump(mode="json", by_alias=True),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return _JSON_OBJECT_ADAPTER.validate_json(encoded)
 
 
 class _CanonicalJSONResponse(JSONResponse):

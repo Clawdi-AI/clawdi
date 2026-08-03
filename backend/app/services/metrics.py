@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Gauge, Histogram
@@ -121,6 +121,6 @@ def metrics_content_type() -> str:
 
 
 @contextmanager
-def track_proxy_latency(channel: str, method: str) -> Iterator[None]:
+def track_proxy_latency(channel: str, method: str) -> Generator[None, None, None]:
     with proxy_latency.labels(channel=channel, method=method).time():
         yield

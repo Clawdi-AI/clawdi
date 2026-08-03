@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import sys
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import ModuleType
 from typing import Any
 
 import httpx
@@ -24,6 +26,16 @@ from app.services.memory_provider import Mem0Provider
 from tests.conftest import create_env_with_project
 
 pytestmark = pytest.mark.committed_db
+
+
+class _FakeMem0Module(ModuleType):
+    MemoryClient: object
+
+
+class _FakeMem0ExceptionsModule(ModuleType):
+    MemoryError: type[Exception]
+    NetworkError: type[Exception]
+    RateLimitError: type[Exception]
 
 
 def _runtime_auth(user, environment_id, *, scopes: list[str] | None = None) -> AuthContext:
@@ -419,12 +431,52 @@ async def test_environment_bound_mem0_delete_uses_account_scope(
             self.get_calls.append(requested_memory_id)
             return {"id": str(memory_id), "user_id": str(seed_user.id)}
 
-        def delete(self, requested_memory_id: str) -> None:
+        def delete(self, requested_memory_id: str) -> dict[str, str]:
             self.delete_calls.append(requested_memory_id)
+            return {"status": "deleted"}
+
+        def add(
+            self,
+            messages: list[dict[str, object]],
+            *,
+            filters: dict[str, object],
+            metadata: dict[str, object],
+        ) -> object:
+            raise AssertionError((messages, filters, metadata))
+
+        def search(
+            self,
+            query: str,
+            *,
+            filters: dict[str, object],
+            top_k: int,
+        ) -> object:
+            raise AssertionError((query, filters, top_k))
+
+        def get_all(
+            self,
+            *,
+            filters: dict[str, object],
+            page: int,
+            page_size: int,
+        ) -> object:
+            raise AssertionError((filters, page, page_size))
 
     mem0_client = Mem0DeleteClient()
-    provider = Mem0Provider.__new__(Mem0Provider)
-    provider.client = mem0_client
+
+    def memory_client_factory(*, api_key: str) -> Mem0DeleteClient:
+        assert api_key == "test-api-key"
+        return mem0_client
+
+    mem0_module = _FakeMem0Module("mem0")
+    mem0_module.MemoryClient = memory_client_factory
+    exceptions_module = _FakeMem0ExceptionsModule("mem0.exceptions")
+    exceptions_module.MemoryError = RuntimeError
+    exceptions_module.NetworkError = ConnectionError
+    exceptions_module.RateLimitError = TimeoutError
+    monkeypatch.setitem(sys.modules, "mem0", mem0_module)
+    monkeypatch.setitem(sys.modules, "mem0.exceptions", exceptions_module)
+    provider = Mem0Provider(api_key="test-api-key")
 
     async def override_session():
         yield db_session

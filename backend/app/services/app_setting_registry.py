@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from app.services.clerk_cli_oauth_settings import (
     CLERK_CLI_OAUTH_SETTING_ADAPTER,
@@ -32,6 +32,7 @@ CLERK_CLI_OAUTH_SPEC = AppSettingSpec[ClerkCliOAuthSetting](
 )
 APP_SETTING_SPECS: tuple[AppSettingSpec[Any], ...] = (CLERK_CLI_OAUTH_SPEC,)
 APP_SETTING_SPEC_BY_KEY = {spec.key: spec for spec in APP_SETTING_SPECS}
+_JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
 def get_app_setting_spec(key: str) -> AppSettingSpec[Any]:
@@ -48,6 +49,6 @@ def validate_app_setting_value[T](spec: AppSettingSpec[T], value: object) -> T:
         raise AppSettingValueError(f"invalid {spec.key} value") from error
 
 
-def canonical_app_setting_json[T](spec: AppSettingSpec[T], value: object) -> Any:
+def canonical_app_setting_json[T](spec: AppSettingSpec[T], value: object) -> JsonValue:
     validated = validate_app_setting_value(spec, value)
-    return spec.adapter.dump_python(validated, mode="json")
+    return _JSON_VALUE_ADAPTER.validate_python(spec.adapter.dump_python(validated, mode="json"))

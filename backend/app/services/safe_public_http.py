@@ -9,9 +9,10 @@ import socket
 import ssl
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 import httpx
+from pydantic import JsonValue
 
 from app.services.private_ip import is_private_hostname
 
@@ -222,7 +223,7 @@ class SafePublicHttpClient:
         url: str | httpx.URL,
         *,
         headers: Mapping[str, str] | None = None,
-        json: Any = None,
+        json: JsonValue = None,
     ) -> SafePublicHttpResponse:
         try:
             async with asyncio.timeout(self._total_timeout_seconds):
@@ -251,7 +252,7 @@ class SafePublicHttpClient:
         *,
         target: ResolvedPublicHttpTarget,
         headers: Mapping[str, str] | None,
-        json: Any,
+        json: JsonValue,
     ) -> SafePublicHttpResponse:
         last_connect_error: httpx.ConnectError | httpx.ConnectTimeout | None = None
         for address in target.addresses:
@@ -280,7 +281,7 @@ class SafePublicHttpClient:
         url: httpx.URL,
         address: str,
         headers: Mapping[str, str] | None,
-        json: Any,
+        json: JsonValue,
     ) -> SafePublicHttpResponse:
         original_host = url.raw_host.decode("ascii")
         host_header = f"[{original_host}]" if ":" in original_host else original_host

@@ -1,14 +1,14 @@
 import uuid
-from typing import Any
 
+from pydantic import JsonValue
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.channel import ChannelAccount, ChannelBotAgentLink  # noqa: F401
-from app.models.session import AgentEnvironment  # noqa: F401
-from app.models.user import User  # noqa: F401
+from app.models.channel import ChannelAccount, ChannelBotAgentLink
+from app.models.session import AgentEnvironment
+from app.models.user import User
 
 
 class ControlPlaneAuditEvent(Base, TimestampMixin):
@@ -18,12 +18,12 @@ class ControlPlaneAuditEvent(Base, TimestampMixin):
     actor_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(User.id, ondelete="SET NULL"),
         index=True,
     )
     target_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey(User.id, ondelete="SET NULL"),
         index=True,
     )
     source: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
@@ -32,20 +32,20 @@ class ControlPlaneAuditEvent(Base, TimestampMixin):
     resource_id: Mapped[str | None] = mapped_column(String(200), index=True)
     environment_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("agent_environments.id", ondelete="SET NULL"),
+        ForeignKey(AgentEnvironment.id, ondelete="SET NULL"),
         index=True,
     )
     channel_account_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("channel_accounts.id", ondelete="SET NULL"),
+        ForeignKey(ChannelAccount.id, ondelete="SET NULL"),
         index=True,
     )
     channel_agent_link_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("channel_bot_agent_links.id", ondelete="SET NULL"),
+        ForeignKey(ChannelBotAgentLink.id, ondelete="SET NULL"),
         index=True,
     )
-    details: Mapped[dict[str, Any]] = mapped_column(
+    details: Mapped[dict[str, JsonValue]] = mapped_column(
         JSONB(none_as_null=True),
         nullable=False,
         default=dict,

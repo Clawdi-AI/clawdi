@@ -19,9 +19,9 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.project import Project  # noqa: F401 - FK target
-from app.models.session import AgentEnvironment as AgentEnvironment  # noqa: F401 - FK target
-from app.models.user import User as User  # noqa: F401 - FK target
+from app.models.project import Project
+from app.models.session import AgentEnvironment
+from app.models.user import User
 
 
 class AgentProjectBinding(Base, TimestampMixin):
@@ -30,12 +30,12 @@ class AgentProjectBinding(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     agent_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("agent_environments.id", ondelete="CASCADE"),
+        ForeignKey(AgentEnvironment.id, ondelete="CASCADE"),
         nullable=False,
     )
     project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("projects.id", ondelete="CASCADE"),
+        ForeignKey(Project.id, ondelete="CASCADE"),
         nullable=False,
     )
     binding_type: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -48,7 +48,7 @@ class AgentProjectBinding(Base, TimestampMixin):
     )
     created_by_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey(User.id, ondelete="CASCADE"),
         nullable=False,
     )
 

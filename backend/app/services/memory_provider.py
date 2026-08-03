@@ -5,55 +5,34 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Protocol
 
+from pydantic import BaseModel, JsonValue
 from sqlalchemy import select, text
+from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.memory import Memory
-from app.services.embedding import Embedder, resolve_embedder
+from app.services.embedding import Embedder, EmbeddingUpstreamError, resolve_embedder
+from app.services.memory_provider_mem0 import Mem0Provider
+from app.services.memory_types import MemoryItem, MemoryProvider, MemoryProviderUnavailableError
 from app.services.vault_crypto import decrypt_field
 
 log = logging.getLogger(__name__)
 
 
-class MemoryProvider(Protocol):
-    async def add(
-        self,
-        user_id: str,
-        content: str,
-        category: str = "fact",
-        source: str = "manual",
-        tags: list[str] | None = None,
-        source_session_id: uuid.UUID | None = None,
-        source_environment_id: uuid.UUID | None = None,
-    ) -> dict: ...
-
-    async def search(
-        self,
-        user_id: str,
-        query: str,
-        limit: int = 50,
-        category: str | None = None,
-    ) -> list[dict]: ...
-
-    async def list_all(
-        self,
-        user_id: str,
-        limit: int = 50,
-        offset: int = 0,
-        category: str | None = None,
-        order: str = "desc",
-    ) -> list[dict]: ...
-
-    async def count(
-        self,
-        user_id: str,
-        category: str | None = None,
-    ) -> int: ...
-
-    async def delete(self, user_id: str, memory_id: str) -> bool: ...
+class _RawMemorySearchRow(BaseModel):
+    id: uuid.UUID
+    content: str
+    category: str
+    source: str
+    tags: list[str] | None = None
+    access_count: int
+    created_at: datetime
+    source_session_id: uuid.UUID | None = None
+    source_environment_id: uuid.UUID | None = None
+    combined_score: float | None = None
 
 
 class BuiltinProvider:
@@ -77,17 +56,17 @@ class BuiltinProvider:
         tags: list[str] | None = None,
         source_session_id: uuid.UUID | None = None,
         source_environment_id: uuid.UUID | None = None,
-    ) -> dict:
+    ) -> MemoryItem:
         vec: list[float] | None = None
         if self.embedder is not None:
             try:
                 vec = await self.embedder.embed(content)
-            except Exception as e:
+            except EmbeddingUpstreamError as exc:
                 # Embedding is a nice-to-have on the write path — if the
                 # embedder fails, store the memory anyway so the user's
                 # write isn't silently dropped. Future search will fall
                 # back to FTS/trigram for this row.
-                log.warning("embedder failed at add-time, storing without: %s", e)
+                log.warning("embedder failed at add-time, storing without: %s", exc)
         memory = Memory(
             user_id=uuid.UUID(user_id),
             content=content,
@@ -109,7 +88,7 @@ class BuiltinProvider:
         query: str,
         limit: int = 50,
         category: str | None = None,
-    ) -> list[dict]:
+    ) -> list[MemoryItem]:
         fts_rows = await self._search_fts(user_id, query, limit, category)
         if self.embedder is None:
             return [_strip_scores(r) for r in fts_rows]
@@ -129,7 +108,7 @@ class BuiltinProvider:
         query: str,
         limit: int,
         category: str | None,
-    ) -> list[dict]:
+    ) -> list[MemoryItem]:
         """FTS + trigram hybrid with strict/relaxed score floor.
 
         Internal rows keep `combined_score` for downstream merge.
@@ -166,7 +145,7 @@ class BuiltinProvider:
         rows = (await self.db.execute(sql, {**params, "min_score": 0.05})).mappings().all()
         if not rows:
             rows = (await self.db.execute(sql, {**params, "min_score": 0.0})).mappings().all()
-        return [_row_to_search_dict(r, score_key="combined_score") for r in rows]
+        return [_row_to_search_dict(row) for row in rows]
 
     # Cosine-distance thresholds for vector search. Empirically on
     # `paraphrase-multilingual-mpnet-base-v2`, the legitimate-match band
@@ -189,7 +168,7 @@ class BuiltinProvider:
         query: str,
         limit: int,
         category: str | None,
-    ) -> list[dict]:
+    ) -> list[MemoryItem]:
         """pgvector cosine-distance nearest neighbors among rows with embeddings.
 
         Strict threshold first; if empty, retry with a relaxed threshold
@@ -215,7 +194,7 @@ class BuiltinProvider:
                 category,
                 self.VECTOR_DISTANCE_RELAXED,
             )
-        out: list[dict] = []
+        out: list[MemoryItem] = []
         for mem, dist in rows:
             d = memory_to_dict(mem)
             # cosine distance ∈ [0, 2]; convert to similarity ∈ [0, 1].
@@ -231,7 +210,7 @@ class BuiltinProvider:
         limit: int,
         category: str | None,
         max_distance: float,
-    ):
+    ) -> Sequence[Row[tuple[Memory, float]]]:
         distance = Memory.embedding.cosine_distance(q_vec)
         stmt = (
             select(Memory, distance.label("distance"))
@@ -254,7 +233,7 @@ class BuiltinProvider:
         offset: int = 0,
         category: str | None = None,
         order: str = "desc",
-    ) -> list[dict]:
+    ) -> list[MemoryItem]:
         q = select(Memory).where(Memory.user_id == uuid.UUID(user_id))
         if category:
             q = q.where(Memory.category == category)
@@ -290,141 +269,17 @@ class BuiltinProvider:
         return True
 
 
-class Mem0Provider:
-    """Memory provider backed by Mem0 API."""
-
-    def __init__(self, api_key: str):
-        from mem0 import MemoryClient  # pyright: ignore[reportMissingImports]
-
-        self.client = MemoryClient(api_key=api_key)
-
-    async def add(
-        self,
-        user_id: str,
-        content: str,
-        category: str = "fact",
-        source: str = "manual",
-        tags: list[str] | None = None,
-        source_session_id: uuid.UUID | None = None,
-        source_environment_id: uuid.UUID | None = None,
-    ) -> dict:
-        # Mem0 has no native provenance columns; persist both forms in metadata
-        # and use the same metadata as a server-side search/list filter.
-        metadata: dict = {"category": category, "source": source, "tags": tags or []}
-        if source_session_id is not None:
-            metadata["source_session_id"] = str(source_session_id)
-        if source_environment_id is not None:
-            metadata["source_environment_id"] = str(source_environment_id)
-        result = self.client.add(
-            [{"role": "user", "content": content}],
-            filters={"user_id": user_id},
-            metadata=metadata,
-        )
-        items = _mem0_items(result)
-        mem_id = items[0].get("id") if items else None
-        if not isinstance(mem_id, str) or not mem_id:
-            mem_id = str(uuid.uuid4())
-        return {"id": mem_id}
-
-    async def search(
-        self,
-        user_id: str,
-        query: str,
-        limit: int = 50,
-        category: str | None = None,
-    ) -> list[dict]:
-        results = self.client.search(
-            query,
-            filters=_mem0_filters(user_id, category=category),
-            top_k=limit,
-        )
-        items = _mem0_items(results)
-        out = []
-        for r in items:
-            if not isinstance(r, dict):
-                continue
-            meta = r.get("metadata", {}) or {}
-            if category and meta.get("category") != category:
-                continue
-            out.append(
-                {
-                    "id": r.get("id", ""),
-                    "content": r.get("memory", ""),
-                    "category": meta.get("category", "fact"),
-                    "source": "mem0",
-                    "tags": meta.get("tags"),
-                    "created_at": r.get("created_at", ""),
-                    "source_session_id": meta.get("source_session_id"),
-                    "source_environment_id": meta.get("source_environment_id"),
-                }
-            )
-        return out
-
-    async def list_all(
-        self,
-        user_id: str,
-        limit: int = 50,
-        offset: int = 0,
-        category: str | None = None,
-        order: str = "desc",  # mem0 returns in insertion order; accepted for
-        # Protocol compatibility but ignored here.
-    ) -> list[dict]:
-        del order  # intentionally unused for mem0 provider
-        results = self.client.get_all(
-            filters=_mem0_filters(user_id, category=category),
-            page=(offset // limit) + 1,
-            page_size=limit,
-        )
-        items = _mem0_items(results)
-        return [
-            {
-                "id": r.get("id", ""),
-                "content": r.get("memory", ""),
-                "category": r.get("metadata", {}).get("category", "fact"),
-                "source": "mem0",
-                "tags": r.get("metadata", {}).get("tags"),
-                "created_at": r.get("created_at", ""),
-                "source_session_id": r.get("metadata", {}).get("source_session_id"),
-                "source_environment_id": r.get("metadata", {}).get("source_environment_id"),
-            }
-            for r in items[:limit]
-        ]
-
-    async def count(
-        self,
-        user_id: str,
-        category: str | None = None,
-    ) -> int:
-        results = self.client.get_all(
-            filters=_mem0_filters(user_id, category=category),
-            page=1,
-            page_size=1,
-        )
-        if isinstance(results, dict):
-            count = results.get("count")
-            if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
-                return count
-        items = _mem0_items(results)
-        return len(items)
-
-    async def delete(self, user_id: str, memory_id: str) -> bool:
-        memory = self.client.get(memory_id)
-        if not isinstance(memory, dict) or memory.get("user_id") != user_id:
-            return False
-        self.client.delete(memory_id)
-        return True
-
-
 # ---------- helpers ----------
 
 
-def memory_to_dict(m: Memory) -> dict:
+def memory_to_dict(m: Memory) -> MemoryItem:
+    tags: list[JsonValue] | None = [tag for tag in m.tags] if m.tags is not None else None
     return {
         "id": str(m.id),
         "content": m.content,
         "category": m.category,
         "source": m.source,
-        "tags": m.tags,
+        "tags": tags,
         "access_count": m.access_count,
         "created_at": m.created_at.isoformat(),
         # Session linkage so the route layer can JOIN through to the
@@ -437,60 +292,41 @@ def memory_to_dict(m: Memory) -> dict:
     }
 
 
-def _row_to_dict(r) -> dict:
+def _row_to_dict(raw: object) -> MemoryItem:
     """Serialize a raw SQL row (SQLAlchemy RowMapping) to the API shape."""
-    created_at = r["created_at"]
-    sid = r.get("source_session_id") if hasattr(r, "get") else None
-    eid = r.get("source_environment_id") if hasattr(r, "get") else None
+    row = _RawMemorySearchRow.model_validate(raw)
+    tags: list[JsonValue] | None = [tag for tag in row.tags] if row.tags is not None else None
     return {
-        "id": str(r["id"]),
-        "content": r["content"],
-        "category": r["category"],
-        "source": r["source"],
-        "tags": r["tags"],
-        "access_count": r["access_count"],
-        "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
-        "source_session_id": str(sid) if sid else None,
-        "source_environment_id": str(eid) if eid else None,
+        "id": str(row.id),
+        "content": row.content,
+        "category": row.category,
+        "source": row.source,
+        "tags": tags,
+        "access_count": row.access_count,
+        "created_at": row.created_at.isoformat(),
+        "source_session_id": (
+            str(row.source_session_id) if row.source_session_id is not None else None
+        ),
+        "source_environment_id": (
+            str(row.source_environment_id) if row.source_environment_id is not None else None
+        ),
     }
 
 
-def _mem0_items(result: object) -> list[dict]:
-    if isinstance(result, list):
-        return [item for item in result if isinstance(item, dict)]
-    if isinstance(result, dict):
-        raw = result.get("results")
-        if isinstance(raw, list):
-            return [item for item in raw if isinstance(item, dict)]
-        if isinstance(result.get("id"), str):
-            return [result]
-    return []
-
-
-def _mem0_filters(
-    user_id: str,
-    *,
-    category: str | None,
-) -> dict:
-    """Build an account-scoped Mem0 Platform v3 filter."""
-    conditions: list[dict] = [{"user_id": user_id}]
-    if category is not None:
-        conditions.append({"metadata": {"category": category}})
-    return {"AND": conditions}
-
-
-def _row_to_search_dict(r, score_key: str) -> dict:
+def _row_to_search_dict(raw: object) -> MemoryItem:
     """Like `_row_to_dict` but preserves an internal score field for merging."""
-    d = _row_to_dict(r)
-    val = r.get(score_key) if hasattr(r, "get") else None
-    if val is not None:
-        d[score_key] = float(val)
-    return d
+    row = _RawMemorySearchRow.model_validate(raw)
+    item = _row_to_dict(row.model_dump())
+    if row.combined_score is not None:
+        item["combined_score"] = row.combined_score
+    return item
 
 
-def _strip_scores(d: dict) -> dict:
+def _strip_scores(item: MemoryItem) -> MemoryItem:
     """Remove internal score fields before returning to the client."""
-    return {k: v for k, v in d.items() if k not in ("combined_score", "vector_score")}
+    return {
+        key: value for key, value in item.items() if key not in ("combined_score", "vector_score")
+    }
 
 
 # --- hybrid merge: vector + FTS, with temporal decay and MMR rerank ---
@@ -518,8 +354,8 @@ def _parse_iso_ts(v: object) -> datetime | None:
 
 
 def _apply_temporal_decay(
-    scores: dict,
-    rows_by_id: dict,
+    scores: dict[str, float],
+    rows_by_id: dict[str, MemoryItem],
     half_life_days: float = 30.0,
 ) -> None:
     """Halve each score every `half_life_days`. In-place mutation.
@@ -536,19 +372,19 @@ def _apply_temporal_decay(
 
 
 def _mmr_rerank(
-    candidates: list[dict],
-    scores: dict,
+    candidates: list[MemoryItem],
+    scores: dict[str, float],
     limit: int,
     lam: float = 0.7,
-) -> list[dict]:
+) -> list[MemoryItem]:
     """Greedy MMR (Carbonell & Goldstein, 1998) on Jaccard token similarity.
 
     λ=0.7 relevance / 0.3 diversity. Uses content tokens so no extra
     embedding calls are needed to compute diversity.
     """
-    picked: list[dict] = []
+    picked: list[MemoryItem] = []
     picked_tokens: list[set[str]] = []
-    rest = [(c, _tokenize(c.get("content", ""))) for c in candidates]
+    rest = [(candidate, _tokenize(_memory_content(candidate))) for candidate in candidates]
     while rest and len(picked) < limit:
         best_idx, best_mmr = 0, -1e9
         for i, (c, toks) in enumerate(rest):
@@ -556,7 +392,7 @@ def _mmr_rerank(
                 (_jaccard(toks, pt) for pt in picked_tokens),
                 default=0.0,
             )
-            mmr = lam * scores.get(c["id"], 0.0) - (1 - lam) * max_sim
+            mmr = lam * scores.get(_memory_id(c), 0.0) - (1 - lam) * max_sim
             if mmr > best_mmr:
                 best_mmr, best_idx = mmr, i
         c, toks = rest.pop(best_idx)
@@ -566,76 +402,70 @@ def _mmr_rerank(
 
 
 def _merge_hybrid(
-    vec_rows: list[dict],
-    fts_rows: list[dict],
+    vec_rows: list[MemoryItem],
+    fts_rows: list[MemoryItem],
     limit: int,
     vector_weight: float = 0.7,
     text_weight: float = 0.3,
-) -> list[dict]:
+) -> list[MemoryItem]:
     """Merge vector + FTS results by weighted score, decay, then MMR rerank."""
-    vec_max = max((r.get("vector_score", 0.0) for r in vec_rows), default=0.0) or 1.0
-    fts_max = max((r.get("combined_score", 0.0) for r in fts_rows), default=0.0) or 1.0
+    vec_max = (
+        max(
+            (_memory_score(row, "vector_score") for row in vec_rows),
+            default=0.0,
+        )
+        or 1.0
+    )
+    fts_max = (
+        max(
+            (_memory_score(row, "combined_score") for row in fts_rows),
+            default=0.0,
+        )
+        or 1.0
+    )
 
-    by_id: dict = {}
-    vec_norm: dict = {}
-    fts_norm: dict = {}
-    for r in vec_rows:
-        by_id[r["id"]] = r
-        vec_norm[r["id"]] = (r.get("vector_score") or 0.0) / vec_max
-    for r in fts_rows:
-        by_id.setdefault(r["id"], r)
-        fts_norm[r["id"]] = (r.get("combined_score") or 0.0) / fts_max
+    by_id: dict[str, MemoryItem] = {}
+    vec_norm: dict[str, float] = {}
+    fts_norm: dict[str, float] = {}
+    for row in vec_rows:
+        memory_id = _memory_id(row)
+        by_id[memory_id] = row
+        vec_norm[memory_id] = _memory_score(row, "vector_score") / vec_max
+    for row in fts_rows:
+        memory_id = _memory_id(row)
+        by_id.setdefault(memory_id, row)
+        fts_norm[memory_id] = _memory_score(row, "combined_score") / fts_max
 
-    scores: dict = {}
+    scores: dict[str, float] = {}
     for rid in by_id:
         scores[rid] = vector_weight * vec_norm.get(rid, 0.0) + text_weight * fts_norm.get(rid, 0.0)
 
     _apply_temporal_decay(scores, by_id)
 
-    ranked = sorted(by_id.values(), key=lambda r: -scores[r["id"]])
+    ranked = sorted(by_id.values(), key=lambda row: -scores[_memory_id(row)])
     return _mmr_rerank(ranked, scores, limit, lam=0.7)
 
 
+def _memory_id(item: MemoryItem) -> str:
+    memory_id = item.get("id")
+    if not isinstance(memory_id, str) or not memory_id:
+        raise ValueError("memory result is missing an id")
+    return memory_id
+
+
+def _memory_content(item: MemoryItem) -> str:
+    content = item.get("content")
+    return content if isinstance(content, str) else ""
+
+
+def _memory_score(item: MemoryItem, key: str) -> float:
+    value = item.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    return float(value)
+
+
 # ---------- provider selection ----------
-
-
-def mem0_available() -> bool:
-    """Whether the `mem0` Python module is actually importable
-    in this deployment. Drives the dashboard capability flag
-    (see `routes/capabilities.py`) and the settings-save
-    validator (`routes/settings.py`) — UI hides the option
-    when not available; settings refuses to persist a
-    memory_provider=mem0 value the backend can't honor.
-
-    Probes by REAL import, not `find_spec`. `find_spec` returns
-    truthy even when the module's transitive dependencies fail
-    to load (broken `[mem0]` install, partially-installed venv).
-    A truthy `find_spec` followed by a failing real import would
-    let `/v1/capabilities` advertise mem0, the settings page
-    accept the value, then `Mem0Provider.__init__` catch the
-    ImportError and silently degrade to builtin — leaving the
-    user with a UI saying "Currently using: mem0" and behavior
-    that's actually builtin. Real import probes the same path
-    the runtime would take.
-
-    Cached because it never changes within a process — re-
-    checking on every request needlessly thrashes the import
-    system.
-    """
-    global _mem0_available_cached
-    cached = _mem0_available_cached
-    if cached is not None:
-        return cached
-    try:
-        __import__("mem0")
-        cached = True
-    except ImportError:
-        cached = False
-    _mem0_available_cached = cached
-    return cached
-
-
-_mem0_available_cached: bool | None = None
 
 
 async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
@@ -653,8 +483,8 @@ async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
     s = (setting.settings if setting else {}) or {}
 
     if s.get("memory_provider") == "mem0":
-        raw_key = s.get("mem0_api_key", "")
-        if not raw_key:
+        raw_key = s.get("mem0_api_key")
+        if not isinstance(raw_key, str) or not raw_key:
             log.warning("memory_provider=mem0 but mem0_api_key missing; falling back to builtin.")
             return BuiltinProvider(db, embedder=resolve_embedder())
         # Decrypt if stored with enc: prefix; legacy plaintext passes through.
@@ -667,20 +497,19 @@ async def get_memory_provider(user_id: str, db: AsyncSession) -> MemoryProvider:
         except (ValueError, RuntimeError, TypeError) as e:
             log.error("failed to decrypt mem0_api_key, falling back to builtin: %s", e)
             return BuiltinProvider(db, embedder=resolve_embedder())
-        # Defense-in-depth: even with the [mem0] extra installed,
-        # a transient import failure (broken venv, partial install)
-        # shouldn't 500 every memory request — the builtin provider
+        # Defense-in-depth: even with the [mem0] extra installed, a missing
+        # export or incompatible client constructor must not 500 the request.
+        # The builtin provider
         # is always functional. Settings save validation also
         # checks `mem0_available()` before allowing the value to
         # land in user_settings, so this branch is the safety net,
         # not the primary gate.
         try:
             return Mem0Provider(api_key=api_key)
-        except ImportError as e:
+        except MemoryProviderUnavailableError:
             log.warning(
-                "memory_provider=mem0 but mem0 module is not importable in this "
-                "deployment (install the [mem0] extra); falling back to builtin: %s",
-                e,
+                "memory_provider=mem0 but the Mem0 SDK boundary is unavailable; "
+                "falling back to builtin"
             )
             return BuiltinProvider(db, embedder=resolve_embedder())
 

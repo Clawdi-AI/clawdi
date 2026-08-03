@@ -83,7 +83,7 @@ class VaultItemDelete(BaseModel):
     @field_validator("fields", mode="after")
     @classmethod
     def validate_field_names(cls, value: list[str]) -> list[str]:
-        cleaned = []
+        cleaned: list[str] = []
         for field_name in value:
             stripped = field_name.strip()
             if not stripped:

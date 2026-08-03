@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from uuid import UUID
 
+from pydantic import JsonValue
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -131,9 +132,9 @@ async def upsert_clawdi_managed_provider(
     base_url: str,
     api_key: str,
     default_model: str | None = None,
-    models: list[dict] | None = None,
+    models: list[dict[str, JsonValue]] | None = None,
     label: str | None = None,
-    capabilities: dict | None = None,
+    capabilities: dict[str, JsonValue] | None = None,
 ) -> AiProvider:
     """Upsert a first-party v2 managed AI provider contract for a user."""
     # TODO(#425): Remove legacy v2 upsert acceptance after the compatibility window closes.
@@ -175,7 +176,10 @@ async def upsert_clawdi_managed_provider(
     provider.archived_at = None
     db.add(provider)
     await db.flush()
-    auth_metadata = {"source": "managed", "profile": MANAGED_AI_PROVIDER_PROFILE}
+    auth_metadata: dict[str, JsonValue] = {
+        "source": "managed",
+        "profile": MANAGED_AI_PROVIDER_PROFILE,
+    }
     await transition_ai_provider_auth(
         db,
         owner_user_id=user.id,

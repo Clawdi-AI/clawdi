@@ -3149,7 +3149,6 @@ export interface components {
         /** AgentRuntimeObservedResponse */
         AgentRuntimeObservedResponse: {
             environment: components["schemas"]["EnvironmentResponse"];
-            desired?: components["schemas"]["AgentRuntimeObservedDesiredResponse"] | null;
             observed?: components["schemas"]["RuntimeObservedConfigResponse"] | null;
             health: components["schemas"]["RuntimeObservedHealthResponse"];
             /**
@@ -3157,6 +3156,7 @@ export interface components {
              * @default []
              */
             provider_health: components["schemas"]["RuntimeObservedProviderHealthResponse"][];
+            desired?: components["schemas"]["AgentRuntimeObservedDesiredResponse"] | null;
         };
         /** AiProviderAcceptRequest */
         AiProviderAcceptRequest: {
@@ -4779,7 +4779,7 @@ export interface components {
         ConnectorToolParametersResponse: {
             /** Properties */
             properties: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Required */
             required: string[];
@@ -6602,7 +6602,6 @@ export interface components {
         /** RuntimeObservedResponse */
         RuntimeObservedResponse: {
             environment: components["schemas"]["EnvironmentResponse"];
-            desired?: components["schemas"]["RuntimeObservedDesiredResponse"] | null;
             observed?: components["schemas"]["RuntimeObservedConfigResponse"] | null;
             health: components["schemas"]["RuntimeObservedHealthResponse"];
             /**
@@ -6610,6 +6609,7 @@ export interface components {
              * @default []
              */
             provider_health: components["schemas"]["RuntimeObservedProviderHealthResponse"][];
+            desired?: components["schemas"]["RuntimeObservedDesiredResponse"] | null;
         };
         /** RuntimeObservedSummaryCountsResponse */
         RuntimeObservedSummaryCountsResponse: {
@@ -7037,13 +7037,13 @@ export interface components {
         };
         /** SettingsResponse */
         SettingsResponse: {
-            [key: string]: unknown;
+            [key: string]: components["schemas"]["JsonValue"];
         };
         /** SettingsUpdate */
         SettingsUpdate: {
             /** Settings */
             settings: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
         };
         /** SettingsUpdateResponse */

@@ -10,6 +10,7 @@ from pydantic import (
     ModelWrapValidatorHandler,
     PrivateAttr,
     StringConstraints,
+    TypeAdapter,
     field_validator,
     model_validator,
 )
@@ -32,6 +33,7 @@ from app.schemas.runtime_observed import (
 _LONE_SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
 _MODEL_FIELD_RE = re.compile(r"""["'](?:default|model)["']\s*:\s*["']([^"']+)["']""")
 _MAX_MODEL_LENGTH = 100
+_SESSION_INPUT_ADAPTER = TypeAdapter(dict[str, object], config=ConfigDict(strict=True))
 
 
 # local_session_id flows straight into a file-store key
@@ -51,7 +53,7 @@ SafeLocalSessionId = Annotated[
 ]
 
 
-def _is_negative_int_like(v: Any) -> bool:
+def _is_negative_int_like(v: object) -> bool:
     if v is None or isinstance(v, bool):
         return False
     if isinstance(v, int):
@@ -67,6 +69,13 @@ def _is_negative_int_like(v: Any) -> bool:
         except ValueError:
             return False
     return False
+
+
+def _session_input(value: object) -> dict[str, object] | None:
+    try:
+        return _SESSION_INPUT_ADAPTER.validate_python(value)
+    except ValueError:
+        return None
 
 
 class SessionCreate(BaseModel):
@@ -110,10 +119,13 @@ class SessionCreate(BaseModel):
 
     @model_validator(mode="wrap")
     @classmethod
-    def _clamp_negative_duration(cls, data: Any, handler: ModelWrapValidatorHandler[Self]) -> Self:
+    def _clamp_negative_duration(
+        cls, data: object, handler: ModelWrapValidatorHandler[Self]
+    ) -> Self:
         clamped = False
-        if isinstance(data, dict) and _is_negative_int_like(data.get("duration_seconds")):
-            data = {**data, "duration_seconds": 0}
+        values = _session_input(data)
+        if values is not None and _is_negative_int_like(values.get("duration_seconds")):
+            data = {**values, "duration_seconds": 0}
             clamped = True
         model = handler(data)
         if clamped:
@@ -343,27 +355,33 @@ class AgentRuntimeObservedDesiredResponse(RuntimeObservedDesiredResponse):
 
 class RuntimeObservedHealthResponse(BaseModel):
     status: Literal["ok", "error", "stale", "unknown", "not_configured"]
-    reasons: list[str] = []
+    reasons: list[str] = Field(default_factory=list, json_schema_extra={"default": []})
     observed_at: datetime | None = None
 
 
 class RuntimeObservedProviderHealthResponse(BaseModel):
     provider_id: str
     status: Literal["ok", "error", "unknown", "not_configured"]
-    reasons: list[str] = []
+    reasons: list[str] = Field(default_factory=list, json_schema_extra={"default": []})
     desired: dict[str, Any] | None = None
     observed: HostedRuntimeObservedProviderPayload | None = None
 
 
-class RuntimeObservedResponse(BaseModel):
+class RuntimeObservedResponseBase(BaseModel):
     environment: EnvironmentResponse
-    desired: RuntimeObservedDesiredResponse | None = None
     observed: RuntimeObservedConfigResponse | None = None
     health: RuntimeObservedHealthResponse
-    provider_health: list[RuntimeObservedProviderHealthResponse] = []
+    provider_health: list[RuntimeObservedProviderHealthResponse] = Field(
+        default_factory=list,
+        json_schema_extra={"default": []},
+    )
 
 
-class AgentRuntimeObservedResponse(RuntimeObservedResponse):
+class RuntimeObservedResponse(RuntimeObservedResponseBase):
+    desired: RuntimeObservedDesiredResponse | None = None
+
+
+class AgentRuntimeObservedResponse(RuntimeObservedResponseBase):
     desired: AgentRuntimeObservedDesiredResponse | None = None
 
 
@@ -380,7 +398,10 @@ class RuntimeObservedSummaryItemResponse(BaseModel):
     desired: RuntimeObservedDesiredResponse | None = None
     observed: RuntimeObservedConfigSummaryResponse | None = None
     health: RuntimeObservedHealthResponse
-    provider_health: list[RuntimeObservedProviderHealthResponse] = []
+    provider_health: list[RuntimeObservedProviderHealthResponse] = Field(
+        default_factory=list,
+        json_schema_extra={"default": []},
+    )
 
 
 class RuntimeObservedSummaryResponse(BaseModel):

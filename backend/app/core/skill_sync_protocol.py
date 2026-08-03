@@ -24,7 +24,7 @@ def resolve_skill_sync_protocol(protocol: str | None) -> SkillSyncProtocol:
         return SkillSyncProtocol.LEGACY
     if protocol == SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1:
         return SkillSyncProtocol.AGENT_AUTHORITATIVE_V1
-    if protocol is not None and not _PROTOCOL_VALUE.fullmatch(protocol):
+    if not _PROTOCOL_VALUE.fullmatch(protocol):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail={

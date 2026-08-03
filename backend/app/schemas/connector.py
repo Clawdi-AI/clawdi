@@ -1,7 +1,7 @@
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, JsonValue, field_validator
 
 from app.core.config import settings
 
@@ -161,7 +161,7 @@ class ConnectorMcpConfigResponse(BaseModel):
 
 
 class ConnectorToolParametersResponse(BaseModel):
-    properties: dict
+    properties: dict[str, JsonValue]
     required: list[str]
 
 

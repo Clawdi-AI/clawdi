@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
 from uuid import UUID
 
 import httpx
@@ -31,15 +30,14 @@ from app.models.channel import (
     ChannelBinding,
     ChannelBindingAlias,
     ChannelBotAgentLink,
+    ChannelDelivery,
+    ChannelMessage,
 )
 from app.schemas.channel import (
     ChannelAccountResponse,
     ChannelBindingResponse,
     ChannelMessageResponse,
     ChannelVisibility,
-)
-from app.services.channel_webhooks import (
-    telegram_link_webhook_config,
 )
 from app.services.channels import (
     DISCORD_RESERVED_COMMAND_NAMES,
@@ -84,9 +82,13 @@ _DISCORD_COMMAND_RETRIES_CONFIG_KEY = "discord_command_retries"
 _JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _JSON_OBJECT_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 type RequestParam = JsonValue | UploadFile
+type RequestPayload = JsonValue | dict[str, RequestParam]
+type JsonObject = dict[str, JsonValue]
+type DiscordCommand = JsonObject
+type DiscordCommandScopes = dict[str, list[DiscordCommand]]
 
 
-def _channel_visibility(account: ChannelAccount) -> ChannelVisibility:
+def channel_visibility(account: ChannelAccount) -> ChannelVisibility:
     if account.visibility == CHANNEL_VISIBILITY_PRIVATE:
         return "private"
     if account.visibility == CHANNEL_VISIBILITY_PUBLIC:
@@ -94,22 +96,22 @@ def _channel_visibility(account: ChannelAccount) -> ChannelVisibility:
     raise ValueError("invalid channel account visibility")
 
 
-def _account_response(account: ChannelAccount) -> ChannelAccountResponse:
+def account_response(account: ChannelAccount) -> ChannelAccountResponse:
     return ChannelAccountResponse(
         id=account.id,
         provider=account.provider,
         name=account.name,
         status=account.status,
-        visibility=_channel_visibility(account),
+        visibility=channel_visibility(account),
         has_provider_token=bool(account.encrypted_provider_token and account.provider_token_nonce),
         webhook_url=channel_webhook_url(account.id, account.provider),
         created_at=account.created_at,
     )
 
 
-async def _request_payload(request: Request) -> Any:
+async def _request_payload(request: Request) -> RequestPayload:
     if request.method == "GET":
-        return dict(request.query_params)
+        return {key: value for key, value in request.query_params.items()}
     content_type = request.headers.get("content-type", "").lower()
     if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
         form = await request.form()
@@ -118,8 +120,8 @@ async def _request_payload(request: Request) -> Any:
     if not body:
         return {}
     try:
-        payload = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        payload = _JSON_VALUE_ADAPTER.validate_json(body, strict=True)
+    except (UnicodeDecodeError, ValidationError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid json") from exc
     return payload
 
@@ -131,8 +133,6 @@ async def request_params(request: Request) -> dict[str, RequestParam]:
     params: dict[str, RequestParam] = {}
     try:
         for key, value in payload.items():
-            if not isinstance(key, str):
-                raise ValueError("parameter name must be a string")
             params[key] = (
                 value
                 if isinstance(value, UploadFile)
@@ -146,7 +146,7 @@ async def request_params(request: Request) -> dict[str, RequestParam]:
     return params
 
 
-def _parse_wire_value(value: Any) -> Any:
+def _parse_wire_value(value: str | UploadFile) -> RequestParam:
     if not isinstance(value, str):
         return value
     trimmed = value.strip()
@@ -154,16 +154,9 @@ def _parse_wire_value(value: Any) -> Any:
         return trimmed == "true"
     if trimmed.startswith(("{", "[")):
         try:
-            return json.loads(trimmed)
-        except json.JSONDecodeError:
+            return _JSON_VALUE_ADAPTER.validate_json(trimmed, strict=True)
+        except ValidationError:
             return value
-    return value
-
-
-def _required_str_param(params: dict[str, Any], key: str) -> str:
-    value = optional_str(params.get(key))
-    if value is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{key} is required")
     return value
 
 
@@ -188,47 +181,23 @@ def optional_int_param(value: object) -> int | None:
     return None
 
 
-def _optional_bool_param(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-    return False
-
-
-async def _read_upload_bytes(upload: UploadFile, *, max_bytes: int) -> bytes:
-    data = await upload.read(max_bytes + 1)
-    await upload.close()
-    if len(data) > max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="attachment too large",
-        )
-    return data
-
-
 def allowed_updates(value: object) -> set[str] | None:
     if value is None:
         return None
-    parsed = value
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            parsed = [value]
+    try:
+        if isinstance(value, str):
+            parsed = _JSON_VALUE_ADAPTER.validate_json(value, strict=True)
+        else:
+            parsed = _JSON_VALUE_ADAPTER.validate_python(value, strict=True)
+    except ValidationError:
+        parsed = _JSON_VALUE_ADAPTER.validate_python([value], strict=True)
     if not isinstance(parsed, list):
         return None
     updates = {item for item in parsed if isinstance(item, str) and item}
     return updates or None
 
 
-async def _set_account_config(account: ChannelAccount, updates: dict[str, Any]) -> None:
-    config = dict(account.config) if isinstance(account.config, dict) else {}
-    config.update(updates)
-    account.config = config
-
-
-async def _require_bound_chat(
+async def require_bound_chat(
     db: AsyncSession,
     *,
     account: ChannelAccount,
@@ -289,31 +258,7 @@ def telegram_me(account: ChannelAccount) -> dict[str, JsonValue]:
     }
 
 
-def _telegram_sent_result(message: Any, *, chat_id: str, text: str) -> dict[str, Any]:
-    payload = message.payload if isinstance(message.payload, dict) else {}
-    result = payload.get("result")
-    if isinstance(result, dict):
-        return result
-    return {
-        "message_id": abs(hash(str(message.id))) % 2_147_483_647,
-        "date": int(time.time()),
-        "chat": {"id": int(chat_id) if chat_id.lstrip("-").isdigit() else chat_id},
-        "text": text,
-    }
-
-
-def _telegram_link_webhook_config(link: ChannelBotAgentLink) -> dict[str, Any]:
-    return telegram_link_webhook_config(link)
-
-
-async def _resolve_discord_agent_account(
-    db: AsyncSession,
-    authorization: str | None,
-) -> ChannelAccount:
-    return (await _resolve_discord_agent_context(db, authorization)).account
-
-
-async def _resolve_discord_agent_context(
+async def resolve_discord_agent_context(
     db: AsyncSession,
     authorization: str | None,
 ) -> ChannelAgentContext:
@@ -345,7 +290,7 @@ def extract_bearer_token(authorization: str | None) -> str | None:
     return value.strip()
 
 
-def _discord_application_id(account: ChannelAccount) -> str:
+def discord_application_id(account: ChannelAccount) -> str:
     config = account.config if isinstance(account.config, dict) else {}
     configured = optional_str(config.get("application_id")) or optional_str(config.get("app_id"))
     if configured:
@@ -353,9 +298,9 @@ def _discord_application_id(account: ChannelAccount) -> str:
     return str(abs(hash(str(account.id))) % 10_000_000_000_000_000_000)
 
 
-def _discord_bot_user(account: ChannelAccount) -> dict[str, Any]:
+def discord_bot_user(account: ChannelAccount) -> JsonObject:
     config = account.config if isinstance(account.config, dict) else {}
-    app_id = _discord_application_id(account)
+    app_id = discord_application_id(account)
     username = optional_str(config.get("bot_username")) or account.name
     return {
         "id": app_id,
@@ -368,26 +313,13 @@ def _discord_bot_user(account: ChannelAccount) -> dict[str, Any]:
     }
 
 
-def _discord_message_result(message: Any, *, channel_id: str, content: str) -> dict[str, Any]:
-    payload = message.payload if isinstance(message.payload, dict) else {}
-    if "id" in payload and "channel_id" in payload:
-        return payload
-    return {
-        "id": message.provider_message_id or str(message.id),
-        "channel_id": channel_id,
-        "content": content,
-        "timestamp": message.created_at.isoformat(),
-        "author": {"id": str(message.account_id), "bot": True, "username": "Clawdi"},
-    }
-
-
-async def _handle_discord_application_commands(
+async def handle_discord_application_commands(
     db: AsyncSession,
     *,
     agent: ChannelAgentContext,
     request: Request,
     segments: list[str],
-) -> Any:
+) -> object | None:
     account = agent.account
     link = agent.link
     if not segments or segments[0] != "applications":
@@ -409,9 +341,9 @@ async def _handle_discord_application_commands(
         command_id = segments[5]
     else:
         return None
-    if application_id is None or application_id != _discord_application_id(account):
+    if application_id is None or application_id != discord_application_id(account):
         return _discord_command_error("Missing Access", 50001, 403)
-    if guild_id is not None and not await _discord_guild_owned_by_link(
+    if guild_id is not None and not await discord_guild_owned_by_link(
         db,
         account=account,
         bot_agent_link_id=link.id,
@@ -486,7 +418,15 @@ async def _handle_discord_application_commands(
         return None
 
     payload = await _request_payload(request)
-    params = payload if isinstance(payload, dict) else {}
+    try:
+        params = _JSON_OBJECT_ADAPTER.validate_python(
+            payload if isinstance(payload, dict) else {}, strict=True
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="application command object required",
+        ) from exc
     raw_commands = payload if isinstance(payload, list) else params.get("commands")
     if request.method == "PUT":
         if isinstance(raw_commands, list):
@@ -548,9 +488,9 @@ async def _handle_discord_application_commands(
 
 
 def _find_discord_command(
-    commands: list[dict[str, Any]],
+    commands: list[DiscordCommand],
     command_id: str,
-) -> dict[str, Any] | None:
+) -> DiscordCommand | None:
     for command in commands:
         if optional_str(command.get("id")) == command_id:
             return command
@@ -565,19 +505,19 @@ def _discord_command_error(message: str, code: int, status_code: int) -> Respons
     )
 
 
-def _discord_command_shadow(link: ChannelBotAgentLink) -> dict[str, list[dict[str, Any]]]:
+def _discord_command_shadow(link: ChannelBotAgentLink) -> DiscordCommandScopes:
     config = link.config if isinstance(link.config, dict) else {}
     commands = config.get(_DISCORD_AGENT_COMMANDS_CONFIG_KEY)
     if not isinstance(commands, dict):
         return {}
-    clean: dict[str, list[dict[str, Any]]] = {}
+    clean: DiscordCommandScopes = {}
     for scope, value in commands.items():
-        if isinstance(scope, str) and isinstance(value, list):
+        if isinstance(value, list):
             clean[scope] = [item for item in value if isinstance(item, dict)]
     return clean
 
 
-def _discord_command_materializations(link: ChannelBotAgentLink) -> dict[str, str]:
+def discord_command_materializations(link: ChannelBotAgentLink) -> dict[str, str]:
     config = link.config if isinstance(link.config, dict) else {}
     raw = config.get(_DISCORD_COMMAND_MATERIALIZATIONS_CONFIG_KEY)
     if not isinstance(raw, dict):
@@ -585,11 +525,11 @@ def _discord_command_materializations(link: ChannelBotAgentLink) -> dict[str, st
     return {
         guild_id: fingerprint
         for guild_id, fingerprint in raw.items()
-        if isinstance(guild_id, str) and guild_id and isinstance(fingerprint, str) and fingerprint
+        if guild_id and isinstance(fingerprint, str) and fingerprint
     }
 
 
-def _discord_command_retries(link: ChannelBotAgentLink) -> dict[str, dict[str, Any]]:
+def discord_command_retries(link: ChannelBotAgentLink) -> dict[str, JsonObject]:
     config = link.config if isinstance(link.config, dict) else {}
     raw = config.get(_DISCORD_COMMAND_RETRIES_CONFIG_KEY)
     if not isinstance(raw, dict):
@@ -597,11 +537,11 @@ def _discord_command_retries(link: ChannelBotAgentLink) -> dict[str, dict[str, A
     return {
         guild_id: dict(value)
         for guild_id, value in raw.items()
-        if isinstance(guild_id, str) and guild_id and isinstance(value, dict)
+        if guild_id and isinstance(value, dict)
     }
 
 
-def _discord_retry_is_due(retry: dict[str, Any] | None, *, fingerprint: str) -> bool:
+def _discord_retry_is_due(retry: JsonObject | None, *, fingerprint: str) -> bool:
     if retry is None or retry.get("fingerprint") != fingerprint:
         return True
     if retry.get("blocked") is True:
@@ -616,7 +556,7 @@ def _discord_retry_is_due(retry: dict[str, Any] | None, *, fingerprint: str) -> 
     return due_at <= datetime.now(UTC)
 
 
-def _discord_retry_after_seconds(result: _DiscordProviderResult) -> float | None:
+def discord_retry_after_seconds(result: DiscordProviderResult) -> float | None:
     raw_header = next(
         (value for key, value in (result.headers or {}).items() if key.lower() == "retry-after"),
         None,
@@ -637,13 +577,13 @@ def _discord_retry_after_seconds(result: _DiscordProviderResult) -> float | None
 
 def _discord_command_retry_state(
     *,
-    previous: dict[str, Any] | None,
+    previous: JsonObject | None,
     fingerprint: str,
     status_code: int,
-    result: _DiscordProviderResult | None,
-) -> dict[str, Any]:
-    previous_attempts = previous.get("attempts") if isinstance(previous, dict) else None
-    previous_fingerprint = previous.get("fingerprint") if isinstance(previous, dict) else None
+    result: DiscordProviderResult | None,
+) -> JsonObject:
+    previous_attempts = previous.get("attempts") if previous is not None else None
+    previous_fingerprint = previous.get("fingerprint") if previous is not None else None
     attempts = (
         previous_attempts + 1
         if isinstance(previous_attempts, int)
@@ -652,7 +592,7 @@ def _discord_command_retry_state(
         and previous_fingerprint == fingerprint
         else 1
     )
-    retry_after = _discord_retry_after_seconds(result) if result is not None else None
+    retry_after = discord_retry_after_seconds(result) if result is not None else None
     # A 429 is always transient. Discord normally supplies Retry-After, but a
     # missing/malformed value must fall back to bounded exponential backoff
     # instead of turning a temporary rate limit into a permanent tombstone.
@@ -673,16 +613,16 @@ def _discord_command_retry_state(
 
 
 def _discord_effective_guild_commands(
-    shadow: dict[str, list[dict[str, Any]]],
+    shadow: DiscordCommandScopes,
     *,
     guild_id: str,
-) -> list[dict[str, Any]]:
+) -> list[DiscordCommand]:
     guild_commands = shadow.get(f"guild:{guild_id}")
     return guild_commands if guild_commands is not None else shadow.get("global", [])
 
 
-def _discord_guild_command_fingerprint(
-    commands: list[dict[str, Any]],
+def discord_guild_command_fingerprint(
+    commands: list[DiscordCommand],
     *,
     application_id: str,
 ) -> str:
@@ -705,18 +645,18 @@ async def _discord_materialized_command_list(
     account: ChannelAccount,
     link: ChannelBotAgentLink,
     guild_id: str | None,
-) -> list[dict[str, Any]]:
+) -> list[DiscordCommand]:
     shadow = _discord_command_shadow(link)
-    materializations = _discord_command_materializations(link)
-    application_id = _discord_application_id(account)
+    materializations = discord_command_materializations(link)
+    application_id = discord_application_id(account)
     if guild_id is not None:
         desired = _discord_effective_guild_commands(shadow, guild_id=guild_id)
-        expected = _discord_guild_command_fingerprint(
+        expected = discord_guild_command_fingerprint(
             desired,
             application_id=application_id,
         )
         return desired if materializations.get(guild_id) == expected else []
-    guild_ids = await _discord_uncontested_guilds_for_link(
+    guild_ids = await discord_uncontested_guilds_for_link(
         db,
         account=account,
         bot_agent_link_id=link.id,
@@ -734,7 +674,7 @@ async def _discord_materialized_command_list(
         return global_commands if not bindings else []
     if not global_targets:
         return global_commands
-    expected = _discord_guild_command_fingerprint(
+    expected = discord_guild_command_fingerprint(
         global_commands,
         application_id=application_id,
     )
@@ -747,7 +687,7 @@ async def _store_discord_command_shadow(
     db: AsyncSession,
     *,
     link: ChannelBotAgentLink,
-    commands: dict[str, list[dict[str, Any]]],
+    commands: DiscordCommandScopes,
 ) -> None:
     config = dict(link.config) if isinstance(link.config, dict) else {}
     config[_DISCORD_AGENT_COMMANDS_CONFIG_KEY] = _JSON_OBJECT_ADAPTER.validate_python(
@@ -758,11 +698,11 @@ async def _store_discord_command_shadow(
 
 
 def _discord_command_list_shape(
-    commands: list[Any],
+    commands: Sequence[object],
     *,
     application_id: str,
-) -> list[dict[str, Any]]:
-    shaped: list[dict[str, Any]] = []
+) -> list[DiscordCommand]:
+    shaped: list[DiscordCommand] = []
     seen_keys: set[tuple[int, str]] = set()
     for command in commands:
         item = _discord_command_shape(command, application_id=application_id)
@@ -777,13 +717,14 @@ def _discord_command_list_shape(
     return shaped
 
 
-def _discord_command_shape(command: Any, *, application_id: str) -> dict[str, Any]:
-    if not isinstance(command, dict):
+def _discord_command_shape(command: object, *, application_id: str) -> DiscordCommand:
+    try:
+        source = _JSON_OBJECT_ADAPTER.validate_python(command, strict=True)
+    except ValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="application command object required",
-        )
-    source = command
+        ) from exc
     name = optional_str(source.get("name"))
     if name is None:
         raise HTTPException(
@@ -834,7 +775,7 @@ def _discord_command_shape(command: Any, *, application_id: str) -> dict[str, An
     return shaped
 
 
-def _discord_command_key(command: dict[str, Any]) -> tuple[int, str]:
+def _discord_command_key(command: DiscordCommand) -> tuple[int, str]:
     raw_command_type = command.get("type")
     command_type = 1
     if isinstance(raw_command_type, int) and not isinstance(raw_command_type, bool):
@@ -843,8 +784,8 @@ def _discord_command_key(command: dict[str, Any]) -> tuple[int, str]:
 
 
 def _discord_upsert_command(
-    commands: list[dict[str, Any]],
-    command: dict[str, Any],
+    commands: list[DiscordCommand],
+    command: DiscordCommand,
 ) -> None:
     command_key = _discord_command_key(command)
     for index, existing in enumerate(commands):
@@ -856,8 +797,8 @@ def _discord_upsert_command(
 
 
 def _discord_command_key_conflicts(
-    commands: list[dict[str, Any]],
-    command: dict[str, Any],
+    commands: list[DiscordCommand],
+    command: DiscordCommand,
     *,
     ignored_id: str,
 ) -> bool:
@@ -870,7 +811,7 @@ def _discord_command_key_conflicts(
     return False
 
 
-async def _discord_guild_owned_by_link(
+async def discord_guild_owned_by_link(
     db: AsyncSession,
     *,
     account: ChannelAccount,
@@ -879,19 +820,19 @@ async def _discord_guild_owned_by_link(
 ) -> bool:
     owners = await _discord_guild_owner_principals(
         db,
-        application_id=_discord_application_id(account),
+        application_id=discord_application_id(account),
         guild_id=guild_id,
     )
     return owners == {(account.id, bot_agent_link_id)}
 
 
-async def _discord_uncontested_guilds_for_link(
+async def discord_uncontested_guilds_for_link(
     db: AsyncSession,
     *,
     account: ChannelAccount,
     bot_agent_link_id: UUID,
 ) -> list[str]:
-    application_id = _discord_application_id(account)
+    application_id = discord_application_id(account)
     result = await db.execute(
         select(ChannelBinding, ChannelAccount, ChannelBotAgentLink)
         .join(ChannelAccount, ChannelAccount.id == ChannelBinding.account_id)
@@ -905,9 +846,9 @@ async def _discord_uncontested_guilds_for_link(
     )
     owners_by_guild: dict[str, set[tuple[UUID, UUID]]] = {}
     for binding, owner_account, owner_link in result.all():
-        if _discord_application_id(owner_account) != application_id:
+        if discord_application_id(owner_account) != application_id:
             continue
-        guild_id = _discord_binding_guild_id(binding)
+        guild_id = discord_binding_guild_id(binding)
         if guild_id is None:
             continue
         owners_by_guild.setdefault(guild_id, set()).add((owner_account.id, owner_link.id))
@@ -943,7 +884,7 @@ async def _assert_discord_command_mutation_supported(
 ) -> None:
     if guild_id is not None:
         return
-    guild_ids = await _discord_uncontested_guilds_for_link(
+    guild_ids = await discord_uncontested_guilds_for_link(
         db,
         account=account,
         bot_agent_link_id=link.id,
@@ -982,14 +923,14 @@ async def _discord_guild_owner_principals(
     owners: set[tuple[UUID, UUID]] = set()
     for binding, owner_account, owner_link in result.all():
         if (
-            _discord_application_id(owner_account) == application_id
-            and _discord_binding_guild_id(binding) == guild_id
+            discord_application_id(owner_account) == application_id
+            and discord_binding_guild_id(binding) == guild_id
         ):
             owners.add((owner_account.id, owner_link.id))
     return owners
 
 
-def _discord_binding_guild_id(binding: ChannelBinding) -> str | None:
+def discord_binding_guild_id(binding: ChannelBinding) -> str | None:
     chat_type = (binding.external_chat_type or "").lower()
     if binding.external_chat_id and chat_type == "guild":
         return binding.external_chat_id
@@ -1009,7 +950,7 @@ async def _lock_discord_command_projection(
     await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(lock_name, 0))))
 
 
-def _discord_retry_exception(retry: dict[str, Any]) -> HTTPException:
+def _discord_retry_exception(retry: JsonObject) -> HTTPException:
     status_code = retry.get("status_code")
     if status_code == status.HTTP_429_TOO_MANY_REQUESTS:
         headers: dict[str, str] | None = None
@@ -1038,9 +979,9 @@ def _discord_retry_exception(retry: dict[str, Any]) -> HTTPException:
     )
 
 
-def _discord_provider_failure_exception(result: _DiscordProviderResult) -> HTTPException:
+def _discord_provider_failure_exception(result: DiscordProviderResult) -> HTTPException:
     if result.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
-        retry_after = _discord_retry_after_seconds(result)
+        retry_after = discord_retry_after_seconds(result)
         return HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="discord command sync is rate limited",
@@ -1052,13 +993,13 @@ def _discord_provider_failure_exception(result: _DiscordProviderResult) -> HTTPE
     )
 
 
-async def _fan_out_discord_global_commands(
+async def fan_out_discord_global_commands(
     db: AsyncSession,
     *,
     account: ChannelAccount,
     bot_agent_link_id: UUID,
     application_id: str,
-    commands: list[dict[str, Any]],
+    commands: list[DiscordCommand],
     guild_ids: set[str] | None = None,
     automatic: bool = False,
     force: bool = False,
@@ -1079,7 +1020,7 @@ async def _fan_out_discord_global_commands(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="discord agent link unavailable",
         )
-    uncontested_guild_ids = await _discord_uncontested_guilds_for_link(
+    uncontested_guild_ids = await discord_uncontested_guilds_for_link(
         db,
         account=account,
         bot_agent_link_id=bot_agent_link_id,
@@ -1098,7 +1039,7 @@ async def _fan_out_discord_global_commands(
             guild_id=guild_id,
         )
         await db.refresh(link, with_for_update=True)
-        if not await _discord_guild_owned_by_link(
+        if not await discord_guild_owned_by_link(
             db,
             account=account,
             bot_agent_link_id=link.id,
@@ -1107,13 +1048,13 @@ async def _fan_out_discord_global_commands(
             await db.commit()
             continue
         desired_shadow = _discord_command_shadow(link)
-        materializations = _discord_command_materializations(link)
-        retries = _discord_command_retries(link)
+        materializations = discord_command_materializations(link)
+        retries = discord_command_retries(link)
         desired_commands = _discord_effective_guild_commands(
             desired_shadow,
             guild_id=guild_id,
         )
-        fingerprint = _discord_guild_command_fingerprint(
+        fingerprint = discord_guild_command_fingerprint(
             desired_commands,
             application_id=application_id,
         )
@@ -1134,7 +1075,7 @@ async def _fan_out_discord_global_commands(
             [_discord_guild_command_provider_payload(command) for command in desired_commands]
         ).encode("utf-8")
         try:
-            result = await _request_discord_provider(
+            result = await request_discord_provider(
                 account=account,
                 method="PUT",
                 path=f"/applications/{application_id}/guilds/{guild_id}/commands",
@@ -1189,7 +1130,7 @@ async def _fan_out_discord_global_commands(
     return reconciled
 
 
-async def _discord_historical_guilds_for_link(
+async def discord_historical_guilds_for_link(
     db: AsyncSession,
     *,
     account: ChannelAccount,
@@ -1204,11 +1145,11 @@ async def _discord_historical_guilds_for_link(
     return {
         guild_id
         for binding in result.scalars()
-        if (guild_id := _discord_binding_guild_id(binding)) is not None
+        if (guild_id := discord_binding_guild_id(binding)) is not None
     }
 
 
-async def _clear_discord_guild_commands(
+async def clear_discord_guild_commands(
     db: AsyncSession,
     *,
     account: ChannelAccount,
@@ -1220,7 +1161,7 @@ async def _clear_discord_guild_commands(
     """Converge stale physical Guild scopes to an explicit empty tombstone."""
     if not account.encrypted_provider_token or not account.provider_token_nonce:
         return False
-    empty_fingerprint = _discord_guild_command_fingerprint(
+    empty_fingerprint = discord_guild_command_fingerprint(
         [],
         application_id=application_id,
     )
@@ -1232,8 +1173,8 @@ async def _clear_discord_guild_commands(
             guild_id=guild_id,
         )
         await db.refresh(link, with_for_update=True)
-        materializations = _discord_command_materializations(link)
-        retries = _discord_command_retries(link)
+        materializations = discord_command_materializations(link)
+        retries = discord_command_retries(link)
         owners = await _discord_guild_owner_principals(
             db,
             application_id=application_id,
@@ -1266,7 +1207,7 @@ async def _clear_discord_guild_commands(
             await db.commit()
             continue
         try:
-            result = await _request_discord_provider(
+            result = await request_discord_provider(
                 account=account,
                 method="PUT",
                 path=f"/applications/{application_id}/guilds/{guild_id}/commands",
@@ -1311,7 +1252,7 @@ async def _materialize_discord_command_scope(
     link: ChannelBotAgentLink,
     application_id: str,
     guild_id: str | None,
-    commands: list[dict[str, Any]],
+    commands: list[DiscordCommand],
 ) -> None:
     # Agent-defined commands are Link shadows. Never write them to the shared
     # physical global command set or DMs; only materialize them into this
@@ -1319,7 +1260,7 @@ async def _materialize_discord_command_scope(
     # account-level sync path and remain physical global commands.
     # TODO(discord): If Discord adds a per-install or per-DM command namespace,
     # project Link shadows there and retire this Guild-only boundary.
-    target_guild_ids = await _discord_uncontested_guilds_for_link(
+    target_guild_ids = await discord_uncontested_guilds_for_link(
         db,
         account=account,
         bot_agent_link_id=link.id,
@@ -1344,7 +1285,7 @@ async def _materialize_discord_command_scope(
                 ),
             )
         return
-    await _fan_out_discord_global_commands(
+    await fan_out_discord_global_commands(
         db,
         account=account,
         bot_agent_link_id=link.id,
@@ -1354,7 +1295,7 @@ async def _materialize_discord_command_scope(
     )
 
 
-def _discord_guild_command_provider_payload(command: dict[str, Any]) -> dict[str, Any]:
+def _discord_guild_command_provider_payload(command: DiscordCommand) -> DiscordCommand:
     """Project a virtual response object onto Discord's guild write contract."""
     payload = dict(command)
     for field in (
@@ -1372,7 +1313,7 @@ def _discord_guild_command_provider_payload(command: dict[str, Any]) -> dict[str
     return payload
 
 
-def _discord_gateway_dispatch(message: Any) -> dict[str, Any]:
+def discord_gateway_dispatch(message: ChannelMessage) -> JsonObject:
     payload = message.payload if isinstance(message.payload, dict) else {}
     interaction_type = payload.get("type")
     is_http_interaction = (
@@ -1403,7 +1344,7 @@ def _discord_gateway_dispatch(message: Any) -> dict[str, Any]:
 
 
 @dataclass(frozen=True)
-class _DiscordProviderResult:
+class DiscordProviderResult:
     content: bytes
     status_code: int
     media_type: str
@@ -1417,24 +1358,23 @@ class _DiscordProviderResult:
             headers=self.headers,
         )
 
-    def json_object(self) -> dict[str, Any] | None:
+    def json_object(self) -> JsonObject | None:
         try:
-            payload = json.loads(self.content)
-        except (UnicodeDecodeError, json.JSONDecodeError):
+            return _JSON_OBJECT_ADAPTER.validate_json(self.content, strict=True)
+        except ValidationError:
             return None
-        return payload if isinstance(payload, dict) else None
 
 
-async def _request_discord_provider(
+async def request_discord_provider(
     *,
     account: ChannelAccount,
     method: str,
     path: str,
     body: bytes | None = None,
     content_type: str = "application/json",
-    query_params: Any = None,
-    request_headers: Any = None,
-) -> _DiscordProviderResult:
+    query_params: Mapping[str, str] | None = None,
+    request_headers: Mapping[str, str] | None = None,
+) -> DiscordProviderResult:
     token = decrypt_provider_token(account)
     normalized_path = f"/{path.lstrip('/')}"
     base_url = settings.channel_discord_api_base_url.strip()
@@ -1452,7 +1392,7 @@ async def _request_discord_provider(
             channel="discord",
             scope="bot" if decision.global_limit else "route",
         ).inc()
-        return _DiscordProviderResult(
+        return DiscordProviderResult(
             content=json.dumps(
                 {
                     "message": "You are being rate limited.",
@@ -1491,7 +1431,7 @@ async def _request_discord_provider(
     outbound_messages.labels(channel="discord", method=method).inc()
     if response.status_code >= 400:
         outbound_errors.labels(channel="discord", method=method).inc()
-    return _DiscordProviderResult(
+    return DiscordProviderResult(
         content=response.content,
         status_code=response.status_code,
         media_type=response.headers.get("content-type", "application/json"),
@@ -1499,13 +1439,13 @@ async def _request_discord_provider(
     )
 
 
-async def _proxy_discord_request(
+async def proxy_discord_request(
     *,
     account: ChannelAccount,
     request: Request,
     path: str,
 ) -> Response:
-    result = await _request_discord_provider(
+    result = await request_discord_provider(
         account=account,
         method=request.method,
         path=path,
@@ -1517,7 +1457,7 @@ async def _proxy_discord_request(
     return result.as_response()
 
 
-def _discord_request_headers(headers: Any) -> dict[str, str]:
+def _discord_request_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
     if headers is None:
         return {}
     return {
@@ -1525,7 +1465,7 @@ def _discord_request_headers(headers: Any) -> dict[str, str]:
     }
 
 
-def _discord_response_headers(headers: Any) -> dict[str, str]:
+def _discord_response_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
     if headers is None:
         return {}
     return {
@@ -1538,10 +1478,10 @@ def _discord_rate_limit_response_headers(response: httpx.Response) -> dict[str, 
     if response.status_code != status.HTTP_429_TOO_MANY_REQUESTS or "retry-after" in headers:
         return headers
     try:
-        payload = response.json()
-    except ValueError:
+        payload = _JSON_OBJECT_ADAPTER.validate_json(response.content, strict=True)
+    except ValidationError:
         return headers
-    raw_retry_after = payload.get("retry_after") if isinstance(payload, dict) else None
+    raw_retry_after = payload.get("retry_after")
     if (
         isinstance(raw_retry_after, (int, float))
         and not isinstance(raw_retry_after, bool)
@@ -1562,7 +1502,7 @@ async def _validate_discord_provider_base_url(base_url: str) -> None:
         ) from exc
 
 
-def _public_ws_url(path: str) -> str:
+def public_ws_url(path: str) -> str:
     base = settings.public_api_url.rstrip("/")
     if base.startswith("https://"):
         return "wss://" + base.removeprefix("https://") + path
@@ -1571,7 +1511,7 @@ def _public_ws_url(path: str) -> str:
     return base + path
 
 
-def _binding_response(
+def binding_response(
     binding: ChannelBinding,
     *,
     last_message_at: datetime | None = None,
@@ -1589,7 +1529,9 @@ def _binding_response(
     )
 
 
-def _message_response(message, *, delivery=None) -> ChannelMessageResponse:
+def message_response(
+    message: ChannelMessage, *, delivery: ChannelDelivery | None = None
+) -> ChannelMessageResponse:
     return ChannelMessageResponse(
         id=message.id,
         direction=message.direction,
@@ -1602,11 +1544,11 @@ def _message_response(message, *, delivery=None) -> ChannelMessageResponse:
     )
 
 
-def _discord_interaction_content(
+def discord_interaction_content(
     *,
     paired: bool,
     unpaired: bool,
-    command: Any = None,
+    command: object = None,
     reply: str | None = None,
 ) -> str:
     if command is not None and reply:
@@ -1628,11 +1570,8 @@ async def json_object(request: Request) -> dict[str, JsonValue]:
     return _JSON_OBJECT_ADAPTER.validate_python(payload, strict=True)
 
 
-def _json_object_from_bytes(body: bytes) -> dict[str, Any]:
+def json_object_from_bytes(body: bytes) -> JsonObject:
     try:
-        payload = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return _JSON_OBJECT_ADAPTER.validate_json(body, strict=True)
+    except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid json") from exc
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="json object required")
-    return payload

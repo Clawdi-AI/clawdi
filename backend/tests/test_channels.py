@@ -20,7 +20,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy import event as sqlalchemy_event
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -69,13 +69,12 @@ from app.routes.channel_routers import shared as shared_router
 from app.routes.channel_routers import telegram as telegram_router
 from app.routes.channel_routers.discord import (
     _DISCORD_GATEWAY_SESSIONS,
-    _discord_bound_guilds,
     _discord_gateway_authority,
     _discord_gateway_url,
     _discord_guild_create_payload,
     cleanup_discord_guild_commands_after_authority_revoked,
 )
-from app.routes.channel_routers.shared import _discord_gateway_dispatch
+from app.routes.channel_routers.shared import discord_gateway_dispatch
 from app.schemas.channel import ChannelAccountCreate, ChannelAgentLinkCreate
 from app.services import channel_config as channel_config_service
 from app.services import channels as channel_service
@@ -2987,6 +2986,92 @@ async def test_channel_agent_link_accepts_strict_v2_runtime_agents(
 
 
 @pytest.mark.asyncio
+async def test_channel_agent_link_rejects_non_object_runtime_state_without_500(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="non-object-runtime-authority",
+        agent_type="openclaw",
+    )
+    await db_session.execute(
+        update(HostedRuntimeState)
+        .where(HostedRuntimeState.environment_id == agent.id)
+        .values(runtimes=[])
+    )
+    await db_session.commit()
+    account = await _create_public_telegram_account_for_user(
+        client,
+        user=user,
+        label="non-object-runtime-authority",
+    )
+
+    async with _client_for_user(db_session, user) as user_client:
+        response = await user_client.post(
+            f"/v1/channels/{account['id']}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == channel_service.STRICT_V2_AGENT_LINK_DETAIL
+
+
+@pytest.mark.asyncio
+async def test_discord_public_routes_reject_non_object_account_config_without_500(
+    db_session: AsyncSession,
+) -> None:
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="non-object-discord-config",
+        agent_type="openclaw",
+    )
+    provider_token, provider_token_nonce = encrypt_optional_token("discord-token")
+    account = channel_service.build_channel_account(
+        owner_user_id=user.id,
+        provider=CHANNEL_PROVIDER_DISCORD,
+        name=f"non-object-discord-config-{uuid4().hex}",
+        visibility="private",
+        webhook_secret_hash=hash_token(uuid4().hex),
+        encrypted_provider_token=provider_token,
+        provider_token_nonce=provider_token_nonce,
+    )
+    db_session.add(account)
+    await db_session.commit()
+    await db_session.execute(
+        update(ChannelAccount).where(ChannelAccount.id == account.id).values(config=[])
+    )
+    await db_session.commit()
+
+    async with _client_for_user(db_session, user) as user_client:
+        fetched = await user_client.get(f"/v1/channels/{account.id}")
+        command_response = await user_client.post(
+            f"/v1/channels/{account.id}/commands/sync",
+            json={
+                "commands": [
+                    {
+                        "name": "inspect_config_boundary",
+                        "description": "Exercise account config validation",
+                    }
+                ],
+                "guild_id": "test-guild",
+            },
+        )
+        response = await user_client.post(
+            f"/v1/channels/{account.id}/pair-codes",
+            json={"agent_id": str(agent.id), "ttl_seconds": 900},
+        )
+
+    assert fetched.status_code == 200, fetched.text
+    assert command_response.status_code == 400
+    assert command_response.json() == {
+        "detail": "discord application_id is required in channel config"
+    }
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Discord application_id is required."}
+
+
+@pytest.mark.asyncio
 async def test_channel_link_admission_serializes_behind_runtime_retirement(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -5825,6 +5910,84 @@ async def test_provider_send_rejects_existing_private_config_url(monkeypatch):
     assert exc.value.status_code == 400
     assert exc.value.detail == "discord provider url must be a public https URL"
     assert _FakeProviderClient.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "response_payload"),
+    [
+        ("discord", {}),
+        ("telegram", {"ok": True, "result": {}}),
+    ],
+)
+async def test_provider_send_rejects_success_without_provider_message_id(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    response_payload: dict[str, object],
+) -> None:
+    real_client = httpx.AsyncClient
+
+    def provider_handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=response_payload)
+
+    def client_factory(*_args: object, **_kwargs: object) -> httpx.AsyncClient:
+        return real_client(transport=httpx.MockTransport(provider_handler))
+
+    async def allow_test_url(_url: str, *, label: str) -> None:
+        expected_label = (
+            "discord api base url" if provider == "discord" else "telegram provider url"
+        )
+        assert label == expected_label
+
+    monkeypatch.setattr(channel_service.httpx, "AsyncClient", client_factory)
+    monkeypatch.setattr(channel_service, "validate_channel_http_url", allow_test_url)
+    ciphertext, nonce = encrypt_optional_token("provider-token")
+    account = ChannelAccount(
+        provider=provider,
+        encrypted_provider_token=ciphertext,
+        provider_token_nonce=nonce,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await send_provider_outbound_payload(
+            account=account,
+            external_chat_id="123",
+            text="hello",
+        )
+
+    assert exc_info.value.status_code == 502
+    assert "provider-token" not in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_telegram_command_sync_rejects_malformed_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_client = httpx.AsyncClient
+
+    def provider_handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": "true", "result": True})
+
+    def client_factory(*_args: object, **_kwargs: object) -> httpx.AsyncClient:
+        return real_client(transport=httpx.MockTransport(provider_handler))
+
+    async def allow_test_url(_url: str, *, label: str) -> None:
+        assert label == "telegram api base url"
+
+    monkeypatch.setattr(channel_service.httpx, "AsyncClient", client_factory)
+    monkeypatch.setattr(channel_service, "validate_channel_http_url", allow_test_url)
+    ciphertext, nonce = encrypt_optional_token("telegram-token")
+    account = ChannelAccount(
+        provider="telegram",
+        encrypted_provider_token=ciphertext,
+        provider_token_nonce=nonce,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await channel_service.sync_telegram_commands(account=account, commands=[])
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "telegram api returned invalid commands"
 
 
 @pytest.mark.asyncio
@@ -9456,7 +9619,7 @@ async def test_discord_gateway_shared_account_link_bearers_are_isolated(
     async def fake_provider_request(*, account, method: str, path: str, **kwargs):
         channel_id = path.rpartition("/")[2]
         suffix = channel_id.rpartition("-")[2]
-        return shared_router._DiscordProviderResult(
+        return shared_router.DiscordProviderResult(
             content=json.dumps(
                 {
                     "id": channel_id,
@@ -9469,7 +9632,7 @@ async def test_discord_gateway_shared_account_link_bearers_are_isolated(
             media_type="application/json",
         )
 
-    monkeypatch.setattr(discord_router, "_request_discord_provider", fake_provider_request)
+    monkeypatch.setattr(discord_router, "request_discord_provider", fake_provider_request)
 
     def identify(bearer: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
         with TestClient(app) as sync_client:
@@ -14688,6 +14851,9 @@ def _install_discord_gateway_protocol_fakes(
 ) -> list[str]:
     _DISCORD_GATEWAY_SESSIONS.clear()
     event_queue = events if events is not None else []
+    for event in event_queue:
+        if event.id is None:
+            event.id = uuid4()
     guild_authority = guilds if guilds is not None else {"guild-protocol-1": "Protocol Guild"}
     channel_authority = (
         channels if channels is not None else {"chan-protocol-1": "guild-protocol-1"}
@@ -14741,7 +14907,7 @@ def _install_discord_gateway_protocol_fakes(
     async def fake_provider_request(*, account, method: str, path: str, **kwargs):
         provider_paths.append(path)
         payload = provider_payloads[path.rpartition("/")[2]]
-        return shared_router._DiscordProviderResult(
+        return shared_router.DiscordProviderResult(
             content=json.dumps(payload).encode(),
             status_code=200,
             media_type="application/json",
@@ -14798,7 +14964,7 @@ def _install_discord_gateway_protocol_fakes(
         fake_authority,
     )
     monkeypatch.setattr(
-        "app.routes.channel_routers.discord._request_discord_provider",
+        "app.routes.channel_routers.discord.request_discord_provider",
         fake_provider_request,
     )
     monkeypatch.setattr(
@@ -15037,7 +15203,7 @@ async def test_discord_gateway_new_identify_replays_unacknowledged_db_message_af
 
     async def fake_provider_request(*, account, method: str, path: str, **_kwargs):
         assert path == f"channels/{channel_id}"
-        return shared_router._DiscordProviderResult(
+        return shared_router.DiscordProviderResult(
             content=json.dumps(
                 {"id": channel_id, "guild_id": guild_id, "type": 0, "name": "restart"}
             ).encode(),
@@ -15045,7 +15211,7 @@ async def test_discord_gateway_new_identify_replays_unacknowledged_db_message_af
             media_type="application/json",
         )
 
-    monkeypatch.setattr(discord_router, "_request_discord_provider", fake_provider_request)
+    monkeypatch.setattr(discord_router, "request_discord_provider", fake_provider_request)
     _install_discord_gateway_test_session_factory(monkeypatch)
 
     with TestClient(app) as sync_client:
@@ -15134,7 +15300,7 @@ async def test_discord_gateway_resume_sequence_acks_and_replays_exact_db_message
     await db_session.commit()
 
     async def fake_provider_request(*, account, method: str, path: str, **_kwargs):
-        return shared_router._DiscordProviderResult(
+        return shared_router.DiscordProviderResult(
             content=json.dumps(
                 {"id": channel_id, "guild_id": guild_id, "type": 0, "name": "resume"}
             ).encode(),
@@ -15142,7 +15308,7 @@ async def test_discord_gateway_resume_sequence_acks_and_replays_exact_db_message
             media_type="application/json",
         )
 
-    monkeypatch.setattr(discord_router, "_request_discord_provider", fake_provider_request)
+    monkeypatch.setattr(discord_router, "request_discord_provider", fake_provider_request)
     _install_discord_gateway_test_session_factory(monkeypatch)
 
     with TestClient(app) as sync_client:
@@ -15444,7 +15610,7 @@ def test_discord_gateway_terminal_alias_failure_does_not_block_later_event(monke
             },
         )
 
-    monkeypatch.setattr(discord_router, "_request_discord_provider", provider_request)
+    monkeypatch.setattr(discord_router, "request_discord_provider", provider_request)
     monkeypatch.setattr(discord_router, "monotonic", lambda: now)
 
     with TestClient(app) as sync_client:
@@ -15651,26 +15817,38 @@ async def test_discord_gateway_multiple_connections_send_each_event_once(
     await db_session.commit()
     await db_session.refresh(message)
     sends = 0
+    send_started = asyncio.Event()
+    release_send = asyncio.Event()
 
     async def send() -> int:
         nonlocal sends
         sends += 1
-        await asyncio.sleep(0.05)
+        send_started.set()
+        await release_send.wait()
         return 42
 
-    results = await asyncio.gather(
-        *(
+    async with asyncio.timeout(1):
+        first = asyncio.create_task(
             discord_router._send_discord_gateway_message(
                 account_id=account_id,
                 bot_agent_link_id=link_id,
                 message=message,
                 send=send,
             )
-            for _ in range(2)
         )
-    )
+        try:
+            await send_started.wait()
+            second = await discord_router._send_discord_gateway_message(
+                account_id=account_id,
+                bot_agent_link_id=link_id,
+                message=message,
+                send=send,
+            )
+        finally:
+            release_send.set()
+            first_result = await first
 
-    assert sorted(results) == [("consumed", None), ("sent", 42)]
+    assert sorted([first_result, second]) == [("consumed", None), ("sent", 42)]
     assert sends == 1
 
 
@@ -16256,7 +16434,7 @@ async def test_discord_interaction_pair_replays_shadowed_commands_once_for_guild
         )
 
     monkeypatch.setattr(
-        "app.routes.channel_routers.discord._fan_out_discord_global_commands",
+        "app.routes.channel_routers.discord.fan_out_discord_global_commands",
         fake_fan_out,
     )
     shadowed_command = {
@@ -17408,7 +17586,7 @@ async def test_discord_guild_binding_routes_other_members_channels_and_threads(
     assert {message.binding_id for message in messages} == {messages[0].binding_id}
     assert {message.external_chat_id for message in messages} == {"guild-shared"}
     dispatches = {
-        message.provider_message_id: _discord_gateway_dispatch(message) for message in messages
+        message.provider_message_id: discord_gateway_dispatch(message) for message in messages
     }
     assert dispatches["guild-message-b"]["d"] == channel_frame["d"]
     assert dispatches["guild-thread-message"]["d"] == thread_frame["d"]
@@ -17533,7 +17711,7 @@ async def test_discord_dm_round_trip_is_isolated_from_other_dms_and_guilds(
         )
     ).scalar_one()
     assert message.external_chat_id == "discord-dm-a"
-    assert _discord_gateway_dispatch(message)["d"] == dm_frame["d"]
+    assert discord_gateway_dispatch(message)["d"] == dm_frame["d"]
 
     _reset_fake_provider_client(
         {
@@ -17688,7 +17866,7 @@ async def test_discord_dispatch_records_bound_message(
         )
     ).scalar_one()
     assert alias.binding_id == message.binding_id
-    assert _discord_gateway_dispatch(message) == {
+    assert discord_gateway_dispatch(message) == {
         "op": 0,
         "t": "MESSAGE_CREATE",
         "s": message.inbox_sequence,
@@ -20348,7 +20526,7 @@ async def test_public_discord_dm_pair_handoff_unpair_and_duplicate_are_recorded_
         if message.provider_message_id in forwarded_payloads
     }
     for interaction_id, payload in forwarded_payloads.items():
-        dispatch = _discord_gateway_dispatch(forwarded_messages[interaction_id])
+        dispatch = discord_gateway_dispatch(forwarded_messages[interaction_id])
         assert dispatch["op"] == 0
         assert dispatch["t"] == "INTERACTION_CREATE"
         assert dispatch["d"] == payload
@@ -20598,8 +20776,7 @@ async def test_discord_signed_guild_pair_persists_provider_name_and_routes_by_id
     binding = await db_session.get(ChannelBinding, UUID(bindings[0]["id"]))
     assert account is not None
     assert binding is not None
-    assert await _discord_bound_guilds(db_session, account=account) == [guild_id]
-    assert shared_router._discord_binding_guild_id(binding) == guild_id
+    assert shared_router.discord_binding_guild_id(binding) == guild_id
 
 
 @pytest.mark.asyncio
@@ -21097,14 +21274,14 @@ async def test_discord_owner_missing_unpair_cleanup_skips_manage_guild_and_membe
         membership_must_not_run,
     )
 
-    async def provider_success(**_kwargs: Any) -> shared_router._DiscordProviderResult:
-        return shared_router._DiscordProviderResult(
+    async def provider_success(**_kwargs: Any) -> shared_router.DiscordProviderResult:
+        return shared_router.DiscordProviderResult(
             content=b"[]",
             status_code=200,
             media_type="application/json",
         )
 
-    monkeypatch.setattr(shared_router, "_request_discord_provider", provider_success)
+    monkeypatch.setattr(shared_router, "request_discord_provider", provider_success)
 
     async def unpair(actor: str, owners: dict[str, str] | None) -> httpx.Response:
         payload: dict[str, Any] = {
@@ -21155,10 +21332,10 @@ async def test_discord_replayed_unpair_cannot_archive_a_replacement_binding(
         guild_id=guild_id,
     )
 
-    async def provider_success(**_kwargs: Any) -> shared_router._DiscordProviderResult:
+    async def provider_success(**_kwargs: Any) -> shared_router.DiscordProviderResult:
         return _discord_provider_result(200, [])
 
-    monkeypatch.setattr(shared_router, "_request_discord_provider", provider_success)
+    monkeypatch.setattr(shared_router, "request_discord_provider", provider_success)
     original_unpair = {
         "type": 2,
         "id": "replayed-unpair-interaction",
@@ -21643,14 +21820,14 @@ async def test_discord_legacy_duplicate_application_is_contested_across_accounts
         (UUID(first["id"]), first_link.id),
         (UUID(second["id"]), second_link.id),
     }
-    assert not await shared_router._discord_guild_owned_by_link(
+    assert not await shared_router.discord_guild_owned_by_link(
         db_session,
         account=first_account,
         bot_agent_link_id=first_link.id,
         guild_id=guild_id,
     )
     assert (
-        await shared_router._discord_uncontested_guilds_for_link(
+        await shared_router.discord_uncontested_guilds_for_link(
             db_session,
             account=first_account,
             bot_agent_link_id=first_link.id,
@@ -21746,8 +21923,8 @@ def _discord_provider_result(
     payload: Any,
     *,
     headers: dict[str, str] | None = None,
-) -> shared_router._DiscordProviderResult:
-    return shared_router._DiscordProviderResult(
+) -> shared_router.DiscordProviderResult:
+    return shared_router.DiscordProviderResult(
         content=json.dumps(payload).encode("utf-8"),
         status_code=status_code,
         media_type="application/json",
@@ -21794,11 +21971,11 @@ async def test_discord_prod_timeline_reconciles_shadow_after_guild_create(
         _discord_provider_result(200, []),
     ]
 
-    async def sequenced_provider(**kwargs: Any) -> shared_router._DiscordProviderResult:
+    async def sequenced_provider(**kwargs: Any) -> shared_router.DiscordProviderResult:
         provider_calls.append(kwargs)
         return responses.pop(0)
 
-    monkeypatch.setattr(shared_router, "_request_discord_provider", sequenced_provider)
+    monkeypatch.setattr(shared_router, "request_discord_provider", sequenced_provider)
     command_url = f"/v1/channels/discord/v10/applications/{DISCORD_TEST_APPLICATION_ID}/commands"
     commands = [
         {"name": f"agent_command_{index}", "description": f"Agent command {index}"}
@@ -21894,11 +22071,11 @@ async def test_discord_delete_tombstone_recovers_after_provider_failure(
         _discord_provider_result(200, []),
     ]
 
-    async def sequenced_provider(**kwargs: Any) -> shared_router._DiscordProviderResult:
+    async def sequenced_provider(**kwargs: Any) -> shared_router.DiscordProviderResult:
         provider_calls.append(kwargs)
         return responses.pop(0)
 
-    monkeypatch.setattr(shared_router, "_request_discord_provider", sequenced_provider)
+    monkeypatch.setattr(shared_router, "request_discord_provider", sequenced_provider)
     command_url = f"/v1/channels/discord/v10/applications/{DISCORD_TEST_APPLICATION_ID}/commands"
     stored = await client.put(
         command_url,
@@ -21935,7 +22112,7 @@ async def test_discord_delete_tombstone_recovers_after_provider_failure(
     link = await db_session.get(ChannelBotAgentLink, link_id)
     assert link is not None
     await db_session.refresh(link)
-    empty_fingerprint = shared_router._discord_guild_command_fingerprint(
+    empty_fingerprint = shared_router.discord_guild_command_fingerprint(
         [],
         application_id=DISCORD_TEST_APPLICATION_ID,
     )
@@ -21967,11 +22144,11 @@ async def test_discord_429_retry_after_blocks_poll_until_due(
         _discord_provider_result(200, []),
     ]
 
-    async def sequenced_provider(**kwargs: Any) -> shared_router._DiscordProviderResult:
+    async def sequenced_provider(**kwargs: Any) -> shared_router.DiscordProviderResult:
         provider_calls.append(kwargs)
         return responses.pop(0)
 
-    monkeypatch.setattr(shared_router, "_request_discord_provider", sequenced_provider)
+    monkeypatch.setattr(shared_router, "request_discord_provider", sequenced_provider)
     command_url = f"/v1/channels/discord/v10/applications/{DISCORD_TEST_APPLICATION_ID}/commands"
     rate_limited = await client.put(
         command_url,
@@ -21998,7 +22175,7 @@ async def test_discord_429_retry_after_blocks_poll_until_due(
     assert len(provider_calls) == 2
 
     body_only = _discord_provider_result(429, {"retry_after": 23.5})
-    assert shared_router._discord_retry_after_seconds(body_only) == pytest.approx(23.5)
+    assert shared_router.discord_retry_after_seconds(body_only) == pytest.approx(23.5)
 
 
 def test_discord_429_without_valid_retry_after_uses_bounded_backoff() -> None:
@@ -22036,11 +22213,11 @@ async def test_discord_403_command_retry_is_blocked_without_tight_poll(
     )
     provider_calls: list[dict[str, Any]] = []
 
-    async def forbidden_provider(**kwargs: Any) -> shared_router._DiscordProviderResult:
+    async def forbidden_provider(**kwargs: Any) -> shared_router.DiscordProviderResult:
         provider_calls.append(kwargs)
         return _discord_provider_result(403, {"message": "Missing Access"})
 
-    monkeypatch.setattr(shared_router, "_request_discord_provider", forbidden_provider)
+    monkeypatch.setattr(shared_router, "request_discord_provider", forbidden_provider)
     command_url = f"/v1/channels/discord/v10/applications/{DISCORD_TEST_APPLICATION_ID}/commands"
     rejected = await client.put(
         command_url,
@@ -22083,11 +22260,11 @@ async def test_discord_verified_token_repair_rearms_blocked_command_retry(
         _discord_provider_result(200, []),
     ]
 
-    async def sequenced_provider(**kwargs: Any) -> shared_router._DiscordProviderResult:
+    async def sequenced_provider(**kwargs: Any) -> shared_router.DiscordProviderResult:
         provider_calls.append(kwargs)
         return responses.pop(0)
 
-    monkeypatch.setattr(shared_router, "_request_discord_provider", sequenced_provider)
+    monkeypatch.setattr(shared_router, "request_discord_provider", sequenced_provider)
     command_url = f"/v1/channels/discord/v10/applications/{DISCORD_TEST_APPLICATION_ID}/commands"
     rejected = await client.put(
         command_url,
@@ -22157,7 +22334,7 @@ async def test_discord_multi_guild_partial_failure_converges_independently(
     provider_calls: list[dict[str, Any]] = []
     guild_b_attempts = 0
 
-    async def partial_provider(**kwargs: Any) -> shared_router._DiscordProviderResult:
+    async def partial_provider(**kwargs: Any) -> shared_router.DiscordProviderResult:
         nonlocal guild_b_attempts
         provider_calls.append(kwargs)
         path = kwargs["path"]
@@ -22167,7 +22344,7 @@ async def test_discord_multi_guild_partial_failure_converges_independently(
                 return _discord_provider_result(502, {"message": "temporary guild failure"})
         return _discord_provider_result(200, [])
 
-    monkeypatch.setattr(shared_router, "_request_discord_provider", partial_provider)
+    monkeypatch.setattr(shared_router, "request_discord_provider", partial_provider)
     command_url = f"/v1/channels/discord/v10/applications/{DISCORD_TEST_APPLICATION_ID}/commands"
     partially_failed = await client.put(
         command_url,
@@ -22320,7 +22497,7 @@ async def test_discord_projection_lock_prevents_stale_put_after_new_desired_stat
     release_first = asyncio.Event()
     provider_versions: list[str] = []
 
-    async def blocked_provider(**kwargs: Any) -> shared_router._DiscordProviderResult:
+    async def blocked_provider(**kwargs: Any) -> shared_router.DiscordProviderResult:
         commands = json.loads(kwargs["body"])
         provider_versions.append(commands[0]["name"])
         if commands[0]["name"] == "version_one":
@@ -22328,14 +22505,14 @@ async def test_discord_projection_lock_prevents_stale_put_after_new_desired_stat
             await release_first.wait()
         return _discord_provider_result(200, [])
 
-    monkeypatch.setattr(shared_router, "_request_discord_provider", blocked_provider)
+    monkeypatch.setattr(shared_router, "request_discord_provider", blocked_provider)
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
 
     async def materialize_current() -> int:
         async with sessionmaker() as session:
             account = await session.get(ChannelAccount, account_id)
             assert account is not None
-            return await shared_router._fan_out_discord_global_commands(
+            return await shared_router.fan_out_discord_global_commands(
                 session,
                 account=account,
                 bot_agent_link_id=link_id,
@@ -22372,7 +22549,7 @@ async def test_discord_projection_lock_prevents_stale_put_after_new_desired_stat
     desired = final_link.config["discord_agent_commands"]["global"]
     assert desired == v2
     assert final_link.config["discord_command_materializations"][guild_id] == (
-        shared_router._discord_guild_command_fingerprint(
+        shared_router.discord_guild_command_fingerprint(
             v2,
             application_id=DISCORD_TEST_APPLICATION_ID,
         )
@@ -22480,11 +22657,11 @@ async def test_discord_admin_rejects_token_for_different_application(
 def test_discord_materialization_fingerprint_is_application_bound() -> None:
     commands = [{"name": "application_bound", "description": "Application-bound command"}]
 
-    first = shared_router._discord_guild_command_fingerprint(
+    first = shared_router.discord_guild_command_fingerprint(
         commands,
         application_id=DISCORD_TEST_APPLICATION_ID,
     )
-    second = shared_router._discord_guild_command_fingerprint(
+    second = shared_router.discord_guild_command_fingerprint(
         commands,
         application_id="223456789012345678",
     )
@@ -22512,11 +22689,11 @@ async def test_discord_archived_binding_cleanup_is_recovered_by_worker(
         _discord_provider_result(200, []),
     ]
 
-    async def sequenced_provider(**kwargs: Any) -> shared_router._DiscordProviderResult:
+    async def sequenced_provider(**kwargs: Any) -> shared_router.DiscordProviderResult:
         provider_calls.append(kwargs)
         return responses.pop(0)
 
-    monkeypatch.setattr(shared_router, "_request_discord_provider", sequenced_provider)
+    monkeypatch.setattr(shared_router, "request_discord_provider", sequenced_provider)
     command_url = f"/v1/channels/discord/v10/applications/{DISCORD_TEST_APPLICATION_ID}/commands"
     stored = await client.put(
         command_url,
@@ -22558,7 +22735,7 @@ async def test_discord_archived_binding_cleanup_is_recovered_by_worker(
     link = await db_session.get(ChannelBotAgentLink, link_id)
     assert link is not None
     assert link.config["discord_command_materializations"][guild_id] == (
-        shared_router._discord_guild_command_fingerprint(
+        shared_router.discord_guild_command_fingerprint(
             [],
             application_id=DISCORD_TEST_APPLICATION_ID,
         )
@@ -22596,11 +22773,11 @@ async def test_discord_worker_recovers_cleanup_when_crash_left_no_link_state(
     await db_session.commit()
     provider_calls: list[dict[str, Any]] = []
 
-    async def provider_success(**kwargs: Any) -> shared_router._DiscordProviderResult:
+    async def provider_success(**kwargs: Any) -> shared_router.DiscordProviderResult:
         provider_calls.append(kwargs)
         return _discord_provider_result(200, [])
 
-    monkeypatch.setattr(shared_router, "_request_discord_provider", provider_success)
+    monkeypatch.setattr(shared_router, "request_discord_provider", provider_success)
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     worker = DiscordCommandReconciliationWorker(sessionmaker, poll_interval_seconds=0.01)
 
@@ -22743,8 +22920,7 @@ async def test_discord_gateway_guild_create_lazily_heals_legacy_name_and_keeps_i
     assert binding.external_chat_type == "guild"
     assert binding.external_chat_name == "Renamed Guild"
     assert binding.external_chat_id == guild_id
-    assert await _discord_bound_guilds(db_session, account=account) == [guild_id]
-    assert shared_router._discord_binding_guild_id(binding) == guild_id
+    assert shared_router.discord_binding_guild_id(binding) == guild_id
     assert reconciled_guild_ids == [guild_id]
 
     assert (
@@ -22780,11 +22956,11 @@ async def test_discord_gateway_guild_delete_unavailable_does_nothing(
     )
     provider_calls: list[dict[str, Any]] = []
 
-    async def provider_must_not_run(**kwargs: Any) -> shared_router._DiscordProviderResult:
+    async def provider_must_not_run(**kwargs: Any) -> shared_router.DiscordProviderResult:
         provider_calls.append(kwargs)
         return _discord_provider_result(200, [])
 
-    monkeypatch.setattr(shared_router, "_request_discord_provider", provider_must_not_run)
+    monkeypatch.setattr(shared_router, "request_discord_provider", provider_must_not_run)
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
 
     assert (
@@ -22822,11 +22998,11 @@ async def test_discord_gateway_guild_delete_archives_cleans_and_is_replay_safe(
     )
     provider_calls: list[dict[str, Any]] = []
 
-    async def provider_success(**kwargs: Any) -> shared_router._DiscordProviderResult:
+    async def provider_success(**kwargs: Any) -> shared_router.DiscordProviderResult:
         provider_calls.append(kwargs)
         return _discord_provider_result(200, [])
 
-    monkeypatch.setattr(shared_router, "_request_discord_provider", provider_success)
+    monkeypatch.setattr(shared_router, "request_discord_provider", provider_success)
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     deleted = {
         "op": 0,
