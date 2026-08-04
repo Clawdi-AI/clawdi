@@ -7,7 +7,6 @@ import {
 	Key,
 	type LucideIcon,
 	SlidersHorizontal,
-	User,
 	WalletCards,
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
@@ -16,7 +15,6 @@ import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
 import { IconChip } from "@/components/icon-chip";
 import { ApiKeysPanel } from "@/components/settings/api-keys-panel";
 import { GeneralPanel } from "@/components/settings/general-panel";
-import { ProfilePanel } from "@/components/settings/profile-panel";
 import { type SettingsEditState, SettingsEditStateContext } from "@/components/settings-edit-state";
 import { SettingsPanelErrorBoundary } from "@/components/settings-panel-error-boundary";
 import { Button } from "@/components/ui/button";
@@ -75,14 +73,8 @@ const SETTINGS_NAV: SettingsNavItem[] = [
 	{
 		id: "general",
 		label: "General",
-		description: "Appearance and app preferences",
+		description: "Account and appearance",
 		icon: SlidersHorizontal,
-	},
-	{
-		id: "profile",
-		label: "Profile",
-		description: "Account identity",
-		icon: User,
 	},
 	{
 		id: "api-keys",
@@ -291,11 +283,11 @@ export function SettingsDialog({
 						</aside>
 
 						<section className="min-h-0 overflow-y-auto py-6 md:py-8">
-							<div className="mx-auto w-full max-w-5xl">
+							<div className="mx-auto w-full max-w-4xl">
 								{billingAccessPending ? (
 									<HostedRouteSkeleton />
 								) : billingAccessError ? (
-									<div className="px-4 lg:px-6">
+									<div className="px-5 sm:px-6 lg:px-8">
 										<ApiErrorPanel
 											error={hostedAccess.error}
 											normalizer={HOSTED_ACCESS_ERROR_NORMALIZER}
@@ -328,8 +320,6 @@ function SettingsPanel({ section }: { section: SettingsSectionId }) {
 	if (!SETTINGS_SECTION_IDS.includes(section)) return <GeneralPanel />;
 
 	switch (section) {
-		case "profile":
-			return <ProfilePanel />;
 		case "api-keys":
 			return <ApiKeysPanel />;
 		case "billing-wallet":

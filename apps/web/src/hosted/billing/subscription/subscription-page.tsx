@@ -20,7 +20,7 @@ import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
 const DESCRIPTION = "Plans and account billing for hosted agents.";
-const SUBSCRIPTION_PAGE_CLASS = "flex flex-col gap-8 px-4 lg:px-6";
+const SUBSCRIPTION_PAGE_CLASS = "flex flex-col gap-8 px-5 sm:px-6 lg:px-8";
 
 export function SubscriptionPage() {
 	const plans = usePlans();
@@ -98,11 +98,7 @@ export function SubscriptionPage() {
 
 			<BillingHistorySection />
 
-			<PlanComparison
-				term={term}
-				onTermChange={setTerm}
-				canCreateCloudAgents={hostedAccess.canCreateCloudAgents}
-			/>
+			<PlanComparison term={term} onTermChange={setTerm} />
 		</div>
 	);
 }

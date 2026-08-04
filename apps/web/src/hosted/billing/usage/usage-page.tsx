@@ -1,13 +1,13 @@
 "use client";
 
-import { Activity, AlertCircle, RefreshCw } from "lucide-react";
+import { AlertCircle, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
+import { SettingsSection } from "@/components/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { UsageSkeleton } from "@/hosted/billing/components/state-views";
 import type { HostedUsageSummary, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
@@ -27,7 +27,7 @@ import { formatShortDate } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
 const DESCRIPTION = "Clawdi AI usage in USD for the current reporting window across your agents.";
-const USAGE_PAGE_CLASS = "flex flex-col gap-8 px-4 lg:px-6";
+const USAGE_PAGE_CLASS = "flex flex-col gap-8 px-5 sm:px-6 lg:px-8";
 
 type UnavailableUsageSection = HostedUsageSummary["unavailable_sections"][number];
 
@@ -135,10 +135,11 @@ export function UsageSummaryView({
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
 				<SettingsPanelHeader title="Usage" description={DESCRIPTION} />
 				<EmptyState
-					icon={AlertCircle}
+					variant="inset"
 					title="We can’t load your usage right now"
 					description="The usage provider is temporarily unavailable. No spend or request total is shown because we could not read it."
 					action={<UsageRetryButton isRetrying={isRetrying} onRetry={onRetry} />}
+					className="py-10 md:p-10"
 				/>
 			</div>
 		);
@@ -169,9 +170,10 @@ export function UsageSummaryView({
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
 				<SettingsPanelHeader title="Usage" description={DESCRIPTION} />
 				<EmptyState
-					icon={Activity}
+					variant="inset"
 					title="No usage yet"
 					description="Once your agents start running, Clawdi AI spend shows up here."
+					className="py-10 md:p-10"
 				/>
 			</div>
 		);
@@ -206,100 +208,96 @@ export function UsageSummaryView({
 			) : null}
 
 			{totals ? (
-				<div className="grid gap-3 sm:grid-cols-2">
-					<Card data-hosted="true">
-						<CardContent>
-							<div className="text-3xl font-semibold tabular-nums">
-								{formatUsdExact(totals.usd)}
-							</div>
-							<div className="text-sm text-muted-foreground">Clawdi AI spend in window</div>
-						</CardContent>
-					</Card>
-					<Card data-hosted="true">
-						<CardContent>
-							<div className="text-3xl font-semibold tabular-nums">
-								{totals.requests.toLocaleString()}
-							</div>
-							<div className="text-sm text-muted-foreground">Requests in window</div>
-						</CardContent>
-					</Card>
-				</div>
+				<section
+					data-hosted="true"
+					aria-label="Usage summary"
+					className="grid overflow-hidden rounded-lg border sm:grid-cols-2 sm:divide-x"
+				>
+					<div className="space-y-1 p-4 sm:p-5">
+						<div className="text-xs font-medium text-muted-foreground">Clawdi AI spend</div>
+						<div className="text-3xl font-semibold tracking-tight tabular-nums">
+							{formatUsdExact(totals.usd)}
+						</div>
+					</div>
+					<div className="space-y-1 border-t p-4 sm:border-t-0 sm:p-5">
+						<div className="text-xs font-medium text-muted-foreground">Requests</div>
+						<div className="text-3xl font-semibold tracking-tight tabular-nums">
+							{totals.requests.toLocaleString()}
+						</div>
+					</div>
+				</section>
 			) : (
-				<Card data-hosted="true">
-					<CardContent>
-						<EmptyState
-							variant="inset"
-							title="Usage totals unavailable"
-							description="Spend and request totals are hidden because they could not be read."
-							className="py-4 md:p-4"
-						/>
-					</CardContent>
-				</Card>
+				<EmptyState
+					variant="inset"
+					title="Usage totals unavailable"
+					description="Spend and request totals are hidden because they could not be read."
+					className="py-6 md:p-6"
+				/>
 			)}
 
-			<Card data-hosted="true">
-				<CardHeader>
-					<h3 className="text-base leading-normal font-medium">Daily consumption</h3>
-				</CardHeader>
-				<CardContent>
-					{missingSectionSet.has("by_day") ? (
-						<EmptyState
-							variant="inset"
-							title="Daily breakdown unavailable"
-							description="No daily values are shown because the breakdown could not be read."
-							className="py-4 md:p-4"
-						/>
-					) : hasDailyBreakdown ? (
-						<>
-							<div className="flex h-28 items-end gap-1" role="img" aria-label={dailyChartLabel}>
+			<SettingsSection
+				headingLevel={3}
+				title="Daily usage"
+				description="Clawdi AI spend by day in this reporting window."
+			>
+				{missingSectionSet.has("by_day") ? (
+					<EmptyState
+						variant="inset"
+						title="Daily breakdown unavailable"
+						description="No daily values are shown because the breakdown could not be read."
+						className="py-4 md:p-4"
+					/>
+				) : hasDailyBreakdown ? (
+					<>
+						<div className="flex h-28 items-end gap-1" role="img" aria-label={dailyChartLabel}>
+							{usage.by_day.map((day) => (
+								<div
+									key={day.date}
+									title={`${formatShortDate(day.date)}: ${formatUsdExact(day.amount_usd)}`}
+									className="flex-1 rounded-t bg-primary/70 transition-colors hover:bg-primary"
+									style={{
+										height: `${Math.max(2, maxDay > 0 ? (decimalUsdNumber(day.amount_usd) / maxDay) * 100 : 0)}%`,
+									}}
+								/>
+							))}
+						</div>
+						<div className="mt-1.5 flex justify-between text-2xs text-muted-foreground">
+							<span>{formatShortDate(firstDailyPoint?.date, { includeYear: false })}</span>
+							<span>{formatShortDate(lastDailyPoint?.date, { includeYear: false })}</span>
+						</div>
+						<table className="sr-only">
+							<caption>Daily consumption by day in the reporting window</caption>
+							<thead>
+								<tr>
+									<th scope="col">Day</th>
+									<th scope="col">USD used</th>
+								</tr>
+							</thead>
+							<tbody>
 								{usage.by_day.map((day) => (
-									<div
-										key={day.date}
-										title={`${formatShortDate(day.date)}: ${formatUsdExact(day.amount_usd)}`}
-										className="flex-1 rounded-t bg-primary/70 transition-colors hover:bg-primary"
-										style={{
-											height: `${Math.max(2, maxDay > 0 ? (decimalUsdNumber(day.amount_usd) / maxDay) * 100 : 0)}%`,
-										}}
-									/>
-								))}
-							</div>
-							<div className="mt-1.5 flex justify-between text-2xs text-muted-foreground">
-								<span>{formatShortDate(firstDailyPoint?.date, { includeYear: false })}</span>
-								<span>{formatShortDate(lastDailyPoint?.date, { includeYear: false })}</span>
-							</div>
-							<table className="sr-only">
-								<caption>Daily consumption by day in the reporting window</caption>
-								<thead>
-									<tr>
-										<th scope="col">Day</th>
-										<th scope="col">USD used</th>
+									<tr key={day.date}>
+										<td>{day.date}</td>
+										<td>{formatUsdExact(day.amount_usd)}</td>
 									</tr>
-								</thead>
-								<tbody>
-									{usage.by_day.map((day) => (
-										<tr key={day.date}>
-											<td>{day.date}</td>
-											<td>{formatUsdExact(day.amount_usd)}</td>
-										</tr>
-									))}
-								</tbody>
-							</table>
-						</>
-					) : (
-						<EmptyState
-							variant="inset"
-							description="No daily usage in this reporting window"
-							className="py-4 md:p-4"
-						/>
-					)}
-				</CardContent>
-			</Card>
+								))}
+							</tbody>
+						</table>
+					</>
+				) : (
+					<EmptyState
+						variant="inset"
+						description="No daily usage in this reporting window"
+						className="py-4 md:p-4"
+					/>
+				)}
+			</SettingsSection>
 
-			<Card data-hosted="true">
-				<CardHeader>
-					<h3 className="text-base leading-normal font-medium">By model</h3>
-				</CardHeader>
-				<CardContent className="flex flex-col gap-4">
+			<SettingsSection
+				headingLevel={3}
+				title="By model"
+				description="Spend and requests grouped by model."
+			>
+				<div className="divide-y">
 					{missingSectionSet.has("by_model") ? (
 						<EmptyState
 							variant="inset"
@@ -324,7 +322,7 @@ export function UsageSummaryView({
 							return (
 								<div
 									key={`${model.provider ?? "managed"}:${model.model}`}
-									className="flex min-w-0 items-start gap-2.5"
+									className="flex min-w-0 items-start gap-2.5 py-3 first:pt-0 last:pb-0"
 								>
 									<ProviderIcon provider={providerId} providers={providers} size="sm" />
 									<div className="min-w-0 flex-1 space-y-1">
@@ -351,8 +349,8 @@ export function UsageSummaryView({
 							);
 						})
 					)}
-				</CardContent>
-			</Card>
+				</div>
+			</SettingsSection>
 		</div>
 	);
 }

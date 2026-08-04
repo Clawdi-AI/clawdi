@@ -19,7 +19,7 @@ export class SettingsPanelErrorBoundary extends Component<
 		if (!this.state.failed) return this.props.children;
 
 		return (
-			<div className="px-4 lg:px-6">
+			<div className="px-5 sm:px-6 lg:px-8">
 				<Alert variant="destructive">
 					<AlertCircle aria-hidden />
 					<AlertTitle>Couldn’t load this settings section</AlertTitle>

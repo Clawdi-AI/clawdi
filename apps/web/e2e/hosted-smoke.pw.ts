@@ -9078,27 +9078,30 @@ test("compute comparison synchronizes API prices across the shared billing term"
 
 	const settingsDialog = page.getByTestId("settings-dialog");
 	await expect(settingsDialog).toBeVisible();
-	const comparison = settingsDialog.getByRole("region", { name: "Compare compute options" });
+	const comparison = settingsDialog.getByRole("region", { name: "Compare compute plans" });
 	const termSwitcher = comparison.getByRole("group", { name: /Billing term/ });
 	await expect(termSwitcher).toHaveCount(1);
 	const cards = comparison.locator('[data-slot="card"]');
 	const basicCard = cards.nth(0);
 	const performanceCard = cards.nth(1);
-	const aiCard = cards.nth(2);
+	await expect(cards).toHaveCount(2);
 	await expect(termSwitcher.getByRole("button", { name: "Monthly", exact: true })).toHaveAttribute(
 		"aria-pressed",
 		"true",
 	);
 	await expect(basicCard).toContainText("$12.34/mo");
 	await expect(performanceCard).toContainText("$56.78/mo");
-	await expect(aiCard).toContainText("Pay as you go");
+	const monthlyBoxes = await cards.evaluateAll((elements) =>
+		elements.map((element) => element.getBoundingClientRect().toJSON()),
+	);
+	expect(monthlyBoxes[0]?.top).toBeCloseTo(monthlyBoxes[1]?.top ?? 0, 0);
+	expect(monthlyBoxes[0]?.height).toBeCloseTo(monthlyBoxes[1]?.height ?? 0, 0);
 
 	await termSwitcher.getByRole("button", { name: "Annual", exact: true }).click();
 	await expect(basicCard).toContainText("$10.29/mo");
 	await expect(basicCard).toContainText("Billed $123.48/yr");
 	await expect(performanceCard).toContainText("$45.27/mo");
 	await expect(performanceCard).toContainText("Billed $543.24/yr");
-	await expect(aiCard).toContainText("Pay as you go");
 	expect(errors, `compute plan comparison: ${errors.join(" | ")}`).toEqual([]);
 });
 
