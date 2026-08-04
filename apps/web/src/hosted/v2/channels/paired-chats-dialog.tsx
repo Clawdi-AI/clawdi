@@ -73,7 +73,10 @@ export function PairedChatsDialog({
 		<button
 			type="button"
 			data-agent-paired-chats-trigger={linkId}
-			className={cn(buttonVariants({ variant: "outline", size: "xs" }), "max-w-full justify-start")}
+			className={cn(
+				buttonVariants({ variant: "link", size: "xs" }),
+				"h-auto max-w-full justify-start p-0 text-sm",
+			)}
 			aria-controls={panelId}
 		>
 			<span data-agent-paired-chats-label className="whitespace-nowrap">
