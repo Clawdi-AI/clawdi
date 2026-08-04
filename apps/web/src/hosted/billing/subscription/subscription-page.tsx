@@ -20,8 +20,7 @@ import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
-const DESCRIPTION =
-	"Plan options for new hosted agents. Existing compute is managed from each agent’s Settings.";
+const DESCRIPTION = "Plans and account billing for hosted agents.";
 const SUBSCRIPTION_PAGE_CLASS = "flex flex-col gap-8 px-4 lg:px-6";
 
 export function SubscriptionPage() {

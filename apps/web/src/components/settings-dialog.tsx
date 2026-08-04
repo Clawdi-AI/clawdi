@@ -293,9 +293,7 @@ export function SettingsDialog({
 						<section className="min-h-0 overflow-y-auto py-6 md:py-8">
 							<div className="mx-auto w-full max-w-5xl">
 								{billingAccessPending ? (
-									<div className="px-4 lg:px-6">
-										<HostedRouteSkeleton />
-									</div>
+									<HostedRouteSkeleton />
 								) : billingAccessError ? (
 									<div className="px-4 lg:px-6">
 										<ApiErrorPanel
@@ -336,13 +334,7 @@ function SettingsPanel({ section }: { section: SettingsSectionId }) {
 			return <ApiKeysPanel />;
 		case "billing-wallet":
 			return WalletPage ? (
-				<Suspense
-					fallback={
-						<div className="px-4 lg:px-6">
-							<HostedRouteSkeleton />
-						</div>
-					}
-				>
+				<Suspense fallback={<HostedRouteSkeleton />}>
 					<WalletPage />
 				</Suspense>
 			) : (
@@ -350,13 +342,7 @@ function SettingsPanel({ section }: { section: SettingsSectionId }) {
 			);
 		case "billing-plan":
 			return SubscriptionPage ? (
-				<Suspense
-					fallback={
-						<div className="px-4 lg:px-6">
-							<HostedRouteSkeleton />
-						</div>
-					}
-				>
+				<Suspense fallback={<HostedRouteSkeleton />}>
 					<SubscriptionPage />
 				</Suspense>
 			) : (
@@ -364,13 +350,7 @@ function SettingsPanel({ section }: { section: SettingsSectionId }) {
 			);
 		case "billing-usage":
 			return UsagePage ? (
-				<Suspense
-					fallback={
-						<div className="px-4 lg:px-6">
-							<HostedRouteSkeleton />
-						</div>
-					}
-				>
+				<Suspense fallback={<HostedRouteSkeleton />}>
 					<UsagePage />
 				</Suspense>
 			) : (

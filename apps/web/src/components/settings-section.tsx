@@ -2,7 +2,10 @@ import { useId } from "react";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
-type SettingsSectionProps = Omit<React.ComponentProps<"section">, "children" | "title"> & {
+type SettingsSectionProps = Omit<
+	React.ComponentProps<"section">,
+	"aria-labelledby" | "children" | "title"
+> & {
 	title: React.ReactNode;
 	description?: React.ReactNode;
 	children?: React.ReactNode;
@@ -21,18 +24,17 @@ export function SettingsSection({
 	...sectionProps
 }: SettingsSectionProps) {
 	const generatedTitleId = useId();
-	const titleId = sectionProps["aria-labelledby"] ?? generatedTitleId;
 	const Heading = headingLevel === 3 ? "h3" : "h2";
 	return (
 		<section
-			aria-labelledby={titleId}
 			{...sectionProps}
+			aria-labelledby={generatedTitleId}
 			className={cn("flex flex-col gap-4", className)}
 		>
 			<Separator />
 			<div className="flex max-w-2xl flex-col gap-1.5">
 				<Heading
-					id={titleId}
+					id={generatedTitleId}
 					className={cn("text-sm font-semibold", variant === "destructive" && "text-destructive")}
 				>
 					{title}

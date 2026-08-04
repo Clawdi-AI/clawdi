@@ -7,7 +7,7 @@ import { EmptyState } from "@/components/empty-state";
 import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { UsageSkeleton } from "@/hosted/billing/components/state-views";
 import type { HostedUsageSummary, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
@@ -239,7 +239,7 @@ export function UsageSummaryView({
 
 			<Card data-hosted="true">
 				<CardHeader>
-					<CardTitle className="text-base">Daily consumption</CardTitle>
+					<h3 className="text-base leading-normal font-medium">Daily consumption</h3>
 				</CardHeader>
 				<CardContent>
 					{missingSectionSet.has("by_day") ? (
@@ -297,7 +297,7 @@ export function UsageSummaryView({
 
 			<Card data-hosted="true">
 				<CardHeader>
-					<CardTitle className="text-base">By model</CardTitle>
+					<h3 className="text-base leading-normal font-medium">By model</h3>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
 					{missingSectionSet.has("by_model") ? (
