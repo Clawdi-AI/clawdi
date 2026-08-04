@@ -30,6 +30,7 @@ from app.models.runtime_observation import (
     V2RuntimeEnvironmentFence,
 )
 from app.models.session import AgentEnvironment
+from app.services.principal_lifecycle import assert_user_authority_active
 
 
 @dataclass
@@ -79,6 +80,8 @@ async def mint_api_key(
     accepted only for a managed environment-bound key whose pre-provisioned
     fence matches the same owner and deployment in this transaction.
     """
+    await assert_user_authority_active(db, user_id)
+
     # Defense-in-depth: every route caller already checks env
     # ownership before calling this service, but the service
     # itself enforces it too. A future caller that forgets the

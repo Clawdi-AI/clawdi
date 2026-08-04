@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import invalidate_api_key_auth_cache
+from app.core.auth import invalidate_api_key_auth_cache, invalidate_user_api_key_auth_cache
 from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
@@ -26,6 +26,8 @@ from app.schemas.platform import (
     PlatformApiKeyCreate,
     PlatformMutationBody,
     PlatformOwner,
+    PlatformPrincipalTermination,
+    PlatformPrincipalTerminationResponse,
     PlatformRuntimeStateResponse,
     PlatformRuntimeStateUpsert,
 )
@@ -68,6 +70,19 @@ from app.services.platform_workload_auth import (
     get_platform_workload_key_resolver,
     issue_platform_workload_token,
     require_platform_mutation_auth,
+    require_platform_workload_auth,
+)
+from app.services.principal_lifecycle import (
+    PrincipalCommandConflictError,
+    PrincipalIdentityConflictError,
+    PrincipalLifecycleConfigurationError,
+    PrincipalTerminatedError,
+    assert_user_authority_active,
+    complete_principal_cleanup,
+    fence_principal_termination,
+    load_clerk_user_for_issuer,
+    record_principal_cleanup_failure,
+    resolve_clerk_owner_issuer,
 )
 from app.services.runtime_generation import (
     RuntimeApplyGenerationUpdateError,
@@ -196,6 +211,188 @@ async def platform_workload_oauth_token(
     return JSONResponse(content=response.model_dump(), headers=_OAUTH_NO_STORE_HEADERS)
 
 
+@router.post(
+    "/principals/terminate",
+    response_model=PlatformPrincipalTerminationResponse,
+)
+async def platform_terminate_principal(
+    body: PlatformPrincipalTermination,
+    request: Request,
+    idempotency_key: IdempotencyKey,
+    _auth: PlatformMutationAuth = Depends(
+        require_platform_workload_auth("platform:principals:terminate")
+    ),
+    db: AsyncSession = Depends(get_session),
+) -> PlatformPrincipalTerminationResponse:
+    """Fence a Clerk principal before transactionally revoking local authority."""
+
+    action = "principal.terminate"
+    owner = PlatformOwner(kind=PRINCIPAL_KIND_CLERK, ref=body.principal.subject)
+    resource_id = f"{body.principal.issuer}#{body.principal.subject}"
+    if idempotency_key != body.command_id:
+        await _reject(
+            db,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Idempotency-Key must equal command_id",
+            result="invalid_command_identity",
+            owner=owner,
+            owner_user_id=None,
+            resource_type="principal_lifecycle",
+            resource_id=resource_id,
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+        )
+        raise AssertionError("unreachable")
+
+    try:
+        receipt = await fence_principal_termination(
+            db,
+            issuer=body.principal.issuer,
+            subject=body.principal.subject,
+            revision=body.revision,
+            command_id=body.command_id,
+        )
+    except PrincipalLifecycleConfigurationError:
+        await _reject(
+            db,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="principal lifecycle receiver is not configured",
+            result="receiver_unconfigured",
+            owner=owner,
+            owner_user_id=None,
+            resource_type="principal_lifecycle",
+            resource_id=resource_id,
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+        )
+        raise AssertionError("unreachable")
+    except PrincipalIdentityConflictError:
+        await _reject(
+            db,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="principal issuer is not accepted",
+            result="issuer_mismatch",
+            owner=owner,
+            owner_user_id=None,
+            resource_type="principal_lifecycle",
+            resource_id=resource_id,
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+        )
+        raise AssertionError("unreachable")
+    except PrincipalCommandConflictError:
+        await _reject(
+            db,
+            status_code=status.HTTP_409_CONFLICT,
+            detail="command_id was already used with a different request",
+            result="command_conflict",
+            owner=owner,
+            owner_user_id=None,
+            resource_type="principal_lifecycle",
+            resource_id=resource_id,
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+        )
+        raise AssertionError("unreachable")
+
+    _record_platform_audit(
+        db,
+        owner=owner,
+        owner_user_id=receipt.user_id,
+        resource_type="principal_lifecycle",
+        resource_id=resource_id,
+        action="principal.termination.fence",
+        result="fenced" if receipt.advanced else "revision_noop",
+        request=request,
+        idempotency_key=idempotency_key,
+        details={
+            "issuer": body.principal.issuer,
+            "command_id": body.command_id,
+            "requested_revision": body.revision,
+            "accepted_revision": receipt.accepted_revision,
+            "fence_created": receipt.fence_created,
+        },
+    )
+    # This commit is deliberately before cleanup. Once it succeeds every auth
+    # and owner-creation path observes the fence even if cleanup needs repair.
+    await db.commit()
+
+    try:
+        cleanup = await complete_principal_cleanup(db, lifecycle_id=receipt.lifecycle_id)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        try:
+            await record_principal_cleanup_failure(
+                db,
+                lifecycle_id=receipt.lifecycle_id,
+            )
+            _record_platform_audit(
+                db,
+                owner=owner,
+                owner_user_id=receipt.user_id,
+                resource_type="principal_lifecycle",
+                resource_id=resource_id,
+                action="principal.termination.cleanup",
+                result="repair_pending",
+                request=request,
+                idempotency_key=idempotency_key,
+                details={"durable_retry": True},
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "principal termination cleanup is pending repair",
+        ) from None
+
+    if receipt.user_id is not None:
+        invalidate_user_api_key_auth_cache(receipt.user_id)
+    for key_id in cleanup.revoked_api_key_ids:
+        invalidate_api_key_auth_cache(key_id)
+
+    response = PlatformPrincipalTerminationResponse(
+        principal=body.principal,
+        command_id=body.command_id,
+        requested_revision=body.revision,
+        accepted_revision=receipt.accepted_revision,
+        advanced=receipt.advanced,
+        user_disabled=cleanup.user_disabled,
+    )
+    _record_platform_audit(
+        db,
+        owner=owner,
+        owner_user_id=receipt.user_id,
+        resource_type="principal_lifecycle",
+        resource_id=resource_id,
+        action="principal.termination.cleanup",
+        result="success",
+        request=request,
+        idempotency_key=idempotency_key,
+        details={
+            "command_id": body.command_id,
+            "requested_revision": body.revision,
+            "accepted_revision": receipt.accepted_revision,
+            "api_keys_revoked": cleanup.api_keys_revoked,
+            "agents_archived": cleanup.agents_archived,
+            "runtime_states_deleted": cleanup.runtime_states_deleted,
+            "runtime_environments_retired": cleanup.runtime_environments_retired,
+            "channel_accounts_disabled": cleanup.channel_accounts_disabled,
+            "project_access_revoked": cleanup.project_access_revoked,
+            "session_access_revoked": cleanup.session_access_revoked,
+            "ai_providers_archived": cleanup.ai_providers_archived,
+            "oauth_revoke_pending": cleanup.oauth_revoke_pending,
+        },
+    )
+    await db.commit()
+    return response
+
+
 def _audit_details(
     *,
     owner: PlatformOwner,
@@ -310,17 +507,54 @@ async def _resolve_owner(
     idempotency_key: str,
 ) -> User:
     if owner.kind == PRINCIPAL_KIND_CLERK:
-        filters = (
-            User.principal_kind == PRINCIPAL_KIND_CLERK,
-            User.clerk_id == owner.ref,
-        )
+        try:
+            issuer = await resolve_clerk_owner_issuer(db, subject=owner.ref)
+            user = await load_clerk_user_for_issuer(
+                db,
+                issuer=issuer,
+                subject=owner.ref,
+                bind_legacy=False,
+            )
+        except (PrincipalIdentityConflictError, PrincipalTerminatedError):
+            await _reject(
+                db,
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Owner has been terminated",
+                result="owner_terminated",
+                owner=owner,
+                owner_user_id=None,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                action=action,
+                request=request,
+                idempotency_key=idempotency_key,
+            )
+            raise AssertionError("unreachable")
+        except PrincipalLifecycleConfigurationError:
+            await _reject(
+                db,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Clerk owner issuer is not configured",
+                result="owner_issuer_unconfigured",
+                owner=owner,
+                owner_user_id=None,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                action=action,
+                request=request,
+                idempotency_key=idempotency_key,
+            )
+            raise AssertionError("unreachable")
     else:
-        filters = (
-            User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
-            User.partner_tenant_ref == owner.ref,
-            User.clerk_id.is_(None),
-        )
-    user = (await db.execute(select(User).where(*filters))).scalar_one_or_none()
+        user = (
+            await db.execute(
+                select(User).where(
+                    User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
+                    User.partner_tenant_ref == owner.ref,
+                    User.clerk_id.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
     if user is None:
         await _reject(
             db,
@@ -329,6 +563,23 @@ async def _resolve_owner(
             result="owner_not_found",
             owner=owner,
             owner_user_id=None,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+        )
+        raise AssertionError("unreachable")
+    try:
+        await assert_user_authority_active(db, user.id)
+    except PrincipalTerminatedError:
+        await _reject(
+            db,
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Owner has been terminated",
+            result="owner_terminated",
+            owner=owner,
+            owner_user_id=user.id,
             resource_type=resource_type,
             resource_id=resource_id,
             action=action,

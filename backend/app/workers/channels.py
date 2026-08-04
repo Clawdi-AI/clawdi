@@ -18,6 +18,7 @@ from app.services.discord_command_reconciliation_worker import (
 )
 from app.services.discord_gateway_worker import DiscordGatewayWorker
 from app.services.metrics import metrics_content_type, render_metrics
+from app.services.principal_lifecycle_cleanup_worker import PrincipalLifecycleCleanupWorker
 from app.services.runtime_observation_retention_worker import RuntimeObservationRetentionWorker
 
 configure_application_logging()
@@ -136,6 +137,7 @@ def build_channel_workers() -> tuple[
     ChannelWebhookDeliveryWorker,
     DiscordCommandReconciliationWorker,
     DiscordGatewayWorker,
+    PrincipalLifecycleCleanupWorker,
     ChannelMessageRetentionWorker,
     RuntimeObservationRetentionWorker,
 ]:
@@ -150,6 +152,7 @@ def build_channel_workers() -> tuple[
         ChannelWebhookDeliveryWorker(async_session_factory),
         DiscordCommandReconciliationWorker(async_session_factory),
         DiscordGatewayWorker(async_session_factory, lock_engine=engine),
+        PrincipalLifecycleCleanupWorker(async_session_factory),
         ChannelMessageRetentionWorker(async_session_factory),
         RuntimeObservationRetentionWorker(async_session_factory),
     )

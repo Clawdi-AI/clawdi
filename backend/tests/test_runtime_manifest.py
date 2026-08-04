@@ -291,7 +291,9 @@ async def admin_client(db_session) -> AsyncIterator[httpx.AsyncClient]:
         yield db_session
 
     original_admin_key = settings.admin_api_key
+    original_clerk_issuer = settings.clerk_jwt_issuer
     settings.admin_api_key = _ADMIN_KEY
+    settings.clerk_jwt_issuer = "https://runtime-manifest.clerk.example.test"
     app.dependency_overrides[get_session] = _override_get_session
     try:
         transport = ASGITransport(app=app)
@@ -300,6 +302,7 @@ async def admin_client(db_session) -> AsyncIterator[httpx.AsyncClient]:
     finally:
         app.dependency_overrides.clear()
         settings.admin_api_key = original_admin_key
+        settings.clerk_jwt_issuer = original_clerk_issuer
 
 
 async def _runtime_client(db_session, seed_user, api_key: ApiKey | None):

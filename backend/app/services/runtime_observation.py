@@ -30,7 +30,10 @@ from app.models.runtime_observation import (
     V2RuntimeObservationInbox,
 )
 from app.models.session import AgentEnvironment
-from app.schemas.runtime_observation import RuntimeObservationEventV2
+from app.schemas.runtime_observation import (
+    RuntimeObservationEventV2,
+    RuntimeObservationIngestOutcome,
+)
 from app.services.audit import record_control_plane_audit
 
 _CURSOR_PREFIX = "clawdi-ro-v1"
@@ -57,7 +60,7 @@ class RuntimeObservationIngestResult:
     event_id: str
     stream_position: int
     duplicate: bool
-    outcome: str
+    outcome: RuntimeObservationIngestOutcome
 
 
 @dataclass(frozen=True)

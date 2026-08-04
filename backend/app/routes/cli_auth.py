@@ -19,7 +19,6 @@ This remains additive for existing released CLI clients. New first-party CLI
 login uses Clerk's Public OAuth App Authorization Code + PKCE flow instead.
 """
 
-import hashlib
 import secrets
 import time
 from collections import deque
@@ -36,7 +35,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, require_oauth_cli_auth, require_web_auth
 from app.core.config import settings
 from app.core.database import get_session
-from app.models.api_key import ApiKey
 from app.models.device_authorization import DeviceAuthorization
 from app.schemas.cli_auth import (
     DeviceApproveRequest,
@@ -51,6 +49,7 @@ from app.schemas.cli_auth import (
     OAuthRevokeRequest,
     OAuthRevokeResponse,
 )
+from app.services.api_key import mint_api_key
 from app.services.app_setting_registry import CLERK_CLI_OAUTH_SPEC
 from app.services.app_settings import AppSettingUnavailable, resolve_app_setting
 from app.services.clerk_cli_oauth_settings import ClerkCliOAuthSetting
@@ -511,21 +510,18 @@ async def approve_device_flow(
             f"Authorization is already {da.status}",
         )
 
-    raw = "clawdi_" + secrets.token_urlsafe(32)
     label = (da.client_label or "CLI device flow")[:200]
-    api_key = ApiKey(
+    minted = await mint_api_key(
+        db,
         user_id=auth.user_id,
-        key_hash=hashlib.sha256(raw.encode()).hexdigest(),
-        key_prefix=raw[:16],
         label=label,
+        commit=False,
     )
-    db.add(api_key)
-    await db.flush()  # need api_key.id for the back-reference
 
     da.status = "approved"
     da.user_id = auth.user_id
-    da.api_key_id = api_key.id
-    da.api_key_raw = raw
+    da.api_key_id = minted.api_key.id
+    da.api_key_raw = minted.raw_key
     await db.commit()
 
     return DeviceTerminalResponse(status="approved")

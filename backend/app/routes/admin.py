@@ -162,6 +162,14 @@ from app.services.managed_ai_provider import (
     lock_deployment_managed_provider_mutation,
     upsert_clawdi_managed_provider,
 )
+from app.services.principal_lifecycle import (
+    PrincipalIdentityConflictError,
+    PrincipalLifecycleConfigurationError,
+    PrincipalTerminatedError,
+    assert_user_authority_active,
+    load_clerk_user_for_issuer,
+    resolve_clerk_owner_issuer,
+)
 from app.services.runtime_generation import (
     RuntimeApplyGenerationUpdateError,
     resolve_runtime_apply_generation_update,
@@ -305,7 +313,10 @@ async def admin_upsert_app_setting(
     return _admin_app_setting_response(setting)
 
 
-async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
+async def _resolve_or_create_user(
+    db: AsyncSession,
+    clerk_id: str,
+) -> User:
     """Resolve a user by clerk_id, lazy-creating the row + Personal
     project if needed.
 
@@ -327,20 +338,35 @@ async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
     an operational anomaly worth a loud failure rather than a
     user-flow retry.
     """
-    target = (
-        await db.execute(
-            select(User).where(
-                User.principal_kind == PRINCIPAL_KIND_CLERK,
-                User.clerk_id == clerk_id,
-            )
+    try:
+        issuer = await resolve_clerk_owner_issuer(
+            db,
+            subject=clerk_id,
         )
-    ).scalar_one_or_none()
+        target = await load_clerk_user_for_issuer(
+            db,
+            issuer=issuer,
+            subject=clerk_id,
+            bind_legacy=False,
+        )
+    except (PrincipalIdentityConflictError, PrincipalTerminatedError):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Owner has been terminated") from None
+    except PrincipalLifecycleConfigurationError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Clerk owner issuer is not configured",
+        ) from None
     if target is not None:
+        try:
+            await assert_user_authority_active(db, target.id)
+        except PrincipalTerminatedError:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Owner has been terminated") from None
         return target
 
     user = await lazy_create_user_with_personal_project(
         db,
         clerk_id=clerk_id,
+        clerk_issuer=issuer,
         email=None,
         name=None,
         race_loser_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -349,25 +375,52 @@ async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
     return user
 
 
-async def _find_admin_owner(db: AsyncSession, owner: PlatformOwner) -> User:
+async def _find_admin_owner(
+    db: AsyncSession,
+    owner: PlatformOwner,
+) -> User:
     if owner.kind == PRINCIPAL_KIND_CLERK:
-        filters = (
-            User.principal_kind == PRINCIPAL_KIND_CLERK,
-            User.clerk_id == owner.ref,
-        )
+        try:
+            issuer = await resolve_clerk_owner_issuer(
+                db,
+                subject=owner.ref,
+            )
+            target = await load_clerk_user_for_issuer(
+                db,
+                issuer=issuer,
+                subject=owner.ref,
+                bind_legacy=False,
+            )
+        except (PrincipalIdentityConflictError, PrincipalTerminatedError):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Owner has been terminated") from None
+        except PrincipalLifecycleConfigurationError:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Clerk owner issuer is not configured",
+            ) from None
     else:
-        filters = (
-            User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
-            User.partner_tenant_ref == owner.ref,
-            User.clerk_id.is_(None),
-        )
-    target = (await db.execute(select(User).where(*filters))).scalar_one_or_none()
+        target = (
+            await db.execute(
+                select(User).where(
+                    User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
+                    User.partner_tenant_ref == owner.ref,
+                    User.clerk_id.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Owner not found")
+    try:
+        await assert_user_authority_active(db, target.id)
+    except PrincipalTerminatedError:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Owner has been terminated") from None
     return target
 
 
-async def _resolve_or_create_admin_owner(db: AsyncSession, owner: PlatformOwner) -> User:
+async def _resolve_or_create_admin_owner(
+    db: AsyncSession,
+    owner: PlatformOwner,
+) -> User:
     if owner.kind == PRINCIPAL_KIND_CLERK:
         return await _resolve_or_create_user(db, owner.ref)
 
@@ -381,6 +434,10 @@ async def _resolve_or_create_admin_owner(db: AsyncSession, owner: PlatformOwner)
         )
     ).scalar_one_or_none()
     if target is not None:
+        try:
+            await assert_user_authority_active(db, target.id)
+        except PrincipalTerminatedError:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Owner has been terminated") from None
         return target
     return await lazy_create_partner_user_with_personal_project(
         db,
@@ -557,14 +614,15 @@ async def _assert_admin_target_owns_environment(
     if target_clerk_id is None:
         return env.user_id
 
-    target = (
-        await db.execute(
-            select(User).where(
-                User.principal_kind == PRINCIPAL_KIND_CLERK,
-                User.clerk_id == target_clerk_id,
-            )
+    try:
+        target = await _find_admin_owner(
+            db,
+            PlatformOwner(kind=PRINCIPAL_KIND_CLERK, ref=target_clerk_id),
         )
-    ).scalar_one_or_none()
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_404_NOT_FOUND:
+            raise
+        target = None
     if target is None or env.user_id != target.id:
         logger.warning(
             "admin_environment_owner_rejected target_clerk_id=%s env_id=%s owner_user_id=%s",

@@ -48,6 +48,7 @@ from app.services.platform_workload_auth import (
 from app.services.vault_crypto import encrypt
 
 _ADMIN_KEY = "test-platform-admin-secret"
+_CLERK_ISSUER = "https://platform-workload.clerk.example.test"
 _TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.57"
 _TEST_TOOLS = {
     "codex": {
@@ -119,11 +120,13 @@ async def workload_harness(db_session, seed_user) -> AsyncIterator[WorkloadHarne
         return resolver
 
     original_admin_key = settings.admin_api_key
+    original_clerk_issuer = settings.clerk_jwt_issuer
     original_legacy_flag = settings.platform_legacy_admin_auth_enabled
     original_public_api_url = settings.public_api_url
     original_token_endpoint = settings.platform_workload_token_endpoint
     original_issuer = settings.platform_workload_issuer
     settings.admin_api_key = _ADMIN_KEY
+    settings.clerk_jwt_issuer = _CLERK_ISSUER
     settings.platform_legacy_admin_auth_enabled = True
     settings.public_api_url = "http://test"
     settings.platform_workload_token_endpoint = ""
@@ -149,6 +152,7 @@ async def workload_harness(db_session, seed_user) -> AsyncIterator[WorkloadHarne
     finally:
         app.dependency_overrides.clear()
         settings.admin_api_key = original_admin_key
+        settings.clerk_jwt_issuer = original_clerk_issuer
         settings.platform_legacy_admin_auth_enabled = original_legacy_flag
         settings.public_api_url = original_public_api_url
         settings.platform_workload_token_endpoint = original_token_endpoint
