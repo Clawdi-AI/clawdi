@@ -810,7 +810,9 @@ export default function ProjectDetailPage({
 				count={vaultCount}
 				description={
 					isAgentScope
-						? "Vaults this Agent can use through this Project."
+						? isWorkspace
+							? "Vaults attached to this Agent's Workspace."
+							: "Vaults this Agent can use through this Project."
 						: isOwner
 							? "API keys and secrets this Project can use."
 							: "Read-only vaults shared through this Project."

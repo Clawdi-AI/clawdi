@@ -4343,12 +4343,80 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 			owner_handle: "hosted-user",
 		},
 	];
+	const resourceHostedDeployment = {
+		...railHostedDeployment,
+		config_info: {
+			...railHostedDeployment.config_info,
+			runtime: "openclaw" as const,
+			clawdi_cloud_environments: { openclaw: railHostedEnvironmentId },
+		},
+	};
 	await stubHostedApi(page, {
 		agentResourceFixtures: true,
 		agentProjectBindings: hostedProjectBindings,
 		agentProjects: hostedAgentProjects,
-		deployments: [railHostedDeployment],
+		deployments: [resourceHostedDeployment],
 		cloudAgents: [railHostedCloudAgent],
+	});
+	const runtimeSkillFixture = {
+		name: "Runtime review",
+		description: "Review pull requests",
+		source: "Agent runtime",
+		bundled: false,
+		skill_key: "review-pr",
+		always: false,
+		disabled: false,
+		blocked_by_allowlist: false,
+		eligible: true,
+		requirements: {},
+		missing: {},
+		config_checks: [],
+	};
+	let installedRuntimeSkills = [runtimeSkillFixture];
+	await page.route("**/v1/skills/catalog**", async (route) => {
+		await fulfillJson(route, {
+			items: [
+				{
+					skill_key: "deploy-helper",
+					name: "Deploy helper",
+					description: "Deploy safely",
+					emoji: "🚀",
+					category: "developer",
+					featured: false,
+					headline: "",
+					homepage: null,
+					languages: [],
+					trust_level: "community",
+					tags: [],
+					status: "active",
+					installable: true,
+					connector_requirements: [],
+				},
+			],
+			total: 1,
+		});
+	});
+	await page.route(`**/v1/deployments/${railHostedDeployment.id}/skills**`, async (route) => {
+		const request = route.request();
+		const path = new URL(request.url()).pathname;
+		if (request.method() === "GET") {
+			await fulfillJson(route, { skills: installedRuntimeSkills });
+			return;
+		}
+		if (request.method() === "POST" && path.endsWith("/deploy-helper/install")) {
+			installedRuntimeSkills = [
+				...installedRuntimeSkills,
+				{
+					...runtimeSkillFixture,
+					name: "Deploy helper",
+					description: "Deploy safely",
+					skill_key: "deploy-helper",
+				},
+			];
+			await fulfillJson(route, { ok: true, skill_key: "deploy-helper", status: "installed" });
+			return;
+		}
+		await fulfillJson(route, { detail: "Unexpected runtime Skill request" }, 400);
 	});
 
 	await page.goto(
@@ -4498,57 +4566,47 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	const projectStack = main.getByTestId("agent-project-stack");
 	const projectGrid = projectStack.getByTestId("agent-project-grid");
 	const projectCards = projectGrid.getByTestId("agent-project-card");
-	await expect(projectCards).toHaveCount(3);
+	await expect(projectCards).toHaveCount(2);
 	expect(
 		await projectGrid.evaluate(
 			(element) => getComputedStyle(element).gridTemplateColumns.split(" ").length,
 		),
 	).toBe(3);
-	await expect(projectCards.nth(0)).toContainText("Hosted Agent Project");
-	await expect(projectCards.nth(0)).toContainText("Read order 1");
-	await expect(projectCards.nth(0)).toContainText("Default write destination");
-	await expect(projectCards.nth(0)).not.toContainText("Owner");
-	await expect(
-		projectCards.nth(0).getByRole("link", { name: "Open Hosted Agent Project" }),
-	).toHaveAttribute(
-		"href",
-		`/agents/${railHostedEnvironmentId}/project-access/project-hosted${query}`,
-	);
-	await expect(projectCards.nth(1)).toContainText("Hosted Shared Knowledge");
-	await expect(projectCards.nth(1)).toContainText("Read order 2");
-	await expect(projectCards.nth(1)).toContainText("Viewer");
-	await expect(projectCards.nth(2)).toContainText("Hosted Automation");
-	await expect(projectCards.nth(2)).toContainText("Read order 3");
+	await expect(projectCards.nth(0)).toContainText("Hosted Shared Knowledge");
+	await expect(projectCards.nth(0)).toContainText("Vault priority 1");
+	await expect(projectCards.nth(0)).toContainText("Viewer");
+	await expect(projectCards.nth(1)).toContainText("Hosted Automation");
+	await expect(projectCards.nth(1)).toContainText("Vault priority 2");
 	for (const card of await projectCards.all()) {
 		await expect(card.locator(":scope > div")).toHaveCSS("border-top-width", "1px");
 	}
-	await projectCards.nth(1).hover();
+	await projectCards.nth(0).hover();
 	await expect(
-		projectCards.nth(1).getByRole("button", { name: "Move Hosted Shared Knowledge up" }),
+		projectCards.nth(0).getByRole("button", { name: "Move Hosted Shared Knowledge up" }),
 	).toBeDisabled();
 	await expect(
-		projectCards.nth(1).getByRole("button", { name: "Remove Hosted Shared Knowledge" }),
+		projectCards.nth(0).getByRole("button", { name: "Unlink Hosted Shared Knowledge" }),
 	).toBeVisible();
-	await projectCards.nth(1).getByRole("button", { name: "Remove Hosted Shared Knowledge" }).click();
+	await projectCards.nth(0).getByRole("button", { name: "Unlink Hosted Shared Knowledge" }).click();
 	await expect(page).toHaveURL((url) => {
 		return (
 			url.pathname === `/agents/${railHostedEnvironmentId}/project-access` && url.search === query
 		);
 	});
-	const removeProjectDialog = page.getByRole("alertdialog", { name: "Remove this Project?" });
+	const removeProjectDialog = page.getByRole("alertdialog", { name: "Unlink this Project?" });
 	await expect(removeProjectDialog).toContainText(
-		"Hosted Shared Knowledge will no longer be available to this agent.",
+		"Hosted Shared Knowledge will leave this Agent's Vault resolution order.",
 	);
 	await removeProjectDialog.getByRole("button", { name: "Cancel" }).click();
-	await expect(projectStack.getByLabel("Project to add")).toHaveCount(0);
-	await projectStack.getByRole("button", { name: "Add Project", exact: true }).click();
+	await expect(projectStack.getByLabel("Project to link")).toHaveCount(0);
+	await projectStack.getByRole("button", { name: "Link existing", exact: true }).click();
 	const addProjectDialog = page.getByTestId("agent-project-add-dialog");
 	await expect(addProjectDialog).toBeVisible();
-	const compactProjectPicker = addProjectDialog.getByLabel("Project to add");
+	const compactProjectPicker = addProjectDialog.getByLabel("Project to link");
 	await compactProjectPicker.click();
 	await page.getByRole("option", { name: /Hosted Project Choice/ }).click();
 	await expect(
-		addProjectDialog.getByRole("button", { name: "Add Project", exact: true }),
+		addProjectDialog.getByRole("button", { name: "Link Project", exact: true }),
 	).toBeEnabled();
 	await addProjectDialog.getByRole("button", { name: "Cancel" }).click();
 	await projectStack.screenshot({ path: testInfo.outputPath("hosted-agent-projects-desktop.png") });
@@ -4571,8 +4629,8 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect
 		.poll(() =>
 			projectCards
-				.nth(1)
-				.getByRole("button", { name: "Remove Hosted Shared Knowledge" })
+				.nth(0)
+				.getByRole("button", { name: "Unlink Hosted Shared Knowledge" })
 				.evaluate((element) => getComputedStyle(element.parentElement ?? element).opacity),
 		)
 		.toBe("1");
@@ -4582,15 +4640,15 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 			.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
 	).toBe(true);
 	await projectStack.screenshot({ path: testInfo.outputPath("hosted-agent-projects-mobile.png") });
-	await projectCards.nth(0).getByRole("link", { name: "Open Hosted Agent Project" }).click();
+	await page.goto(`/agents/${railHostedEnvironmentId}/project-access/project-hosted${query}`);
 	await expect(page).toHaveURL((url) => {
 		return (
 			url.pathname === `/agents/${railHostedEnvironmentId}/project-access/project-hosted` &&
 			url.search === query
 		);
 	});
-	await expect(main.getByRole("heading", { name: "Hosted Agent Project", level: 1 })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Agent Projects", exact: true })).toHaveAttribute(
+	await expect(main.getByRole("heading", { name: "Workspace", level: 1 })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Projects", exact: true })).toHaveAttribute(
 		"href",
 		`/agents/${railHostedEnvironmentId}/project-access${query}`,
 	);
@@ -4598,7 +4656,8 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(main.getByRole("button", { name: /Add to agent/i })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "People", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Agents", exact: true })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: /New vault/i })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Install on Agent", exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Attach Vault", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "View all Skills", exact: true })).toHaveAttribute(
 		"href",
 		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/skills${query}`,
@@ -4617,10 +4676,10 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	const focusedSkillsHeading = main.getByRole("heading", { name: "Skills", level: 1 });
 	await expect(focusedSkillsHeading).toBeVisible();
 	await expect(page).toHaveTitle("Skills · Clawdi");
-	await expect(main.getByText("Project: Hosted Agent Project", { exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Back to Hosted Agent Project" })).toHaveAttribute(
+	await expect(main.getByText("Project: Hosted Agent Project", { exact: true })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveAttribute(
 		"href",
-		`/agents/${railHostedEnvironmentId}/project-access/project-hosted${query}`,
+		`/agents/${railHostedEnvironmentId}${query}`,
 	);
 	await expect(
 		focusedSkillsHeading.locator("xpath=../../..").locator(".bg-identity-2-bg svg.lucide-sparkles"),
@@ -4628,8 +4687,13 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(main.getByRole("heading", { name: "Skills", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Vaults", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "View all Skills" })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: /Install skill/i })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: /New vault/i })).toHaveCount(0);
+	await expect(
+		main.getByText("Agent runtime is the install authority", { exact: true }),
+	).toBeVisible();
+	await main.getByRole("button", { name: "Install on Agent", exact: true }).click();
+	await expect(main.getByText("Deploy helper", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Uninstall from Agent" }).last()).toBeVisible();
+	await expect(main.getByRole("button", { name: /Attach Vault/i })).toHaveCount(0);
 	await main.screenshot({ path: testInfo.outputPath("hosted-workspace-skills-mobile.png") });
 	await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
 	const mobileProjectSidebar = page.getByRole("dialog");
@@ -4664,10 +4728,10 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	const focusedVaultsHeading = main.getByRole("heading", { name: "Vaults", level: 1 });
 	await expect(focusedVaultsHeading).toBeVisible();
 	await expect(page).toHaveTitle("Vaults · Clawdi");
-	await expect(main.getByText("Project: Hosted Agent Project", { exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Back to Hosted Agent Project" })).toHaveAttribute(
+	await expect(main.getByText("Project: Hosted Agent Project", { exact: true })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveAttribute(
 		"href",
-		`/agents/${railHostedEnvironmentId}/project-access/project-hosted${query}`,
+		`/agents/${railHostedEnvironmentId}${query}`,
 	);
 	await expect(
 		focusedVaultsHeading.locator("xpath=../../..").locator(".bg-identity-4-bg svg.lucide-key"),
@@ -4675,7 +4739,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(main.getByRole("heading", { name: "Vaults", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Skills", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "View all Vaults" })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: /New vault/i })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Attach Vault", exact: true })).toBeVisible();
 	await main.screenshot({ path: testInfo.outputPath("hosted-workspace-vaults-desktop.png") });
 	const hostedVaultLink = main.getByRole("link", { name: "Open vault Hosted Scoped Vault" });
 	await page.setViewportSize({ width: 390, height: 844 });
@@ -4704,14 +4768,13 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		"href",
 		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/vaults${query}`,
 	);
-	await expect(main.getByRole("link", { name: "Hosted Agent Project" })).toHaveAttribute(
+	await expect(main.getByRole("link", { name: "Workspace" })).toHaveAttribute(
 		"href",
 		`/agents/${railHostedEnvironmentId}/project-access/project-hosted${query}`,
 	);
-	await expect(main.getByRole("button", { name: /^Delete$/ })).toBeVisible();
-	await main.getByRole("button", { name: /Add keys/i }).click();
-	await page.getByPlaceholder(/OPENAI_API_KEY/).fill("HOSTED_SCOPED_KEY=secret-value");
-	await page.getByRole("button", { name: "Save 1" }).click();
+	await expect(main.getByRole("button", { name: "Open in resource library" })).toBeVisible();
+	await expect(main.getByRole("button", { name: /^Delete$/ })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: /Add keys/i })).toHaveCount(0);
 	await expect(page).toHaveURL((url) => {
 		return (
 			url.pathname === `/agents/${railHostedEnvironmentId}/vaults/hosted-vault` &&

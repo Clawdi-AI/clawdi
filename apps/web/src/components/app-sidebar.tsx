@@ -393,7 +393,14 @@ function AgentSectionList({
 	const activePrimaryProjectResource =
 		(primaryProjectRouteActive ? activeAgentRoute?.projectResource : null) ??
 		(scopedResourceTarget?.kind === "workspace" ? scopedResourceTarget.resource : null);
-	const activeContextProjectResource = scopedResourceTarget?.kind === "projects";
+	const isFlatProjectResourceRoute =
+		activeAgentRoute?.section === "skills" || activeAgentRoute?.section === "vaults";
+	// Invalid, legacy, and not-yet-resolved flat resource URLs all return through
+	// Projects. Keep that safe parent active until an exact Workspace or linked
+	// Project context has been proven instead of misleadingly highlighting Overview.
+	const activeContextProjectResource =
+		scopedResourceTarget?.kind === "projects" ||
+		(isFlatProjectResourceRoute && !activePrimaryProjectResource);
 	const normalizedActiveSection = groups.some((group) =>
 		group.items.some((item) => item.id === activeSection),
 	)
