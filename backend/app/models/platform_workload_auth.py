@@ -55,8 +55,7 @@ class PlatformWorkloadClient(Base, TimestampMixin):
             "ARRAY['platform:agents:create','platform:agents:delete',"
             "'platform:runtime-state:write','platform:keys:mint',"
             "'platform:keys:revoke','platform:runtime-observations:consume',"
-            "'platform:runtime-environments:retire',"
-            "'platform:principals:terminate']::varchar[]",
+            "'platform:runtime-environments:retire']::varchar[]",
             name="ck_platform_workload_clients_allowed_scopes",
         ),
     )

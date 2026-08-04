@@ -26,7 +26,6 @@ def _pending_lifecycle(*, subject: str, due_at: datetime) -> PrincipalLifecycle:
     return PrincipalLifecycle(
         issuer=_ISSUER,
         subject=subject,
-        current_revision=1,
         terminated_at=due_at,
         next_cleanup_attempt_at=due_at,
     )

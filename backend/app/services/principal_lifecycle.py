@@ -29,8 +29,8 @@ from app.models.channel import (
 from app.models.device_authorization import DeviceAuthorization
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.principal_lifecycle import (
+    ClerkWebhookEventReceipt,
     PrincipalLifecycle,
-    PrincipalLifecycleCommand,
 )
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.project_invitation import ProjectInvitation
@@ -60,7 +60,7 @@ class PrincipalLifecycleConfigurationError(RuntimeError):
     pass
 
 
-class PrincipalCommandConflictError(RuntimeError):
+class PrincipalWebhookConflictError(RuntimeError):
     pass
 
 
@@ -73,12 +73,11 @@ PRINCIPAL_CLEANUP_BACKOFF_CAP_SECONDS = 15 * 60
 
 
 @dataclass(frozen=True, slots=True)
-class PrincipalTerminationReceipt:
+class PrincipalDeletionReceipt:
     lifecycle_id: UUID
-    accepted_revision: int
-    advanced: bool
     user_id: UUID | None
     fence_created: bool
+    replayed: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,40 +303,44 @@ async def load_clerk_user_for_issuer(
     return user
 
 
-async def fence_principal_termination(
+async def fence_clerk_user_deleted(
     db: AsyncSession,
     *,
     issuer: str,
     subject: str,
-    revision: int,
-    command_id: str,
+    message_id: str,
+    payload_sha256: str,
+    event_occurred_at: datetime,
     now: datetime | None = None,
-) -> PrincipalTerminationReceipt:
-    """Persist the fail-closed fence and command receipt; caller commits it."""
+) -> PrincipalDeletionReceipt:
+    """Persist verified Clerk evidence and its fail-closed fence together."""
 
     if issuer != configured_clerk_issuer():
         raise PrincipalIdentityConflictError("principal issuer is not accepted")
-    await _advisory_xact_lock(db, f"principal-command:{command_id}")
+    if event_occurred_at.tzinfo is None:
+        raise ValueError("Clerk event timestamp must be timezone-aware")
+    await _advisory_xact_lock(db, f"clerk-webhook-event:{message_id}")
     await lock_clerk_principal(db, issuer=issuer, subject=subject)
 
-    existing_command = await db.get(PrincipalLifecycleCommand, command_id)
-    if existing_command is not None:
-        lifecycle = await db.get(PrincipalLifecycle, existing_command.lifecycle_id)
+    existing_receipt = await db.get(ClerkWebhookEventReceipt, message_id)
+    if existing_receipt is not None:
+        lifecycle = await db.get(PrincipalLifecycle, existing_receipt.lifecycle_id)
         if (
             lifecycle is None
             or lifecycle.issuer != issuer
             or lifecycle.subject != subject
-            or existing_command.requested_revision != revision
+            or existing_receipt.receipt_source != "clerk"
+            or existing_receipt.event_type != "user.deleted"
+            or existing_receipt.payload_sha256 != payload_sha256
         ):
-            raise PrincipalCommandConflictError(
-                "command ID was already used with a different request"
+            raise PrincipalWebhookConflictError(
+                "Clerk message ID was already used with different evidence"
             )
-        return PrincipalTerminationReceipt(
+        return PrincipalDeletionReceipt(
             lifecycle_id=lifecycle.id,
-            accepted_revision=existing_command.accepted_revision,
-            advanced=existing_command.advanced,
             user_id=lifecycle.user_id,
             fence_created=False,
+            replayed=True,
         )
 
     lifecycle = (
@@ -352,7 +355,6 @@ async def fence_principal_termination(
     ).scalar_one_or_none()
     current_time = now or datetime.now(UTC)
     fence_created = lifecycle is None
-    advanced = lifecycle is None or revision > lifecycle.current_revision
     if lifecycle is None:
         candidate = await load_clerk_user_for_issuer(
             db,
@@ -382,32 +384,27 @@ async def fence_principal_termination(
             issuer=issuer,
             subject=subject,
             user_id=user.id if user is not None else None,
-            current_revision=revision,
-            terminated_at=current_time,
+            terminated_at=event_occurred_at,
             next_cleanup_attempt_at=current_time,
         )
         db.add(lifecycle)
         await db.flush()
-    elif advanced:
-        lifecycle.current_revision = revision
-
-    accepted_revision = lifecycle.current_revision
     db.add(
-        PrincipalLifecycleCommand(
-            command_id=command_id,
+        ClerkWebhookEventReceipt(
+            message_id=message_id,
             lifecycle_id=lifecycle.id,
-            requested_revision=revision,
-            accepted_revision=accepted_revision,
-            advanced=advanced,
+            receipt_source="clerk",
+            event_type="user.deleted",
+            payload_sha256=payload_sha256,
+            event_occurred_at=event_occurred_at,
         )
     )
     await db.flush()
-    return PrincipalTerminationReceipt(
+    return PrincipalDeletionReceipt(
         lifecycle_id=lifecycle.id,
-        accepted_revision=accepted_revision,
-        advanced=advanced,
         user_id=lifecycle.user_id,
         fence_created=fence_created,
+        replayed=False,
     )
 
 
@@ -836,17 +833,17 @@ __all__ = [
     "PRINCIPAL_CLEANUP_BACKOFF_CAP_SECONDS",
     "PRINCIPAL_CLEANUP_CLAIM_LEASE_SECONDS",
     "PrincipalCleanupClaimLostError",
-    "PrincipalCommandConflictError",
+    "PrincipalDeletionReceipt",
     "PrincipalIdentityConflictError",
     "PrincipalLifecycleConfigurationError",
     "PrincipalTerminatedError",
-    "PrincipalTerminationReceipt",
+    "PrincipalWebhookConflictError",
     "assert_clerk_principal_active",
     "assert_user_authority_active",
     "claim_principal_cleanup",
     "complete_principal_cleanup",
     "configured_clerk_issuer",
-    "fence_principal_termination",
+    "fence_clerk_user_deleted",
     "load_clerk_user_for_issuer",
     "lock_clerk_principal",
     "lock_user_authority",

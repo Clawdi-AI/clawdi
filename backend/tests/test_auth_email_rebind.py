@@ -26,7 +26,9 @@ miss → fresh user, no Clerk-API call, no email matching.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
+from datetime import UTC, datetime
 
 import httpx
 import jwt
@@ -41,7 +43,7 @@ from app.core.auth import _auth_via_clerk_jwt
 from app.core.config import settings
 from app.models.principal_lifecycle import PrincipalLifecycle
 from app.models.user import User
-from app.services.principal_lifecycle import fence_principal_termination
+from app.services.principal_lifecycle import fence_clerk_user_deleted
 
 
 def _rsa_keypair() -> tuple[str, str]:
@@ -149,12 +151,14 @@ async def test_rebind_refuses_tombstoned_new_subject_without_mutating_snapshot_u
     await db_session.commit()
 
     new_sub = f"terminated_{uuid.uuid4().hex[:8]}"
-    receipt = await fence_principal_termination(
+    message_id = f"snapshot-tombstone-{uuid.uuid4().hex}"
+    receipt = await fence_clerk_user_deleted(
         db_session,
         issuer=issuer,
         subject=new_sub,
-        revision=1,
-        command_id=f"snapshot-tombstone-{uuid.uuid4().hex}",
+        message_id=message_id,
+        payload_sha256=hashlib.sha256(message_id.encode()).hexdigest(),
+        event_occurred_at=datetime.now(UTC),
     )
     await db_session.commit()
 

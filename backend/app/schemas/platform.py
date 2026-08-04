@@ -7,7 +7,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.api_scopes import RUNTIME_MCP_SCOPES
-from app.core.config import canonical_clerk_issuer
 from app.schemas.runtime import (
     HostedEgressEngine,
     HostedEgressProfiles,
@@ -30,7 +29,6 @@ PLATFORM_RUNTIME_KEY_SCOPES = RUNTIME_MCP_SCOPES
 _CLERK_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _PARTNER_TENANT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 _SUPPORTED_HOSTED_RUNTIMES = {"hermes", "openclaw"}
-_COMMAND_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 
 
 class PlatformOwner(BaseModel):
@@ -53,52 +51,6 @@ class PlatformMutationBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     owner: PlatformOwner
-
-
-class PlatformClerkPrincipal(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    kind: Literal["clerk"]
-    issuer: str = Field(min_length=1, max_length=255)
-    subject: str = Field(min_length=1, max_length=200)
-
-    @field_validator("issuer")
-    @classmethod
-    def _canonicalize_issuer(cls, value: str) -> str:
-        return canonical_clerk_issuer(value)
-
-    @field_validator("subject")
-    @classmethod
-    def _validate_subject(cls, value: str) -> str:
-        if _CLERK_REF_RE.fullmatch(value) is None:
-            raise ValueError("invalid Clerk principal subject")
-        return value
-
-
-class PlatformPrincipalTermination(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    principal: PlatformClerkPrincipal
-    revision: int = Field(ge=1, le=9_223_372_036_854_775_807)
-    command_id: str = Field(min_length=1, max_length=191)
-
-    @field_validator("command_id")
-    @classmethod
-    def _validate_command_id(cls, value: str) -> str:
-        if _COMMAND_ID_RE.fullmatch(value) is None:
-            raise ValueError("invalid principal lifecycle command ID")
-        return value
-
-
-class PlatformPrincipalTerminationResponse(BaseModel):
-    principal: PlatformClerkPrincipal
-    command_id: str
-    requested_revision: int
-    accepted_revision: int
-    advanced: bool
-    status: Literal["terminated"] = "terminated"
-    cleanup_state: Literal["complete"] = "complete"
-    user_disabled: bool
 
 
 class PlatformAgentCreate(PlatformMutationBody):
