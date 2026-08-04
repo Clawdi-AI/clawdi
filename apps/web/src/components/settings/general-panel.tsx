@@ -28,7 +28,7 @@ export function GeneralPanel() {
 	const { theme, setTheme } = useTheme();
 
 	return (
-		<div className="space-y-6 px-4 lg:px-6">
+		<div className="flex flex-col gap-8 px-4 lg:px-6">
 			<SettingsPanelHeader title="General" description="Appearance and app-wide preferences." />
 			<div className="flex items-center justify-between gap-4 rounded-lg border p-4">
 				<div className="space-y-0.5">

@@ -5,10 +5,9 @@ import { CreditCard, Rocket } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { PageHeader } from "@/components/page-header";
-import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
+import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { SubscriptionSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
@@ -20,14 +19,10 @@ import { WelcomeWalletCard } from "@/hosted/billing/subscription/welcome-wallet-
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { cn } from "@/lib/utils";
 
 const DESCRIPTION =
 	"Plan options for new hosted agents. Existing compute is managed from each agent’s Settings.";
-const SUBSCRIPTION_PAGE_CLASS = cn(
-	CENTERED_PAGE_WIDTH_CLASS.page,
-	"flex flex-col gap-6 px-4 lg:px-6",
-);
+const SUBSCRIPTION_PAGE_CLASS = "flex flex-col gap-8 px-4 lg:px-6";
 
 export function SubscriptionPage() {
 	const plans = usePlans();
@@ -54,7 +49,7 @@ export function SubscriptionPage() {
 	if (plans.isLoading) {
 		return (
 			<div data-hosted="true" className={SUBSCRIPTION_PAGE_CLASS}>
-				<PageHeader title="Compute" description={DESCRIPTION} />
+				<SettingsPanelHeader title="Compute" description={DESCRIPTION} />
 				<SubscriptionSkeleton />
 			</div>
 		);
@@ -63,7 +58,7 @@ export function SubscriptionPage() {
 	if (shouldBlockQueryError(plans.error, plans.data)) {
 		return (
 			<div data-hosted="true" className={SUBSCRIPTION_PAGE_CLASS}>
-				<PageHeader title="Compute" description={DESCRIPTION} />
+				<SettingsPanelHeader title="Compute" description={DESCRIPTION} />
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
 					error={plans.error}
@@ -76,40 +71,34 @@ export function SubscriptionPage() {
 
 	return (
 		<div data-hosted="true" className={SUBSCRIPTION_PAGE_CLASS}>
-			<PageHeader title="Compute" description={DESCRIPTION} />
+			<SettingsPanelHeader title="Compute" description={DESCRIPTION} />
 
 			<WelcomeWalletCard />
 
-			<Card data-hosted="true">
-				<CardHeader>
-					<CardTitle>Compute is managed per agent</CardTitle>
-					<CardDescription>Deploy new hosted agents from here.</CardDescription>
-				</CardHeader>
-				<CardContent className="space-y-4">
-					<p className="text-sm text-muted-foreground">
-						Upgrade, lifecycle, and delete controls live in that agent’s Settings page. Wallet
-						balance and Clawdi AI usage stay account-wide.
-					</p>
-					<div className="flex flex-wrap gap-2">
-						{hostedAccess.canCreateCloudAgents ? (
-							<Button render={<Link to="/deploy" />} nativeButton={false}>
-								<Rocket /> Deploy hosted agent
-							</Button>
-						) : (
-							<Button disabled>
-								<Rocket /> Deploy hosted agent
-							</Button>
-						)}
-						<Button
-							variant="outline"
-							onClick={() => runAction(openBillingPortal)}
-							disabled={portal.isPending}
-						>
-							{portal.isPending ? <Spinner /> : <CreditCard />} Open billing portal
+			<SettingsSection
+				headingLevel={3}
+				title="Manage compute"
+				description="Deploy a new hosted agent here. Manage existing plans from each agent’s Settings."
+			>
+				<div className="flex flex-wrap gap-2">
+					{hostedAccess.canCreateCloudAgents ? (
+						<Button render={<Link to="/deploy" />} nativeButton={false}>
+							<Rocket /> Deploy hosted agent
 						</Button>
-					</div>
-				</CardContent>
-			</Card>
+					) : (
+						<Button disabled>
+							<Rocket /> Deploy hosted agent
+						</Button>
+					)}
+					<Button
+						variant="outline"
+						onClick={() => runAction(openBillingPortal)}
+						disabled={portal.isPending}
+					>
+						{portal.isPending ? <Spinner /> : <CreditCard />} Open billing portal
+					</Button>
+				</div>
+			</SettingsSection>
 
 			<BillingHistorySection />
 

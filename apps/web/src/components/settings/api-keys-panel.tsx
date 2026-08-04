@@ -181,12 +181,12 @@ export function ApiKeysPanel() {
 	}
 
 	return (
-		<div className="space-y-6 px-4 lg:px-6">
+		<div className="flex flex-col gap-8 px-4 lg:px-6">
 			<SettingsPanelHeader
 				title="API Keys"
 				description="Manage bearer tokens for servers, containers, and other headless environments."
 				actions={
-					<Button type="button" onClick={openCreateDialog} className="sm:mr-8">
+					<Button type="button" onClick={openCreateDialog}>
 						<Plus data-icon="inline-start" />
 						Create API key
 					</Button>

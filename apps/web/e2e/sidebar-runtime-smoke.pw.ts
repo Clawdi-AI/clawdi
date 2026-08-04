@@ -1058,6 +1058,25 @@ test("connected detail only requests overview data on Overview", async ({ page }
 	expect(skillRequests).toEqual([]);
 });
 
+test("connected agent settings protects an unsaved display name", async ({ page }) => {
+	await stubDashboardApi(page);
+	await page.goto("/agents/agent-smoke-1/settings");
+	const displayName = page.getByRole("textbox", { name: "Display name" });
+	await displayName.fill("Unsaved agent name");
+
+	const sessionsLink = page.locator('a[href="/agents/agent-smoke-1/sessions"]').first();
+	await sessionsLink.click();
+	const warning = page.getByRole("alertdialog", { name: "Discard unsaved changes?" });
+	await expect(warning).toBeVisible();
+	await expect(page).toHaveURL(/\/agents\/agent-smoke-1\/settings$/);
+
+	await warning.getByRole("button", { name: "Keep editing" }).click();
+	await expect(displayName).toHaveValue("Unsaved agent name");
+	await sessionsLink.click();
+	await warning.getByRole("button", { name: "Discard changes" }).click();
+	await expect(page).toHaveURL(/\/agents\/agent-smoke-1\/sessions$/);
+});
+
 test("SessionCard stays identical across Overview, Agent Sessions, and global Sessions", async ({
 	page,
 }, testInfo) => {

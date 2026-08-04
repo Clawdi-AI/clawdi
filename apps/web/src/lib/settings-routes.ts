@@ -51,6 +51,31 @@ export function settingsDraftOwnerChanges(
 	return current.pathname !== next.pathname || currentSection !== nextSection;
 }
 
+export function shouldCanonicalizeCloudSettings({
+	section,
+	accessLoading,
+	accessError,
+	canCreateCloudAgents,
+	inventoryResolved,
+	hasExistingCloudAgents,
+}: {
+	section: SettingsSectionId;
+	accessLoading: boolean;
+	accessError: boolean;
+	canCreateCloudAgents: boolean;
+	inventoryResolved: boolean;
+	hasExistingCloudAgents: boolean;
+}): boolean {
+	return (
+		section.startsWith("billing-") &&
+		!accessLoading &&
+		!accessError &&
+		inventoryResolved &&
+		!canCreateCloudAgents &&
+		!hasExistingCloudAgents
+	);
+}
+
 export function settingsQueryHref(
 	section: SettingsSectionId = DEFAULT_SETTINGS_SECTION,
 	params?: URLSearchParams | ReadonlyURLSearchParams,

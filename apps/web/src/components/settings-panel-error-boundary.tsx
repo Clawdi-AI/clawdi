@@ -19,21 +19,23 @@ export class SettingsPanelErrorBoundary extends Component<
 		if (!this.state.failed) return this.props.children;
 
 		return (
-			<Alert variant="destructive">
-				<AlertCircle aria-hidden />
-				<AlertTitle>Couldn’t load this settings section</AlertTitle>
-				<AlertDescription className="flex flex-col items-start gap-3">
-					<span>The settings code didn’t finish loading. Reload the page to try again.</span>
-					<Button
-						type="button"
-						size="sm"
-						variant="outline"
-						onClick={() => window.location.reload()}
-					>
-						<RefreshCw data-icon="inline-start" /> Reload settings
-					</Button>
-				</AlertDescription>
-			</Alert>
+			<div className="px-4 lg:px-6">
+				<Alert variant="destructive">
+					<AlertCircle aria-hidden />
+					<AlertTitle>Couldn’t load this settings section</AlertTitle>
+					<AlertDescription className="flex flex-col items-start gap-3">
+						<span>The settings code didn’t finish loading. Reload the page to try again.</span>
+						<Button
+							type="button"
+							size="sm"
+							variant="outline"
+							onClick={() => window.location.reload()}
+						>
+							<RefreshCw data-icon="inline-start" /> Reload settings
+						</Button>
+					</AlertDescription>
+				</Alert>
+			</div>
 		);
 	}
 }

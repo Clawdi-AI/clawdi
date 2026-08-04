@@ -1,6 +1,6 @@
 "use client";
 
-import { type ShouldBlockFn, useBlocker } from "@tanstack/react-router";
+import type { ShouldBlockFn } from "@tanstack/react-router";
 import {
 	BarChart3,
 	CreditCard,
@@ -19,16 +19,6 @@ import { GeneralPanel } from "@/components/settings/general-panel";
 import { ProfilePanel } from "@/components/settings/profile-panel";
 import { type SettingsEditState, SettingsEditStateContext } from "@/components/settings-edit-state";
 import { SettingsPanelErrorBoundary } from "@/components/settings-panel-error-boundary";
-import {
-	AlertDialog,
-	AlertDialogAction,
-	AlertDialogCancel,
-	AlertDialogContent,
-	AlertDialogDescription,
-	AlertDialogFooter,
-	AlertDialogHeader,
-	AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -37,12 +27,14 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import { UnsavedNavigationGuard } from "@/components/unsaved-navigation-guard";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import {
 	DEFAULT_SETTINGS_SECTION,
 	SETTINGS_SECTION_IDS,
 	type SettingsSectionId,
 	settingsDraftOwnerChanges,
+	shouldCanonicalizeCloudSettings,
 } from "@/lib/settings-routes";
 import { cn } from "@/lib/utils";
 
@@ -125,12 +117,14 @@ export function SettingsDialog({
 	open,
 	section,
 	hasExistingCloudAgents = false,
+	cloudInventoryResolved = true,
 	onSectionChange,
 	onOpenChange,
 }: {
 	open: boolean;
 	section: SettingsSectionId;
 	hasExistingCloudAgents?: boolean;
+	cloudInventoryResolved?: boolean;
 	onSectionChange: (section: SettingsSectionId) => void;
 	onOpenChange: (open: boolean) => void;
 }) {
@@ -148,18 +142,10 @@ export function SettingsDialog({
 	}, []);
 	const hasUnsavedChanges = [...editStates.values()].some((state) => state.dirty);
 	const hasPendingSave = [...editStates.values()].some((state) => state.busy);
-	const navigationRiskRef = useRef(false);
-	navigationRiskRef.current = hasUnsavedChanges || hasPendingSave;
 	const shouldBlockNavigation: ShouldBlockFn = useCallback(
-		({ current, next }) => navigationRiskRef.current && settingsDraftOwnerChanges(current, next),
+		({ current, next }) => settingsDraftOwnerChanges(current, next),
 		[],
 	);
-	const shouldBlockDocumentExit = useCallback(() => navigationRiskRef.current, []);
-	const blocker = useBlocker({
-		shouldBlockFn: shouldBlockNavigation,
-		enableBeforeUnload: shouldBlockDocumentExit,
-		withResolver: true,
-	});
 	useEffect(() => {
 		setMounted(true);
 	}, []);
@@ -174,7 +160,9 @@ export function SettingsDialog({
 		? section
 		: DEFAULT_SETTINGS_SECTION;
 	const billingAccessPending =
-		requestedBillingSection && IS_HOSTED_BUILD && (!mounted || hostedAccess.isLoading);
+		requestedBillingSection &&
+		IS_HOSTED_BUILD &&
+		(!mounted || hostedAccess.isLoading || !cloudInventoryResolved);
 	const billingAccessError =
 		requestedBillingSection &&
 		IS_HOSTED_BUILD &&
@@ -186,16 +174,44 @@ export function SettingsDialog({
 	useEffect(() => {
 		if (!open) return;
 		const frame = window.requestAnimationFrame(() => {
-			activeButtonRef.current?.focus({ preventScroll: true });
+			const activeButton = activeButtonRef.current;
+			if (!activeButton) return;
+			const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+			activeButton.scrollIntoView({
+				behavior: reduceMotion ? "auto" : "smooth",
+				block: "nearest",
+				inline: "nearest",
+			});
 		});
 		return () => window.cancelAnimationFrame(frame);
 	}, [open, activeSection]);
 
 	useEffect(() => {
-		if (blocker.status === "blocked" && !hasUnsavedChanges && !hasPendingSave) {
-			blocker.proceed();
+		if (
+			open &&
+			mounted &&
+			shouldCanonicalizeCloudSettings({
+				section,
+				accessLoading: hostedAccess.isLoading,
+				accessError: hostedAccess.isError,
+				canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
+				inventoryResolved: cloudInventoryResolved,
+				hasExistingCloudAgents,
+			})
+		) {
+			onSectionChange(DEFAULT_SETTINGS_SECTION);
 		}
-	}, [blocker, hasPendingSave, hasUnsavedChanges]);
+	}, [
+		cloudInventoryResolved,
+		hasExistingCloudAgents,
+		hostedAccess.canCreateCloudAgents,
+		hostedAccess.isError,
+		hostedAccess.isLoading,
+		mounted,
+		onSectionChange,
+		open,
+		section,
+	]);
 
 	function requestClose(nextOpen: boolean) {
 		onOpenChange(nextOpen);
@@ -204,10 +220,6 @@ export function SettingsDialog({
 	function requestSectionChange(nextSection: SettingsSectionId) {
 		if (nextSection === activeSection) return;
 		onSectionChange(nextSection);
-	}
-
-	function discardChanges() {
-		if (blocker.status === "blocked") blocker.proceed();
 	}
 
 	return (
@@ -281,14 +293,18 @@ export function SettingsDialog({
 						<section className="min-h-0 overflow-y-auto py-6 md:py-8">
 							<div className="mx-auto w-full max-w-5xl">
 								{billingAccessPending ? (
-									<HostedRouteSkeleton />
+									<div className="px-4 lg:px-6">
+										<HostedRouteSkeleton />
+									</div>
 								) : billingAccessError ? (
-									<ApiErrorPanel
-										error={hostedAccess.error}
-										normalizer={HOSTED_ACCESS_ERROR_NORMALIZER}
-										onRetry={() => void hostedAccess.refetch()}
-										title="Couldn’t verify billing access"
-									/>
+									<div className="px-4 lg:px-6">
+										<ApiErrorPanel
+											error={hostedAccess.error}
+											normalizer={HOSTED_ACCESS_ERROR_NORMALIZER}
+											onRetry={() => void hostedAccess.refetch()}
+											title="Couldn’t verify billing access"
+										/>
+									</div>
 								) : (
 									<SettingsPanelErrorBoundary key={activeSection}>
 										<SettingsPanel section={activeSection} />
@@ -300,35 +316,12 @@ export function SettingsDialog({
 				</DialogContent>
 			</Dialog>
 
-			<AlertDialog
-				open={blocker.status === "blocked"}
-				onOpenChange={(nextOpen) => {
-					if (!nextOpen && blocker.status === "blocked") blocker.reset();
-				}}
-			>
-				<AlertDialogContent>
-					<AlertDialogHeader>
-						<AlertDialogTitle>
-							{hasPendingSave ? "Save in progress" : "Discard unsaved changes?"}
-						</AlertDialogTitle>
-						<AlertDialogDescription>
-							{hasPendingSave
-								? "Wait for this save to finish before leaving Settings."
-								: "Your auto-reload settings will return to the last values saved on the server."}
-						</AlertDialogDescription>
-					</AlertDialogHeader>
-					<AlertDialogFooter>
-						<AlertDialogCancel>Keep editing</AlertDialogCancel>
-						<AlertDialogAction
-							variant="destructive"
-							onClick={discardChanges}
-							disabled={hasPendingSave}
-						>
-							Discard changes
-						</AlertDialogAction>
-					</AlertDialogFooter>
-				</AlertDialogContent>
-			</AlertDialog>
+			<UnsavedNavigationGuard
+				dirty={hasUnsavedChanges}
+				busy={hasPendingSave}
+				shouldBlockFn={shouldBlockNavigation}
+				description="Your auto-reload settings will return to the last values saved on the server."
+			/>
 		</SettingsEditStateContext.Provider>
 	);
 }
@@ -343,7 +336,13 @@ function SettingsPanel({ section }: { section: SettingsSectionId }) {
 			return <ApiKeysPanel />;
 		case "billing-wallet":
 			return WalletPage ? (
-				<Suspense fallback={<HostedRouteSkeleton />}>
+				<Suspense
+					fallback={
+						<div className="px-4 lg:px-6">
+							<HostedRouteSkeleton />
+						</div>
+					}
+				>
 					<WalletPage />
 				</Suspense>
 			) : (
@@ -351,7 +350,13 @@ function SettingsPanel({ section }: { section: SettingsSectionId }) {
 			);
 		case "billing-plan":
 			return SubscriptionPage ? (
-				<Suspense fallback={<HostedRouteSkeleton />}>
+				<Suspense
+					fallback={
+						<div className="px-4 lg:px-6">
+							<HostedRouteSkeleton />
+						</div>
+					}
+				>
 					<SubscriptionPage />
 				</Suspense>
 			) : (
@@ -359,7 +364,13 @@ function SettingsPanel({ section }: { section: SettingsSectionId }) {
 			);
 		case "billing-usage":
 			return UsagePage ? (
-				<Suspense fallback={<HostedRouteSkeleton />}>
+				<Suspense
+					fallback={
+						<div className="px-4 lg:px-6">
+							<HostedRouteSkeleton />
+						</div>
+					}
+				>
 					<UsagePage />
 				</Suspense>
 			) : (
