@@ -91,9 +91,9 @@ releases.
    GitHub-hosted `ubuntu-latest`, because npm trusted publishing does not support
    self-hosted or third-party GitHub Actions runners. The CLI workflow does not
    call workflows in the Hosted repository or depend on Hosted repository
-   settings. A lightweight preflight checks only whether the exact npm version
-   and a non-draft GitHub Release exist; if both are complete, the run skips
-   build and publish without querying provenance. Otherwise the run builds from
+   settings. A lightweight preflight checks only whether the version's GitHub
+   Release is published; if so, the run skips build and publish without querying
+   npm or provenance. Otherwise the run builds from
    its own `GITHUB_SHA`. An absent
    exact npm version is published with provenance; an existing version is never
    republished and must have the same `dist.integrity` as this run's artifact.
