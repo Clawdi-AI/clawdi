@@ -4,9 +4,7 @@ import { resolve } from "node:path";
 import { parse } from "yaml";
 
 interface WorkflowJob {
-	if?: string;
 	needs?: unknown;
-	outputs?: Record<string, string>;
 	permissions?: Record<string, string>;
 	steps?: Array<Record<string, unknown>>;
 }
@@ -51,9 +49,7 @@ describe("CLI publish workflow contract", () => {
 		]);
 		expect(build.permissions).toEqual({ contents: "read" });
 		expect(publish.needs).toBe("build-immutable-artifact");
-		expect(publish.if).toBe("needs['build-immutable-artifact'].outputs.should_release == 'true'");
 		expect(publish.permissions).toEqual({ contents: "write", "id-token": "write" });
-		expect(build.outputs?.should_release).toBe(`\${{ steps.check.outputs.should_release }}`);
 		expect(build.steps?.find((step) => step.id === "check")?.["working-directory"]).toBe(
 			"packages/cli",
 		);
@@ -66,9 +62,6 @@ describe("CLI publish workflow contract", () => {
 			expect(build.steps?.find((step) => step.id === stepId)?.["working-directory"]).toBe(
 				"packages/cli",
 			);
-		}
-		for (const step of build.steps?.slice(3) ?? []) {
-			expect(step.if).toBe("steps.check.outputs.should_release == 'true'");
 		}
 		expect(publish.steps?.map((step) => step.id).filter(Boolean)).toEqual([
 			"verify_release",
@@ -148,13 +141,8 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).not.toContain("NPM_TOKEN");
 	});
 
-	test("skips complete exact releases and otherwise verifies artifact integrity", () => {
-		const buildJob = workflow.slice(
-			workflow.indexOf("  build-immutable-artifact:"),
-			workflow.indexOf("  publish-immutable-artifact-with-oidc:"),
-		);
+	test("publishes only an absent exact version and verifies artifact integrity", () => {
 		const publishJob = workflow.slice(workflow.indexOf("  publish-immutable-artifact-with-oidc:"));
-		const noOpDecision = buildJob.indexOf('gh release view "$tag" --json isDraft --jq .isDraft');
 		const absenceCheck = publishJob.indexOf("if ! npm_release_visible; then");
 		const publishCommand = publishJob.indexOf("npm publish ");
 		const visibilityWait = publishJob.indexOf("for attempt in $(seq 1 12); do", publishCommand);
@@ -165,10 +153,7 @@ describe("CLI publish workflow contract", () => {
 			'published_integrity=$(npm view "clawdi@$VERSION" dist.integrity)',
 		);
 
-		expect(noOpDecision).toBeGreaterThan(-1);
-		expect(noOpDecision).toBeLessThan(buildJob.indexOf("bun install --frozen-lockfile"));
-		expect(buildJob).toContain("should_release=true");
-		expect(buildJob.match(/should_release=false/g)).toHaveLength(1);
+		expect(workflow).toContain('- "packages/cli/package.json"');
 		expect(absenceCheck).toBeGreaterThan(-1);
 		expect(absenceCheck).toBeLessThan(publishCommand);
 		expect(visibilityWait).toBeGreaterThan(publishCommand);

@@ -74,10 +74,9 @@ releases.
    ```
 
 6. Bump `packages/cli/package.json` using semver whenever the commit is intended
-   to produce a new CLI artifact. An unchanged version whose exact npm package
-   and complete published GitHub Release already exist is a fast no-op. Reuse
-   the version for active release work only when rerunning the original workflow
-   run after an incomplete release.
+   to produce a new CLI artifact. This package identity change is what triggers
+   the publish workflow. Rerun the original workflow run after an incomplete
+   release; do not create a new commit with the same version.
    For the managed agent-v2 release line, this repository's release workflow must
    build, typecheck, run the full CLI suite, pack one immutable npm tarball, and
    build the native matrix once. It installs the npm tarball and exercises the
@@ -91,11 +90,8 @@ releases.
    GitHub-hosted `ubuntu-latest`, because npm trusted publishing does not support
    self-hosted or third-party GitHub Actions runners. The CLI workflow does not
    call workflows in the Hosted repository or depend on Hosted repository
-   settings. A lightweight preflight checks only whether the version's GitHub
-   Release is published; if so, the run skips build and publish without querying
-   npm or provenance. Otherwise the run builds from
-   its own `GITHUB_SHA`. An absent
-   exact npm version is published with provenance; an existing version is never
+   settings. The run builds from its own `GITHUB_SHA`. An absent exact npm
+   version is published with provenance; an existing version is never
    republished and must have the same `dist.integrity` as this run's artifact.
    Fresh publish completion does not wait for the eventually consistent
    attestation read API. The GitHub Release may be created or a draft may be
@@ -158,8 +154,8 @@ releases.
    - `.github/workflows/clawdi-release.yml` is manual-only. Run `Release Clawdi`
      only after the deployed commit should get public app/backend/web release
      notes.
-   - `.github/workflows/cli-publish.yml` runs for `packages/cli/**` and the
-     CLI publish workflow file. It builds from the run's `GITHUB_SHA`, publishes
+   - `.github/workflows/cli-publish.yml` runs only when
+     `packages/cli/package.json` changes. It builds from the run's `GITHUB_SHA`, publishes
      only when the exact npm version is absent, and otherwise verifies exact
      registry integrity before completing the same-commit GitHub Release.
 
