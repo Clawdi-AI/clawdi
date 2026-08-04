@@ -20,8 +20,8 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.session import AgentEnvironment  # noqa: F401 - register table for FK resolution
-from app.models.user import User  # noqa: F401 - register table for FK resolution
+from app.models.session import AgentEnvironment
+from app.models.user import User
 
 CHANNEL_PROVIDER_TELEGRAM = "telegram"
 CHANNEL_PROVIDER_DISCORD = "discord"
@@ -81,7 +81,7 @@ class ChannelAccount(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey(User.id, ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
@@ -267,7 +267,7 @@ class ChannelBotAgentLink(Base, TimestampMixin):
     )
     agent_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("agent_environments.id", ondelete="CASCADE"),
+        ForeignKey(AgentEnvironment.id, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

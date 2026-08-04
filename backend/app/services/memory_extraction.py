@@ -22,16 +22,17 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from typing import Literal
 
-from openai import AsyncOpenAI
+from openai import APIConnectionError, APIError, APIStatusError, AsyncOpenAI, RateLimitError
 from openai.types.chat import (
     ChatCompletionMessageParam,
     ChatCompletionSystemMessageParam,
     ChatCompletionUserMessageParam,
 )
 from openai.types.shared_params import ResponseFormatJSONSchema
-from pydantic import BaseModel, Field, JsonValue
+from pydantic import BaseModel, Field, JsonValue, ValidationError
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,20 @@ log = logging.getLogger(__name__)
 MAX_MESSAGES = 80
 
 Category = Literal["fact", "preference", "pattern", "decision", "context"]
+
+
+class MemoryExtractionUpstreamError(RuntimeError):
+    """Sanitized OpenAI-compatible extraction failure."""
+
+    def __init__(self, message: str, *, unavailable: bool) -> None:
+        super().__init__(message)
+        self.unavailable = unavailable
+
+
+def create_memory_extraction_client(*, api_key: str, base_url: str | None) -> AsyncOpenAI:
+    """Construct the pinned official client at the extraction boundary."""
+
+    return AsyncOpenAI(api_key=api_key, base_url=base_url)
 
 
 class ExtractedMemory(BaseModel):
@@ -172,7 +187,7 @@ Return JSON only. Do not explain why the array is empty. Do not narrate your rea
 
 
 def _format_messages_for_prompt(
-    messages: list[object],
+    messages: Sequence[object],
     project_path: str | None,
     total: int,
 ) -> str:
@@ -196,7 +211,7 @@ def _format_messages_for_prompt(
 
 
 async def extract_memories_from_session(
-    messages: list[object],
+    messages: Sequence[object],
     *,
     project_path: str | None,
     client: AsyncOpenAI,
@@ -207,7 +222,8 @@ async def extract_memories_from_session(
     Tail-truncates to `MAX_MESSAGES` and asks the LLM for a JSON-schema
     constrained `ExtractionResult`. Returns the parsed list, possibly
     empty. This function takes ownership of `client` and closes it before
-    returning. Any LLM/network/parsing error propagates to the caller.
+    returning. Provider and response failures leave this boundary only as a
+    sanitized first-party error.
     """
     async with client:
         if not messages:
@@ -230,13 +246,45 @@ async def extract_memories_from_session(
                 "schema": _RESPONSE_SCHEMA,
             },
         )
-        response = await client.chat.completions.create(
-            model=model,
-            messages=request_messages,
-            response_format=response_format,
-            temperature=0.2,
-        )
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=request_messages,
+                response_format=response_format,
+                temperature=0.2,
+            )
+        except (APIConnectionError, RateLimitError) as exc:
+            raise MemoryExtractionUpstreamError(
+                "Memory extraction provider is unavailable",
+                unavailable=True,
+            ) from exc
+        except APIStatusError as exc:
+            raise MemoryExtractionUpstreamError(
+                "Memory extraction provider request failed",
+                unavailable=exc.status_code >= 500,
+            ) from exc
+        except APIError as exc:
+            raise MemoryExtractionUpstreamError(
+                "Memory extraction provider returned an invalid response",
+                unavailable=False,
+            ) from exc
 
-        raw = response.choices[0].message.content or "{}"
-        parsed = ExtractionResult.model_validate_json(raw)
+        if len(response.choices) != 1:
+            raise MemoryExtractionUpstreamError(
+                "Memory extraction provider returned an invalid response",
+                unavailable=False,
+            )
+        raw = response.choices[0].message.content
+        if not isinstance(raw, str) or not raw.strip():
+            raise MemoryExtractionUpstreamError(
+                "Memory extraction provider returned an invalid response",
+                unavailable=False,
+            )
+        try:
+            parsed = ExtractionResult.model_validate_json(raw)
+        except ValidationError as exc:
+            raise MemoryExtractionUpstreamError(
+                "Memory extraction provider returned an invalid response",
+                unavailable=False,
+            ) from exc
         return parsed.memories

@@ -8,6 +8,7 @@ groups and renders icons per type.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Literal
 from urllib.parse import quote
 
@@ -16,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, _is_scoped_api_key, get_auth
+from app.core.auth import AuthContext, get_auth, is_scoped_api_key
 from app.core.database import get_session
 from app.core.project import project_ids_visible_to
 from app.core.query_utils import like_needle
@@ -24,6 +25,7 @@ from app.models.session import AgentEnvironment, Session
 from app.models.skill import Skill
 from app.models.vault import Vault, VaultProjectAttachment
 from app.services.memory_provider import get_memory_provider
+from app.services.memory_types import MemoryItem
 
 
 def _has_scope(auth: AuthContext, scope: str) -> bool:
@@ -59,6 +61,10 @@ class SearchResponse(BaseModel):
 
 
 TYPE_LIMIT = 5
+type Searcher = Callable[
+    [AsyncSession, AuthContext, str],
+    Awaitable[list[SearchHit]],
+]
 
 
 async def _search_sessions(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
@@ -107,16 +113,26 @@ async def _search_memories(db: AsyncSession, auth: AuthContext, query: str) -> l
         query,
         limit=TYPE_LIMIT,
     )
-    return [
-        SearchHit(
-            type="memory",
-            id=str(m["id"]),
-            title=m["content"][:80] + ("…" if len(m["content"]) > 80 else ""),
-            subtitle=m.get("category"),
-            href=f"/memories/{m['id']}",
-        )
-        for m in rows
-    ]
+    hits: list[SearchHit] = []
+    for item in rows:
+        if hit := _memory_search_hit(item):
+            hits.append(hit)
+    return hits
+
+
+def _memory_search_hit(item: MemoryItem) -> SearchHit | None:
+    memory_id = item.get("id")
+    content = item.get("content")
+    category = item.get("category")
+    if not isinstance(memory_id, str) or not isinstance(content, str):
+        return None
+    return SearchHit(
+        type="memory",
+        id=memory_id,
+        title=content[:80] + ("…" if len(content) > 80 else ""),
+        subtitle=category if isinstance(category, str) else None,
+        href=f"/memories/{memory_id}",
+    )
 
 
 async def _search_skills(db: AsyncSession, auth: AuthContext, query: str) -> list[SearchHit]:
@@ -227,10 +243,10 @@ async def global_search(
     # we limit it to user JWT and wide-access personal CLI keys
     # (mirrors `require_user_auth` semantics on the direct vault
     # routes).
-    jobs = []
+    jobs: list[tuple[str, Searcher]] = []
     if _has_scope(auth, "skills:read"):
         jobs.append(("skills", _search_skills))
-    if not _is_scoped_api_key(auth):
+    if not is_scoped_api_key(auth):
         jobs.append(("vaults", _search_vaults))
     if _has_scope(auth, "sessions:read"):
         jobs.insert(0, ("sessions", _search_sessions))

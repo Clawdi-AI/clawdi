@@ -1,5 +1,6 @@
 import uuid
 
+from pydantic import JsonValue
 from sqlalchemy import CheckConstraint, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -62,4 +63,6 @@ class UserSetting(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, unique=True)
-    settings: Mapped[dict] = mapped_column(JSONB, server_default="{}", nullable=False)
+    settings: Mapped[dict[str, JsonValue]] = mapped_column(
+        JSONB, server_default="{}", nullable=False
+    )

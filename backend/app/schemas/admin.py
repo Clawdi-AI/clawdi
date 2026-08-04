@@ -385,7 +385,7 @@ def _clean_channel_secret_values(value: dict[str, str] | None) -> dict[str, str]
         name = key.strip()
         if not name or len(name) > 80 or not name.replace("_", "").isalnum():
             raise ValueError("secret names must be alphanumeric or underscore")
-        if not isinstance(secret, str) or not secret:
+        if not secret:
             raise ValueError("secret values cannot be blank")
         cleaned[name] = secret
     return cleaned

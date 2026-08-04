@@ -15,6 +15,7 @@ from app.models.session import Session
 from app.models.skill import Skill
 from app.models.user import User
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
+from app.schemas.connector import ConnectorConnectionResponse
 
 
 async def _seed_dashboard_sessions(db_session: AsyncSession, user_id) -> datetime:
@@ -251,10 +252,19 @@ async def test_dashboard_stats_caches_connector_count(
 
     calls = 0
 
-    async def fake_get_connected_accounts(_clerk_id: str) -> list[dict]:
+    async def fake_get_connected_accounts(
+        _clerk_id: str,
+    ) -> list[ConnectorConnectionResponse]:
         nonlocal calls
         calls += 1
-        return [{"status": "ACTIVE"}]
+        return [
+            ConnectorConnectionResponse(
+                id="connection-1",
+                app_name="github",
+                status="ACTIVE",
+                created_at="2026-08-04T00:00:00Z",
+            )
+        ]
 
     monkeypatch.setattr(composio, "get_connected_accounts", fake_get_connected_accounts)
 
@@ -266,6 +276,30 @@ async def test_dashboard_stats_caches_connector_count(
     assert first.json()["connectors_count"] == 1
     assert second.json()["connectors_count"] == 1
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_dashboard_connector_count_degrades_only_for_registered_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routes import dashboard
+    from app.services import composio
+
+    async def provider_failure(_clerk_id: str) -> list[ConnectorConnectionResponse]:
+        raise composio.ComposioProtocolError("provider detail must stay private")
+
+    async def programming_failure(_clerk_id: str) -> list[ConnectorConnectionResponse]:
+        raise AssertionError("unexpected connector consumer bug")
+
+    monkeypatch.setattr(settings, "composio_api_key", "test-composio-key")
+    monkeypatch.setattr(dashboard, "_connectors_count_cache", {})
+    monkeypatch.setattr(composio, "get_connected_accounts", provider_failure)
+
+    assert await dashboard._cached_connectors_count("clerk_user_123") == 0
+
+    monkeypatch.setattr(composio, "get_connected_accounts", programming_failure)
+    with pytest.raises(AssertionError, match="unexpected connector consumer bug"):
+        await dashboard._cached_connectors_count("clerk_user_123")
 
 
 @pytest.mark.asyncio

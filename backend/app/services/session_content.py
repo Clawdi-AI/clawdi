@@ -37,8 +37,14 @@ class _FileStoreLike(Protocol):
 # stops it from pinning memory forever.
 _MESSAGES_CACHE_MAX = 16
 _MESSAGES_CACHE_TTL_S = 300.0
-_SESSION_MESSAGES_ADAPTER: TypeAdapter[list[JsonValue]] = TypeAdapter(list[JsonValue])
-_messages_cache: OrderedDict[tuple[str, str], tuple[float, list[JsonValue]]] = OrderedDict()
+type SessionMessageValue = dict[str, JsonValue]
+
+_SESSION_MESSAGES_ADAPTER: TypeAdapter[list[SessionMessageValue]] = TypeAdapter(
+    list[SessionMessageValue]
+)
+_messages_cache: OrderedDict[tuple[str, str], tuple[float, list[SessionMessageValue]]] = (
+    OrderedDict()
+)
 _messages_cache_lock = threading.Lock()
 
 
@@ -50,7 +56,7 @@ class SessionContentInvalid(Exception):
     """The stored content isn't a JSON array of messages — corrupted upload."""
 
 
-def _cache_get(key: tuple[str, str]) -> list[JsonValue] | None:
+def _cache_get(key: tuple[str, str]) -> list[SessionMessageValue] | None:
     now = time.monotonic()
     with _messages_cache_lock:
         entry = _messages_cache.get(key)
@@ -65,7 +71,7 @@ def _cache_get(key: tuple[str, str]) -> list[JsonValue] | None:
         return parsed
 
 
-def _cache_put(key: tuple[str, str], parsed: list[JsonValue]) -> None:
+def _cache_put(key: tuple[str, str], parsed: list[SessionMessageValue]) -> None:
     now = time.monotonic()
     with _messages_cache_lock:
         _messages_cache[key] = (now, parsed)
@@ -77,7 +83,7 @@ def _cache_put(key: tuple[str, str], parsed: list[JsonValue]) -> None:
 async def load_session_messages(
     session: Session,
     file_store: _FileStoreLike,
-) -> list[JsonValue]:
+) -> list[SessionMessageValue]:
     """Fetch and parse the session's messages array.
 
     Cached by (file_key, content_hash). Returns the raw list of message

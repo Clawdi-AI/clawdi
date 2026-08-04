@@ -7,9 +7,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
 
 import pytest
-from botocore.exceptions import ClientError, ResponseStreamingError
 
 from app.services.file_store import S3FileStore
+from app.services.file_store_s3 import S3ObjectStoreError, _validate_operation_response
 
 
 class _S3CompatibleHandler(BaseHTTPRequestHandler):
@@ -169,15 +169,31 @@ async def test_real_boto3_s3_transport_contract(
 
 
 @pytest.mark.asyncio
-async def test_non_not_found_client_errors_propagate(
+async def test_non_not_found_client_errors_are_sanitized(
     s3_store: tuple[S3FileStore, type[_S3CompatibleHandler]],
 ) -> None:
     store, _ = s3_store
 
-    with pytest.raises(ClientError, match="AccessDenied"):
+    with pytest.raises(S3ObjectStoreError, match="S3 object read failed") as read_error:
         await store.get("denied")
-    with pytest.raises(ClientError, match="403"):
+    with pytest.raises(
+        S3ObjectStoreError,
+        match="S3 object metadata check failed",
+    ) as metadata_error:
         await store.exists("denied")
+    assert "AccessDenied" not in str(read_error.value)
+    assert "403" not in str(metadata_error.value)
+
+
+def test_operation_response_metadata_fails_closed() -> None:
+    with pytest.raises(S3ObjectStoreError, match="invalid write response"):
+        _validate_operation_response({}, operation="write")
+
+    with pytest.raises(S3ObjectStoreError, match="invalid delete response"):
+        _validate_operation_response(
+            {"ResponseMetadata": {"HTTPStatusCode": 500}},
+            operation="delete",
+        )
 
 
 @pytest.mark.asyncio
@@ -186,7 +202,7 @@ async def test_streaming_body_closes_after_read_failure(
 ) -> None:
     store, handler = s3_store
 
-    with pytest.raises(ResponseStreamingError, match="response stream"):
+    with pytest.raises(S3ObjectStoreError, match="S3 object stream failed"):
         await store.get("truncated")
 
     await store.put("after-truncated", b"ok")

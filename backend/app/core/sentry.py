@@ -11,7 +11,7 @@ scrub a conservative set of sensitive keys before events are sent.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeGuard
 
 from app.core.config import settings
 
@@ -75,15 +75,23 @@ def _scrub_event(event: Event, _hint: Hint) -> Event:
 
 
 def _scrub(obj: object) -> None:
-    if isinstance(obj, dict):
+    if _is_object_dict(obj):
         for key, value in list(obj.items()):
             if _is_sensitive_key(key):
                 obj[key] = "[redacted]"
             else:
                 _scrub(value)
-    elif isinstance(obj, list):
+    elif _is_object_list(obj):
         for item in obj:
             _scrub(item)
+
+
+def _is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
+    return isinstance(value, dict)
+
+
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
 
 
 def _is_sensitive_key(key: object) -> bool:

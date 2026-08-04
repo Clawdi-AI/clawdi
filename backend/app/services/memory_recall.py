@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
+from pydantic import JsonValue
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -57,7 +58,7 @@ async def bump_recall_counts(user_id: UUID, memory_ids: list[UUID]) -> None:
         await engine.dispose()
 
 
-def recall_ids_from_hits(hits: list[dict]) -> list[UUID]:
+def recall_ids_from_hits(hits: list[dict[str, JsonValue]]) -> list[UUID]:
     """Parse memory ids out of provider hits; unparseable ids are skipped
     (Mem0-backed hits may carry non-UUID ids — they have no local row to
     count against anyway)."""

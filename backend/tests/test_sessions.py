@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 import httpx
 import pytest
+from openai import AsyncOpenAI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1784,7 +1786,17 @@ async def test_extract_creates_memories_linked_to_session(
 
     monkeypatch.setattr(app_settings, "llm_api_key", "test-key")
 
-    async def fake_extract(messages, *, project_path, client, model):
+    async def fake_extract(
+        messages: Sequence[object],
+        *,
+        project_path: str | None,
+        client: AsyncOpenAI,
+        model: str,
+    ) -> list[memory_extraction.ExtractedMemory]:
+        assert messages
+        assert model
+        _ = project_path
+        await client.close()
         return [
             memory_extraction.ExtractedMemory(
                 content="User prefers bun over npm", category="preference", tags=["tooling"]
@@ -1794,7 +1806,7 @@ async def test_extract_creates_memories_linked_to_session(
             ),
         ]
 
-    monkeypatch.setattr("app.routes.sessions.extract_memories_from_session", fake_extract)
+    monkeypatch.setattr(memory_extraction, "extract_memories_from_session", fake_extract)
 
     local_id = "sess-extract-1"
     await _seed_session_with_content(client, local_id)
@@ -1818,6 +1830,49 @@ async def test_extract_creates_memories_linked_to_session(
     assert all(m.source_session_id is not None for m in rows)
     contents = {m.content for m in rows}
     assert "User prefers bun over npm" in contents
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("unavailable", "expected_status"),
+    [(False, 502), (True, 503)],
+)
+async def test_extract_maps_sanitized_provider_failure(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    unavailable: bool,
+    expected_status: int,
+) -> None:
+    from app.core.config import settings as app_settings
+    from app.services import memory_extraction
+
+    monkeypatch.setattr(app_settings, "llm_api_key", "test-key")
+
+    async def fail_extract(
+        messages: Sequence[object],
+        *,
+        project_path: str | None,
+        client: AsyncOpenAI,
+        model: str,
+    ) -> list[memory_extraction.ExtractedMemory]:
+        assert messages
+        assert model
+        _ = project_path
+        await client.close()
+        raise memory_extraction.MemoryExtractionUpstreamError(
+            "provider-secret-detail",
+            unavailable=unavailable,
+        )
+
+    monkeypatch.setattr(memory_extraction, "extract_memories_from_session", fail_extract)
+    local_id = f"sess-extract-provider-failure-{expected_status}"
+    await _seed_session_with_content(client, local_id)
+
+    response = await client.post(f"/v1/sessions/{local_id}/extract")
+
+    assert response.status_code == expected_status
+    assert "provider-secret-detail" not in response.text
 
 
 @pytest.mark.asyncio

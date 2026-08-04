@@ -86,6 +86,7 @@ from app.schemas.session import (
     SessionPermissionsResponse,
     SessionUploadResponse,
 )
+from app.services import memory_extraction
 from app.services.agent_environments import (
     local_machine_registration_key,
     register_agent_environment,
@@ -97,7 +98,6 @@ from app.services.agent_lifecycle import (
 )
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
-from app.services.memory_extraction import extract_memories_from_session
 from app.services.memory_provider import get_memory_provider
 from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.runtime_source import (
@@ -128,6 +128,10 @@ _RUNTIME_OBSERVED_STALE_AFTER = timedelta(seconds=90)
 _HEARTBEAT_FRESHNESS_WRITE_INTERVAL = timedelta(seconds=40)
 _AGENT_DISCONNECTED_ERROR_CODE = "agent_disconnected"
 _RUNTIME_OBSERVED_ADAPTER = TypeAdapter(HostedRuntimeObserved)
+_RELATED_REFS_ADAPTER: TypeAdapter[dict[str, list[str]]] = TypeAdapter(dict[str, list[str]])
+_SESSION_MESSAGE_VALUES_ADAPTER: TypeAdapter[list[dict[str, JsonValue]]] = TypeAdapter(
+    list[dict[str, JsonValue]]
+)
 _MANUAL_SESSION_SUMMARY_FILTER = text(
     "(sessions.summary IS NULL OR "
     "(sessions.summary NOT LIKE 'Cron:%' AND sessions.summary NOT LIKE '[%'))"
@@ -2739,10 +2743,9 @@ async def upload_session_content(
     # we'd rather have a session with NULL related_refs than a
     # half-committed upload).
     try:
-        parsed = json.loads(data)
-        if isinstance(parsed, list):
-            session.related_refs = extract_related_refs(parsed) or None
-    except (json.JSONDecodeError, ValueError, TypeError):
+        parsed = _SESSION_MESSAGE_VALUES_ADAPTER.validate_json(data)
+        session.related_refs = _related_refs_json(extract_related_refs(parsed)) or None
+    except (ValidationError, ValueError, TypeError):
         # log.exception (not warning) so the traceback lands in logs —
         # without it, debugging "why did this session land NULL refs"
         # means re-uploading and watching events live.
@@ -2800,13 +2803,9 @@ async def get_session_content(
     # server error to the client and log the detail server-side so we don't
     # leak stored-data shape assumptions.
     try:
-        raw = json.loads(data)
-    except json.JSONDecodeError:
+        raw = _SESSION_MESSAGE_VALUES_ADAPTER.validate_json(data)
+    except ValidationError:
         log.exception("session %s content is not valid JSON", session_id)
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
-
-    if not isinstance(raw, list):
-        log.error("session %s content is not a JSON array (got %s)", session_id, type(raw).__name__)
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
 
     return [SessionMessageResponse.model_validate(m) for m in raw]
@@ -2929,32 +2928,29 @@ async def extract_session_memories(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
 
     try:
-        messages = json.loads(data)
-    except json.JSONDecodeError:
+        messages = _SESSION_MESSAGE_VALUES_ADAPTER.validate_json(data)
+    except ValidationError:
         log.exception("session %s content is not valid JSON", session.id)
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
-    if not isinstance(messages, list):
-        log.error(
-            "session %s content is not a JSON array (got %s)",
-            session.id,
-            type(messages).__name__,
-        )
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error")
 
-    # Local import keeps the openai SDK off the cold-start critical path
-    # for routes that don't need it.
-    from openai import AsyncOpenAI
-
-    client = AsyncOpenAI(
+    client = memory_extraction.create_memory_extraction_client(
         base_url=settings.llm_base_url or None,
         api_key=settings.llm_api_key,
     )
-    extracted = await extract_memories_from_session(
-        messages,
-        project_path=session.project_path,
-        client=client,
-        model=settings.llm_model,
-    )
+    try:
+        extracted = await memory_extraction.extract_memories_from_session(
+            messages,
+            project_path=session.project_path,
+            client=client,
+            model=settings.llm_model,
+        )
+    except memory_extraction.MemoryExtractionUpstreamError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE if exc.unavailable else status.HTTP_502_BAD_GATEWAY,
+            "Memory extraction provider is unavailable"
+            if exc.unavailable
+            else "Memory extraction provider returned an invalid response",
+        ) from exc
 
     provider = await get_memory_provider(str(auth.user_id), db)
     for m in extracted:
@@ -3257,8 +3253,24 @@ def _session_to_response(
         status=s.status,
         content_hash=s.content_hash,
         is_shared=is_shared,
-        related_refs=s.related_refs,
+        related_refs=_related_refs_response(s.related_refs),
     )
+
+
+def _related_refs_json(value: dict[str, list[str]]) -> dict[str, JsonValue]:
+    result: dict[str, JsonValue] = {}
+    for key, refs in value.items():
+        json_refs: list[JsonValue] = [ref for ref in refs]
+        result[key] = json_refs
+    return result
+
+
+def _related_refs_response(
+    value: dict[str, JsonValue] | None,
+) -> dict[str, list[str]] | None:
+    if value is None:
+        return None
+    return _RELATED_REFS_ADAPTER.validate_python(value)
 
 
 # --- Permission helpers ----------------------------------------------------

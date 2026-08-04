@@ -7,6 +7,7 @@ stay in the AI provider OAuth-attempt service, while routes shape HTTP responses
 from dataclasses import dataclass
 
 import httpx
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CODEX_DEVICE_VERIFICATION_URL = "https://auth.openai.com/codex/device"
@@ -15,6 +16,8 @@ CODEX_DEVICE_TOKEN_URL = "https://auth.openai.com/api/accounts/deviceauth/token"
 CODEX_DEVICE_CALLBACK_URL = "https://auth.openai.com/deviceauth/callback"
 CODEX_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 CODEX_DEVICE_RESPONSE_LIMIT_BYTES = 256 * 1024
+type _CodexResponse = dict[str, JsonValue]
+_CODEX_RESPONSE_ADAPTER: TypeAdapter[_CodexResponse] = TypeAdapter(dict[str, JsonValue])
 
 
 @dataclass(frozen=True)
@@ -55,19 +58,17 @@ def device_headers(content_type: str) -> dict[str, str]:
     }
 
 
-def response_json(response: httpx.Response) -> dict:
+def response_json(response: httpx.Response) -> _CodexResponse:
     if len(response.content) > CODEX_DEVICE_RESPONSE_LIMIT_BYTES:
         raise CodexOAuthUpstreamError("ChatGPT returned an oversized response")
     try:
-        data = response.json()
-    except ValueError as exc:
+        data = _CODEX_RESPONSE_ADAPTER.validate_json(response.content)
+    except (ValueError, ValidationError) as exc:
         raise CodexOAuthUpstreamError("ChatGPT returned an invalid response") from exc
-    if not isinstance(data, dict):
-        raise CodexOAuthUpstreamError("ChatGPT returned an invalid response")
     return data
 
 
-def required_field(data: dict, field: str) -> str:
+def required_field(data: _CodexResponse, field: str) -> str:
     value = data.get(field)
     if not isinstance(value, str) or not value:
         raise CodexOAuthUpstreamError("ChatGPT returned an incomplete response")

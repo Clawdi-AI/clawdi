@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 
+from pydantic import JsonValue
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -16,7 +17,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.project import Project  # noqa: F401 — register `projects` table for FK resolution
+from app.models.project import Project
 
 
 class AgentEnvironment(Base, TimestampMixin):
@@ -97,7 +98,7 @@ class AgentEnvironment(Base, TimestampMixin):
     # blocking the whole tear-down.
     default_project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("projects.id", ondelete="CASCADE"),
+        ForeignKey(Project.id, ondelete="CASCADE"),
         nullable=False,
     )
 
@@ -173,4 +174,4 @@ class Session(Base, TimestampMixin):
     # would clobber related_refs back to JSON null. With this flag,
     # Python None → SQL NULL, and the coalesce preserves the
     # server-computed value across re-pushes.
-    related_refs: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    related_refs: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))

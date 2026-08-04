@@ -8,8 +8,8 @@ endpoint must remain the only public MCP surface.
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
@@ -20,16 +20,32 @@ from httpx import ASGITransport
 from app.main import app
 
 
+@dataclass(frozen=True, slots=True)
+class _FakeMcpConfig:
+    type: object
+    url: str
+    headers: dict[str, str | None] | None
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeToolRouterSession:
+    mcp: _FakeMcpConfig
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeComposioSdk:
+    sessions: object
+
+
 @pytest.mark.asyncio
 async def test_settings_patch_masks_sensitive_keys_on_read(client: httpx.AsyncClient, monkeypatch):
     # Settings save now refuses `memory_provider=mem0` when the
     # `[mem0]` extra isn't installed (the prod-default since the
     # package was never declared). Stub `mem0_available()` so this
     # masking test can still exercise the secret-handling path.
-    import app.services.memory_provider as mp
+    import app.services.memory_provider_mem0 as mem0_adapter
 
-    monkeypatch.setattr(mp, "_mem0_available_cached", None)
-    monkeypatch.setattr(mp, "mem0_available", lambda: True)
+    monkeypatch.setattr(mem0_adapter, "mem0_available", lambda: True)
     import app.routes.settings as st
 
     monkeypatch.setattr(st, "mem0_available", lambda: True)
@@ -281,7 +297,7 @@ async def test_clawdi_mcp_initializes_and_lists_native_tools(monkeypatch):
         yield None
 
     async def no_connector_session(user_id: str):
-        raise RuntimeError("connectors disabled for test")
+        raise mcp_bridge.ComposioMcpUpstreamError("connectors disabled for test")
 
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", no_connector_session)
     app.dependency_overrides[get_auth] = fake_auth
@@ -518,7 +534,7 @@ async def test_clawdi_mcp_memory_search_shares_account_memory_across_agents(
         )
 
     async def no_connector_session(user_id: str):
-        raise RuntimeError("connectors disabled for test")
+        raise mcp_bridge.ComposioMcpUpstreamError("connectors disabled for test")
 
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", no_connector_session)
     app.dependency_overrides[get_session] = override_session
@@ -757,17 +773,20 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
 
 @pytest.mark.asyncio
 async def test_create_tool_router_mcp_session_uses_canonical_sdk_off_event_loop(monkeypatch):
+    from composio.core.models.tool_router import ToolRouterMCPServerType
+
     from app.services import composio
 
     calls: list[dict] = []
     event_loop_thread = threading.get_ident()
 
     class FakeSessions:
-        def create(self, **kwargs):
+        def create(self, *, user_id: str, mcp: bool) -> _FakeToolRouterSession:
+            kwargs = {"user_id": user_id, "mcp": mcp}
             calls.append({"kwargs": kwargs, "thread": threading.get_ident()})
-            return SimpleNamespace(
-                mcp=SimpleNamespace(
-                    type="http",
+            return _FakeToolRouterSession(
+                mcp=_FakeMcpConfig(
+                    type=ToolRouterMCPServerType.HTTP,
                     url="https://app.composio.dev/tool_router/v3/trs_test/mcp",
                     headers={"x-api-key": "session_scoped_key", "x-session": "trs_test"},
                 )
@@ -776,7 +795,7 @@ async def test_create_tool_router_mcp_session_uses_canonical_sdk_off_event_loop(
     monkeypatch.setattr(
         composio,
         "get_composio_sdk",
-        lambda: SimpleNamespace(sessions=FakeSessions()),
+        lambda: _FakeComposioSdk(sessions=FakeSessions()),
     )
 
     now = datetime(2026, 5, 24, tzinfo=UTC)
@@ -794,45 +813,42 @@ async def test_create_tool_router_mcp_session_uses_canonical_sdk_off_event_loop(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("mcp", "error"),
+    "mcp",
     [
-        (SimpleNamespace(url="", headers={"x-api-key": "key"}), "mcp.url"),
-        (SimpleNamespace(url="https://composio.test/mcp", headers={}), "mcp.headers"),
-        (
-            SimpleNamespace(
-                url="https://composio.test/mcp",
-                headers={"x-api-key": None},
-            ),
-            "invalid mcp.headers",
+        _FakeMcpConfig(type="http", url="", headers={"x-api-key": "key"}),
+        _FakeMcpConfig(type="http", url="https://composio.test/mcp", headers={}),
+        _FakeMcpConfig(
+            type="http",
+            url="https://composio.test/mcp",
+            headers={"x-api-key": None},
         ),
-        (
-            SimpleNamespace(
-                type="sse",
-                url="https://composio.test/mcp",
-                headers={"x-api-key": "key"},
-            ),
-            "unsupported mcp.type",
+        _FakeMcpConfig(
+            type="sse",
+            url="https://composio.test/mcp",
+            headers={"x-api-key": "key"},
         ),
     ],
 )
 async def test_create_tool_router_mcp_session_fails_closed_on_invalid_sdk_contract(
     monkeypatch,
     mcp,
-    error,
 ):
     from app.services import composio
 
+    config = mcp
+
     class FakeSessions:
-        def create(self, **kwargs):
-            return SimpleNamespace(mcp=mcp)
+        def create(self, *, user_id: str, mcp: bool) -> _FakeToolRouterSession:
+            assert user_id and mcp is True
+            return _FakeToolRouterSession(mcp=config)
 
     monkeypatch.setattr(
         composio,
         "get_composio_sdk",
-        lambda: SimpleNamespace(sessions=FakeSessions()),
+        lambda: _FakeComposioSdk(sessions=FakeSessions()),
     )
 
-    with pytest.raises(RuntimeError, match=error):
+    with pytest.raises(composio.ComposioMcpUpstreamError, match="invalid MCP configuration"):
         await composio._create_tool_router_mcp_session("clerk_user_123")
 
 

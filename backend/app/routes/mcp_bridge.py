@@ -6,17 +6,20 @@ import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 from urllib.parse import quote, unquote, urlsplit
 from uuid import UUID
 
+import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    JsonValue,
     StrictInt,
     StrictStr,
+    TypeAdapter,
     ValidationError,
     field_validator,
 )
@@ -38,9 +41,11 @@ from app.core.query_utils import like_needle
 from app.models.project import Project
 from app.models.session import AgentEnvironment, Session
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
-from app.routes.memories import _attach_source_machines
-from app.routes.public_sessions import _resolve_session_for_view
+from app.routes.memories import attach_source_machines
+from app.routes.public_sessions import resolve_session_for_view
 from app.services.composio import (
+    ComposioMcpUpstreamError,
+    ComposioRouteError,
     call_tool_router_mcp_tool,
     get_tool_router_mcp_session,
     list_tool_router_mcp_tools,
@@ -60,6 +65,10 @@ from app.services.vault_crypto import decrypt
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mcp", tags=["mcp"])
 file_store = get_file_store()
+type JsonObject = dict[str, JsonValue]
+_JSON_OBJECT_ADAPTER: TypeAdapter[JsonObject] = TypeAdapter(dict[str, JsonValue])
+_JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+_HTTP_EXCEPTION_DETAIL_ADAPTER: TypeAdapter[str] = TypeAdapter(StrictStr)
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
 _SHARE_URL_RE = re.compile(
@@ -187,7 +196,7 @@ class _VaultResolveArguments(_ToolArguments):
 
 
 def _validate_arguments[ArgumentsT: _ToolArguments](
-    model: type[ArgumentsT], arguments: dict[str, Any]
+    model: type[ArgumentsT], arguments: JsonObject
 ) -> ArgumentsT:
     try:
         return model.model_validate(arguments)
@@ -196,23 +205,21 @@ def _validate_arguments[ArgumentsT: _ToolArguments](
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid tool arguments") from None
 
 
-type _NativeToolHandler = Callable[
-    [dict[str, Any], AuthContext, AsyncSession], Awaitable[dict[str, Any]]
-]
+type _NativeToolHandler = Callable[[JsonObject, AuthContext, AsyncSession], Awaitable[JsonObject]]
 
 
 @dataclass(frozen=True)
 class _NativeToolSpec:
     description: str
-    input_schema: dict[str, Any]
+    input_schema: object
     scopes: tuple[str, ...]
     handler: _NativeToolHandler
 
-    def definition(self, name: str) -> dict[str, Any]:
+    def definition(self, name: str) -> JsonObject:
         return {
             "name": name,
             "description": self.description,
-            "inputSchema": self.input_schema,
+            "inputSchema": _JSON_OBJECT_ADAPTER.validate_python(self.input_schema),
         }
 
 
@@ -486,22 +493,22 @@ def _extract_legacy_mcp_user_id(request: Request) -> str:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing auth token")
     try:
         return verify_mcp_bridge_token(authorization[7:])
-    except Exception:
+    except (jwt.PyJWTError, RuntimeError, ValueError):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token") from None
 
 
 # Deprecated compatibility bridge for legacy clients. Keep hidden from OpenAPI;
 # new clients authenticate normally and use POST /v1/mcp/clawdi.
 @router.post("/composio", include_in_schema=False)
-async def mcp_composio_post(request: Request):
+async def mcp_composio_post(request: Request) -> JsonObject:
     user_id = _extract_legacy_mcp_user_id(request)
-    body = await request.json()
+    body = await _read_request_json(request)
     if not isinstance(body, dict):
         return _mcp_error(None, -32600, "Invalid Request")
 
     rpc_id = body.get("id")
     method = body.get("method")
-    if method not in {"tools/list", "tools/call"}:
+    if not isinstance(method, str) or method not in {"tools/list", "tools/call"}:
         return _mcp_error(rpc_id, -32601, "Method not found")
 
     try:
@@ -517,23 +524,26 @@ async def mcp_composio_post(request: Request):
             if not isinstance(name, str) or not isinstance(arguments, dict):
                 return _mcp_error(rpc_id, -32602, "Invalid params")
             result = await call_tool_router_mcp_tool(session, name, arguments)
-    except Exception as exc:
+    except (ComposioMcpUpstreamError, ComposioRouteError) as exc:
         logger.error(
             "Legacy Composio MCP error: method=%s error_type=%s", method, type(exc).__name__
         )
         return _mcp_error(rpc_id, -32000, "internal error")
 
-    return _mcp_result(rpc_id, result.model_dump(by_alias=True, exclude_none=True))
+    serialized_result = _JSON_OBJECT_ADAPTER.validate_json(
+        result.model_dump_json(by_alias=True, exclude_none=True)
+    )
+    return _mcp_result(rpc_id, serialized_result)
 
 
-@router.post("/clawdi", include_in_schema=False)
+@router.post("/clawdi", include_in_schema=False, response_model=None)
 async def mcp_clawdi_post(
     request: Request,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-):
+) -> JsonObject | list[JsonObject] | Response:
     """Agent-facing stateless MCP endpoint backed directly by Clawdi Cloud."""
-    body = await request.json()
+    body = await _read_request_json(request)
     if isinstance(body, list):
         responses = [
             response
@@ -556,8 +566,8 @@ async def mcp_clawdi_post(
 
 
 async def _handle_clawdi_mcp_request(
-    body: dict[str, Any], *, auth: AuthContext, db: AsyncSession
-) -> dict[str, Any] | None:
+    body: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject | None:
     rpc_id = body.get("id")
     method = body.get("method")
     if not isinstance(method, str):
@@ -581,7 +591,8 @@ async def _handle_clawdi_mcp_request(
         if method == "ping":
             return _mcp_result(rpc_id, {})
         if method == "tools/list":
-            return _mcp_result(rpc_id, {"tools": await _list_clawdi_mcp_tools(auth)})
+            tools: list[JsonValue] = [tool for tool in await _list_clawdi_mcp_tools(auth)]
+            return _mcp_result(rpc_id, {"tools": tools})
         if method == "tools/call":
             params = body.get("params")
             if not isinstance(params, dict):
@@ -602,13 +613,13 @@ async def _handle_clawdi_mcp_request(
         return _mcp_error(rpc_id, -32000, "internal error", is_tool_error=True)
 
 
-def _mcp_result(rpc_id: Any, result: Any) -> dict[str, Any]:
+def _mcp_result(rpc_id: JsonValue, result: JsonValue) -> JsonObject:
     return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
 
 
 def _mcp_error(
-    rpc_id: Any, code: int, message: str, *, is_tool_error: bool = False
-) -> dict[str, Any]:
+    rpc_id: JsonValue, code: int, message: str, *, is_tool_error: bool = False
+) -> JsonObject:
     if is_tool_error:
         return _mcp_result(
             rpc_id,
@@ -618,19 +629,27 @@ def _mcp_error(
 
 
 def _http_exception_message(exc: HTTPException) -> str:
-    if isinstance(exc.detail, str):
-        return exc.detail
-    return "request failed"
+    try:
+        return _HTTP_EXCEPTION_DETAIL_ADAPTER.validate_python(exc.detail, strict=True)
+    except ValidationError:
+        return "request failed"
+
+
+async def _read_request_json(request: Request) -> JsonValue | None:
+    try:
+        return _JSON_VALUE_ADAPTER.validate_json(await request.body())
+    except ValidationError:
+        return None
 
 
 # Connector tool definitions change only when the user connects/disconnects
 # an app; a short per-user cache keeps repeated tools/list calls (every MCP
 # client init) from paying a Composio round-trip each time.
 _CONNECTOR_TOOLS_CACHE_TTL_SECONDS = 60.0
-_connector_tools_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_connector_tools_cache: dict[str, tuple[float, list[JsonObject]]] = {}
 
 
-async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
+async def _connector_mcp_tools(auth: AuthContext) -> list[JsonObject]:
     try:
         require_auth_scopes(auth, "connectors:read")
     except HTTPException:
@@ -640,11 +659,13 @@ async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
     cached = _connector_tools_cache.get(clerk_id)
     if cached and cached[0] > now:
         return cached[1]
-    tools: list[dict[str, Any]] = []
+    tools: list[JsonObject] = []
     try:
         session = await get_tool_router_mcp_session(clerk_id)
         result = await list_tool_router_mcp_tools(session)
-        serialized = result.model_dump(by_alias=True, exclude_none=True)
+        serialized = _JSON_OBJECT_ADAPTER.validate_json(
+            result.model_dump_json(by_alias=True, exclude_none=True)
+        )
         raw_tools = serialized.get("tools")
         if isinstance(raw_tools, list):
             tools = [tool for tool in raw_tools if isinstance(tool, dict)]
@@ -652,14 +673,14 @@ async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
             now + _CONNECTOR_TOOLS_CACHE_TTL_SECONDS,
             tools,
         )
-    except Exception:
+    except (ComposioMcpUpstreamError, ComposioRouteError):
         # Failures are not cached — the next call retries immediately.
         logger.info("Connector MCP tools unavailable")
     return tools
 
 
-async def _list_clawdi_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
-    native_tools: list[dict[str, Any]] = []
+async def _list_clawdi_mcp_tools(auth: AuthContext) -> list[JsonObject]:
+    native_tools: list[JsonObject] = []
     for name, spec in _NATIVE_TOOL_REGISTRY.items():
         try:
             require_auth_scopes(auth, *spec.scopes)
@@ -675,8 +696,8 @@ async def _list_clawdi_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
 
 
 async def _call_clawdi_mcp_tool(
-    name: str, arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
-) -> dict[str, Any]:
+    name: str, arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
     spec = _NATIVE_TOOL_REGISTRY.get(name)
     if spec is not None:
         require_auth_scopes(auth, *spec.scopes)
@@ -684,27 +705,27 @@ async def _call_clawdi_mcp_tool(
     return await _tool_connector_call(name, arguments, auth=auth)
 
 
-def _tool_text(text: str, *, is_error: bool = False) -> dict[str, Any]:
-    payload: dict[str, Any] = {"content": [{"type": "text", "text": text}]}
+def _tool_text(text: str, *, is_error: bool = False) -> JsonObject:
+    payload: JsonObject = {"content": [{"type": "text", "text": text}]}
     if is_error:
         payload["isError"] = True
     return payload
 
 
-def _tool_json(payload: object) -> dict[str, Any]:
+def _tool_json(payload: object) -> JsonObject:
     return _tool_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
 async def _tool_memory_extract(
-    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
-) -> dict[str, Any]:
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
     _validate_arguments(_NoArguments, arguments)
     return _tool_text(_MEMORY_EXTRACT_INSTRUCTIONS)
 
 
 async def _tool_memory_search(
-    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
-) -> dict[str, Any]:
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
     parsed = _validate_arguments(_MemorySearchArguments, arguments)
     provider = await get_memory_provider(str(auth.user_id), db)
     hits = await provider.search(
@@ -712,7 +733,7 @@ async def _tool_memory_search(
         parsed.query,
         limit=parsed.limit,
     )
-    await _attach_source_machines(db, auth, hits)
+    await attach_source_machines(db, auth, hits)
     text = (
         "\n\n".join(f"[{item.get('category', 'fact')}] {item.get('content', '')}" for item in hits)
         if hits
@@ -722,8 +743,8 @@ async def _tool_memory_search(
 
 
 async def _tool_memory_add(
-    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
-) -> dict[str, Any]:
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
     parsed = _validate_arguments(_MemoryAddArguments, arguments)
     finding = find_likely_secret(parsed.content)
     if finding is not None:
@@ -767,8 +788,8 @@ def _user_sessions_stmt(auth: AuthContext):
 
 
 async def _tool_session_search(
-    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
-) -> dict[str, Any]:
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
     parsed = _validate_arguments(_SessionSearchArguments, arguments)
     stmt = (
         _user_sessions_stmt(auth)
@@ -787,7 +808,7 @@ async def _tool_session_search(
     rows = (await db.execute(stmt)).all()
     if not rows:
         return _tool_text(f'No sessions matched "{parsed.query}".')
-    lines = []
+    lines: list[str] = []
     for session, agent_type in rows:
         date = session.last_activity_at.date().isoformat() if session.last_activity_at else "-"
         summary = session.summary or session.local_session_id or "(untitled)"
@@ -804,8 +825,8 @@ async def _tool_session_search(
 
 
 async def _tool_session_read(
-    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
-) -> dict[str, Any]:
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
     parsed = _validate_arguments(_SessionReadArguments, arguments)
     match = _SHARE_URL_RE.search(parsed.reference)
     session_id = match.group(1) if match else parsed.reference
@@ -829,9 +850,9 @@ async def _tool_session_read(
             if row is not None:
                 session, agent_type = row
             else:
-                session, agent_type, _ = await _resolve_session_for_view(db, parsed_id, None)
+                session, agent_type, _ = await resolve_session_for_view(db, parsed_id, None)
         else:
-            session, agent_type, _ = await _resolve_session_for_view(db, parsed_id, auth)
+            session, agent_type, _ = await resolve_session_for_view(db, parsed_id, auth)
     else:
         stmt = _user_sessions_stmt(auth).where(Session.id == parsed_id)
         row = (await db.execute(stmt)).first()
@@ -853,7 +874,7 @@ async def _tool_session_read(
     )
 
 
-def _project_payload(project: Project) -> dict[str, object]:
+def _project_payload(project: Project) -> JsonObject:
     return {
         "id": str(project.id),
         "name": project.name,
@@ -884,8 +905,8 @@ async def _visible_project_or_404(
 
 
 async def _tool_project_current(
-    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
-) -> dict[str, Any]:
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
     _validate_arguments(_NoArguments, arguments)
     project_id = await resolve_default_write_project(db, auth)
     project = await _visible_project_or_404(db, auth, project_id)
@@ -893,8 +914,8 @@ async def _tool_project_current(
 
 
 async def _tool_project_list(
-    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
-) -> dict[str, Any]:
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
     parsed = _validate_arguments(_ProjectListArguments, arguments)
     visible_project_ids = await project_ids_visible_to(db, auth)
     projects = (
@@ -913,16 +934,16 @@ async def _tool_project_list(
 
 
 async def _tool_project_get(
-    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
-) -> dict[str, Any]:
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
     parsed = _validate_arguments(_ProjectGetArguments, arguments)
     project = await _visible_project_or_404(db, auth, UUID(parsed.project_id))
     return _tool_json(_project_payload(project))
 
 
 async def _tool_vault_list(
-    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
-) -> dict[str, Any]:
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
     parsed = _validate_arguments(_VaultListArguments, arguments)
     visible_project_ids = await project_ids_visible_to(db, auth)
     if parsed.project_id is not None:
@@ -997,8 +1018,8 @@ def _exact_vault_reference(
 
 
 async def _tool_vault_get(
-    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
-) -> dict[str, Any]:
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
     parsed = _validate_arguments(_VaultGetArguments, arguments)
     project_id = UUID(parsed.project_id)
     vault_id = UUID(parsed.vault_id)
@@ -1077,8 +1098,8 @@ def _parse_exact_project_vault_reference(reference: str) -> tuple[UUID, str, str
 
 
 async def _tool_vault_resolve(
-    arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
-) -> dict[str, Any]:
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
     parsed = _validate_arguments(_VaultResolveArguments, arguments)
     project_id, vault_slug, section, field = _parse_exact_project_vault_reference(parsed.reference)
     await _visible_project_or_404(db, auth, project_id)
@@ -1109,13 +1130,11 @@ async def _tool_vault_resolve(
 
 
 async def _tool_connector_call(
-    name: str, arguments: dict[str, Any], *, auth: AuthContext
-) -> dict[str, Any]:
+    name: str, arguments: JsonObject, *, auth: AuthContext
+) -> JsonObject:
     require_auth_scopes(auth, "connectors:invoke")
     session = await get_tool_router_mcp_session(require_clerk_id(auth))
     response = await call_tool_router_mcp_tool(session, name, arguments)
-    result = response.model_dump(by_alias=True, exclude_none=True)
-    if isinstance(result, dict):
-        return result
-    text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, indent=2)
-    return _tool_text(text)
+    return _JSON_OBJECT_ADAPTER.validate_json(
+        response.model_dump_json(by_alias=True, exclude_none=True)
+    )

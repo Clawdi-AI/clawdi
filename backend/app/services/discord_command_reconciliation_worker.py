@@ -5,6 +5,7 @@ import logging
 from uuid import UUID
 
 from fastapi import HTTPException
+from pydantic import JsonValue
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -19,15 +20,15 @@ from app.models.channel import (
     ChannelBotAgentLink,
 )
 from app.routes.channel_routers.shared import (
-    _clear_discord_guild_commands,
-    _discord_binding_guild_id,
-    _discord_command_materializations,
-    _discord_command_retries,
-    _discord_guild_command_fingerprint,
-    _discord_guild_owned_by_link,
-    _discord_historical_guilds_for_link,
-    _discord_uncontested_guilds_for_link,
-    _fan_out_discord_global_commands,
+    clear_discord_guild_commands,
+    discord_binding_guild_id,
+    discord_command_materializations,
+    discord_command_retries,
+    discord_guild_command_fingerprint,
+    discord_guild_owned_by_link,
+    discord_historical_guilds_for_link,
+    discord_uncontested_guilds_for_link,
+    fan_out_discord_global_commands,
 )
 from app.services.channels import lock_channel_binding_identity
 
@@ -67,13 +68,13 @@ async def reconcile_discord_guild_commands(
                 await db.rollback()
                 continue
             try:
-                if await _discord_guild_owned_by_link(
+                if await discord_guild_owned_by_link(
                     db,
                     account=account,
                     bot_agent_link_id=link.id,
                     guild_id=guild_id,
                 ):
-                    reconciled += await _fan_out_discord_global_commands(
+                    reconciled += await fan_out_discord_global_commands(
                         db,
                         account=account,
                         bot_agent_link_id=link.id,
@@ -84,15 +85,15 @@ async def reconcile_discord_guild_commands(
                         force=True,
                     )
                 else:
-                    known_guilds = await _discord_historical_guilds_for_link(
+                    known_guilds = await discord_historical_guilds_for_link(
                         db,
                         account=account,
                         link=link,
                     )
-                    known_guilds.update(_discord_command_materializations(link))
-                    known_guilds.update(_discord_command_retries(link))
+                    known_guilds.update(discord_command_materializations(link))
+                    known_guilds.update(discord_command_retries(link))
                     if guild_id in known_guilds:
-                        await _clear_discord_guild_commands(
+                        await clear_discord_guild_commands(
                             db,
                             account=account,
                             link=link,
@@ -153,14 +154,14 @@ async def reconcile_discord_guild_departure(
             ).scalars()
         )
         departed = [
-            binding for binding in bindings if _discord_binding_guild_id(binding) == guild_id
+            binding for binding in bindings if discord_binding_guild_id(binding) == guild_id
         ]
         link_ids = {binding.bot_agent_link_id for binding in departed}
         for binding in departed:
             binding.status = BINDING_STATUS_ARCHIVED
-        config[_DISCORD_GATEWAY_LIFECYCLE_EVENTS_CONFIG_KEY] = (events + [lifecycle_event_id])[
-            -_DISCORD_GATEWAY_LIFECYCLE_EVENT_LIMIT:
-        ]
+        config[_DISCORD_GATEWAY_LIFECYCLE_EVENTS_CONFIG_KEY] = list[JsonValue](
+            (events + [lifecycle_event_id])[-_DISCORD_GATEWAY_LIFECYCLE_EVENT_LIMIT:]
+        )
         account.config = config
         await db.commit()
 
@@ -172,7 +173,7 @@ async def reconcile_discord_guild_departure(
                 await db.rollback()
                 continue
             try:
-                await _clear_discord_guild_commands(
+                await clear_discord_guild_commands(
                     db,
                     account=account,
                     link=link,
@@ -239,7 +240,7 @@ class DiscordCommandReconciliationWorker:
                     link.status == BOT_AGENT_LINK_STATUS_ACTIVE and link.archived_at is None
                 )
                 if active_link:
-                    reconciled += await _fan_out_discord_global_commands(
+                    reconciled += await fan_out_discord_global_commands(
                         db,
                         account=account,
                         bot_agent_link_id=link.id,
@@ -250,23 +251,23 @@ class DiscordCommandReconciliationWorker:
                     await db.refresh(link)
                 active_guilds = (
                     set(
-                        await _discord_uncontested_guilds_for_link(
+                        await discord_uncontested_guilds_for_link(
                             db,
                             account=account,
                             bot_agent_link_id=link.id,
                         )
                     )
                     if active_link
-                    else set()
+                    else set[str]()
                 )
-                historical_guilds = await _discord_historical_guilds_for_link(
+                historical_guilds = await discord_historical_guilds_for_link(
                     db,
                     account=account,
                     link=link,
                 )
-                materializations = _discord_command_materializations(link)
-                retries = _discord_command_retries(link)
-                empty_fingerprint = _discord_guild_command_fingerprint(
+                materializations = discord_command_materializations(link)
+                retries = discord_command_retries(link)
+                empty_fingerprint = discord_guild_command_fingerprint(
                     [],
                     application_id=application_id,
                 )
@@ -277,7 +278,7 @@ class DiscordCommandReconciliationWorker:
                     and (materializations.get(guild_id) != empty_fingerprint or guild_id in retries)
                 }
                 if cleanup_guilds:
-                    await _clear_discord_guild_commands(
+                    await clear_discord_guild_commands(
                         db,
                         account=account,
                         link=link,

@@ -10,10 +10,11 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urlparse
 from uuid import UUID, uuid4
 
 import httpx
+from cryptography.exceptions import InvalidTag
 from fastapi import HTTPException, status
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import and_, delete, or_, select, update
@@ -55,6 +56,7 @@ log = logging.getLogger(__name__)
 
 OAuthFlowKind = Literal["authorization_code", "device_code"]
 ProviderResponseBuilder = Callable[[AsyncSession, AiProvider], Awaitable[AiProviderResponse]]
+type JsonObject = dict[str, JsonValue]
 
 OAUTH_EXCHANGE_STALE_SECONDS = 2 * 60
 OAUTH_DEVICE_POLL_LEASE_SECONDS = 30
@@ -73,7 +75,8 @@ CODEX_OAUTH_CONFIG: dict[str, JsonValue] = {
     },
 }
 
-_JSON_OBJECT_ADAPTER = TypeAdapter(dict[str, JsonValue])
+_JSON_OBJECT_ADAPTER: TypeAdapter[JsonObject] = TypeAdapter(dict[str, JsonValue])
+_JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1053,8 +1056,9 @@ class AiProviderOAuthAttemptService:
 
 def oauth_attempt_state_identity(state_value: str) -> OAuthAttemptStateIdentity:
     decoded = decode_oauth_state(state_value)
+    raw_flow_id = decoded.get("flow_id")
     try:
-        flow_id = UUID(str(decoded.get("flow_id") or ""))
+        flow_id = UUID(raw_flow_id if isinstance(raw_flow_id, str) else "")
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state") from exc
     if not isinstance(decoded.get("fence"), str):
@@ -1098,7 +1102,7 @@ def oauth_attempt_flow_payload(attempt: AiProviderOAuthAttempt) -> dict[str, Jso
         payload = _JSON_OBJECT_ADAPTER.validate_json(
             decrypt(attempt.encrypted_flow_payload, attempt.flow_payload_nonce)
         )
-    except Exception as exc:
+    except (InvalidTag, RuntimeError, UnicodeDecodeError, ValidationError, ValueError) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, "Stored OAuth attempt is invalid") from exc
     return payload
 
@@ -1124,8 +1128,8 @@ def oauth_config_for(oauth_provider: str) -> dict[str, JsonValue]:
     raw = settings.ai_provider_oauth_config_json.strip()
     if raw:
         try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
+            data = _JSON_VALUE_ADAPTER.validate_json(raw)
+        except ValidationError as exc:
             raise HTTPException(
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
                 "AI Provider OAuth config is invalid JSON",
@@ -1175,7 +1179,7 @@ def encode_oauth_state(payload: dict[str, object]) -> str:
     return f"v1.{_base64url(nonce)}.{_base64url(ciphertext)}"
 
 
-def decode_oauth_state(state_value: str) -> dict:
+def decode_oauth_state(state_value: str) -> JsonObject:
     try:
         version, nonce, ciphertext = state_value.split(".", 2)
     except ValueError as exc:
@@ -1184,11 +1188,9 @@ def decode_oauth_state(state_value: str) -> dict:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state")
     try:
         plaintext = decrypt(_base64url_decode_bytes(ciphertext), _base64url_decode_bytes(nonce))
-        decoded = json.loads(plaintext)
-    except Exception as exc:
+        decoded = _JSON_OBJECT_ADAPTER.validate_json(plaintext)
+    except (InvalidTag, RuntimeError, ValueError, ValidationError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state") from exc
-    if not isinstance(decoded, dict):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid OAuth state")
     return decoded
 
 
@@ -1248,9 +1250,9 @@ async def _exchange_authorization_code(
     client: httpx.AsyncClient,
     *,
     oauth_provider: str,
-    config: dict,
+    config: JsonObject,
     client_id: str,
-    flow_payload: dict,
+    flow_payload: JsonObject,
 ) -> httpx.Response:
     token_url = required_oauth_config(config, "token_url", oauth_provider)
     validate_oauth_url(token_url, "token_url")
@@ -1272,7 +1274,7 @@ async def _exchange_authorization_code(
 
 async def _codex_auth_profile_payload(
     client: httpx.AsyncClient,
-    config: dict,
+    config: JsonObject,
     response: httpx.Response,
     profile: str,
 ) -> str:
@@ -1320,10 +1322,10 @@ async def _codex_auth_profile_payload(
     return json.dumps(envelope, separators=(",", ":"))
 
 
-def token_response_json(response: httpx.Response) -> dict:
+def token_response_json(response: httpx.Response) -> JsonObject:
     try:
-        data = response.json()
-    except json.JSONDecodeError as exc:
+        data = _JSON_VALUE_ADAPTER.validate_json(response.content)
+    except ValidationError as exc:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             "OAuth token response was not JSON",
@@ -1333,7 +1335,7 @@ def token_response_json(response: httpx.Response) -> dict:
     return data
 
 
-def _required_token_field(data: dict, field: str) -> str:
+def _required_token_field(data: JsonObject, field: str) -> str:
     value = data.get(field)
     if not isinstance(value, str) or not value:
         raise HTTPException(
@@ -1345,7 +1347,7 @@ def _required_token_field(data: dict, field: str) -> str:
 
 async def _obtain_codex_api_key(
     client: httpx.AsyncClient,
-    config: dict,
+    config: JsonObject,
     id_token: str,
 ) -> str | None:
     token_url = required_oauth_config(config, "token_url", CODEX_OAUTH_PROVIDER)
@@ -1362,11 +1364,10 @@ async def _obtain_codex_api_key(
     )
     if response.status_code >= 400:
         return None
-    access_token = token_response_json(response).get("access_token")
-    return access_token if isinstance(access_token, str) and access_token else None
+    return _required_token_field(token_response_json(response), "access_token")
 
 
-def _jwt_auth_claims(jwt: str) -> dict:
+def _jwt_auth_claims(jwt: str) -> JsonObject:
     parts = jwt.split(".")
     if len(parts) < 2:
         return {}
@@ -1374,10 +1375,8 @@ def _jwt_auth_claims(jwt: str) -> dict:
     padding = "=" * (-len(payload) % 4)
     try:
         decoded = base64.urlsafe_b64decode(f"{payload}{padding}".encode())
-        claims = json.loads(decoded)
-    except (binascii.Error, ValueError, json.JSONDecodeError):
-        return {}
-    if not isinstance(claims, dict):
+        claims = _JSON_OBJECT_ADAPTER.validate_json(decoded)
+    except (binascii.Error, ValueError, ValidationError):
         return {}
     auth_claims = claims.get("https://api.openai.com/auth")
     return auth_claims if isinstance(auth_claims, dict) else {}
@@ -1392,7 +1391,7 @@ def _base64url_decode_bytes(raw: str) -> bytes:
     return base64.urlsafe_b64decode(f"{raw}{padding}")
 
 
-def _url_origin(parsed) -> str | None:
+def _url_origin(parsed: ParseResult) -> str | None:
     if not parsed.scheme or not parsed.netloc or parsed.username or parsed.password:
         return None
     return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"

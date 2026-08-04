@@ -14,7 +14,6 @@ import base64
 import binascii
 import hashlib
 import hmac
-import json
 import re
 import time
 from datetime import UTC, datetime
@@ -22,7 +21,7 @@ from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,6 +48,7 @@ _MAX_SIGNATURE_HEADER_BYTES = 8 * 1024
 _MESSAGE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,190}$")
 _SUBJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
 _TIMESTAMP_RE = re.compile(r"^[0-9]{1,20}$")
+_JSON_OBJECT_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 
 
 class ClerkWebhookResponse(BaseModel):
@@ -133,13 +133,15 @@ def verify_clerk_webhook(payload: bytes, request: Request) -> str:
 
 def _parse_event(payload: bytes) -> tuple[str, str, datetime]:
     try:
-        event = json.loads(payload)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+        event = _JSON_OBJECT_ADAPTER.validate_json(payload, strict=True)
+    except ValidationError:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Clerk event body") from None
-    if not isinstance(event, dict):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Clerk event body")
     event_type = event.get("type")
-    if event.get("object") != "event" or event_type not in {"user.updated", "user.deleted"}:
+    if (
+        event.get("object") != "event"
+        or not isinstance(event_type, str)
+        or event_type not in {"user.updated", "user.deleted"}
+    ):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported Clerk event")
     event_timestamp = event.get("timestamp")
     if (

@@ -17,8 +17,8 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
-from app.models.session import AgentEnvironment  # noqa: F401 - register FK target
-from app.models.user import User  # noqa: F401 - register users table for FK resolution
+from app.models.session import AgentEnvironment
+from app.models.user import User
 
 
 class AiProvider(Base, TimestampMixin):
@@ -27,7 +27,7 @@ class AiProvider(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     owner_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey(User.id, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -56,7 +56,7 @@ class AiProviderAuthPayload(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     owner_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey(User.id, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -72,7 +72,7 @@ class AiProviderAuthPayload(Base, TimestampMixin):
     )
     consumer_environment_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("agent_environments.id", ondelete="RESTRICT"),
+        ForeignKey(AgentEnvironment.id, ondelete="RESTRICT"),
         index=True,
     )
     consumer_runtime: Mapped[str | None] = mapped_column(String(32))
@@ -103,7 +103,7 @@ class AiProviderOAuthAttempt(Base, TimestampMixin):
     )
     owner_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey(User.id, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

@@ -6,6 +6,7 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 import tomllib
 from collections.abc import Sequence
 from pathlib import Path
@@ -14,87 +15,80 @@ from typing import TypedDict
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_ROOT.parent
 CONFIG = BACKEND_ROOT / "pyproject.toml"
+OWNED_EXCLUSIONS: frozenset[str] = frozenset()
+OWNED_INCLUDE = [
+    "app/__init__.py",
+    "app/core",
+    "app/main.py",
+    "app/middleware",
+    "app/models",
+    "app/routes/__init__.py",
+    "app/routes/a*.py",
+    "app/routes/c*.py",
+    "app/routes/channel_routers",
+    "app/routes/d*.py",
+    "app/routes/m*.py",
+    "app/routes/p*.py",
+    "app/routes/runtime.py",
+    "app/routes/s*.py",
+    "app/routes/v*.py",
+    "app/runtime_entrypoint.py",
+    "app/schemas",
+    "app/services/__init__.py",
+    "app/services/a*.py",
+    "app/services/c*.py",
+    "app/services/d*.py",
+    "app/services/e*.py",
+    "app/services/f*.py",
+    "app/services/h*.py",
+    "app/services/memory*.py",
+    "app/services/metrics*.py",
+    "app/services/p*.py",
+    "app/services/r*.py",
+    "app/services/s*.py",
+    "app/services/t*.py",
+    "app/services/u*.py",
+    "app/services/v*.py",
+    "app/services/w*.py",
+    "app/tasks",
+    "app/workers",
+]
+STANDARD_ONLY = frozenset(
+    {
+        # Both adapters remain in the zero-diagnostic owned gate. Their strict
+        # debt is limited to pinned upstream packages that do not publish
+        # complete typed construction/import boundaries.
+        "app/services/file_store_s3.py",
+        "app/services/memory_provider_mem0.py",
+    }
+)
+FROZEN_LEGACY_ONLY = frozenset(
+    {
+        # The repository-owned byte-freeze protects this file's v1 runtime
+        # observation surface. The user explicitly deferred that legacy
+        # deployment boundary rather than permitting type-only source edits.
+        "app/routes/sessions.py",
+    }
+)
+EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS = {
+    "app/routes/sessions.py": 15,
+    "app/services/file_store_s3.py": 2,
+    "app/services/memory_provider_mem0.py": 19,
+}
+PRODUCTION_FILES = tuple(
+    sorted(
+        path.relative_to(BACKEND_ROOT).as_posix() for path in (BACKEND_ROOT / "app").rglob("*.py")
+    )
+)
+OWNED_PRODUCTION_FILES = tuple(path for path in PRODUCTION_FILES if path not in OWNED_EXCLUSIONS)
+STRICT_PRODUCTION_FILES = tuple(
+    path for path in PRODUCTION_FILES if path not in STANDARD_ONLY | FROZEN_LEGACY_ONLY
+)
 EXPECTED_CONFIG = {
     "typeCheckingMode": "standard",
     "pythonVersion": "3.12",
-    "include": [
-        "app/core/auth.py",
-        "app/core/logging_config.py",
-        "app/core/query_utils.py",
-        "app/core/sentry.py",
-        "app/core/skill_key.py",
-        "app/middleware/request_timing.py",
-        "app/routes/ai_providers.py",
-        "app/routes/channel_routers/telegram.py",
-        "app/routes/channel_routers/whatsapp.py",
-        "app/routes/dashboard.py",
-        "app/routes/sharing.py",
-        "app/routes/sync.py",
-        "app/routes/vault.py",
-        "app/schemas/ai_provider.py",
-        "app/services/agent_bindings.py",
-        "app/services/agent_environments.py",
-        "app/services/ai_provider_connection.py",
-        "app/services/ai_provider_credentials.py",
-        "app/services/channel_debug_events.py",
-        "app/services/channel_webhooks.py",
-        "app/services/composio.py",
-        "app/services/discord_gateway_worker.py",
-        "app/services/embedding.py",
-        "app/services/file_store.py",
-        "app/services/file_store_s3.py",
-        "app/services/memory_extraction.py",
-        "app/services/postgres_listener.py",
-        "app/services/private_ip.py",
-        "app/services/runtime_observation.py",
-        "app/services/safe_public_http.py",
-        "app/services/session_content.py",
-        "app/services/sync_events.py",
-        "app/services/tar_utils.py",
-        "app/services/whatsapp_baileys.py",
-        "app/services/whatsapp_native_transport.py",
-        "app/services/whatsapp_noise.py",
-        "app/services/whatsapp_provider_bridge.py",
-        "app/services/whatsapp_runtime_types.py",
-        "app/services/whatsapp_sidecar_registry.py",
-    ],
-    "strict": [
-        "app/core/auth.py",
-        "app/core/logging_config.py",
-        "app/core/query_utils.py",
-        "app/core/skill_key.py",
-        "app/middleware/request_timing.py",
-        "app/routes/ai_providers.py",
-        "app/routes/channel_routers/telegram.py",
-        "app/routes/channel_routers/whatsapp.py",
-        "app/routes/dashboard.py",
-        "app/routes/sharing.py",
-        "app/routes/sync.py",
-        "app/routes/vault.py",
-        "app/schemas/ai_provider.py",
-        "app/services/agent_bindings.py",
-        "app/services/agent_environments.py",
-        "app/services/ai_provider_connection.py",
-        "app/services/ai_provider_credentials.py",
-        "app/services/channel_debug_events.py",
-        "app/services/channel_webhooks.py",
-        "app/services/discord_gateway_worker.py",
-        "app/services/embedding.py",
-        "app/services/file_store.py",
-        "app/services/memory_extraction.py",
-        "app/services/private_ip.py",
-        "app/services/runtime_observation.py",
-        "app/services/safe_public_http.py",
-        "app/services/session_content.py",
-        "app/services/sync_events.py",
-        "app/services/tar_utils.py",
-        "app/services/whatsapp_baileys.py",
-        "app/services/whatsapp_native_transport.py",
-        "app/services/whatsapp_noise.py",
-        "app/services/whatsapp_provider_bridge.py",
-        "app/services/whatsapp_runtime_types.py",
-        "app/services/whatsapp_sidecar_registry.py",
-    ],
+    "include": OWNED_INCLUDE,
+    "strict": list(STRICT_PRODUCTION_FILES),
 }
 EXPECTED_VERSION = "1.39.9"
 INVENTORY_AREAS = ("app", "tests", "scripts", "alembic")
@@ -115,6 +109,9 @@ class Analysis(TypedDict):
 
 
 def validate_config() -> None:
+    validate_exception_sets(PRODUCTION_FILES, STANDARD_ONLY, FROZEN_LEGACY_ONLY)
+    if set(EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS) != STANDARD_ONLY | FROZEN_LEGACY_ONLY:
+        raise ValueError("strict exception diagnostic inventory paths do not match exceptions")
     with CONFIG.open("rb") as handle:
         document = tomllib.load(handle)
     configured = document.get("tool", {}).get("basedpyright")
@@ -127,11 +124,25 @@ def validate_config() -> None:
         )
 
 
+def validate_exception_sets(
+    production_files: Sequence[str],
+    standard_only: frozenset[str],
+    frozen_legacy_only: frozenset[str],
+) -> None:
+    production = set(production_files)
+    overlap = standard_only & frozen_legacy_only
+    if overlap:
+        raise ValueError(f"typing exception sets overlap: {sorted(overlap)}")
+    stale = (standard_only | frozen_legacy_only) - production
+    if stale:
+        raise ValueError(f"stale typing exception paths: {sorted(stale)}")
+
+
 def validate_strict_paths(configured: dict[str, object]) -> None:
     owned = configured.get("include")
     strict = configured.get("strict")
-    if not isinstance(owned, list) or not all(isinstance(path, str) for path in owned):
-        raise ValueError("BasedPyright owned include must be a path list")
+    if owned != OWNED_INCLUDE:
+        raise ValueError("BasedPyright owned include does not match the audited production set")
     if (
         not isinstance(strict, list)
         or not strict
@@ -142,8 +153,10 @@ def validate_strict_paths(configured: dict[str, object]) -> None:
         raise ValueError("BasedPyright strict paths must be sorted")
     if len(strict) != len(set(strict)):
         raise ValueError("BasedPyright strict paths must not contain duplicates")
-    if not set(strict).issubset(owned):
-        raise ValueError("BasedPyright strict paths must be a subset of owned include paths")
+    if not set(strict).issubset(OWNED_PRODUCTION_FILES):
+        raise ValueError("BasedPyright strict paths must be a subset of owned production files")
+    if strict != list(STRICT_PRODUCTION_FILES):
+        raise ValueError("BasedPyright strict paths do not match the audited production set")
     production_paths(strict)
 
 
@@ -226,9 +239,9 @@ def parse_analysis(stdout: str, expected_files: int) -> Analysis:
     return payload
 
 
-def analyze(paths: Sequence[str], *, gating: bool) -> Analysis:
+def analyze(paths: Sequence[str], *, gating: bool, config: Path = CONFIG) -> Analysis:
     completed = subprocess.run(
-        ["basedpyright", "--outputjson", "--project", str(CONFIG), *paths],
+        ["basedpyright", "--outputjson", "--project", str(config), *paths],
         cwd=BACKEND_ROOT,
         check=False,
         capture_output=True,
@@ -254,6 +267,58 @@ def analyze(paths: Sequence[str], *, gating: bool) -> Analysis:
         ):
             raise ValueError("gating analysis reported diagnostics")
     return analysis
+
+
+def strict_exception_audit() -> dict[str, object]:
+    paths = sorted(STANDARD_ONLY | FROZEN_LEGACY_ONLY)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix=".basedpyright-strict-audit-",
+        suffix=".json",
+        dir=BACKEND_ROOT,
+    ) as handle:
+        json.dump(
+            {
+                "typeCheckingMode": "strict",
+                "pythonVersion": EXPECTED_CONFIG["pythonVersion"],
+                "include": [],
+            },
+            handle,
+        )
+        handle.flush()
+        analysis = analyze(paths, gating=False, config=Path(handle.name))
+
+    counts = dict.fromkeys(paths, 0)
+    for diagnostic in analysis["generalDiagnostics"]:
+        if not isinstance(diagnostic, dict):
+            raise ValueError("strict exception audit returned a malformed diagnostic")
+        raw_path = diagnostic.get("file")
+        if not isinstance(raw_path, str):
+            raise ValueError("strict exception audit diagnostic omitted its file")
+        try:
+            path = Path(raw_path).resolve().relative_to(BACKEND_ROOT).as_posix()
+        except ValueError as exc:
+            raise ValueError(f"strict exception audit escaped the backend: {raw_path}") from exc
+        if path not in counts:
+            raise ValueError(f"strict exception audit reported an unexpected file: {path}")
+        counts[path] += 1
+
+    stale = [path for path, count in counts.items() if count == 0]
+    if stale:
+        raise ValueError(f"strict-clean typing exceptions are stale: {stale}")
+    if counts != EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS:
+        raise ValueError(
+            "strict exception diagnostic inventory mismatch: "
+            f"expected={EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS} observed={counts}"
+        )
+    return {
+        "basedpyrightVersion": EXPECTED_VERSION,
+        "mode": "strict exception audit",
+        "standardOnly": {path: counts[path] for path in sorted(STANDARD_ONLY)},
+        "frozenLegacyOnly": {path: counts[path] for path in sorted(FROZEN_LEGACY_ONLY)},
+        "totalDiagnostics": sum(counts.values()),
+    }
 
 
 def inventory() -> dict[str, object]:
@@ -288,6 +353,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("owned")
     subparsers.add_parser("strict")
+    subparsers.add_parser("exceptions")
     changed = subparsers.add_parser("changed")
     changed.add_argument("paths", nargs="*")
     changed_from = subparsers.add_parser("changed-from")
@@ -298,9 +364,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         validate_config()
         if args.command == "owned":
-            result: object = analyze(EXPECTED_CONFIG["include"], gating=True)["summary"]
+            result: object = analyze(OWNED_PRODUCTION_FILES, gating=True)["summary"]
         elif args.command == "strict":
-            result = analyze(EXPECTED_CONFIG["strict"], gating=True)["summary"]
+            result = analyze(STRICT_PRODUCTION_FILES, gating=True)["summary"]
+        elif args.command == "exceptions":
+            result = strict_exception_audit()
         elif args.command == "changed":
             result = analyze(production_paths(args.paths), gating=True)["summary"]
         elif args.command == "changed-from":

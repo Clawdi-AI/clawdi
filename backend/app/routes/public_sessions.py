@@ -64,7 +64,7 @@ def is_public_session_export_path(path: str) -> bool:
     return _PUBLIC_SESSION_EXPORT_PATH.fullmatch(path) is not None
 
 
-async def _resolve_session_for_view(
+async def resolve_session_for_view(
     db: AsyncSession, session_id: UUID, visitor: AuthContext | None
 ) -> tuple[Session, str | None, User | None]:
     """Look up the session by UUID and authorize the visitor.
@@ -140,7 +140,7 @@ async def get_shared_session_detail(
     the `.json` export serializes, so a new Session column added without
     updating that helper can't silently leak.
     """
-    session, agent_type, owner = await _resolve_session_for_view(db, session_id, visitor)
+    session, agent_type, owner = await resolve_session_for_view(db, session_id, visitor)
     return PublicSessionResponse.model_validate(
         public_session_base_fields(session, agent_type, owner)
     )
@@ -159,7 +159,7 @@ async def get_shared_session_messages(
     Reuses the same `session_content.load_session_messages` cache so a
     popular shared link doesn't re-parse the source JSON per visitor.
     """
-    session, _, _ = await _resolve_session_for_view(db, session_id, visitor)
+    session, _, _ = await resolve_session_for_view(db, session_id, visitor)
 
     if not session.file_key:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
@@ -201,7 +201,7 @@ async def export_shared_session_markdown(
     `(file_key, content_hash)` cache in `load_session_messages`
     already absorbs the parse cost.
     """
-    session, agent_type, _ = await _resolve_session_for_view(db, session_id, visitor)
+    session, agent_type, _ = await resolve_session_for_view(db, session_id, visitor)
 
     if not session.file_key:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
@@ -246,7 +246,7 @@ async def export_shared_session_json(
     to expose.
     """
     response.headers["Cache-Control"] = PUBLIC_SESSION_EXPORT_CACHE_CONTROL
-    session, agent_type, _ = await _resolve_session_for_view(db, session_id, visitor)
+    session, agent_type, _ = await resolve_session_for_view(db, session_id, visitor)
 
     if not session.file_key:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")

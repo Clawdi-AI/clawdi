@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from typing import Any
+
+from pydantic import JsonValue
 
 # GitHub repo PRs / issues / commits. Captures owner, repo, kind, number.
 # Tolerant of trailing slashes, query strings, anchors.
@@ -50,7 +51,7 @@ _REF_LIST_CAP = 20
 _PER_MESSAGE_BUDGET = 200_000
 
 
-def extract_related_refs(messages: Iterable[dict[str, Any]]) -> dict[str, list[str]]:
+def extract_related_refs(messages: Iterable[dict[str, JsonValue]]) -> dict[str, list[str]]:
     """Extract GitHub PRs / repos / branches referenced anywhere in the messages.
 
     Best-effort:

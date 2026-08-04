@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import TypeGuard
 from uuid import UUID
 
+from pydantic import JsonValue
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import ControlPlaneAuditEvent
@@ -35,7 +37,7 @@ def record_control_plane_audit(
     environment_id: UUID | None = None,
     channel_account_id: UUID | None = None,
     channel_agent_link_id: UUID | None = None,
-    details: dict[str, Any] | None = None,
+    details: Mapping[str, object] | None = None,
 ) -> ControlPlaneAuditEvent:
     event = ControlPlaneAuditEvent(
         actor_type=actor_type,
@@ -54,9 +56,17 @@ def record_control_plane_audit(
     return event
 
 
-def _sanitize_audit_details(value: Any) -> Any:
-    if isinstance(value, dict):
-        result: dict[str, Any] = {}
+def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
+    return isinstance(value, Mapping)
+
+
+def _is_object_sequence(value: object) -> TypeGuard[Sequence[object]]:
+    return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
+
+
+def _sanitize_audit_details(value: object) -> JsonValue:
+    if _is_object_mapping(value):
+        result: dict[str, JsonValue] = {}
         for key, item in value.items():
             safe_key = str(key)
             if _is_secretish_key(safe_key):
@@ -64,9 +74,7 @@ def _sanitize_audit_details(value: Any) -> Any:
             else:
                 result[safe_key] = _sanitize_audit_details(item)
         return result
-    if isinstance(value, list):
-        return [_sanitize_audit_details(item) for item in value[:100]]
-    if isinstance(value, tuple):
+    if _is_object_sequence(value):
         return [_sanitize_audit_details(item) for item in value[:100]]
     if isinstance(value, str):
         return value[:500]
@@ -80,7 +88,7 @@ def _is_secretish_key(key: str) -> bool:
     return any(part in normalized for part in SECRETISH_KEY_PARTS)
 
 
-def _sanitize_secretish_value(value: Any) -> Any:
+def _sanitize_secretish_value(value: object) -> JsonValue:
     if isinstance(value, bool) or value is None:
         return value
     return "[REDACTED]"

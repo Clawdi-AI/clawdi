@@ -107,6 +107,42 @@ def test_config_mismatch_fails_closed(tmp_path: Path, monkeypatch: pytest.Monkey
         type_governance.validate_config()
 
 
+def test_typing_exception_sets_accept_live_disjoint_paths() -> None:
+    assert type_governance.STANDARD_ONLY == frozenset(
+        {
+            "app/services/file_store_s3.py",
+            "app/services/memory_provider_mem0.py",
+        }
+    )
+    assert type_governance.FROZEN_LEGACY_ONLY == frozenset({"app/routes/sessions.py"})
+    type_governance.validate_exception_sets(
+        type_governance.PRODUCTION_FILES,
+        type_governance.STANDARD_ONLY,
+        type_governance.FROZEN_LEGACY_ONLY,
+    )
+
+
+def test_typing_exception_sets_reject_overlap() -> None:
+    path = "app/routes/sessions.py"
+    with pytest.raises(ValueError, match="overlap"):
+        type_governance.validate_exception_sets(
+            [path],
+            frozenset({path}),
+            frozenset({path}),
+        )
+
+
+@pytest.mark.parametrize("exception_kind", ["standard", "frozen"])
+def test_typing_exception_sets_reject_stale_paths(exception_kind: str) -> None:
+    stale = frozenset({"app/not_owned.py"})
+    with pytest.raises(ValueError, match="stale"):
+        type_governance.validate_exception_sets(
+            type_governance.PRODUCTION_FILES,
+            stale if exception_kind == "standard" else frozenset(),
+            stale if exception_kind == "frozen" else frozenset(),
+        )
+
+
 def strict_config(*, strict: list[str], include: list[str] | None = None) -> dict[str, object]:
     return {
         "include": include or list(type_governance.EXPECTED_CONFIG["include"]),
@@ -114,7 +150,7 @@ def strict_config(*, strict: list[str], include: list[str] | None = None) -> dic
     }
 
 
-def test_strict_paths_accept_sorted_production_subset() -> None:
+def test_strict_paths_accept_audited_production_set() -> None:
     type_governance.validate_strict_paths(
         strict_config(strict=list(type_governance.EXPECTED_CONFIG["strict"]))
     )
@@ -135,13 +171,13 @@ def test_strict_paths_reject_duplicates() -> None:
 
 def test_strict_paths_reject_non_owned_paths() -> None:
     with pytest.raises(ValueError, match="subset"):
-        type_governance.validate_strict_paths(strict_config(strict=["app/main.py"]))
+        type_governance.validate_strict_paths(strict_config(strict=["app/not_owned.py"]))
 
 
 def test_strict_paths_reject_nonproduction_paths() -> None:
     path = "tests/test_type_governance.py"
     with pytest.raises(ValueError, match="owned production"):
-        type_governance.validate_strict_paths(strict_config(strict=[path], include=[path]))
+        type_governance.validate_strict_paths(strict_config(strict=[path]))
 
 
 def install_analyzer(
@@ -195,3 +231,84 @@ def test_gate_rejects_nonzero_exit_without_diagnostics(
 
     with pytest.raises(ValueError, match="analyzer exited 2"):
         type_governance.analyze(["app/core/query_utils.py"], gating=True)
+
+
+def exception_diagnostics(paths: list[str]) -> list[object]:
+    return [{"file": str(type_governance.BACKEND_ROOT / path)} for path in paths]
+
+
+def test_strict_exception_audit_reports_standard_and_frozen_boundaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = sorted(type_governance.STANDARD_ONLY | type_governance.FROZEN_LEGACY_ONLY)
+    diagnostics = [
+        diagnostic
+        for path, count in type_governance.EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS.items()
+        for diagnostic in exception_diagnostics([path] * count)
+    ]
+    install_analyzer(
+        tmp_path,
+        monkeypatch,
+        payload=analysis(
+            files=len(paths),
+            errors=len(diagnostics),
+            diagnostics=diagnostics,
+        ),
+        exit_code=1,
+    )
+
+    result = type_governance.strict_exception_audit()
+
+    assert result["standardOnly"] == {
+        path: type_governance.EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS[path]
+        for path in sorted(type_governance.STANDARD_ONLY)
+    }
+    assert result["frozenLegacyOnly"] == {
+        path: type_governance.EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS[path]
+        for path in sorted(type_governance.FROZEN_LEGACY_ONLY)
+    }
+
+
+def test_strict_exception_audit_rejects_strict_clean_stale_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = sorted(type_governance.STANDARD_ONLY | type_governance.FROZEN_LEGACY_ONLY)
+    install_analyzer(
+        tmp_path,
+        monkeypatch,
+        payload=analysis(
+            files=len(paths),
+            errors=len(paths) - 1,
+            diagnostics=exception_diagnostics(paths[:-1]),
+        ),
+        exit_code=1,
+    )
+
+    with pytest.raises(ValueError, match="strict-clean typing exceptions are stale"):
+        type_governance.strict_exception_audit()
+
+
+def test_strict_exception_audit_rejects_new_diagnostic_debt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = sorted(type_governance.STANDARD_ONLY | type_governance.FROZEN_LEGACY_ONLY)
+    observed = dict(type_governance.EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS)
+    observed["app/services/memory_provider_mem0.py"] += 1
+    diagnostics = [
+        diagnostic
+        for path, count in observed.items()
+        for diagnostic in exception_diagnostics([path] * count)
+    ]
+    install_analyzer(
+        tmp_path,
+        monkeypatch,
+        payload=analysis(
+            files=len(paths),
+            errors=len(diagnostics),
+            diagnostics=diagnostics,
+        ),
+        exit_code=1,
+    )
+
+    with pytest.raises(ValueError, match="strict exception diagnostic inventory mismatch"):
+        type_governance.strict_exception_audit()

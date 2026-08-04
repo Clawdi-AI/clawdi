@@ -49,11 +49,11 @@ from app.models.channel import (
 )
 from app.models.session import AgentEnvironment
 from app.routes.channel_routers.shared import (
-    _account_response,
-    _binding_response,
-    _channel_visibility,
-    _discord_binding_guild_id,
-    _message_response,
+    account_response,
+    binding_response,
+    channel_visibility,
+    discord_binding_guild_id,
+    message_response,
 )
 from app.schemas.channel import (
     ChannelAccountCreate,
@@ -223,7 +223,7 @@ async def _runtime_account_response(
         agent_token=decrypt_agent_link_token(link),
     )
     return ChannelRuntimeAccountResponse(
-        **_account_response(account).model_dump(),
+        **account_response(account).model_dump(),
         runtime_links=[runtime_link],
         runtime_credentials=await _runtime_credentials_response(db, account=account, link=link),
     )
@@ -308,7 +308,7 @@ def _agent_link_with_account_response(
 ) -> ChannelAgentLinkWithAccountResponse:
     return ChannelAgentLinkWithAccountResponse(
         **_agent_link_response(link).model_dump(),
-        account=_account_response(account),
+        account=account_response(account),
         binding_count=binding_count,
     )
 
@@ -372,7 +372,7 @@ def _bot_pool_item(
     max_links = channel_bot_link_limit(account)
     available = max_links is None or link_count < max_links
     return ChannelBotPoolItem(
-        **_account_response(account).model_dump(),
+        **account_response(account).model_dump(),
         access=access,
         capabilities=_bot_pool_capabilities(access, available=available),
         link_count=link_count,
@@ -465,7 +465,7 @@ async def list_channels(
                 )
             )
             runtime_rows = list(result.tuples().all())
-        payload = []
+        payload: list[object] = []
         for account, link in runtime_rows:
             if not await bot_agent_link_has_strict_v2_authority(db, link=link):
                 continue
@@ -498,7 +498,7 @@ async def list_channels(
         )
     )
     payload = [
-        _account_response(account).model_dump(mode="json") for account in result.scalars().all()
+        account_response(account).model_dump(mode="json") for account in result.scalars().all()
     ]
     etag = strong_json_etag(payload)
     headers = {"ETag": etag, "Cache-Control": "no-store"}
@@ -733,7 +733,7 @@ async def create_channel(
         ) from exc
     await db.refresh(account)
     return ChannelAccountCreatedResponse(
-        **_account_response(account).model_dump(),
+        **account_response(account).model_dump(),
         webhook_secret=webhook_secret,
         agent_link_id=link.id if link else None,
         agent_id=link.agent_id if link else None,
@@ -820,7 +820,7 @@ async def get_channel(
     db: AsyncSession = Depends(get_session),
 ) -> ChannelAccountResponse:
     account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
-    return _account_response(account)
+    return account_response(account)
 
 
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1157,10 +1157,10 @@ async def delete_channel_agent_link(
         {
             guild_id
             for binding in bindings
-            if (guild_id := _discord_binding_guild_id(binding)) is not None
+            if (guild_id := discord_binding_guild_id(binding)) is not None
         }
         if account.provider == CHANNEL_PROVIDER_DISCORD
-        else set()
+        else set[str]()
     )
     for binding in sorted(bindings, key=lambda item: item.external_chat_id):
         await lock_channel_binding_identity(
@@ -1251,7 +1251,7 @@ async def list_channel_bindings(
         .order_by(ChannelBinding.created_at.desc())
     )
     return [
-        _binding_response(binding, last_message_at=last_message_at)
+        binding_response(binding, last_message_at=last_message_at)
         for binding, last_message_at in result.all()
     ]
 
@@ -1321,7 +1321,7 @@ async def delete_channel_binding(
     binding, link = row
     await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=link.agent_id)
     discord_guild_id = (
-        _discord_binding_guild_id(binding) if account.provider == CHANNEL_PROVIDER_DISCORD else None
+        discord_binding_guild_id(binding) if account.provider == CHANNEL_PROVIDER_DISCORD else None
     )
 
     if binding.status != BINDING_STATUS_ACTIVE:
@@ -1525,7 +1525,7 @@ async def send_channel_message(
     await db.commit()
     await db.refresh(message)
     await db.refresh(delivery)
-    return _message_response(message, delivery=delivery)
+    return message_response(message, delivery=delivery)
 
 
 async def _resolve_agent_id_for_link(
@@ -1969,7 +1969,7 @@ def _channel_health_item(
         account_id=account.id,
         provider=account.provider,
         name=account.name,
-        visibility=_channel_visibility(account),
+        visibility=channel_visibility(account),
         channel_status=account.status,
         health_status=health_status,
         reasons=reasons,

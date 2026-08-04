@@ -16,8 +16,7 @@ context.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Mapping, Sequence
 
 from pydantic import JsonValue
 
@@ -49,7 +48,7 @@ def public_session_base_fields(
     session: Session,
     agent_type: str | None,
     owner: User | None = None,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Session-derived fields that are SAFE for a public/share viewer.
 
     Single source of truth for "what does a non-owner see about a
@@ -200,13 +199,13 @@ def session_to_markdown(
 
 def session_to_json(
     session: Session,
-    messages: list[dict[str, Any]],
+    messages: Sequence[Mapping[str, JsonValue]],
     *,
     agent_type: str | None = None,
     machine_name: str | None = None,
     public: bool = False,
     include_owner_metadata: bool = False,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Structured serialization — fed to `.json` export route + the MCP tool.
 
     By default (`include_owner_metadata=False`) drops fields a public
@@ -217,7 +216,7 @@ def session_to_json(
     `public=True` adds a `share_url` field pointing at `/s/{session.id}`.
     """
     body = public_session_base_fields(session, agent_type)
-    body["messages"] = messages
+    body["messages"] = list(messages)
     if public:
         body["share_url"] = _build_share_url(session)
     if include_owner_metadata:

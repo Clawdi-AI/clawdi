@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -9,7 +8,7 @@ from typing import Literal
 from uuid import UUID
 
 from cryptography.exceptions import InvalidTag
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import case, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +29,8 @@ from app.services.vault_crypto import decrypt, encrypt
 OAuthRevokeStatus = Literal["pending", "not_required"]
 OAuthTokenExtractionState = Literal["revocable", "not_revocable", "corrupt"]
 OAUTH_CREDENTIAL_SOURCES = frozenset({"device_code", "oauth_pkce"})
+type JsonObject = dict[str, JsonValue]
+_JSON_OBJECT_ADAPTER: TypeAdapter[JsonObject] = TypeAdapter(dict[str, JsonValue])
 
 
 class OAuthCredentialPayloadCorruptError(RuntimeError):
@@ -81,11 +82,8 @@ async def queue_provider_runtime_manifest_changed(
 
 
 def extract_oauth_token_from_envelope(payload_text: str) -> OAuthTokenExtraction:
-    try:
-        envelope = json.loads(payload_text)
-    except (TypeError, ValueError):
-        return OAuthTokenExtraction(state="corrupt")
-    if not isinstance(envelope, dict):
+    envelope = _parse_json_object(payload_text)
+    if envelope is None:
         return OAuthTokenExtraction(state="corrupt")
     if (
         envelope.get("schemaVersion") != 1
@@ -99,34 +97,40 @@ def extract_oauth_token_from_envelope(payload_text: str) -> OAuthTokenExtraction
     files = envelope.get("files")
     if not isinstance(files, list) or not files:
         return OAuthTokenExtraction(state="corrupt")
-    auth_files: list[dict] = []
+    auth_files: list[JsonObject] = []
     for item in files:
+        if not isinstance(item, dict):
+            return OAuthTokenExtraction(state="corrupt")
+        logical_name = item.get("logicalName")
+        source_path = item.get("sourcePath")
+        target_strategy = item.get("targetStrategy")
+        content = item.get("content")
+        mode = item.get("mode")
+        size = item.get("size")
         if (
-            not isinstance(item, dict)
-            or not isinstance(item.get("logicalName"), str)
-            or not item["logicalName"]
-            or not isinstance(item.get("sourcePath"), str)
-            or item.get("targetStrategy") not in {"adapter_default", "explicit"}
-            or not isinstance(item.get("content"), str)
-            or not isinstance(item.get("mode"), int)
-            or isinstance(item.get("mode"), bool)
-            or not isinstance(item.get("size"), int)
-            or isinstance(item.get("size"), bool)
-            or item["size"] < 0
+            not isinstance(logical_name, str)
+            or not logical_name
+            or not isinstance(source_path, str)
+            or target_strategy not in {"adapter_default", "explicit"}
+            or not isinstance(content, str)
+            or not isinstance(mode, int)
+            or isinstance(mode, bool)
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size < 0
         ):
             return OAuthTokenExtraction(state="corrupt")
-        if item["logicalName"] == "auth.json":
+        if logical_name == "auth.json":
             auth_files.append(item)
     if not auth_files:
         return OAuthTokenExtraction(state="not_revocable")
     if len(auth_files) != 1:
         return OAuthTokenExtraction(state="corrupt")
-    try:
-        auth_file = auth_files[0]
-        auth_json = json.loads(auth_file["content"])
-    except (TypeError, ValueError):
+    auth_file_content = auth_files[0].get("content")
+    if not isinstance(auth_file_content, str):
         return OAuthTokenExtraction(state="corrupt")
-    if not isinstance(auth_json, dict):
+    auth_json = _parse_json_object(auth_file_content)
+    if auth_json is None:
         return OAuthTokenExtraction(state="corrupt")
     auth_mode = auth_json.get("auth_mode")
     if auth_mode is not None:
@@ -208,11 +212,15 @@ def _is_oauth_credential_payload(
     source = (metadata or {}).get("source")
     if source in OAUTH_CREDENTIAL_SOURCES:
         return True
+    envelope = _parse_json_object(plaintext)
+    return envelope is not None and "files" in envelope
+
+
+def _parse_json_object(value: str) -> JsonObject | None:
     try:
-        envelope = json.loads(plaintext)
-    except (TypeError, ValueError):
-        return False
-    return isinstance(envelope, dict) and "files" in envelope
+        return _JSON_OBJECT_ADAPTER.validate_json(value)
+    except ValidationError:
+        return None
 
 
 async def enqueue_oauth_revoke_tombstone(

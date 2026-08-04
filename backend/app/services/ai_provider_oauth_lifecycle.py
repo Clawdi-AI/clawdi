@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
+from pydantic import JsonValue
+
 from app.models.ai_provider import AiProviderOAuthAttempt
 
 OAuthAttemptTerminalStatus = Literal["committed", "failed"]
@@ -16,7 +18,7 @@ OAUTH_RETENTION_BATCH_SIZE = 100
 class OAuthAttemptTerminalTransition:
     status: OAuthAttemptTerminalStatus
     completed_at: datetime
-    receipt: dict | None
+    receipt: dict[str, JsonValue] | None
 
     def apply(self, attempt: AiProviderOAuthAttempt) -> None:
         attempt.status = self.status
@@ -47,7 +49,7 @@ def terminal_oauth_attempt(
     status: OAuthAttemptTerminalStatus,
     *,
     completed_at: datetime | None = None,
-    receipt: dict | None = None,
+    receipt: dict[str, JsonValue] | None = None,
 ) -> OAuthAttemptTerminalTransition:
     if status == "committed" and receipt is None:
         raise ValueError("committed OAuth attempts require a receipt")

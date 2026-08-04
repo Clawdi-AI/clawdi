@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import tarfile
+from typing import TypedDict
 from uuid import UUID
 
 from fastapi import (
@@ -119,6 +120,13 @@ _SKILLS_LIST_CACHE_CONTROL = "no-transform"
 _SKILLS_ETAG_VERSION = "skills-v2"
 
 
+class _ProjectSkillMetadata(TypedDict):
+    name: str
+    kind: PersistedProjectKind
+    environment_id: UUID | None
+    machine_name: str | None
+
+
 def _persisted_skill_authority(value: str) -> PersistedSkillAuthority:
     if value == SKILL_AUTHORITY_AGENT_SYNC:
         return "agent_sync"
@@ -137,7 +145,7 @@ def _persisted_project_kind(value: str) -> PersistedProjectKind:
     raise ValueError(f"Unsupported persisted Project kind: {value}")
 
 
-def _file_key(user_id, project_id, skill_key: str) -> str:
+def _file_key(user_id: UUID, project_id: UUID, skill_key: str) -> str:
     """Storage path for a skill tarball. Includes project_id so
     different projects' same-named skills don't clobber each other
     in object storage. Migration 8a3e5f7b2c1d rewrote pre-existing
@@ -597,7 +605,7 @@ async def _selected_project_visibility(
 async def _resolve_legacy_skill(
     db: AsyncSession,
     auth: AuthContext,
-    visible_project_ids: list,
+    visible_project_ids: list[UUID],
     skill_key: str,
 ) -> Skill:
     """Phase-1 multi-project disambiguation: pick the most-recently-
@@ -623,7 +631,7 @@ async def _resolve_legacy_skill(
 async def _visible_skills_etag_state(
     db: AsyncSession,
     visible_project_ids: list[UUID],
-) -> tuple[str, str, dict]:
+) -> tuple[str, str, dict[UUID, _ProjectSkillMetadata]]:
     """Load current owner revisions and all response-visible metadata.
 
     `users.skills_revision` is bumped on the owner account when a skill
@@ -659,8 +667,8 @@ async def _visible_skills_etag_state(
     visible_revision_fingerprint = hashlib.sha256(":".join(owner_parts).encode()).hexdigest()[:16]
 
     rows_by_project_id = {row.id: row for row in rows}
-    metadata_values = []
-    project_meta: dict = {}
+    metadata_values: list[list[str | None]] = []
+    project_meta: dict[UUID, _ProjectSkillMetadata] = {}
     for project_id in sorted(set(visible_project_ids), key=str):
         row = rows_by_project_id.get(project_id)
         if row is None:
@@ -678,7 +686,7 @@ async def _visible_skills_etag_state(
         )
         project_meta[project_id] = {
             "name": row.name,
-            "kind": row.kind,
+            "kind": _persisted_project_kind(row.kind),
             "environment_id": environment_id,
             "machine_name": row.machine_name,
         }
@@ -714,12 +722,12 @@ async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> S
     # to build the upload URL; multi-machine users see machine_name
     # in the page caption ("on my-mac") so they're sure which copy
     # they're editing.
-    project_id_str: str | None = str(project_id) if project_id else None
+    project_id_str = str(project_id)
     project_name: str | None = None
     project_kind: str | None = None
     machine_name: str | None = None
     environment_id: str | None = None
-    if db is not None and project_id is not None:
+    if db is not None:
         project_row = (
             await db.execute(
                 select(Project.name, Project.kind, Project.origin_environment_id).where(
@@ -1150,7 +1158,7 @@ async def _do_upload_skill(
     *,
     db: AsyncSession,
     auth: AuthContext,
-    project_id,
+    project_id: UUID,
     skill_key: str,
     data: bytes,
     content_hash: str | None,
@@ -1862,7 +1870,7 @@ async def _do_delete_skill(
     *,
     db: AsyncSession,
     auth: AuthContext,
-    project_id,
+    project_id: UUID,
     skill_key: str,
 ) -> SkillDeleteResponse:
     # Advisory lock matches the partial unique index identity, so
@@ -1964,7 +1972,7 @@ async def _do_install_skill(
     *,
     db: AsyncSession,
     auth: AuthContext,
-    project_id,
+    project_id: UUID,
     body: SkillInstallRequest,
 ) -> SkillInstallResponse:
     from app.services.skill_installer import fetch_skill_from_github
@@ -2084,8 +2092,8 @@ async def _do_install_skill(
 async def _upsert_skill(
     db: AsyncSession,
     *,
-    user_id,
-    project_id,
+    user_id: UUID,
+    project_id: UUID,
     skill_key: str,
     name: str,
     description: str,

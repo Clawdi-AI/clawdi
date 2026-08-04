@@ -14,6 +14,7 @@ from app.core.config import canonical_clerk_authorized_party, canonical_clerk_is
 CLERK_CLI_OAUTH_SETTING_KEY = "clerk_cli_oauth"
 CLERK_CLI_OAUTH_SCHEMA_VERSION = 1
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_OBJECT_LIST_ADAPTER = TypeAdapter(list[object], config=ConfigDict(strict=True))
 
 
 def _trimmed(value: str, *, field_name: str) -> str:
@@ -26,10 +27,12 @@ def _trimmed(value: str, *, field_name: str) -> str:
 
 
 def _canonical_authorized_parties(value: object) -> object:
-    if not isinstance(value, list):
+    try:
+        items = _OBJECT_LIST_ADAPTER.validate_python(value)
+    except ValueError:
         return value
     canonical: set[str] = set()
-    for item in value:
+    for item in items:
         if not isinstance(item, str):
             return value
         if len(item) > 512:

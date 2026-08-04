@@ -1,5 +1,4 @@
-from typing import Any
-
+from pydantic import JsonValue
 from sqlalchemy import String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -17,4 +16,4 @@ class AppSetting(Base, TimestampMixin):
     __tablename__ = "app_settings"
 
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
-    value_json: Mapped[Any] = mapped_column(JSONB(none_as_null=True), nullable=False)
+    value_json: Mapped[JsonValue] = mapped_column(JSONB(none_as_null=True), nullable=False)

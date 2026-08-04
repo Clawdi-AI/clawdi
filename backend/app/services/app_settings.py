@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pydantic import JsonValue
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,7 +37,7 @@ async def stage_app_setting_upsert(
     *,
     key: str,
     value: object,
-) -> tuple[AppSetting, object | None, bool]:
+) -> tuple[AppSetting, JsonValue | None, bool]:
     """Validate and stage one whole-value replacement without committing."""
 
     spec = get_app_setting_spec(key)
@@ -45,7 +46,7 @@ async def stage_app_setting_upsert(
         await session.execute(select(AppSetting).where(AppSetting.key == key).with_for_update())
     ).scalar_one_or_none()
     created = setting is None
-    previous: object | None = None
+    previous: JsonValue | None = None
     if setting is None:
         setting = AppSetting(key=key, value_json=canonical)
         session.add(setting)
