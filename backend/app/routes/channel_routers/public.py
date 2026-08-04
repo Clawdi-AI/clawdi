@@ -883,11 +883,7 @@ async def _whatsapp_pair_deep_link(
     ):
         return None
     registry = get_active_whatsapp_sidecar_registry()
-    if (
-        registry is None
-        or not registry.managed_is_bound(account.id)
-        or registry.managed_account_revision(account.id) != configured_revision
-    ):
+    if registry is None or registry.managed_account_revision(account.id) != configured_revision:
         return None
     client = registry.get_managed_client(account.id)
     if client is None:
@@ -896,7 +892,7 @@ async def _whatsapp_pair_deep_link(
         health = await client.health()
     except WhatsAppSidecarError:
         return None
-    if health.status != "connected" or not health.connected or not health.registered:
+    if not health.registered:
         return None
     phone_number = whatsapp_phone_number_from_pn_jid(health.account_jid)
     if phone_number is None:
