@@ -7,6 +7,7 @@ import {
 	autoReloadFormState,
 	autoReloadRequest,
 	autoReloadSaveError,
+	autoReloadStatusSummary,
 } from "./auto-reload-card.logic";
 
 const validForm = {
@@ -24,12 +25,18 @@ describe("autoReloadFormState", () => {
 		expect(state.formValid).toBe(false);
 	});
 
-	test("keeps an explicit 0 monthly cap as the no-cap value", () => {
-		const state = autoReloadFormState({ ...validForm, cap: "0" });
+	test("requires a finite limit to cover one reload and supports an explicit no-limit choice", () => {
+		const tooSmall = autoReloadFormState({ ...validForm, cap: "20" });
+		const unlimited = autoReloadFormState({
+			...validForm,
+			cap: "",
+			monthlyLimitEnabled: false,
+		});
 
-		expect(state.capCents).toBe(0);
-		expect(state.capValid).toBe(true);
-		expect(state.formValid).toBe(true);
+		expect(tooSmall.capValid).toBe(false);
+		expect(unlimited.capCents).toBe(0);
+		expect(unlimited.capValid).toBe(true);
+		expect(unlimited.formValid).toBe(true);
 	});
 
 	test("preserves the direct $1 threshold floor", () => {
@@ -51,6 +58,9 @@ const wallet: WalletState = {
 	auto_reload_threshold_usd: "5",
 	auto_reload_amount_cents: 2_500,
 	auto_reload_monthly_cap_cents: 10_000,
+	auto_reload_monthly_spent_cents: 2_500,
+	auto_reload_period_end: "2026-09-01T00:00:00Z",
+	auto_reload_status: "off",
 	auto_reload_action: null,
 };
 
@@ -89,6 +99,22 @@ describe("auto-reload explicit-save state", () => {
 		expect(autoReloadDraftIsDirty({ ...baseline, amount: "25.00" }, baseline)).toBe(false);
 		expect(autoReloadDraftIsDirty({ ...baseline, amount: "26" }, baseline)).toBe(true);
 		expect(autoReloadDraftIsDirty({ ...baseline, amount: "" }, baseline)).toBe(true);
+	});
+});
+
+describe("autoReloadStatusSummary", () => {
+	test("explains a monthly-limit pause without implying auto-reload was turned off", () => {
+		expect(
+			autoReloadStatusSummary({
+				...wallet,
+				auto_reload_enabled: true,
+				auto_reload_status: "paused_monthly_limit",
+			}),
+		).toEqual({
+			label: "Paused",
+			tone: "warning",
+			description: "Monthly limit reached. Auto-reload resumes Sep 1.",
+		});
 	});
 });
 

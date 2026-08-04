@@ -6,6 +6,7 @@ const LEDGER_FILTERS: readonly LedgerFilter[] = ["all", "topup", "grant", "compu
 
 const LEDGER_OPERATION_LABELS: Record<string, string> = {
 	topup: "Top-up",
+	auto_reload: "Auto-reload",
 	x402: "On-chain top-up",
 	grant_signup: "Signup grant",
 	admin_adjust: "Adjustment",
@@ -30,7 +31,7 @@ export function isLedgerFilter(value: string): value is LedgerFilter {
 }
 
 export function ledgerOperationGroup(op: string): LedgerFilter {
-	if (op === "topup" || op === "x402") return "topup";
+	if (op === "topup" || op === "auto_reload" || op === "x402") return "topup";
 	if (op === "grant_signup") return "grant";
 	if (op === "compute_charge" || op === "compute_credit") return "compute";
 	if (op === "refund") return "refund";

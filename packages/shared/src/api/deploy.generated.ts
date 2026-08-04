@@ -608,7 +608,7 @@ export interface components {
              * Verb
              * @enum {string}
              */
-            verb: "create" | "plan_change" | "start" | "stop" | "restart" | "update" | "rename" | "delete" | "reset_runtime_ui_access";
+            verb: "create" | "plan_change" | "start" | "stop" | "restart" | "update" | "rename" | "delete" | "reset_runtime_ui_access" | "migrate_image" | "rollback_image";
             /** Targetgeneration */
             targetGeneration: number;
             /** Manifestetag */
@@ -2056,6 +2056,8 @@ export interface components {
             items: components["schemas"]["V2WalletLedgerItemResponse"][];
             /** Has More */
             has_more: boolean;
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /** V2WalletResponse */
         V2WalletResponse: {
@@ -2071,6 +2073,18 @@ export interface components {
             auto_reload_amount_cents: number;
             /** Auto Reload Monthly Cap Cents */
             auto_reload_monthly_cap_cents: number;
+            /** Auto Reload Monthly Spent Cents */
+            auto_reload_monthly_spent_cents: number;
+            /**
+             * Auto Reload Period End
+             * Format: date-time
+             */
+            auto_reload_period_end: string;
+            /**
+             * Auto Reload Status
+             * @enum {string}
+             */
+            auto_reload_status: "off" | "active" | "paused_monthly_limit" | "payment_action_required" | "payment_failed" | "blocked_refund";
             auto_reload_action?: components["schemas"]["V2WalletAutoReloadActionResponse"] | null;
         };
         /** V2WalletTopupRequest */
@@ -3282,6 +3296,7 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                cursor?: string | null;
             };
             header?: never;
             path?: never;

@@ -1,10 +1,9 @@
 "use client";
 
-import { Coins, CreditCard, Info, TriangleAlert } from "lucide-react";
+import { Coins, CreditCard, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatUsdExact } from "@/hosted/billing/format";
 import type { WalletCacheSnapshot } from "@/hosted/billing/wallet/wallet-cache";
 import { isLowBalance } from "@/hosted/billing/wallet/wallet-constants";
@@ -35,22 +34,6 @@ export function BalanceCard({
 					<div className="flex items-center gap-1.5 text-sm text-muted-foreground">
 						<Coins className="size-4" aria-hidden />
 						Wallet balance
-						<Tooltip>
-							<TooltipTrigger
-								render={
-									<button
-										type="button"
-										aria-label="About this balance"
-										className="rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-									/>
-								}
-							>
-								<Info className="size-3.5" />
-							</TooltipTrigger>
-							<TooltipContent className="max-w-xs">
-								One USD balance shared by Clawdi AI and wallet-funded compute.
-							</TooltipContent>
-						</Tooltip>
 					</div>
 					<div>
 						<span
@@ -64,7 +47,7 @@ export function BalanceCard({
 						</span>
 					</div>
 					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-						<span>Shared across Clawdi AI and wallet-funded compute.</span>
+						<span>Pays for Clawdi AI and wallet-funded compute.</span>
 						{low ? (
 							<span className="inline-flex items-center gap-1 font-medium text-warning-muted-foreground">
 								<TriangleAlert className="size-3.5" aria-hidden /> Low — top up before

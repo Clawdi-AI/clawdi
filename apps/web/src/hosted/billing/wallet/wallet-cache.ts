@@ -17,6 +17,9 @@ export function walletSnapshotForCache(wallet: WalletState): WalletCacheSnapshot
 		auto_reload_threshold_usd: wallet.auto_reload_threshold_usd,
 		auto_reload_amount_cents: wallet.auto_reload_amount_cents,
 		auto_reload_monthly_cap_cents: wallet.auto_reload_monthly_cap_cents,
+		auto_reload_monthly_spent_cents: wallet.auto_reload_monthly_spent_cents,
+		auto_reload_period_end: wallet.auto_reload_period_end,
+		auto_reload_status: wallet.auto_reload_status,
 	};
 	const action = wallet.auto_reload_action;
 	if (action === undefined) return snapshot;

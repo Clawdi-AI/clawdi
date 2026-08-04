@@ -17,12 +17,14 @@ export interface AutoReloadDraft {
 	amount: string;
 	threshold: string;
 	cap: string;
+	monthlyLimitEnabled: boolean;
 }
 
 export interface AutoReloadFormInput {
 	amount: string;
 	threshold: string;
 	cap: string;
+	monthlyLimitEnabled?: boolean;
 }
 
 export interface AutoReloadFormState {
@@ -42,6 +44,12 @@ export interface AutoReloadSaveError {
 	requiresPaymentMethod: boolean;
 }
 
+export interface AutoReloadStatusSummary {
+	label: string;
+	tone: "success" | "warning" | "destructive" | "neutral";
+	description: string;
+}
+
 function dollars(value: number): string {
 	return String(Math.round(value * 100) / 100);
 }
@@ -53,17 +61,67 @@ function dollarsFromInput(value: string): number | null {
 	return Number.isFinite(parsed) ? parsed : null;
 }
 
+function periodEndLabel(value: string): string {
+	return new Intl.DateTimeFormat("en-US", {
+		month: "short",
+		day: "numeric",
+		timeZone: "UTC",
+	}).format(new Date(value));
+}
+
+export function autoReloadStatusSummary(wallet: WalletCacheSnapshot): AutoReloadStatusSummary {
+	switch (wallet.auto_reload_status) {
+		case "active":
+			return { label: "Active", tone: "success", description: "Auto-reload is ready." };
+		case "paused_monthly_limit":
+			return {
+				label: "Paused",
+				tone: "warning",
+				description: `Monthly limit reached. Auto-reload resumes ${periodEndLabel(wallet.auto_reload_period_end)}.`,
+			};
+		case "payment_action_required":
+			return {
+				label: "Confirmation needed",
+				tone: "warning",
+				description: "Confirm the pending card payment to finish the reload.",
+			};
+		case "payment_failed":
+			return {
+				label: "Payment failed",
+				tone: "destructive",
+				description: "Update your payment method, then set up auto-reload again.",
+			};
+		case "blocked_refund":
+			return {
+				label: "Blocked",
+				tone: "destructive",
+				description: "A refunded balance must be resolved before auto-reload can run.",
+			};
+		default:
+			return {
+				label: "Off",
+				tone: "neutral",
+				description: "Automatically add funds when your balance is low.",
+			};
+	}
+}
+
 export function autoReloadFormState({
 	amount,
 	threshold,
 	cap,
+	monthlyLimitEnabled = true,
 }: AutoReloadFormInput): AutoReloadFormState {
 	const amountDollars = dollarsFromInput(amount);
 	const thresholdDollars = dollarsFromInput(threshold);
 	const capDollars = dollarsFromInput(cap);
 	const amountCents = amountDollars === null ? Number.NaN : Math.round(amountDollars * 100);
 	const thresholdUsd = thresholdDollars === null ? Number.NaN : thresholdDollars;
-	const capCents = capDollars === null ? Number.NaN : Math.round(capDollars * 100);
+	const capCents = monthlyLimitEnabled
+		? capDollars === null
+			? Number.NaN
+			: Math.round(capDollars * 100)
+		: 0;
 
 	const amountValid =
 		Number.isFinite(amountCents) &&
@@ -71,8 +129,9 @@ export function autoReloadFormState({
 		amountCents <= AUTORELOAD_AMOUNT_MAX_CENTS;
 	const thresholdValid =
 		Number.isFinite(thresholdUsd) && thresholdUsd >= AUTORELOAD_THRESHOLD_MIN_USD;
-	// 0 = no cap; any positive value is a cap. Blank / negative / non-numeric is invalid.
-	const capValid = Number.isFinite(capCents) && capCents >= 0;
+	const capValid =
+		!monthlyLimitEnabled ||
+		(Number.isFinite(capCents) && (!amountValid || capCents >= amountCents));
 	const formValid = amountValid && thresholdValid && capValid;
 
 	return {
@@ -87,11 +146,17 @@ export function autoReloadFormState({
 }
 
 export function autoReloadDraftFromWallet(wallet: WalletCacheSnapshot): AutoReloadDraft {
+	const monthlyLimitEnabled = wallet.auto_reload_monthly_cap_cents !== 0;
 	return {
 		enabled: wallet.auto_reload_enabled,
 		threshold: dollars(Number(wallet.auto_reload_threshold_usd)),
 		amount: dollars(wallet.auto_reload_amount_cents / 100),
-		cap: dollars(wallet.auto_reload_monthly_cap_cents / 100),
+		cap: dollars(
+			(monthlyLimitEnabled
+				? wallet.auto_reload_monthly_cap_cents
+				: wallet.auto_reload_amount_cents) / 100,
+		),
+		monthlyLimitEnabled,
 	};
 }
 
@@ -100,6 +165,7 @@ export function autoReloadRequest(draft: AutoReloadDraft): WalletAutoReloadReque
 		amount: draft.amount,
 		threshold: draft.threshold,
 		cap: draft.cap,
+		monthlyLimitEnabled: draft.monthlyLimitEnabled,
 	});
 	if (!state.formValid) return null;
 
@@ -148,7 +214,7 @@ export function autoReloadSaveError(error: unknown): AutoReloadSaveError {
 	if (signal.includes("monthly cap") || signal.includes("monthly_cap")) {
 		return {
 			title: "Check the monthly cap",
-			description: "Enter 0 for no cap or a positive dollar amount, then save again.",
+			description: "Set a monthly limit at least as large as one reload, or choose no limit.",
 			field: "cap",
 			requiresPaymentMethod: false,
 		};

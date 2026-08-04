@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { PageHeader } from "@/components/page-header";
@@ -9,7 +9,7 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner";
 import { WalletSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
-import { useHostedDeployments, useWalletLedger } from "@/hosted/billing/hooks";
+import { useHostedDeployments, useWalletLedgerPages } from "@/hosted/billing/hooks";
 import { useSensitiveBillingPortal } from "@/hosted/billing/sensitive-actions";
 import { getStripe } from "@/hosted/billing/stripe";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
@@ -24,14 +24,14 @@ import {
 	type WalletTopupReturnToast,
 	walletTopupReturnToast,
 } from "@/hosted/billing/wallet/top-up-return.logic";
-import { LEDGER_MAX_ROWS, LEDGER_PAGE_SIZE } from "@/hosted/billing/wallet/wallet-constants";
+import { LEDGER_PAGE_SIZE } from "@/hosted/billing/wallet/wallet-constants";
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { X402Card } from "@/hosted/billing/wallet/x402-card";
 import { env } from "@/lib/env";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
-const DESCRIPTION = "One balance for Clawdi AI, wallet-funded compute, top-ups, and auto-reload.";
+const DESCRIPTION = "Add funds and manage how your Clawdi usage is paid.";
 const WALLET_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6");
 
 function scrollToAutoReload() {
@@ -39,7 +39,9 @@ function scrollToAutoReload() {
 	if (!section) return;
 	const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 	section.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
-	window.requestAnimationFrame(() => document.getElementById("auto-reload-enabled")?.focus());
+	window.requestAnimationFrame(() =>
+		section.querySelector<HTMLButtonElement>("[data-auto-reload-primary]")?.focus(),
+	);
 }
 
 function showWalletTopupReturnToast(result: WalletTopupReturnToast) {
@@ -56,11 +58,8 @@ export function WalletPage() {
 	const portal = useSensitiveBillingPortal();
 	const runAction = useActionLock();
 	const queryClient = useQueryClient();
-	const [ledgerLimit, setLedgerLimit] = useState(LEDGER_PAGE_SIZE);
-	const ledger = useWalletLedger(ledgerLimit);
-	const lastLedgerDataRef = useRef(ledger.data);
-	if (ledger.data) lastLedgerDataRef.current = ledger.data;
-	const ledgerData = ledger.data ?? lastLedgerDataRef.current;
+	const ledger = useWalletLedgerPages(LEDGER_PAGE_SIZE);
+	const ledgerEntries = ledger.data?.pages.flatMap((page) => page.items) ?? [];
 	const [topUpOpen, setTopUpOpen] = useState(false);
 
 	async function openBillingPortal() {
@@ -185,12 +184,18 @@ export function WalletPage() {
 					isManagePaymentMethodsPending={portal.isPending}
 				/>
 
-				<div id="auto-reload" className="grid gap-4 lg:grid-cols-2">
-					<AutoReloadCard wallet={w} onTopUp={() => setTopUpOpen(true)} />
-					{w.x402_enabled === true ? <X402Card /> : null}
+				<div id="auto-reload">
+					<AutoReloadCard
+						wallet={w}
+						onTopUp={() => setTopUpOpen(true)}
+						onManagePaymentMethods={() => void runAction(openBillingPortal)}
+						isManagePaymentMethodsPending={portal.isPending}
+					/>
 				</div>
 
-				{ledger.error && !ledgerData ? (
+				<X402Card enabled={w.x402_enabled === true} />
+
+				{ledger.error && !ledger.data ? (
 					<ApiErrorPanel
 						normalizer={billingErrorNormalizer}
 						error={ledger.error}
@@ -200,23 +205,18 @@ export function WalletPage() {
 				) : (
 					<>
 						<LedgerTable
-							entries={ledgerData?.items ?? []}
+							entries={ledgerEntries}
 							isLoading={ledger.isLoading}
-							hasMore={ledgerData?.has_more ?? false}
-							atCap={ledgerLimit >= LEDGER_MAX_ROWS && (ledgerData?.has_more ?? false)}
-							isFetchingMore={ledger.isPlaceholderData && ledger.isFetching}
-							onShowMore={
-								ledger.error && ledger.data === undefined
-									? undefined
-									: () => setLedgerLimit((n) => Math.min(n + LEDGER_PAGE_SIZE, LEDGER_MAX_ROWS))
-							}
+							hasMore={ledger.hasNextPage}
+							isFetchingMore={ledger.isFetchingNextPage}
+							onShowMore={() => void ledger.fetchNextPage()}
 						/>
-						{ledger.error && ledger.data === undefined ? (
+						{ledger.isFetchNextPageError ? (
 							<ApiErrorPanel
 								normalizer={billingErrorNormalizer}
 								error={ledger.error}
 								title="Couldn’t load more activity"
-								onRetry={() => void ledger.refetch()}
+								onRetry={() => void ledger.fetchNextPage()}
 							/>
 						) : null}
 					</>

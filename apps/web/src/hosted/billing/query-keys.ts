@@ -7,6 +7,7 @@ export const billingKeys = {
 	wallet: ["billing", "wallet"] as const,
 	ledgerRoot,
 	ledger: (limit: number) => [...ledgerRoot, limit] as const,
+	ledgerPages: (limit: number) => [...ledgerRoot, "pages", limit] as const,
 	subscriptionCreateQuotes,
 	subscriptionCreateQuote: (planSlug: string, billingTermMonths: number, fundingSource: string) =>
 		[...subscriptionCreateQuotes, planSlug, billingTermMonths, fundingSource] as const,

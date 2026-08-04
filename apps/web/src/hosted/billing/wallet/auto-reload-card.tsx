@@ -18,7 +18,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { Switch } from "@/components/ui/switch";
+import type { WalletState } from "@/hosted/billing/contracts";
 import { formatCents } from "@/hosted/billing/format";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import { useSensitiveSetAutoReload } from "@/hosted/billing/sensitive-actions";
@@ -36,6 +38,7 @@ import {
 	autoReloadFormState,
 	autoReloadRequest,
 	autoReloadSaveError,
+	autoReloadStatusSummary,
 } from "@/hosted/billing/wallet/auto-reload-card.logic";
 import type { WalletCacheSnapshot } from "@/hosted/billing/wallet/wallet-cache";
 import {
@@ -54,9 +57,13 @@ const ALL_FIELDS_BLURRED: BlurredFields = { threshold: true, amount: true, cap: 
 export function AutoReloadCard({
 	wallet,
 	onTopUp,
+	onManagePaymentMethods,
+	isManagePaymentMethodsPending = false,
 }: {
 	wallet: WalletCacheSnapshot;
 	onTopUp?: () => void;
+	onManagePaymentMethods?: () => void;
+	isManagePaymentMethodsPending?: boolean;
 }) {
 	const save = useSensitiveSetAutoReload();
 	const queryClient = useQueryClient();
@@ -64,6 +71,7 @@ export function AutoReloadCard({
 	const initialDraft = autoReloadDraftFromWallet(wallet);
 	const [baseline, setBaseline] = useState<AutoReloadDraft>(initialDraft);
 	const [draft, setDraft] = useState<AutoReloadDraft>(initialDraft);
+	const [editing, setEditing] = useState(false);
 	const [blurred, setBlurred] = useState<BlurredFields>(PRISTINE_FIELDS);
 	const [requestError, setRequestError] = useState<AutoReloadSaveError | null>(null);
 	const [actionClientSecret, setActionClientSecret] = useState<PaymentIntentClientSecret | null>(
@@ -76,13 +84,10 @@ export function AutoReloadCard({
 	baselineRef.current = baseline;
 	pendingRef.current = save.isPending;
 
-	const form = autoReloadFormState({
-		amount: draft.amount,
-		threshold: draft.threshold,
-		cap: draft.cap,
-	});
+	const form = autoReloadFormState(draft);
 	const dirty = autoReloadDraftIsDirty(draft, baseline);
-	useSettingsEditState({ dirty, busy: save.isPending });
+	const status = autoReloadStatusSummary(wallet);
+	useSettingsEditState({ dirty: editing && dirty, busy: save.isPending });
 
 	useEffect(() => {
 		const next = autoReloadDraftFromWallet(wallet);
@@ -113,11 +118,43 @@ export function AutoReloadCard({
 		setBlurred((current) => ({ ...current, [field]: true }));
 	}
 
+	function beginEditing() {
+		const next = { ...autoReloadDraftFromWallet(wallet), enabled: true };
+		setBaseline(autoReloadDraftFromWallet(wallet));
+		setDraft(next);
+		setBlurred(PRISTINE_FIELDS);
+		setRequestError(null);
+		setEditing(true);
+	}
+
 	function cancelChanges() {
 		if (save.isPending) return;
 		setDraft(baseline);
 		setBlurred(PRISTINE_FIELDS);
 		setRequestError(null);
+		setEditing(false);
+	}
+
+	function acceptSavedWallet(nextWallet: WalletState) {
+		setActionClientSecret(walletAutoReloadPaymentIntentClientSecret(nextWallet.auto_reload_action));
+		queryClient.invalidateQueries({ queryKey: billingKeys.wallet });
+		const next = autoReloadDraftFromWallet(nextWallet);
+		setBaseline(next);
+		setDraft(next);
+		setBlurred(PRISTINE_FIELDS);
+		setRequestError(null);
+		setEditing(false);
+	}
+
+	function handleSaveFailure(error: unknown) {
+		const copy = autoReloadSaveError(error);
+		setRequestError(copy);
+		const field = copy.field;
+		if (field) {
+			setBlurred((current) => ({ ...current, [field]: true }));
+			window.requestAnimationFrame(() => document.getElementById(`ar-${field}`)?.focus());
+		}
+		toast.error(copy.title, { description: copy.description });
 	}
 
 	async function saveChanges() {
@@ -126,28 +163,24 @@ export function AutoReloadCard({
 		setRequestError(null);
 		try {
 			const nextWallet = await save.execute(request);
-			setActionClientSecret(
-				walletAutoReloadPaymentIntentClientSecret(nextWallet.auto_reload_action),
-			);
-			queryClient.invalidateQueries({ queryKey: billingKeys.wallet });
-			const next = autoReloadDraftFromWallet(nextWallet);
-			setBaseline(next);
-			setDraft(next);
-			setBlurred(PRISTINE_FIELDS);
-			toast.success("Auto-reload settings saved", {
-				description: next.enabled
-					? "Auto-reload is on with the saved threshold, amount, and monthly cap."
-					: "Auto-reload is off. Your saved parameters are ready for the next time you enable it.",
-			});
+			acceptSavedWallet(nextWallet);
+			toast.success("Auto-reload settings saved");
 		} catch (error) {
-			const copy = autoReloadSaveError(error);
-			setRequestError(copy);
-			const field = copy.field;
-			if (field) {
-				setBlurred((current) => ({ ...current, [field]: true }));
-				window.requestAnimationFrame(() => document.getElementById(`ar-${field}`)?.focus());
-			}
-			toast.error(copy.title, { description: copy.description });
+			handleSaveFailure(error);
+		}
+	}
+
+	async function turnOff() {
+		if (save.isPending) return;
+		const request = autoReloadRequest({ ...autoReloadDraftFromWallet(wallet), enabled: false });
+		if (!request) return;
+		setRequestError(null);
+		try {
+			const nextWallet = await save.execute(request);
+			acceptSavedWallet(nextWallet);
+			toast.success("Auto-reload turned off");
+		} catch (error) {
+			handleSaveFailure(error);
 		}
 	}
 
@@ -157,6 +190,15 @@ export function AutoReloadCard({
 	const thresholdServerError = requestError?.field === "threshold";
 	const amountServerError = requestError?.field === "amount";
 	const capServerError = requestError?.field === "cap";
+	const minimumCap = form.amountValid ? formatCents(form.amountCents) : "the reload amount";
+	const cap = wallet.auto_reload_monthly_cap_cents;
+	const usage =
+		cap === 0
+			? `${formatCents(wallet.auto_reload_monthly_spent_cents)} added this month · No monthly limit`
+			: `${formatCents(wallet.auto_reload_monthly_spent_cents)} of ${formatCents(cap)} used · Resets ${new Intl.DateTimeFormat(
+					"en-US",
+					{ month: "short", day: "numeric", timeZone: "UTC" },
+				).format(new Date(wallet.auto_reload_period_end))}`;
 
 	return (
 		<Card data-hosted="true">
@@ -166,26 +208,17 @@ export function AutoReloadCard({
 						<CardTitle className="flex items-center gap-2 text-base">
 							<Repeat className="size-4" aria-hidden /> Auto-reload
 						</CardTitle>
-						<CardDescription id="auto-reload-description">
-							Top up automatically below a balance threshold. Changes apply only after you save.
+						<CardDescription>
+							{editing ? "Choose when and how much to add." : status.description}
 						</CardDescription>
 					</div>
-					<div className="flex shrink-0 items-center gap-2">
-						<Label htmlFor="auto-reload-enabled" className="text-sm">
-							Enabled
-						</Label>
-						<Switch
-							id="auto-reload-enabled"
-							checked={draft.enabled}
-							onCheckedChange={(enabled) => updateDraft("enabled", enabled)}
-							disabled={save.isPending}
-							aria-describedby="auto-reload-description"
-						/>
-					</div>
+					<StatusBadge status={status.tone} withDot>
+						{status.label}
+					</StatusBadge>
 				</div>
 			</CardHeader>
 
-			<CardContent className="flex flex-col gap-4">
+			<CardContent className="flex flex-col gap-5">
 				<AutoReloadActionConfirm
 					wallet={wallet}
 					onTopUp={onTopUp}
@@ -208,154 +241,209 @@ export function AutoReloadCard({
 					</Alert>
 				) : null}
 
-				<form
-					id="auto-reload-form"
-					onSubmit={(event) => {
-						event.preventDefault();
-						setBlurred(ALL_FIELDS_BLURRED);
-						void runAction(saveChanges);
-					}}
-				>
-					<div className="grid gap-4 sm:grid-cols-3">
-						<div className="flex flex-col gap-1.5">
-							<Label htmlFor="ar-threshold">When balance is below (USD)</Label>
-							<Input
-								id="ar-threshold"
-								name="auto-reload-threshold"
-								type="number"
-								inputMode="decimal"
-								autoComplete="off"
-								min={AUTORELOAD_THRESHOLD_MIN_USD}
-								step="0.01"
-								className="tabular-nums"
-								value={draft.threshold}
-								onChange={(event) => updateDraft("threshold", event.target.value)}
-								onBlur={() => markBlurred("threshold")}
-								disabled={save.isPending}
-								aria-invalid={thresholdInvalid || thresholdServerError}
-								aria-describedby={
-									thresholdServerError
-										? "ar-threshold-help auto-reload-save-error"
-										: "ar-threshold-help"
-								}
-							/>
-							<p
-								id="ar-threshold-help"
-								className={
-									thresholdInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"
-								}
-								aria-live="polite"
-							>
-								Minimum {formatCents(AUTORELOAD_THRESHOLD_MIN_USD * 100)}; up to 2 decimal places.
-							</p>
+				{editing ? (
+					<form
+						id="auto-reload-form"
+						className="max-w-2xl space-y-5"
+						onSubmit={(event) => {
+							event.preventDefault();
+							setBlurred(ALL_FIELDS_BLURRED);
+							void runAction(saveChanges);
+						}}
+					>
+						<div className="grid gap-4 sm:grid-cols-2">
+							<div className="flex flex-col gap-1.5">
+								<Label htmlFor="ar-threshold">When balance is below (USD)</Label>
+								<Input
+									id="ar-threshold"
+									type="number"
+									inputMode="decimal"
+									autoComplete="off"
+									min={AUTORELOAD_THRESHOLD_MIN_USD}
+									step="0.01"
+									className="tabular-nums"
+									value={draft.threshold}
+									onChange={(event) => updateDraft("threshold", event.target.value)}
+									onBlur={() => markBlurred("threshold")}
+									disabled={save.isPending}
+									aria-invalid={thresholdInvalid || thresholdServerError}
+									aria-describedby="ar-threshold-help"
+								/>
+								<p
+									id="ar-threshold-help"
+									className={
+										thresholdInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"
+									}
+								>
+									Minimum {formatCents(AUTORELOAD_THRESHOLD_MIN_USD * 100)}.
+								</p>
+							</div>
+
+							<div className="flex flex-col gap-1.5">
+								<Label htmlFor="ar-amount">Amount to add (USD)</Label>
+								<Input
+									id="ar-amount"
+									type="number"
+									inputMode="decimal"
+									autoComplete="off"
+									min={AUTORELOAD_AMOUNT_MIN_CENTS / 100}
+									max={AUTORELOAD_AMOUNT_MAX_CENTS / 100}
+									step="0.01"
+									className="tabular-nums"
+									value={draft.amount}
+									onChange={(event) => updateDraft("amount", event.target.value)}
+									onBlur={() => markBlurred("amount")}
+									disabled={save.isPending}
+									aria-invalid={amountInvalid || amountServerError}
+									aria-describedby="ar-amount-help"
+								/>
+								<p
+									id="ar-amount-help"
+									className={
+										amountInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"
+									}
+								>
+									{AUTORELOAD_AMOUNT_RANGE_LABEL}.
+								</p>
+							</div>
 						</div>
 
-						<div className="flex flex-col gap-1.5">
-							<Label htmlFor="ar-amount">Amount to add (USD)</Label>
-							<Input
-								id="ar-amount"
-								name="auto-reload-amount"
-								type="number"
-								inputMode="decimal"
-								autoComplete="off"
-								min={AUTORELOAD_AMOUNT_MIN_CENTS / 100}
-								max={AUTORELOAD_AMOUNT_MAX_CENTS / 100}
-								step="0.01"
-								className="tabular-nums"
-								value={draft.amount}
-								onChange={(event) => updateDraft("amount", event.target.value)}
-								onBlur={() => markBlurred("amount")}
-								disabled={save.isPending}
-								aria-invalid={amountInvalid || amountServerError}
-								aria-describedby={
-									amountServerError ? "ar-amount-help auto-reload-save-error" : "ar-amount-help"
-								}
-							/>
-							<p
-								id="ar-amount-help"
-								className={
-									amountInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"
-								}
-								aria-live="polite"
-							>
-								{AUTORELOAD_AMOUNT_RANGE_LABEL}; up to 2 decimal places.
-							</p>
-						</div>
+						<div className="space-y-3 rounded-lg border p-4">
+							<div className="flex items-start justify-between gap-3">
+								<div className="space-y-0.5">
+									<Label htmlFor="ar-monthly-limit">Monthly limit</Label>
+									<p className="text-xs text-muted-foreground">
+										{draft.monthlyLimitEnabled
+											? "Pause auto-reload after this amount is added."
+											: "No monthly limit."}
+									</p>
+								</div>
+								<Switch
+									id="ar-monthly-limit"
+									checked={draft.monthlyLimitEnabled}
+									onCheckedChange={(checked) => updateDraft("monthlyLimitEnabled", checked)}
+									disabled={save.isPending}
+								/>
+							</div>
 
-						<div className="flex flex-col gap-1.5">
-							<Label htmlFor="ar-cap">Monthly cap (USD)</Label>
-							<Input
-								id="ar-cap"
-								name="auto-reload-monthly-cap"
-								type="number"
-								inputMode="decimal"
-								autoComplete="off"
-								min={0}
-								step="0.01"
-								className="tabular-nums"
-								value={draft.cap}
-								onChange={(event) => updateDraft("cap", event.target.value)}
-								onBlur={() => markBlurred("cap")}
-								disabled={save.isPending}
-								aria-invalid={capInvalid || capServerError}
-								aria-describedby={
-									capServerError ? "ar-cap-help auto-reload-save-error" : "ar-cap-help"
-								}
-							/>
-							<p
-								id="ar-cap-help"
-								className={
-									capInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"
-								}
-								aria-live="polite"
-							>
-								Enter 0 for no monthly cap; up to 2 decimal places.
-							</p>
+							{draft.monthlyLimitEnabled ? (
+								<div className="flex max-w-sm flex-col gap-1.5">
+									<Label htmlFor="ar-cap">Monthly limit (USD)</Label>
+									<Input
+										id="ar-cap"
+										type="number"
+										inputMode="decimal"
+										autoComplete="off"
+										min={AUTORELOAD_AMOUNT_MIN_CENTS / 100}
+										step="0.01"
+										className="tabular-nums"
+										value={draft.cap}
+										onChange={(event) => updateDraft("cap", event.target.value)}
+										onBlur={() => markBlurred("cap")}
+										disabled={save.isPending}
+										aria-invalid={capInvalid || capServerError}
+										aria-describedby="ar-cap-help"
+									/>
+									<p
+										id="ar-cap-help"
+										className={
+											capInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"
+										}
+									>
+										Must cover at least one reload ({minimumCap}).
+									</p>
+								</div>
+							) : null}
 						</div>
+					</form>
+				) : wallet.auto_reload_enabled ? (
+					<div className="space-y-1">
+						<p className="font-medium tabular-nums">
+							Below {formatCents(Number(wallet.auto_reload_threshold_usd) * 100)} → add{" "}
+							{formatCents(wallet.auto_reload_amount_cents)}
+						</p>
+						<p className="text-sm text-muted-foreground">{usage}</p>
 					</div>
-				</form>
+				) : null}
 			</CardContent>
 
 			<CardFooter className="flex flex-wrap justify-between gap-3 border-t">
-				<div className="flex min-w-0 flex-col gap-1">
-					<p className="text-xs text-muted-foreground">
-						Enabling requires a saved card. Your first manual top-up saves one.
-					</p>
-					<p
-						className={
-							dirty
-								? "text-xs font-medium text-warning-muted-foreground"
-								: "text-xs text-muted-foreground"
-						}
-						aria-live="polite"
-					>
-						{dirty ? "Unsaved changes" : "All changes saved"}
-					</p>
-				</div>
-				<div className="flex gap-2">
-					<Button
-						type="button"
-						size="sm"
-						variant="ghost"
-						onClick={cancelChanges}
-						disabled={!dirty || save.isPending}
-					>
-						Cancel changes
-					</Button>
-					<Button
-						type="submit"
-						form="auto-reload-form"
-						size="sm"
-						disabled={!dirty || !form.formValid || save.isPending}
-					>
-						{save.isPending ? (
-							<>
-								<Spinner data-icon="inline-start" /> Saving…
-							</>
-						) : (
-							"Save changes"
-						)}
-					</Button>
+				<p className="text-xs text-muted-foreground">
+					Auto-reload uses your saved card. A manual top-up saves one.
+				</p>
+				<div className="flex flex-wrap gap-2">
+					{onManagePaymentMethods ? (
+						<Button
+							type="button"
+							size="sm"
+							variant="ghost"
+							onClick={onManagePaymentMethods}
+							disabled={isManagePaymentMethodsPending || save.isPending}
+						>
+							{isManagePaymentMethodsPending ? (
+								<Spinner data-icon="inline-start" />
+							) : (
+								<CreditCard data-icon="inline-start" />
+							)}
+							Payment methods
+						</Button>
+					) : null}
+					{editing ? (
+						<div key="auto-reload-edit-actions" className="flex gap-2">
+							<Button
+								type="button"
+								size="sm"
+								variant="ghost"
+								onClick={cancelChanges}
+								disabled={save.isPending}
+							>
+								Cancel
+							</Button>
+							<Button
+								type="submit"
+								form="auto-reload-form"
+								size="sm"
+								disabled={!dirty || !form.formValid || save.isPending}
+							>
+								{save.isPending ? (
+									<>
+										<Spinner data-icon="inline-start" /> Saving…
+									</>
+								) : (
+									"Save"
+								)}
+							</Button>
+						</div>
+					) : (
+						<div key="auto-reload-summary-actions" className="flex gap-2">
+							{wallet.auto_reload_enabled ? (
+								<Button
+									type="button"
+									size="sm"
+									variant="ghost"
+									onClick={() => void runAction(turnOff)}
+									disabled={save.isPending}
+								>
+									{save.isPending ? (
+										<>
+											<Spinner data-icon="inline-start" /> Turning off…
+										</>
+									) : (
+										"Turn off"
+									)}
+								</Button>
+							) : null}
+							<Button
+								data-auto-reload-primary
+								type="button"
+								size="sm"
+								onClick={beginEditing}
+								disabled={save.isPending}
+							>
+								{wallet.auto_reload_enabled ? "Edit" : "Set up auto-reload"}
+							</Button>
+						</div>
+					)}
 				</div>
 			</CardFooter>
 		</Card>

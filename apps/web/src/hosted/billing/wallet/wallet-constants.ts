@@ -13,7 +13,7 @@ export const TOPUP_DEFAULT_CENTS = 2500;
 export const TOPUP_INCREMENT_CENTS = 100;
 export const TOPUP_PRESETS_CENTS = [1000, 2500, 5000, 10_000, 25_000];
 
-// Auto-reload amount bounds; threshold ≥ $1, cap ≥ 0 (0 = off).
+// Auto-reload amount bounds; threshold ≥ $1, and 0 means no monthly limit.
 export const AUTORELOAD_AMOUNT_MIN_CENTS = 500;
 export const AUTORELOAD_AMOUNT_MAX_CENTS = 50_000;
 export const AUTORELOAD_THRESHOLD_MIN_USD = 1;
@@ -31,11 +31,8 @@ export const AUTORELOAD_AMOUNT_RANGE_LABEL = amountRangeLabel(
 // Low-balance warning trips below $2.
 export const LOW_BALANCE_USD = 2;
 
-// Ledger: fetch a page at a time and cap the client-side window so a wallet
-// with thousands of entries can never render thousands of rows. "Show more"
-// steps up by a page until the cap, then the table states it's capped.
+// Ledger activity is fetched incrementally with an opaque server cursor.
 export const LEDGER_PAGE_SIZE = 50;
-export const LEDGER_MAX_ROWS = 100;
 
 export function isLowBalance(balanceUsd: string): boolean {
 	const balance = Number(balanceUsd);
