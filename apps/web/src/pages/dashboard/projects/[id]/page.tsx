@@ -1742,17 +1742,31 @@ function ProjectVaultActions({
 					{accountVaults.isLoading ? (
 						<Skeleton className="h-9 w-full" />
 					) : blockingAccountVaultsError ? (
-						<ApiErrorPanel
-							error={blockingAccountVaultsError}
-							onRetry={() => {
-								void accountVaults.refetch();
-							}}
-							title="Couldn't load account Vaults"
-						/>
+						<div className="space-y-4">
+							<ApiErrorPanel
+								error={blockingAccountVaultsError}
+								onRetry={() => {
+									void accountVaults.refetch();
+								}}
+								title="Couldn't load account Vaults"
+							/>
+							<DialogFooter>
+								<Button type="button" variant="ghost" onClick={() => setAttachOpen(false)}>
+									Cancel
+								</Button>
+							</DialogFooter>
+						</div>
 					) : attachableVaults.length === 0 ? (
-						<p className="text-sm text-muted-foreground">
-							All account-owned Vaults are already attached to this {contextLabel}.
-						</p>
+						<div className="space-y-4">
+							<p className="text-sm text-muted-foreground">
+								All account-owned Vaults are already attached to this {contextLabel}.
+							</p>
+							<DialogFooter>
+								<Button type="button" variant="ghost" onClick={() => setAttachOpen(false)}>
+									Cancel
+								</Button>
+							</DialogFooter>
+						</div>
 					) : (
 						<form
 							className="space-y-4"

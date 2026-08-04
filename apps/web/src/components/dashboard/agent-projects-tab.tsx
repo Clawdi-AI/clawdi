@@ -366,7 +366,7 @@ function AgentProjectsPanel({
 					<div className="flex flex-wrap justify-end gap-2">
 						<Button size="sm" disabled={!primary} onClick={() => setCreateOpen(true)}>
 							<Plus className="size-3.5" />
-							Create new
+							Create project
 						</Button>
 						<Button
 							size="sm"
@@ -378,7 +378,7 @@ function AgentProjectsPanel({
 							}}
 						>
 							<Link2 className="size-3.5" />
-							Link existing
+							Link project
 						</Button>
 					</div>
 				}
@@ -482,7 +482,7 @@ function AgentProjectsPanel({
 			>
 				<DialogContent className="sm:max-w-md" data-testid="agent-project-add-dialog">
 					<DialogHeader>
-						<DialogTitle>Link existing Project</DialogTitle>
+						<DialogTitle>Link project</DialogTitle>
 						<DialogDescription>
 							Link a Custom or shared Project. This does not install its Skills on the Agent.
 						</DialogDescription>
@@ -534,7 +534,7 @@ function AgentProjectsPanel({
 			>
 				<DialogContent className="sm:max-w-md">
 					<DialogHeader>
-						<DialogTitle>Create new Project</DialogTitle>
+						<DialogTitle>Create project</DialogTitle>
 						<DialogDescription>
 							Create a Project and link it to this Agent. Add Skills and Vaults to the Project
 							separately.
