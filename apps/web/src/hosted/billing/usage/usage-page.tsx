@@ -277,10 +277,7 @@ export function UsagePage({ agentTiles }: { agentTiles: readonly AgentTile[] }) 
 	const agentOptions = Array.isArray(allUsage.data?.by_agent) ? allUsage.data.by_agent : [];
 	const rangeSelection = {
 		days: rangeDays,
-		onChange: (days: UsageRangeDays) => {
-			setSelectedAgentId("all");
-			setRangeDays(days);
-		},
+		onChange: setRangeDays,
 	};
 	const filters = (
 		<UsageFilters
