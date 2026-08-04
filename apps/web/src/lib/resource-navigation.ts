@@ -22,7 +22,13 @@ import {
 
 export type ResourceNavigationScope =
 	| { kind: "library" }
-	| { kind: "agent"; agentId: string; agentQuery?: AgentRouteQuery };
+	| {
+			kind: "agent";
+			agentId: string;
+			agentQuery?: AgentRouteQuery;
+			/** Project selected before opening Project-scoped Agent resources. */
+			projectId?: string;
+	  };
 
 export type ResourceCollection = "projects" | "vaults" | "memories" | "connectors";
 type ProjectAssignedResource = Extract<ResourceCollection, "projects" | "vaults">;
@@ -39,8 +45,9 @@ export const LIBRARY_RESOURCE_SCOPE = {
 export function agentResourceScope(
 	agentId: string,
 	agentQuery?: AgentRouteQuery,
+	projectId?: string,
 ): ResourceNavigationScope {
-	return { kind: "agent", agentId, agentQuery };
+	return { kind: "agent", agentId, agentQuery, projectId };
 }
 
 export function resourceCollectionTarget(
@@ -53,14 +60,28 @@ export function resourceCollectionTarget(
 			label: getResourceCollectionLabel(resource),
 		};
 	}
+	if (resource === "vaults") {
+		return scope.projectId
+			? {
+					href: `${agentProjectDetailHref(
+						scope.agentId,
+						scope.projectId,
+						agentDeploymentRouteQuery(scope.agentQuery),
+					)}#vaults`,
+					label: "Agent Project",
+				}
+			: {
+					href: agentSectionHref(
+						scope.agentId,
+						"projects",
+						agentDeploymentRouteQuery(scope.agentQuery),
+					),
+					label: "Agent Projects",
+				};
+	}
 	return {
 		href: agentSectionHref(scope.agentId, resource, agentDeploymentRouteQuery(scope.agentQuery)),
-		label:
-			resource === "projects"
-				? "Agent Projects"
-				: resource === "vaults"
-					? "Agent Vaults"
-					: getResourceCollectionLabel(resource),
+		label: resource === "projects" ? "Agent Projects" : getResourceCollectionLabel(resource),
 	};
 }
 
@@ -98,12 +119,7 @@ export function vaultDetailHrefForScope(
 	vaultId?: string | null,
 ): string {
 	return scope.kind === "agent"
-		? agentVaultDetailHref(
-				scope.agentId,
-				vaultSlug,
-				vaultId,
-				agentDeploymentRouteQuery(scope.agentQuery),
-			)
+		? agentVaultDetailHref(scope.agentId, vaultSlug, vaultId, agentProjectResourceQuery(scope))
 		: vaultDetailHref(vaultSlug, vaultId);
 }
 
@@ -113,17 +129,21 @@ export function vaultDetailLink(
 	vaultId?: string | null,
 ) {
 	return scope.kind === "agent"
-		? agentVaultDetailLink(
-				scope.agentId,
-				vaultSlug,
-				vaultId,
-				agentDeploymentRouteQuery(scope.agentQuery),
-			)
+		? agentVaultDetailLink(scope.agentId, vaultSlug, vaultId, agentProjectResourceQuery(scope))
 		: linkOptions({
 				to: "/vaults/$slug",
 				params: { slug: vaultSlug },
 				search: vaultId ? { vault: vaultId } : undefined,
 			});
+}
+
+function agentProjectResourceQuery(
+	scope: Extract<ResourceNavigationScope, { kind: "agent" }>,
+): AgentRouteQuery {
+	return {
+		...agentDeploymentRouteQuery(scope.agentQuery),
+		project: scope.projectId,
+	};
 }
 
 export function memoryDetailHrefForScope(scope: ResourceNavigationScope, memoryId: string): string {

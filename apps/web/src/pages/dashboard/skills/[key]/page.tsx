@@ -49,7 +49,12 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { type AgentRouteSearch, agentSectionHref } from "@/lib/agent-routes";
+import {
+	type AgentRouteSearch,
+	agentDeploymentRouteQuery,
+	agentProjectDetailHref,
+	agentSectionHref,
+} from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
@@ -102,17 +107,21 @@ export function SkillDetailContent({
 	const queryClient = useQueryClient();
 
 	// Library routes keep their legacy resolver fallback for backwards
-	// compatibility. Agent routes must resolve bindings first and only call
-	// Project-explicit endpoints within the effective Agent Project scope.
+	// compatibility. Agent routes must resolve one explicit binding first and
+	// only call the endpoint for the Project selected on the Project hub.
 	const [projectIdParam] = useQueryState("project", parseAsString.withDefault(""));
 	const isAgentScope = Boolean(agentId);
-	const selectedProjectId =
-		isAgentScope && typeof routeSearch?.project === "string" ? routeSearch.project : projectIdParam;
+	const selectedProjectId = (
+		isAgentScope && typeof routeSearch?.project === "string" ? routeSearch.project : projectIdParam
+	).trim();
 	const skillListHref = agentId
-		? agentSectionHref(agentId, "skills", {
-				source: routeSearch?.source,
-				d: routeSearch?.d,
-			})
+		? selectedProjectId
+			? `${agentProjectDetailHref(
+					agentId,
+					selectedProjectId,
+					agentDeploymentRouteQuery(routeSearch),
+				)}#skills`
+			: agentSectionHref(agentId, "projects", agentDeploymentRouteQuery(routeSearch))
 		: projectResourceHref("skills");
 	const scopedBindings = useAgentProjectBindings(agentId, { enabled: isAgentScope });
 	const scopedProjectScope = useMemo<{ projectIds: string[]; error: unknown | null }>(() => {
@@ -138,7 +147,7 @@ export function SkillDetailContent({
 			scopedProjectAccess.kind === "bound" &&
 			scopedProjectAccess.projectIds.length > 0);
 	const projectionScope = agentId
-		? `agent:${JSON.stringify([agentId, ...scopedProjectScope.projectIds])}`
+		? `agent:${JSON.stringify([agentId, selectedProjectId])}`
 		: "cloud";
 
 	const skillQuery = useQuery({
@@ -188,14 +197,14 @@ export function SkillDetailContent({
 			: null
 		: null;
 	const agentAccessError = blockingBindingsError ?? scopedProjectScope.error;
-	const isUnboundAgentProject =
+	const agentProjectUnavailable =
 		isAgentScope &&
 		bindingsResolved &&
 		!scopedProjectScope.error &&
-		scopedProjectAccess.kind === "unbound";
+		scopedProjectAccess.kind !== "bound";
 	const skillIsLoading =
 		(isAgentScope && !bindingsResolved && !agentAccessError) ||
-		(!agentAccessError && !isUnboundAgentProject && skillQuery.isLoading);
+		(!agentAccessError && !agentProjectUnavailable && skillQuery.isLoading);
 
 	const agentEnvironmentId = agentId ?? skill?.environment_id ?? null;
 	const { data: skillAgent } = $api.useQuery(
@@ -400,10 +409,14 @@ export function SkillDetailContent({
 					}}
 					title="Couldn't load Agent Skill access"
 				/>
-			) : isUnboundAgentProject ? (
+			) : agentProjectUnavailable ? (
 				<DetailNotFound
-					title="Skill not available to this Agent"
-					message="The requested Project is not available through this Agent. Return to Agent Skills to choose an available Skill."
+					title="Project not available to this Agent"
+					message={
+						scopedProjectAccess.kind === "missing"
+							? "Choose an Agent Project before opening its Skills."
+							: "The requested Project is not available through this Agent. Choose an available Project first."
+					}
 				/>
 			) : viewState === "missing-key" ? (
 				<DetailNotFound title="Skill not found" message="The URL is missing a skill key." />

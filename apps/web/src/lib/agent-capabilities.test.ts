@@ -18,9 +18,7 @@ describe("agent overview registry", () => {
 		expect(hosted.map((group) => group.id)).toEqual(["resources", "operate"]);
 		expect(connected[0]?.modules.map((module) => module.id)).toEqual([
 			"projects",
-			"skills",
 			"memories",
-			"vaults",
 			"connectors",
 		]);
 		expect(hosted[0]?.modules).toEqual(connected[0]?.modules);

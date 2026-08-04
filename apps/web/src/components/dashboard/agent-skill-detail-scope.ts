@@ -1,18 +1,18 @@
 export type AgentSkillProjectAccess =
 	| { kind: "bound"; projectIds: string[] }
+	| { kind: "missing" }
 	| { kind: "unbound"; projectId: string };
 
 /**
- * Resolve a detail URL against the Agent's effective Project read order.
- * An explicit Project never expands that scope; an omitted Project searches
- * only the bound Projects, in their effective order.
+ * Resolve a detail URL against the Agent's effective Project access.
+ * Detail reads require one explicit Project and never aggregate candidates.
  */
 export function resolveAgentSkillProjectAccess(
 	effectiveProjectIds: readonly string[],
 	requestedProjectId: string,
 ): AgentSkillProjectAccess {
 	const projectIds = Array.from(new Set(effectiveProjectIds));
-	if (!requestedProjectId) return { kind: "bound", projectIds };
+	if (!requestedProjectId) return { kind: "missing" };
 	if (!projectIds.includes(requestedProjectId)) {
 		return { kind: "unbound", projectId: requestedProjectId };
 	}

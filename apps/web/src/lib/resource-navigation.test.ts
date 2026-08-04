@@ -58,12 +58,16 @@ describe("resource navigation scopes", () => {
 	});
 
 	it("builds nested Agent details and preserves hosted deployment identity", () => {
-		const scope = agentResourceScope("agent 1", {
-			source: "on-clawdi",
-			d: "deployment 1",
-			tab: "legacy",
-			project: "unrelated",
-		});
+		const scope = agentResourceScope(
+			"agent 1",
+			{
+				source: "on-clawdi",
+				d: "deployment 1",
+				tab: "legacy",
+				project: "unrelated",
+			},
+			"project 1",
+		);
 
 		expect(resourceCollectionTarget(scope, "projects")).toEqual({
 			href: "/agents/agent%201/project-access?source=on-clawdi&d=deployment%201",
@@ -73,8 +77,12 @@ describe("resource navigation scopes", () => {
 			"/agents/agent%201/project-access/project%201?source=on-clawdi&d=deployment%201",
 		);
 		expect(vaultDetailHrefForScope(scope, "prod keys", "vault/1")).toBe(
-			"/agents/agent%201/vaults/prod%20keys?source=on-clawdi&d=deployment%201&vault=vault%2F1",
+			"/agents/agent%201/vaults/prod%20keys?source=on-clawdi&d=deployment%201&project=project%201&vault=vault%2F1",
 		);
+		expect(resourceCollectionTarget(scope, "vaults")).toEqual({
+			href: "/agents/agent%201/project-access/project%201?source=on-clawdi&d=deployment%201#vaults",
+			label: "Agent Project",
+		});
 		expect(resourceCollectionTarget(scope, "memories")).toEqual({
 			href: "/agents/agent%201/memories?source=on-clawdi&d=deployment%201",
 			label: "Memories",
@@ -97,7 +105,12 @@ describe("resource navigation scopes", () => {
 		expect(vaultDetailLink(scope, "prod keys", "vault/1")).toMatchObject({
 			to: "/agents/$id/vaults/$slug",
 			params: { id: "agent 1", slug: "prod keys" },
-			search: { source: "on-clawdi", d: "deployment 1", vault: "vault/1" },
+			search: {
+				source: "on-clawdi",
+				d: "deployment 1",
+				project: "project 1",
+				vault: "vault/1",
+			},
 		});
 		expect(memoryDetailLink(scope, "memory 1")).toMatchObject({
 			to: "/agents/$id/memories/$memoryId",

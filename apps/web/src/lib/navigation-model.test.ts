@@ -101,7 +101,7 @@ describe("sidebar navigation model", () => {
 		]);
 	});
 
-	test("keeps all Agent resources in one navigation group", () => {
+	test("keeps only directly navigable Agent resources in one navigation group", () => {
 		const connectedGroups = agentNavigationGroups("connected");
 		expect(groupShape(connectedGroups)).toEqual([
 			{
@@ -119,9 +119,7 @@ describe("sidebar navigation model", () => {
 				separated: false,
 				items: [
 					{ id: "projects", label: "Projects" },
-					{ id: "skills", label: "Skills" },
 					{ id: "memories", label: "Memories" },
-					{ id: "vaults", label: "Vaults" },
 					{ id: "connectors", label: "Connectors" },
 				],
 			},
@@ -151,9 +149,7 @@ describe("sidebar navigation model", () => {
 				separated: false,
 				items: [
 					{ id: "projects", label: "Projects" },
-					{ id: "skills", label: "Skills" },
 					{ id: "memories", label: "Memories" },
-					{ id: "vaults", label: "Vaults" },
 					{ id: "connectors", label: "Connectors" },
 				],
 			},
@@ -181,9 +177,7 @@ describe("sidebar navigation model", () => {
 			"overview",
 			"sessions",
 			"projects",
-			"skills",
 			"memories",
-			"vaults",
 			"connectors",
 			"settings",
 		]);
@@ -191,9 +185,7 @@ describe("sidebar navigation model", () => {
 			"overview",
 			"sessions",
 			"projects",
-			"skills",
 			"memories",
-			"vaults",
 			"connectors",
 			"console",
 			"terminal",
@@ -241,7 +233,7 @@ describe("sidebar navigation model", () => {
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.settings.icon).toBe(Settings);
 	});
 
-	test("shares resource panels rather than duplicating agent implementations", () => {
+	test("shares direct resource panels and keeps Project resources on the Project hub", () => {
 		const connectedDetail = readFileSync(
 			new URL("../components/dashboard/connected-agent-detail.tsx", import.meta.url),
 			"utf8",
@@ -273,7 +265,8 @@ describe("sidebar navigation model", () => {
 		for (const source of [connectedDetail, hostedDetail]) {
 			expect(source).toContain("AGENT_SECTION_NAVIGATION_ITEMS[activeTab]");
 			expect(source).toContain("<AgentProjectsTab");
-			expect(source).toContain("<AgentVaultsTab");
+			expect(source).not.toContain("<AgentSkillsTab");
+			expect(source).not.toContain("<AgentVaultsTab");
 			expect(source).toContain("<ConnectorsSurface embedded");
 			expect(source).toContain("<MemoriesSurface");
 			expect(source).not.toContain("@/pages/dashboard");

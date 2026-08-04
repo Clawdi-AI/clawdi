@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { AgentProjectResourceCanonicalizer } from "@/components/dashboard/agent-project-resource-canonicalizer";
 import { routeHeadTitle } from "@/lib/document-title";
-import { AgentDetailClient } from "@/pages/dashboard/agents/agent-detail-client";
 
 // Explicit index route for the agent Skills tab. Without it the bare
 // `/agents/<id>/skills` URL falls through to the sibling splat route
@@ -16,5 +16,5 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id/skills/"
 function AgentSkillsRoute() {
 	const { id } = Route.useParams();
 	const search = Route.useSearch();
-	return <AgentDetailClient environmentId={id} section="skills" routeSearch={search} />;
+	return <AgentProjectResourceCanonicalizer agentId={id} resource="skills" routeSearch={search} />;
 }

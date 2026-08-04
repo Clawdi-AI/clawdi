@@ -103,19 +103,25 @@ export default function VaultDetailPage({
 	const backTarget = resourceCollectionTarget(scope, "vaults");
 	const managementTarget = libraryManagementTarget("vaults", { vaultSlug: slug, vaultId });
 	const isAgentScope = scope.kind === "agent";
+	const requestedProjectId =
+		scope.kind === "agent" && scope.projectId?.trim() ? scope.projectId.trim() : null;
 	const scopedBindings = useAgentProjectBindings(scope.kind === "agent" ? scope.agentId : "", {
-		enabled: scope.kind === "agent",
+		enabled: scope.kind === "agent" && Boolean(requestedProjectId),
 	});
 	const scopedProjectIds = useMemo(
 		() => effectiveAgentProjectIds(scopedBindings.data ?? []),
 		[scopedBindings.data],
 	);
 	const scopedProjectIdSet = useMemo(() => new Set(scopedProjectIds), [scopedProjectIds]);
+	const scopedBindingsResolved = !isAgentScope || scopedBindings.data !== undefined;
+	const requestedProjectIsBound = Boolean(
+		requestedProjectId && scopedProjectIdSet.has(requestedProjectId),
+	);
 
 	// UUID links use an exact authorized metadata lookup. Slug-only deep links
 	// remain a compatibility fallback for bookmarks created before stable IDs.
 	const vaultDetail = useQuery({
-		queryKey: ["vault-detail", slug, vaultId],
+		queryKey: ["vault-detail", slug, vaultId, requestedProjectId],
 		queryFn: async () =>
 			vaultId
 				? unwrap(
@@ -124,6 +130,9 @@ export default function VaultDetailPage({
 						}),
 					)
 				: unwrap(await api.GET("/v1/vault", { params: { query: { q: slug, page_size: 200 } } })),
+		enabled:
+			!isAgentScope ||
+			(Boolean(requestedProjectId) && scopedBindingsResolved && requestedProjectIsBound),
 	});
 	const vault: VaultSummary | null = vaultId
 		? ((vaultDetail.data as VaultSummary | undefined) ?? null)
@@ -132,7 +141,11 @@ export default function VaultDetailPage({
 			) ?? null);
 	const isOwner = vault?.is_owner !== false;
 	const anyProjectId = isAgentScope
-		? vault?.project_ids?.find((projectId) => scopedProjectIdSet.has(projectId))
+		? requestedProjectId &&
+			requestedProjectIsBound &&
+			vault?.project_ids?.includes(requestedProjectId)
+			? requestedProjectId
+			: undefined
 		: vault?.project_ids?.[0];
 
 	const projects = $api.useQuery(
@@ -179,6 +192,8 @@ export default function VaultDetailPage({
 			? scopedBindings.error
 			: null
 		: null;
+	const requestedProjectUnavailable =
+		isAgentScope && (!requestedProjectId || (scopedBindingsResolved && !requestedProjectIsBound));
 
 	// Curation toolkit for grab-bag vaults (the default vault holds
 	// hundreds of keys): search by name, batch-select, then copy/move
@@ -314,7 +329,10 @@ export default function VaultDetailPage({
 
 	useSetBreadcrumbTitle(vault?.name ?? null);
 
-	if (vaultDetail.isLoading || (isAgentScope && scopedBindings.isLoading)) {
+	if (
+		vaultDetail.isLoading ||
+		(isAgentScope && Boolean(requestedProjectId) && scopedBindings.isLoading)
+	) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<Skeleton className="h-8 w-20" />
@@ -365,6 +383,31 @@ export default function VaultDetailPage({
 		);
 	}
 
+	if (requestedProjectUnavailable) {
+		return (
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+				<Button
+					render={<Link to={backTarget.href} />}
+					nativeButton={false}
+					variant="ghost"
+					size="sm"
+					className="w-fit"
+				>
+					<ArrowLeft className="mr-1.5 size-4" />
+					{backTarget.label}
+				</Button>
+				<DetailNotFound
+					title="Project not available to this Agent"
+					message={
+						requestedProjectId
+							? "The requested Project is not available through this Agent. Choose an available Project first."
+							: "Choose an Agent Project before opening its Vaults."
+					}
+				/>
+			</div>
+		);
+	}
+
 	if (!vault) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
@@ -387,8 +430,7 @@ export default function VaultDetailPage({
 	}
 
 	const isAvailableToAgent =
-		!isAgentScope ||
-		(vault.project_ids ?? []).some((projectId) => scopedProjectIdSet.has(projectId));
+		!isAgentScope || Boolean(requestedProjectId && vault.project_ids?.includes(requestedProjectId));
 	if (!isAvailableToAgent) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>

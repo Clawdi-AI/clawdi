@@ -491,6 +491,7 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 
 type DashboardApiStubOptions = {
 	accountResourceRequests?: string[];
+	projectResourceRequests?: string[];
 	sessionsPage?: unknown;
 	sessionRequests?: string[];
 	connectorConnections?: readonly unknown[];
@@ -525,6 +526,7 @@ type DashboardApiStubOptions = {
 	skillRequests?: string[];
 	skillsByProjectId?: Readonly<Record<string, readonly unknown[]>>;
 	vaultRequests?: string[];
+	vaultItems?: readonly (typeof vaults.items)[number][];
 };
 
 async function stubDashboardApi(
@@ -540,6 +542,15 @@ async function stubDashboardApi(
 			url.pathname.startsWith("/v1/connectors/")
 		) {
 			options.accountResourceRequests?.push(`${route.request().method()} ${url.pathname}`);
+		}
+		if (
+			/^\/v1\/agents\/[^/]+\/project-bindings$/.test(url.pathname) ||
+			url.pathname === "/v1/projects" ||
+			url.pathname === "/v1/skills" ||
+			url.pathname.startsWith("/v1/vault") ||
+			/^\/v1\/projects\/[^/]+\/skills\//.test(url.pathname)
+		) {
+			options.projectResourceRequests?.push(`${route.request().method()} ${url.pathname}`);
 		}
 		if (url.pathname === "/v1/agents/order" && route.request().method() === "PATCH") {
 			agentOrderRequests.push(route.request().postData() ?? "");
@@ -625,12 +636,17 @@ async function stubDashboardApi(
 			await fulfillJson(route, { detail: "Skill not found" }, 404);
 			return;
 		}
+		if (url.pathname === "/v1/vault" && route.request().method() === "POST") {
+			await fulfillJson(route, {});
+			return;
+		}
 		if (url.pathname === "/v1/vault") {
 			options.vaultRequests?.push(route.request().url());
 			const projectId = url.searchParams.get("project_id");
+			const availableVaults = options.vaultItems ?? vaults.items;
 			const items = projectId
-				? vaults.items.filter((vault) => vault.project_ids.includes(projectId))
-				: vaults.items;
+				? availableVaults.filter((vault) => vault.project_ids.includes(projectId))
+				: availableVaults;
 			await fulfillJson(route, {
 				...vaults,
 				items,
@@ -642,7 +658,9 @@ async function stubDashboardApi(
 		}
 		if (url.pathname === "/v1/vault/detail") {
 			const vaultId = url.searchParams.get("vault_id");
-			const vault = vaults.items.find((candidate) => candidate.id === vaultId);
+			const vault = (options.vaultItems ?? vaults.items).find(
+				(candidate) => candidate.id === vaultId,
+			);
 			await fulfillJson(route, vault ?? { detail: "Vault not found" }, vault ? 200 : 404);
 			return;
 		}
@@ -844,7 +862,7 @@ test("Console and connected agents use the scoped navigation grammar", async ({ 
 		{ label: null, items: ["Overview", "Sessions"] },
 		{
 			label: "Resources",
-			items: ["Projects", "Skills", "Memories", "Vaults", "Connectors"],
+			items: ["Projects", "Memories", "Connectors"],
 		},
 		{ label: null, items: ["Settings"] },
 	]);
@@ -852,8 +870,12 @@ test("Console and connected agents use the scoped navigation grammar", async ({ 
 
 test("connected agent overview uses the modular hierarchy", async ({ page }, testInfo) => {
 	const projectRequests: string[] = [];
+	const skillRequests: string[] = [];
+	const vaultRequests: string[] = [];
 	await stubDashboardApi(page, [], {
 		projectRequests,
+		skillRequests,
+		vaultRequests,
 		sessionsPage: overviewSessions,
 		connectorConnections: [
 			{ id: "conn-github", app_name: "github", status: "ACTIVE" },
@@ -900,19 +922,19 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(page.getByRole("heading", { name: "Recent sessions", exact: true })).toBeVisible({
 		timeout: 12_000,
 	});
-	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(5);
+	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(3);
 	await expect(
 		overview.locator('[data-overview-module] [data-slot="card-description"]'),
-	).toHaveCount(5);
+	).toHaveCount(3);
 	expect(
 		await overview
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) =>
 				cards.map((card) => card.querySelectorAll(':scope > [data-slot="card-content"]').length),
 			),
-	).toEqual([0, 0, 0, 0, 0]);
+	).toEqual([0, 0, 0]);
 	await expect(overview.locator('[data-overview-module] > [data-slot="card-header"]')).toHaveCount(
-		5,
+		3,
 	);
 	await expect(overview.locator("[data-overview-module-error]")).toHaveCount(0);
 	await expect(
@@ -926,7 +948,7 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		await overview
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
+	).toEqual(["projects", "memories", "connectors"]);
 	expect(
 		await page
 			.locator("#connected-recent-sessions, #agent-overview-resources")
@@ -936,7 +958,10 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(overview.locator('[data-overview-module="projects"]')).not.toContainText(
 		"Smoke Project",
 	);
+	await expect(overview.getByTestId("agent-project-grid")).toHaveCount(0);
 	expect(projectRequests).toEqual([]);
+	expect(skillRequests).toEqual([]);
+	expect(vaultRequests).toEqual([]);
 	await expect(page.locator('[data-overview-status="live-sync"]')).toContainText(
 		"smoke-machine.local",
 	);
@@ -1010,11 +1035,10 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 				((recentSessionsBox?.y ?? 0) + (recentSessionsBox?.height ?? 0)),
 		),
 	).toBeLessThanOrEqual(2);
-	await expect(overview.locator('[data-overview-module="skills"]')).toContainText("1 skill");
-	await expect(overview.locator('[data-overview-module="skills"]')).not.toContainText("Research");
 	await expect(overview.locator('[data-slot="badge"]')).toHaveCount(0);
 	await expect(overview.getByTestId("overview-connector-rail")).toHaveCount(0);
-	await expect(overview.locator('[data-overview-module="vaults"]')).toBeVisible();
+	await expect(overview.locator('[data-overview-module="skills"]')).toHaveCount(0);
+	await expect(overview.locator('[data-overview-module="vaults"]')).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="memories"]')).toContainText("1 memory");
 	await expect(overview.locator('[data-overview-module="connectors"]')).toContainText(
 		"2 connected",
@@ -1023,16 +1047,18 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 	await expect(sidebar.getByText("Paused", { exact: true })).toBeVisible();
 	await expect(sidebar.getByText(/last seen/i)).toBeVisible();
 	await expectInlineSidebarStatus(sidebar, "connected");
-	for (const section of ["Projects", "Skills", "Vaults", "Memories", "Connectors"]) {
+	for (const section of ["Projects", "Memories", "Connectors"]) {
 		await expect(sidebar.getByRole("link", { name: section, exact: true })).toBeVisible();
 	}
+	await expect(sidebar.getByRole("link", { name: "Skills", exact: true })).toHaveCount(0);
+	await expect(sidebar.getByRole("link", { name: "Vaults", exact: true })).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="agent-interface"]')).toHaveCount(0);
 	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
 	const resourceGrid = overview.locator('[data-overview-layout="three-column"]');
 	const resourceGeometry = await resourceGrid
 		.locator("[data-overview-module]")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(resourceGeometry).toHaveLength(5);
+	expect(resourceGeometry).toHaveLength(3);
 	expect(
 		Math.max(...resourceGeometry.map((box) => box.width)) -
 			Math.min(...resourceGeometry.map((box) => box.width)),
@@ -1054,15 +1080,15 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		await resourceGrid
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "skills", "memories", "vaults", "connectors"]);
-	await expectOverviewResourceGeometry(resourceGrid, [3, 2]);
+	).toEqual(["projects", "memories", "connectors"]);
+	await expectOverviewResourceGeometry(resourceGrid, [3]);
 	await expectAgentOverviewTypography(page);
 	await page.setViewportSize({ width: 1024, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [2, 2, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [2, 1]);
 	await page.setViewportSize({ width: 768, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1]);
 	await page.setViewportSize({ width: 390, height: 844 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1]);
 	const mobileSessionBoxes = await recentSessions
 		.locator("article")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
@@ -1349,12 +1375,16 @@ test("connected Agent Connectors keeps established UI through nested list and de
 
 test("nested account resources fail closed when the Agent does not exist", async ({ page }) => {
 	const accountResourceRequests: string[] = [];
-	await stubDashboardApi(page, [], { accountResourceRequests });
+	const projectResourceRequests: string[] = [];
+	await stubDashboardApi(page, [], { accountResourceRequests, projectResourceRequests });
 	const main = page.locator("main");
 
 	for (const path of [
 		"/agents/does-not-exist/memories/memory-smoke-1",
 		"/agents/does-not-exist/connectors/gmail",
+		"/agents/does-not-exist/project-access/project-smoke",
+		"/agents/does-not-exist/skills/scoped-skill?project=project-smoke",
+		"/agents/does-not-exist/vaults/scoped-vault?project=project-smoke&vault=vault-scoped",
 	]) {
 		await page.goto(path);
 		await expect(main.getByText("Agent not found", { exact: true })).toBeVisible();
@@ -1367,6 +1397,7 @@ test("nested account resources fail closed when the Agent does not exist", async
 	}
 
 	expect(accountResourceRequests).toEqual([]);
+	expect(projectResourceRequests).toEqual([]);
 });
 
 test("connected all-agent detail loading, not-found, and error states keep Agent scope", async ({
@@ -1429,9 +1460,10 @@ test("connected all-agent detail loading, not-found, and error states keep Agent
 	await expect(page).toHaveURL("/agents/agent-smoke-1/connectors/error-connector");
 });
 
-test("connected agent resource tabs reuse scoped Projects, account Connectors, and effective Vaults", async ({
+test("connected agent resources select Projects before scoped Skills and Vaults", async ({
 	page,
 }, testInfo) => {
+	test.setTimeout(60_000);
 	const vaultRequests: string[] = [];
 	const longContextProjectName =
 		"Automation Library for exceptionally long production workflow names across several teams";
@@ -1487,10 +1519,58 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 			owner_handle: "dev-user",
 		},
 	];
+	const projectSkill = (projectId: string, skillKey: string, name: string) => ({
+		id: `${projectId}-${skillKey}`,
+		skill_key: skillKey,
+		name,
+		description: `${name} instructions`,
+		version: 1,
+		source: "cloud",
+		authority: "cloud",
+		source_repo: null,
+		agent_types: ["codex"],
+		file_count: 1,
+		content_hash: "a".repeat(64),
+		is_active: true,
+		created_at: now.toISOString(),
+		updated_at: now.toISOString(),
+		project_id: projectId,
+		project_name: projectId === "project-smoke" ? "Smoke Project" : "Team Knowledge",
+		project_kind: projectId === "project-smoke" ? "environment" : "workspace",
+	});
+	const projectAccessVaults = [
+		vaults.items[0],
+		{
+			...vaults.items[0],
+			id: "vault-team",
+			slug: "team-vault",
+			name: "Team Vault",
+			project_ids: ["project-context-first"],
+		},
+		{
+			...vaults.items[0],
+			id: "vault-shared",
+			slug: "shared-vault",
+			name: "Shared Vault",
+			project_ids: ["project-smoke", "project-context-first"],
+		},
+		vaults.items[1],
+	];
 	await stubDashboardApi(page, [], {
 		projectBindings: projectAccessBindings,
 		projects: projectAccessProjects,
+		skillsByProjectId: {
+			"project-smoke": [
+				projectSkill("project-smoke", "primary-only", "Primary-only Skill"),
+				projectSkill("project-smoke", "shared-workflow", "Shared Workflow"),
+			],
+			"project-context-first": [
+				projectSkill("project-context-first", "team-only", "Team-only Skill"),
+				projectSkill("project-context-first", "shared-workflow", "Shared Workflow"),
+			],
+		},
 		vaultRequests,
+		vaultItems: projectAccessVaults,
 	});
 
 	await page.setViewportSize({ width: 1280, height: 900 });
@@ -1647,9 +1727,39 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 	await expect(main.getByRole("button", { name: /Add to agent/i }).first()).toBeVisible();
 	await expect(main.getByRole("button", { name: /Install skill/i })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /New vault/i })).toBeVisible();
+	await expect(main.getByText("Primary-only Skill", { exact: true })).toBeVisible();
+	await expect(main.getByText("Shared Workflow", { exact: true })).toBeVisible();
+	await expect(main.getByText("Team-only Skill", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("Scoped Vault", { exact: true })).toBeVisible();
+	await expect(main.getByText("Shared Vault", { exact: true })).toBeVisible();
+	await expect(main.getByText("Team Vault", { exact: true })).toHaveCount(0);
+	await expect(main.getByRole("link", { name: "Open Primary-only Skill" })).toHaveAttribute(
+		"href",
+		"/agents/agent-smoke-1/skills/primary-only?project=project-smoke",
+	);
 	await expect(main.getByRole("link", { name: "Open vault Scoped Vault" })).toHaveAttribute(
 		"href",
-		"/agents/agent-smoke-1/vaults/scoped-vault?vault=vault-scoped",
+		"/agents/agent-smoke-1/vaults/scoped-vault?project=project-smoke&vault=vault-scoped",
+	);
+	await main.screenshot({ path: testInfo.outputPath("connected-agent-project-hub-mobile.png") });
+	await page.setViewportSize({ width: 1280, height: 1200 });
+	await main.screenshot({ path: testInfo.outputPath("connected-agent-project-hub-desktop.png") });
+
+	await page.goto("/agents/agent-smoke-1/project-access/project-context-first");
+	await expect(main.getByRole("heading", { name: "Team Knowledge", level: 1 })).toBeVisible();
+	await expect(main.getByText("Team-only Skill", { exact: true })).toBeVisible();
+	await expect(main.getByText("Shared Workflow", { exact: true })).toBeVisible();
+	await expect(main.getByText("Primary-only Skill", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("Team Vault", { exact: true })).toBeVisible();
+	await expect(main.getByText("Shared Vault", { exact: true })).toBeVisible();
+	await expect(main.getByText("Scoped Vault", { exact: true })).toHaveCount(0);
+	await expect(main.getByRole("link", { name: "Open Team-only Skill" })).toHaveAttribute(
+		"href",
+		"/agents/agent-smoke-1/skills/team-only?project=project-context-first",
+	);
+	await expect(main.getByRole("link", { name: "Open vault Team Vault" })).toHaveAttribute(
+		"href",
+		"/agents/agent-smoke-1/vaults/team-vault?project=project-context-first&vault=vault-team",
 	);
 
 	await page.setViewportSize({ width: 1280, height: 900 });
@@ -1683,47 +1793,62 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 	).toBe(true);
 	await main.screenshot({ path: testInfo.outputPath("console-projects-mobile.png") });
 
+	// Isolate the compatibility-route phase from Console-level Project queries.
+	vaultRequests.length = 0;
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.goto("/agents/agent-smoke-1/skills");
+	await expect(page).toHaveURL("/agents/agent-smoke-1/project-access");
+	await expect(main.getByRole("heading", { name: "Projects", level: 1 })).toBeVisible();
+	await page.goto("/agents/agent-smoke-1/skills?project=project-context-first");
+	await expect(page).toHaveURL("/agents/agent-smoke-1/project-access/project-context-first#skills");
+	await expect(main.getByRole("heading", { name: "Team Knowledge", level: 1 })).toBeVisible();
+	await expect(main.getByText("Team-only Skill", { exact: true })).toBeVisible();
+	await expect(main.getByText("Primary-only Skill", { exact: true })).toHaveCount(0);
+
 	await page.goto("/agents/agent-smoke-1/vaults");
-	await expect(main.getByRole("heading", { name: "Vaults", level: 1 })).toBeVisible();
-	await expect(page).toHaveTitle("Vaults · Clawdi");
-	await expect(
-		main.getByText("Vaults available through this agent's Projects.", { exact: true }),
-	).toHaveCount(1);
-	await expect(main.getByText("Vaults appear here through", { exact: false })).toHaveCount(0);
-	await expect(main.getByText("Scoped Vault", { exact: true })).toBeVisible();
-	await expect(main.getByText("Unrelated Vault", { exact: true })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: /New vault/i })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: /Add keys/i })).toHaveCount(0);
+	await expect(page).toHaveURL("/agents/agent-smoke-1/project-access");
+	await page.goto("/agents/agent-smoke-1/vaults?project=project-unrelated");
+	await expect(page).toHaveURL("/agents/agent-smoke-1/project-access");
+	await page.goto("/agents/agent-smoke-1/vaults?project=project-smoke");
+	await expect(page).toHaveURL("/agents/agent-smoke-1/project-access/project-smoke#vaults");
+	await expect(main.getByRole("heading", { name: "Smoke Project", level: 1 })).toBeVisible();
 	const scopedVaultLink = main.getByRole("link", { name: "Open vault Scoped Vault" });
-	await expect(scopedVaultLink).toHaveAttribute(
-		"href",
-		"/agents/agent-smoke-1/vaults/scoped-vault?vault=vault-scoped",
-	);
 	await scopedVaultLink.click();
 	await expect(page).toHaveURL(
-		/\/agents\/agent-smoke-1\/vaults\/scoped-vault\?vault=vault-scoped$/,
+		/\/agents\/agent-smoke-1\/vaults\/scoped-vault\?project=project-smoke&vault=vault-scoped$/,
 	);
 	await expect(main.getByRole("heading", { name: "Scoped Vault", level: 1 })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Agent Vaults" })).toHaveAttribute(
+	await expect(main.getByRole("button", { name: "Agent Project" })).toHaveAttribute(
 		"href",
-		"/agents/agent-smoke-1/vaults",
+		"/agents/agent-smoke-1/project-access/project-smoke#vaults",
 	);
+	await expect(
+		main
+			.getByRole("navigation", { name: "breadcrumb" })
+			.getByRole("link", { name: "Vaults", exact: true }),
+	).toHaveAttribute("href", "/agents/agent-smoke-1/project-access/project-smoke#vaults");
 	await expect(main.getByRole("button", { name: "Manage in resource library" })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /^Delete$/ })).toBeVisible();
-	await expect(main.getByRole("button", { name: /Add keys/i })).toBeVisible();
+	await main.getByRole("button", { name: /Add keys/i }).click();
+	await page.getByPlaceholder(/OPENAI_API_KEY/).fill("SCOPED_ADDED_KEY=secret-value");
+	await page.getByRole("button", { name: "Save 1" }).click();
+	await expect(page).toHaveURL(
+		"/agents/agent-smoke-1/vaults/scoped-vault?project=project-smoke&vault=vault-scoped",
+	);
 	await expect(main.getByRole("link", { name: "Smoke Project" })).toHaveAttribute(
 		"href",
 		"/agents/agent-smoke-1/project-access/project-smoke",
 	);
-	const vaultRequest = vaultRequests[0];
-	if (!vaultRequest) throw new Error("Agent Vault inventory was not requested");
-	const vaultRequestUrl = new URL(vaultRequest);
-	expect(vaultRequestUrl.searchParams.get("project_id")).toBe("project-smoke");
-	expect(vaultRequestUrl.searchParams.get("page")).toBe("1");
-	expect(vaultRequestUrl.searchParams.get("page_size")).toBe("200");
+	const requestedVaultProjectIds = vaultRequests.map((request) =>
+		new URL(request).searchParams.get("project_id"),
+	);
+	expect(requestedVaultProjectIds).toContain("project-smoke");
+	expect(requestedVaultProjectIds).toContain("project-context-first");
+	expect(requestedVaultProjectIds).not.toContain(null);
+	expect(requestedVaultProjectIds).not.toContain("project-unrelated");
 });
 
-test("agent Vaults wait for effective Project bindings before requesting inventory", async ({
+test("legacy Agent Vaults validate explicit Project access before opening its hub", async ({
 	page,
 }) => {
 	let releaseBindings: (() => void) | undefined;
@@ -1733,13 +1858,13 @@ test("agent Vaults wait for effective Project bindings before requesting invento
 	const vaultRequests: string[] = [];
 	await stubDashboardApi(page, [], { projectBindingsGate, vaultRequests });
 
-	await page.goto("/agents/agent-smoke-1/vaults");
+	await page.goto("/agents/agent-smoke-1/vaults?project=project-smoke");
 	const main = page.locator("main");
-	await expect(main.getByRole("heading", { name: "Vaults", level: 1 })).toBeVisible();
-	await expect(main.getByTestId("agent-vaults-loading")).toBeVisible();
+	await expect(main.getByRole("button", { name: "Back to Agent Projects" })).toBeVisible();
 	expect(vaultRequests).toEqual([]);
 	if (!releaseBindings) throw new Error("Project binding gate was not initialized");
 	releaseBindings();
+	await expect(page).toHaveURL("/agents/agent-smoke-1/project-access/project-smoke#vaults");
 	await expect(main.getByText("Scoped Vault", { exact: true })).toBeVisible();
 	expect(vaultRequests).toHaveLength(1);
 	const vaultRequest = vaultRequests[0];
@@ -1747,46 +1872,21 @@ test("agent Vaults wait for effective Project bindings before requesting invento
 	expect(new URL(vaultRequest).searchParams.get("project_id")).toBe("project-smoke");
 });
 
-test("agent Skills wait for effective Project bindings and fail closed on binding errors", async ({
+test("legacy Agent Skills fail closed on Project binding errors without reading Skills", async ({
 	page,
 }) => {
-	let releaseBindings: (() => void) | undefined;
-	const projectBindingsGate = new Promise<void>((resolve) => {
-		releaseBindings = resolve;
-	});
 	const skillRequests: string[] = [];
-	await stubDashboardApi(page, [], { projectBindingsGate, skillRequests });
+	await stubDashboardApi(page, [], {
+		projectBindingsError: { status: 503, detail: "bindings unavailable" },
+		skillRequests,
+	});
 
-	await page.goto("/agents/agent-smoke-1/skills");
+	await page.goto("/agents/agent-smoke-1/skills?project=project-smoke");
 	const main = page.locator("main");
-	await expect(main.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible();
-	await expect(main.getByTestId("agent-skills-inventory")).toBeVisible();
-	await expect(
-		main.getByText("Skills available through this agent's Projects.", { exact: true }),
-	).toHaveCount(1);
-	await expect(main.getByText("Skills appear here through", { exact: false })).toHaveCount(0);
+	await expect(main.getByText("Couldn't load Agent Project access", { exact: true })).toBeVisible({
+		timeout: 15_000,
+	});
 	expect(skillRequests).toEqual([]);
-	if (!releaseBindings) throw new Error("Project binding gate was not initialized");
-	releaseBindings();
-	await expect(main.getByText("No Skills yet.", { exact: true })).toBeVisible();
-	await expect(main.getByText("No Skills are available through", { exact: false })).toHaveCount(0);
-	expect(skillRequests).toHaveLength(1);
-
-	const errorPage = await page.context().newPage();
-	const errorSkillRequests: string[] = [];
-	try {
-		await stubDashboardApi(errorPage, [], {
-			projectBindingsError: { status: 503, detail: "bindings unavailable" },
-			skillRequests: errorSkillRequests,
-		});
-		await errorPage.goto("/agents/agent-smoke-1/skills");
-		await expect(
-			errorPage.locator("main").getByText("Couldn't load agent Skills", { exact: true }),
-		).toBeVisible({ timeout: 15_000 });
-		expect(errorSkillRequests).toEqual([]);
-	} finally {
-		await errorPage.close();
-	}
 });
 
 test("agent Skill details resolve only through effective Projects", async ({ page }) => {
@@ -1873,7 +1973,7 @@ test("agent Skill details resolve only through effective Projects", async ({ pag
 		`/agents/agent-smoke-1/skills/scoped-skill?project=project-smoke&${deploymentQuery}`,
 	);
 	const main = page.locator("main");
-	await expect(main.getByTestId("agent-skill-detail-loading")).toBeVisible();
+	await expect(main.getByRole("button", { name: "Back to Agent Projects" })).toBeVisible();
 	expect(skillDetailRequests).toEqual([]);
 	if (!releaseBindings) throw new Error("Project binding gate was not initialized");
 	releaseBindings();
@@ -1886,7 +1986,7 @@ test("agent Skill details resolve only through effective Projects", async ({ pag
 		.getByRole("link", { name: "Skills", exact: true });
 	await expect(agentSkillsLink).toHaveAttribute(
 		"href",
-		`/agents/agent-smoke-1/skills?${deploymentQuery}`,
+		`/agents/agent-smoke-1/project-access/project-smoke?${deploymentQuery}#skills`,
 	);
 	expect(
 		skillDetailRequests.some(
@@ -1899,24 +1999,36 @@ test("agent Skill details resolve only through effective Projects", async ({ pag
 	await page.goto(
 		`/agents/agent-smoke-1/skills/scoped-skill?project=project-unrelated&${deploymentQuery}`,
 	);
-	await expect(main.getByText("Skill not available to this Agent", { exact: true })).toBeVisible();
+	await expect(
+		main.getByText("Project not available to this Agent", { exact: true }),
+	).toBeVisible();
 	await expect(main.getByRole("heading", { name: "Scoped Skill", level: 1 })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Agent Skills" })).toHaveCount(0);
 	expect(skillDetailRequests).toHaveLength(requestsBeforeTamperedProject);
 	expect(legacySkillDetailRequests).toEqual([]);
 
-	await page.goto(`/agents/agent-smoke-1/skills/context-only?${deploymentQuery}`);
+	await page.goto(
+		`/agents/agent-smoke-1/skills/context-only?project=${contextProjectId}&${deploymentQuery}`,
+	);
 	await expect(main.getByRole("heading", { name: "Context-only Skill", level: 1 })).toBeVisible();
 	const contextRequests = skillDetailRequests.filter((request) =>
 		new URL(request).pathname.endsWith("/skills/context-only"),
 	);
 	expect(contextRequests.map((request) => new URL(request).pathname)).toEqual([
-		"/v1/projects/project-smoke/skills/context-only",
 		`/v1/projects/${contextProjectId}/skills/context-only`,
 	]);
 	expect(legacySkillDetailRequests).toEqual([]);
 
-	await page.goto(`/agents/agent-smoke-1/skills/missing-skill?${deploymentQuery}`);
+	const requestsBeforeMissingProject = skillDetailRequests.length;
+	await page.goto(`/agents/agent-smoke-1/skills/context-only?${deploymentQuery}`);
+	await expect(
+		main.getByText("Project not available to this Agent", { exact: true }),
+	).toBeVisible();
+	expect(skillDetailRequests).toHaveLength(requestsBeforeMissingProject);
+
+	await page.goto(
+		`/agents/agent-smoke-1/skills/missing-skill?project=${contextProjectId}&${deploymentQuery}`,
+	);
 	await expect(main.getByText("Skill not found", { exact: true })).toBeVisible();
 	await expect(main.getByText("This Skill was not found in this Agent's Projects.")).toBeVisible();
 	expect(legacySkillDetailRequests).toEqual([]);
@@ -1933,14 +2045,17 @@ test("agent Skill details resolve only through effective Projects", async ({ pag
 		);
 		const errorMain = errorPage.locator("main");
 		await expect(
-			errorMain.getByText("Couldn't load Agent Skill access", { exact: true }),
+			errorMain.getByText("Couldn't verify Agent Project access", { exact: true }),
 		).toBeVisible({ timeout: 15_000 });
 		await expect(errorMain.getByRole("button", { name: "Agent Skills" })).toHaveCount(0);
 		await expect(
 			errorMain
 				.getByRole("navigation", { name: "breadcrumb" })
 				.getByRole("link", { name: "Skills", exact: true }),
-		).toHaveAttribute("href", `/agents/agent-smoke-1/skills?${deploymentQuery}`);
+		).toHaveAttribute(
+			"href",
+			`/agents/agent-smoke-1/project-access/project-smoke?${deploymentQuery}#skills`,
+		);
 		expect(errorSkillDetailRequests).toEqual([]);
 	} finally {
 		await errorPage.close();

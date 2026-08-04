@@ -576,7 +576,7 @@ export default function ProjectDetailPage({
 										agentSkillDetailLink(
 											scope.agentId,
 											skill.skill_key,
-											skill.project_id,
+											project.id,
 											scope.agentQuery,
 										)
 								: undefined

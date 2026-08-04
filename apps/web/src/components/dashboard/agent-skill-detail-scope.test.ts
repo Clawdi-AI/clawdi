@@ -18,24 +18,9 @@ describe("Agent Skill detail Project scope", () => {
 		});
 	});
 
-	test("searches an omitted Project only in effective read order", async () => {
+	test("rejects an omitted Project instead of searching effective read order", () => {
 		const access = resolveAgentSkillProjectAccess(["primary", "context", "context"], "");
-		expect(access).toEqual({ kind: "bound", projectIds: ["primary", "context"] });
-		if (access.kind !== "bound") throw new Error("Expected bound Project candidates");
-
-		const calls: string[] = [];
-		const skill = await fetchAgentScopedSkillDetail(
-			access.projectIds,
-			async (projectId) => {
-				calls.push(projectId);
-				if (projectId === "primary") throw new NotFoundError("missing");
-				return { project_id: projectId, name: "Context Skill" };
-			},
-			(error) => error instanceof NotFoundError,
-		);
-
-		expect(calls).toEqual(["primary", "context"]);
-		expect(skill).toEqual({ project_id: "context", name: "Context Skill" });
+		expect(access).toEqual({ kind: "missing" });
 	});
 
 	test("fails closed on non-404 errors and mismatched Project responses", async () => {

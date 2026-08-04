@@ -261,9 +261,14 @@ describe("agent routes", () => {
 	});
 
 	it("keeps released account-resource deep links available for connected and hosted detail", () => {
-		for (const section of ["memories", "skills", "projects", "vaults", "connectors"] as const) {
+		for (const section of ["memories", "projects", "connectors"] as const) {
 			expect(CONNECTED_AGENT_SECTION_IDS).toContain(section);
 			expect(HOSTED_AGENT_SECTION_IDS).toContain(section);
+		}
+		for (const section of ["skills", "vaults"] as const) {
+			expect(CONNECTED_AGENT_SECTION_IDS).not.toContain(section);
+			expect(HOSTED_AGENT_SECTION_IDS).not.toContain(section);
+			expect(parseAgentSectionSegment(section)).toBe(section);
 		}
 		expect(CONNECTED_AGENT_SECTION_IDS).not.toContain("mcp");
 		expect(HOSTED_AGENT_SECTION_IDS).not.toContain("mcp");

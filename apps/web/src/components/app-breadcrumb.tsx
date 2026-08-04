@@ -14,6 +14,7 @@ import {
 import {
 	type AgentRouteSearch,
 	agentDeploymentRouteQuery,
+	agentProjectDetailHref,
 	agentSectionLabelFromSegment,
 	agentSectionLink,
 	type ParsedAgentPathname,
@@ -76,6 +77,17 @@ function agentBreadcrumbLink(
 	if (!route) return null;
 	const deploymentSearch = agentDeploymentRouteQuery(search);
 	if (index === 1) return agentSectionLink(route.agentId, "overview", deploymentSearch);
+	const projectId = typeof search.project === "string" ? search.project.trim() : "";
+	if (
+		index === 2 &&
+		projectId &&
+		((route.section === "skills" && route.skillKey) ||
+			(route.section === "vaults" && route.vaultSlug))
+	) {
+		return {
+			to: `${agentProjectDetailHref(route.agentId, projectId, deploymentSearch)}#${route.section}`,
+		};
+	}
 	if (index === 2) return agentSectionLink(route.agentId, route.section, deploymentSearch);
 	return null;
 }
