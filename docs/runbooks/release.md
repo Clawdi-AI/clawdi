@@ -292,6 +292,12 @@ GitHub Actions secrets; operators keep Kamal secrets in the gitignored
 `.kamal/secrets` file and export deployment parameters before running Kamal.
 Self-hosters set `DEPLOY_HOST` to their own server.
 
+The GitHub Actions deploy step rewrites the two Cloudflare certificate entries
+in `.kamal/secrets` to literal `$CLOUDFLARE_ORIGIN_CERT` and
+`$CLOUDFLARE_ORIGIN_KEY` references. This keeps an operator-local `$(cat ...)`
+path from being evaluated on an ephemeral runner; the dedicated GitHub secrets
+remain the only CI certificate source.
+
 The deployment workflow installs and verifies exactly Kamal `2.12.0`; the
 configuration keeps `minimum_version: 2.12.0` as an independent floor. The
 workflow-level GitHub concurrency queue is the scheduler layer. Kamal's

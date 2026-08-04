@@ -186,6 +186,14 @@ describe("backend image release workflow contract", () => {
 		expect(deployConfigSource).toMatch(/^minimum_version: 2\.12\.0$/m);
 	});
 
+	test("normalizes CI certificate references before Kamal reads secrets", () => {
+		const writeSecrets = imageRelease.jobs["deploy-vps"]?.steps?.find(
+			(step) => step.name === "Write Kamal secrets",
+		);
+		expect(writeSecrets?.run).toContain('print "CLOUDFLARE_ORIGIN_CERT=$CLOUDFLARE_ORIGIN_CERT"');
+		expect(writeSecrets?.run).toContain('print "CLOUDFLARE_ORIGIN_KEY=$CLOUDFLARE_ORIGIN_KEY"');
+	});
+
 	test("wires Docker health to API and channels-worker readiness", () => {
 		expect(backendDockerfile).toContain("ca-certificates curl");
 		const healthcheck = backendDockerfile.match(
