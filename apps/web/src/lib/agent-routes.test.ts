@@ -8,6 +8,8 @@ import {
 	agentMemoryDetailLink,
 	agentProjectDetailHref,
 	agentProjectDetailLink,
+	agentProjectResourceHref,
+	agentProjectResourceLink,
 	agentRouteOwnsSection,
 	agentRouteQueryString,
 	agentSectionHref,
@@ -55,6 +57,12 @@ describe("agent routes", () => {
 		expect(agentSkillDetailHref("agent 1", "team/foo")).toBe("/agents/agent%201/skills/team/foo");
 		expect(agentProjectDetailHref("agent 1", "project 1")).toBe(
 			"/agents/agent%201/project-access/project%201",
+		);
+		expect(agentProjectResourceHref("agent 1", "project 1", "skills")).toBe(
+			"/agents/agent%201/project-access/project%201/skills",
+		);
+		expect(agentProjectResourceHref("agent 1", "project 1", "vaults")).toBe(
+			"/agents/agent%201/project-access/project%201/vaults",
 		);
 		expect(agentVaultDetailHref("agent 1", "prod keys", "vault/1")).toBe(
 			"/agents/agent%201/vaults/prod%20keys?vault=vault%2F1",
@@ -126,6 +134,16 @@ describe("agent routes", () => {
 		});
 		expect(agentProjectDetailLink("agent 1", "project 1", query)).toEqual({
 			to: "/agents/$id/project-access/$projectId",
+			params: { id: "agent 1", projectId: "project 1" },
+			search: { source: "on-clawdi", d: "hdep_selected" },
+		});
+		expect(agentProjectResourceLink("agent 1", "project 1", "skills", query)).toEqual({
+			to: "/agents/$id/project-access/$projectId/skills",
+			params: { id: "agent 1", projectId: "project 1" },
+			search: { source: "on-clawdi", d: "hdep_selected" },
+		});
+		expect(agentProjectResourceLink("agent 1", "project 1", "vaults", query)).toEqual({
+			to: "/agents/$id/project-access/$projectId/vaults",
 			params: { id: "agent 1", projectId: "project 1" },
 			search: { source: "on-clawdi", d: "hdep_selected" },
 		});
@@ -361,6 +379,22 @@ describe("agent routes", () => {
 			skillKey: undefined,
 			projectId: "project 1",
 		});
+		expect(parseAgentPathname("/agents/agent%201/project-access/project%201/skills")).toEqual({
+			agentId: "agent 1",
+			section: "projects",
+			sessionId: undefined,
+			skillKey: undefined,
+			projectId: "project 1",
+			projectResource: "skills",
+		});
+		expect(parseAgentPathname("/agents/agent%201/project-access/project%201/vaults")).toEqual({
+			agentId: "agent 1",
+			section: "projects",
+			sessionId: undefined,
+			skillKey: undefined,
+			projectId: "project 1",
+			projectResource: "vaults",
+		});
 		expect(parseAgentPathname("/agents/agent%201/vaults/prod%20keys")).toEqual({
 			agentId: "agent 1",
 			section: "vaults",
@@ -388,6 +422,7 @@ describe("agent routes", () => {
 		});
 		expect(parseAgentPathname("/agents/agent%201/projects")).toBeNull();
 		expect(parseAgentPathname("/agents/agent%201/project-access/project/extra")).toBeNull();
+		expect(parseAgentPathname("/agents/agent%201/project-access/project/skills/extra")).toBeNull();
 		expect(parseAgentPathname("/agents/agent%201/vaults/prod/extra")).toBeNull();
 		expect(parseAgentPathname("/agents/agent%201/memories/memory/extra")).toBeNull();
 		expect(parseAgentPathname("/agents/agent%201/connectors/github/extra")).toBeNull();

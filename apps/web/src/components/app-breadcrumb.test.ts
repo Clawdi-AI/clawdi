@@ -16,11 +16,10 @@ describe("AppBreadcrumb responsive trail", () => {
 		expect(breadcrumb).not.toContain('<span key={href} className="contents">');
 	});
 
-	test("returns Project-scoped Skill and Vault crumbs to their explicit Project hub", () => {
+	test("returns Project-scoped resource crumbs to their independent collection", () => {
 		expect(breadcrumb).toContain('typeof search.project === "string"');
-		expect(breadcrumb).toContain(
-			"agentProjectDetailHref(route.agentId, projectId, deploymentSearch)",
-		);
-		expect(breadcrumb).toContain("route.section}`");
+		expect(breadcrumb).toContain("agentProjectResourceHref(route.agentId, projectId");
+		expect(breadcrumb).toContain("route.section,");
+		expect(breadcrumb).toContain('route.section === "projects" && route.projectId');
 	});
 });

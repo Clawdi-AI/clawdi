@@ -3277,7 +3277,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		await expect(sidebar.getByRole("link", { name: section, exact: true })).toBeVisible();
 	}
 	const projectGroup = sidebar.getByRole("group", {
-		name: "Hosted Agent Project",
+		name: "Workspace",
 		exact: true,
 	});
 	const skillsLink = projectGroup.getByRole("link", { name: "Skills", exact: true });
@@ -3285,17 +3285,17 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const expectedProjectHub = `/agents/${railHostedEnvironmentId}/project-access/project-hosted`;
 	await expect(skillsLink).toHaveAttribute(
 		"href",
-		`${expectedProjectHub}?source=on-clawdi&d=${railHostedDeployment.id}#skills`,
+		`${expectedProjectHub}/skills?source=on-clawdi&d=${railHostedDeployment.id}`,
 	);
 	await expect(vaultsLink).toHaveAttribute(
 		"href",
-		`${expectedProjectHub}?source=on-clawdi&d=${railHostedDeployment.id}#vaults`,
+		`${expectedProjectHub}/vaults?source=on-clawdi&d=${railHostedDeployment.id}`,
 	);
 	await vaultsLink.focus();
 	await expect(vaultsLink).toBeFocused();
 	await vaultsLink.click();
 	await expect(page).toHaveURL(
-		`${expectedProjectHub}?source=on-clawdi&d=${railHostedDeployment.id}#vaults`,
+		`${expectedProjectHub}/vaults?source=on-clawdi&d=${railHostedDeployment.id}`,
 	);
 	await expect(vaultsLink).toHaveAttribute("data-active", "");
 	await expect(skillsLink).not.toHaveAttribute("data-active", "");
@@ -4342,9 +4342,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(groups.nth(0).getByRole("link")).toHaveText(["Overview", "Sessions"]);
 	await expect(groups.nth(1).locator('[data-slot="sidebar-group-label"]')).toHaveText("Resources");
 	await expect(groups.nth(1).getByRole("link")).toHaveText(["Projects", "Memories", "Connectors"]);
-	await expect(groups.nth(2).locator('[data-slot="sidebar-group-label"]')).toHaveText(
-		"Hosted Agent Project",
-	);
+	await expect(groups.nth(2).locator('[data-slot="sidebar-group-label"]')).toHaveText("Workspace");
 	await expect(groups.nth(2).getByRole("link")).toHaveText(["Skills", "Vaults"]);
 	await expect(groups.nth(3).locator('[data-slot="sidebar-group-label"]')).toHaveText("Tools");
 	await expect(groups.nth(3).getByRole("link")).toHaveText([
@@ -4585,30 +4583,56 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		"href",
 		`/agents/${railHostedEnvironmentId}/vaults/hosted-vault${query}&project=project-hosted&vault=vault-hosted`,
 	);
-	const hostedVaultLink = main.getByRole("link", { name: "Open vault Hosted Scoped Vault" });
 	await page.goto(
-		`/agents/${railHostedEnvironmentId}/project-access/project-hosted${query}#skills`,
+		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/skills${query}`,
 	);
-	await expect(main.getByRole("heading", { name: "Hosted Agent Project", level: 1 })).toBeVisible();
-	await main.screenshot({ path: testInfo.outputPath("hosted-agent-project-hub-mobile.png") });
+	await expect(main.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible();
+	await expect(page).toHaveTitle("Skills · Clawdi");
+	await expect(main.getByText("Project: Hosted Agent Project", { exact: true })).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Vaults", level: 2 })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: /Install skill/i })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: /New vault/i })).toHaveCount(0);
+	await main.screenshot({ path: testInfo.outputPath("hosted-workspace-skills-mobile.png") });
 	await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
 	const mobileProjectSidebar = page.getByRole("dialog");
 	await expect(mobileProjectSidebar).toBeVisible();
+	await expect(
+		mobileProjectSidebar.getByRole("group", { name: "Workspace", exact: true }),
+	).toBeVisible();
 	await expect(
 		mobileProjectSidebar.getByRole("link", { name: "Skills", exact: true }),
 	).toHaveAttribute("data-active", "");
 	await page.waitForTimeout(250);
 	await page.screenshot({
-		path: testInfo.outputPath("hosted-agent-project-hub-navigation-mobile.png"),
+		path: testInfo.outputPath("hosted-workspace-sidebar-mobile.png"),
 		fullPage: true,
 	});
 	await page.keyboard.press("Escape");
 	await page.setViewportSize({ width: 1280, height: 1200 });
-	await main.screenshot({ path: testInfo.outputPath("hosted-agent-project-hub-desktop.png") });
+	await main.screenshot({ path: testInfo.outputPath("hosted-workspace-skills-desktop.png") });
 	await page.screenshot({
-		path: testInfo.outputPath("hosted-agent-project-hub-navigation-desktop.png"),
+		path: testInfo.outputPath("hosted-workspace-sidebar-desktop.png"),
 		fullPage: true,
 	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/vaults${query}`,
+	);
+	await expect(page).toHaveURL((url) => {
+		return (
+			url.pathname === `/agents/${railHostedEnvironmentId}/project-access/project-hosted/vaults` &&
+			url.search === query
+		);
+	});
+	await expect(main.getByRole("heading", { name: "Vaults", level: 1 })).toBeVisible();
+	await expect(page).toHaveTitle("Vaults · Clawdi");
+	await expect(main.getByText("Project: Hosted Agent Project", { exact: true })).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Skills", level: 2 })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: /New vault/i })).toBeVisible();
+	await main.screenshot({ path: testInfo.outputPath("hosted-workspace-vaults-desktop.png") });
+	const hostedVaultLink = main.getByRole("link", { name: "Open vault Hosted Scoped Vault" });
+	await page.setViewportSize({ width: 390, height: 844 });
+	await main.screenshot({ path: testInfo.outputPath("hosted-workspace-vaults-mobile.png") });
+	await page.setViewportSize({ width: 1280, height: 1200 });
 	await hostedVaultLink.click();
 	await expect(page).toHaveURL((url) => {
 		return (
@@ -4620,9 +4644,9 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		);
 	});
 	await expect(main.getByRole("heading", { name: "Hosted Scoped Vault", level: 1 })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Agent Project" })).toHaveAttribute(
+	await expect(main.getByRole("button", { name: "Vaults" })).toHaveAttribute(
 		"href",
-		`/agents/${railHostedEnvironmentId}/project-access/project-hosted${query}#vaults`,
+		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/vaults${query}`,
 	);
 	await expect(
 		main
@@ -4630,7 +4654,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 			.getByRole("link", { name: "Vaults", exact: true }),
 	).toHaveAttribute(
 		"href",
-		`/agents/${railHostedEnvironmentId}/project-access/project-hosted${query}#vaults`,
+		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/vaults${query}`,
 	);
 	await expect(main.getByRole("link", { name: "Hosted Agent Project" })).toHaveAttribute(
 		"href",
@@ -4787,7 +4811,7 @@ test("agent cards stay action-free and brand marks fill their tiles", async ({
 	});
 });
 
-test("hosted legacy Project resources fail at the Agent gate before resolving Project scope", async ({
+test("hosted Workspace resources fail at the Agent gate before resolving Project scope", async ({
 	page,
 }) => {
 	const agentProjectBindingRequests: string[] = [];
@@ -4800,7 +4824,7 @@ test("hosted legacy Project resources fail at the Agent gate before resolving Pr
 	});
 
 	await page.goto(
-		`/agents/${missingProjectionEnvironmentId}/skills?source=on-clawdi&d=${runningMissingProjectionDeployment.id}&project=project-hosted`,
+		`/agents/${missingProjectionEnvironmentId}/project-access/project-hosted/skills?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
 	);
 	await expect(page.locator("main").getByText("Agent not found", { exact: true })).toBeVisible();
 	expect(agentProjectBindingRequests).toEqual([]);
@@ -4837,13 +4861,13 @@ test("hosted legacy Project-resource collections canonicalize only explicit boun
 	await page.goto(`/agents/${railHostedEnvironmentId}/skills${query}&project=project-hosted`);
 	await expect(page).toHaveURL((url) => {
 		return (
-			url.pathname === `${projectsPath}/project-hosted` &&
+			url.pathname === `${projectsPath}/project-hosted/skills` &&
 			url.search === query &&
-			url.hash === "#skills"
+			url.hash === ""
 		);
 	});
 	await expect(
-		page.locator("main").getByRole("heading", { name: "Hosted Agent Project", level: 1 }),
+		page.locator("main").getByRole("heading", { name: "Skills", level: 1 }),
 	).toBeVisible();
 });
 
@@ -5062,7 +5086,7 @@ test("hosted Agent Skill details retain deployment context and stay inside bound
 			.getByRole("link", { name: "Skills", exact: true }),
 	).toHaveAttribute(
 		"href",
-		`/agents/${railHostedEnvironmentId}/project-access/project-hosted?${deploymentQuery}#skills`,
+		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/skills?${deploymentQuery}`,
 	);
 	expect(legacySkillDetailRequests).toEqual([]);
 

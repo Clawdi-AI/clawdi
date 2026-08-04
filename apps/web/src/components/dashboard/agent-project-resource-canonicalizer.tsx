@@ -14,7 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
 	type AgentRouteSearch,
 	agentDeploymentRouteQuery,
-	agentProjectDetailHref,
+	agentProjectResourceHref,
 	agentSectionHref,
 } from "@/lib/agent-routes";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -80,11 +80,12 @@ function CanonicalizeProjectResource({
 			: null
 		: null;
 	const targetHref = resolvedProjectId
-		? `${agentProjectDetailHref(
+		? agentProjectResourceHref(
 				agentId,
 				resolvedProjectId,
+				resource,
 				agentDeploymentRouteQuery(routeSearch),
-			)}#${resource}`
+			)
 		: projectsHref;
 	const canCanonicalize = !requestedProjectId || bindings.data !== undefined;
 

@@ -19,6 +19,7 @@ describe("legacy Agent Project-resource collections", () => {
 		expect(source).toContain("<AgentResourceRouteGate");
 		expect(source).toContain("enabled: Boolean(requestedProjectId)");
 		expect(source).toContain("agentDeploymentRouteQuery(routeSearch)");
+		expect(source).toContain("agentProjectResourceHref(");
 		expect(source).not.toContain('binding_type === "primary"');
 	});
 });

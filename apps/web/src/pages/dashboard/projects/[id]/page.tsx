@@ -17,7 +17,7 @@ import {
 import { type ReactElement, type ReactNode, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
 	AgentLabel,
 	AgentSourceBadgeForEnvironment,
@@ -82,6 +82,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface";
 import {
+	agentProjectDetailHref,
 	agentSectionHref,
 	agentSectionLabel,
 	agentSectionLink,
@@ -116,9 +117,11 @@ const AGENT_PROJECTS_SECTION_LABEL = agentSectionLabel("projects");
 export default function ProjectDetailPage({
 	projectId,
 	scope,
+	focus,
 }: {
 	projectId: string;
 	scope: ResourceNavigationScope;
+	focus?: "skills" | "vaults";
 }) {
 	const api = useApi();
 	const $api = useOpenApi();
@@ -130,6 +133,8 @@ export default function ProjectDetailPage({
 	const backTarget = resourceCollectionTarget(scope, "projects");
 	const managementTarget = libraryManagementTarget("projects", { projectId });
 	const isAgentScope = scope.kind === "agent";
+	const showSkills = focus !== "vaults";
+	const showVaults = focus !== "skills";
 	const [useWithAgentOpen, setUseWithAgentOpen] = useState(
 		searchParams.get("useWithAgent") === "1",
 	);
@@ -204,7 +209,7 @@ export default function ProjectDetailPage({
 					),
 				{ pageSize: 200, resourceName: "project skills" },
 			),
-		enabled: !isAgentScope || !!scopedBinding,
+		enabled: showSkills && (!isAgentScope || !!scopedBinding),
 	});
 
 	const vaults = useQuery({
@@ -219,7 +224,7 @@ export default function ProjectDetailPage({
 					),
 				{ pageSize: 200, resourceName: "project vaults" },
 			),
-		enabled: !isAgentScope || !!scopedBinding,
+		enabled: showVaults && (!isAgentScope || !!scopedBinding),
 	});
 
 	// People tile/section — members list is owner-only on the API; viewers
@@ -288,7 +293,12 @@ export default function ProjectDetailPage({
 		},
 	});
 
-	useSetBreadcrumbTitle(project ? displayProjectName(project) : null);
+	const projectName = project ? displayProjectName(project) : null;
+	useSetBreadcrumbSegmentTitle(
+		scope.kind === "agent" ? agentProjectDetailHref(scope.agentId, projectId) : null,
+		projectName,
+	);
+	useSetBreadcrumbTitle(projectName ? (focus ? agentSectionLabel(focus) : projectName) : null);
 
 	if (projects.isLoading || (isAgentScope && scopedBindings.isLoading)) {
 		return (
@@ -466,8 +476,8 @@ export default function ProjectDetailPage({
 			</Button>
 
 			<PageHeader
-				title={displayProjectName(project)}
-				titleAdornment={<ProjectKindBadge kind={project.kind} />}
+				title={focus ? agentSectionLabel(focus) : displayProjectName(project)}
+				titleAdornment={focus ? undefined : <ProjectKindBadge kind={project.kind} />}
 				icon={
 					<IconChip tint={projectIdentity.colorClasses} className="text-xl">
 						{projectIdentity.emoji}
@@ -475,10 +485,22 @@ export default function ProjectDetailPage({
 				}
 				description={
 					isAgentScope
-						? "Skills and Vaults available to this Agent through this Project."
+						? focus === "skills"
+							? "Skills this Agent can read through this Project."
+							: focus === "vaults"
+								? "Vaults this Agent can use through this Project."
+								: "Skills and Vaults available to this Agent through this Project."
 						: projectDetailDescription(project, isOwner, projectType?.label ?? "Project")
 				}
-				status={<span className="font-mono text-xs text-muted-foreground">{project.slug}</span>}
+				status={
+					<span
+						className={
+							focus ? "text-xs text-muted-foreground" : "font-mono text-xs text-muted-foreground"
+						}
+					>
+						{focus ? `Project: ${displayProjectName(project)}` : project.slug}
+					</span>
+				}
 				actions={
 					!isAgentScope ? (
 						<>
@@ -535,6 +557,7 @@ export default function ProjectDetailPage({
 			) : null}
 
 			<HubSection
+				visible={showSkills}
 				id="skills"
 				title="Skills"
 				count={skillCount}
@@ -595,6 +618,7 @@ export default function ProjectDetailPage({
 			</HubSection>
 
 			<HubSection
+				visible={showVaults}
 				id="vaults"
 				title="Vaults"
 				count={vaultCount}
@@ -829,6 +853,7 @@ function StatTile({ label, value, href }: { label: string; value?: CountValue; h
 }
 
 function HubSection({
+	visible = true,
 	id,
 	title,
 	count,
@@ -836,6 +861,7 @@ function HubSection({
 	action,
 	children,
 }: {
+	visible?: boolean;
 	id: string;
 	title: string;
 	count?: CountValue;
@@ -843,6 +869,7 @@ function HubSection({
 	action?: ReactNode;
 	children: ReactNode;
 }) {
+	if (!visible) return null;
 	return (
 		<section id={id} className="scroll-mt-20 space-y-3">
 			<div className="flex items-end justify-between gap-2">

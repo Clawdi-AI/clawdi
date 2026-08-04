@@ -61,7 +61,6 @@ import {
 import { DaemonStatusBadge, type DaemonStatusSource } from "@/components/dashboard/daemon-status";
 import { NewAgentButton } from "@/components/dashboard/new-agent-button";
 import { IconChip } from "@/components/icon-chip";
-import { displayProjectName } from "@/components/projects/project-metadata";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -98,7 +97,7 @@ import {
 	type AgentSectionId,
 	agentDeploymentRouteQuery,
 	agentDeploymentSelector,
-	agentProjectDetailHref,
+	agentProjectResourceHref,
 	agentRouteIdsEqual,
 	agentSectionHref,
 	parseAgentPathname,
@@ -164,7 +163,6 @@ type SidebarNavItem = {
 
 type AgentPrimaryProjectNavigation = {
 	id: string;
-	name: string;
 };
 
 const RAIL_DRAG_ACTIVATION_DISTANCE = 10;
@@ -345,11 +343,10 @@ function AgentSectionList({
 	extraPrimaryItems?: SidebarNavItem[];
 	onNavigate?: () => void;
 }) {
-	const { pathname, searchStr, hash } = useLocation({
+	const { pathname, searchStr } = useLocation({
 		select: (location) => ({
 			pathname: location.pathname,
 			searchStr: location.searchStr,
-			hash: location.hash.replace(/^#/, ""),
 		}),
 	});
 	const routeQuery = agentDeploymentRouteQuery(searchStr);
@@ -359,8 +356,9 @@ function AgentSectionList({
 	const primaryProjectRouteActive = Boolean(
 		primaryProject && agentRouteIdsEqual(activeAgentRoute?.projectId, primaryProject.id),
 	);
-	const activePrimaryProjectResource =
-		primaryProjectRouteActive && (hash === "skills" || hash === "vaults") ? hash : null;
+	const activePrimaryProjectResource = primaryProjectRouteActive
+		? activeAgentRoute?.projectResource
+		: null;
 	const normalizedActiveSection = groups.some((group) =>
 		group.items.some((item) => item.id === activeSection),
 	)
@@ -372,10 +370,10 @@ function AgentSectionList({
 				return {
 					id: `primary-project-${section}`,
 					label: item.label,
-					href: `${agentProjectDetailHref(agentId, primaryProject.id, routeQuery)}#${section}`,
+					href: agentProjectResourceHref(agentId, primaryProject.id, section, routeQuery),
 					icon: item.icon,
 					tint: item.tint,
-					tooltip: `${item.label} — ${primaryProject.name}`,
+					tooltip: `${item.label} in Workspace`,
 					active: activePrimaryProjectResource === section,
 				};
 			})
@@ -412,7 +410,7 @@ function AgentSectionList({
 					/>
 					{group.id === "resources" && primaryProject ? (
 						<SidebarNavSection
-							label={primaryProject.name}
+							label="Workspace"
 							items={primaryProjectItems}
 							onNavigate={onNavigate}
 						/>
@@ -1580,9 +1578,7 @@ export function AppSidebar({
 					navigableProjects.data ?? [],
 					activeAgent?.default_project_id,
 				);
-	const primaryProject = resolvedPrimaryProject
-		? { id: resolvedPrimaryProject.id, name: displayProjectName(resolvedPrimaryProject) }
-		: null;
+	const primaryProject = resolvedPrimaryProject ? { id: resolvedPrimaryProject.id } : null;
 	const classifiedActiveAgentKind = useAgentChromeKind(activeAgent, activeAgentTile);
 	const activeAgentKind =
 		activeAgentTile || !activeAgentId || (agentsLoaded && !hostedInventoryFetching)

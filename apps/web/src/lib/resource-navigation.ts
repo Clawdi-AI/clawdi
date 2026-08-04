@@ -8,6 +8,7 @@ import {
 	agentMemoryDetailLink,
 	agentProjectDetailHref,
 	agentProjectDetailLink,
+	agentProjectResourceHref,
 	agentSectionHref,
 	agentVaultDetailHref,
 	agentVaultDetailLink,
@@ -63,12 +64,13 @@ export function resourceCollectionTarget(
 	if (resource === "vaults") {
 		return scope.projectId
 			? {
-					href: `${agentProjectDetailHref(
+					href: agentProjectResourceHref(
 						scope.agentId,
 						scope.projectId,
+						"vaults",
 						agentDeploymentRouteQuery(scope.agentQuery),
-					)}#vaults`,
-					label: "Agent Project",
+					),
+					label: "Vaults",
 				}
 			: {
 					href: agentSectionHref(

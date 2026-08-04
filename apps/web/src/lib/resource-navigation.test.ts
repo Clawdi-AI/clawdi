@@ -80,8 +80,8 @@ describe("resource navigation scopes", () => {
 			"/agents/agent%201/vaults/prod%20keys?source=on-clawdi&d=deployment%201&project=project%201&vault=vault%2F1",
 		);
 		expect(resourceCollectionTarget(scope, "vaults")).toEqual({
-			href: "/agents/agent%201/project-access/project%201?source=on-clawdi&d=deployment%201#vaults",
-			label: "Agent Project",
+			href: "/agents/agent%201/project-access/project%201/vaults?source=on-clawdi&d=deployment%201",
+			label: "Vaults",
 		});
 		expect(resourceCollectionTarget(scope, "memories")).toEqual({
 			href: "/agents/agent%201/memories?source=on-clawdi&d=deployment%201",

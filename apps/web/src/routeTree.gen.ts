@@ -51,6 +51,9 @@ import { Route as ProtectedDashboardAgentsIdSessionsSessionIdRouteImport } from 
 import { Route as ProtectedDashboardAgentsIdSkillsIndexRouteImport } from './routes/_protected/_dashboard/agents/$id/skills/index'
 import { Route as ProtectedDashboardAgentsIdSkillsSplatRouteImport } from './routes/_protected/_dashboard/agents/$id/skills/$'
 import { Route as ProtectedDashboardAgentsIdVaultsSlugRouteImport } from './routes/_protected/_dashboard/agents/$id/vaults/$slug'
+import { Route as ProtectedDashboardAgentsIdProjectAccessProjectIdIndexRouteImport } from './routes/_protected/_dashboard/agents/$id/project-access/$projectId/index'
+import { Route as ProtectedDashboardAgentsIdProjectAccessProjectIdSkillsRouteImport } from './routes/_protected/_dashboard/agents/$id/project-access/$projectId/skills'
+import { Route as ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRouteImport } from './routes/_protected/_dashboard/agents/$id/project-access/$projectId/vaults'
 
 const ProtectedRoute = ProtectedRouteImport.update({
   id: '/_protected',
@@ -291,6 +294,24 @@ const ProtectedDashboardAgentsIdVaultsSlugRoute =
     path: '/vaults/$slug',
     getParentRoute: () => ProtectedDashboardAgentsIdRoute,
   } as any)
+const ProtectedDashboardAgentsIdProjectAccessProjectIdIndexRoute =
+  ProtectedDashboardAgentsIdProjectAccessProjectIdIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => ProtectedDashboardAgentsIdProjectAccessProjectIdRoute,
+  } as any)
+const ProtectedDashboardAgentsIdProjectAccessProjectIdSkillsRoute =
+  ProtectedDashboardAgentsIdProjectAccessProjectIdSkillsRouteImport.update({
+    id: '/skills',
+    path: '/skills',
+    getParentRoute: () => ProtectedDashboardAgentsIdProjectAccessProjectIdRoute,
+  } as any)
+const ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRoute =
+  ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRouteImport.update({
+    id: '/vaults',
+    path: '/vaults',
+    getParentRoute: () => ProtectedDashboardAgentsIdProjectAccessProjectIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ProtectedDashboardIndexRoute
@@ -328,11 +349,14 @@ export interface FileRoutesByFullPath {
   '/agents/$id/': typeof ProtectedDashboardAgentsIdIndexRoute
   '/agents/$id/connectors/$name': typeof ProtectedDashboardAgentsIdConnectorsNameRoute
   '/agents/$id/memories/$memoryId': typeof ProtectedDashboardAgentsIdMemoriesMemoryIdRoute
-  '/agents/$id/project-access/$projectId': typeof ProtectedDashboardAgentsIdProjectAccessProjectIdRoute
+  '/agents/$id/project-access/$projectId': typeof ProtectedDashboardAgentsIdProjectAccessProjectIdRouteWithChildren
   '/agents/$id/sessions/$sessionId': typeof ProtectedDashboardAgentsIdSessionsSessionIdRoute
   '/agents/$id/skills/$': typeof ProtectedDashboardAgentsIdSkillsSplatRoute
   '/agents/$id/vaults/$slug': typeof ProtectedDashboardAgentsIdVaultsSlugRoute
   '/agents/$id/skills/': typeof ProtectedDashboardAgentsIdSkillsIndexRoute
+  '/agents/$id/project-access/$projectId/skills': typeof ProtectedDashboardAgentsIdProjectAccessProjectIdSkillsRoute
+  '/agents/$id/project-access/$projectId/vaults': typeof ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRoute
+  '/agents/$id/project-access/$projectId/': typeof ProtectedDashboardAgentsIdProjectAccessProjectIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof ProtectedDashboardIndexRoute
@@ -369,11 +393,13 @@ export interface FileRoutesByTo {
   '/agents/$id': typeof ProtectedDashboardAgentsIdIndexRoute
   '/agents/$id/connectors/$name': typeof ProtectedDashboardAgentsIdConnectorsNameRoute
   '/agents/$id/memories/$memoryId': typeof ProtectedDashboardAgentsIdMemoriesMemoryIdRoute
-  '/agents/$id/project-access/$projectId': typeof ProtectedDashboardAgentsIdProjectAccessProjectIdRoute
   '/agents/$id/sessions/$sessionId': typeof ProtectedDashboardAgentsIdSessionsSessionIdRoute
   '/agents/$id/skills/$': typeof ProtectedDashboardAgentsIdSkillsSplatRoute
   '/agents/$id/vaults/$slug': typeof ProtectedDashboardAgentsIdVaultsSlugRoute
   '/agents/$id/skills': typeof ProtectedDashboardAgentsIdSkillsIndexRoute
+  '/agents/$id/project-access/$projectId/skills': typeof ProtectedDashboardAgentsIdProjectAccessProjectIdSkillsRoute
+  '/agents/$id/project-access/$projectId/vaults': typeof ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRoute
+  '/agents/$id/project-access/$projectId': typeof ProtectedDashboardAgentsIdProjectAccessProjectIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -414,11 +440,14 @@ export interface FileRoutesById {
   '/_protected/_dashboard/agents/$id/': typeof ProtectedDashboardAgentsIdIndexRoute
   '/_protected/_dashboard/agents/$id/connectors/$name': typeof ProtectedDashboardAgentsIdConnectorsNameRoute
   '/_protected/_dashboard/agents/$id/memories/$memoryId': typeof ProtectedDashboardAgentsIdMemoriesMemoryIdRoute
-  '/_protected/_dashboard/agents/$id/project-access/$projectId': typeof ProtectedDashboardAgentsIdProjectAccessProjectIdRoute
+  '/_protected/_dashboard/agents/$id/project-access/$projectId': typeof ProtectedDashboardAgentsIdProjectAccessProjectIdRouteWithChildren
   '/_protected/_dashboard/agents/$id/sessions/$sessionId': typeof ProtectedDashboardAgentsIdSessionsSessionIdRoute
   '/_protected/_dashboard/agents/$id/skills/$': typeof ProtectedDashboardAgentsIdSkillsSplatRoute
   '/_protected/_dashboard/agents/$id/vaults/$slug': typeof ProtectedDashboardAgentsIdVaultsSlugRoute
   '/_protected/_dashboard/agents/$id/skills/': typeof ProtectedDashboardAgentsIdSkillsIndexRoute
+  '/_protected/_dashboard/agents/$id/project-access/$projectId/skills': typeof ProtectedDashboardAgentsIdProjectAccessProjectIdSkillsRoute
+  '/_protected/_dashboard/agents/$id/project-access/$projectId/vaults': typeof ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRoute
+  '/_protected/_dashboard/agents/$id/project-access/$projectId/': typeof ProtectedDashboardAgentsIdProjectAccessProjectIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -463,6 +492,9 @@ export interface FileRouteTypes {
     | '/agents/$id/skills/$'
     | '/agents/$id/vaults/$slug'
     | '/agents/$id/skills/'
+    | '/agents/$id/project-access/$projectId/skills'
+    | '/agents/$id/project-access/$projectId/vaults'
+    | '/agents/$id/project-access/$projectId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -499,11 +531,13 @@ export interface FileRouteTypes {
     | '/agents/$id'
     | '/agents/$id/connectors/$name'
     | '/agents/$id/memories/$memoryId'
-    | '/agents/$id/project-access/$projectId'
     | '/agents/$id/sessions/$sessionId'
     | '/agents/$id/skills/$'
     | '/agents/$id/vaults/$slug'
     | '/agents/$id/skills'
+    | '/agents/$id/project-access/$projectId/skills'
+    | '/agents/$id/project-access/$projectId/vaults'
+    | '/agents/$id/project-access/$projectId'
   id:
     | '__root__'
     | '/_protected'
@@ -548,6 +582,9 @@ export interface FileRouteTypes {
     | '/_protected/_dashboard/agents/$id/skills/$'
     | '/_protected/_dashboard/agents/$id/vaults/$slug'
     | '/_protected/_dashboard/agents/$id/skills/'
+    | '/_protected/_dashboard/agents/$id/project-access/$projectId/skills'
+    | '/_protected/_dashboard/agents/$id/project-access/$projectId/vaults'
+    | '/_protected/_dashboard/agents/$id/project-access/$projectId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -856,15 +893,57 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProtectedDashboardAgentsIdVaultsSlugRouteImport
       parentRoute: typeof ProtectedDashboardAgentsIdRoute
     }
+    '/_protected/_dashboard/agents/$id/project-access/$projectId/': {
+      id: '/_protected/_dashboard/agents/$id/project-access/$projectId/'
+      path: '/'
+      fullPath: '/agents/$id/project-access/$projectId/'
+      preLoaderRoute: typeof ProtectedDashboardAgentsIdProjectAccessProjectIdIndexRouteImport
+      parentRoute: typeof ProtectedDashboardAgentsIdProjectAccessProjectIdRoute
+    }
+    '/_protected/_dashboard/agents/$id/project-access/$projectId/skills': {
+      id: '/_protected/_dashboard/agents/$id/project-access/$projectId/skills'
+      path: '/skills'
+      fullPath: '/agents/$id/project-access/$projectId/skills'
+      preLoaderRoute: typeof ProtectedDashboardAgentsIdProjectAccessProjectIdSkillsRouteImport
+      parentRoute: typeof ProtectedDashboardAgentsIdProjectAccessProjectIdRoute
+    }
+    '/_protected/_dashboard/agents/$id/project-access/$projectId/vaults': {
+      id: '/_protected/_dashboard/agents/$id/project-access/$projectId/vaults'
+      path: '/vaults'
+      fullPath: '/agents/$id/project-access/$projectId/vaults'
+      preLoaderRoute: typeof ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRouteImport
+      parentRoute: typeof ProtectedDashboardAgentsIdProjectAccessProjectIdRoute
+    }
   }
 }
+
+interface ProtectedDashboardAgentsIdProjectAccessProjectIdRouteChildren {
+  ProtectedDashboardAgentsIdProjectAccessProjectIdSkillsRoute: typeof ProtectedDashboardAgentsIdProjectAccessProjectIdSkillsRoute
+  ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRoute: typeof ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRoute
+  ProtectedDashboardAgentsIdProjectAccessProjectIdIndexRoute: typeof ProtectedDashboardAgentsIdProjectAccessProjectIdIndexRoute
+}
+
+const ProtectedDashboardAgentsIdProjectAccessProjectIdRouteChildren: ProtectedDashboardAgentsIdProjectAccessProjectIdRouteChildren =
+  {
+    ProtectedDashboardAgentsIdProjectAccessProjectIdSkillsRoute:
+      ProtectedDashboardAgentsIdProjectAccessProjectIdSkillsRoute,
+    ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRoute:
+      ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRoute,
+    ProtectedDashboardAgentsIdProjectAccessProjectIdIndexRoute:
+      ProtectedDashboardAgentsIdProjectAccessProjectIdIndexRoute,
+  }
+
+const ProtectedDashboardAgentsIdProjectAccessProjectIdRouteWithChildren =
+  ProtectedDashboardAgentsIdProjectAccessProjectIdRoute._addFileChildren(
+    ProtectedDashboardAgentsIdProjectAccessProjectIdRouteChildren,
+  )
 
 interface ProtectedDashboardAgentsIdRouteChildren {
   ProtectedDashboardAgentsIdSectionRoute: typeof ProtectedDashboardAgentsIdSectionRoute
   ProtectedDashboardAgentsIdIndexRoute: typeof ProtectedDashboardAgentsIdIndexRoute
   ProtectedDashboardAgentsIdConnectorsNameRoute: typeof ProtectedDashboardAgentsIdConnectorsNameRoute
   ProtectedDashboardAgentsIdMemoriesMemoryIdRoute: typeof ProtectedDashboardAgentsIdMemoriesMemoryIdRoute
-  ProtectedDashboardAgentsIdProjectAccessProjectIdRoute: typeof ProtectedDashboardAgentsIdProjectAccessProjectIdRoute
+  ProtectedDashboardAgentsIdProjectAccessProjectIdRoute: typeof ProtectedDashboardAgentsIdProjectAccessProjectIdRouteWithChildren
   ProtectedDashboardAgentsIdSessionsSessionIdRoute: typeof ProtectedDashboardAgentsIdSessionsSessionIdRoute
   ProtectedDashboardAgentsIdSkillsSplatRoute: typeof ProtectedDashboardAgentsIdSkillsSplatRoute
   ProtectedDashboardAgentsIdVaultsSlugRoute: typeof ProtectedDashboardAgentsIdVaultsSlugRoute
@@ -881,7 +960,7 @@ const ProtectedDashboardAgentsIdRouteChildren: ProtectedDashboardAgentsIdRouteCh
     ProtectedDashboardAgentsIdMemoriesMemoryIdRoute:
       ProtectedDashboardAgentsIdMemoriesMemoryIdRoute,
     ProtectedDashboardAgentsIdProjectAccessProjectIdRoute:
-      ProtectedDashboardAgentsIdProjectAccessProjectIdRoute,
+      ProtectedDashboardAgentsIdProjectAccessProjectIdRouteWithChildren,
     ProtectedDashboardAgentsIdSessionsSessionIdRoute:
       ProtectedDashboardAgentsIdSessionsSessionIdRoute,
     ProtectedDashboardAgentsIdSkillsSplatRoute:

@@ -52,7 +52,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
 	type AgentRouteSearch,
 	agentDeploymentRouteQuery,
-	agentProjectDetailHref,
+	agentProjectResourceHref,
 	agentSectionHref,
 } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
@@ -116,11 +116,12 @@ export function SkillDetailContent({
 	).trim();
 	const skillListHref = agentId
 		? selectedProjectId
-			? `${agentProjectDetailHref(
+			? agentProjectResourceHref(
 					agentId,
 					selectedProjectId,
+					"skills",
 					agentDeploymentRouteQuery(routeSearch),
-				)}#skills`
+				)
 			: agentSectionHref(agentId, "projects", agentDeploymentRouteQuery(routeSearch))
 		: projectResourceHref("skills");
 	const scopedBindings = useAgentProjectBindings(agentId, { enabled: isAgentScope });

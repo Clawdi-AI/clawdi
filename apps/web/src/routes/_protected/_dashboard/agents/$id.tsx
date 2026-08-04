@@ -3,6 +3,7 @@ import {
 	agentConnectorDetailLink,
 	agentMemoryDetailLink,
 	agentProjectDetailLink,
+	agentProjectResourceLink,
 	agentRouteIdsEqual,
 	agentSectionLink,
 	agentSessionDetailLink,
@@ -34,6 +35,17 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id")({
 					typeof legacy.search?.project === "string" ? legacy.search.project : undefined;
 				throw redirect({
 					...agentSkillDetailLink(params.id, currentRoute.skillKey, projectId, legacy.search),
+					replace: true,
+				});
+			}
+			if (currentRoute?.projectId && currentRoute.projectResource) {
+				throw redirect({
+					...agentProjectResourceLink(
+						params.id,
+						currentRoute.projectId,
+						currentRoute.projectResource,
+						legacy.search,
+					),
 					replace: true,
 				});
 			}
