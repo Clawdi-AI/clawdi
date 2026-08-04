@@ -298,8 +298,8 @@ checklist. This section covers the CLI/npm release line in detail.
 
 Publishing is automated. `.github/workflows/cli-publish.yml` watches `main`
 for changes under `packages/cli/`. If the exact npm version and its published,
-non-draft GitHub Release already exist with every required non-empty asset, the
-workflow exits before installing dependencies or building. Otherwise it builds
+non-draft GitHub Release already exist, the workflow exits before installing
+dependencies or building. Otherwise it builds
 the artifact from its own `GITHUB_SHA`. An absent exact npm version is
 published; an existing version is never republished and must have the same
 `dist.integrity` as the artifact built by this run.
@@ -324,9 +324,8 @@ version and matching `dist.integrity` authorizes GitHub Release completion; the
 job does not wait for the eventually consistent registry attestation read API.
 If release work remains and the immutable npm version already exists, the
 workflow never republishes it and only accepts an exact integrity match. The
-GitHub Release and tag must target that run's `GITHUB_SHA`. A published release
-with incomplete assets, or a release/tag for another commit while completion is
-required, fails closed.
+GitHub Release and tag must target that run's `GITHUB_SHA`; another commit while
+completion is required fails closed.
 
 The CLI workflow neither calls nor checks out the Hosted repository. An operator
 verifies the exact package publication, then explicitly supplies the exact

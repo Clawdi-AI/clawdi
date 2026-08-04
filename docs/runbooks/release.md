@@ -92,15 +92,15 @@ releases.
    self-hosted or third-party GitHub Actions runners. The CLI workflow does not
    call workflows in the Hosted repository or depend on Hosted repository
    settings. A lightweight preflight checks only whether the exact npm version
-   and a non-draft GitHub Release with every required non-empty asset exist; if
-   both are complete, the run skips build and publish without querying
-   provenance. Otherwise the run builds from its own `GITHUB_SHA`. An absent
+   and a non-draft GitHub Release exist; if both are complete, the run skips
+   build and publish without querying provenance. Otherwise the run builds from
+   its own `GITHUB_SHA`. An absent
    exact npm version is published with provenance; an existing version is never
    republished and must have the same `dist.integrity` as this run's artifact.
    Fresh publish completion does not wait for the eventually consistent
    attestation read API. The GitHub Release may be created or a draft may be
-   completed only for the same `GITHUB_SHA`; another target or an incomplete
-   published release fails closed. After npm succeeds, rerun the original
+   completed only for the same `GITHUB_SHA`; another target fails closed. After
+   npm succeeds, rerun the original
    workflow run to complete GitHub assets. A different commit whose artifact
    differs must bump the package version instead of recovering across commits.
    Native ownership is separate: installed native executables update only from
