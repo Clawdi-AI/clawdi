@@ -366,8 +366,9 @@ their own temporary stub binaries without touching the host. Dependency caches
 are intentionally per-run inside the container; only Docker image layers and
 build cache are reused by the Docker daemon. It does not force `CLAWDI_HOME`, so
 tests can still isolate Clawdi state through the same home/config paths as the
-product. Backend tests use a temporary `pgvector/pgvector:0.8.1-pg16` Postgres
-service and do not reuse the dev database.
+product. Backend tests use the production-pinned PostgreSQL 18.4 image from
+`config/postgres-image.txt`, verify pgvector 0.8.6 and loadable `pg_trgm`, and
+do not reuse the dev database.
 
 Clean Test Runner CI uses the first-class `ci` profile to exercise the runner
 contract in one container without repeating the full web and CLI product

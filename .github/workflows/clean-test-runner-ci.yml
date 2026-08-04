@@ -16,6 +16,8 @@ on:
       - "docker/**"
       - ".dockerignore"
       - "docker-compose.test.yml"
+      - "config/postgres-image.txt"
+      - "scripts/check_postgres_image_parity.py"
       - "scripts/test.sh"
       - "package.json"
       - "bun.lock"
@@ -41,6 +43,7 @@ on:
       - "backend/uv.lock"
       - "backend/tests/conftest.py"
       - "backend/tests/test_smoke.py"
+      - "backend/scripts/check_postgres_runtime.py"
       - ".github/workflows/clean-test-runner-ci.yml"
   push:
     branches: [main]
@@ -48,6 +51,8 @@ on:
       - "docker/**"
       - ".dockerignore"
       - "docker-compose.test.yml"
+      - "config/postgres-image.txt"
+      - "scripts/check_postgres_image_parity.py"
       - "scripts/test.sh"
       - "package.json"
       - "bun.lock"
@@ -73,6 +78,7 @@ on:
       - "backend/uv.lock"
       - "backend/tests/conftest.py"
       - "backend/tests/test_smoke.py"
+      - "backend/scripts/check_postgres_runtime.py"
       - ".github/workflows/clean-test-runner-ci.yml"
 
 permissions:

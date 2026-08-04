@@ -48,6 +48,7 @@ run_on_host() {
 		shift
 	fi
 	validate_suite "$suite"
+	python3 "$repo_root/scripts/check_postgres_image_parity.py"
 
 	cleanup() {
 		compose down --remove-orphans --volumes >/dev/null
@@ -164,6 +165,7 @@ backend_tests() {
 			fi
 			sleep 1
 		done
+		uv run python scripts/check_postgres_runtime.py
 		uv run alembic upgrade head
 		uv run pytest -q "$@"
 	)

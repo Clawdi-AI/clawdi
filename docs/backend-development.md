@@ -47,9 +47,10 @@ cd backend && pdm test
 
 That command bind-mounts the host checkout read-only, copies it into an
 isolated container workspace, runs `uv sync` inside the container, starts a
-throwaway `pgvector/pgvector:pg16` Postgres service, applies Alembic migrations,
-and runs pytest. It also uses fake home/cache directories backed by container
-tmpfs and does not reuse the dev database.
+throwaway production-pinned PostgreSQL 18.4 service with pgvector 0.8.6, checks
+its runtime contract, applies Alembic migrations, and runs pytest. It also uses
+fake home/cache directories backed by container tmpfs and does not reuse the
+dev database.
 
 The PDM `test` command returns to the same Docker entrypoint. Raw
 `uv run pytest` remains an explicit host-local workflow only.
@@ -109,13 +110,14 @@ Long-lived shared test databases rot because other branches migrate or stamp
 them differently. The reliable pattern is a throwaway Postgres on a free port:
 
 ```bash
+POSTGRES_IMAGE="$(<config/postgres-image.txt)"
 CID=$(
   docker run --rm -d \
     -e POSTGRES_USER=clawdi \
     -e POSTGRES_PASSWORD=clawdi_test \
     -e POSTGRES_DB=clawdi_test \
     -p 127.0.0.1::5432 \
-    pgvector/pgvector:pg16
+    "$POSTGRES_IMAGE"
 )
 cleanup() {
   docker rm -f "$CID" >/dev/null
@@ -128,6 +130,7 @@ PORT=$(docker port "$CID" 5432/tcp | sed 's/.*://')
 export DATABASE_URL="postgresql+asyncpg://clawdi:clawdi_test@127.0.0.1:${PORT}/clawdi_test"
 
 cd backend
+uv run python scripts/check_postgres_runtime.py
 uv run alembic upgrade head
 uv run pytest -q
 ```
