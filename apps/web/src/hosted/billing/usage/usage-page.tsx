@@ -46,10 +46,7 @@ function compareStableText(left: string, right: string): number {
 function decimalUsdParts(value: string): readonly [string, string] {
 	const match = /^\+?(\d+)(?:\.(\d+))?$/.exec(value.trim());
 	if (!match) return ["0", ""];
-	return [
-		(match[1] ?? "0").replace(/^0+(?=\d)/, ""),
-		(match[2] ?? "").replace(/0+$/, ""),
-	];
+	return [(match[1] ?? "0").replace(/^0+(?=\d)/, ""), (match[2] ?? "").replace(/0+$/, "")];
 }
 
 function compareSpendDescending(left: string, right: string): number {
@@ -319,8 +316,8 @@ export function UsageSummaryView({
 														? "truncate font-mono text-[11px] text-muted-foreground"
 														: "text-xs leading-4 text-muted-foreground"
 												}
-											title={agent.agent_id ?? undefined}
-										>
+												title={agent.agent_id ?? undefined}
+											>
 												{agent.agent_id ?? "Usage not linked to an agent"}
 											</div>
 										</td>
