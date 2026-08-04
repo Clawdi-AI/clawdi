@@ -32,7 +32,8 @@ describe("dialog exit lifecycle", () => {
 			"components/vault/add-keys-dialog.tsx",
 			"components/vault/vaults-surface.tsx",
 			"components/memories/memories-surface.tsx",
-			"pages/dashboard/projects/page.tsx",
+			"components/projects/project-create-dialog.tsx",
+			"components/skills/agent-skill-add-dialog.tsx",
 		]) {
 			expect(source(path), path).toContain("onOpenChangeComplete");
 		}

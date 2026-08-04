@@ -66,8 +66,8 @@ describe("overview modules", () => {
 			createElement(AgentOverviewCapabilitiesSkeleton, { variant: "hosted" }),
 		);
 
-		expect(connected.match(/data-overview-module-skeleton=/g)).toHaveLength(5);
-		expect(hosted.match(/data-overview-module-skeleton=/g)).toHaveLength(7);
+		expect(connected.match(/data-overview-module-skeleton=/g)).toHaveLength(2);
+		expect(hosted.match(/data-overview-module-skeleton=/g)).toHaveLength(4);
 		expect(hosted).toContain("h-full min-w-0 py-3");
 		expect(hosted).toContain("grid-rows-1 content-center gap-0");
 		expect(hosted).not.toContain("h-40");

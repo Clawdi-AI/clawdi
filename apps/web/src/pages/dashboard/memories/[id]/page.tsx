@@ -62,7 +62,7 @@ export default function MemoryDetailPage({
 	const deleteMemory = api.useMutation("delete", "/v1/memories/{memory_id}", {
 		onSuccess: () => {
 			toast.success("Memory Deleted", {
-				description: "Your agents will no longer recall it.",
+				description: "Every Agent in this account will stop recalling it.",
 			});
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
 			void router.navigate({ href: collectionTarget.href });
@@ -70,7 +70,10 @@ export default function MemoryDetailPage({
 		onError: (e) => toast.error("Couldn't delete memory", { description: errorMessage(e) }),
 	});
 
-	const onDelete = () => deleteMemory.mutate({ params: { path: { memory_id: memoryId } } });
+	const onDelete = () => {
+		if (deleteMemory.isPending) return;
+		deleteMemory.mutate({ params: { path: { memory_id: memoryId } } });
+	};
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
@@ -212,10 +215,22 @@ function MemoryPageHeader({
 					<>
 						{scope.kind === "agent" ? (
 							<Button
-								render={<Link to={libraryHref} />}
+								render={<Link to={collectionHref} />}
 								nativeButton={false}
 								variant="outline"
 								size="sm"
+							>
+								<ArrowLeft />
+								Back to {collectionLabel}
+							</Button>
+						) : null}
+						{scope.kind === "agent" ? (
+							<Button
+								render={<Link to={libraryHref} />}
+								nativeButton={false}
+								variant="ghost"
+								size="sm"
+								className="text-muted-foreground"
 							>
 								<ExternalLink />
 								{libraryLabel}

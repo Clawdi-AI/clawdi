@@ -30,8 +30,9 @@ import {
 	useAgentProjectBindings,
 } from "@/components/dashboard/agent-project-bindings-query";
 import { orderedAgentProjectBindings } from "@/components/dashboard/agent-project-scope";
-import { DetailNotFound, DetailPanel, DetailTitle } from "@/components/detail/layout";
+import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
+import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	displayProjectName,
@@ -44,7 +45,9 @@ import {
 	projectKindMeta,
 } from "@/components/projects/project-metadata";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
+import { AgentSkillAddDialog } from "@/components/skills/agent-skill-add-dialog";
 import { SkillCardGrid } from "@/components/skills/skill-card";
+import { SkillInstallForm } from "@/components/skills/skill-install-form";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
 	AlertDialog,
@@ -68,8 +71,6 @@ import {
 	DialogTitle,
 	DialogTrigger,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
 	Select,
 	SelectContent,
@@ -79,6 +80,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { NewVaultDialog } from "@/components/vault/vaults-surface";
 import {
 	agentSectionHref,
 	agentSectionLabel,
@@ -97,7 +99,6 @@ import {
 	libraryManagementTarget,
 	type ResourceNavigationScope,
 	resourceCollectionTarget,
-	vaultDetailHrefForScope,
 	vaultDetailLink,
 } from "@/lib/resource-navigation";
 import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
@@ -136,7 +137,6 @@ export default function ProjectDetailPage({
 	// Forms are progressive-disclosure (taste audit #2): content first,
 	// inputs on demand.
 	const [showInstallSkill, setShowInstallSkill] = useState(false);
-	const [showCreateVault, setShowCreateVault] = useState(false);
 	const joinedFromShare = !isAgentScope && searchParams.get("joined") === "share";
 
 	const projects = $api.useQuery("get", "/v1/projects", {});
@@ -159,6 +159,16 @@ export default function ProjectDetailPage({
 	const scopedBindingPosition = scopedBinding
 		? orderedScopedBindings.findIndex((binding) => binding.id === scopedBinding.id) + 1
 		: null;
+	const scopedWritableProjectIds = useMemo(
+		() =>
+			isAgentScope
+				? orderedScopedBindings.flatMap((binding) => {
+						const boundProject = rows.find((row) => row.id === binding.project_id);
+						return isBrowserWritableSkillProject(boundProject) ? [binding.project_id] : [];
+					})
+				: undefined,
+		[isAgentScope, orderedScopedBindings, rows],
+	);
 
 	useEffect(() => {
 		if (!isAgentScope && searchParams.get("useWithAgent") === "1") setUseWithAgentOpen(true);
@@ -284,7 +294,8 @@ export default function ProjectDetailPage({
 			void qc.invalidateQueries({ queryKey: ["skills"] });
 			void qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			toast.success("Project removed from Agent", {
-				description: "The Project and its resources remain in the resource library.",
+				description:
+					"Only this Agent lost access. The Project and its resources remain in the resource library.",
 			});
 			void router.navigate({ href: backTarget.href });
 		},
@@ -319,6 +330,16 @@ export default function ProjectDetailPage({
 	if (projects.isLoading || (isAgentScope && scopedBindings.isLoading)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+				<Button
+					render={<Link to={backTarget.href} />}
+					nativeButton={false}
+					variant="ghost"
+					size="sm"
+					className="w-fit"
+				>
+					<ArrowLeft className="size-4" />
+					Back to {backTarget.label}
+				</Button>
 				<Skeleton className="h-8 w-24" />
 				<div className="flex items-start gap-3">
 					<Skeleton className="size-11 rounded-xl" />
@@ -359,7 +380,7 @@ export default function ProjectDetailPage({
 					className="w-fit"
 				>
 					<ArrowLeft className="mr-1.5 size-4" />
-					{backTarget.label}
+					Back to {backTarget.label}
 				</Button>
 				{isApiNotFoundError(blockingError) ? (
 					<DetailNotFound
@@ -393,7 +414,7 @@ export default function ProjectDetailPage({
 					className="w-fit"
 				>
 					<ArrowLeft className="mr-1.5 size-4" />
-					{backTarget.label}
+					Back to {backTarget.label}
 				</Button>
 				<DetailNotFound
 					title="Project not found"
@@ -414,7 +435,7 @@ export default function ProjectDetailPage({
 					className="w-fit"
 				>
 					<ArrowLeft className="mr-1.5 size-4" />
-					{backTarget.label}
+					Back to {backTarget.label}
 				</Button>
 				<DetailNotFound
 					title="Project not available to this Agent"
@@ -476,80 +497,76 @@ export default function ProjectDetailPage({
 			{trigger}
 		</UseProjectWithAgentDialog>
 	);
+	const projectIdentity = identityFor(displayProjectName(project));
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<Button
-				render={<Link to={backTarget.href} />}
-				nativeButton={false}
-				variant="ghost"
-				size="sm"
-				className="w-fit"
-			>
-				<ArrowLeft className="mr-1.5 size-4" />
-				{backTarget.label}
-			</Button>
-
-			{/* Hub identity header — who this project is, in one glance. */}
-			<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-				<div className="flex min-w-0 items-start gap-3">
+			<PageHeader
+				title={displayProjectName(project)}
+				titleAdornment={<ProjectKindBadge kind={project.kind} />}
+				icon={
 					<span
 						className={cn(
 							"flex size-11 shrink-0 select-none items-center justify-center rounded-xl text-2xl leading-none",
-							identityFor(displayProjectName(project)).colorClasses,
+							projectIdentity.colorClasses,
 						)}
 					>
-						{identityFor(displayProjectName(project)).emoji}
+						{projectIdentity.emoji}
 					</span>
-					<div className="min-w-0">
-						<div className="flex min-w-0 flex-wrap items-center gap-2">
-							<DetailTitle className="truncate">{displayProjectName(project)}</DetailTitle>
-							<ProjectKindBadge kind={project.kind} />
-						</div>
-						<p className="mt-1 text-sm text-muted-foreground">
-							{isAgentScope && scopedBinding
-								? scopedBinding.binding_type === "primary"
-									? "This Agent reads this Project first and writes new Project resources here by default."
-									: "This Agent can read skills and Vaults from this Project. Writes stay in its main Project."
-								: projectDetailDescription(project, isOwner, projectType?.label ?? "Project")}
-						</p>
-						<p className="mt-0.5 font-mono text-xs text-muted-foreground">{project.slug}</p>
-					</div>
-				</div>
-				<div className="flex shrink-0 items-center gap-2">
-					{isAgentScope ? (
+				}
+				description={
+					isAgentScope && scopedBinding
+						? scopedBinding.binding_type === "primary"
+							? "This is the Agent's fixed Default project and first read context. Supported changes affect every Agent using this Project."
+							: "This Agent can use Skills and attached Vaults from this Project. Supported changes affect every Agent using this Project."
+						: projectDetailDescription(project, isOwner, projectType?.label ?? "Project")
+				}
+				status={<span className="font-mono text-xs text-muted-foreground">{project.slug}</span>}
+				actions={
+					<>
 						<Button
-							render={<Link to={managementTarget.href} />}
+							render={<Link to={backTarget.href} />}
 							nativeButton={false}
-							variant="ghost"
+							variant="outline"
 							size="sm"
-							className="text-muted-foreground"
 						>
-							<ExternalLink className="size-3.5" />
-							{managementTarget.label}
+							<ArrowLeft className="size-4" />
+							Back to {backTarget.label}
 						</Button>
-					) : (
-						addToAgentDialog(
-							<Button size="sm">
-								<Bot className="mr-1.5 size-3.5" />
-								Add to agent
-							</Button>,
-						)
-					)}
-					{!isAgentScope && isOwner && isShareableProject ? (
-						<ShareProjectDialog
-							projectId={project.id}
-							projectName={displayProjectName(project)}
-							projectKind={project.kind}
-						>
-							<Button variant="outline" size="sm">
-								<Share2 className="mr-1.5 size-3.5" />
-								Share
+						{isAgentScope ? (
+							<Button
+								render={<Link to={managementTarget.href} />}
+								nativeButton={false}
+								variant="ghost"
+								size="sm"
+								className="text-muted-foreground"
+							>
+								<ExternalLink className="size-3.5" />
+								{managementTarget.label}
 							</Button>
-						</ShareProjectDialog>
-					) : null}
-				</div>
-			</div>
+						) : (
+							addToAgentDialog(
+								<Button size="sm">
+									<Bot className="mr-1.5 size-3.5" />
+									Add to agent
+								</Button>,
+							)
+						)}
+						{!isAgentScope && isOwner && isShareableProject ? (
+							<ShareProjectDialog
+								projectId={project.id}
+								projectName={displayProjectName(project)}
+								projectKind={project.kind}
+							>
+								<Button variant="outline" size="sm">
+									<Share2 className="mr-1.5 size-3.5" />
+									Share
+								</Button>
+							</ShareProjectDialog>
+						) : null}
+					</>
+				}
+			/>
 
 			{isAgentScope && scopedBinding ? (
 				<DetailPanel className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -557,7 +574,7 @@ export default function ProjectDetailPage({
 						<h2 className="text-sm font-semibold">Agent access</h2>
 						<p className="mt-0.5 text-xs text-muted-foreground">
 							{scopedBinding.binding_type === "primary"
-								? "Main Project · read order 1 · default write destination."
+								? "Default project · read order 1. The current API keeps this primary binding fixed."
 								: `Added Project · read order ${scopedBindingPosition ?? "—"}. Removing it only changes this Agent's access.`}
 						</p>
 					</div>
@@ -620,7 +637,9 @@ export default function ProjectDetailPage({
 				count={skillCount}
 				description={
 					isAgentScope
-						? "Skills this Agent can read from this Project."
+						? canManageSkills
+							? "Project copies available to this Agent. Changes affect every Agent using this Project."
+							: "Skills this Agent can read from this Project."
 						: project.kind === "environment"
 							? "Read-only projections authored on this Agent's filesystem."
 							: isOwner
@@ -628,21 +647,46 @@ export default function ProjectDetailPage({
 								: "Readable instructions shared by the owner."
 				}
 				action={
-					!isAgentScope && canManageSkills ? (
-						<Button
-							variant="outline"
-							size="sm"
-							aria-expanded={showInstallSkill}
-							onClick={() => setShowInstallSkill((v) => !v)}
-						>
-							<Plus className="size-3.5" />
-							Install skill
-						</Button>
+					canManageSkills ? (
+						isAgentScope ? (
+							<AgentSkillAddDialog
+								agentId={scope.agentId}
+								projects={[project]}
+								defaultProjectId={project.id}
+								routeSearch={scope.agentQuery}
+								trigger={
+									<Button variant="outline" size="sm">
+										<Plus className="size-3.5" />
+										Add Skill
+									</Button>
+								}
+							/>
+						) : (
+							<Button
+								variant="outline"
+								size="sm"
+								aria-expanded={showInstallSkill}
+								onClick={() => setShowInstallSkill((v) => !v)}
+							>
+								<Plus className="size-3.5" />
+								Install skill
+							</Button>
+						)
 					) : null
 				}
 			>
 				{!isAgentScope && canManageSkills && showInstallSkill ? (
-					<InstallSkillInProjectForm projectId={project.id} onChanged={refresh} />
+					<div className="max-w-3xl rounded-lg border bg-muted/30 p-3">
+						<SkillInstallForm
+							projectId={project.id}
+							onInstalled={(skill) => {
+								refresh();
+								toast.success("Skill installed", {
+									description: `${skill.name} is now available to every Agent using this Project.`,
+								});
+							}}
+						/>
+					</div>
 				) : null}
 				{blockingSkillsError ? (
 					<ApiErrorPanel
@@ -662,21 +706,7 @@ export default function ProjectDetailPage({
 								: "No skills are visible in this Project yet."
 						}
 						emptyVariant="inset"
-						capabilitiesFor={(skill) => {
-							const capabilities = skillCapabilities(skill, project);
-							return isAgentScope && capabilities.canUpdate
-								? {
-										...capabilities,
-										canUpdate: false,
-										canDelete: false,
-										canSend: false,
-										canSelect: false,
-										canSync: false,
-										readOnlyReason: "unknown",
-										badgeLabel: "Managed in library",
-									}
-								: capabilities;
-						}}
+						capabilitiesFor={(skill) => skillCapabilities(skill, project)}
 						skillLink={
 							scope.kind === "agent"
 								? (skill) =>
@@ -688,6 +718,7 @@ export default function ProjectDetailPage({
 										)
 								: undefined
 						}
+						sendTargetProjectIds={scopedWritableProjectIds}
 					/>
 				)}
 			</HubSection>
@@ -704,22 +735,21 @@ export default function ProjectDetailPage({
 							: "Read-only vaults shared through this Project."
 				}
 				action={
-					!isAgentScope && isOwner ? (
-						<Button
-							variant="outline"
-							size="sm"
-							aria-expanded={showCreateVault}
-							onClick={() => setShowCreateVault((v) => !v)}
-						>
-							<Plus className="size-3.5" />
-							New vault
-						</Button>
+					isOwner ? (
+						<NewVaultDialog
+							allowedProjectIds={[project.id]}
+							defaultProjectId={project.id}
+							navigationScope={scope}
+							trigger={
+								<Button variant="outline" size="sm">
+									<Plus className="size-3.5" />
+									New vault
+								</Button>
+							}
+						/>
 					) : null
 				}
 			>
-				{!isAgentScope && isOwner && showCreateVault ? (
-					<CreateVaultInProjectForm projectId={project.id} onChanged={refresh} />
-				) : null}
 				{vaults.isLoading ? (
 					<Skeleton className="h-24 w-full" />
 				) : blockingVaultsError ? (
@@ -1161,8 +1191,8 @@ function UseProjectWithAgentDialog({
 				<DialogHeader>
 					<DialogTitle>Add project to agent</DialogTitle>
 					<DialogDescription>
-						Add {projectName} as an extra Project for an agent. The agent&apos;s main Project stays
-						the writable default; this Project is read by the agent.
+						Add {projectName} to an Agent&apos;s Project access and read order. This does not change
+						the Agent&apos;s Default project.
 					</DialogDescription>
 				</DialogHeader>
 
@@ -1241,7 +1271,7 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<CheckCircle2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">This Is the Agent&apos;s Main Project</div>
+										<div className="font-medium">This is the Agent&apos;s Default project</div>
 										<p className="mt-1 text-xs text-muted-foreground">
 											No extra step is needed. Open the agent&apos;s {AGENT_PROJECTS_SECTION_LABEL}{" "}
 											section to review its read order.
@@ -1265,8 +1295,9 @@ function UseProjectWithAgentDialog({
 									<div>
 										<div className="font-medium">Add as Extra</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											Skills and vaults from this Project become available to the selected agent.
-											Writes still land in the agent&apos;s main Project.
+											Skills and attached Vaults from this Project become available to the selected
+											Agent. Existing resources do not move, and its Default project does not
+											change.
 										</p>
 									</div>
 								</div>
@@ -1322,157 +1353,6 @@ function UseProjectWithAgentDialog({
 	);
 }
 
-function InstallSkillInProjectForm({
-	projectId,
-	onChanged,
-}: {
-	projectId: string;
-	onChanged: () => void;
-}) {
-	const api = useApi();
-	const [repoInput, setRepoInput] = useState("");
-	const [error, setError] = useState<string | null>(null);
-	const install = useMutation({
-		mutationFn: async ({ repo, path }: { repo: string; path?: string }) =>
-			unwrap(
-				await api.POST("/v1/projects/{project_id}/skills/install", {
-					params: { path: { project_id: projectId } },
-					body: { repo, path },
-				}),
-			),
-		onSuccess: () => {
-			setRepoInput("");
-			setError(null);
-			onChanged();
-			toast.success("Skill installed", { description: "Saved in this Project." });
-		},
-		onError: (e) => {
-			setError(errorMessage(e));
-		},
-	});
-
-	const submit = () => {
-		setError(null);
-		const trimmed = repoInput.trim();
-		if (!trimmed) return;
-		const clean = trimmed.replace(/^https?:\/\/github\.com\//, "").replace(/\/$/, "");
-		const parts = clean.split("/").filter(Boolean);
-		if (parts.length < 2) {
-			setError("Enter as `owner/repo` or `owner/repo/path-to-skill`.");
-			return;
-		}
-		install.mutate({
-			repo: `${parts[0]}/${parts[1]}`,
-			path: parts.length > 2 ? parts.slice(2).join("/") : undefined,
-		});
-	};
-
-	return (
-		<div className="grid max-w-3xl gap-2 rounded-lg border bg-muted/30 p-3">
-			<Label htmlFor={`project-skill-repo-${projectId}`} className="text-xs font-medium">
-				GitHub skill repository
-			</Label>
-			<div className="flex flex-col gap-2 sm:flex-row">
-				<Input
-					id={`project-skill-repo-${projectId}`}
-					name="project-skill-repo"
-					value={repoInput}
-					onChange={(e) => {
-						setRepoInput(e.target.value);
-						setError(null);
-					}}
-					onKeyDown={(e) => {
-						if (e.key === "Enter") submit();
-					}}
-					placeholder="owner/repo or owner/repo/path…"
-					autoComplete="off"
-					spellCheck={false}
-					aria-invalid={!!error || undefined}
-					className="min-w-0 flex-1"
-				/>
-				<Button
-					size="sm"
-					disabled={!repoInput.trim() || install.isPending}
-					onClick={submit}
-					variant={repoInput.trim() ? "default" : "outline"}
-					className="w-full sm:w-auto"
-				>
-					{install.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
-					Install skill
-				</Button>
-			</div>
-			<p className="text-xs text-muted-foreground">Paste a GitHub skill path to add it here.</p>
-			{error ? <p className="text-xs text-destructive">{error}</p> : null}
-		</div>
-	);
-}
-
-function CreateVaultInProjectForm({
-	projectId,
-	onChanged,
-}: {
-	projectId: string;
-	onChanged: () => void;
-}) {
-	const api = useApi();
-	const router = useRouter();
-	const [slug, setSlug] = useState("");
-	const create = useMutation({
-		mutationFn: async (nextSlug: string) =>
-			unwrap(
-				await api.POST("/v1/vault", {
-					params: { query: { project_id: projectId, create_only: true } },
-					body: { slug: nextSlug, name: nextSlug },
-				}),
-			),
-		onSuccess: (created) => {
-			setSlug("");
-			onChanged();
-			toast.success("Vault created", { description: "Added to this Project. Add keys next." });
-			void router.navigate({
-				href: vaultDetailHrefForScope({ kind: "library" }, created.slug, created.id),
-			});
-		},
-		onError: (e) => toast.error("Couldn't create vault", { description: errorMessage(e) }),
-	});
-
-	return (
-		<div className="grid max-w-3xl gap-2 rounded-lg border bg-muted/30 p-3">
-			<Label htmlFor={`project-vault-slug-${projectId}`} className="text-xs font-medium">
-				Vault name
-			</Label>
-			<div className="flex flex-col gap-2 sm:flex-row">
-				<Input
-					id={`project-vault-slug-${projectId}`}
-					name="project-vault-slug"
-					value={slug}
-					onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
-					onKeyDown={(e) => {
-						if (e.key === "Enter" && slug) create.mutate(slug);
-					}}
-					placeholder="github…"
-					autoComplete="off"
-					spellCheck={false}
-					className="min-w-0 flex-1"
-				/>
-				<Button
-					size="sm"
-					disabled={!slug || create.isPending}
-					onClick={() => slug && create.mutate(slug)}
-					variant={slug ? "default" : "outline"}
-					className="w-full sm:w-auto"
-				>
-					{create.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
-					Create Vault
-				</Button>
-			</div>
-			<p className="text-xs text-muted-foreground">
-				Use lowercase letters, numbers, and hyphens. The new Vault opens so you can add keys.
-			</p>
-		</div>
-	);
-}
-
 function VaultRow({ vault, scope }: { vault: VaultSummary; scope: ResourceNavigationScope }) {
 	const id = identityFor(vault.name);
 	return (
@@ -1487,7 +1367,9 @@ function VaultRow({ vault, scope }: { vault: VaultSummary; scope: ResourceNaviga
 			</span>
 			<div className="min-w-0 flex-1">
 				<span className="block truncate text-sm font-medium">{vault.name}</span>
-				<span className="mt-0.5 block font-mono text-xs text-muted-foreground">{vault.slug}</span>
+				<span className="mt-0.5 block text-xs text-muted-foreground">
+					<span className="font-mono">{vault.slug}</span> · Attached to this Project
+				</span>
 			</div>
 			<ChevronRight className="size-4 shrink-0 text-muted-foreground/50 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
 			<Link

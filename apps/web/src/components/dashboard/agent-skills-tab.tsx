@@ -127,7 +127,6 @@ export function AgentSkillsTab({
 		() => new Map((projects.data ?? []).map((project) => [project.id, project])),
 		[projects.data],
 	);
-
 	if (shouldBlockQueryError(skillsError, skills)) {
 		return (
 			<div>

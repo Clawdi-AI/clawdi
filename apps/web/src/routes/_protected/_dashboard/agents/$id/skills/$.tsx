@@ -1,4 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { AgentResourceRouteGate } from "@/components/dashboard/agent-resource-route-gate";
+import { agentSectionHref } from "@/lib/agent-routes";
 import { routeHeadTitle } from "@/lib/document-title";
 import { decodeResourceRouteParam } from "@/lib/project-resource-model";
 import { SkillDetailContent } from "@/pages/dashboard/skills/[key]/page";
@@ -12,5 +14,13 @@ function AgentSkillDetailRoute() {
 	const { id, _splat } = Route.useParams();
 	const search = Route.useSearch();
 	const skillKey = (_splat ?? "").split("/").map(decodeResourceRouteParam).join("/");
-	return <SkillDetailContent agentId={id} skillKey={skillKey} routeSearch={search} />;
+	return (
+		<AgentResourceRouteGate
+			agentId={id}
+			returnHref={agentSectionHref(id, "projects", search)}
+			returnLabel="Agent Projects"
+		>
+			<SkillDetailContent agentId={id} skillKey={skillKey} routeSearch={search} />
+		</AgentResourceRouteGate>
+	);
 }

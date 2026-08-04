@@ -10,6 +10,7 @@ import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { ProjectCreateDialog } from "@/components/projects/project-create-dialog";
 import {
 	displayProjectName,
 	isCustomProject,
@@ -25,15 +26,6 @@ import {
 import { SectionLabel } from "@/components/section-label";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { Button } from "@/components/ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
@@ -44,7 +36,6 @@ import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn, errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
-type ProjectCreate = components["schemas"]["ProjectCreate"];
 type ProjectRow = components["schemas"]["ProjectResponse"];
 type CountValue = number | "unavailable";
 
@@ -55,8 +46,6 @@ export default function ProjectsPage() {
 	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const router = useRouter();
-	const [newProjectName, setNewProjectName] = useState("");
-	const [newProjectSlug, setNewProjectSlug] = useState("");
 	const [createOpen, setCreateOpen] = useState(false);
 	const [search, setSearch] = useState("");
 	const [systemOpen, setSystemOpen] = useState(false);
@@ -176,8 +165,6 @@ export default function ProjectsPage() {
 	});
 
 	const openCreateDialog = () => {
-		setNewProjectName("");
-		setNewProjectSlug("");
 		setCreateOpen(true);
 	};
 
@@ -218,78 +205,12 @@ export default function ProjectsPage() {
 				/>
 			) : null}
 
-			<Dialog
+			<ProjectCreateDialog
 				open={createOpen}
 				onOpenChange={setCreateOpen}
-				onOpenChangeComplete={(open) => {
-					if (!open) {
-						setNewProjectName("");
-						setNewProjectSlug("");
-					}
-				}}
-			>
-				<DialogContent className="sm:max-w-xl">
-					<DialogHeader>
-						<DialogTitle>New project</DialogTitle>
-						<DialogDescription>
-							Create a Project for a team, workflow, repo, or shareable resources. Add skills,
-							vaults, and sharing settings after it is created.
-						</DialogDescription>
-					</DialogHeader>
-					<form
-						className="space-y-4"
-						onSubmit={(event) => {
-							event.preventDefault();
-							if (!newProjectName.trim() || createProject.isPending) return;
-							const body: ProjectCreate = { name: newProjectName.trim() };
-							const slug = normalizeSlugInput(newProjectSlug);
-							if (slug) body.slug = slug;
-							createProject.mutate({ body });
-						}}
-					>
-						<div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
-							<div className="space-y-1.5">
-								<Label htmlFor="project-name">Name</Label>
-								<Input
-									id="project-name"
-									name="project-name"
-									value={newProjectName}
-									maxLength={200}
-									placeholder="Project name…"
-									autoComplete="off"
-									onChange={(event) => setNewProjectName(event.target.value)}
-								/>
-							</div>
-							<div className="space-y-1.5">
-								<Label htmlFor="project-slug">Slug</Label>
-								<Input
-									id="project-slug"
-									name="project-slug"
-									value={newProjectSlug}
-									maxLength={80}
-									placeholder="auto-generated…"
-									autoComplete="off"
-									spellCheck={false}
-									onChange={(event) => setNewProjectSlug(normalizeSlugDraft(event.target.value))}
-								/>
-							</div>
-						</div>
-						<div className="flex justify-end gap-2">
-							<Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
-								Cancel
-							</Button>
-							<Button
-								type="submit"
-								disabled={!newProjectName.trim() || createProject.isPending}
-								variant={newProjectName.trim() ? "default" : "outline"}
-							>
-								<Plus className="size-3.5" />
-								{createProject.isPending ? "Creating…" : "Create project"}
-							</Button>
-						</div>
-					</form>
-				</DialogContent>
-			</Dialog>
+				isPending={createProject.isPending}
+				onCreate={(body) => createProject.mutateAsync({ body })}
+			/>
 
 			{gridProjects.length === 0 && search.trim() ? (
 				<p className="py-12 text-center text-sm text-muted-foreground">
@@ -395,7 +316,7 @@ function SystemProjectCard({
 function ProjectShareAction({ project }: { project: ProjectRow }) {
 	const projectName = displayProjectName(project);
 	return (
-		<div className="opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+		<div className="opacity-100 transition-opacity duration-150 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
 			<ShareProjectDialog
 				projectId={project.id}
 				projectName={projectName}
@@ -409,21 +330,9 @@ function ProjectShareAction({ project }: { project: ProjectRow }) {
 	);
 }
 
-function normalizeSlugInput(value: string) {
-	return normalizeSlugDraft(value).replace(/-+$/, "");
-}
-
 function formatCountLabel(value: CountValue, noun: string) {
 	if (value === "unavailable") return `— ${noun}s`;
 	return `${value} ${value === 1 ? noun : `${noun}s`}`;
-}
-
-function normalizeSlugDraft(value: string) {
-	return value
-		.toLowerCase()
-		.replace(/[^a-z0-9-]+/g, "-")
-		.replace(/-{2,}/g, "-")
-		.replace(/^-+/, "");
 }
 
 function compareProjectsForProductUse(a: ProjectRow, b: ProjectRow) {

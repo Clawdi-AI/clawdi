@@ -78,11 +78,11 @@ describe("resource navigation scopes", () => {
 		);
 		expect(resourceCollectionTarget(scope, "memories")).toEqual({
 			href: "/agents/agent%201/memories?source=on-clawdi&d=deployment%201",
-			label: "Memories",
+			label: "Agent Memories",
 		});
 		expect(resourceCollectionTarget(scope, "connectors")).toEqual({
 			href: "/agents/agent%201/connectors?source=on-clawdi&d=deployment%201",
-			label: "Connectors",
+			label: "Agent Connectors",
 		});
 		expect(memoryDetailHrefForScope(scope, "memory 1")).toBe(
 			"/agents/agent%201/memories/memory%201?source=on-clawdi&d=deployment%201",
@@ -110,18 +110,39 @@ describe("resource navigation scopes", () => {
 			params: { id: "agent 1", name: "google drive" },
 			search: { source: "on-clawdi", d: "deployment 1" },
 		});
+
+		const projectScope = agentResourceScope(
+			"agent 1",
+			{ source: "on-clawdi", d: "deployment 1", project: "untrusted legacy value" },
+			"project 1",
+		);
+		expect(resourceCollectionTarget(projectScope, "vaults")).toEqual({
+			href: "/agents/agent%201/project-access/project%201?source=on-clawdi&d=deployment%201#vaults",
+			label: "Project",
+		});
+		expect(vaultDetailHrefForScope(projectScope, "prod keys", "vault/1")).toBe(
+			"/agents/agent%201/vaults/prod%20keys?source=on-clawdi&d=deployment%201&project=project%201&vault=vault%2F1",
+		);
+		expect(vaultDetailLink(projectScope, "prod keys", "vault/1")).toMatchObject({
+			search: {
+				source: "on-clawdi",
+				d: "deployment 1",
+				project: "project 1",
+				vault: "vault/1",
+			},
+		});
 	});
 
-	it("makes leaving the Agent shell an explicit library-management target", () => {
+	it("makes leaving the Agent shell an explicit low-emphasis library target", () => {
 		expect(libraryManagementTarget("projects", { projectId: "project 1" })).toEqual({
 			href: "/projects/project%201",
-			label: "Manage in resource library",
+			label: "Open in resource library",
 		});
 		expect(
 			libraryManagementTarget("vaults", { vaultSlug: "prod keys", vaultId: "vault/1" }),
 		).toEqual({
 			href: "/vaults/prod%20keys?vault=vault%2F1",
-			label: "Manage in resource library",
+			label: "Open in resource library",
 		});
 		expect(resourceLibraryDetailTarget("memories", "memory 1")).toEqual({
 			href: "/memories/memory%201",

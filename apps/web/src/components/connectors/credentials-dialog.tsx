@@ -102,7 +102,9 @@ export function ConnectorCredentialsDialog({
 			// initiated the mutation, not whatever the user is doing now.
 			if (gen !== openGenRef.current) return;
 			setValues({});
-			toast.success(`${displayName} connected`);
+			toast.success(`${displayName} connected`, {
+				description: "Approved tools are now available to every Agent in this account.",
+			});
 			onOpenChange(false);
 		} catch {
 			if (gen !== openGenRef.current) return;

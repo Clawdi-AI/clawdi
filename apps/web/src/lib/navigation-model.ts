@@ -256,7 +256,7 @@ export function consoleCommandPaletteItems(
 		);
 }
 
-type AgentNavigationGroupId = "primary" | "resources" | "operate" | "settings";
+type AgentNavigationGroupId = "primary" | "resources" | "shared" | "operate" | "settings";
 
 export type AgentNavigationItemMetadata = Omit<NavigationItemMetadata<AgentSectionId>, "href"> & {
 	variants: readonly AgentNavigationVariant[];
@@ -275,7 +275,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "overview",
 		...CANONICAL_NAVIGATION_IDENTITIES.overview,
 		tint: RESOURCE_TINT_CLASSES.overview,
-		description: "Status, resources, and recent activity for this agent.",
+		description: "Default project, additional Projects, shared capabilities, and recent activity.",
 		tooltip: "Agent overview",
 		variants: ["connected", "hosted"],
 	},
@@ -317,8 +317,8 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "skills",
 		...CANONICAL_NAVIGATION_IDENTITIES.skills,
 		tint: RESOURCE_TINT_CLASSES.skills,
-		description: "Skills available through this agent's Projects.",
-		tooltip: "Skills available through this agent's Projects",
+		description: "Legacy link — choose a Project to manage its Skills.",
+		tooltip: "Choose a Project to manage Skills",
 		variants: ["connected", "hosted"],
 	},
 	projects: {
@@ -333,8 +333,8 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "vaults",
 		...CANONICAL_NAVIGATION_IDENTITIES.vaults,
 		tint: RESOURCE_TINT_CLASSES.vaults,
-		description: "Vaults available through this agent's Projects.",
-		tooltip: "Vaults available through this agent's Projects",
+		description: "Legacy link — choose a Project to manage attached Vaults.",
+		tooltip: "Choose a Project to manage Vaults",
 		variants: ["connected", "hosted"],
 	},
 	connectors: {
@@ -371,13 +371,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	},
 };
 
-export const AGENT_RESOURCE_SECTION_IDS = [
-	"projects",
-	"skills",
-	"vaults",
-	"memories",
-	"connectors",
-] as const satisfies readonly AgentSectionId[];
+export const AGENT_RESOURCE_SECTION_IDS = ["projects"] as const satisfies readonly AgentSectionId[];
 
 export const AGENT_ALL_AGENTS_SECTION_IDS = [
 	"memories",
@@ -401,6 +395,12 @@ const AGENT_NAVIGATION_GROUPS = [
 		id: "resources",
 		label: "Resources",
 		itemIds: AGENT_RESOURCE_SECTION_IDS,
+		separated: false,
+	},
+	{
+		id: "shared",
+		label: "Shared capabilities",
+		itemIds: AGENT_ALL_AGENTS_SECTION_IDS,
 		separated: false,
 	},
 	{

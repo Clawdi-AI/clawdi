@@ -101,7 +101,7 @@ describe("sidebar navigation model", () => {
 		]);
 	});
 
-	test("keeps all Agent resources in one navigation group", () => {
+	test("keeps Project-scoped and all-agent capabilities in a flat navigation", () => {
 		const connectedGroups = agentNavigationGroups("connected");
 		expect(groupShape(connectedGroups)).toEqual([
 			{
@@ -117,10 +117,13 @@ describe("sidebar navigation model", () => {
 				id: "resources",
 				label: "Resources",
 				separated: false,
+				items: [{ id: "projects", label: "Projects" }],
+			},
+			{
+				id: "shared",
+				label: "Shared capabilities",
+				separated: false,
 				items: [
-					{ id: "projects", label: "Projects" },
-					{ id: "skills", label: "Skills" },
-					{ id: "vaults", label: "Vaults" },
 					{ id: "memories", label: "Memories" },
 					{ id: "connectors", label: "Connectors" },
 				],
@@ -132,7 +135,7 @@ describe("sidebar navigation model", () => {
 				items: [{ id: "settings", label: "Settings" }],
 			},
 		]);
-		expectNavigationHeadings(connectedGroups, ["Resources"]);
+		expectNavigationHeadings(connectedGroups, ["Resources", "Shared capabilities"]);
 
 		const hostedGroups = agentNavigationGroups("hosted");
 		expect(groupShape(hostedGroups)).toEqual([
@@ -149,10 +152,13 @@ describe("sidebar navigation model", () => {
 				id: "resources",
 				label: "Resources",
 				separated: false,
+				items: [{ id: "projects", label: "Projects" }],
+			},
+			{
+				id: "shared",
+				label: "Shared capabilities",
+				separated: false,
 				items: [
-					{ id: "projects", label: "Projects" },
-					{ id: "skills", label: "Skills" },
-					{ id: "vaults", label: "Vaults" },
 					{ id: "memories", label: "Memories" },
 					{ id: "connectors", label: "Connectors" },
 				],
@@ -175,7 +181,7 @@ describe("sidebar navigation model", () => {
 				items: [{ id: "settings", label: "Settings" }],
 			},
 		]);
-		expectNavigationHeadings(hostedGroups, ["Resources", "Tools"]);
+		expectNavigationHeadings(hostedGroups, ["Resources", "Shared capabilities", "Tools"]);
 
 		expect(CONNECTED_AGENT_SECTION_IDS).toEqual([
 			"overview",
@@ -241,17 +247,13 @@ describe("sidebar navigation model", () => {
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.settings.icon).toBe(Settings);
 	});
 
-	test("shares resource panels rather than duplicating agent implementations", () => {
+	test("shares Project hubs and all-agent panels without duplicating implementations", () => {
 		const connectedDetail = readFileSync(
 			new URL("../components/dashboard/connected-agent-detail.tsx", import.meta.url),
 			"utf8",
 		);
 		const hostedDetail = readFileSync(
 			new URL("../hosted/agents/hosted-agent-detail.tsx", import.meta.url),
-			"utf8",
-		);
-		const agentVaultsTab = readFileSync(
-			new URL("../components/dashboard/agent-vaults-tab.tsx", import.meta.url),
 			"utf8",
 		);
 		const memoriesPage = readFileSync(
@@ -273,13 +275,11 @@ describe("sidebar navigation model", () => {
 		for (const source of [connectedDetail, hostedDetail]) {
 			expect(source).toContain("AGENT_SECTION_NAVIGATION_ITEMS[activeTab]");
 			expect(source).toContain("<AgentProjectsTab");
-			expect(source).toContain("<AgentVaultsTab");
+			expect(source).toContain("<AgentProjectResourceRedirect");
 			expect(source).toContain("<ConnectorsSurface embedded");
 			expect(source).toContain("<MemoriesSurface");
 			expect(source).not.toContain("@/pages/dashboard");
 		}
-		expect(agentVaultsTab).toContain("@/components/vault/vaults-surface");
-		expect(agentVaultsTab).not.toContain("@/pages/dashboard");
 		expect(connectorsPage).toContain("@/components/connectors/connectors-surface");
 		expect(connectorsPage).not.toContain("useQuery");
 		expect(vaultPage).toContain("@/components/vault/vaults-surface");

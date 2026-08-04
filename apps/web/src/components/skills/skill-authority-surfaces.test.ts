@@ -8,7 +8,8 @@ function source(relativeUrl: string): string {
 describe("Skill authority across Web mutation surfaces", () => {
 	test("cards suppress send, selection, and uninstall while preserving detail navigation", () => {
 		const card = source("./skill-card.tsx");
-		expect(card).toContain("const canSend = !readOnly");
+		expect(card).toContain("const canSend =");
+		expect(card).toContain("sendTargetProjectIds.some");
 		expect(card).toContain("const canUninstall = !readOnly");
 		expect(card).toContain("selectMode && selectable");
 		expect(card).toContain("link={selectMode ? undefined : detailLink}");
@@ -37,9 +38,8 @@ describe("Skill authority across Web mutation surfaces", () => {
 		expect(detail).toContain("skillCapabilities(skill");
 		expect(detail).toContain("if (!capabilities?.canUpdate)");
 		expect(detail).toContain("if (!capabilities?.canDelete)");
-		expect(project).toContain("isBrowserWritableSkillProject(project)");
-		expect(project).toContain("const capabilities = skillCapabilities(skill, project)");
-		expect(project).toContain("isAgentScope && capabilities.canUpdate");
-		expect(project).toContain("canUpdate: false");
+		expect(project).toContain("const canManageSkills = isBrowserWritableSkillProject(project)");
+		expect(project).toContain("capabilitiesFor={(skill) => skillCapabilities(skill, project)}");
+		expect(project).toContain("sendTargetProjectIds={scopedWritableProjectIds}");
 	});
 });

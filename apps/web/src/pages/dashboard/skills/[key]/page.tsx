@@ -32,16 +32,11 @@ import {
 	AGENT_PROJECT_SKILLS_REFRESH_POLICY,
 	agentSkillForegroundRefetchInterval,
 } from "@/components/dashboard/agent-skills-query";
-import {
-	DetailMeta,
-	DetailNotFound,
-	DetailPanel,
-	DetailStats,
-	DetailTitle,
-} from "@/components/detail/layout";
+import { DetailMeta, DetailNotFound, DetailPanel, DetailStats } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { Markdown } from "@/components/markdown";
 import { Stat } from "@/components/meta/stat";
+import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { ProjectIdentity } from "@/components/projects/project-metadata";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -50,7 +45,13 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { type AgentRouteSearch, agentSectionHref } from "@/lib/agent-routes";
+import {
+	type AgentRouteSearch,
+	agentDeploymentRouteQuery,
+	agentProjectDetailHref,
+	agentSectionHref,
+	agentSkillDetailHref,
+} from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import {
@@ -70,7 +71,7 @@ import {
 
 // Strip the leading `---\n...\n---` YAML frontmatter so the markdown
 // renderer doesn't show "name:" / "description:" lines (already
-// rendered above as DetailTitle + description) and so the closing
+// rendered above as PageHeader content) and so the closing
 // `---` doesn't render as a stray `<hr>` next to the Separator.
 function stripFrontmatter(raw: string): string {
 	const m = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/);
@@ -113,12 +114,6 @@ export function SkillDetailContent({
 	const isAgentScope = Boolean(agentId);
 	const selectedProjectId =
 		isAgentScope && typeof routeSearch?.project === "string" ? routeSearch.project : projectIdParam;
-	const skillListHref = agentId
-		? agentSectionHref(agentId, "skills", {
-				source: routeSearch?.source,
-				d: routeSearch?.d,
-			})
-		: projectResourceHref("skills");
 	const scopedBindings = useAgentProjectBindings(agentId, { enabled: isAgentScope });
 	const scopedProjectScope = useMemo<{ projectIds: string[]; error: unknown | null }>(() => {
 		if (!isAgentScope || !scopedBindings.data) return { projectIds: [], error: null };
@@ -187,6 +182,36 @@ export function SkillDetailContent({
 		refetchOnWindowFocus: AGENT_PROJECT_SKILLS_REFRESH_POLICY.refetchOnWindowFocus,
 	});
 	const skill = skillQuery.data;
+	const explicitProjectIsBound = Boolean(selectedProjectId) && scopedProjectAccess.kind === "bound";
+	const returnProjectId = isAgentScope
+		? explicitProjectIsBound
+			? selectedProjectId
+			: (skill?.project_id ?? scopedProjectScope.projectIds[0] ?? null)
+		: null;
+	const skillReturnHref = agentId
+		? returnProjectId
+			? `${agentProjectDetailHref(
+					agentId,
+					returnProjectId,
+					agentDeploymentRouteQuery(routeSearch),
+				)}#skills`
+			: agentSectionHref(agentId, "projects", agentDeploymentRouteQuery(routeSearch))
+		: projectResourceHref("skills");
+	const skillReturnLabel = returnProjectId ? "Project" : agentId ? "Agent Projects" : "Skills";
+	const canonicalAgentSkillHref =
+		agentId && !selectedProjectId && skill?.project_id
+			? agentSkillDetailHref(
+					agentId,
+					skillKey,
+					skill.project_id,
+					agentDeploymentRouteQuery(routeSearch),
+				)
+			: null;
+
+	useEffect(() => {
+		if (!canonicalAgentSkillHref) return;
+		void router.navigate({ href: canonicalAgentSkillHref, replace: true, resetScroll: false });
+	}, [canonicalAgentSkillHref, router]);
 	const blockingBindingsError = isAgentScope
 		? shouldBlockQueryError(scopedBindings.error, scopedBindings.data)
 			? scopedBindings.error
@@ -255,7 +280,7 @@ export function SkillDetailContent({
 		skill.authority === "agent_sync" ||
 		skill.project_kind === "environment" ||
 		projects !== undefined;
-	const isReadOnly = isAgentScope || (capabilities ? !capabilities.canUpdate : true);
+	const isReadOnly = capabilities ? !capabilities.canUpdate : true;
 	const libraryDetailHref = skillDetailHref(
 		skillKey,
 		selectedProjectId || skill?.project_id || undefined,
@@ -323,7 +348,8 @@ export function SkillDetailContent({
 		},
 		onSuccess: () => {
 			toast.success("Skill Saved", {
-				description: "The Cloud-owned Skill content was updated.",
+				description:
+					"The Project copy was updated. Every Agent using this Project receives the change.",
 			});
 			setIsEditing(false);
 			setDraft("");
@@ -350,6 +376,7 @@ export function SkillDetailContent({
 		},
 	});
 
+	const sourceProjectName = skill?.project_name ?? null;
 	const uninstall = useMutation({
 		mutationFn: async () => {
 			if (!targetProjectId) throw new Error("Project not loaded yet");
@@ -362,12 +389,12 @@ export function SkillDetailContent({
 		},
 		onSuccess: async () => {
 			toast.success("Skill Uninstalled", {
-				description: skillAgentLabel
-					? `Removed from ${skillAgentLabel}. Other agents keep their copies.`
-					: "Removed from this agent. Other agents keep their copies.",
+				description: sourceProjectName
+					? `Removed from ${sourceProjectName}. Every Agent using that Project loses this copy.`
+					: "The Project copy was removed. Copies in other Projects remain.",
 			});
 			await removeDeletedSkillQueries(queryClient, skillKey);
-			void router.navigate({ href: skillListHref });
+			void router.navigate({ href: skillReturnHref });
 		},
 		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
 	});
@@ -384,8 +411,6 @@ export function SkillDetailContent({
 		uninstall.mutate();
 	};
 
-	const sourceProjectName = skill?.project_name ?? null;
-	const uninstallLocation = skillAgentLabel ? `from ${skillAgentLabel}` : "from this agent";
 	const agentCaption = skillAgentLabel
 		? `on ${skillAgentLabel}`
 		: sourceProjectName
@@ -401,16 +426,16 @@ export function SkillDetailContent({
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			{isAgentScope ? (
+			{isAgentScope && !(viewState === "detail" && skill) ? (
 				<Button
-					render={<Link to={skillListHref} />}
+					render={<Link to={skillReturnHref} />}
 					nativeButton={false}
 					variant="ghost"
 					size="sm"
 					className="w-fit"
 				>
-					<ArrowLeft className="mr-1.5 size-4" />
-					Agent Skills
+					<ArrowLeft className="size-4" />
+					Back to {skillReturnLabel}
 				</Button>
 			) : null}
 			{agentAccessError ? (
@@ -424,7 +449,7 @@ export function SkillDetailContent({
 			) : isUnboundAgentProject ? (
 				<DetailNotFound
 					title="Skill not available to this Agent"
-					message="The requested Project is not available through this Agent. Return to Agent Skills to choose an available Skill."
+					message="The requested Project is not available through this Agent. Return to Agent Projects to choose an available Project."
 				/>
 			) : viewState === "missing-key" ? (
 				<DetailNotFound title="Skill not found" message="The URL is missing a skill key." />
@@ -452,16 +477,57 @@ export function SkillDetailContent({
 				</div>
 			) : viewState === "detail" && skill ? (
 				<>
-					<div className="space-y-2">
-						<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-							<div className="min-w-0 space-y-2">
-								<div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-									<Sparkles className="size-3.5" />
-									<span>Skill</span>
-								</div>
-								<DetailTitle className="truncate">{skill.name}</DetailTitle>
-							</div>
-							<div className="flex w-full shrink-0 flex-wrap gap-2 sm:w-auto sm:justify-end">
+					<PageHeader
+						title={skill.name}
+						icon={<Sparkles className="size-5 text-muted-foreground" />}
+						description={skill.description ?? undefined}
+						status={
+							<DetailMeta>
+								<span>{skill.source}</span>
+								{skill.source_repo ? (
+									<>
+										<span>·</span>
+										<a
+											href={`https://github.com/${skill.source_repo}`}
+											target="_blank"
+											rel="noreferrer"
+											className="inline-flex items-center gap-1 hover:text-foreground"
+										>
+											{skill.source_repo}
+											<ExternalLink className="size-3" />
+										</a>
+									</>
+								) : null}
+								{agentCaption ? (
+									<>
+										<span>·</span>
+										<span className="inline-flex items-center gap-1">
+											<Laptop className="size-3" />
+											{agentCaption}
+										</span>
+									</>
+								) : null}
+								{skill.created_at ? (
+									<>
+										<span>·</span>
+										<span>installed {relativeTime(skill.created_at)}</span>
+									</>
+								) : null}
+							</DetailMeta>
+						}
+						actions={
+							<>
+								{isAgentScope ? (
+									<Button
+										render={<Link to={skillReturnHref} />}
+										nativeButton={false}
+										variant="outline"
+										size="sm"
+									>
+										<ArrowLeft className="size-4" />
+										Back to {skillReturnLabel}
+									</Button>
+								) : null}
 								{isAgentScope ? (
 									<Button
 										render={<Link to={libraryDetailHref} />}
@@ -471,9 +537,10 @@ export function SkillDetailContent({
 										className="text-muted-foreground"
 									>
 										<ExternalLink className="size-3.5" />
-										Manage in resource library
+										Open in resource library
 									</Button>
-								) : !accessKnown ? null : isReadOnly ? (
+								) : null}
+								{!accessKnown ? null : isReadOnly ? (
 									<Badge
 										variant="secondary"
 										title="Cloud mutations are disabled for this Skill's authority or Project."
@@ -501,13 +568,10 @@ export function SkillDetailContent({
 										<ConfirmAction
 											title={`Uninstall ${skill.name}?`}
 											description={
-												<>
-													<p>This removes the skill {uninstallLocation}.</p>
-													<p>
-														Your other agents keep their copies. To get it back here, re-install it
-														from the marketplace.
-													</p>
-												</>
+												<p>
+													This removes the copy from {sourceProjectName ?? "this Project"}. Every
+													Agent using that Project loses access; copies in other Projects remain.
+												</p>
 											}
 											confirmLabel="Uninstall Skill"
 											destructive
@@ -550,41 +614,9 @@ export function SkillDetailContent({
 										</Button>
 									</>
 								)}
-							</div>
-						</div>
-						<DetailMeta>
-							<span>{skill.source}</span>
-							{skill.source_repo ? (
-								<>
-									<span>·</span>
-									<a
-										href={`https://github.com/${skill.source_repo}`}
-										target="_blank"
-										rel="noreferrer"
-										className="inline-flex items-center gap-1 hover:text-foreground"
-									>
-										{skill.source_repo}
-										<ExternalLink className="size-3" />
-									</a>
-								</>
-							) : null}
-							{agentCaption ? (
-								<>
-									<span>·</span>
-									<span className="inline-flex items-center gap-1">
-										<Laptop className="size-3" />
-										{agentCaption}
-									</span>
-								</>
-							) : null}
-							{skill.created_at ? (
-								<>
-									<span>·</span>
-									<span>installed {relativeTime(skill.created_at)}</span>
-								</>
-							) : null}
-						</DetailMeta>
-					</div>
+							</>
+						}
+					/>
 
 					<DetailStats>
 						<Stat icon={Tag} label={`v${skill.version}`} />
@@ -593,10 +625,6 @@ export function SkillDetailContent({
 							label={`${skill.file_count} file${skill.file_count === 1 ? "" : "s"}`}
 						/>
 					</DetailStats>
-
-					{skill.description ? (
-						<p className="text-sm text-muted-foreground">{skill.description}</p>
-					) : null}
 
 					<DetailPanel className="space-y-3">
 						<div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -642,7 +670,7 @@ export function SkillDetailContent({
 								<AlertTitle>Editing the Skill File</AlertTitle>
 								<AlertDescription>
 									Keep the YAML header at the top intact. It stores the skill name and description.
-									Save updates this Project and syncs to the agent.
+									Save updates this Project copy for every Agent using the Project.
 								</AlertDescription>
 							</Alert>
 							<Textarea

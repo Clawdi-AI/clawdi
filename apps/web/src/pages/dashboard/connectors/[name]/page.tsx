@@ -76,7 +76,7 @@ export default function ConnectorDetailPage({
 function DetailSkeletonShell({ name, scope }: { name: string; scope: ResourceNavigationScope }) {
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
-			<ConnectorPageHeader name={name} scope={scope} showCollectionAction />
+			<ConnectorPageHeader name={name} scope={scope} />
 			<DetailSkeleton />
 		</div>
 	);
@@ -95,11 +95,19 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	useEffect(() => {
 		const failed =
 			oauthState.error !== null || oauthState.status === "error" || oauthState.status === "failed";
-		if (!failed) return;
-		toast.error("Connection Failed", {
-			description: oauthState.error || "OAuth did not complete. Try again from this page.",
-		});
-		void setOauthState({ error: null, status: null }, { history: "replace" });
+		const succeeded = oauthState.status === "success" || oauthState.status === "connected";
+		if (failed) {
+			toast.error("Connection Failed", {
+				description: oauthState.error || "OAuth did not complete. Try again from this page.",
+			});
+		} else if (succeeded) {
+			toast.success("Connector connected", {
+				description: "Approved tools are now available to every Agent in this account.",
+			});
+		}
+		if (failed || succeeded) {
+			void setOauthState({ error: null, status: null }, { history: "replace" });
+		}
 	}, [oauthState.error, oauthState.status, setOauthState]);
 
 	// All hosted/cloud branching is encapsulated in the `connectors-data`
@@ -153,6 +161,11 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 		disconnectMutation.mutate(
 			{ params: { path: { connection_id: connectionId } } },
 			{
+				onSuccess: () => {
+					toast.success("Connector disconnected", {
+						description: "Every Agent in this account loses access to this connected account.",
+					});
+				},
 				onSettled: () => {
 					inflightDisconnectsRef.current.delete(connectionId);
 					setDisconnectingIds((s) => {
@@ -208,7 +221,9 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 			return;
 		}
 		if (usesNoAuth) {
-			toast.info(`${displayName} does not require setup`);
+			toast.info(`${displayName} does not require setup`, {
+				description: "Its approved tools are available to every Agent in this account.",
+			});
 			return;
 		}
 		if (usesCredentialsForm) {
@@ -277,7 +292,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	if (isApiNotFoundError(appQ.error) || shouldBlockQueryError(appQ.error, appQ.data)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
-				<ConnectorPageHeader name={name} scope={scope} showCollectionAction />
+				<ConnectorPageHeader name={name} scope={scope} />
 				{isApiNotFoundError(appQ.error) ? (
 					<EmptyState
 						icon={Plug}
@@ -479,7 +494,6 @@ function ConnectorPageHeader({
 	isReady = false,
 	readyLabel = "Connected",
 	scope,
-	showCollectionAction = false,
 }: {
 	name: string;
 	displayName?: string;
@@ -488,7 +502,6 @@ function ConnectorPageHeader({
 	isReady?: boolean;
 	readyLabel?: string;
 	scope: ResourceNavigationScope;
-	showCollectionAction?: boolean;
 }) {
 	const libraryTarget = resourceLibraryDetailTarget("connectors", name);
 	const collectionTarget = resourceCollectionTarget(scope, "connectors");
@@ -517,7 +530,7 @@ function ConnectorPageHeader({
 			}
 			actions={
 				scope.kind === "agent" ? (
-					showCollectionAction ? (
+					<>
 						<Button
 							render={<Link to={collectionTarget.href} />}
 							nativeButton={false}
@@ -527,17 +540,17 @@ function ConnectorPageHeader({
 							<ArrowLeft />
 							Back to {collectionTarget.label}
 						</Button>
-					) : (
 						<Button
 							render={<Link to={libraryTarget.href} />}
 							nativeButton={false}
-							variant="outline"
+							variant="ghost"
 							size="sm"
+							className="text-muted-foreground"
 						>
 							<ExternalLink />
 							{libraryTarget.label}
 						</Button>
-					)
+					</>
 				) : null
 			}
 		/>

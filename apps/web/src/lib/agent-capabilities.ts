@@ -1,9 +1,8 @@
 import { ALL_AGENTS_ACCESS_LABEL } from "@/lib/agent-resource-access";
 import {
-	AGENT_RESOURCE_SECTION_IDS,
+	AGENT_ALL_AGENTS_SECTION_IDS,
 	type AgentNavigationVariant,
 	type AgentSectionId,
-	isAllAgentsSection,
 } from "@/lib/navigation-model";
 
 export type AgentOverviewModuleId =
@@ -15,7 +14,7 @@ export type AgentOverviewModuleId =
 	| "model-provider"
 	| "channels";
 
-export type AgentOverviewGroupId = "resources" | "operate";
+export type AgentOverviewGroupId = "shared" | "operate";
 
 export type AgentOverviewModule = {
 	id: AgentOverviewModuleId;
@@ -30,27 +29,27 @@ export type AgentOverviewGroup = {
 	modules: readonly AgentOverviewModule[];
 };
 
-const AGENT_RESOURCES = AGENT_RESOURCE_SECTION_IDS.map((section) => ({
+const AGENT_SHARED_CAPABILITIES = AGENT_ALL_AGENTS_SECTION_IDS.map((section) => ({
 	id: section,
 	section,
-	...(isAllAgentsSection(section) ? { accessLabel: ALL_AGENTS_ACCESS_LABEL } : {}),
+	accessLabel: ALL_AGENTS_ACCESS_LABEL,
 }));
 
 const AGENT_OVERVIEW_GROUPS = {
 	connected: [
 		{
-			id: "resources",
-			label: "Resources",
+			id: "shared",
+			label: "Shared capabilities",
 			layout: "three-column",
-			modules: AGENT_RESOURCES,
+			modules: AGENT_SHARED_CAPABILITIES,
 		},
 	],
 	hosted: [
 		{
-			id: "resources",
-			label: "Resources",
+			id: "shared",
+			label: "Shared capabilities",
 			layout: "three-column",
-			modules: AGENT_RESOURCES,
+			modules: AGENT_SHARED_CAPABILITIES,
 		},
 		{
 			id: "operate",

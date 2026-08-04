@@ -41,6 +41,7 @@ export function SkillCard({
 	selectable = true,
 	sourceLabel,
 	skillLink,
+	sendTargetProjectIds,
 }: {
 	skill: SkillSummary;
 	readOnly?: boolean;
@@ -55,10 +56,16 @@ export function SkillCard({
 	sourceLabel?: { name: string; emoji: string } | null;
 	/** Build the detail link for the current navigation scope. */
 	skillLink?: SkillLinkBuilder;
+	/** Restrict Send destinations to a validated Project scope. */
+	sendTargetProjectIds?: readonly string[];
 }) {
 	const id = identityFor(skill.name || skill.skill_key);
 	const canUninstall = !readOnly && !!onUninstall && !!skill.project_id;
-	const canSend = !readOnly && !!skill.project_id;
+	const canSend =
+		!readOnly &&
+		!!skill.project_id &&
+		(sendTargetProjectIds === undefined ||
+			sendTargetProjectIds.some((projectId) => projectId !== skill.project_id));
 	const detailLink = skillLink?.(skill) ?? {
 		to: "/skills/$key",
 		params: { key: skill.skill_key },
@@ -116,12 +123,19 @@ export function SkillCard({
 						/>
 					) : null
 				) : (
-					<div className="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
-						{canSend ? <SendSkillDialog skills={[skill]} /> : null}
+					<div className="flex items-center gap-0.5 opacity-100 transition-opacity duration-150 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
+						{canSend ? (
+							<SendSkillDialog skills={[skill]} allowedProjectIds={sendTargetProjectIds} />
+						) : null}
 						{canUninstall ? (
 							<ConfirmAction
 								title={`Uninstall ${skill.name}?`}
-								description={<p>Other Projects keep their copies.</p>}
+								description={
+									<p>
+										This removes this Project copy. Every Agent using this Project loses it; copies
+										in other Projects remain.
+									</p>
+								}
 								confirmLabel="Uninstall"
 								destructive
 								onConfirm={() => {
@@ -175,6 +189,7 @@ export function SkillCardGrid({
 	onToggleSelect,
 	sourceLabelFor,
 	skillLink,
+	sendTargetProjectIds,
 }: {
 	skills: SkillSummary[];
 	isLoading: boolean;
@@ -193,6 +208,8 @@ export function SkillCardGrid({
 	sourceLabelFor?: (skill: SkillSummary) => { name: string; emoji: string } | null;
 	/** Build the detail link for the current navigation scope. */
 	skillLink?: SkillLinkBuilder;
+	/** Restrict card Send destinations to a validated Project scope. */
+	sendTargetProjectIds?: readonly string[];
 }) {
 	if (isLoading) {
 		return (
@@ -227,6 +244,7 @@ export function SkillCardGrid({
 						onToggleSelect={onToggleSelect}
 						sourceLabel={sourceLabelFor?.(skill) ?? null}
 						skillLink={skillLink}
+						sendTargetProjectIds={sendTargetProjectIds}
 					/>
 				);
 			})}

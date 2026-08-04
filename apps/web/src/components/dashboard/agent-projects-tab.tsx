@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import { Link, useRouter } from "@tanstack/react-router";
+import { ArrowDown, ArrowUp, ExternalLink, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -16,6 +17,7 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
+import { ProjectCreateDialog } from "@/components/projects/project-create-dialog";
 import {
 	displayProjectName,
 	isCustomProject,
@@ -26,6 +28,8 @@ import {
 	ProjectResourceCardSkeleton,
 	UnavailableProjectResourceCard,
 } from "@/components/projects/project-resource-card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
@@ -39,12 +43,19 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import type { AgentRouteSearch } from "@/lib/agent-routes";
-import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
+import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
+import { formatApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
+import { projectDetailHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { agentResourceScope, type ResourceNavigationScope } from "@/lib/resource-navigation";
+import {
+	agentResourceScope,
+	projectDetailHrefForScope,
+	type ResourceNavigationScope,
+} from "@/lib/resource-navigation";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
+type ProjectCreate = components["schemas"]["ProjectCreate"];
 
 export function AgentProjectsTab({
 	agentId,
@@ -86,6 +97,9 @@ export function AgentProjectsTab({
 			onChanged={() => {
 				void queryClient.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(agentId) });
 				void queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
+				void queryClient.invalidateQueries({ queryKey: ["skills"] });
+				void queryClient.invalidateQueries({ queryKey: ["vaults", "agent-projects"] });
+				void queryClient.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			}}
 		/>
 	);
@@ -115,8 +129,14 @@ function AgentProjectsPanel({
 	onChanged: () => void;
 }) {
 	const api = useApi();
+	const router = useRouter();
 	const [contextProjectId, setContextProjectId] = useState("");
 	const [addOpen, setAddOpen] = useState(false);
+	const [createOpen, setCreateOpen] = useState(false);
+	const [partiallyCreatedProject, setPartiallyCreatedProject] = useState<{
+		project: ProjectRow;
+		bindingError: unknown;
+	} | null>(null);
 	const orderedBindings = orderedAgentProjectBindings(bindings);
 	const primary = orderedBindings.find((binding) => binding.binding_type === "primary") ?? null;
 	const contexts = orderedBindings.filter((binding) => binding.binding_type === "context");
@@ -143,9 +163,67 @@ function AgentProjectsPanel({
 			setContextProjectId("");
 			setAddOpen(false);
 			onChanged();
-			toast.success("Project added");
+			toast.success("Project added", {
+				description: "Only this Agent's effective access and read order changed.",
+			});
 		},
 		onError: toastApiError("Couldn't add project"),
+	});
+
+	const finishCreatedProject = (project: ProjectRow) => {
+		setPartiallyCreatedProject(null);
+		setCreateOpen(false);
+		onChanged();
+		toast.success("Project created and added", {
+			description: `${project.name} is an account resource and is now available to this Agent.`,
+		});
+		void router.navigate({ href: projectDetailHrefForScope(navigationScope, project.id) });
+	};
+
+	const createProject = useMutation({
+		mutationFn: async (body: ProjectCreate) => {
+			const project = unwrap(await api.POST("/v1/projects", { body }));
+			try {
+				await unwrap(
+					await api.POST("/v1/agents/{agent_id}/project-bindings/context", {
+						params: { path: { agent_id: agentId } },
+						body: { project_id: project.id },
+					}),
+				);
+				return { project, bindingError: null };
+			} catch (bindingError) {
+				return { project, bindingError };
+			}
+		},
+		onSuccess: ({ project, bindingError }) => {
+			onChanged();
+			if (bindingError) {
+				setPartiallyCreatedProject({ project, bindingError });
+				toast.warning("Project created, but not added to this Agent", {
+					description: "The Project remains safely available in the resource library. Retry here.",
+				});
+				return;
+			}
+			finishCreatedProject(project);
+		},
+		onError: toastApiError("Couldn't create Project"),
+	});
+
+	const retryCreatedProjectBinding = useMutation({
+		mutationFn: async (project: ProjectRow) => {
+			await unwrap(
+				await api.POST("/v1/agents/{agent_id}/project-bindings/context", {
+					params: { path: { agent_id: agentId } },
+					body: { project_id: project.id },
+				}),
+			);
+			return project;
+		},
+		onSuccess: finishCreatedProject,
+		onError: (bindingError) => {
+			setPartiallyCreatedProject((current) => (current ? { ...current, bindingError } : current));
+			toastApiError("Couldn't add Project to this Agent")(bindingError);
+		},
 	});
 
 	const removeBinding = useMutation({
@@ -158,7 +236,9 @@ function AgentProjectsPanel({
 		},
 		onSuccess: () => {
 			onChanged();
-			toast.success("Project removed");
+			toast.success("Project removed", {
+				description: "Only this Agent lost access. The Project and its resources still exist.",
+			});
 		},
 		onError: toastApiError("Couldn't remove project"),
 	});
@@ -174,12 +254,15 @@ function AgentProjectsPanel({
 		},
 		onSuccess: () => {
 			onChanged();
-			toast.success("Project order updated");
+			toast.success("Project order updated", {
+				description: "Only this Agent's Project read order changed.",
+			});
 		},
 		onError: toastApiError("Couldn't reorder projects"),
 	});
 
 	const moveContext = (bindingId: string, direction: -1 | 1) => {
+		if (reorder.isPending) return;
 		const index = contexts.findIndex((binding) => binding.id === bindingId);
 		const targetIndex = index + direction;
 		if (index < 0 || targetIndex < 0 || targetIndex >= contexts.length) return;
@@ -229,17 +312,31 @@ function AgentProjectsPanel({
 		<div className="space-y-4" data-testid="agent-project-stack">
 			<ListToolbar
 				actions={
-					<Button
-						size="sm"
-						disabled={!primary}
-						onClick={() => {
-							setContextProjectId("");
-							setAddOpen(true);
-						}}
-					>
-						<Plus className="size-3.5" />
-						Add Project
-					</Button>
+					<>
+						<Button
+							size="sm"
+							disabled={!primary}
+							onClick={() => {
+								setPartiallyCreatedProject(null);
+								setCreateOpen(true);
+							}}
+						>
+							<Plus className="size-3.5" />
+							New Project
+						</Button>
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={!primary}
+							onClick={() => {
+								setContextProjectId("");
+								setAddOpen(true);
+							}}
+						>
+							<Plus className="size-3.5" />
+							Add existing Project
+						</Button>
+					</>
 				}
 			/>
 
@@ -301,12 +398,14 @@ function AgentProjectsPanel({
 													}
 													confirmLabel="Remove Project"
 													destructive
-													onConfirm={() => removeBinding.mutate(binding.id)}
+													onConfirm={() => {
+														if (!removeBinding.isPending) removeBinding.mutate(binding.id);
+													}}
 												>
 													<Button
 														variant="ghost"
 														size="icon-sm"
-														disabled={isRemoving}
+														disabled={removeBinding.isPending}
 														title="Remove"
 														aria-label={`Remove ${projectName}`}
 													>
@@ -327,16 +426,75 @@ function AgentProjectsPanel({
 				</ol>
 			)}
 
+			<ProjectCreateDialog
+				open={createOpen}
+				onOpenChange={(nextOpen) => {
+					if (createProject.isPending || retryCreatedProjectBinding.isPending) return;
+					setCreateOpen(nextOpen);
+					if (!nextOpen) setPartiallyCreatedProject(null);
+				}}
+				onCreate={(body) => createProject.mutateAsync(body)}
+				isPending={createProject.isPending}
+				formLocked={partiallyCreatedProject !== null}
+				title="New Project for this Agent"
+				description="Creates an account-owned Custom Project, then adds it to this Agent's effective access scope."
+				feedback={
+					partiallyCreatedProject ? (
+						<Alert variant="destructive">
+							<AlertTitle>Project created; Agent access still needs attention</AlertTitle>
+							<AlertDescription className="space-y-3">
+								<p>
+									{partiallyCreatedProject.project.name} exists in the resource library, but adding
+									it to this Agent failed:{" "}
+									{partiallyCreatedProject.bindingError instanceof ApiError
+										? formatApiError(partiallyCreatedProject.bindingError.detail)
+										: "The request could not be completed. Try adding it again."}
+								</p>
+								<div className="flex flex-wrap gap-2">
+									<Button
+										type="button"
+										size="sm"
+										disabled={retryCreatedProjectBinding.isPending}
+										onClick={() =>
+											retryCreatedProjectBinding.mutate(partiallyCreatedProject.project)
+										}
+									>
+										{retryCreatedProjectBinding.isPending ? (
+											<Spinner className="size-3.5" />
+										) : (
+											<RotateCcw className="size-3.5" />
+										)}
+										Retry adding to Agent
+									</Button>
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										render={<Link to={projectDetailHref(partiallyCreatedProject.project.id)} />}
+										nativeButton={false}
+									>
+										<ExternalLink className="size-3.5" />
+										Open in resource library
+									</Button>
+								</div>
+							</AlertDescription>
+						</Alert>
+					) : null
+				}
+			/>
+
 			<Dialog
 				open={addOpen}
-				onOpenChange={setAddOpen}
+				onOpenChange={(nextOpen) => {
+					if (!addContext.isPending) setAddOpen(nextOpen);
+				}}
 				onOpenChangeComplete={(open) => {
 					if (!open) setContextProjectId("");
 				}}
 			>
 				<DialogContent className="sm:max-w-md" data-testid="agent-project-add-dialog">
 					<DialogHeader>
-						<DialogTitle>Add Project</DialogTitle>
+						<DialogTitle>Add existing Project</DialogTitle>
 						<DialogDescription>
 							Add a Custom or shared Project to this agent's read order.
 						</DialogDescription>
@@ -364,7 +522,12 @@ function AgentProjectsPanel({
 							</p>
 						)}
 						<DialogFooter>
-							<Button type="button" variant="ghost" onClick={() => setAddOpen(false)}>
+							<Button
+								type="button"
+								variant="ghost"
+								disabled={addContext.isPending}
+								onClick={() => setAddOpen(false)}
+							>
 								Cancel
 							</Button>
 							<Button type="submit" disabled={!contextProjectId || addContext.isPending}>
@@ -373,7 +536,7 @@ function AgentProjectsPanel({
 								) : (
 									<Plus className="size-3.5" />
 								)}
-								Add Project
+								Add existing Project
 							</Button>
 						</DialogFooter>
 					</form>
@@ -396,10 +559,7 @@ function AgentProjectCard({
 	navigationScope: ResourceNavigationScope;
 	actions?: React.ReactNode;
 }) {
-	const footer = [
-		`Read order ${position + 1}`,
-		binding.binding_type === "primary" ? "Default write destination" : null,
-	];
+	const footer = [`Read order ${position + 1}`];
 	if (!project) {
 		return (
 			<UnavailableProjectResourceCard
@@ -414,6 +574,9 @@ function AgentProjectCard({
 			project={project}
 			footer={footer}
 			actions={actions}
+			badges={
+				binding.binding_type === "primary" ? <Badge variant="secondary">Default</Badge> : null
+			}
 			showKind
 			navigationScope={navigationScope}
 		/>
