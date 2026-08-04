@@ -3,7 +3,13 @@ from __future__ import annotations
 from collections.abc import Iterable
 from urllib.parse import urlsplit
 
-from app.services.private_ip import has_private_resolved_ip, is_private_hostname
+from app.services.private_ip import is_private_hostname
+from app.services.safe_public_http import (
+    SafePublicHttpDnsError,
+    SafePublicHttpDnsTimeout,
+    UnsafePublicHttpUrlError,
+    resolve_public_http_target,
+)
 
 _CHANNEL_HTTP_SCHEMES = frozenset({"https"})
 _CHANNEL_WEBSOCKET_SCHEMES = frozenset({"wss"})
@@ -74,18 +80,18 @@ async def validate_outbound_url(
     label: str,
 ) -> None:
     schemes = {scheme.lower() for scheme in allowed_schemes}
-    candidate = url.strip()
     try:
-        parsed = urlsplit(candidate)
-        parsed.port
-    except ValueError as exc:
-        raise UnsafeOutboundUrlError(f"{label} must use {_scheme_list(schemes)}") from exc
-    if parsed.scheme.lower() not in schemes or not parsed.netloc or not parsed.hostname:
-        raise UnsafeOutboundUrlError(f"{label} must use {_scheme_list(schemes)}")
-    if is_private_hostname(parsed.hostname):
-        raise UnsafeOutboundUrlError(f"{label} targets a private host")
-    if await has_private_resolved_ip(parsed.hostname):
-        raise UnsafeOutboundUrlError(f"{label} resolves to a private host")
+        await resolve_public_http_target(url, allowed_schemes=schemes)
+    except UnsafePublicHttpUrlError as exc:
+        if exc.reason == "private_host":
+            message = f"{label} targets a private host"
+        elif exc.reason == "private_address":
+            message = f"{label} resolves to a private host"
+        else:
+            message = f"{label} must use {_scheme_list(schemes)}"
+        raise UnsafeOutboundUrlError(message) from None
+    except (SafePublicHttpDnsError, SafePublicHttpDnsTimeout):
+        raise UnsafeOutboundUrlError(f"{label} could not resolve to a public host") from None
 
 
 def _scheme_list(schemes: set[str]) -> str:

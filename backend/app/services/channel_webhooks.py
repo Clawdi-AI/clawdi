@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
 from fastapi import HTTPException, status
 from pydantic import TypeAdapter, ValidationError
 
 from app.models.channel import ChannelAccount, ChannelBotAgentLink
 from app.services.metrics import webhook_deliveries
+from app.services.safe_public_http import SafePublicHttpClient, SafePublicHttpError
 from app.services.url_security import UnsafeOutboundUrlError, validate_outbound_url
 
 _CONFIG_OBJECT_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
@@ -55,7 +55,7 @@ async def validate_agent_webhook_url(_account: ChannelAccount, url: str) -> None
 
 
 async def deliver_telegram_agent_webhook(
-    account: ChannelAccount,
+    _account: ChannelAccount,
     link: ChannelBotAgentLink,
     payload: dict[str, Any],
 ) -> bool:
@@ -63,22 +63,17 @@ async def deliver_telegram_agent_webhook(
     url = _optional_str(webhook.get("url"))
     if not url:
         return False
-    try:
-        await validate_agent_webhook_url(account, url)
-    except HTTPException:
-        webhook_deliveries.labels(outcome="failure").inc()
-        return False
     headers: dict[str, str] = {}
     secret_token = _optional_str(webhook.get("secret_token"))
     if secret_token:
         headers["X-Telegram-Bot-Api-Secret-Token"] = secret_token
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(url, headers=headers, json=payload)
-    except httpx.HTTPError:
+        client = SafePublicHttpClient(timeout=10.0)
+        response = await client.post(url, headers=headers, json=payload)
+    except SafePublicHttpError:
         webhook_deliveries.labels(outcome="failure").inc()
         return False
-    if response.status_code < 400:
+    if 200 <= response.status_code < 300:
         webhook_deliveries.labels(outcome="success").inc()
         return True
     webhook_deliveries.labels(outcome="failure").inc()

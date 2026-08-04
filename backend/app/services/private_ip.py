@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import asyncio
 import ipaddress
-import socket
 
 _PRIVATE_HOST_ALIASES = {
     "localhost",
@@ -29,27 +27,6 @@ def is_private_hostname(hostname: str | None) -> bool:
     if mapped is not None:
         ip = mapped
     return not ip.is_global or ip.is_multicast or ip.is_reserved
-
-
-async def has_private_resolved_ip(hostname: str | None) -> bool:
-    host = _normalize_hostname(hostname)
-    if not host:
-        return True
-    if is_private_hostname(host):
-        return True
-    try:
-        infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
-    except OSError:
-        return True
-    if not infos:
-        return True
-    for info in infos:
-        address = info[4][0]
-        if not isinstance(address, str):
-            return True
-        if is_private_hostname(address):
-            return True
-    return False
 
 
 def _normalize_hostname(hostname: str | None) -> str:

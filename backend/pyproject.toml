@@ -11,7 +11,10 @@ dependencies = [
     "pydantic-settings>=2.14.0",
     "pyjwt[crypto]==2.13.0",
     "cryptography>=44.0",
-    "httpx>=0.28.1",
+    # SafePublicHttpClient relies on request extension forwarding and
+    # sni_hostname handling verified in these exact paired releases.
+    "httpcore==1.0.9",
+    "httpx==0.28.1",
     "httpx2>=2.5.0,<3.0.0",
     "idna>=3.10",
     "python-multipart>=0.0.20",
@@ -96,6 +99,7 @@ include = [
     "app/services/postgres_listener.py",
     "app/services/private_ip.py",
     "app/services/runtime_observation.py",
+    "app/services/safe_public_http.py",
     "app/services/session_content.py",
     "app/services/sync_events.py",
     "app/services/tar_utils.py",
@@ -132,6 +136,7 @@ strict = [
     "app/services/memory_extraction.py",
     "app/services/private_ip.py",
     "app/services/runtime_observation.py",
+    "app/services/safe_public_http.py",
     "app/services/session_content.py",
     "app/services/sync_events.py",
     "app/services/tar_utils.py",
@@ -161,6 +166,7 @@ DEP002 = [
     "uvicorn",            # ASGI server runtime; invoked as a binary.
     "asyncpg",            # SQLAlchemy postgresql+asyncpg driver.
     "alembic",            # Migration CLI.
+    "httpcore",           # Pinned transport behavior used by HTTPX request extensions.
     "python-multipart",   # FastAPI multipart parser; loaded via Form().
     "aiofiles",           # FastAPI's UploadFile uses async file I/O internally.
     "psycopg2-binary",    # Sync PG driver kept for alembic offline-mode SQL.

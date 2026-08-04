@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import socket
+
 import pytest
 
 from app.services.url_security import (
+    UnsafeOutboundUrlError,
     UnsafePublicHttpsUrlError,
     is_public_https_url,
+    validate_outbound_url,
     validate_public_https_url,
 )
 
@@ -58,3 +62,22 @@ def test_public_https_url_rejects_non_hosted_shapes(url: str) -> None:
     with pytest.raises(UnsafePublicHttpsUrlError):
         validate_public_https_url(url, label="base_url")
     assert is_public_https_url(url) is False
+
+
+@pytest.mark.asyncio
+async def test_outbound_url_reports_unresolved_hosts_without_claiming_they_are_private(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unresolved(*_args: object) -> list[tuple[object, ...]]:
+        raise socket.gaierror
+
+    monkeypatch.setattr(socket, "getaddrinfo", unresolved)
+
+    with pytest.raises(UnsafeOutboundUrlError) as caught:
+        await validate_outbound_url(
+            "https://unresolved.example.test/hook",
+            allowed_schemes={"https"},
+            label="webhook url",
+        )
+
+    assert str(caught.value) == "webhook url could not resolve to a public host"
