@@ -662,6 +662,7 @@ async def test_oauth_revoke_uses_validated_oauth_identity_and_safe_proxy(
     )
     assert captured["headers"] == {
         "Authorization": f"Bearer {_SECRET_KEY}",
+        "Clerk-API-Version": "2026-05-12",
         "User-Agent": "clawdi-backend/1.0",
     }
     assert captured["json"] == {"token": refresh_token}

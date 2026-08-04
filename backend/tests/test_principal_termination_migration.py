@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 
 BRIDGE_REVISION = "c9f4e2a7b1d6"
 DIRECT_REVISION = "d1e5f7a9b3c2"
+AUTHORITY_REVISION = "e7b2c4d9a1f3"
 BACKEND_DIR = Path(__file__).parents[1]
 
 
@@ -196,6 +197,65 @@ def test_direct_webhook_migration_preserves_legacy_evidence_and_is_one_way() -> 
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
                 DIRECT_REVISION
             )
+    finally:
+        database_engine.dispose()
+        with admin_engine.connect() as connection:
+            connection.execute(text(f'DROP DATABASE IF EXISTS "{database_name}" WITH (FORCE)'))
+        admin_engine.dispose()
+
+
+def test_authority_migration_downgrade_allows_ban_covered_by_deletion() -> None:
+    source_url = make_url(os.environ["DATABASE_URL"])
+    database_name = f"clawdi_clerk_authority_{uuid.uuid4().hex}"
+    admin_engine = create_engine(
+        _sync_url(source_url, database="postgres"),
+        isolation_level="AUTOCOMMIT",
+    )
+    database_url = source_url.set(database=database_name)
+    database_engine = create_engine(_sync_url(source_url, database=database_name))
+
+    with admin_engine.connect() as connection:
+        connection.execute(text(f'CREATE DATABASE "{database_name}"'))
+    try:
+        _run_alembic(database_url, "upgrade", AUTHORITY_REVISION)
+        issuer = "https://clerk.example.test"
+        subject = "deleted-banned-user"
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO clerk_principal_authorities "
+                    "(id, issuer, subject, banned, authority_updated_at, "
+                    "message_id, payload_sha256) VALUES "
+                    "(:id, :issuer, :subject, true, now(), 'msg-ban', :hash)"
+                ),
+                {
+                    "id": uuid.uuid4(),
+                    "issuer": issuer,
+                    "subject": subject,
+                    "hash": "a" * 64,
+                },
+            )
+
+        with pytest.raises(subprocess.CalledProcessError):
+            _run_alembic(database_url, "downgrade", DIRECT_REVISION)
+
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO principal_lifecycles "
+                    "(id, issuer, subject, terminated_at, cleanup_attempts, "
+                    "next_cleanup_attempt_at) VALUES "
+                    "(:id, :issuer, :subject, now(), 0, now())"
+                ),
+                {"id": uuid.uuid4(), "issuer": issuer, "subject": subject},
+            )
+
+        _run_alembic(database_url, "downgrade", DIRECT_REVISION)
+        with database_engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                DIRECT_REVISION
+            )
+            assert inspect(connection).has_table("clerk_principal_authorities") is False
     finally:
         database_engine.dispose()
         with admin_engine.connect() as connection:

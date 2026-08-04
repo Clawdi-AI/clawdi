@@ -8,6 +8,7 @@ import json
 import time
 import uuid
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
@@ -19,7 +20,11 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
-from app.models.principal_lifecycle import ClerkWebhookEventReceipt, PrincipalLifecycle
+from app.models.principal_lifecycle import (
+    ClerkPrincipalAuthority,
+    ClerkWebhookEventReceipt,
+    PrincipalLifecycle,
+)
 from app.models.session import AgentEnvironment
 from app.models.user import PRINCIPAL_KIND_PARTNER_TENANT, User
 from app.routes import clerk_webhooks
@@ -41,13 +46,18 @@ _SIGNING_SECRET = "whsec_dGVzdF9jbGVya19zaWduaW5nX3NlY3JldA=="
 _ADMIN_KEY = "direct-webhook-admin-test"
 
 
-def _payload(subject: str, *, timestamp_ms: int | None = None) -> bytes:
+def _payload(
+    subject: str,
+    *,
+    event_type: str = "user.deleted",
+    timestamp_ms: int | None = None,
+) -> bytes:
     return json.dumps(
         {
             "data": {"deleted": True, "id": subject, "object": "user"},
             "object": "event",
             "timestamp": timestamp_ms or int(time.time() * 1000),
-            "type": "user.deleted",
+            "type": event_type,
         },
         separators=(",", ":"),
     ).encode()
@@ -84,6 +94,7 @@ def _direct_webhook_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         SecretStr(_SIGNING_SECRET),
     )
     monkeypatch.setattr(settings, "admin_api_key", _ADMIN_KEY)
+    monkeypatch.setattr(settings, "clerk_secret_key", "sk_test_direct_webhook")
     monkeypatch.setattr(settings, "platform_legacy_admin_auth_enabled", True)
 
 
@@ -94,6 +105,152 @@ async def _delete(anon_client, subject: str, *, message_id: str) -> object:
         content=payload,
         headers=_signed_headers(payload, message_id=message_id),
     )
+
+
+def _mock_clerk_authority(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    subject: str,
+    states: list[tuple[bool, int]],
+    requests: list[httpx.Request] | None = None,
+) -> None:
+    real_client = httpx.AsyncClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if requests is not None:
+            requests.append(request)
+        banned, updated_at = states.pop(0)
+        return httpx.Response(
+            200,
+            json={"object": "user", "id": subject, "banned": banned, "updated_at": updated_at},
+        )
+
+    transport = httpx.MockTransport(handler)
+
+    def client_factory(*_args: object, **_kwargs: object) -> httpx.AsyncClient:
+        return real_client(transport=transport)
+
+    monkeypatch.setattr(clerk_webhooks.httpx, "AsyncClient", client_factory)
+
+
+async def _update(anon_client, subject: str, *, message_id: str) -> object:
+    payload = _payload(subject, event_type="user.updated")
+    return await anon_client.post(
+        "/v1/webhooks/clerk",
+        content=payload,
+        headers=_signed_headers(payload, message_id=message_id),
+    )
+
+
+async def test_signed_authoritative_ban_and_unban_gate_user_and_api_key(
+    anon_client,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = await mint_api_key(db_session, user_id=seed_user.id, label="ban-gate", commit=True)
+    requests: list[httpx.Request] = []
+    _mock_clerk_authority(
+        monkeypatch,
+        subject=seed_user.clerk_id,
+        states=[(True, 2_000), (False, 3_000)],
+        requests=requests,
+    )
+
+    banned = await _update(
+        anon_client,
+        seed_user.clerk_id,
+        message_id=f"msg_{uuid.uuid4().hex}",
+    )
+    with pytest.raises(PrincipalTerminatedError):
+        await assert_user_authority_active(db_session, seed_user.id)
+    await db_session.rollback()
+    rejected = await anon_client.get(
+        "/v1/auth/me",
+        headers={"Authorization": f"Bearer {key.raw_key}"},
+    )
+
+    unbanned = await _update(
+        anon_client,
+        seed_user.clerk_id,
+        message_id=f"msg_{uuid.uuid4().hex}",
+    )
+    restored = await anon_client.get(
+        "/v1/auth/me",
+        headers={"Authorization": f"Bearer {key.raw_key}"},
+    )
+
+    assert banned.status_code == unbanned.status_code == 200
+    assert rejected.status_code == 401
+    assert restored.status_code == 200
+    assert all(request.headers["Clerk-API-Version"] == "2026-05-12" for request in requests)
+
+
+async def test_ban_before_first_login_and_stale_update_are_safe(
+    anon_client,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subject = f"prelogin_{uuid.uuid4().hex}"
+    _mock_clerk_authority(
+        monkeypatch,
+        subject=subject,
+        states=[(True, 5_000), (False, 4_000), (True, 5_000), (True, 5_000)],
+    )
+    assert (
+        await _update(anon_client, subject, message_id=f"msg_{uuid.uuid4().hex}")
+    ).status_code == 200
+    assert (
+        await _update(anon_client, subject, message_id=f"msg_{uuid.uuid4().hex}")
+    ).status_code == 200
+    # An exact Svix replay re-fetches current authority and remains idempotent.
+    replay_id = f"msg_{uuid.uuid4().hex}"
+    replay_payload = _payload(subject, event_type="user.updated")
+    replay_headers = _signed_headers(replay_payload, message_id=replay_id)
+    for _ in range(2):
+        replay = await anon_client.post(
+            "/v1/webhooks/clerk",
+            content=replay_payload,
+            headers=replay_headers,
+        )
+        assert replay.status_code == 200
+
+    with pytest.raises(HTTPException) as error:
+        await lazy_create_user_with_personal_project(
+            db_session,
+            clerk_id=subject,
+            clerk_issuer=_ISSUER,
+            email=None,
+            name=None,
+            race_loser_status=500,
+        )
+    await db_session.rollback()
+    projection = await db_session.scalar(
+        select(ClerkPrincipalAuthority).where(ClerkPrincipalAuthority.subject == subject)
+    )
+    assert error.value.status_code == 403
+    assert projection is not None and projection.banned is True
+
+
+async def test_delete_wins_over_authoritative_unban(
+    anon_client,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subject = f"delete_wins_{uuid.uuid4().hex}"
+    assert (
+        await _delete(anon_client, subject, message_id=f"msg_{uuid.uuid4().hex}")
+    ).status_code == 200
+
+    def fail_if_clerk_is_called(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("tombstoned update must not call Clerk")
+
+    monkeypatch.setattr(clerk_webhooks.httpx, "AsyncClient", fail_if_clerk_is_called)
+    assert (
+        await _update(anon_client, subject, message_id=f"msg_{uuid.uuid4().hex}")
+    ).status_code == 200
+    with pytest.raises(PrincipalTerminatedError):
+        await assert_clerk_principal_active(db_session, issuer=_ISSUER, subject=subject)
 
 
 async def test_signature_timestamp_and_body_validation_precede_persistence(

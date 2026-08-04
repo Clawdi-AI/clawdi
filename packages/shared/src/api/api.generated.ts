@@ -2844,8 +2844,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Clerk User Deleted Webhook */
-        post: operations["clerk_user_deleted_webhook_v1_webhooks_clerk_post"];
+        /** Clerk User Lifecycle Webhook */
+        post: operations["clerk_user_lifecycle_webhook_v1_webhooks_clerk_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -13100,7 +13100,7 @@ export interface operations {
             };
         };
     };
-    clerk_user_deleted_webhook_v1_webhooks_clerk_post: {
+    clerk_user_lifecycle_webhook_v1_webhooks_clerk_post: {
         parameters: {
             query?: never;
             header?: never;
