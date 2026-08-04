@@ -56,7 +56,7 @@ export function WalletSkeleton() {
 	);
 }
 
-/** Usage: metric strip followed by flat daily and model breakdowns. */
+/** Usage: metric strip followed by peer agent and model breakdowns. */
 export function UsageSkeleton() {
 	return (
 		<div data-hosted="true" className="space-y-8">
@@ -71,20 +71,10 @@ export function UsageSkeleton() {
 				</div>
 			</div>
 			<SectionSkeleton>
-				<div>
-					<div className="flex h-28 items-end gap-1">
-						{Array.from({ length: 14 }, (_, index) => `day-${index}`).map((key, index) => (
-							<Skeleton
-								key={key}
-								className="flex-1 rounded-t"
-								style={{ height: `${Math.max(16, ((index % 7) + 2) * 10)}%` }}
-							/>
-						))}
-					</div>
-					<div className="mt-2 flex justify-between">
-						<Skeleton className="h-3 w-10" />
-						<Skeleton className="h-3 w-10" />
-					</div>
+				<div className="space-y-3">
+					<Skeleton className="h-10 w-full" />
+					<Skeleton className="h-10 w-full" />
+					<Skeleton className="h-10 w-full" />
 				</div>
 			</SectionSkeleton>
 			<SectionSkeleton>

@@ -954,19 +954,43 @@ async def usage() -> dict[str, Any]:
     return {
         "period_start": str(today - timedelta(days=6)),
         "period_end": str(today),
-        "total_credits": 1280,
+        "availability": "complete",
+        "unavailable_sections": [],
+        "total_usd": "12.80",
         "total_requests": 94,
+        "by_agent": [
+            {
+                "agent_id": DEV_V2_DEPLOYMENT_ID,
+                "agent_name": "dev-sidebar-preview",
+                "amount_usd": "9.80",
+                "requests": 72,
+            },
+            {
+                "agent_id": None,
+                "agent_name": None,
+                "amount_usd": "3.00",
+                "requests": 22,
+            },
+        ],
         "by_model": [
             {
                 "model": "openai/gpt-4o-mini",
                 "provider": DEV_V2_PROVIDER_ID,
-                "credits": 980,
+                "amount_usd": "9.80",
                 "requests": 72,
             },
-            {"model": "managed/default", "provider": "clawdi", "credits": 300, "requests": 22},
+            {
+                "model": "managed/default",
+                "provider": "clawdi",
+                "amount_usd": "3.00",
+                "requests": 22,
+            },
         ],
         "by_day": [
-            {"date": str(today - timedelta(days=i)), "credits": 120 + i * 25}
+            {
+                "date": str(today - timedelta(days=i)),
+                "amount_usd": f"{(120 + i * 25) / 100:.2f}",
+            }
             for i in reversed(range(7))
         ],
     }

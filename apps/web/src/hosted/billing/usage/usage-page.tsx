@@ -1,14 +1,14 @@
 "use client";
 
-import { AlertCircle, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
 import { SettingsSection } from "@/components/settings-section";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { UsageSkeleton } from "@/hosted/billing/components/state-views";
 import type { HostedUsageSummary, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
@@ -26,36 +26,80 @@ import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { formatShortDate } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
-const DESCRIPTION = "Clawdi AI usage in USD for the current reporting window across your agents.";
+const DESCRIPTION = "Clawdi AI spend and requests for the current reporting window.";
 const USAGE_PAGE_CLASS = "flex flex-col gap-8 px-5 sm:px-6 lg:px-8";
 
-type UnavailableUsageSection = HostedUsageSummary["unavailable_sections"][number];
-
-const UNAVAILABLE_USAGE_SECTION_LABELS = {
-	totals: "spend and request totals",
-	by_model: "the model breakdown",
-	by_day: "the daily breakdown",
-} satisfies Record<UnavailableUsageSection, string>;
-
-function decimalUsdNumber(value: string): number {
-	const parsed = Number(value);
-	return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
-}
+type VisibleUsageSection = "totals" | "by_agent" | "by_model";
+type AgentBreakdown = NonNullable<HostedUsageSummary["by_agent"]>[number];
+type ModelBreakdown = HostedUsageSummary["by_model"][number];
 
 function decimalUsdIsZero(value: string): boolean {
 	return /^[+-]?0+(?:\.0+)?$/.test(value.trim());
 }
 
-function readableList(items: readonly string[]): string {
-	if (items.length < 2) return items[0] ?? "some usage data";
-	if (items.length === 2) return `${items[0]} and ${items[1]}`;
-	return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
+function compareStableText(left: string, right: string): number {
+	if (left < right) return -1;
+	if (left > right) return 1;
+	return 0;
 }
 
-function unavailableUsageSections(usage: HostedUsageSummary): UnavailableUsageSection[] {
-	const sections = new Set(usage.unavailable_sections);
-	if (usage.total_usd === null || usage.total_requests === null) sections.add("totals");
-	return [...sections];
+function decimalUsdParts(value: string): readonly [string, string] {
+	const match = /^\+?(\d+)(?:\.(\d+))?$/.exec(value.trim());
+	if (!match) return ["0", ""];
+	return [
+		(match[1] ?? "0").replace(/^0+(?=\d)/, ""),
+		(match[2] ?? "").replace(/0+$/, ""),
+	];
+}
+
+function compareSpendDescending(left: string, right: string): number {
+	const [leftWhole, leftFraction] = decimalUsdParts(left);
+	const [rightWhole, rightFraction] = decimalUsdParts(right);
+	if (leftWhole.length !== rightWhole.length) return rightWhole.length - leftWhole.length;
+	const wholeOrder = compareStableText(leftWhole, rightWhole);
+	if (wholeOrder !== 0) return -wholeOrder;
+	const fractionLength = Math.max(leftFraction.length, rightFraction.length);
+	return -compareStableText(
+		leftFraction.padEnd(fractionLength, "0"),
+		rightFraction.padEnd(fractionLength, "0"),
+	);
+}
+
+function sortAgentBreakdown(left: AgentBreakdown, right: AgentBreakdown): number {
+	const spendOrder = compareSpendDescending(left.amount_usd, right.amount_usd);
+	if (spendOrder !== 0) return spendOrder;
+	const leftName = left.agent_name?.toLowerCase() ?? "\uffff";
+	const rightName = right.agent_name?.toLowerCase() ?? "\uffff";
+	const nameOrder = compareStableText(leftName, rightName);
+	return nameOrder !== 0 ? nameOrder : compareStableText(left.agent_id ?? "", right.agent_id ?? "");
+}
+
+function sortModelBreakdown(left: ModelBreakdown, right: ModelBreakdown): number {
+	const spendOrder = compareSpendDescending(left.amount_usd, right.amount_usd);
+	if (spendOrder !== 0) return spendOrder;
+	const modelOrder = compareStableText(left.model.toLowerCase(), right.model.toLowerCase());
+	return modelOrder !== 0
+		? modelOrder
+		: compareStableText(left.provider ?? "", right.provider ?? "");
+}
+
+function unavailableUsageSections(
+	usage: HostedUsageSummary,
+	agentBreakdown: readonly AgentBreakdown[] | null,
+): Set<VisibleUsageSection> {
+	const sections = new Set<VisibleUsageSection>();
+	if (
+		usage.unavailable_sections.includes("totals") ||
+		usage.total_usd === null ||
+		usage.total_requests === null
+	) {
+		sections.add("totals");
+	}
+	if (usage.unavailable_sections.includes("by_agent") || agentBreakdown === null) {
+		sections.add("by_agent");
+	}
+	if (usage.unavailable_sections.includes("by_model")) sections.add("by_model");
+	return sections;
 }
 
 export function UsagePage() {
@@ -123,21 +167,28 @@ export function UsageSummaryView({
 	isRetrying: boolean;
 	onRetry: () => void;
 }) {
-	const missingSections = unavailableUsageSections(usage);
-	const missingSectionSet = new Set(missingSections);
+	const agentBreakdown = Array.isArray(usage.by_agent) ? usage.by_agent : null;
+	const missingSections = unavailableUsageSections(usage, agentBreakdown);
 	const totals =
-		!missingSectionSet.has("totals") && usage.total_usd !== null && usage.total_requests !== null
+		!missingSections.has("totals") && usage.total_usd !== null && usage.total_requests !== null
 			? { usd: usage.total_usd, requests: usage.total_requests }
 			: null;
+	const sortedAgents = agentBreakdown ? [...agentBreakdown].sort(sortAgentBreakdown) : [];
+	const sortedModels = [...usage.by_model].sort(sortModelBreakdown);
+	const windowLabel = `${formatShortDate(usage.period_start)} – ${formatShortDate(usage.period_end)}`;
 
-	if (usage.availability === "unavailable") {
+	if (
+		missingSections.has("totals") &&
+		missingSections.has("by_agent") &&
+		missingSections.has("by_model")
+	) {
 		return (
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
-				<SettingsPanelHeader title="Usage" description={DESCRIPTION} />
+				<SettingsPanelHeader title="Usage" description={`${windowLabel} reporting window.`} />
 				<EmptyState
 					variant="inset"
 					title="We can’t load your usage right now"
-					description="The usage provider is temporarily unavailable. No spend or request total is shown because we could not read it."
+					description="The usage provider is temporarily unavailable. No spend, agent, or model values are shown."
 					action={<UsageRetryButton isRetrying={isRetrying} onRetry={onRetry} />}
 					className="py-10 md:p-10"
 				/>
@@ -145,30 +196,19 @@ export function UsageSummaryView({
 		);
 	}
 
-	const hasDailyBreakdown = usage.by_day.length > 0;
-	const firstDailyPoint = usage.by_day[0];
-	const lastDailyPoint = usage.by_day[usage.by_day.length - 1];
-	const windowLabel = `${formatShortDate(usage.period_start)} – ${formatShortDate(usage.period_end)}`;
-	const dailyChartLabel =
-		hasDailyBreakdown && firstDailyPoint && lastDailyPoint
-			? `Daily USD usage returned for ${formatShortDate(firstDailyPoint.date)} to ${formatShortDate(lastDailyPoint.date)} within the ${windowLabel} reporting window.`
-			: undefined;
-	const maxDay = Math.max(0, ...usage.by_day.map((day) => decimalUsdNumber(day.amount_usd)));
-	const maxModel = Math.max(
-		0,
-		...usage.by_model.map((model) => decimalUsdNumber(model.amount_usd)),
-	);
 	const isRealZero =
-		usage.availability === "complete" &&
 		totals !== null &&
 		decimalUsdIsZero(totals.usd) &&
 		totals.requests === 0 &&
-		usage.by_model.length === 0;
+		!missingSections.has("by_agent") &&
+		sortedAgents.length === 0 &&
+		!missingSections.has("by_model") &&
+		sortedModels.length === 0;
 
 	if (isRealZero) {
 		return (
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
-				<SettingsPanelHeader title="Usage" description={DESCRIPTION} />
+				<SettingsPanelHeader title="Usage" description={`${windowLabel} reporting window.`} />
 				<EmptyState
 					variant="inset"
 					title="No usage yet"
@@ -179,33 +219,21 @@ export function UsageSummaryView({
 		);
 	}
 
+	const retrySection: VisibleUsageSection | null = missingSections.has("totals")
+		? "totals"
+		: missingSections.has("by_agent")
+			? "by_agent"
+			: missingSections.has("by_model")
+				? "by_model"
+				: null;
+	const retryAction = (section: VisibleUsageSection) =>
+		retrySection === section ? (
+			<UsageRetryButton isRetrying={isRetrying} onRetry={onRetry} />
+		) : null;
+
 	return (
 		<div data-hosted="true" className={USAGE_PAGE_CLASS}>
-			<SettingsPanelHeader
-				title="Usage"
-				description={
-					totals
-						? `${windowLabel} reporting window. Totals below are for this window; wallet balance carries over.`
-						: `${windowLabel} reporting window. Available usage details for this window are shown below.`
-				}
-			/>
-
-			{missingSections.length > 0 ? (
-				<Alert data-hosted="true">
-					<AlertCircle />
-					<AlertTitle>Some usage data is unavailable</AlertTitle>
-					<AlertDescription className="flex flex-col items-start gap-3">
-						<span>
-							We couldn’t read{" "}
-							{readableList(
-								missingSections.map((section) => UNAVAILABLE_USAGE_SECTION_LABELS[section]),
-							)}
-							. Other usage shown below was read successfully.
-						</span>
-						<UsageRetryButton isRetrying={isRetrying} onRetry={onRetry} />
-					</AlertDescription>
-				</Alert>
-			) : null}
+			<SettingsPanelHeader title="Usage" description={`${windowLabel} reporting window.`} />
 
 			{totals ? (
 				<section
@@ -230,126 +258,158 @@ export function UsageSummaryView({
 				<EmptyState
 					variant="inset"
 					title="Usage totals unavailable"
-					description="Spend and request totals are hidden because they could not be read."
+					description="Spend and request totals could not be read."
+					action={retryAction("totals")}
 					className="py-6 md:p-6"
 				/>
 			)}
 
 			<SettingsSection
 				headingLevel={3}
-				title="Daily usage"
-				description="Clawdi AI spend by day in this reporting window."
+				title="By agent"
+				description="Spend and requests grouped by agent."
 			>
-				{missingSectionSet.has("by_day") ? (
+				{missingSections.has("by_agent") ? (
 					<EmptyState
 						variant="inset"
-						title="Daily breakdown unavailable"
-						description="No daily values are shown because the breakdown could not be read."
+						title="Agent breakdown unavailable"
+						description="Agent attribution could not be read. No agent values are shown."
+						action={retryAction("by_agent")}
 						className="py-4 md:p-4"
 					/>
-				) : hasDailyBreakdown ? (
-					<>
-						<div className="flex h-28 items-end gap-1" role="img" aria-label={dailyChartLabel}>
-							{usage.by_day.map((day) => (
-								<div
-									key={day.date}
-									title={`${formatShortDate(day.date)}: ${formatUsdExact(day.amount_usd)}`}
-									className="flex-1 rounded-t bg-primary/70 transition-colors hover:bg-primary"
-									style={{
-										height: `${Math.max(2, maxDay > 0 ? (decimalUsdNumber(day.amount_usd) / maxDay) * 100 : 0)}%`,
-									}}
-								/>
-							))}
-						</div>
-						<div className="mt-1.5 flex justify-between text-2xs text-muted-foreground">
-							<span>{formatShortDate(firstDailyPoint?.date, { includeYear: false })}</span>
-							<span>{formatShortDate(lastDailyPoint?.date, { includeYear: false })}</span>
-						</div>
-						<table className="sr-only">
-							<caption>Daily consumption by day in the reporting window</caption>
-							<thead>
-								<tr>
-									<th scope="col">Day</th>
-									<th scope="col">USD used</th>
-								</tr>
-							</thead>
-							<tbody>
-								{usage.by_day.map((day) => (
-									<tr key={day.date}>
-										<td>{day.date}</td>
-										<td>{formatUsdExact(day.amount_usd)}</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</>
+				) : sortedAgents.length === 0 ? (
+					<EmptyState
+						variant="inset"
+						description="No agent usage in this reporting window"
+						className="py-4 md:p-4"
+					/>
 				) : (
-					<EmptyState
-						variant="inset"
-						description="No daily usage in this reporting window"
-						className="py-4 md:p-4"
-					/>
+					<table className="w-full table-fixed">
+						<caption className="sr-only">Clawdi AI usage grouped by agent</caption>
+						<colgroup>
+							<col />
+							<col className="w-[5.5rem] sm:w-28" />
+							<col className="w-[5.5rem] sm:w-28" />
+						</colgroup>
+						<thead>
+							<tr className="border-b text-xs text-muted-foreground">
+								<th scope="col" className="pb-2 text-left font-medium">
+									Agent
+								</th>
+								<th scope="col" className="pb-2 text-right font-medium">
+									Requests
+								</th>
+								<th scope="col" className="pb-2 text-right font-medium">
+									Spend
+								</th>
+							</tr>
+						</thead>
+						<tbody className="divide-y">
+							{sortedAgents.map((agent) => {
+								const displayName = agent.agent_name
+									? deploymentDisplayName(agent.agent_name)
+									: "Unattributed";
+								return (
+									<tr key={agent.agent_id ?? "unattributed"}>
+										<td className="min-w-0 py-3 pr-3 align-top">
+											<div className="truncate text-sm font-medium">{displayName}</div>
+											<div
+												className={
+													agent.agent_id
+														? "truncate font-mono text-[11px] text-muted-foreground"
+														: "text-xs leading-4 text-muted-foreground"
+												}
+												title={agent.agent_id ?? undefined}
+											>
+												{agent.agent_id ?? "Deleted or unmapped agent usage"}
+											</div>
+										</td>
+										<td className="py-3 text-right align-top text-sm tabular-nums">
+											{agent.requests.toLocaleString()}
+										</td>
+										<td className="py-3 text-right align-top text-sm font-medium tabular-nums">
+											{formatUsdExact(agent.amount_usd)}
+										</td>
+									</tr>
+								);
+							})}
+						</tbody>
+					</table>
 				)}
 			</SettingsSection>
 
 			<SettingsSection
 				headingLevel={3}
 				title="By model"
-				description="Spend and requests grouped by model."
+				description="Spend and requests grouped by provider and model."
 			>
-				<div className="divide-y">
-					{missingSectionSet.has("by_model") ? (
-						<EmptyState
-							variant="inset"
-							title="Model breakdown unavailable"
-							description="No model values are shown because the breakdown could not be read."
-							className="py-4 md:p-4"
-						/>
-					) : usage.by_model.length === 0 ? (
-						<EmptyState
-							variant="inset"
-							description="No model usage in this reporting window"
-							className="py-4 md:p-4"
-						/>
-					) : (
-						usage.by_model.map((model) => {
-							const providerId = model.provider ?? MANAGED_PROVIDER_ID;
-							const modelName = modelDisplayName(
-								model.model,
-								modelOptionsForProvider(providerId, providers, managedModels),
-							);
-							const providerName = providerDisplayLabel(providerId, providers);
-							return (
-								<div
-									key={`${model.provider ?? "managed"}:${model.model}`}
-									className="flex min-w-0 items-start gap-2.5 py-3 first:pt-0 last:pb-0"
-								>
-									<ProviderIcon provider={providerId} providers={providers} size="sm" />
-									<div className="min-w-0 flex-1 space-y-1">
-										<div className="flex items-baseline justify-between gap-2 text-sm">
-											<span className="truncate font-medium">{modelName}</span>
-											<span className="shrink-0 tabular-nums">
-												{formatUsdExact(model.amount_usd)}
-											</span>
-										</div>
-										<div className="h-2 overflow-hidden rounded-full bg-muted">
-											<div
-												className="h-2 rounded-full bg-primary"
-												style={{
-													width: `${maxModel > 0 ? (decimalUsdNumber(model.amount_usd) / maxModel) * 100 : 0}%`,
-												}}
-											/>
-										</div>
-										<div className="text-xs text-muted-foreground">
-											{providerName} · {model.requests.toLocaleString()} request
-											{model.requests === 1 ? "" : "s"}
-										</div>
-									</div>
-								</div>
-							);
-						})
-					)}
-				</div>
+				{missingSections.has("by_model") ? (
+					<EmptyState
+						variant="inset"
+						title="Model breakdown unavailable"
+						description="The model breakdown could not be read. No model values are shown."
+						action={retryAction("by_model")}
+						className="py-4 md:p-4"
+					/>
+				) : sortedModels.length === 0 ? (
+					<EmptyState
+						variant="inset"
+						description="No model usage in this reporting window"
+						className="py-4 md:p-4"
+					/>
+				) : (
+					<table className="w-full table-fixed">
+						<caption className="sr-only">Clawdi AI usage grouped by provider and model</caption>
+						<colgroup>
+							<col />
+							<col className="w-[5.5rem] sm:w-28" />
+							<col className="w-[5.5rem] sm:w-28" />
+						</colgroup>
+						<thead>
+							<tr className="border-b text-xs text-muted-foreground">
+								<th scope="col" className="pb-2 text-left font-medium">
+									Model
+								</th>
+								<th scope="col" className="pb-2 text-right font-medium">
+									Requests
+								</th>
+								<th scope="col" className="pb-2 text-right font-medium">
+									Spend
+								</th>
+							</tr>
+						</thead>
+						<tbody className="divide-y">
+							{sortedModels.map((model) => {
+								const providerId = model.provider ?? MANAGED_PROVIDER_ID;
+								const modelName = modelDisplayName(
+									model.model,
+									modelOptionsForProvider(providerId, providers, managedModels),
+								);
+								return (
+									<tr key={`${model.provider ?? "managed"}:${model.model}`}>
+										<td className="min-w-0 py-3 pr-3 align-top">
+											<div className="flex min-w-0 items-center gap-2">
+												<ProviderIcon provider={providerId} providers={providers} size="sm" />
+												<div className="min-w-0">
+													<div className="truncate text-sm font-medium">{modelName}</div>
+													<div className="truncate text-xs text-muted-foreground">
+														{providerDisplayLabel(providerId, providers)}
+													</div>
+												</div>
+											</div>
+										</td>
+										<td className="py-3 text-right align-top text-sm tabular-nums">
+											{model.requests.toLocaleString()}
+										</td>
+										<td className="py-3 text-right align-top text-sm font-medium tabular-nums">
+											{formatUsdExact(model.amount_usd)}
+										</td>
+									</tr>
+								);
+							})}
+						</tbody>
+					</table>
+				)}
 			</SettingsSection>
 		</div>
 	);

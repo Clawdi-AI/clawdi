@@ -41,6 +41,14 @@ const usage: DeploySchemas["V2HostedUsageSummaryResponse"] = {
 	unavailable_sections: [],
 	total_usd: "0.000001",
 	total_requests: 1,
+	by_agent: [
+		{
+			agent_id: "hdep_test",
+			agent_name: "Test agent",
+			amount_usd: "0.000001",
+			requests: 1,
+		},
+	],
 	by_model: [
 		{
 			model: "gpt-test",
@@ -120,6 +128,7 @@ describe("USD-native v2 billing contract", () => {
 		});
 		expect(usage.total_usd).toBe("0.000001");
 		expect(usage.availability).toBe("complete");
+		expect(usage.by_agent?.[0]?.agent_id).toBe("hdep_test");
 		expect(usage.by_model[0]?.amount_usd).toBe("0.000001");
 	});
 });

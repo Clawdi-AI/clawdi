@@ -51,6 +51,7 @@ describe("usage availability rendering", () => {
 			unavailable_sections: [],
 			total_usd: "0.0000",
 			total_requests: 0,
+			by_agent: [],
 			by_model: [],
 			by_day: [],
 		});
@@ -63,9 +64,10 @@ describe("usage availability rendering", () => {
 		const markup = renderUsage({
 			...PERIOD,
 			availability: "unavailable",
-			unavailable_sections: ["totals", "by_model", "by_day"],
+			unavailable_sections: ["totals", "by_agent", "by_model", "by_day"],
 			total_usd: null,
 			total_requests: null,
+			by_agent: [],
 			by_model: [],
 			by_day: [],
 		});
@@ -77,11 +79,11 @@ describe("usage availability rendering", () => {
 		expect(markup).not.toContain("Clawdi AI spend in window");
 	});
 
-	test("names a missing daily section while preserving read totals and model usage", () => {
+	test("treats a missing by_agent field from an older backend as unavailable", () => {
 		const markup = renderUsage({
 			...PERIOD,
-			availability: "partial",
-			unavailable_sections: ["by_day"],
+			availability: "complete",
+			unavailable_sections: [],
 			total_usd: "12.50",
 			total_requests: 37,
 			by_model: [
@@ -95,31 +97,77 @@ describe("usage availability rendering", () => {
 			by_day: [],
 		});
 
-		expect(markup).toContain("Some usage data is unavailable");
-		expect(markup).toContain("the daily breakdown");
-		expect(markup).toContain("Daily breakdown unavailable");
+		expect(markup).toContain("Agent breakdown unavailable");
+		expect(markup).toContain("Retry");
 		expect(markup).toContain("$12.50");
 		expect(markup).toContain("37");
 		expect(markup).toContain("model-read-successfully");
+		expect(markup).not.toContain("Daily usage");
 	});
 
-	test("hides missing totals and model values while preserving a read daily section", () => {
+	test("keeps agent attribution visible when totals and model data are unavailable", () => {
 		const markup = renderUsage({
 			...PERIOD,
 			availability: "partial",
 			unavailable_sections: ["totals", "by_model"],
 			total_usd: null,
 			total_requests: null,
+			by_agent: [
+				{
+					agent_id: "hdep_support",
+					agent_name: "openclaw-support",
+					amount_usd: "9.25",
+					requests: 12,
+				},
+			],
 			by_model: [],
 			by_day: [{ date: "2026-07-20", amount_usd: "9.25" }],
 		});
 
-		expect(markup).toContain("spend and request totals and the model breakdown");
 		expect(markup).toContain("Usage totals unavailable");
 		expect(markup).toContain("Model breakdown unavailable");
+		expect(markup).toContain("support");
+		expect(markup).toContain("hdep_support");
 		expect(markup).toContain("$9.25");
-		expect(markup).not.toContain("Clawdi AI spend in window");
-		expect(markup).not.toContain("Requests in window");
 		expect(markup).not.toContain("No usage yet");
+	});
+
+	test("shows explicit unattributed usage and sorts both breakdowns by spend", () => {
+		const markup = renderUsage({
+			...PERIOD,
+			availability: "complete",
+			unavailable_sections: [],
+			total_usd: "12.50",
+			total_requests: 37,
+			by_agent: [
+				{ agent_id: null, agent_name: null, amount_usd: "2.50", requests: 7 },
+				{
+					agent_id: "hdep_research",
+					agent_name: "openclaw-research",
+					amount_usd: "10.00",
+					requests: 30,
+				},
+			],
+			by_model: [
+				{
+					model: "smaller-model",
+					provider: null,
+					amount_usd: "2.50",
+					requests: 7,
+				},
+				{
+					model: "larger-model",
+					provider: null,
+					amount_usd: "10.00",
+					requests: 30,
+				},
+			],
+			by_day: [],
+		});
+
+		expect(markup).toContain("Unattributed");
+		expect(markup).toContain("Deleted or unmapped agent usage");
+		expect(markup.indexOf("research")).toBeLessThan(markup.indexOf("Unattributed"));
+		expect(markup.indexOf("larger-model")).toBeLessThan(markup.indexOf("smaller-model"));
 	});
 });
