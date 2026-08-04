@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { settingsDraftOwnerChanges, validateDashboardSettingsSearch } from "@/lib/settings-routes";
+import {
+	settingsDraftOwnerChanges,
+	shouldCanonicalizeCloudSettings,
+	validateDashboardSettingsSearch,
+} from "@/lib/settings-routes";
 
 describe("dashboard Settings search", () => {
 	test("blocks only navigation that changes the Settings draft owner", () => {
@@ -34,5 +38,22 @@ describe("dashboard Settings search", () => {
 		expect(validateDashboardSettingsSearch({ settings: "unknown", keep: "yes" })).toEqual({
 			keep: "yes",
 		});
+	});
+
+	test("canonicalizes denied Cloud deep links only after access and inventory resolve", () => {
+		const denied = {
+			section: "billing-plan" as const,
+			accessLoading: false,
+			accessError: false,
+			canCreateCloudAgents: false,
+			inventoryResolved: true,
+			hasExistingCloudAgents: false,
+		};
+		expect(shouldCanonicalizeCloudSettings(denied)).toBe(true);
+		expect(shouldCanonicalizeCloudSettings({ ...denied, accessLoading: true })).toBe(false);
+		expect(shouldCanonicalizeCloudSettings({ ...denied, inventoryResolved: false })).toBe(false);
+		expect(shouldCanonicalizeCloudSettings({ ...denied, hasExistingCloudAgents: true })).toBe(
+			false,
+		);
 	});
 });

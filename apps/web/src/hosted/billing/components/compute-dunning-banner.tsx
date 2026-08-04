@@ -1,5 +1,6 @@
 "use client";
 
+import { Link, useSearch } from "@tanstack/react-router";
 import {
 	CreditCard,
 	ExternalLink,
@@ -23,7 +24,6 @@ import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
-import { settingsQueryHref } from "@/lib/settings-routes";
 import { computeDunningState, fallbackReasonSentence } from "./compute-dunning.logic";
 
 export function ComputeDunningBanner({ deployment }: { deployment: HostedDeployment }) {
@@ -35,6 +35,10 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 		enabled: state?.ctaTarget === "top_up",
 	});
 	const [topUpOpen, setTopUpOpen] = useState(false);
+	const routeSearch = useSearch({ from: "/_protected/_dashboard" });
+	const billingHistoryLink = (
+		<Link to="." search={{ ...routeSearch, settings: "billing-plan" }} hash="billing-history" />
+	);
 
 	if (!state) return null;
 
@@ -119,12 +123,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 							<Plus data-icon="inline-start" /> Start a new subscription
 						</Button>
 					) : state.ctaTarget === "billing_history" ? (
-						<Button
-							render={<a href={settingsQueryHref("billing-plan")} />}
-							nativeButton={false}
-							size="sm"
-							variant="outline"
-						>
+						<Button render={billingHistoryLink} nativeButton={false} size="sm" variant="outline">
 							<History data-icon="inline-start" /> View billing history
 						</Button>
 					) : state.ctaTarget === "support" ? (
@@ -154,12 +153,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 						</Button>
 					) : null}
 					{state.secondaryTarget === "billing_history" ? (
-						<Button
-							render={<a href={settingsQueryHref("billing-plan")} />}
-							nativeButton={false}
-							size="sm"
-							variant="outline"
-						>
+						<Button render={billingHistoryLink} nativeButton={false} size="sm" variant="outline">
 							<History data-icon="inline-start" /> View billing history
 						</Button>
 					) : state.secondaryTarget === "support" ? (

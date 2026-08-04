@@ -13,6 +13,7 @@ export function X402Card({ enabled }: { enabled: boolean }) {
 	if (!enabled) {
 		return (
 			<SettingsSection
+				headingLevel={3}
 				data-hosted="true"
 				title={
 					<span className="flex flex-wrap items-center gap-2">
@@ -36,6 +37,7 @@ function EnabledX402Card() {
 
 	return (
 		<SettingsSection
+			headingLevel={3}
 			data-hosted="true"
 			title={
 				<span className="flex flex-wrap items-center gap-2">

@@ -98,6 +98,10 @@ import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusDot, type StatusTone } from "@/components/ui/status-badge";
 import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
+import {
+	UnsavedNavigationBoundary,
+	useUnsavedNavigationState,
+} from "@/components/unsaved-navigation-state";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
@@ -3099,15 +3103,17 @@ function HostedAgentSettingsTab({
 }) {
 	const formatName = useCallback((name: string) => deploymentDisplayName(name, runtime), [runtime]);
 	return (
-		<div className="flex flex-col gap-10">
-			{projectionAvailable ? (
-				<AgentSettingsPanel environmentId={environmentId} formatName={formatName} />
-			) : (
-				<ProjectionDependentUnavailable label="Profile settings" />
-			)}
-			<LanguageTimezoneSettingsSection deployment={deployment} />
-			<ComputeSettingsSections deployment={deployment} onDeleteAccepted={onDeleteAccepted} />
-		</div>
+		<UnsavedNavigationBoundary description="Your agent settings will return to the last values saved on the server.">
+			<div className="flex flex-col gap-10">
+				{projectionAvailable ? (
+					<AgentSettingsPanel environmentId={environmentId} formatName={formatName} />
+				) : (
+					<ProjectionDependentUnavailable label="Profile settings" />
+				)}
+				<LanguageTimezoneSettingsSection deployment={deployment} />
+				<ComputeSettingsSections deployment={deployment} onDeleteAccepted={onDeleteAccepted} />
+			</div>
+		</UnsavedNavigationBoundary>
 	);
 }
 
@@ -3138,6 +3144,7 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 		[configTimezone, runtimeTimezoneOptions, timezone],
 	);
 	const dirty = language !== configLanguage || timezone !== configTimezone;
+	useUnsavedNavigationState({ dirty, busy: updateDeployment.isPending });
 
 	return (
 		<SettingsSection

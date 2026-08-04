@@ -4,8 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { PageHeader } from "@/components/page-header";
-import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
 import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner";
 import { WalletSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
@@ -29,10 +28,9 @@ import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { X402Card } from "@/hosted/billing/wallet/x402-card";
 import { env } from "@/lib/env";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Add funds and manage how your Clawdi usage is paid.";
-const WALLET_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-8 px-4 lg:px-6");
+const WALLET_PAGE_CLASS = "flex flex-col gap-8 px-4 lg:px-6";
 
 function scrollToAutoReload() {
 	const section = document.getElementById("auto-reload");
@@ -136,7 +134,7 @@ export function WalletPage() {
 	if (wallet.isLoading) {
 		return (
 			<div data-hosted="true" className={WALLET_PAGE_CLASS}>
-				<PageHeader title="Wallet" description={DESCRIPTION} />
+				<SettingsPanelHeader title="Wallet" description={DESCRIPTION} />
 				<WalletSkeleton />
 			</div>
 		);
@@ -145,7 +143,7 @@ export function WalletPage() {
 	if (shouldBlockQueryError(wallet.error, wallet.data) || !wallet.data) {
 		return (
 			<div data-hosted="true" className={WALLET_PAGE_CLASS}>
-				<PageHeader title="Wallet" description={DESCRIPTION} />
+				<SettingsPanelHeader title="Wallet" description={DESCRIPTION} />
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
 					error={wallet.error}
@@ -164,7 +162,7 @@ export function WalletPage() {
 
 	return (
 		<div data-hosted="true" className={WALLET_PAGE_CLASS}>
-			<PageHeader title="Wallet" description={DESCRIPTION} />
+			<SettingsPanelHeader title="Wallet" description={DESCRIPTION} />
 
 			<TopUpDialog
 				open={topUpOpen}

@@ -6624,19 +6624,28 @@ test("hosted locale settings submit canonical deployment PATCH", async ({ page }
 		ifMatch: string | null;
 	}> = [];
 	await stubHostedApi(page, {
-		deployments: [includedBasicDeployment],
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
 		plans: [basicPlan],
 		updateDeploymentRequests,
 	});
-	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
+	await gotoHostedAgentSettings(page, "hdep_rail_cloud", "Basic");
 
+	const displayName = page.getByRole("textbox", { name: "Display name" });
+	await displayName.fill("Unsaved Cloud name");
 	await page.locator("#hosted-agent-language").click();
 	await page.getByRole("option", { name: "Español" }).click();
+	await page.getByRole("link", { name: "Sessions", exact: true }).click();
+	const discardDialog = page.getByRole("alertdialog", { name: "Discard unsaved changes?" });
+	await expect(discardDialog).toHaveCount(1);
+	await discardDialog.getByRole("button", { name: "Keep editing" }).click();
+	await expect(displayName).toHaveValue("Unsaved Cloud name");
+	await expect(page.locator("#hosted-agent-language")).toContainText("Español");
 	await page.locator("main").getByRole("button", { name: "Save changes" }).click();
 	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
 
 	expect(updateDeploymentRequests[0]?.idempotencyKey).toMatch(/^deployment-update-/);
-	expect(updateDeploymentRequests[0]?.ifMatch).toBe('"rv_hdep_included"');
+	expect(updateDeploymentRequests[0]?.ifMatch).toBe('"rv_hdep_rail_cloud"');
 	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
 		language: "es",
 	});
@@ -8508,6 +8517,23 @@ test("Stripe invoice history shows both rails and a server-visible zero proratio
 		],
 		plans: [basicPlan, performancePlan],
 	});
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto("/channels?settings=billing-usage");
+	await page.reload();
+	const mobileSettings = page.getByTestId("settings-dialog");
+	const usageTab = mobileSettings.getByRole("button", { name: /^Usage/ });
+	await expect
+		.poll(() =>
+			usageTab.evaluate((button) => {
+				const nav = button.closest("nav");
+				if (!nav) return false;
+				const buttonBox = button.getBoundingClientRect();
+				const navBox = nav.getBoundingClientRect();
+				return buttonBox.left >= navBox.left && buttonBox.right <= navBox.right;
+			}),
+		)
+		.toBe(true);
+	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.goto("/channels?settings=billing-plan");
 	const settingsDialog = page.getByTestId("settings-dialog");
 	await expect(settingsDialog.getByText("Billing history", { exact: true })).toBeVisible();

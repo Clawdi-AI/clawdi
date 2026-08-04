@@ -16,7 +16,7 @@ export function ProfilePanel() {
 	const initial = user?.fullName?.[0] ?? user?.primaryEmailAddress?.emailAddress?.[0] ?? "U";
 
 	return (
-		<div className="space-y-6 px-4 lg:px-6">
+		<div className="flex flex-col gap-8 px-4 lg:px-6">
 			<SettingsPanelHeader title="Profile" description="Your account identity." />
 			<div className="flex flex-col gap-4 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
 				<div className="flex items-center gap-4">

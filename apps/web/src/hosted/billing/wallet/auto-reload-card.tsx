@@ -191,6 +191,7 @@ export function AutoReloadCard({
 
 	return (
 		<SettingsSection
+			headingLevel={3}
 			data-hosted="true"
 			title={
 				<span className="flex flex-wrap items-center gap-2">

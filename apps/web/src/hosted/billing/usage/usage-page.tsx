@@ -4,11 +4,10 @@ import { Activity, AlertCircle, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
-import { PageHeader } from "@/components/page-header";
-import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { UsageSkeleton } from "@/hosted/billing/components/state-views";
 import type { HostedUsageSummary, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
@@ -26,10 +25,9 @@ import {
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { formatShortDate } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Clawdi AI usage in USD for the current reporting window across your agents.";
-const USAGE_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6");
+const USAGE_PAGE_CLASS = "flex flex-col gap-8 px-4 lg:px-6";
 
 type UnavailableUsageSection = HostedUsageSummary["unavailable_sections"][number];
 
@@ -78,7 +76,7 @@ export function UsagePage() {
 	if (usage.isLoading) {
 		return (
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
-				<PageHeader title="Usage" description={DESCRIPTION} />
+				<SettingsPanelHeader title="Usage" description={DESCRIPTION} />
 				<UsageSkeleton />
 			</div>
 		);
@@ -87,7 +85,7 @@ export function UsagePage() {
 	if (shouldBlockQueryError(usage.error, usage.data) || !usage.data) {
 		return (
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
-				<PageHeader title="Usage" description={DESCRIPTION} />
+				<SettingsPanelHeader title="Usage" description={DESCRIPTION} />
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
 					error={usage.error}
@@ -135,7 +133,7 @@ export function UsageSummaryView({
 	if (usage.availability === "unavailable") {
 		return (
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
-				<PageHeader title="Usage" description={DESCRIPTION} />
+				<SettingsPanelHeader title="Usage" description={DESCRIPTION} />
 				<EmptyState
 					icon={AlertCircle}
 					title="We can’t load your usage right now"
@@ -169,7 +167,7 @@ export function UsageSummaryView({
 	if (isRealZero) {
 		return (
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
-				<PageHeader title="Usage" description={DESCRIPTION} />
+				<SettingsPanelHeader title="Usage" description={DESCRIPTION} />
 				<EmptyState
 					icon={Activity}
 					title="No usage yet"
@@ -181,7 +179,7 @@ export function UsageSummaryView({
 
 	return (
 		<div data-hosted="true" className={USAGE_PAGE_CLASS}>
-			<PageHeader
+			<SettingsPanelHeader
 				title="Usage"
 				description={
 					totals
@@ -241,7 +239,7 @@ export function UsageSummaryView({
 
 			<Card data-hosted="true">
 				<CardHeader>
-					<CardTitle className="text-base">Daily consumption</CardTitle>
+					<h3 className="text-base leading-normal font-medium">Daily consumption</h3>
 				</CardHeader>
 				<CardContent>
 					{missingSectionSet.has("by_day") ? (
@@ -299,7 +297,7 @@ export function UsageSummaryView({
 
 			<Card data-hosted="true">
 				<CardHeader>
-					<CardTitle className="text-base">By model</CardTitle>
+					<h3 className="text-base leading-normal font-medium">By model</h3>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
 					{missingSectionSet.has("by_model") ? (

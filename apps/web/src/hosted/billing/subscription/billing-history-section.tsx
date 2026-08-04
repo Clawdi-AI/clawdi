@@ -3,6 +3,7 @@
 import { ExternalLink, Receipt } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
+import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -88,20 +89,13 @@ export function BillingHistorySection() {
 	const rows = history.data?.pages.flatMap((page) => page.data ?? []) ?? [];
 
 	return (
-		<section
+		<SettingsSection
+			id="billing-history"
 			data-hosted="true"
-			className="flex flex-col gap-3"
-			aria-labelledby="billing-history-title"
+			headingLevel={3}
+			title="Billing history"
+			description="Invoices for card and Wallet-funded compute subscriptions."
 		>
-			<div>
-				<h2 id="billing-history-title" className="text-base font-semibold">
-					Billing history
-				</h2>
-				<p className="text-sm text-muted-foreground">
-					Invoices for card and Wallet-funded compute subscriptions.
-				</p>
-			</div>
-
 			{history.isLoading ? (
 				<div className="flex flex-col gap-px overflow-hidden rounded-lg border">
 					{Array.from({ length: 3 }, (_, index) => `history-skeleton-${index}`).map((key) => (
@@ -207,6 +201,6 @@ export function BillingHistorySection() {
 					) : null}
 				</>
 			)}
-		</section>
+		</SettingsSection>
 	);
 }

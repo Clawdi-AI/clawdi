@@ -137,9 +137,9 @@ export function LedgerTable({
 		<section data-hosted="true" className="flex flex-col gap-4" aria-labelledby={headingId}>
 			<Separator />
 			<div className="flex items-center justify-between gap-2">
-				<h2 id={headingId} className="text-sm font-semibold">
+				<h3 id={headingId} className="text-sm font-semibold">
 					Activity
-				</h2>
+				</h3>
 				<Select
 					items={LEDGER_FILTER_ITEMS}
 					value={filter}

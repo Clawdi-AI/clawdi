@@ -20,6 +20,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { UnsavedNavigationGuard } from "@/components/unsaved-navigation-guard";
+import { useUnsavedNavigationState } from "@/components/unsaved-navigation-state";
 import {
 	agentDisconnectUnavailable,
 	agentOwnershipKindFromId,
@@ -167,6 +169,15 @@ export function AgentSettingsPanel({
 		}
 		uploadMutation.mutate(file);
 	};
+	const normalizedDraftName = draftName.trim() || null;
+	const currentCustomName = agent?.display_name
+		? (formatName?.(agent.display_name) ?? agent.display_name)
+		: null;
+	const nameChanged = Boolean(agent) && normalizedDraftName !== currentCustomName;
+	const guardedBySurface = useUnsavedNavigationState({
+		dirty: nameChanged,
+		busy: updateIdentity.isPending,
+	});
 
 	if (isLoading) {
 		return (
@@ -185,11 +196,6 @@ export function AgentSettingsPanel({
 		);
 	}
 
-	const normalizedDraftName = draftName.trim() || null;
-	const currentCustomName = agent.display_name
-		? (formatName?.(agent.display_name) ?? agent.display_name)
-		: null;
-	const nameChanged = normalizedDraftName !== currentCustomName;
 	const hasCustomAvatar = Boolean(agent.avatar_url);
 	const ownershipKind = agentOwnershipKindFromId(agent.id, ownership);
 	// Disconnect archives the active Agent and Project, so it must wait for
@@ -216,6 +222,13 @@ export function AgentSettingsPanel({
 
 	return (
 		<div className={cn("flex flex-col gap-9", className)}>
+			{guardedBySurface ? null : (
+				<UnsavedNavigationGuard
+					dirty={nameChanged}
+					busy={updateIdentity.isPending}
+					description="Your display name will return to the last value saved on the server."
+				/>
+			)}
 			<input
 				ref={fileInputRef}
 				type="file"

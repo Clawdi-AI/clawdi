@@ -1647,6 +1647,7 @@ export function AppSidebar({
 				hasExistingCloudAgents={
 					hostedAgentTiles?.some((tile) => tile.source === "on-clawdi") ?? false
 				}
+				cloudInventoryResolved={agentsLoaded && !hostedInventoryFetching}
 				onSectionChange={changeSettingsSection}
 				onOpenChange={setSettingsOpen}
 			/>

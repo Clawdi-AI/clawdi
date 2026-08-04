@@ -42,6 +42,7 @@ const STATELESS_OR_CANONICAL = [
 	"components/dashboard/daemon-status.tsx",
 	"components/dashboard/new-agent-button.tsx",
 	"components/settings-dialog.tsx",
+	"components/unsaved-navigation-guard.tsx",
 	"components/ui/command.tsx",
 	"components/ui/sidebar.tsx",
 	"components/vault/copy-keys-dialog.tsx",
