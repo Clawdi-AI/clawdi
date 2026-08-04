@@ -10,6 +10,11 @@ const routeSource = (resource: "skills" | "vaults") =>
 		"utf8",
 	);
 
+const projectPage = readFileSync(
+	new URL("../pages/dashboard/projects/[id]/page.tsx", import.meta.url),
+	"utf8",
+);
+
 describe("Agent Project resource routes", () => {
 	test("keep the shared Agent and Project access gate above both focused pages", () => {
 		const parent = readFileSync(
@@ -29,5 +34,26 @@ describe("Agent Project resource routes", () => {
 			expect(source).toContain(`focus="${resource}"`);
 			expect(source).toContain("agentResourceScope(id, search, projectId)");
 		}
+	});
+
+	test("return focused pages to their Project and use canonical resource identities", () => {
+		expect(projectPage).toContain("projectDetailHrefForScope(scope, projectId)");
+		expect(projectPage).toContain(
+			`label: projectName ? \`Back to \${projectName}\` : "Back to Project"`,
+		);
+		expect(projectPage).toContain("AGENT_SECTION_NAVIGATION_ITEMS[focus]");
+		expect(projectPage).toContain("focusedResourceIdentity.tint");
+		expect(projectPage).toContain("<FocusedResourceIcon />");
+		expect(projectPage).toContain("showHeading={!focus}");
+	});
+
+	test("link every Agent Project hub to its focused collections without replacing CRUD", () => {
+		expect(projectPage).toContain('resource="Skills"');
+		expect(projectPage).toContain('resource="Vaults"');
+		expect(projectPage).toContain(`aria-label={\`View all \${resource}\`}`);
+		expect(projectPage).toContain("agentDeploymentRouteQuery(scope.agentQuery)");
+		expect(projectPage).toContain("!focus && projectResourceTargets");
+		expect(projectPage).toContain("Install skill");
+		expect(projectPage).toContain("New vault");
 	});
 });

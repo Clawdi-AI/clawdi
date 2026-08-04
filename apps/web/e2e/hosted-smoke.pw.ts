@@ -4579,6 +4579,14 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(main.getByRole("heading", { name: "People", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Agents", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /New vault/i })).toBeVisible();
+	await expect(main.getByRole("button", { name: "View all Skills", exact: true })).toHaveAttribute(
+		"href",
+		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/skills${query}`,
+	);
+	await expect(main.getByRole("button", { name: "View all Vaults", exact: true })).toHaveAttribute(
+		"href",
+		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/vaults${query}`,
+	);
 	await expect(main.getByRole("link", { name: "Open vault Hosted Scoped Vault" })).toHaveAttribute(
 		"href",
 		`/agents/${railHostedEnvironmentId}/vaults/hosted-vault${query}&project=project-hosted&vault=vault-hosted`,
@@ -4586,10 +4594,20 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await page.goto(
 		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/skills${query}`,
 	);
-	await expect(main.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible();
+	const focusedSkillsHeading = main.getByRole("heading", { name: "Skills", level: 1 });
+	await expect(focusedSkillsHeading).toBeVisible();
 	await expect(page).toHaveTitle("Skills · Clawdi");
 	await expect(main.getByText("Project: Hosted Agent Project", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Back to Hosted Agent Project" })).toHaveAttribute(
+		"href",
+		`/agents/${railHostedEnvironmentId}/project-access/project-hosted${query}`,
+	);
+	await expect(
+		focusedSkillsHeading.locator("xpath=../../..").locator(".bg-identity-2-bg svg.lucide-sparkles"),
+	).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Skills", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Vaults", level: 2 })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: "View all Skills" })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /Install skill/i })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /New vault/i })).toHaveCount(0);
 	await main.screenshot({ path: testInfo.outputPath("hosted-workspace-skills-mobile.png") });
@@ -4623,10 +4641,20 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 			url.search === query
 		);
 	});
-	await expect(main.getByRole("heading", { name: "Vaults", level: 1 })).toBeVisible();
+	const focusedVaultsHeading = main.getByRole("heading", { name: "Vaults", level: 1 });
+	await expect(focusedVaultsHeading).toBeVisible();
 	await expect(page).toHaveTitle("Vaults · Clawdi");
 	await expect(main.getByText("Project: Hosted Agent Project", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Back to Hosted Agent Project" })).toHaveAttribute(
+		"href",
+		`/agents/${railHostedEnvironmentId}/project-access/project-hosted${query}`,
+	);
+	await expect(
+		focusedVaultsHeading.locator("xpath=../../..").locator(".bg-identity-4-bg svg.lucide-key"),
+	).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Vaults", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Skills", level: 2 })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: "View all Vaults" })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /New vault/i })).toBeVisible();
 	await main.screenshot({ path: testInfo.outputPath("hosted-workspace-vaults-desktop.png") });
 	const hostedVaultLink = main.getByRole("link", { name: "Open vault Hosted Scoped Vault" });

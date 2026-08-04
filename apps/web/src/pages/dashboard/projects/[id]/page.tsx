@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import {
 	ArrowLeft,
+	ArrowRight,
 	BookOpen,
 	Bot,
 	CheckCircle2,
@@ -82,7 +83,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface";
 import {
+	agentDeploymentRouteQuery,
 	agentProjectDetailHref,
+	agentProjectResourceHref,
 	agentSectionHref,
 	agentSectionLabel,
 	agentSectionLink,
@@ -94,10 +97,13 @@ import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { formatShortDate } from "@/lib/format";
 import { identityFor } from "@/lib/identity";
+import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	libraryManagementTarget,
+	projectDetailHrefForScope,
 	type ResourceNavigationScope,
+	type ResourceNavigationTarget,
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
 import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
@@ -130,7 +136,7 @@ export default function ProjectDetailPage({
 	const pathname = useLocation({ select: (location) => location.pathname });
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr]);
-	const backTarget = resourceCollectionTarget(scope, "projects");
+	const projectsTarget = resourceCollectionTarget(scope, "projects");
 	const managementTarget = libraryManagementTarget("projects", { projectId });
 	const isAgentScope = scope.kind === "agent";
 	const showSkills = focus !== "vaults";
@@ -148,6 +154,31 @@ export default function ProjectDetailPage({
 
 	const rows = projects.data ?? [];
 	const project = rows.find((row) => row.id === projectId) ?? null;
+	const projectName = project ? displayProjectName(project) : null;
+	const pageReturnTarget: ResourceNavigationTarget =
+		focus && scope.kind === "agent"
+			? {
+					href: projectDetailHrefForScope(scope, projectId),
+					label: projectName ? `Back to ${projectName}` : "Back to Project",
+				}
+			: projectsTarget;
+	const projectResourceTargets =
+		scope.kind === "agent"
+			? {
+					skills: agentProjectResourceHref(
+						scope.agentId,
+						projectId,
+						"skills",
+						agentDeploymentRouteQuery(scope.agentQuery),
+					),
+					vaults: agentProjectResourceHref(
+						scope.agentId,
+						projectId,
+						"vaults",
+						agentDeploymentRouteQuery(scope.agentQuery),
+					),
+				}
+			: null;
 	const projectNameById = useMemo(
 		() => new Map(rows.map((row) => [row.id, displayProjectName(row)])),
 		[rows],
@@ -284,7 +315,7 @@ export default function ProjectDetailPage({
 				queryKey: ["get", "/v1/agents/{agent_id}/project-bindings"],
 			});
 			toast.success("Left Shared Project", { description: "Membership removed." });
-			void router.navigate({ href: backTarget.href });
+			void router.navigate({ href: projectsTarget.href });
 		},
 		onError: (e) => {
 			toast.error("Couldn't leave shared project", {
@@ -293,7 +324,6 @@ export default function ProjectDetailPage({
 		},
 	});
 
-	const projectName = project ? displayProjectName(project) : null;
 	useSetBreadcrumbSegmentTitle(
 		scope.kind === "agent" ? agentProjectDetailHref(scope.agentId, projectId) : null,
 		projectName,
@@ -303,7 +333,11 @@ export default function ProjectDetailPage({
 	if (projects.isLoading || (isAgentScope && scopedBindings.isLoading)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<Skeleton className="h-8 w-24" />
+				{focus && isAgentScope ? (
+					<ProjectReturnLink target={pageReturnTarget} />
+				) : (
+					<Skeleton className="h-8 w-24" />
+				)}
 				<div className="flex items-start gap-3">
 					<Skeleton className="size-11 rounded-xl" />
 					<div className="min-w-0 flex-1 space-y-2">
@@ -335,16 +369,7 @@ export default function ProjectDetailPage({
 		const blockingError = blockingProjectError ?? blockingScopeError;
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<Button
-					render={<Link to={backTarget.href} />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="w-fit"
-				>
-					<ArrowLeft className="mr-1.5 size-4" />
-					{backTarget.label}
-				</Button>
+				<ProjectReturnLink target={projectsTarget} />
 				{isApiNotFoundError(blockingError) ? (
 					<DetailNotFound
 						title="Project not found"
@@ -369,16 +394,7 @@ export default function ProjectDetailPage({
 	if (!project) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<Button
-					render={<Link to={backTarget.href} />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="w-fit"
-				>
-					<ArrowLeft className="mr-1.5 size-4" />
-					{backTarget.label}
-				</Button>
+				<ProjectReturnLink target={projectsTarget} />
 				<DetailNotFound
 					title="Project not found"
 					message="This Project may have been removed, or your account no longer has access."
@@ -390,16 +406,7 @@ export default function ProjectDetailPage({
 	if (isAgentScope && !scopedBinding) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<Button
-					render={<Link to={backTarget.href} />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="w-fit"
-				>
-					<ArrowLeft className="mr-1.5 size-4" />
-					{backTarget.label}
-				</Button>
+				<ProjectReturnLink target={projectsTarget} />
 				<DetailNotFound
 					title="Project not available to this Agent"
 					message="The Project may have been removed from this Agent. It remains available in the resource library if your account still has access."
@@ -461,27 +468,26 @@ export default function ProjectDetailPage({
 		</UseProjectWithAgentDialog>
 	);
 	const projectIdentity = identityFor(displayProjectName(project));
+	const focusedResourceIdentity = focus ? AGENT_SECTION_NAVIGATION_ITEMS[focus] : null;
+	const FocusedResourceIcon = focusedResourceIdentity?.icon ?? null;
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<Button
-				render={<Link to={backTarget.href} />}
-				nativeButton={false}
-				variant="ghost"
-				size="sm"
-				className="w-fit"
-			>
-				<ArrowLeft className="mr-1.5 size-4" />
-				{backTarget.label}
-			</Button>
+			<ProjectReturnLink target={pageReturnTarget} />
 
 			<PageHeader
-				title={focus ? agentSectionLabel(focus) : displayProjectName(project)}
+				title={focusedResourceIdentity?.label ?? displayProjectName(project)}
 				titleAdornment={focus ? undefined : <ProjectKindBadge kind={project.kind} />}
 				icon={
-					<IconChip tint={projectIdentity.colorClasses} className="text-xl">
-						{projectIdentity.emoji}
-					</IconChip>
+					focusedResourceIdentity && FocusedResourceIcon ? (
+						<IconChip tint={focusedResourceIdentity.tint}>
+							<FocusedResourceIcon />
+						</IconChip>
+					) : (
+						<IconChip tint={projectIdentity.colorClasses} className="text-xl">
+							{projectIdentity.emoji}
+						</IconChip>
+					)
 				}
 				description={
 					isAgentScope
@@ -558,6 +564,7 @@ export default function ProjectDetailPage({
 
 			<HubSection
 				visible={showSkills}
+				showHeading={!focus}
 				id="skills"
 				title="Skills"
 				count={skillCount}
@@ -571,17 +578,27 @@ export default function ProjectDetailPage({
 								: "Readable instructions shared by the owner."
 				}
 				action={
-					canManageSkills ? (
-						<Button
-							variant="outline"
-							size="sm"
-							aria-expanded={showInstallSkill}
-							onClick={() => setShowInstallSkill((v) => !v)}
-						>
-							<Plus className="size-3.5" />
-							Install skill
-						</Button>
-					) : null
+					(!focus && projectResourceTargets) || canManageSkills ? (
+						<>
+							{!focus && projectResourceTargets ? (
+								<ProjectResourceViewAllLink
+									href={projectResourceTargets.skills}
+									resource="Skills"
+								/>
+							) : null}
+							{canManageSkills ? (
+								<Button
+									variant="outline"
+									size="sm"
+									aria-expanded={showInstallSkill}
+									onClick={() => setShowInstallSkill((v) => !v)}
+								>
+									<Plus className="size-3.5" />
+									Install skill
+								</Button>
+							) : null}
+						</>
+					) : undefined
 				}
 			>
 				{canManageSkills && showInstallSkill ? (
@@ -619,6 +636,7 @@ export default function ProjectDetailPage({
 
 			<HubSection
 				visible={showVaults}
+				showHeading={!focus}
 				id="vaults"
 				title="Vaults"
 				count={vaultCount}
@@ -630,17 +648,27 @@ export default function ProjectDetailPage({
 							: "Read-only vaults shared through this Project."
 				}
 				action={
-					isOwner ? (
-						<Button
-							variant="outline"
-							size="sm"
-							aria-expanded={showCreateVault}
-							onClick={() => setShowCreateVault((v) => !v)}
-						>
-							<Plus className="size-3.5" />
-							New vault
-						</Button>
-					) : null
+					(!focus && projectResourceTargets) || isOwner ? (
+						<>
+							{!focus && projectResourceTargets ? (
+								<ProjectResourceViewAllLink
+									href={projectResourceTargets.vaults}
+									resource="Vaults"
+								/>
+							) : null}
+							{isOwner ? (
+								<Button
+									variant="outline"
+									size="sm"
+									aria-expanded={showCreateVault}
+									onClick={() => setShowCreateVault((v) => !v)}
+								>
+									<Plus className="size-3.5" />
+									New vault
+								</Button>
+							) : null}
+						</>
+					) : undefined
 				}
 			>
 				{isOwner && showCreateVault ? (
@@ -819,7 +847,7 @@ export default function ProjectDetailPage({
 			) : null}
 
 			{!isAgentScope && isOwner && isManaged ? (
-				<ManagedProjectPanel project={project} agent={projectAgent} returnTarget={backTarget} />
+				<ManagedProjectPanel project={project} agent={projectAgent} returnTarget={projectsTarget} />
 			) : null}
 		</div>
 	);
@@ -854,6 +882,7 @@ function StatTile({ label, value, href }: { label: string; value?: CountValue; h
 
 function HubSection({
 	visible = true,
+	showHeading = true,
 	id,
 	title,
 	count,
@@ -862,6 +891,7 @@ function HubSection({
 	children,
 }: {
 	visible?: boolean;
+	showHeading?: boolean;
 	id: string;
 	title: string;
 	count?: CountValue;
@@ -872,22 +902,64 @@ function HubSection({
 	if (!visible) return null;
 	return (
 		<section id={id} className="scroll-mt-20 space-y-3">
-			<div className="flex items-end justify-between gap-2">
-				<div className="min-w-0">
-					<div className="flex items-center gap-2">
-						<h2 className="text-sm font-semibold">{title}</h2>
-						{count !== undefined ? (
-							<Badge variant="secondary" className="tabular-nums">
-								{formatCountValue(count)}
-							</Badge>
-						) : null}
+			{showHeading ? (
+				<div className="flex items-end justify-between gap-2">
+					<div className="min-w-0">
+						<div className="flex items-center gap-2">
+							<h2 className="text-sm font-semibold">{title}</h2>
+							{count !== undefined ? (
+								<Badge variant="secondary" className="tabular-nums">
+									{formatCountValue(count)}
+								</Badge>
+							) : null}
+						</div>
+						<p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
 					</div>
-					<p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+					{action ? (
+						<div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{action}</div>
+					) : null}
 				</div>
-				{action ? <div className="shrink-0">{action}</div> : null}
-			</div>
+			) : action ? (
+				<div className="flex flex-wrap items-center justify-end gap-2">{action}</div>
+			) : null}
 			{children}
 		</section>
+	);
+}
+
+function ProjectReturnLink({ target }: { target: ResourceNavigationTarget }) {
+	return (
+		<Button
+			render={<Link to={target.href} />}
+			nativeButton={false}
+			variant="ghost"
+			size="sm"
+			className="w-fit"
+		>
+			<ArrowLeft className="mr-1.5 size-4" />
+			{target.label}
+		</Button>
+	);
+}
+
+function ProjectResourceViewAllLink({
+	href,
+	resource,
+}: {
+	href: string;
+	resource: "Skills" | "Vaults";
+}) {
+	return (
+		<Button
+			render={<Link to={href} aria-label={`View all ${resource}`} />}
+			nativeButton={false}
+			variant="ghost"
+			size="sm"
+			className="text-muted-foreground"
+		>
+			View all
+			<ArrowRight />
+		</Button>
 	);
 }
 
