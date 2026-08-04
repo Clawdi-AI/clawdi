@@ -15,11 +15,11 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { Switch } from "@/components/ui/switch";
 import type { WalletState } from "@/hosted/billing/contracts";
 import { formatCents } from "@/hosted/billing/format";
 import { billingKeys } from "@/hosted/billing/query-keys";
@@ -309,23 +309,24 @@ export function AutoReloadCard({
 						</div>
 
 						<div className="space-y-3 rounded-lg border p-4">
-							<div className="flex items-start gap-3">
-								<Checkbox
-									id="ar-unlimited"
-									checked={draft.unlimited}
-									onCheckedChange={(checked) => updateDraft("unlimited", checked)}
-									disabled={save.isPending}
-								/>
+							<div className="flex items-start justify-between gap-3">
 								<div className="space-y-0.5">
-									<Label htmlFor="ar-unlimited">No monthly limit</Label>
+									<Label htmlFor="ar-monthly-limit">Monthly limit</Label>
 									<p className="text-xs text-muted-foreground">
-										Reloads can continue whenever your balance is low. You can turn this off at any
-										time.
+										{draft.monthlyLimitEnabled
+											? "Pause auto-reload after this amount is added."
+											: "No monthly limit."}
 									</p>
 								</div>
+								<Switch
+									id="ar-monthly-limit"
+									checked={draft.monthlyLimitEnabled}
+									onCheckedChange={(checked) => updateDraft("monthlyLimitEnabled", checked)}
+									disabled={save.isPending}
+								/>
 							</div>
 
-							{!draft.unlimited ? (
+							{draft.monthlyLimitEnabled ? (
 								<div className="flex max-w-sm flex-col gap-1.5">
 									<Label htmlFor="ar-cap">Monthly limit (USD)</Label>
 									<Input

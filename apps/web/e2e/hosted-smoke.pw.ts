@@ -8694,9 +8694,11 @@ test("auto-reload batches toggle and fields into one explicit save", async ({ pa
 	await card.getByRole("button", { name: "Set up auto-reload" }).click();
 	const threshold = card.getByLabel("When balance is below (USD)");
 	const amount = card.getByLabel("Amount to add (USD)");
+	const monthlyLimit = card.getByRole("switch", { name: "Monthly limit", exact: true });
 	const cap = card.getByLabel("Monthly limit (USD)");
 	const save = card.getByRole("button", { name: "Save", exact: true });
 	const cancel = card.getByRole("button", { name: "Cancel", exact: true });
+	await expect(monthlyLimit).toBeChecked();
 
 	await threshold.fill("7.50");
 	await amount.fill("30");

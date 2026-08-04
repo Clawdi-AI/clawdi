@@ -27,7 +27,11 @@ describe("autoReloadFormState", () => {
 
 	test("requires a finite limit to cover one reload and supports an explicit no-limit choice", () => {
 		const tooSmall = autoReloadFormState({ ...validForm, cap: "20" });
-		const unlimited = autoReloadFormState({ ...validForm, cap: "", unlimited: true });
+		const unlimited = autoReloadFormState({
+			...validForm,
+			cap: "",
+			monthlyLimitEnabled: false,
+		});
 
 		expect(tooSmall.capValid).toBe(false);
 		expect(unlimited.capCents).toBe(0);

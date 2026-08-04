@@ -17,14 +17,14 @@ export interface AutoReloadDraft {
 	amount: string;
 	threshold: string;
 	cap: string;
-	unlimited: boolean;
+	monthlyLimitEnabled: boolean;
 }
 
 export interface AutoReloadFormInput {
 	amount: string;
 	threshold: string;
 	cap: string;
-	unlimited?: boolean;
+	monthlyLimitEnabled?: boolean;
 }
 
 export interface AutoReloadFormState {
@@ -110,14 +110,18 @@ export function autoReloadFormState({
 	amount,
 	threshold,
 	cap,
-	unlimited = false,
+	monthlyLimitEnabled = true,
 }: AutoReloadFormInput): AutoReloadFormState {
 	const amountDollars = dollarsFromInput(amount);
 	const thresholdDollars = dollarsFromInput(threshold);
 	const capDollars = dollarsFromInput(cap);
 	const amountCents = amountDollars === null ? Number.NaN : Math.round(amountDollars * 100);
 	const thresholdUsd = thresholdDollars === null ? Number.NaN : thresholdDollars;
-	const capCents = unlimited ? 0 : capDollars === null ? Number.NaN : Math.round(capDollars * 100);
+	const capCents = monthlyLimitEnabled
+		? capDollars === null
+			? Number.NaN
+			: Math.round(capDollars * 100)
+		: 0;
 
 	const amountValid =
 		Number.isFinite(amountCents) &&
@@ -126,7 +130,8 @@ export function autoReloadFormState({
 	const thresholdValid =
 		Number.isFinite(thresholdUsd) && thresholdUsd >= AUTORELOAD_THRESHOLD_MIN_USD;
 	const capValid =
-		unlimited || (Number.isFinite(capCents) && (!amountValid || capCents >= amountCents));
+		!monthlyLimitEnabled ||
+		(Number.isFinite(capCents) && (!amountValid || capCents >= amountCents));
 	const formValid = amountValid && thresholdValid && capValid;
 
 	return {
@@ -141,15 +146,17 @@ export function autoReloadFormState({
 }
 
 export function autoReloadDraftFromWallet(wallet: WalletCacheSnapshot): AutoReloadDraft {
-	const unlimited = wallet.auto_reload_monthly_cap_cents === 0;
+	const monthlyLimitEnabled = wallet.auto_reload_monthly_cap_cents !== 0;
 	return {
 		enabled: wallet.auto_reload_enabled,
 		threshold: dollars(Number(wallet.auto_reload_threshold_usd)),
 		amount: dollars(wallet.auto_reload_amount_cents / 100),
 		cap: dollars(
-			(unlimited ? wallet.auto_reload_amount_cents : wallet.auto_reload_monthly_cap_cents) / 100,
+			(monthlyLimitEnabled
+				? wallet.auto_reload_monthly_cap_cents
+				: wallet.auto_reload_amount_cents) / 100,
 		),
-		unlimited,
+		monthlyLimitEnabled,
 	};
 }
 
@@ -158,7 +165,7 @@ export function autoReloadRequest(draft: AutoReloadDraft): WalletAutoReloadReque
 		amount: draft.amount,
 		threshold: draft.threshold,
 		cap: draft.cap,
-		unlimited: draft.unlimited,
+		monthlyLimitEnabled: draft.monthlyLimitEnabled,
 	});
 	if (!state.formValid) return null;
 
