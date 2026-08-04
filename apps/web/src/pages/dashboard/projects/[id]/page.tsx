@@ -1838,7 +1838,7 @@ function ProjectVaultActions({
 								id={`project-vault-slug-${projectId}`}
 								name="project-vault-slug"
 								value={slug}
-									onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+								onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
 								placeholder="github…"
 								autoComplete="off"
 								spellCheck={false}
