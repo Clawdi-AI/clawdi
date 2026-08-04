@@ -216,8 +216,13 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			this.pairingQr !== undefined &&
 			this.pairingQrExpiresAt !== undefined &&
 			Date.now() < this.pairingQrExpiresAt;
+		const pairingTransportInFlight =
+			!registered &&
+			this.pairingMethod !== undefined &&
+			!this.fatalReason &&
+			(this.status === "connected" || this.status === "disconnected");
 		const status =
-			this.status === "connecting" || this.status === "starting"
+			this.status === "connecting" || this.status === "starting" || pairingTransportInFlight
 				? "starting"
 				: this.status === "pairing_qr" && !qrIsCurrent
 					? "starting"

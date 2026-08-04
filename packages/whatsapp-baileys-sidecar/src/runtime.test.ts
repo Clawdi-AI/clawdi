@@ -176,6 +176,33 @@ describe("physical Baileys runtime", () => {
 		await runtime.stop();
 	});
 
+	it("keeps unregistered QR transport transitions in the pairing lifecycle", async () => {
+		const harness = createHarness({ registered: false });
+		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
+
+		await runtime.startQrPairing();
+		harness.events.emit("connection.update", { connection: "open" });
+		expect(runtime.pairingStatus()).toEqual({
+			status: "starting",
+			registered: false,
+			method: "qr",
+		});
+
+		harness.events.emit("connection.update", { qr: "sensitive-qr-value" });
+		harness.events.emit("connection.update", {
+			connection: "close",
+			lastDisconnect: { error: { output: { statusCode: DisconnectReason.connectionLost } } },
+		});
+		expect(runtime.pairingStatus()).toMatchObject({
+			status: "starting",
+			registered: false,
+			method: "qr",
+		});
+
+		await runtime.cancelPairing();
+		await runtime.stop();
+	});
+
 	it("confirms physical logout before clearing registered auth", async () => {
 		const harness = createHarness();
 		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
