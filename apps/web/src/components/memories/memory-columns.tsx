@@ -98,8 +98,8 @@ export function makeMemoryColumns(onDelete: (id: string) => void): ColumnDef<Mem
 			cell: ({ row }) => (
 				<ConfirmAction
 					title="Delete this memory?"
-					description={<p>Your AI will stop recalling it on every agent within seconds.</p>}
-					confirmLabel="Delete Memory"
+					description={<p>All agents will stop recalling it within seconds.</p>}
+					confirmLabel="Delete memory"
 					destructive
 					onConfirm={() => onDelete(row.original.id)}
 				>

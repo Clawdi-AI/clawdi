@@ -10,7 +10,7 @@ describe("shared Memories surface", () => {
 		expect(source).toContain('api.useMutation("post", "/v1/memories"');
 		expect(source).toContain('$api.useMutation("delete", "/v1/memories/{memory_id}"');
 		expect(source).toContain("memoryDetailLink(scope, memory.id)");
-		expect(source).toContain("this memory from every agent");
+		expect(source).toContain("this memory from all agents");
 		expect(source).toContain("DataTablePagination");
 		expect(source).toContain("Search memories…");
 		expect(source).not.toMatch(/agent_id|environment_id/);

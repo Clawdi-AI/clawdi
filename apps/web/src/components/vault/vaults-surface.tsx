@@ -230,7 +230,7 @@ export function VaultsSurface({
 								trigger={
 									<Button size="sm">
 										<Plus className="size-3.5" />
-										New vault
+										Create vault
 									</Button>
 								}
 							/>
@@ -444,7 +444,7 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 	const triggerElement = trigger ?? (
 		<Button size="sm">
 			<Plus className="size-3.5" />
-			New vault
+		Create vault
 		</Button>
 	);
 
@@ -459,9 +459,9 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 			<DialogTrigger render={triggerElement} />
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
-					<DialogTitle>New vault</DialogTitle>
+					<DialogTitle>Create vault</DialogTitle>
 					<DialogDescription>
-						A bundle of API keys your agents can use. Add it to Projects to control who can use it.
+						A bundle of API keys your Agents can use. Attach it to Projects to control access.
 					</DialogDescription>
 				</DialogHeader>
 				<form

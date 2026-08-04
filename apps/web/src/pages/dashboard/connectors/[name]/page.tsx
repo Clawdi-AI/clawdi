@@ -347,7 +347,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 								disabled={isConnectDisabled}
 							>
 								{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
-								Connect Account
+								Connect account
 							</Button>
 						) : null
 					}
@@ -399,7 +399,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 								action={
 									<Button onClick={startConnect} disabled={isConnectDisabled}>
 										{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
-										{isStarting ? "Connecting…" : "Connect Account"}
+										{isStarting ? "Connecting…" : "Connect account"}
 									</Button>
 								}
 							/>

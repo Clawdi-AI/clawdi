@@ -205,7 +205,7 @@ function ResourceRow({
 			<span className="flex shrink-0 items-center gap-2" title={scopeLabel}>
 				{count}
 				<span className="rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground">
-					1. Create Project
+					1. Create project
 				</span>
 			</span>
 		) : (

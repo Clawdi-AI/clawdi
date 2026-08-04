@@ -74,7 +74,7 @@ export default function MemoryDetailPage({
 					<Brain />
 					<AlertTitle>Shared across all agents</AlertTitle>
 					<AlertDescription>
-						This memory belongs to the account. Changes here affect every agent.
+						This memory belongs to the account. Changes here affect all agents.
 					</AlertDescription>
 				</Alert>
 			) : null}
@@ -135,11 +135,11 @@ export default function MemoryDetailPage({
 							title="Delete this memory?"
 							description={
 								<>
-									<p>Your AI will stop recalling it across every agent within seconds.</p>
+									<p>All agents will stop recalling it within seconds.</p>
 									<p>You can tell it the same thing again later.</p>
 								</>
 							}
-							confirmLabel="Delete Memory"
+							confirmLabel="Delete memory"
 							destructive
 							onConfirm={onDelete}
 						>

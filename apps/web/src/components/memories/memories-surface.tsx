@@ -168,7 +168,7 @@ export function MemoriesSurface({
 					<Brain />
 					<AlertTitle>Shared across all agents</AlertTitle>
 					<AlertDescription>
-						Memories and provider settings belong to this account. Changes here affect every agent.
+						Memories and provider settings belong to this account. Changes here affect all agents.
 					</AlertDescription>
 				</Alert>
 			) : null}
@@ -350,7 +350,7 @@ function MemoryNotesGrid({
 					<span className="absolute right-2 top-2 z-10 opacity-100 transition-opacity duration-150 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
 						<ConfirmAction
 							title="Delete this memory?"
-							description={<p>Deleting removes this memory from every agent.</p>}
+							description={<p>Deleting removes this memory from all agents.</p>}
 							confirmLabel="Delete memory"
 							destructive
 							onConfirm={() => onDelete(memory.id)}
@@ -454,13 +454,13 @@ function AddMemoryForm() {
 		>
 			<DialogTrigger render={<Button size="sm" />}>
 				<Plus />
-				New memory
+				Create memory
 			</DialogTrigger>
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
-					<DialogTitle>New memory</DialogTitle>
+					<DialogTitle>Create memory</DialogTitle>
 					<DialogDescription>
-						A note your AI recalls on every agent, across machines.
+						A note your AI recalls across all agents and machines.
 					</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-3">

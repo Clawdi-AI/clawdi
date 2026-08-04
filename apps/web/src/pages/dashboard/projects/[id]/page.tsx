@@ -873,7 +873,7 @@ export default function ProjectDetailPage({
 											description={
 												<p>The Vault remains in your account and attached to any other Projects.</p>
 											}
-											confirmLabel={isWorkspace ? "Detach from Workspace" : "Detach from Project"}
+											confirmLabel="Detach vault"
 											destructive
 											onConfirm={() => detachProjectVault.mutateAsync(vault)}
 										>
@@ -977,7 +977,7 @@ export default function ProjectDetailPage({
 						project.kind === "environment"
 							? "Home Agent for this managed Workspace."
 							: project.kind === "personal"
-								? "This Global Project is account-wide and is not linked to Agents."
+									? "This Global Project belongs to your account and is not linked to individual Agents."
 								: "Agents linked to this Project for Vault runtime resolution."
 					}
 				>
@@ -1005,7 +1005,7 @@ export default function ProjectDetailPage({
 								project.kind === "environment"
 									? "The home Agent for this Workspace is unavailable."
 									: project.kind === "personal"
-										? "Global Project applies account-wide and has no Agent links."
+											? "Global Project belongs to your account and has no Agent links."
 										: "No Agents are linked yet. Linking adds attached Vaults to runtime resolution; it does not install Skills."
 							}
 						/>
@@ -1166,7 +1166,7 @@ function projectDetailDescription(project: ProjectRow, isOwner: boolean, typeLab
 	const access = isOwner ? "you own" : "shared with you";
 	if (project.kind === "workspace") {
 		return isOwner
-			? `${typeLabel} you own. Add Skills and attach Vaults here, share the Project, then link it to Agents when needed. Linking does not install its Skills.`
+				? `${typeLabel} you own. Install Skills and attach Vaults here, share the Project, then link it to Agents when needed. Linking does not install its Skills.`
 			: `${typeLabel} shared with you. Its Skills stay stored here, while attached Vaults can join an Agent's runtime resolution after you link the Project.`;
 	}
 	if (project.kind === "environment") {
@@ -1368,7 +1368,7 @@ function UseProjectWithAgentDialog({
 					<DialogTitle>Link project to Agent</DialogTitle>
 					<DialogDescription>
 						Link {projectName} as a context Project. Attached Vaults join runtime resolution; Skills
-						remain stored here and require a separate Install on Agent action to run.
+						remain stored here and must be installed on the Agent separately.
 					</DialogDescription>
 				</DialogHeader>
 

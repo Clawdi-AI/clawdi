@@ -89,7 +89,7 @@ export function AddKeysDialog({
 	const vaultItems = useMemo(
 		() => [
 			...ownVaults.map((vault) => ({ value: vault.id, label: vault.name })),
-			{ value: NEW_VAULT, label: "New vault…" },
+			{ value: NEW_VAULT, label: "Create vault…" },
 		],
 		[ownVaults],
 	);
@@ -300,7 +300,7 @@ export function AddKeysDialog({
 										))}
 										<SelectItem value={NEW_VAULT}>
 											<Plus className="size-3.5" />
-											New vault…
+											Create vault…
 										</SelectItem>
 									</SelectContent>
 								</Select>
@@ -311,7 +311,7 @@ export function AddKeysDialog({
 										value={newVaultName}
 										onChange={(e) => setNewVaultName(e.target.value)}
 										placeholder="Vault name…"
-										aria-label="New vault name"
+										aria-label="Vault name"
 										className="sm:w-44"
 									/>
 									{newVaultSlugTaken ? (

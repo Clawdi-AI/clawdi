@@ -67,7 +67,7 @@ export function ConnectedWorkspaceSkillsPanel({
 						onClick={() => setInstallOpen(true)}
 					>
 						<Plus className="size-3.5" />
-						Install on Agent
+						Install skill
 					</Button>
 				</AlertDescription>
 			</Alert>
@@ -117,7 +117,7 @@ export function ConnectedWorkspaceSkillsPanel({
 			>
 				<DialogContent className="sm:max-w-xl">
 					<DialogHeader>
-						<DialogTitle>Install on Agent</DialogTitle>
+						<DialogTitle>Install skill</DialogTitle>
 						<DialogDescription>
 							Enter a GitHub Skill path, then run the generated command on the connected Agent
 							machine.
@@ -167,12 +167,12 @@ function ConnectedSkillRemoveAction({
 				onClick={() => setOpen(true)}
 			>
 				<Trash2 className="size-3.5" />
-				Uninstall from Agent
+				Uninstall skill
 			</Button>
 			<Dialog open={open} onOpenChange={setOpen}>
 				<DialogContent className="sm:max-w-xl">
 					<DialogHeader>
-						<DialogTitle>Uninstall from Agent</DialogTitle>
+						<DialogTitle>Uninstall skill</DialogTitle>
 						<DialogDescription>
 							Run this command on the connected Agent machine. The Cloud projection is not an
 							uninstall authority.

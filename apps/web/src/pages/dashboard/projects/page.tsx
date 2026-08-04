@@ -203,7 +203,7 @@ export default function ProjectsPage() {
 				actions={
 					<Button size="sm" onClick={openCreateDialog}>
 						<Plus className="size-3.5" />
-						New project
+						Create project
 					</Button>
 				}
 			/>
@@ -230,10 +230,10 @@ export default function ProjectsPage() {
 			>
 				<DialogContent className="sm:max-w-xl">
 					<DialogHeader>
-						<DialogTitle>New project</DialogTitle>
+						<DialogTitle>Create project</DialogTitle>
 						<DialogDescription>
-							Create a Project for a team, workflow, repo, or shareable resources. Add skills,
-							vaults, and sharing settings after it is created.
+							Create a Project for a team, workflow, repo, or shareable resources. Install
+							Skills, attach Vaults, and configure sharing after it is created.
 						</DialogDescription>
 					</DialogHeader>
 					<form

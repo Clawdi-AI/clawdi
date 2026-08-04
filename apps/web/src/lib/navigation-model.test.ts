@@ -228,7 +228,7 @@ describe("sidebar navigation model", () => {
 			"AI provider and primary model used by this agent.",
 		);
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.memories.description).toBe(
-			"Memories are account-wide and available across all agents.",
+			"Memories are shared across all agents.",
 		);
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.settings.icon).toBe(Settings);
 	});

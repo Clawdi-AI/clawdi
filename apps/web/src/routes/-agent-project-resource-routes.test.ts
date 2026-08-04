@@ -53,6 +53,6 @@ describe("Agent Project resource routes", () => {
 		expect(projectPage).toContain(`aria-label={\`View all \${resource}\`}`);
 		expect(projectPage).toContain("agentDeploymentRouteQuery(scope.agentQuery)");
 		expect(projectPage).toContain("!focus && projectResourceTargets");
-		expect(projectPage).toContain("Add to Project");
+		expect(projectPage).toContain("Install skill");
 	});
 });

@@ -97,7 +97,7 @@ export function CopyKeysDialog({
 				value: targetVault.id,
 				label: targetVault.name,
 			})),
-			{ value: NEW_VAULT, label: "New vault…" },
+			{ value: NEW_VAULT, label: "Create vault…" },
 		],
 		[targetVaults],
 	);
@@ -300,7 +300,7 @@ export function CopyKeysDialog({
 									))}
 									<SelectItem value={NEW_VAULT}>
 										<Plus className="size-3.5" />
-										New vault…
+									Create vault…
 									</SelectItem>
 								</SelectContent>
 							</Select>
@@ -311,7 +311,7 @@ export function CopyKeysDialog({
 									value={newVaultName}
 									onChange={(e) => setNewVaultName(e.target.value)}
 									placeholder="Vault name…"
-									aria-label="New vault name"
+									aria-label="Vault name"
 									className="sm:w-44"
 								/>
 								{newVaultSlugTaken ? (
@@ -346,7 +346,7 @@ export function CopyKeysDialog({
 					{mode === "copy" ? (
 						<p className="text-xs text-muted-foreground">
 							Just want these keys available in another Project? Use{" "}
-							<span className="font-medium text-foreground">Add to Project</span> on this vault
+							<span className="font-medium text-foreground">Attach vault</span> on this vault
 							instead — one source of truth, changes apply everywhere.
 						</p>
 					) : null}

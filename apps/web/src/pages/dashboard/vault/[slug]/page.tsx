@@ -903,7 +903,7 @@ export default function VaultDetailPage({
 													The Agent will stop resolving these keys through this {attachmentLabel}.
 												</p>
 											}
-											confirmLabel={`Detach from ${attachmentLabel}`}
+											confirmLabel="Detach vault"
 											destructive
 											onConfirm={() => detachProject.mutate(project.id)}
 										>
@@ -956,7 +956,7 @@ function AttachProjectPicker({
 					className="w-full sm:w-44"
 					aria-label="Project to attach this Vault to"
 				>
-					<SelectValue placeholder="Attach to Project…" />
+					<SelectValue placeholder="Choose a Project…" />
 				</SelectTrigger>
 				<SelectContent>
 					{projects.map((p) => (
@@ -977,7 +977,7 @@ function AttachProjectPicker({
 				}}
 			>
 				{isPending ? <Spinner /> : <Plus className="size-3.5" />}
-				Attach to Project
+				Attach vault
 			</Button>
 		</div>
 	);
@@ -1105,7 +1105,7 @@ function ShareKeysDialog({
 					{isAttaching ? <Spinner /> : <Plus className="size-3.5" />}
 					{projectId && (vault.project_ids ?? []).includes(projectId)
 						? "Continue"
-						: "Attach to Project"}
+						: "Attach vault"}
 				</Button>
 				{alreadyIn.length > 0 ? (
 					<p className="text-xs text-muted-foreground">

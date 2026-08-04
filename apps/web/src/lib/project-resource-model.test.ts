@@ -71,7 +71,7 @@ describe("project resource model", () => {
 		expect(projectResourceScopeLabel("activity")).toBe("Account resources");
 		expect(projectResourceScopeLabel("all-agents")).toBe("All agents");
 		expect(projectResourceScopeDescription(getProjectResourceDefinition("memories"))).toContain(
-			"every agent",
+			"all agents",
 		);
 		expect(projectResourceScopeDescription(getProjectResourceDefinition("skills"))).toContain(
 			"Pick the Project",

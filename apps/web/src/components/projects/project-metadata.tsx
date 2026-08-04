@@ -612,7 +612,7 @@ export function projectKindMeta(kind: string): {
 		return {
 			label: "Global Project",
 			groupLabel: "Managed Projects",
-			description: "Account-wide default Project for resources not tied to one agent or workflow.",
+			description: "Project for account resources not tied to one Agent or workflow.",
 			icon: Globe2,
 			iconClassName: "border-border bg-muted/50 text-muted-foreground",
 			badgeClassName: "border-border bg-muted/50 text-muted-foreground",
