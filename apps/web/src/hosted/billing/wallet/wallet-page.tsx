@@ -31,7 +31,7 @@ import { env } from "@/lib/env";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
-const DESCRIPTION = "One balance for Clawdi AI, wallet-funded compute, top-ups, and auto-reload.";
+const DESCRIPTION = "Add funds and manage how your Clawdi usage is paid.";
 const WALLET_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6");
 
 function scrollToAutoReload() {
@@ -187,7 +187,7 @@ export function WalletPage() {
 
 				<div id="auto-reload" className="grid gap-4 lg:grid-cols-2">
 					<AutoReloadCard wallet={w} onTopUp={() => setTopUpOpen(true)} />
-					{w.x402_enabled === true ? <X402Card /> : null}
+					<X402Card enabled={w.x402_enabled === true} />
 				</div>
 
 				{ledger.error && !ledgerData ? (

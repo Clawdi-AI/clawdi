@@ -167,7 +167,7 @@ export function AutoReloadCard({
 							<Repeat className="size-4" aria-hidden /> Auto-reload
 						</CardTitle>
 						<CardDescription id="auto-reload-description">
-							Top up automatically below a balance threshold. Changes apply only after you save.
+							Automatically add funds when your balance is low.
 						</CardDescription>
 					</div>
 					<div className="flex shrink-0 items-center gap-2">
