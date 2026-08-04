@@ -17688,12 +17688,24 @@ async def test_discord_dispatch_records_bound_message(
         )
     ).scalar_one()
     assert alias.binding_id == message.binding_id
+    assert _discord_gateway_dispatch(message) == {
+        "op": 0,
+        "t": "MESSAGE_CREATE",
+        "s": message.inbox_sequence,
+        "d": {
+            "id": "msg-dispatch-1",
+            "channel_id": "chan-dispatch",
+            "guild_id": "guild-dispatch",
+            "content": "hello from discord",
+        },
+    }
 
 
 @pytest.mark.asyncio
-async def test_discord_gateway_dispatch_pair_code_creates_binding(
+async def test_discord_gateway_interaction_cannot_pair_or_create_side_effects(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     created = (
         await client.post(
@@ -17712,6 +17724,15 @@ async def test_discord_gateway_dispatch_pair_code_creates_binding(
             json={"ttl_seconds": 900},
         )
     ).json()
+
+    async def membership_must_not_run(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("Gateway interaction reached pairing admission")
+
+    monkeypatch.setattr(
+        channel_service,
+        "discord_bot_guild_membership_check",
+        membership_must_not_run,
+    )
 
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     recorded = await record_discord_gateway_dispatch(
@@ -17742,34 +17763,19 @@ async def test_discord_gateway_dispatch_pair_code_creates_binding(
         },
     )
 
-    assert recorded is True
-    binding = (
-        await db_session.execute(
-            select(ChannelBinding).where(
-                ChannelBinding.account_id == UUID(created["id"]),
-                ChannelBinding.external_chat_id == "guild-gateway",
+    assert recorded is False
+    for model in (ChannelBinding, ChannelMessage, ChannelAgentReference, ChannelDelivery):
+        assert (
+            await db_session.scalar(
+                select(func.count())
+                .select_from(model)
+                .where(model.account_id == UUID(created["id"]))
             )
+            == 0
         )
-    ).scalar_one()
-    assert binding.status == "active"
-    message = (
-        await db_session.execute(
-            select(ChannelMessage).where(
-                ChannelMessage.provider_message_id == "interaction-gateway-pair"
-            )
-        )
-    ).scalar_one()
-    assert message.binding_id == binding.id
-    alias = (
-        await db_session.execute(
-            select(ChannelBindingAlias).where(
-                ChannelBindingAlias.account_id == UUID(created["id"]),
-                ChannelBindingAlias.alias_external_chat_id == "chan-gateway-pair",
-                ChannelBindingAlias.alias_kind == "discord_channel",
-            )
-        )
-    ).scalar_one()
-    assert alias.binding_id == binding.id
+    pair_code = await db_session.get(ChannelPairCode, UUID(pair["id"]))
+    assert pair_code is not None
+    assert pair_code.status == PAIR_CODE_STATUS_PENDING
 
 
 @pytest.mark.asyncio
@@ -20227,26 +20233,29 @@ async def test_public_discord_dm_pair_handoff_unpair_and_duplicate_are_recorded_
         (5, {"custom_id": "agent-modal", "components": []}),
     ]
     forwarded_ids: list[str] = []
+    forwarded_payloads: dict[str, dict[str, Any]] = {}
     for interaction_type, interaction_data in forwarded_interactions:
         interaction_id = f"public-dm-agent-interaction-{interaction_type}"
         forwarded_ids.append(interaction_id)
+        forwarded_payload = {
+            "type": interaction_type,
+            "id": interaction_id,
+            "token": f"{interaction_id}-token",
+            "application_id": application_id,
+            "channel_id": "public-paired-dm",
+            "context": 1,
+            "authorizing_integration_owners": {"1": "public-pair-user"},
+            "user": {
+                "id": "public-pair-user",
+                "global_name": "Paired Public User",
+            },
+            "data": interaction_data,
+        }
+        forwarded_payloads[interaction_id] = forwarded_payload
         forwarded = await client.post(
             webhook_url,
             headers=headers,
-            json={
-                "type": interaction_type,
-                "id": interaction_id,
-                "token": f"{interaction_id}-token",
-                "application_id": application_id,
-                "channel_id": "public-paired-dm",
-                "context": 1,
-                "authorizing_integration_owners": {"1": "public-pair-user"},
-                "user": {
-                    "id": "public-pair-user",
-                    "global_name": "Paired Public User",
-                },
-                "data": interaction_data,
-            },
+            json=forwarded_payload,
         )
         assert forwarded.status_code == 202
         assert forwarded.content == b""
@@ -20333,6 +20342,16 @@ async def test_public_discord_dm_pair_handoff_unpair_and_duplicate_are_recorded_
     assert len(messages) == 6
     assert {message.binding_id for message in messages} == {binding_id}
     assert {message.user_id for message in messages} == {channel_agent.user_id}
+    forwarded_messages = {
+        message.provider_message_id: message
+        for message in messages
+        if message.provider_message_id in forwarded_payloads
+    }
+    for interaction_id, payload in forwarded_payloads.items():
+        dispatch = _discord_gateway_dispatch(forwarded_messages[interaction_id])
+        assert dispatch["op"] == 0
+        assert dispatch["t"] == "INTERACTION_CREATE"
+        assert dispatch["d"] == payload
     assert (
         await db_session.scalar(
             select(func.count())
@@ -21323,7 +21342,7 @@ async def test_discord_concurrent_replayed_unpair_waits_for_event_commit_and_rep
 
 
 @pytest.mark.asyncio
-async def test_discord_gateway_replayed_unpair_cannot_archive_replacement_binding(
+async def test_discord_gateway_interaction_cannot_unpair_or_create_side_effects(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
 ) -> None:
@@ -21336,8 +21355,15 @@ async def test_discord_gateway_replayed_unpair_cannot_archive_replacement_bindin
         channel_id=channel_id,
         guild_id=guild_id,
     )
+    account_id = UUID(created["id"])
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    original_unpair = {
+    before_counts = {
+        model: await db_session.scalar(
+            select(func.count()).select_from(model).where(model.account_id == account_id)
+        )
+        for model in (ChannelMessage, ChannelAgentReference, ChannelDelivery)
+    }
+    gateway_unpair = {
         "op": 0,
         "t": "INTERACTION_CREATE",
         "s": 801,
@@ -21357,57 +21383,21 @@ async def test_discord_gateway_replayed_unpair_cannot_archive_replacement_bindin
             "data": {"name": "clawdi_unpair"},
         },
     }
-    assert (
-        await record_discord_gateway_dispatch(
-            sessionmaker,
-            UUID(created["id"]),
-            original_unpair,
-        )
-        is True
-    )
-    assert (await client.get(f"/v1/channels/{created['id']}/bindings")).json() == []
-
-    pair = (
-        await client.post(
-            f"/v1/channels/{created['id']}/pair-codes",
-            json={"ttl_seconds": 900},
-        )
-    ).json()
-    replacement_pair = await client.post(
-        f"/v1/channels/discord/{created['id']}/webhook",
-        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
-        json={
-            "type": 2,
-            "id": "gateway-replacement-pair-interaction",
-            "token": "gateway-replacement-pair-token",
-            "application_id": DISCORD_TEST_APPLICATION_ID,
-            "channel_id": channel_id,
-            "guild_id": guild_id,
-            "context": 0,
-            "authorizing_integration_owners": {"0": guild_id},
-            "member": {
-                "permissions": "32",
-                "user": {"id": actor_id},
-            },
-            "data": {
-                "name": "clawdi_pair",
-                "options": [{"name": "code", "value": pair["code"]}],
-            },
-        },
-    )
-    assert replacement_pair.json()["data"]["content"].startswith("Server paired.")
-
-    assert (
-        await record_discord_gateway_dispatch(
-            sessionmaker,
-            UUID(created["id"]),
-            original_unpair,
-        )
-        is True
+    assert not await record_discord_gateway_dispatch(
+        sessionmaker,
+        account_id,
+        gateway_unpair,
     )
     bindings = (await client.get(f"/v1/channels/{created['id']}/bindings")).json()
     assert len(bindings) == 1
     assert bindings[0]["external_chat_id"] == guild_id
+    for model, before in before_counts.items():
+        assert (
+            await db_session.scalar(
+                select(func.count()).select_from(model).where(model.account_id == account_id)
+            )
+            == before
+        )
 
 
 @pytest.mark.asyncio
