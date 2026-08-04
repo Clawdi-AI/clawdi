@@ -152,6 +152,10 @@ from app.services.whatsapp_baileys import (
     whatsapp_agent_websocket_url,
 )
 from app.services.whatsapp_device_onboarding import require_whatsapp_logout_for_archive
+from app.services.whatsapp_native_transport import (
+    WhatsAppSidecarError,
+    whatsapp_phone_number_from_pn_jid,
+)
 from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_registry
 
 router = APIRouter(prefix="/channels", tags=["channels"])
@@ -861,6 +865,45 @@ async def delete_channel(
     await db.commit()
 
 
+async def _whatsapp_pair_deep_link(
+    account: ChannelAccount,
+    *,
+    pairing_command: str,
+) -> str | None:
+    if (
+        account.provider != CHANNEL_PROVIDER_WHATSAPP
+        or account.visibility != CHANNEL_VISIBILITY_PUBLIC
+        or account.user_id is not None
+    ):
+        return None
+    config = account.config if isinstance(account.config, dict) else {}
+    configured_revision = config.get("sidecar_config_revision")
+    if config.get("connection_mode") != "baileys_managed" or not isinstance(
+        configured_revision, str
+    ):
+        return None
+    registry = get_active_whatsapp_sidecar_registry()
+    if (
+        registry is None
+        or not registry.managed_is_bound(account.id)
+        or registry.managed_account_revision(account.id) != configured_revision
+    ):
+        return None
+    client = registry.get_managed_client(account.id)
+    if client is None:
+        return None
+    try:
+        health = await client.health()
+    except WhatsAppSidecarError:
+        return None
+    if health.status != "connected" or not health.connected or not health.registered:
+        return None
+    phone_number = whatsapp_phone_number_from_pn_jid(health.account_jid)
+    if phone_number is None:
+        return None
+    return f"https://wa.me/{phone_number}?text={quote(pairing_command, safe='')}"
+
+
 @router.post("/{account_id}/pair-codes", status_code=status.HTTP_201_CREATED)
 async def create_channel_pair_code(
     account_id: UUID,
@@ -953,7 +996,7 @@ async def create_channel_pair_code(
     deep_link = (
         f"https://t.me/{bot_username}?start={quote(created.code, safe='')}"
         if bot_username is not None
-        else None
+        else await _whatsapp_pair_deep_link(account, pairing_command=pairing_command)
     )
     return ChannelPairCodeResponse(
         id=created.pair_code.id,

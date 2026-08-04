@@ -19,6 +19,7 @@ from app.services.whatsapp_native_transport import (
     WhatsAppNativeRelayRequest,
     WhatsAppProviderTransportAdapter,
     WhatsAppSidecarUnavailableError,
+    whatsapp_phone_number_from_pn_jid,
 )
 from app.services.whatsapp_provider_bridge import (
     register_whatsapp_provider_transport,
@@ -193,6 +194,10 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
                         "sourceCommit": "7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a",
                         "version": [2, 3000, 1043857760],
                     },
+                    "user": {
+                        "id": "15551234567:17@s.whatsapp.net",
+                        "name": "Clawdi Public WhatsApp",
+                    },
                 },
             )
         if request.url.path == f"{SESSION_PREFIX}/relay-message":
@@ -268,7 +273,9 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
     )
     transport = WhatsAppProviderTransportAdapter(client)
 
-    assert await client.refresh_health() is True
+    health = await client.health()
+    assert health.connected is True
+    assert health.account_jid == "15551234567:17@s.whatsapp.net"
     assert client.connected is True
 
     relayed_message_id = await transport.relay_outbound_message(
@@ -317,6 +324,33 @@ async def test_whatsapp_baileys_sidecar_client_uses_internal_contract():
         "attrs": {"id": "response", "type": "result"},
         "content": b"\x01\x02",
     }
+
+
+@pytest.mark.parametrize(
+    ("account_jid", "phone_number"),
+    [
+        ("15551234567@s.whatsapp.net", "15551234567"),
+        ("15551234567:1@s.whatsapp.net", "15551234567"),
+        ("1234567:255@s.whatsapp.net", "1234567"),
+        (None, None),
+        ("15551234567@lid", None),
+        ("15551234567@hosted", None),
+        ("15551234567@s.whatsapp.net.evil.example", None),
+        ("+15551234567@s.whatsapp.net", None),
+        ("05551234567@s.whatsapp.net", None),
+        ("123456@s.whatsapp.net", None),
+        ("1234567890123456@s.whatsapp.net", None),
+        ("15551234567:0@s.whatsapp.net", None),
+        ("15551234567:256@s.whatsapp.net", None),
+        ("15551234567_1@s.whatsapp.net", None),
+        ("15551234567@s.whatsapp.net ", None),
+    ],
+)
+def test_whatsapp_phone_number_requires_strict_pn_jid(
+    account_jid: str | None,
+    phone_number: str | None,
+) -> None:
+    assert whatsapp_phone_number_from_pn_jid(account_jid) == phone_number
 
 
 @pytest.mark.asyncio

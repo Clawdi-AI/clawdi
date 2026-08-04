@@ -5,6 +5,7 @@ import binascii
 import hashlib
 import math
 import os
+import re
 import stat
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -58,6 +59,7 @@ _EXPECTED_BAILEYS_RELEASE = {
     "sourceCommit": "7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a",
     "version": [2, 3000, 1043857760],
 }
+_WHATSAPP_PN_JID = re.compile(r"^([1-9][0-9]{6,14})(?::([1-9][0-9]{0,2}))?@s\.whatsapp\.net$")
 
 WhatsAppSidecarRuntimeStatus = Literal[
     "starting",
@@ -91,6 +93,7 @@ class WhatsAppSidecarHealth:
     status: WhatsAppSidecarRuntimeStatus
     connected: bool
     registered: bool
+    account_jid: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -290,6 +293,7 @@ class WhatsAppBaileysSidecarClient:
             status=_runtime_status(payload.get("status")),
             connected=connected,
             registered=_required_bool(payload, "registered"),
+            account_jid=_sidecar_account_jid(payload.get("user")),
         )
 
     async def capabilities(self) -> WhatsAppSidecarCapabilities:
@@ -678,6 +682,29 @@ def _required_bool(value: Mapping[str, JsonValue], key: str) -> bool:
     if not isinstance(raw, bool):
         raise WhatsAppSidecarProtocolError("invalid Baileys sidecar response")
     return raw
+
+
+def _sidecar_account_jid(value: JsonValue | None) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    account_jid = value.get("id")
+    if not isinstance(account_jid, str) or not account_jid or len(account_jid) > 128:
+        return None
+    return account_jid
+
+
+def whatsapp_phone_number_from_pn_jid(account_jid: str | None) -> str | None:
+    """Return click-to-chat digits only for a strict Baileys PN user JID."""
+
+    if account_jid is None or len(account_jid) > 128:
+        return None
+    match = _WHATSAPP_PN_JID.fullmatch(account_jid)
+    if match is None:
+        return None
+    raw_device = match.group(2)
+    if raw_device is not None and int(raw_device) > 255:
+        return None
+    return match.group(1)
 
 
 def _optional_secret(value: JsonValue, *, maximum: int) -> str | None:

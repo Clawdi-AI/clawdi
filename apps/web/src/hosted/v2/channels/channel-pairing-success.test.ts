@@ -17,8 +17,9 @@ describe("pairing success detection", () => {
 		expect(pairingCountIncreased(3, reopenedSessionBaseline)).toBe(true);
 	});
 
-	test("describes Telegram and Discord success without requiring a binding-list poll", () => {
+	test("describes provider success without requiring a binding-list poll", () => {
 		expect(pairingSuccessDescription("telegram")).toBe("Telegram chat is ready.");
 		expect(pairingSuccessDescription("discord")).toBe("Discord chat is ready.");
+		expect(pairingSuccessDescription("whatsapp")).toBe("WhatsApp chat is ready.");
 	});
 });
