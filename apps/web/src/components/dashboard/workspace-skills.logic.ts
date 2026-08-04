@@ -1,10 +1,10 @@
-import type { components } from "@/lib/api-schemas";
+import type { SkillCardEntity } from "@/components/skills/skill-card";
 import type {
 	HostedSkillCatalogItem,
 	HostedSkillInstallResponse,
 	HostedSkillStatusItem,
 } from "@/hosted/billing/contracts";
-import type { SkillCardEntity } from "@/components/skills/skill-card";
+import type { components } from "@/lib/api-schemas";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
