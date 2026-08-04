@@ -29,6 +29,7 @@ from app.models.channel import (
 from app.models.device_authorization import DeviceAuthorization
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.principal_lifecycle import (
+    ClerkPrincipalAuthority,
     ClerkWebhookEventReceipt,
     PrincipalLifecycle,
 )
@@ -194,6 +195,14 @@ async def assert_clerk_principal_active(
     )
     if lifecycle_id is not None:
         raise PrincipalTerminatedError("principal has been terminated")
+    banned = await db.scalar(
+        select(ClerkPrincipalAuthority.banned).where(
+            ClerkPrincipalAuthority.issuer == resolved_issuer,
+            ClerkPrincipalAuthority.subject == subject,
+        )
+    )
+    if banned is True:
+        raise PrincipalTerminatedError("principal is suspended")
     return resolved_issuer
 
 
@@ -255,10 +264,81 @@ async def assert_user_authority_active(
         select(User.id).where(
             User.id == user_id,
             ~select(PrincipalLifecycle.id).where(PrincipalLifecycle.user_id == User.id).exists(),
+            ~select(ClerkPrincipalAuthority.id)
+            .where(
+                ClerkPrincipalAuthority.issuer == User.clerk_issuer,
+                ClerkPrincipalAuthority.subject == User.clerk_id,
+                ClerkPrincipalAuthority.banned.is_(True),
+            )
+            .exists(),
         )
     )
     if active_id is None:
         raise PrincipalTerminatedError("user authority is disabled")
+
+
+async def project_clerk_user_authority(
+    db: AsyncSession,
+    *,
+    issuer: str,
+    subject: str,
+    banned: bool,
+    authority_updated_at: datetime,
+    message_id: str,
+    payload_sha256: str,
+) -> bool:
+    """Project a current Clerk ban value; deletion is permanently dominant."""
+
+    if issuer != configured_clerk_issuer():
+        raise PrincipalIdentityConflictError("principal issuer is not accepted")
+    if authority_updated_at.tzinfo is None:
+        raise ValueError("Clerk authority timestamp must be timezone-aware")
+    await lock_clerk_principal(db, issuer=issuer, subject=subject)
+    if await db.scalar(
+        select(PrincipalLifecycle.id).where(
+            PrincipalLifecycle.issuer == issuer,
+            PrincipalLifecycle.subject == subject,
+        )
+    ):
+        return False
+
+    projection = (
+        await db.execute(
+            select(ClerkPrincipalAuthority)
+            .where(
+                ClerkPrincipalAuthority.issuer == issuer,
+                ClerkPrincipalAuthority.subject == subject,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if projection is not None and projection.authority_updated_at >= authority_updated_at:
+        return False
+    changed = projection is None or projection.banned != banned
+    if projection is None:
+        projection = ClerkPrincipalAuthority(
+            issuer=issuer,
+            subject=subject,
+            banned=banned,
+            authority_updated_at=authority_updated_at,
+            message_id=message_id,
+            payload_sha256=payload_sha256,
+        )
+        db.add(projection)
+    else:
+        projection.banned = banned
+        projection.authority_updated_at = authority_updated_at
+        projection.message_id = message_id
+        projection.payload_sha256 = payload_sha256
+    user = await load_clerk_user_for_issuer(
+        db,
+        issuer=issuer,
+        subject=subject,
+        bind_legacy=True,
+    )
+    if user is not None:
+        await db.flush()
+    return changed
 
 
 async def load_clerk_user_for_issuer(
@@ -847,6 +927,7 @@ __all__ = [
     "load_clerk_user_for_issuer",
     "lock_clerk_principal",
     "lock_user_authority",
+    "project_clerk_user_authority",
     "resolve_clerk_owner_issuer",
     "record_principal_cleanup_failure",
 ]

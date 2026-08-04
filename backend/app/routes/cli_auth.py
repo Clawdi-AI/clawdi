@@ -52,6 +52,7 @@ from app.schemas.cli_auth import (
 from app.services.api_key import mint_api_key
 from app.services.app_setting_registry import CLERK_CLI_OAUTH_SPEC
 from app.services.app_settings import AppSettingUnavailable, resolve_app_setting
+from app.services.clerk_backend import clerk_backend_headers, clerk_backend_url
 from app.services.clerk_cli_oauth_settings import ClerkCliOAuthSetting
 
 router = APIRouter(prefix="/cli/auth", tags=["cli-auth"])
@@ -158,11 +159,8 @@ async def revoke_oauth_refresh_grant(
         )
 
     escaped_application_id = quote(application_id, safe="")
-    url = f"https://api.clerk.com/v1/oauth_applications/{escaped_application_id}/revoke_token"
-    headers = {
-        "Authorization": f"Bearer {secret_key}",
-        "User-Agent": "clawdi-backend/1.0",
-    }
+    url = clerk_backend_url(f"oauth_applications/{escaped_application_id}/revoke_token")
+    headers = clerk_backend_headers()
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.post(

@@ -3,6 +3,20 @@
 Guide for contributors working on `backend/`. Commands in this document assume
 you start at the repository root unless a command changes directory.
 
+## Clerk lifecycle subscription
+
+Standalone Clawdi lazy-creates a Clerk user only after a verified JWT is used;
+do not subscribe `user.created`. Configure the direct signed webhook endpoint
+`POST /v1/webhooks/clerk` for exactly `user.updated` and `user.deleted`.
+`user.updated` refreshes the current `banned` value from Clerk's Backend API
+and reversibly gates all Clawdi authentication, including API keys;
+`user.deleted` remains an irreversible tombstone followed by cleanup. Session,
+organization, messaging, and billing webhooks are intentionally unsupported.
+
+Set `CLERK_WEBHOOK_SIGNING_SECRET`, `CLERK_SECRET_KEY`, and
+`CLERK_JWT_ISSUER`. Backend API calls use the pinned Clerk API version
+`2026-05-12`.
+
 ## Local backend loop
 
 Use the canonical local-stack runbook in
