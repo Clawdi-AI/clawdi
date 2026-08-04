@@ -1,8 +1,9 @@
 "use client";
 
 import { ExternalLink, Receipt } from "lucide-react";
-import { useId, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { EmptyState } from "@/components/empty-state";
+import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
 import {
 	Select,
@@ -11,7 +12,6 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -103,7 +103,6 @@ export function LedgerTable({
 	onShowMore?: () => void;
 }) {
 	const [filter, setFilter] = useState<LedgerFilter>("all");
-	const headingId = useId();
 
 	const filtered = useMemo(() => filteredLedgerEntries(entries, filter), [entries, filter]);
 	const canLoadMore = hasMore && onShowMore != null;
@@ -134,12 +133,9 @@ export function LedgerTable({
 	}
 
 	return (
-		<section data-hosted="true" className="flex flex-col gap-4" aria-labelledby={headingId}>
-			<Separator />
-			<div className="flex items-center justify-between gap-2">
-				<h3 id={headingId} className="text-sm font-semibold">
-					Activity
-				</h3>
+		<SettingsSection data-hosted="true" headingLevel={3} title="Activity">
+			<div className="flex flex-col gap-4">
+				<div className="flex justify-end">
 				<Select
 					items={LEDGER_FILTER_ITEMS}
 					value={filter}
@@ -158,9 +154,9 @@ export function LedgerTable({
 						))}
 					</SelectContent>
 				</Select>
-			</div>
+				</div>
 
-			{isLoading ? (
+				{isLoading ? (
 				<div className="space-y-px overflow-hidden rounded-lg border">
 					{Array.from({ length: 5 }, (_, i) => `s-${i}`).map((key) => (
 						<div key={key} className="flex items-center justify-between gap-4 px-3 py-3">
@@ -269,7 +265,8 @@ export function LedgerTable({
 
 					{renderLoadMoreControl()}
 				</>
-			)}
-		</section>
+				)}
+			</div>
+		</SettingsSection>
 	);
 }

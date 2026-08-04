@@ -2,6 +2,7 @@
 
 import { Check, Cpu, Zap } from "lucide-react";
 import { useMemo } from "react";
+import { SettingsSection } from "@/components/settings-section";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type { Plan } from "@/hosted/billing/contracts";
@@ -75,20 +76,19 @@ export function PlanComparison({
 		basic !== undefined && performance !== undefined && !selectedTerm;
 
 	return (
-		<section data-hosted="true" className="space-y-4" aria-labelledby="plan-comparison-heading">
-			<div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-				<div>
-					<h3 id="plan-comparison-heading" className="text-base font-semibold">
-						Compare compute plans
-					</h3>
-					{sharedPricingUnavailable ? (
-						<p className="mt-1 text-sm text-muted-foreground">
-							A shared Basic and Performance billing term is not currently available.
-						</p>
-					) : null}
-				</div>
+		<SettingsSection
+			data-hosted="true"
+			headingLevel={3}
+			title="Compare compute plans"
+			description={
+				sharedPricingUnavailable
+					? "A shared Basic and Performance billing term is not currently available."
+					: undefined
+			}
+		>
+			<div className="space-y-4">
 				{commonOffers.length > 1 && selectedTerm !== null ? (
-					<div className="w-full shrink-0 space-y-1.5 sm:w-56">
+					<div className="ml-auto w-full space-y-1.5 sm:w-56">
 						<p className="text-xs font-medium text-muted-foreground">Billing term</p>
 						<TermSwitcher
 							offers={commonOffers}
@@ -99,8 +99,7 @@ export function PlanComparison({
 						/>
 					</div>
 				) : null}
-			</div>
-			<div className="grid gap-3 lg:grid-cols-2">
+				<div className="grid gap-3 lg:grid-cols-2">
 				{/* Basic */}
 				<Card size="sm">
 					<CardHeader className="gap-2">
@@ -173,7 +172,8 @@ export function PlanComparison({
 						</ul>
 					</CardContent>
 				</Card>
+				</div>
 			</div>
-		</section>
+		</SettingsSection>
 	);
 }

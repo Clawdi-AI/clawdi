@@ -3188,7 +3188,7 @@ function HostedAgentSettingsTab({
 	const formatName = useCallback((name: string) => deploymentDisplayName(name, runtime), [runtime]);
 	return (
 		<UnsavedNavigationBoundary description="Your agent settings will return to the last values saved on the server.">
-			<div className="flex flex-col gap-10">
+			<div className="flex flex-col gap-8">
 				{projectionAvailable ? (
 					<AgentSettingsPanel environmentId={environmentId} formatName={formatName} />
 				) : (
@@ -3589,7 +3589,7 @@ function ComputeSettingsSections({
 	}
 
 	return (
-		<div className="flex flex-col gap-9">
+		<div className="flex flex-col gap-8">
 			{wallet.data ? (
 				<TopUpDialog {...walletTopUp.dialogProps} onComplete={() => setPlanChangeQuote(null)} />
 			) : null}
