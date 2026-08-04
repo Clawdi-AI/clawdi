@@ -203,7 +203,7 @@ jobs:
         run: docker version
       - name: Restore pinned upstream artifacts
         id: upstream-artifacts
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ${{ runner.temp }}/managed-whatsapp-native-e2e-artifacts
           key: managed-whatsapp-native-e2e-artifacts-v1-${{ hashFiles('packages/cli/tests/fixtures/managed-whatsapp-native-e2e/versions.env') }}
@@ -214,7 +214,7 @@ jobs:
         run: scripts/test-managed-whatsapp-native-e2e.sh --fetch-only
       - name: Save pinned upstream artifacts
         if: steps.upstream-artifacts.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ${{ runner.temp }}/managed-whatsapp-native-e2e-artifacts
           key: managed-whatsapp-native-e2e-artifacts-v1-${{ hashFiles('packages/cli/tests/fixtures/managed-whatsapp-native-e2e/versions.env') }}

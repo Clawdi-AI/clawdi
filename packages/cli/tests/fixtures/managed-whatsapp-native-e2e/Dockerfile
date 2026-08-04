@@ -81,11 +81,16 @@ RUN --mount=type=bind,from=e2e_artifacts,source=/,target=/mnt/artifacts,ro \
 			/tmp/openclaw.tgz \
 			--ignore-scripts --no-audit --no-fund \
 	&& rm /tmp/openclaw.tgz \
-	&& runuser -u clawdi -- env \
+	&& OPENCLAW_PLUGIN_INSTALL_ATTEMPT=1 \
+	&& until runuser -u clawdi -- env \
 		HOME=/opt/stock/openclaw-home \
 		NPM_CONFIG_CACHE=/var/cache/npm \
 		/opt/stock/openclaw-home/.openclaw/bin/openclaw plugins install \
-			clawhub:@openclaw/whatsapp \
+			--force clawhub:@openclaw/whatsapp; do \
+		if [ "${OPENCLAW_PLUGIN_INSTALL_ATTEMPT}" -ge 5 ]; then exit 1; fi; \
+		sleep "$((OPENCLAW_PLUGIN_INSTALL_ATTEMPT * 3))"; \
+		OPENCLAW_PLUGIN_INSTALL_ATTEMPT="$((OPENCLAW_PLUGIN_INSTALL_ATTEMPT + 1))"; \
+	done \
 	&& OPENCLAW_VERSION_OUTPUT="$(runuser -u clawdi -- env HOME=/opt/stock/openclaw-home \
 		/opt/stock/openclaw-home/.openclaw/bin/openclaw --version)" \
 	&& printf '%s\n' "${OPENCLAW_VERSION_OUTPUT}" | grep -F "OpenClaw ${OPENCLAW_VERSION}" \
