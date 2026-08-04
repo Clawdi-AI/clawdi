@@ -31,15 +31,15 @@ describe("Skill authority across Web mutation surfaces", () => {
 		expect(dialog).not.toMatch(/agentTargets|default_project_id|SelectLabel>Agents/);
 	});
 
-	test("detail and Project pages guard environment and agent-sync mutations", () => {
+	test("detail and both Project hub scopes use the authoritative capability projection", () => {
 		const detail = source("../../pages/dashboard/skills/[key]/page.tsx");
 		const project = source("../../pages/dashboard/projects/[id]/page.tsx");
 		expect(detail).toContain("skillCapabilities(skill");
 		expect(detail).toContain("if (!capabilities?.canUpdate)");
 		expect(detail).toContain("if (!capabilities?.canDelete)");
 		expect(project).toContain("isBrowserWritableSkillProject(project)");
-		expect(project).toContain("const capabilities = skillCapabilities(skill, project)");
-		expect(project).toContain("isAgentScope && capabilities.canUpdate");
-		expect(project).toContain("canUpdate: false");
+		expect(project).toContain("capabilitiesFor={(skill) => skillCapabilities(skill, project)}");
+		expect(project).not.toContain("isAgentScope && capabilities.canUpdate");
+		expect(project).not.toContain('badgeLabel: "Managed in library"');
 	});
 });

@@ -580,21 +580,7 @@ export default function ProjectDetailPage({
 						isLoading={skills.isLoading}
 						emptyMessage="No skills are visible in this Project yet."
 						emptyVariant="inset"
-						capabilitiesFor={(skill) => {
-							const capabilities = skillCapabilities(skill, project);
-							return isAgentScope && capabilities.canUpdate
-								? {
-										...capabilities,
-										canUpdate: false,
-										canDelete: false,
-										canSend: false,
-										canSelect: false,
-										canSync: false,
-										readOnlyReason: "unknown",
-										badgeLabel: "Managed in library",
-									}
-								: capabilities;
-						}}
+						capabilitiesFor={(skill) => skillCapabilities(skill, project)}
 						skillLink={
 							scope.kind === "agent"
 								? (skill) =>
