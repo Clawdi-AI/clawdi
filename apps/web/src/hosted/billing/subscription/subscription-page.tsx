@@ -15,7 +15,6 @@ import { usePlans } from "@/hosted/billing/hooks";
 import { useSensitiveBillingPortal } from "@/hosted/billing/sensitive-actions";
 import { BillingHistorySection } from "@/hosted/billing/subscription/billing-history-section";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
-import { WelcomeWalletCard } from "@/hosted/billing/subscription/welcome-wallet-card";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -71,8 +70,6 @@ export function SubscriptionPage() {
 	return (
 		<div data-hosted="true" className={SUBSCRIPTION_PAGE_CLASS}>
 			<SettingsPanelHeader title="Compute" description={DESCRIPTION} />
-
-			<WelcomeWalletCard />
 
 			<SettingsSection
 				headingLevel={3}
