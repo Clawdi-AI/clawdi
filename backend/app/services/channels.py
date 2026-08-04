@@ -6590,7 +6590,9 @@ async def _record_discord_unpaired_message_and_maybe_instruct(
     message_type = data.get("type", 0)
     author = data.get("author")
     if (
-        message_type != 0
+        # DEFAULT and REPLY are the ordinary user-authored message types.
+        # https://discord.com/developers/docs/resources/message#message-object-message-types
+        message_type not in {0, 19}
         or not isinstance(author, dict)
         or author.get("bot") is True
         or data.get("webhook_id") is not None

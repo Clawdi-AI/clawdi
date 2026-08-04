@@ -31,7 +31,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import and_, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1470,7 +1470,7 @@ async def discord_webhook(
     x_signature_ed25519: str | None = Header(default=None),
     x_signature_timestamp: str | None = Header(default=None),
     db: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
+) -> Any:
     account = await get_active_channel_account(db, account_id=account_id)
     if account.provider != CHANNEL_PROVIDER_DISCORD:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
@@ -1495,6 +1495,16 @@ async def discord_webhook(
 
     chat = discord_chat_from_payload(payload)
     if chat is None:
+        if payload.get("type") == 4:
+            return {"type": 8, "data": {"choices": []}}
+        if payload.get("type") in {2, 3, 5}:
+            return {
+                "type": 4,
+                "data": {
+                    "content": "Discord could not route this interaction.",
+                    "flags": 64,
+                },
+            }
         return {"ok": True}
     external_chat_id, external_chat_type, external_chat_name = chat
     command = discord_control_command_from_payload(payload)
@@ -1591,8 +1601,31 @@ async def discord_webhook(
         )
         await record_inactive_bot_agent_link_event(db, account=account, binding=binding)
     await db.commit()
-    message = messages[0][0]
+    message = messages[0][0] if messages else None
     reply_text = discord_control_reply_for_command(command, binding_result, guild_id=guild_id)
+    if (
+        command is None
+        and binding_result.binding is not None
+        and payload.get("type") in {2, 3, 4, 5}
+    ):
+        # The bound Agent receives this interaction over Clawdi's synthetic
+        # Gateway and responds through the proxied interaction callback. For
+        # interactions received over HTTP, Discord requires this original
+        # request to be released with 202 and no body when that separate
+        # callback path is used.
+        # https://discord.com/developers/docs/interactions/receiving-and-responding#interaction-callback
+        return Response(status_code=status.HTTP_202_ACCEPTED)
+    if command is None and payload.get("type") == 4:
+        return {"type": 8, "data": {"choices": []}}
+    if command is None and payload.get("type") in {3, 5}:
+        scope = "server" if guild_id is not None else "direct message"
+        return {
+            "type": 4,
+            "data": {
+                "content": f"This {scope} is not paired.",
+                "flags": 64,
+            },
+        }
     if payload.get("type") == 2:
         if binding_result.paired and binding_result.binding is not None and guild_id is not None:
             # Discord interactions have a short acknowledgement deadline. The
@@ -1650,7 +1683,9 @@ async def discord_webhook(
         "ok": True,
         "paired": binding_result.paired,
         "unpaired": binding_result.unpaired,
-        "binding_id": str(message.binding_id) if message.binding_id else None,
+        "binding_id": (
+            str(message.binding_id) if message is not None and message.binding_id else None
+        ),
     }
 
 
