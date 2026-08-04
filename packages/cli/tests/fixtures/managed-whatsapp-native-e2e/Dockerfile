@@ -5,19 +5,19 @@ ARG NODE_VERSION=24.18.0
 ARG UV_VERSION=0.11.14
 
 FROM oven/bun:${BUN_VERSION} AS bun
-FROM node:${NODE_VERSION}-bookworm AS node
+FROM node:${NODE_VERSION}-bookworm-slim AS node
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
-FROM python:3.13-bookworm
+
+FROM python:3.13-slim-bookworm AS base
 
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
-COPY --from=bun /usr/local/bin/bunx /usr/local/bin/bunx
+RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx
 COPY --from=node /usr/local/ /usr/local/
 COPY --from=uv /uv /uvx /usr/local/bin/
 
 RUN apt-get update \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
 		ca-certificates \
-		curl \
 		nftables \
 		util-linux \
 	&& rm -rf /var/lib/apt/lists/*
@@ -27,86 +27,143 @@ RUN groupadd --gid 10001 clawdi \
 	&& groupadd --gid 10002 egress \
 	&& useradd --uid 10002 --gid 10002 --create-home --home-dir /home/egress --shell /bin/bash egress
 
-ENV UV_LINK_MODE=copy \
-	UV_PROJECT_ENVIRONMENT=/workspace/backend/.venv
+ENV UV_LINK_MODE=copy
 
-WORKDIR /workspace/backend
-COPY backend/pyproject.toml backend/uv.lock backend/alembic.ini ./
-RUN uv sync --frozen --no-dev --no-install-project
+FROM base AS harness-dependencies
 
-ARG OPENCLAW_VERSION=2026.7.1
-ARG OPENCLAW_COMMIT=2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4
-ARG OPENCLAW_INTEGRITY=sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==
-RUN mkdir -p /opt/artifacts /opt/stock/openclaw-home \
-	&& npm pack "openclaw@${OPENCLAW_VERSION}" --pack-destination /opt/artifacts --silent >/dev/null \
-	&& OPENCLAW_TARBALL="/opt/artifacts/openclaw-${OPENCLAW_VERSION}.tgz" \
+WORKDIR /opt/e2e-harness
+COPY packages/cli/tests/fixtures/managed-whatsapp-native-e2e/pyproject.toml ./
+COPY packages/cli/tests/fixtures/managed-whatsapp-native-e2e/uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+	uv sync --frozen --no-dev --no-install-project
+
+FROM base AS cli-dependencies
+
+WORKDIR /workspace
+COPY package.json bun.lock ./
+COPY apps/web/package.json apps/web/package.json
+COPY packages/cli/package.json packages/cli/package.json
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/whatsapp-baileys-sidecar/package.json packages/whatsapp-baileys-sidecar/package.json
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+	bun install --frozen-lockfile --ignore-scripts --filter './packages/cli'
+
+FROM base AS mitmproxy
+
+COPY packages/cli/tests/fixtures/managed-whatsapp-native-e2e/versions.env /opt/e2e/versions.env
+RUN --mount=type=bind,from=e2e_artifacts,source=/,target=/mnt/artifacts,ro \
+	. /opt/e2e/versions.env \
+	&& printf '%s  %s\n' "${MITMPROXY_SHA256}" /mnt/artifacts/mitmproxy.tar.gz \
+		| sha256sum --check --strict \
+	&& mkdir -p /opt/mitmproxy \
+	&& tar --extract --gzip --file /mnt/artifacts/mitmproxy.tar.gz --directory /opt/mitmproxy \
+	&& test -x /opt/mitmproxy/mitmdump
+
+FROM base AS openclaw-stock
+
+COPY packages/cli/tests/fixtures/managed-whatsapp-native-e2e/versions.env /opt/e2e/versions.env
+RUN --mount=type=bind,from=e2e_artifacts,source=/,target=/mnt/artifacts,ro \
+	--mount=type=cache,target=/var/cache/npm,uid=10001,gid=10001 \
+	. /opt/e2e/versions.env \
+	&& OPENCLAW_TARBALL=/mnt/artifacts/openclaw.tgz \
 		OPENCLAW_EXPECTED_INTEGRITY="${OPENCLAW_INTEGRITY}" \
 		node --input-type=module --eval \
 			'import { createHash } from "node:crypto"; import { readFileSync } from "node:fs"; const actual = `sha512-${createHash("sha512").update(readFileSync(process.env.OPENCLAW_TARBALL)).digest("base64")}`; if (actual !== process.env.OPENCLAW_EXPECTED_INTEGRITY) throw new Error(`OpenClaw integrity mismatch: ${actual}`);' \
+	&& install --mode=0444 --owner=clawdi --group=clawdi \
+		/mnt/artifacts/openclaw.tgz /tmp/openclaw.tgz \
+	&& mkdir -p /opt/stock/openclaw-home \
 	&& chown -R clawdi:clawdi /opt/stock/openclaw-home \
-	&& runuser -u clawdi -- env HOME=/opt/stock/openclaw-home npm install --global \
-		--prefix /opt/stock/openclaw-home/.openclaw \
-		"/opt/artifacts/openclaw-${OPENCLAW_VERSION}.tgz" \
-		--ignore-scripts --no-audit --no-fund \
-	&& runuser -u clawdi -- env HOME=/opt/stock/openclaw-home \
+	&& runuser -u clawdi -- env \
+		HOME=/opt/stock/openclaw-home \
+		NPM_CONFIG_CACHE=/var/cache/npm \
+		npm install --global \
+			--prefix /opt/stock/openclaw-home/.openclaw \
+			/tmp/openclaw.tgz \
+			--ignore-scripts --no-audit --no-fund \
+	&& rm /tmp/openclaw.tgz \
+	&& runuser -u clawdi -- env \
+		HOME=/opt/stock/openclaw-home \
+		NPM_CONFIG_CACHE=/var/cache/npm \
 		/opt/stock/openclaw-home/.openclaw/bin/openclaw plugins install \
-		clawhub:@openclaw/whatsapp \
+			clawhub:@openclaw/whatsapp \
 	&& OPENCLAW_VERSION_OUTPUT="$(runuser -u clawdi -- env HOME=/opt/stock/openclaw-home \
 		/opt/stock/openclaw-home/.openclaw/bin/openclaw --version)" \
 	&& printf '%s\n' "${OPENCLAW_VERSION_OUTPUT}" | grep -F "OpenClaw ${OPENCLAW_VERSION}" \
 	&& printf '%s\n' "${OPENCLAW_VERSION_OUTPUT}" | grep -F "$(printf '%s' "${OPENCLAW_COMMIT}" | cut -c1-7)" \
 	&& OPENCLAW_PLUGIN_INSPECT="$(runuser -u clawdi -- env HOME=/opt/stock/openclaw-home \
 		/opt/stock/openclaw-home/.openclaw/bin/openclaw plugins inspect whatsapp --json)" \
-		OPENCLAW_EXPECTED_VERSION="${OPENCLAW_VERSION}" node --input-type=module --eval \
-			'const value = JSON.parse(process.env.OPENCLAW_PLUGIN_INSPECT); const install = value.install ?? {}; if (value.plugin?.packageName !== "@openclaw/whatsapp" || value.plugin?.version !== process.env.OPENCLAW_EXPECTED_VERSION || install.source !== "clawhub" || install.clawhubChannel !== "official" || install.clawhubPackage !== "@openclaw/whatsapp" || install.version !== process.env.OPENCLAW_EXPECTED_VERSION || install.integrity !== "sha256-sdm2t01PGNHeXI+RZz6wW+WHXAEm5CwMNFqlUOsAxmM=" || install.npmIntegrity !== "sha512-oymPNeprQ3jBL89aima9ou0Dfj185JTVF9ic2ccX+ho3dHXALP9TADZpgx3q41JAr8CUlFyfc/a+9MFeYEn7ZQ==" || install.clawpackSha256 !== "b1d9b6b74d4f18d1de5c8f91673eb05be5875c0126e42c0c345aa550eb00c663") throw new Error(`unexpected OpenClaw WhatsApp provenance: ${JSON.stringify(install)}`);' \
-	&& node --input-type=module --eval \
-		'import { readFileSync } from "node:fs"; const root = "/opt/stock/openclaw-home/.openclaw/extensions/whatsapp"; const plugin = JSON.parse(readFileSync(`${root}/package.json`, "utf8")); const baileys = JSON.parse(readFileSync(`${root}/node_modules/baileys/package.json`, "utf8")); if (plugin.name !== "@openclaw/whatsapp" || plugin.version !== "2026.7.1") throw new Error(`unexpected OpenClaw plugin: ${plugin.name}@${plugin.version}`); if (baileys.name !== "baileys" || baileys.version !== "7.0.0-rc13") throw new Error(`unexpected OpenClaw Baileys: ${baileys.name}@${baileys.version}`);'
+		OPENCLAW_EXPECTED_VERSION="${OPENCLAW_VERSION}" \
+		OPENCLAW_EXPECTED_PLUGIN_INTEGRITY="${OPENCLAW_PLUGIN_INTEGRITY}" \
+		OPENCLAW_EXPECTED_PLUGIN_NPM_INTEGRITY="${OPENCLAW_PLUGIN_NPM_INTEGRITY}" \
+		OPENCLAW_EXPECTED_CLAWPACK_SHA256="${OPENCLAW_PLUGIN_CLAWPACK_SHA256}" \
+		node --input-type=module --eval \
+			'const value = JSON.parse(process.env.OPENCLAW_PLUGIN_INSPECT); const install = value.install ?? {}; if (value.plugin?.packageName !== "@openclaw/whatsapp" || value.plugin?.version !== process.env.OPENCLAW_EXPECTED_VERSION || install.source !== "clawhub" || install.clawhubChannel !== "official" || install.clawhubPackage !== "@openclaw/whatsapp" || install.version !== process.env.OPENCLAW_EXPECTED_VERSION || install.integrity !== process.env.OPENCLAW_EXPECTED_PLUGIN_INTEGRITY || install.npmIntegrity !== process.env.OPENCLAW_EXPECTED_PLUGIN_NPM_INTEGRITY || install.clawpackSha256 !== process.env.OPENCLAW_EXPECTED_CLAWPACK_SHA256) throw new Error(`unexpected OpenClaw WhatsApp provenance: ${JSON.stringify(install)}`);' \
+	&& OPENCLAW_EXPECTED_VERSION="${OPENCLAW_VERSION}" \
+		OPENCLAW_EXPECTED_BAILEYS_VERSION="${OPENCLAW_BAILEYS_VERSION}" \
+		node --input-type=module --eval \
+			'import { readFileSync } from "node:fs"; const root = "/opt/stock/openclaw-home/.openclaw/extensions/whatsapp"; const plugin = JSON.parse(readFileSync(`${root}/package.json`, "utf8")); const baileys = JSON.parse(readFileSync(`${root}/node_modules/baileys/package.json`, "utf8")); if (plugin.name !== "@openclaw/whatsapp" || plugin.version !== process.env.OPENCLAW_EXPECTED_VERSION) throw new Error(`unexpected OpenClaw plugin: ${plugin.name}@${plugin.version}`); if (baileys.name !== "baileys" || baileys.version !== process.env.OPENCLAW_EXPECTED_BAILEYS_VERSION) throw new Error(`unexpected OpenClaw Baileys: ${baileys.name}@${baileys.version}`);'
 
-ARG HERMES_COMMIT=cc4cab2f592e60a197e796506de9168f74baf3ea
-ARG HERMES_ARCHIVE_SHA256=e75ad450f3e0932737bbfff3a0a997d4ed532dd8b5ece024072274791a648679
-ARG HERMES_BAILEYS_INTEGRITY=sha512-8JPc8gaaCRykkjW2jxLGQ7/RZGrc7awO7WU+QJocf58eSUI9jAdcuYLynzhAbyU4UWvJJsHImZ+5E/JaZj5ypA==
-RUN curl --fail --silent --show-error --location \
-		"https://github.com/NousResearch/hermes-agent/archive/${HERMES_COMMIT}.tar.gz" \
-		--output /opt/artifacts/hermes-agent.tar.gz \
-	&& printf '%s  %s\n' "${HERMES_ARCHIVE_SHA256}" /opt/artifacts/hermes-agent.tar.gz | sha256sum --check --strict \
+FROM base AS hermes-stock
+
+COPY packages/cli/tests/fixtures/managed-whatsapp-native-e2e/versions.env /opt/e2e/versions.env
+RUN --mount=type=bind,from=e2e_artifacts,source=/,target=/mnt/artifacts,ro \
+	--mount=type=cache,target=/var/cache/npm,uid=10001,gid=10001 \
+	. /opt/e2e/versions.env \
+	&& printf '%s  %s\n' "${HERMES_ARCHIVE_SHA256}" /mnt/artifacts/hermes-agent.tar.gz \
+		| sha256sum --check --strict \
 	&& mkdir -p /opt/stock/hermes-home/.hermes/hermes-agent \
-	&& tar --extract --gzip --file /opt/artifacts/hermes-agent.tar.gz \
+	&& tar --extract --gzip --file /mnt/artifacts/hermes-agent.tar.gz \
 		--directory /opt/stock/hermes-home/.hermes/hermes-agent --strip-components=1 \
 	&& chown -R clawdi:clawdi /opt/stock/hermes-home \
-	&& runuser -u clawdi -- env HOME=/opt/stock/hermes-home npm ci \
-		--prefix /opt/stock/hermes-home/.hermes/hermes-agent/scripts/whatsapp-bridge \
-		--ignore-scripts --no-audit --no-fund \
+	&& runuser -u clawdi -- env \
+		HOME=/opt/stock/hermes-home \
+		NPM_CONFIG_CACHE=/var/cache/npm \
+		npm ci \
+			--prefix /opt/stock/hermes-home/.hermes/hermes-agent/scripts/whatsapp-bridge \
+			--ignore-scripts --no-audit --no-fund \
 	&& BRIDGE_ROOT=/opt/stock/hermes-home/.hermes/hermes-agent/scripts/whatsapp-bridge \
 	&& sha256sum "${BRIDGE_ROOT}/package.json" | cut -c1-16 >"${BRIDGE_ROOT}/node_modules/.hermes-pkg-hash" \
-	&& HERMES_BAILEYS_EXPECTED_INTEGRITY="${HERMES_BAILEYS_INTEGRITY}" node --input-type=module --eval \
-		'import { readFileSync } from "node:fs"; const root = "/opt/stock/hermes-home/.hermes/hermes-agent"; const pyproject = readFileSync(`${root}/pyproject.toml`, "utf8"); if (!/^version = "0\.19\.1"$/m.test(pyproject)) throw new Error("unexpected Hermes package version"); const bridge = `${root}/scripts/whatsapp-bridge`; const lock = JSON.parse(readFileSync(`${bridge}/package-lock.json`, "utf8")); const locked = lock.packages?.["node_modules/@whiskeysockets/baileys"]; const installed = JSON.parse(readFileSync(`${bridge}/node_modules/@whiskeysockets/baileys/package.json`, "utf8")); if (locked?.version !== "7.0.0-rc13" || locked.integrity !== process.env.HERMES_BAILEYS_EXPECTED_INTEGRITY) throw new Error(`unexpected Hermes Baileys lock: ${locked?.version} ${locked?.integrity}`); if (installed.name !== "@whiskeysockets/baileys" || installed.version !== "7.0.0-rc13") throw new Error(`unexpected Hermes Baileys: ${installed.name}@${installed.version}`);'
+	&& HERMES_EXPECTED_VERSION="${HERMES_VERSION}" \
+		HERMES_BAILEYS_EXPECTED_VERSION="${HERMES_BAILEYS_VERSION}" \
+		HERMES_BAILEYS_EXPECTED_INTEGRITY="${HERMES_BAILEYS_INTEGRITY}" \
+		node --input-type=module --eval \
+			'import { readFileSync } from "node:fs"; const root = "/opt/stock/hermes-home/.hermes/hermes-agent"; const pyproject = readFileSync(`${root}/pyproject.toml`, "utf8"); if (!pyproject.split("\n").includes(`version = "${process.env.HERMES_EXPECTED_VERSION}"`)) throw new Error("unexpected Hermes package version"); const bridge = `${root}/scripts/whatsapp-bridge`; const lock = JSON.parse(readFileSync(`${bridge}/package-lock.json`, "utf8")); const locked = lock.packages?.["node_modules/@whiskeysockets/baileys"]; const installed = JSON.parse(readFileSync(`${bridge}/node_modules/@whiskeysockets/baileys/package.json`, "utf8")); if (locked?.version !== process.env.HERMES_BAILEYS_EXPECTED_VERSION || locked.integrity !== process.env.HERMES_BAILEYS_EXPECTED_INTEGRITY) throw new Error(`unexpected Hermes Baileys lock: ${locked?.version} ${locked?.integrity}`); if (installed.name !== "@whiskeysockets/baileys" || installed.version !== process.env.HERMES_BAILEYS_EXPECTED_VERSION) throw new Error(`unexpected Hermes Baileys: ${installed.name}@${installed.version}`);'
 
-RUN UV_PROJECT_ENVIRONMENT=/opt/hermes-venv uv sync \
+RUN --mount=type=cache,target=/root/.cache/uv \
+	UV_PROJECT_ENVIRONMENT=/opt/hermes-venv uv sync \
 		--project /opt/stock/hermes-home/.hermes/hermes-agent \
 		--frozen --extra messaging --no-dev --no-install-project
 
-ARG MITMPROXY_VERSION=12.2.3
-ARG MITMPROXY_SHA256=2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5
-RUN curl --fail --silent --show-error --location \
-		"https://downloads.mitmproxy.org/${MITMPROXY_VERSION}/mitmproxy-${MITMPROXY_VERSION}-linux-x86_64.tar.gz" \
-		--output /opt/artifacts/mitmproxy.tar.gz \
-	&& printf '%s  %s\n' "${MITMPROXY_SHA256}" /opt/artifacts/mitmproxy.tar.gz | sha256sum --check --strict \
-	&& mkdir -p /opt/mitmproxy \
-	&& tar --extract --gzip --file /opt/artifacts/mitmproxy.tar.gz --directory /opt/mitmproxy \
-	&& test -x /opt/mitmproxy/mitmdump
+FROM base AS e2e-base
 
 WORKDIR /workspace
-COPY . .
-RUN bun install --frozen-lockfile
+COPY --from=harness-dependencies /opt/e2e-harness/.venv /opt/e2e-harness/.venv
+COPY --from=cli-dependencies /workspace/node_modules /workspace/node_modules
+COPY --from=cli-dependencies /workspace/packages/cli/node_modules /workspace/packages/cli/node_modules
+COPY package.json ./
+COPY packages/cli/package.json packages/cli/package.json
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/cli/src packages/cli/src
+COPY packages/shared/src packages/shared/src
+COPY packages/cli/egress-addon packages/cli/egress-addon
+COPY packages/cli/tests/fixtures/managed-whatsapp-native-e2e packages/cli/tests/fixtures/managed-whatsapp-native-e2e
+COPY backend/app backend/app
+COPY --from=mitmproxy /opt/mitmproxy /opt/mitmproxy
 
 ENV CLAWDI_RUNTIME_USER=clawdi \
 	CLAWDI_RUNTIME_UID=10001 \
 	CLAWDI_RUNTIME_GID=10001 \
 	CLAWDI_EGRESS_UID=10002 \
 	CLAWDI_EGRESS_GID=10002 \
-	E2E_OPENCLAW_COMMIT=${OPENCLAW_COMMIT} \
-	E2E_HERMES_COMMIT=${HERMES_COMMIT} \
-	E2E_MITMPROXY_VERSION=${MITMPROXY_VERSION} \
 	PYTHONPATH=/workspace/backend
 
 ENTRYPOINT ["/workspace/packages/cli/tests/fixtures/managed-whatsapp-native-e2e/run.sh"]
+
+FROM e2e-base AS openclaw
+COPY --from=openclaw-stock --chown=clawdi:clawdi \
+	/opt/stock/openclaw-home /opt/stock/openclaw-home
+
+FROM e2e-base AS hermes
+COPY --from=hermes-stock --chown=clawdi:clawdi \
+	/opt/stock/hermes-home /opt/stock/hermes-home
+COPY --from=hermes-stock /opt/hermes-venv /opt/hermes-venv

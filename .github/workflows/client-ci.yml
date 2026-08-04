@@ -70,7 +70,7 @@ jobs:
     outputs:
       client: ${{ steps.filter.outputs.client }}
       deploy_contract: ${{ steps.filter.outputs.deploy_contract }}
-      whatsapp_native: ${{ steps.filter.outputs.whatsapp_native }}
+      whatsapp_native_e2e: ${{ steps.filter.outputs.whatsapp_native_e2e }}
     steps:
       - uses: actions/checkout@v7
       - id: filter
@@ -98,11 +98,10 @@ jobs:
               - "scripts/check-deploy-generated-api.sh"
               - "apps/web/package.json"
               - ".github/workflows/client-ci.yml"
-            whatsapp_native:
-              - "backend/app/routes/channel_routers/whatsapp.py"
-              - "backend/app/services/whatsapp_*.py"
-              - "backend/pyproject.toml"
-              - "backend/uv.lock"
+            # Backend transport and pairing-link behavior is covered by Backend CI.
+            # This expensive stock-runtime boundary only follows code that can
+            # change CLI projection, egress, patching, or the E2E fixture itself.
+            whatsapp_native_e2e:
               - "packages/cli/egress-addon/**"
               - "packages/cli/src/runtime/channels.ts"
               - "packages/cli/src/runtime/egress-*.ts"
@@ -113,9 +112,6 @@ jobs:
               - "packages/cli/tests/fixtures/managed-whatsapp-native-e2e/**"
               - "scripts/test-managed-whatsapp-native-e2e.sh"
               - ".dockerignore"
-              - "package.json"
-              - "bun.lock"
-              - ".github/workflows/client-ci.yml"
 
   # Lint, typecheck, build, and client package tests in one job.
   #
@@ -183,17 +179,69 @@ jobs:
 
   whatsapp-native-e2e:
     needs: changes
+    # Keep the required check name stable. A backend-only PR gets a successful
+    # skipped job, while the daily schedule catches pinned upstream/runtime drift.
     if: >-
-      github.event_name != 'schedule' &&
-      needs.changes.outputs.whatsapp_native == 'true'
+      always() &&
+      (github.event_name == 'schedule' ||
+      needs.changes.outputs.whatsapp_native_e2e == 'true')
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - name: Check Docker availability
         run: docker version
+      - name: Restore pinned upstream artifacts
+        id: upstream-artifacts
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/managed-whatsapp-native-e2e-artifacts
+          key: managed-whatsapp-native-e2e-artifacts-v1-${{ hashFiles('packages/cli/tests/fixtures/managed-whatsapp-native-e2e/versions.env') }}
+      - name: Fetch and verify pinned upstream artifacts
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/managed-whatsapp-native-e2e-artifacts
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/test-managed-whatsapp-native-e2e.sh --fetch-only
+      - name: Save pinned upstream artifacts
+        if: steps.upstream-artifacts.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/managed-whatsapp-native-e2e-artifacts
+          key: managed-whatsapp-native-e2e-artifacts-v1-${{ hashFiles('packages/cli/tests/fixtures/managed-whatsapp-native-e2e/versions.env') }}
+      - uses: docker/setup-buildx-action@v4
+      - name: Build stock OpenClaw WhatsApp E2E image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: packages/cli/tests/fixtures/managed-whatsapp-native-e2e/Dockerfile
+          target: openclaw
+          tags: clawdi-managed-whatsapp-native-e2e:openclaw-local
+          load: true
+          build-contexts: |
+            e2e_artifacts=${{ runner.temp }}/managed-whatsapp-native-e2e-artifacts
+          cache-from: type=gha,scope=managed-whatsapp-native-e2e-openclaw
+          cache-to: type=gha,mode=max,scope=managed-whatsapp-native-e2e-openclaw
+      - name: Build stock Hermes WhatsApp E2E image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: packages/cli/tests/fixtures/managed-whatsapp-native-e2e/Dockerfile
+          target: hermes
+          tags: clawdi-managed-whatsapp-native-e2e:hermes-local
+          load: true
+          build-contexts: |
+            e2e_artifacts=${{ runner.temp }}/managed-whatsapp-native-e2e-artifacts
+          cache-from: type=gha,scope=managed-whatsapp-native-e2e-hermes
+          cache-to: type=gha,mode=max,scope=managed-whatsapp-native-e2e-hermes
       - name: Test stock OpenClaw and Hermes WhatsApp plugins
-        run: scripts/test-managed-whatsapp-native-e2e.sh
+        run: scripts/test-managed-whatsapp-native-e2e.sh --run-only
+      - name: Remove loaded E2E images
+        if: always()
+        run: >-
+          docker image rm
+          clawdi-managed-whatsapp-native-e2e:openclaw-local
+          clawdi-managed-whatsapp-native-e2e:hermes-local
+          2>/dev/null || true
 
   deploy-contract-drift-daily:
     if: github.event_name == 'schedule'

@@ -1,0 +1,16 @@
+[project]
+name = "clawdi-managed-whatsapp-native-e2e-harness"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "cryptography>=44.0",
+    "fastapi>=0.115",
+    "httpx==0.28.1",
+    "idna>=3.10",
+    "prometheus-client>=0.25.0",
+    "pydantic-settings>=2.14.0",
+    "sqlalchemy[asyncio]>=2.0",
+    "uvicorn>=0.34",
+    "websockets==17.0.1",
+    "xeddsa==1.2.0",
+]

@@ -2,6 +2,8 @@
 set -euo pipefail
 
 readonly FIXTURE_ROOT="/workspace/packages/cli/tests/fixtures/managed-whatsapp-native-e2e"
+# shellcheck source=versions.env
+source "${FIXTURE_ROOT}/versions.env"
 readonly RUN_ROOT="/tmp/clawdi-whatsapp-native-e2e"
 readonly E2E_HOME="/opt/stock/${E2E_RUNTIME:-invalid}-home"
 readonly E2E_OUTPUT="${RUN_ROOT}/output"
@@ -17,7 +19,9 @@ wait_for_http() {
 	local url="$1"
 	local label="$2"
 	for _ in $(seq 1 200); do
-		if curl --fail --silent --show-error "${url}" >/dev/null 2>&1; then return 0; fi
+		if node --input-type=module --eval \
+			'const response = await fetch(process.argv[1]); if (!response.ok) process.exit(1);' \
+			"${url}" >/dev/null 2>&1; then return 0; fi
 		sleep 0.05
 	done
 	echo "${label} did not become ready" >&2
@@ -66,7 +70,7 @@ trap cleanup EXIT INT TERM
 mkdir -p "${E2E_OUTPUT}" "${EGRESS_CA_DIR}"
 chown -R egress:egress "${EGRESS_HOME}"
 
-/workspace/backend/.venv/bin/python "${FIXTURE_ROOT}/server.py" init "${E2E_SCENARIO}"
+/opt/e2e-harness/.venv/bin/python "${FIXTURE_ROOT}/server.py" init "${E2E_SCENARIO}"
 
 export E2E_HOME E2E_OUTPUT E2E_SCENARIO
 bun test "${FIXTURE_ROOT}/project.e2e.ts"
@@ -81,9 +85,9 @@ export CLAWDI_EGRESS_CA_CERT="${EGRESS_CA_DIR}/mitmproxy-ca-cert.pem"
 export CLAWDI_EGRESS_SYSTEM_CA_BUNDLE="${EGRESS_CA_DIR}/mitmproxy-ca-cert.pem"
 export CLAWDI_EGRESS_TRANSPORT_VERSION="clawdi-transparent-egress-v1"
 export CLAWDI_EGRESS_ENGINE_TYPE="mitmproxy"
-export CLAWDI_EGRESS_ENGINE_VERSION="${E2E_MITMPROXY_VERSION}"
-export CLAWDI_EGRESS_ENGINE_URL="https://downloads.mitmproxy.org/${E2E_MITMPROXY_VERSION}/mitmproxy-${E2E_MITMPROXY_VERSION}-linux-x86_64.tar.gz"
-export CLAWDI_EGRESS_ENGINE_SHA256="2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5"
+export CLAWDI_EGRESS_ENGINE_VERSION="${MITMPROXY_VERSION}"
+export CLAWDI_EGRESS_ENGINE_URL="https://downloads.mitmproxy.org/${MITMPROXY_VERSION}/mitmproxy-${MITMPROXY_VERSION}-linux-x86_64.tar.gz"
+export CLAWDI_EGRESS_ENGINE_SHA256="${MITMPROXY_SHA256}"
 export CLAWDI_EGRESS_ENGINE_BINARY_PATH="/opt/mitmproxy/mitmdump"
 export CLAWDI_EGRESS_ADDON_PATH="/workspace/packages/cli/egress-addon/clawdi_egress_addon.py"
 export CLAWDI_EGRESS_ADDON_SHA256
@@ -92,7 +96,7 @@ CLAWDI_EGRESS_ADDON_SHA256="$(sha256sum "${CLAWDI_EGRESS_ADDON_PATH}" | cut -d '
 chown egress:egress "${CLAWDI_EGRESS_PROFILE_BUNDLE}" "${CLAWDI_EGRESS_SECRET_FILE}"
 chmod 0600 "${CLAWDI_EGRESS_PROFILE_BUNDLE}" "${CLAWDI_EGRESS_SECRET_FILE}"
 
-/workspace/backend/.venv/bin/python "${FIXTURE_ROOT}/server.py" serve "${E2E_SCENARIO}" \
+/opt/e2e-harness/.venv/bin/python "${FIXTURE_ROOT}/server.py" serve "${E2E_SCENARIO}" \
 	>"${SERVER_LOG}" 2>&1 &
 server_pid="$!"
 wait_for_http "http://127.0.0.1:9000/control/status" "backend Noise harness"
@@ -140,12 +144,7 @@ else
 		/opt/hermes-venv/bin/python "${FIXTURE_ROOT}/hermes_consumer.py"
 fi
 
-readonly FINAL_STATUS_PATH="${E2E_OUTPUT}/final-status.json"
-curl --fail --silent --show-error \
-	--output "${FINAL_STATUS_PATH}" \
-	http://127.0.0.1:9000/control/status
-export FINAL_STATUS_PATH
 node --input-type=module --eval \
-	'import { readFileSync } from "node:fs"; const value = JSON.parse(readFileSync(process.env.FINAL_STATUS_PATH, "utf8")); if (value.markerLeaks !== 0 || value.identityRejections !== 0) throw new Error(`invalid final harness status: ${JSON.stringify(value)}`); console.log(JSON.stringify({ runtime: process.env.E2E_RUNTIME, connections: value.connections, inboundPushes: value.inboundPushes.length, outboundMessages: value.outboundMessages.length, outboundNodes: value.outboundNodes.length }));'
+	'const response = await fetch("http://127.0.0.1:9000/control/status"); if (!response.ok) throw new Error(`final harness status returned ${response.status}`); const value = await response.json(); if (value.markerLeaks !== 0 || value.identityRejections !== 0) throw new Error(`invalid final harness status: ${JSON.stringify(value)}`); console.log(JSON.stringify({ runtime: process.env.E2E_RUNTIME, connections: value.connections, inboundPushes: value.inboundPushes.length, outboundMessages: value.outboundMessages.length, outboundNodes: value.outboundNodes.length }));'
 
 echo "managed WhatsApp ${E2E_RUNTIME} native plugin E2E passed"
