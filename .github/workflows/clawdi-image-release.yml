@@ -209,6 +209,16 @@ jobs:
           test "${#CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN}" -le 128
           install -d -m 700 .kamal
           printf '%s\n' "$KAMAL_SECRETS" > .kamal/secrets
+          secrets_tmp="$(mktemp)"
+          trap 'rm -f "$secrets_tmp"' EXIT
+          awk '
+            !/^CLOUDFLARE_ORIGIN_CERT=/ && !/^CLOUDFLARE_ORIGIN_KEY=/ { print }
+            END {
+              print "CLOUDFLARE_ORIGIN_CERT=$CLOUDFLARE_ORIGIN_CERT"
+              print "CLOUDFLARE_ORIGIN_KEY=$CLOUDFLARE_ORIGIN_KEY"
+            }
+          ' .kamal/secrets > "$secrets_tmp"
+          mv "$secrets_tmp" .kamal/secrets
           printf 'CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN=%s\n' \
             "$CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN" >> .kamal/secrets
           chmod 600 .kamal/secrets
