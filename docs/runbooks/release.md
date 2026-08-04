@@ -3,6 +3,9 @@
 Use this runbook when a PR is ready to merge or when an operator needs to
 create a Clawdi release from an already-deployed commit.
 
+Kamal host log retention and the one-time journald rollout prerequisite are in
+[`kamal-service-logs.md`](kamal-service-logs.md).
+
 ## Release Lines
 
 - App/backend/web/shared/root-config changes use calendar GitHub releases:
