@@ -101,7 +101,7 @@ jobs:
               }
             : { exists: false };
           console.log(JSON.stringify({
-            schemaVersion: "clawdi.cliReleaseRecoveryInput.v1",
+            schemaVersion: "clawdi.cliReleaseRecoveryInput.v2",
             mode: "plan",
             package: { name: process.env.PACKAGE_NAME, version: process.env.VERSION },
             repository: {
@@ -311,19 +311,23 @@ jobs:
           if [ "$NPM_ACTION" = "publish" ] && npm_release_visible; then
             NPM_ACTION=verify
           fi
+          publication_evidence_mode=""
           case "$NPM_ACTION" in
             publish)
               npm publish "./release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"
+              publication_evidence_mode="fresh-publish"
               ;;
-            verify) ;;
+            verify)
+              publication_evidence_mode="existing-version"
+              ;;
             *)
               echo "unsupported npm recovery action: $NPM_ACTION" >&2
               exit 64
               ;;
           esac
-          # npm publication is immutable but registry reads are eventually
-          # consistent. Wait only for the exact version just published or found;
-          # all integrity and provenance checks below remain unchanged.
+          # Confirm the exact immutable registry artifact for both evidence modes.
+          # Only an existing-version recovery must re-read registry provenance;
+          # this job's successful --provenance publish is its provenance authority.
           registry_visible=false
           for attempt in $(seq 1 12); do
             if npm_release_visible; then
@@ -336,25 +340,30 @@ jobs:
             echo "clawdi@$VERSION was not visible in the npm registry after 60 seconds" >&2
             exit 69
           fi
+          registry_version=$(npm view "clawdi@$VERSION" version)
+          test "$registry_version" = "$VERSION"
           published_integrity=$(npm view "clawdi@$VERSION" dist.integrity)
-          attestations=$(npm view "clawdi@$VERSION" dist.attestations --json)
-          attestation_url=$(ATTESTATIONS="$attestations" node - <<'NODE'
+          attestations=""
+          attestation_bundle=""
+          if [ "$publication_evidence_mode" = "existing-version" ]; then
+            attestations=$(npm view "clawdi@$VERSION" dist.attestations --json)
+            attestation_url=$(ATTESTATIONS="$attestations" node - <<'NODE'
           const attestations = JSON.parse(process.env.ATTESTATIONS);
           const url = new URL(attestations.url);
           if (url.origin !== "https://registry.npmjs.org") process.exit(1);
           console.log(attestations.url);
           NODE
-          )
-          attestation_bundle=""
-          for attempt in $(seq 1 12); do
-            if attestation_bundle=$(curl --fail --silent --location "$attestation_url"); then
-              break
+            )
+            for attempt in $(seq 1 12); do
+              if attestation_bundle=$(curl --fail --silent --location "$attestation_url"); then
+                break
+              fi
+              if [ "$attempt" -lt 12 ]; then sleep 5; fi
+            done
+            if [ -z "$attestation_bundle" ]; then
+              echo "clawdi@$VERSION provenance was not visible after 60 seconds" >&2
+              exit 69
             fi
-            if [ "$attempt" -lt 12 ]; then sleep 5; fi
-          done
-          if [ -z "$attestation_bundle" ]; then
-            echo "clawdi@$VERSION provenance was not visible after 60 seconds" >&2
-            exit 69
           fi
           tag="clawdi-cli-v$VERSION"
           release_json=null
@@ -365,12 +374,27 @@ jobs:
           if resolved_tag=$(git rev-list -n 1 "$tag" 2>/dev/null); then
             tag_commit="\"$resolved_tag\""
           fi
-          recovery_input=$(PUBLISHED_INTEGRITY="$published_integrity" ATTESTATIONS="$attestations" \
+          recovery_input=$(PUBLICATION_EVIDENCE_MODE="$publication_evidence_mode" \
+            REGISTRY_VERSION="$registry_version" PUBLISHED_INTEGRITY="$published_integrity" \
+            ATTESTATIONS="$attestations" \
             ATTESTATION_BUNDLE="$attestation_bundle" LOCAL_INTEGRITY="$local_integrity" \
             LOCAL_SHA512="$local_sha512" RELEASE_JSON="$release_json" TAG_COMMIT="$tag_commit" \
             node - <<'NODE'
+          const publicationEvidence = process.env.PUBLICATION_EVIDENCE_MODE === "fresh-publish"
+            ? {
+                mode: "fresh-publish",
+                registryVersion: process.env.REGISTRY_VERSION,
+                distIntegrity: process.env.PUBLISHED_INTEGRITY,
+              }
+            : {
+                mode: "existing-version",
+                registryVersion: process.env.REGISTRY_VERSION,
+                distIntegrity: process.env.PUBLISHED_INTEGRITY,
+                attestations: JSON.parse(process.env.ATTESTATIONS),
+                attestationBundle: JSON.parse(process.env.ATTESTATION_BUNDLE),
+              };
           console.log(JSON.stringify({
-            schemaVersion: "clawdi.cliReleaseRecoveryInput.v1",
+            schemaVersion: "clawdi.cliReleaseRecoveryInput.v2",
             mode: "complete",
             package: { name: "clawdi", version: process.env.VERSION },
             repository: {
@@ -392,12 +416,7 @@ jobs:
               integrity: process.env.LOCAL_INTEGRITY,
               sha512: process.env.LOCAL_SHA512,
             },
-            npm: {
-              exists: true,
-              distIntegrity: process.env.PUBLISHED_INTEGRITY,
-              attestations: JSON.parse(process.env.ATTESTATIONS),
-              attestationBundle: JSON.parse(process.env.ATTESTATION_BUNDLE),
-            },
+            publicationEvidence,
             github: {
               release: JSON.parse(process.env.RELEASE_JSON),
               tagCommit: JSON.parse(process.env.TAG_COMMIT),

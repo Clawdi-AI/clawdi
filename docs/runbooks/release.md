@@ -93,8 +93,13 @@ releases.
    checks out the source commit recorded by npm provenance, rebuilds the same
    artifact, verifies its npm `dist.integrity`, skips republishing the immutable
    npm version, and completes the draft release before finalization. Recovery
-   decisions come from `packages/cli/scripts/release-recovery.mjs`; the workflow
-   only gathers external facts and executes the validated action.
+   decisions come from `packages/cli/scripts/release-recovery.mjs`. Its evidence
+   modes are explicit: a fresh successful `npm publish --provenance` requires
+   the exact registry version and matching `dist.integrity` without waiting for
+   the eventually consistent attestation read API; an already-existing version
+   requires registry provenance for the exact source, workflow, package subject,
+   and artifact. The workflow only gathers those mode-specific facts and
+   executes the validated action.
    Native ownership is separate: installed native executables update only from
    the exact `clawdi-cli-v<version>` manifest and assets. npm/Bun installs use
    exact npm versions. Hosted remains a separate exact-version npm authority and

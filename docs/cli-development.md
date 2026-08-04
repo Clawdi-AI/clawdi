@@ -315,7 +315,13 @@ The build/test job may use the configured fast runner, but the protected
 publish job is fixed to GitHub-hosted `ubuntu-latest`: npm trusted publishing
 does not support self-hosted or third-party GitHub Actions runners. The publish
 job uses Node 24 and npm 11.5.1, satisfying npm's minimum Node 22.14 and npm
-11.5.1.
+11.5.1. After a fresh `npm publish --provenance` succeeds, that command plus
+the exact registry version and matching `dist.integrity` authorizes GitHub
+Release completion; the job does not wait for the eventually consistent
+registry attestation read API. If the immutable npm version already exists,
+the workflow did not publish it and therefore requires registry provenance to
+prove the exact repository workflow, source commit, package subject, and
+artifact integrity before recovering the GitHub Release.
 
 The CLI workflow neither calls nor checks out the Hosted repository. An operator
 verifies the exact package publication, then explicitly supplies the exact
@@ -392,6 +398,9 @@ onward releases are automatic.
    one artifact, verifies its SHA-256 in both jobs, then publishes that tarball
    from GitHub-hosted `ubuntu-latest` with
    `npm publish <tarball> --access public --provenance --ignore-scripts --tag <resolved-tag>`.
+   A successful fresh publish is completed using that command result plus the
+   exact registry version and `dist.integrity`; it does not depend on immediate
+   visibility of the registry attestation query endpoint.
    If npm already has the exact version but its GitHub Release is incomplete,
    a rerun checks out the source commit recorded by npm provenance, rebuilds the
    tarball, compares it with npm `dist.integrity`, skips the immutable npm
