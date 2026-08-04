@@ -9,6 +9,7 @@ import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { DetailMeta, DetailNotFound, DetailPanel, DetailTitle } from "@/components/detail/layout";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { TimeTooltip } from "@/components/time-tooltip";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
@@ -55,7 +56,7 @@ export default function MemoryDetailPage({
 
 	const deleteMemory = api.useMutation("delete", "/v1/memories/{memory_id}", {
 		onSuccess: () => {
-			toast.success("Memory Deleted", {
+			toast.success("Memory deleted", {
 				description: "Your agents will no longer recall it.",
 			});
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
@@ -68,6 +69,15 @@ export default function MemoryDetailPage({
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			{scope.kind === "agent" ? (
+				<Alert>
+					<Brain />
+					<AlertTitle>Shared across all agents</AlertTitle>
+					<AlertDescription>
+						This memory belongs to the account. Changes here affect all agents.
+					</AlertDescription>
+				</Alert>
+			) : null}
 			{blockingError && isApiNotFoundError(blockingError) ? (
 				<DetailNotFound title="Memory not found" message={errorMessage(blockingError)} />
 			) : blockingError ? (
@@ -125,11 +135,11 @@ export default function MemoryDetailPage({
 							title="Delete this memory?"
 							description={
 								<>
-									<p>Your AI will stop recalling it across every agent within seconds.</p>
+									<p>All agents will stop recalling it within seconds.</p>
 									<p>You can tell it the same thing again later.</p>
 								</>
 							}
-							confirmLabel="Delete Memory"
+							confirmLabel="Delete memory"
 							destructive
 							onConfirm={onDelete}
 						>

@@ -14,6 +14,7 @@ import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
@@ -197,6 +198,15 @@ function ConnectorsList({
 					status={headerStatus}
 				/>
 			)}
+			{scope.kind === "agent" ? (
+				<Alert>
+					<Plug />
+					<AlertTitle>Shared across all agents</AlertTitle>
+					<AlertDescription>
+						Connections belong to this account. Connecting or disconnecting here affects all agents.
+					</AlertDescription>
+				</Alert>
+			) : null}
 
 			<ListToolbar
 				search={

@@ -31,6 +31,7 @@ import {
 	useDisconnect,
 } from "@/lib/connectors-data";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { LIBRARY_RESOURCE_SCOPE, type ResourceNavigationScope } from "@/lib/resource-navigation";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -47,10 +48,16 @@ function formatName(raw: string): string {
  * `useQueryStates` reads URL state under the hood. Wrapping the body keeps
  * the shell renderable and defers only the URL-state-dependent code.
  */
-export default function ConnectorDetailPage({ name }: { name: string }) {
+export default function ConnectorDetailPage({
+	name,
+	scope = LIBRARY_RESOURCE_SCOPE,
+}: {
+	name: string;
+	scope?: ResourceNavigationScope;
+}) {
 	return (
 		<Suspense fallback={<DetailSkeletonShell />}>
-			<ConnectorDetail name={name} />
+			<ConnectorDetail name={name} scope={scope} />
 		</Suspense>
 	);
 }
@@ -63,7 +70,7 @@ function DetailSkeletonShell() {
 	);
 }
 
-function ConnectorDetail({ name }: { name: string }) {
+function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigationScope }) {
 	// OAuth from hosted mode redirects directly back to this page (no
 	// intermediary callback route). Composio sometimes signals failure
 	// via `?error=…` and sometimes via `?status=error|failed` with no
@@ -77,7 +84,7 @@ function ConnectorDetail({ name }: { name: string }) {
 		const failed =
 			oauthState.error !== null || oauthState.status === "error" || oauthState.status === "failed";
 		if (!failed) return;
-		toast.error("Connection Failed", {
+		toast.error("Connection failed", {
 			description: oauthState.error || "OAuth did not complete. Try again from this page.",
 		});
 		void setOauthState({ error: null, status: null }, { history: "replace" });
@@ -283,6 +290,15 @@ function ConnectorDetail({ name }: { name: string }) {
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
+			{scope.kind === "agent" ? (
+				<Alert>
+					<Plug />
+					<AlertTitle>Shared across all agents</AlertTitle>
+					<AlertDescription>
+						Connections belong to this account. Connecting or disconnecting here affects all agents.
+					</AlertDescription>
+				</Alert>
+			) : null}
 			{/* Header — matches clawdi ConnectorHeader */}
 			<div className="flex items-start gap-5">
 				<ConnectorIcon logo={app?.logo} name={displayName} size="lg" />
@@ -330,7 +346,7 @@ function ConnectorDetail({ name }: { name: string }) {
 								disabled={isConnectDisabled}
 							>
 								{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
-								Connect Account
+								Connect account
 							</Button>
 						) : null
 					}
@@ -382,7 +398,7 @@ function ConnectorDetail({ name }: { name: string }) {
 								action={
 									<Button onClick={startConnect} disabled={isConnectDisabled}>
 										{isStarting ? <Spinner className="size-3.5" /> : <Plug className="size-3.5" />}
-										{isStarting ? "Connecting…" : "Connect Account"}
+										{isStarting ? "Connecting…" : "Connect account"}
 									</Button>
 								}
 							/>
@@ -407,7 +423,9 @@ function ConnectorDetail({ name }: { name: string }) {
 									<ConfirmAction
 										title={`Disconnect ${c.account_display || "this account"}?`}
 										description={
-											<p>Your AI will lose access immediately. To get it back, sign in again.</p>
+											<p>
+												All agents will lose access immediately. To restore access, sign in again.
+											</p>
 										}
 										confirmLabel="Disconnect"
 										destructive

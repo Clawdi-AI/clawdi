@@ -130,17 +130,11 @@ function HostedWorkspaceSkillsPanelContent({
 				return;
 			}
 			void queryClient.invalidateQueries({ queryKey: statusKey });
-			toast.success(
-				variables.action === "install"
-					? "Skill installed on Agent"
-					: "Skill uninstalled from Agent",
-			);
+			toast.success(variables.action === "install" ? "Skill installed" : "Skill uninstalled");
 		},
 		onError: (error, variables) => {
 			toast.error(
-				variables.action === "install"
-					? "Couldn't install Skill on Agent"
-					: "Couldn't uninstall Skill from Agent",
+				variables.action === "install" ? "Couldn't install skill" : "Couldn't uninstall skill",
 				{ description: errorMessage(error) },
 			);
 		},
@@ -174,7 +168,7 @@ function HostedWorkspaceSkillsPanelContent({
 		return (
 			<div className="space-y-4">
 				<Alert>
-					<AlertTitle>Install on Agent is unavailable</AlertTitle>
+					<AlertTitle>Skill installation is unavailable</AlertTitle>
 					<AlertDescription>
 						{runtimeDisplayName(deploymentRuntime(deployment))} does not expose a deployment Skill
 						install capability. Cloud projection details remain read-only.
@@ -296,7 +290,7 @@ function HostedWorkspaceSkillsPanelContent({
 										<ConfirmAction
 											title={`Uninstall ${item.entity.name} from Agent?`}
 											description={<p>The deployment runtime will remove its workspace copy.</p>}
-											confirmLabel="Uninstall from Agent"
+											confirmLabel="Uninstall skill"
 											destructive
 											onConfirm={() => runMutation("uninstall", item.entity.skill_key)}
 										>
@@ -306,7 +300,7 @@ function HostedWorkspaceSkillsPanelContent({
 												) : (
 													<Trash2 className="size-3.5" />
 												)}
-												Uninstall from Agent
+												Uninstall skill
 											</Button>
 										</ConfirmAction>
 									) : item.installable ? (
@@ -317,7 +311,7 @@ function HostedWorkspaceSkillsPanelContent({
 											onClick={() => runMutation("install", item.entity.skill_key)}
 										>
 											{pending ? <Spinner className="size-3.5" /> : <Plus className="size-3.5" />}
-											{pending ? "Awaiting runtime" : "Install on Agent"}
+											{pending ? "Awaiting runtime" : "Install skill"}
 										</Button>
 									) : null
 								}

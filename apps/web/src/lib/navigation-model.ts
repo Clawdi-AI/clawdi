@@ -308,8 +308,8 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "memories",
 		...CANONICAL_NAVIGATION_IDENTITIES.memories,
 		tint: RESOURCE_TINT_CLASSES.memories,
-		description: "Memories are account-wide and available across all agents.",
-		tooltip: "Account-wide memories available across all agents",
+		description: "Memories are shared across all agents.",
+		tooltip: "Shared across all agents",
 		variants: ["connected", "hosted"],
 	},
 	skills: {
@@ -340,8 +340,8 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "connectors",
 		...CANONICAL_NAVIGATION_IDENTITIES.connectors,
 		tint: RESOURCE_TINT_CLASSES.connectors,
-		description: "Account-wide connectors available across all agents.",
-		tooltip: "Account-wide connectors available across all agents",
+		description: "Connectors are shared across all agents.",
+		tooltip: "Shared across all agents",
 		variants: ["connected", "hosted"],
 	},
 	ai: {

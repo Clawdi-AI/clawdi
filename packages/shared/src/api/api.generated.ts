@@ -11778,7 +11778,7 @@ export interface operations {
         parameters: {
             query?: {
                 project_id?: string | null;
-                /** @description Return 409 if this slug already exists instead of attaching it. */
+                /** @description Use strict create semantics: return 409 for an existing slug and, when project_id is omitted, leave a newly created Vault unattached. */
                 create_only?: boolean;
             };
             header?: never;

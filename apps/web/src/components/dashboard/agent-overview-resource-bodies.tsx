@@ -61,7 +61,9 @@ export function useOverviewMemoriesModule({
 	if (query.error) return { description: "Unavailable right now" };
 	const total = query.data?.total ?? 0;
 	return {
-		description: total ? `${total} ${total === 1 ? "memory" : "memories"}` : "No memories yet",
+		description: total
+			? `${total} ${total === 1 ? "memory" : "memories"} · All agents`
+			: "No memories yet · All agents",
 	};
 }
 
@@ -107,9 +109,9 @@ export function useOverviewConnectorsModule({
 	) : connections.error ? (
 		"Unavailable right now"
 	) : connectedAppCount ? (
-		`${connectedAppCount} connected`
+		`${connectedAppCount} connected · All agents`
 	) : (
-		"No apps connected"
+		"No apps connected · All agents"
 	);
 	return { description };
 }

@@ -54,7 +54,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		managementDescription:
 			"Create Projects to share resources with teammates. Use the Global Project for account defaults. Workspaces belong to one connected Agent and cannot be shared.",
 		href: PROJECT_RESOURCE_LIST_PATHS.projects,
-		emptyCta: "Create Project",
+		emptyCta: "Create project",
 		routeGroup: "project-registry",
 		projectScope: "container",
 		pathSegments: ["Projects"],
@@ -67,9 +67,9 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Skills",
 		description: "Reusable instructions stored and managed in a Project.",
 		managementDescription:
-			"Skills are stored in Projects. Choose a Project, then add or remove its Skills. Install on an Agent separately to run them.",
+			"Skills are stored in Projects. Choose a Project, then install or uninstall its Skills. Install each Skill on an Agent separately to run it.",
 		href: PROJECT_RESOURCE_LIST_PATHS.skills,
-		emptyCta: "Browse Marketplace",
+		emptyCta: "Browse marketplace",
 		routeGroup: "project-resources",
 		projectScope: "project-managed",
 		pathSegments: ["Projects", "Selected Project", "Skills"],
@@ -82,11 +82,11 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Vaults",
 		singularLabel: "Vault",
 		navLabel: "Vaults",
-		description: "Encrypted key collections that can be added to one or more Projects.",
+		description: "Encrypted key collections attached to one or more Projects.",
 		managementDescription:
-			"Store API keys once, then add Vaults to the Projects where agents should use those keys.",
+			"Store API keys once, then attach Vaults to the Projects where Agents should use those keys.",
 		href: PROJECT_RESOURCE_LIST_PATHS.vaults,
-		emptyCta: "Create Vault",
+		emptyCta: "Create vault",
 		routeGroup: "project-resources",
 		projectScope: "project-managed",
 		pathSegments: ["Projects", "Selected Project", "Vaults"],
@@ -103,7 +103,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		managementDescription:
 			"Sessions are agent activity. Browse conversations and filter by the agent that produced them.",
 		href: PROJECT_RESOURCE_LIST_PATHS.sessions,
-		emptyCta: "Start Syncing",
+		emptyCta: "Start syncing",
 		routeGroup: "user-resources",
 		projectScope: "activity",
 		pathSegments: ["Account resources", "Sessions"],
@@ -115,10 +115,10 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Memories",
 		singularLabel: "Memory",
 		navLabel: "Memories",
-		description: "Notes every agent in this account can recall when they run.",
-		managementDescription: "Memories are available to every agent in this account.",
+		description: "Notes shared across all agents in this account.",
+		managementDescription: "Memories are shared across all agents in this account.",
 		href: PROJECT_RESOURCE_LIST_PATHS.memories,
-		emptyCta: "Add Memory",
+		emptyCta: "Create memory",
 		routeGroup: "user-resources",
 		projectScope: "all-agents",
 		pathSegments: ["Account resources", "Memory"],
@@ -130,10 +130,10 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Connectors",
 		singularLabel: "Connector",
 		navLabel: "Connectors",
-		description: "App connections every agent can use after approval.",
-		managementDescription: "Connect apps once so every agent can use approved tools.",
+		description: "App connections shared across all agents in this account.",
+		managementDescription: "Connect apps once to share approved tools across all agents.",
 		href: PROJECT_RESOURCE_LIST_PATHS.connectors,
-		emptyCta: "Connect App",
+		emptyCta: "Browse connectors",
 		routeGroup: "user-resources",
 		projectScope: "all-agents",
 		pathSegments: ["Account resources", "Connectors"],
@@ -258,7 +258,7 @@ export function projectResourceScopeDescription(resource: ProjectResourceDefinit
 		case "activity":
 			return "Activity from agents, shown with the agent that produced it.";
 		case "all-agents":
-			return "Available to every agent in this account. Changes here affect every agent.";
+			return "Shared across all agents in this account. Changes here affect all agents.";
 	}
 }
 

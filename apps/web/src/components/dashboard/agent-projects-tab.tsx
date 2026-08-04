@@ -175,7 +175,7 @@ function AgentProjectsPanel({
 			onChanged();
 			toast.success("Project linked");
 		},
-		onError: (error) => toast.error("Couldn't link Project", { description: errorMessage(error) }),
+		onError: (error) => toast.error("Couldn't link project", { description: errorMessage(error) }),
 		onSettled: () => {
 			linkExistingLockedRef.current = false;
 		},
@@ -213,7 +213,7 @@ function AgentProjectsPanel({
 				onChanged();
 				return;
 			}
-			toast.error("Couldn't create Project", { description: errorMessage(error) });
+			toast.error("Couldn't create project", { description: errorMessage(error) });
 		},
 		onSettled: () => {
 			createAndLinkLockedRef.current = false;
@@ -291,7 +291,7 @@ function AgentProjectsPanel({
 			toast.success("Project unlinked");
 		},
 		onError: (error) =>
-			toast.error("Couldn't unlink Project", { description: errorMessage(error) }),
+			toast.error("Couldn't unlink project", { description: errorMessage(error) }),
 	});
 
 	const reorder = useMutation({
@@ -366,7 +366,7 @@ function AgentProjectsPanel({
 					<div className="flex flex-wrap justify-end gap-2">
 						<Button size="sm" disabled={!primary} onClick={() => setCreateOpen(true)}>
 							<Plus className="size-3.5" />
-							Create and link
+							Create project
 						</Button>
 						<Button
 							size="sm"
@@ -378,7 +378,7 @@ function AgentProjectsPanel({
 							}}
 						>
 							<Link2 className="size-3.5" />
-							Link existing
+							Link project
 						</Button>
 					</div>
 				}
@@ -446,7 +446,7 @@ function AgentProjectsPanel({
 														</p>
 													</>
 												}
-												confirmLabel="Unlink Project"
+												confirmLabel="Unlink project"
 												destructive
 												onConfirm={() => removeBinding.mutate(binding.id)}
 											>
@@ -454,7 +454,7 @@ function AgentProjectsPanel({
 													variant="ghost"
 													size="icon-sm"
 													disabled={isRemoving}
-													title="Unlink Project"
+													title="Unlink project"
 													aria-label={`Unlink ${projectName}`}
 												>
 													{isRemoving ? (
@@ -482,7 +482,7 @@ function AgentProjectsPanel({
 			>
 				<DialogContent className="sm:max-w-md" data-testid="agent-project-add-dialog">
 					<DialogHeader>
-						<DialogTitle>Link existing Project</DialogTitle>
+						<DialogTitle>Link project</DialogTitle>
 						<DialogDescription>
 							Link a Custom or shared Project. This does not install its Skills on the Agent.
 						</DialogDescription>
@@ -518,7 +518,7 @@ function AgentProjectsPanel({
 								) : (
 									<Plus className="size-3.5" />
 								)}
-								Link Project
+								Link project
 							</Button>
 						</DialogFooter>
 					</form>
@@ -534,10 +534,10 @@ function AgentProjectsPanel({
 			>
 				<DialogContent className="sm:max-w-md">
 					<DialogHeader>
-						<DialogTitle>Create and link Project</DialogTitle>
+						<DialogTitle>Create project</DialogTitle>
 						<DialogDescription>
-							Create a Project and link it to this Agent. Add Skills and Vaults to the Project
-							separately.
+							Create a Project and link it to this Agent. Install Skills and attach Vaults to the
+							Project separately.
 						</DialogDescription>
 					</DialogHeader>
 					{createdProjectAwaitingLink ? (
@@ -597,7 +597,7 @@ function AgentProjectsPanel({
 								</Button>
 								<Button type="submit" disabled={!newProjectName.trim() || createAndLink.isPending}>
 									{createAndLink.isPending ? <Spinner className="size-3.5" /> : <Plus />}
-									Create and link
+									Create project
 								</Button>
 							</DialogFooter>
 						</form>
