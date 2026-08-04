@@ -252,17 +252,19 @@ function ComputePriceBlock({
 					{presentation.primary}
 				</span>
 			</div>
-			<div className="text-xs leading-4 font-normal text-muted-foreground">
-				{presentation.secondary}
-				{presentation.savings ? (
-					<>
-						{" "}
-						<span className="whitespace-nowrap" data-testid={`${testId}-savings`}>
-							· {presentation.savings}
-						</span>
-					</>
-				) : null}
-			</div>
+			{presentation.secondary ? (
+				<div className="text-xs leading-4 font-normal text-muted-foreground">
+					{presentation.secondary}
+					{presentation.savings ? (
+						<>
+							{" "}
+							<span className="whitespace-nowrap" data-testid={`${testId}-savings`}>
+								· {presentation.savings}
+							</span>
+						</>
+					) : null}
+				</div>
+			) : null}
 		</div>
 	);
 }

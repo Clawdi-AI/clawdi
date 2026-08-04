@@ -11,7 +11,7 @@ import { walletDebitShortfallUsd } from "@/hosted/billing/wallet/wallet-debit-su
 
 export type ComputePricePresentation = {
 	primary: string;
-	secondary: string;
+	secondary: string | null;
 	savings: string | null;
 };
 
@@ -25,14 +25,18 @@ function monthlyPrice(offer: BillingOffer): string {
 	return `${formatCents(offer.effective_monthly_price_cents)}/mo`;
 }
 
+function termPrice(offer: BillingOffer): string {
+	return `${formatCents(offer.price_cents)}${billingTermSuffix(offer.billing_term_months)}`;
+}
+
 export function computePricePresentation(
 	offer: BillingOffer,
 	offers: readonly BillingOffer[],
 ): ComputePricePresentation {
 	if (offer.billing_term_months === 1) {
 		return {
-			primary: monthlyPrice(offer),
-			secondary: "Billed monthly",
+			primary: termPrice(offer),
+			secondary: null,
 			savings: null,
 		};
 	}
@@ -48,14 +52,9 @@ export function computePricePresentation(
 		comparisonIsCheaper && undiscountedTermPrice !== null
 			? undiscountedTermPrice - offer.price_cents
 			: 0;
-	const billed =
-		offer.billing_term_months === 12
-			? `Billed ${formatCents(offer.price_cents)}/yr`
-			: `Billed ${formatCents(offer.price_cents)} every ${offer.billing_term_months} months`;
-
 	return {
-		primary: monthlyPrice(offer),
-		secondary: billed,
+		primary: termPrice(offer),
+		secondary: monthlyPrice(offer),
 		savings: savingsCents > 0 ? `save ${formatCents(savingsCents)}` : null,
 	};
 }
@@ -63,20 +62,20 @@ export function computePricePresentation(
 export function cardDeployAmountPresentation(offer: BillingOffer): DeployAmountPresentation {
 	if (offer.billing_term_months === 1) {
 		return {
-			amount: `${formatCents(offer.price_cents)}/mo`,
+			amount: termPrice(offer),
 			caption: "Billed monthly",
 			detail: null,
 		};
 	}
 	if (offer.billing_term_months === 12) {
 		return {
-			amount: `${formatCents(offer.price_cents)}/yr`,
+			amount: termPrice(offer),
 			caption: `${monthlyPrice(offer)}, billed annually`,
 			detail: null,
 		};
 	}
 	return {
-		amount: `${formatCents(offer.price_cents)}${billingTermSuffix(offer.billing_term_months)}`,
+		amount: termPrice(offer),
 		caption: `${monthlyPrice(offer)}, billed ${billingTermLabel(offer.billing_term_months).toLowerCase()}`,
 		detail: null,
 	};
