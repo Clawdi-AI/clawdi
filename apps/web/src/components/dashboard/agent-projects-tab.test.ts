@@ -56,7 +56,7 @@ describe("agent Projects presentation", () => {
 		expect(tabSource).not.toContain('from: "agent-projects"');
 	});
 
-	test("keeps Project selection behind the compact toolbar dialog", () => {
+	test("keeps create and existing Project access in one compact toolbar dialog", () => {
 		const source = readFileSync(new URL("./agent-projects-tab.tsx", import.meta.url), "utf8");
 
 		expect(source).toContain("<ListToolbar");
@@ -64,7 +64,11 @@ describe("agent Projects presentation", () => {
 		expect(source).toContain('data-testid="agent-project-add-dialog"');
 		expect(source).toContain("<ProjectCompactPicker");
 		expect(source).toContain('ariaLabel="Project to add"');
-		expect(source).toContain("No Custom or shared Projects are available to add.");
+		expect(source).toContain('<TabsTrigger value="create">New Project</TabsTrigger>');
+		expect(source).toContain('<TabsTrigger value="existing">Existing Project</TabsTrigger>');
+		expect(source).toContain('api.POST("/v1/projects"');
+		expect(source).toContain("Create and add");
+		expect(source).toContain("Retry adding Project");
 		expect(source).not.toContain("<ProjectScopePicker");
 		expect(source).not.toContain('data-testid="agent-project-add"');
 	});
@@ -120,6 +124,10 @@ describe("agent Projects presentation", () => {
 		expect(projectPage).toContain("<PageHeader");
 		expect(projectPage).toContain("<SkillCardGrid");
 		expect(projectPage).toContain("<VaultCard");
+		expect(projectPage).toContain("<ProjectCompactPicker");
+		expect(projectPage).toContain("<AgentProjectAddDialog");
+		expect(projectPage).toContain("Choose a writable Project to add skills");
+		expect(projectPage).toContain("focusedProjectHref(nextProjectId)");
 		expect(projectPage).not.toContain("function VaultRow");
 		expect(vaultCards).toContain("export function VaultCard(");
 		expect(vaultCards).toContain("actions={actions}");

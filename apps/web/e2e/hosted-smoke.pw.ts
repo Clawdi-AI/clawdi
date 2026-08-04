@@ -4544,6 +4544,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await projectStack.getByRole("button", { name: "Add Project", exact: true }).click();
 	const addProjectDialog = page.getByTestId("agent-project-add-dialog");
 	await expect(addProjectDialog).toBeVisible();
+	await addProjectDialog.getByRole("tab", { name: "Existing Project" }).click();
 	const compactProjectPicker = addProjectDialog.getByLabel("Project to add");
 	await compactProjectPicker.click();
 	await page.getByRole("option", { name: /Hosted Project Choice/ }).click();
@@ -4617,7 +4618,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	const focusedSkillsHeading = main.getByRole("heading", { name: "Skills", level: 1 });
 	await expect(focusedSkillsHeading).toBeVisible();
 	await expect(page).toHaveTitle("Skills · Clawdi");
-	await expect(main.getByText("Project: Hosted Agent Project", { exact: true })).toBeVisible();
+	await expect(main.getByLabel("Skills Project")).toContainText("Hosted Agent Project");
 	await expect(main.getByRole("button", { name: "Back to Hosted Agent Project" })).toHaveAttribute(
 		"href",
 		`/agents/${railHostedEnvironmentId}/project-access/project-hosted${query}`,
@@ -4664,7 +4665,7 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	const focusedVaultsHeading = main.getByRole("heading", { name: "Vaults", level: 1 });
 	await expect(focusedVaultsHeading).toBeVisible();
 	await expect(page).toHaveTitle("Vaults · Clawdi");
-	await expect(main.getByText("Project: Hosted Agent Project", { exact: true })).toBeVisible();
+	await expect(main.getByLabel("Vaults Project")).toContainText("Hosted Agent Project");
 	await expect(main.getByRole("button", { name: "Back to Hosted Agent Project" })).toHaveAttribute(
 		"href",
 		`/agents/${railHostedEnvironmentId}/project-access/project-hosted${query}`,

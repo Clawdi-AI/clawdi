@@ -513,7 +513,9 @@ type DashboardApiStubOptions = {
 	memoryDetailGate?: Promise<void>;
 	memoryDetailResponse?: { body: unknown; status: number };
 	projectBindingRequests?: string[];
+	projectBindingMutationRequests?: string[];
 	projectRequests?: string[];
+	projectCreateRequests?: string[];
 	projectBindings?: readonly unknown[];
 	projectBindingsError?: { status: number; detail: string };
 	projectBindingsGate?: Promise<void>;
@@ -534,6 +536,8 @@ async function stubDashboardApi(
 	agentOrderRequests: string[] = [],
 	options: DashboardApiStubOptions = {},
 ) {
+	const mutableProjectBindings = [...(options.projectBindings ?? projectBindings)];
+	const mutableProjects = [...(options.projects ?? projects)];
 	await page.route("**/v1/**", async (route) => {
 		const url = new URL(route.request().url());
 		if (
@@ -575,6 +579,25 @@ async function stubDashboardApi(
 			await fulfillJson(route, agent ?? { detail: "Agent not found" }, agent ? 200 : 404);
 			return;
 		}
+		if (
+			url.pathname === "/v1/agents/agent-smoke-1/project-bindings/context" &&
+			route.request().method() === "POST"
+		) {
+			options.projectBindingMutationRequests?.push(route.request().postData() ?? "");
+			const body = route.request().postDataJSON() as { project_id: string };
+			const binding = {
+				id: `binding-${body.project_id}`,
+				agent_id: "agent-smoke-1",
+				project_id: body.project_id,
+				binding_type: "context",
+				priority: mutableProjectBindings.length,
+				default_write_enabled: false,
+				created_at: now.toISOString(),
+			};
+			mutableProjectBindings.push(binding);
+			await fulfillJson(route, binding);
+			return;
+		}
 		if (url.pathname === "/v1/agents/agent-smoke-1/project-bindings") {
 			options.projectBindingRequests?.push(route.request().url());
 			await options.projectBindingsGate;
@@ -586,11 +609,33 @@ async function stubDashboardApi(
 				);
 				return;
 			}
-			await fulfillJson(route, options.projectBindings ?? projectBindings);
+			await fulfillJson(route, mutableProjectBindings);
 			return;
 		}
 		if (url.pathname === "/v1/dashboard/stats") {
 			await fulfillJson(route, dashboardStats);
+			return;
+		}
+		if (url.pathname === "/v1/projects" && route.request().method() === "POST") {
+			options.projectCreateRequests?.push(route.request().postData() ?? "");
+			const body = route.request().postDataJSON() as { name: string };
+			const project = {
+				id: "project-created-from-agent",
+				name: body.name,
+				slug: body.name
+					.toLowerCase()
+					.replace(/[^a-z0-9]+/g, "-")
+					.replace(/(^-|-$)/g, ""),
+				kind: "workspace",
+				origin_environment_id: null,
+				archived_at: null,
+				created_at: now.toISOString(),
+				is_owner: true,
+				owner_display: "Dev User",
+				owner_handle: "dev-user",
+			};
+			mutableProjects.push(project);
+			await fulfillJson(route, project);
 			return;
 		}
 		if (url.pathname === "/v1/projects") {
@@ -600,7 +645,7 @@ async function stubDashboardApi(
 				await fulfillJson(route, options.projectsResponse.body, options.projectsResponse.status);
 				return;
 			}
-			await fulfillJson(route, options.projects ?? projects);
+			await fulfillJson(route, mutableProjects);
 			return;
 		}
 		if (url.pathname === "/v1/skills") {
@@ -1517,6 +1562,87 @@ test("connected all-agent detail loading, not-found, and error states keep Agent
 	await expect(page).toHaveURL("/agents/agent-smoke-1/connectors/error-connector");
 });
 
+test("connected Agent can create and link a writable Project before adding Skills", async ({
+	page,
+}, testInfo) => {
+	const projectCreateRequests: string[] = [];
+	const projectBindingMutationRequests: string[] = [];
+	await stubDashboardApi(page, [], {
+		projectBindings,
+		projects: projects.filter((project) => project.id === "project-smoke"),
+		projectCreateRequests,
+		projectBindingMutationRequests,
+	});
+
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.goto("/agents/agent-smoke-1/project-access/project-smoke/skills");
+	const main = page.locator("main");
+	await expect(main.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible({
+		timeout: 15_000,
+	});
+	await expect(
+		main.getByText("Choose a writable Project to add skills", { exact: true }),
+	).toBeVisible();
+	await expect(main.getByRole("button", { name: "Install skill" })).toHaveCount(0);
+	await expect(main.getByLabel("Skills Project")).toContainText("Smoke Project");
+
+	await main.getByRole("button", { name: "Add Project", exact: true }).first().click();
+	const dialog = page.getByTestId("agent-project-add-dialog");
+	await expect(dialog.getByRole("tab", { name: "New Project" })).toHaveAttribute("data-active", "");
+	await dialog.screenshot({ path: testInfo.outputPath("agent-create-project-dialog.png") });
+	await dialog.getByLabel("Project name").fill("Agent Workspace");
+	await dialog.getByRole("button", { name: "Create and add" }).click();
+
+	await expect(page).toHaveURL(
+		"/agents/agent-smoke-1/project-access/project-created-from-agent/skills",
+	);
+	await expect(main.getByLabel("Skills Project")).toContainText("Agent Workspace");
+	await expect(main.getByRole("button", { name: "Install skill" })).toBeVisible();
+	await expect(
+		main.getByText("Choose a writable Project to add skills", { exact: true }),
+	).toHaveCount(0);
+	await main.screenshot({ path: testInfo.outputPath("agent-writable-skills-desktop.png") });
+	await page.setViewportSize({ width: 390, height: 844 });
+	expect(
+		await page
+			.locator("html")
+			.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+	).toBe(true);
+	await main.screenshot({ path: testInfo.outputPath("agent-writable-skills-mobile.png") });
+	expect(projectCreateRequests).toEqual([JSON.stringify({ name: "Agent Workspace" })]);
+	expect(projectBindingMutationRequests).toEqual([
+		JSON.stringify({ project_id: "project-created-from-agent" }),
+	]);
+});
+
+test("connected Agent can link an existing Project and manage its Skills", async ({ page }) => {
+	const projectBindingMutationRequests: string[] = [];
+	await stubDashboardApi(page, [], { projectBindingMutationRequests });
+
+	await page.goto("/agents/agent-smoke-1/project-access");
+	const main = page.locator("main");
+	const projectStack = main.getByTestId("agent-project-stack");
+	await expect(projectStack.getByTestId("agent-project-card")).toHaveCount(1, { timeout: 15_000 });
+	await projectStack.getByRole("button", { name: "Add Project", exact: true }).click();
+	const dialog = page.getByTestId("agent-project-add-dialog");
+	await dialog.getByRole("tab", { name: "Existing Project" }).click();
+	await dialog.getByLabel("Project to add").click();
+	await page.getByRole("option", { name: /Unrelated Project/ }).click();
+	await dialog.getByRole("button", { name: "Add Project", exact: true }).click();
+
+	await expect(projectStack.getByTestId("agent-project-card")).toHaveCount(2);
+	await expect(projectStack.getByText("Unrelated Project", { exact: true })).toBeVisible();
+	expect(projectBindingMutationRequests).toEqual([
+		JSON.stringify({ project_id: "project-unrelated" }),
+	]);
+
+	await projectStack.getByRole("link", { name: "Open Unrelated Project" }).click();
+	await main.getByRole("button", { name: "View all Skills", exact: true }).click();
+	await expect(page).toHaveURL("/agents/agent-smoke-1/project-access/project-unrelated/skills");
+	await expect(main.getByLabel("Skills Project")).toContainText("Unrelated Project");
+	await expect(main.getByRole("button", { name: "Install skill" })).toBeVisible();
+});
+
 test("connected agent resources select Projects before scoped Skills and Vaults", async ({
 	page,
 }, testInfo) => {
@@ -1713,6 +1839,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	const addProjectDialog = page.getByTestId("agent-project-add-dialog");
 	await expect(addProjectDialog).toBeVisible();
 	await expect(addProjectDialog.getByRole("heading", { name: "Add Project" })).toBeVisible();
+	await addProjectDialog.getByRole("tab", { name: "Existing Project" }).click();
 	const compactProjectPicker = addProjectDialog.getByLabel("Project to add");
 	await expect(compactProjectPicker).toBeVisible();
 	await compactProjectPicker.click();
@@ -1814,7 +1941,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	const focusedSkillsHeading = main.getByRole("heading", { name: "Skills", level: 1 });
 	await expect(focusedSkillsHeading).toBeVisible();
 	await expect(page).toHaveTitle("Skills · Clawdi");
-	await expect(main.getByText("Project: Smoke Project", { exact: true })).toBeVisible();
+	await expect(main.getByLabel("Skills Project")).toContainText("Smoke Project");
 	await expect(main.getByRole("button", { name: "Back to Smoke Project" })).toHaveAttribute(
 		"href",
 		"/agents/agent-smoke-1/project-access/project-smoke",
@@ -1857,7 +1984,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	const focusedVaultsHeading = main.getByRole("heading", { name: "Vaults", level: 1 });
 	await expect(focusedVaultsHeading).toBeVisible();
 	await expect(page).toHaveTitle("Vaults · Clawdi");
-	await expect(main.getByText("Project: Smoke Project", { exact: true })).toBeVisible();
+	await expect(main.getByLabel("Vaults Project")).toContainText("Smoke Project");
 	await expect(main.getByRole("button", { name: "Back to Smoke Project" })).toHaveAttribute(
 		"href",
 		"/agents/agent-smoke-1/project-access/project-smoke",
@@ -1979,13 +2106,13 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await page.goto("/agents/agent-smoke-1/skills?project=project-context-first");
 	await expect(page).toHaveURL("/agents/agent-smoke-1/project-access/project-context-first/skills");
 	await expect(main.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible();
-	await expect(main.getByText("Project: Team Knowledge", { exact: true })).toBeVisible();
+	await expect(main.getByLabel("Skills Project")).toContainText("Team Knowledge");
 	await expect(main.getByText("Team-only Skill", { exact: true })).toBeVisible();
 	await expect(main.getByText("Primary-only Skill", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /Install skill/i })).toHaveCount(0);
 	expect(vaultRequests).toEqual([]);
 	await page.goto("/agents/agent-smoke-1/project-access/project-context-later/skills");
-	await expect(main.getByText(`Project: ${longContextProjectName}`, { exact: true })).toBeVisible();
+	await expect(main.getByLabel("Skills Project")).toContainText(longContextProjectName);
 	await expect(main.getByRole("button", { name: /Install skill/i })).toBeVisible();
 	await expect(main.getByRole("button", { name: /New vault/i })).toHaveCount(0);
 

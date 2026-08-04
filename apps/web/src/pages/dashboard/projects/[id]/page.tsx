@@ -30,6 +30,7 @@ import {
 	useAgentProjectBindings,
 } from "@/components/dashboard/agent-project-bindings-query";
 import { orderedAgentProjectBindings } from "@/components/dashboard/agent-project-scope";
+import { AgentProjectAddDialog } from "@/components/dashboard/agent-projects-tab";
 import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
@@ -41,6 +42,7 @@ import {
 	isCustomProject,
 	isManagedProject,
 	type ProjectAgentMetadata,
+	ProjectCompactPicker,
 	ProjectIdentity,
 	ProjectKindBadge,
 	projectAgentFor,
@@ -148,6 +150,8 @@ export default function ProjectDetailPage({
 	// inputs on demand.
 	const [showInstallSkill, setShowInstallSkill] = useState(false);
 	const [showCreateVault, setShowCreateVault] = useState(false);
+	const [addProjectOpen, setAddProjectOpen] = useState(false);
+	const [addProjectDialogGeneration, setAddProjectDialogGeneration] = useState(0);
 	const joinedFromShare = !isAgentScope && searchParams.get("joined") === "share";
 
 	const projects = $api.useQuery("get", "/v1/projects", {});
@@ -197,6 +201,9 @@ export default function ProjectDetailPage({
 	);
 	const scopedBinding =
 		orderedScopedBindings.find((binding) => binding.project_id === projectId) ?? null;
+	const scopedProjects = orderedScopedBindings
+		.map((binding) => rows.find((row) => row.id === binding.project_id))
+		.filter((candidate): candidate is ProjectRow => Boolean(candidate));
 	useEffect(() => {
 		if (searchParams.get("useWithAgent") === "1") setUseWithAgentOpen(true);
 	}, [searchParams]);
@@ -470,6 +477,16 @@ export default function ProjectDetailPage({
 	const projectIdentity = identityFor(displayProjectName(project));
 	const focusedResourceIdentity = focus ? AGENT_SECTION_NAVIGATION_ITEMS[focus] : null;
 	const FocusedResourceIcon = focusedResourceIdentity?.icon ?? null;
+	const showHeaderAddProject = Boolean(focus && (focus !== "skills" || canManageSkills));
+	const focusedProjectHref = (nextProjectId: string) =>
+		scope.kind === "agent" && focus
+			? agentProjectResourceHref(
+					scope.agentId,
+					nextProjectId,
+					focus,
+					agentDeploymentRouteQuery(scope.agentQuery),
+				)
+			: projectDetailHrefForScope(scope, nextProjectId);
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
@@ -499,13 +516,19 @@ export default function ProjectDetailPage({
 						: projectDetailDescription(project, isOwner, projectType?.label ?? "Project")
 				}
 				status={
-					<span
-						className={
-							focus ? "text-xs text-muted-foreground" : "font-mono text-xs text-muted-foreground"
-						}
-					>
-						{focus ? `Project: ${displayProjectName(project)}` : project.slug}
-					</span>
+					focus && scope.kind === "agent" ? (
+						<ProjectCompactPicker
+							projects={scopedProjects}
+							value={project.id}
+							onValueChange={(nextProjectId) => {
+								void router.navigate({ href: focusedProjectHref(nextProjectId) });
+							}}
+							ariaLabel={`${focusedResourceIdentity?.label ?? "Resource"} Project`}
+							className="mt-2 w-full max-w-sm"
+						/>
+					) : (
+						<span className="font-mono text-xs text-muted-foreground">{project.slug}</span>
+					)
 				}
 				actions={
 					!isAgentScope ? (
@@ -529,9 +552,36 @@ export default function ProjectDetailPage({
 								</ShareProjectDialog>
 							) : null}
 						</>
+					) : showHeaderAddProject ? (
+						<Button variant="outline" size="sm" onClick={() => setAddProjectOpen(true)}>
+							<Plus className="size-3.5" />
+							Add Project
+						</Button>
 					) : undefined
 				}
 			/>
+
+			{isAgentScope && focus ? (
+				<Dialog
+					open={addProjectOpen}
+					onOpenChange={setAddProjectOpen}
+					onOpenChangeComplete={(open) => {
+						if (!open) setAddProjectDialogGeneration((generation) => generation + 1);
+					}}
+				>
+					<AgentProjectAddDialog
+						key={addProjectDialogGeneration}
+						agentId={scope.agentId}
+						bindings={orderedScopedBindings}
+						projects={rows}
+						onOpenChange={setAddProjectOpen}
+						onChanged={refresh}
+						onAdded={(addedProjectId) => {
+							void router.navigate({ href: focusedProjectHref(addedProjectId) });
+						}}
+					/>
+				</Dialog>
+			) : null}
 
 			{joinedFromShare ? (
 				<Alert>
@@ -545,6 +595,24 @@ export default function ProjectDetailPage({
 						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
 							<Bot className="mr-1.5 size-3.5" />
 							Add to agent
+						</Button>
+					</AlertDescription>
+				</Alert>
+			) : null}
+
+			{isAgentScope && focus === "skills" && !canManageSkills ? (
+				<Alert>
+					<BookOpen className="size-4" />
+					<AlertTitle>Choose a writable Project to add skills</AlertTitle>
+					<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+						<span>
+							{project.kind === "environment"
+								? "This Agent Project mirrors skills from the Agent filesystem. Select an owned Custom Project, or create one here, to install skills from the dashboard."
+								: "This shared Project is read-only. Select an owned Custom Project, or create one here, to install skills."}
+						</span>
+						<Button type="button" size="sm" onClick={() => setAddProjectOpen(true)}>
+							<Plus className="size-3.5" />
+							Add Project
 						</Button>
 					</AlertDescription>
 				</Alert>

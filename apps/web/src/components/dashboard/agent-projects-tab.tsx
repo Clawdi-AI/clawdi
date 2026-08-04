@@ -36,13 +36,17 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { AgentRouteSearch } from "@/lib/agent-routes";
 import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { agentResourceScope, type ResourceNavigationScope } from "@/lib/resource-navigation";
+import { errorMessage } from "@/lib/utils";
 
 type ProjectRow = components["schemas"]["ProjectResponse"];
 
@@ -115,8 +119,8 @@ function AgentProjectsPanel({
 	onChanged: () => void;
 }) {
 	const api = useApi();
-	const [contextProjectId, setContextProjectId] = useState("");
 	const [addOpen, setAddOpen] = useState(false);
+	const [addDialogGeneration, setAddDialogGeneration] = useState(0);
 	const orderedBindings = orderedAgentProjectBindings(bindings);
 	const primary = orderedBindings.find((binding) => binding.binding_type === "primary") ?? null;
 	const contexts = orderedBindings.filter((binding) => binding.binding_type === "context");
@@ -125,29 +129,6 @@ function AgentProjectsPanel({
 		() => new Map(projects.map((project) => [project.id, project])),
 		[projects],
 	);
-	const contextChoices = projects.filter(
-		(project) =>
-			isCustomProject(project) && !bindings.some((binding) => binding.project_id === project.id),
-	);
-
-	const addContext = useMutation({
-		mutationFn: async () => {
-			await unwrap(
-				await api.POST("/v1/agents/{agent_id}/project-bindings/context", {
-					params: { path: { agent_id: agentId } },
-					body: { project_id: contextProjectId },
-				}),
-			);
-		},
-		onSuccess: () => {
-			setContextProjectId("");
-			setAddOpen(false);
-			onChanged();
-			toast.success("Project added");
-		},
-		onError: toastApiError("Couldn't add project"),
-	});
-
 	const removeBinding = useMutation({
 		mutationFn: async (bindingId: string) => {
 			await unwrap(
@@ -229,14 +210,7 @@ function AgentProjectsPanel({
 		<div className="space-y-4" data-testid="agent-project-stack">
 			<ListToolbar
 				actions={
-					<Button
-						size="sm"
-						disabled={!primary}
-						onClick={() => {
-							setContextProjectId("");
-							setAddOpen(true);
-						}}
-					>
+					<Button size="sm" disabled={!primary} onClick={() => setAddOpen(true)}>
 						<Plus className="size-3.5" />
 						Add Project
 					</Button>
@@ -331,22 +305,196 @@ function AgentProjectsPanel({
 				open={addOpen}
 				onOpenChange={setAddOpen}
 				onOpenChangeComplete={(open) => {
-					if (!open) setContextProjectId("");
+					if (!open) setAddDialogGeneration((generation) => generation + 1);
 				}}
 			>
-				<DialogContent className="sm:max-w-md" data-testid="agent-project-add-dialog">
-					<DialogHeader>
-						<DialogTitle>Add Project</DialogTitle>
-						<DialogDescription>
-							Add a Custom or shared Project to this agent's read order.
-						</DialogDescription>
-					</DialogHeader>
+				<AgentProjectAddDialog
+					key={addDialogGeneration}
+					agentId={agentId}
+					bindings={bindings}
+					projects={projects}
+					onOpenChange={setAddOpen}
+					onChanged={onChanged}
+				/>
+			</Dialog>
+		</div>
+	);
+}
+
+type AddProjectRequest = { kind: "existing"; projectId: string } | { kind: "create"; name: string };
+
+class ProjectCreatedButNotAddedError extends Error {
+	constructor(
+		readonly project: ProjectRow,
+		readonly linkError: unknown,
+	) {
+		super("Project created but could not be added to the Agent");
+		this.name = "ProjectCreatedButNotAddedError";
+	}
+}
+
+export function AgentProjectAddDialog({
+	agentId,
+	bindings,
+	projects,
+	onOpenChange,
+	onChanged,
+	onAdded,
+}: {
+	agentId: string;
+	bindings: AgentProjectBinding[];
+	projects: ProjectRow[];
+	onOpenChange: (open: boolean) => void;
+	onChanged: () => void;
+	onAdded?: (projectId: string) => void;
+}) {
+	const api = useApi();
+	const queryClient = useQueryClient();
+	const [mode, setMode] = useState<"create" | "existing">("create");
+	const [projectName, setProjectName] = useState("");
+	const [contextProjectId, setContextProjectId] = useState("");
+	const [createdProjectToRetry, setCreatedProjectToRetry] = useState<ProjectRow | null>(null);
+	const contextChoices = projects.filter(
+		(project) =>
+			isCustomProject(project) && !bindings.some((binding) => binding.project_id === project.id),
+	);
+
+	const addProject = useMutation({
+		mutationFn: async (request: AddProjectRequest) => {
+			let createdProject: ProjectRow | null = null;
+			if (request.kind === "create") {
+				createdProject = await unwrap(
+					await api.POST("/v1/projects", {
+						body: { name: request.name },
+					}),
+				);
+			}
+			const projectId = request.kind === "existing" ? request.projectId : createdProject?.id;
+			if (!projectId) throw new Error("The new Project did not return an id.");
+			try {
+				await unwrap(
+					await api.POST("/v1/agents/{agent_id}/project-bindings/context", {
+						params: { path: { agent_id: agentId } },
+						body: { project_id: projectId },
+					}),
+				);
+			} catch (error) {
+				if (request.kind === "create" && createdProject) {
+					throw new ProjectCreatedButNotAddedError(createdProject, error);
+				}
+				throw error;
+			}
+			return { projectId, created: request.kind === "create" };
+		},
+		onSuccess: async ({ projectId, created }) => {
+			await Promise.all([
+				queryClient.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(agentId) }),
+				queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] }),
+			]);
+			setProjectName("");
+			setContextProjectId("");
+			setCreatedProjectToRetry(null);
+			onOpenChange(false);
+			onChanged();
+			toast.success(created ? "Project created and added" : "Project added");
+			onAdded?.(projectId);
+		},
+		onError: (error) => {
+			if (error instanceof ProjectCreatedButNotAddedError) {
+				setCreatedProjectToRetry(error.project);
+				void queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
+				toast.error("Project created, but couldn't add it to this Agent", {
+					description: errorMessage(error.linkError),
+				});
+				return;
+			}
+			toast.error("Couldn't add project", { description: errorMessage(error) });
+		},
+	});
+	return (
+		<DialogContent className="sm:max-w-md" data-testid="agent-project-add-dialog">
+			<DialogHeader>
+				<DialogTitle>Add Project</DialogTitle>
+				<DialogDescription>
+					Create a Project for this Agent, or add a Custom or shared Project you already use.
+				</DialogDescription>
+			</DialogHeader>
+			<Tabs
+				value={mode}
+				onValueChange={(value) => {
+					if (value === "create" || value === "existing") setMode(value);
+				}}
+			>
+				<TabsList className="grid w-full grid-cols-2">
+					<TabsTrigger value="create">New Project</TabsTrigger>
+					<TabsTrigger value="existing">Existing Project</TabsTrigger>
+				</TabsList>
+				<TabsContent value="create">
 					<form
-						className="space-y-4"
+						className="space-y-4 pt-2"
 						onSubmit={(event) => {
 							event.preventDefault();
-							if (!contextProjectId || addContext.isPending) return;
-							addContext.mutate();
+							const name = projectName.trim();
+							if (!name || addProject.isPending) return;
+							addProject.mutate({ kind: "create", name });
+						}}
+					>
+						<div className="space-y-1.5">
+							<Label htmlFor="agent-project-name">Project name</Label>
+							<Input
+								id="agent-project-name"
+								value={projectName}
+								onChange={(event) => setProjectName(event.target.value)}
+								placeholder="Project name…"
+								maxLength={200}
+								autoComplete="off"
+								disabled={addProject.isPending}
+							/>
+						</div>
+						{createdProjectToRetry ? (
+							<div className="rounded-md border bg-muted/30 p-3 text-sm">
+								<p className="font-medium">
+									{displayProjectName(createdProjectToRetry)} was created.
+								</p>
+								<p className="mt-1 text-muted-foreground">
+									Adding it to this Agent failed. Retry without creating another Project.
+								</p>
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									className="mt-3"
+									disabled={addProject.isPending}
+									onClick={() =>
+										addProject.mutate({ kind: "existing", projectId: createdProjectToRetry.id })
+									}
+								>
+									Retry adding Project
+								</Button>
+							</div>
+						) : null}
+						<DialogFooter>
+							<Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+								Cancel
+							</Button>
+							<Button type="submit" disabled={!projectName.trim() || addProject.isPending}>
+								{addProject.isPending ? (
+									<Spinner className="size-3.5" />
+								) : (
+									<Plus className="size-3.5" />
+								)}
+								Create and add
+							</Button>
+						</DialogFooter>
+					</form>
+				</TabsContent>
+				<TabsContent value="existing">
+					<form
+						className="space-y-4 pt-2"
+						onSubmit={(event) => {
+							event.preventDefault();
+							if (!contextProjectId || addProject.isPending) return;
+							addProject.mutate({ kind: "existing", projectId: contextProjectId });
 						}}
 					>
 						{contextChoices.length > 0 ? (
@@ -356,19 +504,19 @@ function AgentProjectsPanel({
 								onValueChange={setContextProjectId}
 								placeholder="Choose a Project…"
 								ariaLabel="Project to add"
-								disabled={addContext.isPending}
+								disabled={addProject.isPending}
 							/>
 						) : (
 							<p className="text-sm text-muted-foreground">
-								No Custom or shared Projects are available to add.
+								Every available Custom or shared Project is already linked to this Agent.
 							</p>
 						)}
 						<DialogFooter>
-							<Button type="button" variant="ghost" onClick={() => setAddOpen(false)}>
+							<Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
 								Cancel
 							</Button>
-							<Button type="submit" disabled={!contextProjectId || addContext.isPending}>
-								{addContext.isPending ? (
+							<Button type="submit" disabled={!contextProjectId || addProject.isPending}>
+								{addProject.isPending ? (
 									<Spinner className="size-3.5" />
 								) : (
 									<Plus className="size-3.5" />
@@ -377,9 +525,9 @@ function AgentProjectsPanel({
 							</Button>
 						</DialogFooter>
 					</form>
-				</DialogContent>
-			</Dialog>
-		</div>
+				</TabsContent>
+			</Tabs>
+		</DialogContent>
 	);
 }
 
