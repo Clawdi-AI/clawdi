@@ -1617,7 +1617,7 @@ async def discord_webhook(
         return Response(status_code=status.HTTP_202_ACCEPTED)
     if command is None and payload.get("type") == 4:
         return {"type": 8, "data": {"choices": []}}
-    if command is None and payload.get("type") in {3, 5}:
+    if command is None and payload.get("type") in {2, 3, 5}:
         scope = "server" if guild_id is not None else "direct message"
         return {
             "type": 4,

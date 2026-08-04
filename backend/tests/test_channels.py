@@ -14268,7 +14268,7 @@ async def test_discord_webhook_does_not_claim_code_for_legacy_interaction(
     )
 
     assert response.status_code == 200
-    assert response.json()["data"]["content"] == "Message received."
+    assert response.json()["data"]["content"] == "This server is not paired."
     pair_code = await db_session.get(ChannelPairCode, UUID(pair["id"]))
     assert pair_code is not None
     assert pair_code.status == PAIR_CODE_STATUS_PENDING
@@ -20279,6 +20279,7 @@ async def test_public_discord_dm_pair_handoff_unpair_and_duplicate_are_recorded_
     assert archived_binding.external_chat_name == "Renamed Public User"
 
     unbound_interactions = [
+        (2, {"name": "unbound_agent_command"}),
         (3, {"custom_id": "unbound-component", "component_type": 2}),
         (4, {"name": "unbound_autocomplete"}),
         (5, {"custom_id": "unbound-modal", "components": []}),
@@ -20300,6 +20301,10 @@ async def test_public_discord_dm_pair_handoff_unpair_and_duplicate_are_recorded_
                 "data": interaction_data,
             },
         )
+    assert unbound_responses[2].json() == {
+        "type": 4,
+        "data": {"content": "This direct message is not paired.", "flags": 64},
+    }
     assert unbound_responses[3].json() == {
         "type": 4,
         "data": {"content": "This direct message is not paired.", "flags": 64},
