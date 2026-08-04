@@ -8,6 +8,7 @@ type SettingsSectionProps = Omit<
 > & {
 	title: React.ReactNode;
 	description?: React.ReactNode;
+	actions?: React.ReactNode;
 	children?: React.ReactNode;
 	variant?: "default" | "destructive";
 	headingLevel?: 2 | 3;
@@ -17,6 +18,7 @@ type SettingsSectionProps = Omit<
 export function SettingsSection({
 	title,
 	description,
+	actions,
 	children,
 	className,
 	variant = "default",
@@ -32,16 +34,19 @@ export function SettingsSection({
 			className={cn("flex flex-col gap-4", className)}
 		>
 			<Separator />
-			<div className="flex max-w-2xl flex-col gap-1.5">
-				<Heading
-					id={generatedTitleId}
-					className={cn("text-sm font-semibold", variant === "destructive" && "text-destructive")}
-				>
-					{title}
-				</Heading>
-				{description ? (
-					<div className="text-sm leading-5 text-muted-foreground">{description}</div>
-				) : null}
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+				<div className="flex max-w-2xl min-w-0 flex-col gap-1.5">
+					<Heading
+						id={generatedTitleId}
+						className={cn("text-sm font-semibold", variant === "destructive" && "text-destructive")}
+					>
+						{title}
+					</Heading>
+					{description ? (
+						<div className="text-sm leading-5 text-muted-foreground">{description}</div>
+					) : null}
+				</div>
+				{actions ? <div className="shrink-0">{actions}</div> : null}
 			</div>
 			{children !== undefined && children !== null ? (
 				<div className="min-w-0">{children}</div>

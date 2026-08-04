@@ -1,6 +1,7 @@
 const subscriptionCreateQuotes = ["billing", "subscription-create-quote"] as const;
 const ledgerRoot = ["billing", "ledger"] as const;
 const billingHistoryRoot = ["billing", "history"] as const;
+const usageRoot = ["billing", "usage"] as const;
 
 export const billingKeys = {
 	managedModelCatalog: ["billing", "managed-model-catalog"] as const,
@@ -17,5 +18,5 @@ export const billingKeys = {
 	deployments: ["billing", "deployments"] as const,
 	legacyAgentEnvironments: ["billing", "legacy-agent-environments"] as const,
 	me: ["billing", "me"] as const,
-	usage: ["billing", "usage"] as const,
+	usage: (days: number | null) => [...usageRoot, days] as const,
 };

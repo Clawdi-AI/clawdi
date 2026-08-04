@@ -35,10 +35,21 @@ import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { formatShortDate } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
-const DESCRIPTION = "Clawdi AI spend and requests for the current reporting window.";
+const DESCRIPTION = "Clawdi AI spend and requests.";
 const USAGE_PAGE_CLASS = "flex flex-col gap-8 px-5 sm:px-6 lg:px-8";
+const USAGE_RANGE_ITEMS = [
+	{ label: "Current period", value: "current" },
+	{ label: "Last 7 days", value: "7" },
+	{ label: "Last 30 days", value: "30" },
+	{ label: "Last 90 days", value: "90" },
+] as const;
 
 type VisibleUsageSection = "totals" | "by_agent" | "by_model" | "by_day";
+type UsageRangeDays = 7 | 30 | 90 | null;
+type UsageRangeSelection = {
+	days: UsageRangeDays;
+	onChange: (days: UsageRangeDays) => void;
+};
 type AgentBreakdown = NonNullable<HostedUsageSummary["by_agent"]>[number];
 type ModelBreakdown = HostedUsageSummary["by_model"][number];
 type DayBreakdown = HostedUsageSummary["by_day"][number];
@@ -173,8 +184,49 @@ function unavailableUsageSections(
 	return sections;
 }
 
+function usageRangeDays(value: string | null): UsageRangeDays {
+	switch (value) {
+		case "7":
+			return 7;
+		case "30":
+			return 30;
+		case "90":
+			return 90;
+		default:
+			return null;
+	}
+}
+
+function UsageRangeSelect({
+	days,
+	onChange,
+}: {
+	days: UsageRangeDays;
+	onChange: (days: UsageRangeDays) => void;
+}) {
+	return (
+		<Select
+			items={USAGE_RANGE_ITEMS}
+			value={days === null ? "current" : String(days)}
+			onValueChange={(value) => onChange(usageRangeDays(value))}
+		>
+			<SelectTrigger aria-label="Reporting range" className="w-40">
+				<SelectValue />
+			</SelectTrigger>
+			<SelectContent align="end">
+				{USAGE_RANGE_ITEMS.map((item) => (
+					<SelectItem key={item.value} value={item.value}>
+						{item.label}
+					</SelectItem>
+				))}
+			</SelectContent>
+		</Select>
+	);
+}
+
 export function UsagePage({ agentTiles }: { agentTiles: readonly AgentTile[] }) {
-	const usage = useUsage();
+	const [rangeDays, setRangeDays] = useState<UsageRangeDays>(null);
+	const usage = useUsage(rangeDays);
 	const providers = useUserAiProviders();
 	const managedModelCatalog = useManagedModelCatalog();
 	const [manualRetrying, setManualRetrying] = useState(false);
@@ -191,7 +243,11 @@ export function UsagePage({ agentTiles }: { agentTiles: readonly AgentTile[] }) 
 	if (usage.isLoading) {
 		return (
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
-				<SettingsPanelHeader title="Usage" description={DESCRIPTION} />
+				<SettingsPanelHeader
+					title="Usage"
+					description={DESCRIPTION}
+					actions={<UsageRangeSelect days={rangeDays} onChange={setRangeDays} />}
+				/>
 				<UsageSkeleton />
 			</div>
 		);
@@ -200,7 +256,11 @@ export function UsagePage({ agentTiles }: { agentTiles: readonly AgentTile[] }) 
 	if (shouldBlockQueryError(usage.error, usage.data) || !usage.data) {
 		return (
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
-				<SettingsPanelHeader title="Usage" description={DESCRIPTION} />
+				<SettingsPanelHeader
+					title="Usage"
+					description={DESCRIPTION}
+					actions={<UsageRangeSelect days={rangeDays} onChange={setRangeDays} />}
+				/>
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
 					error={usage.error}
@@ -218,6 +278,7 @@ export function UsagePage({ agentTiles }: { agentTiles: readonly AgentTile[] }) 
 			agentTiles={agentTiles}
 			providers={providers.data ?? []}
 			managedModels={managedModelCatalog.data?.models ?? []}
+			rangeSelection={{ days: rangeDays, onChange: setRangeDays }}
 			isRetrying={manualRetrying}
 			onRetry={() => {
 				void retryUsage();
@@ -231,6 +292,7 @@ export function UsageSummaryView({
 	agentTiles = [],
 	providers,
 	managedModels,
+	rangeSelection,
 	isRetrying,
 	onRetry,
 }: {
@@ -238,6 +300,7 @@ export function UsageSummaryView({
 	agentTiles?: readonly AgentTile[];
 	providers: readonly AiProvider[];
 	managedModels: readonly ManagedModelCatalogItem[];
+	rangeSelection?: UsageRangeSelection;
 	isRetrying: boolean;
 	onRetry: () => void;
 }) {
@@ -266,6 +329,9 @@ export function UsageSummaryView({
 		})),
 	];
 	const windowLabel = `${formatShortDate(usage.period_start)} – ${formatShortDate(usage.period_end)}`;
+	const rangeAction = rangeSelection ? (
+		<UsageRangeSelect days={rangeSelection.days} onChange={rangeSelection.onChange} />
+	) : null;
 
 	if (
 		missingSections.has("totals") &&
@@ -275,7 +341,7 @@ export function UsageSummaryView({
 	) {
 		return (
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
-				<SettingsPanelHeader title="Usage" description={`${windowLabel} reporting window.`} />
+				<SettingsPanelHeader title="Usage" description={windowLabel} actions={rangeAction} />
 				<EmptyState
 					variant="inset"
 					title="We can’t load your usage right now"
@@ -301,7 +367,7 @@ export function UsageSummaryView({
 	if (isRealZero) {
 		return (
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
-				<SettingsPanelHeader title="Usage" description={`${windowLabel} reporting window.`} />
+				<SettingsPanelHeader title="Usage" description={windowLabel} actions={rangeAction} />
 				<EmptyState
 					variant="inset"
 					title="No usage yet"
@@ -328,7 +394,7 @@ export function UsageSummaryView({
 
 	return (
 		<div data-hosted="true" className={USAGE_PAGE_CLASS}>
-			<SettingsPanelHeader title="Usage" description={`${windowLabel} reporting window.`} />
+			<SettingsPanelHeader title="Usage" description={windowLabel} actions={rangeAction} />
 
 			{totals ? (
 				<section
@@ -359,11 +425,7 @@ export function UsageSummaryView({
 				/>
 			)}
 
-			<SettingsSection
-				headingLevel={3}
-				title="Daily usage"
-				description="Global Clawdi AI spend by day."
-			>
+			<SettingsSection headingLevel={3} title="Daily usage">
 				{missingSections.has("by_day") ? (
 					<EmptyState
 						variant="inset"
@@ -383,11 +445,7 @@ export function UsageSummaryView({
 				)}
 			</SettingsSection>
 
-			<SettingsSection
-				headingLevel={3}
-				title="By agent"
-				description="Spend and requests grouped by agent."
-			>
+			<SettingsSection headingLevel={3} title="By agent">
 				{missingSections.has("by_agent") ? (
 					<EmptyState
 						variant="inset"
@@ -465,7 +523,26 @@ export function UsageSummaryView({
 			<SettingsSection
 				headingLevel={3}
 				title="By model"
-				description="Spend and requests grouped by provider and model."
+				actions={
+					!missingSections.has("by_model") && selectableAgents.length > 0 ? (
+						<Select
+							items={scopeItems}
+							value={effectiveAgentId}
+							onValueChange={(value) => setSelectedAgentId(value ?? "all")}
+						>
+							<SelectTrigger aria-label="Agent scope" className="w-44 sm:w-56">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent align="end">
+								{scopeItems.map((item) => (
+									<SelectItem key={item.value} value={item.value}>
+										{item.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					) : null
+				}
 			>
 				{missingSections.has("by_model") ? (
 					<EmptyState
@@ -476,29 +553,7 @@ export function UsageSummaryView({
 						className="py-4 md:p-4"
 					/>
 				) : (
-					<div className="space-y-4">
-						{selectableAgents.length > 0 ? (
-							<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-								<span className="text-xs font-medium text-muted-foreground">Agent scope</span>
-								<Select
-									items={scopeItems}
-									value={effectiveAgentId}
-									onValueChange={(value) => setSelectedAgentId(value ?? "all")}
-								>
-									<SelectTrigger aria-label="Agent scope" className="w-full sm:w-56">
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent align="end">
-										{scopeItems.map((item) => (
-											<SelectItem key={item.value} value={item.value}>
-												{item.label}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
-							</div>
-						) : null}
-
+					<div>
 						{sortedModels.length === 0 ? (
 							<EmptyState
 								variant="inset"

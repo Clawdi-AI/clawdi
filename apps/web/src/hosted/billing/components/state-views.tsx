@@ -2,12 +2,23 @@
 
 import { Skeleton } from "@/components/ui/skeleton";
 
-function SectionSkeleton({ children }: { children: React.ReactNode }) {
+function SectionSkeleton({
+	children,
+	description = true,
+	actions,
+}: {
+	children?: React.ReactNode;
+	description?: boolean;
+	actions?: React.ReactNode;
+}) {
 	return (
 		<div className="space-y-4 border-t pt-4">
-			<div className="space-y-2">
-				<Skeleton className="h-4 w-28" />
-				<Skeleton className="h-4 w-52 max-w-full" />
+			<div className="flex items-start justify-between gap-3">
+				<div className="space-y-2">
+					<Skeleton className="h-4 w-28" />
+					{description ? <Skeleton className="h-4 w-52 max-w-full" /> : null}
+				</div>
+				{actions}
 			</div>
 			{children}
 		</div>
@@ -27,10 +38,15 @@ export function SubscriptionSkeleton() {
 			<SectionSkeleton>
 				<Skeleton className="h-28 w-full rounded-lg" />
 			</SectionSkeleton>
-			<div className="grid gap-3 lg:grid-cols-2">
-				<Skeleton className="h-72 w-full rounded-xl" />
-				<Skeleton className="h-72 w-full rounded-xl" />
-			</div>
+			<SectionSkeleton
+				description={false}
+				actions={<Skeleton className="h-9 w-56 shrink-0 rounded-md" />}
+			>
+				<div className="grid gap-3 lg:grid-cols-2">
+					<Skeleton className="h-72 w-full rounded-xl" />
+					<Skeleton className="h-72 w-full rounded-xl" />
+				</div>
+			</SectionSkeleton>
 		</div>
 	);
 }
@@ -40,16 +56,15 @@ export function WalletSkeleton() {
 	return (
 		<div data-hosted="true" className="space-y-8">
 			<Skeleton className="h-36 w-full rounded-xl" />
-			<SectionSkeleton>
-				<div className="grid max-w-3xl gap-4 sm:grid-cols-2">
-					<Skeleton className="h-16 w-full rounded-md" />
-					<Skeleton className="h-16 w-full rounded-md" />
-				</div>
-			</SectionSkeleton>
-			<SectionSkeleton>
-				<Skeleton className="h-9 w-40" />
-			</SectionSkeleton>
-			<SectionSkeleton>
+			<SectionSkeleton
+				description={false}
+				actions={<Skeleton className="h-5 w-9 shrink-0 rounded-full" />}
+			/>
+			<SectionSkeleton />
+			<SectionSkeleton
+				description={false}
+				actions={<Skeleton className="h-8 w-40 shrink-0 rounded-md" />}
+			>
 				<Skeleton className="h-40 w-full rounded-lg" />
 			</SectionSkeleton>
 		</div>
@@ -70,17 +85,20 @@ export function UsageSkeleton() {
 					<Skeleton className="h-4 w-32" />
 				</div>
 			</div>
-			<SectionSkeleton>
+			<SectionSkeleton description={false}>
 				<Skeleton className="h-44 w-full rounded-lg" />
 			</SectionSkeleton>
-			<SectionSkeleton>
+			<SectionSkeleton description={false}>
 				<div className="space-y-3">
 					<Skeleton className="h-10 w-full" />
 					<Skeleton className="h-10 w-full" />
 					<Skeleton className="h-10 w-full" />
 				</div>
 			</SectionSkeleton>
-			<SectionSkeleton>
+			<SectionSkeleton
+				description={false}
+				actions={<Skeleton className="h-9 w-44 shrink-0 rounded-md sm:w-56" />}
+			>
 				<div className="space-y-3">
 					<Skeleton className="h-10 w-full" />
 					<Skeleton className="h-10 w-full" />
