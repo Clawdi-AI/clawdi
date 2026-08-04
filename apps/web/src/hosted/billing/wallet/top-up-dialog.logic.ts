@@ -1,4 +1,4 @@
-import type { QueryClient } from "@tanstack/react-query";
+import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import type { WalletLedgerEntry, WalletTopupResult } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import {
@@ -91,6 +91,17 @@ export function walletTopupCreditIsApplied(
 	);
 }
 
+type WalletLedgerPage = { items: WalletLedgerEntry[] };
+
+function walletTopupCreditIsCached(
+	paymentReference: string,
+	data: WalletLedgerPage | InfiniteData<WalletLedgerPage> | undefined,
+): boolean {
+	if (!data) return false;
+	const pages = "pages" in data ? data.pages : [data];
+	return pages.some((page) => walletTopupCreditIsApplied(paymentReference, page.items));
+}
+
 export async function waitForWalletTopupCredit(
 	queryClient: QueryClient,
 	paymentReference: string,
@@ -106,14 +117,14 @@ export async function waitForWalletTopupCredit(
 				{ throwOnError: true },
 			),
 		]);
-		const ledgerPages = queryClient.getQueriesData<{ items: WalletLedgerEntry[] }>({
+		const ledgerPages = queryClient.getQueriesData<
+			WalletLedgerPage | InfiniteData<WalletLedgerPage>
+		>({
 			queryKey: billingKeys.ledgerRoot,
 		});
 		if (
 			refreshes.every((refresh) => refresh.status === "fulfilled") &&
-			ledgerPages.some(([, page]) =>
-				walletTopupCreditIsApplied(paymentReference, page?.items ?? []),
-			)
+			ledgerPages.some(([, data]) => walletTopupCreditIsCached(paymentReference, data))
 		) {
 			return true;
 		}

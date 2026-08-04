@@ -5,16 +5,9 @@ import { AlertCircle, CreditCard, Repeat } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSettingsEditState } from "@/components/settings-edit-state";
+import { SettingsSection } from "@/components/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardFooter,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
@@ -57,13 +50,9 @@ const ALL_FIELDS_BLURRED: BlurredFields = { threshold: true, amount: true, cap: 
 export function AutoReloadCard({
 	wallet,
 	onTopUp,
-	onManagePaymentMethods,
-	isManagePaymentMethodsPending = false,
 }: {
 	wallet: WalletCacheSnapshot;
 	onTopUp?: () => void;
-	onManagePaymentMethods?: () => void;
-	isManagePaymentMethodsPending?: boolean;
 }) {
 	const save = useSensitiveSetAutoReload();
 	const queryClient = useQueryClient();
@@ -201,24 +190,21 @@ export function AutoReloadCard({
 				).format(new Date(wallet.auto_reload_period_end))}`;
 
 	return (
-		<Card data-hosted="true">
-			<CardHeader>
-				<div className="flex items-start justify-between gap-3">
-					<div className="min-w-0">
-						<CardTitle className="flex items-center gap-2 text-base">
-							<Repeat className="size-4" aria-hidden /> Auto-reload
-						</CardTitle>
-						<CardDescription>
-							{editing ? "Choose when and how much to add." : status.description}
-						</CardDescription>
-					</div>
+		<SettingsSection
+			data-hosted="true"
+			title={
+				<span className="flex flex-wrap items-center gap-2">
+					<span className="inline-flex items-center gap-2">
+						<Repeat className="size-4" aria-hidden /> Auto-reload
+					</span>
 					<StatusBadge status={status.tone} withDot>
 						{status.label}
 					</StatusBadge>
-				</div>
-			</CardHeader>
-
-			<CardContent className="flex flex-col gap-5">
+				</span>
+			}
+			description={editing ? "Choose when and how much to add." : status.description}
+		>
+			<div className="flex max-w-2xl flex-col gap-5">
 				<AutoReloadActionConfirm
 					wallet={wallet}
 					onTopUp={onTopUp}
@@ -308,7 +294,7 @@ export function AutoReloadCard({
 							</div>
 						</div>
 
-						<div className="space-y-3 rounded-lg border p-4">
+						<div className="space-y-3 border-t pt-5">
 							<div className="flex items-start justify-between gap-3">
 								<div className="space-y-0.5">
 									<Label htmlFor="ar-monthly-limit">Monthly limit</Label>
@@ -365,87 +351,71 @@ export function AutoReloadCard({
 						<p className="text-sm text-muted-foreground">{usage}</p>
 					</div>
 				) : null}
-			</CardContent>
 
-			<CardFooter className="flex flex-wrap justify-between gap-3 border-t">
-				<p className="text-xs text-muted-foreground">
-					Auto-reload uses your saved card. A manual top-up saves one.
-				</p>
-				<div className="flex flex-wrap gap-2">
-					{onManagePaymentMethods ? (
-						<Button
-							type="button"
-							size="sm"
-							variant="ghost"
-							onClick={onManagePaymentMethods}
-							disabled={isManagePaymentMethodsPending || save.isPending}
-						>
-							{isManagePaymentMethodsPending ? (
-								<Spinner data-icon="inline-start" />
-							) : (
-								<CreditCard data-icon="inline-start" />
-							)}
-							Payment methods
-						</Button>
-					) : null}
-					{editing ? (
-						<div key="auto-reload-edit-actions" className="flex gap-2">
-							<Button
-								type="button"
-								size="sm"
-								variant="ghost"
-								onClick={cancelChanges}
-								disabled={save.isPending}
-							>
-								Cancel
-							</Button>
-							<Button
-								type="submit"
-								form="auto-reload-form"
-								size="sm"
-								disabled={!dirty || !form.formValid || save.isPending}
-							>
-								{save.isPending ? (
-									<>
-										<Spinner data-icon="inline-start" /> Saving…
-									</>
-								) : (
-									"Save"
-								)}
-							</Button>
-						</div>
-					) : (
-						<div key="auto-reload-summary-actions" className="flex gap-2">
-							{wallet.auto_reload_enabled ? (
+				<div className="flex flex-wrap items-center justify-between gap-3">
+					<p className="text-xs text-muted-foreground">
+						Auto-reload uses your saved card. A manual top-up saves one.
+					</p>
+					<div className="flex flex-wrap gap-2">
+						{editing ? (
+							<div key="auto-reload-edit-actions" className="flex gap-2">
 								<Button
 									type="button"
 									size="sm"
 									variant="ghost"
-									onClick={() => void runAction(turnOff)}
+									onClick={cancelChanges}
 									disabled={save.isPending}
+								>
+									Cancel
+								</Button>
+								<Button
+									type="submit"
+									form="auto-reload-form"
+									size="sm"
+									disabled={!dirty || !form.formValid || save.isPending}
 								>
 									{save.isPending ? (
 										<>
-											<Spinner data-icon="inline-start" /> Turning off…
+											<Spinner data-icon="inline-start" /> Saving…
 										</>
 									) : (
-										"Turn off"
+										"Save"
 									)}
 								</Button>
-							) : null}
-							<Button
-								data-auto-reload-primary
-								type="button"
-								size="sm"
-								onClick={beginEditing}
-								disabled={save.isPending}
-							>
-								{wallet.auto_reload_enabled ? "Edit" : "Set up auto-reload"}
-							</Button>
-						</div>
-					)}
+							</div>
+						) : (
+							<div key="auto-reload-summary-actions" className="flex gap-2">
+								{wallet.auto_reload_enabled ? (
+									<Button
+										type="button"
+										size="sm"
+										variant="ghost"
+										onClick={() => void runAction(turnOff)}
+										disabled={save.isPending}
+									>
+										{save.isPending ? (
+											<>
+												<Spinner data-icon="inline-start" /> Turning off…
+											</>
+										) : (
+											"Turn off"
+										)}
+									</Button>
+								) : null}
+								<Button
+									data-auto-reload-primary
+									type="button"
+									size="sm"
+									onClick={beginEditing}
+									disabled={save.isPending}
+								>
+									{wallet.auto_reload_enabled ? "Edit" : "Set up auto-reload"}
+								</Button>
+							</div>
+						)}
+					</div>
 				</div>
-			</CardFooter>
-		</Card>
+			</div>
+		</SettingsSection>
 	);
 }

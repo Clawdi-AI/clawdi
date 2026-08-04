@@ -11,6 +11,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -133,9 +134,10 @@ export function LedgerTable({
 	}
 
 	return (
-		<section data-hosted="true" className="space-y-3" aria-labelledby={headingId}>
+		<section data-hosted="true" className="flex flex-col gap-4" aria-labelledby={headingId}>
+			<Separator />
 			<div className="flex items-center justify-between gap-2">
-				<h2 id={headingId} className="text-base font-semibold">
+				<h2 id={headingId} className="text-sm font-semibold">
 					Activity
 				</h2>
 				<Select

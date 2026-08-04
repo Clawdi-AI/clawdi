@@ -32,7 +32,7 @@ import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Add funds and manage how your Clawdi usage is paid.";
-const WALLET_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6");
+const WALLET_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-8 px-4 lg:px-6");
 
 function scrollToAutoReload() {
 	const section = document.getElementById("auto-reload");
@@ -166,9 +166,15 @@ export function WalletPage() {
 		<div data-hosted="true" className={WALLET_PAGE_CLASS}>
 			<PageHeader title="Wallet" description={DESCRIPTION} />
 
-			<TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} presentation="inline" />
+			<TopUpDialog
+				open={topUpOpen}
+				onOpenChange={setTopUpOpen}
+				onComplete={(_status, paymentReference) => {
+					void confirmWalletTopup(queryClient, paymentReference);
+				}}
+			/>
 
-			<div className={cn("space-y-6", topUpOpen && "hidden")}>
+			<div className="space-y-8">
 				<LowBalanceBanner
 					wallet={w}
 					hasWalletCompute={walletComputeCount > 0}
@@ -184,13 +190,8 @@ export function WalletPage() {
 					isManagePaymentMethodsPending={portal.isPending}
 				/>
 
-				<div id="auto-reload">
-					<AutoReloadCard
-						wallet={w}
-						onTopUp={() => setTopUpOpen(true)}
-						onManagePaymentMethods={() => void runAction(openBillingPortal)}
-						isManagePaymentMethodsPending={portal.isPending}
-					/>
+				<div id="auto-reload" data-testid="auto-reload-section">
+					<AutoReloadCard wallet={w} onTopUp={() => setTopUpOpen(true)} />
 				</div>
 
 				<X402Card enabled={w.x402_enabled === true} />

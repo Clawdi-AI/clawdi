@@ -1,6 +1,13 @@
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
+type SettingsSectionProps = Omit<React.ComponentProps<"section">, "children" | "title"> & {
+	title: React.ReactNode;
+	description?: React.ReactNode;
+	children?: React.ReactNode;
+	variant?: "default" | "destructive";
+};
+
 /** Flat form/settings section; use SectionLabel for list-group captions and DashboardSection for bordered content containers. */
 export function SettingsSection({
 	title,
@@ -8,15 +15,10 @@ export function SettingsSection({
 	children,
 	className,
 	variant = "default",
-}: {
-	title: React.ReactNode;
-	description?: React.ReactNode;
-	children: React.ReactNode;
-	className?: string;
-	variant?: "default" | "destructive";
-}) {
+	...sectionProps
+}: SettingsSectionProps) {
 	return (
-		<section className={cn("flex flex-col gap-4", className)}>
+		<section {...sectionProps} className={cn("flex flex-col gap-4", className)}>
 			<Separator />
 			<div className="flex max-w-2xl flex-col gap-1.5">
 				<div
@@ -28,7 +30,9 @@ export function SettingsSection({
 					<div className="text-sm leading-5 text-muted-foreground">{description}</div>
 				) : null}
 			</div>
-			<div className="min-w-0">{children}</div>
+			{children !== undefined && children !== null ? (
+				<div className="min-w-0">{children}</div>
+			) : null}
 		</section>
 	);
 }
