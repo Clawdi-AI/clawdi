@@ -154,9 +154,7 @@ describe("CLI publish workflow contract", () => {
 			workflow.indexOf("  publish-immutable-artifact-with-oidc:"),
 		);
 		const publishJob = workflow.slice(workflow.indexOf("  publish-immutable-artifact-with-oidc:"));
-		const noOpDecision = buildJob.indexOf(
-			'registry_version=$(npm view "clawdi@$version" version 2>/dev/null || true)',
-		);
+		const noOpDecision = buildJob.indexOf('gh release view "$tag" --json isDraft --jq .isDraft');
 		const absenceCheck = publishJob.indexOf("if ! npm_release_visible; then");
 		const publishCommand = publishJob.indexOf("npm publish ");
 		const visibilityWait = publishJob.indexOf("for attempt in $(seq 1 12); do", publishCommand);
@@ -170,8 +168,6 @@ describe("CLI publish workflow contract", () => {
 		expect(noOpDecision).toBeGreaterThan(-1);
 		expect(noOpDecision).toBeLessThan(buildJob.indexOf("bun install --frozen-lockfile"));
 		expect(buildJob).toContain("should_release=true");
-		expect(buildJob).toContain('gh release view "$tag"');
-		expect(buildJob).toContain("--json isDraft --jq .isDraft");
 		expect(buildJob.match(/should_release=false/g)).toHaveLength(1);
 		expect(absenceCheck).toBeGreaterThan(-1);
 		expect(absenceCheck).toBeLessThan(publishCommand);

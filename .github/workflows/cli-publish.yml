@@ -53,12 +53,9 @@ jobs:
             *) npm_tag=latest ;;
           esac
           should_release=true
-          registry_version=$(npm view "clawdi@$version" version 2>/dev/null || true)
-          if [ "$registry_version" = "$version" ]; then
-            tag="clawdi-cli-v$version"
-            if [ "$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)" = "false" ]; then
-              should_release=false
-            fi
+          tag="clawdi-cli-v$version"
+          if [ "$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)" = "false" ]; then
+            should_release=false
           fi
           VERSION="$version" NPM_TAG="$npm_tag" SHOULD_RELEASE="$should_release" node - <<'NODE'
           const fs = require("node:fs");

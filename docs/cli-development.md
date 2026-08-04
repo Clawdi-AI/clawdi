@@ -297,9 +297,9 @@ Use `docs/runbooks/release.md` for the full app/backend/web/CLI release
 checklist. This section covers the CLI/npm release line in detail.
 
 Publishing is automated. `.github/workflows/cli-publish.yml` watches `main`
-for changes under `packages/cli/`. If the exact npm version and its published,
-non-draft GitHub Release already exist, the workflow exits before installing
-dependencies or building. Otherwise it builds
+for changes under `packages/cli/`. If the version's GitHub Release is already
+published, the workflow exits before installing dependencies or building.
+Otherwise it builds
 the artifact from its own `GITHUB_SHA`. An absent exact npm version is
 published; an existing version is never republished and must have the same
 `dist.integrity` as the artifact built by this run.
@@ -317,8 +317,8 @@ The build/test job may use the configured fast runner, but the protected
 publish job is fixed to GitHub-hosted `ubuntu-latest`: npm trusted publishing
 does not support self-hosted or third-party GitHub Actions runners. The publish
 job uses Node 24 and npm 11.5.1, satisfying npm's minimum Node 22.14 and npm
-11.5.1. The lightweight preflight reads only the exact npm version and the
-corresponding GitHub Release state; it does not query provenance. After a fresh
+11.5.1. The lightweight preflight reads only the GitHub Release state; it does
+not query npm or provenance. After a fresh
 `npm publish --provenance` succeeds, that command plus the exact registry
 version and matching `dist.integrity` authorizes GitHub Release completion; the
 job does not wait for the eventually consistent registry attestation read API.
