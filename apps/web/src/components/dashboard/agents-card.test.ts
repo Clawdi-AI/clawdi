@@ -10,11 +10,14 @@ import {
 
 type FocusHeaderSyncSource = typeof import("@/components/app-sidebar").focusHeaderSyncSource;
 type FocusHeaderComputeStatus = typeof import("@/components/app-sidebar").focusHeaderComputeStatus;
+type ScopedAgentResourceSidebarTarget =
+	typeof import("@/components/app-sidebar").scopedAgentResourceSidebarTarget;
 
 type Env = components["schemas"]["AgentResponse"];
 
 let getFocusHeaderSyncSource: FocusHeaderSyncSource | null = null;
 let getFocusHeaderComputeStatus: FocusHeaderComputeStatus | null = null;
+let getScopedAgentResourceSidebarTarget: ScopedAgentResourceSidebarTarget | null = null;
 
 beforeAll(async () => {
 	process.env.VITE_CLAWDI_API_URL = "http://localhost:8000";
@@ -22,6 +25,7 @@ beforeAll(async () => {
 	const sidebar = await import("@/components/app-sidebar");
 	getFocusHeaderSyncSource = sidebar.focusHeaderSyncSource;
 	getFocusHeaderComputeStatus = sidebar.focusHeaderComputeStatus;
+	getScopedAgentResourceSidebarTarget = sidebar.scopedAgentResourceSidebarTarget;
 });
 
 function env(overrides: Partial<Env> = {}): Env {
@@ -182,6 +186,54 @@ describe("focused sidebar status projection", () => {
 		expect(getFocusHeaderSyncSource("legacy", true)).toBe("on-clawdi");
 		if (!getFocusHeaderComputeStatus) throw new Error("focusHeaderComputeStatus was not loaded");
 		expect(getFocusHeaderComputeStatus("connected", null)).toBeNull();
+	});
+});
+
+describe("focused sidebar resource scope", () => {
+	it("activates the exact Workspace resource for primary-scoped detail routes", () => {
+		if (!getScopedAgentResourceSidebarTarget) {
+			throw new Error("scopedAgentResourceSidebarTarget was not loaded");
+		}
+
+		expect(
+			getScopedAgentResourceSidebarTarget(
+				"/agents/agent-one/skills/vendor/review",
+				"?source=on-clawdi&d=hdep_one&project=workspace-one",
+				"workspace-one",
+				["context-one"],
+			),
+		).toEqual({ kind: "workspace", resource: "skills" });
+		expect(
+			getScopedAgentResourceSidebarTarget(
+				"/agents/agent-one/vaults/production",
+				"?project=WORKSPACE-ONE&source=on-clawdi&d=hdep_one",
+				"workspace-one",
+				["context-one"],
+			),
+		).toEqual({ kind: "workspace", resource: "vaults" });
+	});
+
+	it("activates Projects only for a bound context Project", () => {
+		if (!getScopedAgentResourceSidebarTarget) {
+			throw new Error("scopedAgentResourceSidebarTarget was not loaded");
+		}
+
+		expect(
+			getScopedAgentResourceSidebarTarget(
+				"/agents/agent-one/skills/vendor/review",
+				"?project=context-one&source=on-clawdi&d=hdep_one",
+				"workspace-one",
+				["context-one"],
+			),
+		).toEqual({ kind: "projects" });
+		expect(
+			getScopedAgentResourceSidebarTarget(
+				"/agents/agent-one/vaults/production",
+				"?project=unbound-project",
+				"workspace-one",
+				["context-one"],
+			),
+		).toBeNull();
 	});
 });
 

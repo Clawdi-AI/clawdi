@@ -163,7 +163,33 @@ type SidebarNavItem = {
 
 type AgentPrimaryProjectNavigation = {
 	id: string;
+	contextProjectIds: readonly string[];
 };
+
+type ScopedAgentResourceSidebarTarget =
+	| { kind: "workspace"; resource: "skills" | "vaults" }
+	| { kind: "projects" }
+	| null;
+
+export function scopedAgentResourceSidebarTarget(
+	pathname: string,
+	searchStr: string,
+	primaryProjectId: string,
+	contextProjectIds: readonly string[],
+): ScopedAgentResourceSidebarTarget {
+	const route = parseAgentPathname(pathname);
+	if (!route || (route.section !== "skills" && route.section !== "vaults")) return null;
+
+	const projectId = new URLSearchParams(searchStr).get("project")?.trim();
+	if (!projectId) return null;
+	if (agentRouteIdsEqual(projectId, primaryProjectId)) {
+		return { kind: "workspace", resource: route.section };
+	}
+	if (contextProjectIds.some((id) => agentRouteIdsEqual(projectId, id))) {
+		return { kind: "projects" };
+	}
+	return null;
+}
 
 const RAIL_DRAG_ACTIVATION_DISTANCE = 10;
 const RAIL_KEYBOARD_CODES = {
@@ -356,9 +382,18 @@ function AgentSectionList({
 	const primaryProjectRouteActive = Boolean(
 		primaryProject && agentRouteIdsEqual(activeAgentRoute?.projectId, primaryProject.id),
 	);
-	const activePrimaryProjectResource = primaryProjectRouteActive
-		? activeAgentRoute?.projectResource
+	const scopedResourceTarget = primaryProject
+		? scopedAgentResourceSidebarTarget(
+				pathname,
+				searchStr,
+				primaryProject.id,
+				primaryProject.contextProjectIds,
+			)
 		: null;
+	const activePrimaryProjectResource =
+		(primaryProjectRouteActive ? activeAgentRoute?.projectResource : null) ??
+		(scopedResourceTarget?.kind === "workspace" ? scopedResourceTarget.resource : null);
+	const activeContextProjectResource = scopedResourceTarget?.kind === "projects";
 	const normalizedActiveSection = groups.some((group) =>
 		group.items.some((item) => item.id === activeSection),
 	)
@@ -395,8 +430,12 @@ function AgentSectionList({
 									tint: item.tint,
 									tooltip: item.tooltip,
 									active:
-										normalizedActiveSection === item.id &&
-										!(item.id === "projects" && activePrimaryProjectResource),
+										item.id === "projects"
+											? activeContextProjectResource ||
+												(normalizedActiveSection === "projects" && !activePrimaryProjectResource)
+											: normalizedActiveSection === item.id &&
+												!activePrimaryProjectResource &&
+												!activeContextProjectResource,
 									prefetch: item.id === "connectors" ? prefetchConnectorsCatalog : undefined,
 								};
 							}),
@@ -1578,7 +1617,14 @@ export function AppSidebar({
 					navigableProjects.data ?? [],
 					activeAgent?.default_project_id,
 				);
-	const primaryProject = resolvedPrimaryProject ? { id: resolvedPrimaryProject.id } : null;
+	const primaryProject = resolvedPrimaryProject
+		? {
+				id: resolvedPrimaryProject.id,
+				contextProjectIds: (defaultProjectBindings.data ?? [])
+					.filter((binding) => binding.binding_type === "context")
+					.map((binding) => binding.project_id),
+			}
+		: null;
 	const classifiedActiveAgentKind = useAgentChromeKind(activeAgent, activeAgentTile);
 	const activeAgentKind =
 		activeAgentTile || !activeAgentId || (agentsLoaded && !hostedInventoryFetching)

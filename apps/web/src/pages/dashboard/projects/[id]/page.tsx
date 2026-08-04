@@ -211,6 +211,7 @@ export default function ProjectDetailPage({
 	const scopedBinding =
 		orderedScopedBindings.find((binding) => binding.project_id === projectId) ?? null;
 	const isWorkspace = isAgentScope && scopedBinding?.binding_type === "primary";
+	const isWorkspaceContext = isWorkspace || project?.kind === "environment";
 	const canManageProjectSkills = canManageSkills && !isWorkspace;
 	const deploymentSelector =
 		scope.kind === "agent" ? agentDeploymentSelector(scope.agentQuery) : null;
@@ -538,11 +539,12 @@ export default function ProjectDetailPage({
 	const blockingBoundAgentsError = shouldBlockQueryError(boundAgents.error, boundAgents.data)
 		? boundAgents.error
 		: null;
-	const skillCount: CountValue | undefined = blockingSkillsError
-		? "unavailable"
-		: isWorkspace
-			? workspaceSkillProjections.length
-			: skills.data?.items.length;
+	const skillCount: CountValue | undefined =
+		isWorkspace || project.kind === "environment"
+			? undefined
+			: blockingSkillsError
+				? "unavailable"
+				: skills.data?.items.length;
 	const vaultCount: CountValue | undefined = blockingVaultsError
 		? "unavailable"
 		: vaults.data?.items.length;
@@ -623,7 +625,7 @@ export default function ProjectDetailPage({
 					)
 				}
 				actions={
-					!isAgentScope ? (
+					!isAgentScope && isShareableProject ? (
 						<>
 							{addToAgentDialog(
 								<Button size="sm">
@@ -648,7 +650,7 @@ export default function ProjectDetailPage({
 				}
 			/>
 
-			{joinedFromShare ? (
+			{joinedFromShare && isShareableProject ? (
 				<Alert>
 					<CheckCircle2 className="size-4" />
 					<AlertTitle>Project added</AlertTitle>
@@ -668,7 +670,9 @@ export default function ProjectDetailPage({
 			{/* Stat tiles — anchors into the sections below. */}
 			{!isAgentScope ? (
 				<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-					<StatTile label="Skills" value={skillCount} href="#skills" />
+					{project.kind !== "environment" ? (
+						<StatTile label="Skills" value={skillCount} href="#skills" />
+					) : null}
 					<StatTile label="Vaults" value={vaultCount} href="#vaults" />
 					{isOwner && isShareableProject ? (
 						<StatTile label="People" value={peopleCount} href="#people" />
@@ -855,7 +859,9 @@ export default function ProjectDetailPage({
 						onRetry={() => {
 							void vaults.refetch();
 						}}
-						title="Couldn't load Project vaults"
+						title={
+							isWorkspaceContext ? "Couldn't load Workspace Vaults" : "Couldn't load Project vaults"
+						}
 					/>
 				) : vaults.data?.items.length ? (
 					<div className={HERO_GRID_CLASS}>
@@ -895,7 +901,13 @@ export default function ProjectDetailPage({
 						))}
 					</div>
 				) : (
-					<EmptyLine message="No Vaults are attached to this Project yet." />
+					<EmptyLine
+						message={
+							isWorkspaceContext
+								? "No Vaults are attached to this Workspace yet."
+								: "No Vaults are attached to this Project yet."
+						}
+					/>
 				)}
 			</HubSection>
 
@@ -959,12 +971,16 @@ export default function ProjectDetailPage({
 						agent={projectAgent}
 						isLeaving={leaveSharedProject.isPending}
 						onLeave={() => leaveSharedProject.mutate()}
-						useWithAgentControl={addToAgentDialog(
-							<Button size="sm" className="w-fit">
-								<Bot className="mr-1.5 size-3.5" />
-								Link Project
-							</Button>,
-						)}
+						useWithAgentControl={
+							isShareableProject
+								? addToAgentDialog(
+										<Button size="sm" className="w-fit">
+											<Bot className="mr-1.5 size-3.5" />
+											Link Project
+										</Button>,
+									)
+								: null
+						}
 					/>
 				</HubSection>
 			) : null}
@@ -974,13 +990,23 @@ export default function ProjectDetailPage({
 					id="agents"
 					title="Agents"
 					count={agentCount}
-					description="Agents linked to this Project for Vault runtime resolution."
-					action={addToAgentDialog(
-						<Button variant="outline" size="sm">
-							<Bot className="mr-1.5 size-3.5" />
-							Link Project
-						</Button>,
-					)}
+					description={
+						project.kind === "environment"
+							? "Home Agent for this managed Workspace."
+							: project.kind === "personal"
+								? "This Global Project is account-wide and is not linked to Agents."
+								: "Agents linked to this Project for Vault runtime resolution."
+					}
+					action={
+						isShareableProject
+							? addToAgentDialog(
+									<Button variant="outline" size="sm">
+										<Bot className="mr-1.5 size-3.5" />
+										Link Project
+									</Button>,
+								)
+							: undefined
+					}
 				>
 					{boundAgents.isLoading || environments.isLoading ? (
 						<Skeleton className="h-16 w-full" />
@@ -1001,7 +1027,15 @@ export default function ProjectDetailPage({
 							title="Couldn't load Project agent bindings"
 						/>
 					) : (boundAgents.data?.length ?? 0) === 0 ? (
-						<EmptyLine message="No Agents are linked yet. Linking adds attached Vaults to runtime resolution; it does not install Skills." />
+						<EmptyLine
+							message={
+								project.kind === "environment"
+									? "The home Agent for this Workspace is unavailable."
+									: project.kind === "personal"
+										? "Global Project applies account-wide and has no Agent links."
+										: "No Agents are linked yet. Linking adds attached Vaults to runtime resolution; it does not install Skills."
+							}
+						/>
 					) : (
 						<div className="divide-y overflow-hidden rounded-lg border bg-card">
 							{(boundAgents.data ?? []).map(({ env, home }) => (
