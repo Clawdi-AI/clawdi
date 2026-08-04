@@ -203,8 +203,7 @@ function ConnectorsList({
 					<Plug />
 					<AlertTitle>Shared across all agents</AlertTitle>
 					<AlertDescription>
-						Connections belong to this account. Connecting or disconnecting here affects every
-						agent.
+						Connections belong to this account. Connecting or disconnecting here affects all agents.
 					</AlertDescription>
 				</Alert>
 			) : null}

@@ -151,7 +151,7 @@ export function MemoriesSurface({
 	const emptyMessage =
 		debouncedSearch || apiCategory
 			? "No matches — try a different search or category."
-			: "No memories yet. Add one above, or your agents will create them automatically as they work.";
+			: "No memories yet. Create one above, or your Agents will create them automatically as they work.";
 	const paginationFooter = (
 		<DataTablePagination
 			page={pagination.pageIndex + 1}
@@ -441,7 +441,7 @@ function AddMemoryForm() {
 			setOpen(false);
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
 		},
-		onError: (e) => toast.error("Couldn't add memory", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't create memory", { description: errorMessage(e) }),
 	});
 
 	return (

@@ -84,7 +84,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 		const failed =
 			oauthState.error !== null || oauthState.status === "error" || oauthState.status === "failed";
 		if (!failed) return;
-		toast.error("Connection Failed", {
+		toast.error("Connection failed", {
 			description: oauthState.error || "OAuth did not complete. Try again from this page.",
 		});
 		void setOauthState({ error: null, status: null }, { history: "replace" });
@@ -295,8 +295,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					<Plug />
 					<AlertTitle>Shared across all agents</AlertTitle>
 					<AlertDescription>
-						Connections belong to this account. Connecting or disconnecting here affects every
-						agent.
+						Connections belong to this account. Connecting or disconnecting here affects all agents.
 					</AlertDescription>
 				</Alert>
 			) : null}

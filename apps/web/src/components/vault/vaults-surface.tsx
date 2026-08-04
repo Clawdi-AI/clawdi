@@ -444,7 +444,7 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 	const triggerElement = trigger ?? (
 		<Button size="sm">
 			<Plus className="size-3.5" />
-		Create vault
+			Create vault
 		</Button>
 	);
 

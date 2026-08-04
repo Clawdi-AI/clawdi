@@ -232,8 +232,8 @@ export default function ProjectsPage() {
 					<DialogHeader>
 						<DialogTitle>Create project</DialogTitle>
 						<DialogDescription>
-							Create a Project for a team, workflow, repo, or shareable resources. Install
-							Skills, attach Vaults, and configure sharing after it is created.
+							Create a Project for a team, workflow, repo, or shareable resources. Install Skills,
+							attach Vaults, and configure sharing after it is created.
 						</DialogDescription>
 					</DialogHeader>
 					<form

@@ -446,7 +446,7 @@ function AgentProjectsPanel({
 														</p>
 													</>
 												}
-										confirmLabel="Unlink project"
+												confirmLabel="Unlink project"
 												destructive
 												onConfirm={() => removeBinding.mutate(binding.id)}
 											>
@@ -454,7 +454,7 @@ function AgentProjectsPanel({
 													variant="ghost"
 													size="icon-sm"
 													disabled={isRemoving}
-											title="Unlink project"
+													title="Unlink project"
 													aria-label={`Unlink ${projectName}`}
 												>
 													{isRemoving ? (
@@ -536,8 +536,8 @@ function AgentProjectsPanel({
 					<DialogHeader>
 						<DialogTitle>Create project</DialogTitle>
 						<DialogDescription>
-							Create a Project and link it to this Agent. Install Skills and attach Vaults to
-							the Project separately.
+							Create a Project and link it to this Agent. Install Skills and attach Vaults to the
+							Project separately.
 						</DialogDescription>
 					</DialogHeader>
 					{createdProjectAwaitingLink ? (
@@ -597,7 +597,7 @@ function AgentProjectsPanel({
 								</Button>
 								<Button type="submit" disabled={!newProjectName.trim() || createAndLink.isPending}>
 									{createAndLink.isPending ? <Spinner className="size-3.5" /> : <Plus />}
-									Create and link
+									Create project
 								</Button>
 							</DialogFooter>
 						</form>

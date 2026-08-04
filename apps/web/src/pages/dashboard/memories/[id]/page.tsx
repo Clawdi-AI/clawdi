@@ -56,7 +56,7 @@ export default function MemoryDetailPage({
 
 	const deleteMemory = api.useMutation("delete", "/v1/memories/{memory_id}", {
 		onSuccess: () => {
-			toast.success("Memory Deleted", {
+			toast.success("Memory deleted", {
 				description: "Your agents will no longer recall it.",
 			});
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });

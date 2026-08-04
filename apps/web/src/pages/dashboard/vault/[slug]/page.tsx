@@ -1103,9 +1103,7 @@ function ShareKeysDialog({
 					}}
 				>
 					{isAttaching ? <Spinner /> : <Plus className="size-3.5" />}
-					{projectId && (vault.project_ids ?? []).includes(projectId)
-						? "Continue"
-						: "Attach vault"}
+					{projectId && (vault.project_ids ?? []).includes(projectId) ? "Continue" : "Attach vault"}
 				</Button>
 				{alreadyIn.length > 0 ? (
 					<p className="text-xs text-muted-foreground">

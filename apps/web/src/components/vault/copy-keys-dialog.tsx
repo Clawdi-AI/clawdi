@@ -300,7 +300,7 @@ export function CopyKeysDialog({
 									))}
 									<SelectItem value={NEW_VAULT}>
 										<Plus className="size-3.5" />
-									Create vault…
+										Create vault…
 									</SelectItem>
 								</SelectContent>
 							</Select>

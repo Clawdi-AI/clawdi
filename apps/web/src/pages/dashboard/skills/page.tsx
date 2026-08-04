@@ -474,9 +474,9 @@ function SkillsPageInner() {
 		: isStaleTarget
 			? "This link points to an agent that no longer exists. Pick a Project above."
 			: orderedProjects.length === 0
-					? "Create a Project first, then install Skills in it."
+				? "Create a Project first, then install Skills in it."
 				: isProjectReady
-						? "No Skills are stored in this Project yet. Install one from the marketplace below."
+					? "No Skills are stored in this Project yet. Install one from the marketplace below."
 					: "Pick a Project to see its skills.";
 	const canShareTargetProject =
 		targetProject && isProjectOwner(targetProject) && isCustomProject(targetProject);

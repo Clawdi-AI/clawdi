@@ -130,17 +130,11 @@ function HostedWorkspaceSkillsPanelContent({
 				return;
 			}
 			void queryClient.invalidateQueries({ queryKey: statusKey });
-			toast.success(
-				variables.action === "install"
-					? "Skill installed"
-					: "Skill uninstalled",
-			);
+			toast.success(variables.action === "install" ? "Skill installed" : "Skill uninstalled");
 		},
 		onError: (error, variables) => {
 			toast.error(
-				variables.action === "install"
-					? "Couldn't install skill"
-					: "Couldn't uninstall skill",
+				variables.action === "install" ? "Couldn't install skill" : "Couldn't uninstall skill",
 				{ description: errorMessage(error) },
 			);
 		},
