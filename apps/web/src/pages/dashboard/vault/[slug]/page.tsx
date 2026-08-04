@@ -777,7 +777,7 @@ export default function VaultDetailPage({
 											<Button
 												variant="ghost"
 												size="icon-xs"
-												className="text-muted-foreground opacity-0 transition-opacity duration-150 hover:text-destructive group-focus-within:opacity-100 group-hover:opacity-100"
+												className="text-muted-foreground opacity-100 transition-opacity duration-150 hover:text-destructive sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"
 												aria-label={`Delete ${name}`}
 											>
 												<Trash2 className="size-3" />

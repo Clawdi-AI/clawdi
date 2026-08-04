@@ -1144,6 +1144,18 @@ async def test_vault_create_only_rejects_existing_slug(client, db_session, seed_
     db_session.add_all([project_a, project_b])
     await db_session.commit()
 
+    unattached = await client.post(
+        "/v1/vault?create_only=true",
+        json={"slug": "account-only", "name": "Account only"},
+    )
+    assert unattached.status_code == 200, unattached.text
+    unattached_detail = await client.get(
+        f"/v1/vault/detail?slug=account-only&vault_id={unattached.json()['id']}"
+    )
+    assert unattached_detail.status_code == 200, unattached_detail.text
+    assert unattached_detail.json()["project_id"] is None
+    assert unattached_detail.json()["project_ids"] == []
+
     first = await client.post(
         f"/v1/vault?project_id={project_a.id}",
         json={"slug": "github", "name": "GitHub"},

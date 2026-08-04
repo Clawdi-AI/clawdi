@@ -183,7 +183,10 @@ async def create_vault(
     project_id: UUID | None = Query(default=None),
     create_only: bool = Query(
         default=False,
-        description="Return 409 if this slug already exists instead of attaching it.",
+        description=(
+            "Use strict create semantics: return 409 for an existing slug and, when "
+            "project_id is omitted, leave a newly created Vault unattached."
+        ),
     ),
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
@@ -191,13 +194,15 @@ async def create_vault(
     selected_project_id = project_id
     if selected_project_id is not None:
         await validate_project_for_caller(db, auth, selected_project_id)
-    else:
+    elif not create_only:
+        # Preserve the released CLI contract: a plain POST without a Project
+        # resolves and attaches the caller's default write Project.
         selected_project_id = await resolve_default_write_project(db, auth)
 
-    # Vaults are account-owned. Creating with a Project selected also
-    # ensures the vault is attached to that Project; if the slug already
-    # exists, this endpoint becomes idempotent attach for CLI/dashboard
-    # flows that first pick a Project and then add keys.
+    # Vaults are account-owned. `create_only=true` without a Project is the
+    # account-library create contract and deliberately leaves the Vault
+    # unattached. An explicit Project still attaches exactly that Project;
+    # plain POST retains the idempotent create-or-attach behavior used by CLI.
     existing_result = await db.execute(
         select(Vault).where(
             Vault.user_id == auth.user_id,
@@ -212,7 +217,8 @@ async def create_vault(
         db.add(vault)
         await db.flush()
 
-    await _ensure_vault_attached(db, vault.id, selected_project_id)
+    if selected_project_id is not None:
+        await _ensure_vault_attached(db, vault.id, selected_project_id)
     await db.commit()
     await db.refresh(vault)
     return VaultCreatedResponse(id=str(vault.id), slug=vault.slug)

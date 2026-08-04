@@ -12,6 +12,7 @@ import { EntityMeta, HERO_CARD_BASE } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
 import { memorySettingsForCache } from "@/components/memories/memory-settings-cache";
 import { TimeTooltip } from "@/components/time-tooltip";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -162,6 +163,15 @@ export function MemoriesSurface({
 	);
 	return (
 		<div className="space-y-6" data-testid="memories-surface">
+			{scope.kind === "agent" ? (
+				<Alert>
+					<Brain />
+					<AlertTitle>Shared across all agents</AlertTitle>
+					<AlertDescription>
+						Memories and provider settings belong to this account. Changes here affect every agent.
+					</AlertDescription>
+				</Alert>
+			) : null}
 			{provider === "mem0" && !hasMem0Key ? (
 				<Mem0KeyForm onSave={saveMem0Key.execute} isPending={saveMem0Key.isPending} />
 			) : null}
@@ -337,7 +347,7 @@ function MemoryNotesGrid({
 							) : null,
 						]}
 					/>
-					<span className="absolute right-2 top-2 z-10 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+					<span className="absolute right-2 top-2 z-10 opacity-100 transition-opacity duration-150 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
 						<ConfirmAction
 							title="Delete this memory?"
 							description={<p>Deleting removes this memory from every agent.</p>}

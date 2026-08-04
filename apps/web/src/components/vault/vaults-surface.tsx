@@ -399,14 +399,6 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 	const [open, setOpen] = useState(false);
 	const [name, setName] = useState("");
 
-	const projects = $api.useQuery(
-		"get",
-		"/v1/projects",
-		{},
-		{
-			enabled: open,
-		},
-	);
 	const vaultsQuery = $api.useQuery(
 		"get",
 		"/v1/vault",
@@ -417,36 +409,22 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 			enabled: open,
 		},
 	);
-	// A vault is created through a project the user can write to; the
-	// personal (Global) project always exists and is the least surprising
-	// default — attachments can be changed afterwards on the vault page.
-	const defaultProject = useMemo(() => {
-		const rows = projects.data ?? [];
-		return rows.find((p) => p.kind === "personal") ?? rows.find((p) => p.is_owner !== false);
-	}, [projects.data]);
-
 	const slug = slugFromVaultName(name);
 	const slugTaken =
 		slug.length > 0 &&
 		(vaultsQuery.data?.items ?? []).some((v) => v.is_owner !== false && v.slug === slug);
 	const canCreate =
-		name.trim().length > 0 &&
-		slug.length > 0 &&
-		!slugTaken &&
-		!projects.isLoading &&
-		!vaultsQuery.isLoading &&
-		defaultProject !== undefined;
+		name.trim().length > 0 && slug.length > 0 && !slugTaken && !vaultsQuery.isLoading;
 
 	const create = useMutation({
 		mutationFn: async () => {
-			if (!defaultProject) throw new Error("No writable Project available yet");
 			if (!slug) throw new Error("Use letters or numbers in the vault name");
 			if ((vaultsQuery.data?.items ?? []).some((v) => v.is_owner !== false && v.slug === slug)) {
 				throw new Error("A vault with that name already exists");
 			}
 			return unwrap(
 				await api.POST("/v1/vault", {
-					params: { query: { project_id: defaultProject.id, create_only: true } },
+					params: { query: { create_only: true } },
 					body: { slug, name: name.trim() },
 				}),
 			);

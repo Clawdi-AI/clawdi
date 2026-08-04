@@ -166,9 +166,7 @@ export default function ProjectDetailPage({
 	const [useWithAgentOpen, setUseWithAgentOpen] = useState(
 		searchParams.get("useWithAgent") === "1",
 	);
-	// Forms are progressive-disclosure (taste audit #2): content first,
-	// inputs on demand.
-	const [showInstallSkill, setShowInstallSkill] = useState(false);
+	const [installSkillOpen, setInstallSkillOpen] = useState(false);
 	const joinedFromShare = !isAgentScope && searchParams.get("joined") === "share";
 
 	const projects = $api.useQuery("get", "/v1/projects", {});
@@ -628,12 +626,14 @@ export default function ProjectDetailPage({
 				actions={
 					!isAgentScope && isShareableProject ? (
 						<>
-							{addToAgentDialog(
-								<Button size="sm">
-									<Bot className="mr-1.5 size-3.5" />
-									Link Project
-								</Button>,
-							)}
+							{!joinedFromShare
+								? addToAgentDialog(
+										<Button size="sm">
+											<Bot className="mr-1.5 size-3.5" />
+											Link project
+										</Button>,
+									)
+								: null}
 							{isOwner && isShareableProject ? (
 								<ShareProjectDialog
 									projectId={project.id}
@@ -662,7 +662,7 @@ export default function ProjectDetailPage({
 						</span>
 						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
 							<Bot className="mr-1.5 size-3.5" />
-							Link Project
+							Link project
 						</Button>
 					</AlertDescription>
 				</Alert>
@@ -709,22 +709,22 @@ export default function ProjectDetailPage({
 								/>
 							) : null}
 							{canManageProjectSkills ? (
-								<Button
-									variant="outline"
-									size="sm"
-									aria-expanded={showInstallSkill}
-									onClick={() => setShowInstallSkill((v) => !v)}
-								>
+								<Button variant="outline" size="sm" onClick={() => setInstallSkillOpen(true)}>
 									<Plus className="size-3.5" />
-									Add to Project
+									Install skill
 								</Button>
 							) : null}
 						</>
 					) : undefined
 				}
 			>
-				{canManageProjectSkills && showInstallSkill ? (
-					<InstallSkillInProjectForm projectId={project.id} onChanged={refresh} />
+				{canManageProjectSkills ? (
+					<InstallSkillInProjectDialog
+						projectId={project.id}
+						open={installSkillOpen}
+						onOpenChange={setInstallSkillOpen}
+						onChanged={refresh}
+					/>
 				) : null}
 				{blockingWorkspaceAgentError ? (
 					<ApiErrorPanel
@@ -963,16 +963,7 @@ export default function ProjectDetailPage({
 						agent={projectAgent}
 						isLeaving={leaveSharedProject.isPending}
 						onLeave={() => leaveSharedProject.mutate()}
-						useWithAgentControl={
-							isShareableProject
-								? addToAgentDialog(
-										<Button size="sm" className="w-fit">
-											<Bot className="mr-1.5 size-3.5" />
-											Link Project
-										</Button>,
-									)
-								: null
-						}
+						useWithAgentControl={null}
 					/>
 				</HubSection>
 			) : null}
@@ -988,16 +979,6 @@ export default function ProjectDetailPage({
 							: project.kind === "personal"
 								? "This Global Project is account-wide and is not linked to Agents."
 								: "Agents linked to this Project for Vault runtime resolution."
-					}
-					action={
-						isShareableProject
-							? addToAgentDialog(
-									<Button variant="outline" size="sm">
-										<Bot className="mr-1.5 size-3.5" />
-										Link Project
-									</Button>,
-								)
-							: undefined
 					}
 				>
 					{boundAgents.isLoading || environments.isLoading ? (
@@ -1384,7 +1365,7 @@ function UseProjectWithAgentDialog({
 			<DialogTrigger render={children} />
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
-					<DialogTitle>Link Project to Agent</DialogTitle>
+					<DialogTitle>Link project to Agent</DialogTitle>
 					<DialogDescription>
 						Link {projectName} as a context Project. Attached Vaults join runtime resolution; Skills
 						remain stored here and require a separate Install on Agent action to run.
@@ -1536,7 +1517,7 @@ function UseProjectWithAgentDialog({
 									}
 								>
 									{addProjectToAgent.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
-									{addProjectToAgent.isPending ? "Linking…" : "Link Project"}
+									{addProjectToAgent.isPending ? "Linking…" : "Link project"}
 								</Button>
 							)}
 						</div>
@@ -1547,11 +1528,15 @@ function UseProjectWithAgentDialog({
 	);
 }
 
-function InstallSkillInProjectForm({
+function InstallSkillInProjectDialog({
 	projectId,
+	open,
+	onOpenChange,
 	onChanged,
 }: {
 	projectId: string;
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
 	onChanged: () => void;
 }) {
 	const api = useApi();
@@ -1568,8 +1553,9 @@ function InstallSkillInProjectForm({
 		onSuccess: () => {
 			setRepoInput("");
 			setError(null);
+			onOpenChange(false);
 			onChanged();
-			toast.success("Skill added to Project", { description: "Saved in this Project." });
+			toast.success("Skill installed", { description: "Saved in this Project." });
 		},
 		onError: (e) => {
 			setError(errorMessage(e));
@@ -1593,42 +1579,63 @@ function InstallSkillInProjectForm({
 	};
 
 	return (
-		<div className="grid max-w-3xl gap-2 rounded-lg border bg-muted/30 p-3">
-			<Label htmlFor={`project-skill-repo-${projectId}`} className="text-xs font-medium">
-				GitHub skill repository
-			</Label>
-			<div className="flex flex-col gap-2 sm:flex-row">
-				<Input
-					id={`project-skill-repo-${projectId}`}
-					name="project-skill-repo"
-					value={repoInput}
-					onChange={(e) => {
-						setRepoInput(e.target.value);
-						setError(null);
-					}}
-					onKeyDown={(e) => {
-						if (e.key === "Enter") submit();
-					}}
-					placeholder="owner/repo or owner/repo/path…"
-					autoComplete="off"
-					spellCheck={false}
-					aria-invalid={!!error || undefined}
-					className="min-w-0 flex-1"
-				/>
-				<Button
-					size="sm"
-					disabled={!repoInput.trim() || install.isPending}
-					onClick={submit}
-					variant={repoInput.trim() ? "default" : "outline"}
-					className="w-full sm:w-auto"
-				>
-					{install.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
-					Add to Project
-				</Button>
-			</div>
-			<p className="text-xs text-muted-foreground">Paste a GitHub skill path to add it here.</p>
-			{error ? <p className="text-xs text-destructive">{error}</p> : null}
-		</div>
+		<Dialog
+			open={open}
+			onOpenChange={(next) => {
+				if (install.isPending) return;
+				onOpenChange(next);
+			}}
+			onOpenChangeComplete={(next) => {
+				if (!next) {
+					setRepoInput("");
+					setError(null);
+				}
+			}}
+		>
+			<DialogContent className="sm:max-w-md">
+				<DialogHeader>
+					<DialogTitle>Install skill</DialogTitle>
+					<DialogDescription>Install a GitHub Skill into this Project.</DialogDescription>
+				</DialogHeader>
+				<div className="space-y-2">
+					<Label htmlFor={`project-skill-repo-${projectId}`}>GitHub skill repository</Label>
+					<Input
+						id={`project-skill-repo-${projectId}`}
+						name="project-skill-repo"
+						value={repoInput}
+						onChange={(e) => {
+							setRepoInput(e.target.value);
+							setError(null);
+						}}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" && !install.isPending) submit();
+						}}
+						placeholder="owner/repo or owner/repo/path…"
+						autoComplete="off"
+						spellCheck={false}
+						aria-invalid={!!error || undefined}
+						className="min-w-0 flex-1"
+					/>
+					<p className="text-xs text-muted-foreground">
+						Use owner/repo or owner/repo/path-to-skill.
+					</p>
+					{error ? <p className="text-xs text-destructive">{error}</p> : null}
+				</div>
+				<DialogFooter>
+					<Button
+						variant="outline"
+						onClick={() => onOpenChange(false)}
+						disabled={install.isPending}
+					>
+						Cancel
+					</Button>
+					<Button onClick={submit} disabled={!repoInput.trim() || install.isPending}>
+						{install.isPending ? <Spinner /> : <Plus className="size-3.5" />}
+						Install skill
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	);
 }
 

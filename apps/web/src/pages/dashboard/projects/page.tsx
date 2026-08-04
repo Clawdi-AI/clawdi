@@ -395,7 +395,7 @@ function SystemProjectCard({
 function ProjectShareAction({ project }: { project: ProjectRow }) {
 	const projectName = displayProjectName(project);
 	return (
-		<div className="opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+		<div className="opacity-100 transition-opacity duration-150 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
 			<ShareProjectDialog
 				projectId={project.id}
 				projectName={projectName}
