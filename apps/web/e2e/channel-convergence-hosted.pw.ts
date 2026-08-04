@@ -9,6 +9,8 @@ const telegramId = "22222222-2222-4222-8222-222222222222";
 const telegramLinkId = "33333333-3333-4333-8333-333333333333";
 const discordId = "44444444-4444-4444-8444-444444444444";
 const discordLinkId = "55555555-5555-4555-8555-555555555555";
+const whatsappId = "aaaaaaaa-1111-4aaa-8aaa-aaaaaaaaaaaa";
+const whatsappLinkId = "bbbbbbbb-2222-4bbb-8bbb-bbbbbbbbbbbb";
 const rawDiagnostic =
 	"Authorization: Bot private-token; postgres://internal-db/tenant; upstream stack trace";
 
@@ -53,6 +55,14 @@ const discord = {
 	webhook_url: "https://example.test/channels/discord",
 };
 
+const whatsapp = {
+	...telegram,
+	id: whatsappId,
+	provider: "whatsapp",
+	name: "Customer Care WhatsApp",
+	webhook_url: null,
+};
+
 const links = [
 	{
 		id: telegramLinkId,
@@ -71,6 +81,15 @@ const links = [
 		created_at: now,
 		account: discord,
 		binding_count: 1,
+	},
+	{
+		id: whatsappLinkId,
+		account_id: whatsappId,
+		agent_id: agentId,
+		status: "active",
+		created_at: now,
+		account: whatsapp,
+		binding_count: 0,
 	},
 ];
 
@@ -193,6 +212,7 @@ async function stubChannelExperience(page: Page) {
 	let telegramBindingReads = 0;
 	let discordBindingReads = 0;
 	let telegramPairRequests = 0;
+	let whatsappPairRequests = 0;
 
 	await page.route(`${DEPLOY_API}/**`, async (route) => {
 		const path = new URL(route.request().url()).pathname;
@@ -217,7 +237,7 @@ async function stubChannelExperience(page: Page) {
 		if (path === "/v1/agents") return fulfillJson(route, [agent]);
 		if (path === `/v1/agents/${agentId}`) return fulfillJson(route, agent);
 		if (path === "/v1/channels" && request.method() === "GET") {
-			return fulfillJson(route, [telegram, discord]);
+			return fulfillJson(route, [telegram, discord, whatsapp]);
 		}
 		if (path === "/v1/channels/bot-pool") {
 			return fulfillJson(route, { providers: {} });
@@ -234,11 +254,15 @@ async function stubChannelExperience(page: Page) {
 		if (path === "/v1/channels/health") return fulfillJson(route, { items: [health] });
 		if (path === `/v1/channels/${telegramId}`) return fulfillJson(route, telegram);
 		if (path === `/v1/channels/${discordId}`) return fulfillJson(route, discord);
+		if (path === `/v1/channels/${whatsappId}`) return fulfillJson(route, whatsapp);
 		if (path === `/v1/channels/${telegramId}/agent-links`) {
 			return fulfillJson(route, [links[0]]);
 		}
 		if (path === `/v1/channels/${discordId}/agent-links`) {
 			return fulfillJson(route, [links[1]]);
+		}
+		if (path === `/v1/channels/${whatsappId}/agent-links`) {
+			return fulfillJson(route, [links[2]]);
 		}
 		if (path === `/v1/channels/${telegramId}/bindings`) {
 			telegramBindingReads += 1;
@@ -316,6 +340,27 @@ async function stubChannelExperience(page: Page) {
 				201,
 			);
 		}
+		if (path === `/v1/channels/${whatsappId}/pair-codes` && request.method() === "POST") {
+			whatsappPairRequests += 1;
+			if (whatsappPairRequests === 1) {
+				return fulfillJson(route, { detail: rawDiagnostic }, 503);
+			}
+			const code = whatsappPairRequests === 2 ? "EXPIREDWA" : "FRESHWACODE";
+			return fulfillJson(
+				route,
+				{
+					id: "cccccccc-3333-4ccc-8ccc-cccccccccccc",
+					agent_link_id: whatsappLinkId,
+					agent_id: agentId,
+					code,
+					expires_at: new Date(
+						Date.now() + (whatsappPairRequests === 2 ? -1_000 : 300_000),
+					).toISOString(),
+					pairing_command: `/clawdi_pair ${code}`,
+				},
+				201,
+			);
+		}
 		if (path === "/v1/projects") return fulfillJson(route, []);
 		if (path === "/v1/sessions") {
 			return fulfillJson(route, { items: [], total: 0, page: 1, page_size: 25 });
@@ -333,6 +378,7 @@ async function stubChannelExperience(page: Page) {
 		telegramBindingReads: () => telegramBindingReads,
 		discordBindingReads: () => discordBindingReads,
 		telegramPairRequests: () => telegramPairRequests,
+		whatsappPairRequests: () => whatsappPairRequests,
 	};
 }
 
@@ -348,11 +394,12 @@ for (const viewport of [
 	{ label: "desktop", width: 1440, height: 1000 },
 	{ label: "320px", width: 320, height: 720 },
 ]) {
-	test(`Telegram and Discord cards, chats, and pairing converge at ${viewport.label}`, async ({
+	test(`Telegram, Discord, and WhatsApp cards, chats, and pairing converge at ${viewport.label}`, async ({
 		page,
 	}) => {
 		test.setTimeout(45_000);
 		await page.setViewportSize({ width: viewport.width, height: viewport.height });
+		await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
 		const api = await stubChannelExperience(page);
 		await page.goto(`/agents/${agentId}/channel-links?source=on-clawdi&d=${deploymentId}`);
 
@@ -360,10 +407,13 @@ for (const viewport of [
 		await expect(breadcrumb.getByRole("link", { name: "Channels", exact: true })).toBeVisible();
 		const telegramCard = page.locator(`[data-agent-channel-link-id="${telegramLinkId}"]`);
 		const discordCard = page.locator(`[data-agent-channel-link-id="${discordLinkId}"]`);
+		const whatsappCard = page.locator(`[data-agent-channel-link-id="${whatsappLinkId}"]`);
 		await expect(telegramCard).toContainText(telegram.name);
 		await expect(discordCard).toContainText(discord.name);
+		await expect(whatsappCard).toContainText(whatsapp.name);
 		await expect(telegramCard.getByRole("button", { name: "Pair", exact: true })).toHaveCount(1);
 		await expect(discordCard.getByRole("button", { name: "Pair", exact: true })).toHaveCount(1);
+		await expect(whatsappCard.getByRole("button", { name: "Pair", exact: true })).toHaveCount(1);
 		await expect(telegramCard.locator("footer, [data-channel-card-footer]")).toHaveCount(0);
 		await expect(discordCard.locator("footer, [data-channel-card-footer]")).toHaveCount(0);
 
@@ -437,6 +487,35 @@ for (const viewport of [
 		await page.keyboard.press("Escape");
 		await expect(pairDialog).toHaveCount(0);
 		await expectNoHorizontalOverflow(page);
+
+		const whatsappPair = whatsappCard.getByRole("button", { name: "Pair", exact: true });
+		await whatsappPair.click();
+		pairDialog = page.getByRole("dialog", { name: "Pair WhatsApp" });
+		await expect(pairDialog).toContainText(
+			"WhatsApp pairing is temporarily unavailable. Try again.",
+		);
+		await expect(pairDialog).not.toContainText(rawDiagnostic);
+		await expect(whatsappCard).not.toContainText("Pair failed");
+		await pairDialog.getByRole("button", { name: "Retry", exact: true }).click();
+		await expect.poll(api.whatsappPairRequests).toBe(2);
+		await expect(pairDialog).toContainText("This WhatsApp pair code has expired");
+		await expect(pairDialog).toContainText("Expired — generate a new code");
+		await pairDialog.getByRole("button", { name: "Generate new code", exact: true }).click();
+		await expect.poll(api.whatsappPairRequests).toBe(3);
+		const whatsappCommand = pairDialog.getByRole("button", {
+			name: "Copy WhatsApp pairing command",
+		});
+		await expect(whatsappCommand).toContainText("/clawdi_pair FRESHWACODE");
+		await expect(whatsappCard).not.toContainText("/clawdi_pair");
+		await expect(pairDialog.getByText(/^Expires in /)).toBeVisible();
+		await whatsappCommand.click();
+		await expect(
+			pairDialog.getByRole("button", { name: "WhatsApp pairing command copied" }),
+		).toBeVisible();
+		await expectNoHorizontalOverflow(page);
+		await page.keyboard.press("Escape");
+		await expect(pairDialog).toHaveCount(0);
+		await expect(whatsappPair).toBeFocused();
 	});
 }
 

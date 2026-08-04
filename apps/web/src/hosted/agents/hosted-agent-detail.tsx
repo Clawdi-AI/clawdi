@@ -280,6 +280,7 @@ import { DiscordPairDialog } from "@/hosted/v2/channels/discord-pair-dialog";
 import { PairedChatsDialog } from "@/hosted/v2/channels/paired-chats-dialog";
 import { ProviderLinkReplacementConfirm } from "@/hosted/v2/channels/provider-link-replacement-confirm";
 import { TelegramPairDialog } from "@/hosted/v2/channels/telegram-pair-dialog";
+import { WhatsAppPairDialog } from "@/hosted/v2/channels/whatsapp-pair-dialog";
 import {
 	type AgentRouteSearch,
 	type AgentSectionId,
@@ -2354,6 +2355,12 @@ function ChannelsTab({
 		channelName: string;
 		open: boolean;
 	} | null>(null);
+	const [whatsappPair, setWhatsappPair] = useState<{
+		accountId: string;
+		agentLinkId: string;
+		channelName: string;
+		open: boolean;
+	} | null>(null);
 	const [customBotDialogOpen, setCustomBotDialogOpen] = useState(false);
 	const linkingAccountIdsRef = useRef<Set<string>>(new Set());
 	const [linkingAccountIds, setLinkingAccountIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -2446,6 +2453,13 @@ function ChannelsTab({
 			});
 		} else if (account?.provider === "discord") {
 			setDiscordPair({
+				accountId: nextLink.account_id,
+				agentLinkId: nextLink.id,
+				channelName: account.name,
+				open: true,
+			});
+		} else if (account?.provider === "whatsapp") {
+			setWhatsappPair({
 				accountId: nextLink.account_id,
 				agentLinkId: nextLink.id,
 				channelName: account.name,
@@ -2639,6 +2653,15 @@ function ChannelsTab({
 							channelName: bot.name,
 							open: true,
 						});
+						return;
+					}
+					if (bot.provider === "whatsapp") {
+						setWhatsappPair({
+							accountId: bot.id,
+							agentLinkId: bot.agentLinkId,
+							channelName: bot.name,
+							open: true,
+						});
 					}
 				}}
 			/>
@@ -2672,6 +2695,22 @@ function ChannelsTab({
 					agentLinkId={discordPair.agentLinkId}
 					channelName={discordPair.channelName}
 					bindingCount={bindingCountForLink(discordPair.agentLinkId)}
+				/>
+			) : null}
+			{whatsappPair ? (
+				<WhatsAppPairDialog
+					open={whatsappPair.open}
+					onOpenChange={(open) => {
+						setWhatsappPair((current) => (current ? { ...current, open } : current));
+					}}
+					onCloseComplete={() => {
+						setWhatsappPair((current) => (current?.open === false ? null : current));
+					}}
+					agentId={environmentId}
+					accountId={whatsappPair.accountId}
+					agentLinkId={whatsappPair.agentLinkId}
+					channelName={whatsappPair.channelName}
+					bindingCount={bindingCountForLink(whatsappPair.agentLinkId)}
 				/>
 			) : null}
 		</div>
@@ -2889,6 +2928,7 @@ function LinkedChannelRow({
 	const [code, setCode] = useState<AgentPairCodeResult | null>(null);
 	const [telegramPairOpen, setTelegramPairOpen] = useState(false);
 	const [discordPairOpen, setDiscordPairOpen] = useState(false);
+	const [whatsappPairOpen, setWhatsappPairOpen] = useState(false);
 	const [nowMs, setNowMs] = useState(() => Date.now());
 	const [creatingPairCode, setCreatingPairCode] = useState(false);
 	const pairInFlightRef = useRef(false);
@@ -2898,6 +2938,8 @@ function LinkedChannelRow({
 	const account = link.account ?? fallbackAccount ?? null;
 	const provider = account?.provider ?? "";
 	const isDiscord = provider === "discord";
+	const isWhatsApp = provider === "whatsapp";
+	const usesPairDialog = provider === "telegram" || isDiscord || isWhatsApp;
 	const name = account?.name ?? "Unnamed channel";
 	useEffect(() => {
 		if (!code) return;
@@ -2928,12 +2970,12 @@ function LinkedChannelRow({
 		!isNormalChannelStatus(link.status) ? (
 			<ChannelStatusBadge key="status" status={link.status} />
 		) : null,
-		provider !== "telegram" && !isDiscord && pair.error ? (
+		!usesPairDialog && pair.error ? (
 			<span key="pair-error" className="font-medium text-destructive">
 				Pair failed · Try again
 			</span>
 		) : null,
-		code && provider !== "telegram" && !isDiscord ? (
+		code && !usesPairDialog ? (
 			<span key="pair-code" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
 				<CopyInline value={code.pairing_command} label="pairing command" />
 				<span className="text-muted-foreground">{pairCodeExpiryLabel(code.expires_at, nowMs)}</span>
@@ -2954,10 +2996,11 @@ function LinkedChannelRow({
 								variant="outline"
 								size="sm"
 								className="w-full min-w-0 xl:w-32"
-								disabled={provider !== "telegram" && creatingPairCode}
+								disabled={!usesPairDialog && creatingPairCode}
 								onClick={() => {
 									if (provider === "telegram") setTelegramPairOpen(true);
 									else if (isDiscord) setDiscordPairOpen(true);
+									else if (isWhatsApp) setWhatsappPairOpen(true);
 									else void createPairCode();
 								}}
 							>
@@ -3014,6 +3057,17 @@ function LinkedChannelRow({
 				<DiscordPairDialog
 					open={discordPairOpen}
 					onOpenChange={setDiscordPairOpen}
+					agentId={agentId}
+					accountId={link.account_id}
+					agentLinkId={link.id}
+					channelName={name}
+					bindingCount={link.binding_count}
+				/>
+			) : null}
+			{isWhatsApp ? (
+				<WhatsAppPairDialog
+					open={whatsappPairOpen}
+					onOpenChange={setWhatsappPairOpen}
 					agentId={agentId}
 					accountId={link.account_id}
 					agentLinkId={link.id}

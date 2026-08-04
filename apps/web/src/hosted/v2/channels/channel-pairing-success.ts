@@ -20,6 +20,9 @@ export function pairingSuccessDescription(provider: string): string {
 	if (provider === "telegram") {
 		return "Telegram chat is ready.";
 	}
+	if (provider === "whatsapp") {
+		return "WhatsApp chat is ready.";
+	}
 	return "The chat is ready.";
 }
 

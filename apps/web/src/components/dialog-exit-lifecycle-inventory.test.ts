@@ -51,6 +51,7 @@ const STATELESS_OR_CANONICAL = [
 	"hosted/v2/channels/paired-chats-dialog.tsx",
 	"hosted/v2/channels/pairing-dialog-ui.tsx",
 	"hosted/v2/channels/telegram-pair-dialog.tsx",
+	"hosted/v2/channels/whatsapp-pair-dialog.tsx",
 	"pages/dashboard/projects/[id]/page.tsx",
 ] as const;
 
