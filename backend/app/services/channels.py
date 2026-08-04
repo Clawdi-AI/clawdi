@@ -18,6 +18,7 @@ import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import HTTPException, status
+from pydantic import JsonValue
 from sqlalchemy import and_, delete, exists, func, or_, select, union_all, update
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
@@ -5329,7 +5330,10 @@ async def rearm_discord_command_reconciliation(
             changed = True
             rearmed += 1
         if changed:
-            config["discord_command_retries"] = retries
+            json_retries: dict[str, JsonValue] = {}
+            for guild_id, retry in retries.items():
+                json_retries[guild_id] = retry
+            config["discord_command_retries"] = json_retries
             link.config = config
     return rearmed
 
