@@ -12,7 +12,7 @@ export function SettingsPanelHeader({
 	return (
 		<div
 			data-slot="settings-panel-header"
-			className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
+			className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between md:pr-12"
 		>
 			<div className="flex min-w-0 flex-col gap-1">
 				<h2 className="text-lg font-semibold tracking-tight">{title}</h2>

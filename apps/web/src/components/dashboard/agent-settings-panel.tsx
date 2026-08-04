@@ -224,7 +224,7 @@ export function AgentSettingsPanel({
 	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;
 
 	return (
-		<div className={cn("flex flex-col gap-8", className)}>
+		<div className={cn("flex flex-col gap-9", className)}>
 			{guardedBySurface ? null : (
 				<UnsavedNavigationGuard
 					dirty={nameChanged}

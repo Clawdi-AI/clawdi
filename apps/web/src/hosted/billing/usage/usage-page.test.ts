@@ -102,6 +102,7 @@ describe("usage availability rendering", () => {
 		expect(markup).toContain("$12.50");
 		expect(markup).toContain("37");
 		expect(markup).toContain("model-read-successfully");
+		expect(markup).not.toContain("Daily usage");
 	});
 
 	test("keeps agent attribution visible when totals and model data are unavailable", () => {
@@ -126,7 +127,7 @@ describe("usage availability rendering", () => {
 		expect(markup).toContain("Usage totals unavailable");
 		expect(markup).toContain("Model breakdown unavailable");
 		expect(markup).toContain("support");
-		expect(markup).not.toContain("hdep_support");
+		expect(markup).toContain("hdep_support");
 		expect(markup).toContain("$9.25");
 		expect(markup).not.toContain("No usage yet");
 	});

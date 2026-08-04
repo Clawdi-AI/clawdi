@@ -60,6 +60,7 @@ export function AutoReloadCard({
 	const initialDraft = autoReloadDraftFromWallet(wallet);
 	const [baseline, setBaseline] = useState<AutoReloadDraft>(initialDraft);
 	const [draft, setDraft] = useState<AutoReloadDraft>(initialDraft);
+	const [editing, setEditing] = useState(false);
 	const [blurred, setBlurred] = useState<BlurredFields>(PRISTINE_FIELDS);
 	const [requestError, setRequestError] = useState<AutoReloadSaveError | null>(null);
 	const [actionClientSecret, setActionClientSecret] = useState<PaymentIntentClientSecret | null>(
@@ -75,7 +76,7 @@ export function AutoReloadCard({
 	const form = autoReloadFormState(draft);
 	const dirty = autoReloadDraftIsDirty(draft, baseline);
 	const status = autoReloadStatusSummary(wallet);
-	useSettingsEditState({ dirty, busy: save.isPending });
+	useSettingsEditState({ dirty: editing && dirty, busy: save.isPending });
 
 	useEffect(() => {
 		const next = autoReloadDraftFromWallet(wallet);
@@ -106,11 +107,21 @@ export function AutoReloadCard({
 		setBlurred((current) => ({ ...current, [field]: true }));
 	}
 
+	function beginEditing() {
+		const next = { ...autoReloadDraftFromWallet(wallet), enabled: true };
+		setBaseline(autoReloadDraftFromWallet(wallet));
+		setDraft(next);
+		setBlurred(PRISTINE_FIELDS);
+		setRequestError(null);
+		setEditing(true);
+	}
+
 	function cancelChanges() {
 		if (save.isPending) return;
 		setDraft(baseline);
 		setBlurred(PRISTINE_FIELDS);
 		setRequestError(null);
+		setEditing(false);
 	}
 
 	function acceptSavedWallet(nextWallet: WalletState) {
@@ -121,6 +132,7 @@ export function AutoReloadCard({
 		setDraft(next);
 		setBlurred(PRISTINE_FIELDS);
 		setRequestError(null);
+		setEditing(false);
 	}
 
 	function handleSaveFailure(error: unknown) {
@@ -142,6 +154,20 @@ export function AutoReloadCard({
 			const nextWallet = await save.execute(request);
 			acceptSavedWallet(nextWallet);
 			toast.success("Auto-reload settings saved");
+		} catch (error) {
+			handleSaveFailure(error);
+		}
+	}
+
+	async function turnOff() {
+		if (save.isPending) return;
+		const request = autoReloadRequest({ ...autoReloadDraftFromWallet(wallet), enabled: false });
+		if (!request) return;
+		setRequestError(null);
+		try {
+			const nextWallet = await save.execute(request);
+			acceptSavedWallet(nextWallet);
+			toast.success("Auto-reload turned off");
 		} catch (error) {
 			handleSaveFailure(error);
 		}
@@ -172,14 +198,14 @@ export function AutoReloadCard({
 					<span className="inline-flex items-center gap-2">
 						<Repeat className="size-4" aria-hidden /> Auto-reload
 					</span>
-					<StatusBadge status={status.tone} withDot>
-						{status.label}
+					<StatusBadge status={editing ? "neutral" : status.tone} withDot>
+						{editing ? "Editing" : status.label}
 					</StatusBadge>
 				</span>
 			}
-			description={status.description}
+			description={editing ? "Configure when Wallet automatically adds funds." : status.description}
 		>
-			<div className="flex max-w-3xl flex-col gap-4">
+			<div className="flex max-w-3xl flex-col gap-6">
 				<AutoReloadActionConfirm
 					wallet={wallet}
 					onTopUp={onTopUp}
@@ -202,173 +228,194 @@ export function AutoReloadCard({
 					</Alert>
 				) : null}
 
-				<form
-					id="auto-reload-form"
-					className="overflow-hidden rounded-lg border bg-muted/10"
-					onSubmit={(event) => {
-						event.preventDefault();
-						setBlurred(ALL_FIELDS_BLURRED);
-						void runAction(saveChanges);
-					}}
-				>
-					<div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4 p-4 sm:p-5">
-						<div className="space-y-1">
-							<Label htmlFor="ar-enabled">Automatically add funds</Label>
-							<p className="text-xs leading-5 text-muted-foreground">
-								{wallet.auto_reload_enabled
-									? usage
-									: "Turn this on to reload Wallet when the balance reaches your threshold."}
-							</p>
-						</div>
-						<div className="flex items-center gap-2">
-							<span className="text-xs font-medium text-muted-foreground">
-								{draft.enabled ? "On" : "Off"}
-							</span>
-							<Switch
-								id="ar-enabled"
-								data-auto-reload-primary
-								checked={draft.enabled}
-								onCheckedChange={(checked) => updateDraft("enabled", checked)}
-								disabled={save.isPending}
-							/>
-						</div>
-					</div>
-
-					<div className="grid gap-5 border-t p-4 sm:grid-cols-2 sm:p-5">
-						<div className="flex flex-col gap-1.5">
-							<Label htmlFor="ar-threshold">When balance is below (USD)</Label>
-							<Input
-								id="ar-threshold"
-								type="number"
-								inputMode="decimal"
-								autoComplete="off"
-								min={AUTORELOAD_THRESHOLD_MIN_USD}
-								step="0.01"
-								className="tabular-nums [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-								value={draft.threshold}
-								onChange={(event) => updateDraft("threshold", event.target.value)}
-								onBlur={() => markBlurred("threshold")}
-								disabled={!draft.enabled || save.isPending}
-								aria-invalid={thresholdInvalid || thresholdServerError}
-								aria-describedby="ar-threshold-help"
-							/>
-							<p
-								id="ar-threshold-help"
-								className={
-									thresholdInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"
-								}
-							>
-								Minimum {formatCents(AUTORELOAD_THRESHOLD_MIN_USD * 100)}.
-							</p>
-						</div>
-
-						<div className="flex flex-col gap-1.5">
-							<Label htmlFor="ar-amount">Amount to add (USD)</Label>
-							<Input
-								id="ar-amount"
-								type="number"
-								inputMode="decimal"
-								autoComplete="off"
-								min={AUTORELOAD_AMOUNT_MIN_CENTS / 100}
-								max={AUTORELOAD_AMOUNT_MAX_CENTS / 100}
-								step="0.01"
-								className="tabular-nums [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-								value={draft.amount}
-								onChange={(event) => updateDraft("amount", event.target.value)}
-								onBlur={() => markBlurred("amount")}
-								disabled={!draft.enabled || save.isPending}
-								aria-invalid={amountInvalid || amountServerError}
-								aria-describedby="ar-amount-help"
-							/>
-							<p
-								id="ar-amount-help"
-								className={
-									amountInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"
-								}
-							>
-								{AUTORELOAD_AMOUNT_RANGE_LABEL}.
-							</p>
-						</div>
-					</div>
-
-					<div className="border-t p-4 sm:p-5">
-						<div className="flex items-start justify-between gap-3">
-							<div className="space-y-0.5">
-								<Label htmlFor="ar-monthly-limit">Monthly limit</Label>
-								<p className="text-xs text-muted-foreground">
-									{draft.monthlyLimitEnabled
-										? "Pause auto-reload after this amount is added."
-										: "No monthly limit."}
+				{editing ? (
+					<form
+						id="auto-reload-form"
+						className="space-y-6"
+						onSubmit={(event) => {
+							event.preventDefault();
+							setBlurred(ALL_FIELDS_BLURRED);
+							void runAction(saveChanges);
+						}}
+					>
+						<div className="grid gap-5 sm:grid-cols-2">
+							<div className="flex flex-col gap-1.5">
+								<Label htmlFor="ar-threshold">When balance is below (USD)</Label>
+								<Input
+									id="ar-threshold"
+									type="number"
+									inputMode="decimal"
+									autoComplete="off"
+									min={AUTORELOAD_THRESHOLD_MIN_USD}
+									step="0.01"
+									className="tabular-nums [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+									value={draft.threshold}
+									onChange={(event) => updateDraft("threshold", event.target.value)}
+									onBlur={() => markBlurred("threshold")}
+									disabled={save.isPending}
+									aria-invalid={thresholdInvalid || thresholdServerError}
+									aria-describedby="ar-threshold-help"
+								/>
+								<p
+									id="ar-threshold-help"
+									className={
+										thresholdInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"
+									}
+								>
+									Minimum {formatCents(AUTORELOAD_THRESHOLD_MIN_USD * 100)}.
 								</p>
 							</div>
-							<Switch
-								id="ar-monthly-limit"
-								checked={draft.monthlyLimitEnabled}
-								onCheckedChange={(checked) => updateDraft("monthlyLimitEnabled", checked)}
-								disabled={!draft.enabled || save.isPending}
-							/>
-						</div>
 
-						{draft.monthlyLimitEnabled ? (
-							<div className="mt-4 flex flex-col gap-1.5">
-								<Label htmlFor="ar-cap">Monthly limit (USD)</Label>
+							<div className="flex flex-col gap-1.5">
+								<Label htmlFor="ar-amount">Amount to add (USD)</Label>
 								<Input
-									id="ar-cap"
+									id="ar-amount"
 									type="number"
 									inputMode="decimal"
 									autoComplete="off"
 									min={AUTORELOAD_AMOUNT_MIN_CENTS / 100}
+									max={AUTORELOAD_AMOUNT_MAX_CENTS / 100}
 									step="0.01"
 									className="tabular-nums [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-									value={draft.cap}
-									onChange={(event) => updateDraft("cap", event.target.value)}
-									onBlur={() => markBlurred("cap")}
-									disabled={!draft.enabled || save.isPending}
-									aria-invalid={capInvalid || capServerError}
-									aria-describedby="ar-cap-help"
+									value={draft.amount}
+									onChange={(event) => updateDraft("amount", event.target.value)}
+									onBlur={() => markBlurred("amount")}
+									disabled={save.isPending}
+									aria-invalid={amountInvalid || amountServerError}
+									aria-describedby="ar-amount-help"
 								/>
 								<p
-									id="ar-cap-help"
+									id="ar-amount-help"
 									className={
-										capInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"
+										amountInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"
 									}
 								>
-									Must cover at least one reload ({minimumCap}).
+									{AUTORELOAD_AMOUNT_RANGE_LABEL}.
 								</p>
 							</div>
-						) : null}
-					</div>
-
-					<div className="flex flex-col gap-3 border-t p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
-						<p className="text-xs leading-5 text-muted-foreground">
-							Uses your saved card. A manual top-up saves a card for future reloads.
-						</p>
-						<div className="flex shrink-0 justify-end gap-2">
-							<Button
-								type="button"
-								size="sm"
-								variant="outline"
-								onClick={cancelChanges}
-								disabled={!dirty || save.isPending}
-							>
-								Cancel
-							</Button>
-							<Button
-								type="submit"
-								size="sm"
-								disabled={!dirty || !form.formValid || save.isPending}
-							>
-								{save.isPending ? (
-									<>
-										<Spinner data-icon="inline-start" /> Saving…
-									</>
-								) : (
-									"Save"
-								)}
-							</Button>
 						</div>
+
+						<div className="grid gap-4 border-t pt-5 sm:grid-cols-2">
+							<div className="flex items-start justify-between gap-3">
+								<div className="space-y-0.5">
+									<Label htmlFor="ar-monthly-limit">Monthly limit</Label>
+									<p className="text-xs text-muted-foreground">
+										{draft.monthlyLimitEnabled
+											? "Pause auto-reload after this amount is added."
+											: "No monthly limit."}
+									</p>
+								</div>
+								<Switch
+									id="ar-monthly-limit"
+									checked={draft.monthlyLimitEnabled}
+									onCheckedChange={(checked) => updateDraft("monthlyLimitEnabled", checked)}
+									disabled={save.isPending}
+								/>
+							</div>
+
+							{draft.monthlyLimitEnabled ? (
+								<div className="flex flex-col gap-1.5">
+									<Label htmlFor="ar-cap">Monthly limit (USD)</Label>
+									<Input
+										id="ar-cap"
+										type="number"
+										inputMode="decimal"
+										autoComplete="off"
+										min={AUTORELOAD_AMOUNT_MIN_CENTS / 100}
+										step="0.01"
+										className="tabular-nums [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+										value={draft.cap}
+										onChange={(event) => updateDraft("cap", event.target.value)}
+										onBlur={() => markBlurred("cap")}
+										disabled={save.isPending}
+										aria-invalid={capInvalid || capServerError}
+										aria-describedby="ar-cap-help"
+									/>
+									<p
+										id="ar-cap-help"
+										className={
+											capInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"
+										}
+									>
+										Must cover at least one reload ({minimumCap}).
+									</p>
+								</div>
+							) : null}
+						</div>
+					</form>
+				) : wallet.auto_reload_enabled ? (
+					<div className="space-y-1">
+						<p className="font-medium tabular-nums">
+							Below {formatCents(Number(wallet.auto_reload_threshold_usd) * 100)} → add{" "}
+							{formatCents(wallet.auto_reload_amount_cents)}
+						</p>
+						<p className="text-sm text-muted-foreground">{usage}</p>
 					</div>
-				</form>
+				) : null}
+
+				<div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+					<p className="text-xs text-muted-foreground">
+						Auto-reload uses your saved card. A manual top-up saves one.
+					</p>
+					<div className="flex flex-wrap gap-2">
+						{editing ? (
+							<div key="auto-reload-edit-actions" className="flex gap-2">
+								<Button
+									type="button"
+									size="sm"
+									variant="ghost"
+									onClick={cancelChanges}
+									disabled={save.isPending}
+								>
+									Cancel
+								</Button>
+								<Button
+									type="submit"
+									form="auto-reload-form"
+									size="sm"
+									disabled={!dirty || !form.formValid || save.isPending}
+								>
+									{save.isPending ? (
+										<>
+											<Spinner data-icon="inline-start" /> Saving…
+										</>
+									) : (
+										"Save"
+									)}
+								</Button>
+							</div>
+						) : (
+							<div key="auto-reload-summary-actions" className="flex gap-2">
+								{wallet.auto_reload_enabled ? (
+									<Button
+										type="button"
+										size="sm"
+										variant="ghost"
+										onClick={() => void runAction(turnOff)}
+										disabled={save.isPending}
+									>
+										{save.isPending ? (
+											<>
+												<Spinner data-icon="inline-start" /> Turning off…
+											</>
+										) : (
+											"Turn off"
+										)}
+									</Button>
+								) : null}
+								<Button
+									data-auto-reload-primary
+									type="button"
+									size="sm"
+									onClick={beginEditing}
+									disabled={save.isPending}
+								>
+									{wallet.auto_reload_enabled ? "Edit" : "Set up auto-reload"}
+								</Button>
+							</div>
+						)}
+					</div>
+				</div>
 			</div>
 		</SettingsSection>
 	);

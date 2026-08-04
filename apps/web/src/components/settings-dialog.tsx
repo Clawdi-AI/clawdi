@@ -8,11 +8,9 @@ import {
 	type LucideIcon,
 	SlidersHorizontal,
 	WalletCards,
-	XIcon,
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
-import type { AgentTile } from "@/components/dashboard/agents-card";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
 import { IconChip } from "@/components/icon-chip";
 import { ApiKeysPanel } from "@/components/settings/api-keys-panel";
@@ -22,7 +20,6 @@ import { SettingsPanelErrorBoundary } from "@/components/settings-panel-error-bo
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
-	DialogClose,
 	DialogContent,
 	DialogDescription,
 	DialogHeader,
@@ -111,7 +108,6 @@ const SETTINGS_NAV: SettingsNavItem[] = [
 export function SettingsDialog({
 	open,
 	section,
-	agentTiles,
 	hasExistingCloudAgents = false,
 	cloudInventoryResolved = true,
 	onSectionChange,
@@ -119,7 +115,6 @@ export function SettingsDialog({
 }: {
 	open: boolean;
 	section: SettingsSectionId;
-	agentTiles: readonly AgentTile[];
 	hasExistingCloudAgents?: boolean;
 	cloudInventoryResolved?: boolean;
 	onSectionChange: (section: SettingsSectionId) => void;
@@ -225,7 +220,7 @@ export function SettingsDialog({
 				<DialogContent
 					data-testid="settings-dialog"
 					initialFocus={activeButtonRef}
-					showCloseButton={false}
+					showCloseButton={!hasPendingSave}
 					className="h-[min(820px,calc(100dvh-2rem))] w-[calc(100vw-2rem)] max-w-6xl gap-0 overflow-hidden p-0 sm:max-w-6xl"
 				>
 					<DialogHeader className="sr-only">
@@ -235,12 +230,11 @@ export function SettingsDialog({
 
 					<div className="grid h-full min-h-0 grid-rows-[auto_1fr] md:grid-cols-[15rem_minmax(0,1fr)] md:grid-rows-1">
 						<aside className="flex min-w-0 flex-col border-b bg-muted/30 md:border-r md:border-b-0">
-							<div className="flex h-14 shrink-0 items-center justify-between gap-3 px-4 md:h-16">
+							<div className="flex h-14 shrink-0 items-center px-4 md:h-16">
 								<div className="min-w-0">
 									<div className="truncate text-sm font-semibold">Settings</div>
 									<div className="truncate text-xs text-muted-foreground">Clawdi preferences</div>
 								</div>
-								{!hasPendingSave ? <SettingsDialogCloseButton className="md:hidden" /> : null}
 							</div>
 							<div className="relative min-w-0 md:min-h-0 md:flex-1">
 								<nav
@@ -288,32 +282,25 @@ export function SettingsDialog({
 							</div>
 						</aside>
 
-						<section className="grid min-h-0 min-w-0 md:grid-cols-[minmax(0,1fr)_auto]">
-							<div className="min-h-0 overflow-y-auto py-6 md:py-8">
-								<div className="mx-auto w-full max-w-4xl">
-									{billingAccessPending ? (
-										<HostedRouteSkeleton />
-									) : billingAccessError ? (
-										<div className="px-5 sm:px-6 lg:px-8">
-											<ApiErrorPanel
-												error={hostedAccess.error}
-												normalizer={HOSTED_ACCESS_ERROR_NORMALIZER}
-												onRetry={() => void hostedAccess.refetch()}
-												title="Couldn’t verify billing access"
-											/>
-										</div>
-									) : (
-										<SettingsPanelErrorBoundary key={activeSection}>
-											<SettingsPanel section={activeSection} agentTiles={agentTiles} />
-										</SettingsPanelErrorBoundary>
-									)}
-								</div>
+						<section className="min-h-0 overflow-y-auto py-6 md:py-8">
+							<div className="mx-auto w-full max-w-4xl">
+								{billingAccessPending ? (
+									<HostedRouteSkeleton />
+								) : billingAccessError ? (
+									<div className="px-5 sm:px-6 lg:px-8">
+										<ApiErrorPanel
+											error={hostedAccess.error}
+											normalizer={HOSTED_ACCESS_ERROR_NORMALIZER}
+											onRetry={() => void hostedAccess.refetch()}
+											title="Couldn’t verify billing access"
+										/>
+									</div>
+								) : (
+									<SettingsPanelErrorBoundary key={activeSection}>
+										<SettingsPanel section={activeSection} />
+									</SettingsPanelErrorBoundary>
+								)}
 							</div>
-							{!hasPendingSave ? (
-								<div className="hidden items-start justify-center px-2 pt-4 md:flex">
-									<SettingsDialogCloseButton />
-								</div>
-							) : null}
 						</section>
 					</div>
 				</DialogContent>
@@ -329,25 +316,7 @@ export function SettingsDialog({
 	);
 }
 
-function SettingsDialogCloseButton({ className }: { className?: string }) {
-	return (
-		<DialogClose
-			className={className}
-			render={<Button type="button" variant="ghost" size="icon-sm" />}
-		>
-			<XIcon />
-			<span className="sr-only">Close</span>
-		</DialogClose>
-	);
-}
-
-function SettingsPanel({
-	section,
-	agentTiles,
-}: {
-	section: SettingsSectionId;
-	agentTiles: readonly AgentTile[];
-}) {
+function SettingsPanel({ section }: { section: SettingsSectionId }) {
 	if (!SETTINGS_SECTION_IDS.includes(section)) return <GeneralPanel />;
 
 	switch (section) {
@@ -372,7 +341,7 @@ function SettingsPanel({
 		case "billing-usage":
 			return UsagePage ? (
 				<Suspense fallback={<HostedRouteSkeleton />}>
-					<UsagePage agentTiles={agentTiles} />
+					<UsagePage />
 				</Suspense>
 			) : (
 				<GeneralPanel />
