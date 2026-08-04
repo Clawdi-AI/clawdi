@@ -98,11 +98,17 @@ jobs:
               - "scripts/check-deploy-generated-api.sh"
               - "apps/web/package.json"
               - ".github/workflows/client-ci.yml"
-            # Backend transport and pairing-link behavior is covered by Backend CI.
-            # This expensive stock-runtime boundary only follows code that can
-            # change CLI projection, egress, patching, or the E2E fixture itself.
+            # Account-health and pairing-link behavior stays in Backend CI. This
+            # stock-runtime boundary follows the protocol modules imported by the
+            # harness, CLI runtime behavior, and every dependency input installed
+            # into the filtered CLI workspace.
             whatsapp_native_e2e:
+              - "backend/app/services/whatsapp_baileys.py"
+              - "backend/app/services/whatsapp_noise.py"
+              - "backend/app/services/whatsapp_runtime_types.py"
+              - "backend/app/services/whatsapp_wabinary_tokens.py"
               - "packages/cli/egress-addon/**"
+              - "packages/cli/package.json"
               - "packages/cli/src/runtime/channels.ts"
               - "packages/cli/src/runtime/egress-*.ts"
               - "packages/cli/src/runtime/managed-baileys-compat.ts"
@@ -110,8 +116,12 @@ jobs:
               - "packages/cli/src/runtime/transparent-egress.ts"
               - "packages/cli/src/runtime/whatsapp-*.ts"
               - "packages/cli/tests/fixtures/managed-whatsapp-native-e2e/**"
+              - "packages/shared/package.json"
               - "scripts/test-managed-whatsapp-native-e2e.sh"
               - ".dockerignore"
+              - "package.json"
+              - "bun.lock"
+              - ".github/workflows/client-ci.yml"
 
   # Lint, typecheck, build, and client package tests in one job.
   #

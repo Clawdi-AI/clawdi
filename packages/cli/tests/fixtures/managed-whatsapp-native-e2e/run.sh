@@ -47,7 +47,8 @@ fi
 server_pid=""
 egress_pid=""
 cleanup() {
-	local status="$?"
+	local status="$1"
+	trap - EXIT INT TERM
 	set +e
 	if [[ "${status}" -ne 0 ]]; then
 		for log in "${SERVER_LOG}" "${EGRESS_LOG}"; do
@@ -64,8 +65,11 @@ cleanup() {
 			'import { cleanupTransparentEgressNftRules } from "./packages/cli/src/runtime/transparent-egress.ts"; cleanupTransparentEgressNftRules(process.env.CLAWDI_EGRESS_NFT_TABLE);' \
 			>/dev/null 2>&1
 	fi
+	return "${status}"
 }
-trap cleanup EXIT INT TERM
+trap 'cleanup "$?"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 mkdir -p "${E2E_OUTPUT}" "${EGRESS_CA_DIR}"
 chown -R egress:egress "${EGRESS_HOME}"
@@ -144,7 +148,23 @@ else
 		/opt/hermes-venv/bin/python "${FIXTURE_ROOT}/hermes_consumer.py"
 fi
 
-node --input-type=module --eval \
-	'const response = await fetch("http://127.0.0.1:9000/control/status"); if (!response.ok) throw new Error(`final harness status returned ${response.status}`); const value = await response.json(); if (value.markerLeaks !== 0 || value.identityRejections !== 0) throw new Error(`invalid final harness status: ${JSON.stringify(value)}`); console.log(JSON.stringify({ runtime: process.env.E2E_RUNTIME, connections: value.connections, inboundPushes: value.inboundPushes.length, outboundMessages: value.outboundMessages.length, outboundNodes: value.outboundNodes.length }));'
+node --input-type=module <<'EOF'
+const response = await fetch("http://127.0.0.1:9000/control/status");
+if (!response.ok) throw new Error(`final harness status returned ${response.status}`);
+const value = await response.json();
+if (value.markerLeaks !== 0 || value.identityRejections !== 0) {
+	throw new Error(`invalid final harness status: ${JSON.stringify(value)}`);
+}
+console.log(
+	JSON.stringify({
+		runtime: process.env.E2E_RUNTIME,
+		connections: value.connections,
+		inboundPushes: value.inboundPushes.length,
+		outboundMessages: value.outboundMessages.length,
+		outboundNodes: value.outboundNodes.length,
+	}),
+);
+EOF
 
 echo "managed WhatsApp ${E2E_RUNTIME} native plugin E2E passed"
+cleanup 0

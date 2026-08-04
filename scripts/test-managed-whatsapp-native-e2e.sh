@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly REPO_ROOT
 readonly FIXTURE_ROOT="${REPO_ROOT}/packages/cli/tests/fixtures/managed-whatsapp-native-e2e"
 readonly IMAGE_PREFIX="${E2E_IMAGE_PREFIX:-clawdi-managed-whatsapp-native-e2e}"
 readonly MODE="${1:---all}"
@@ -21,6 +22,9 @@ run_log_root=""
 run_pids=()
 run_cidfiles=()
 cleanup() {
+	local status="$1"
+	trap - EXIT INT TERM
+	set +e
 	for pid in "${run_pids[@]}"; do
 		kill "${pid}" 2>/dev/null || true
 	done
@@ -37,8 +41,11 @@ cleanup() {
 	if [[ "${remove_artifact_root}" == true && -n "${artifact_root}" ]]; then
 		rm -rf "${artifact_root}"
 	fi
+	return "${status}"
 }
-trap cleanup EXIT INT TERM
+trap 'cleanup "$?"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [[ "${MODE}" != "--run-only" ]]; then
 	if [[ -z "${artifact_root}" ]]; then
@@ -49,6 +56,7 @@ if [[ "${MODE}" != "--run-only" ]]; then
 fi
 
 if [[ "${MODE}" == "--fetch-only" ]]; then
+	cleanup 0
 	exit 0
 fi
 
@@ -65,6 +73,7 @@ if [[ "${MODE}" != "--run-only" ]]; then
 fi
 
 if [[ "${MODE}" == "--build-only" ]]; then
+	cleanup 0
 	exit 0
 fi
 
@@ -93,4 +102,5 @@ for index in "${!RUNTIMES[@]}"; do
 	cat "${run_log_root}/${runtime}.log"
 done
 run_pids=()
+cleanup "${status}"
 exit "${status}"
