@@ -438,6 +438,44 @@ async def _create_admin_channel(
         settings.clerk_jwt_issuer = original_clerk_issuer
 
 
+async def _create_public_discord_account(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    name: str,
+    application_id: str,
+) -> dict[str, Any]:
+    async def configure_test_application(account: ChannelAccount) -> dict[str, Any]:
+        config = dict(account.config) if isinstance(account.config, dict) else {}
+        config["discord_install_config_version"] = channel_service.DISCORD_INSTALL_CONFIG_VERSION
+        config["discord_user_install_supported"] = True
+        account.config = config
+        return {
+            "id": application_id,
+            "integration_types_config": {"0": {}, "1": {}},
+        }
+
+    async def sync_test_commands(**_kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(
+        admin_router,
+        "configure_discord_application",
+        configure_test_application,
+    )
+    monkeypatch.setattr(admin_router, "sync_channel_commands", sync_test_commands)
+    response = await _create_admin_channel(
+        client,
+        target_clerk_id="unused-for-public-channel",
+        provider=CHANNEL_PROVIDER_DISCORD,
+        name=name,
+        provider_token="discord-provider-token",
+        config=_discord_ready_config(application_id),
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
 async def _create_public_telegram_account_for_user(
     client: httpx.AsyncClient,
     *,
@@ -1018,8 +1056,8 @@ async def _record_discord_interaction(
     application_id: str,
     channel_id: str = "discord-chan-1",
     guild_id: str = "discord-guild-1",
-) -> None:
-    await client.post(
+) -> httpx.Response:
+    return await client.post(
         f"/v1/channels/discord/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
@@ -10246,13 +10284,15 @@ async def test_discord_interaction_callback_and_followup_require_recorded_token(
         name="discord-interaction-ref",
         agent_id=channel_agent.id,
     )
-    await _record_discord_interaction(
+    ingress = await _record_discord_interaction(
         client,
         created=created,
         interaction_id="interaction-1",
         token="interaction-token-1",
         application_id=DISCORD_TEST_APPLICATION_ID,
     )
+    assert ingress.status_code == 202
+    assert ingress.content == b""
     other = (
         await client.post(
             "/v1/channels",
@@ -14228,7 +14268,7 @@ async def test_discord_webhook_does_not_claim_code_for_legacy_interaction(
     )
 
     assert response.status_code == 200
-    assert response.json()["data"]["content"] == "Message received."
+    assert response.json()["data"]["content"] == "This server is not paired."
     pair_code = await db_session.get(ChannelPairCode, UUID(pair["id"]))
     assert pair_code is not None
     assert pair_code.status == PAIR_CODE_STATUS_PENDING
@@ -17648,12 +17688,24 @@ async def test_discord_dispatch_records_bound_message(
         )
     ).scalar_one()
     assert alias.binding_id == message.binding_id
+    assert _discord_gateway_dispatch(message) == {
+        "op": 0,
+        "t": "MESSAGE_CREATE",
+        "s": message.inbox_sequence,
+        "d": {
+            "id": "msg-dispatch-1",
+            "channel_id": "chan-dispatch",
+            "guild_id": "guild-dispatch",
+            "content": "hello from discord",
+        },
+    }
 
 
 @pytest.mark.asyncio
-async def test_discord_gateway_dispatch_pair_code_creates_binding(
+async def test_discord_gateway_interaction_cannot_pair_or_create_side_effects(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     created = (
         await client.post(
@@ -17672,6 +17724,15 @@ async def test_discord_gateway_dispatch_pair_code_creates_binding(
             json={"ttl_seconds": 900},
         )
     ).json()
+
+    async def membership_must_not_run(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("Gateway interaction reached pairing admission")
+
+    monkeypatch.setattr(
+        channel_service,
+        "discord_bot_guild_membership_check",
+        membership_must_not_run,
+    )
 
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     recorded = await record_discord_gateway_dispatch(
@@ -17702,34 +17763,19 @@ async def test_discord_gateway_dispatch_pair_code_creates_binding(
         },
     )
 
-    assert recorded is True
-    binding = (
-        await db_session.execute(
-            select(ChannelBinding).where(
-                ChannelBinding.account_id == UUID(created["id"]),
-                ChannelBinding.external_chat_id == "guild-gateway",
+    assert recorded is False
+    for model in (ChannelBinding, ChannelMessage, ChannelAgentReference, ChannelDelivery):
+        assert (
+            await db_session.scalar(
+                select(func.count())
+                .select_from(model)
+                .where(model.account_id == UUID(created["id"]))
             )
+            == 0
         )
-    ).scalar_one()
-    assert binding.status == "active"
-    message = (
-        await db_session.execute(
-            select(ChannelMessage).where(
-                ChannelMessage.provider_message_id == "interaction-gateway-pair"
-            )
-        )
-    ).scalar_one()
-    assert message.binding_id == binding.id
-    alias = (
-        await db_session.execute(
-            select(ChannelBindingAlias).where(
-                ChannelBindingAlias.account_id == UUID(created["id"]),
-                ChannelBindingAlias.alias_external_chat_id == "chan-gateway-pair",
-                ChannelBindingAlias.alias_kind == "discord_channel",
-            )
-        )
-    ).scalar_one()
-    assert alias.binding_id == binding.id
+    pair_code = await db_session.get(ChannelPairCode, UUID(pair["id"]))
+    assert pair_code is not None
+    assert pair_code.status == PAIR_CODE_STATUS_PENDING
 
 
 @pytest.mark.asyncio
@@ -19995,6 +20041,428 @@ def test_discord_pair_install_contract_requires_matching_context_and_owner(
 
 
 @pytest.mark.asyncio
+async def test_public_discord_unbound_dm_controls_ack_without_tenant_messages(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application_id = "723456789012345678"
+    created = await _create_public_discord_account(
+        client,
+        monkeypatch,
+        name="discord-public-unbound-dm-controls",
+        application_id=application_id,
+    )
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    assert account.visibility == CHANNEL_VISIBILITY_PUBLIC
+    assert account.user_id is None
+
+    async def invoke(
+        interaction_id: str,
+        name: str,
+        *,
+        options: list[dict[str, Any]] | None = None,
+        authorizing_user_id: str = "public-unbound-user",
+    ) -> httpx.Response:
+        return await client.post(
+            f"/v1/channels/discord/{created['id']}/webhook",
+            headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+            json={
+                "type": 2,
+                "id": interaction_id,
+                "token": f"{interaction_id}-token",
+                "application_id": application_id,
+                "channel_id": "public-unbound-dm",
+                "context": 1,
+                "authorizing_integration_owners": {"1": authorizing_user_id},
+                "user": {
+                    "id": "public-unbound-user",
+                    "global_name": "Public DM User",
+                },
+                "data": {
+                    "name": name,
+                    **({"options": options} if options is not None else {}),
+                },
+            },
+        )
+
+    help_response = await invoke("public-unbound-help", "clawdi_help")
+    unpair_response = await invoke("public-unbound-unpair", "clawdi_unpair")
+    missing_pair_response = await invoke(
+        "public-unbound-missing-pair",
+        "clawdi_pair",
+        options=[],
+    )
+    invalid_pair_response = await invoke(
+        "public-unbound-invalid-pair",
+        "clawdi_pair",
+        options=[{"name": "code", "value": "BCDFGHJKLM"}],
+    )
+    denied_pair_response = await invoke(
+        "public-unbound-denied-pair",
+        "clawdi_pair",
+        options=[{"name": "code", "value": "BCDFGHJKLM"}],
+        authorizing_user_id="different-user",
+    )
+    unroutable_component = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "type": 3,
+            "id": "public-unbound-component-without-channel",
+            "token": "public-unbound-component-without-channel-token",
+            "application_id": application_id,
+            "context": 1,
+            "authorizing_integration_owners": {"1": "public-unbound-user"},
+            "user": {"id": "public-unbound-user"},
+            "data": {"custom_id": "missing-channel", "component_type": 2},
+        },
+    )
+    unroutable_autocomplete = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "type": 4,
+            "id": "public-unbound-autocomplete-without-channel",
+            "token": "public-unbound-autocomplete-without-channel-token",
+            "application_id": application_id,
+            "context": 1,
+            "authorizing_integration_owners": {"1": "public-unbound-user"},
+            "user": {"id": "public-unbound-user"},
+            "data": {"name": "missing_channel"},
+        },
+    )
+
+    assert help_response.status_code == 200
+    assert help_response.json() == {
+        "type": 4,
+        "data": {
+            "content": channel_service.channel_control_help_reply(),
+            "flags": 64,
+        },
+    }
+    assert unpair_response.status_code == 200
+    assert unpair_response.json()["data"]["content"] == "This direct message is not paired."
+    assert missing_pair_response.status_code == 200
+    assert missing_pair_response.json()["data"]["content"] == "Usage: /clawdi_pair <code>"
+    assert invalid_pair_response.status_code == 200
+    assert invalid_pair_response.json()["data"]["content"] == "Pairing failed: invalid."
+    assert denied_pair_response.status_code == 200
+    assert denied_pair_response.json()["data"]["content"] == (
+        "Discord could not verify User Install for this direct-message command."
+    )
+    assert unroutable_component.json() == {
+        "type": 4,
+        "data": {"content": "Discord could not route this interaction.", "flags": 64},
+    }
+    assert unroutable_autocomplete.json() == {"type": 8, "data": {"choices": []}}
+    assert (await client.get(f"/v1/channels/{created['id']}/bindings")).json() == []
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(ChannelMessage)
+            .where(ChannelMessage.account_id == account.id)
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_public_discord_dm_pair_handoff_unpair_and_duplicate_are_recorded_correctly(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application_id = "823456789012345678"
+    created = await _create_public_discord_account(
+        client,
+        monkeypatch,
+        name="discord-public-dm-pair-dedupe",
+        application_id=application_id,
+    )
+    linked = await client.post(
+        f"/v1/channels/{created['id']}/agent-links",
+        json={"agent_id": str(channel_agent.id)},
+    )
+    assert linked.status_code == 201, linked.text
+    pair = await client.post(
+        f"/v1/channels/{created['id']}/pair-codes",
+        json={"agent_link_id": linked.json()["id"], "ttl_seconds": 900},
+    )
+    assert pair.status_code == 201, pair.text
+    interaction = {
+        "type": 2,
+        "id": "public-dm-pair-interaction",
+        "token": "public-dm-pair-token",
+        "application_id": application_id,
+        "channel_id": "public-paired-dm",
+        "context": 1,
+        "authorizing_integration_owners": {"1": "public-pair-user"},
+        "user": {
+            "id": "public-pair-user",
+            "global_name": "Paired Public User",
+        },
+        "data": {
+            "name": "clawdi_pair",
+            "options": [{"name": "code", "value": pair.json()["code"]}],
+        },
+    }
+    webhook_url = f"/v1/channels/discord/{created['id']}/webhook"
+    headers = {"x-clawdi-channel-secret": created["webhook_secret"]}
+
+    paired = await client.post(webhook_url, headers=headers, json=interaction)
+    duplicate = await client.post(webhook_url, headers=headers, json=interaction)
+
+    assert paired.status_code == 200
+    assert paired.json()["data"]["content"].startswith("Direct message paired.")
+    assert duplicate.status_code == 200
+    assert duplicate.json()["data"]["content"] == "This interaction was already handled."
+    bindings = (await client.get(f"/v1/channels/{created['id']}/bindings")).json()
+    assert len(bindings) == 1
+    assert bindings[0]["external_chat_id"] == "public-paired-dm"
+    assert bindings[0]["external_chat_type"] == "dm"
+    assert bindings[0]["external_chat_name"] == "Paired Public User"
+    binding_id = UUID(bindings[0]["id"])
+
+    forwarded_interactions = [
+        (2, {"name": "agent_command"}),
+        (3, {"custom_id": "agent-component", "component_type": 2}),
+        (4, {"name": "agent_autocomplete"}),
+        (5, {"custom_id": "agent-modal", "components": []}),
+    ]
+    forwarded_ids: list[str] = []
+    forwarded_payloads: dict[str, dict[str, Any]] = {}
+    for interaction_type, interaction_data in forwarded_interactions:
+        interaction_id = f"public-dm-agent-interaction-{interaction_type}"
+        forwarded_ids.append(interaction_id)
+        forwarded_payload = {
+            "type": interaction_type,
+            "id": interaction_id,
+            "token": f"{interaction_id}-token",
+            "application_id": application_id,
+            "channel_id": "public-paired-dm",
+            "context": 1,
+            "authorizing_integration_owners": {"1": "public-pair-user"},
+            "user": {
+                "id": "public-pair-user",
+                "global_name": "Paired Public User",
+            },
+            "data": interaction_data,
+        }
+        forwarded_payloads[interaction_id] = forwarded_payload
+        forwarded = await client.post(
+            webhook_url,
+            headers=headers,
+            json=forwarded_payload,
+        )
+        assert forwarded.status_code == 202
+        assert forwarded.content == b""
+
+    unpaired = await client.post(
+        webhook_url,
+        headers=headers,
+        json={
+            "type": 2,
+            "id": "public-dm-unpair-interaction",
+            "token": "public-dm-unpair-token",
+            "application_id": application_id,
+            "channel_id": "public-paired-dm",
+            "context": 1,
+            "authorizing_integration_owners": {"1": "public-pair-user"},
+            "user": {
+                "id": "public-pair-user",
+                "global_name": "Renamed Public User",
+            },
+            "data": {"name": "clawdi_unpair"},
+        },
+    )
+
+    assert unpaired.status_code == 200
+    assert unpaired.json()["data"]["content"].startswith("Direct message unpaired.")
+    assert (await client.get(f"/v1/channels/{created['id']}/bindings")).json() == []
+    archived_binding = await db_session.get(ChannelBinding, binding_id)
+    assert archived_binding is not None
+    assert archived_binding.status == BINDING_STATUS_ARCHIVED
+    assert archived_binding.external_chat_name == "Renamed Public User"
+
+    unbound_interactions = [
+        (2, {"name": "unbound_agent_command"}),
+        (3, {"custom_id": "unbound-component", "component_type": 2}),
+        (4, {"name": "unbound_autocomplete"}),
+        (5, {"custom_id": "unbound-modal", "components": []}),
+    ]
+    unbound_responses: dict[int, httpx.Response] = {}
+    for interaction_type, interaction_data in unbound_interactions:
+        unbound_responses[interaction_type] = await client.post(
+            webhook_url,
+            headers=headers,
+            json={
+                "type": interaction_type,
+                "id": f"public-unbound-interaction-{interaction_type}",
+                "token": f"public-unbound-interaction-{interaction_type}-token",
+                "application_id": application_id,
+                "channel_id": "public-paired-dm",
+                "context": 1,
+                "authorizing_integration_owners": {"1": "public-pair-user"},
+                "user": {"id": "public-pair-user"},
+                "data": interaction_data,
+            },
+        )
+    assert unbound_responses[2].json() == {
+        "type": 4,
+        "data": {"content": "This direct message is not paired.", "flags": 64},
+    }
+    assert unbound_responses[3].json() == {
+        "type": 4,
+        "data": {"content": "This direct message is not paired.", "flags": 64},
+    }
+    assert unbound_responses[4].json() == {"type": 8, "data": {"choices": []}}
+    assert unbound_responses[5].json() == {
+        "type": 4,
+        "data": {"content": "This direct message is not paired.", "flags": 64},
+    }
+    messages = list(
+        (
+            await db_session.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.account_id == UUID(created["id"]),
+                    ChannelMessage.provider_message_id.in_(
+                        [
+                            "public-dm-pair-interaction",
+                            "public-dm-unpair-interaction",
+                            *forwarded_ids,
+                        ]
+                    ),
+                )
+            )
+        ).scalars()
+    )
+    assert len(messages) == 6
+    assert {message.binding_id for message in messages} == {binding_id}
+    assert {message.user_id for message in messages} == {channel_agent.user_id}
+    forwarded_messages = {
+        message.provider_message_id: message
+        for message in messages
+        if message.provider_message_id in forwarded_payloads
+    }
+    for interaction_id, payload in forwarded_payloads.items():
+        dispatch = _discord_gateway_dispatch(forwarded_messages[interaction_id])
+        assert dispatch["op"] == 0
+        assert dispatch["t"] == "INTERACTION_CREATE"
+        assert dispatch["d"] == payload
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(ChannelMessage)
+            .where(ChannelMessage.account_id == UUID(created["id"]))
+        )
+        == 6
+    )
+
+
+@pytest.mark.asyncio
+async def test_public_discord_unpaired_dm_tutorial_uses_platform_marker_without_message_rows(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = await _create_public_discord_account(
+        client,
+        monkeypatch,
+        name="discord-public-unpaired-dm-tutorial",
+        application_id="923456789012345678",
+    )
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    sent: list[dict[str, Any]] = []
+
+    async def send_tutorial(**kwargs: Any) -> None:
+        sent.append(kwargs)
+
+    monkeypatch.setattr(
+        channel_service,
+        "send_platform_unbound_channel_message",
+        send_tutorial,
+    )
+
+    def frame(
+        message_id: str,
+        *,
+        message_type: int,
+        bot: bool = False,
+        webhook_id: str | None = None,
+    ) -> dict[str, Any]:
+        event = {
+            "op": 0,
+            "t": "MESSAGE_CREATE",
+            "d": {
+                "id": message_id,
+                "channel_id": "public-tutorial-dm",
+                "content": "hello",
+                "type": message_type,
+                "author": {
+                    "id": "public-tutorial-user",
+                    "global_name": "Tutorial User",
+                    "bot": bot,
+                },
+            },
+        }
+        if webhook_id is not None:
+            event["d"]["webhook_id"] = webhook_id
+        return event
+
+    assert not await record_discord_dispatch(
+        db_session,
+        account=account,
+        frame=frame("tutorial-bot-reply", message_type=19, bot=True),
+    )
+    assert not await record_discord_dispatch(
+        db_session,
+        account=account,
+        frame=frame("tutorial-webhook-reply", message_type=19, webhook_id="webhook-1"),
+    )
+    assert not await record_discord_dispatch(
+        db_session,
+        account=account,
+        frame=frame("tutorial-system", message_type=6),
+    )
+
+    assert await record_discord_dispatch(
+        db_session,
+        account=account,
+        frame=frame("tutorial-reply", message_type=19),
+    )
+    await db_session.commit()
+    assert await record_discord_dispatch(
+        db_session,
+        account=account,
+        frame=frame("tutorial-default", message_type=0),
+    )
+    await db_session.commit()
+
+    assert sent == [
+        {
+            "account": account,
+            "external_chat_id": "public-tutorial-dm",
+            "text": (
+                "This Discord chat is not paired. Create a Discord pairing code in Clawdi, "
+                "then run /clawdi_pair <code>."
+            ),
+        }
+    ]
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(ChannelMessage)
+            .where(ChannelMessage.account_id == account.id)
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
 async def test_discord_secret_only_interaction_cannot_claim_pair_code(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -20874,7 +21342,7 @@ async def test_discord_concurrent_replayed_unpair_waits_for_event_commit_and_rep
 
 
 @pytest.mark.asyncio
-async def test_discord_gateway_replayed_unpair_cannot_archive_replacement_binding(
+async def test_discord_gateway_interaction_cannot_unpair_or_create_side_effects(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
 ) -> None:
@@ -20887,8 +21355,15 @@ async def test_discord_gateway_replayed_unpair_cannot_archive_replacement_bindin
         channel_id=channel_id,
         guild_id=guild_id,
     )
+    account_id = UUID(created["id"])
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    original_unpair = {
+    before_counts = {
+        model: await db_session.scalar(
+            select(func.count()).select_from(model).where(model.account_id == account_id)
+        )
+        for model in (ChannelMessage, ChannelAgentReference, ChannelDelivery)
+    }
+    gateway_unpair = {
         "op": 0,
         "t": "INTERACTION_CREATE",
         "s": 801,
@@ -20908,57 +21383,21 @@ async def test_discord_gateway_replayed_unpair_cannot_archive_replacement_bindin
             "data": {"name": "clawdi_unpair"},
         },
     }
-    assert (
-        await record_discord_gateway_dispatch(
-            sessionmaker,
-            UUID(created["id"]),
-            original_unpair,
-        )
-        is True
-    )
-    assert (await client.get(f"/v1/channels/{created['id']}/bindings")).json() == []
-
-    pair = (
-        await client.post(
-            f"/v1/channels/{created['id']}/pair-codes",
-            json={"ttl_seconds": 900},
-        )
-    ).json()
-    replacement_pair = await client.post(
-        f"/v1/channels/discord/{created['id']}/webhook",
-        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
-        json={
-            "type": 2,
-            "id": "gateway-replacement-pair-interaction",
-            "token": "gateway-replacement-pair-token",
-            "application_id": DISCORD_TEST_APPLICATION_ID,
-            "channel_id": channel_id,
-            "guild_id": guild_id,
-            "context": 0,
-            "authorizing_integration_owners": {"0": guild_id},
-            "member": {
-                "permissions": "32",
-                "user": {"id": actor_id},
-            },
-            "data": {
-                "name": "clawdi_pair",
-                "options": [{"name": "code", "value": pair["code"]}],
-            },
-        },
-    )
-    assert replacement_pair.json()["data"]["content"].startswith("Server paired.")
-
-    assert (
-        await record_discord_gateway_dispatch(
-            sessionmaker,
-            UUID(created["id"]),
-            original_unpair,
-        )
-        is True
+    assert not await record_discord_gateway_dispatch(
+        sessionmaker,
+        account_id,
+        gateway_unpair,
     )
     bindings = (await client.get(f"/v1/channels/{created['id']}/bindings")).json()
     assert len(bindings) == 1
     assert bindings[0]["external_chat_id"] == guild_id
+    for model, before in before_counts.items():
+        assert (
+            await db_session.scalar(
+                select(func.count()).select_from(model).where(model.account_id == account_id)
+            )
+            == before
+        )
 
 
 @pytest.mark.asyncio

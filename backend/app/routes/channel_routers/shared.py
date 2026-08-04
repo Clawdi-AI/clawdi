@@ -1374,14 +1374,26 @@ def _discord_guild_command_provider_payload(command: dict[str, Any]) -> dict[str
 
 def _discord_gateway_dispatch(message: Any) -> dict[str, Any]:
     payload = message.payload if isinstance(message.payload, dict) else {}
-    data = payload.get("d") if isinstance(payload.get("d"), dict) else payload
-    dispatch_type = payload.get("t") if isinstance(payload.get("t"), str) else "MESSAGE_CREATE"
+    interaction_type = payload.get("type")
+    is_http_interaction = (
+        "t" not in payload
+        and isinstance(interaction_type, int)
+        and not isinstance(interaction_type, bool)
+        and interaction_type in {2, 3, 4, 5}
+    )
+    if is_http_interaction:
+        data = payload
+        dispatch_type = "INTERACTION_CREATE"
+    else:
+        data = payload.get("d") if isinstance(payload.get("d"), dict) else payload
+        dispatch_type = payload.get("t") if isinstance(payload.get("t"), str) else "MESSAGE_CREATE"
     if not isinstance(data, dict):
         data = {}
     data = dict(data)
-    data.setdefault("id", message.provider_message_id or str(message.id))
-    data.setdefault("channel_id", message.external_chat_id)
-    data.setdefault("content", message.text or "")
+    if not is_http_interaction:
+        data.setdefault("id", message.provider_message_id or str(message.id))
+        data.setdefault("channel_id", message.external_chat_id)
+        data.setdefault("content", message.text or "")
     return {
         "op": 0,
         "t": dispatch_type,

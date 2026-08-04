@@ -18,6 +18,7 @@ import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import HTTPException, status
+from pydantic import JsonValue
 from sqlalchemy import and_, delete, exists, func, or_, select, union_all, update
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
@@ -2345,7 +2346,7 @@ def discord_guild_command_denied_reason(
     data = _discord_event_data(payload)
     member = data.get("member")
     raw_permissions = member.get("permissions") if isinstance(member, dict) else None
-    is_interaction = payload.get("type") == 2 or payload.get("t") == "INTERACTION_CREATE"
+    is_interaction = payload.get("type") == 2
     if not isinstance(raw_permissions, str) or re.fullmatch(r"[0-9]+", raw_permissions) is None:
         return DISCORD_GUILD_PERMISSION_DENIED if is_interaction else DISCORD_GUILD_USE_INTERACTION
     try:
@@ -2400,13 +2401,12 @@ def _discord_pair_install_admission(
     interaction_type = data.get("type")
     interaction_data = data.get("data")
     is_http_interaction = data is payload
-    is_gateway_interaction = payload.get("t") == "INTERACTION_CREATE" and data is not payload
     is_application_command = (
         isinstance(interaction_type, int)
         and not isinstance(interaction_type, bool)
         and interaction_type == 2
         and isinstance(interaction_data, dict)
-        and (is_http_interaction or is_gateway_interaction)
+        and is_http_interaction
     )
     expected_context = (
         DISCORD_GUILD_INTERACTION_CONTEXT
@@ -5329,7 +5329,10 @@ async def rearm_discord_command_reconciliation(
             changed = True
             rearmed += 1
         if changed:
-            config["discord_command_retries"] = retries
+            json_retries: dict[str, JsonValue] = {}
+            for guild_id, retry in retries.items():
+                json_retries[guild_id] = retry
+            config["discord_command_retries"] = json_retries
             link.config = config
     return rearmed
 
@@ -6450,6 +6453,8 @@ async def record_discord_dispatch(
     account: ChannelAccount,
     frame: dict[str, Any],
 ) -> bool:
+    if frame.get("t") == "INTERACTION_CREATE":
+        return False
     key = extract_discord_routing_key(frame)
     chat = discord_chat_from_payload(frame)
     if key is not None:
@@ -6590,7 +6595,9 @@ async def _record_discord_unpaired_message_and_maybe_instruct(
     message_type = data.get("type", 0)
     author = data.get("author")
     if (
-        message_type != 0
+        # DEFAULT and REPLY are the ordinary user-authored message types.
+        # https://discord.com/developers/docs/resources/message#message-object-message-types
+        message_type not in {0, 19}
         or not isinstance(author, dict)
         or author.get("bot") is True
         or data.get("webhook_id") is not None
