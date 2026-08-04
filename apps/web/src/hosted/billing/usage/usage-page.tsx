@@ -8,6 +8,7 @@ import type { AgentTile } from "@/components/dashboard/agents-card";
 import { EmptyState } from "@/components/empty-state";
 import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
 import { SettingsSection } from "@/components/settings-section";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
 	Select,
@@ -496,6 +497,9 @@ export function UsageSummaryView({
 													type={identity.type}
 													avatarUrl={identity.avatarUrl}
 													size="sm"
+													titleAdornment={
+														agent.agent_deleted ? <Badge variant="outline">Deleted</Badge> : null
+													}
 												/>
 											) : (
 												<div className="space-y-0.5">

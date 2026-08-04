@@ -2007,6 +2007,8 @@ export interface components {
             agent_name: string | null;
             /** Agent Type */
             agent_type?: ("openclaw" | "hermes") | null;
+            /** Agent Deleted */
+            agent_deleted?: boolean | null;
             /** Amount Usd */
             amount_usd: string;
             /** Requests */
