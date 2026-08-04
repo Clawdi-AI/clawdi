@@ -8,6 +8,8 @@ on:
       - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
       - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
       - "config/deploy.yml"
+      - "config/postgres-image.txt"
+      - "docker-compose.test.yml"
       - "deploy/self-host/**"
       - "apps/web/Dockerfile"
       - ".dockerignore"
@@ -16,6 +18,7 @@ on:
       - "bun.lock"
       - "scripts/openapi-typescript.sh"
       - "scripts/test-kamal-whatsapp-sidecar-render.sh"
+      - "scripts/check_postgres_image_parity.py"
       - "tools/openapi-typescript/**"
       - ".github/actions/setup-bun-ci/**"
       - ".github/workflows/backend-ci.yml"
@@ -28,6 +31,8 @@ on:
       - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
       - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
       - "config/deploy.yml"
+      - "config/postgres-image.txt"
+      - "docker-compose.test.yml"
       - "deploy/self-host/**"
       - "apps/web/Dockerfile"
       - ".dockerignore"
@@ -36,6 +41,7 @@ on:
       - "bun.lock"
       - "scripts/openapi-typescript.sh"
       - "scripts/test-kamal-whatsapp-sidecar-render.sh"
+      - "scripts/check_postgres_image_parity.py"
       - "tools/openapi-typescript/**"
       - ".github/actions/setup-bun-ci/**"
       - ".github/workflows/backend-ci.yml"
@@ -83,14 +89,21 @@ jobs:
               - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
               - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
               - "scripts/test-kamal-whatsapp-sidecar-render.sh"
+              - "scripts/check_postgres_image_parity.py"
               - "config/deploy.yml"
+              - "config/postgres-image.txt"
+              - "docker-compose.test.yml"
             test:
               - "backend/app/**"
               - "backend/tests/**"
               - "backend/alembic/**"
+              - "backend/scripts/check_postgres_runtime.py"
               - "backend/pyproject.toml"
               - "backend/uv.lock"
               - "backend/Dockerfile"
+              - "config/postgres-image.txt"
+              - "docker-compose.test.yml"
+              - "scripts/check_postgres_image_parity.py"
               - ".github/workflows/backend-ci.yml"
             sidecar:
               - "packages/whatsapp-baileys-sidecar/**"
@@ -127,6 +140,8 @@ jobs:
         with:
           bun-version: "1.3.14"
       - run: uv sync --frozen --no-install-project
+      - name: PostgreSQL image parity
+        run: uv run python ../scripts/check_postgres_image_parity.py
       - name: uv lock is current
         run: uv lock --check
       - name: Dependency authority
@@ -167,18 +182,19 @@ jobs:
         working-directory: backend
     services:
       postgres:
-        # pgvector image ships PG 16 + pgvector + pg_trgm preinstalled as extensions.
-        image: pgvector/pgvector:pg16
+        # Workflow services require a literal; the parity contract guards it.
+        image: ghcr.io/clawdi-ai/postgres-pgbackrest:pg18@sha256:a1fdff3df831a4cd165795cc4c78d5e8d99ed7d279438e59fc30d75b8d10dd67
         env:
           POSTGRES_DB: clawdi_test
           POSTGRES_USER: test
           POSTGRES_PASSWORD: test
         ports: ["5432:5432"]
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U test -d clawdi_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+          --tmpfs /var/lib/postgresql:rw,nosuid,nodev,noexec,size=1g
     env:
       DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/clawdi_test
       ENCRYPTION_KEY: test-encryption-key-32-chars-xxxx
@@ -194,11 +210,8 @@ jobs:
           prune-cache: true
           cache-dependency-glob: backend/uv.lock
       - run: uv sync --frozen --no-install-project
-      - name: Enable Postgres extensions
-        run: |
-          PGPASSWORD=test psql -h localhost -U test -d clawdi_test \
-            -c 'CREATE EXTENSION IF NOT EXISTS vector;' \
-            -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
+      - name: Verify PostgreSQL runtime contract
+        run: uv run python scripts/check_postgres_runtime.py
       - name: Run migrations
         run: uv run alembic upgrade head
       - name: Project-sharing migration downgrade/upgrade round trip
