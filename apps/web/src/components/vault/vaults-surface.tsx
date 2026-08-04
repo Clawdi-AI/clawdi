@@ -4,7 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { useRouter } from "@tanstack/react-router";
 import { Lock, Plus } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
-import { type ReactElement, useMemo, useState } from "react";
+import { type ReactElement, type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -287,13 +287,14 @@ export function VaultsSurface({
 	);
 }
 
-function VaultCard({
+export function VaultCard({
 	vault,
 	projectNameById,
 	projectNamesUnavailable,
 	visibleProjectIds,
 	navigationScope,
 	shared = false,
+	actions,
 }: {
 	vault: VaultSummary;
 	projectNameById: ReadonlyMap<string, string>;
@@ -301,6 +302,7 @@ function VaultCard({
 	visibleProjectIds: ReadonlySet<string> | null;
 	navigationScope: ResourceNavigationScope;
 	shared?: boolean;
+	actions?: ReactNode;
 }) {
 	const api = useApi();
 	const itemProjectId =
@@ -366,13 +368,14 @@ function VaultCard({
 					"not in any Project yet"
 				),
 			]}
+			actions={actions}
 			link={vaultDetailLink(navigationScope, vault.slug, vault.id)}
 			ariaLabel={`Open vault ${vault.name}`}
 		/>
 	);
 }
 
-function VaultCardSkeleton() {
+export function VaultCardSkeleton() {
 	return (
 		<div className={cn(HERO_CARD_BASE, "flex min-h-36 flex-col gap-3")}>
 			<Skeleton className="size-10 rounded-lg" />

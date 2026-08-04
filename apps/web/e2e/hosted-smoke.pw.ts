@@ -3111,25 +3111,32 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		await overview
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "memories", "connectors", "model-provider", "channels"]);
+	).toEqual([
+		"projects",
+		"default-project",
+		"memories",
+		"connectors",
+		"model-provider",
+		"channels",
+	]);
 	expect(
 		await page
 			.locator("#hosted-recent-sessions, #agent-overview-resources")
 			.evaluateAll((headings) => headings.map((heading) => heading.id)),
 	).toEqual(["hosted-recent-sessions", "agent-overview-resources"]);
-	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(5);
+	await expect(overview.locator('[data-overview-module] [data-slot="card-title"]')).toHaveCount(6);
 	await expect(
 		overview.locator('[data-overview-module] [data-slot="card-description"]'),
-	).toHaveCount(5);
+	).toHaveCount(6);
 	expect(
 		await overview
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) =>
 				cards.map((card) => card.querySelectorAll(':scope > [data-slot="card-content"]').length),
 			),
-	).toEqual([0, 0, 0, 0, 0]);
+	).toEqual([0, 0, 0, 0, 0, 0]);
 	await expect(overview.locator('[data-overview-module] > [data-slot="card-header"]')).toHaveCount(
-		5,
+		6,
 	);
 	await expect(overview.locator("[data-overview-module-error]")).toHaveCount(0);
 	await expect(
@@ -3142,8 +3149,11 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.locator('[data-overview-module="projects"]')).not.toContainText(
 		"Hosted Agent Project",
 	);
+	await expect(overview.locator('[data-overview-module="default-project"]')).toContainText(
+		"Hosted Agent Project",
+	);
 	await expect(overview.getByTestId("agent-project-grid")).toHaveCount(0);
-	expect(agentProjectRequests).toEqual([]);
+	expect(agentProjectRequests).toHaveLength(1);
 	expect(skillRequests).toEqual([]);
 	expect(vaultRequests).toEqual([]);
 	const viewAllSessions = page
@@ -3272,7 +3282,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expectInlineSidebarStatus(sidebar, "hosted");
 	await expect(sidebar.getByText("Paused", { exact: true })).toHaveCount(0);
 	await expect(sidebar.getByText(/last seen/i)).toHaveCount(0);
-	for (const section of ["Projects", "Memories", "Connectors"]) {
+	for (const section of ["Projects", "Default Project", "Memories", "Connectors"]) {
 		await expect(sidebar.getByRole("link", { name: section, exact: true })).toBeVisible();
 	}
 	await expect(sidebar.getByRole("link", { name: "Skills", exact: true })).toHaveCount(0);
@@ -3291,7 +3301,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const resourceGeometry = await resourceGrid
 		.locator("[data-overview-module]")
 		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(resourceGeometry).toHaveLength(3);
+	expect(resourceGeometry).toHaveLength(4);
 	expect(
 		Math.max(...resourceGeometry.map((box) => box.width)) -
 			Math.min(...resourceGeometry.map((box) => box.width)),
@@ -3306,8 +3316,8 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		await resourceGrid
 			.locator("[data-overview-module]")
 			.evaluateAll((cards) => cards.map((card) => card.getAttribute("data-overview-module"))),
-	).toEqual(["projects", "memories", "connectors"]);
-	await expectOverviewResourceGeometry(resourceGrid, [3]);
+	).toEqual(["projects", "default-project", "memories", "connectors"]);
+	await expectOverviewResourceGeometry(resourceGrid, [3, 1]);
 	await expectOverviewResourceGeometry(toolsGrid, [2]);
 	const toolGeometry = await toolsGrid
 		.locator("[data-overview-module]")
@@ -3331,13 +3341,13 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	);
 	await expectAgentOverviewTypography(page);
 	await page.setViewportSize({ width: 1024, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [2, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [2, 2]);
 	await expectOverviewResourceGeometry(toolsGrid, [2]);
 	await page.setViewportSize({ width: 768, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1]);
 	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
 	await page.setViewportSize({ width: 390, height: 1200 });
-	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1]);
+	await expectOverviewResourceGeometry(resourceGrid, [1, 1, 1, 1]);
 	await expectOverviewResourceGeometry(toolsGrid, [1, 1]);
 	const [mobileSessionsBox, mobileViewAllBox] = await Promise.all([
 		recentSessions.boundingBox(),
@@ -4315,7 +4325,12 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	await expect(groups.nth(0).locator('[data-slot="sidebar-group-label"]')).toHaveCount(0);
 	await expect(groups.nth(0).getByRole("link")).toHaveText(["Overview", "Sessions"]);
 	await expect(groups.nth(1).locator('[data-slot="sidebar-group-label"]')).toHaveText("Resources");
-	await expect(groups.nth(1).getByRole("link")).toHaveText(["Projects", "Memories", "Connectors"]);
+	await expect(groups.nth(1).getByRole("link")).toHaveText([
+		"Projects",
+		"Default Project",
+		"Memories",
+		"Connectors",
+	]);
 	await expect(groups.nth(2).locator('[data-slot="sidebar-group-label"]')).toHaveText("Tools");
 	await expect(groups.nth(2).getByRole("link")).toHaveText([
 		"Agent Interface",
@@ -4547,7 +4562,9 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		`/agents/${railHostedEnvironmentId}/project-access${query}`,
 	);
 	await expect(main.getByRole("button", { name: "Manage in resource library" })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: /Add to agent/i }).first()).toBeVisible();
+	await expect(main.getByRole("button", { name: /Add to agent/i })).toHaveCount(0);
+	await expect(main.getByRole("heading", { name: "People", exact: true })).toHaveCount(0);
+	await expect(main.getByRole("heading", { name: "Agents", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /New vault/i })).toBeVisible();
 	await expect(main.getByRole("link", { name: "Open vault Hosted Scoped Vault" })).toHaveAttribute(
 		"href",

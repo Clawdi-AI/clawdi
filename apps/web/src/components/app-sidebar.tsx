@@ -49,6 +49,8 @@ import {
 	displayMachineName,
 	LegacyAgentBadge,
 } from "@/components/dashboard/agent-label";
+import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
+import { resolveAgentDefaultProject } from "@/components/dashboard/agent-project-scope";
 import {
 	type AgentCardStatusProjection,
 	type AgentTile,
@@ -59,6 +61,7 @@ import {
 import { DaemonStatusBadge, type DaemonStatusSource } from "@/components/dashboard/daemon-status";
 import { NewAgentButton } from "@/components/dashboard/new-agent-button";
 import { IconChip } from "@/components/icon-chip";
+import { displayProjectName } from "@/components/projects/project-metadata";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -95,6 +98,8 @@ import {
 	type AgentSectionId,
 	agentDeploymentRouteQuery,
 	agentDeploymentSelector,
+	agentProjectDetailHref,
+	agentRouteIdsEqual,
 	agentSectionHref,
 	parseAgentPathname,
 } from "@/lib/agent-routes";
@@ -155,6 +160,11 @@ type SidebarNavItem = {
 	active: boolean;
 	external?: boolean;
 	prefetch?: () => void;
+};
+
+type AgentDefaultProjectShortcut = {
+	id: string;
+	name: string;
 };
 
 const RAIL_DRAG_ACTIVATION_DISTANCE = 10;
@@ -319,6 +329,7 @@ function AgentSectionList({
 	variant,
 	visibleSectionIds,
 	activeSection,
+	defaultProject,
 	extraPrimaryItems = [],
 	onNavigate,
 }: {
@@ -326,13 +337,19 @@ function AgentSectionList({
 	variant: AgentNavigationVariant;
 	visibleSectionIds?: readonly AgentSectionId[];
 	activeSection: AgentSectionId;
+	defaultProject?: AgentDefaultProjectShortcut | null;
 	extraPrimaryItems?: SidebarNavItem[];
 	onNavigate?: () => void;
 }) {
+	const pathname = useLocation({ select: (location) => location.pathname });
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const routeQuery = agentDeploymentRouteQuery(searchStr);
 	const prefetchConnectorsCatalog = usePrefetchConnectorsCatalog();
 	const groups = agentNavigationGroups(variant, visibleSectionIds);
+	const activeAgentRoute = parseAgentPathname(pathname);
+	const defaultProjectActive = Boolean(
+		defaultProject && agentRouteIdsEqual(activeAgentRoute?.projectId, defaultProject.id),
+	);
 	const normalizedActiveSection = groups.some((group) =>
 		group.items.some((item) => item.id === activeSection),
 	)
@@ -346,18 +363,35 @@ function AgentSectionList({
 					key={group.id}
 					label={group.label}
 					items={[
-						...group.items.map(
-							(item): SidebarNavItem => ({
+						...group.items.flatMap((item): SidebarNavItem[] => {
+							const navigationItem: SidebarNavItem = {
 								id: item.id,
 								label: item.label,
 								href: agentSectionHref(agentId, item.id, routeQuery),
 								icon: item.icon,
 								tint: item.tint,
 								tooltip: item.tooltip,
-								active: normalizedActiveSection === item.id,
+								active:
+									normalizedActiveSection === item.id &&
+									!(item.id === "projects" && defaultProjectActive),
 								prefetch: item.id === "connectors" ? prefetchConnectorsCatalog : undefined,
-							}),
-						),
+							};
+							if (group.id !== "resources" || item.id !== "projects" || !defaultProject) {
+								return [navigationItem];
+							}
+							return [
+								navigationItem,
+								{
+									id: "default-project",
+									label: "Default Project",
+									href: agentProjectDetailHref(agentId, defaultProject.id, routeQuery),
+									icon: item.icon,
+									tint: item.tint,
+									tooltip: `Default Project — ${defaultProject.name}`,
+									active: defaultProjectActive,
+								},
+							];
+						}),
 						...(group.id === "primary" ? extraPrimaryItems : []),
 					]}
 					separated={group.separated}
@@ -375,11 +409,13 @@ function AgentFocusSections({
 	agentId,
 	kind,
 	activeSection,
+	defaultProject,
 	onNavigate,
 }: {
 	agentId: string;
 	kind: Exclude<AgentChromeKind, "unresolved">;
 	activeSection: AgentSectionId;
+	defaultProject?: AgentDefaultProjectShortcut | null;
 	onNavigate?: () => void;
 }) {
 	const legacyDashboardHref = kind === "legacy" ? legacyHostedDashboardUrl() : null;
@@ -402,6 +438,7 @@ function AgentFocusSections({
 			agentId={agentId}
 			variant={kind === "cloud" ? "hosted" : "connected"}
 			activeSection={activeSection}
+			defaultProject={defaultProject}
 			extraPrimaryItems={extraPrimaryItems}
 			onNavigate={onNavigate}
 		/>
@@ -484,6 +521,7 @@ function SidebarMainNavigation({
 	activeAgentKind,
 	agentsLoaded,
 	activeSection,
+	defaultProject,
 	onNavigate,
 }: {
 	pathname: string;
@@ -493,6 +531,7 @@ function SidebarMainNavigation({
 	activeAgentKind: AgentChromeKind;
 	agentsLoaded: boolean;
 	activeSection: AgentSectionId;
+	defaultProject?: AgentDefaultProjectShortcut | null;
 	onNavigate?: () => void;
 }) {
 	if (activeAgentId && activeAgentTile && activeAgentKind !== "unresolved") {
@@ -501,6 +540,7 @@ function SidebarMainNavigation({
 				agentId={activeAgentId}
 				kind={activeAgentKind}
 				activeSection={activeSection}
+				defaultProject={defaultProject}
 				onNavigate={onNavigate}
 			/>
 		);
@@ -553,6 +593,7 @@ type FocusNavigationPaneProps = {
 	activeAgentKind: AgentChromeKind;
 	agentsLoaded: boolean;
 	activeSection: AgentSectionId;
+	defaultProject?: AgentDefaultProjectShortcut | null;
 	onNavigate?: () => void;
 };
 
@@ -566,6 +607,7 @@ function FocusNavigationPane({
 	activeAgentKind,
 	agentsLoaded,
 	activeSection,
+	defaultProject,
 	onNavigate,
 }: FocusNavigationPaneProps) {
 	return (
@@ -587,6 +629,7 @@ function FocusNavigationPane({
 					activeAgentKind={activeAgentKind}
 					agentsLoaded={agentsLoaded}
 					activeSection={activeSection}
+					defaultProject={defaultProject}
 					onNavigate={onNavigate}
 				/>
 			</SidebarContent>
@@ -1499,6 +1542,23 @@ export function AppSidebar({
 	const activeAgent = activeAgentId
 		? (hydratedEnvironments?.find((env) => env.id === activeAgentId) ?? null)
 		: null;
+	const defaultProjectBindings = useAgentProjectBindings(activeAgent?.id, {
+		enabled: hydrated && Boolean(activeAgent?.default_project_id),
+	});
+	const navigableProjects = $api.useQuery(
+		"get",
+		"/v1/projects",
+		{},
+		{ enabled: hydrated && Boolean(activeAgent?.default_project_id) },
+	);
+	const resolvedDefaultProject = resolveAgentDefaultProject(
+		defaultProjectBindings.data ?? [],
+		navigableProjects.data ?? [],
+		activeAgent?.default_project_id,
+	);
+	const defaultProject = resolvedDefaultProject
+		? { id: resolvedDefaultProject.id, name: displayProjectName(resolvedDefaultProject) }
+		: null;
 	const classifiedActiveAgentKind = useAgentChromeKind(activeAgent, activeAgentTile);
 	const activeAgentKind =
 		activeAgentTile || !activeAgentId || (agentsLoaded && !hostedInventoryFetching)
@@ -1584,6 +1644,7 @@ export function AppSidebar({
 						activeAgentKind={activeAgentKind}
 						agentsLoaded={agentsLoaded}
 						activeSection={activeSection}
+						defaultProject={defaultProject}
 					/>
 				) : null}
 
@@ -1619,6 +1680,7 @@ export function AppSidebar({
 							activeAgentKind={activeAgentKind}
 							agentsLoaded={agentsLoaded}
 							activeSection={activeSection}
+							defaultProject={defaultProject}
 							onNavigate={closeMobileSidebar}
 						/>
 						<SidebarGlobalControlsBar

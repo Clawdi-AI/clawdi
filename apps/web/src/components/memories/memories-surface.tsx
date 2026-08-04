@@ -340,7 +340,7 @@ function MemoryNotesGrid({
 					<span className="absolute right-2 top-2 z-10 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
 						<ConfirmAction
 							title="Delete this memory?"
-							description={<p>Your AI will stop recalling it on every agent within seconds.</p>}
+							description={<p>Deleting removes this memory from every agent.</p>}
 							confirmLabel="Delete memory"
 							destructive
 							onConfirm={() => onDelete(memory.id)}

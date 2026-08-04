@@ -80,4 +80,41 @@ describe("agent Projects presentation", () => {
 		expect(source).toContain("agentProjectBindingsQueryKey(agentId)");
 		expect(source).toContain('invalidateQueries({ queryKey: ["get", "/v1/projects"] })');
 	});
+
+	test("adds a fail-closed Default Project shortcut to existing navigation tile families", () => {
+		const sidebar = readFileSync(new URL("../app-sidebar.tsx", import.meta.url), "utf8");
+		const overview = readFileSync(
+			new URL("./agent-overview-capabilities.tsx", import.meta.url),
+			"utf8",
+		);
+
+		expect(sidebar).toContain('label: "Default Project"');
+		expect(sidebar).toContain("resolveAgentDefaultProject(");
+		expect(sidebar).toContain("agentProjectDetailHref(agentId, defaultProject.id, routeQuery)");
+		expect(overview).toContain('title="Default Project"');
+		expect(overview).toContain("agentProjectDetailLink(");
+		expect(overview).toContain("<OverviewNavigationCard");
+		expect(overview).not.toContain("ProjectResourceCard");
+	});
+
+	test("uses canonical resource entities and removes account relationship UI in Agent scope", () => {
+		const projectPage = readFileSync(
+			new URL("../../pages/dashboard/projects/[id]/page.tsx", import.meta.url),
+			"utf8",
+		);
+		const vaultCards = readFileSync(
+			new URL("../vault/vaults-surface.tsx", import.meta.url),
+			"utf8",
+		);
+
+		expect(projectPage).toContain("<PageHeader");
+		expect(projectPage).toContain("<SkillCardGrid");
+		expect(projectPage).toContain("<VaultCard");
+		expect(projectPage).not.toContain("function VaultRow");
+		expect(vaultCards).toContain("export function VaultCard(");
+		expect(vaultCards).toContain("actions={actions}");
+		expect(projectPage).toContain("!isAgentScope && isOwner && isShareableProject");
+		expect(projectPage).toContain("!isAgentScope && !isOwner");
+		expect(projectPage).toContain("!isAgentScope && isOwner && isManaged");
+	});
 });

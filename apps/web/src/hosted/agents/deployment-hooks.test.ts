@@ -355,7 +355,9 @@ describe("deployment transition timeout rendering", () => {
 		expect(shouldShowProjectionNotice("ai")).toBe(false);
 		expect(shouldShowProjectionNotice("settings")).toBe(false);
 		expect(shouldShowProjectionNotice("sessions")).toBe(false);
-		expect(shouldShowProjectionNotice("skills")).toBe(true);
+		expect(shouldShowProjectionNotice("projects")).toBe(true);
+		expect(shouldShowProjectionNotice("skills")).toBe(false);
+		expect(shouldShowProjectionNotice("vaults")).toBe(false);
 	});
 
 	test("keeps lifecycle actions out of the deployment-backed overview", () => {
