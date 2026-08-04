@@ -24,6 +24,7 @@ describe("global Channels inventory", () => {
 		expect(channelsPage).not.toContain("data-pool-account-id");
 		expect(channelsPage).not.toContain("LinkAgentDialog");
 		expect(channelsPage).not.toContain("Link an agent");
+		expect(channelsPage).toContain("Delete custom bot");
 		expect(channelsPage).not.toContain("At capacity");
 		expect(channelsPage).toContain("providersWithBots(counts)");
 		expect(channelsPage).not.toContain("· Shared");
@@ -57,6 +58,7 @@ describe("global Channels inventory", () => {
 		expect(connectDialog).toContain('onAddWithoutLinking={() => submit("inventory-only")}');
 		expect(replacementConfirm).toContain('label: "Add without linking"');
 		expect(replacementConfirm).toContain("? `How should this ");
+		expect(replacementConfirm).toContain("This Agent can link only one");
 		expect(replacementConfirm).toContain(": `Replace this Agent’s ");
 		expect(connectDialog).toContain("onAgentConnected");
 		expect(connectDialog).toContain("autoLinkAgentIdForNewCustomBot");

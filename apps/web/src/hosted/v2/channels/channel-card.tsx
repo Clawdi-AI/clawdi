@@ -49,7 +49,10 @@ export function ChannelCard({
 					meta={state}
 				/>
 				{actions ? (
-					<div data-channel-card-actions className="flex min-w-0 items-center justify-end gap-2">
+					<div
+						data-channel-card-actions
+						className="relative z-10 flex min-w-0 items-center justify-end gap-2"
+					>
 						{actions}
 					</div>
 				) : null}

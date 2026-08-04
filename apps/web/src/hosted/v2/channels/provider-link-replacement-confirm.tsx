@@ -27,25 +27,26 @@ export function ProviderLinkReplacementConfirm({
 						: `Replace this Agent’s ${providerLabel} link?`
 				}
 				description={
-					onAddWithoutLinking ? (
-						<>
-							This Agent can use one {providerLabel} bot at a time. Choose Add without linking to
-							keep the current bot and its paired chats;{" "}
-							<span className="font-medium text-foreground [overflow-wrap:anywhere]">
-								{targetName}
-							</span>{" "}
-							will be added to Custom bots only. Choose Replace to link the new bot and remove the
-							current bot&apos;s paired chats from this Agent.
-						</>
-					) : (
-						<>
-							This Agent can use one {providerLabel} bot at a time.{" "}
-							<span className="font-medium text-foreground [overflow-wrap:anywhere]">
-								{targetName}
-							</span>{" "}
-							will replace the current bot, and its paired chats will be removed from this Agent.
-						</>
-					)
+					<>
+						This Agent can link only one {providerLabel} bot.{" "}
+						{onAddWithoutLinking ? (
+							<>
+								Add{" "}
+								<span className="font-medium text-foreground [overflow-wrap:anywhere]">
+									{targetName}
+								</span>{" "}
+								without linking, or replace the current bot and remove its paired chats.
+							</>
+						) : (
+							<>
+								Linking{" "}
+								<span className="font-medium text-foreground [overflow-wrap:anywhere]">
+									{targetName}
+								</span>{" "}
+								will replace the current bot and remove its paired chats.
+							</>
+						)}
+					</>
 				}
 				confirmLabel={`Replace ${providerLabel} link`}
 				secondaryAction={
