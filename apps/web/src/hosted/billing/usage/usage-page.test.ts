@@ -166,7 +166,7 @@ describe("usage availability rendering", () => {
 		});
 
 		expect(markup).toContain("Unattributed");
-		expect(markup).toContain("Deleted or unmapped agent usage");
+		expect(markup).toContain("Usage not linked to an agent");
 		expect(markup.indexOf("research")).toBeLessThan(markup.indexOf("Unattributed"));
 		expect(markup.indexOf("larger-model")).toBeLessThan(markup.indexOf("smaller-model"));
 	});

@@ -4844,7 +4844,7 @@ test("usage settings show peer agent and model breakdowns on desktop and mobile"
 	await expect(dialog.getByText("research", { exact: true })).toBeVisible();
 	await expect(dialog.getByText("hdep_research", { exact: true })).toBeVisible();
 	await expect(dialog.getByText("Unattributed", { exact: true })).toBeVisible();
-	await expect(dialog.getByText("Deleted or unmapped agent usage", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("Usage not linked to an agent", { exact: true })).toBeVisible();
 	await expect(dialog.getByText("Daily usage", { exact: true })).toHaveCount(0);
 	await expect(dialog.getByRole("table")).toHaveCount(2);
 	await dialog.screenshot({ path: testInfo.outputPath("usage-desktop.png") });

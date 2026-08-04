@@ -319,9 +319,9 @@ export function UsageSummaryView({
 														? "truncate font-mono text-[11px] text-muted-foreground"
 														: "text-xs leading-4 text-muted-foreground"
 												}
-												title={agent.agent_id ?? undefined}
-											>
-												{agent.agent_id ?? "Deleted or unmapped agent usage"}
+											title={agent.agent_id ?? undefined}
+										>
+												{agent.agent_id ?? "Usage not linked to an agent"}
 											</div>
 										</td>
 										<td className="py-3 text-right align-top text-sm tabular-nums">

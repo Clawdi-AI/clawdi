@@ -115,11 +115,7 @@ export function PlanComparison({
 									<p className="text-3xl font-semibold tracking-tight tabular-nums">
 										{basicPrice.primary}
 									</p>
-									{basicOffer?.billing_term_months !== 1 ? (
-										<p className="text-xs text-muted-foreground">{basicPrice.secondary}</p>
-									) : (
-										<div className="h-4" aria-hidden />
-									)}
+									<p className="text-xs text-muted-foreground">{basicPrice.secondary}</p>
 								</>
 							) : (
 								<p className="text-sm font-medium">Pricing unavailable</p>
@@ -155,11 +151,7 @@ export function PlanComparison({
 									<p className="text-3xl font-semibold tracking-tight tabular-nums">
 										{performancePrice.primary}
 									</p>
-									{performanceOffer?.billing_term_months !== 1 ? (
-										<p className="text-xs text-muted-foreground">{performancePrice.secondary}</p>
-									) : (
-										<div className="h-4" aria-hidden />
-									)}
+									<p className="text-xs text-muted-foreground">{performancePrice.secondary}</p>
 								</>
 							) : (
 								<p className="text-sm font-medium">Pricing unavailable</p>
