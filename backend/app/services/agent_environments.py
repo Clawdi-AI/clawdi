@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
 from app.services.agent_lifecycle import reactivate_agent_and_project
+from app.services.principal_lifecycle import assert_user_authority_active
 
 _AGENT_TYPE_LABELS = {
     "openclaw": "OpenClaw",
@@ -71,6 +72,8 @@ async def register_agent_environment(
 
     if environment_id is None and registration_key is None:
         raise ValueError("register_agent_environment requires environment_id or registration_key")
+
+    await assert_user_authority_active(db, user_id)
 
     if environment_id is not None:
         existing = (
@@ -179,6 +182,11 @@ async def register_agent_environment(
         return AgentEnvironmentRegistration(env=env, created=True)
     except IntegrityError:
         await db.rollback()
+        # The rollback releases transaction-scoped advisory locks. Reacquire
+        # the shared authority fence before inspecting or mutating the winner.
+        # A termination queued behind the failed create therefore fences the
+        # user before this retry can refresh or reactivate authority.
+        await assert_user_authority_active(db, user_id)
         if environment_id is not None:
             winner = (
                 await db.execute(
@@ -268,7 +276,7 @@ async def _refresh_agent_environment(
     env.os = os_name
     env.last_seen_at = datetime.now(UTC)
     env.registration_key = registration_key
-    if env.default_project_id is None:
+    if not env.default_project_id:
         project_name = env.default_name or _agent_project_label(machine_name, agent_type)
         healing_project = Project(
             user_id=user_id,

@@ -69,6 +69,14 @@ from app.services.platform_workload_auth import (
     issue_platform_workload_token,
     require_platform_mutation_auth,
 )
+from app.services.principal_lifecycle import (
+    PrincipalIdentityConflictError,
+    PrincipalLifecycleConfigurationError,
+    PrincipalTerminatedError,
+    assert_user_authority_active,
+    load_clerk_user_for_issuer,
+    resolve_clerk_owner_issuer,
+)
 from app.services.runtime_generation import (
     RuntimeApplyGenerationUpdateError,
     resolve_runtime_apply_generation_update,
@@ -310,17 +318,54 @@ async def _resolve_owner(
     idempotency_key: str,
 ) -> User:
     if owner.kind == PRINCIPAL_KIND_CLERK:
-        filters = (
-            User.principal_kind == PRINCIPAL_KIND_CLERK,
-            User.clerk_id == owner.ref,
-        )
+        try:
+            issuer = await resolve_clerk_owner_issuer(db, subject=owner.ref)
+            user = await load_clerk_user_for_issuer(
+                db,
+                issuer=issuer,
+                subject=owner.ref,
+                bind_legacy=False,
+            )
+        except (PrincipalIdentityConflictError, PrincipalTerminatedError):
+            await _reject(
+                db,
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Owner has been terminated",
+                result="owner_terminated",
+                owner=owner,
+                owner_user_id=None,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                action=action,
+                request=request,
+                idempotency_key=idempotency_key,
+            )
+            raise AssertionError("unreachable")
+        except PrincipalLifecycleConfigurationError:
+            await _reject(
+                db,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Clerk owner issuer is not configured",
+                result="owner_issuer_unconfigured",
+                owner=owner,
+                owner_user_id=None,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                action=action,
+                request=request,
+                idempotency_key=idempotency_key,
+            )
+            raise AssertionError("unreachable")
     else:
-        filters = (
-            User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
-            User.partner_tenant_ref == owner.ref,
-            User.clerk_id.is_(None),
-        )
-    user = (await db.execute(select(User).where(*filters))).scalar_one_or_none()
+        user = (
+            await db.execute(
+                select(User).where(
+                    User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
+                    User.partner_tenant_ref == owner.ref,
+                    User.clerk_id.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
     if user is None:
         await _reject(
             db,
@@ -329,6 +374,23 @@ async def _resolve_owner(
             result="owner_not_found",
             owner=owner,
             owner_user_id=None,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+        )
+        raise AssertionError("unreachable")
+    try:
+        await assert_user_authority_active(db, user.id)
+    except PrincipalTerminatedError:
+        await _reject(
+            db,
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Owner has been terminated",
+            result="owner_terminated",
+            owner=owner,
+            owner_user_id=user.id,
             resource_type=resource_type,
             resource_id=resource_id,
             action=action,

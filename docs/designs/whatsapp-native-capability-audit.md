@@ -1,7 +1,7 @@
 # WhatsApp Native Consumer Capability Audit
 
-Status: audited; all activation and live gates remain false
-Date: 2026-08-02
+Status: audited; stock native E2E passed; live-account message drill not executed
+Date: 2026-08-03
 
 ## Scope and evidence
 
@@ -90,6 +90,21 @@ query are in
 [`messages-send.ts`](https://github.com/WhiskeySockets/Baileys/blob/8053b086ecc97ec3f78299561de11959bab05d39/src/Socket/messages-send.ts#L1098-L1142)
 and
 [`messages-send.ts`](https://github.com/WhiskeySockets/Baileys/blob/8053b086ecc97ec3f78299561de11959bab05d39/src/Socket/messages-send.ts#L1218-L1244).
+Baileys rc13 constructs the exact device/LID USync query in
+[`socket.ts`](https://github.com/WhiskeySockets/Baileys/blob/8053b086ecc97ec3f78299561de11959bab05d39/src/Socket/socket.ts#L264-L318)
+and uses it for recipient device resolution in
+[`messages-send.ts`](https://github.com/WhiskeySockets/Baileys/blob/8053b086ecc97ec3f78299561de11959bab05d39/src/Socket/messages-send.ts#L303-L327).
+Its inbound decoder stores the PN/LID mapping and selects the actual Signal
+decryption JID in
+[`decode-wa-message.ts`](https://github.com/WhiskeySockets/Baileys/blob/8053b086ecc97ec3f78299561de11959bab05d39/src/Utils/decode-wa-message.ts#L22-L50)
+and
+[`decode-wa-message.ts`](https://github.com/WhiskeySockets/Baileys/blob/8053b086ecc97ec3f78299561de11959bab05d39/src/Utils/decode-wa-message.ts#L306-L330).
+Noise certificate signatures follow rc13's X25519-key verification in
+[`noise-handler.ts`](https://github.com/WhiskeySockets/Baileys/blob/8053b086ecc97ec3f78299561de11959bab05d39/src/Utils/noise-handler.ts#L189-L222)
+and use only python-xeddsa `1.2.0`'s published exports and signing API in
+[`__init__.py`](https://github.com/Syndace/python-xeddsa/blob/c7b161a55e8e98d38c79f32116cc4681c805897d/xeddsa/__init__.py#L3-L27)
+and
+[`bindings.py`](https://github.com/Syndace/python-xeddsa/blob/c7b161a55e8e98d38c79f32116cc4681c805897d/xeddsa/bindings.py#L285-L312).
 
 ## Clawdi boundary and concrete gaps
 
@@ -101,7 +116,7 @@ Inbound `messages.upsert` proto bytes take the reverse path. Presence,
 chatstate, receipts and bounded IQs remain raw BinaryNodes after ownership
 policy.
 
-Two concrete envelope gaps were found and fixed without an application adapter:
+Three concrete envelope gaps were found and fixed without an application adapter:
 
 1. rc13 media upload and read-receipt policy use account-scoped provider IQs,
    not chat JIDs. The former chat-only check rejected them. Only the exact
@@ -115,11 +130,21 @@ Two concrete envelope gaps were found and fixed without an application adapter:
    accepts only this one exact node. Participants, encrypted payloads,
    device-identity, event metadata and arbitrary raw nodes are rejected or not
    forwarded.
+3. rc13's recipient device/LID USync targets are nested inside the IQ content,
+   so the former top-level JID authorization could not forward the stock query.
+   The bridge now accepts only the exact rc13 query shape, requires every target
+   to resolve to an active binding owned by the calling Link, and queries the
+   one physical provider transport. If that query is unavailable, it may return
+   only a PN/LID pair already observed in that same binding's durable aliases;
+   missing, ambiguous, cross-Link, or same-number inferred aliases fail closed.
+   For inbound PN-primary envelopes with a real LID alternate, Signal state is
+   stored under rc13's LID decryption address without fabricating a LID or
+   mirroring the session under a second address.
 
 Global available/unavailable presence, trusted-contact token IQs, live group
 event projection, and physical delivery/receipt replay remain real unsupported
 boundaries. The remaining `A+B` rows are supported by pinned consumer/rc13
-source call paths and deterministic exact-proto/envelope tests, but have not
-passed a real-account native E2E drill. That is an evidence gap, not a known
-translation gap, and no readiness claim is made from it. All aggregate, Link,
-runtime, native-E2E and live gates remain false.
+source call paths, deterministic exact-proto/envelope tests, and the CI-wired
+fixed-artifact stock OpenClaw/Hermes native-plugin E2E. A real-account message
+drill has not been executed. That is release evidence to collect, not a runtime
+feature flag or a known translation gap.

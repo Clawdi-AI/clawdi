@@ -26,8 +26,9 @@ Still intentionally out of scope for this baseline:
 - Admin/public bot publishing from the CLI.
 - Provider webhook ownership, pair-code claiming, bindings, command replies,
   provider protocol state, and worker queues. Those remain backend-owned.
-- Managed WhatsApp activation. Its stock native-plugin path has a CLI-owned
-  compatibility seam, but remains gated on native-plugin E2E and a live drill.
+- Managed WhatsApp uses the canonical Hosted runtime projection: Link-scoped
+  synthetic auth, the audited compatibility seam, and generic egress. The
+  legacy dotenv manifest does not project a WhatsApp WebSocket URL.
 - Custom WhatsApp OpenClaw connectors, Hermes platform adapters, and
   application-level relay projections.
 
@@ -163,8 +164,8 @@ Apply is idempotent except for explicitly requested one-time values:
 - New link token issuance.
 - Token rotation.
 - New pair code issuance.
-- Internal WhatsApp synthetic credential issuance once the upstream/runtime
-  gates are deliberately enabled.
+- Internal WhatsApp synthetic credential issuance after ordinary Link,
+  compatibility, and secret validation.
 
 ## One-Time Token Policy
 
@@ -215,8 +216,8 @@ DISCORD_BOT_API_BASE_URL=https://channels.example.test/v1/channels/discord
 DISCORD_GATEWAY_URL=wss://channels.example.test/v1/channels/discord/gateway
 ```
 
-WhatsApp deliberately has no dotenv application-API projection. Its gated
-managed path uses the runtime's stock native Baileys plugin, a private auth
+WhatsApp deliberately has no dotenv application-API projection. Its managed
+path uses the runtime's stock native Baileys plugin, a private auth
 directory, and the generic managed-upgrade egress profile.
 
 The dotenv projection is not allowed to resurrect old root routes such as
@@ -246,8 +247,8 @@ for channel accounts:
 
 - Telegram account token and API root.
 - Discord token, REST base URL, and Gateway URL.
-- WhatsApp official native-plugin account and synthetic auth directory, only
-  after all gates are enabled. It does not set a custom websocket URL.
+- WhatsApp official native-plugin account and synthetic auth directory. It does
+  not set a custom websocket URL.
 
 The managed default Agent profile accepts at most one Link per provider. The
 WhatsApp projection must not install a custom ChannelPlugin connector.
@@ -291,13 +292,13 @@ shape. Multiple bots for the same provider should require either multiple
 Hermes profiles or a Hermes-side multi-account config before the adapter
 claims full multi-bot support.
 
-WhatsApp is not projected through a new Hermes `BasePlatformAdapter`. The gated
-projection uses Hermes' stock native Baileys integration with the same
+WhatsApp is not projected through a new Hermes `BasePlatformAdapter`. The
+managed projection uses Hermes' stock native Baileys integration with the same
 synthetic auth and managed-upgrade profile contract as OpenClaw.
 
 ### WhatsApp Native Baileys Projection
 
-The managed projection is entirely gate-controlled:
+The managed projection is Link-scoped and fail-closed:
 
 1. The authenticated runtime-channel source mints or reuses one Link-scoped
    synthetic credential under the account row lock. There is no public credential
@@ -326,10 +327,11 @@ reconciler accepts only rigorously parsed SemVer major 7 packages whose audited
 before/after context hunks each match uniquely and exactly with fuzz zero.
 Unrelated bytes outside those hunks are allowed, while missing, duplicated,
 mixed-without-ownership, or changed hunk semantics fail closed. It remains
-inert without a projected managed Link. The aggregate upstream gate is still
-false because OpenClaw and Hermes native-plugin E2E and the live-account drill
-are not complete; runtime convergence therefore currently installs neither
-WhatsApp auth state nor a WhatsApp egress profile.
+inert without a projected managed Link. Fixed-artifact stock OpenClaw and
+Hermes native-plugin E2E runs through
+`scripts/test-managed-whatsapp-native-e2e.sh`; runtime convergence installs
+WhatsApp auth state and the Link-scoped egress profile for an active managed
+Link. A real live-account message drill has not been executed.
 
 ## CLI Commands
 
@@ -367,8 +369,7 @@ The CLI should use only existing user APIs:
 
 The ordinary user API has no WhatsApp credential mint/list or auth-certificate
 authority route. Authenticated runtime-channel projection is the internal
-producer once the gates are viable. No admin endpoint is needed for user
-runtime setup.
+producer. No admin endpoint is needed for user runtime setup.
 
 First-party hosted control planes should follow the same boundary. They may
 invoke the CLI inside the runtime or call these user APIs directly before
@@ -392,7 +393,7 @@ webhooks, or recreate the legacy channel bridge tenant router.
 ## Endpoint Security Boundary
 
 The runtime manifest describes agent-facing configuration: SDK tokens,
-pair-code setup, dotenv projection, and gated synthetic credential files. It
+pair-code setup, dotenv projection, and Link-scoped synthetic credential files. It
 must not expose backend provider egress knobs such as Discord REST/Gateway
 base URLs as ordinary runtime fields.
 
@@ -406,7 +407,6 @@ boundary.
 
 - Whether `clawdi run` should automatically load `outputs.dotenv`, or whether
   users should pass `--env-file .env.clawdi.channels` explicitly.
-- Live validation of the exact target-native OpenClaw and Hermes config shape.
 - Whether the backend should expose a user API to update private channel
   account config after creation. Today the manifest can create or reuse private
   bots, but not reconcile changed provider config without deletion.
@@ -418,7 +418,8 @@ boundary.
 3. Implement idempotent account and link reconciliation through user APIs.
 4. Implement dotenv projection with private atomic writes.
 5. Implement explicit token rotation flags and missing-token warnings.
-6. Keep WhatsApp native projection gated until native-plugin E2E and the live drill exist.
+6. Project WhatsApp through the stock native plugins after Link authority and
+   compatibility validation; retain the live drill as non-blocking evidence.
 7. Use stock OpenClaw/Hermes WhatsApp integrations; do not add custom adapters.
 8. Add CLI tests proving:
    - no admin endpoint is called,
@@ -427,5 +428,5 @@ boundary.
    - existing one-time tokens are not silently rotated,
    - multiple bots can link to one agent with distinct token env names,
    - one bot can link to multiple agents,
-   - disabled WhatsApp gates write no credential files or egress profiles,
+   - WhatsApp projection writes Link-scoped credentials and egress profiles,
    - malformed manifests fail before API mutation.

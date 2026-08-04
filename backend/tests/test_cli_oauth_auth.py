@@ -481,6 +481,34 @@ async def test_oauth_and_session_for_same_clerk_sub_resolve_same_user(
 
 
 @pytest.mark.asyncio
+async def test_oauth_and_session_issuers_cannot_rebind_the_same_clerk_sub(
+    db_session: AsyncSession,
+    clerk_oauth_signing_key: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    clerk_sub = f"user_cross_issuer_{uuid.uuid4().hex}"
+    browser_issuer = "https://browser.clerk.example.test"
+    monkeypatch.setattr(settings, "clerk_jwt_issuer", browser_issuer)
+    session = await _auth_via_clerk_jwt(
+        _session_token(
+            clerk_oauth_signing_key,
+            clerk_sub,
+            {"iss": browser_issuer},
+        ),
+        db_session,
+    )
+
+    assert session is not None
+    with pytest.raises(HTTPException) as rejected:
+        await _auth_via_clerk_jwt(
+            _oauth_access_token(clerk_oauth_signing_key, clerk_sub),
+            db_session,
+        )
+    assert rejected.value.status_code == 401
+    assert rejected.value.detail == "Invalid account identity"
+
+
+@pytest.mark.asyncio
 async def test_oauth_config_returns_only_public_values(
     raw_auth_client: httpx.AsyncClient, clerk_oauth_signing_key: str
 ):

@@ -194,12 +194,13 @@ HERMES_AGENT_TYPE = "hermes"
 OPENCLAW_AGENT_TYPE = "openclaw"
 HOSTED_RUNTIME_AGENT_TYPES = frozenset({HERMES_AGENT_TYPE, OPENCLAW_AGENT_TYPE})
 HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS = frozenset(
-    {CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD}
+    {
+        CHANNEL_PROVIDER_TELEGRAM,
+        CHANNEL_PROVIDER_DISCORD,
+        CHANNEL_PROVIDER_WHATSAPP,
+    }
 )
 STRICT_V2_AGENT_LINK_DETAIL = "Only Cloud Agents can be linked or paired with channels."
-WHATSAPP_COMING_SOON_DETAIL = (
-    "WhatsApp channels are coming soon for hosted agents. Telegram and Discord are available now."
-)
 TELEGRAM_UPDATE_RETENTION = timedelta(hours=24)
 
 
@@ -207,6 +208,7 @@ def hosted_agent_provider_link_limit_detail(provider: str, *, duplicate: bool = 
     label = {
         CHANNEL_PROVIDER_TELEGRAM: "Telegram",
         CHANNEL_PROVIDER_DISCORD: "Discord",
+        CHANNEL_PROVIDER_WHATSAPP: "WhatsApp",
     }.get(provider, provider.title())
     if duplicate:
         return (
@@ -646,6 +648,7 @@ async def get_or_create_bot_agent_link(
     agent_id: UUID,
     user_id: UUID | None = None,
     agent_token: str | None = None,
+    replace_existing_provider_link: bool = False,
 ) -> tuple[ChannelBotAgentLink, str | None]:
     link_user_id = require_channel_tenant_user_id(account, tenant_user_id=user_id)
     # Serialize against both Link creation and runtime retirement. The fence is
@@ -712,8 +715,16 @@ async def get_or_create_bot_agent_link(
         account=account,
         agent_id=agent_id,
         user_id=link_user_id,
+        replace_existing_provider_link=replace_existing_provider_link,
     )
     await ensure_bot_agent_link_capacity(db, account=account)
+    if replace_existing_provider_link:
+        await archive_existing_hosted_agent_provider_links(
+            db,
+            account=account,
+            agent_id=agent_id,
+            user_id=link_user_id,
+        )
     raw_token = agent_token or generate_agent_token(account.provider)
     link = ChannelBotAgentLink(
         account_id=account.id,
@@ -972,8 +983,6 @@ async def list_strict_v2_hosted_channel_agent_ids(
     for agent, state, fence in rows:
         if not is_strict_v2_hosted_channel_agent(agent, state, fence):
             continue
-        if provider == CHANNEL_PROVIDER_WHATSAPP:
-            continue
         if provider in HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS:
             existing_link_ids = await _active_bot_agent_link_ids_for_provider(
                 db,
@@ -993,6 +1002,7 @@ async def ensure_hosted_agent_provider_link_available(
     account: ChannelAccount,
     agent_id: UUID,
     user_id: UUID,
+    replace_existing_provider_link: bool = False,
 ) -> None:
     agent = (
         await db.execute(
@@ -1009,15 +1019,6 @@ async def ensure_hosted_agent_provider_link_available(
         return
 
     if (
-        account.provider == CHANNEL_PROVIDER_WHATSAPP
-        and agent.agent_type in HOSTED_RUNTIME_AGENT_TYPES
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=WHATSAPP_COMING_SOON_DETAIL,
-        )
-
-    if (
         agent.agent_type not in HOSTED_RUNTIME_AGENT_TYPES
         or account.provider not in HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS
     ):
@@ -1030,10 +1031,67 @@ async def ensure_hosted_agent_provider_link_available(
     )
     if not existing_link_ids:
         return
+    if replace_existing_provider_link:
+        return
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail=hosted_agent_provider_link_limit_detail(account.provider),
     )
+
+
+async def archive_existing_hosted_agent_provider_links(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    agent_id: UUID,
+    user_id: UUID,
+) -> None:
+    """Archive other active single-provider Links before creating a replacement.
+
+    The caller holds the Agent and runtime-fence locks acquired by
+    ``get_or_create_bot_agent_link``. Link row locks and binding identity locks
+    serialize this archive with unlink, pairing, and delivery mutations. All
+    changes remain in the caller's transaction, so a later failure restores
+    the previous Link and its scoped runtime state.
+    """
+    if account.provider not in HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS:
+        return
+    rows = (
+        await db.execute(
+            select(ChannelBotAgentLink, ChannelAccount)
+            .join(ChannelAccount, ChannelAccount.id == ChannelBotAgentLink.account_id)
+            .where(
+                ChannelBotAgentLink.agent_id == agent_id,
+                ChannelBotAgentLink.user_id == user_id,
+                ChannelBotAgentLink.account_id != account.id,
+                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                ChannelBotAgentLink.archived_at.is_(None),
+                ChannelAccount.provider == account.provider,
+                ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                ChannelAccount.archived_at.is_(None),
+            )
+            .order_by(ChannelBotAgentLink.id)
+            .with_for_update(of=ChannelBotAgentLink)
+        )
+    ).all()
+    for existing_link, existing_account in rows:
+        bindings = list(
+            (
+                await db.execute(
+                    select(ChannelBinding).where(
+                        ChannelBinding.bot_agent_link_id == existing_link.id,
+                        ChannelBinding.status == BINDING_STATUS_ACTIVE,
+                    )
+                )
+            ).scalars()
+        )
+        for binding in sorted(bindings, key=lambda item: item.external_chat_id):
+            await lock_channel_binding_identity(
+                db,
+                account_id=existing_account.id,
+                external_chat_id=binding.external_chat_id,
+            )
+        await archive_bot_agent_link(db, link=existing_link, account=existing_account)
 
 
 def channel_bot_link_limit(account: ChannelAccount) -> int | None:

@@ -2,6 +2,7 @@ import base64
 import hashlib
 import re
 import secrets
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from urllib.parse import urlencode, urlparse
@@ -10,7 +11,7 @@ from uuid import UUID
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import JSONResponse
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -473,7 +474,7 @@ async def test_saved_ai_provider(
             if active_profile is not None
             else None
         )
-        payload_keys = (
+        payload_keys: set[tuple[str, str, str]] = (
             {(payload.provider_id, payload.auth_profile, payload.kind)}
             if payload is not None and payload.archived_at is None
             else set()
@@ -766,7 +767,7 @@ async def set_ai_provider_api_key(
         proposed_runtime_env_name,
         exclude_provider_id=provider.provider_id,
     )
-    metadata = {"source": "managed", "profile": profile}
+    metadata: dict[str, JsonValue] = {"source": "managed", "profile": profile}
     await transition_ai_provider_auth(
         db,
         owner_user_id=auth.user_id,
@@ -810,7 +811,7 @@ async def import_ai_provider_auth(
         )
     tool = _normalize_profile(auth_import.tool)
     _validate_supported_agent_profile_tool(tool)
-    metadata = {
+    metadata: dict[str, JsonValue] = {
         "tool": tool,
         "profile": profile,
     }
@@ -975,7 +976,7 @@ async def start_ai_provider_oauth(
     extra = config.get("extra_authorize_params")
     if isinstance(extra, dict):
         for key, value in extra.items():
-            if isinstance(key, str) and isinstance(value, str):
+            if isinstance(value, str):
                 if key in RESERVED_OAUTH_AUTHORIZE_PARAMS:
                     raise HTTPException(
                         status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1032,7 +1033,7 @@ async def complete_ai_provider_oauth(
 def _ai_provider_accept_request_hash(body: AiProviderAcceptRequest) -> str:
     credential = body.credential
     if isinstance(credential, AiProviderApiKeyAcceptCredential):
-        credential_payload = {
+        credential_payload: dict[str, JsonValue] = {
             "type": credential.type,
             "value_sha256": hashlib.sha256(
                 credential.value.get_secret_value().encode()
@@ -1040,7 +1041,7 @@ def _ai_provider_accept_request_hash(body: AiProviderAcceptRequest) -> str:
         }
     else:
         credential_payload = credential.model_dump(mode="json", exclude_none=False)
-    request_payload = {
+    request_payload: dict[str, JsonValue] = {
         "provider": body.provider.model_dump(mode="json", exclude_none=False),
         "credential": credential_payload,
     }
@@ -1398,7 +1399,7 @@ def _base64url(raw: bytes) -> str:
 
 def _oauth_authorization_code_redirect_uri(
     *,
-    config: dict,
+    config: Mapping[str, JsonValue],
     client_id: str,
     requested: str | None,
     oauth_provider: str,
@@ -1460,7 +1461,7 @@ async def _validate_runtime_env_unique(
     exclude_provider_id: str | None = None,
 ) -> None:
     auth_ref, _metadata = provider.auth.persistence_fields()
-    names = (
+    names: set[str] = (
         {provider.runtime_env_name}
         if provider.runtime_env_name and provider.auth.type in {"api_key", "secret_ref"}
         else set()
@@ -1566,10 +1567,12 @@ def _apply_provider_body(
         provider.auth_ref, provider.auth_metadata = body.auth.persistence_fields()
 
 
-def _provider_models_payload(models: list[AiProviderModel] | None) -> list[dict] | None:
+def _provider_models_payload(
+    models: list[AiProviderModel] | None,
+) -> list[dict[str, JsonValue]] | None:
     if models is None:
         return None
-    return [model.model_dump(exclude_none=True) for model in models]
+    return [model.model_dump(mode="json", exclude_none=True) for model in models]
 
 
 def _to_auth(provider: AiProvider) -> AiProviderAuth:
@@ -1703,7 +1706,9 @@ def _build_response(
     )
 
 
-def _runtime_manifest_provider_signature(provider: AiProvider | None) -> dict | None:
+def _runtime_manifest_provider_signature(
+    provider: AiProvider | None,
+) -> dict[str, object] | None:
     if provider is None:
         return None
     return {
@@ -1720,7 +1725,9 @@ def _runtime_manifest_provider_signature(provider: AiProvider | None) -> dict | 
     }
 
 
-def _runtime_manifest_provider_non_auth_signature(provider: AiProvider | None) -> dict | None:
+def _runtime_manifest_provider_non_auth_signature(
+    provider: AiProvider | None,
+) -> dict[str, object] | None:
     signature = _runtime_manifest_provider_signature(provider)
     if signature is None:
         return None
@@ -1782,12 +1789,12 @@ def _connection_test_model(
     return model_id, model_api_mode
 
 
-def _model_id(model: AiProviderModel | dict) -> str:
+def _model_id(model: AiProviderModel | Mapping[str, JsonValue]) -> str:
     value = model.id if isinstance(model, AiProviderModel) else model.get("id")
     return value.strip() if isinstance(value, str) else ""
 
 
-def _model_api_mode(model: AiProviderModel | dict) -> str | None:
+def _model_api_mode(model: AiProviderModel | Mapping[str, JsonValue]) -> str | None:
     value = model.api_mode if isinstance(model, AiProviderModel) else model.get("api_mode")
     return value if isinstance(value, str) else None
 
@@ -1929,7 +1936,7 @@ def _validate_supported_oauth_provider(oauth_provider: str) -> None:
     )
 
 
-def _validate_patch_nulls(update: dict) -> list[str]:
+def _validate_patch_nulls(update: Mapping[str, object]) -> list[str]:
     errors: list[str] = []
     for field in ("type", "base_url", "auth", "managed_by"):
         if field in update and update[field] is None:
@@ -1956,8 +1963,10 @@ def _validate_base_url(base_url: str, auth: AiProviderAuth) -> list[str]:
     return errors
 
 
-def _compact(data: dict) -> dict | None:
-    compacted = {key: value for key, value in data.items() if value is not None}
+def _compact(data: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
+    compacted: dict[str, JsonValue] = {
+        key: value for key, value in data.items() if value is not None
+    }
     return compacted or None
 
 

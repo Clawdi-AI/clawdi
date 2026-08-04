@@ -26,7 +26,8 @@ non-generated references without the deleted compatibility files.
 Decision labels:
 
 - **A — keep:** required by the physical provider transport, synthetic Noise
-  boundary, identity/ownership, durable inbox/outbox, generic egress, or gates.
+  boundary, identity/ownership, durable inbox/outbox, generic egress, or
+  fail-closed authorization and compatibility checks.
 - **B — delete:** old hosted compatibility, application relay, public
   credential authority, or unreachable duplicate configuration/tests.
 - **C — refactor/document:** behavior stays, but naming or ownership moves to
@@ -42,13 +43,13 @@ Decision labels:
 | `backend/app/services/whatsapp_provider_bridge.py` | A, new | Centralizes one transport registration per account, authorized raw/IQ forwarding, exact proto delivery, and physical event persistence. |
 | `backend/app/services/whatsapp_media_reupload.py` | B, deleted | Provider media download/decrypt/upload conversion belonged to the removed hosted compatibility path. |
 | `backend/app/services/whatsapp_shared_runtime.py` | B, deleted | Application-level bot/runtime relay façade competed with stock native plugins and obscured the physical socket owner. |
-| `backend/tests/test_whatsapp_*.py` | A/C | Existing protocol/Noise/transport tests are trimmed to preserved behavior; provider-bridge tests are added. Old Graph/webhook/media/shared-runtime assertions are removed. The opt-in smoke remains gated and creates no production connection during normal tests. |
+| `backend/tests/test_whatsapp_*.py` | A/C | Existing protocol/Noise/transport tests are trimmed to preserved behavior; provider-bridge tests are added. Old Graph/webhook/media/shared-runtime assertions are removed. The smoke test remains explicitly opt-in and creates no production connection during normal tests. |
 | `backend/alembic/versions/2d4c8e1b7a90_clawdi_native_channels.py` | A | Existing durable channel, synthetic credential, and auth-cert tables remain required. No destructive migration is introduced. |
 | `backend/alembic/versions/c4e8f1a2b3d5_rename_hosted_runtime_egress_columns.py`, `backend/tests/test_hosted_runtime_egress_migration.py` | A | Generic egress schema history, not WhatsApp product code. |
 | `apps/web/src/hosted/v2/channels/whatsapp-credential-cache.ts` | B, deleted | Cached the removed public credential API response. Its hooks and query keys are also removed. |
 | `packages/cli/egress-addon/clawdi_egress_addon.py` | A | Single provider-neutral matcher/rewrite engine. Source invariant rejects provider constants. |
 | `packages/cli/src/runtime/egress-env.ts`, `egress-profiles.ts`, `hosted-egress-profiles.ts`, `transparent-egress.ts` and their tests | A | Generic schema, secret references, redirect, and profile materialization shared by all providers. No WhatsApp branch is added. |
-| `packages/cli/src/runtime/whatsapp-egress.ts`, `whatsapp-upstream-contract.ts`, `whatsapp-gate.ts` | A | Provider-only profile builder, exact marker contract, pinned upstream evidence, and false gates. The builder has no runtime producer while the external seam is absent. |
+| `packages/cli/src/runtime/whatsapp-egress.ts`, `whatsapp-upstream-contract.ts` | A | Provider-only profile builder plus the exact marker and metadata contract consumed by production. Fixed-artifact E2E evidence lives in its CI-wired script, not in runtime constants. Normal runtime projection consumes the builder without a master feature flag. |
 | `packages/whatsapp-baileys-sidecar/**` | A/C | Package name retained for build stability and documented as the one physical-provider transport. `runtime.ts` is the only production `makeWASocket`; a single WAL/FULL SQLite store holds auth/Signal/retry/inbox state and immutable account metadata under SQLite exclusive locking on a compatible local filesystem, rejecting symlinked state paths before open. At-rest encryption remains a deployment infrastructure requirement. The private bearer HTTP operations and byte-safe node codec remain. Demo multi-file auth, mutable version discovery, PID locking, and JSON spool/cache files are absent from production. |
 | `docs/designs/whatsapp-baileys-sidecar-runtime.md` | C | Current topology and exact upstream proposal. |
 | `docs/egress-channel-transport-architecture.md` | C | Replaced stale proxy/Graph research with the current generic engine and three provider builders. |
@@ -77,7 +78,7 @@ files is preserved:
   query cache: public credential cache/mutation coverage.
 - `packages/cli/src/commands/runtime.ts`, `runtime/channels.ts`, and
   `runtime/manifest.ts`: public credential mint/write and Hermes application
-  adapter projection. Gated stock-native auth materialization and ordinary
+  adapter projection. Stock-native auth materialization and ordinary
   Telegram/Discord projection stay **A**.
 - backend, Web, and CLI tests: old compatibility expectations are deleted or
   replaced with source/topology invariants.
@@ -104,7 +105,7 @@ packages/cli/tests/clean-test-runner.test.ts
 These references build/test the retained package or preserve release history;
 they are not product transport implementations.
 
-**A — gated Web discovery only**
+**A — Web discovery and activation**
 
 ```text
 apps/web/e2e/hosted-smoke.pw.ts
@@ -124,8 +125,9 @@ apps/web/src/lib/navigation-model.ts
 docs/v2-ui-ux-final-sweep.md
 ```
 
-WhatsApp stays a known provider/icon for existing assets, but linking and empty
-state entry points remain hidden because `WHATSAPP_LINKING_READY` is false.
+WhatsApp remains a normal provider/icon. Agent Link and Pair entry points use
+the same account, runtime, binding, and provider-availability admission rules as
+the enabled backend path; Custom onboarding still creates inventory first.
 
 **A/C — backend production ownership and transport**
 
@@ -188,7 +190,6 @@ packages/cli/src/runtime/manifest-source.ts
 packages/cli/src/runtime/manifest.ts
 packages/cli/src/runtime/runtime-bundle-v2.test.ts
 packages/cli/src/runtime/whatsapp-egress.ts
-packages/cli/src/runtime/whatsapp-gate.ts
 packages/cli/src/runtime/whatsapp-upstream-contract.ts
 packages/cli/tests/commands/runtime.test.ts
 packages/cli/tests/egress_addon/clawdi_egress_addon_test.py
@@ -197,7 +198,7 @@ packages/cli/tests/runtime-whatsapp-egress.test.ts
 packages/cli/tests/runtime.test.ts
 ```
 
-The command/manifest files retain only gate-controlled stock native-plugin auth
+The command/manifest files retain only stock native-plugin auth
 projection and cleanup of Clawdi-owned auth directories. They neither create a
 second physical socket nor install a custom WhatsApp adapter.
 
@@ -239,7 +240,7 @@ Intentional residual references are:
 
 - historical changelog and “removed compatibility” documentation;
 - 404/source-invariant tests proving deleted public routes stay absent;
-- the opt-in gated Noise smoke fixture's auth-cert serialization;
+- the explicitly opt-in Noise smoke fixture's auth-cert serialization;
 - user-owned legacy runtime config fixtures proving Clawdi does not erase
   unmanaged configuration;
 - the WABinary data token `"meta"` required for protocol decoding.
@@ -268,4 +269,6 @@ WhatsApp transport/registry/bridge/Noise suites report 455 passing tests. The
 source invariants report one production physical socket owner, no
 demo multi-file auth or dynamic Web-version fetch, no legacy application
 connector, no hosted Graph/Cloud WhatsApp surface, no provider constants in
-the generic addon, and false gates.
+the generic addon, and no WhatsApp runtime master enablement switch. The
+fixed-artifact E2E is CI-wired; the real live-account message drill has not
+been performed.

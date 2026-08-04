@@ -64,12 +64,12 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
-import asyncpg
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import event, select, text
 from sqlalchemy import update as sa_update
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.hosted_runtime import HostedRuntimeState
@@ -83,6 +83,7 @@ from app.services.managed_ai_provider import (
     runtime_managed_provider_id,
     v2_deployment_managed_provider_id,
 )
+from app.services.postgres_listener import PostgresListener, connect_postgres_listener
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +104,12 @@ type SyncEventValue = str | int
 type SyncEventPayload = dict[str, SyncEventValue]
 type SyncEventQueue = asyncio.Queue[SyncEventPayload]
 type _PendingEvent = tuple[UUID, SyncEventPayload]
+
+
+class _PostgresNotification(BaseModel):
+    origin: str
+    user_id: UUID
+    event: SyncEventPayload
 
 
 @dataclass
@@ -349,7 +356,7 @@ async def queue_provider_runtime_manifest_changed(
 
 def _runtime_state_may_use_provider(state: HostedRuntimeState, provider_id: str) -> bool:
     runtimes = state.runtimes
-    if not isinstance(runtimes, dict) or len(runtimes) != 1:
+    if len(runtimes) != 1:
         return False
     runtime_name, raw_runtime = next(iter(runtimes.items()))
     if runtime_name not in {"hermes", "openclaw"}:
@@ -482,7 +489,7 @@ def _queue_for_commit(
         event.listen(sync_session, "after_rollback", _on_session_rollback)
 
 
-def _on_session_before_commit(sync_session) -> None:
+def _on_session_before_commit(sync_session: Session) -> None:
     """Publish pending events transactionally for other API processes."""
     pending: list[_PendingEvent] | None = sync_session.info.get(_PENDING_KEY)
     if not pending:
@@ -505,7 +512,7 @@ def _on_session_before_commit(sync_session) -> None:
         )
 
 
-def _on_session_commit(sync_session) -> None:
+def _on_session_commit(sync_session: Session) -> None:
     """SQLAlchemy after_commit hook — flush all queued events.
     Runs on the sync session's thread; `_broadcast` only touches
     in-memory queues so it doesn't need the event loop. The
@@ -518,7 +525,7 @@ def _on_session_commit(sync_session) -> None:
         _broadcast(user_id, payload)
 
 
-def _on_session_rollback(sync_session) -> None:
+def _on_session_rollback(sync_session: Session) -> None:
     """Drop queued events — the writes that produced them never
     landed."""
     sync_session.info.pop(_PENDING_KEY, None)
@@ -585,13 +592,16 @@ async def _postgres_listener_loop(
 ) -> None:
     reconnect_delay = 1.0
     while not stop.is_set():
-        connection: asyncpg.Connection | None = None
+        connection: PostgresListener | None = None
         terminated = asyncio.Event()
         try:
-            active_connection = await asyncpg.connect(_asyncpg_dsn(), timeout=10)
+            active_connection = await connect_postgres_listener(
+                _asyncpg_dsn(),
+                _POSTGRES_CHANNEL,
+                _on_postgres_notification,
+                terminated.set,
+            )
             connection = active_connection
-            await active_connection.add_listener(_POSTGRES_CHANNEL, _on_postgres_notification)
-            active_connection.add_termination_listener(lambda _connection: terminated.set())
             if not ready.done():
                 ready.set_result(None)
             reconnect_delay = 1.0
@@ -614,14 +624,7 @@ async def _postgres_listener_loop(
         finally:
             if connection is not None and not connection.is_closed():
                 try:
-                    await connection.remove_listener(
-                        _POSTGRES_CHANNEL,
-                        _on_postgres_notification,
-                    )
-                except Exception as exc:  # noqa: BLE001 - reconnect loop owns recovery
-                    log.warning("sync events listener cleanup failed: %s", exc)
-                try:
-                    await connection.close(timeout=5)
+                    await connection.close()
                 except Exception as exc:  # noqa: BLE001 - reconnect loop owns recovery
                     log.warning("sync events listener close failed: %s", exc)
         if stop.is_set():
@@ -644,23 +647,20 @@ def _process_id() -> str:
 
 
 def _on_postgres_notification(
-    _connection: asyncpg.Connection,
     _pid: int,
     _channel: str,
     payload: str,
 ) -> None:
     try:
-        envelope = json.loads(payload)
-        if envelope.get("origin") == _process_id():
+        envelope = _PostgresNotification.model_validate_json(payload)
+        if envelope.origin == _process_id():
             return
-        user_id = UUID(envelope["user_id"])
-        event_payload = envelope["event"]
-        if not isinstance(event_payload, dict) or not isinstance(event_payload.get("type"), str):
+        if not isinstance(envelope.event.get("type"), str):
             raise ValueError("invalid event payload")
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (ValueError, ValidationError) as exc:
         log.warning("ignored invalid PostgreSQL sync event: %s", exc)
         return
-    _broadcast(user_id, event_payload)
+    _broadcast(envelope.user_id, envelope.event)
 
 
 async def get_skills_revision(db: AsyncSession, user_id: UUID) -> int:

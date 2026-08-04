@@ -13,11 +13,12 @@ from fastapi import (
     HTTPException,
     Request,
     Response,
-    UploadFile,
     status,
 )
+from pydantic import JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import UploadFile
 
 from app.core.config import settings
 from app.models.channel import (
@@ -38,10 +39,7 @@ from app.schemas.channel import (
     ChannelVisibility,
 )
 from app.services.channel_webhooks import (
-    deliver_telegram_agent_webhook,
     telegram_link_webhook_config,
-    telegram_link_webhook_url,
-    validate_agent_webhook_url,
 )
 from app.services.channels import (
     DISCORD_RESERVED_COMMAND_NAMES,
@@ -83,6 +81,9 @@ _DISCORD_RESPONSE_HEADER_ALLOWLIST = (
 _DISCORD_AGENT_COMMANDS_CONFIG_KEY = "discord_agent_commands"
 _DISCORD_COMMAND_MATERIALIZATIONS_CONFIG_KEY = "discord_command_materializations"
 _DISCORD_COMMAND_RETRIES_CONFIG_KEY = "discord_command_retries"
+_JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+_JSON_OBJECT_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
+type RequestParam = JsonValue | UploadFile
 
 
 def _channel_visibility(account: ChannelAccount) -> ChannelVisibility:
@@ -123,11 +124,26 @@ async def _request_payload(request: Request) -> Any:
     return payload
 
 
-async def _request_params(request: Request) -> dict[str, Any]:
+async def request_params(request: Request) -> dict[str, RequestParam]:
     payload = await _request_payload(request)
     if not isinstance(payload, dict):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="json object required")
-    return payload
+    params: dict[str, RequestParam] = {}
+    try:
+        for key, value in payload.items():
+            if not isinstance(key, str):
+                raise ValueError("parameter name must be a string")
+            params[key] = (
+                value
+                if isinstance(value, UploadFile)
+                else _JSON_VALUE_ADAPTER.validate_python(value, strict=True)
+            )
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid request parameter",
+        ) from exc
+    return params
 
 
 def _parse_wire_value(value: Any) -> Any:
@@ -145,13 +161,13 @@ def _parse_wire_value(value: Any) -> Any:
 
 
 def _required_str_param(params: dict[str, Any], key: str) -> str:
-    value = _optional_str(params.get(key))
+    value = optional_str(params.get(key))
     if value is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{key} is required")
     return value
 
 
-def _optional_str(value: Any) -> str | None:
+def optional_str(value: object) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):
@@ -162,7 +178,7 @@ def _optional_str(value: Any) -> str | None:
     return None
 
 
-def _optional_int_param(value: Any) -> int | None:
+def optional_int_param(value: object) -> int | None:
     if isinstance(value, int):
         return value
     if isinstance(value, str):
@@ -191,7 +207,7 @@ async def _read_upload_bytes(upload: UploadFile, *, max_bytes: int) -> bytes:
     return data
 
 
-def _allowed_updates(value: Any) -> set[str] | None:
+def allowed_updates(value: object) -> set[str] | None:
     if value is None:
         return None
     parsed = value
@@ -210,10 +226,6 @@ async def _set_account_config(account: ChannelAccount, updates: dict[str, Any]) 
     config = dict(account.config) if isinstance(account.config, dict) else {}
     config.update(updates)
     account.config = config
-
-
-async def _validate_agent_webhook_url(account: ChannelAccount, url: str) -> None:
-    await validate_agent_webhook_url(account, url)
 
 
 async def _require_bound_chat(
@@ -250,21 +262,21 @@ async def _require_bound_chat(
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="chat is not paired")
 
 
-def _telegram_ok(result: Any) -> dict[str, Any]:
-    return {"ok": True, "result": result}
+def telegram_ok(result: object) -> dict[str, JsonValue]:
+    return _JSON_OBJECT_ADAPTER.validate_python({"ok": True, "result": result}, strict=True)
 
 
-def _telegram_error(description: str, error_code: int) -> dict[str, Any]:
+def telegram_error(description: str, error_code: int) -> dict[str, JsonValue]:
     return {"ok": False, "error_code": error_code, "description": description}
 
 
-def _telegram_me(account: ChannelAccount) -> dict[str, Any]:
+def telegram_me(account: ChannelAccount) -> dict[str, JsonValue]:
     # Synthetic identities are account-scoped so rotating an AgentLink token
     # cannot impersonate a different physical bot. Without a provider getMe
     # snapshot, topic capability must fail closed.
     bot_id = (account.id.int % 999_999_999) + 1
     config = account.config if isinstance(account.config, dict) else {}
-    username = _optional_str(config.get("bot_username")) or account.name.replace(" ", "_")
+    username = optional_str(config.get("bot_username")) or account.name.replace(" ", "_")
     return {
         "id": bot_id,
         "is_bot": True,
@@ -292,18 +304,6 @@ def _telegram_sent_result(message: Any, *, chat_id: str, text: str) -> dict[str,
 
 def _telegram_link_webhook_config(link: ChannelBotAgentLink) -> dict[str, Any]:
     return telegram_link_webhook_config(link)
-
-
-def _telegram_link_webhook_url(link: ChannelBotAgentLink) -> str | None:
-    return telegram_link_webhook_url(link)
-
-
-async def _deliver_telegram_agent_webhook(
-    account: ChannelAccount,
-    link: ChannelBotAgentLink,
-    payload: dict[str, Any],
-) -> bool:
-    return await deliver_telegram_agent_webhook(account, link, payload)
 
 
 async def _resolve_discord_agent_account(
@@ -336,7 +336,7 @@ def _extract_bot_token(authorization: str | None) -> str | None:
     return value.strip()
 
 
-def _extract_bearer_token(authorization: str | None) -> str | None:
+def extract_bearer_token(authorization: str | None) -> str | None:
     if not authorization:
         return None
     scheme, _, value = authorization.partition(" ")
@@ -347,7 +347,7 @@ def _extract_bearer_token(authorization: str | None) -> str | None:
 
 def _discord_application_id(account: ChannelAccount) -> str:
     config = account.config if isinstance(account.config, dict) else {}
-    configured = _optional_str(config.get("application_id")) or _optional_str(config.get("app_id"))
+    configured = optional_str(config.get("application_id")) or optional_str(config.get("app_id"))
     if configured:
         return configured
     return str(abs(hash(str(account.id))) % 10_000_000_000_000_000_000)
@@ -356,7 +356,7 @@ def _discord_application_id(account: ChannelAccount) -> str:
 def _discord_bot_user(account: ChannelAccount) -> dict[str, Any]:
     config = account.config if isinstance(account.config, dict) else {}
     app_id = _discord_application_id(account)
-    username = _optional_str(config.get("bot_username")) or account.name
+    username = optional_str(config.get("bot_username")) or account.name
     return {
         "id": app_id,
         "username": username,
@@ -467,7 +467,7 @@ async def _handle_discord_application_commands(
     if request.method == "DELETE" and command_id is not None:
         command_list = commands.get(scope_key, [])
         filtered = [
-            command for command in command_list if _optional_str(command.get("id")) != command_id
+            command for command in command_list if optional_str(command.get("id")) != command_id
         ]
         if len(filtered) == len(command_list):
             return _discord_command_error("Unknown application command", 10063, 404)
@@ -508,7 +508,7 @@ async def _handle_discord_application_commands(
     if request.method == "PATCH" and command_id is not None:
         command_list = commands.setdefault(scope_key, [])
         for index, existing in enumerate(command_list):
-            if _optional_str(existing.get("id")) != command_id:
+            if optional_str(existing.get("id")) != command_id:
                 continue
             merged = dict(existing)
             merged.update(params)
@@ -552,7 +552,7 @@ def _find_discord_command(
     command_id: str,
 ) -> dict[str, Any] | None:
     for command in commands:
-        if _optional_str(command.get("id")) == command_id:
+        if optional_str(command.get("id")) == command_id:
             return command
     return None
 
@@ -750,7 +750,9 @@ async def _store_discord_command_shadow(
     commands: dict[str, list[dict[str, Any]]],
 ) -> None:
     config = dict(link.config) if isinstance(link.config, dict) else {}
-    config[_DISCORD_AGENT_COMMANDS_CONFIG_KEY] = commands
+    config[_DISCORD_AGENT_COMMANDS_CONFIG_KEY] = _JSON_OBJECT_ADAPTER.validate_python(
+        commands, strict=True
+    )
     link.config = config
     await db.commit()
 
@@ -782,7 +784,7 @@ def _discord_command_shape(command: Any, *, application_id: str) -> dict[str, An
             detail="application command object required",
         )
     source = command
-    name = _optional_str(source.get("name"))
+    name = optional_str(source.get("name"))
     if name is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -809,7 +811,7 @@ def _discord_command_shape(command: Any, *, application_id: str) -> dict[str, An
     shaped = dict(source)
     shaped.update(
         {
-            "id": _optional_str(source.get("id"))
+            "id": optional_str(source.get("id"))
             or str(
                 abs(
                     hash(
@@ -837,7 +839,7 @@ def _discord_command_key(command: dict[str, Any]) -> tuple[int, str]:
     command_type = 1
     if isinstance(raw_command_type, int) and not isinstance(raw_command_type, bool):
         command_type = raw_command_type
-    return command_type, _optional_str(command.get("name")) or ""
+    return command_type, optional_str(command.get("name")) or ""
 
 
 def _discord_upsert_command(
@@ -847,7 +849,7 @@ def _discord_upsert_command(
     command_key = _discord_command_key(command)
     for index, existing in enumerate(commands):
         if _discord_command_key(existing) == command_key:
-            command["id"] = _optional_str(existing.get("id")) or command["id"]
+            command["id"] = optional_str(existing.get("id")) or command["id"]
             commands[index] = command
             return
     commands.append(command)
@@ -861,7 +863,7 @@ def _discord_command_key_conflicts(
 ) -> bool:
     command_key = _discord_command_key(command)
     for existing in commands:
-        if _optional_str(existing.get("id")) == ignored_id:
+        if optional_str(existing.get("id")) == ignored_id:
             continue
         if _discord_command_key(existing) == command_key:
             return True
@@ -1146,7 +1148,9 @@ async def _fan_out_discord_global_commands(
                 result=None,
             )
             config = dict(link.config) if isinstance(link.config, dict) else {}
-            config[_DISCORD_COMMAND_RETRIES_CONFIG_KEY] = retries
+            config[_DISCORD_COMMAND_RETRIES_CONFIG_KEY] = _JSON_OBJECT_ADAPTER.validate_python(
+                retries, strict=True
+            )
             link.config = config
             await db.commit()
             if not automatic and first_error is None:
@@ -1160,7 +1164,9 @@ async def _fan_out_discord_global_commands(
                 result=result,
             )
             config = dict(link.config) if isinstance(link.config, dict) else {}
-            config[_DISCORD_COMMAND_RETRIES_CONFIG_KEY] = retries
+            config[_DISCORD_COMMAND_RETRIES_CONFIG_KEY] = _JSON_OBJECT_ADAPTER.validate_python(
+                retries, strict=True
+            )
             link.config = config
             await db.commit()
             if not automatic and first_error is None:
@@ -1169,8 +1175,12 @@ async def _fan_out_discord_global_commands(
         materializations[guild_id] = fingerprint
         retries.pop(guild_id, None)
         config = dict(link.config) if isinstance(link.config, dict) else {}
-        config[_DISCORD_COMMAND_MATERIALIZATIONS_CONFIG_KEY] = materializations
-        config[_DISCORD_COMMAND_RETRIES_CONFIG_KEY] = retries
+        config[_DISCORD_COMMAND_MATERIALIZATIONS_CONFIG_KEY] = _JSON_OBJECT_ADAPTER.validate_python(
+            materializations, strict=True
+        )
+        config[_DISCORD_COMMAND_RETRIES_CONFIG_KEY] = _JSON_OBJECT_ADAPTER.validate_python(
+            retries, strict=True
+        )
         link.config = config
         await db.commit()
         reconciled += 1
@@ -1235,8 +1245,12 @@ async def _clear_discord_guild_commands(
             materializations[guild_id] = empty_fingerprint
             retries.pop(guild_id, None)
             config = dict(link.config) if isinstance(link.config, dict) else {}
-            config[_DISCORD_COMMAND_MATERIALIZATIONS_CONFIG_KEY] = materializations
-            config[_DISCORD_COMMAND_RETRIES_CONFIG_KEY] = retries
+            config[_DISCORD_COMMAND_MATERIALIZATIONS_CONFIG_KEY] = (
+                _JSON_OBJECT_ADAPTER.validate_python(materializations, strict=True)
+            )
+            config[_DISCORD_COMMAND_RETRIES_CONFIG_KEY] = _JSON_OBJECT_ADAPTER.validate_python(
+                retries, strict=True
+            )
             link.config = config
             await db.commit()
             continue
@@ -1279,8 +1293,12 @@ async def _clear_discord_guild_commands(
                 )
                 succeeded = False
         config = dict(link.config) if isinstance(link.config, dict) else {}
-        config[_DISCORD_COMMAND_MATERIALIZATIONS_CONFIG_KEY] = materializations
-        config[_DISCORD_COMMAND_RETRIES_CONFIG_KEY] = retries
+        config[_DISCORD_COMMAND_MATERIALIZATIONS_CONFIG_KEY] = _JSON_OBJECT_ADAPTER.validate_python(
+            materializations, strict=True
+        )
+        config[_DISCORD_COMMAND_RETRIES_CONFIG_KEY] = _JSON_OBJECT_ADAPTER.validate_python(
+            retries, strict=True
+        )
         link.config = config
         await db.commit()
     return succeeded
@@ -1588,14 +1606,14 @@ def _discord_interaction_content(
     return "Message received."
 
 
-async def _json_object(request: Request) -> dict[str, Any]:
+async def json_object(request: Request) -> dict[str, JsonValue]:
     try:
         payload = await request.json()
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid json") from exc
     if not isinstance(payload, dict):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="json object required")
-    return payload
+    return _JSON_OBJECT_ADAPTER.validate_python(payload, strict=True)
 
 
 def _json_object_from_bytes(body: bytes) -> dict[str, Any]:

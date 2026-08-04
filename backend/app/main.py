@@ -33,6 +33,7 @@ from app.routes.audit import router as audit_router
 from app.routes.auth import router as auth_router
 from app.routes.capabilities import router as capabilities_router
 from app.routes.channels import router as channels_router
+from app.routes.clerk_webhooks import router as clerk_webhooks_router
 from app.routes.cli_auth import router as cli_auth_router
 from app.routes.connectors import router as connectors_router
 from app.routes.dashboard import router as dashboard_router
@@ -376,6 +377,9 @@ for _router in _VERSIONED_ROUTERS:
         app.include_router(_router, prefix="/api", include_in_schema=False)
 
 app.include_router(admin_whatsapp_pairing_router, prefix="/v1")
+# Signed provider ingress is canonical-only; it does not inherit the legacy
+# hidden /api aliases used by older dashboard routes.
+app.include_router(clerk_webhooks_router, prefix="/v1")
 # The declarative runtime observation companion is a clean-v2 contract. It is
 # mounted directly and intentionally has neither a /v1 nor a hidden /api alias.
 app.include_router(runtime_observation_v2_router)

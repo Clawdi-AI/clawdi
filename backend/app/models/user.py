@@ -21,7 +21,7 @@ class User(Base, TimestampMixin):
             "(principal_kind = 'clerk' AND clerk_id IS NOT NULL "
             "AND partner_tenant_ref IS NULL) OR "
             "(principal_kind = 'partner_tenant' AND clerk_id IS NULL "
-            "AND partner_tenant_ref IS NOT NULL)",
+            "AND clerk_issuer IS NULL AND partner_tenant_ref IS NOT NULL)",
             name="ck_users_principal_identity",
         ),
     )
@@ -35,6 +35,12 @@ class User(Base, TimestampMixin):
         nullable=False,
     )
     partner_tenant_ref: Mapped[str | None] = mapped_column(String(255))
+    # Existing Clerk rows start with NULL and bind to the configured issuer on
+    # their next trusted JWT, create, or termination use. The released global
+    # clerk_id uniqueness remains a deliberate single-Clerk-instance compatibility
+    # constraint; clerk_issuer scopes lifecycle fences but does not enable
+    # simultaneous same-subject users from multiple Clerk instances.
+    clerk_issuer: Mapped[str | None] = mapped_column(String(255))
     email: Mapped[str | None] = mapped_column(String(320))
     name: Mapped[str | None] = mapped_column(String(200))
     # Profile picture URL captured from the Clerk JWT `picture` claim

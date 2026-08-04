@@ -9,7 +9,7 @@ import stat
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from typing import Literal, Protocol, cast
+from typing import Literal, Protocol, TypeGuard, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -395,7 +395,10 @@ class WhatsAppBaileysSidecarClient:
         decoded = _decode_json_value(raw_node)
         if not isinstance(decoded, dict):
             raise ValueError("baileys sidecar query response must be a node object or null")
-        return decoded
+        decoded_node: BinaryNode = {}
+        for key, value in decoded.items():
+            decoded_node[key] = value
+        return decoded_node
 
     async def provider_events(self, *, limit: int = 100) -> list[WhatsAppProviderMessageEvent]:
         response = await self._request("GET", _PROVIDER_EVENTS_PATH, params={"limit": limit})
@@ -778,15 +781,15 @@ def _optional_event_str(value: Mapping[str, JsonValue], key: str) -> str | None:
     return item if isinstance(item, str) and item else None
 
 
-def _encode_json_value(value: _NativeNodeValue) -> JsonValue:
+def _encode_json_value(value: object) -> JsonValue:
     if isinstance(value, bytes):
         return {
             "$type": _BYTES_SENTINEL,
             "base64": base64.b64encode(value).decode("ascii"),
         }
-    if isinstance(value, Mapping):
+    if _is_object_mapping(value):
         return {str(key): _encode_json_value(inner) for key, inner in value.items()}
-    if isinstance(value, (list, tuple)):
+    if _is_object_sequence(value):
         return [_encode_json_value(inner) for inner in value]
     return _encode_scalar(value)
 
@@ -795,6 +798,16 @@ def _encode_scalar(value: object) -> JsonValue:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return str(value)
+
+
+def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
+    return isinstance(value, Mapping)
+
+
+def _is_object_sequence(
+    value: object,
+) -> TypeGuard[list[object] | tuple[object, ...]]:
+    return isinstance(value, (list, tuple))
 
 
 def _decode_json_value(value: JsonValue) -> _NativeNodeValue:

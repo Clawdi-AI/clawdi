@@ -30,6 +30,7 @@ secret_keys=(
 	CLERK_JWT_ISSUER
 	SENTRY_DSN
 	CLERK_SECRET_KEY
+	CLERK_WEBHOOK_SIGNING_SECRET
 	COMPOSIO_API_KEY
 	DATABASE_URL
 	ENCRYPTION_KEY
@@ -51,6 +52,37 @@ chmod 600 "${render_root}/.kamal/secrets"
 	DEPLOY_HOST=192.0.2.10 \
 		DEPLOY_IMAGE_VERSION="${expected_version}" \
 		kamal config --version "${expected_version}" > "${rendered_config}"
+	DEPLOY_HOST=192.0.2.10 \
+		DEPLOY_IMAGE_VERSION="${expected_version}" \
+		ruby - "${render_root}/config/deploy.yml" "${expected_version}" <<'RUBY'
+require "kamal"
+require "pathname"
+
+config_path, expected_version = ARGV
+config = Kamal::Configuration.create_from(
+  config_file: Pathname.new(config_path),
+  version: expected_version
+)
+expected_logging_args = [ "--log-driver", '"journald"' ]
+
+raise "top-level logging did not render journald" unless config.logging_args == expected_logging_args
+config.roles.each do |role|
+  raise "#{role.name} logging drifted" unless role.logging_args == expected_logging_args
+end
+config.accessories.each do |accessory|
+  command = Kamal::Commands::Accessory.new(config, name: accessory.name).run
+  unless command.each_cons(2).include?(expected_logging_args)
+    raise "#{accessory.name} logging did not render journald"
+  end
+  raise "#{accessory.name} retained a json-file log option" if command.include?("--log-opt")
+end
+
+proxy_args = config.proxy_run(config.primary_host).docker_options_args
+unless proxy_args.each_cons(2).include?(expected_logging_args)
+  raise "kamal-proxy logging did not render journald"
+end
+raise "kamal-proxy retained a json-file log option" if proxy_args.include?("--log-opt")
+RUBY
 )
 
 test "$(grep -Ec '^  whatsapp-baileys:$' "${rendered_config}")" -eq 1

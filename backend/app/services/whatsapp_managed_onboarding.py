@@ -39,7 +39,7 @@ from app.services.whatsapp_native_transport import (
 from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegistry
 
 _LOCK_ID = 8_071_323_913
-_OWNING_STATES = ("generating", "ready", "scanned", "connected", "error")
+_OWNING_STATES = ("generating", "ready", "scanned", "error")
 _EXPIRABLE_STATES = ("generating", "ready", "scanned", "error")
 
 
@@ -97,25 +97,49 @@ async def start_platform_whatsapp_pairing(
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "configured WhatsApp account identity conflicts"
             )
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "configured WhatsApp account is already onboarded"
+        if account.name != name:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "configured WhatsApp account name conflicts"
+            )
+        client = registry.get_managed_client(account_id)
+        if client is None:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp onboarding unavailable"
+            )
+        try:
+            health = await client.health()
+            pairing = await client.pairing_status()
+        except WhatsAppSidecarError:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp onboarding unavailable"
+            ) from None
+        if health.registered != pairing.registered:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp onboarding unavailable"
+            )
+        if pairing.registered:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "configured WhatsApp account is already authenticated",
+            )
+    else:
+        duplicate_name = await db.scalar(
+            select(ChannelAccount.id).where(
+                ChannelAccount.user_id.is_(None),
+                ChannelAccount.provider == CHANNEL_PROVIDER_WHATSAPP,
+                ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
+                ChannelAccount.name == name,
+                ChannelAccount.archived_at.is_(None),
+            )
         )
-    duplicate_name = await db.scalar(
-        select(ChannelAccount.id).where(
-            ChannelAccount.user_id.is_(None),
-            ChannelAccount.provider == CHANNEL_PROVIDER_WHATSAPP,
-            ChannelAccount.visibility == CHANNEL_VISIBILITY_PUBLIC,
-            ChannelAccount.name == name,
-            ChannelAccount.archived_at.is_(None),
-        )
-    )
-    if duplicate_name is not None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "WhatsApp account name already exists")
+        if duplicate_name is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "WhatsApp account name already exists")
     now = datetime.now(UTC)
     onboarding = ChannelWhatsAppOnboardingSession(
         ownership_kind=WHATSAPP_ONBOARDING_OWNERSHIP_PLATFORM,
         sidecar_account_id=account_id,
         sidecar_config_revision=revision,
+        channel_account_id=account.id if account is not None else None,
         user_id=None,
         request_id=request_id,
         name=name,

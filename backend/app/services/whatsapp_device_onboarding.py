@@ -36,6 +36,7 @@ from app.services.channels import (
     hash_token,
     require_channel_tenant_user_id,
 )
+from app.services.principal_lifecycle import assert_user_authority_active
 from app.services.whatsapp_native_transport import (
     WhatsAppSidecarCapabilities,
     WhatsAppSidecarError,
@@ -477,9 +478,14 @@ async def require_whatsapp_logout_for_archive(
     owner_user_id = require_channel_tenant_user_id(account)
     raw_sidecar_account_id = config.get("sidecar_account_id")
     sidecar_config_revision = config.get("sidecar_config_revision")
+    if not isinstance(raw_sidecar_account_id, str):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WhatsApp disconnect could not be confirmed",
+        )
     try:
         sidecar_account_id = UUID(raw_sidecar_account_id)
-    except (TypeError, ValueError, AttributeError):
+    except ValueError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="WhatsApp disconnect could not be confirmed",
@@ -688,6 +694,10 @@ async def _finalize_connected_account(
     account_id: UUID | None = None
     newly_bound = False
     try:
+        owner_user_id = onboarding.user_id
+        if owner_user_id is None:
+            raise WhatsAppSidecarProtocolError("custom sidecar tenant owner is missing")
+        await assert_user_authority_active(db, owner_user_id)
         configured_revision = registry.custom_session_revision(session_id)
         if configured_revision != session_revision:
             raise WhatsAppSidecarProtocolError("custom sidecar revision mismatch")
@@ -698,10 +708,8 @@ async def _finalize_connected_account(
         )
         if existing is None and onboarding.channel_account_id is None:
             webhook_secret = generate_webhook_secret()
-            if onboarding.user_id is None:
-                raise WhatsAppSidecarProtocolError("custom sidecar tenant owner is missing")
             existing = build_channel_account(
-                owner_user_id=onboarding.user_id,
+                owner_user_id=owner_user_id,
                 provider=CHANNEL_PROVIDER_WHATSAPP,
                 name=onboarding.name,
                 visibility=CHANNEL_VISIBILITY_PRIVATE,

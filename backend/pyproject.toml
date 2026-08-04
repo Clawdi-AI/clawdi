@@ -11,7 +11,10 @@ dependencies = [
     "pydantic-settings>=2.14.0",
     "pyjwt[crypto]==2.13.0",
     "cryptography>=44.0",
-    "httpx>=0.28.1",
+    # SafePublicHttpClient relies on request extension forwarding and
+    # sni_hostname handling verified in these exact paired releases.
+    "httpcore==1.0.9",
+    "httpx==0.28.1",
     "httpx2>=2.5.0,<3.0.0",
     "idna>=3.10",
     "python-multipart>=0.0.20",
@@ -36,6 +39,7 @@ dependencies = [
     # https://pypi.org/pypi/boto3/1.43.62/json
     "boto3==1.43.62",
     "botocore==1.43.62",
+    "xeddsa==1.2.0",
 ]
 
 [project.optional-dependencies]
@@ -92,8 +96,10 @@ include = [
     "app/services/file_store.py",
     "app/services/file_store_s3.py",
     "app/services/memory_extraction.py",
+    "app/services/postgres_listener.py",
     "app/services/private_ip.py",
     "app/services/runtime_observation.py",
+    "app/services/safe_public_http.py",
     "app/services/session_content.py",
     "app/services/sync_events.py",
     "app/services/tar_utils.py",
@@ -105,13 +111,21 @@ include = [
     "app/services/whatsapp_sidecar_registry.py",
 ]
 strict = [
+    "app/core/auth.py",
     "app/core/logging_config.py",
     "app/core/query_utils.py",
     "app/core/skill_key.py",
     "app/middleware/request_timing.py",
+    "app/routes/ai_providers.py",
+    "app/routes/channel_routers/telegram.py",
+    "app/routes/channel_routers/whatsapp.py",
+    "app/routes/dashboard.py",
     "app/routes/sharing.py",
     "app/routes/sync.py",
+    "app/routes/vault.py",
+    "app/schemas/ai_provider.py",
     "app/services/agent_bindings.py",
+    "app/services/agent_environments.py",
     "app/services/ai_provider_connection.py",
     "app/services/ai_provider_credentials.py",
     "app/services/channel_debug_events.py",
@@ -122,9 +136,13 @@ strict = [
     "app/services/memory_extraction.py",
     "app/services/private_ip.py",
     "app/services/runtime_observation.py",
+    "app/services/safe_public_http.py",
     "app/services/session_content.py",
+    "app/services/sync_events.py",
     "app/services/tar_utils.py",
+    "app/services/whatsapp_baileys.py",
     "app/services/whatsapp_native_transport.py",
+    "app/services/whatsapp_noise.py",
     "app/services/whatsapp_provider_bridge.py",
     "app/services/whatsapp_runtime_types.py",
     "app/services/whatsapp_sidecar_registry.py",
@@ -148,6 +166,7 @@ DEP002 = [
     "uvicorn",            # ASGI server runtime; invoked as a binary.
     "asyncpg",            # SQLAlchemy postgresql+asyncpg driver.
     "alembic",            # Migration CLI.
+    "httpcore",           # Pinned transport behavior used by HTTPX request extensions.
     "python-multipart",   # FastAPI multipart parser; loaded via Form().
     "aiofiles",           # FastAPI's UploadFile uses async file I/O internally.
     "psycopg2-binary",    # Sync PG driver kept for alembic offline-mode SQL.

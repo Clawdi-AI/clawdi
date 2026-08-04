@@ -31,6 +31,7 @@ from tests.conftest import create_env_with_project
 from tests.hosted_runtime_fixtures import ensure_canonical_codex_tool_provider
 
 _ADMIN_KEY = "test-platform-admin-secret"
+_CLERK_ISSUER = "https://platform-tests.clerk.example.test"
 _ADMIN_AUTH = {"X-Admin-Key": _ADMIN_KEY}
 _TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.57"
 _TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC = "clawdi@0.13.2-test"
@@ -71,7 +72,9 @@ async def platform_client(db_session, seed_user) -> AsyncIterator[httpx.AsyncCli
         yield db_session
 
     original_admin_key = settings.admin_api_key
+    original_clerk_issuer = settings.clerk_jwt_issuer
     settings.admin_api_key = _ADMIN_KEY
+    settings.clerk_jwt_issuer = _CLERK_ISSUER
     app.dependency_overrides[get_session] = _override_get_session
     try:
         async with httpx.AsyncClient(
@@ -82,6 +85,7 @@ async def platform_client(db_session, seed_user) -> AsyncIterator[httpx.AsyncCli
     finally:
         app.dependency_overrides.clear()
         settings.admin_api_key = original_admin_key
+        settings.clerk_jwt_issuer = original_clerk_issuer
 
 
 def _headers(key: str, *, request_id: str | None = None) -> dict[str, str]:

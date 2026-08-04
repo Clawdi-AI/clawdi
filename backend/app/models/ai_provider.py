@@ -2,6 +2,7 @@ import secrets
 import uuid
 from datetime import datetime
 
+from pydantic import JsonValue
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
@@ -35,11 +36,11 @@ class AiProvider(Base, TimestampMixin):
     label: Mapped[str | None] = mapped_column(String(200))
     base_url: Mapped[str] = mapped_column(String(1000), nullable=False)
     api_mode: Mapped[str | None] = mapped_column(String(80))
-    capabilities: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
-    models: Mapped[list[dict] | None] = mapped_column(JSONB(none_as_null=True))
+    capabilities: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
+    models: Mapped[list[dict[str, JsonValue]] | None] = mapped_column(JSONB(none_as_null=True))
     auth_type: Mapped[str] = mapped_column(String(80), nullable=False)
     auth_ref: Mapped[str | None] = mapped_column(String(1000))
-    auth_metadata: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    auth_metadata: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
     managed_by: Mapped[str] = mapped_column(String(80), nullable=False, server_default="user")
     runtime_env_name: Mapped[str | None] = mapped_column(String(128))
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -65,7 +66,7 @@ class AiProviderAuthPayload(Base, TimestampMixin):
     source: Mapped[str] = mapped_column(String(80), nullable=False)
     encrypted_payload: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    payload_metadata: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    payload_metadata: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
     credential_revision: Mapped[str] = mapped_column(
         String(64), nullable=False, default=lambda: secrets.token_hex(16)
     )
@@ -122,7 +123,7 @@ class AiProviderOAuthAttempt(Base, TimestampMixin):
     encrypted_flow_payload: Mapped[bytes | None] = mapped_column(LargeBinary)
     flow_payload_nonce: Mapped[bytes | None] = mapped_column(LargeBinary)
     poll_claim_id: Mapped[str | None] = mapped_column(String(64))
-    receipt: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    receipt: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     exchange_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

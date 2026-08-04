@@ -769,9 +769,3 @@ def require_platform_mutation_auth(required_scope: str):
     """Authenticate a workload token or the explicitly enabled legacy admin key."""
 
     return _require_platform_auth(required_scope, allow_legacy_admin=True)
-
-
-def require_platform_workload_auth(required_scope: str):
-    """Authenticate only a scoped platform workload access token."""
-
-    return _require_platform_auth(required_scope, allow_legacy_admin=False)

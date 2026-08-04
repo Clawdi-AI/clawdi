@@ -20,6 +20,7 @@ from app.models.channel import (
     PROVIDER_EVENT_SCOPE_ACCOUNT,
     ChannelAccount,
     ChannelBinding,
+    ChannelBindingAlias,
 )
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channels import (
@@ -40,11 +41,15 @@ from app.services.whatsapp_baileys import (
     choose_whatsapp_route_jid,
     decide_whatsapp_relay,
     forward_iq_over,
+    parse_whatsapp_jid,
+    parse_whatsapp_usync_device_targets,
     remember_whatsapp_binding_aliases,
     resolve_whatsapp_binding_by_jids,
+    strip_whatsapp_device,
     validate_relay_outbound_additional_nodes,
     whatsapp_text_from_message_proto,
     whatsapp_text_message_proto,
+    whatsapp_usync_device_result,
 )
 from app.services.whatsapp_native_transport import WhatsAppProviderMessageEvent
 from app.services.whatsapp_runtime_types import WhatsAppOutboundMessage
@@ -341,7 +346,18 @@ class WhatsAppProviderBridge:
             return None
         async with self._sessionmaker() as db:
             account = await _load_active_whatsapp_account(db, account_id=self._account_id)
-            if _is_authorized_provider_service_iq(node):
+            usync_targets = parse_whatsapp_usync_device_targets(node)
+            recipient_lids: dict[str, str] | None = None
+            if usync_targets is not None:
+                recipient_lids = await _authorized_usync_recipient_lids(
+                    db,
+                    account=account,
+                    targets=usync_targets,
+                    bot_agent_link_id=bot_agent_link_id,
+                )
+                if recipient_lids is None:
+                    return None
+            elif _is_authorized_provider_service_iq(node):
                 if not await _active_link_owns_account(
                     db,
                     account=account,
@@ -359,13 +375,34 @@ class WhatsAppProviderBridge:
                 if not targets or any(resolve_jid(target) is None for target in targets):
                     return None
             transport = self._transport()
-            if transport is None or self._forward_iq_inflight >= 5:
-                return None
-            self._forward_iq_inflight += 1
-            try:
-                return await forward_iq_over(_query_iq(transport), node)
-            finally:
-                self._forward_iq_inflight -= 1
+            forwarded: BinaryNode | None = None
+            if transport is not None and self._forward_iq_inflight < 5:
+                self._forward_iq_inflight += 1
+                try:
+                    forwarded = await forward_iq_over(_query_iq(transport), node)
+                finally:
+                    self._forward_iq_inflight -= 1
+            if forwarded is not None:
+                return forwarded
+            if recipient_lids is not None:
+                return whatsapp_usync_device_result(node, recipient_lids=recipient_lids)
+            return None
+
+    async def resolve_recipient_lid(
+        self,
+        jid: str,
+        *,
+        bot_agent_link_id: UUID,
+    ) -> str | None:
+        async with self._sessionmaker() as db:
+            account = await _load_active_whatsapp_account(db, account_id=self._account_id)
+            recipient_lids = await _authorized_usync_recipient_lids(
+                db,
+                account=account,
+                targets=(jid,),
+                bot_agent_link_id=bot_agent_link_id,
+            )
+            return recipient_lids.get(jid) if recipient_lids is not None else None
 
 
 async def relay_whatsapp_provider_payload(
@@ -485,6 +522,7 @@ async def persist_whatsapp_provider_event(
         text=text,
         payload=payload,
         provider_event_scope=PROVIDER_EVENT_SCOPE_ACCOUNT,
+        require_active_authority=not binding_result.command_handled,
     )
     for _message, binding in messages:
         if binding is not None:
@@ -730,6 +768,79 @@ async def _build_bound_jid_resolver(
             else None
         )
     return resolved.get
+
+
+async def _authorized_usync_recipient_lids(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    targets: tuple[str, ...],
+    bot_agent_link_id: UUID,
+) -> dict[str, str] | None:
+    target_bindings: dict[str, ChannelBinding] = {}
+    bindings: dict[UUID, ChannelBinding] = {}
+    for target in targets:
+        binding = await find_binding(
+            db,
+            account=account,
+            external_chat_id=target,
+            bot_agent_link_id=bot_agent_link_id,
+        )
+        if binding is None:
+            return None
+        target_bindings[target] = binding
+        bindings[binding.id] = binding
+
+    authorized: dict[UUID, ChannelBinding] = {}
+    for binding_id in sorted(bindings, key=str):
+        binding = await lock_active_binding_authority(
+            db,
+            account=account,
+            binding=bindings[binding_id],
+            bot_agent_link_id=bot_agent_link_id,
+        )
+        if binding is None:
+            return None
+        authorized[binding_id] = binding
+
+    aliases_result = await db.execute(
+        select(ChannelBindingAlias).where(
+            ChannelBindingAlias.account_id == account.id,
+            ChannelBindingAlias.bot_agent_link_id == bot_agent_link_id,
+            ChannelBindingAlias.binding_id.in_(authorized),
+        )
+    )
+    identifiers: dict[UUID, set[str]] = {
+        binding_id: {strip_whatsapp_device(binding.external_chat_id)}
+        for binding_id, binding in authorized.items()
+    }
+    for alias in aliases_result.scalars():
+        identifiers[alias.binding_id].add(strip_whatsapp_device(alias.alias_external_chat_id))
+
+    resolved: dict[str, str] = {}
+    for target, binding in target_bindings.items():
+        target_jid = strip_whatsapp_device(target)
+        binding_identifiers = identifiers[binding.id]
+        if target_jid not in binding_identifiers:
+            return None
+        lids = {
+            identifier
+            for identifier in binding_identifiers
+            if (parsed := parse_whatsapp_jid(identifier)) is not None and parsed.server == "lid"
+        }
+        if len(lids) != 1:
+            return None
+        lid = lids.pop()
+        target_parsed = parse_whatsapp_jid(target_jid)
+        lid_parsed = parse_whatsapp_jid(lid)
+        if target_parsed is None or lid_parsed is None:
+            return None
+        # A PN inferred by replacing "@lid" with "@s.whatsapp.net" is not an
+        # observed alias. Refuse that same-number pair instead of guessing it.
+        if target_parsed.server == "s.whatsapp.net" and target_parsed.user == lid_parsed.user:
+            return None
+        resolved[target] = lid
+    return resolved
 
 
 def _node_target_jids(node: BinaryNode) -> tuple[str, ...]:

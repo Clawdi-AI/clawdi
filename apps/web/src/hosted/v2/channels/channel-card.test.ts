@@ -95,7 +95,6 @@ describe("shared Channel card", () => {
 		expect(card).not.toContain("data-channel-card-footer");
 		expect(agentChannels).toContain("h-[7.5rem] flex-none grid-rows-[2.75rem_2rem]");
 		expect(agentChannels).toContain("xl:h-20 xl:grid-rows-1");
-		expect(agentChannels).toContain('state={unavailableReason ?? "Available"}');
 		expect(agentChannels).toContain("pairedChatsControl");
 		expect(agentChannels).not.toContain('isNormalChannelStatus(link.status) ? (\n\t\t\t"Linked"');
 		expect(consoleChannels).not.toContain('state="Available"');

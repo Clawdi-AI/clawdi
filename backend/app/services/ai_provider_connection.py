@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import ipaddress
-import socket
-import ssl
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -13,11 +9,20 @@ import httpx
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from app.schemas.ai_provider import ConnectionErrorCategory
+from app.services.safe_public_http import (
+    SafePublicHttpClient,
+    SafePublicHttpConnectError,
+    SafePublicHttpDnsError,
+    SafePublicHttpDnsTimeout,
+    SafePublicHttpRequestError,
+    SafePublicHttpResponseTooLarge,
+    SafePublicHttpTimeout,
+    SafePublicHttpTlsError,
+    UnsafePublicHttpUrlError,
+)
 
-_DNS_TIMEOUT_SECONDS = 3.0
 _PROBE_TIMEOUT = httpx.Timeout(connect=4.0, read=8.0, write=4.0, pool=2.0)
 _TOTAL_PROBE_TIMEOUT_SECONDS = 10.0
-_MAX_PROBE_ADDRESSES = 4
 _MAX_RESPONSE_BYTES = 64 * 1024
 _PROBE_RESPONSE_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 
@@ -96,65 +101,58 @@ async def test_ai_provider_connection(
             retryable=False,
         )
 
-    hostname = request.url.host
-    if not hostname:
-        return _failure(
-            "validation",
-            "invalid_endpoint",
-            "Provider endpoint is invalid.",
-            retryable=False,
-        )
     try:
-        addresses = await _resolve_public_addresses(hostname, request.url.port or 443)
-    except TimeoutError:
+        response = await _send_probe_request(request)
+    except SafePublicHttpDnsTimeout:
         return _failure(
             "dns",
             "dns_timeout",
             "Provider hostname lookup timed out.",
             retryable=True,
         )
-    except socket.gaierror:
+    except SafePublicHttpDnsError:
         return _failure(
             "dns",
             "dns_failed",
             "Provider hostname could not be resolved.",
             retryable=True,
         )
-    except ValueError:
+    except UnsafePublicHttpUrlError as exc:
+        if exc.reason == "invalid":
+            return _failure(
+                "validation",
+                "invalid_endpoint",
+                "Provider endpoint is invalid.",
+                retryable=False,
+            )
         return _failure(
             "ssrf",
             "blocked_address",
             "Provider endpoint resolves to a non-public address.",
             retryable=False,
         )
-
-    try:
-        response = await asyncio.wait_for(
-            _send_to_public_addresses(request, addresses),
-            timeout=_TOTAL_PROBE_TIMEOUT_SECONDS,
-        )
-    except (TimeoutError, httpx.TimeoutException):
+    except SafePublicHttpTimeout:
         return _failure(
             "timeout",
             "request_timeout",
             "Provider connection timed out.",
             retryable=True,
         )
-    except httpx.ConnectError as error:
-        if _caused_by_tls(error):
-            return _failure(
-                "tls",
-                "tls_failed",
-                "Provider TLS verification failed.",
-                retryable=False,
-            )
+    except SafePublicHttpTlsError:
+        return _failure(
+            "tls",
+            "tls_failed",
+            "Provider TLS verification failed.",
+            retryable=False,
+        )
+    except SafePublicHttpConnectError:
         return _failure(
             "network",
             "connection_failed",
             "Provider endpoint could not be reached.",
             retryable=True,
         )
-    except _InvalidProbeResponse:
+    except (_InvalidProbeResponse, SafePublicHttpResponseTooLarge):
         return _failure(
             "protocol_model",
             "invalid_inference_response",
@@ -162,7 +160,7 @@ async def test_ai_provider_connection(
             retryable=False,
             endpoint_reachable=True,
         )
-    except httpx.HTTPError:
+    except SafePublicHttpRequestError:
         return _failure(
             "network",
             "request_failed",
@@ -325,96 +323,25 @@ def _append_path(path: str, suffix: str) -> str:
     return f"{prefix}/{suffix.lstrip('/')}" or "/"
 
 
-async def _resolve_public_addresses(hostname: str, port: int) -> tuple[str, ...]:
-    try:
-        literal = ipaddress.ip_address(hostname)
-    except ValueError:
-        infos = await asyncio.wait_for(
-            asyncio.to_thread(
-                socket.getaddrinfo,
-                hostname,
-                port,
-                socket.AF_UNSPEC,
-                socket.SOCK_STREAM,
-            ),
-            timeout=_DNS_TIMEOUT_SECONDS,
-        )
-        addresses = tuple(dict.fromkeys(str(info[4][0]) for info in infos))
-    else:
-        addresses = (str(literal),)
-    if not addresses:
-        raise socket.gaierror("no addresses")
-    if any(not ipaddress.ip_address(address).is_global for address in addresses):
-        raise ValueError("non-public address")
-    return addresses
-
-
-async def _send_to_public_addresses(
-    request: _ProbeRequest,
-    addresses: tuple[str, ...],
-) -> _ProbeHttpResponse:
-    ordered = sorted(addresses, key=lambda address: ipaddress.ip_address(address).version)
-    last_connect_error: httpx.ConnectError | httpx.ConnectTimeout | None = None
-    for address in ordered[:_MAX_PROBE_ADDRESSES]:
-        try:
-            return await _send_pinned_request(request, address)
-        except httpx.ConnectTimeout as error:
-            last_connect_error = error
-        except httpx.ConnectError as error:
-            if _caused_by_tls(error):
-                raise
-            last_connect_error = error
-    if last_connect_error is not None:
-        raise last_connect_error
-    raise httpx.ConnectError("Provider endpoint has no usable public address")
-
-
-async def _send_pinned_request(
-    request: _ProbeRequest,
-    address: str,
-    *,
-    ssl_context: ssl.SSLContext | None = None,
-) -> _ProbeHttpResponse:
-    original_host = request.url.host
-    if not original_host:
-        raise ValueError("missing host")
-    default_port = 443 if request.url.scheme == "https" else 80
-    host_header = original_host
-    if ":" in host_header and not host_header.startswith("["):
-        host_header = f"[{host_header}]"
-    if request.url.port is not None and request.url.port != default_port:
-        host_header = f"{host_header}:{request.url.port}"
-    headers = {**request.headers, "host": host_header}
-    pinned_url = request.url.copy_with(host=address)
-    transport = httpx.AsyncHTTPTransport(
-        verify=ssl_context if ssl_context is not None else True,
-        trust_env=False,
-        retries=0,
-    )
-    async with httpx.AsyncClient(
-        transport=transport,
+async def _send_probe_request(request: _ProbeRequest) -> _ProbeHttpResponse:
+    client = SafePublicHttpClient(
         timeout=_PROBE_TIMEOUT,
-        follow_redirects=False,
-        trust_env=False,
-    ) as client:
-        async with client.stream(
-            "POST",
-            pinned_url,
-            headers=headers,
-            json=request.body,
-            extensions={"sni_hostname": original_host},
-        ) as response:
-            if not 200 <= response.status_code < 300:
-                return _ProbeHttpResponse(status_code=response.status_code, body=b"")
-            content_encoding = response.headers.get("content-encoding", "identity").lower()
-            if content_encoding not in {"", "identity"}:
-                raise _InvalidProbeResponse("compressed probe responses are not accepted")
-            body = bytearray()
-            async for chunk in response.aiter_raw():
-                if len(body) + len(chunk) > _MAX_RESPONSE_BYTES:
-                    raise _InvalidProbeResponse("probe response exceeds size limit")
-                body.extend(chunk)
-            return _ProbeHttpResponse(status_code=response.status_code, body=bytes(body))
+        total_timeout_seconds=_TOTAL_PROBE_TIMEOUT_SECONDS,
+        max_response_bytes=_MAX_RESPONSE_BYTES,
+    )
+    response = await client.post(
+        request.url,
+        headers=request.headers,
+        json=request.body,
+    )
+    if response.is_success:
+        content_encoding = response.headers.get("content-encoding", "identity").lower()
+        if content_encoding not in {"", "identity"}:
+            raise _InvalidProbeResponse("compressed probe responses are not accepted")
+    return _ProbeHttpResponse(
+        status_code=response.status_code,
+        body=response.body if response.is_success else b"",
+    )
 
 
 def _is_valid_inference_response(api_mode: str, body: bytes) -> bool:
@@ -451,17 +378,6 @@ def _is_valid_inference_response(api_mode: str, body: bytes) -> bool:
 
 def _is_non_empty_string(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
-
-
-def _caused_by_tls(error: BaseException) -> bool:
-    current: BaseException | None = error
-    seen: set[int] = set()
-    while current is not None and id(current) not in seen:
-        if isinstance(current, ssl.SSLError):
-            return True
-        seen.add(id(current))
-        current = current.__cause__ or current.__context__
-    return False
 
 
 def _failure(

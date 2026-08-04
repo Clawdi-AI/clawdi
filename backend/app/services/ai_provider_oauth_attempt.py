@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import secrets
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 
 import httpx
 from fastapi import HTTPException, status
-from pydantic import ValidationError
+from pydantic import JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -61,7 +61,7 @@ OAUTH_DEVICE_POLL_LEASE_SECONDS = 30
 CODEX_OAUTH_PROVIDER = "codex"
 CODEX_OPENAI_BASE_URL = "https://api.openai.com/v1"
 CODEX_OAUTH_REVOKE_URL = "https://auth.openai.com/oauth/revoke"
-CODEX_OAUTH_CONFIG = {
+CODEX_OAUTH_CONFIG: dict[str, JsonValue] = {
     "authorization_url": "https://auth.openai.com/oauth/authorize",
     "token_url": CODEX_OAUTH_TOKEN_URL,
     "client_id": CODEX_OAUTH_CLIENT_ID,
@@ -72,6 +72,8 @@ CODEX_OAUTH_CONFIG = {
         "originator": "codex_cli_rs",
     },
 }
+
+_JSON_OBJECT_ADAPTER = TypeAdapter(dict[str, JsonValue])
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,7 +321,7 @@ class AiProviderOAuthAttemptService:
         profile: str,
         flow_kind: OAuthFlowKind,
         expires_at: datetime,
-        flow_payload: dict,
+        flow_payload: dict[str, JsonValue],
     ) -> str:
         await lock_ai_provider_owner(db, owner_user_id)
         locked_provider = (
@@ -390,7 +392,7 @@ class AiProviderOAuthAttemptService:
         provider_id: str,
         state_value: str,
         flow_kind: OAuthFlowKind,
-        payload_updates: dict,
+        payload_updates: dict[str, JsonValue],
     ) -> UUID | AiProviderResponse:
         state_identity = oauth_attempt_state_identity(state_value)
         async with self._session_factory() as db:
@@ -585,7 +587,11 @@ class AiProviderOAuthAttemptService:
                     )
                 payload_text = await _codex_auth_profile_payload(client, config, response, profile)
                 provider_auth_type = "agent_profile"
-                metadata = {"tool": "codex", "profile": profile, "source": source}
+                metadata: dict[str, JsonValue] = {
+                    "tool": "codex",
+                    "profile": profile,
+                    "source": source,
+                }
         except CodexOAuthUpstreamError as exc:
             await self.fail_attempt(attempt_id)
             raise _codex_upstream_http_exception(exc) from exc
@@ -616,7 +622,7 @@ class AiProviderOAuthAttemptService:
         owner_user_id: UUID,
         provider_auth_type: str,
         payload_text: str,
-        metadata: dict,
+        metadata: dict[str, JsonValue],
         compensation: OAuthRevokeTombstoneRef | None,
     ) -> AiProviderResponse:
         from app.services.ai_provider_auth_transition import (
@@ -1022,7 +1028,7 @@ class AiProviderOAuthAttemptService:
             )
 
     @staticmethod
-    def _store_flow_payload(attempt: AiProviderOAuthAttempt, payload: dict) -> None:
+    def _store_flow_payload(attempt: AiProviderOAuthAttempt, payload: dict[str, JsonValue]) -> None:
         attempt.encrypted_flow_payload, attempt.flow_payload_nonce = encrypt(
             json.dumps(payload, separators=(",", ":"), sort_keys=True)
         )
@@ -1085,15 +1091,15 @@ async def load_oauth_attempt(
     return attempt
 
 
-def oauth_attempt_flow_payload(attempt: AiProviderOAuthAttempt) -> dict:
+def oauth_attempt_flow_payload(attempt: AiProviderOAuthAttempt) -> dict[str, JsonValue]:
     if attempt.encrypted_flow_payload is None or attempt.flow_payload_nonce is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Stored OAuth attempt is invalid")
     try:
-        payload = json.loads(decrypt(attempt.encrypted_flow_payload, attempt.flow_payload_nonce))
+        payload = _JSON_OBJECT_ADAPTER.validate_json(
+            decrypt(attempt.encrypted_flow_payload, attempt.flow_payload_nonce)
+        )
     except Exception as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, "Stored OAuth attempt is invalid") from exc
-    if not isinstance(payload, dict):
-        raise HTTPException(status.HTTP_409_CONFLICT, "Stored OAuth attempt is invalid")
     return payload
 
 
@@ -1108,13 +1114,13 @@ def oauth_attempt_replay(attempt: AiProviderOAuthAttempt) -> AiProviderResponse 
         raise HTTPException(status.HTTP_409_CONFLICT, "Stored OAuth receipt is invalid") from exc
 
 
-def oauth_config_for(oauth_provider: str) -> dict:
+def oauth_config_for(oauth_provider: str) -> dict[str, JsonValue]:
     if oauth_provider != CODEX_OAUTH_PROVIDER:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
             f"AI Provider OAuth config not found for {oauth_provider}",
         )
-    config: dict = dict(CODEX_OAUTH_CONFIG)
+    config = dict(CODEX_OAUTH_CONFIG)
     raw = settings.ai_provider_oauth_config_json.strip()
     if raw:
         try:
@@ -1140,7 +1146,9 @@ def oauth_config_for(oauth_provider: str) -> dict:
     return config
 
 
-def merge_oauth_config(base: dict, override: dict) -> dict:
+def merge_oauth_config(
+    base: Mapping[str, JsonValue], override: Mapping[str, JsonValue]
+) -> dict[str, JsonValue]:
     merged = {**base, **override}
     base_extra = base.get("extra_authorize_params")
     override_extra = override.get("extra_authorize_params")
@@ -1152,7 +1160,7 @@ def merge_oauth_config(base: dict, override: dict) -> dict:
     return merged
 
 
-def required_oauth_config(config: dict, key: str, oauth_provider: str) -> str:
+def required_oauth_config(config: Mapping[str, JsonValue], key: str, oauth_provider: str) -> str:
     value = config.get(key)
     if not isinstance(value, str) or not value.strip():
         raise HTTPException(

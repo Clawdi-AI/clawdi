@@ -4,8 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	agentProviderHasSingleLinkLimit,
+	agentProviderLinkReplacementRequired,
+	agentProviderLinkStatusUnknown,
 	autoLinkAgentIdForNewCustomBot,
-	channelProviderLinkingReady,
 	pairCodeExpired,
 	pairingCommand,
 	verifiedDiscordInstallUrl,
@@ -27,7 +28,7 @@ function productionTypeScriptFiles(directory: string): string[] {
 	});
 }
 
-describe("hosted channel instructions and gates", () => {
+describe("hosted channel instructions and admission rules", () => {
 	test("renders the exact command accepted by the channel backend", () => {
 		expect(pairingCommand("BCDFGHJKLM")).toBe("/clawdi_pair BCDFGHJKLM");
 	});
@@ -90,10 +91,13 @@ describe("hosted channel instructions and gates", () => {
 		}
 	});
 
-	test("adds conflicting Custom bots to inventory without changing the existing Agent link", () => {
+	test("requires replacement confirmation for known single-provider conflicts", () => {
 		for (const provider of ["telegram", "discord"] as const) {
 			expect(autoLinkAgentIdForNewCustomBot("agent-1", "openclaw", provider, new Set())).toBe(
 				"agent-1",
+			);
+			expect(agentProviderLinkReplacementRequired("openclaw", provider, new Set([provider]))).toBe(
+				true,
 			);
 			expect(
 				autoLinkAgentIdForNewCustomBot("agent-1", "openclaw", provider, new Set([provider])),
@@ -107,10 +111,15 @@ describe("hosted channel instructions and gates", () => {
 			autoLinkAgentIdForNewCustomBot(undefined, undefined, "telegram", new Set(["telegram"])),
 		).toBeNull();
 		expect(autoLinkAgentIdForNewCustomBot("agent-1", "openclaw", "telegram", undefined)).toBeNull();
+		expect(agentProviderLinkStatusUnknown("openclaw", "telegram", undefined)).toBe(true);
 	});
 
-	test("keeps WhatsApp inventory onboarding separate from Agent linking", () => {
+	test("uses explicit WhatsApp linking with the same replacement semantics", () => {
 		expect(autoLinkAgentIdForNewCustomBot("agent-1", "openclaw", "whatsapp", new Set())).toBeNull();
+		expect(
+			agentProviderLinkReplacementRequired("openclaw", "whatsapp", new Set(["whatsapp"])),
+		).toBe(true);
+		expect(agentProviderLinkStatusUnknown("openclaw", "whatsapp", undefined)).toBe(true);
 	});
 
 	test("expires pairing actions exactly at the server deadline", () => {
@@ -119,12 +128,6 @@ describe("hosted channel instructions and gates", () => {
 		expect(pairCodeExpired(deadline, Date.parse(deadline))).toBe(true);
 		expect(pairCodeExpired(deadline, Date.parse("2026-07-30T12:00:01Z"))).toBe(true);
 		expect(pairCodeExpired("not-a-timestamp", Date.parse(deadline))).toBe(true);
-	});
-
-	test("keeps unavailable providers out of direct Agent linking", () => {
-		expect(channelProviderLinkingReady("telegram")).toBe(true);
-		expect(channelProviderLinkingReady("discord")).toBe(true);
-		expect(channelProviderLinkingReady("whatsapp")).toBe(false);
 	});
 
 	test("describes the single-account runtime capability for both hosted runtimes", () => {

@@ -59,8 +59,6 @@ describe("channel IA boundary", () => {
 		expect(agentDetail).toContain("<PairedChatsDialog");
 		expect(pairedChatsDialog).toContain("<PairedChatRow");
 		expect(pairedChatRow).toContain("Unpair");
-		expect(agentDetail).toContain("body: { agent_id: environmentId }");
-		expect(agentDetail).toContain("agentProviderHasSingleLinkLimit");
 		expect(agentDetail).toContain('title="Clawdi bots"');
 		expect(agentDetail).toContain('title="Custom bots"');
 		expect(agentDetail).toContain("No Clawdi bots available");
@@ -75,11 +73,11 @@ describe("channel IA boundary", () => {
 	});
 
 	test("keeps Discord inventory in Console and Add/Pair actions on the Agent", () => {
-		expect(connectDialog).toContain("agent_id: autoLinkAgentId");
+		expect(connectDialog).toContain("replace_existing_provider_link: true");
+		expect(connectDialog).toContain("<ProviderLinkReplacementConfirm");
 		expect(connectDialog).toContain("Add custom bot");
 		expect(connectDialog).toContain("onAgentConnected");
 		expect(agentDetail).toContain('linking ? "Linking…" : "Link"');
-		expect(agentDetail).toContain("body: { agent_id: environmentId }");
 		expect(agentDetail).toContain("setDiscordPairOpen(true)");
 		expect(agentDetail).toContain("setDiscordPair({");
 		expect(agentDetail).toContain("<DiscordPairDialog");
@@ -149,7 +147,9 @@ describe("channel IA boundary", () => {
 	test("opens the shared fixed-TTL Telegram flow immediately after a new link", () => {
 		expect(agentDetail).toContain("const [telegramPair, setTelegramPair]");
 		expect(agentDetail).toContain('account?.provider === "telegram"');
-		expect(agentDetail).toContain("onLink={() => void submitLink(bot.id)}");
+		expect(agentDetail).toContain(
+			"onLink={(replaceExistingProviderLink) => submitLink(bot.id, replaceExistingProviderLink)}",
+		);
 		expect(agentDetail).toContain("<TelegramPairDialog");
 		expect(pairDialog).toContain("const TELEGRAM_PAIR_TTL_SECONDS = 300");
 		expect(discordPairDialog).toContain("const DISCORD_PAIR_TTL_SECONDS = 300");
@@ -262,8 +262,6 @@ describe("channel IA boundary", () => {
 		expect(pairedChatsDialog).toContain("bindingCount === 1");
 		expect(pairedChatsDialog).toContain('"chat" : "chats"');
 		expect(agentDetail).not.toContain("Link to start pairing chats");
-		expect(agentDetail).toContain("Agent Link gated");
-		expect(agentDetail).toContain("activationGated ? (");
 		expect(pairedChatsDialog).toContain("aria-controls={panelId}");
 		expect(pairedChatsDialog).toContain('role="status"');
 		expect(pairedChatsDialog).toContain('role="alert"');

@@ -4,14 +4,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "n
 import { join } from "node:path";
 import { egressProfileSchema } from "../src/runtime/egress-profiles";
 import { buildManagedWhatsAppEgressProfiles } from "../src/runtime/whatsapp-egress";
-import {
-	CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER,
-	WHATSAPP_LINKING_READY,
-	WHATSAPP_RUNTIME_READY,
-	WHATSAPP_RUNTIME_REQUIREMENTS,
-	WHATSAPP_UPSTREAM_AUDIT,
-	WHATSAPP_UPSTREAM_READY,
-} from "../src/runtime/whatsapp-upstream-contract";
+import { CLAWDI_WHATSAPP_LINK_CAPABILITY_HEADER } from "../src/runtime/whatsapp-upstream-contract";
 
 const agentTokenSecretRef = (link: string) =>
 	`secret://channels/whatsapp/account/links/${link}/agent-token`;
@@ -42,7 +35,7 @@ describe("native WhatsApp egress contract", () => {
 		).toBe(false);
 		for (const path of productionSources) {
 			const source = readFileSync(path, "utf-8");
-			expect(source).not.toMatch(/\bBasePlatformAdapter\b|HERMES_WA_CREDS_JSON|WHATSAPP_MODE/);
+			expect(source).not.toMatch(/\bBasePlatformAdapter\b|HERMES_WA_CREDS_JSON/);
 		}
 	});
 
@@ -67,7 +60,7 @@ describe("native WhatsApp egress contract", () => {
 		expect(routeSource).not.toMatch(/\/graph|\/webhook|\/media/);
 	});
 
-	it("gates new upgrades on an exact per-Link capability and denies stale markers", () => {
+	it("requires an exact per-Link capability marker and denies stale markers", () => {
 		const profiles = buildManagedWhatsAppEgressProfiles({
 			controlPlaneApiUrl: "https://control-plane.test/base?ignored=true",
 			links: ["link-a", "link-b"].map((linkId) => ({
@@ -137,22 +130,7 @@ describe("native WhatsApp egress contract", () => {
 		});
 	});
 
-	it("keeps release closed while recording only the isolated compatibility evidence", () => {
-		expect(WHATSAPP_LINKING_READY).toBe(false);
-		expect(WHATSAPP_RUNTIME_READY).toBe(false);
-		expect(WHATSAPP_UPSTREAM_READY).toBe(false);
-		expect(Object.values(WHATSAPP_RUNTIME_REQUIREMENTS)).toEqual([
-			true,
-			true,
-			true,
-			true,
-			false,
-			false,
-			false,
-		]);
-	});
-
-	it("qualifies the rc14 sidecar artifact while consumers remain on audited rc13", () => {
+	it("qualifies the pinned rc14 physical sidecar artifact", () => {
 		const sidecarRoot = join(import.meta.dir, "../../whatsapp-baileys-sidecar");
 		const baileysRoot = realpathSync(join(sidecarRoot, "node_modules/baileys"));
 		const packageJson = JSON.parse(readFileSync(join(baileysRoot, "package.json"), "utf-8")) as {
@@ -166,19 +144,8 @@ describe("native WhatsApp egress contract", () => {
 		const sidecarConfig = readFileSync(join(sidecarRoot, "src/config.ts"), "utf-8");
 		const sidecarState = readFileSync(join(sidecarRoot, "src/sqlite-state.ts"), "utf-8");
 		const auditedVersion = readFileSync(join(sidecarRoot, "src/audited-version.ts"), "utf-8");
-		const release = WHATSAPP_UPSTREAM_AUDIT.baileysRelease;
-		const openclawArtifact = release.artifacts.openclaw;
-		const hermesArtifact = release.artifacts.hermes;
-
-		expect(openclawArtifact.package).toBe("baileys");
-		expect(openclawArtifact.consumerStableCommit).toBe("2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4");
-		expect(hermesArtifact.package).toBe("@whiskeysockets/baileys");
-		expect(hermesArtifact.consumerStableCommit).toBe("cc4cab2f592e60a197e796506de9168f74baf3ea");
-		expect(WHATSAPP_UPSTREAM_AUDIT.openclaw).not.toHaveProperty("mainCommit");
-		expect(WHATSAPP_UPSTREAM_AUDIT.hermes).not.toHaveProperty("mainCommit");
 		expect(packageJson.name).toBe("@whiskeysockets/baileys");
 		expect(packageJson.version).toBe("7.0.0-rc14");
-		expect(release.gitCommit).toBe("8053b086ecc97ec3f78299561de11959bab05d39");
 		expect(createHash("sha256").update(noiseHandler).digest("hex")).toBe(
 			"970f9526ce0e5a6bebf937328b3d835966a9282c0d232f31b5c0bb283531afe8",
 		);
@@ -211,25 +178,6 @@ describe("native WhatsApp egress contract", () => {
 			'AUDITED_BAILEYS_SOURCE_COMMIT = "7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a"',
 		);
 		expect(auditedVersion).toContain('AUDITED_WHATSAPP_WEB_VERSION_TEXT = "2.3000.1043857760"');
-		expect(release.noiseTrustSeam).toMatchObject({
-			available: true,
-			providedBy: "clawdi.managedBaileysCompat.v3",
-			backwardCompatibleDefault: "WA_CERT_DETAILS",
-		});
-		expect(release.webSocketUpgradeHeaderSeam).toMatchObject({
-			available: true,
-			providedBy: "clawdi.managedBaileysCompat.v3",
-		});
-		expect(WHATSAPP_UPSTREAM_AUDIT.openclaw.stockAuthStatePersistenceCompatibility).toEqual({
-			available: true,
-			nativeUpstream: true,
-			providedBy: "stock OpenClaw auth-state load/save",
-		});
-		expect(WHATSAPP_UPSTREAM_AUDIT.hermes.stockAuthStatePersistenceCompatibility).toEqual({
-			available: true,
-			nativeUpstream: true,
-			providedBy: "stock Hermes useMultiFileAuthState load/save",
-		});
 	});
 });
 

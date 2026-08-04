@@ -17,6 +17,7 @@ from app.main import app
 _CANONICAL_ONLY_V1_PREFIXES = (
     "/v1/platform/",
     "/v1/admin/channels/whatsapp/pairing-sessions",
+    "/v1/webhooks/clerk",
 )
 
 

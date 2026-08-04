@@ -205,7 +205,6 @@ import {
 	TRANSPARENT_EGRESS_TABLE,
 	TRANSPARENT_EGRESS_TRANSPORT_VERSION,
 } from "./transparent-egress";
-import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 import {
 	CLAWDI_MANAGED_WHATSAPP_SOCKET_METADATA_KEY,
 	parseManagedWhatsAppSocketMetadataJson,
@@ -465,10 +464,6 @@ export function materializeHostedChannelCredentials(
 		removeStaleManagedWhatsAppAuthDirs(home, new Set<string>());
 		return;
 	}
-	if (!WHATSAPP_UPSTREAM_READY) {
-		removeStaleManagedWhatsAppAuthDirs(home, new Set<string>());
-		return;
-	}
 	const credentials = hostedWhatsAppAuthCredentials(manifest);
 	const normalizedSecrets = normalizeSecretValues(secretValues);
 	const expectedAuthDirs = new Set<string>();
@@ -505,7 +500,7 @@ function validateHostedChannelCredentialsPlan(
 	secretValues: Record<string, string> | undefined,
 	home: string,
 ): void {
-	if (!hostedChannelCredentialsDeclared(manifest) || !WHATSAPP_UPSTREAM_READY) return;
+	if (!hostedChannelCredentialsDeclared(manifest)) return;
 	const normalizedSecrets = normalizeSecretValues(secretValues);
 	for (const credential of hostedWhatsAppAuthCredentials(manifest)) {
 		const authDirError = managedWhatsAppAuthDirError(home, credential);
@@ -3318,7 +3313,7 @@ function hermesManagedChannelsPatch(channels: Record<string, unknown>): Record<s
 			? {
 					whatsapp: {
 						enabled: true,
-						dm_policy: "open",
+						dm_policy: "allowlist",
 						group_policy: "open",
 						allow_from: ["*"],
 						group_allow_from: ["*"],
@@ -3339,7 +3334,7 @@ function hermesManagedChannelsPatch(channels: Record<string, unknown>): Record<s
 						whatsapp: {
 							enabled: true,
 							extra: {
-								dm_policy: "open",
+								dm_policy: "allowlist",
 								group_policy: "open",
 								allow_from: ["*"],
 								group_allow_from: ["*"],
@@ -3374,20 +3369,20 @@ function openClawManagedChannelUsesEnvSecretRefs(channels: Record<string, unknow
 
 function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record<string, unknown> {
 	const deleteEntries = openClawManagedChannelDeletes();
-	const runtimeReadyChannels = openClawRuntimeReadyChannels(channels);
-	const usesEnvSecretRefs = openClawManagedChannelUsesEnvSecretRefs(runtimeReadyChannels);
+	const usesEnvSecretRefs = openClawManagedChannelUsesEnvSecretRefs(channels);
 	const isolatesManagedDms =
-		channelHasAccounts(runtimeReadyChannels.telegram) ||
-		channelHasAccounts(runtimeReadyChannels.discord);
+		channelHasAccounts(channels.telegram) ||
+		channelHasAccounts(channels.discord) ||
+		channelHasAccounts(channels.whatsapp);
 	return {
 		channels: {
 			...deleteEntries,
-			...runtimeReadyChannels,
+			...channels,
 		},
 		plugins: {
 			entries: {
 				...deleteEntries,
-				...channelPluginEntries(runtimeReadyChannels),
+				...channelPluginEntries(channels),
 			},
 		},
 		secrets: usesEnvSecretRefs
@@ -3407,28 +3402,20 @@ function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record
 }
 
 function openClawManagedAccountReplaceArgs(channels: Record<string, unknown>): string[] {
-	const runtimeReadyChannels = openClawRuntimeReadyChannels(channels);
 	const args: string[] = [];
 	for (const provider of OPENCLAW_MANAGED_CHANNELS) {
-		const channel = runtimeReadyChannels[provider];
+		const channel = channels[provider];
 		if (!isPlainRecord(channel) || !isPlainRecord(channel.accounts)) continue;
 		args.push("--replace-path", `channels.${provider}.accounts`);
 	}
 	return args;
 }
 
-function openClawRuntimeReadyChannels(channels: Record<string, unknown>): Record<string, unknown> {
-	if (WHATSAPP_UPSTREAM_READY || !Object.hasOwn(channels, "whatsapp")) return channels;
-	const runtimeReadyChannels = { ...channels };
-	delete runtimeReadyChannels.whatsapp;
-	return runtimeReadyChannels;
-}
-
 function openClawManagedChannelDeletes(): Record<string, null> {
-	const channels = WHATSAPP_UPSTREAM_READY
-		? OPENCLAW_MANAGED_CHANNELS
-		: OPENCLAW_MANAGED_CHANNELS.filter((channel) => channel !== "whatsapp");
-	return Object.fromEntries(channels.map((channel) => [channel, null])) as Record<string, null>;
+	return Object.fromEntries(OPENCLAW_MANAGED_CHANNELS.map((channel) => [channel, null])) as Record<
+		string,
+		null
+	>;
 }
 
 function installOpenClawChannelPlugins(input: {
@@ -3440,7 +3427,6 @@ function installOpenClawChannelPlugins(input: {
 	receiptTargets: RuntimeInstallReceiptTargets;
 }): void {
 	for (const channel of Object.keys(input.channels).sort()) {
-		if (channel === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		const specs = OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS[channel];
 		if (!specs) continue;
 		const key = `openclaw:${channel}`;
@@ -4294,7 +4280,7 @@ function runtimeRunConfigIdIsValid(id: string): boolean {
 const MANAGED_LIVE_SYNC_AGENTS = ["openclaw", "hermes", "codex"] as const;
 const OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS: Record<string, readonly string[]> = {
 	discord: ["@openclaw/discord"],
-	whatsapp: ["clawhub:@openclaw/whatsapp", "@openclaw/whatsapp"],
+	whatsapp: ["clawhub:@openclaw/whatsapp"],
 };
 
 const OPENCLAW_MANAGED_CHANNELS = ["telegram", "discord", "whatsapp"] as const;
@@ -4861,7 +4847,7 @@ export function runtimeInstallerMutationTargets(
 
 function hostedChannelCredentialMutationTargets(manifest: RuntimeManifest, home: string): string[] {
 	const targets = new Set(
-		hostedChannelCredentialsDeclared(manifest) && WHATSAPP_UPSTREAM_READY
+		hostedChannelCredentialsDeclared(manifest)
 			? hostedWhatsAppAuthCredentials(manifest).map((entry) => entry.authDir)
 			: [],
 	);
@@ -4880,7 +4866,6 @@ function hostedChannelCredentialMutationTargets(manifest: RuntimeManifest, home:
 function managedWhatsAppCompatibilityRuntime(
 	manifest: RuntimeManifest,
 ): ManagedBaileysRuntime | null {
-	if (!WHATSAPP_UPSTREAM_READY) return null;
 	const runtimes = new Set<ManagedBaileysRuntime>();
 	for (const credential of hostedWhatsAppAuthCredentials(manifest)) {
 		runtimes.add(credential.target === "hermes" ? "hermes" : "openclaw");

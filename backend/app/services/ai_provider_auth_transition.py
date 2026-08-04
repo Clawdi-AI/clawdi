@@ -9,6 +9,7 @@ from typing import Literal
 from uuid import UUID
 
 from cryptography.exceptions import InvalidTag
+from pydantic import JsonValue
 from sqlalchemy import case, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,7 +42,7 @@ class AuthCredentialWrite:
     profile: str
     kind: str
     plaintext: str
-    metadata: dict | None
+    metadata: dict[str, JsonValue] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,7 +198,7 @@ def _preflight_incoming_oauth_credential(
 def _is_oauth_credential_payload(
     *,
     kind: str,
-    metadata: dict | None,
+    metadata: dict[str, JsonValue] | None,
     plaintext: str,
 ) -> bool:
     if kind == "oauth_profile":
@@ -326,7 +327,7 @@ async def transition_ai_provider_auth(
     provider: AiProvider,
     auth_type: str,
     auth_ref: str | None,
-    auth_metadata: dict | None,
+    auth_metadata: dict[str, JsonValue] | None,
     credential: AuthCredentialWrite | None = None,
     archive_provider: bool = False,
     keep_oauth_attempt_id: UUID | None = None,
@@ -451,7 +452,11 @@ async def transition_ai_provider_auth(
     )
 
 
-def _auth_identity(auth_type: str, auth_ref: str | None, metadata: dict | None) -> tuple:
+def _auth_identity(
+    auth_type: str,
+    auth_ref: str | None,
+    metadata: dict[str, JsonValue] | None,
+) -> tuple[object, ...]:
     values = metadata or {}
     if auth_type == "api_key":
         source = values.get("source")
@@ -480,7 +485,7 @@ def _revocable_or_raise(extraction: OAuthTokenExtraction) -> tuple[str, str] | N
     return extraction.revocable
 
 
-def _oauth_provider(metadata: dict | None) -> str:
+def _oauth_provider(metadata: dict[str, JsonValue] | None) -> str:
     values = metadata or {}
     provider = values.get("tool") or values.get("provider")
     return provider if isinstance(provider, str) and provider else "codex"

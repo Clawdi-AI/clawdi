@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID, uuid4
 
@@ -17,6 +18,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -74,6 +76,7 @@ from app.routes.channel_routers.discord import (
     cleanup_discord_guild_commands_after_authority_revoked,
 )
 from app.routes.channel_routers.shared import _discord_gateway_dispatch
+from app.schemas.channel import ChannelAccountCreate, ChannelAgentLinkCreate
 from app.services import channel_config as channel_config_service
 from app.services import channels as channel_service
 from app.services.channel_debug_events import record_channel_debug_event
@@ -133,6 +136,32 @@ TELEGRAM_AGENT_TOKEN_RE = re.compile(r"^[1-9][0-9]{8}:[A-Za-z0-9_-]{32,}$")
 DISCORD_TEST_APPLICATION_ID = "123456789012345678"
 DISCORD_TEST_PUBLIC_KEY = "11" * 32
 _REAL_DISCORD_BOT_GUILD_MEMBERSHIP_CHECK = channel_service.discord_bot_guild_membership_check
+
+
+async def _wait_for_postgres_lock_wait(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    backend_pid: int,
+) -> None:
+    async with sessionmaker() as observer:
+        while True:
+            waiting = await observer.scalar(
+                text(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM pg_stat_activity
+                        WHERE pid = :backend_pid
+                          AND state = 'active'
+                          AND wait_event_type = 'Lock'
+                    )
+                    """
+                ),
+                {"backend_pid": backend_pid},
+            )
+            if waiting is True:
+                return
+            await observer.rollback()
+            await asyncio.sleep(0.01)
 
 
 def _discord_ready_config(
@@ -380,7 +409,9 @@ async def _create_admin_channel(
 ) -> httpx.Response:
     admin_key = f"admin-{uuid4().hex}"
     original_admin_key = settings.admin_api_key
+    original_clerk_issuer = settings.clerk_jwt_issuer
     settings.admin_api_key = admin_key
+    settings.clerk_jwt_issuer = "https://channel-tests.clerk.example.test"
     try:
         payload: dict[str, Any] = {
             "provider": provider,
@@ -400,6 +431,7 @@ async def _create_admin_channel(
         )
     finally:
         settings.admin_api_key = original_admin_key
+        settings.clerk_jwt_issuer = original_clerk_issuer
 
 
 async def _create_public_telegram_account_for_user(
@@ -1017,6 +1049,27 @@ async def test_create_channel_masks_provider_token(client: httpx.AsyncClient):
     assert TELEGRAM_AGENT_TOKEN_RE.fullmatch(created["agent_token"])
     assert created["webhook_secret"]
     assert "telegram-secret" not in response.text
+
+
+def test_provider_link_replace_opt_in_is_non_nullable_and_defaults_false():
+    account = ChannelAccountCreate(provider=CHANNEL_PROVIDER_TELEGRAM, name="Schema test")
+    link = ChannelAgentLinkCreate()
+
+    assert account.replace_existing_provider_link is False
+    assert link.replace_existing_provider_link is False
+
+    with pytest.raises(ValidationError):
+        ChannelAccountCreate.model_validate(
+            {
+                "provider": CHANNEL_PROVIDER_TELEGRAM,
+                "name": "Schema test",
+                "replace_existing_provider_link": None,
+            }
+        )
+    with pytest.raises(ValidationError):
+        ChannelAgentLinkCreate.model_validate({"replace_existing_provider_link": None})
+    with pytest.raises(ValidationError, match="agent_id is required"):
+        ChannelAgentLinkCreate(replace_existing_provider_link=True)
 
 
 @pytest.mark.asyncio
@@ -2169,6 +2222,278 @@ async def test_hosted_agent_rejects_second_provider_account_but_keeps_existing_l
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent_type", "provider"),
+    [
+        ("hermes", CHANNEL_PROVIDER_TELEGRAM),
+        ("hermes", CHANNEL_PROVIDER_DISCORD),
+        ("openclaw", CHANNEL_PROVIDER_TELEGRAM),
+        ("openclaw", CHANNEL_PROVIDER_DISCORD),
+    ],
+)
+async def test_agent_link_replace_opt_in_atomically_archives_the_existing_provider_link(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+    agent_type: str,
+    provider: str,
+):
+    if provider == CHANNEL_PROVIDER_DISCORD:
+
+        async def fake_configure_discord_application(account: ChannelAccount):
+            return {"id": DISCORD_TEST_APPLICATION_ID}
+
+        async def fake_sync_channel_commands(**kwargs):
+            return []
+
+        monkeypatch.setattr(
+            "app.routes.admin.configure_discord_application",
+            fake_configure_discord_application,
+        )
+        monkeypatch.setattr(
+            "app.routes.admin.sync_channel_commands",
+            fake_sync_channel_commands,
+        )
+    discord_credentials = (
+        {
+            "provider_token": f"discord-replacement-token-{uuid4().hex}",
+            "config": _discord_ready_config(),
+        }
+        if provider == CHANNEL_PROVIDER_DISCORD
+        else {}
+    )
+    first_account_response = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=provider,
+        name=f"{agent_type}-{provider}-replace-first-{uuid4().hex}",
+        **discord_credentials,
+    )
+    second_account_response = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=provider,
+        name=f"{agent_type}-{provider}-replace-second-{uuid4().hex}",
+        **discord_credentials,
+    )
+    assert first_account_response.status_code == 201, first_account_response.text
+    assert second_account_response.status_code == 201, second_account_response.text
+    first_account_id = UUID(first_account_response.json()["id"])
+    second_account_id = UUID(second_account_response.json()["id"])
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label=f"{agent_type}-{provider}-replace",
+        agent_type=agent_type,
+    )
+
+    async with _client_for_user(db_session, user) as user_client:
+        first_response = await user_client.post(
+            f"/v1/channels/{first_account_id}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
+    assert first_response.status_code == 201, first_response.text
+    first_link = await db_session.get(ChannelBotAgentLink, UUID(first_response.json()["id"]))
+    assert first_link is not None
+    binding = ChannelBinding(
+        account_id=first_account_id,
+        bot_agent_link_id=first_link.id,
+        user_id=user.id,
+        external_chat_id=f"replacement-chat-{uuid4().hex}",
+        external_chat_type="private",
+        external_chat_name="Replacement cleanup",
+    )
+    pair_code = ChannelPairCode(
+        account_id=first_account_id,
+        bot_agent_link_id=first_link.id,
+        user_id=user.id,
+        code_hash=hash_token(f"replacement-{uuid4()}"),
+        expires_at=datetime.now(UTC) + timedelta(minutes=15),
+    )
+    credential = ChannelAgentCredential(
+        account_id=first_account_id,
+        bot_agent_link_id=first_link.id,
+        user_id=user.id,
+        provider=provider,
+        identity_pub_key_hash=hash_token(f"replacement-credential-{uuid4()}"),
+        identity_public_key=b"replacement-public-key",
+        synthetic_jid=f"replacement-{uuid4().hex}@example.test",
+        encrypted_credentials=b"replacement-encrypted-credentials",
+        credential_nonce=b"replacement-credential-nonce",
+    )
+    db_session.add_all((binding, pair_code, credential))
+    await db_session.commit()
+
+    async with _client_for_user(db_session, user) as user_client:
+        replacement = await user_client.post(
+            f"/v1/channels/{second_account_id}/agent-links",
+            json={
+                "agent_id": str(agent.id),
+                "replace_existing_provider_link": True,
+            },
+        )
+        idempotent = await user_client.post(
+            f"/v1/channels/{second_account_id}/agent-links",
+            json={
+                "agent_id": str(agent.id),
+                "replace_existing_provider_link": True,
+            },
+        )
+        active_links = await user_client.get(
+            "/v1/channels/agent-links",
+            params={"agent_id": str(agent.id)},
+        )
+
+    assert replacement.status_code == 201, replacement.text
+    assert replacement.json()["account_id"] == str(second_account_id)
+    assert replacement.json()["agent_token"] is not None
+    assert idempotent.status_code == 201, idempotent.text
+    assert idempotent.json()["id"] == replacement.json()["id"]
+    assert idempotent.json()["agent_token"] is None
+    assert active_links.status_code == 200, active_links.text
+    assert [item["account_id"] for item in active_links.json()] == [str(second_account_id)]
+
+    for row in (first_link, binding, pair_code, credential):
+        await db_session.refresh(row)
+    assert first_link.status == BOT_AGENT_LINK_STATUS_ARCHIVED
+    assert first_link.archived_at is not None
+    assert first_link.agent_token_hash is None
+    assert first_link.encrypted_agent_token is None
+    assert first_link.agent_token_nonce is None
+    assert binding.status == BINDING_STATUS_ARCHIVED
+    assert pair_code.status == PAIR_CODE_STATUS_REVOKED
+    assert credential.revoked_at is not None
+
+
+@pytest.mark.asyncio
+async def test_create_channel_replace_opt_in_links_the_new_custom_bot(
+    db_session: AsyncSession,
+):
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="create-channel-provider-replace",
+        agent_type="openclaw",
+    )
+    async with _client_for_user(db_session, user) as user_client:
+        first = await user_client.post(
+            "/v1/channels",
+            json={
+                "provider": CHANNEL_PROVIDER_TELEGRAM,
+                "name": f"create-replace-first-{uuid4().hex}",
+                "agent_id": str(agent.id),
+            },
+        )
+        replacement = await user_client.post(
+            "/v1/channels",
+            json={
+                "provider": CHANNEL_PROVIDER_TELEGRAM,
+                "name": f"create-replace-second-{uuid4().hex}",
+                "agent_id": str(agent.id),
+                "replace_existing_provider_link": True,
+            },
+        )
+
+    assert first.status_code == 201, first.text
+    assert replacement.status_code == 201, replacement.text
+    assert replacement.json()["agent_id"] == str(agent.id)
+    assert replacement.json()["agent_link_id"] is not None
+    first_link = await db_session.get(ChannelBotAgentLink, UUID(first.json()["agent_link_id"]))
+    replacement_link = await db_session.get(
+        ChannelBotAgentLink,
+        UUID(replacement.json()["agent_link_id"]),
+    )
+    assert first_link is not None
+    assert first_link.status == BOT_AGENT_LINK_STATUS_ARCHIVED
+    assert first_link.archived_at is not None
+    assert replacement_link is not None
+    assert replacement_link.status == BOT_AGENT_LINK_STATUS_ACTIVE
+    assert replacement_link.archived_at is None
+
+
+@pytest.mark.asyncio
+async def test_provider_link_replacement_rolls_back_when_a_downstream_step_fails(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    first_account_response = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        name=f"rollback-replace-first-{uuid4().hex}",
+    )
+    second_account_response = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        name=f"rollback-replace-second-{uuid4().hex}",
+    )
+    assert first_account_response.status_code == 201, first_account_response.text
+    assert second_account_response.status_code == 201, second_account_response.text
+    first_account_id = UUID(first_account_response.json()["id"])
+    second_account_id = UUID(second_account_response.json()["id"])
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="rollback-provider-replace",
+        agent_type="openclaw",
+    )
+    first_link, first_token = await _seed_existing_channel_link(
+        db_session,
+        account_id=str(first_account_id),
+        agent=agent,
+    )
+    binding = ChannelBinding(
+        account_id=first_account_id,
+        bot_agent_link_id=first_link.id,
+        user_id=user.id,
+        external_chat_id=f"rollback-chat-{uuid4().hex}",
+        external_chat_type="private",
+    )
+    db_session.add(binding)
+    await db_session.commit()
+    session_factory = async_sessionmaker(db_session.bind, expire_on_commit=False)
+
+    with pytest.raises(RuntimeError, match="downstream replacement failure"):
+        async with session_factory() as replacement_session:
+            async with replacement_session.begin():
+                replacement_account = await replacement_session.get(
+                    ChannelAccount,
+                    second_account_id,
+                )
+                assert replacement_account is not None
+                await channel_service.get_or_create_bot_agent_link(
+                    replacement_session,
+                    account=replacement_account,
+                    agent_id=agent.id,
+                    user_id=user.id,
+                    replace_existing_provider_link=True,
+                )
+                raise RuntimeError("downstream replacement failure")
+
+    async with session_factory() as verification_session:
+        restored_link = await verification_session.get(ChannelBotAgentLink, first_link.id)
+        restored_binding = await verification_session.get(ChannelBinding, binding.id)
+        replacement_links = list(
+            (
+                await verification_session.execute(
+                    select(ChannelBotAgentLink).where(
+                        ChannelBotAgentLink.account_id == second_account_id,
+                        ChannelBotAgentLink.agent_id == agent.id,
+                        ChannelBotAgentLink.archived_at.is_(None),
+                    )
+                )
+            ).scalars()
+        )
+    assert restored_link is not None
+    assert restored_link.status == BOT_AGENT_LINK_STATUS_ACTIVE
+    assert restored_link.archived_at is None
+    assert decrypt_agent_link_token(restored_link) == first_token
+    assert restored_binding is not None
+    assert restored_binding.status == BINDING_STATUS_ACTIVE
+    assert replacement_links == []
+
+
+@pytest.mark.asyncio
 async def test_second_managed_telegram_account_is_rejected_before_provider_io(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
@@ -2448,7 +2773,7 @@ async def test_historical_duplicate_managed_accounts_are_visible_but_fail_closed
 
     monkeypatch.setattr(
         telegram_router,
-        "_deliver_telegram_agent_webhook",
+        "deliver_telegram_agent_webhook",
         _record_agent_delivery,
     )
     ingress_delivered = await telegram_router._deliver_telegram_agent_webhook_for_binding(
@@ -3058,19 +3383,19 @@ async def test_historical_pending_pair_code_cannot_create_new_chat_binding(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("agent_type", ["hermes", "openclaw"])
-async def test_whatsapp_managed_link_admission_remains_gated(
+async def test_whatsapp_managed_link_and_pair_admission_is_enabled_with_single_account_limit(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     agent_type: str,
 ):
     account = await _seed_historical_platform_whatsapp_account(
         db_session,
-        name=f"{agent_type}-whatsapp-gated-{uuid4().hex}",
+        name=f"{agent_type}-whatsapp-enabled-{uuid4().hex}",
     )
     account_id = str(account.id)
     user, agent = await _create_user_with_channel_agent(
         db_session,
-        label=f"{agent_type}-whatsapp-gated",
+        label=f"{agent_type}-whatsapp-enabled",
         agent_type=agent_type,
     )
 
@@ -3079,9 +3404,26 @@ async def test_whatsapp_managed_link_admission_remains_gated(
             f"/v1/channels/{account_id}/agent-links",
             json={"agent_id": str(agent.id)},
         )
+        pair = await user_client.post(
+            f"/v1/channels/{account_id}/pair-codes",
+            json={"agent_link_id": link.json()["id"], "ttl_seconds": 900},
+        )
+        second_account = await _seed_historical_platform_whatsapp_account(
+            db_session,
+            name=f"{agent_type}-whatsapp-second-{uuid4().hex}",
+        )
+        second_link = await user_client.post(
+            f"/v1/channels/{second_account.id}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
 
-    assert link.status_code == 409
-    assert link.json()["detail"] == channel_service.WHATSAPP_COMING_SOON_DETAIL
+    assert link.status_code == 201, link.text
+    assert pair.status_code == 201, pair.text
+    assert pair.json()["agent_link_id"] == link.json()["id"]
+    assert second_link.status_code == 409
+    assert second_link.json()["detail"] == (
+        "This Agent already has a WhatsApp bot. Unlink it before connecting another."
+    )
     existing = list(
         (
             await db_session.execute(
@@ -3093,7 +3435,8 @@ async def test_whatsapp_managed_link_admission_remains_gated(
             )
         ).scalars()
     )
-    assert existing == []
+    assert len(existing) == 1
+    assert str(existing[0].id) == link.json()["id"]
 
 
 @pytest.mark.asyncio
@@ -4129,11 +4472,15 @@ async def test_agent_bound_runtime_contract_issues_only_synthetic_whatsapp_state
         )
     assert created_response.status_code == 201, created_response.text
     created = created_response.json()
-    link, agent_token = await _seed_existing_channel_link(
-        db_session,
-        account_id=created["id"],
-        agent=agent,
-    )
+    async with _client_for_user(db_session, user) as user_client:
+        linked = await user_client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
+    assert linked.status_code == 201, linked.text
+    link = await db_session.get(ChannelBotAgentLink, UUID(linked.json()["id"]))
+    assert link is not None
+    agent_token = linked.json()["agent_token"]
 
     api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="hosted-wa-runtime")
     async with _client_for_api_key(db_session, user, api_key) as runtime_client:
@@ -5202,7 +5549,7 @@ async def test_telegram_agent_webhook_is_scoped_to_agent_link(
 ):
     _reset_sequenced_provider_client([200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created, workspace_pair, chat_id = await _paired_telegram_shared_chat(
@@ -5323,9 +5670,9 @@ async def test_telegram_set_webhook_rejects_private_dns_targets(
     client: httpx.AsyncClient,
     monkeypatch,
 ):
-    def fake_getaddrinfo(host, port):
+    def fake_getaddrinfo(host, port, *_args):
         assert host == "agent-hook.example"
-        assert port is None
+        assert port == 443
         return [
             (
                 socket.AF_INET,
@@ -6709,7 +7056,7 @@ def test_telegram_binding_command_projection_follows_provider_precedence(
         external_chat_type=chat_type,
     )
 
-    projections = telegram_router._telegram_binding_command_projections(shadow, binding)
+    projections = telegram_router.telegram_binding_command_projections(shadow, binding)
     projected = {
         (payload["scope"]["type"], payload.get("language_code", "")): payload["commands"][3][
             "command"
@@ -6747,10 +7094,11 @@ async def test_telegram_legacy_oversized_shadow_does_not_block_cleanup_or_pair_r
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ):
+    ciphertext, nonce = encrypt_optional_token("telegram-provider-token")
     account = ChannelAccount(
         id=uuid4(),
-        encrypted_provider_token=b"token",
-        provider_token_nonce=b"nonce",
+        encrypted_provider_token=ciphertext,
+        provider_token_nonce=nonce,
     )
     link = ChannelBotAgentLink(
         id=uuid4(),
@@ -6770,17 +7118,25 @@ async def test_telegram_legacy_oversized_shadow_does_not_block_cleanup_or_pair_r
         external_chat_id="42",
         external_chat_type="private",
     )
-    calls: list[tuple[str, dict[str, Any]]] = []
+    requests: list[httpx.Request] = []
+    real_client = httpx.AsyncClient
 
-    async def post_payload(*, account, method, payload):
-        calls.append((method, payload))
+    def provider_handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
         return httpx.Response(200, json={"ok": True, "result": True})
 
-    class FakeSession:
-        async def get(self, model, identity):
-            return link
+    transport = httpx.MockTransport(provider_handler)
 
-    monkeypatch.setattr(telegram_router, "_post_telegram_bot_payload", post_payload)
+    def client_factory(*_args: object, **_kwargs: object) -> httpx.AsyncClient:
+        return real_client(transport=transport)
+
+    async def allow_test_url(_url: str, *, label: str) -> None:
+        assert label == "telegram api base url"
+
+    monkeypatch.setattr(telegram_router.httpx, "AsyncClient", client_factory)
+    monkeypatch.setattr(telegram_router, "validate_channel_http_url", allow_test_url)
+    db = AsyncMock(spec=AsyncSession)
+    db.get.return_value = link
 
     assert await telegram_router._clear_telegram_commands_for_binding(
         account=account,
@@ -6788,12 +7144,13 @@ async def test_telegram_legacy_oversized_shadow_does_not_block_cleanup_or_pair_r
         binding=binding,
     )
     await telegram_router._replay_telegram_commands_on_pair(
-        FakeSession(),
+        db,
         account=account,
         binding=binding,
     )
 
-    assert calls == [("deleteMyCommands", {"scope": {"type": "chat", "chat_id": "42"}})]
+    assert [request.url.path.rsplit("/", 1)[-1] for request in requests] == ["deleteMyCommands"]
+    assert json.loads(requests[0].content) == {"scope": {"type": "chat", "chat_id": "42"}}
     assert "telegram_pair_command_replay_skipped_oversized_projection" in caplog.text
 
 
@@ -7853,7 +8210,7 @@ async def test_telegram_agent_webhook_success_acks_inbox(
 ):
     _reset_sequenced_provider_client([200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created = await _create_paired_telegram_channel(
@@ -7902,7 +8259,7 @@ async def test_telegram_agent_webhook_5xx_defers_ack_to_worker(
 ):
     _reset_sequenced_provider_client([503, 200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created = await _create_paired_telegram_channel(
@@ -7957,7 +8314,7 @@ async def test_telegram_update_redelivery_retries_failed_agent_webhook(
 ):
     _reset_sequenced_provider_client([503, 200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created = await _create_paired_telegram_channel(
@@ -8024,7 +8381,7 @@ async def test_telegram_agent_webhook_inactive_link_records_debug_health(
 ):
     _reset_sequenced_provider_client([200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created = await _create_paired_telegram_channel(
@@ -8094,14 +8451,16 @@ async def test_telegram_agent_webhook_inactive_link_records_debug_health(
 
 
 @pytest.mark.asyncio
-async def test_telegram_agent_webhook_4xx_does_not_ack_inbox(
+@pytest.mark.parametrize("failure_status", [302, 403])
+async def test_telegram_agent_webhook_non_2xx_does_not_ack_inbox(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     monkeypatch,
+    failure_status: int,
 ):
-    _reset_sequenced_provider_client([403, 200])
+    _reset_sequenced_provider_client([failure_status, 200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created = await _create_paired_telegram_channel(
@@ -8159,18 +8518,13 @@ async def test_telegram_agent_webhook_revalidates_dns_at_delivery(
         ("10.0.0.5", 0),
     ]
 
-    def fake_getaddrinfo(host, port):
+    def fake_getaddrinfo(host, port, *_args):
         assert host == "agent-hook.example"
-        assert port is None
+        assert port == 443
         address = resolutions.pop(0)
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", address)]
 
-    _reset_fake_provider_client()
     monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
-    monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
-        _FakeProviderClient,
-    )
     created = await _create_paired_telegram_channel(
         client,
         name="telegram-agent-webhook-dns-revalidate",
@@ -8214,7 +8568,7 @@ async def test_telegram_webhook_worker_retries_failed_agent_delivery(
 ):
     _reset_sequenced_provider_client([503, 503, 503, 200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created = await _create_paired_telegram_channel(
@@ -8274,7 +8628,7 @@ async def test_telegram_webhook_worker_does_not_retry_after_unpair(
 ) -> None:
     _reset_sequenced_provider_client([503])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created = await _create_paired_telegram_channel(
@@ -8363,7 +8717,7 @@ async def test_telegram_webhook_worker_skips_non_webhook_queue_head(
 ):
     _reset_sequenced_provider_client([503, 503, 503, 200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     polling_channel = await _create_paired_telegram_channel(
@@ -8457,7 +8811,7 @@ async def test_telegram_webhook_worker_drops_expired_agent_delivery(
 ):
     _reset_sequenced_provider_client([503, 503, 503])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     created = await _create_paired_telegram_channel(
@@ -11454,7 +11808,7 @@ async def test_telegram_concurrent_redelivery_has_one_agent_side_effect(
     ).status_code == 200
     _reset_sequenced_provider_client([200])
     monkeypatch.setattr(
-        "app.services.channel_webhooks.httpx.AsyncClient",
+        "app.services.channel_webhooks.SafePublicHttpClient",
         _SequencedProviderClient,
     )
     update = {
@@ -12961,19 +13315,15 @@ async def test_telegram_inbound_lease_makes_ui_unpair_wait_and_consume_inserted_
         "record_inbound_messages_for_bindings",
         pause_after_ordinary_inbound_lease,
     )
-    original_identity_lock = public_router.lock_channel_binding_identity
-    unpair_started = asyncio.Event()
-
-    async def observe_unpair_start(*args: Any, **kwargs: Any):
-        unpair_started.set()
-        return await original_identity_lock(*args, **kwargs)
-
-    monkeypatch.setattr(public_router, "lock_channel_binding_identity", observe_unpair_start)
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    business_backend_pids: asyncio.Queue[int] = asyncio.Queue()
     previous_session_override = app.dependency_overrides[get_session]
 
     async def independent_request_session() -> AsyncIterator[AsyncSession]:
         async with sessionmaker() as request_db:
+            backend_pid = await request_db.scalar(select(func.pg_backend_pid()))
+            assert isinstance(backend_pid, int)
+            business_backend_pids.put_nowait(backend_pid)
             yield request_db
 
     await db_session.rollback()
@@ -12997,13 +13347,17 @@ async def test_telegram_inbound_lease_makes_ui_unpair_wait_and_consume_inserted_
                 },
             )
         )
+        inbound_backend_pid = await asyncio.wait_for(business_backend_pids.get(), timeout=2)
         await asyncio.wait_for(lease_acquired.wait(), timeout=2)
         unpair_task = asyncio.create_task(
             client.delete(f"/v1/channels/{created['id']}/bindings/{binding_id}")
         )
-        await asyncio.wait_for(unpair_started.wait(), timeout=2)
-        await asyncio.sleep(0.05)
-        assert not unpair_task.done()
+        unpair_backend_pid = await asyncio.wait_for(business_backend_pids.get(), timeout=2)
+        assert unpair_backend_pid != inbound_backend_pid
+        await asyncio.wait_for(
+            _wait_for_postgres_lock_wait(sessionmaker, unpair_backend_pid),
+            timeout=2,
+        )
         release_inbound_commit.set()
         inbound, deleted = await asyncio.wait_for(
             asyncio.gather(inbound_task, unpair_task),
@@ -13015,6 +13369,8 @@ async def test_telegram_inbound_lease_makes_ui_unpair_wait_and_consume_inserted_
             task for task in (inbound_task, unpair_task) if task is not None and not task.done()
         ]
         if pending_tasks:
+            for task in pending_tasks:
+                task.cancel()
             await asyncio.gather(*pending_tasks, return_exceptions=True)
         app.dependency_overrides[get_session] = previous_session_override
 
@@ -14891,8 +15247,12 @@ async def _archive_discord_binding_with_identity_lock(
     account_id: UUID,
     binding_id: UUID,
     external_chat_id: str,
+    backend_pids: asyncio.Queue[int],
 ) -> None:
     async with sessionmaker() as db:
+        backend_pid = await db.scalar(select(func.pg_backend_pid()))
+        assert isinstance(backend_pid, int)
+        backend_pids.put_nowait(backend_pid)
         await channel_service.lock_channel_binding_identity(
             db,
             account_id=account_id,
@@ -14941,6 +15301,7 @@ async def test_discord_gateway_send_and_unpair_are_linearized(
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     send_started = asyncio.Event()
     allow_send = asyncio.Event()
+    business_backend_pids: asyncio.Queue[int] = asyncio.Queue()
     frames: list[str] = []
 
     async def send() -> int:
@@ -14949,29 +15310,45 @@ async def test_discord_gateway_send_and_unpair_are_linearized(
         await allow_send.wait()
         return 42
 
-    send_task = asyncio.create_task(
-        discord_router._send_discord_gateway_message(
-            account_id=account_id,
-            bot_agent_link_id=link_id,
-            message=message,
-            send=send,
+    send_task: asyncio.Task[tuple[str, int | None]] | None = None
+    unpair_task: asyncio.Task[None] | None = None
+    try:
+        send_task = asyncio.create_task(
+            discord_router._send_discord_gateway_message(
+                account_id=account_id,
+                bot_agent_link_id=link_id,
+                message=message,
+                send=send,
+            )
         )
-    )
-    await send_started.wait()
-    unpair_task = asyncio.create_task(
-        _archive_discord_binding_with_identity_lock(
-            sessionmaker,
-            account_id=account_id,
-            binding_id=binding.id,
-            external_chat_id=binding.external_chat_id,
+        await asyncio.wait_for(send_started.wait(), timeout=2)
+        unpair_task = asyncio.create_task(
+            _archive_discord_binding_with_identity_lock(
+                sessionmaker,
+                account_id=account_id,
+                binding_id=binding.id,
+                external_chat_id=binding.external_chat_id,
+                backend_pids=business_backend_pids,
+            )
         )
-    )
-    await asyncio.sleep(0.05)
-    assert not unpair_task.done()
-    allow_send.set()
+        unpair_backend_pid = await asyncio.wait_for(business_backend_pids.get(), timeout=2)
+        await asyncio.wait_for(
+            _wait_for_postgres_lock_wait(sessionmaker, unpair_backend_pid),
+            timeout=2,
+        )
+        allow_send.set()
+        assert await asyncio.wait_for(send_task, timeout=2) == ("sent", 42)
+        await asyncio.wait_for(unpair_task, timeout=2)
+    finally:
+        allow_send.set()
+        pending_tasks = [
+            task for task in (send_task, unpair_task) if task is not None and not task.done()
+        ]
+        if pending_tasks:
+            for task in pending_tasks:
+                task.cancel()
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
 
-    assert await send_task == ("sent", 42)
-    await unpair_task
     assert frames == ["frame"]
     await db_session.refresh(message)
     assert message.delivered_at is None
@@ -15086,16 +15463,16 @@ async def test_discord_inbound_record_and_unpair_are_linearized(
         )
     ).scalar_one()
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    producer_started = asyncio.Event()
-    allow_record = asyncio.Event()
+    producer_has_lease = asyncio.Event()
+    release_producer_commit = asyncio.Event()
+    business_backend_pids: asyncio.Queue[int] = asyncio.Queue()
     original_record = channel_service.record_inbound_messages_for_bindings
 
     async def paused_record(*args, **kwargs):
-        producer_started.set()
-        await allow_record.wait()
-        return await original_record(*args, **kwargs)
-
-    monkeypatch.setattr(channel_service, "record_inbound_messages_for_bindings", paused_record)
+        messages = await original_record(*args, **kwargs)
+        producer_has_lease.set()
+        await release_producer_commit.wait()
+        return messages
 
     async def produce(provider_message_id: str) -> bool:
         async with sessionmaker() as db:
@@ -15118,23 +15495,46 @@ async def test_discord_inbound_record_and_unpair_are_linearized(
             await db.commit()
             return recorded
 
-    producer_task = asyncio.create_task(produce("producer-first"))
-    await producer_started.wait()
-    unpair_task = asyncio.create_task(
-        _archive_discord_binding_with_identity_lock(
-            sessionmaker,
-            account_id=account_id,
-            binding_id=binding.id,
-            external_chat_id=binding.external_chat_id,
+    with monkeypatch.context() as paused_delivery:
+        paused_delivery.setattr(
+            channel_service,
+            "record_inbound_messages_for_bindings",
+            paused_record,
         )
-    )
-    await asyncio.sleep(0.05)
-    assert not unpair_task.done()
-    allow_record.set()
-    assert await producer_task is True
-    await unpair_task
+        producer_task: asyncio.Task[bool] | None = None
+        unpair_task: asyncio.Task[None] | None = None
+        try:
+            producer_task = asyncio.create_task(produce("producer-first"))
+            await asyncio.wait_for(producer_has_lease.wait(), timeout=2)
+            unpair_task = asyncio.create_task(
+                _archive_discord_binding_with_identity_lock(
+                    sessionmaker,
+                    account_id=account_id,
+                    binding_id=binding.id,
+                    external_chat_id=binding.external_chat_id,
+                    backend_pids=business_backend_pids,
+                )
+            )
+            unpair_backend_pid = await asyncio.wait_for(business_backend_pids.get(), timeout=2)
+            await asyncio.wait_for(
+                _wait_for_postgres_lock_wait(sessionmaker, unpair_backend_pid),
+                timeout=2,
+            )
+            release_producer_commit.set()
+            assert await asyncio.wait_for(producer_task, timeout=2) is True
+            await asyncio.wait_for(unpair_task, timeout=2)
+        finally:
+            release_producer_commit.set()
+            pending_tasks = [
+                task
+                for task in (producer_task, unpair_task)
+                if task is not None and not task.done()
+            ]
+            if pending_tasks:
+                for task in pending_tasks:
+                    task.cancel()
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
 
-    monkeypatch.setattr(channel_service, "record_inbound_messages_for_bindings", original_record)
     assert await produce("unpair-first") is False
     rows = list(
         (

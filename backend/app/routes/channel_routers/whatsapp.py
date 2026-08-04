@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any
 from uuid import UUID
 
 from fastapi import (
@@ -13,6 +12,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from pydantic import JsonValue
 from sqlalchemy import select, update
 
 from app.core.config import settings
@@ -23,8 +23,8 @@ from app.models.channel import (
     ChannelMessage,
 )
 from app.routes.channel_routers.shared import (
-    _extract_bearer_token,
-    _optional_str,
+    extract_bearer_token,
+    optional_str,
 )
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channels import (
@@ -33,8 +33,11 @@ from app.services.channels import (
     resolve_channel_agent_by_token,
 )
 from app.services.whatsapp_baileys import (
+    BinaryNode,
     WhatsAppInboxPump,
     WhatsAppInboxPumpEvent,
+    WhatsAppPreparedInboundDelivery,
+    WhatsAppSyntheticDeliveryResult,
     describe_whatsapp_jid_for_log,
     load_or_create_whatsapp_auth_cert,
     resolve_whatsapp_credential_by_identity,
@@ -55,13 +58,14 @@ from app.services.whatsapp_noise import (
 from app.services.whatsapp_provider_bridge import (
     WhatsAppProviderBridge,
 )
+from app.services.whatsapp_runtime_types import WhatsAppOutboundMessage
 
 router = APIRouter(prefix="/channels/whatsapp", tags=["channels"])
 
 
 @router.websocket("/baileys")
 async def whatsapp_baileys_managed_websocket(websocket: WebSocket) -> None:
-    token = _extract_bearer_token(websocket.headers.get("authorization"))
+    token = extract_bearer_token(websocket.headers.get("authorization"))
     if token is None:
         await websocket.close(code=1008)
         return
@@ -240,14 +244,17 @@ async def _run_whatsapp_baileys_websocket(
         account_id=account_id,
     )
 
-    async def relay_outbound_message(message) -> None:
+    async def relay_outbound_message(message: WhatsAppOutboundMessage) -> None:
         await require_session_authority()
         await provider_bridge.store_outbound_message(
             message,
             bot_agent_link_id=bot_agent_link_id,
         )
 
-    async def relay_outbound_node(node: Any, lookup_inbound_sender: Any) -> None:
+    async def relay_outbound_node(
+        node: BinaryNode,
+        lookup_inbound_sender: Callable[[str], str | None],
+    ) -> None:
         await require_session_authority()
         await provider_bridge.relay_raw_node(
             node,
@@ -255,11 +262,18 @@ async def _run_whatsapp_baileys_websocket(
             bot_agent_link_id=bot_agent_link_id,
         )
 
-    async def forward_iq(node: Any, tenant_id: str | None) -> Any:
+    async def forward_iq(node: BinaryNode, tenant_id: str | None) -> BinaryNode | None:
         await require_session_authority()
         return await provider_bridge.forward_iq(
             node,
             tenant_id,
+            bot_agent_link_id=bot_agent_link_id,
+        )
+
+    async def resolve_outbound_signal_jid(jid: str) -> str | None:
+        await require_session_authority()
+        return await provider_bridge.resolve_recipient_lid(
+            jid,
             bot_agent_link_id=bot_agent_link_id,
         )
 
@@ -271,6 +285,7 @@ async def _run_whatsapp_baileys_websocket(
         on_outbound_message=relay_outbound_message,
         on_outbound_relay=relay_outbound_node,
         forward_iq=forward_iq,
+        resolve_outbound_signal_jid=resolve_outbound_signal_jid,
     )
     send_lock = asyncio.Lock()
     inbox_pump_task: asyncio.Task[None] | None = None
@@ -369,7 +384,9 @@ async def _receive_websocket_bytes_or_revocation(
                 await task
 
 
-def _whatsapp_runtime_debug_details(details: dict[str, Any]) -> dict[str, Any]:
+def _whatsapp_runtime_debug_details(
+    details: dict[str, JsonValue],
+) -> dict[str, JsonValue]:
     aliases = {
         "preKeyCount": "preCount",
         "signedPreKeyId": "signedPreId",
@@ -411,7 +428,9 @@ async def _run_whatsapp_websocket_inbox_pump(
             through_sequence=through_sequence,
         )
 
-    async def deliver(prepared):
+    async def deliver(
+        prepared: WhatsAppPreparedInboundDelivery,
+    ) -> WhatsAppSyntheticDeliveryResult:
         async with send_lock:
             await require_session_authority()
             frame, result = await session.push_inbound_message(
@@ -439,7 +458,7 @@ async def _run_whatsapp_websocket_inbox_pump(
             account_id,
             user_id=tenant_user_id,
             require_session_authority=require_session_authority,
-        ),
+        ).record,
     )
     await pump.run(stop_when_idle=False)
 
@@ -456,8 +475,10 @@ class _WhatsAppWebsocketInboxDebugEvents:
         self._user_id = user_id
         self._require_session_authority = require_session_authority
 
-    async def record(self, payload: dict[str, Any]) -> None:
+    async def record(self, payload: dict[str, JsonValue]) -> None:
         await self._require_session_authority()
+        raw_details = payload.get("details")
+        details = raw_details if isinstance(raw_details, dict) else {}
         async with async_session_factory() as db:
             account = await get_active_channel_account(db, account_id=self._account_id)
             await record_channel_debug_event(
@@ -465,11 +486,11 @@ class _WhatsAppWebsocketInboxDebugEvents:
                 account=account,
                 user_id=self._user_id,
                 provider=CHANNEL_PROVIDER_WHATSAPP,
-                direction=_optional_str(payload.get("direction")) or "agent",
-                stage=_optional_str(payload.get("stage")) or "inbox_delivery",
-                outcome=_optional_str(payload.get("outcome")) or "unknown",
-                external_chat_id=_optional_str(payload.get("chatId")),
-                details=payload.get("details") if isinstance(payload.get("details"), dict) else {},
+                direction=optional_str(payload.get("direction")) or "agent",
+                stage=optional_str(payload.get("stage")) or "inbox_delivery",
+                outcome=optional_str(payload.get("outcome")) or "unknown",
+                external_chat_id=optional_str(payload.get("chatId")),
+                details=details,
             )
             await db.commit()
 

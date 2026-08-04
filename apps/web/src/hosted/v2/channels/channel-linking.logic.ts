@@ -1,5 +1,3 @@
-export const WHATSAPP_LINKING_READY = false;
-
 export const CONNECTABLE_BOT_PROVIDERS = ["telegram", "discord", "whatsapp"] as const;
 export type ConnectableBotProvider = (typeof CONNECTABLE_BOT_PROVIDERS)[number];
 
@@ -8,15 +6,29 @@ const SINGLE_LINK_PROVIDERS_BY_AGENT_TYPE: Readonly<Record<string, ReadonlySet<s
 	openclaw: new Set(["telegram", "discord", "whatsapp"]),
 };
 
-export function channelProviderLinkingReady(provider: string): boolean {
-	return provider !== "whatsapp" || WHATSAPP_LINKING_READY;
-}
-
 export function agentProviderHasSingleLinkLimit(
 	agentType: string | null | undefined,
 	provider: string,
 ): boolean {
 	return Boolean(agentType && SINGLE_LINK_PROVIDERS_BY_AGENT_TYPE[agentType]?.has(provider));
+}
+
+export function agentProviderLinkReplacementRequired(
+	agentType: string | null | undefined,
+	provider: string,
+	linkedProviders: ReadonlySet<string> | null | undefined,
+): boolean {
+	return Boolean(
+		agentProviderHasSingleLinkLimit(agentType, provider) && linkedProviders?.has(provider),
+	);
+}
+
+export function agentProviderLinkStatusUnknown(
+	agentType: string | null | undefined,
+	provider: string,
+	linkedProviders: ReadonlySet<string> | null | undefined,
+): boolean {
+	return Boolean(agentProviderHasSingleLinkLimit(agentType, provider) && !linkedProviders);
 }
 
 /**
@@ -30,7 +42,9 @@ export function autoLinkAgentIdForNewCustomBot(
 	provider: string,
 	linkedProviders: ReadonlySet<string> | null | undefined,
 ): string | null {
-	if (!agentId || !channelProviderLinkingReady(provider)) return null;
+	// Linked-device onboarding creates the durable Custom account first; Link
+	// and chat Pair remain explicit follow-up actions for WhatsApp.
+	if (!agentId || provider === "whatsapp") return null;
 	if (
 		agentProviderHasSingleLinkLimit(agentType, provider) &&
 		(!linkedProviders || linkedProviders.has(provider))

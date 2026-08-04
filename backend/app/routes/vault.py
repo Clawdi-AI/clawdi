@@ -1,3 +1,4 @@
+from typing import TypedDict
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -54,6 +55,15 @@ router = APIRouter(prefix="/vault", tags=["vault"])
 VaultItemIndex = dict[tuple[UUID, str, str, str], tuple[Vault, VaultItem]]
 VaultItemLookupRow = tuple[UUID, str, Vault, VaultItem]
 ExactVaultReferenceFilter = tuple[str, str, str]
+type VaultResolutionRecord = dict[str, object]
+
+
+class ProjectPrecedenceEntry(TypedDict):
+    project_id: UUID
+    alias: str
+    display: str
+    binding_type: str
+    priority: int
 
 
 def _ambiguous_vault_detail(
@@ -285,13 +295,15 @@ async def list_vault_sections(
         .where(VaultItem.vault_id == vault.id)
         .order_by(VaultItem.section, VaultItem.item_name)
     )
-    items = {}
+    items: dict[str, list[str]] = {}
     for section, item_name in result.all():
         items.setdefault(section or "(default)", []).append(item_name)
     return VaultSectionsResponse(items)
 
 
-async def _load_items_by_name(db: AsyncSession, vault_id, section: str) -> dict[str, VaultItem]:
+async def _load_items_by_name(
+    db: AsyncSession, vault_id: UUID, section: str
+) -> dict[str, VaultItem]:
     """Batch-prefetch all vault items for a vault+section keyed by item_name."""
     result = await db.execute(
         select(VaultItem).where(
@@ -649,7 +661,7 @@ async def _project_precedence(
     db: AsyncSession,
     auth: AuthContext,
     project_id: UUID,
-) -> list[dict]:
+) -> list[ProjectPrecedenceEntry]:
     """Return a one-project precedence chain for vault resolution."""
     allowed = set(await _plaintext_project_ids(db, auth))
     if project_id not in allowed:
@@ -676,7 +688,7 @@ async def _agent_project_precedence(
     db: AsyncSession,
     auth: AuthContext,
     agent_id: UUID,
-) -> list[dict]:
+) -> list[ProjectPrecedenceEntry]:
     """Return an agent's primary + context projects in runtime order."""
     if (
         auth.is_cli
@@ -708,7 +720,7 @@ async def _agent_project_precedence(
         )
     ).all()
 
-    entries: list[dict] = []
+    entries: list[ProjectPrecedenceEntry] = []
     has_primary = False
     for binding, project in rows:
         if project.id not in allowed:
@@ -912,7 +924,7 @@ def _format_vault_reference(vault_slug: str, section: str, field: str) -> str:
 def _resolve_exact_vault_reference_from_index(
     *,
     item_index: VaultItemIndex,
-    ordered: list[dict],
+    ordered: list[ProjectPrecedenceEntry],
     reference: str,
     vault_slug: str,
     section: str,
@@ -920,18 +932,18 @@ def _resolve_exact_vault_reference_from_index(
     preview: bool,
     allow_conflicts: bool,
     debug: bool,
-) -> dict:
-    precedence: list[dict] = []
-    winner: dict | None = None
+) -> VaultResolutionRecord:
+    precedence: list[VaultResolutionRecord] = []
+    winner: VaultResolutionRecord | None = None
     winner_item_id: UUID | None = None
-    conflicts: list[dict] = []
+    conflicts: list[VaultResolutionRecord] = []
     for entry in ordered:
         hit = item_index.get((entry["project_id"], vault_slug, section, field))
         hit_vault, hit_item = hit if hit is not None else (None, None)
         duplicate_via_attachment = (
             hit_item is not None and winner_item_id is not None and hit_item.id == winner_item_id
         )
-        entry_debug = {
+        entry_debug: VaultResolutionRecord = {
             "project_id": str(entry["project_id"]),
             "alias": entry["alias"],
             "display": entry["display"],
@@ -1005,7 +1017,7 @@ def _resolve_exact_vault_reference_from_index(
                 "precedence": precedence,
             },
         )
-    response = {"reference": reference, **winner}
+    response: VaultResolutionRecord = {"reference": reference, **winner}
     if debug:
         response["precedence"] = precedence
     if conflicts:
@@ -1018,12 +1030,15 @@ async def _resolve_bulk_reference_order(
     db: AsyncSession,
     auth: AuthContext,
     request: VaultBulkResolveRequest,
-) -> tuple[list[tuple[VaultReferenceResolveInput, list[dict]]], list[UUID]]:
-    ordered_references: list[tuple[VaultReferenceResolveInput, list[dict]]] = []
+) -> tuple[
+    list[tuple[VaultReferenceResolveInput, list[ProjectPrecedenceEntry]]],
+    list[UUID],
+]:
+    ordered_references: list[tuple[VaultReferenceResolveInput, list[ProjectPrecedenceEntry]]] = []
     project_ids: list[UUID] = []
     seen_project_ids: set[UUID] = set()
 
-    def remember_projects(ordered: list[dict]) -> None:
+    def remember_projects(ordered: list[ProjectPrecedenceEntry]) -> None:
         for entry in ordered:
             project_id = entry["project_id"]
             if project_id in seen_project_ids:
@@ -1050,7 +1065,7 @@ async def _resolve_bulk_reference_order(
         return ordered_references, project_ids
 
     default_project_id: UUID | None = None
-    project_precedence: dict[UUID, list[dict]] = {}
+    project_precedence: dict[UUID, list[ProjectPrecedenceEntry]] = {}
     for ref in request.references:
         selected_project_id = ref.project_id or request.project_id
         if selected_project_id is None:
@@ -1097,7 +1112,7 @@ async def resolve_vault_bulk(
             db, project_ids, exact_filters, searched_namespaces
         )
     )
-    results: dict[str, dict[str, object]] = {}
+    results: dict[str, VaultResolutionRecord] = {}
     for ref, ordered in ordered_references:
         results[ref.reference] = _resolve_exact_vault_reference_from_index(
             item_index=item_index,
@@ -1141,7 +1156,7 @@ async def resolve_vault(
     ),
     auth: AuthContext = Depends(require_user_cli),
     db: AsyncSession = Depends(get_session),
-) -> dict:
+) -> VaultResolutionRecord:
     """Resolve all vault items to plaintext. CLI-only (requires ApiKey auth).
 
     User-level CLI/API-key callers may resolve plaintext from Projects they
@@ -1200,10 +1215,10 @@ async def resolve_vault(
 
     if key is not None:
         wanted = key.upper()
-        precedence: list[dict] = []
-        winner: dict | None = None
+        precedence: list[VaultResolutionRecord] = []
+        winner: VaultResolutionRecord | None = None
         winner_item_id: UUID | None = None
-        key_conflicts: list[dict] = []
+        key_conflicts: list[VaultResolutionRecord] = []
         for entry in ordered:
             hit_vault, hit_item = await _first_vault_key_hit(
                 db,
@@ -1216,7 +1231,7 @@ async def resolve_vault(
                 and hit_item.id == winner_item_id
             )
 
-            entry_debug = {
+            entry_debug: VaultResolutionRecord = {
                 "project_id": str(entry["project_id"]),
                 "alias": entry["alias"],
                 "display": entry["display"],
@@ -1289,7 +1304,7 @@ async def resolve_vault(
                 },
             )
 
-        response = {"key": key, **winner}
+        response: VaultResolutionRecord = {"key": key, **winner}
         if debug:
             response["precedence"] = precedence
         if key_conflicts:
@@ -1297,10 +1312,10 @@ async def resolve_vault(
         return response
 
     if agent_id is not None:
-        agent_env: dict[str, str] = {}
-        seen: dict[str, dict] = {}
+        agent_env: VaultResolutionRecord = {}
+        seen: dict[str, VaultResolutionRecord] = {}
         agent_seen_item_ids: dict[str, UUID] = {}
-        conflicts: list[dict] = []
+        conflicts: list[VaultResolutionRecord] = []
         rows_by_project: dict[UUID, list[tuple[Vault, VaultItem]]] = {}
         for row_project_id, vault, item in await _vault_item_rows_for_projects(
             db, effective_project_ids
@@ -1309,7 +1324,7 @@ async def resolve_vault(
         for entry in ordered:
             for vault, item in rows_by_project.get(entry["project_id"], []):
                 env_key = _env_key(item.section, item.item_name)
-                source = {
+                source: VaultResolutionRecord = {
                     "project_id": str(entry["project_id"]),
                     "alias": entry["alias"],
                     "display": entry["display"],
@@ -1349,7 +1364,7 @@ async def resolve_vault(
             return {"env": agent_env, "precedence": ordered, "conflicts": conflicts}
         return agent_env
 
-    env: dict[str, str] = {}
+    env: VaultResolutionRecord = {}
     seen_item_ids: dict[str, UUID] = {}
     for _project_id, _vault, item in await _vault_item_rows_for_projects(db, effective_project_ids):
         env_key = _env_key(item.section, item.item_name)

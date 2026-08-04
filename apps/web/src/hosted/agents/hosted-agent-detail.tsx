@@ -252,8 +252,8 @@ import { CHANNEL_CARD_GRID_CLASS, ChannelCard } from "@/hosted/v2/channels/chann
 import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client.logic";
 import {
-	agentProviderHasSingleLinkLimit,
-	channelProviderLinkingReady,
+	agentProviderLinkReplacementRequired,
+	agentProviderLinkStatusUnknown,
 } from "@/hosted/v2/channels/channel-linking.logic";
 import { channelKeys } from "@/hosted/v2/channels/channel-query-cache";
 import {
@@ -273,6 +273,7 @@ import {
 import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
 import { DiscordPairDialog } from "@/hosted/v2/channels/discord-pair-dialog";
 import { PairedChatsDialog } from "@/hosted/v2/channels/paired-chats-dialog";
+import { ProviderLinkReplacementConfirm } from "@/hosted/v2/channels/provider-link-replacement-confirm";
 import { TelegramPairDialog } from "@/hosted/v2/channels/telegram-pair-dialog";
 import {
 	type AgentRouteSearch,
@@ -2318,17 +2319,13 @@ function agentChannelLinkUnavailableReason({
 }: {
 	bot: AgentChannelCardItem;
 	agentType: HostedRuntime;
-	linkedProviders: ReadonlySet<string>;
+	linkedProviders: ReadonlySet<string> | undefined;
 }): string | null {
-	if (!channelProviderLinkingReady(bot.provider)) return "Coming soon";
 	if (!bot.available || !bot.canLink || bot.status.toLowerCase() !== "active") {
 		return bot.maxLinks !== null ? "At capacity" : "Unavailable";
 	}
-	if (
-		agentProviderHasSingleLinkLimit(agentType, bot.provider) &&
-		linkedProviders.has(bot.provider)
-	) {
-		return "Another bot from this provider is already linked";
+	if (agentProviderLinkStatusUnknown(agentType, bot.provider, linkedProviders)) {
+		return "Agent link status unavailable";
 	}
 	return null;
 }
@@ -2420,7 +2417,8 @@ function ChannelsTab({
 	}, [cardGroups]);
 	const bindingCountForLink = (linkId: string) =>
 		visibleActiveLinks.find((link) => link.id === linkId)?.binding_count ?? 0;
-	const linkedProviders = useMemo(() => {
+	const linkedProviders = useMemo<ReadonlySet<string> | undefined>(() => {
+		if (!linked.data) return undefined;
 		const providers = new Set<string>();
 		for (const link of visibleActiveLinks) {
 			const provider = link.account?.provider ?? accountSummaries.get(link.account_id)?.provider;
@@ -2428,13 +2426,23 @@ function ChannelsTab({
 		}
 		return providers;
 	}, [accountSummaries, visibleActiveLinks]);
-	const link = useSensitiveAction(async (channelId: string) =>
-		unwrap(
-			await api.POST("/v1/channels/{account_id}/agent-links", {
-				params: { path: { account_id: channelId } },
-				body: { agent_id: environmentId },
-			}),
-		),
+	const link = useSensitiveAction(
+		async ({
+			channelId,
+			replaceExistingProviderLink,
+		}: {
+			channelId: string;
+			replaceExistingProviderLink: boolean;
+		}) =>
+			unwrap(
+				await api.POST("/v1/channels/{account_id}/agent-links", {
+					params: { path: { account_id: channelId } },
+					body: {
+						agent_id: environmentId,
+						...(replaceExistingProviderLink ? { replace_existing_provider_link: true } : {}),
+					},
+				}),
+			),
 	);
 
 	function showPairingForLink(nextLink: AgentChannelLink) {
@@ -2469,12 +2477,15 @@ function ChannelsTab({
 		showPairingForLink(nextLink);
 	}
 
-	async function submitLink(channelId: string): Promise<boolean> {
-		if (!channelId || linkingAccountIdsRef.current.has(channelId)) return false;
+	async function submitLink(
+		channelId: string,
+		replaceExistingProviderLink: boolean,
+	): Promise<void> {
+		if (!channelId || linkingAccountIdsRef.current.has(channelId)) return;
 		linkingAccountIdsRef.current.add(channelId);
 		setLinkingAccountIds((current) => new Set(current).add(channelId));
 		try {
-			const data = await link.execute(channelId);
+			const data = await link.execute({ channelId, replaceExistingProviderLink });
 			acceptLinkedChannel({
 				id: data.id,
 				account_id: data.account_id,
@@ -2483,7 +2494,7 @@ function ChannelsTab({
 				created_at: data.created_at,
 				binding_count: 0,
 			});
-			return true;
+			return;
 		} catch (error) {
 			if (error instanceof ApiError && error.status === 409) {
 				const refreshed = await linked.refetch();
@@ -2498,11 +2509,11 @@ function ChannelsTab({
 					toast.info("Bot already linked", {
 						description: "Using the existing link for this Agent.",
 					});
-					return true;
+					return;
 				}
 			}
 			toastApiError("Couldn't link bot")(error);
-			return false;
+			throw error;
 		} finally {
 			linkingAccountIdsRef.current.delete(channelId);
 			setLinkingAccountIds((current) => {
@@ -2551,7 +2562,7 @@ function ChannelsTab({
 				linkedProviders={linkedProviders}
 				linking={linkingAccountIds.has(bot.id)}
 				unlinking={Boolean(linkForBot && unlinkingLinkIds.has(linkForBot.id))}
-				onLink={() => void submitLink(bot.id)}
+				onLink={(replaceExistingProviderLink) => submitLink(bot.id, replaceExistingProviderLink)}
 				onUnlink={() => {
 					if (linkForBot) startUnlink(bot.id, linkForBot.id);
 				}}
@@ -2756,14 +2767,30 @@ function AgentChannelBotCard({
 	agentId: string;
 	agentName: string;
 	agentType: HostedRuntime;
-	linkedProviders: ReadonlySet<string>;
+	linkedProviders: ReadonlySet<string> | undefined;
 	linking: boolean;
 	unlinking: boolean;
-	onLink: () => void;
+	onLink: (replaceExistingProviderLink: boolean) => Promise<void>;
 	onUnlink: () => void;
 }) {
 	const unavailableReason = agentChannelLinkUnavailableReason({ bot, agentType, linkedProviders });
-	const activationGated = unavailableReason === "Coming soon";
+	const replacementRequired = agentProviderLinkReplacementRequired(
+		agentType,
+		bot.provider,
+		linkedProviders,
+	);
+	const linkButton = (
+		<Button
+			type="button"
+			size="sm"
+			className="w-full min-w-0 sm:w-28"
+			disabled={Boolean(unavailableReason) || linking}
+			onClick={replacementRequired ? undefined : () => void onLink(false).catch(() => undefined)}
+		>
+			{linking ? <Spinner className="size-3.5" /> : <Link2 className="size-3.5" />}
+			{linking ? "Linking…" : "Link"}
+		</Button>
+	);
 	return (
 		<div data-agent-channel-account-id={bot.id} className="h-full min-w-0">
 			{bot.link ? (
@@ -2783,24 +2810,18 @@ function AgentChannelBotCard({
 				<AgentChannelCard
 					provider={bot.provider}
 					title={bot.name}
-					state={unavailableReason ?? "Available"}
+					state={replacementRequired ? "Replaces current link" : (unavailableReason ?? "Available")}
 					actions={
-						activationGated ? (
-							<p className="flex min-w-0 items-center justify-center gap-1.5 text-xs text-muted-foreground [overflow-wrap:anywhere] sm:w-28">
-								<Info className="size-3.5 shrink-0" />
-								Agent Link gated
-							</p>
-						) : (
-							<Button
-								type="button"
-								size="sm"
-								className="w-full min-w-0 sm:w-28"
-								disabled={Boolean(unavailableReason) || linking}
-								onClick={onLink}
+						replacementRequired ? (
+							<ProviderLinkReplacementConfirm
+								provider={bot.provider}
+								targetName={bot.name}
+								onConfirm={() => onLink(true)}
 							>
-								{linking ? <Spinner className="size-3.5" /> : <Link2 className="size-3.5" />}
-								{linking ? "Linking…" : "Link"}
-							</Button>
+								{linkButton}
+							</ProviderLinkReplacementConfirm>
+						) : (
+							linkButton
 						)
 					}
 				/>
