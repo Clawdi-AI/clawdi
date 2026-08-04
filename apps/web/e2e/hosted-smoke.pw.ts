@@ -10197,7 +10197,7 @@ for (const firstTimeViewport of [
 	});
 }
 
-test("Add channel confirms atomic Telegram and Discord link replacement", async ({
+test("Add channel offers inventory-only creation and atomic provider replacement", async ({
 	page,
 }, testInfo) => {
 	await page.setViewportSize({ width: 320, height: 844 });
@@ -10249,12 +10249,28 @@ test("Add channel confirms atomic Telegram and Discord link replacement", async 
 		unlinkAgentRequests,
 		createChannelResponses: [
 			{
+				status: 503,
+				body: { detail: "Inventory creation temporarily unavailable" },
+			},
+			{
 				status: 201,
 				body: {
 					...telegramAccount,
 					id: "5a555555-5555-4555-8555-555555555555",
 					name: "Additional Telegram",
 					webhook_secret: "telegram-webhook-secret-must-not-render",
+					agent_link_id: null,
+					agent_id: null,
+					agent_token: null,
+				},
+			},
+			{
+				status: 201,
+				body: {
+					...telegramAccount,
+					id: "5a555556-5555-4555-8555-555555555556",
+					name: "Additional Telegram",
+					webhook_secret: "telegram-replacement-secret-must-not-render",
 					agent_link_id: "5a777777-7777-4777-8777-777777777777",
 					agent_id: agentId,
 					agent_token: null,
@@ -10312,11 +10328,19 @@ test("Add channel confirms atomic Telegram and Discord link replacement", async 
 	await expectNoHorizontalOverflow(dialog, "Telegram replacement form at 320px");
 	await dialog.getByRole("button", { name: "Add custom bot", exact: true }).click();
 	let replacementDialog = page.getByRole("alertdialog", {
-		name: "Replace this Agent’s Telegram link?",
+		name: "How should this Telegram bot be added?",
 	});
 	await expect(replacementDialog).toBeVisible();
 	await expect(replacementDialog).toContainText("one Telegram bot at a time");
 	await expect(replacementDialog).toContainText("Additional Telegram");
+	await expect(replacementDialog).toContainText("keep the current bot and its paired chats");
+	await expect(replacementDialog).toContainText("will be added to Custom bots only");
+	await expect(
+		replacementDialog.getByRole("button", { name: "Add without linking", exact: true }),
+	).toBeVisible();
+	await expect(
+		replacementDialog.getByRole("button", { name: "Replace Telegram link", exact: true }),
+	).toBeVisible();
 	await expect(createChannelRequests).toHaveLength(0);
 	await expect(linkAgentRequests).toHaveLength(0);
 	await expect(unlinkAgentRequests).toHaveLength(0);
@@ -10324,7 +10348,7 @@ test("Add channel confirms atomic Telegram and Discord link replacement", async 
 	await expect(page.locator("html")).toHaveClass(/dark/);
 	await expectNoHorizontalOverflow(replacementDialog, "Telegram replacement confirmation at 320px");
 	await replacementDialog.screenshot({
-		path: testInfo.outputPath("replace-telegram-link-confirm-dark-320.png"),
+		path: testInfo.outputPath("add-or-replace-telegram-link-confirm-dark-320.png"),
 	});
 	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
 	await replacementDialog.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -10335,13 +10359,60 @@ test("Add channel confirms atomic Telegram and Discord link replacement", async 
 
 	await dialog.getByRole("button", { name: "Add custom bot", exact: true }).click();
 	replacementDialog = page.getByRole("alertdialog", {
-		name: "Replace this Agent’s Telegram link?",
+		name: "How should this Telegram bot be added?",
+	});
+	await replacementDialog.getByRole("button", { name: "Add without linking", exact: true }).click();
+	await expect.poll(() => createChannelRequests.length).toBe(1);
+	expect(JSON.parse(createChannelRequests[0] ?? "{}")).toEqual({
+		provider: "telegram",
+		name: "Additional Telegram",
+		provider_token: "123456:additional-telegram-token",
+		agent_id: null,
+	});
+	await expect(replacementDialog).toBeVisible();
+	await expect(
+		page.locator("[data-sonner-toast]").filter({ hasText: "Couldn't add Custom bot" }),
+	).toBeVisible();
+	await expect(
+		replacementDialog.getByRole("button", { name: "Add without linking", exact: true }),
+	).toBeEnabled();
+	await expect(dialog.getByLabel("Name")).toHaveValue("Additional Telegram");
+	await expect(dialog.getByLabel("Bot token")).toHaveValue("123456:additional-telegram-token");
+	await expect(linkAgentRequests).toHaveLength(0);
+	await expect(unlinkAgentRequests).toHaveLength(0);
+	await replacementDialog.getByRole("button", { name: "Add without linking", exact: true }).click();
+	await expect.poll(() => createChannelRequests.length).toBe(2);
+	expect(JSON.parse(createChannelRequests[1] ?? "{}")).toEqual({
+		provider: "telegram",
+		name: "Additional Telegram",
+		provider_token: "123456:additional-telegram-token",
+		agent_id: null,
+	});
+	const inventorySuccessDialog = page.getByRole("dialog", { name: "Custom bot added" });
+	await expect(inventorySuccessDialog).toBeVisible();
+	await expect(inventorySuccessDialog).toContainText(
+		"Additional Telegram was added to Custom bots without linking to this Agent.",
+	);
+	await expectNoHorizontalOverflow(inventorySuccessDialog, "Inventory-only success at 320px");
+	await expect(page.getByRole("dialog", { name: "Pair Telegram" })).toHaveCount(0);
+	await expect(linkAgentRequests).toHaveLength(0);
+	await expect(unlinkAgentRequests).toHaveLength(0);
+	await inventorySuccessDialog.getByRole("button", { name: "Done", exact: true }).click();
+	await expect(inventorySuccessDialog).toHaveCount(0);
+
+	await addChannel.click();
+	dialog = page.getByRole("dialog", { name: "Add channel" });
+	await dialog.getByLabel("Name").fill("Additional Telegram");
+	await dialog.getByLabel("Bot token").fill("123456:additional-telegram-token");
+	await dialog.getByRole("button", { name: "Add custom bot", exact: true }).click();
+	replacementDialog = page.getByRole("alertdialog", {
+		name: "How should this Telegram bot be added?",
 	});
 	await replacementDialog
 		.getByRole("button", { name: "Replace Telegram link", exact: true })
 		.click();
-	await expect.poll(() => createChannelRequests.length).toBe(1);
-	expect(JSON.parse(createChannelRequests[0] ?? "{}")).toEqual({
+	await expect.poll(() => createChannelRequests.length).toBe(3);
+	expect(JSON.parse(createChannelRequests[2] ?? "{}")).toEqual({
 		provider: "telegram",
 		name: "Additional Telegram",
 		provider_token: "123456:additional-telegram-token",
@@ -10371,13 +10442,16 @@ test("Add channel confirms atomic Telegram and Discord link replacement", async 
 	await expectNoHorizontalOverflow(dialog, "Discord replacement form at 320px");
 	await dialog.getByRole("button", { name: "Add custom bot", exact: true }).click();
 	replacementDialog = page.getByRole("alertdialog", {
-		name: "Replace this Agent’s Discord link?",
+		name: "How should this Discord bot be added?",
 	});
-	await expect(replacementDialog).toContainText("paired chats will be removed");
+	await expect(replacementDialog).toContainText("remove the current bot's paired chats");
+	await expect(
+		replacementDialog.getByRole("button", { name: "Add without linking", exact: true }),
+	).toBeVisible();
 	await replacementDialog
 		.getByRole("button", { name: "Replace Discord link", exact: true })
 		.click();
-	await expect.poll(() => createChannelRequests.length).toBe(2);
+	await expect.poll(() => createChannelRequests.length).toBe(4);
 	await expect(replacementDialog).toBeVisible();
 	await expect(
 		page.locator("[data-sonner-toast]").filter({ hasText: "Couldn't add Custom bot" }),
@@ -10386,15 +10460,15 @@ test("Add channel confirms atomic Telegram and Discord link replacement", async 
 		replacementDialog.getByRole("button", { name: "Cancel", exact: true }),
 	).toBeEnabled();
 	await expect(dialog.getByLabel("Name")).toHaveValue("Additional Discord");
-	expect(JSON.parse(createChannelRequests[1] ?? "{}")).toMatchObject({
+	expect(JSON.parse(createChannelRequests[3] ?? "{}")).toMatchObject({
 		agent_id: agentId,
 		replace_existing_provider_link: true,
 	});
 	await replacementDialog
 		.getByRole("button", { name: "Replace Discord link", exact: true })
 		.click();
-	await expect.poll(() => createChannelRequests.length).toBe(3);
-	expect(JSON.parse(createChannelRequests[2] ?? "{}")).toEqual({
+	await expect.poll(() => createChannelRequests.length).toBe(5);
+	expect(JSON.parse(createChannelRequests[4] ?? "{}")).toEqual({
 		provider: "discord",
 		name: "Additional Discord",
 		provider_token: "A".repeat(50),
@@ -10429,7 +10503,7 @@ test("Add channel confirms atomic Telegram and Discord link replacement", async 
 	const unexpectedErrors = errors.filter((error) => !error.includes("status of 503"));
 	expect(
 		unexpectedErrors,
-		`replacement Custom bot errors: ${unexpectedErrors.join(" | ")}`,
+		`Custom bot conflict actions errors: ${unexpectedErrors.join(" | ")}`,
 	).toEqual([]);
 });
 
@@ -10785,6 +10859,9 @@ test("Agent bot groups keep every bot visible and confirm provider replacement",
 		name: "Replace this Agent’s Telegram link?",
 	});
 	await expect(replacementDialog).toContainText("Replacement Telegram");
+	await expect(
+		replacementDialog.getByRole("button", { name: "Add without linking", exact: true }),
+	).toHaveCount(0);
 	await expectNoHorizontalOverflow(replacementDialog, "Telegram Link replacement confirmation");
 	await replacementDialog.screenshot({
 		path: testInfo.outputPath("replace-existing-bot-link-confirm-desktop.png"),
