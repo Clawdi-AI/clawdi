@@ -896,6 +896,9 @@ const walletState = {
 	auto_reload_threshold_usd: "5.00",
 	auto_reload_amount_cents: 2_500,
 	auto_reload_monthly_cap_cents: 10_000,
+	auto_reload_monthly_spent_cents: 0,
+	auto_reload_period_end: "2026-09-01T00:00:00Z",
+	auto_reload_status: "off",
 	auto_reload_action: null,
 };
 
@@ -1499,7 +1502,7 @@ type HostedApiStubOptions = {
 	deployments?: readonly unknown[];
 	deploymentsResponse?: StubResponse;
 	fixPaymentRequests?: string[];
-	ledgerResponseForRequest?: (limit: number) => unknown;
+	ledgerResponseForRequest?: (limit: number, cursor: string | null) => unknown;
 	ledgerRequests?: string[];
 	ledgerResponses?: unknown[];
 	legacyAgentEnvironmentIds?: readonly string[];
@@ -1717,8 +1720,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p === "/v2/wallet/ledger" && r.request().method() === "GET") {
 			options.ledgerRequests?.push(r.request().url());
-			const limit = Number(new URL(r.request().url()).searchParams.get("limit"));
-			const response = options.ledgerResponseForRequest?.(limit) ??
+			const url = new URL(r.request().url());
+			const limit = Number(url.searchParams.get("limit"));
+			const response = options.ledgerResponseForRequest?.(limit, url.searchParams.get("cursor")) ??
 				options.ledgerResponses?.shift() ?? { items: [], has_more: false };
 			return isStubResponse(response)
 				? fulfillJson(r, response.body, response.status)
@@ -8525,7 +8529,9 @@ test("Stripe invoice history shows both rails and a server-visible zero proratio
 	).toEqual([]);
 });
 
-test("Wallet activity caps show-more requests at the ledger API limit", async ({ page }) => {
+test("Wallet activity follows the ledger cursor without replacing loaded rows", async ({
+	page,
+}) => {
 	const ledgerRequests: string[] = [];
 	let expandedAttempts = 0;
 	const computeCharge = {
@@ -8548,14 +8554,15 @@ test("Wallet activity caps show-more requests at the ledger API limit", async ({
 	};
 	await stubHostedApi(page, {
 		ledgerRequests,
-		ledgerResponseForRequest: (limit) => {
-			if (limit === 50) return { items: [topUp, computeCharge], has_more: true };
+		ledgerResponseForRequest: (_limit, cursor) => {
+			if (cursor === null) {
+				return { items: [topUp, computeCharge], has_more: true, next_cursor: "cursor_2" };
+			}
 			expandedAttempts += 1;
 			return expandedAttempts === 1
 				? { status: 400, body: { detail: "ledger_backend_unavailable" } }
 				: {
 						items: [
-							computeCharge,
 							{
 								...computeCharge,
 								operation: "compute_credit",
@@ -8565,7 +8572,8 @@ test("Wallet activity caps show-more requests at the ledger API limit", async ({
 								applied_at: "2026-07-15T00:00:01Z",
 							},
 						],
-						has_more: true,
+						has_more: false,
+						next_cursor: null,
 					};
 		},
 		plans: [basicPlan, performancePlan],
@@ -8579,7 +8587,7 @@ test("Wallet activity caps show-more requests at the ledger API limit", async ({
 	await expect(
 		ledgerTable.locator('a[href="https://billing.stripe.test/receipt/topup"]'),
 	).toHaveText("Receipt");
-	await settingsDialog.getByRole("button", { name: "Show more" }).click();
+	await settingsDialog.getByRole("button", { name: "Load more" }).click();
 	await expect.poll(() => ledgerRequests.length).toBe(2);
 	await expect(
 		settingsDialog.getByText("Couldn’t load more activity", { exact: true }),
@@ -8588,14 +8596,13 @@ test("Wallet activity caps show-more requests at the ledger API limit", async ({
 	await settingsDialog.getByRole("button", { name: "Retry" }).click();
 	await expect.poll(() => ledgerRequests.length).toBe(3);
 	await expect(ledgerTable.getByText("Compute reversal", { exact: true })).toBeVisible();
-	await expect(settingsDialog.getByRole("button", { name: "Show more" })).toHaveCount(0);
-	await expect(settingsDialog).toContainText(
-		"Showing your most recent activity. Older entries are archived.",
-	);
+	await expect(settingsDialog.getByRole("button", { name: "Load more" })).toHaveCount(0);
 
 	const limits = ledgerRequests.map((url) => Number(new URL(url).searchParams.get("limit")));
-	expect([...new Set(limits)]).toEqual([50, 100]);
-	expect(limits.every((limit) => limit <= 100)).toBe(true);
+	expect([...new Set(limits)]).toEqual([50]);
+	expect(new URL(ledgerRequests[1] ?? "http://invalid").searchParams.get("cursor")).toBe(
+		"cursor_2",
+	);
 	expect(
 		errors.filter((error) => !error.includes("status of 400")),
 		`wallet ledger cap: ${errors.join(" | ")}`,
@@ -8661,12 +8668,13 @@ test("Wallet formats its balance and opens billing from the balance actions", as
 test("auto-reload batches toggle and fields into one explicit save", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	const autoReloadRequests: string[] = [];
-	const savedWallet = {
+	const savedWallet: typeof walletState = {
 		...walletState,
 		auto_reload_enabled: true,
 		auto_reload_threshold_usd: "7.50",
 		auto_reload_amount_cents: 3_000,
 		auto_reload_monthly_cap_cents: 12_500,
+		auto_reload_status: "active",
 	};
 	await stubHostedApi(page, {
 		autoReloadRequests,
@@ -8682,33 +8690,24 @@ test("auto-reload batches toggle and fields into one explicit save", async ({ pa
 	});
 	const settingsDialog = await gotoHostedSettingsDialog(page, "billing-wallet");
 	const card = settingsDialog.locator('[data-slot="card"]').filter({ hasText: "Auto-reload" });
-	const enabled = card.getByRole("switch", { name: "Enabled" });
+	await expect(card.getByText("Off", { exact: true })).toBeVisible();
+	await card.getByRole("button", { name: "Set up auto-reload" }).click();
 	const threshold = card.getByLabel("When balance is below (USD)");
 	const amount = card.getByLabel("Amount to add (USD)");
-	const cap = card.getByLabel("Monthly cap (USD)");
-	const save = card.getByRole("button", { name: "Save changes" });
-	const cancel = card.getByRole("button", { name: "Cancel changes" });
+	const cap = card.getByLabel("Monthly limit (USD)");
+	const save = card.getByRole("button", { name: "Save", exact: true });
+	const cancel = card.getByRole("button", { name: "Cancel", exact: true });
 
-	await expect(card.getByText("All changes saved", { exact: true })).toBeVisible();
-	await expect(save).toBeDisabled();
-	await expect(cancel).toBeDisabled();
-
-	await enabled.click();
 	await threshold.fill("7.50");
 	await amount.fill("30");
 	await cap.fill("125");
-	await expect(card.getByText("Unsaved changes", { exact: true })).toBeVisible();
 	expect(autoReloadRequests).toEqual([]);
 
 	await cancel.click();
-	await expect(enabled).not.toBeChecked();
-	await expect(threshold).toHaveValue("5");
-	await expect(amount).toHaveValue("25");
-	await expect(cap).toHaveValue("100");
-	await expect(save).toBeDisabled();
+	await expect(card.getByRole("button", { name: "Set up auto-reload" })).toBeVisible();
 	expect(autoReloadRequests).toEqual([]);
 
-	await enabled.click();
+	await card.getByRole("button", { name: "Set up auto-reload" }).click();
 	await threshold.fill("7.50");
 	await amount.fill("30");
 	await cap.fill("125");
@@ -8730,14 +8729,14 @@ test("auto-reload batches toggle and fields into one explicit save", async ({ pa
 		card.getByText("Add a card before enabling auto-reload", { exact: true }),
 	).toBeVisible();
 	await expect(card.getByRole("button", { name: "Add a card" })).toBeVisible();
-	await expect(card.getByText("Unsaved changes", { exact: true })).toBeVisible();
+	await expect(threshold).toHaveValue("7.50");
 	await card.screenshot({ path: "/tmp/auto-reload-error.png" });
 
 	await save.click();
 	await expect.poll(() => autoReloadRequests.length).toBe(2);
-	await expect(card.getByText("All changes saved", { exact: true })).toBeVisible();
-	await expect(enabled).toBeChecked();
-	await expect(save).toBeDisabled();
+	await expect(card.getByText("Active", { exact: true })).toBeVisible();
+	await expect(card.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+	await expect(card.getByText("Below $7.50 → add $30.00", { exact: true })).toBeVisible();
 	await card.screenshot({ path: "/tmp/auto-reload-saved.png" });
 
 	for (const raw of autoReloadRequests) {

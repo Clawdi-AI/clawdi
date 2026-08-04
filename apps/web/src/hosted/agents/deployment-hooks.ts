@@ -35,6 +35,8 @@ const ACCEPTED_OPERATION_TRANSITIONS = {
 	update: "updating",
 	plan_change: "updating",
 	runtime_switch: "updating",
+	migrate_image: "updating",
+	rollback_image: "updating",
 	rename: "updating",
 	delete: "deleting",
 } satisfies Record<DeploymentOperationVerb, HostedDeploymentStatus["summary_state"]>;

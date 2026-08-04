@@ -30,6 +30,9 @@ describe("walletSnapshotQueryOptions", () => {
 			auto_reload_threshold_usd: "5.00",
 			auto_reload_amount_cents: 2_500,
 			auto_reload_monthly_cap_cents: 10_000,
+			auto_reload_monthly_spent_cents: 2_500,
+			auto_reload_period_end: "2026-09-01T00:00:00Z",
+			auto_reload_status: "active",
 			auto_reload_action: {
 				attempt_id: 7,
 				payment_intent_id: "pi_test",
@@ -63,6 +66,9 @@ describe("walletSnapshotQueryOptions", () => {
 			auto_reload_threshold_usd: "5.00",
 			auto_reload_amount_cents: 2_500,
 			auto_reload_monthly_cap_cents: 10_000,
+			auto_reload_monthly_spent_cents: 2_500,
+			auto_reload_period_end: "2026-09-01T00:00:00Z",
+			auto_reload_status: "active",
 			auto_reload_action: {
 				attempt_id: 7,
 				payment_intent_id: "pi_test",

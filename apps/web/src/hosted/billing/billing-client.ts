@@ -401,10 +401,10 @@ export function createBillingClient(
 		getManagedModelCatalog: async () =>
 			unwrapDeploy(await api.GET("/v2/ai-providers/managed/models")),
 		getWallet: async () => unwrapDeploy(await api.GET("/v2/wallet")),
-		getLedger: async (limit = 50) =>
+		getLedger: async (limit = 50, cursor?: string | null) =>
 			unwrapDeploy(
 				await api.GET("/v2/wallet/ledger", {
-					params: { query: { limit } },
+					params: { query: { limit, cursor } },
 				}),
 			),
 		topUp: async (body: WalletTopupRequest, idempotencyKey: string) =>

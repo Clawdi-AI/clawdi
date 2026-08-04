@@ -91,7 +91,6 @@ export function LedgerTable({
 	entries,
 	isLoading = false,
 	hasMore = false,
-	atCap = false,
 	isFetchingMore = false,
 	onShowMore,
 }: {
@@ -99,8 +98,6 @@ export function LedgerTable({
 	isLoading?: boolean;
 	/** More entries likely exist beyond the current window. */
 	hasMore?: boolean;
-	/** The client-side row cap is reached — stop offering "Show more". */
-	atCap?: boolean;
 	isFetchingMore?: boolean;
 	onShowMore?: () => void;
 }) {
@@ -108,7 +105,7 @@ export function LedgerTable({
 	const headingId = useId();
 
 	const filtered = useMemo(() => filteredLedgerEntries(entries, filter), [entries, filter]);
-	const canLoadMore = !atCap && hasMore && onShowMore != null;
+	const canLoadMore = hasMore && onShowMore != null;
 	const emptyState = ledgerEmptyStateCopy({ entriesCount: entries.length, filter, canLoadMore });
 
 	function handleFilterChange(value: string) {
@@ -128,7 +125,7 @@ export function LedgerTable({
 							<Spinner /> Loading…
 						</>
 					) : (
-						"Show more"
+						"Load more"
 					)}
 				</Button>
 			</div>
@@ -268,13 +265,7 @@ export function LedgerTable({
 						</Table>
 					</div>
 
-					{atCap ? (
-						<p className="text-center text-xs text-muted-foreground">
-							Showing your most recent activity. Older entries are archived.
-						</p>
-					) : (
-						renderLoadMoreControl()
-					)}
+					{renderLoadMoreControl()}
 				</>
 			)}
 		</section>

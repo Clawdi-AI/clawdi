@@ -39,6 +39,11 @@ describe("filteredLedgerEntries", () => {
 		).toEqual(["compute_charge"]);
 	});
 
+	test("groups automatic reloads with top-ups while keeping their label", () => {
+		expect(ledgerOperationGroup("auto_reload")).toBe("topup");
+		expect(ledgerOperationLabel("auto_reload")).toBe("Auto-reload");
+	});
+
 	test("does not expose an unknown backend operation token", () => {
 		expect(ledgerOperationLabel("bridge_internal_credit_v3")).toBe("Other activity");
 		expect(ledgerOperationGroup("invoice")).toBe("all");
