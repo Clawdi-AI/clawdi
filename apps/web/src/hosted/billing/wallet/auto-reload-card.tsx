@@ -173,7 +173,9 @@ export function AutoReloadCard({
 			headingLevel={3}
 			data-hosted="true"
 			title="Auto-reload"
-			description={draft.enabled ? enabledDetail : undefined}
+			description={
+				draft.enabled ? enabledDetail : "Automatically add funds when your balance is low."
+			}
 			actions={
 				<Switch
 					id="ar-enabled"

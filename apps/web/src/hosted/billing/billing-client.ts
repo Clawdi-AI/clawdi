@@ -467,10 +467,15 @@ export function createBillingClient(
 			unwrapDeploy(await api.POST("/v2/subscription/portal", { body })),
 		resumeSubscription: async (body: ComputeSubscriptionResumeRequest) =>
 			unwrapDeploy(await api.POST("/v2/subscription/resume", { body })),
-		getUsage: async (days: number | null = null) =>
+		getUsage: async (days: number | null = null, agentId: string | null = null) =>
 			unwrapDeploy(
 				await api.GET("/v2/usage", {
-					params: { query: { days: days ?? undefined } },
+					params: {
+						query: {
+							days: days ?? undefined,
+							agent_id: agentId ?? undefined,
+						},
+					},
 				}),
 			),
 

@@ -2007,6 +2007,8 @@ export interface components {
             agent_name: string | null;
             /** Agent Type */
             agent_type?: ("openclaw" | "hermes") | null;
+            /** Agent Deleted */
+            agent_deleted?: boolean | null;
             /** Amount Usd */
             amount_usd: string;
             /** Requests */
@@ -3627,6 +3629,7 @@ export interface operations {
         parameters: {
             query?: {
                 days?: number | null;
+                agent_id?: string | null;
             };
             header?: never;
             path?: never;

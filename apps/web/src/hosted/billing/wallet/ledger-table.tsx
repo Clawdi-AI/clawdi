@@ -133,29 +133,32 @@ export function LedgerTable({
 	}
 
 	return (
-		<SettingsSection data-hosted="true" headingLevel={3} title="Activity">
+		<SettingsSection
+			data-hosted="true"
+			headingLevel={3}
+			title="Activity"
+			actions={
+				<Select
+					items={LEDGER_FILTER_ITEMS}
+					value={filter}
+					onValueChange={(value) => {
+						if (value !== null) handleFilterChange(value);
+					}}
+				>
+					<SelectTrigger size="sm" className="w-40" aria-label="Filter activity">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent align="end">
+						{LEDGER_FILTER_ITEMS.map((item) => (
+							<SelectItem key={item.value} value={item.value}>
+								{item.label}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+			}
+		>
 			<div className="flex flex-col gap-4">
-				<div className="flex justify-end">
-					<Select
-						items={LEDGER_FILTER_ITEMS}
-						value={filter}
-						onValueChange={(value) => {
-							if (value !== null) handleFilterChange(value);
-						}}
-					>
-						<SelectTrigger size="sm" className="w-40" aria-label="Filter activity">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							{LEDGER_FILTER_ITEMS.map((item) => (
-								<SelectItem key={item.value} value={item.value}>
-									{item.label}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-				</div>
-
 				{isLoading ? (
 					<div className="space-y-px overflow-hidden rounded-lg border">
 						{Array.from({ length: 5 }, (_, i) => `s-${i}`).map((key) => (
