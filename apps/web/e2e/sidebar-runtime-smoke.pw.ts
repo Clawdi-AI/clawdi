@@ -490,6 +490,7 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 }
 
 type DashboardApiStubOptions = {
+	accountResourceRequests?: string[];
 	sessionsPage?: unknown;
 	sessionRequests?: string[];
 	connectorConnections?: readonly unknown[];
@@ -533,6 +534,13 @@ async function stubDashboardApi(
 ) {
 	await page.route("**/v1/**", async (route) => {
 		const url = new URL(route.request().url());
+		if (
+			/^\/v1\/memories\/[^/]+$/.test(url.pathname) ||
+			url.pathname === "/v1/connectors" ||
+			url.pathname.startsWith("/v1/connectors/")
+		) {
+			options.accountResourceRequests?.push(`${route.request().method()} ${url.pathname}`);
+		}
 		if (url.pathname === "/v1/agents/order" && route.request().method() === "PATCH") {
 			agentOrderRequests.push(route.request().postData() ?? "");
 			const requested = JSON.parse(route.request().postData() ?? "{}") as {
@@ -553,7 +561,7 @@ async function stubDashboardApi(
 		const agentMatch = url.pathname.match(/^\/v1\/agents\/([^/]+)$/);
 		if (agentMatch) {
 			const agent = agents.find((candidate) => candidate.id === decodeURIComponent(agentMatch[1]));
-			await fulfillJson(route, agent ?? { detail: "Agent not found" });
+			await fulfillJson(route, agent ?? { detail: "Agent not found" }, agent ? 200 : 404);
 			return;
 		}
 		if (url.pathname === "/v1/agents/agent-smoke-1/project-bindings") {
@@ -1337,6 +1345,28 @@ test("connected Agent Connectors keeps established UI through nested list and de
 	);
 	await connectorsLink.click();
 	await expect(page).toHaveURL("/agents/agent-smoke-1/connectors");
+});
+
+test("nested account resources fail closed when the Agent does not exist", async ({ page }) => {
+	const accountResourceRequests: string[] = [];
+	await stubDashboardApi(page, [], { accountResourceRequests });
+	const main = page.locator("main");
+
+	for (const path of [
+		"/agents/does-not-exist/memories/memory-smoke-1",
+		"/agents/does-not-exist/connectors/gmail",
+	]) {
+		await page.goto(path);
+		await expect(main.getByText("Agent not found", { exact: true })).toBeVisible();
+		await expect(
+			main.getByText("This Agent does not exist or is no longer available."),
+		).toBeVisible();
+		await expect(page).toHaveURL(path);
+		await main.getByRole("button", { name: "Back to Agents" }).click();
+		await expect(page).toHaveURL("/agents");
+	}
+
+	expect(accountResourceRequests).toEqual([]);
 });
 
 test("connected all-agent detail loading, not-found, and error states keep Agent scope", async ({
