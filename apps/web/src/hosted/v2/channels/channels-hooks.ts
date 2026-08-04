@@ -134,8 +134,17 @@ export function useWhatsAppOnboardingActions() {
 			),
 		),
 	);
+	const repair = useSensitiveAction(async (accountId: string) =>
+		accept(
+			unwrap(
+				await api.POST("/v1/channels/whatsapp/onboarding/accounts/{account_id}/repair", {
+					params: { path: { account_id: accountId } },
+				}),
+			),
+		),
+	);
 
-	return { start, refresh, pairingCode, cancel, retry };
+	return { start, refresh, pairingCode, cancel, retry, repair };
 }
 
 export function useChannelAgentLinks(id: string) {

@@ -35,6 +35,7 @@ import {
 const RECONNECT_DELAY_MS = 3_000;
 const FIRST_QR_TTL_MS = 60_000;
 const ROTATED_QR_TTL_MS = 20_000;
+const REMOTE_LOGOUT_REASON = "remote_logged_out";
 const E164_DIGITS = /^[1-9][0-9]{6,14}$/;
 const TRANSIENT_DISCONNECT_REASONS = new Set<number>([
 	DisconnectReason.connectionClosed,
@@ -70,6 +71,8 @@ type ProviderState = {
 	};
 	retryCounterCache: CacheStore;
 	saveCreds(update?: Partial<AuthenticationCreds>): void;
+	physicalAuthQuarantineReason(): string | undefined;
+	quarantinePhysicalAuth(reason: string): void;
 	storeRetryMessage(remoteJid: string, messageId: string, message: Uint8Array): void;
 	getRetryMessage(
 		remoteJid: string | null | undefined,
@@ -113,7 +116,7 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 		private readonly config: SidecarSessionConfig,
 		dependencies: BaileysRuntimeDependencies = {},
 	) {
-		this.logger = pino({ level: config.logLevel });
+		this.logger = pino({ level: config.logLevel }).child({ sessionId: config.sessionId });
 		// Upstream Baileys logs can contain JIDs/device metadata. The sidecar
 		// emits only its own generic lifecycle logs at the configured level.
 		this.baileysLogger = pino({ level: "silent" });
@@ -127,13 +130,24 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 				config.providerInbox,
 				(operation, error) => this.markStateFatal(operation, error),
 			);
+		const quarantineReason = this.providerState.physicalAuthQuarantineReason();
+		if (quarantineReason) {
+			this.fatalReason = quarantineReason;
+			this.lastDisconnectReason = quarantineReason;
+			this.status = "disconnected";
+			this.logger.warn(
+				{ reason: quarantineReason },
+				"WhatsApp linked-device auth quarantine restored from durable state",
+			);
+		}
 	}
 
 	async start(): Promise<void> {
-		if (this.fatalReason) {
-			throw new Error(`WhatsApp provider requires operator recovery: ${this.fatalReason}`);
-		}
 		if (this.stateClosed) throw new Error("WhatsApp provider state is closed");
+		// Keep health and explicit recovery routes reachable while quarantined.
+		// Data-plane methods still fail closed through requireSocket(), and retry
+		// applies the reason-specific recovery policy below.
+		if (this.fatalReason) return;
 		// Session-scoped status and health requests call start() before dispatch.
 		// An unregistered socket may already be generating or displaying a QR;
 		// preserve that sole physical owner instead of resetting its lifecycle.
@@ -169,10 +183,14 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 	}
 
 	health(): RuntimeHealth {
-		const user = this.socket?.user
+		// rc14 chooses login vs registration from durable creds.me. Report that
+		// same persisted identity even while the transport is reconnecting or
+		// quarantined; socket liveness must not erase account identity.
+		const durableUser = this.providerState.state.creds.me;
+		const user = durableUser
 			? {
-					id: this.socket.user.id,
-					name: this.socket.user.name,
+					id: durableUser.id,
+					name: durableUser.name,
 				}
 			: undefined;
 		return {
@@ -303,10 +321,31 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			if (!isLinkedAuthenticationCreds(this.providerState.state.creds)) {
 				throw new PairingLifecycleError("unregistered_session_requires_pairing");
 			}
+			if (this.fatalReason === REMOTE_LOGOUT_REASON) {
+				throw new PairingLifecycleError("physical_auth_recovery_required");
+			}
 			if (!this.socket) {
 				this.fatalReason = undefined;
 				await this.openSocket();
 			}
+			return this.pairingStatus();
+		});
+	}
+
+	async recoverPairing(): Promise<PairingStatus> {
+		return await this.runLifecycle(async () => {
+			if (
+				this.fatalReason !== REMOTE_LOGOUT_REASON ||
+				!isLinkedAuthenticationCreds(this.providerState.state.creds)
+			) {
+				throw new PairingLifecycleError("physical_auth_recovery_not_required");
+			}
+			this.clearReconnectTimer();
+			this.resetPhysicalAuth();
+			this.clearPairingSecrets();
+			this.status = "stopped";
+			this.lastDisconnectReason = undefined;
+			this.fatalReason = undefined;
 			return this.pairingStatus();
 		});
 	}
@@ -441,14 +480,23 @@ export class BaileysSocketRuntime implements BaileysRuntime {
 			this.lastDisconnectReason = reason === undefined ? "unknown_disconnect" : String(reason);
 			this.logger.warn({ reason }, "WhatsApp connection closed");
 			if (reason === DisconnectReason.loggedOut) {
+				// A provider-side loggedOut signal is not proof that the user asked
+				// Clawdi to destroy its durable auth state. Quarantine the session so
+				// ordinary retries and process restarts cannot turn a transport event
+				// into irreversible credential loss. The authenticated recovery route
+				// is the only path that may clear this retained state for re-pairing.
 				try {
-					this.resetPhysicalAuth();
+					this.providerState.quarantinePhysicalAuth(REMOTE_LOGOUT_REASON);
+					this.clearReconnectTimer();
 					this.clearPairingSecrets();
-					this.status = "stopped";
-					this.lastDisconnectReason = undefined;
-					this.fatalReason = undefined;
+					this.fatalReason = REMOTE_LOGOUT_REASON;
+					this.lastDisconnectReason = REMOTE_LOGOUT_REASON;
+					this.logger.error(
+						{ reason: REMOTE_LOGOUT_REASON },
+						"WhatsApp linked-device auth quarantined; explicit repair required",
+					);
 				} catch (error: unknown) {
-					this.markStateFatal("physical_auth_reset", asError(error));
+					this.markStateFatal("physical_auth_quarantine", asError(error));
 				}
 				return;
 			}

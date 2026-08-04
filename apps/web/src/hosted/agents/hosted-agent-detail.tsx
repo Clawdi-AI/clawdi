@@ -70,6 +70,7 @@ import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
+	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
@@ -280,6 +281,7 @@ import { DiscordPairDialog } from "@/hosted/v2/channels/discord-pair-dialog";
 import { PairedChatsDialog } from "@/hosted/v2/channels/paired-chats-dialog";
 import { ProviderLinkReplacementConfirm } from "@/hosted/v2/channels/provider-link-replacement-confirm";
 import { TelegramPairDialog } from "@/hosted/v2/channels/telegram-pair-dialog";
+import { WhatsAppDeviceOnboarding } from "@/hosted/v2/channels/whatsapp-device-onboarding";
 import { WhatsAppPairDialog } from "@/hosted/v2/channels/whatsapp-pair-dialog";
 import {
 	type AgentRouteSearch,
@@ -2319,6 +2321,12 @@ function ChannelsTab({
 		channelName: string;
 		open: boolean;
 	} | null>(null);
+	const [whatsappRepair, setWhatsappRepair] = useState<{
+		accountId: string;
+		channelName: string;
+		replaceExistingProviderLink: boolean;
+		started: boolean;
+	} | null>(null);
 	const [customBotDialogOpen, setCustomBotDialogOpen] = useState(false);
 	const linkingAccountIdsRef = useRef<Set<string>>(new Set());
 	const [linkingAccountIds, setLinkingAccountIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -2462,6 +2470,19 @@ function ChannelsTab({
 			});
 			return;
 		} catch (error) {
+			if (
+				error instanceof ApiError &&
+				error.status === 409 &&
+				error.detail === "whatsapp_repair_required"
+			) {
+				setWhatsappRepair({
+					accountId: channelId,
+					channelName: accountSummaries.get(channelId)?.name ?? "Custom WhatsApp",
+					replaceExistingProviderLink,
+					started: false,
+				});
+				return;
+			}
 			if (error instanceof ApiError && error.status === 409) {
 				const refreshed = await linked.refetch();
 				const existing = activeAgentLinkForAccount({
@@ -2697,6 +2718,62 @@ function ChannelsTab({
 					channelName={whatsappPair.channelName}
 					bindingCount={bindingCountForLink(whatsappPair.agentLinkId)}
 				/>
+			) : null}
+			{whatsappRepair ? (
+				<Dialog
+					open
+					onOpenChange={(open) => {
+						if (!open) setWhatsappRepair(null);
+					}}
+				>
+					<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md">
+						<DialogHeader>
+							<DialogTitle>Repair WhatsApp before linking</DialogTitle>
+							<DialogDescription>
+								<span className="font-medium text-foreground">{whatsappRepair.channelName}</span>{" "}
+								needs a fresh linked-device connection. The Custom bot, existing Agent Links, paired
+								chats, and history stay unchanged.
+							</DialogDescription>
+						</DialogHeader>
+						{whatsappRepair.started ? (
+							<WhatsAppDeviceOnboarding
+								repairAccountId={whatsappRepair.accountId}
+								onDone={() => {
+									const repaired = whatsappRepair;
+									setWhatsappRepair(null);
+									void submitLink(repaired.accountId, repaired.replaceExistingProviderLink).catch(
+										() => undefined,
+									);
+								}}
+							/>
+						) : (
+							<>
+								<Alert className="border-warning/30 bg-warning-muted">
+									<AlertCircle aria-hidden />
+									<AlertTitle>WhatsApp needs to be reconnected</AlertTitle>
+									<AlertDescription>
+										Repair clears only the invalid linked-device login, then asks you to scan a
+										fresh QR. It does not replace this Custom bot.
+									</AlertDescription>
+								</Alert>
+								<DialogFooter>
+									<Button variant="outline" onClick={() => setWhatsappRepair(null)}>
+										Cancel
+									</Button>
+									<Button
+										onClick={() =>
+											setWhatsappRepair((current) =>
+												current ? { ...current, started: true } : current,
+											)
+										}
+									>
+										Repair WhatsApp
+									</Button>
+								</DialogFooter>
+							</>
+						)}
+					</DialogContent>
+				</Dialog>
 			) : null}
 		</div>
 	);

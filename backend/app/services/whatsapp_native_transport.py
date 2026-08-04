@@ -51,8 +51,9 @@ _PAIRING_CODE_PATH = "/v1/pairing/code"
 _PAIRING_CANCEL_PATH = "/v1/pairing/cancel"
 _PAIRING_LOGOUT_PATH = "/v1/pairing/logout"
 _PAIRING_RETRY_PATH = "/v1/pairing/retry"
+_PAIRING_RECOVER_PATH = "/v1/pairing/recover"
 _MAX_PAIRING_JSON_BYTES = 128 * 1024
-_PAIRING_ACTIONS = frozenset({"qr", "code", "cancel", "logout", "retry"})
+_PAIRING_ACTIONS = frozenset({"qr", "code", "cancel", "logout", "retry", "recover"})
 _EXPECTED_BAILEYS_RELEASE = {
     "packageName": "@whiskeysockets/baileys",
     "packageVersion": "7.0.0-rc14",
@@ -94,6 +95,7 @@ class WhatsAppSidecarHealth:
     connected: bool
     registered: bool
     account_jid: str | None = field(default=None, repr=False)
+    last_disconnect_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -294,6 +296,7 @@ class WhatsAppBaileysSidecarClient:
             connected=connected,
             registered=_required_bool(payload, "registered"),
             account_jid=_sidecar_account_jid(payload.get("user")),
+            last_disconnect_reason=_sidecar_disconnect_reason(payload.get("lastDisconnectReason")),
         )
 
     async def capabilities(self) -> WhatsAppSidecarCapabilities:
@@ -347,6 +350,11 @@ class WhatsAppBaileysSidecarClient:
     async def pairing_retry(self) -> WhatsAppSidecarPairingStatus:
         return self._remember_pairing_status(
             _pairing_status(await self._request_json("POST", _PAIRING_RETRY_PATH))
+        )
+
+    async def pairing_recover(self) -> WhatsAppSidecarPairingStatus:
+        return self._remember_pairing_status(
+            _pairing_status(await self._request_json("POST", _PAIRING_RECOVER_PATH))
         )
 
     def _remember_pairing_status(
@@ -691,6 +699,14 @@ def _sidecar_account_jid(value: JsonValue | None) -> str | None:
     if not isinstance(account_jid, str) or not account_jid or len(account_jid) > 128:
         return None
     return account_jid
+
+
+def _sidecar_disconnect_reason(value: JsonValue | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value or len(value) > 128:
+        raise WhatsAppSidecarProtocolError("invalid Baileys sidecar disconnect reason")
+    return value
 
 
 def whatsapp_phone_number_from_pn_jid(account_jid: str | None) -> str | None:

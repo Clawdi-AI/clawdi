@@ -39,9 +39,23 @@ import {
 
 type WhatsAppConnectMode = "overview" | "custom";
 
-export function WhatsAppDeviceOnboarding({ onDone }: { onDone: () => void }) {
+export function WhatsAppDeviceOnboarding({
+	onDone,
+	repairAccountId,
+}: {
+	onDone: () => void;
+	repairAccountId?: string;
+}) {
 	const [mode, setMode] = useState<WhatsAppConnectMode>("overview");
-	const readiness = useWhatsAppOnboardingReadiness(true);
+	const readiness = useWhatsAppOnboardingReadiness(!repairAccountId);
+
+	if (repairAccountId) {
+		return (
+			<div data-hosted="true" data-v2="true">
+				<YourWhatsAppFlow onBack={onDone} onDone={onDone} repairAccountId={repairAccountId} />
+			</div>
+		);
+	}
 
 	if (mode === "custom") {
 		return (
@@ -91,7 +105,15 @@ export function WhatsAppDeviceOnboarding({ onDone }: { onDone: () => void }) {
 	);
 }
 
-function YourWhatsAppFlow({ onBack, onDone }: { onBack: () => void; onDone: () => void }) {
+function YourWhatsAppFlow({
+	onBack,
+	onDone,
+	repairAccountId,
+}: {
+	onBack: () => void;
+	onDone: () => void;
+	repairAccountId?: string;
+}) {
 	const actions = useWhatsAppOnboardingActions();
 	const [name, setName] = useState("");
 	const [phoneNumber, setPhoneNumber] = useState("");
@@ -102,8 +124,10 @@ function YourWhatsAppFlow({ onBack, onDone }: { onBack: () => void; onDone: () =
 	const sessionRef = useRef<WhatsAppOnboardingSession | null>(null);
 	const startLockedRef = useRef(false);
 	const startRequestIdRef = useRef<string | null>(null);
+	const repairStartedRef = useRef(false);
 	const mountedRef = useRef(true);
 	const cancelSession = actions.cancel.execute;
+	const repairAccount = actions.repair.execute;
 
 	function setSession(next: WhatsAppOnboardingSession | null) {
 		sessionRef.current = next;
@@ -125,6 +149,22 @@ function YourWhatsAppFlow({ onBack, onDone }: { onBack: () => void; onDone: () =
 			}
 		};
 	}, [cancelSession]);
+
+	useEffect(() => {
+		if (!repairAccountId || repairStartedRef.current) return;
+		repairStartedRef.current = true;
+		void repairAccount(repairAccountId)
+			.then((next) => {
+				if (mountedRef.current) {
+					setSession(next);
+				} else if (whatsappOnboardingRequiresCleanup(next.state)) {
+					void cancelSession(next.id).catch(() => undefined);
+				}
+			})
+			.catch(() => {
+				if (mountedRef.current) setRequestError(true);
+			});
+	}, [repairAccount, repairAccountId]);
 
 	useEffect(() => {
 		if (!session || !whatsappOnboardingShouldPoll(session.state)) return;
@@ -213,7 +253,58 @@ function YourWhatsAppFlow({ onBack, onDone }: { onBack: () => void; onDone: () =
 		}
 	}
 
+	function retryRepairStart() {
+		if (!repairAccountId || actions.repair.isPending) return;
+		setRequestError(false);
+		void repairAccount(repairAccountId)
+			.then((next) => {
+				repairStartedRef.current = true;
+				if (mountedRef.current) {
+					setSession(next);
+				} else if (whatsappOnboardingRequiresCleanup(next.state)) {
+					void cancelSession(next.id).catch(() => undefined);
+				}
+			})
+			.catch(() => {
+				repairStartedRef.current = true;
+				if (mountedRef.current) setRequestError(true);
+			});
+	}
+
 	if (!session) {
+		if (repairAccountId) {
+			return (
+				<div className="min-w-0 space-y-4" data-whatsapp-onboarding-state="repairing">
+					{requestError ? (
+						<>
+							<PairingNotice title="Couldn't start WhatsApp repair">
+								The connection status may be temporarily unavailable. Your account and history were
+								not removed.
+							</PairingNotice>
+							<PairingDialogActions>
+								<Button type="button" variant="outline" onClick={onBack}>
+									Close
+								</Button>
+								<Button
+									type="button"
+									disabled={actions.repair.isPending}
+									onClick={retryRepairStart}
+								>
+									<RefreshCw className="size-4" />
+									Try again
+								</Button>
+							</PairingDialogActions>
+						</>
+					) : (
+						<CenteredState
+							icon={<Spinner className="size-6" />}
+							title="Preparing WhatsApp repair…"
+							description="Checking the saved device session before generating a new QR code."
+						/>
+					)}
+				</div>
+			);
+		}
 		return (
 			<div className="min-w-0 space-y-4" data-whatsapp-onboarding-state="name">
 				<button
@@ -277,6 +368,7 @@ function YourWhatsAppFlow({ onBack, onDone }: { onBack: () => void; onDone: () =
 		>
 			<WhatsAppSessionState
 				session={session}
+				repairing={Boolean(repairAccountId)}
 				nowMs={nowMs}
 				phoneNumber={phoneNumber}
 				onPhoneNumberChange={setPhoneNumber}
@@ -296,7 +388,7 @@ function YourWhatsAppFlow({ onBack, onDone }: { onBack: () => void; onDone: () =
 			{session.state === "connected" ? (
 				<Button type="button" className="w-full min-w-0 whitespace-normal" onClick={onDone}>
 					<Bot className="size-4 shrink-0" />
-					Review Custom bots
+					{repairAccountId ? "Done" : "Review Custom bots"}
 				</Button>
 			) : session.state === "expired" || session.state === "error" ? (
 				<PairingDialogActions>
@@ -339,6 +431,7 @@ function YourWhatsAppFlow({ onBack, onDone }: { onBack: () => void; onDone: () =
 
 export function WhatsAppSessionState({
 	session,
+	repairing = false,
 	nowMs,
 	phoneNumber,
 	onPhoneNumberChange,
@@ -346,6 +439,7 @@ export function WhatsAppSessionState({
 	pairingCodePending,
 }: {
 	session: WhatsAppOnboardingSession;
+	repairing?: boolean;
 	nowMs: number;
 	phoneNumber: string;
 	onPhoneNumberChange: (value: string) => void;
@@ -369,7 +463,11 @@ export function WhatsAppSessionState({
 			<CenteredState
 				icon={<CheckCircle2 className="size-7 text-success" />}
 				title="WhatsApp account connected"
-				description="It is now under Custom bots, but is not ready on an Agent yet. Next, Link it to an Agent, then Pair an authorized chat."
+				description={
+					repairing
+						? "The WhatsApp device is reconnected. Existing Custom bot settings, Agent Links, paired chats, and history stay unchanged."
+						: "It is now under Custom bots, but is not ready on an Agent yet. Next, Link it to an Agent, then Pair an authorized chat."
+				}
 			/>
 		);
 	}

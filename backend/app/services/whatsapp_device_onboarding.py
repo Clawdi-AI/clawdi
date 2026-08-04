@@ -33,6 +33,7 @@ from app.schemas.channel import (
 from app.services.channels import (
     build_channel_account,
     generate_webhook_secret,
+    get_owned_private_channel_account,
     hash_token,
     require_channel_tenant_user_id,
 )
@@ -40,6 +41,7 @@ from app.services.principal_lifecycle import assert_user_authority_active
 from app.services.whatsapp_native_transport import (
     WhatsAppSidecarCapabilities,
     WhatsAppSidecarError,
+    WhatsAppSidecarHealth,
     WhatsAppSidecarPairingStatus,
     WhatsAppSidecarProtocolError,
     WhatsAppSidecarUnavailableError,
@@ -53,7 +55,14 @@ WHATSAPP_ONBOARDING_TTL = timedelta(minutes=5)
 _E164_DIGITS = re.compile(r"^[1-9][0-9]{6,14}$")
 _ALLOCATION_LOCK_ID = 8_071_323_912
 _LOGOUT_RECOVERY_TTL_SECONDS = 10.0
+_WhatsAppRepairReason = Literal["remote_logged_out", "unregistered"]
 _UNRELEASED_SESSION_STATES = (*WHATSAPP_ONBOARDING_ACTIVE_STATES, WHATSAPP_ONBOARDING_STATE_ERROR)
+_REPAIR_IN_PROGRESS_STATES = (
+    WHATSAPP_ONBOARDING_STATE_GENERATING,
+    WHATSAPP_ONBOARDING_STATE_READY,
+    WHATSAPP_ONBOARDING_STATE_SCANNED,
+    WHATSAPP_ONBOARDING_STATE_ERROR,
+)
 _WHATSAPP_ONBOARDING_STATES = frozenset(
     {
         WHATSAPP_ONBOARDING_STATE_GENERATING,
@@ -344,7 +353,7 @@ async def cancel_whatsapp_onboarding(
         )
     try:
         await client.health()
-        canceled = await stop_whatsapp_pairing(client)
+        canceled = await stop_whatsapp_pairing(client, allow_remote_logout_recovery=True)
     except WhatsAppSidecarError:
         await _mark_session_error(db, onboarding)
         raise HTTPException(
@@ -385,10 +394,40 @@ async def retry_whatsapp_onboarding(
         )
 
     if onboarding.channel_account_id is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This WhatsApp connection cannot be retried",
+        account = await get_owned_private_channel_account(
+            db,
+            account_id=onboarding.channel_account_id,
+            user_id=user_id,
         )
+        try:
+            physical_session_id, config_revision = _custom_account_session(
+                account,
+                registry=registry,
+            )
+        except WhatsAppSidecarError:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This WhatsApp connection cannot be retried",
+            ) from None
+        if (
+            physical_session_id != onboarding.sidecar_account_id
+            or config_revision != onboarding.sidecar_config_revision
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This WhatsApp connection cannot be retried",
+            )
+        try:
+            await registry.prepare_custom_account_repair(
+                session_id=physical_session_id,
+                account_id=account.id,
+                config_revision=config_revision,
+            )
+        except WhatsAppSidecarError:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="WhatsApp account repair is temporarily unavailable",
+            ) from None
     if onboarding.state == WHATSAPP_ONBOARDING_STATE_ERROR:
         await _confirm_stopped(onboarding, registry=registry)
     await db.commit()
@@ -432,6 +471,202 @@ async def retry_whatsapp_onboarding(
     return response
 
 
+async def repair_whatsapp_account(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    account_id: UUID,
+    registry: ConfiguredWhatsAppSidecarRegistry | None,
+) -> ChannelWhatsAppOnboardingSessionResponse:
+    """Start an owner-requested re-pair without replacing the durable account."""
+
+    if registry is None or not registry.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WhatsApp account repair is not configured",
+        )
+    await _lock_allocation(db)
+    account = await get_owned_private_channel_account(
+        db,
+        account_id=account_id,
+        user_id=user_id,
+    )
+    if account.provider != CHANNEL_PROVIDER_WHATSAPP:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel not found")
+    try:
+        session_id, config_revision = _custom_account_session(account, registry=registry)
+    except WhatsAppSidecarError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This WhatsApp account cannot be repaired",
+        ) from None
+    existing = await db.scalar(
+        select(ChannelWhatsAppOnboardingSession)
+        .where(
+            ChannelWhatsAppOnboardingSession.ownership_kind == WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
+            ChannelWhatsAppOnboardingSession.user_id == user_id,
+            ChannelWhatsAppOnboardingSession.channel_account_id == account.id,
+            ChannelWhatsAppOnboardingSession.sidecar_account_id == session_id,
+            ChannelWhatsAppOnboardingSession.state.in_(_REPAIR_IN_PROGRESS_STATES),
+        )
+        .order_by(ChannelWhatsAppOnboardingSession.created_at.desc())
+    )
+    if existing is not None:
+        await db.commit()
+        return _session_response(existing, manual_pairing_code_supported=False)
+
+    client = registry.get_custom_lifecycle_client(
+        session_id,
+        config_revision=config_revision,
+    )
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WhatsApp account repair is temporarily unavailable",
+        )
+    try:
+        capabilities = await client.capabilities()
+        health = await client.health()
+        pairing = await client.pairing_status()
+    except WhatsAppSidecarError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WhatsApp account repair is temporarily unavailable",
+        ) from None
+    if health.registered != pairing.registered:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WhatsApp account repair is temporarily unavailable",
+        )
+    repair_reason = _repair_reason(health)
+    if repair_reason is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This WhatsApp account does not need repair",
+        )
+
+    now = datetime.now(UTC)
+    onboarding = ChannelWhatsAppOnboardingSession(
+        ownership_kind=WHATSAPP_ONBOARDING_OWNERSHIP_CUSTOM,
+        sidecar_account_id=session_id,
+        sidecar_config_revision=config_revision,
+        channel_account_id=account.id,
+        user_id=user_id,
+        request_id=uuid4(),
+        name=account.name,
+        state=WHATSAPP_ONBOARDING_STATE_GENERATING,
+        method="qr",
+        started_at=now,
+        expires_at=now + WHATSAPP_ONBOARDING_TTL,
+    )
+    db.add(onboarding)
+    await db.flush()
+    await db.commit()
+    onboarding = await _owned_session(db, user_id=user_id, session_id=onboarding.id)
+    try:
+        client = await registry.prepare_custom_account_repair(
+            session_id=session_id,
+            account_id=account.id,
+            config_revision=config_revision,
+        )
+        if repair_reason == "remote_logged_out":
+            recovered = await client.pairing_recover()
+            if recovered.status != "stopped" or recovered.registered:
+                raise WhatsAppSidecarProtocolError("custom Baileys recovery was not confirmed")
+        pairing = await client.pairing_qr()
+        response = await _apply_pairing_status(
+            db,
+            onboarding=onboarding,
+            pairing=pairing,
+            capabilities=capabilities,
+            registry=registry,
+        )
+    except WhatsAppSidecarError:
+        return await _mark_session_error(db, onboarding)
+    await db.commit()
+    return response
+
+
+async def require_whatsapp_custom_link_ready(
+    account: ChannelAccount,
+    *,
+    registry: ConfiguredWhatsAppSidecarRegistry | None,
+) -> None:
+    """Fail a Custom WhatsApp Link unless its physical transport is usable."""
+
+    config = account.config if isinstance(account.config, dict) else {}
+    if (
+        account.provider != CHANNEL_PROVIDER_WHATSAPP
+        or config.get("connection_mode") != "baileys_custom"
+    ):
+        return
+    if registry is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="whatsapp_connection_temporarily_unavailable",
+        )
+    try:
+        session_id, config_revision = _custom_account_session(account, registry=registry)
+    except WhatsAppSidecarError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="whatsapp_connection_temporarily_unavailable",
+        ) from None
+    client = registry.get_custom_lifecycle_client(
+        session_id,
+        config_revision=config_revision,
+    )
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="whatsapp_connection_temporarily_unavailable",
+        )
+    try:
+        health = await client.health()
+    except WhatsAppSidecarError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="whatsapp_connection_temporarily_unavailable",
+        ) from None
+    if _repair_reason(health) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="whatsapp_repair_required",
+        )
+    if not health.connected:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="whatsapp_connection_temporarily_unavailable",
+        )
+
+
+def _repair_reason(health: WhatsAppSidecarHealth) -> _WhatsAppRepairReason | None:
+    if health.last_disconnect_reason == "remote_logged_out":
+        return "remote_logged_out"
+    if not health.registered:
+        return "unregistered"
+    return None
+
+
+def _custom_account_session(
+    account: ChannelAccount,
+    *,
+    registry: ConfiguredWhatsAppSidecarRegistry,
+) -> tuple[UUID, str]:
+    config = account.config if isinstance(account.config, dict) else {}
+    raw_session_id = config.get("sidecar_account_id")
+    config_revision = config.get("sidecar_config_revision")
+    if config.get("connection_mode") != "baileys_custom" or not isinstance(config_revision, str):
+        raise WhatsAppSidecarProtocolError("custom Baileys account identity is unavailable")
+    try:
+        session_id = UUID(raw_session_id) if isinstance(raw_session_id, str) else None
+    except ValueError:
+        session_id = None
+    if session_id is None or registry.custom_session_revision(session_id) != config_revision:
+        raise WhatsAppSidecarProtocolError("custom Baileys account identity is unavailable")
+    return session_id, config_revision
+
+
 async def require_whatsapp_logout_for_archive(
     db: AsyncSession,
     *,
@@ -460,7 +695,7 @@ async def require_whatsapp_logout_for_archive(
                 detail="WhatsApp disconnect could not be confirmed",
             )
         try:
-            disconnected = await stop_whatsapp_pairing(client)
+            disconnected = await stop_whatsapp_pairing(client, allow_remote_logout_recovery=True)
         except WhatsAppSidecarError:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -503,7 +738,10 @@ async def require_whatsapp_logout_for_archive(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="WhatsApp disconnect could not be confirmed",
         )
-    client = registry.get_custom_client(sidecar_account_id)
+    client = registry.get_custom_lifecycle_client(
+        sidecar_account_id,
+        config_revision=sidecar_config_revision,
+    )
     if client is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -514,14 +752,18 @@ async def require_whatsapp_logout_for_archive(
         current = await client.pairing_status()
         if health.registered != current.registered:
             raise WhatsAppSidecarProtocolError("custom sidecar registration state drifted")
-        if current.registered:
+        if current.registered and health.last_disconnect_reason != "remote_logged_out":
             await _ensure_connected_transport_for_account(
                 account_id=account.id,
                 session_id=sidecar_account_id,
                 config_revision=sidecar_config_revision,
                 registry=registry,
             )
-        disconnected = await stop_whatsapp_pairing(client, current=current)
+        disconnected = await stop_whatsapp_pairing(
+            client,
+            current=current,
+            allow_remote_logout_recovery=True,
+        )
     except WhatsAppSidecarError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -851,7 +1093,7 @@ async def _confirm_stopped(
         )
     try:
         await client.health()
-        stopped = await stop_whatsapp_pairing(client)
+        stopped = await stop_whatsapp_pairing(client, allow_remote_logout_recovery=True)
     except WhatsAppSidecarError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -868,9 +1110,14 @@ async def stop_whatsapp_pairing(
     client: WhatsAppSidecarClient,
     *,
     current: WhatsAppSidecarPairingStatus | None = None,
+    allow_remote_logout_recovery: bool = False,
 ) -> WhatsAppSidecarPairingStatus:
     observed = current if current is not None else await client.pairing_status()
     if observed.registered:
+        if allow_remote_logout_recovery:
+            health = await client.health()
+            if health.last_disconnect_reason == "remote_logged_out":
+                return await client.pairing_recover()
         return await _logout_registered_pairing(client, current=observed)
     if observed.status == "stopped":
         return observed

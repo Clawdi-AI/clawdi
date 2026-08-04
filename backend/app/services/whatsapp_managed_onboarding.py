@@ -35,6 +35,7 @@ from app.services.whatsapp_device_onboarding import (
 from app.services.whatsapp_native_transport import (
     WhatsAppSidecarError,
     WhatsAppSidecarProtocolError,
+    whatsapp_phone_number_from_pn_jid,
 )
 from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarRegistry
 
@@ -118,10 +119,23 @@ async def start_platform_whatsapp_pairing(
                 status.HTTP_503_SERVICE_UNAVAILABLE, "WhatsApp onboarding unavailable"
             )
         if pairing.registered:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "configured WhatsApp account is already authenticated",
-            )
+            if health.last_disconnect_reason != "remote_logged_out":
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "configured WhatsApp account is already authenticated",
+                )
+            try:
+                recovered = await client.pairing_recover()
+            except WhatsAppSidecarError:
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "WhatsApp recovery could not be confirmed",
+                ) from None
+            if recovered.status != "stopped" or recovered.registered:
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "WhatsApp recovery could not be confirmed",
+                )
     else:
         duplicate_name = await db.scalar(
             select(ChannelAccount.id).where(
@@ -184,7 +198,11 @@ async def cancel_platform_whatsapp_pairing(
         )
     client = registry.get_managed_client(onboarding.sidecar_account_id) if registry else None
     try:
-        stopped = await stop_whatsapp_pairing(client) if client is not None else None
+        stopped = (
+            await stop_whatsapp_pairing(client, allow_remote_logout_recovery=True)
+            if client is not None
+            else None
+        )
     except WhatsAppSidecarError:
         stopped = None
     if stopped is None or stopped.status != "stopped" or stopped.registered:
@@ -248,7 +266,15 @@ async def _refresh(
     if health.registered != pairing.registered:
         return await _error(db, onboarding)
     if health.connected and pairing.status == "connected" and pairing.registered:
-        await _promote(db, onboarding=onboarding, registry=registry)
+        phone_number = whatsapp_phone_number_from_pn_jid(health.account_jid)
+        if phone_number is None:
+            return await _error(db, onboarding)
+        await _promote(
+            db,
+            onboarding=onboarding,
+            registry=registry,
+            phone_number=phone_number,
+        )
         return _response(onboarding)
     if pairing.status == "starting" and not pairing.registered:
         onboarding.state = WHATSAPP_ONBOARDING_STATE_GENERATING
@@ -285,6 +311,7 @@ async def _promote(
     *,
     onboarding: ChannelWhatsAppOnboardingSession,
     registry: ConfiguredWhatsAppSidecarRegistry,
+    phone_number: str,
 ) -> None:
     account_id = onboarding.sidecar_account_id
     session_id = onboarding.id
@@ -302,12 +329,17 @@ async def _promote(
                 config={
                     "connection_mode": "baileys_managed",
                     "sidecar_config_revision": onboarding.sidecar_config_revision,
+                    "phone_number": phone_number,
                 },
             )
             db.add(account)
             await db.flush()
         elif not _matches(account, revision=onboarding.sidecar_config_revision):
             raise WhatsAppSidecarProtocolError("managed WhatsApp identity conflict")
+        else:
+            config = dict(account.config) if isinstance(account.config, dict) else {}
+            config["phone_number"] = phone_number
+            account.config = config
         newly_bound = await registry.bind_managed_account(
             account.id, config_revision=onboarding.sidecar_config_revision
         )

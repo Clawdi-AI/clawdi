@@ -11755,6 +11755,19 @@ class _WhatsAppPairLinkRegistry:
     def get_managed_client(self, account_id: UUID) -> _WhatsAppPairLinkSidecar | None:
         return self._client if account_id == self._account_id else None
 
+    def custom_session_revision(self, session_id: UUID) -> str | None:
+        return self._revision if session_id == self._account_id else None
+
+    def get_custom_lifecycle_client(
+        self,
+        session_id: UUID,
+        *,
+        config_revision: str,
+    ) -> _WhatsAppPairLinkSidecar | None:
+        if session_id != self._account_id or config_revision != self._revision:
+            return None
+        return self._client
+
 
 async def _create_whatsapp_pair_target(
     client: httpx.AsyncClient,
@@ -11819,7 +11832,7 @@ async def test_whatsapp_pair_code_returns_click_to_chat_for_bound_public_managed
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_pair_code_keeps_manual_pairing_when_sidecar_is_unavailable(
+async def test_whatsapp_pair_code_uses_durable_phone_when_sidecar_is_unavailable(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     channel_agent,
@@ -11833,6 +11846,7 @@ async def test_whatsapp_pair_code_keeps_manual_pairing_when_sidecar_is_unavailab
     account.config = {
         "connection_mode": "baileys_managed",
         "sidecar_config_revision": "trusted-managed-revision",
+        "phone_number": "15551234567",
     }
     await db_session.commit()
     sidecar = _WhatsAppPairLinkSidecar(WhatsAppSidecarUnavailableError("unavailable"))
@@ -11846,9 +11860,11 @@ async def test_whatsapp_pair_code_keeps_manual_pairing_when_sidecar_is_unavailab
 
     assert response.status_code == 201, response.text
     pair = response.json()
-    assert pair["deep_link"] is None
-    assert pair["qr_payload"] is None
+    expected = f"https://wa.me/15551234567?text=%2Fclawdi_pair%20{pair['code']}"
+    assert pair["deep_link"] == expected
+    assert pair["qr_payload"] == expected
     assert pair["pairing_command"] == f"/clawdi_pair {pair['code']}"
+    assert sidecar.health_calls == 0
 
 
 @pytest.mark.asyncio
@@ -11863,7 +11879,8 @@ async def test_whatsapp_pair_code_never_links_to_a_private_custom_identity(
     assert account is not None
     account.config = {
         "connection_mode": "baileys_custom",
-        "sidecar_config_revision": "custom-revision",
+        "sidecar_account_id": str(account.id),
+        "sidecar_config_revision": "trusted-managed-revision",
     }
     await db_session.commit()
     sidecar = _WhatsAppPairLinkSidecar(
@@ -11886,7 +11903,7 @@ async def test_whatsapp_pair_code_never_links_to_a_private_custom_identity(
     pair = response.json()
     assert pair["deep_link"] is None
     assert pair["qr_payload"] is None
-    assert sidecar.health_calls == 0
+    assert sidecar.health_calls == 1
 
 
 @pytest.mark.asyncio

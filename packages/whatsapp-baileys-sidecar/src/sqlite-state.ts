@@ -40,6 +40,7 @@ export type ProviderInboxConfig = {
 
 export type ProviderStateFailureOperation =
 	| "auth_creds_write"
+	| "physical_auth_quarantine"
 	| "physical_auth_reset"
 	| "signal_key_read"
 	| "signal_key_write"
@@ -175,6 +176,32 @@ export class SQLiteProviderState {
 		});
 	}
 
+	physicalAuthQuarantineReason(): string | undefined {
+		return this.withFailure("physical_auth_quarantine", () => {
+			const row = this.db
+				.query<{ reason: string }, []>(
+					"SELECT reason FROM physical_auth_quarantine WHERE singleton = 1",
+				)
+				.get();
+			return row?.reason;
+		});
+	}
+
+	quarantinePhysicalAuth(reason: string): void {
+		this.withFailure("physical_auth_quarantine", () => {
+			if (!/^[a-z][a-z0-9_]{0,63}$/.test(reason)) {
+				throw new Error("invalid physical auth quarantine reason");
+			}
+			this.transaction(() => {
+				this.db
+					.query(
+						"INSERT OR REPLACE INTO physical_auth_quarantine (singleton, reason) VALUES (1, ?)",
+					)
+					.run(reason);
+			});
+		});
+	}
+
 	appendProviderEvents(events: readonly ProviderMessageEventInput[]): void {
 		if (events.length === 0) return;
 		this.withFailure("provider_inbox_write", () => {
@@ -252,6 +279,7 @@ export class SQLiteProviderState {
 			const serialized = serializeBufferJson(fresh, "Baileys auth credentials");
 			this.transaction(() => {
 				this.db.exec(`
+					DELETE FROM physical_auth_quarantine;
 					DELETE FROM signal_keys;
 					DELETE FROM retry_cache;
 					DELETE FROM retry_messages;
@@ -596,6 +624,10 @@ function createSchema(db: Database): void {
 		CREATE TABLE IF NOT EXISTS auth_creds (
 			singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
 			value TEXT NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS physical_auth_quarantine (
+			singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+			reason TEXT NOT NULL CHECK (length(reason) BETWEEN 1 AND 64)
 		);
 		CREATE TABLE IF NOT EXISTS signal_keys (
 			category TEXT NOT NULL,

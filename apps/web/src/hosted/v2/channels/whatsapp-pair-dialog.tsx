@@ -27,6 +27,8 @@ import {
 	PairingNotice,
 	PairingQrCode,
 } from "@/hosted/v2/channels/pairing-dialog-ui";
+import { WhatsAppDeviceOnboarding } from "@/hosted/v2/channels/whatsapp-device-onboarding";
+import { ApiError } from "@/lib/api";
 
 const WHATSAPP_PAIR_TTL_SECONDS = 300;
 
@@ -62,6 +64,7 @@ export function WhatsAppPairDialog({
 	const [result, setResult] = useState<WhatsAppPairResult | null>(null);
 	const [requestError, setRequestError] = useState<unknown>(null);
 	const [generating, setGenerating] = useState(false);
+	const [repairing, setRepairing] = useState(false);
 	const [nowMs, setNowMs] = useState(() => Date.now());
 	const openKeyRef = useRef<string | null>(null);
 	const sessionRef = useRef(0);
@@ -151,6 +154,10 @@ export function WhatsAppPairDialog({
 				})
 			: null;
 	const accountIdentity = channelName?.trim() || "this WhatsApp account";
+	const repairRequired =
+		requestError instanceof ApiError &&
+		requestError.status === 409 &&
+		requestError.detail === "whatsapp_repair_required";
 
 	return (
 		<Dialog
@@ -159,6 +166,7 @@ export function WhatsAppPairDialog({
 			onOpenChangeComplete={(nextOpen) => {
 				if (nextOpen) return;
 				setGenerating(false);
+				setRepairing(false);
 				setRequestError(null);
 				setResult(null);
 				onCloseComplete?.();
@@ -174,6 +182,30 @@ export function WhatsAppPairDialog({
 				<PairingDialogBody data-whatsapp-pair-dialog-body>
 					{generating ? (
 						<PairingLoading>Creating a WhatsApp pair code…</PairingLoading>
+					) : repairRequired ? (
+						repairing ? (
+							<WhatsAppDeviceOnboarding
+								repairAccountId={accountId}
+								onDone={() => {
+									setRepairing(false);
+									setRequestError(null);
+									void generate();
+								}}
+							/>
+						) : (
+							<div className="space-y-4">
+								<PairingNotice title="WhatsApp needs repair before pairing">
+									Reconnect this Custom WhatsApp account first. The bot, Agent Links, paired chats,
+									and history stay unchanged.
+								</PairingNotice>
+								<PairingDialogActions>
+									<Button variant="outline" onClick={() => requestOpenChange(false)}>
+										Cancel
+									</Button>
+									<Button onClick={() => setRepairing(true)}>Repair WhatsApp</Button>
+								</PairingDialogActions>
+							</div>
+						)
 					) : requestError ? (
 						<ApiErrorPanel
 							error={requestError}

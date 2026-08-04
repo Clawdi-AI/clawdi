@@ -207,12 +207,34 @@ describe("SQLite provider state", () => {
 		second.close();
 	});
 
+	it("persists physical-auth quarantine and clears it only with explicit auth reset", () => {
+		const directory = makeDirectory();
+		const first = makeState(directory);
+		first.saveCreds({ registered: true, me: REGISTERED_ME });
+		first.quarantinePhysicalAuth("remote_logged_out");
+		expect(first.physicalAuthQuarantineReason()).toBe("remote_logged_out");
+		first.close();
+
+		const second = makeState(directory);
+		expect(second.state.creds.registered).toBe(true);
+		expect(second.physicalAuthQuarantineReason()).toBe("remote_logged_out");
+		second.resetPhysicalAuth();
+		expect(second.physicalAuthQuarantineReason()).toBeUndefined();
+		second.close();
+
+		const third = makeState(directory);
+		expect(third.state.creds.registered).toBe(false);
+		expect(third.physicalAuthQuarantineReason()).toBeUndefined();
+		third.close();
+	});
+
 	it("rolls back and reports a failed physical-auth reset", async () => {
 		const failures: ProviderStateFailureOperation[] = [];
 		const state = makeState(makeDirectory(), {
 			onFailure: (operation) => failures.push(operation),
 		});
 		state.saveCreds({ registered: true, me: REGISTERED_ME });
+		state.quarantinePhysicalAuth("remote_logged_out");
 		await state.state.keys.set({ session: { sender: Buffer.from([1]) } });
 		internalDatabase(state).exec(`
 			CREATE TRIGGER fail_auth_reset BEFORE INSERT ON auth_creds
@@ -221,6 +243,7 @@ describe("SQLite provider state", () => {
 
 		expect(() => state.resetPhysicalAuth()).toThrow("injected auth reset failure");
 		expect(state.state.creds.registered).toBe(true);
+		expect(state.physicalAuthQuarantineReason()).toBe("remote_logged_out");
 		expect(await state.state.keys.get("session", ["sender"])).toEqual({
 			sender: Buffer.from([1]),
 		});

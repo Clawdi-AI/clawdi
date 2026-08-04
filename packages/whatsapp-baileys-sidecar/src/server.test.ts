@@ -40,7 +40,7 @@ class FakeRuntime implements BaileysRuntime {
 	capabilities() {
 		return {
 			schemaVersion: "clawdi.whatsapp.sidecar-capabilities.v1",
-			pairing: ["qr", "code", "cancel", "logout", "retry"],
+			pairing: ["qr", "code", "cancel", "logout", "retry", "recover"],
 			rawProviderAccess: false,
 		} as const;
 	}
@@ -73,6 +73,10 @@ class FakeRuntime implements BaileysRuntime {
 
 	async retryPairing(): Promise<PairingStatus> {
 		return this.pairingStatus();
+	}
+
+	async recoverPairing(): Promise<PairingStatus> {
+		return { status: "stopped", registered: false };
 	}
 
 	async relayMessage(request: RelayMessageRequest): Promise<string> {
@@ -173,6 +177,7 @@ describe("sidecar HTTP contract", () => {
 			[`${SESSION_PREFIX}/pairing/cancel`, { method: "POST" }],
 			[`${SESSION_PREFIX}/pairing/logout`, { method: "POST" }],
 			[`${SESSION_PREFIX}/pairing/retry`, { method: "POST" }],
+			[`${SESSION_PREFIX}/pairing/recover`, { method: "POST" }],
 		];
 
 		for (const [path, init] of requests) {
@@ -195,6 +200,7 @@ describe("sidecar HTTP contract", () => {
 			[`${SESSION_PREFIX}/pairing/cancel`, { method: "POST" }],
 			[`${SESSION_PREFIX}/pairing/logout`, { method: "POST" }],
 			[`${SESSION_PREFIX}/pairing/retry`, { method: "POST" }],
+			[`${SESSION_PREFIX}/pairing/recover`, { method: "POST" }],
 		];
 
 		for (const [path, init] of requests) {

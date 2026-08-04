@@ -71,6 +71,9 @@ config.roles.each do |role|
 end
 config.accessories.each do |accessory|
   command = Kamal::Commands::Accessory.new(config, name: accessory.name).run
+  unless command.each_cons(2).include?([ "--restart", "unless-stopped" ])
+    raise "#{accessory.name} does not survive an ordinary host restart"
+  end
   unless command.each_cons(2).include?(expected_logging_args)
     raise "#{accessory.name} logging did not render journald"
   end

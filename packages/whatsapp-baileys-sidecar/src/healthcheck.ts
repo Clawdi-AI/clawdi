@@ -2,16 +2,44 @@ import { type RequestOptions, request } from "node:http";
 import { basename, resolve } from "node:path";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+const SESSION_ID_PATTERN =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-export async function checkSidecarHealth(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+export async function checkSidecarHealth(
+	env: NodeJS.ProcessEnv = process.env,
+	sessionIds: readonly string[] = [],
+): Promise<void> {
 	const token = required(env.CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN, "sidecar token");
 	const endpoint = healthEndpoint(env);
+	const service = await requestHealth(endpoint, token, "/v1/health");
+	if (
+		!isRecord(service) ||
+		service.schemaVersion !== "clawdi.whatsapp.sidecar-health.v1" ||
+		service.ready !== true
+	) {
+		throw new Error("sidecar health identity mismatch");
+	}
+	for (const sessionId of sessionIds) {
+		if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error("invalid sidecar session id");
+		const session = await requestHealth(endpoint, token, `/v1/sessions/${sessionId}/health`);
+		if (
+			!isRecord(session) ||
+			session.sessionId !== sessionId ||
+			session.status !== "connected" ||
+			session.connected !== true ||
+			session.registered !== true
+		) {
+			throw new Error("sidecar session did not recover");
+		}
+	}
+}
 
-	await new Promise<void>((resolveHealth, rejectHealth) => {
+function requestHealth(endpoint: RequestOptions, token: string, path: string): Promise<unknown> {
+	return new Promise<unknown>((resolveHealth, rejectHealth) => {
 		const healthRequest = request(
 			{
 				...endpoint,
-				path: "/v1/health",
+				path,
 				method: "GET",
 				headers: { authorization: `Bearer ${token}` },
 				timeout: 4_000,
@@ -23,18 +51,8 @@ export async function checkSidecarHealth(env: NodeJS.ProcessEnv = process.env): 
 				response.on("end", () => {
 					try {
 						const body: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-						if (
-							response.statusCode !== 200 ||
-							typeof body !== "object" ||
-							body === null ||
-							!("schemaVersion" in body) ||
-							body.schemaVersion !== "clawdi.whatsapp.sidecar-health.v1" ||
-							!("ready" in body) ||
-							body.ready !== true
-						) {
-							throw new Error("sidecar health identity mismatch");
-						}
-						resolveHealth();
+						if (response.statusCode !== 200) throw new Error("sidecar health request failed");
+						resolveHealth(body);
 					} catch (error: unknown) {
 						rejectHealth(error);
 					}
@@ -45,6 +63,10 @@ export async function checkSidecarHealth(env: NodeJS.ProcessEnv = process.env): 
 		healthRequest.once("error", rejectHealth);
 		healthRequest.end();
 	});
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function healthEndpoint(env: NodeJS.ProcessEnv): RequestOptions {
@@ -92,4 +114,4 @@ function nonEmpty(value: string | undefined): string | undefined {
 	return text ? text : undefined;
 }
 
-if (import.meta.main) await checkSidecarHealth();
+if (import.meta.main) await checkSidecarHealth(process.env, process.argv.slice(2));
