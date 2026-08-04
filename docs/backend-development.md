@@ -78,7 +78,7 @@ uv run python -m compileall app scripts tests alembic
 ## Python type governance
 
 BasedPyright runs from the uv development environment. The owned gate covers
-all 185 production modules in standard mode and applies strict mode to 182 of
+all 185 production modules in standard mode and applies strict mode to 183 of
 them. CI also sends every changed `backend/app/**/*.py` file to the fail-closed
 exact-path gate. The gate rejects empty, missing, partial, or malformed
 analysis rather than treating it as success. Its production-file discovery is
@@ -112,16 +112,16 @@ used. Non-production counts may vary in a host-local environment with a
 different interpreter; the production `app` result is the zero-diagnostic
 invariant. Every first-party production module is clean in its owned gate.
 
-The strict-equivalent production audit reports 36 diagnostics across two
-retained standard-mode adapters and one runtime-observation compatibility
-module with byte-frozen symbols; the other 182 production files are
+The strict-equivalent production audit reports 34 diagnostics across one
+retained standard-mode adapter and one runtime-observation compatibility
+module with byte-frozen symbols; the other 183 production files are
 strict-clean. The five reviewed SDK boundary owners have these exact gates:
 
 | SDK boundary | Gate / diagnostics | Locked upstream and first-party normalization |
 | --- | --- | --- |
 | `core/sentry.py` | strict / 0 | `sentry-sdk==2.66.1`; typed `Event`/`Hint` enter one recursive object boundary, credential-shaped keys are redacted, and no SDK response enters application state. |
 | `services/composio.py` | strict / 0 | `composio==0.18.1`, `composio-client==1.43.0`, `mcp==2.0.0`; generated request types and exact first-party Pydantic wire models cover every consumed SDK/MCP result, while SDK error families map to sanitized domain failures. |
-| `services/file_store_s3.py` | standard / 2 | `boto3==1.43.14`, `botocore==1.43.14`, `boto3-stubs==1.43.14`, `botocore-stubs==1.43.14`, and `mypy-boto3-s3==1.43.14`; only the two untyped `boto3.client("s3")` construction calls remain Unknown. The adapter retains the generated `S3Client` internally and validates operation metadata, error payloads, `StreamingBody`, and bytes before returning. |
+| `services/file_store_s3.py` | strict / 0 | `boto3==1.43.14`, `botocore==1.43.14`, `boto3-stubs==1.43.14`, `boto3-stubs-full==1.43.14`, and `botocore-stubs==1.43.14`; the all-in-one generated service bundle resolves the complete public `boto3.client` overload while the S3 literal overload returns the generated `S3Client`. The runtime construction call is unchanged, and the adapter validates operation metadata, error payloads, `StreamingBody`, and bytes before returning. |
 | `services/memory_provider_mem0.py` | standard / 19 | Optional `mem0ai==2.0.14` publishes no `py.typed`; strict-mode missing-stub and Unknown diagnostics stay localized to the two official lazy import blocks and the five public operation callables. Construction uses the public `MemoryClient` path, each consumed operation is checked for existence and callability, and strict Pydantic wire models validate add/search/list/count/get/delete results before domain conversion. See the [official export](https://github.com/mem0ai/mem0/blob/v2.0.14/mem0/__init__.py) and [client source](https://github.com/mem0ai/mem0/blob/v2.0.14/mem0/client/main.py). |
 | `services/postgres_listener.py` | strict / 0 | `asyncpg==0.31.0`, `asyncpg-stubs==0.31.3`; listener callbacks accept a validated string payload only, and connection/listener failures map to `PostgresListenerError`. |
 
@@ -129,8 +129,17 @@ The five Boto distributions use their latest common public patch, 1.43.14:
 [boto3](https://pypi.org/pypi/boto3/1.43.14/json),
 [botocore](https://pypi.org/pypi/botocore/1.43.14/json),
 [boto3-stubs](https://pypi.org/pypi/boto3-stubs/1.43.14/json),
-[botocore-stubs](https://pypi.org/pypi/botocore-stubs/1.43.14/json), and
-[mypy-boto3-s3](https://pypi.org/pypi/mypy-boto3-s3/1.43.14/json).
+[boto3-stubs-full](https://pypi.org/pypi/boto3-stubs-full/1.43.14/json), and
+[botocore-stubs](https://pypi.org/pypi/botocore-stubs/1.43.14/json).
+The generated base stubs declare both public `boto3.client("s3")` and
+`Session.client("s3")` as returning `S3Client`. With only the S3 extra,
+BasedPyright also sees unresolved return types in the same overload set for
+services whose generated packages are absent, so strict mode reports the
+member as partially Unknown. The official all-in-one bundle supplies those
+generated return types, including the same 1.43.14 `mypy_boto3_s3` module
+published by the standalone
+[S3 distribution](https://pypi.org/pypi/mypy-boto3-s3/1.43.14/json), while the
+application keeps boto3's public default-session construction path unchanged.
 The official botocore 1.43.14 and formerly pinned 1.43.62 S3 models have the
 same `PutObject`, `GetObject`, `HeadObject`, and `DeleteObject` operation
 shapes used by this adapter. Their only transitive shape difference for those
@@ -139,9 +148,9 @@ adapter neither sends nor consumes it, so the common-version pin does not
 change its Bucket, Key, Body, ContentType, status, or stream contract.
 
 No local SDK stub or mirrored overload is used to hide diagnostics.
-`STANDARD_ONLY` contains exactly S3 and Mem0, and the owned production
-exclusion set is empty. The exception audit pins the per-file strict diagnostic
-counts (S3 2, Mem0 19, runtime-observation compatibility 15), so either added
+`STANDARD_ONLY` contains exactly Mem0, and the owned production exclusion set
+is empty. The exception audit pins the remaining per-file strict diagnostic
+counts (Mem0 19, runtime-observation compatibility 15), so either added
 debt or a typing improvement fails until the exact allowlist is reviewed. The
 public `S3ObjectStoreClient` protocol is a first-party storage facade, not a
 substitute type for boto: the adapter itself retains the generated official
@@ -169,8 +178,8 @@ used to hide the remaining compatibility boundary. Hosted v1 product and
 deployment infrastructure are outside this repository and are not part of the
 exception.
 
-Done: `owned` reports 185 files and `strict` reports 182 files, with every
-diagnostic count equal to zero; `exceptions` reports the exact 36-diagnostic
+Done: `owned` reports 185 files and `strict` reports 183 files, with every
+diagnostic count equal to zero; `exceptions` reports the exact 34-diagnostic
 strict debt above; `inventory` reports all four areas above.
 
 ## External API import ownership and contracts
@@ -192,16 +201,16 @@ SDK types or pinned official source, typed request construction, runtime
 validation of every consumed response, narrow sanitized exception mapping, and
 contract tests using real official clients, models, or transports.
 
-S3 and Mem0 are the only standard-mode production adapters. Their exact files
-and exact strict diagnostic counts are ratcheted by `type_governance.py`; the
-import inventory prevents their dynamic SDKs from gaining another owner. S3
-uses the generated official client/stubs and validates metadata, error bodies,
-streams, and returned bytes. Mem0 calls the pinned public `MemoryClient`, keeps
-its untyped operation results as `object`, and validates every consumed result
-with strict Pydantic wire models. Tests exercise the official S3 model/pins and
-the real Mem0 client over an official HTTPX transport. No scanner-side inferred
-type, homemade upstream protocol, suppression, or unchecked provider response
-is accepted as evidence.
+Mem0 is the only standard-mode production adapter, and its exact file and
+strict diagnostic count are ratcheted by `type_governance.py`; the import
+inventory prevents dynamic SDKs from gaining another owner. S3 uses the
+strict-clean generated official client/stubs and validates metadata, error
+bodies, streams, and returned bytes. Mem0 calls the pinned public
+`MemoryClient`, keeps its untyped operation results as `object`, and validates
+every consumed result with strict Pydantic wire models. Tests exercise the
+official S3 model/pins and the real Mem0 client over an official HTTPX
+transport. No scanner-side inferred type, homemade upstream protocol,
+suppression, or unchecked provider response is accepted as evidence.
 
 The maintained boundary contracts are:
 

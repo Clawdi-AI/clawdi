@@ -64,10 +64,11 @@ dev = [
     # undeclared for months without CI noticing.
     "deptry>=0.20",
     # Generated from boto3/botocore service models and pinned to the runtime
-    # SDK line. The S3 service package is selected by this extra.
-    "boto3-stubs[s3]==1.43.14",
+    # SDK line. The full bundle resolves every generated client overload for
+    # strict Pyright consumers; the base stubs own boto3's public surface.
+    "boto3-stubs==1.43.14",
+    "boto3-stubs-full==1.43.14",
     "botocore-stubs==1.43.14",
-    "mypy-boto3-s3==1.43.14",
     # Public annotations for the pinned asyncpg 0.31 runtime contract.
     "asyncpg-stubs==0.31.3",
 ]
@@ -248,6 +249,7 @@ strict = [
     "app/services/discord_rate_limiter.py",
     "app/services/embedding.py",
     "app/services/file_store.py",
+    "app/services/file_store_s3.py",
     "app/services/hosted_runtime_secrets.py",
     "app/services/http_cache.py",
     "app/services/managed_ai_provider.py",

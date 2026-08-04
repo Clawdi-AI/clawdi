@@ -109,12 +109,7 @@ def test_config_mismatch_fails_closed(tmp_path: Path, monkeypatch: pytest.Monkey
 
 
 def test_typing_exception_sets_accept_live_disjoint_paths() -> None:
-    assert type_governance.STANDARD_ONLY == frozenset(
-        {
-            "app/services/file_store_s3.py",
-            "app/services/memory_provider_mem0.py",
-        }
-    )
+    assert type_governance.STANDARD_ONLY == frozenset({"app/services/memory_provider_mem0.py"})
     assert type_governance.RUNTIME_OBSERVATION_COMPATIBILITY_ONLY == frozenset(
         {"app/routes/sessions.py"}
     )
@@ -123,6 +118,14 @@ def test_typing_exception_sets_accept_live_disjoint_paths() -> None:
         type_governance.STANDARD_ONLY,
         type_governance.RUNTIME_OBSERVATION_COMPATIBILITY_ONLY,
     )
+
+
+def test_s3_is_strict_and_cannot_retain_a_stale_exception() -> None:
+    path = "app/services/file_store_s3.py"
+
+    assert path in type_governance.STRICT_PRODUCTION_FILES
+    assert path not in type_governance.STANDARD_ONLY
+    assert path not in type_governance.EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS
 
 
 def test_typing_exception_sets_reject_overlap() -> None:

@@ -56,10 +56,9 @@ OWNED_INCLUDE = [
 ]
 STANDARD_ONLY = frozenset(
     {
-        # Both adapters remain in the zero-diagnostic owned gate. Their strict
-        # debt is limited to pinned upstream packages that do not publish
-        # complete typed construction/import boundaries.
-        "app/services/file_store_s3.py",
+        # This adapter remains in the zero-diagnostic owned gate. Its strict
+        # debt is limited to a pinned upstream package that does not publish
+        # a complete typed import boundary.
         "app/services/memory_provider_mem0.py",
     }
 )
@@ -93,7 +92,6 @@ EXPECTED_RUNTIME_OBSERVATION_COMPATIBILITY_DIAGNOSTICS = {
     }
 }
 EXPECTED_STRICT_EXCEPTION_DIAGNOSTICS = {
-    "app/services/file_store_s3.py": 2,
     "app/services/memory_provider_mem0.py": 19,
     **{
         path: sum(
