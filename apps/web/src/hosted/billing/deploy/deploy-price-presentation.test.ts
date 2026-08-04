@@ -18,25 +18,39 @@ const annual: BillingOffer = {
 	effective_monthly_price_cents: 1_666,
 	discount_percent: 17,
 };
+const quarterly: BillingOffer = {
+	billing_term_months: 3,
+	price_cents: 5_400,
+	effective_monthly_price_cents: 1_800,
+	discount_percent: 10,
+};
 
 describe("computePricePresentation", () => {
 	test("makes monthly and annual pricing visibly distinct", () => {
 		expect(computePricePresentation(monthly, [monthly, annual])).toEqual({
 			primary: "$20.00/mo",
-			secondary: "Billed monthly",
+			secondary: null,
 			savings: null,
 		});
 		expect(computePricePresentation(annual, [monthly, annual])).toEqual({
-			primary: "$16.66/mo",
-			secondary: "Billed $200.00/yr",
+			primary: "$200.00/yr",
+			secondary: "$16.66/mo",
 			savings: "save $40.00",
+		});
+	});
+
+	test("uses the actual term total for other multi-month offers", () => {
+		expect(computePricePresentation(quarterly, [monthly, quarterly])).toEqual({
+			primary: "$54.00/qtr",
+			secondary: "$18.00/mo",
+			savings: "save $6.00",
 		});
 	});
 
 	test("omits savings when a monthly offer is missing", () => {
 		expect(computePricePresentation(annual, [annual])).toEqual({
-			primary: "$16.66/mo",
-			secondary: "Billed $200.00/yr",
+			primary: "$200.00/yr",
+			secondary: "$16.66/mo",
 			savings: null,
 		});
 	});

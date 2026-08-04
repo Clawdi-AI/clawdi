@@ -9621,8 +9621,13 @@ test("compute comparison synchronizes API prices across the shared billing term"
 		"aria-pressed",
 		"true",
 	);
-	await expect(basicCard).toContainText("$12.34/mo");
-	await expect(performanceCard).toContainText("$56.78/mo");
+	const basicMonthlyPrice = basicCard.getByText("$12.34/mo", { exact: true });
+	const performanceMonthlyPrice = performanceCard.getByText("$56.78/mo", { exact: true });
+	await expect(basicMonthlyPrice).toHaveCount(1);
+	await expect(performanceMonthlyPrice).toHaveCount(1);
+	await expect(basicMonthlyPrice).toHaveClass(/text-3xl/);
+	await expect(performanceMonthlyPrice).toHaveClass(/text-3xl/);
+	await expect(cards.getByText("Billed monthly", { exact: true })).toHaveCount(0);
 	const monthlyBoxes = await cards.evaluateAll((elements) =>
 		elements.map((element) => element.getBoundingClientRect().toJSON()),
 	);
@@ -9630,10 +9635,10 @@ test("compute comparison synchronizes API prices across the shared billing term"
 	expect(monthlyBoxes[0]?.height).toBeCloseTo(monthlyBoxes[1]?.height ?? 0, 0);
 
 	await termSwitcher.getByRole("button", { name: "Annual", exact: true }).click();
-	await expect(basicCard).toContainText("$10.29/mo");
-	await expect(basicCard).toContainText("Billed $123.48/yr");
-	await expect(performanceCard).toContainText("$45.27/mo");
-	await expect(performanceCard).toContainText("Billed $543.24/yr");
+	await expect(basicCard.getByText("$123.48/yr", { exact: true })).toHaveClass(/text-3xl/);
+	await expect(basicCard.getByText("$10.29/mo", { exact: true })).toHaveClass(/text-xs/);
+	await expect(performanceCard.getByText("$543.24/yr", { exact: true })).toHaveClass(/text-3xl/);
+	await expect(performanceCard.getByText("$45.27/mo", { exact: true })).toHaveClass(/text-xs/);
 	expect(errors, `compute plan comparison: ${errors.join(" | ")}`).toEqual([]);
 });
 
