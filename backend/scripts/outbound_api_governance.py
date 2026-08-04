@@ -17,8 +17,8 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = BACKEND_ROOT / "app"
 
 # SDKs with dynamic or incomplete upstream typing stay behind one reviewed
-# first-party owner. Some owners are strict-clean; S3 and Mem0 are the two
-# exact standard-mode adapter exceptions in type_governance.py.
+# first-party owner. Some owners are strict-clean; Mem0 is the sole exact
+# standard-mode adapter exception in type_governance.py.
 SDK_IMPORT_OWNERS: dict[str, str] = {
     "asyncpg": "app/services/postgres_listener.py",
     "boto3": "app/services/file_store_s3.py",

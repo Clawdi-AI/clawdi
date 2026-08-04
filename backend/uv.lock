@@ -180,9 +180,13 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/62/fbe74ff470757616468c11d735a128ae10f3743845675c1aae2d4d7d2a24/boto3_stubs-1.43.14-py3-none-any.whl", hash = "sha256:9cb47a627714aa1c4a41ddf6320be7d10b3eaae9748459cd8f71659a7d8020ca", size = 70667, upload-time = "2026-05-22T20:48:30.598Z" },
 ]
 
-[package.optional-dependencies]
-s3 = [
-    { name = "mypy-boto3-s3" },
+[[package]]
+name = "boto3-stubs-full"
+version = "1.43.14"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/20/27/7dabfad6788c5a7395291d8b4c1024b35e90dd529052ce45932cecaebcb2/boto3_stubs_full-1.43.14.tar.gz", hash = "sha256:54972512d2db7bee2b87e811205f5d9f2a2a3362c13dec71fe4ff789e39cf81a", size = 8766227, upload-time = "2026-05-23T02:44:55.273Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2b/0b/5f5e72b0b66e35d28e85deb6fd082a2d72e7b670f51057b75eb37305d206/boto3_stubs_full-1.43.14-py3-none-any.whl", hash = "sha256:119c9373550c6e3287abc681eeb27ce780dfff086431725218bcc91910968b8b", size = 13290667, upload-time = "2026-05-23T02:44:51.211Z" },
 ]
 
 [[package]]
@@ -411,10 +415,10 @@ dev = [
     { name = "aiosqlite" },
     { name = "asyncpg-stubs" },
     { name = "basedpyright" },
-    { name = "boto3-stubs", extra = ["s3"] },
+    { name = "boto3-stubs" },
+    { name = "boto3-stubs-full" },
     { name = "botocore-stubs" },
     { name = "deptry" },
-    { name = "mypy-boto3-s3" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -459,10 +463,10 @@ dev = [
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "asyncpg-stubs", specifier = "==0.31.3" },
     { name = "basedpyright", specifier = "==1.39.9" },
-    { name = "boto3-stubs", extras = ["s3"], specifier = "==1.43.14" },
+    { name = "boto3-stubs", specifier = "==1.43.14" },
+    { name = "boto3-stubs-full", specifier = "==1.43.14" },
     { name = "botocore-stubs", specifier = "==1.43.14" },
     { name = "deptry", specifier = ">=0.20" },
-    { name = "mypy-boto3-s3", specifier = "==1.43.14" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "ruff", specifier = ">=0.9" },
@@ -1317,15 +1321,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/21/54/1d71cd143752361c0aebef16ad3f55926a6faf7b112d355745c1f8a25f7f/mmh3-5.2.1-cp314-cp314t-win32.whl", hash = "sha256:29bc3973676ae334412efdd367fcd11d036b7be3efc1ce2407ef8676dabfeb82", size = 41934, upload-time = "2026-03-05T15:55:53.564Z" },
     { url = "https://files.pythonhosted.org/packages/9d/e4/63a2a88f31d93dea03947cccc2a076946857e799ea4f7acdecbf43b324aa/mmh3-5.2.1-cp314-cp314t-win_amd64.whl", hash = "sha256:28cfab66577000b9505a0d068c731aee7ca85cd26d4d63881fab17857e0fe1fb", size = 43036, upload-time = "2026-03-05T15:55:55.252Z" },
     { url = "https://files.pythonhosted.org/packages/a0/0f/59204bf136d1201f8d7884cfbaf7498c5b4674e87a4c693f9bde63741ce1/mmh3-5.2.1-cp314-cp314t-win_arm64.whl", hash = "sha256:dfd51b4c56b673dfbc43d7d27ef857dd91124801e2806c69bb45585ce0fa019b", size = 40391, upload-time = "2026-03-05T15:55:56.697Z" },
-]
-
-[[package]]
-name = "mypy-boto3-s3"
-version = "1.43.14"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/04/2c/fc409f9ff5904a02cf4c2c1518c34d20cb56f22b2368b35fd0adda2926f3/mypy_boto3_s3-1.43.14.tar.gz", hash = "sha256:73d54c1d0999c73c403dc9a9a3da4a9722715aba116595af08c0d4675f8bc670", size = 77078, upload-time = "2026-05-22T20:48:28.251Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b7/61/e8e74a3f4c729719efc8b1d00179bc16c302202eac32a1b56a842a997ed2/mypy_boto3_s3-1.43.14-py3-none-any.whl", hash = "sha256:ce77096d6c5f90020c45e34c83d2268ca2bb17726149ce5033751870f7fb4e97", size = 84277, upload-time = "2026-05-22T20:48:25.032Z" },
 ]
 
 [[package]]
