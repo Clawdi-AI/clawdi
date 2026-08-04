@@ -90,6 +90,7 @@ describe("agent Projects presentation", () => {
 
 		expect(sidebar).toContain("resolveAgentDefaultProject(");
 		expect(sidebar).toContain("label={primaryProject.name}");
+		expect(sidebar).toContain('className="min-w-0 truncate" title={label}');
 		expect(sidebar).toContain('["skills", "vaults"] as const');
 		expect(sidebar).toMatch(
 			/agentProjectDetailHref\(agentId, primaryProject\.id, routeQuery\)\}#\$\{section\}/,

@@ -233,7 +233,11 @@ function SidebarNavSection({
 			className={cn("pt-0", separated && "mt-2 border-t pt-2")}
 			aria-label={ariaLabel ?? label ?? undefined}
 		>
-			{label ? <SidebarGroupLabel>{label}</SidebarGroupLabel> : null}
+			{label ? (
+				<SidebarGroupLabel className="min-w-0 truncate" title={label}>
+					{label}
+				</SidebarGroupLabel>
+			) : null}
 			<SidebarGroupContent>
 				<SidebarMenu>
 					{before}
