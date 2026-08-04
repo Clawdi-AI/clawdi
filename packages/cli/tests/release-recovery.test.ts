@@ -64,7 +64,7 @@ function completeRelease() {
 
 function planFixture() {
 	return {
-		schemaVersion: "clawdi.cliReleaseRecoveryInput.v1",
+		schemaVersion: "clawdi.cliReleaseRecoveryInput.v2",
 		mode: "plan",
 		package: { name: "clawdi", version: "1.2.3" },
 		repository: {
@@ -79,11 +79,35 @@ function planFixture() {
 }
 
 function completeFixture() {
+	const fixture = planFixture();
 	return {
-		...planFixture(),
+		schemaVersion: fixture.schemaVersion,
 		mode: "complete",
+		package: fixture.package,
+		repository: fixture.repository,
+		requiredAssets: fixture.requiredAssets,
+		github: fixture.github,
 		expectedSourceCommit: sourceCommit,
 		localArtifact: { integrity, sha512 },
+		publicationEvidence: {
+			mode: "existing-version",
+			registryVersion: fixture.package.version,
+			distIntegrity: fixture.npm.distIntegrity,
+			attestations: fixture.npm.attestations,
+			attestationBundle: fixture.npm.attestationBundle,
+		},
+	};
+}
+
+function freshPublishFixture() {
+	const fixture = completeFixture();
+	return {
+		...fixture,
+		publicationEvidence: {
+			mode: "fresh-publish",
+			registryVersion: fixture.package.version,
+			distIntegrity: integrity,
+		},
 	};
 }
 
@@ -205,13 +229,42 @@ describe("CLI release recovery decision", () => {
 		});
 	});
 
+	test("completes a fresh provenance publish without registry attestation visibility", () => {
+		const fixture = freshPublishFixture();
+		const decision = expectDecision(fixture);
+
+		expect(fixture.publicationEvidence).toEqual({
+			mode: "fresh-publish",
+			registryVersion: "1.2.3",
+			distIntegrity: integrity,
+		});
+		expect(decision).toMatchObject({
+			evidenceMode: "fresh-publish",
+			releaseAction: "create-draft",
+			releaseTarget: sourceCommit,
+			finalize: true,
+		});
+	});
+
+	test("requires registry provenance for existing-version recovery", () => {
+		const fixture = completeFixture();
+		Reflect.deleteProperty(fixture.publicationEvidence, "attestationBundle");
+
+		const result = runRecovery(fixture);
+
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr).toContain("publicationEvidence.attestationBundle");
+	});
+
 	test("fails closed on local, published, or provenance integrity drift", () => {
 		const fixtures = [completeFixture(), completeFixture(), completeFixture()];
 		fixtures[0].localArtifact.sha512 = "cd".repeat(64);
-		fixtures[1].npm.distIntegrity = `sha512-${Buffer.from("cd".repeat(64), "hex").toString("base64")}`;
-		fixtures[2].npm.attestationBundle.attestations[0].bundle.dsseEnvelope.payload = Buffer.from(
-			JSON.stringify({ ...provenanceStatement(), subject: [] }),
-		).toString("base64");
+		fixtures[1].publicationEvidence.distIntegrity = `sha512-${Buffer.from(
+			"cd".repeat(64),
+			"hex",
+		).toString("base64")}`;
+		fixtures[2].publicationEvidence.attestationBundle.attestations[0].bundle.dsseEnvelope.payload =
+			Buffer.from(JSON.stringify({ ...provenanceStatement(), subject: [] })).toString("base64");
 
 		for (const fixture of fixtures) {
 			const result = runRecovery(fixture);
@@ -239,9 +292,8 @@ describe("CLI release recovery decision", () => {
 			const fixture = completeFixture();
 			const statement = provenanceStatement();
 			mutate(statement);
-			fixture.npm.attestationBundle.attestations[0].bundle.dsseEnvelope.payload = Buffer.from(
-				JSON.stringify(statement),
-			).toString("base64");
+			fixture.publicationEvidence.attestationBundle.attestations[0].bundle.dsseEnvelope.payload =
+				Buffer.from(JSON.stringify(statement)).toString("base64");
 			const result = runRecovery(fixture);
 			expect(result.exitCode).toBe(1);
 			expect(result.stderr).toMatch(/WORKFLOW_MISMATCH|SOURCE_COMMIT_MISMATCH/);

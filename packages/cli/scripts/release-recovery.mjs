@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-const INPUT_SCHEMA = "clawdi.cliReleaseRecoveryInput.v1";
-const OUTPUT_SCHEMA = "clawdi.cliReleaseRecoveryOutput.v1";
+const INPUT_SCHEMA = "clawdi.cliReleaseRecoveryInput.v2";
+const OUTPUT_SCHEMA = "clawdi.cliReleaseRecoveryOutput.v2";
 const PROVENANCE_PREDICATE = "https://slsa.dev/provenance/v1";
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 const SEMVER_PATTERN =
@@ -105,6 +105,43 @@ function npmInput(value) {
 		distIntegrity: string(parsed.distIntegrity, "npm.distIntegrity"),
 		attestations: object(parsed.attestations, "npm.attestations"),
 		attestationBundle: object(parsed.attestationBundle, "npm.attestationBundle"),
+	};
+}
+
+function publicationEvidenceInput(value, packageInfo) {
+	const parsed = object(value, "publicationEvidence");
+	const mode = string(parsed.mode, "publicationEvidence.mode");
+	if (mode !== "fresh-publish" && mode !== "existing-version") {
+		fail(
+			"INVALID_EVIDENCE_MODE",
+			"publicationEvidence.mode must be fresh-publish or existing-version",
+		);
+	}
+	const registryVersion = string(parsed.registryVersion, "publicationEvidence.registryVersion");
+	if (registryVersion !== packageInfo.version) {
+		fail("VERSION_MISMATCH", "registry version does not match the expected package version");
+	}
+	const allowedKeys =
+		mode === "fresh-publish"
+			? new Set(["mode", "registryVersion", "distIntegrity"])
+			: new Set(["mode", "registryVersion", "distIntegrity", "attestations", "attestationBundle"]);
+	const extraKeys = Object.keys(parsed).filter((key) => !allowedKeys.has(key));
+	if (extraKeys.length > 0) {
+		fail(
+			"INVALID_PUBLICATION_EVIDENCE",
+			`publicationEvidence contains fields forbidden in ${mode} mode: ${extraKeys.join(", ")}`,
+		);
+	}
+	const evidence = {
+		mode,
+		registryVersion,
+		distIntegrity: string(parsed.distIntegrity, "publicationEvidence.distIntegrity"),
+	};
+	if (mode === "fresh-publish") return evidence;
+	return {
+		...evidence,
+		attestations: object(parsed.attestations, "publicationEvidence.attestations"),
+		attestationBundle: object(parsed.attestationBundle, "publicationEvidence.attestationBundle"),
 	};
 }
 
@@ -249,22 +286,22 @@ function commonInput(input) {
 		packageInfo: packageInput(input.package),
 		repository: repositoryInput(input.repository),
 		requiredAssets: requiredAssetsInput(input.requiredAssets),
-		npm: npmInput(input.npm),
 		github: githubInput(input.github),
 	};
 }
 
 function plan(input, common) {
 	const currentCommit = commit(input.currentCommit, "currentCommit");
-	const provenance = common.npm.exists
-		? verifyProvenance(common.npm, common.packageInfo, common.repository)
+	const npm = npmInput(input.npm);
+	const provenance = npm.exists
+		? verifyProvenance(npm, common.packageInfo, common.repository)
 		: null;
 	const sourceCommit = provenance?.sourceCommit ?? currentCommit;
 	const state = releaseState(common.github, common.requiredAssets, sourceCommit);
-	if (!common.npm.exists && state === "published-complete") {
+	if (!npm.exists && state === "published-complete") {
 		fail("RELEASE_WITHOUT_PACKAGE", "published GitHub release exists without the npm package");
 	}
-	const shouldRelease = !(common.npm.exists && state === "published-complete");
+	const shouldRelease = !(npm.exists && state === "published-complete");
 	return {
 		schemaVersion: OUTPUT_SCHEMA,
 		mode: "plan",
@@ -274,15 +311,12 @@ function plan(input, common) {
 		tarballFilename: `clawdi-${common.packageInfo.version}.tgz`,
 		shouldRelease,
 		sourceCommit,
-		npmAction: shouldRelease ? (common.npm.exists ? "verify" : "publish") : "none",
+		npmAction: shouldRelease ? (npm.exists ? "verify" : "publish") : "none",
 		releaseState: state,
 	};
 }
 
 function complete(input, common) {
-	if (!common.npm.exists) {
-		fail("PACKAGE_NOT_PUBLISHED", "complete mode requires the published npm package");
-	}
 	const expectedSourceCommit = commit(input.expectedSourceCommit, "expectedSourceCommit");
 	const localArtifact = object(input.localArtifact, "localArtifact");
 	const localIntegrity = integrityDigest(localArtifact.integrity, "localArtifact.integrity");
@@ -290,25 +324,41 @@ function complete(input, common) {
 	if (!/^[0-9a-f]{128}$/.test(localSha512) || localSha512 !== localIntegrity.hex) {
 		fail("LOCAL_INTEGRITY_MISMATCH", "local artifact integrity and SHA-512 digest disagree");
 	}
-	const provenance = verifyProvenance(
-		common.npm,
+	const publicationEvidence = publicationEvidenceInput(
+		input.publicationEvidence,
 		common.packageInfo,
-		common.repository,
-		localSha512,
 	);
-	if (provenance.sourceCommit !== expectedSourceCommit) {
+	const published = integrityDigest(
+		publicationEvidence.distIntegrity,
+		"publicationEvidence.distIntegrity",
+	);
+	if (published.hex !== localSha512) {
+		fail("INTEGRITY_MISMATCH", "npm integrity does not match the local artifact");
+	}
+	const provenance =
+		publicationEvidence.mode === "existing-version"
+			? verifyProvenance(
+					{ exists: true, ...publicationEvidence },
+					common.packageInfo,
+					common.repository,
+					localSha512,
+				)
+			: null;
+	const sourceCommit = provenance?.sourceCommit ?? expectedSourceCommit;
+	if (sourceCommit !== expectedSourceCommit) {
 		fail(
 			"SOURCE_COMMIT_MISMATCH",
 			"published provenance does not match the expected source commit",
 		);
 	}
-	const state = releaseState(common.github, common.requiredAssets, provenance.sourceCommit);
+	const state = releaseState(common.github, common.requiredAssets, sourceCommit);
 	return {
 		schemaVersion: OUTPUT_SCHEMA,
 		mode: "complete",
+		evidenceMode: publicationEvidence.mode,
 		version: common.packageInfo.version,
 		releaseTag: `clawdi-cli-v${common.packageInfo.version}`,
-		releaseTarget: provenance.sourceCommit,
+		releaseTarget: sourceCommit,
 		releaseState: state,
 		releaseAction:
 			state === "absent" ? "create-draft" : state === "draft" ? "resume-draft" : "none",

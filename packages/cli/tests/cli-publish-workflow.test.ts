@@ -138,20 +138,43 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).not.toContain("NPM_TOKEN");
 	});
 
-	test("recovers registry publication races without republishing", () => {
-		const boundaryCheck = workflow.indexOf(
+	test("separates fresh publish authority from existing-version recovery", () => {
+		const publishJob = workflow.slice(workflow.indexOf("  publish-immutable-artifact-with-oidc:"));
+		const boundaryCheck = publishJob.indexOf(
 			'if [ "$NPM_ACTION" = "publish" ] && npm_release_visible; then',
 		);
-		const publishDecision = workflow.indexOf('case "$NPM_ACTION" in');
-		const visibilityWait = workflow.indexOf("for attempt in $(seq 1 12); do", publishDecision);
-		const integrityRead = workflow.indexOf(
+		const publishDecision = publishJob.indexOf('case "$NPM_ACTION" in');
+		const publishCommand = publishJob.indexOf("npm publish ");
+		const freshEvidence = publishJob.indexOf('publication_evidence_mode="fresh-publish"');
+		const existingEvidence = publishJob.indexOf('publication_evidence_mode="existing-version"');
+		const visibilityWait = publishJob.indexOf("for attempt in $(seq 1 12); do", publishDecision);
+		const versionRead = publishJob.indexOf(
+			'registry_version=$(npm view "clawdi@$VERSION" version)',
+		);
+		const integrityRead = publishJob.indexOf(
 			'published_integrity=$(npm view "clawdi@$VERSION" dist.integrity)',
+		);
+		const provenanceGuard = publishJob.indexOf(
+			'if [ "$publication_evidence_mode" = "existing-version" ]; then',
+		);
+		const provenanceRead = publishJob.indexOf(
+			'attestations=$(npm view "clawdi@$VERSION" dist.attestations --json)',
 		);
 
 		expect(boundaryCheck).toBeGreaterThan(-1);
 		expect(boundaryCheck).toBeLessThan(publishDecision);
+		expect(publishCommand).toBeGreaterThan(publishDecision);
+		expect(freshEvidence).toBeGreaterThan(publishCommand);
+		expect(existingEvidence).toBeGreaterThan(freshEvidence);
 		expect(visibilityWait).toBeGreaterThan(publishDecision);
-		expect(visibilityWait).toBeLessThan(integrityRead);
+		expect(visibilityWait).toBeLessThan(versionRead);
+		expect(versionRead).toBeLessThan(integrityRead);
+		expect(integrityRead).toBeLessThan(provenanceGuard);
+		expect(provenanceGuard).toBeLessThan(provenanceRead);
+		expect(publishJob).toContain('test "$registry_version" = "$VERSION"');
+		expect(publishJob).toContain("publicationEvidence,");
+		expect(publishJob).toContain('mode: "fresh-publish"');
+		expect(publishJob).toContain('mode: "existing-version"');
 		expect(workflow).toContain('if [ "$attempt" -lt 12 ]; then sleep 5; fi');
 		expect(workflow).toContain(
 			'echo "clawdi@$VERSION was not visible in the npm registry after 60 seconds" >&2',
