@@ -297,10 +297,9 @@ Use `docs/runbooks/release.md` for the full app/backend/web/CLI release
 checklist. This section covers the CLI/npm release line in detail.
 
 Publishing is automated. `.github/workflows/cli-publish.yml` watches `main`
-for changes under `packages/cli/`. If the version's GitHub Release is already
-published, the workflow exits before installing dependencies or building.
-Otherwise it builds
-the artifact from its own `GITHUB_SHA`. An absent exact npm version is
+for changes to `packages/cli/package.json`, so a release run starts only when
+the package identity changes. It builds the artifact from its own `GITHUB_SHA`.
+An absent exact npm version is
 published; an existing version is never republished and must have the same
 `dist.integrity` as the artifact built by this run.
 
@@ -317,9 +316,7 @@ The build/test job may use the configured fast runner, but the protected
 publish job is fixed to GitHub-hosted `ubuntu-latest`: npm trusted publishing
 does not support self-hosted or third-party GitHub Actions runners. The publish
 job uses Node 24 and npm 11.5.1, satisfying npm's minimum Node 22.14 and npm
-11.5.1. The lightweight preflight reads only the GitHub Release state; it does
-not query npm or provenance. After a fresh
-`npm publish --provenance` succeeds, that command plus the exact registry
+11.5.1. After a fresh `npm publish --provenance` succeeds, that command plus the exact registry
 version and matching `dist.integrity` authorizes GitHub Release completion; the
 job does not wait for the eventually consistent registry attestation read API.
 If release work remains and the immutable npm version already exists, the
@@ -419,10 +416,8 @@ version through its Cloud manifest. The `beta` tag is publication metadata;
 production and Hosted never resolve an npm dist-tag.
 
 A manual run is available under `workflow_dispatch` if the auto-run needs a
-nudge. An unchanged version with an exact npm package and complete published
-GitHub Release is a fast no-op. If npm succeeded but GitHub Release creation
-failed, rerun that original workflow run so `GITHUB_SHA` and the artifact remain
-identical.
+nudge. If npm succeeded but GitHub Release creation failed, rerun that original
+workflow run so `GITHUB_SHA` and the artifact remain identical.
 
 ### Smoke checks before bumping the version
 
