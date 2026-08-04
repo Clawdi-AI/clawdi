@@ -1,77 +1,89 @@
 "use client";
 
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
-/** A single card skeleton (header + body lines) matching the Card primitive. */
-function CardSkeleton({ lines = 3, className }: { lines?: number; className?: string }) {
+function SectionSkeleton({ children }: { children: React.ReactNode }) {
 	return (
-		<Card data-hosted="true" className={className}>
-			<CardHeader>
-				<Skeleton className="h-5 w-32" />
-				<Skeleton className="h-4 w-48" />
-			</CardHeader>
-			<CardContent className="space-y-3">
-				{Array.from({ length: lines }, (_, i) => `l-${i}`).map((key) => (
-					<Skeleton key={key} className="h-4 w-full" />
-				))}
-			</CardContent>
-		</Card>
+		<div className="space-y-4 border-t pt-4">
+			<div className="space-y-2">
+				<Skeleton className="h-4 w-28" />
+				<Skeleton className="h-4 w-52 max-w-full" />
+			</div>
+			{children}
+		</div>
 	);
 }
 
-/** Subscription: dunning slot + the current-plan card. */
+/** Compute: actions, billing history, and the two comparable plan cards. */
 export function SubscriptionSkeleton() {
 	return (
-		<div data-hosted="true" className="space-y-6">
-			<CardSkeleton lines={4} />
+		<div data-hosted="true" className="space-y-8">
+			<SectionSkeleton>
+				<div className="flex flex-wrap gap-2">
+					<Skeleton className="h-9 w-36" />
+					<Skeleton className="h-9 w-36" />
+				</div>
+			</SectionSkeleton>
+			<SectionSkeleton>
+				<Skeleton className="h-28 w-full rounded-lg" />
+			</SectionSkeleton>
+			<div className="grid gap-3 lg:grid-cols-2">
+				<Skeleton className="h-72 w-full rounded-xl" />
+				<Skeleton className="h-72 w-full rounded-xl" />
+			</div>
 		</div>
 	);
 }
 
-/** Wallet: balance hero + the auto-reload / x402 row + the activity table. */
+/** Wallet: balance hero followed by the same flat sections as loaded content. */
 export function WalletSkeleton() {
 	return (
-		<div data-hosted="true" className="space-y-6">
-			<Skeleton className="h-28 w-full rounded-lg" />
-			<div className="grid gap-4 lg:grid-cols-2">
-				<CardSkeleton lines={3} />
-				<CardSkeleton lines={2} />
-			</div>
-			<Skeleton className="h-64 w-full rounded-lg" />
+		<div data-hosted="true" className="space-y-8">
+			<Skeleton className="h-36 w-full rounded-xl" />
+			<SectionSkeleton>
+				<div className="grid max-w-3xl gap-4 sm:grid-cols-2">
+					<Skeleton className="h-16 w-full rounded-md" />
+					<Skeleton className="h-16 w-full rounded-md" />
+				</div>
+			</SectionSkeleton>
+			<SectionSkeleton>
+				<Skeleton className="h-9 w-40" />
+			</SectionSkeleton>
+			<SectionSkeleton>
+				<Skeleton className="h-40 w-full rounded-lg" />
+			</SectionSkeleton>
 		</div>
 	);
 }
 
-/** Usage: total cards + daily chart + by-model rows. */
+/** Usage: metric strip followed by peer agent and model breakdowns. */
 export function UsageSkeleton() {
 	return (
-		<div data-hosted="true" className="space-y-6">
-			<div className="grid gap-3 sm:grid-cols-2">
-				<CardSkeleton lines={1} />
-				<CardSkeleton lines={1} />
+		<div data-hosted="true" className="space-y-8">
+			<div className="grid overflow-hidden rounded-lg border sm:grid-cols-2 sm:divide-x">
+				<div className="space-y-2 p-4">
+					<Skeleton className="h-8 w-28" />
+					<Skeleton className="h-4 w-36" />
+				</div>
+				<div className="space-y-2 border-t p-4 sm:border-t-0">
+					<Skeleton className="h-8 w-20" />
+					<Skeleton className="h-4 w-32" />
+				</div>
 			</div>
-			<Card data-hosted="true">
-				<CardHeader>
-					<Skeleton className="h-5 w-36" />
-				</CardHeader>
-				<CardContent>
-					<div className="flex h-28 items-end gap-1">
-						{Array.from({ length: 14 }, (_, i) => `day-${i}`).map((key, index) => (
-							<Skeleton
-								key={key}
-								className="flex-1 rounded-t"
-								style={{ height: `${Math.max(16, ((index % 7) + 2) * 10)}%` }}
-							/>
-						))}
-					</div>
-					<div className="mt-2 flex justify-between">
-						<Skeleton className="h-3 w-10" />
-						<Skeleton className="h-3 w-10" />
-					</div>
-				</CardContent>
-			</Card>
-			<CardSkeleton lines={5} />
+			<SectionSkeleton>
+				<div className="space-y-3">
+					<Skeleton className="h-10 w-full" />
+					<Skeleton className="h-10 w-full" />
+					<Skeleton className="h-10 w-full" />
+				</div>
+			</SectionSkeleton>
+			<SectionSkeleton>
+				<div className="space-y-3">
+					<Skeleton className="h-10 w-full" />
+					<Skeleton className="h-10 w-full" />
+					<Skeleton className="h-10 w-full" />
+				</div>
+			</SectionSkeleton>
 		</div>
 	);
 }

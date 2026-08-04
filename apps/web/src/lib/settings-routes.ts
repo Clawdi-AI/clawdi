@@ -2,7 +2,6 @@ export const SETTINGS_QUERY_KEY = "settings";
 
 export const SETTINGS_SECTION_IDS = [
 	"general",
-	"profile",
 	"api-keys",
 	"billing-wallet",
 	"billing-plan",
@@ -23,6 +22,7 @@ export function normalizeSettingsSection(
 	value: string | null | undefined,
 ): SettingsSectionId | null {
 	if (!value) return null;
+	if (value === "profile") return DEFAULT_SETTINGS_SECTION;
 	return SETTINGS_SECTION_SET.has(value) ? (value as SettingsSectionId) : null;
 }
 

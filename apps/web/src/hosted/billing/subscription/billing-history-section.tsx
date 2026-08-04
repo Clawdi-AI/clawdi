@@ -118,6 +118,7 @@ export function BillingHistorySection() {
 					icon={Receipt}
 					title="No billing history yet"
 					description="Paid compute invoices will appear here after the first collection."
+					className="py-8 md:p-8"
 				/>
 			) : (
 				<>

@@ -30,7 +30,7 @@ import { env } from "@/lib/env";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
 const DESCRIPTION = "Add funds and manage how your Clawdi usage is paid.";
-const WALLET_PAGE_CLASS = "flex flex-col gap-8 px-4 lg:px-6";
+const WALLET_PAGE_CLASS = "flex flex-col gap-8 px-5 sm:px-6 lg:px-8";
 
 function scrollToAutoReload() {
 	const section = document.getElementById("auto-reload");

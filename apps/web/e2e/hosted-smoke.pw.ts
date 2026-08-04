@@ -1545,6 +1545,7 @@ type HostedApiStubOptions = {
 	topUpRequests?: string[];
 	topUpResponses?: StubResponse[];
 	unfinishedDeploymentRequests?: boolean;
+	usageResponse?: unknown;
 	updateDeploymentRequests?: Array<{
 		body: string;
 		idempotencyKey: string | null;
@@ -1696,6 +1697,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p === "/v2/ai-providers/managed/models") {
 			options.managedModelRequests?.push(r.request().url());
 			return fulfillJson(r, options.managedModels ?? managedModelCatalog);
+		}
+		if (p === "/v2/usage" && r.request().method() === "GET" && options.usageResponse) {
+			return fulfillJson(r, options.usageResponse);
 		}
 		if (p === "/v2/wallet" && r.request().method() === "GET") {
 			options.walletRequests?.push(r.request().url());
@@ -4797,6 +4801,58 @@ test("existing Cloud customers keep billing settings when new deploys are disabl
 	await expect(dialog.getByRole("button", { name: /^Wallet/ })).toBeVisible();
 	await expect(dialog.getByRole("button", { name: /^Compute/ })).toBeVisible();
 	await expect(dialog.getByRole("button", { name: /^Usage/ })).toBeVisible();
+});
+
+test("usage settings show peer agent and model breakdowns on desktop and mobile", async ({
+	page,
+}, testInfo) => {
+	await stubHostedApi(page, {
+		usageResponse: {
+			period_start: "2026-07-01T00:00:00Z",
+			period_end: "2026-08-01T00:00:00Z",
+			availability: "complete",
+			unavailable_sections: [],
+			total_usd: "12.50",
+			total_requests: 37,
+			by_agent: [
+				{
+					agent_id: "hdep_research",
+					agent_name: "openclaw-research",
+					amount_usd: "10.00",
+					requests: 30,
+				},
+				{ agent_id: null, agent_name: null, amount_usd: "2.50", requests: 7 },
+			],
+			by_model: [
+				{
+					model: "openai/gpt-4o-mini",
+					provider: null,
+					amount_usd: "12.50",
+					requests: 37,
+				},
+			],
+			by_day: [],
+		},
+	});
+
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.goto("/channels?settings=billing-usage");
+	const dialog = page.getByTestId("settings-dialog");
+	await expect(dialog.getByRole("heading", { name: "Usage", exact: true })).toBeVisible();
+	await expect(dialog.getByRole("heading", { name: "By agent", exact: true })).toBeVisible();
+	await expect(dialog.getByRole("heading", { name: "By model", exact: true })).toBeVisible();
+	await expect(dialog.getByText("research", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("hdep_research", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("Unattributed", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("Usage not linked to an agent", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("Daily usage", { exact: true })).toHaveCount(0);
+	await expect(dialog.getByRole("table")).toHaveCount(2);
+	await dialog.screenshot({ path: testInfo.outputPath("usage-desktop.png") });
+
+	await page.setViewportSize({ width: 390, height: 844 });
+	await expect(dialog.getByRole("table")).toHaveCount(2);
+	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+	await dialog.screenshot({ path: testInfo.outputPath("usage-mobile.png") });
 });
 
 test("deploy wizard Select opens without browser errors", async ({ page }) => {
@@ -9078,27 +9134,30 @@ test("compute comparison synchronizes API prices across the shared billing term"
 
 	const settingsDialog = page.getByTestId("settings-dialog");
 	await expect(settingsDialog).toBeVisible();
-	const comparison = settingsDialog.getByRole("region", { name: "Compare compute options" });
+	const comparison = settingsDialog.getByRole("region", { name: "Compare compute plans" });
 	const termSwitcher = comparison.getByRole("group", { name: /Billing term/ });
 	await expect(termSwitcher).toHaveCount(1);
 	const cards = comparison.locator('[data-slot="card"]');
 	const basicCard = cards.nth(0);
 	const performanceCard = cards.nth(1);
-	const aiCard = cards.nth(2);
+	await expect(cards).toHaveCount(2);
 	await expect(termSwitcher.getByRole("button", { name: "Monthly", exact: true })).toHaveAttribute(
 		"aria-pressed",
 		"true",
 	);
 	await expect(basicCard).toContainText("$12.34/mo");
 	await expect(performanceCard).toContainText("$56.78/mo");
-	await expect(aiCard).toContainText("Pay as you go");
+	const monthlyBoxes = await cards.evaluateAll((elements) =>
+		elements.map((element) => element.getBoundingClientRect().toJSON()),
+	);
+	expect(monthlyBoxes[0]?.top).toBeCloseTo(monthlyBoxes[1]?.top ?? 0, 0);
+	expect(monthlyBoxes[0]?.height).toBeCloseTo(monthlyBoxes[1]?.height ?? 0, 0);
 
 	await termSwitcher.getByRole("button", { name: "Annual", exact: true }).click();
 	await expect(basicCard).toContainText("$10.29/mo");
 	await expect(basicCard).toContainText("Billed $123.48/yr");
 	await expect(performanceCard).toContainText("$45.27/mo");
 	await expect(performanceCard).toContainText("Billed $543.24/yr");
-	await expect(aiCard).toContainText("Pay as you go");
 	expect(errors, `compute plan comparison: ${errors.join(" | ")}`).toEqual([]);
 });
 

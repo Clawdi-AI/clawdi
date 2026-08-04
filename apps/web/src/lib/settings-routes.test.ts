@@ -38,6 +38,10 @@ describe("dashboard Settings search", () => {
 		expect(validateDashboardSettingsSearch({ settings: "unknown", keep: "yes" })).toEqual({
 			keep: "yes",
 		});
+		expect(validateDashboardSettingsSearch({ settings: "profile", keep: "yes" })).toEqual({
+			settings: "general",
+			keep: "yes",
+		});
 	});
 
 	test("canonicalizes denied Cloud deep links only after access and inventory resolve", () => {

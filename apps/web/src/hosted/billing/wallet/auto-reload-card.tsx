@@ -198,14 +198,14 @@ export function AutoReloadCard({
 					<span className="inline-flex items-center gap-2">
 						<Repeat className="size-4" aria-hidden /> Auto-reload
 					</span>
-					<StatusBadge status={status.tone} withDot>
-						{status.label}
+					<StatusBadge status={editing ? "neutral" : status.tone} withDot>
+						{editing ? "Editing" : status.label}
 					</StatusBadge>
 				</span>
 			}
-			description={editing ? "Choose when and how much to add." : status.description}
+			description={editing ? "Configure when Wallet automatically adds funds." : status.description}
 		>
-			<div className="flex max-w-2xl flex-col gap-5">
+			<div className="flex max-w-3xl flex-col gap-6">
 				<AutoReloadActionConfirm
 					wallet={wallet}
 					onTopUp={onTopUp}
@@ -231,14 +231,14 @@ export function AutoReloadCard({
 				{editing ? (
 					<form
 						id="auto-reload-form"
-						className="max-w-2xl space-y-5"
+						className="space-y-6"
 						onSubmit={(event) => {
 							event.preventDefault();
 							setBlurred(ALL_FIELDS_BLURRED);
 							void runAction(saveChanges);
 						}}
 					>
-						<div className="grid gap-4 sm:grid-cols-2">
+						<div className="grid gap-5 sm:grid-cols-2">
 							<div className="flex flex-col gap-1.5">
 								<Label htmlFor="ar-threshold">When balance is below (USD)</Label>
 								<Input
@@ -248,7 +248,7 @@ export function AutoReloadCard({
 									autoComplete="off"
 									min={AUTORELOAD_THRESHOLD_MIN_USD}
 									step="0.01"
-									className="tabular-nums"
+									className="tabular-nums [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
 									value={draft.threshold}
 									onChange={(event) => updateDraft("threshold", event.target.value)}
 									onBlur={() => markBlurred("threshold")}
@@ -276,7 +276,7 @@ export function AutoReloadCard({
 									min={AUTORELOAD_AMOUNT_MIN_CENTS / 100}
 									max={AUTORELOAD_AMOUNT_MAX_CENTS / 100}
 									step="0.01"
-									className="tabular-nums"
+									className="tabular-nums [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
 									value={draft.amount}
 									onChange={(event) => updateDraft("amount", event.target.value)}
 									onBlur={() => markBlurred("amount")}
@@ -295,7 +295,7 @@ export function AutoReloadCard({
 							</div>
 						</div>
 
-						<div className="space-y-3 border-t pt-5">
+						<div className="grid gap-4 border-t pt-5 sm:grid-cols-2">
 							<div className="flex items-start justify-between gap-3">
 								<div className="space-y-0.5">
 									<Label htmlFor="ar-monthly-limit">Monthly limit</Label>
@@ -314,7 +314,7 @@ export function AutoReloadCard({
 							</div>
 
 							{draft.monthlyLimitEnabled ? (
-								<div className="flex max-w-sm flex-col gap-1.5">
+								<div className="flex flex-col gap-1.5">
 									<Label htmlFor="ar-cap">Monthly limit (USD)</Label>
 									<Input
 										id="ar-cap"
@@ -323,7 +323,7 @@ export function AutoReloadCard({
 										autoComplete="off"
 										min={AUTORELOAD_AMOUNT_MIN_CENTS / 100}
 										step="0.01"
-										className="tabular-nums"
+										className="tabular-nums [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
 										value={draft.cap}
 										onChange={(event) => updateDraft("cap", event.target.value)}
 										onBlur={() => markBlurred("cap")}
@@ -353,7 +353,7 @@ export function AutoReloadCard({
 					</div>
 				) : null}
 
-				<div className="flex flex-wrap items-center justify-between gap-3">
+				<div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
 					<p className="text-xs text-muted-foreground">
 						Auto-reload uses your saved card. A manual top-up saves one.
 					</p>

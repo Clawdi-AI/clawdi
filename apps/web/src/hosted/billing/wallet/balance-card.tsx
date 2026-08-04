@@ -57,12 +57,11 @@ export function BalanceCard({
 					</div>
 				</div>
 				<div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto lg:shrink-0">
-					<Button onClick={onTopUp} size="lg" className="w-full sm:w-auto">
+					<Button onClick={onTopUp} className="w-full sm:w-auto">
 						<CreditCard /> Top up
 					</Button>
 					<Button
 						variant="outline"
-						size="lg"
 						className="w-full sm:w-auto"
 						onClick={onManagePaymentMethods}
 						disabled={isManagePaymentMethodsPending}

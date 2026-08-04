@@ -1745,6 +1745,17 @@ export interface components {
             upgrade_eligibility: components["schemas"]["V2HostedComputeUpgradeEligibility"];
             compute_slot_occupancy: components["schemas"]["V2HostedComputeSlotOccupancy"] | null;
         };
+        /** V2HostedUsageAgentBreakdown */
+        V2HostedUsageAgentBreakdown: {
+            /** Agent Id */
+            agent_id: string | null;
+            /** Agent Name */
+            agent_name: string | null;
+            /** Amount Usd */
+            amount_usd: string;
+            /** Requests */
+            requests: number;
+        };
         /** V2HostedUsageDay */
         V2HostedUsageDay: {
             /** Date */
@@ -1775,11 +1786,13 @@ export interface components {
              */
             availability: "complete" | "partial" | "unavailable";
             /** Unavailable Sections */
-            unavailable_sections: ("totals" | "by_model" | "by_day")[];
+            unavailable_sections: ("totals" | "by_agent" | "by_model" | "by_day")[];
             /** Total Usd */
             total_usd: string | null;
             /** Total Requests */
             total_requests: number | null;
+            /** By Agent */
+            by_agent?: components["schemas"]["V2HostedUsageAgentBreakdown"][];
             /** By Model */
             by_model: components["schemas"]["V2HostedUsageModelBreakdown"][];
             /** By Day */
