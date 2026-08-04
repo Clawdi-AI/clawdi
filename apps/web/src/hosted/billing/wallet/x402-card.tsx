@@ -2,8 +2,8 @@
 
 import { Link2 } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
+import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { useHostedUser } from "@/hosted/billing/hooks";
@@ -12,17 +12,18 @@ import { shouldBlockQueryError } from "@/lib/query-state";
 export function X402Card({ enabled }: { enabled: boolean }) {
 	if (!enabled) {
 		return (
-			<Card data-hosted="true" className="self-start">
-				<CardHeader>
-					<div className="flex items-center justify-between gap-3">
-						<CardTitle className="flex items-center gap-2 text-base">
-							<Link2 className="size-4" aria-hidden /> USDC top-up
-						</CardTitle>
-						<Badge variant="secondary">Coming soon</Badge>
-					</div>
-					<CardDescription>Let your agent add funds with USDC through x402.</CardDescription>
-				</CardHeader>
-			</Card>
+			<SettingsSection
+				data-hosted="true"
+				title={
+					<span className="flex flex-wrap items-center gap-2">
+						<span className="inline-flex items-center gap-2">
+							<Link2 className="size-4" aria-hidden /> USDC via x402
+						</span>
+						<Badge variant="secondary">Not available yet</Badge>
+					</span>
+				}
+				description="x402 payments are not available yet. When launched, agents will be able to add Wallet funds with USDC."
+			/>
 		);
 	}
 
@@ -34,19 +35,19 @@ function EnabledX402Card() {
 	const address = me.data?.evm_wallet_address ?? null;
 
 	return (
-		<Card data-hosted="true" className="self-start">
-			<CardHeader>
-				<div className="flex items-center justify-between gap-3">
-					<CardTitle className="flex items-center gap-2 text-base">
-						<Link2 className="size-4" aria-hidden /> USDC top-up
-					</CardTitle>
-					<Badge variant="outline">x402</Badge>
-				</div>
-				<CardDescription>
-					Your agent can add funds from its linked wallet. They appear in this balance.
-				</CardDescription>
-			</CardHeader>
-			<CardContent>
+		<SettingsSection
+			data-hosted="true"
+			title={
+				<span className="flex flex-wrap items-center gap-2">
+					<span className="inline-flex items-center gap-2">
+						<Link2 className="size-4" aria-hidden /> USDC via x402
+					</span>
+					<Badge variant="outline">Available</Badge>
+				</span>
+			}
+			description="Your agent can add Wallet funds from its linked wallet using USDC."
+		>
+			<div className="max-w-2xl">
 				{me.isLoading ? (
 					<Skeleton className="h-9 w-full rounded-md" />
 				) : shouldBlockQueryError(me.error, me.data) ? (
@@ -67,7 +68,7 @@ function EnabledX402Card() {
 						Connect an agent wallet before using x402.
 					</p>
 				)}
-			</CardContent>
-		</Card>
+			</div>
+		</SettingsSection>
 	);
 }

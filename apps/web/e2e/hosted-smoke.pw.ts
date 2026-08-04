@@ -8655,8 +8655,11 @@ test("Wallet formats its balance and opens billing from the balance actions", as
 	const balanceCard = settingsDialog
 		.locator('[data-slot="card"]')
 		.filter({ hasText: "Wallet balance" });
+	await expect(settingsDialog.locator('[data-slot="card"]')).toHaveCount(1);
 	await expect(balanceCard.getByText("$29.48", { exact: true })).toBeVisible();
 	await expect(balanceCard.getByRole("button", { name: "Top up", exact: true })).toBeVisible();
+	await expect(settingsDialog.getByText("Not available yet", { exact: true })).toBeVisible();
+	await expect(settingsDialog.getByText(/x402 payments are not available yet/)).toBeVisible();
 
 	await balanceCard.getByRole("button", { name: "Manage payment methods" }).click();
 
@@ -8689,7 +8692,7 @@ test("auto-reload batches toggle and fields into one explicit save", async ({ pa
 		plans: [basicPlan, performancePlan],
 	});
 	const settingsDialog = await gotoHostedSettingsDialog(page, "billing-wallet");
-	const card = settingsDialog.locator('[data-slot="card"]').filter({ hasText: "Auto-reload" });
+	const card = settingsDialog.getByTestId("auto-reload-section");
 	await expect(card.getByText("Off", { exact: true })).toBeVisible();
 	await card.getByRole("button", { name: "Set up auto-reload" }).click();
 	const threshold = card.getByLabel("When balance is below (USD)");
@@ -8779,8 +8782,9 @@ test("top-up validates the amount and blocks duplicate submission or close in fl
 	});
 	const settingsDialog = await gotoHostedSettingsDialog(page, "billing-wallet");
 	await settingsDialog.getByRole("button", { name: "Top up" }).click();
-	const topUpPanel = settingsDialog.getByRole("region", { name: "Top up Wallet" });
+	const topUpPanel = page.getByRole("dialog").filter({ hasText: "Top up Wallet" });
 	await expect(page.getByRole("dialog")).toHaveCount(1);
+	await expect(settingsDialog.getByText("Wallet balance", { exact: true })).toBeVisible();
 	const amount = topUpPanel.getByLabel("Amount (USD)");
 
 	await amount.fill("25.50");
@@ -8867,8 +8871,9 @@ test("wallet confirms a card top-up only from its exact payment reference", asyn
 	await expect(settingsDialog.getByText("No activity yet", { exact: true })).toBeVisible();
 
 	await settingsDialog.getByRole("button", { name: "Top up" }).last().click();
-	await settingsDialog
-		.getByRole("region", { name: "Top up Wallet" })
+	await page
+		.getByRole("dialog")
+		.filter({ hasText: "Top up Wallet" })
 		.getByRole("button", { name: "Continue with $25.00" })
 		.click();
 
@@ -8903,7 +8908,7 @@ test("top-up rotates its idempotency key after an explicit reuse conflict", asyn
 	await page.goto("/channels?settings=billing-wallet");
 	const settingsDialog = page.getByTestId("settings-dialog");
 	await settingsDialog.getByRole("button", { name: "Top up" }).click();
-	const topUpPanel = settingsDialog.getByRole("region", { name: "Top up Wallet" });
+	const topUpPanel = page.getByRole("dialog").filter({ hasText: "Top up Wallet" });
 	const submit = topUpPanel.getByRole("button", { name: "Continue" });
 
 	await submit.click();

@@ -1,19 +1,10 @@
 "use client";
 
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
-import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSettingsEditState } from "@/components/settings-edit-state";
 import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardAction,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
 import {
 	Dialog,
 	DialogContent,
@@ -50,7 +41,6 @@ import {
 } from "@/hosted/billing/wallet/wallet-constants";
 
 type Step = "amount" | "pay";
-type TopUpPresentation = "dialog" | "inline";
 
 export async function confirmWalletTopup(
 	queryClient: QueryClient,
@@ -84,13 +74,11 @@ export function TopUpDialog({
 	onOpenChange,
 	onComplete,
 	initialAmountCents,
-	presentation = "dialog",
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	onComplete?: (status: "succeeded" | "processing") => void;
+	onComplete?: (status: "succeeded" | "processing", paymentReference: string | null) => void;
 	initialAmountCents?: number | null;
-	presentation?: TopUpPresentation;
 }) {
 	const topUp = useSensitiveTopUp();
 	const qc = useQueryClient();
@@ -112,10 +100,7 @@ export function TopUpDialog({
 	const valid = validTopUpAmountCents(amountCents);
 	const amountInvalid = amountTouched && !valid;
 	function finishTopup(status: PaymentOutcome) {
-		onComplete?.(status);
-		if (presentation === "inline") {
-			void confirmWalletTopup(qc, paymentReferenceRef.current);
-		}
+		onComplete?.(status, paymentReferenceRef.current);
 	}
 
 	function setAmount(next: string) {
@@ -280,31 +265,6 @@ export function TopUpDialog({
 				onSubmittingChange={setPaymentSubmitting}
 			/>
 		) : null;
-
-	if (presentation === "inline") {
-		if (!open) return null;
-		return (
-			<Card data-hosted="true" role="region" aria-labelledby="wallet-top-up-title">
-				<CardHeader>
-					<CardTitle id="wallet-top-up-title">Top up Wallet</CardTitle>
-					<CardDescription>{description}</CardDescription>
-					<CardAction>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon-sm"
-							onClick={() => close(false)}
-							disabled={topUp.isPending || paymentSubmitting}
-						>
-							<X />
-							<span className="sr-only">Close top-up</span>
-						</Button>
-					</CardAction>
-				</CardHeader>
-				<CardContent>{content}</CardContent>
-			</Card>
-		);
-	}
 
 	return (
 		<Dialog
