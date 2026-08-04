@@ -16,6 +16,7 @@ describe("agent overview registry", () => {
 		const hosted = agentOverviewGroups("hosted");
 		expect(connected.map((group) => group.id)).toEqual(["shared"]);
 		expect(hosted.map((group) => group.id)).toEqual(["shared", "operate"]);
+		expect(connected[0]?.label).toBe("Available to all agents");
 		expect(connected[0]?.modules.map((module) => module.id)).toEqual(["memories", "connectors"]);
 		expect(hosted[0]?.modules).toEqual(connected[0]?.modules);
 		expect(hosted[0]?.layout).toBe(connected[0]?.layout);

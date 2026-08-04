@@ -517,7 +517,7 @@ export default function ProjectDetailPage({
 				description={
 					isAgentScope && scopedBinding
 						? scopedBinding.binding_type === "primary"
-							? "This is the Agent's fixed Default project and first read context. Supported changes affect every Agent using this Project."
+							? "This Agent uses this Project by default. Changes affect every Agent using this Project."
 							: "This Agent can use Skills and attached Vaults from this Project. Supported changes affect every Agent using this Project."
 						: projectDetailDescription(project, isOwner, projectType?.label ?? "Project")
 				}
@@ -568,39 +568,36 @@ export default function ProjectDetailPage({
 				}
 			/>
 
-			{isAgentScope && scopedBinding ? (
+			{isAgentScope && scopedBinding?.binding_type === "context" ? (
 				<DetailPanel className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<div className="min-w-0">
 						<h2 className="text-sm font-semibold">Agent access</h2>
 						<p className="mt-0.5 text-xs text-muted-foreground">
-							{scopedBinding.binding_type === "primary"
-								? "Default project · read order 1. The current API keeps this primary binding fixed."
-								: `Added Project · read order ${scopedBindingPosition ?? "—"}. Removing it only changes this Agent's access.`}
+							Additional Project · read order {scopedBindingPosition ?? "—"}. Removing it only
+							changes this Agent&apos;s access.
 						</p>
 					</div>
-					{scopedBinding.binding_type === "context" ? (
-						<ConfirmAction
-							title="Remove this Project from the Agent?"
-							description={
-								<>
-									<p>This Agent will no longer be able to use this Project.</p>
-									<p>The Project and its resources are not deleted.</p>
-								</>
-							}
-							confirmLabel="Remove from Agent"
-							destructive
-							onConfirm={() => removeFromAgent.mutateAsync()}
-						>
-							<Button variant="outline" size="sm" disabled={removeFromAgent.isPending}>
-								{removeFromAgent.isPending ? (
-									<Spinner className="size-3.5" />
-								) : (
-									<Unlink className="size-3.5" />
-								)}
-								Remove from Agent
-							</Button>
-						</ConfirmAction>
-					) : null}
+					<ConfirmAction
+						title="Remove this Project from the Agent?"
+						description={
+							<>
+								<p>This Agent will no longer be able to use this Project.</p>
+								<p>The Project and its resources are not deleted.</p>
+							</>
+						}
+						confirmLabel="Remove from Agent"
+						destructive
+						onConfirm={() => removeFromAgent.mutateAsync()}
+					>
+						<Button variant="outline" size="sm" disabled={removeFromAgent.isPending}>
+							{removeFromAgent.isPending ? (
+								<Spinner className="size-3.5" />
+							) : (
+								<Unlink className="size-3.5" />
+							)}
+							Remove from Agent
+						</Button>
+					</ConfirmAction>
 				</DetailPanel>
 			) : null}
 
@@ -621,15 +618,16 @@ export default function ProjectDetailPage({
 				</Alert>
 			) : null}
 
-			{/* Stat tiles — anchors into the sections below. */}
-			<div className={cn("grid grid-cols-2 gap-3", !isAgentScope && "sm:grid-cols-4")}>
-				<StatTile label="Skills" value={skillCount} href="#skills" />
-				<StatTile label="Vaults" value={vaultCount} href="#vaults" />
-				{!isAgentScope && isOwner && isShareableProject ? (
-					<StatTile label="People" value={peopleCount} href="#people" />
-				) : null}
-				{!isAgentScope ? <StatTile label="Agents" value={agentCount} href="#agents" /> : null}
-			</div>
+			{!isAgentScope ? (
+				<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+					<StatTile label="Skills" value={skillCount} href="#skills" />
+					<StatTile label="Vaults" value={vaultCount} href="#vaults" />
+					{isOwner && isShareableProject ? (
+						<StatTile label="People" value={peopleCount} href="#people" />
+					) : null}
+					<StatTile label="Agents" value={agentCount} href="#agents" />
+				</div>
+			) : null}
 
 			<HubSection
 				id="skills"

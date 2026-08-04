@@ -256,7 +256,7 @@ export function consoleCommandPaletteItems(
 		);
 }
 
-type AgentNavigationGroupId = "primary" | "resources" | "shared" | "operate" | "settings";
+type AgentNavigationGroupId = "primary" | "resources" | "operate" | "settings";
 
 export type AgentNavigationItemMetadata = Omit<NavigationItemMetadata<AgentSectionId>, "href"> & {
 	variants: readonly AgentNavigationVariant[];
@@ -394,13 +394,7 @@ const AGENT_NAVIGATION_GROUPS = [
 	{
 		id: "resources",
 		label: "Resources",
-		itemIds: AGENT_RESOURCE_SECTION_IDS,
-		separated: false,
-	},
-	{
-		id: "shared",
-		label: "Shared capabilities",
-		itemIds: AGENT_ALL_AGENTS_SECTION_IDS,
+		itemIds: [...AGENT_RESOURCE_SECTION_IDS, ...AGENT_ALL_AGENTS_SECTION_IDS],
 		separated: false,
 	},
 	{

@@ -116,6 +116,8 @@ export default function VaultDetailPage({
 		[scopedBindings.data],
 	);
 	const scopedProjectIdSet = useMemo(() => new Set(scopedProjectIds), [scopedProjectIds]);
+	const scopedBindingsResolved = !isAgentScope || scopedBindings.data !== undefined;
+	const requestedProjectIsBound = !requestedProjectId || scopedProjectIdSet.has(requestedProjectId);
 
 	// UUID links use an exact authorized metadata lookup. Slug-only deep links
 	// remain a compatibility fallback for bookmarks created before stable IDs.
@@ -142,6 +144,7 @@ export default function VaultDetailPage({
 			);
 			return resolveLegacyVaultSummary(listing.items, slug);
 		},
+		enabled: !isAgentScope || (scopedBindingsResolved && requestedProjectIsBound),
 	});
 	const vault: VaultSummary | null = vaultDetail.data ?? null;
 	const isOwner = vault?.is_owner !== false;
@@ -206,6 +209,8 @@ export default function VaultDetailPage({
 			? scopedBindings.error
 			: null
 		: null;
+	const requestedProjectUnavailable =
+		isAgentScope && !!requestedProjectId && scopedBindingsResolved && !requestedProjectIsBound;
 
 	// Curation toolkit for grab-bag vaults (the default vault holds
 	// hundreds of keys): search by name, batch-select, then copy/move
@@ -412,6 +417,27 @@ export default function VaultDetailPage({
 						title={blockingScopeError ? "Couldn't load Agent Vault access" : "Couldn't load vault"}
 					/>
 				)}
+			</div>
+		);
+	}
+
+	if (requestedProjectUnavailable) {
+		return (
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+				<Button
+					render={<Link to={backTarget.href} />}
+					nativeButton={false}
+					variant="ghost"
+					size="sm"
+					className="w-fit"
+				>
+					<ArrowLeft className="mr-1.5 size-4" />
+					Back to {backTarget.label}
+				</Button>
+				<DetailNotFound
+					title="Vault not available to this Agent"
+					message="The requested Project is not available to this Agent. Choose one of the Agent's Projects first."
+				/>
 			</div>
 		);
 	}

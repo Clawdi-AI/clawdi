@@ -526,6 +526,7 @@ type DashboardApiStubOptions = {
 	skillDetailResponses?: Readonly<Record<string, { body: unknown; status: number }>>;
 	skillRequests?: string[];
 	skillsByProjectId?: Readonly<Record<string, readonly unknown[]>>;
+	vaultDetailRequests?: string[];
 	vaultRequests?: string[];
 };
 
@@ -636,6 +637,7 @@ async function stubDashboardApi(
 			return;
 		}
 		if (url.pathname === "/v1/vault/detail") {
+			options.vaultDetailRequests?.push(route.request().url());
 			const vaultId = url.searchParams.get("vault_id");
 			const vault = vaults.items.find((candidate) => candidate.id === vaultId);
 			await fulfillJson(route, vault ?? { detail: "Vault not found" }, vault ? 200 : 404);
@@ -838,8 +840,7 @@ test("Console and connected agents use the scoped navigation grammar", async ({ 
 	await page.goto("/agents/agent-smoke-1");
 	await expectSidebarNavigationGroups(page, [
 		{ label: null, items: ["Overview", "Sessions"] },
-		{ label: "Resources", items: ["Projects"] },
-		{ label: "Shared capabilities", items: ["Memories", "Connectors"] },
+		{ label: "Resources", items: ["Projects", "Memories", "Connectors"] },
 		{ label: null, items: ["Settings"] },
 	]);
 });
@@ -915,7 +916,7 @@ test("connected agent overview uses the modular hierarchy", async ({ page }, tes
 		),
 	).toHaveCount(0);
 	await expect(
-		overview.getByRole("heading", { name: "Shared capabilities", exact: true }),
+		overview.getByRole("heading", { name: "Available to all agents", exact: true }),
 	).toBeVisible();
 	await expect(overview.locator("[data-overview-access-scope]")).toHaveCount(2);
 	await expect(
@@ -1716,8 +1717,10 @@ test("connected agent resource tabs reuse scoped Projects, account Connectors, a
 		"/agents/agent-smoke-1/vaults/scoped-vault?project=project-smoke&vault=vault-scoped",
 	);
 	await expect(main.getByText("Attached to this Project", { exact: false })).toBeVisible();
+	await main.screenshot({ path: testInfo.outputPath("connected-project-hub-mobile.png") });
 
 	await page.setViewportSize({ width: 1280, height: 900 });
+	await main.screenshot({ path: testInfo.outputPath("connected-project-hub-desktop.png") });
 	await page.goto("/projects");
 	await expect(main.getByRole("heading", { name: "Projects", level: 1 })).toBeVisible();
 	const consoleProjectGrid = main.getByTestId("project-grid");
@@ -1821,6 +1824,20 @@ test("agent Vaults wait for effective Project bindings before requesting invento
 	const vaultRequest = vaultRequests[0];
 	if (!vaultRequest) throw new Error("Agent Vault inventory was not requested after bindings");
 	expect(new URL(vaultRequest).searchParams.get("project_id")).toBe("project-smoke");
+});
+
+test("agent Vault details reject an unbound Project before account Vault lookup", async ({
+	page,
+}) => {
+	const vaultDetailRequests: string[] = [];
+	await stubDashboardApi(page, [], { vaultDetailRequests });
+
+	await page.goto(
+		"/agents/agent-smoke-1/vaults/unrelated-vault?project=project-unrelated&vault=vault-unrelated",
+	);
+	const main = page.locator("main");
+	await expect(main.getByText("Vault not available to this Agent", { exact: true })).toBeVisible();
+	expect(vaultDetailRequests).toEqual([]);
 });
 
 test("agent Skills wait for effective Project bindings and fail closed on binding errors", async ({
@@ -2050,7 +2067,7 @@ test("agent Skill details resolve only through effective Projects", async ({ pag
 
 test("connected Project hub keeps create, Skill, and Vault mutations in Agent context", async ({
 	page,
-}) => {
+}, testInfo) => {
 	type Project = components["schemas"]["ProjectResponse"];
 	type Binding = components["schemas"]["AgentProjectBindingResponse"];
 	const primaryProject: Project = {
@@ -2109,6 +2126,11 @@ test("connected Project hub keeps create, Skill, and Vault mutations in Agent co
 	await expect(
 		main.getByRole("heading", { name: "Mutation Created Project", level: 1 }),
 	).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 10_000 });
+	await main.screenshot({ path: testInfo.outputPath("connected-custom-project-hub-desktop.png") });
+	await page.setViewportSize({ width: 390, height: 844 });
+	await main.screenshot({ path: testInfo.outputPath("connected-custom-project-hub-mobile.png") });
+	await page.setViewportSize({ width: 1280, height: 900 });
 
 	await main.getByRole("button", { name: "Add Skill", exact: true }).click();
 	const addSkillDialog = page.getByRole("dialog", {

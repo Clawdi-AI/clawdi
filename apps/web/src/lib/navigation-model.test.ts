@@ -117,13 +117,8 @@ describe("sidebar navigation model", () => {
 				id: "resources",
 				label: "Resources",
 				separated: false,
-				items: [{ id: "projects", label: "Projects" }],
-			},
-			{
-				id: "shared",
-				label: "Shared capabilities",
-				separated: false,
 				items: [
+					{ id: "projects", label: "Projects" },
 					{ id: "memories", label: "Memories" },
 					{ id: "connectors", label: "Connectors" },
 				],
@@ -135,7 +130,7 @@ describe("sidebar navigation model", () => {
 				items: [{ id: "settings", label: "Settings" }],
 			},
 		]);
-		expectNavigationHeadings(connectedGroups, ["Resources", "Shared capabilities"]);
+		expectNavigationHeadings(connectedGroups, ["Resources"]);
 
 		const hostedGroups = agentNavigationGroups("hosted");
 		expect(groupShape(hostedGroups)).toEqual([
@@ -152,13 +147,8 @@ describe("sidebar navigation model", () => {
 				id: "resources",
 				label: "Resources",
 				separated: false,
-				items: [{ id: "projects", label: "Projects" }],
-			},
-			{
-				id: "shared",
-				label: "Shared capabilities",
-				separated: false,
 				items: [
+					{ id: "projects", label: "Projects" },
 					{ id: "memories", label: "Memories" },
 					{ id: "connectors", label: "Connectors" },
 				],
@@ -181,7 +171,7 @@ describe("sidebar navigation model", () => {
 				items: [{ id: "settings", label: "Settings" }],
 			},
 		]);
-		expectNavigationHeadings(hostedGroups, ["Resources", "Shared capabilities", "Tools"]);
+		expectNavigationHeadings(hostedGroups, ["Resources", "Tools"]);
 
 		expect(CONNECTED_AGENT_SECTION_IDS).toEqual([
 			"overview",

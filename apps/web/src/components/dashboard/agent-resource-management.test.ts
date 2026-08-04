@@ -62,6 +62,12 @@ describe("Agent resource management surfaces", () => {
 		expect(skillDetail).toContain("}#skills`");
 		expect(vaultDetail).toContain("requestedProjectId");
 		expect(vaultDetail).toContain("vaultDetailHrefForScope(");
+		expect(vaultDetail).toContain(
+			"enabled: !isAgentScope || (scopedBindingsResolved && requestedProjectIsBound)",
+		);
+		expect(vaultDetail.indexOf("if (requestedProjectUnavailable)")).toBeLessThan(
+			vaultDetail.lastIndexOf("if (!vault)"),
+		);
 	});
 
 	test("keeps audited card actions visible on touch-sized viewports", () => {

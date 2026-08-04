@@ -3101,7 +3101,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overviewTitleRow.getByText("Cloud", { exact: true })).toHaveCount(1);
 	await expect(overviewTitleRow.getByText("Legacy", { exact: true })).toHaveCount(0);
 	await expect(
-		overview.getByRole("heading", { name: "Shared capabilities", exact: true }),
+		overview.getByRole("heading", { name: "Available to all agents", exact: true }),
 	).toBeVisible({ timeout: 12_000 });
 	await expect(overview.locator("[data-overview-access-scope]")).toHaveCount(2);
 	await expect(
@@ -3938,7 +3938,7 @@ test("hosted unavailable status stays inside Compute", async ({ page }, testInfo
 	const overview = main.locator('[data-agent-overview="hosted"]');
 	const compute = main.locator('[data-overview-status="compute"]');
 	await expect(
-		overview.getByRole("heading", { name: "Shared capabilities", exact: true }),
+		overview.getByRole("heading", { name: "Available to all agents", exact: true }),
 	).toBeVisible();
 	await expect(overview.getByRole("heading", { name: "Tools", exact: true })).toBeVisible();
 	await expect(compute).toContainText("Status unavailable");
@@ -4279,32 +4279,28 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 	const groups = page
 		.getByTestId("app-sidebar")
 		.locator('[data-slot="sidebar-content"] > [data-slot="sidebar-group"]');
-	await expect(groups).toHaveCount(5);
+	await expect(groups).toHaveCount(4);
 	await expect(groups.nth(0).locator('[data-slot="sidebar-group-label"]')).toHaveCount(0);
 	await expect(groups.nth(0).getByRole("link")).toHaveText(["Overview", "Sessions"]);
 	await expect(groups.nth(1).locator('[data-slot="sidebar-group-label"]')).toHaveText("Resources");
-	await expect(groups.nth(1).getByRole("link")).toHaveText(["Projects"]);
-	await expect(groups.nth(2).locator('[data-slot="sidebar-group-label"]')).toHaveText(
-		"Shared capabilities",
-	);
-	await expect(groups.nth(2).getByRole("link")).toHaveText(["Memories", "Connectors"]);
-	await expect(groups.nth(3).locator('[data-slot="sidebar-group-label"]')).toHaveText("Tools");
-	await expect(groups.nth(3).getByRole("link")).toHaveText([
+	await expect(groups.nth(1).getByRole("link")).toHaveText(["Projects", "Memories", "Connectors"]);
+	await expect(groups.nth(2).locator('[data-slot="sidebar-group-label"]')).toHaveText("Tools");
+	await expect(groups.nth(2).getByRole("link")).toHaveText([
 		"Agent Interface",
 		"Terminal",
 		"Channels",
 		"AI Providers",
 	]);
-	await expect(groups.nth(4).locator('[data-slot="sidebar-group-label"]')).toHaveCount(0);
-	await expect(groups.nth(4).getByRole("link")).toHaveText(["Settings"]);
-	await expect(groups.locator('[data-slot="sidebar-group-label"]')).toHaveCount(3);
+	await expect(groups.nth(3).locator('[data-slot="sidebar-group-label"]')).toHaveCount(0);
+	await expect(groups.nth(3).getByRole("link")).toHaveText(["Settings"]);
+	await expect(groups.locator('[data-slot="sidebar-group-label"]')).toHaveCount(2);
 	await expect(groups.locator('[data-slot="sidebar-group-label"]:empty')).toHaveCount(0);
 
 	const query = `?source=on-clawdi&d=${railHostedDeployment.id}`;
 	const main = page.locator("main");
 	await page.setViewportSize({ width: 2000, height: 1000 });
-	await expect(groups.nth(2).getByRole("link", { name: "Memories", exact: true })).toBeVisible();
-	await expect(groups.nth(2).getByRole("link", { name: "Connectors", exact: true })).toBeVisible();
+	await expect(groups.nth(1).getByRole("link", { name: "Memories", exact: true })).toBeVisible();
+	await expect(groups.nth(1).getByRole("link", { name: "Connectors", exact: true })).toBeVisible();
 	await page.goto(`/agents/${railHostedEnvironmentId}/memories${query}`);
 	await expect(page).toHaveURL(
 		(url) =>
@@ -4533,6 +4529,9 @@ test("hosted Agent keeps Memory and Connector card details nested with deploymen
 		`/agents/${railHostedEnvironmentId}/vaults/hosted-vault${query}&project=project-hosted&vault=vault-hosted`,
 	);
 	await expect(main.getByText("Attached to this Project", { exact: false })).toBeVisible();
+	await main.screenshot({ path: testInfo.outputPath("hosted-project-hub-mobile.png") });
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await main.screenshot({ path: testInfo.outputPath("hosted-project-hub-desktop.png") });
 
 	await page.goto(`/agents/${railHostedEnvironmentId}/vaults${query}`);
 	await expect(page).toHaveURL((url) => {

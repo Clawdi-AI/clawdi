@@ -39,7 +39,7 @@ const AGENT_OVERVIEW_GROUPS = {
 	connected: [
 		{
 			id: "shared",
-			label: "Shared capabilities",
+			label: "Available to all agents",
 			layout: "three-column",
 			modules: AGENT_SHARED_CAPABILITIES,
 		},
@@ -47,7 +47,7 @@ const AGENT_OVERVIEW_GROUPS = {
 	hosted: [
 		{
 			id: "shared",
-			label: "Shared capabilities",
+			label: "Available to all agents",
 			layout: "three-column",
 			modules: AGENT_SHARED_CAPABILITIES,
 		},
