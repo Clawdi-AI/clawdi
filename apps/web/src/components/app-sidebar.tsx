@@ -1726,6 +1726,7 @@ export function AppSidebar({
 			<SettingsDialog
 				open={settingsOpen}
 				section={activeSettingsSection}
+				agentTiles={agents}
 				hasExistingCloudAgents={
 					hostedAgentTiles?.some((tile) => tile.source === "on-clawdi") ?? false
 				}

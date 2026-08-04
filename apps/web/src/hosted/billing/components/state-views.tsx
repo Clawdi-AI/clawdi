@@ -56,7 +56,7 @@ export function WalletSkeleton() {
 	);
 }
 
-/** Usage: metric strip followed by peer agent and model breakdowns. */
+/** Usage: metric strip, daily trend, then peer agent and model breakdowns. */
 export function UsageSkeleton() {
 	return (
 		<div data-hosted="true" className="space-y-8">
@@ -70,6 +70,9 @@ export function UsageSkeleton() {
 					<Skeleton className="h-4 w-32" />
 				</div>
 			</div>
+			<SectionSkeleton>
+				<Skeleton className="h-44 w-full rounded-lg" />
+			</SectionSkeleton>
 			<SectionSkeleton>
 				<div className="space-y-3">
 					<Skeleton className="h-10 w-full" />
