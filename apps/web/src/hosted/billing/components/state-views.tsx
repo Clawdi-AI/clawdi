@@ -71,34 +71,24 @@ export function WalletSkeleton() {
 	);
 }
 
-/** Usage: metric strip, daily trend, then peer agent and model breakdowns. */
+/** Usage: scoped totals, spend trend, and model table. */
 export function UsageSkeleton() {
 	return (
 		<div data-hosted="true" className="space-y-8">
 			<div className="grid overflow-hidden rounded-lg border sm:grid-cols-2 sm:divide-x">
 				<div className="space-y-2 p-4">
-					<Skeleton className="h-8 w-28" />
 					<Skeleton className="h-4 w-36" />
+					<Skeleton className="h-8 w-28" />
 				</div>
 				<div className="space-y-2 border-t p-4 sm:border-t-0">
-					<Skeleton className="h-8 w-20" />
 					<Skeleton className="h-4 w-32" />
+					<Skeleton className="h-8 w-20" />
 				</div>
 			</div>
 			<SectionSkeleton description={false}>
-				<Skeleton className="h-44 w-full rounded-lg" />
+				<Skeleton className="h-44 w-full" />
 			</SectionSkeleton>
 			<SectionSkeleton description={false}>
-				<div className="space-y-3">
-					<Skeleton className="h-10 w-full" />
-					<Skeleton className="h-10 w-full" />
-					<Skeleton className="h-10 w-full" />
-				</div>
-			</SectionSkeleton>
-			<SectionSkeleton
-				description={false}
-				actions={<Skeleton className="h-9 w-44 shrink-0 rounded-md sm:w-56" />}
-			>
 				<div className="space-y-3">
 					<Skeleton className="h-10 w-full" />
 					<Skeleton className="h-10 w-full" />

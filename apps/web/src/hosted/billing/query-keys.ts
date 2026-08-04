@@ -18,5 +18,6 @@ export const billingKeys = {
 	deployments: ["billing", "deployments"] as const,
 	legacyAgentEnvironments: ["billing", "legacy-agent-environments"] as const,
 	me: ["billing", "me"] as const,
-	usage: (days: number | null) => [...usageRoot, days] as const,
+	usage: (days: number | null, agentId: string | null = null) =>
+		[...usageRoot, days, agentId] as const,
 };

@@ -3629,6 +3629,7 @@ export interface operations {
         parameters: {
             query?: {
                 days?: number | null;
+                agent_id?: string | null;
             };
             header?: never;
             path?: never;
