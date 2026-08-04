@@ -90,6 +90,7 @@ class Settings(BaseSettings):
         "clerk_pem_public_key",
         "clerk_jwt_issuer",
         "clerk_jwt_audience",
+        "clerk_webhook_signing_secret",
         mode="before",
     )
     @classmethod
@@ -220,6 +221,10 @@ class Settings(BaseSettings):
     # Empty values preserve the historical signature-only session validation.
     clerk_jwt_issuer: str = ""
     clerk_jwt_audience: str = ""
+    # Dedicated to this Clerk webhook endpoint. It must not be shared with a
+    # different endpoint because Clerk/Svix issues one secret per endpoint.
+    clerk_webhook_signing_secret: SecretStr = SecretStr("")
+    clerk_webhook_tolerance_seconds: Annotated[int, Field(gt=0, le=600)] = 300
 
     # Opt-in for the email-rebind authentication path. When true, an
     # incoming Clerk JWT whose `sub` doesn't match any existing user is

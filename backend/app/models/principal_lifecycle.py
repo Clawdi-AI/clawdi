@@ -2,8 +2,6 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
-    BigInteger,
-    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -31,10 +29,6 @@ class PrincipalLifecycle(Base, TimestampMixin):
         ),
         UniqueConstraint("user_id", name="uq_principal_lifecycles_user_id"),
         CheckConstraint(
-            "current_revision >= 1",
-            name="ck_principal_lifecycles_revision",
-        ),
-        CheckConstraint(
             "cleanup_attempts >= 0",
             name="ck_principal_lifecycles_cleanup_attempts",
         ),
@@ -61,7 +55,6 @@ class PrincipalLifecycle(Base, TimestampMixin):
         ForeignKey("users.id", ondelete="SET NULL"),
         index=True,
     )
-    current_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
     terminated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     cleanup_attempts: Mapped[int] = mapped_column(
         Integer,
@@ -78,24 +71,37 @@ class PrincipalLifecycle(Base, TimestampMixin):
     cleanup_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class PrincipalLifecycleCommand(Base, TimestampMixin):
-    """Durable receipt for one externally idempotent termination command."""
+class ClerkWebhookEventReceipt(Base, TimestampMixin):
+    """Minimal durable evidence for one verified Clerk deletion event."""
 
-    __tablename__ = "principal_lifecycle_commands"
+    __tablename__ = "clerk_webhook_event_receipts"
     __table_args__ = (
         CheckConstraint(
-            "requested_revision >= 1 AND accepted_revision >= requested_revision",
-            name="ck_principal_lifecycle_commands_revisions",
+            "receipt_source IN ('clerk', 'legacy_platform_bridge')",
+            name="ck_clerk_webhook_event_receipts_source",
+        ),
+        CheckConstraint(
+            "event_type = 'user.deleted'",
+            name="ck_clerk_webhook_event_receipts_type",
+        ),
+        CheckConstraint(
+            "(receipt_source = 'clerk' AND length(payload_sha256) = 64) OR "
+            "(receipt_source = 'legacy_platform_bridge' AND payload_sha256 IS NULL)",
+            name="ck_clerk_webhook_event_receipts_payload",
         ),
     )
 
-    command_id: Mapped[str] = mapped_column(String(191), primary_key=True)
+    message_id: Mapped[str] = mapped_column(String(191), primary_key=True)
     lifecycle_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("principal_lifecycles.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    requested_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    accepted_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    advanced: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    receipt_source: Mapped[str] = mapped_column(String(32), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload_sha256: Mapped[str | None] = mapped_column(String(64))
+    event_occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )

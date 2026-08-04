@@ -2009,26 +2009,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/platform/principals/terminate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Platform Terminate Principal
-         * @description Fence a Clerk principal before transactionally revoking local authority.
-         */
-        post: operations["platform_terminate_principal_v1_platform_principals_terminate_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/platform/agents": {
         parameters: {
             query?: never;
@@ -2850,6 +2830,23 @@ export interface paths {
         post?: never;
         /** Delete Project Binding */
         delete: operations["delete_project_binding_v1_agents__agent_id__project_bindings__binding_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/webhooks/clerk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clerk User Deleted Webhook */
+        post: operations["clerk_user_deleted_webhook_v1_webhooks_clerk_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -4632,6 +4629,15 @@ export interface components {
             /** Completed At */
             completed_at?: string | null;
         };
+        /** ClerkWebhookResponse */
+        ClerkWebhookResponse: {
+            /**
+             * Status
+             * @default ok
+             * @constant
+             */
+            status: "ok";
+        };
         /**
          * ConnectRequest
          * @description OAuth connect-link request body.
@@ -5976,18 +5982,6 @@ export interface components {
             /** Scopes */
             scopes?: string[];
         };
-        /** PlatformClerkPrincipal */
-        PlatformClerkPrincipal: {
-            /**
-             * Kind
-             * @constant
-             */
-            kind: "clerk";
-            /** Issuer */
-            issuer: string;
-            /** Subject */
-            subject: string;
-        };
         /** PlatformMutationBody */
         PlatformMutationBody: {
             owner: components["schemas"]["PlatformOwner"];
@@ -6023,40 +6017,6 @@ export interface components {
             kind: "clerk" | "partner_tenant";
             /** Ref */
             ref: string;
-        };
-        /** PlatformPrincipalTermination */
-        PlatformPrincipalTermination: {
-            principal: components["schemas"]["PlatformClerkPrincipal"];
-            /** Revision */
-            revision: number;
-            /** Command Id */
-            command_id: string;
-        };
-        /** PlatformPrincipalTerminationResponse */
-        PlatformPrincipalTerminationResponse: {
-            principal: components["schemas"]["PlatformClerkPrincipal"];
-            /** Command Id */
-            command_id: string;
-            /** Requested Revision */
-            requested_revision: number;
-            /** Accepted Revision */
-            accepted_revision: number;
-            /** Advanced */
-            advanced: boolean;
-            /**
-             * Status
-             * @default terminated
-             * @constant
-             */
-            status: "terminated";
-            /**
-             * Cleanup State
-             * @default complete
-             * @constant
-             */
-            cleanup_state: "complete";
-            /** User Disabled */
-            user_disabled: boolean;
         };
         /** PlatformRuntimeStateResponse */
         PlatformRuntimeStateResponse: {
@@ -11530,43 +11490,6 @@ export interface operations {
             };
         };
     };
-    platform_terminate_principal_v1_platform_principals_terminate_post: {
-        parameters: {
-            query?: never;
-            header: {
-                "Idempotency-Key": string;
-                "X-Admin-Key"?: string | null;
-                Authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PlatformPrincipalTermination"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PlatformPrincipalTerminationResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     platform_create_agent_v1_platform_agents_post: {
         parameters: {
             query?: never;
@@ -13173,6 +13096,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clerk_user_deleted_webhook_v1_webhooks_clerk_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClerkWebhookResponse"];
                 };
             };
         };
