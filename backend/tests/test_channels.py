@@ -127,7 +127,11 @@ from app.services.whatsapp_baileys import (
     mint_whatsapp_agent_credential,
     whatsapp_text_message_proto,
 )
-from app.services.whatsapp_native_transport import WhatsAppProviderMessageEvent
+from app.services.whatsapp_native_transport import (
+    WhatsAppProviderMessageEvent,
+    WhatsAppSidecarHealth,
+    WhatsAppSidecarUnavailableError,
+)
 from app.services.whatsapp_provider_bridge import persist_whatsapp_provider_event
 
 pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
@@ -11714,6 +11718,175 @@ async def test_telegram_pair_code_omits_link_metadata_for_invalid_username(
     assert pair["deep_link"] is None
     assert pair["qr_payload"] is None
     assert pair["pairing_command"] == f"/clawdi_pair {pair['code']}"
+
+
+class _WhatsAppPairLinkSidecar:
+    def __init__(self, health: WhatsAppSidecarHealth | Exception) -> None:
+        self._health = health
+        self.health_calls = 0
+
+    async def health(self) -> WhatsAppSidecarHealth:
+        self.health_calls += 1
+        if isinstance(self._health, Exception):
+            raise self._health
+        return self._health
+
+
+class _WhatsAppPairLinkRegistry:
+    def __init__(
+        self,
+        *,
+        account_id: UUID,
+        client: _WhatsAppPairLinkSidecar,
+        revision: str = "trusted-managed-revision",
+        bound: bool = True,
+    ) -> None:
+        self._account_id = account_id
+        self._client = client
+        self._revision = revision
+        self._bound = bound
+
+    def managed_is_bound(self, account_id: UUID) -> bool:
+        return self._bound and account_id == self._account_id
+
+    def managed_account_revision(self, account_id: UUID) -> str | None:
+        return self._revision if account_id == self._account_id else None
+
+    def get_managed_client(self, account_id: UUID) -> _WhatsAppPairLinkSidecar | None:
+        return self._client if account_id == self._account_id else None
+
+
+async def _create_whatsapp_pair_target(
+    client: httpx.AsyncClient,
+    *,
+    agent_id: UUID,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    created_response = await client.post(
+        "/v1/channels",
+        json={"provider": "whatsapp", "name": f"whatsapp-pair-link-{uuid4().hex}"},
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+    link_response = await client.post(
+        f"/v1/channels/{created['id']}/agent-links",
+        json={"agent_id": str(agent_id)},
+    )
+    assert link_response.status_code == 201, link_response.text
+    return created, link_response.json()
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_pair_code_returns_click_to_chat_for_bound_public_managed_pn(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created, link = await _create_whatsapp_pair_target(client, agent_id=channel_agent.id)
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    account.visibility = CHANNEL_VISIBILITY_PUBLIC
+    account.user_id = None
+    account.config = {
+        "connection_mode": "baileys_managed",
+        "sidecar_config_revision": "trusted-managed-revision",
+    }
+    await db_session.commit()
+    sidecar = _WhatsAppPairLinkSidecar(
+        WhatsAppSidecarHealth(
+            status="connected",
+            connected=True,
+            registered=True,
+            account_jid="15551234567:17@s.whatsapp.net",
+        )
+    )
+    registry = _WhatsAppPairLinkRegistry(account_id=account.id, client=sidecar)
+    monkeypatch.setattr(public_router, "get_active_whatsapp_sidecar_registry", lambda: registry)
+
+    response = await client.post(
+        f"/v1/channels/{account.id}/pair-codes",
+        json={"agent_link_id": link["id"], "ttl_seconds": 900},
+    )
+
+    assert response.status_code == 201, response.text
+    pair = response.json()
+    expected = f"https://wa.me/15551234567?text=%2Fclawdi_pair%20{pair['code']}"
+    assert pair["pairing_command"] == f"/clawdi_pair {pair['code']}"
+    assert pair["deep_link"] == expected
+    assert pair["qr_payload"] == expected
+    assert sidecar.health_calls == 1
+    assert "s.whatsapp.net" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_pair_code_keeps_manual_pairing_when_sidecar_is_unavailable(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created, link = await _create_whatsapp_pair_target(client, agent_id=channel_agent.id)
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    account.visibility = CHANNEL_VISIBILITY_PUBLIC
+    account.user_id = None
+    account.config = {
+        "connection_mode": "baileys_managed",
+        "sidecar_config_revision": "trusted-managed-revision",
+    }
+    await db_session.commit()
+    sidecar = _WhatsAppPairLinkSidecar(WhatsAppSidecarUnavailableError("unavailable"))
+    registry = _WhatsAppPairLinkRegistry(account_id=account.id, client=sidecar)
+    monkeypatch.setattr(public_router, "get_active_whatsapp_sidecar_registry", lambda: registry)
+
+    response = await client.post(
+        f"/v1/channels/{account.id}/pair-codes",
+        json={"agent_link_id": link["id"], "ttl_seconds": 900},
+    )
+
+    assert response.status_code == 201, response.text
+    pair = response.json()
+    assert pair["deep_link"] is None
+    assert pair["qr_payload"] is None
+    assert pair["pairing_command"] == f"/clawdi_pair {pair['code']}"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_pair_code_never_links_to_a_private_custom_identity(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created, link = await _create_whatsapp_pair_target(client, agent_id=channel_agent.id)
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    account.config = {
+        "connection_mode": "baileys_custom",
+        "sidecar_config_revision": "custom-revision",
+    }
+    await db_session.commit()
+    sidecar = _WhatsAppPairLinkSidecar(
+        WhatsAppSidecarHealth(
+            status="connected",
+            connected=True,
+            registered=True,
+            account_jid="15559876543@s.whatsapp.net",
+        )
+    )
+    registry = _WhatsAppPairLinkRegistry(account_id=account.id, client=sidecar)
+    monkeypatch.setattr(public_router, "get_active_whatsapp_sidecar_registry", lambda: registry)
+
+    response = await client.post(
+        f"/v1/channels/{account.id}/pair-codes",
+        json={"agent_link_id": link["id"], "ttl_seconds": 900},
+    )
+
+    assert response.status_code == 201, response.text
+    pair = response.json()
+    assert pair["deep_link"] is None
+    assert pair["qr_payload"] is None
+    assert sidecar.health_calls == 0
 
 
 @pytest.mark.asyncio

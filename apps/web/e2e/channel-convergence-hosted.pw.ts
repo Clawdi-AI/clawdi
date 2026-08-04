@@ -345,7 +345,19 @@ async function stubChannelExperience(page: Page) {
 			if (whatsappPairRequests === 1) {
 				return fulfillJson(route, { detail: rawDiagnostic }, 503);
 			}
-			const code = whatsappPairRequests === 2 ? "EXPIREDWA" : "FRESHWACODE";
+			const code =
+				whatsappPairRequests === 2
+					? "EXPIREDWA"
+					: whatsappPairRequests === 3
+						? "FRESHWACODE"
+						: "MANUALWACODE";
+			const canonicalLink = `https://wa.me/15551234567?text=%2Fclawdi_pair%20${code}`;
+			const deepLink =
+				whatsappPairRequests === 3
+					? canonicalLink
+					: whatsappPairRequests > 3
+						? `https://wa.me.evil.example/15551234567?text=%2Fclawdi_pair%20${code}`
+						: null;
 			return fulfillJson(
 				route,
 				{
@@ -357,6 +369,8 @@ async function stubChannelExperience(page: Page) {
 						Date.now() + (whatsappPairRequests === 2 ? -1_000 : 300_000),
 					).toISOString(),
 					pairing_command: `/clawdi_pair ${code}`,
+					deep_link: deepLink,
+					qr_payload: deepLink,
 				},
 				201,
 			);
@@ -502,6 +516,20 @@ for (const viewport of [
 		await expect(pairDialog).toContainText("Expired — generate a new code");
 		await pairDialog.getByRole("button", { name: "Generate new code", exact: true }).click();
 		await expect.poll(api.whatsappPairRequests).toBe(3);
+		const whatsappLink = "https://wa.me/15551234567?text=%2Fclawdi_pair%20FRESHWACODE";
+		await expect(pairDialog.getByRole("img", { name: "WhatsApp pairing QR code" })).toBeVisible();
+		await expect(pairDialog.getByRole("button", { name: "Open WhatsApp" })).toHaveAttribute(
+			"href",
+			whatsappLink,
+		);
+		await expect(pairDialog.getByRole("button", { name: "Open WhatsApp" })).toHaveAttribute(
+			"target",
+			"_blank",
+		);
+		await pairDialog.getByRole("button", { name: "Copy WhatsApp link" }).click();
+		await expect(pairDialog.getByRole("button", { name: "WhatsApp link copied" })).toBeVisible();
+		await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(whatsappLink);
+		await pairDialog.getByText("Pair manually", { exact: true }).click();
 		const whatsappCommand = pairDialog.getByRole("button", {
 			name: "Copy WhatsApp pairing command",
 		});
@@ -512,6 +540,26 @@ for (const viewport of [
 		await expect(
 			pairDialog.getByRole("button", { name: "WhatsApp pairing command copied" }),
 		).toBeVisible();
+		await expectNoHorizontalOverflow(page);
+		await page.keyboard.press("Escape");
+		await expect(pairDialog).toHaveCount(0);
+		await expect(whatsappPair).toBeFocused();
+
+		await whatsappPair.click();
+		pairDialog = page.getByRole("dialog", { name: "Pair WhatsApp" });
+		await expect.poll(api.whatsappPairRequests).toBe(4);
+		await expect(pairDialog).toContainText("WhatsApp link unavailable");
+		await expect(pairDialog.getByRole("img", { name: "WhatsApp pairing QR code" })).toHaveCount(0);
+		await expect(pairDialog.getByRole("button", { name: "Open WhatsApp" })).toHaveCount(0);
+		await expect(pairDialog.getByRole("button", { name: "Copy WhatsApp link" })).toHaveCount(0);
+		const fallbackCommand = pairDialog.getByRole("button", {
+			name: "Copy WhatsApp pairing command",
+		});
+		await expect(fallbackCommand).toContainText("/clawdi_pair MANUALWACODE");
+		await fallbackCommand.click();
+		await expect
+			.poll(() => page.evaluate(() => navigator.clipboard.readText()))
+			.toBe("/clawdi_pair MANUALWACODE");
 		await expectNoHorizontalOverflow(page);
 		await page.keyboard.press("Escape");
 		await expect(pairDialog).toHaveCount(0);

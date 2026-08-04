@@ -1,12 +1,16 @@
 "use client";
 
-import { RefreshCw } from "lucide-react";
+import { Check, Copy, ExternalLink, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
-import { pairCodeExpired } from "@/hosted/v2/channels/channel-linking.logic";
+import {
+	pairCodeExpired,
+	verifiedWhatsAppPairLink,
+} from "@/hosted/v2/channels/channel-linking.logic";
 import { WHATSAPP_PAIR_ERROR_NORMALIZER } from "@/hosted/v2/channels/channel-pairing-errors";
 import { usePairingSuccess } from "@/hosted/v2/channels/channel-pairing-success";
 import type { ChannelPairCode } from "@/hosted/v2/channels/channel-types";
@@ -21,11 +25,15 @@ import {
 	PairingInstructionPanel,
 	PairingLoading,
 	PairingNotice,
+	PairingQrCode,
 } from "@/hosted/v2/channels/pairing-dialog-ui";
 
 const WHATSAPP_PAIR_TTL_SECONDS = 300;
 
-type WhatsAppPairResult = Pick<ChannelPairCode, "expires_at" | "pairing_command">;
+type WhatsAppPairResult = Pick<
+	ChannelPairCode,
+	"code" | "expires_at" | "pairing_command" | "deep_link" | "qr_payload"
+>;
 
 export function WhatsAppPairDialog({
 	open,
@@ -47,6 +55,10 @@ export function WhatsAppPairDialog({
 	bindingCount: number;
 }) {
 	const pair = useCreatePairCode(accountId, { agentId, toastOnError: false });
+	const { copied, copy } = useCopyToClipboard({
+		success: false,
+		error: "Couldn't copy WhatsApp link",
+	});
 	const [result, setResult] = useState<WhatsAppPairResult | null>(null);
 	const [requestError, setRequestError] = useState<unknown>(null);
 	const [generating, setGenerating] = useState(false);
@@ -91,8 +103,11 @@ export function WhatsAppPairDialog({
 				if (sessionRef.current !== session) return;
 				setNowMs(Date.now());
 				setResult({
+					code: data.code,
 					expires_at: data.expires_at,
 					pairing_command: data.pairing_command,
+					deep_link: data.deep_link ?? null,
+					qr_payload: data.qr_payload ?? null,
 				});
 			} catch (error) {
 				if (sessionRef.current === session) setRequestError(error);
@@ -126,6 +141,15 @@ export function WhatsAppPairDialog({
 	}, [open, result]);
 
 	const expired = result ? pairCodeExpired(result.expires_at, nowMs) : false;
+	const validLink =
+		result && !expired
+			? verifiedWhatsAppPairLink({
+					deepLink: result.deep_link,
+					qrPayload: result.qr_payload,
+					pairingCommand: result.pairing_command,
+					code: result.code,
+				})
+			: null;
 	const accountIdentity = channelName?.trim() || "this WhatsApp account";
 
 	return (
@@ -144,7 +168,7 @@ export function WhatsAppPairDialog({
 				<PairingDialogHeader
 					title="Pair WhatsApp"
 					identity={accountIdentity}
-					description="Send the one-time command in the WhatsApp chat you want to connect."
+					description="Use the link or pairing command to connect a chat."
 				/>
 
 				<PairingDialogBody data-whatsapp-pair-dialog-body>
@@ -159,34 +183,84 @@ export function WhatsAppPairDialog({
 						/>
 					) : result ? (
 						<div className="space-y-4">
-							{expired ? (
-								<PairingNotice title="This WhatsApp pair code has expired">
-									Generate a new command before pairing WhatsApp.
-								</PairingNotice>
+							{validLink ? (
+								<PairingQrCode value={validLink} label="WhatsApp pairing QR code" />
 							) : (
-								<PairingInstructionPanel>
-									<p>Send this command in the WhatsApp chat you want to connect:</p>
-									<CopyablePairingCode
-										value={result.pairing_command}
-										label="WhatsApp pairing command"
-									/>
-								</PairingInstructionPanel>
+								<PairingNotice
+									title={
+										expired ? "This WhatsApp pair code has expired" : "WhatsApp link unavailable"
+									}
+								>
+									{expired
+										? "Generate a new code before pairing WhatsApp."
+										: "QR and Open WhatsApp aren't available for this account. Use the command below instead."}
+								</PairingNotice>
 							)}
 							<PairingExpiry expired={expired}>
 								{expired
 									? "Expired — generate a new code"
 									: pairCodeExpiryLabel(result.expires_at, nowMs)}
 							</PairingExpiry>
-							<PairingDialogActions className="sm:grid-cols-1">
-								<Button
-									variant={expired ? "default" : "outline"}
-									className="w-full min-w-0 whitespace-normal"
-									onClick={() => void generate()}
-								>
-									<RefreshCw className="size-4" />
-									Generate new code
-								</Button>
-							</PairingDialogActions>
+							{validLink ? (
+								<PairingDialogActions>
+									<Button
+										render={<a href={validLink} target="_blank" rel="noopener noreferrer" />}
+										nativeButton={false}
+										className="w-full min-w-0 whitespace-normal"
+									>
+										Open WhatsApp
+										<ExternalLink className="size-4" />
+									</Button>
+									<Button
+										variant="outline"
+										className="w-full min-w-0 whitespace-normal"
+										onClick={() => void copy(validLink)}
+										aria-label={copied ? "WhatsApp link copied" : "Copy WhatsApp link"}
+										aria-live="polite"
+									>
+										{copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+										{copied ? "Link copied" : "Copy link"}
+									</Button>
+								</PairingDialogActions>
+							) : null}
+							{!expired ? (
+								<PairingInstructionPanel>
+									{validLink ? (
+										<details>
+											<summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+												Pair manually
+											</summary>
+											<div className="mt-3 space-y-2">
+												<p>Send this in the WhatsApp chat you want to connect:</p>
+												<CopyablePairingCode
+													value={result.pairing_command}
+													label="WhatsApp pairing command"
+												/>
+											</div>
+										</details>
+									) : (
+										<>
+											<p>Send this in the WhatsApp chat you want to connect:</p>
+											<CopyablePairingCode
+												value={result.pairing_command}
+												label="WhatsApp pairing command"
+											/>
+										</>
+									)}
+								</PairingInstructionPanel>
+							) : null}
+							{!validLink ? (
+								<PairingDialogActions className="sm:grid-cols-1">
+									<Button
+										variant={expired ? "default" : "outline"}
+										className="w-full min-w-0 whitespace-normal"
+										onClick={() => void generate()}
+									>
+										<RefreshCw className="size-4" />
+										Generate new code
+									</Button>
+								</PairingDialogActions>
+							) : null}
 						</div>
 					) : null}
 				</PairingDialogBody>

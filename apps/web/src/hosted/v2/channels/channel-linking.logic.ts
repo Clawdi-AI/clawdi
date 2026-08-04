@@ -63,6 +63,50 @@ export function verifiedDiscordPairingCommand(pairingCommand: string, code: stri
 	return pairingCommand === expected ? pairingCommand : null;
 }
 
+const WHATSAPP_PAIR_LINK_MAX_LENGTH = 256;
+const WHATSAPP_CLICK_TO_CHAT_PATH = /^\/[1-9][0-9]{6,14}$/;
+
+export function verifiedWhatsAppPairLink({
+	deepLink,
+	qrPayload,
+	pairingCommand: responsePairingCommand,
+	code,
+}: {
+	deepLink: string | null | undefined;
+	qrPayload: string | null | undefined;
+	pairingCommand: string;
+	code: string;
+}): string | null {
+	if (!deepLink || deepLink !== qrPayload || deepLink.length > WHATSAPP_PAIR_LINK_MAX_LENGTH) {
+		return null;
+	}
+	const expectedCommand = pairingCommand(code);
+	if (responsePairingCommand !== expectedCommand) return null;
+	try {
+		const url = new URL(deepLink);
+		const entries = [...url.searchParams.entries()];
+		if (
+			url.protocol !== "https:" ||
+			url.hostname !== "wa.me" ||
+			url.host !== "wa.me" ||
+			url.username ||
+			url.password ||
+			url.port ||
+			url.hash ||
+			!WHATSAPP_CLICK_TO_CHAT_PATH.test(url.pathname) ||
+			entries.length !== 1 ||
+			entries[0]?.[0] !== "text" ||
+			entries[0]?.[1] !== expectedCommand
+		) {
+			return null;
+		}
+		const canonical = `https://wa.me${url.pathname}?text=${encodeURIComponent(expectedCommand)}`;
+		return deepLink === canonical && url.href === canonical ? canonical : null;
+	} catch {
+		return null;
+	}
+}
+
 const DISCORD_INSTALL_URL_MAX_LENGTH = 8_192;
 const DISCORD_INSTALL_QUERY_MAX_ENTRIES = 16;
 const DISCORD_INSTALL_QUERY_KEY = /^[a-z][a-z0-9_]{0,63}$/;

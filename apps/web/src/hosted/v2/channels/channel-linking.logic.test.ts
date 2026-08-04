@@ -11,6 +11,7 @@ import {
 	pairingCommand,
 	verifiedDiscordInstallUrl,
 	verifiedDiscordPairingCommand,
+	verifiedWhatsAppPairLink,
 } from "./channel-linking.logic";
 
 function productionTypeScriptFiles(directory: string): string[] {
@@ -40,6 +41,70 @@ describe("hosted channel instructions and admission rules", () => {
 		expect(verifiedDiscordPairingCommand("/bot_pair BCDFGHJKLM", "BCDFGHJKLM")).toBeNull();
 		expect(verifiedDiscordPairingCommand("/clawdi_pair OTHER", "BCDFGHJKLM")).toBeNull();
 		expect(verifiedDiscordPairingCommand(" /clawdi_pair BCDFGHJKLM", "BCDFGHJKLM")).toBeNull();
+	});
+
+	test("accepts only canonical WhatsApp click-to-chat pairing links", () => {
+		for (const phoneNumber of ["1234567", "15551234567", "123456789012345"]) {
+			const link = `https://wa.me/${phoneNumber}?text=%2Fclawdi_pair%20BCDFGHJKLM`;
+			expect(
+				verifiedWhatsAppPairLink({
+					deepLink: link,
+					qrPayload: link,
+					pairingCommand: "/clawdi_pair BCDFGHJKLM",
+					code: "BCDFGHJKLM",
+				}),
+			).toBe(link);
+		}
+	});
+
+	test("rejects unsafe or ambiguous WhatsApp pairing links", () => {
+		const canonical = "https://wa.me/15551234567?text=%2Fclawdi_pair%20BCDFGHJKLM";
+		for (const deepLink of [
+			null,
+			undefined,
+			"not-a-url",
+			"http://wa.me/15551234567?text=%2Fclawdi_pair%20BCDFGHJKLM",
+			"https://wa.me.example.test/15551234567?text=%2Fclawdi_pair%20BCDFGHJKLM",
+			"https://wa.me@evil.example/15551234567?text=%2Fclawdi_pair%20BCDFGHJKLM",
+			"https://user:password@wa.me/15551234567?text=%2Fclawdi_pair%20BCDFGHJKLM",
+			"https://wa.me:443/15551234567?text=%2Fclawdi_pair%20BCDFGHJKLM",
+			"https://wa.me/15551234567?text=%2Fclawdi_pair%20BCDFGHJKLM#open",
+			"https://wa.me/+15551234567?text=%2Fclawdi_pair%20BCDFGHJKLM",
+			"https://wa.me/05551234567?text=%2Fclawdi_pair%20BCDFGHJKLM",
+			"https://wa.me/123456?text=%2Fclawdi_pair%20BCDFGHJKLM",
+			"https://wa.me/1234567890123456?text=%2Fclawdi_pair%20BCDFGHJKLM",
+			"https://wa.me/15551234567/?text=%2Fclawdi_pair%20BCDFGHJKLM",
+			"https://wa.me/15551234567?text=%2Fclawdi_pair%20OTHER",
+			"https://wa.me/15551234567?text=%2Fclawdi_pair%20BCDFGHJKLM&text=again",
+			"https://wa.me/15551234567?text=%2Fclawdi_pair%20BCDFGHJKLM&source=clawdi",
+			"https://wa.me/15551234567?text=%2Fclawdi_pair+BCDFGHJKLM",
+			"https://wa.me/15551234567?text=%2fclawdi_pair%20BCDFGHJKLM",
+		]) {
+			expect(
+				verifiedWhatsAppPairLink({
+					deepLink,
+					qrPayload: deepLink,
+					pairingCommand: "/clawdi_pair BCDFGHJKLM",
+					code: "BCDFGHJKLM",
+				}),
+			).toBeNull();
+		}
+		expect(
+			verifiedWhatsAppPairLink({
+				deepLink: canonical,
+				qrPayload: `${canonical}#different`,
+				pairingCommand: "/clawdi_pair BCDFGHJKLM",
+				code: "BCDFGHJKLM",
+			}),
+		).toBeNull();
+		expect(
+			verifiedWhatsAppPairLink({
+				deepLink: canonical,
+				qrPayload: canonical,
+				pairingCommand: "/clawdi_pair OTHER",
+				code: "BCDFGHJKLM",
+			}),
+		).toBeNull();
 	});
 
 	test("accepts backend-owned Discord install policy across split deploys", () => {
