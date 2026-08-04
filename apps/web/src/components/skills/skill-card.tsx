@@ -2,6 +2,7 @@
 
 import type { LinkProps } from "@tanstack/react-router";
 import { Sparkles, Trash2 } from "lucide-react";
+import type { ReactNode } from "react";
 import { EmptyState, type EmptyStateVariant } from "@/components/empty-state";
 import { HERO_GRID_CLASS, HeroCard } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
@@ -17,8 +18,10 @@ import type { SkillCapabilities } from "@/lib/skill-authority";
 import { relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
+export type SkillCardEntity = Pick<SkillSummary, "skill_key" | "name" | "description"> &
+	Partial<Pick<SkillSummary, "source" | "source_repo" | "version" | "updated_at">>;
 type SkillLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
-type SkillLinkBuilder = (skill: SkillSummary) => SkillLinkOptions;
+type SkillLinkBuilder = (skill: SkillSummary) => SkillLinkOptions | null;
 
 /* Skills are objects, not spreadsheet rows — they get the same card
  * treatment as projects and vaults: emoji identity tile, name, version,
@@ -31,8 +34,11 @@ type SkillLinkBuilder = (skill: SkillSummary) => SkillLinkOptions;
 
 export function SkillCard({
 	skill,
+	cloudSkill,
 	readOnly = false,
 	readOnlyLabel = "Shared · Read-only",
+	showVersion = true,
+	actions,
 	onUninstall,
 	uninstallPending = false,
 	selectMode = false,
@@ -42,9 +48,13 @@ export function SkillCard({
 	sourceLabel,
 	skillLink,
 }: {
-	skill: SkillSummary;
+	skill: SkillCardEntity;
+	/** Real Cloud entity backing navigation/selection/Project mutations. */
+	cloudSkill?: SkillSummary;
 	readOnly?: boolean;
-	readOnlyLabel?: string;
+	readOnlyLabel?: string | null;
+	showVersion?: boolean;
+	actions?: ReactNode;
 	onUninstall?: (skillKey: string, projectId: string) => void;
 	uninstallPending?: boolean;
 	selectMode?: boolean;
@@ -57,18 +67,22 @@ export function SkillCard({
 	skillLink?: SkillLinkBuilder;
 }) {
 	const id = identityFor(skill.name || skill.skill_key);
-	const canUninstall = !readOnly && !!onUninstall && !!skill.project_id;
-	const canSend = !readOnly && !!skill.project_id;
-	const detailLink = skillLink?.(skill) ?? {
-		to: "/skills/$key",
-		params: { key: skill.skill_key },
-		search: skill.project_id ? { project: skill.project_id } : undefined,
-	};
+	const canUninstall = !readOnly && !!onUninstall && !!cloudSkill?.project_id;
+	const canSend = !readOnly && !!cloudSkill?.project_id;
+	const detailLink = !cloudSkill
+		? undefined
+		: skillLink === undefined
+			? {
+					to: "/skills/$key" as const,
+					params: { key: cloudSkill.skill_key },
+					search: cloudSkill.project_id ? { project: cloudSkill.project_id } : undefined,
+				}
+			: (skillLink(cloudSkill) ?? undefined);
 	return (
 		<HeroCard
 			className="min-h-28 gap-2"
 			selected={selectMode && selected}
-			interactive={!selectMode}
+			interactive={!selectMode && Boolean(detailLink)}
 			icon={
 				<IconChip size="sm" tint={id.colorClasses} className="rounded-lg text-base">
 					{id.emoji}
@@ -77,10 +91,12 @@ export function SkillCard({
 			title={skill.name}
 			badges={
 				<>
-					<Badge variant="outline" className="shrink-0">
-						v{skill.version}
-					</Badge>
-					{readOnly ? (
+					{showVersion && skill.version !== undefined ? (
+						<Badge variant="outline" className="shrink-0">
+							v{skill.version}
+						</Badge>
+					) : null}
+					{readOnly && readOnlyLabel ? (
 						<Badge variant="secondary" className="shrink-0">
 							{readOnlyLabel}
 						</Badge>
@@ -100,9 +116,11 @@ export function SkillCard({
 						<span className="truncate">{sourceLabel.name}</span>
 					</span>
 				) : null,
-				<span key="source" className="font-mono" translate="no">
-					{skill.source_repo ?? skill.source}
-				</span>,
+				skill.source_repo || skill.source ? (
+					<span key="source" className="font-mono" translate="no">
+						{skill.source_repo ?? skill.source}
+					</span>
+				) : null,
 				skill.updated_at ? relativeTime(skill.updated_at) : null,
 			]}
 			actions={
@@ -116,16 +134,19 @@ export function SkillCard({
 						/>
 					) : null
 				) : (
-					<div className="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
-						{canSend ? <SendSkillDialog skills={[skill]} /> : null}
+					<div className="flex items-center gap-0.5 opacity-100 transition-opacity duration-150 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
+						{actions}
+						{canSend && cloudSkill ? <SendSkillDialog skills={[cloudSkill]} /> : null}
 						{canUninstall ? (
 							<ConfirmAction
-								title={`Uninstall ${skill.name}?`}
+								title={`Remove ${skill.name} from Project?`}
 								description={<p>Other Projects keep their copies.</p>}
-								confirmLabel="Uninstall"
+								confirmLabel="Remove from Project"
 								destructive
 								onConfirm={() => {
-									if (skill.project_id) onUninstall?.(skill.skill_key, skill.project_id);
+									if (cloudSkill?.project_id) {
+										onUninstall?.(cloudSkill.skill_key, cloudSkill.project_id);
+									}
 								}}
 							>
 								<Button
@@ -133,7 +154,7 @@ export function SkillCard({
 									size="icon-sm"
 									disabled={uninstallPending}
 									className="text-muted-foreground hover:text-destructive"
-									aria-label={`Uninstall ${skill.name}`}
+									aria-label={`Remove ${skill.name} from Project`}
 								>
 									<Trash2 className="size-3.5" />
 								</Button>
@@ -148,7 +169,9 @@ export function SkillCard({
 			{selectMode && selectable ? (
 				<button
 					type="button"
-					onClick={() => onToggleSelect?.(skill)}
+					onClick={() => {
+						if (cloudSkill) onToggleSelect?.(cloudSkill);
+					}}
 					aria-pressed={selected}
 					className="absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 				>
@@ -175,6 +198,8 @@ export function SkillCardGrid({
 	onToggleSelect,
 	sourceLabelFor,
 	skillLink,
+	actionsFor,
+	showVersionFor,
 }: {
 	skills: SkillSummary[];
 	isLoading: boolean;
@@ -193,6 +218,8 @@ export function SkillCardGrid({
 	sourceLabelFor?: (skill: SkillSummary) => { name: string; emoji: string } | null;
 	/** Build the detail link for the current navigation scope. */
 	skillLink?: SkillLinkBuilder;
+	actionsFor?: (skill: SkillSummary) => ReactNode;
+	showVersionFor?: (skill: SkillSummary) => boolean;
 }) {
 	if (isLoading) {
 		return (
@@ -217,8 +244,11 @@ export function SkillCardGrid({
 					<SkillCard
 						key={skillSelectionKey(skill)}
 						skill={skill}
+						cloudSkill={skill}
 						readOnly={readOnly}
 						readOnlyLabel={capabilities?.badgeLabel ?? undefined}
+						showVersion={showVersionFor?.(skill) ?? true}
+						actions={actionsFor?.(skill)}
 						onUninstall={onUninstall}
 						uninstallPending={uninstallPending}
 						selectMode={selectMode}

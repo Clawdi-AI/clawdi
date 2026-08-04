@@ -21,6 +21,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/deployments/{deployment_id}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Skills */
+        get: operations["get_skills_v1_deployments__deployment_id__skills_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/deployments/{deployment_id}/skills/{skill_key}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install Skill
+         * @description Install a catalog skill onto a deployment via the Clawdi plugin RPC.
+         *
+         *     Flow: plugin RPC (place files) → poll skills.status (verify) → skills.update (enable).
+         *     No backend install state — gateway is the sole runtime truth.
+         */
+        post: operations["install_skill_v1_deployments__deployment_id__skills__skill_key__install_post"];
+        /**
+         * Uninstall Skill
+         * @description Uninstall a skill: disable → remove files → chokidar auto-detects removal.
+         */
+        delete: operations["uninstall_skill_v1_deployments__deployment_id__skills__skill_key__install_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me": {
         parameters: {
             query?: never;
@@ -30,6 +74,26 @@ export interface paths {
         };
         /** Me */
         get: operations["me_v1_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Skill Catalog
+         * @description List/search curated skill catalog entries. Public endpoint, no auth required.
+         */
+        get: operations["skill_catalog_v1_skills_catalog_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -987,6 +1051,196 @@ export interface components {
         V1AgentEnvironmentsResponse: {
             /** Environment Ids */
             environment_ids: string[];
+        };
+        /** V1SkillCatalogItem */
+        V1SkillCatalogItem: {
+            /** Skill Key */
+            skill_key: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Emoji */
+            emoji: string;
+            /** Category */
+            category: string;
+            /** Featured */
+            featured: boolean;
+            /**
+             * Headline
+             * @default
+             */
+            headline: string;
+            /** Homepage */
+            homepage?: string | null;
+            /**
+             * Languages
+             * @default []
+             */
+            languages: string[];
+            /**
+             * Trust Level
+             * @default community
+             */
+            trust_level: string;
+            /**
+             * Tags
+             * @default []
+             */
+            tags: string[];
+            /**
+             * Status
+             * @default active
+             */
+            status: string;
+            /**
+             * Installable
+             * @default false
+             */
+            installable: boolean;
+            /**
+             * Connector Requirements
+             * @default []
+             */
+            connector_requirements: components["schemas"]["V1SkillConnectorRequirementItem"][];
+        };
+        /** V1SkillCatalogResponse */
+        V1SkillCatalogResponse: {
+            /** Items */
+            items: components["schemas"]["V1SkillCatalogItem"][];
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+        };
+        /** V1SkillConfigCheck */
+        V1SkillConfigCheck: {
+            /** Path */
+            path: string;
+            /** Satisfied */
+            satisfied: boolean;
+            /** Message */
+            message?: string | null;
+        };
+        /** V1SkillConnectorRequirementItem */
+        V1SkillConnectorRequirementItem: {
+            /** App Name */
+            app_name: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Required
+             * @default true
+             */
+            required: boolean;
+            /**
+             * Rank
+             * @default 0
+             */
+            rank: number;
+        };
+        /**
+         * V1SkillInstallRequest
+         * @description Request to install a catalog skill onto a deployment.
+         */
+        V1SkillInstallRequest: {
+            /**
+             * Enable After Install
+             * @default true
+             */
+            enable_after_install: boolean;
+        };
+        /** V1SkillInstallResponse */
+        V1SkillInstallResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Skill Key */
+            skill_key: string;
+            /** Status */
+            status: string;
+            /** Install Path */
+            install_path?: string | null;
+            /** Error */
+            error?: string | null;
+        };
+        /** V1SkillStatusItem */
+        V1SkillStatusItem: {
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Source */
+            source?: string | null;
+            /** Base Dir */
+            base_dir?: string | null;
+            /**
+             * Bundled
+             * @default false
+             */
+            bundled: boolean;
+            /** Skill Key */
+            skill_key: string;
+            /** Primary Env */
+            primary_env?: string | null;
+            /** Emoji */
+            emoji?: string | null;
+            /** Homepage */
+            homepage?: string | null;
+            /**
+             * Always
+             * @default false
+             */
+            always: boolean;
+            /**
+             * Disabled
+             * @default false
+             */
+            disabled: boolean;
+            /**
+             * Blocked By Allowlist
+             * @default false
+             */
+            blocked_by_allowlist: boolean;
+            /**
+             * Eligible
+             * @default true
+             */
+            eligible: boolean;
+            /**
+             * Requirements
+             * @default {}
+             */
+            requirements: {
+                [key: string]: string[];
+            };
+            /**
+             * Missing
+             * @default {}
+             */
+            missing: {
+                [key: string]: string[];
+            };
+            /**
+             * Config Checks
+             * @default []
+             */
+            config_checks: components["schemas"]["V1SkillConfigCheck"][];
+        };
+        /** V1SkillUninstallResponse */
+        V1SkillUninstallResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Skill Key */
+            skill_key: string;
+        };
+        /** V1SkillsStatusResponse */
+        V1SkillsStatusResponse: {
+            /** Skills */
+            skills: components["schemas"]["V1SkillStatusItem"][];
         };
         /** V1UserFeatureResolution */
         V1UserFeatureResolution: {
@@ -2166,6 +2420,105 @@ export interface operations {
             };
         };
     };
+    get_skills_v1_deployments__deployment_id__skills_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V1SkillsStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    install_skill_v1_deployments__deployment_id__skills__skill_key__install_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_key: string;
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V1SkillInstallRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V1SkillInstallResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    uninstall_skill_v1_deployments__deployment_id__skills__skill_key__install_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_key: string;
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V1SkillUninstallResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     me_v1_me_get: {
         parameters: {
             query?: never;
@@ -2182,6 +2535,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V1UserResponse"];
+                };
+            };
+        };
+    };
+    skill_catalog_v1_skills_catalog_get: {
+        parameters: {
+            query?: {
+                q?: string | null;
+                category?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V1SkillCatalogResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

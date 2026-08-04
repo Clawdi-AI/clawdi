@@ -7,12 +7,14 @@ const RUNTIME_META = {
 	openclaw: {
 		label: "OpenClaw",
 		blurb: "Choose this if you already use OpenClaw and want its Control UI and workflows.",
+		skillInstall: true,
 	},
 	hermes: {
 		label: "Hermes",
 		blurb: "Recommended for most people. Chat with and manage your agent in the Hermes Dashboard.",
+		skillInstall: false,
 	},
-} as const satisfies Record<HostedRuntime, { label: string; blurb: string }>;
+} as const satisfies Record<HostedRuntime, { label: string; blurb: string; skillInstall: boolean }>;
 
 export function isHostedRuntime(value: string): value is HostedRuntime {
 	return (HOSTED_RUNTIMES as readonly string[]).includes(value);
@@ -24,6 +26,10 @@ export function runtimeDisplayName(runtime: HostedRuntime): string {
 
 export function runtimeBlurb(runtime: HostedRuntime): string {
 	return RUNTIME_META[runtime].blurb;
+}
+
+export function runtimeSupportsSkillInstall(runtime: HostedRuntime): boolean {
+	return RUNTIME_META[runtime].skillInstall;
 }
 
 export function deploymentRuntime(deployment: HostedDeployment): HostedRuntime {

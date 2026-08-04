@@ -25,7 +25,9 @@ export function overviewProjectsModule({
 	if (bindings.isUnavailable) return { description: "Unavailable right now" };
 	if (bindings.error) return { description: "Unavailable right now" };
 	const count = bindings.count ?? 0;
-	const primary = count ? `${count} ${count === 1 ? "project" : "projects"}` : "No projects added";
+	const primary = count
+		? `${count} linked ${count === 1 ? "Project" : "Projects"}`
+		: "No Projects linked";
 	return { description: primary };
 }
 

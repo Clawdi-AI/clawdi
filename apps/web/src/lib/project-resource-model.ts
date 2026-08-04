@@ -42,7 +42,7 @@ export interface ProjectResourceDefinition {
 }
 
 export const PROJECT_CANONICAL_DEFINITION =
-	"A Project groups the skills and Vault access an agent or teammate can use.";
+	"A Project stores Skills and attaches Vault access for a workflow or team.";
 
 const PROJECT_RESOURCE_DEFINITIONS = [
 	{
@@ -52,7 +52,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Projects",
 		description: PROJECT_CANONICAL_DEFINITION,
 		managementDescription:
-			"Create Projects to share resources with teammates. Use the Global Project for account defaults. Agent Projects belong to one connected agent and cannot be shared.",
+			"Create Projects to share resources with teammates. Use the Global Project for account defaults. Workspaces belong to one connected Agent and cannot be shared.",
 		href: PROJECT_RESOURCE_LIST_PATHS.projects,
 		emptyCta: "Create Project",
 		routeGroup: "project-registry",
@@ -65,9 +65,9 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Skills",
 		singularLabel: "Skill",
 		navLabel: "Skills",
-		description: "Reusable instructions agents can read from a Project.",
+		description: "Reusable instructions stored and managed in a Project.",
 		managementDescription:
-			"Skills are Project resources. Choose a Project, then install or remove its skills.",
+			"Skills are stored in Projects. Choose a Project, then add or remove its Skills. Install on an Agent separately to run them.",
 		href: PROJECT_RESOURCE_LIST_PATHS.skills,
 		emptyCta: "Browse Marketplace",
 		routeGroup: "project-resources",

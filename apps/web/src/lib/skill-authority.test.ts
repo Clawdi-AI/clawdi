@@ -22,6 +22,7 @@ describe("skillCapabilities", () => {
 			canSelect: false,
 			canSync: false,
 			readOnlyReason: "agent-sync",
+			badgeLabel: "Agent projection · Read-only",
 		});
 	});
 
@@ -29,7 +30,7 @@ describe("skillCapabilities", () => {
 		expect(skillCapabilities(skill("cloud"), project("environment"))).toMatchObject({
 			canUpdate: false,
 			readOnlyReason: "agent-project",
-			badgeLabel: "Agent Project · Read-only",
+			badgeLabel: "Workspace · Read-only",
 		});
 	});
 

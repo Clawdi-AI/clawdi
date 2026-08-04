@@ -1,19 +1,24 @@
 export type AgentSkillProjectAccess =
 	| { kind: "bound"; projectIds: string[] }
-	| { kind: "missing" }
+	| { kind: "unavailable" }
 	| { kind: "unbound"; projectId: string };
 
 /**
- * Resolve a detail URL against the Agent's effective Project access.
- * Detail reads require one explicit Project and never aggregate candidates.
+ * Resolve a detail URL against the Agent's bindings. Explicit Project context
+ * stays strict. Legacy URLs without context may use only the unique primary
+ * Workspace and never search or aggregate context Projects.
  */
 export function resolveAgentSkillProjectAccess(
-	effectiveProjectIds: readonly string[],
+	bindings: readonly { project_id: string; binding_type: string }[],
 	requestedProjectId: string,
 ): AgentSkillProjectAccess {
-	const projectIds = Array.from(new Set(effectiveProjectIds));
-	if (!requestedProjectId) return { kind: "missing" };
-	if (!projectIds.includes(requestedProjectId)) {
+	if (!requestedProjectId) {
+		const primaryBindings = bindings.filter((binding) => binding.binding_type === "primary");
+		return primaryBindings.length === 1 && primaryBindings[0]
+			? { kind: "bound", projectIds: [primaryBindings[0].project_id] }
+			: { kind: "unavailable" };
+	}
+	if (!bindings.some((binding) => binding.project_id === requestedProjectId)) {
 		return { kind: "unbound", projectId: requestedProjectId };
 	}
 	return { kind: "bound", projectIds: [requestedProjectId] };
@@ -35,7 +40,9 @@ export async function fetchAgentScopedSkillDetail<T extends { project_id?: strin
 		try {
 			const skill = await fetchSkill(projectId);
 			if (skill.project_id !== projectId) {
-				throw new Error("A Skill detail response did not match the requested Agent Project.");
+				throw new Error(
+					"A Skill detail response did not match the requested Workspace or Project.",
+				);
 			}
 			return skill;
 		} catch (error) {
@@ -45,5 +52,5 @@ export async function fetchAgentScopedSkillDetail<T extends { project_id?: strin
 	}
 
 	if (lastNotFoundError !== undefined) throw lastNotFoundError;
-	throw new Error("This Agent has no available Projects for this Skill.");
+	throw new Error("This Agent has no available Workspace or Project for this Skill.");
 }

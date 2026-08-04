@@ -88,9 +88,9 @@ describe("projectShowCommand", () => {
 		expect(out).toContain("Owner: Alice (@alice-a3b4)");
 		expect(out).toContain("Access: viewer read access");
 		expect(out).toContain("Resources");
-		expect(out).toContain("Attach to Agent:");
+		expect(out).toContain("Link to Agent:");
 		expect(out).toContain(
-			"clawdi agent projects attach <agent-id> --project @alice-a3b4/shared-toolkit",
+			"clawdi agent projects link <agent-id> --project @alice-a3b4/shared-toolkit",
 		);
 		expect(out).toContain("Leave: clawdi project leave @alice-a3b4/shared-toolkit");
 		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);

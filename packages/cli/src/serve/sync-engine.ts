@@ -12,11 +12,13 @@
  *                        so a runtime project reassignment converges
  *   - heartbeat        — periodic POST to /v1/agents/{agent_id}/sync-heartbeat
  *
- * Authority model: the Agent filesystem is the sole Skill-content source.
- * Cloud rows are projections. Only an exact, durable Agent+Project claim can
- * authorize deletion after local absence; legacy hash caches cannot. Managed
- * reservations are skipped as content and cause any prior user projection to
- * be deleted without touching the managed target.
+ * Authority model: ordinary Agent-local Skills are filesystem-authored and
+ * Cloud rows are projections. Project-owned Skills explicitly materialized by
+ * pull remain source-Project references and are never reverse-projected.
+ * Only an exact, durable Agent+Project claim can authorize deletion after
+ * local absence; legacy hash caches cannot. Managed reservations are skipped
+ * as content and cause any prior user projection to be deleted without
+ * touching the managed target.
  *
  * Push side:
  *   1. Watcher fires for skill_key X
@@ -44,6 +46,7 @@ import { cacheKey, readSessionsLock, writeSessionsLock } from "../lib/sessions-l
 import { isValidSkillKey, SkillKeyValidationError } from "../lib/skill-key";
 import {
 	computeSkillFolderHash,
+	readProjectSkillMaterialization,
 	readSkillProjectionClaimsForAgent,
 	readSkillProjectionState,
 	recordSkillProjectionClaim,
@@ -895,6 +898,41 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	log.info("engine.stop", {});
 }
 
+function enqueueMaterializedSkillClaimCleanup(
+	opts: {
+		environmentId: string;
+		adapter: Pick<AgentAdapter, "agentType">;
+	},
+	queue: RetryQueue,
+	skillKey: string,
+): void {
+	const claim = readSkillProjectionClaimsForAgent(opts.adapter.agentType, opts.environmentId)
+		.filter((candidate) => candidate.skill_key === skillKey)
+		.sort((left, right) => left.project_id.localeCompare(right.project_id))[0];
+	if (!claim) return;
+	const cleanupPending = queue
+		.all()
+		.some(
+			(item) =>
+				item.kind === "skill_delete" &&
+				item.skill_key === skillKey &&
+				item.agent_id === opts.environmentId,
+		);
+	if (cleanupPending) return;
+	queue.enqueue({
+		kind: "skill_delete",
+		skill_key: skillKey,
+		agent_id: opts.environmentId,
+		project_id: claim.project_id,
+		enqueued_at: new Date().toISOString(),
+		attempts: 0,
+	});
+	log.info("engine.enqueue_project_materialization_claim_cleanup", {
+		skill_key: skillKey,
+		project_id: claim.project_id,
+	});
+}
+
 async function enqueueIfChanged(
 	opts: EngineOpts,
 	queue: RetryQueue,
@@ -904,6 +942,16 @@ async function enqueueIfChanged(
 ): Promise<void> {
 	if (!isValidSkillKey(skillKey)) {
 		log.warn("engine.invalid_skill_key_skipped", { skill_key: skillKey });
+		return;
+	}
+	if (
+		readProjectSkillMaterialization({
+			agentType: opts.adapter.agentType,
+			localSkillKey: skillKey,
+		})
+	) {
+		enqueueMaterializedSkillClaimCleanup(opts, queue, skillKey);
+		log.debug("engine.project_skill_materialization_skipped", { skill_key: skillKey });
 		return;
 	}
 	const dir = join(opts.adapter.getSkillsRootDir(), skillKey);
@@ -1260,6 +1308,18 @@ export async function processQueueItem(
 	projectId: string,
 ): Promise<QueueProcessOutcome> {
 	if (item.kind === "skill_push" || item.kind === "skill_delete") {
+		const materialization = readProjectSkillMaterialization({
+			agentType: opts.adapter.agentType,
+			localSkillKey: item.skill_key,
+		});
+		if (materialization && item.kind === "skill_push") {
+			queue.markDoneIfVersion(item);
+			log.info("engine.project_skill_queue_item_dropped", {
+				kind: item.kind,
+				skill_key: item.skill_key,
+			});
+			return "absent";
+		}
 		if (item.agent_id === undefined || item.project_id === undefined) {
 			log.warn("engine.queue_identity_mismatch_dropped", {
 				kind: item.kind,
@@ -1284,6 +1344,31 @@ export async function processQueueItem(
 			});
 			queue.markDoneIfVersion(item);
 			return "not_applied";
+		}
+		if (materialization && item.kind === "skill_delete") {
+			// A pull may fence Project-owned bytes immediately after this key
+			// held an Agent projection. Exact claims remain the sole deletion
+			// authority; retire every one before releasing the durable task.
+			const claims = readSkillProjectionClaimsForAgent(
+				opts.adapter.agentType,
+				opts.environmentId,
+			).filter((claim) => claim.skill_key === item.skill_key);
+			for (const claim of claims) {
+				await api.deleteAgentSkill(opts.environmentId, item.skill_key, claim.project_id);
+				removeSkillProjectionClaim({
+					agentType: opts.adapter.agentType,
+					agentId: opts.environmentId,
+					projectId: claim.project_id,
+					skillKey: item.skill_key,
+				});
+			}
+			lastPushedHash.delete(item.skill_key);
+			queue.markDoneIfVersion(item);
+			log.info("engine.project_skill_projection_claims_retired", {
+				skill_key: item.skill_key,
+				claim_count: claims.length,
+			});
+			return claims.length > 0 ? "applied" : "absent";
 		}
 		for (const staleProjectId of staleSkillProjectionProjectIds(
 			opts.adapter.agentType,
@@ -1812,6 +1897,15 @@ export async function reconcileAgentSkillProjection(input: {
 	]);
 
 	for (const skillKey of [...allKeys].sort()) {
+		if (
+			readProjectSkillMaterialization({
+				agentType: opts.adapter.agentType,
+				localSkillKey: skillKey,
+			})
+		) {
+			enqueueMaterializedSkillClaimCleanup(opts, queue, skillKey);
+			continue;
+		}
 		const reserved = isReservedSkill(opts, skillKey);
 		if (reserved || !localKeys.has(skillKey)) {
 			if (

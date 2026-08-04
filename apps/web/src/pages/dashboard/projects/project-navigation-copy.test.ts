@@ -10,7 +10,7 @@ describe("Project navigation instructions", () => {
 		expect(projectDetailSource).toContain(
 			'const AGENT_PROJECTS_SECTION_LABEL = agentSectionLabel("projects");',
 		);
-		expect(projectDetailSource.match(/\{AGENT_PROJECTS_SECTION_LABEL\}/g)).toHaveLength(3);
+		expect(projectDetailSource.match(/\{AGENT_PROJECTS_SECTION_LABEL\}/g)).toHaveLength(2);
 		expect(projectDetailSource).not.toContain("Project Access section");
 	});
 });

@@ -29,7 +29,13 @@ import {
 	getEnvIdByAgent,
 } from "../lib/select-adapter";
 import { sanitizeSkillKey } from "../lib/skill-key";
-import { recordSkillProjectionClaim, removeSkillProjectionClaim } from "../lib/skills-lock";
+import {
+	readProjectSkillMaterialization,
+	readSkillProjectionState,
+	recordSkillProjectionClaim,
+	removeProjectSkillMaterialization,
+	removeSkillProjectionClaim,
+} from "../lib/skills-lock";
 import { type ParsedSource, parseSource } from "../lib/source-parser";
 import { extractTarGz, snapshotSkillArchive, tarSingleFile, tarSkillDir } from "../lib/tar";
 import { isInteractive } from "../lib/tty";
@@ -83,7 +89,7 @@ async function resolveAgentProjectTarget(
 	const agentId = project.origin_environment_id;
 	if (!agentId) {
 		throw new Error(
-			"This Agent Project no longer has a live Agent identity. Skill mutation is disabled.",
+			"This Workspace no longer has a live Agent identity. Skill mutation is disabled.",
 		);
 	}
 	const agent = unwrap(
@@ -92,12 +98,12 @@ async function resolveAgentProjectTarget(
 		}),
 	);
 	if (agent.default_project_id !== projectId) {
-		throw new Error("The Agent Project identity changed; refusing an unfenced Skill mutation.");
+		throw new Error("The Workspace identity changed; refusing an unfenced Skill mutation.");
 	}
 	if (getEnvIdByAgent(agent.agent_type) !== agentId) {
 		const machineName = agent.machine_name || "another machine";
 		throw new Error(
-			`This Agent Project belongs to ${machineName}'s ${agent.agent_type} Agent. Run the command on that machine.`,
+			`This Workspace belongs to ${machineName}'s ${agent.agent_type} Agent. Run the command on that machine.`,
 		);
 	}
 	const entry = adapterRegistry[agent.agent_type as keyof typeof adapterRegistry];
@@ -270,6 +276,10 @@ async function installGithubSkillForAgent(
 	// Local activation is authoritative and guarded by the adapter's managed
 	// reservation boundary. No Cloud mutation occurs if this commit fails.
 	await target.adapter.writeSkillArchive(downloaded.skillKey, downloaded.tarBytes);
+	removeProjectSkillMaterialization({
+		agentType: target.adapter.agentType,
+		localSkillKey: downloaded.skillKey,
+	});
 	const committedDir = dirname(target.adapter.getSkillPath(downloaded.skillKey));
 	const committedSnapshot = await snapshotSkillArchive(
 		committedDir,
@@ -462,6 +472,10 @@ export async function skillAdd(
 		// directory is only input; it cannot become an Agent projection until
 		// its validated archive has atomically activated under the skills root.
 		await target.adapter.writeSkillArchive(skillKey, tarBytes);
+		removeProjectSkillMaterialization({
+			agentType: target.adapter.agentType,
+			localSkillKey: skillKey,
+		});
 		const committedDir = dirname(target.adapter.getSkillPath(skillKey));
 		const committedSnapshot = await snapshotSkillArchive(committedDir, undefined, skillKey);
 		try {
@@ -570,10 +584,29 @@ export async function skillRm(key: string, opts: { agent?: string; project?: str
 	const api = new ApiClient();
 	const target = await resolveSkillMutationTarget(api, opts);
 	if (target.agentId && target.adapter) {
+		const materialization = readProjectSkillMaterialization({
+			agentType: target.adapter.agentType,
+			localSkillKey: key,
+		});
+		const hasAgentProjection = readSkillProjectionState(
+			target.adapter.agentType,
+			target.agentId,
+			target.projectId,
+		).claims.has(key);
 		// Filesystem absence is authoritative. The adapter mutation is guarded
 		// by managed-Skill reservations, so a reserved target fails before any
 		// Cloud delete can be reported.
 		await target.adapter.removeLocalSkill(key);
+		if (materialization) {
+			removeProjectSkillMaterialization({
+				agentType: target.adapter.agentType,
+				localSkillKey: key,
+			});
+		}
+		if (materialization && !hasAgentProjection) {
+			console.log(chalk.green(`✓ Removed ${sanitizeMetadata(key)} from Agent`));
+			return;
+		}
 		try {
 			await api.deleteAgentSkill(target.agentId, key, target.projectId);
 		} catch (error) {

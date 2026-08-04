@@ -14,8 +14,17 @@ import {
 	LogOut,
 	Plus,
 	Share2,
+	Trash2,
 } from "lucide-react";
-import { type ReactElement, type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+	lazy,
+	type ReactElement,
+	type ReactNode,
+	Suspense,
+	useEffect,
+	useMemo,
+	useState,
+} from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -30,6 +39,7 @@ import {
 	useAgentProjectBindings,
 } from "@/components/dashboard/agent-project-bindings-query";
 import { orderedAgentProjectBindings } from "@/components/dashboard/agent-project-scope";
+import { ConnectedWorkspaceSkillsPanel } from "@/components/dashboard/workspace-skills-panel";
 import { DetailNotFound, DetailPanel } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
@@ -62,6 +72,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
 	Dialog,
 	DialogContent,
@@ -84,6 +95,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface";
 import {
 	agentDeploymentRouteQuery,
+	agentDeploymentSelector,
 	agentProjectDetailHref,
 	agentProjectResourceHref,
 	agentSectionHref,
@@ -119,6 +131,14 @@ type Member = components["schemas"]["MemberResponse"];
 type CountValue = number | "unavailable";
 
 const AGENT_PROJECTS_SECTION_LABEL = agentSectionLabel("projects");
+const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+const HostedWorkspaceSkillsPanel = IS_HOSTED_BUILD
+	? lazy(() =>
+			import("@/hosted/agents/hosted-workspace-skills-panel").then((module) => ({
+				default: module.HostedWorkspaceSkillsPanel,
+			})),
+		)
+	: null;
 
 export default function ProjectDetailPage({
 	projectId,
@@ -155,13 +175,6 @@ export default function ProjectDetailPage({
 	const rows = projects.data ?? [];
 	const project = rows.find((row) => row.id === projectId) ?? null;
 	const projectName = project ? displayProjectName(project) : null;
-	const pageReturnTarget: ResourceNavigationTarget =
-		focus && scope.kind === "agent"
-			? {
-					href: projectDetailHrefForScope(scope, projectId),
-					label: projectName ? `Back to ${projectName}` : "Back to Project",
-				}
-			: projectsTarget;
 	const projectResourceTargets =
 		scope.kind === "agent"
 			? {
@@ -197,6 +210,33 @@ export default function ProjectDetailPage({
 	);
 	const scopedBinding =
 		orderedScopedBindings.find((binding) => binding.project_id === projectId) ?? null;
+	const isWorkspace = isAgentScope && scopedBinding?.binding_type === "primary";
+	const isWorkspaceContext = isWorkspace || project?.kind === "environment";
+	const canManageProjectSkills = canManageSkills && !isWorkspace;
+	const deploymentSelector =
+		scope.kind === "agent" ? agentDeploymentSelector(scope.agentQuery) : null;
+	const pageReturnTarget: ResourceNavigationTarget =
+		focus && scope.kind === "agent"
+			? isWorkspace
+				? {
+						href: agentSectionHref(scope.agentId, "overview", scope.agentQuery),
+						label: "Back to Agent Overview",
+					}
+				: {
+						href: projectDetailHrefForScope(scope, projectId),
+						label: projectName ? `Back to ${projectName}` : "Back to Project",
+					}
+			: projectsTarget;
+	const workspaceAgent = $api.useQuery(
+		"get",
+		"/v1/agents/{agent_id}",
+		{
+			params: { path: { agent_id: scope.kind === "agent" ? scope.agentId : "" } },
+		},
+		{
+			enabled: scope.kind === "agent" && isWorkspace && showSkills && !IS_HOSTED_BUILD,
+		},
+	);
 	useEffect(() => {
 		if (searchParams.get("useWithAgent") === "1") setUseWithAgentOpen(true);
 	}, [searchParams]);
@@ -242,6 +282,10 @@ export default function ProjectDetailPage({
 			),
 		enabled: showSkills && (!isAgentScope || !!scopedBinding),
 	});
+	const workspaceSkillProjections = useMemo(
+		() => (skills.data?.items ?? []).filter((skill) => skill.authority === "agent_sync"),
+		[skills.data?.items],
+	);
 
 	const vaults = useQuery({
 		queryKey: ["vaults", "project-detail", projectId],
@@ -298,9 +342,52 @@ export default function ProjectDetailPage({
 	const refresh = () => {
 		qc.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
 		qc.invalidateQueries({ queryKey: ["skills"] });
+		qc.invalidateQueries({ queryKey: ["vaults"] });
 		qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 		qc.invalidateQueries({ queryKey: ["project-bound-agents", projectId] });
 	};
+
+	const removeProjectSkill = useMutation({
+		mutationFn: async ({
+			skillKey,
+			skillProjectId,
+		}: {
+			skillKey: string;
+			skillProjectId: string;
+		}) =>
+			unwrap(
+				await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
+					params: { path: { project_id: skillProjectId, skill_key: skillKey } },
+				}),
+			),
+		onSuccess: () => {
+			refresh();
+			toast.success("Skill removed from Project");
+		},
+		onError: (error) =>
+			toast.error("Couldn't remove Skill from Project", { description: errorMessage(error) }),
+	});
+
+	const detachProjectVault = useMutation({
+		mutationFn: async (vault: VaultSummary) =>
+			unwrap(
+				await api.DELETE("/v1/vault/{slug}", {
+					params: {
+						path: { slug: vault.slug },
+						query: { project_id: projectId, vault_id: vault.id },
+					},
+				}),
+			),
+		onSuccess: () => {
+			refresh();
+			toast.success(isWorkspace ? "Vault detached from Workspace" : "Vault detached from Project");
+		},
+		onError: (error) =>
+			toast.error(
+				isWorkspace ? "Couldn't detach Vault from Workspace" : "Couldn't detach Vault from Project",
+				{ description: errorMessage(error) },
+			),
+	});
 
 	const leaveSharedProject = useMutation({
 		mutationFn: async () =>
@@ -326,18 +413,22 @@ export default function ProjectDetailPage({
 
 	useSetBreadcrumbSegmentTitle(
 		scope.kind === "agent" ? agentProjectDetailHref(scope.agentId, projectId) : null,
-		projectName,
+		isWorkspace ? "Workspace" : projectName,
 	);
-	useSetBreadcrumbTitle(projectName ? (focus ? agentSectionLabel(focus) : projectName) : null);
+	useSetBreadcrumbTitle(
+		projectName
+			? focus
+				? agentSectionLabel(focus)
+				: isWorkspace
+					? "Workspace"
+					: projectName
+			: null,
+	);
 
 	if (projects.isLoading || (isAgentScope && scopedBindings.isLoading)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				{focus && isAgentScope ? (
-					<ProjectReturnLink target={pageReturnTarget} />
-				) : (
-					<Skeleton className="h-8 w-24" />
-				)}
+				<Skeleton className="h-8 w-24" />
 				<div className="flex items-start gap-3">
 					<Skeleton className="size-11 rounded-xl" />
 					<div className="min-w-0 flex-1 space-y-2">
@@ -383,7 +474,9 @@ export default function ProjectDetailPage({
 							if (blockingScopeError) void scopedBindings.refetch();
 						}}
 						title={
-							blockingScopeError ? "Couldn't load Agent Project access" : "Couldn't load project"
+							blockingScopeError
+								? "Couldn't load Workspace or Project access"
+								: "Couldn't load project"
 						}
 					/>
 				)}
@@ -431,6 +524,12 @@ export default function ProjectDetailPage({
 	const blockingVaultsError = shouldBlockQueryError(vaults.error, vaults.data)
 		? vaults.error
 		: null;
+	const blockingWorkspaceAgentError = shouldBlockQueryError(
+		workspaceAgent.error,
+		workspaceAgent.data,
+	)
+		? workspaceAgent.error
+		: null;
 	const blockingMembersError = shouldBlockQueryError(members.error, members.data)
 		? members.error
 		: null;
@@ -440,9 +539,12 @@ export default function ProjectDetailPage({
 	const blockingBoundAgentsError = shouldBlockQueryError(boundAgents.error, boundAgents.data)
 		? boundAgents.error
 		: null;
-	const skillCount: CountValue | undefined = blockingSkillsError
-		? "unavailable"
-		: skills.data?.items.length;
+	const skillCount: CountValue | undefined =
+		isWorkspace || project.kind === "environment"
+			? undefined
+			: blockingSkillsError
+				? "unavailable"
+				: skills.data?.items.length;
 	const vaultCount: CountValue | undefined = blockingVaultsError
 		? "unavailable"
 		: vaults.data?.items.length;
@@ -468,6 +570,7 @@ export default function ProjectDetailPage({
 		</UseProjectWithAgentDialog>
 	);
 	const projectIdentity = identityFor(displayProjectName(project));
+	const workspaceIdentity = identityFor("Workspace");
 	const focusedResourceIdentity = focus ? AGENT_SECTION_NAVIGATION_ITEMS[focus] : null;
 	const FocusedResourceIcon = focusedResourceIdentity?.icon ?? null;
 
@@ -476,44 +579,58 @@ export default function ProjectDetailPage({
 			<ProjectReturnLink target={pageReturnTarget} />
 
 			<PageHeader
-				title={focusedResourceIdentity?.label ?? displayProjectName(project)}
-				titleAdornment={focus ? undefined : <ProjectKindBadge kind={project.kind} />}
+				title={
+					focusedResourceIdentity?.label ??
+					(isWorkspace ? "Workspace" : displayProjectName(project))
+				}
+				titleAdornment={focus || isWorkspace ? undefined : <ProjectKindBadge kind={project.kind} />}
 				icon={
 					focusedResourceIdentity && FocusedResourceIcon ? (
 						<IconChip tint={focusedResourceIdentity.tint}>
 							<FocusedResourceIcon />
 						</IconChip>
 					) : (
-						<IconChip tint={projectIdentity.colorClasses} className="text-xl">
-							{projectIdentity.emoji}
+						<IconChip
+							tint={isWorkspace ? workspaceIdentity.colorClasses : projectIdentity.colorClasses}
+							className="text-xl"
+						>
+							{isWorkspace ? workspaceIdentity.emoji : projectIdentity.emoji}
 						</IconChip>
 					)
 				}
 				description={
 					isAgentScope
-						? focus === "skills"
-							? "Skills this Agent can read through this Project."
-							: focus === "vaults"
-								? "Vaults this Agent can use through this Project."
-								: "Skills and Vaults available to this Agent through this Project."
+						? isWorkspace
+							? focus === "skills"
+								? "Skills installed in this Agent's Workspace. Cloud projection content is read-only."
+								: focus === "vaults"
+									? "Vaults attached to this Agent's Workspace."
+									: "This Agent's fixed Workspace for installed Skills and attached Vaults."
+							: focus === "skills"
+								? "Skills stored and managed in this Project. Linking it does not install them on the Agent."
+								: focus === "vaults"
+									? "Vaults this Agent can resolve through this Project."
+									: "Skills stay managed in this Project; its Vaults join the Agent's runtime resolution."
 						: projectDetailDescription(project, isOwner, projectType?.label ?? "Project")
 				}
 				status={
-					<span
-						className={
-							focus ? "text-xs text-muted-foreground" : "font-mono text-xs text-muted-foreground"
-						}
-					>
-						{focus ? `Project: ${displayProjectName(project)}` : project.slug}
-					</span>
+					isWorkspace ? undefined : (
+						<span
+							className={
+								focus ? "text-xs text-muted-foreground" : "font-mono text-xs text-muted-foreground"
+							}
+						>
+							{focus ? `Project: ${displayProjectName(project)}` : project.slug}
+						</span>
+					)
 				}
 				actions={
-					!isAgentScope ? (
+					!isAgentScope && isShareableProject ? (
 						<>
 							{addToAgentDialog(
 								<Button size="sm">
 									<Bot className="mr-1.5 size-3.5" />
-									Add to agent
+									Link Project
 								</Button>,
 							)}
 							{isOwner && isShareableProject ? (
@@ -533,18 +650,18 @@ export default function ProjectDetailPage({
 				}
 			/>
 
-			{joinedFromShare ? (
+			{joinedFromShare && isShareableProject ? (
 				<Alert>
 					<CheckCircle2 className="size-4" />
 					<AlertTitle>Project added</AlertTitle>
 					<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 						<span>
-							Skills and Vault keys are used by agents. Add this Project to an agent to make them
-							available.
+							Linking makes attached Vaults available in Agent runtime resolution. Skills stay
+							stored and managed in this Project until separately installed on an Agent.
 						</span>
 						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
 							<Bot className="mr-1.5 size-3.5" />
-							Add to agent
+							Link Project
 						</Button>
 					</AlertDescription>
 				</Alert>
@@ -553,7 +670,9 @@ export default function ProjectDetailPage({
 			{/* Stat tiles — anchors into the sections below. */}
 			{!isAgentScope ? (
 				<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-					<StatTile label="Skills" value={skillCount} href="#skills" />
+					{project.kind !== "environment" ? (
+						<StatTile label="Skills" value={skillCount} href="#skills" />
+					) : null}
 					<StatTile label="Vaults" value={vaultCount} href="#vaults" />
 					{isOwner && isShareableProject ? (
 						<StatTile label="People" value={peopleCount} href="#people" />
@@ -570,7 +689,9 @@ export default function ProjectDetailPage({
 				count={skillCount}
 				description={
 					isAgentScope
-						? "Skills this Agent can read from this Project."
+						? isWorkspace
+							? "Installed Skills in this Agent's fixed Workspace."
+							: "Skills are stored and managed in this Project; linking does not install them."
 						: project.kind === "environment"
 							? "Read-only projections authored on this Agent's filesystem."
 							: isOwner
@@ -578,7 +699,7 @@ export default function ProjectDetailPage({
 								: "Readable instructions shared by the owner."
 				}
 				action={
-					(!focus && projectResourceTargets) || canManageSkills ? (
+					(!focus && projectResourceTargets) || canManageProjectSkills ? (
 						<>
 							{!focus && projectResourceTargets ? (
 								<ProjectResourceViewAllLink
@@ -586,7 +707,7 @@ export default function ProjectDetailPage({
 									resource="Skills"
 								/>
 							) : null}
-							{canManageSkills ? (
+							{canManageProjectSkills ? (
 								<Button
 									variant="outline"
 									size="sm"
@@ -594,23 +715,63 @@ export default function ProjectDetailPage({
 									onClick={() => setShowInstallSkill((v) => !v)}
 								>
 									<Plus className="size-3.5" />
-									Install skill
+									Add to Project
 								</Button>
 							) : null}
 						</>
 					) : undefined
 				}
 			>
-				{canManageSkills && showInstallSkill ? (
+				{canManageProjectSkills && showInstallSkill ? (
 					<InstallSkillInProjectForm projectId={project.id} onChanged={refresh} />
 				) : null}
-				{blockingSkillsError ? (
+				{blockingWorkspaceAgentError ? (
+					<ApiErrorPanel
+						error={blockingWorkspaceAgentError}
+						onRetry={() => {
+							void workspaceAgent.refetch();
+						}}
+						title="Couldn't load the Agent identity"
+					/>
+				) : isWorkspace && scope.kind === "agent" ? (
+					IS_HOSTED_BUILD && HostedWorkspaceSkillsPanel ? (
+						<Suspense fallback={<Skeleton className="h-40 w-full rounded-lg" />}>
+							<HostedWorkspaceSkillsPanel
+								agentId={scope.agentId}
+								projectId={project.id}
+								routeSearch={scope.agentQuery}
+								deploymentSelector={deploymentSelector}
+								projections={workspaceSkillProjections}
+								projectionsLoading={skills.isLoading}
+								projectionError={blockingSkillsError}
+								onRetryProjections={() => {
+									void skills.refetch();
+								}}
+							/>
+						</Suspense>
+					) : workspaceAgent.data ? (
+						<ConnectedWorkspaceSkillsPanel
+							agentId={scope.agentId}
+							projectId={project.id}
+							routeSearch={scope.agentQuery}
+							agentType={workspaceAgent.data.agent_type}
+							projections={workspaceSkillProjections}
+							isLoading={skills.isLoading}
+							projectionError={blockingSkillsError}
+							onRetryProjections={() => {
+								void skills.refetch();
+							}}
+						/>
+					) : (
+						<Skeleton className="h-40 w-full rounded-lg" />
+					)
+				) : blockingSkillsError ? (
 					<ApiErrorPanel
 						error={blockingSkillsError}
 						onRetry={() => {
 							void skills.refetch();
 						}}
-						title="Couldn't load Project skills"
+						title="Couldn't load Project Skills"
 					/>
 				) : (
 					<SkillCardGrid
@@ -619,6 +780,13 @@ export default function ProjectDetailPage({
 						emptyMessage="No skills are visible in this Project yet."
 						emptyVariant="inset"
 						capabilitiesFor={(skill) => skillCapabilities(skill, project)}
+						onUninstall={
+							canManageProjectSkills
+								? (skillKey, skillProjectId) =>
+										removeProjectSkill.mutate({ skillKey, skillProjectId })
+								: undefined
+						}
+						uninstallPending={removeProjectSkill.isPending}
 						skillLink={
 							scope.kind === "agent"
 								? (skill) =>
@@ -642,7 +810,9 @@ export default function ProjectDetailPage({
 				count={vaultCount}
 				description={
 					isAgentScope
-						? "Vaults this Agent can use through this Project."
+						? isWorkspace
+							? "Vaults attached to this Agent's Workspace."
+							: "Vaults this Agent can use through this Project."
 						: isOwner
 							? "API keys and secrets this Project can use."
 							: "Read-only vaults shared through this Project."
@@ -664,7 +834,7 @@ export default function ProjectDetailPage({
 									onClick={() => setShowCreateVault((v) => !v)}
 								>
 									<Plus className="size-3.5" />
-									New vault
+									Attach Vault
 								</Button>
 							) : null}
 						</>
@@ -672,7 +842,12 @@ export default function ProjectDetailPage({
 				}
 			>
 				{isOwner && showCreateVault ? (
-					<CreateVaultInProjectForm projectId={project.id} onChanged={refresh} />
+					<ProjectVaultAttachmentForm
+						projectId={project.id}
+						attachedVaultIds={new Set((vaults.data?.items ?? []).map((vault) => vault.id))}
+						contextLabel={isWorkspace ? "Workspace" : "Project"}
+						onChanged={refresh}
+					/>
 				) : null}
 				{vaults.isLoading ? (
 					<div className={HERO_GRID_CLASS}>
@@ -686,7 +861,9 @@ export default function ProjectDetailPage({
 						onRetry={() => {
 							void vaults.refetch();
 						}}
-						title="Couldn't load Project vaults"
+						title={
+							isWorkspaceContext ? "Couldn't load Workspace Vaults" : "Couldn't load Project vaults"
+						}
 					/>
 				) : vaults.data?.items.length ? (
 					<div className={HERO_GRID_CLASS}>
@@ -699,11 +876,40 @@ export default function ProjectDetailPage({
 								visibleProjectIds={visibleProjectIds}
 								navigationScope={scope}
 								shared={vault.is_owner === false}
+								actions={
+									vault.is_owner !== false ? (
+										<ConfirmAction
+											title={`Detach ${vault.name} from ${isWorkspace ? "Workspace" : "Project"}?`}
+											description={
+												<p>The Vault remains in your account and attached to any other Projects.</p>
+											}
+											confirmLabel={isWorkspace ? "Detach from Workspace" : "Detach from Project"}
+											destructive
+											onConfirm={() => detachProjectVault.mutateAsync(vault)}
+										>
+											<Button
+												variant="ghost"
+												size="icon-sm"
+												disabled={detachProjectVault.isPending}
+												className="text-muted-foreground hover:text-destructive"
+												aria-label={`Detach ${vault.name} from ${isWorkspace ? "Workspace" : "Project"}`}
+											>
+												<Trash2 className="size-3.5" />
+											</Button>
+										</ConfirmAction>
+									) : undefined
+								}
 							/>
 						))}
 					</div>
 				) : (
-					<EmptyLine message="No vaults are visible in this Project yet." />
+					<EmptyLine
+						message={
+							isWorkspaceContext
+								? "No Vaults are attached to this Workspace yet."
+								: "No Vaults are attached to this Project yet."
+						}
+					/>
 				)}
 			</HubSection>
 
@@ -760,19 +966,23 @@ export default function ProjectDetailPage({
 				<HubSection
 					id="people"
 					title="Your access"
-					description="You have viewer access — read skills, see key names, and use them with your agents."
+					description="You have viewer access to stored Skills and Vault key names. Install Skills on an Agent separately; attached Vaults can participate in runtime resolution after linking the Project."
 				>
 					<SharedAccessPanel
 						project={project}
 						agent={projectAgent}
 						isLeaving={leaveSharedProject.isPending}
 						onLeave={() => leaveSharedProject.mutate()}
-						useWithAgentControl={addToAgentDialog(
-							<Button size="sm" className="w-fit">
-								<Bot className="mr-1.5 size-3.5" />
-								Add to agent
-							</Button>,
-						)}
+						useWithAgentControl={
+							isShareableProject
+								? addToAgentDialog(
+										<Button size="sm" className="w-fit">
+											<Bot className="mr-1.5 size-3.5" />
+											Link Project
+										</Button>,
+									)
+								: null
+						}
 					/>
 				</HubSection>
 			) : null}
@@ -782,13 +992,23 @@ export default function ProjectDetailPage({
 					id="agents"
 					title="Agents"
 					count={agentCount}
-					description="Agents that can use this Project at runtime."
-					action={addToAgentDialog(
-						<Button variant="outline" size="sm">
-							<Bot className="mr-1.5 size-3.5" />
-							Add to agent
-						</Button>,
-					)}
+					description={
+						project.kind === "environment"
+							? "Home Agent for this managed Workspace."
+							: project.kind === "personal"
+								? "This Global Project is account-wide and is not linked to Agents."
+								: "Agents linked to this Project for Vault runtime resolution."
+					}
+					action={
+						isShareableProject
+							? addToAgentDialog(
+									<Button variant="outline" size="sm">
+										<Bot className="mr-1.5 size-3.5" />
+										Link Project
+									</Button>,
+								)
+							: undefined
+					}
 				>
 					{boundAgents.isLoading || environments.isLoading ? (
 						<Skeleton className="h-16 w-full" />
@@ -809,7 +1029,15 @@ export default function ProjectDetailPage({
 							title="Couldn't load Project agent bindings"
 						/>
 					) : (boundAgents.data?.length ?? 0) === 0 ? (
-						<EmptyLine message="No agents use this Project yet. Add it to an agent to sync its skills and keys." />
+						<EmptyLine
+							message={
+								project.kind === "environment"
+									? "The home Agent for this Workspace is unavailable."
+									: project.kind === "personal"
+										? "Global Project applies account-wide and has no Agent links."
+										: "No Agents are linked yet. Linking adds attached Vaults to runtime resolution; it does not install Skills."
+							}
+						/>
 					) : (
 						<div className="divide-y overflow-hidden rounded-lg border bg-card">
 							{(boundAgents.data ?? []).map(({ env, home }) => (
@@ -826,11 +1054,11 @@ export default function ProjectDetailPage({
 									/>
 									{home ? (
 										<Badge variant="secondary" className="shrink-0">
-											Home project
+											Workspace
 										</Badge>
 									) : (
 										<Badge variant="outline" className="shrink-0">
-											Added
+											Linked
 										</Badge>
 									)}
 									<Link
@@ -967,11 +1195,11 @@ function projectDetailDescription(project: ProjectRow, isOwner: boolean, typeLab
 	const access = isOwner ? "you own" : "shared with you";
 	if (project.kind === "workspace") {
 		return isOwner
-			? `${typeLabel} you own. Add skills and vaults here, share the Project, then add it to agents when needed.`
-			: `${typeLabel} shared with you. You can read its skills and vaults and add it to agents when needed.`;
+			? `${typeLabel} you own. Add Skills and attach Vaults here, share the Project, then link it to Agents when needed. Linking does not install its Skills.`
+			: `${typeLabel} shared with you. Its Skills stay stored here, while attached Vaults can join an Agent's runtime resolution after you link the Project.`;
 	}
 	if (project.kind === "environment") {
-		return `${typeLabel} ${access}. This is the Agent Project for one connected agent. It is managed for you and cannot be shared.`;
+		return `${typeLabel} ${access}. This Workspace belongs to one connected Agent. It is managed for you and cannot be shared.`;
 	}
 	if (project.kind === "personal") {
 		return `${typeLabel} ${access}. This is your account default for resources that are not tied to one workflow or agent.`;
@@ -990,7 +1218,7 @@ function ManagedProjectPanel({
 }) {
 	const description =
 		project.kind === "environment"
-			? "This Agent Project is managed by the connected agent and is not shareable. Create a Project when you need collaboration or reusable resources."
+			? "This Workspace is managed by the connected Agent and is not shareable. Create a Project when you need collaboration or reusable resources."
 			: "This Global Project is your account default and is not shareable. Create a Project when you need collaboration or reusable resources.";
 	return (
 		<DetailPanel className="space-y-4">
@@ -1038,7 +1266,8 @@ function SharedAccessPanel({
 					<h2 className="text-sm font-semibold">You Have Viewer Access</h2>
 				</div>
 				<p className="text-xs text-muted-foreground">
-					You can read this Project. Add it to an agent when you want it available during a run.
+					You can read this Project and link it to an Agent. Its attached Vaults then join runtime
+					resolution; its Skills stay stored here until separately installed on the Agent.
 				</p>
 			</div>
 			<div className="rounded-md border bg-background/60 p-3">
@@ -1065,8 +1294,8 @@ function SharedAccessPanel({
 					<AlertDialogHeader>
 						<AlertDialogTitle>Leave {displayProjectName(project)}?</AlertDialogTitle>
 						<AlertDialogDescription>
-							This removes your read-only membership. Agents will no longer be able to use this
-							Project through your account.
+							This removes your read-only membership. Your Agents will stop resolving attached
+							Vaults through this Project; Project Skills remain separate from Agent installs.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -1142,10 +1371,9 @@ function UseProjectWithAgentDialog({
 		onSuccess: () => {
 			const agentName = selectedEnv ? displayAgentName(selectedEnv) : "the agent";
 			qc.invalidateQueries({ queryKey: agentProjectBindingsQueryKey(selectedAgentId) });
-			qc.invalidateQueries({ queryKey: ["skills"] });
 			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
-			toast.success("Project Added", {
-				description: `Done. ${agentName} can now use ${projectName}'s skills and Vault keys.`,
+			toast.success("Project linked", {
+				description: `${projectName}'s attached Vaults now participate in ${agentName}'s runtime resolution. Skills remain stored in the Project until separately installed on the Agent.`,
 				action: {
 					label: "Open Agent",
 					onClick: () =>
@@ -1155,7 +1383,7 @@ function UseProjectWithAgentDialog({
 			onOpenChange(false);
 		},
 		onError: (e) => {
-			toast.error("Couldn't add project", {
+			toast.error("Couldn't link Project", {
 				description: e instanceof ApiError ? formatApiError(e.detail) : errorMessage(e),
 			});
 		},
@@ -1166,10 +1394,10 @@ function UseProjectWithAgentDialog({
 			<DialogTrigger render={children} />
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
-					<DialogTitle>Add project to agent</DialogTitle>
+					<DialogTitle>Link Project to Agent</DialogTitle>
 					<DialogDescription>
-						Add {projectName} as an extra Project for an agent. The agent&apos;s main Project stays
-						the writable default; this Project is read by the agent.
+						Link {projectName} as a context Project. Attached Vaults join runtime resolution; Skills
+						remain stored here and require a separate Install on Agent action to run.
 					</DialogDescription>
 				</DialogHeader>
 
@@ -1180,7 +1408,7 @@ function UseProjectWithAgentDialog({
 						<Bot className="size-4" />
 						<AlertTitle>No agents connected</AlertTitle>
 						<AlertDescription>
-							Add an agent from Overview first, then add this Project here or from the agent&apos;s{" "}
+							Add an Agent from Overview first, then link this Project here or from the Agent&apos;s{" "}
 							{AGENT_PROJECTS_SECTION_LABEL} section.
 						</AlertDescription>
 					</Alert>
@@ -1196,7 +1424,7 @@ function UseProjectWithAgentDialog({
 								}}
 							>
 								<SelectTrigger
-									aria-label="Agent to add this Project to"
+									aria-label="Agent to link this Project to"
 									className="h-auto min-h-9 w-full justify-between py-2"
 								>
 									{selectedEnv ? (
@@ -1248,10 +1476,10 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<CheckCircle2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">This Is the Agent&apos;s Main Project</div>
+										<div className="font-medium">This Project Is the Agent&apos;s Workspace</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											No extra step is needed. Open the agent&apos;s {AGENT_PROJECTS_SECTION_LABEL}{" "}
-											section to review its read order.
+											No context link is needed. Workspace Skills and Vaults are managed from the
+											Agent&apos;s Workspace section.
 										</p>
 									</div>
 								</div>
@@ -1259,10 +1487,10 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<CheckCircle2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">Already Added as Extra</div>
+										<div className="font-medium">Already Linked</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											Open the agent&apos;s {AGENT_PROJECTS_SECTION_LABEL} section to review its
-											read order or remove it.
+											Open the Agent&apos;s {AGENT_PROJECTS_SECTION_LABEL} section to review its
+											Vault resolution priority or unlink it.
 										</p>
 									</div>
 								</div>
@@ -1270,10 +1498,10 @@ function UseProjectWithAgentDialog({
 								<div className="flex items-start gap-2">
 									<Bot className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 									<div>
-										<div className="font-medium">Add as Extra</div>
+										<div className="font-medium">Link as Project</div>
 										<p className="mt-1 text-xs text-muted-foreground">
-											Skills and vaults from this Project become available to the selected agent.
-											Writes still land in the agent&apos;s main Project.
+											Attached Vaults join the selected Agent&apos;s runtime resolution. Skills stay
+											stored in this Project until separately installed on the Agent.
 										</p>
 									</div>
 								</div>
@@ -1304,7 +1532,7 @@ function UseProjectWithAgentDialog({
 									}
 									nativeButton={false}
 								>
-									Open Agent Projects
+									Open Projects
 								</Button>
 							) : (
 								<Button
@@ -1318,7 +1546,7 @@ function UseProjectWithAgentDialog({
 									}
 								>
 									{addProjectToAgent.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
-									{addProjectToAgent.isPending ? "Adding…" : "Add Project"}
+									{addProjectToAgent.isPending ? "Linking…" : "Link Project"}
 								</Button>
 							)}
 						</div>
@@ -1351,7 +1579,7 @@ function InstallSkillInProjectForm({
 			setRepoInput("");
 			setError(null);
 			onChanged();
-			toast.success("Skill installed", { description: "Saved in this Project." });
+			toast.success("Skill added to Project", { description: "Saved in this Project." });
 		},
 		onError: (e) => {
 			setError(errorMessage(e));
@@ -1405,7 +1633,7 @@ function InstallSkillInProjectForm({
 					className="w-full sm:w-auto"
 				>
 					{install.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
-					Install skill
+					Add to Project
 				</Button>
 			</div>
 			<p className="text-xs text-muted-foreground">Paste a GitHub skill path to add it here.</p>
@@ -1414,15 +1642,64 @@ function InstallSkillInProjectForm({
 	);
 }
 
-function CreateVaultInProjectForm({
+function ProjectVaultAttachmentForm({
 	projectId,
+	attachedVaultIds,
+	contextLabel,
 	onChanged,
 }: {
 	projectId: string;
+	attachedVaultIds: ReadonlySet<string>;
+	contextLabel: "Workspace" | "Project";
 	onChanged: () => void;
 }) {
 	const api = useApi();
 	const [slug, setSlug] = useState("");
+	const [selectedVaultId, setSelectedVaultId] = useState("");
+	const accountVaults = useQuery({
+		queryKey: ["vaults", "project-attachment-options", projectId],
+		queryFn: async () =>
+			fetchAllPages<VaultSummary>(
+				async (page, pageSize) =>
+					unwrap(
+						await api.GET("/v1/vault", {
+							params: { query: { page, page_size: pageSize } },
+						}),
+					),
+				{ pageSize: 200, resourceName: "account Vaults" },
+			),
+	});
+	const attachableVaults = (accountVaults.data?.items ?? []).filter(
+		(vault) => vault.is_owner !== false && !attachedVaultIds.has(vault.id),
+	);
+	const attachableItems = attachableVaults.map((vault) => ({
+		value: vault.id,
+		label: vault.name,
+	}));
+	const blockingAccountVaultsError = shouldBlockQueryError(accountVaults.error, accountVaults.data)
+		? accountVaults.error
+		: null;
+	const attach = useMutation({
+		mutationFn: async (vaultId: string) => {
+			const vault = attachableVaults.find((candidate) => candidate.id === vaultId);
+			if (!vault) throw new Error("Choose an available Vault");
+			return unwrap(
+				await api.POST("/v1/vault", {
+					params: { query: { project_id: projectId } },
+					body: { slug: vault.slug, name: vault.name },
+				}),
+			);
+		},
+		onSuccess: () => {
+			setSelectedVaultId("");
+			onChanged();
+			toast.success(`Vault attached to ${contextLabel}`);
+		},
+		onError: (error) =>
+			toast.error(`Couldn't attach Vault to ${contextLabel}`, {
+				description: errorMessage(error),
+			}),
+	});
 	const create = useMutation({
 		mutationFn: async (nextSlug: string) =>
 			unwrap(
@@ -1434,44 +1711,102 @@ function CreateVaultInProjectForm({
 		onSuccess: () => {
 			setSlug("");
 			onChanged();
-			toast.success("Vault created", { description: "Added to this Project." });
+			toast.success("Vault created", { description: `Attached to this ${contextLabel}.` });
 		},
 		onError: (e) => toast.error("Couldn't create vault", { description: errorMessage(e) }),
 	});
 
 	return (
-		<div className="grid max-w-3xl gap-2 rounded-lg border bg-muted/30 p-3">
-			<Label htmlFor={`project-vault-slug-${projectId}`} className="text-xs font-medium">
-				Vault name
-			</Label>
-			<div className="flex flex-col gap-2 sm:flex-row">
-				<Input
-					id={`project-vault-slug-${projectId}`}
-					name="project-vault-slug"
-					value={slug}
-					onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
-					onKeyDown={(e) => {
-						if (e.key === "Enter" && slug) create.mutate(slug);
-					}}
-					placeholder="github…"
-					autoComplete="off"
-					spellCheck={false}
-					className="min-w-0 flex-1"
-				/>
-				<Button
-					size="sm"
-					disabled={!slug || create.isPending}
-					onClick={() => slug && create.mutate(slug)}
-					variant={slug ? "default" : "outline"}
-					className="w-full sm:w-auto"
-				>
-					{create.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
-					Create Vault
-				</Button>
+		<div className="grid max-w-3xl gap-4 rounded-lg border bg-muted/30 p-3">
+			<div className="grid gap-2">
+				<Label htmlFor={`project-vault-attachment-${projectId}`} className="text-xs font-medium">
+					Existing Vault
+				</Label>
+				{accountVaults.isLoading ? (
+					<Skeleton className="h-9 w-full" />
+				) : blockingAccountVaultsError ? (
+					<ApiErrorPanel
+						error={blockingAccountVaultsError}
+						onRetry={() => {
+							void accountVaults.refetch();
+						}}
+						title="Couldn't load account Vaults"
+					/>
+				) : attachableVaults.length === 0 ? (
+					<p className="text-xs text-muted-foreground">
+						All account-owned Vaults are already attached to this {contextLabel}.
+					</p>
+				) : (
+					<div className="flex flex-col gap-2 sm:flex-row">
+						<Select
+							items={attachableItems}
+							value={selectedVaultId}
+							onValueChange={(value) => {
+								if (value !== null) setSelectedVaultId(value);
+							}}
+						>
+							<SelectTrigger
+								id={`project-vault-attachment-${projectId}`}
+								className="min-w-0 flex-1"
+							>
+								<SelectValue placeholder="Choose a Vault…" />
+							</SelectTrigger>
+							<SelectContent>
+								{attachableVaults.map((vault) => (
+									<SelectItem key={vault.id} value={vault.id}>
+										{vault.name}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={!selectedVaultId || attach.isPending}
+							onClick={() => selectedVaultId && attach.mutate(selectedVaultId)}
+							className="w-full sm:w-auto"
+						>
+							{attach.isPending ? <Spinner /> : <Plus className="size-3.5" />}
+							Attach to {contextLabel}
+						</Button>
+					</div>
+				)}
 			</div>
-			<p className="text-xs text-muted-foreground">
-				Use lowercase letters, numbers, and hyphens. Add keys from the Vaults page after creation.
-			</p>
+
+			<div className="grid gap-2 border-t pt-3">
+				<Label htmlFor={`project-vault-slug-${projectId}`} className="text-xs font-medium">
+					Create a new Vault
+				</Label>
+				<div className="flex flex-col gap-2 sm:flex-row">
+					<Input
+						id={`project-vault-slug-${projectId}`}
+						name="project-vault-slug"
+						value={slug}
+						onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" && slug) create.mutate(slug);
+						}}
+						placeholder="github…"
+						autoComplete="off"
+						spellCheck={false}
+						className="min-w-0 flex-1"
+					/>
+					<Button
+						size="sm"
+						disabled={!slug || create.isPending}
+						onClick={() => slug && create.mutate(slug)}
+						variant={slug ? "default" : "outline"}
+						className="w-full sm:w-auto"
+					>
+						{create.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
+						Create and attach
+					</Button>
+				</div>
+				<p className="text-xs text-muted-foreground">
+					Use lowercase letters, numbers, and hyphens. Open the created Vault in the resource
+					library to add keys.
+				</p>
+			</div>
 		</div>
 	);
 }

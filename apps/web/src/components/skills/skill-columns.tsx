@@ -148,9 +148,9 @@ export function makeSkillColumns(
 				if (access !== "writable") return null;
 				return (
 					<ConfirmAction
-						title={`Uninstall ${s.name}?`}
+						title={`Remove ${s.name} from Project?`}
 						description={<p>Your other agents keep their copies.</p>}
-						confirmLabel="Uninstall Skill"
+						confirmLabel="Remove from Project"
 						destructive
 						onConfirm={() => {
 							if (projectId) onUninstall(s.skill_key, projectId);
@@ -161,8 +161,8 @@ export function makeSkillColumns(
 							size="icon-sm"
 							disabled={uninstallPending || !projectId}
 							onClick={(e) => e.stopPropagation()}
-							className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
-							aria-label={`Uninstall ${s.name}`}
+							className="text-muted-foreground opacity-100 transition-opacity duration-150 hover:text-destructive sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"
+							aria-label={`Remove ${s.name} from Project`}
 						>
 							<Trash2 className="size-3.5" />
 						</Button>

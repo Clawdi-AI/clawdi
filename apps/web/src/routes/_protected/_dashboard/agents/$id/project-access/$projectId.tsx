@@ -18,7 +18,7 @@ function AgentProjectDetailRoute() {
 		<AgentResourceRouteGate
 			agentId={id}
 			returnHref={projectsHref}
-			returnLabel="Agent Projects"
+			returnLabel="Projects"
 			projectAccess={{ projectId }}
 		>
 			<Outlet />

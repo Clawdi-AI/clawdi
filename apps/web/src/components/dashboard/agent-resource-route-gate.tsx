@@ -146,7 +146,7 @@ function AgentProjectAccessGate({
 						onRetry={() => {
 							void bindings.refetch();
 						}}
-						title="Couldn't verify Agent Project access"
+						title="Couldn't verify Workspace or Project access"
 					/>
 				) : (
 					<DetailNotFound
@@ -154,7 +154,7 @@ function AgentProjectAccessGate({
 						message={
 							projectId
 								? "The requested Project is not available through this Agent. Choose an available Project first."
-								: "Choose an Agent Project before opening its Skills or Vaults."
+								: "Choose the Workspace or a linked Project before opening its Skills or Vaults."
 						}
 					/>
 				)}

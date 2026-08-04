@@ -77,7 +77,7 @@ async def assert_project_writable_by_user(
     if project.user_id != user_id:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "Agent Project must be owned by the caller",
+            "Only the Project owner can make this change",
         )
     return project
 
@@ -154,7 +154,10 @@ async def ensure_context_binding(
     if priority is None:
         priority = await _next_context_priority(db, agent_id=agent_id)
     if priority < 1:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "attachment order must be >= 1")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Vault resolution priority must be >= 1",
+        )
 
     binding = AgentProjectBinding(
         agent_id=agent_id,

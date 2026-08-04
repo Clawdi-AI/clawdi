@@ -53,6 +53,6 @@ export function getAcceptedProjectInvitationToastCopy(projectName?: string): {
 	return {
 		title: projectName ? `Joined ${projectName}` : "Project Joined",
 		description:
-			"Read-only access granted. Open the Project to review shared resources, then add it to an agent when needed.",
+			"Read-only access granted. Open the Project to review shared resources, then link it to an Agent when needed.",
 	};
 }

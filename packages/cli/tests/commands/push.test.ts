@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { push } from "../../src/commands/push";
+import { recordProjectSkillMaterialization } from "../../src/lib/skills-lock";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
 import {
 	type AgentHomeOverrideSnapshot,
@@ -145,6 +146,31 @@ describe("push — Hermes fixture", () => {
 		const uploads = captured.filter((c) => c.path === "/v1/agents/env-test/skills/sync/upload");
 		expect(uploads.length).toBeGreaterThan(0);
 		for (const upload of uploads) expect(upload.isMultipart).toBe(true);
+	});
+
+	it("does not upload a Project materialization even after its local bytes are edited", async () => {
+		setup("hermes");
+		recordProjectSkillMaterialization({
+			agentType: "hermes",
+			localSkillKey: "core/demo",
+			sourceProjectId: "project-source",
+			sourceSkillKey: "demo",
+			contentHash: "downloaded-hash",
+		});
+		writeFileSync(
+			join(tmpHome, ".hermes", "skills", "core", "demo", "SKILL.md"),
+			"---\nname: demo\ndescription: edited locally\n---\n# Still Project-owned\n",
+		);
+		const { captured, restore } = mockFetch([okEnvironmentProbe()]);
+		try {
+			await push({ agent: "hermes", modules: "skills", all: true });
+		} finally {
+			restore();
+		}
+
+		expect(
+			captured.some((request) => request.path === "/v1/agents/env-test/skills/sync/upload"),
+		).toBe(false);
 	});
 
 	it("skips local skills with invalid skill_keys before upload", async () => {

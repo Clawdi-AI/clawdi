@@ -51,7 +51,10 @@ from typing import Any
 # SINGLE knob for widening the schema surface.
 KEEP_OPERATIONS_BY_PATH: dict[str, set[str]] = {
     "/v1/agent-environments": {"get"},
+    "/v1/deployments/{deployment_id}/skills": {"get"},
+    "/v1/deployments/{deployment_id}/skills/{skill_key}/install": {"post", "delete"},
     "/v1/me": {"get"},
+    "/v1/skills/catalog": {"get"},
     "/v2/ai-providers/managed/models": {"get"},
     "/v2/deployments": {"get", "post"},
     "/v2/deployments/by-request/{deploy_request_id}": {"get"},

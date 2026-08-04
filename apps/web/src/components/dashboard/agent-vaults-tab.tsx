@@ -39,7 +39,7 @@ export function AgentVaultsTab({
 				onRetry={() => {
 					void bindings.refetch();
 				}}
-				title="Couldn't load agent Projects"
+				title="Couldn't load Workspace and Project Vault access"
 			/>
 		);
 	}

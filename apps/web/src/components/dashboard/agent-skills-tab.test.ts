@@ -29,7 +29,7 @@ describe("agent Skills resource boundary", () => {
 		expect(connectedSkills).not.toContain(AGENT_SECTION_NAVIGATION_ITEMS.skills);
 		expect(hostedSkills).not.toContain(AGENT_SECTION_NAVIGATION_ITEMS.skills);
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.skills.description).toBe(
-			"Skills available through this agent's Projects.",
+			"Skills installed in this Agent's Workspace.",
 		);
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.skills.description).not.toContain(
 			"Manifest configuration",

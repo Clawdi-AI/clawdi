@@ -3,6 +3,12 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pull } from "../../src/commands/pull";
+import {
+	readProjectSkillMaterialization,
+	readSkillProjectionClaimsForAgent,
+	recordSkillProjectionClaim,
+	skillCacheKey,
+} from "../../src/lib/skills-lock";
 import { tarSkillDir } from "../../src/lib/tar";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
 import {
@@ -129,7 +135,8 @@ content
 			{
 				method: "GET",
 				path: "/v1/skills",
-				response: () => jsonResponse({ items: [{ skill_key: "demo", name: "demo" }] }),
+				response: () =>
+					jsonResponse({ items: [{ skill_key: "demo", name: "demo", content_hash: "demo-hash" }] }),
 			},
 		]);
 
@@ -150,6 +157,125 @@ content
 		).toBe(true);
 	});
 
+	it("rebuilds a missing materialization fence instead of trusting a pre-v4 cache hit", async () => {
+		setup("hermes");
+		const local = join(tmpHome, ".hermes", "skills", "legacy");
+		mkdirSync(local, { recursive: true });
+		writeFileSync(join(local, "SKILL.md"), "# Previously pulled without an authority fence\n");
+		writeFileSync(
+			join(tmpHome, ".clawdi", "skills-lock.json"),
+			`${JSON.stringify({
+				version: 3,
+				skills: {
+					[skillCacheKey("hermes", `${TEST_PROJECT_ID}:legacy`)]: { hash: "remote-hash" },
+				},
+				claims: {},
+			})}\n`,
+		);
+		const tarBytes = await buildSkillTar("legacy", "# Downloaded again to establish authority\n");
+		const { captured, restore } = mockFetch([
+			cloudProjectList(),
+			{
+				method: "GET",
+				path: `/v1/projects/${TEST_PROJECT_ID}/skills/legacy/download`,
+				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
+			},
+			{
+				method: "GET",
+				path: "/v1/skills",
+				response: () =>
+					jsonResponse({
+						items: [
+							{
+								skill_key: "legacy",
+								name: "legacy",
+								content_hash: "remote-hash",
+							},
+						],
+					}),
+			},
+		]);
+		try {
+			await pull({ agent: "hermes", modules: "skills", project: TEST_PROJECT_ID });
+		} finally {
+			restore();
+		}
+
+		expect(
+			captured.some(
+				(request) => request.path === `/v1/projects/${TEST_PROJECT_ID}/skills/legacy/download`,
+			),
+		).toBe(true);
+		expect(
+			readProjectSkillMaterialization({ agentType: "hermes", localSkillKey: "legacy" }),
+		).toMatchObject({
+			source_project_id: TEST_PROJECT_ID,
+			source_skill_key: "legacy",
+			content_hash: "remote-hash",
+		});
+	});
+
+	it("retires an exact Agent projection claim when a Project Skill takes the local key", async () => {
+		setup("hermes");
+		const priorProjectId = "00000000-0000-0000-0000-000000000098";
+		const local = join(tmpHome, ".hermes", "skills", "handoff");
+		mkdirSync(local, { recursive: true });
+		writeFileSync(join(local, "SKILL.md"), "# Previously Agent-owned\n");
+		recordSkillProjectionClaim({
+			agentType: "hermes",
+			agentId: "env-test",
+			projectId: priorProjectId,
+			skillKey: "handoff",
+			hash: "agent-hash",
+		});
+		const tarBytes = await buildSkillTar("handoff", "# Project-owned replacement\n");
+		const { captured, restore } = mockFetch([
+			cloudProjectList(),
+			{
+				method: "GET",
+				path: `/v1/projects/${TEST_PROJECT_ID}/skills/handoff/download`,
+				response: () => new Response(new Uint8Array(tarBytes), { status: 200 }),
+			},
+			{
+				method: "GET",
+				path: "/v1/skills",
+				response: () =>
+					jsonResponse({
+						items: [{ skill_key: "handoff", name: "handoff", content_hash: "project-hash" }],
+					}),
+			},
+			{
+				method: "DELETE",
+				path: "/v1/agents/env-test/skills/sync/handoff",
+				response: () => new Response(null, { status: 204 }),
+			},
+		]);
+		try {
+			await pull({ agent: "hermes", modules: "skills", project: TEST_PROJECT_ID });
+		} finally {
+			restore();
+		}
+
+		const deletion = captured.find(
+			(request) =>
+				request.method === "DELETE" &&
+				request.path.startsWith("/v1/agents/env-test/skills/sync/handoff"),
+		);
+		expect(deletion).toBeDefined();
+		expect(new URL(deletion?.url ?? "http://invalid").searchParams.get("project_id")).toBe(
+			priorProjectId,
+		);
+		expect(readSkillProjectionClaimsForAgent("hermes", "env-test")).toEqual([]);
+		expect(
+			readProjectSkillMaterialization({ agentType: "hermes", localSkillKey: "handoff" }),
+		).toMatchObject({
+			source_project_id: TEST_PROJECT_ID,
+			source_skill_key: "handoff",
+			content_hash: "project-hash",
+		});
+		expect(readFileSync(join(local, "SKILL.md"), "utf8")).toContain("Project-owned replacement");
+	});
+
 	it("--dry-run fetches listing but does not download", async () => {
 		setup("hermes");
 		const { captured, restore } = mockFetch([
@@ -162,7 +288,8 @@ content
 			{
 				method: "GET",
 				path: "/v1/skills",
-				response: () => jsonResponse({ items: [{ skill_key: "demo", name: "demo" }] }),
+				response: () =>
+					jsonResponse({ items: [{ skill_key: "demo", name: "demo", content_hash: "demo-hash" }] }),
 			},
 		]);
 		try {
@@ -218,7 +345,7 @@ content
 		try {
 			await expect(
 				pull({ agent: "hermes", modules: "skills", project: TEST_PROJECT_ID }),
-			).rejects.toThrow(/Agent Projects are filesystem-authoritative/);
+			).rejects.toThrow(/Agent Workspaces are filesystem-authoritative/);
 		} finally {
 			restore();
 		}
@@ -261,7 +388,10 @@ description: new
 			{
 				method: "GET",
 				path: "/v1/skills",
-				response: () => jsonResponse({ items: [{ skill_key: "fresh", name: "fresh" }] }),
+				response: () =>
+					jsonResponse({
+						items: [{ skill_key: "fresh", name: "fresh", content_hash: "fresh-hash" }],
+					}),
 			},
 		]);
 		try {
@@ -294,7 +424,10 @@ description: new
 			{
 				method: "GET",
 				path: "/v1/skills",
-				response: () => jsonResponse({ items: [{ skill_key: "fresh", name: "fresh" }] }),
+				response: () =>
+					jsonResponse({
+						items: [{ skill_key: "fresh", name: "fresh", content_hash: "fresh-hash" }],
+					}),
 			},
 		]);
 		try {
@@ -327,7 +460,10 @@ description: new
 			{
 				method: "GET",
 				path: "/v1/skills",
-				response: () => jsonResponse({ items: [{ skill_key: "fresh", name: "fresh" }] }),
+				response: () =>
+					jsonResponse({
+						items: [{ skill_key: "fresh", name: "fresh", content_hash: "fresh-hash" }],
+					}),
 			},
 		]);
 		try {

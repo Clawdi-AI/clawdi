@@ -99,7 +99,7 @@ describe("inboxAcceptCommand", () => {
 		const exitCode = process.exitCode;
 		process.exitCode = 0;
 		expect(exitCode).toBe(1);
-		expect(errors.join("\n")).toContain("Sign in before attaching an accepted Project to an Agent");
+		expect(errors.join("\n")).toContain("Sign in before linking an accepted Project to an Agent");
 	});
 
 	it("stages signed-out access and lists the redacted ticket after sign-in", async () => {
@@ -324,7 +324,7 @@ describe("inboxAcceptCommand", () => {
 		expect(out).toContain("Local share ticket removed from this device.");
 		expect(out).toContain("Role: viewer (read access).");
 		expect(out).toContain(
-			"Attach to Agent: clawdi agent projects attach <agent-id> --project uuid-project-shared",
+			"Link to Agent: clawdi agent projects link <agent-id> --project uuid-project-shared",
 		);
 		expect(out).toContain("Next (optional): clawdi pull --project uuid-project-shared");
 		expect(out).not.toContain(rawToken);

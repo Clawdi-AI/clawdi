@@ -129,7 +129,7 @@ describe("owner project sharing commands", () => {
 		expect(out).toContain("https://clawdi.test/share/tok_raw_secret");
 		expect(out).toContain("clawdi inbox accept https://clawdi.test/share/tok_raw_secret");
 		expect(out).toContain(
-			"clawdi agent projects attach <agent-id> --project @owner-1234/engineering",
+			"clawdi agent projects link <agent-id> --project @owner-1234/engineering",
 		);
 		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);
 	});
@@ -325,7 +325,7 @@ describe("owner project sharing commands", () => {
 		const out = consoleCapture.lines.join("\n");
 		expect(out).toContain("Invitation sent to bob@example.test");
 		expect(out).toContain("viewer with read access");
-		expect(out).toContain("clawdi agent projects attach <agent-id> --project <project>");
+		expect(out).toContain("clawdi agent projects link <agent-id> --project <project>");
 	});
 
 	it("suggests a share link when invite email has no account", async () => {

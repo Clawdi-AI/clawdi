@@ -108,7 +108,7 @@ export function ShareProjectDialog({
 					<DialogDescription>
 						{isShareableProject
 							? "Share this Project without sharing ownership. People join as Viewers with read access; agent use is a separate choice they make later."
-							: "Only Projects you create can be shared with people. Global Projects and Agent Projects are created automatically and cannot be shared."}
+							: "Only Projects you create can be shared with people. Global Projects and Workspaces are created automatically and cannot be shared."}
 					</DialogDescription>
 				</DialogHeader>
 				{isShareableProject ? (

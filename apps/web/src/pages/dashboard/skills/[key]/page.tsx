@@ -1,8 +1,9 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import {
+	ArrowLeft,
 	BookOpen,
 	ExternalLink,
 	FileText,
@@ -124,27 +125,26 @@ export function SkillDetailContent({
 				)
 			: agentSectionHref(agentId, "projects", agentDeploymentRouteQuery(routeSearch))
 		: projectResourceHref("skills");
+	const skillListLabel = agentId && !selectedProjectId ? "Projects" : "Skills";
 	const scopedBindings = useAgentProjectBindings(agentId, { enabled: isAgentScope });
-	const scopedProjectScope = useMemo<{ projectIds: string[]; error: unknown | null }>(() => {
-		if (!isAgentScope || !scopedBindings.data) return { projectIds: [], error: null };
+	const scopedProjectError = useMemo<unknown | null>(() => {
+		if (!isAgentScope || !scopedBindings.data) return null;
 		try {
-			return {
-				projectIds: resolveAgentProjectScope(scopedBindings.data).projectIds,
-				error: null,
-			};
+			resolveAgentProjectScope(scopedBindings.data);
+			return null;
 		} catch (error) {
-			return { projectIds: [], error };
+			return error;
 		}
 	}, [isAgentScope, scopedBindings.data]);
 	const scopedProjectAccess = useMemo(
-		() => resolveAgentSkillProjectAccess(scopedProjectScope.projectIds, selectedProjectId),
-		[scopedProjectScope.projectIds, selectedProjectId],
+		() => resolveAgentSkillProjectAccess(scopedBindings.data ?? [], selectedProjectId),
+		[scopedBindings.data, selectedProjectId],
 	);
 	const bindingsResolved = !isAgentScope || scopedBindings.data !== undefined;
 	const scopedSkillQueryEnabled =
 		!isAgentScope ||
 		(bindingsResolved &&
-			!scopedProjectScope.error &&
+			!scopedProjectError &&
 			scopedProjectAccess.kind === "bound" &&
 			scopedProjectAccess.projectIds.length > 0);
 	const projectionScope = agentId
@@ -197,12 +197,9 @@ export function SkillDetailContent({
 			? scopedBindings.error
 			: null
 		: null;
-	const agentAccessError = blockingBindingsError ?? scopedProjectScope.error;
+	const agentAccessError = blockingBindingsError ?? scopedProjectError;
 	const agentProjectUnavailable =
-		isAgentScope &&
-		bindingsResolved &&
-		!scopedProjectScope.error &&
-		scopedProjectAccess.kind !== "bound";
+		isAgentScope && bindingsResolved && !scopedProjectError && scopedProjectAccess.kind !== "bound";
 	const skillIsLoading =
 		(isAgentScope && !bindingsResolved && !agentAccessError) ||
 		(!agentAccessError && !agentProjectUnavailable && skillQuery.isLoading);
@@ -362,15 +359,16 @@ export function SkillDetailContent({
 			);
 		},
 		onSuccess: async () => {
-			toast.success("Skill Uninstalled", {
-				description: skillAgentLabel
-					? `Removed from ${skillAgentLabel}. Other agents keep their copies.`
-					: "Removed from this agent. Other agents keep their copies.",
+			toast.success("Skill removed from Project", {
+				description: skill?.project_name
+					? `Removed from ${skill.project_name}. Other Projects keep their copies.`
+					: "Removed from this Project. Other Projects keep their copies.",
 			});
 			await removeDeletedSkillQueries(queryClient, skillKey);
 			void router.navigate({ href: skillListHref });
 		},
-		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
+		onError: (e) =>
+			toast.error("Couldn't remove Skill from Project", { description: errorMessage(e) }),
 	});
 
 	const onUninstall = () => {
@@ -386,11 +384,14 @@ export function SkillDetailContent({
 	};
 
 	const sourceProjectName = skill?.project_name ?? null;
-	const uninstallLocation = skillAgentLabel ? `from ${skillAgentLabel}` : "from this agent";
-	const agentCaption = skillAgentLabel
-		? `on ${skillAgentLabel}`
+	const uninstallLocation = sourceProjectName ? `from ${sourceProjectName}` : "from this Project";
+	const isAgentSyncProjection = skill?.authority === "agent_sync";
+	const agentCaption = isAgentSyncProjection
+		? skillAgentLabel
+			? `synced from ${skillAgentLabel}`
+			: "synced from Agent runtime"
 		: sourceProjectName
-			? `in ${sourceProjectName}`
+			? `stored in ${sourceProjectName}`
 			: null;
 	const skillBody = useMemo(() => stripFrontmatter(skill?.content ?? "").trim(), [skill?.content]);
 	const viewState = skillDetailViewState({
@@ -402,6 +403,16 @@ export function SkillDetailContent({
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<Button
+				render={<Link to={skillListHref} />}
+				nativeButton={false}
+				variant="ghost"
+				size="sm"
+				className="w-fit"
+			>
+				<ArrowLeft className="size-4" />
+				Back to {skillListLabel}
+			</Button>
 			{agentAccessError ? (
 				<ApiErrorPanel
 					error={agentAccessError}
@@ -414,8 +425,8 @@ export function SkillDetailContent({
 				<DetailNotFound
 					title="Project not available to this Agent"
 					message={
-						scopedProjectAccess.kind === "missing"
-							? "Choose an Agent Project before opening its Skills."
+						scopedProjectAccess.kind === "unavailable"
+							? "The Workspace is not available yet. Return to Projects and try again."
 							: "The requested Project is not available through this Agent. Choose an available Project first."
 					}
 				/>
@@ -473,7 +484,7 @@ export function SkillDetailContent({
 												!skill.content
 													? "No content stored for this skill yet"
 													: projectError
-														? `Default project unavailable: ${errorMessage(projectError)}`
+														? `Project unavailable: ${errorMessage(projectError)}`
 														: undefined
 											}
 										>
@@ -481,17 +492,17 @@ export function SkillDetailContent({
 											Edit
 										</Button>
 										<ConfirmAction
-											title={`Uninstall ${skill.name}?`}
+											title={`Remove ${skill.name} from Project?`}
 											description={
 												<>
 													<p>This removes the skill {uninstallLocation}.</p>
 													<p>
-														Your other agents keep their copies. To get it back here, re-install it
-														from the marketplace.
+														Other Projects keep their copies. Add it to this Project again if
+														needed.
 													</p>
 												</>
 											}
-											confirmLabel="Uninstall Skill"
+											confirmLabel="Remove from Project"
 											destructive
 											onConfirm={onUninstall}
 										>
@@ -501,13 +512,13 @@ export function SkillDetailContent({
 												disabled={uninstall.isPending || !isProjectReady}
 												title={
 													projectError
-														? `Default project unavailable: ${errorMessage(projectError)}`
+														? `Project unavailable: ${errorMessage(projectError)}`
 														: undefined
 												}
 												className="text-destructive hover:text-destructive"
 											>
 												<Trash2 />
-												Uninstall
+												Remove from Project
 											</Button>
 										</ConfirmAction>
 									</>
@@ -562,7 +573,9 @@ export function SkillDetailContent({
 							{skill.created_at ? (
 								<>
 									<span>·</span>
-									<span>installed {relativeTime(skill.created_at)}</span>
+									<span>
+										{isAgentSyncProjection ? "synced" : "added"} {relativeTime(skill.created_at)}
+									</span>
 								</>
 							) : null}
 						</DetailMeta>
@@ -585,11 +598,12 @@ export function SkillDetailContent({
 							<div className="space-y-1">
 								<div className="flex items-center gap-2">
 									<FolderKanban className="size-4 text-muted-foreground" />
-									<h2 className="text-sm font-semibold">Project availability</h2>
+									<h2 className="text-sm font-semibold">Project storage</h2>
 								</div>
 								<p className="text-xs text-muted-foreground">
-									Skills live in a Project. Agents can use this Skill when that Project is added to
-									an agent.
+									{isAgentSyncProjection
+										? "This is a read-only Cloud projection synced from the Agent runtime. Install and uninstall happen on the Agent."
+										: "This Skill is stored and managed in this Project. Install it on an Agent separately to run it."}
 								</p>
 							</div>
 							<Badge variant={isReadOnly ? "secondary" : "outline"}>
@@ -624,7 +638,8 @@ export function SkillDetailContent({
 								<AlertTitle>Editing the Skill File</AlertTitle>
 								<AlertDescription>
 									Keep the YAML header at the top intact. It stores the skill name and description.
-									Save updates this Project and syncs to the agent.
+									Save updates only the Skill stored in this Project. Install it on an Agent
+									separately to run the new content.
 								</AlertDescription>
 							</Alert>
 							<Textarea
@@ -648,7 +663,9 @@ export function SkillDetailContent({
 										<h2 className="text-sm font-semibold">Instruction file</h2>
 									</div>
 									<p className="text-xs text-muted-foreground">
-										Agents read this file when the Project provides the Skill.
+										{isAgentSyncProjection
+											? "This read-only instruction file was projected from the Agent runtime."
+											: "This instruction file is stored in the Project. Install the Skill on an Agent separately to run it."}
 									</p>
 								</div>
 								<Badge variant="secondary">
@@ -675,8 +692,9 @@ export function SkillDetailContent({
 										<h2 className="text-sm font-semibold">Instruction file</h2>
 									</div>
 									<p className="text-xs text-muted-foreground">
-										The Skill is installed, but no editable instruction body is available from the
-										current sync.
+										{isAgentSyncProjection
+											? "The Agent runtime reported this Skill, but its read-only projection does not include an instruction body yet."
+											: "This Project Skill has no editable instruction body."}
 									</p>
 								</div>
 								<Badge variant="secondary">
@@ -685,7 +703,11 @@ export function SkillDetailContent({
 							</div>
 							<EmptyState
 								variant="inset"
-								description="When the agent uploads the Skill file content, the preview and editor will appear here."
+								description={
+									isAgentSyncProjection
+										? "When the Agent uploads its Skill file content, the read-only preview will appear here."
+										: "No instruction content is stored for this Skill."
+								}
 							/>
 						</DetailPanel>
 					)}

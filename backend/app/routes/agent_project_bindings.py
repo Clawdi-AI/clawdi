@@ -126,12 +126,12 @@ async def add_context_project_binding(
     if project_id == agent.default_project_id:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Project is already this Agent Project",
+            "This Project is already the Agent Workspace",
         )
     if project.kind != PROJECT_KIND_WORKSPACE:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Only Custom Projects can be attached to an agent",
+            "Only Custom Projects can be linked to an Agent",
         )
     if body.priority is not None:
         priority_conflict = (
@@ -147,7 +147,7 @@ async def add_context_project_binding(
         if priority_conflict is not None:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "attachment order is already in use",
+                "Vault resolution priority is already in use",
             )
     binding = await ensure_context_binding(
         db,
@@ -180,7 +180,7 @@ async def reorder_context_project_bindings(
     if len({item.binding_id for item in body.items}) != len(body.items):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate binding_id")
     if len({item.priority for item in body.items}) != len(body.items):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate attachment order")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "duplicate Vault resolution priority")
 
     current_context_rows = (
         (
@@ -204,9 +204,12 @@ async def reorder_context_project_bindings(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid binding_id") from err
         binding = current_by_id.get(binding_id)
         if binding is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Project attachment not found")
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Linked Project not found")
         if item.priority < 1:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "attachment order must be >= 1")
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Vault resolution priority must be >= 1",
+            )
         requested.append((binding, item.priority))
 
     requested_ids = {binding.id for binding, _priority in requested}
@@ -215,7 +218,7 @@ async def reorder_context_project_bindings(
         if binding.id not in requested_ids and binding.priority in requested_priorities:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "attachment order is already in use",
+                "Vault resolution priority is already in use",
             )
 
     if requested:
@@ -257,11 +260,11 @@ async def delete_project_binding(
         )
     ).scalar_one_or_none()
     if binding is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Project attachment not found")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Linked Project not found")
     if binding.binding_type == "primary":
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Agent Project cannot be detached",
+            "Workspace cannot be unlinked",
         )
 
     await db.delete(binding)

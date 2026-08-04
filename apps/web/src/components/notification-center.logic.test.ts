@@ -57,7 +57,7 @@ describe("notification center logic", () => {
 		expect(getAcceptedProjectInvitationToastCopy().title).toBe("Project Joined");
 		expect(accepted.description).toContain("Read-only access");
 		expect(accepted.description).toContain("Open the Project");
-		expect(accepted.description).toContain("add it to an agent");
+		expect(accepted.description).toContain("link it to an Agent");
 	});
 
 	test("refreshes canonical OpenAPI membership caches after accepting an invitation", () => {
