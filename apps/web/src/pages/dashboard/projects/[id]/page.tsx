@@ -77,9 +77,9 @@ import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
+	DialogFooter,
 	DialogHeader,
 	DialogTitle,
-	DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -167,7 +167,6 @@ export default function ProjectDetailPage({
 	// Forms are progressive-disclosure (taste audit #2): content first,
 	// inputs on demand.
 	const [showInstallSkill, setShowInstallSkill] = useState(false);
-	const [showCreateVault, setShowCreateVault] = useState(false);
 	const joinedFromShare = !isAgentScope && searchParams.get("joined") === "share";
 
 	const projects = $api.useQuery("get", "/v1/projects", {});
@@ -827,28 +826,19 @@ export default function ProjectDetailPage({
 								/>
 							) : null}
 							{isOwner ? (
-								<Button
-									variant="outline"
-									size="sm"
-									aria-expanded={showCreateVault}
-									onClick={() => setShowCreateVault((v) => !v)}
-								>
-									<Plus className="size-3.5" />
-									Attach Vault
-								</Button>
+								<ProjectVaultActions
+									projectId={project.id}
+									attachedVaultIds={new Set(
+										(vaults.data?.items ?? []).map((vault) => vault.id),
+									)}
+									contextLabel={isWorkspace ? "Workspace" : "Project"}
+									onChanged={refresh}
+								/>
 							) : null}
 						</>
 					) : undefined
 				}
 			>
-				{isOwner && showCreateVault ? (
-					<ProjectVaultAttachmentForm
-						projectId={project.id}
-						attachedVaultIds={new Set((vaults.data?.items ?? []).map((vault) => vault.id))}
-						contextLabel={isWorkspace ? "Workspace" : "Project"}
-						onChanged={refresh}
-					/>
-				) : null}
 				{vaults.isLoading ? (
 					<div className={HERO_GRID_CLASS}>
 						{Array.from({ length: 3 }).map((_, index) => (
@@ -1642,7 +1632,7 @@ function InstallSkillInProjectForm({
 	);
 }
 
-function ProjectVaultAttachmentForm({
+function ProjectVaultActions({
 	projectId,
 	attachedVaultIds,
 	contextLabel,
@@ -1656,8 +1646,11 @@ function ProjectVaultAttachmentForm({
 	const api = useApi();
 	const [slug, setSlug] = useState("");
 	const [selectedVaultId, setSelectedVaultId] = useState("");
+	const [attachOpen, setAttachOpen] = useState(false);
+	const [createOpen, setCreateOpen] = useState(false);
 	const accountVaults = useQuery({
 		queryKey: ["vaults", "project-attachment-options", projectId],
+		enabled: attachOpen,
 		queryFn: async () =>
 			fetchAllPages<VaultSummary>(
 				async (page, pageSize) =>
@@ -1692,6 +1685,7 @@ function ProjectVaultAttachmentForm({
 		},
 		onSuccess: () => {
 			setSelectedVaultId("");
+			setAttachOpen(false);
 			onChanged();
 			toast.success(`Vault attached to ${contextLabel}`);
 		},
@@ -1710,6 +1704,7 @@ function ProjectVaultAttachmentForm({
 			),
 		onSuccess: () => {
 			setSlug("");
+			setCreateOpen(false);
 			onChanged();
 			toast.success("Vault created", { description: `Attached to this ${contextLabel}.` });
 		},
@@ -1717,97 +1712,143 @@ function ProjectVaultAttachmentForm({
 	});
 
 	return (
-		<div className="grid max-w-3xl gap-4 rounded-lg border bg-muted/30 p-3">
-			<div className="grid gap-2">
-				<Label htmlFor={`project-vault-attachment-${projectId}`} className="text-xs font-medium">
-					Existing Vault
-				</Label>
-				{accountVaults.isLoading ? (
-					<Skeleton className="h-9 w-full" />
-				) : blockingAccountVaultsError ? (
-					<ApiErrorPanel
-						error={blockingAccountVaultsError}
-						onRetry={() => {
-							void accountVaults.refetch();
-						}}
-						title="Couldn't load account Vaults"
-					/>
-				) : attachableVaults.length === 0 ? (
-					<p className="text-xs text-muted-foreground">
-						All account-owned Vaults are already attached to this {contextLabel}.
-					</p>
-				) : (
-					<div className="flex flex-col gap-2 sm:flex-row">
-						<Select
-							items={attachableItems}
-							value={selectedVaultId}
-							onValueChange={(value) => {
-								if (value !== null) setSelectedVaultId(value);
-							}}
-						>
-							<SelectTrigger
-								id={`project-vault-attachment-${projectId}`}
-								className="min-w-0 flex-1"
-							>
-								<SelectValue placeholder="Choose a Vault…" />
-							</SelectTrigger>
-							<SelectContent>
-								{attachableVaults.map((vault) => (
-									<SelectItem key={vault.id} value={vault.id}>
-										{vault.name}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
-						<Button
-							size="sm"
-							variant="outline"
-							disabled={!selectedVaultId || attach.isPending}
-							onClick={() => selectedVaultId && attach.mutate(selectedVaultId)}
-							className="w-full sm:w-auto"
-						>
-							{attach.isPending ? <Spinner /> : <Plus className="size-3.5" />}
-							Attach to {contextLabel}
-						</Button>
-					</div>
-				)}
+		<>
+			<div className="flex flex-wrap justify-end gap-2">
+				<Button size="sm" onClick={() => setCreateOpen(true)}>
+					<Plus className="size-3.5" />
+					Create vault
+				</Button>
+				<Button size="sm" variant="outline" onClick={() => setAttachOpen(true)}>
+					<Link2 className="size-3.5" />
+					Attach vault
+				</Button>
 			</div>
 
-			<div className="grid gap-2 border-t pt-3">
-				<Label htmlFor={`project-vault-slug-${projectId}`} className="text-xs font-medium">
-					Create a new Vault
-				</Label>
-				<div className="flex flex-col gap-2 sm:flex-row">
-					<Input
-						id={`project-vault-slug-${projectId}`}
-						name="project-vault-slug"
-						value={slug}
-						onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
-						onKeyDown={(e) => {
-							if (e.key === "Enter" && slug) create.mutate(slug);
+			<Dialog
+				open={attachOpen}
+				onOpenChange={setAttachOpen}
+				onOpenChangeComplete={(open) => {
+					if (!open) setSelectedVaultId("");
+				}}
+			>
+				<DialogContent className="sm:max-w-md">
+					<DialogHeader>
+						<DialogTitle>Attach vault</DialogTitle>
+						<DialogDescription>
+							Choose an account-owned Vault to attach to this {contextLabel}. The Vault remains
+							available in your account.
+						</DialogDescription>
+					</DialogHeader>
+					{accountVaults.isLoading ? (
+						<Skeleton className="h-9 w-full" />
+					) : blockingAccountVaultsError ? (
+						<ApiErrorPanel
+							error={blockingAccountVaultsError}
+							onRetry={() => {
+								void accountVaults.refetch();
+							}}
+							title="Couldn't load account Vaults"
+						/>
+					) : attachableVaults.length === 0 ? (
+						<p className="text-sm text-muted-foreground">
+							All account-owned Vaults are already attached to this {contextLabel}.
+						</p>
+					) : (
+						<form
+							className="space-y-4"
+							onSubmit={(event) => {
+								event.preventDefault();
+								if (selectedVaultId && !attach.isPending) attach.mutate(selectedVaultId);
+							}}
+						>
+							<Label htmlFor={`project-vault-attachment-${projectId}`}>Existing Vault</Label>
+							<Select
+								items={attachableItems}
+								value={selectedVaultId}
+								onValueChange={(value) => {
+									if (value !== null) setSelectedVaultId(value);
+								}}
+							>
+								<SelectTrigger
+									id={`project-vault-attachment-${projectId}`}
+									className="min-w-0 flex-1"
+								>
+									<SelectValue placeholder="Choose a Vault…" />
+								</SelectTrigger>
+								<SelectContent>
+									{attachableVaults.map((vault) => (
+										<SelectItem key={vault.id} value={vault.id}>
+											{vault.name}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+							<DialogFooter>
+								<Button type="button" variant="ghost" onClick={() => setAttachOpen(false)}>
+									Cancel
+								</Button>
+								<Button type="submit" disabled={!selectedVaultId || attach.isPending}>
+									{attach.isPending ? <Spinner /> : <Link2 className="size-3.5" />}
+									Attach vault
+								</Button>
+							</DialogFooter>
+						</form>
+					)}
+				</DialogContent>
+			</Dialog>
+
+			<Dialog
+				open={createOpen}
+				onOpenChange={setCreateOpen}
+				onOpenChangeComplete={(open) => {
+					if (!open) setSlug("");
+				}}
+			>
+				<DialogContent className="sm:max-w-md">
+					<DialogHeader>
+						<DialogTitle>Create vault</DialogTitle>
+						<DialogDescription>
+							Create an account-owned Vault and attach it to this {contextLabel}.
+						</DialogDescription>
+					</DialogHeader>
+					<form
+						className="space-y-4"
+						onSubmit={(event) => {
+							event.preventDefault();
+							if (slug && !create.isPending) create.mutate(slug);
 						}}
-						placeholder="github…"
-						autoComplete="off"
-						spellCheck={false}
-						className="min-w-0 flex-1"
-					/>
-					<Button
-						size="sm"
-						disabled={!slug || create.isPending}
-						onClick={() => slug && create.mutate(slug)}
-						variant={slug ? "default" : "outline"}
-						className="w-full sm:w-auto"
 					>
-						{create.isPending ? <Spinner /> : <Plus className="mr-1.5 size-3.5" />}
-						Create and attach
-					</Button>
-				</div>
-				<p className="text-xs text-muted-foreground">
-					Use lowercase letters, numbers, and hyphens. Open the created Vault in the resource
-					library to add keys.
-				</p>
-			</div>
-		</div>
+						<div className="grid gap-2">
+							<Label htmlFor={`project-vault-slug-${projectId}`}>Vault name</Label>
+							<Input
+								id={`project-vault-slug-${projectId}`}
+								name="project-vault-slug"
+								value={slug}
+								onChange={(e) =>
+									setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
+								}
+								placeholder="github…"
+								autoComplete="off"
+								spellCheck={false}
+								className="min-w-0 flex-1"
+							/>
+							<p className="text-xs text-muted-foreground">
+								Use lowercase letters, numbers, and hyphens. Add keys from the Vault library later.
+							</p>
+						</div>
+						<DialogFooter>
+							<Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
+								Cancel
+							</Button>
+							<Button type="submit" disabled={!slug || create.isPending}>
+								{create.isPending ? <Spinner /> : <Plus className="size-3.5" />}
+								Create vault
+							</Button>
+						</DialogFooter>
+					</form>
+				</DialogContent>
+			</Dialog>
+		</>
 	);
 }
 

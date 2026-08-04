@@ -366,7 +366,7 @@ function AgentProjectsPanel({
 					<div className="flex flex-wrap justify-end gap-2">
 						<Button size="sm" disabled={!primary} onClick={() => setCreateOpen(true)}>
 							<Plus className="size-3.5" />
-							Create and link
+							Create new
 						</Button>
 						<Button
 							size="sm"
@@ -534,7 +534,7 @@ function AgentProjectsPanel({
 			>
 				<DialogContent className="sm:max-w-md">
 					<DialogHeader>
-						<DialogTitle>Create and link Project</DialogTitle>
+						<DialogTitle>Create new Project</DialogTitle>
 						<DialogDescription>
 							Create a Project and link it to this Agent. Add Skills and Vaults to the Project
 							separately.
