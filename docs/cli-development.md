@@ -297,10 +297,12 @@ Use `docs/runbooks/release.md` for the full app/backend/web/CLI release
 checklist. This section covers the CLI/npm release line in detail.
 
 Publishing is automated. `.github/workflows/cli-publish.yml` watches `main`
-for changes under `packages/cli/` and publishes to npm when it sees a
-version bump. A merge with no version change is a no-op — the workflow
-diffs `packages/cli/package.json` against `npm view clawdi version` and
-exits early on a match.
+for changes under `packages/cli/`. If the exact npm version and its published,
+non-draft GitHub Release already exist with every required non-empty asset, the
+workflow exits before installing dependencies or building. Otherwise it builds
+the artifact from its own `GITHUB_SHA`. An absent exact npm version is
+published; an existing version is never republished and must have the same
+`dist.integrity` as the artifact built by this run.
 
 Managed agent-v2 releases are repository-autonomous. The CLI workflow builds,
 typechecks, runs the full CLI suite, packs one immutable npm tarball, and builds
@@ -315,13 +317,16 @@ The build/test job may use the configured fast runner, but the protected
 publish job is fixed to GitHub-hosted `ubuntu-latest`: npm trusted publishing
 does not support self-hosted or third-party GitHub Actions runners. The publish
 job uses Node 24 and npm 11.5.1, satisfying npm's minimum Node 22.14 and npm
-11.5.1. After a fresh `npm publish --provenance` succeeds, that command plus
-the exact registry version and matching `dist.integrity` authorizes GitHub
-Release completion; the job does not wait for the eventually consistent
-registry attestation read API. If the immutable npm version already exists,
-the workflow did not publish it and therefore requires registry provenance to
-prove the exact repository workflow, source commit, package subject, and
-artifact integrity before recovering the GitHub Release.
+11.5.1. The lightweight preflight reads only the exact npm version and the
+corresponding GitHub Release state; it does not query provenance. After a fresh
+`npm publish --provenance` succeeds, that command plus the exact registry
+version and matching `dist.integrity` authorizes GitHub Release completion; the
+job does not wait for the eventually consistent registry attestation read API.
+If release work remains and the immutable npm version already exists, the
+workflow never republishes it and only accepts an exact integrity match. The
+GitHub Release and tag must target that run's `GITHUB_SHA`. A published release
+with incomplete assets, or a release/tag for another commit while completion is
+required, fails closed.
 
 The CLI workflow neither calls nor checks out the Hosted repository. An operator
 verifies the exact package publication, then explicitly supplies the exact
@@ -385,10 +390,8 @@ NPM_TAG=$(node -e "const p=require('./package.json'); console.log(p.version.incl
 npm publish --access public --tag "$NPM_TAG"  # plain publish, no --provenance
 ```
 
-The workflow detects this case (`npm view clawdi` returns nothing → falls
-back to `"0.0.0"`) and stays inert until the package exists. After the
-first publish, configure trusted publisher (next section) and from v0.1.1
-onward releases are automatic.
+After the first publish, configure trusted publisher (next section); subsequent
+releases are automatic.
 
 ### To ship a new version (after bootstrap)
 
@@ -401,12 +404,10 @@ onward releases are automatic.
    A successful fresh publish is completed using that command result plus the
    exact registry version and `dist.integrity`; it does not depend on immediate
    visibility of the registry attestation query endpoint.
-   If npm already has the exact version but its GitHub Release is incomplete,
-   a rerun checks out the source commit recorded by npm provenance, rebuilds the
-   tarball, compares it with npm `dist.integrity`, skips the immutable npm
-   version, and completes the release assets. The workflow passes collected npm,
-   provenance, tag, and asset facts to `scripts/release-recovery.mjs`; that
-   tested decision script fails closed before the workflow performs an action.
+   If npm already has the exact version, the workflow never republishes it and
+   compares the current run's tarball directly with npm `dist.integrity`.
+   Integrity drift requires a version bump or a rerun of the original workflow;
+   the workflow never checks out a source commit inferred from registry data.
 4. The workflow creates or completes `clawdi-cli-v<version>` as a draft,
    uploads the verified binary assets, then finalizes the release with changelog
    notes.
@@ -419,7 +420,10 @@ version through its Cloud manifest. The `beta` tag is publication metadata;
 production and Hosted never resolve an npm dist-tag.
 
 A manual run is available under `workflow_dispatch` if the auto-run needs a
-nudge (for example, npm succeeded but GitHub Release creation failed).
+nudge. An unchanged version with an exact npm package and complete published
+GitHub Release is a fast no-op. If npm succeeded but GitHub Release creation
+failed, rerun that original workflow run so `GITHUB_SHA` and the artifact remain
+identical.
 
 ### Smoke checks before bumping the version
 

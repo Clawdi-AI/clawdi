@@ -73,9 +73,11 @@ releases.
    uv run alembic upgrade head
    ```
 
-6. If the PR touches the CLI package and should publish, bump
-   `packages/cli/package.json` using semver. If no npm publish is intended,
-   leave the version unchanged.
+6. Bump `packages/cli/package.json` using semver whenever the commit is intended
+   to produce a new CLI artifact. An unchanged version whose exact npm package
+   and complete published GitHub Release already exist is a fast no-op. Reuse
+   the version for active release work only when rerunning the original workflow
+   run after an incomplete release.
    For the managed agent-v2 release line, this repository's release workflow must
    build, typecheck, run the full CLI suite, pack one immutable npm tarball, and
    build the native matrix once. It installs the npm tarball and exercises the
@@ -89,17 +91,18 @@ releases.
    GitHub-hosted `ubuntu-latest`, because npm trusted publishing does not support
    self-hosted or third-party GitHub Actions runners. The CLI workflow does not
    call workflows in the Hosted repository or depend on Hosted repository
-   settings. A rerun after npm succeeds but GitHub Release creation fails
-   checks out the source commit recorded by npm provenance, rebuilds the same
-   artifact, verifies its npm `dist.integrity`, skips republishing the immutable
-   npm version, and completes the draft release before finalization. Recovery
-   decisions come from `packages/cli/scripts/release-recovery.mjs`. Its evidence
-   modes are explicit: a fresh successful `npm publish --provenance` requires
-   the exact registry version and matching `dist.integrity` without waiting for
-   the eventually consistent attestation read API; an already-existing version
-   requires registry provenance for the exact source, workflow, package subject,
-   and artifact. The workflow only gathers those mode-specific facts and
-   executes the validated action.
+   settings. A lightweight preflight checks only whether the exact npm version
+   and a non-draft GitHub Release with every required non-empty asset exist; if
+   both are complete, the run skips build and publish without querying
+   provenance. Otherwise the run builds from its own `GITHUB_SHA`. An absent
+   exact npm version is published with provenance; an existing version is never
+   republished and must have the same `dist.integrity` as this run's artifact.
+   Fresh publish completion does not wait for the eventually consistent
+   attestation read API. The GitHub Release may be created or a draft may be
+   completed only for the same `GITHUB_SHA`; another target or an incomplete
+   published release fails closed. After npm succeeds, rerun the original
+   workflow run to complete GitHub assets. A different commit whose artifact
+   differs must bump the package version instead of recovering across commits.
    Native ownership is separate: installed native executables update only from
    the exact `clawdi-cli-v<version>` manifest and assets. npm/Bun installs use
    exact npm versions. Hosted remains a separate exact-version npm authority and
@@ -156,9 +159,9 @@ releases.
      only after the deployed commit should get public app/backend/web release
      notes.
    - `.github/workflows/cli-publish.yml` runs for `packages/cli/**` and the
-     CLI publish workflow file. It publishes when the exact npm version is
-     absent, or rebuilds and verifies that version to complete an unfinished
-     GitHub Release.
+     CLI publish workflow file. It builds from the run's `GITHUB_SHA`, publishes
+     only when the exact npm version is absent, and otherwise verifies exact
+     registry integrity before completing the same-commit GitHub Release.
 
    Done: `bun test packages/cli/tests/clawdi-image-release-workflow.test.ts`
    exits 0 and the backend image release workflow contract passes.
