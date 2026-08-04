@@ -32,6 +32,8 @@ import {
 	discordApplicationIdError,
 	discordBotTokenError,
 	discordPublicKeyError,
+	type NewCustomBotLinkMode,
+	newCustomBotAgentLinkFields,
 } from "@/hosted/v2/channels/connect-bot-dialog.logic";
 import { ProviderLinkReplacementConfirm } from "@/hosted/v2/channels/provider-link-replacement-confirm";
 import { WhatsAppDeviceOnboarding } from "@/hosted/v2/channels/whatsapp-device-onboarding";
@@ -140,13 +142,12 @@ export function ConnectBotDialog({
 				!applicationIdError &&
 				!publicKeyError));
 
-	function buildBody(replaceExistingProviderLink: boolean): ChannelCreate {
+	function buildBody(linkMode: NewCustomBotLinkMode): ChannelCreate {
 		const base: ChannelCreate = {
 			provider,
 			name: name.trim(),
 			provider_token: token.trim(),
-			agent_id: replaceExistingProviderLink ? agentId : autoLinkAgentId,
-			...(replaceExistingProviderLink ? { replace_existing_provider_link: true } : {}),
+			...newCustomBotAgentLinkFields({ mode: linkMode, agentId, autoLinkAgentId }),
 		};
 		if (!discordSelected) return base;
 		return {
@@ -158,12 +159,12 @@ export function ConnectBotDialog({
 		};
 	}
 
-	async function submit(replaceExistingProviderLink = false): Promise<void> {
+	async function submit(linkMode: NewCustomBotLinkMode = "auto-link"): Promise<void> {
 		if (!canSubmit || submitLocked.current) return;
 		submitLocked.current = true;
 		setSubmitting(true);
 		const dialogSession = dialogSessionRef.current;
-		const body = buildBody(replaceExistingProviderLink);
+		const body = buildBody(linkMode);
 		try {
 			const data = await create.execute(body);
 			const result: CreatedCustomBot = {
@@ -259,7 +260,9 @@ export function ConnectBotDialog({
 	const addCustomBotButton = (
 		<Button
 			className="min-w-0 whitespace-normal"
-			onClick={providerLinkConflict ? undefined : () => void submit().catch(() => undefined)}
+			onClick={
+				providerLinkConflict ? undefined : () => void submit("auto-link").catch(() => undefined)
+			}
 			disabled={!canSubmit || isSubmitting}
 		>
 			{isSubmitting ? "Adding…" : "Add custom bot"}
@@ -476,7 +479,8 @@ export function ConnectBotDialog({
 												<ProviderLinkReplacementConfirm
 													provider={provider}
 													targetName={name.trim()}
-													onConfirm={() => submit(true)}
+													onAddWithoutLinking={() => submit("inventory-only")}
+													onConfirm={() => submit("replace")}
 												>
 													{addCustomBotButton}
 												</ProviderLinkReplacementConfirm>

@@ -1,8 +1,28 @@
+import type { ChannelCreate } from "@/hosted/v2/channels/channel-types";
+
 const DISCORD_PUBLIC_KEY_HEX_LENGTH = 64;
 const HEX_PATTERN = /^[0-9a-fA-F]+$/;
 const DISCORD_SNOWFLAKE_PATTERN = /^\d{17,20}$/;
 const MAX_UINT64_DECIMAL = "18446744073709551615";
 const DISCORD_TOKEN_PATTERN = /^[A-Za-z0-9._-]{50,}$/;
+
+export type NewCustomBotLinkMode = "auto-link" | "inventory-only" | "replace";
+
+export function newCustomBotAgentLinkFields({
+	mode,
+	agentId,
+	autoLinkAgentId,
+}: {
+	mode: NewCustomBotLinkMode;
+	agentId?: string;
+	autoLinkAgentId: string | null;
+}): Pick<ChannelCreate, "agent_id" | "replace_existing_provider_link"> {
+	if (mode === "inventory-only") return { agent_id: null };
+	if (mode === "replace") {
+		return { agent_id: agentId, replace_existing_provider_link: true };
+	}
+	return { agent_id: autoLinkAgentId };
+}
 
 function isDiscordSnowflake(value: string): boolean {
 	return (
