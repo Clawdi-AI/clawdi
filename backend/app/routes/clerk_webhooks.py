@@ -42,7 +42,7 @@ from app.services.principal_lifecycle import (
     record_principal_cleanup_failure,
 )
 
-router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+router = APIRouter(prefix="/webhooks", tags=["webhooks"], include_in_schema=False)
 
 _MAX_BODY_BYTES = 64 * 1024
 _MAX_SIGNATURE_HEADER_BYTES = 8 * 1024
