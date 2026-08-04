@@ -2464,7 +2464,7 @@ export interface paths {
         };
         /**
          * Get Mcp Config
-         * @description Return the deprecated MCP bridge config required by CLI 0.12.7.
+         * @description Return the deprecated MCP bridge config required by legacy clients.
          */
         get: operations["get_mcp_config_v1_connectors_mcp_config_get"];
         put?: never;

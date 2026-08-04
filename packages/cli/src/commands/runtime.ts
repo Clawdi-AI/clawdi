@@ -17,7 +17,6 @@ import { z } from "zod";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getConfig } from "../lib/config";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { isSemverLessThan } from "../lib/semver";
 import { getCliVersion } from "../lib/version";
 import {
 	type RuntimeAppliedContentIdentity,
@@ -1046,18 +1045,9 @@ interface RuntimeDoctorCheck {
 	hint?: string;
 }
 
-interface MinimumCliVersionGate {
-	minimumCliVersion: string;
-	currentCliVersion: string;
-	rejectedGeneration: number;
-	activeGeneration: number | null;
-	error: string;
-}
-
 type RuntimeApplyResult =
 	| RuntimeApplyConvergedResult
 	| RuntimeApplyCliHandoffResult
-	| RuntimeApplyGatedResult
 	| RuntimeApplyCliUpdateFailedResult;
 
 interface RuntimeApplyConvergedResult {
@@ -1065,12 +1055,6 @@ interface RuntimeApplyConvergedResult {
 	convergence: ReturnType<typeof convergeRuntimeManifest>;
 	cliUpdate: RuntimeCliUpdateResult;
 	systemdApply: ReturnType<typeof applySystemdRuntimeUpdate>;
-}
-
-interface RuntimeApplyGatedResult {
-	kind: "minimum_cli_version_gated";
-	cliUpdate: RuntimeCliUpdateResult;
-	gate: MinimumCliVersionGate;
 }
 
 interface RuntimeApplyCliHandoffResult {
@@ -2190,49 +2174,6 @@ async function runtimeInitLocked(
 			});
 			return;
 		}
-		if (applyResult.kind === "minimum_cli_version_gated") {
-			const activeAppliedState = readRuntimeAppliedState(paths);
-			const status = buildRuntimeBootStatus(
-				{
-					mode: "repair",
-					status: "error",
-					stage: "config",
-					bootId,
-					runtimeMode: mode,
-					activeGeneration: applyResult.gate.activeGeneration,
-					rejectedGeneration: applyResult.gate.rejectedGeneration,
-					instanceId: activeAppliedState?.instanceId ?? null,
-					enabledRuntimes: [],
-					error: applyResult.gate.error,
-					errors: [applyResult.gate.error],
-					exitCode: 24,
-					datasource: "RuntimeSource",
-					hostPolicy: hostPolicySummary(hostPolicy),
-					manifestSource: {
-						type: convergenceLoad.source,
-						path: convergenceLoad.sourcePath,
-						offline: convergenceLoad.offline,
-					},
-				},
-				paths,
-			);
-			writeRuntimeBootStatus(status, paths);
-			if (opts.json || !process.stdout.isTTY) {
-				console.log(
-					JSON.stringify(
-						{ ...status, cliUpdate: applyResult.cliUpdate, gate: applyResult.gate },
-						null,
-						2,
-					),
-				);
-			} else {
-				console.log(chalk.bold("clawdi runtime init"));
-				console.log(chalk.yellow(`  repair: ${applyResult.gate.error}`));
-				console.log(chalk.gray(`  status: ${paths.bootStatus}`));
-			}
-			process.exitCode = 24;
-			return;
-		}
 		const { convergence } = applyResult;
 		const runtimeErrors = [...convergence.installErrors];
 		const installOk = runtimeErrors.length === 0;
@@ -2502,26 +2443,6 @@ async function runtimeWatchTickAfterCliReconciliation(
 				},
 			};
 		}
-		if (applyResult.kind === "minimum_cli_version_gated") {
-			const cliUpdateError =
-				applyResult.cliUpdate.status === "error"
-					? (applyResult.cliUpdate.error ?? "CLI update failed")
-					: null;
-			const errors = [...(cliUpdateError ? [cliUpdateError] : []), applyResult.gate.error];
-			return {
-				schemaVersion: "clawdi.runtimeWatchEvent.v1",
-				status: "error",
-				stage: cliUpdateError ? "cli-update" : "config",
-				mode: "minimum_cli_version_gated",
-				errors,
-				error: errors[0],
-				activeGeneration: applyResult.gate.activeGeneration,
-				rejectedGeneration: applyResult.gate.rejectedGeneration,
-				cliUpdate: applyResult.cliUpdate,
-				selfReexec: applyResult.cliUpdate.selfReexec,
-				gate: applyResult.gate,
-			};
-		}
 		const { convergence, cliUpdate, systemdApply: systemdApplyResult } = applyResult;
 		const cliUpdateError =
 			cliUpdate.status === "error" ? (cliUpdate.error ?? "CLI update failed") : null;
@@ -2601,10 +2522,6 @@ function applyRuntimeDesiredState(
 	}
 	if (cliUpdate.selfReexec) {
 		return { kind: "cli_handoff", cliUpdate };
-	}
-	const gate = minimumCliVersionGate(load.manifest, paths);
-	if (gate) {
-		return { kind: "minimum_cli_version_gated", cliUpdate, gate };
 	}
 	const previousSystemdUnits = readSystemdUnitSnapshot(paths);
 	let failedSystemdUnits: SystemdUnitSnapshot | null = null;
@@ -2710,23 +2627,6 @@ function applyRuntimeDesiredState(
 		},
 	});
 	return { kind: "converged", cliUpdate, convergence, systemdApply };
-}
-
-function minimumCliVersionGate(
-	manifest: RuntimeManifestLoad["manifest"],
-	paths: RuntimePaths,
-): MinimumCliVersionGate | null {
-	const minimumCliVersion = manifest.minimumCliVersion?.trim();
-	if (!minimumCliVersion) return null;
-	const currentCliVersion = getCliVersion();
-	if (!isSemverLessThan(currentCliVersion, minimumCliVersion)) return null;
-	return {
-		minimumCliVersion,
-		currentCliVersion,
-		rejectedGeneration: manifest.generation,
-		activeGeneration: readRuntimeAppliedState(paths)?.generation ?? null,
-		error: `runtime desired state requires clawdi CLI >= ${minimumCliVersion}; current CLI is ${currentCliVersion}. Keeping the current applied state while CLI self-upgrade runs.`,
-	};
 }
 
 function runtimeCliUpdateError(

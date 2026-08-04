@@ -41,7 +41,6 @@ _EXACT_SEMVER_PATTERN = re.compile(
     rf"({_SEMVER_CORE_IDENTIFIER})(?:-({_SEMVER_PRERELEASE_IDENTIFIER}"
     rf"(?:\.{_SEMVER_PRERELEASE_IDENTIFIER})*))?$"
 )
-_AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION = "0.12.10-beta.57"
 _FORBIDDEN_TOOL_SECRET_KEYS = {
     "apikey",
     "api_key",
@@ -118,53 +117,12 @@ def _parse_exact_semver(value: str) -> tuple[int, int, int, tuple[str, ...]] | N
     )
 
 
-def _compare_exact_semver(left: str, right: str) -> int:
-    parsed_left = _parse_exact_semver(left)
-    parsed_right = _parse_exact_semver(right)
-    if parsed_left is None or parsed_right is None:
-        raise ValueError("invalid exact semver comparison")
-    for left_part, right_part in zip(parsed_left[:3], parsed_right[:3], strict=True):
-        if left_part != right_part:
-            return -1 if left_part < right_part else 1
-    left_prerelease = parsed_left[3]
-    right_prerelease = parsed_right[3]
-    if not left_prerelease and not right_prerelease:
-        return 0
-    if not left_prerelease:
-        return 1
-    if not right_prerelease:
-        return -1
-    for index in range(max(len(left_prerelease), len(right_prerelease))):
-        if index >= len(left_prerelease):
-            return -1
-        if index >= len(right_prerelease):
-            return 1
-        left_identifier = left_prerelease[index]
-        right_identifier = right_prerelease[index]
-        if left_identifier == right_identifier:
-            continue
-        left_numeric = re.fullmatch(r"0|[1-9][0-9]*", left_identifier)
-        right_numeric = re.fullmatch(r"0|[1-9][0-9]*", right_identifier)
-        if left_numeric is not None and right_numeric is not None:
-            return -1 if int(left_identifier) < int(right_identifier) else 1
-        if left_numeric is not None:
-            return -1
-        if right_numeric is not None:
-            return 1
-        return -1 if left_identifier < right_identifier else 1
-    return 0
-
-
 def validate_clawdi_cli_package_spec(value: object) -> str:
     if not isinstance(value, str) or not value.startswith("clawdi@"):
         raise ValueError("cli_package_spec must be clawdi@<exact-semver> without build metadata")
     version = value.removeprefix("clawdi@")
     if _parse_exact_semver(version) is None:
         raise ValueError("cli_package_spec must be clawdi@<exact-semver> without build metadata")
-    if _compare_exact_semver(version, _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION) < 0:
-        raise ValueError(
-            f"cli_package_spec minimum is clawdi@{_AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION}"
-        )
     return value
 
 

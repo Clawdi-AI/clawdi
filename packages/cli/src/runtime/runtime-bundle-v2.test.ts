@@ -42,7 +42,7 @@ const goldenPath = resolve(
 	"../../../../test-fixtures/runtime-bundle-v2.golden.json",
 );
 const EXPECTED_GOLDEN_SOURCE_REVISION =
-	"92ce3dc53e711aacac6a09f9e58b937cae51e093ff39c50c7fcc7dc749236d49";
+	"3a4e4ca33ff1d12064659954d3607ad74af25ca87360ab27de28091bba6bad3e";
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
 const roots: string[] = [];
@@ -186,10 +186,9 @@ describe("hosted runtime bundle v2", () => {
 			...raw,
 			manifest: {
 				...manifest,
-				minimumCliVersion: "0.13.2-test",
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@0.13.2-test",
+					packageSpec: "clawdi@1.2.5-test",
 					registry: "https://registry.npmjs.org",
 				},
 				mcp: {
@@ -949,7 +948,7 @@ describe("hosted runtime bundle v2", () => {
 				applyReceiptId: "apply-receipt-golden-0001",
 				bootNonce: "boot-nonce-golden-000001",
 			},
-			"clawdi@0.12.10-beta.57",
+			"clawdi@1.2.3-test",
 		);
 		const paths = getRuntimePaths({ mode: "hosted" });
 		globalThis.fetch = Object.assign(
@@ -982,7 +981,7 @@ describe("hosted runtime bundle v2", () => {
 				applyReceiptId: "apply-receipt-golden-0001",
 				bootNonce: "boot-nonce-golden-000001",
 			},
-			"clawdi@0.12.10-beta.57",
+			"clawdi@1.2.3-test",
 		);
 		const paths = getRuntimePaths({ mode: "hosted" });
 		globalThis.fetch = Object.assign(
@@ -1018,7 +1017,7 @@ describe("hosted runtime bundle v2", () => {
 				applyReceiptId: "apply-receipt-golden-0001",
 				bootNonce: "boot-nonce-golden-000001",
 			},
-			"clawdi@0.12.10-beta.57",
+			"clawdi@1.2.3-test",
 		);
 		globalThis.fetch = Object.assign(
 			async () =>
@@ -1093,7 +1092,7 @@ describe("hosted runtime bundle v2", () => {
 				applyReceiptId: "apply-receipt-golden-0001",
 				bootNonce: "boot-nonce-golden-000001",
 			},
-			"clawdi@0.12.10-beta.57",
+			"clawdi@1.2.3-test",
 		);
 		const paths = getRuntimePaths({ mode: "hosted" });
 		const goldenRaw = JSON.parse(readFileSync(goldenPath, "utf-8")) as {

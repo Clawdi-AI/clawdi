@@ -416,7 +416,6 @@ Normalization maps hosted fields into the internal shape:
 | `system.openclawGatewayAuth` | Strict-v2 OpenClaw token and required device-auth capability; the token itself is an environment secret reference |
 | `system.hermesDashboardAuth` | Strict-v2 Hermes Basic provider settings, public URL, session TTL, and environment secret references; plaintext credentials are never part of the manifest |
 | `controlPlane.cloudApiUrl` | Required and only control-plane field; `appId`, `apiUrl`, and `manifestUrl` are not public manifest fields |
-| `minimumCliVersion` | Required hosted CLI protocol floor |
 | `clawdiCli.source` | Required literal `npm:clawdi` for Hosted managed CLI updates |
 | `clawdiCli.packageSpec` | Required exact `clawdi@<semver>` without build metadata, at most 200 characters; remote Hosted manifests never select an npm dist-tag or local path |
 | `clawdiCli.registry` | Required literal `https://registry.npmjs.org`; Hosted does not use npm registry defaults or overrides |
@@ -678,6 +677,11 @@ idempotent, and ordinary post-convergence completion retires the handoff
 journal. `badVersions` is preserved. Missing, stale, tampered, or mismatched
 bootstrap identity continues through verified rollback and otherwise fails
 closed; version ordering is not an ownership signal.
+
+The exact package selection and handoff are also the compatibility boundary.
+The manifest carries no independent minimum CLI version: an old process either
+installs and hands off to the selected package or fails before applying the new
+desired state.
 
 When only the exact CLI package changes and the capability image remains
 compatible, the substrate may rotate the fixed runtime-context directory in
@@ -1126,9 +1130,9 @@ Telegram Bot API clients construct method and file URLs as
 the client a Bot API-shaped, non-secret routing placeholder. The egress sidecar
 preserves that placeholder in the Cloud URL and injects the real agent-link
 credential as a redacted Bearer header; cloud-api authenticates the header and
-binds it to the placeholder before routing either request class. The Hosted CLI
-floor `0.12.10-beta.57` is the first version with this boundary, so an exact
-older CLI must not be selected for a deployment with managed Telegram bindings.
+binds it to the placeholder before routing either request class. This boundary
+is expressed by the strict managed-channel and egress manifest schemas, not by
+comparing the selected product version to a semver floor.
 
 ## Runtime UI And Terminal
 
@@ -1205,14 +1209,14 @@ runtime activation and credential delivery.
 
 The exact-only Hosted package, fixture-only bootstrap tgz, strict
 provider/install fields, and preserved generic desired-state behavior described
-above are the CLI boundary. The Hosted rollout writer selects
-`cli_package_spec`; Cloud validates and persists it, requires the exact version
-to be at least the Cloud-owned `0.12.10-beta.57` protocol floor, and owns the
-public manifest projection. Cloud fixes `clawdiCli.source` to `npm:clawdi` and
-`clawdiCli.registry` to `https://registry.npmjs.org`. Stored package state is
-revalidated on every read and fails closed with `409` when invalid or below the
-floor. There is no default, nullable fallback, floating tag, local path, or
-forward compatibility use of the historical `clawdi_cli` column.
+above are the CLI boundary. Hosted selects `cli_package_spec` from its
+database-backed setting and persists it with the deployment; Cloud validates,
+persists, and projects that exact value into the public manifest. Cloud fixes
+`clawdiCli.source` to `npm:clawdi` and `clawdiCli.registry` to
+`https://registry.npmjs.org`. Stored package state is revalidated on every read
+and fails closed with `409` when invalid. There is no independent version floor,
+default, nullable fallback, floating tag, local path, or forward compatibility
+use of the historical `clawdi_cli` column.
 
 The security boundary is delivered as a paired artifact rollout: the Hosted
 runtime image supplies the root-only bootstrap entrypoint and replaces the

@@ -49,7 +49,7 @@ from app.services.vault_crypto import encrypt
 
 _ADMIN_KEY = "test-platform-admin-secret"
 _CLERK_ISSUER = "https://platform-workload.clerk.example.test"
-_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.57"
+_TEST_CLI_PACKAGE_SPEC = "clawdi@1.2.3-test"
 _TEST_TOOLS = {
     "codex": {
         "enabled": True,

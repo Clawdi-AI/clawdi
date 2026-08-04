@@ -673,7 +673,7 @@ async def test_agent_absence_can_remove_legacy_projection_while_manifest_reserve
         deployment_id="dep-reserved-handoff",
         instance_id="iid-reserved-handoff",
         generation=1,
-        cli_package_spec="clawdi@0.13.2-test",
+        cli_package_spec="clawdi@1.2.5-test",
         locale={"language": "en", "timezone": "UTC"},
         system={},
         runtimes={},

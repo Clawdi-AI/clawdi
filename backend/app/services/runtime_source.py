@@ -26,7 +26,6 @@ from app.models.hosted_runtime import HostedRuntimeSecret, HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.schemas.ai_provider import AiProviderModel
 from app.schemas.runtime import (
-    _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION,
     HostedCodexProviderProjection,
     HostedEgressEngine,
     HostedEgressProfiles,
@@ -266,9 +265,7 @@ def render_runtime_source(
     try:
         cli_package_spec = validate_clawdi_cli_package_spec(state.cli_package_spec)
     except ValueError as exc:
-        raise RuntimeSourceError(
-            "Hosted runtime CLI package spec is invalid or below the minimum version"
-        ) from exc
+        raise RuntimeSourceError("Hosted runtime CLI package spec is invalid") from exc
     runtime_name, runtime = _runtime(state.runtimes)
     bound_runtime_provider_ids = list(runtime["provider_ids"])
     runtime = _agent_runtime_binding(runtime)
@@ -472,7 +469,6 @@ def render_runtime_source(
         "providers": providers,
         "liveSync": live_sync.model_dump(mode="json"),
         "recovery": recovery.model_dump(mode="json"),
-        "minimumCliVersion": _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION,
     }
     if dashboard_auth is not None:
         manifest["system"]["hermesDashboardAuth"] = dashboard_auth.model_dump(

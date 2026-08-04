@@ -490,7 +490,7 @@ def _extract_legacy_mcp_user_id(request: Request) -> str:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token") from None
 
 
-# Deprecated compatibility bridge for CLI 0.12.7. Keep hidden from OpenAPI;
+# Deprecated compatibility bridge for legacy clients. Keep hidden from OpenAPI;
 # new clients authenticate normally and use POST /v1/mcp/clawdi.
 @router.post("/composio", include_in_schema=False)
 async def mcp_composio_post(request: Request):

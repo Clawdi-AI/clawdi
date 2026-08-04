@@ -213,26 +213,21 @@ discoverable from account state and should be reconciled separately with
    Done: the exact version exists from the verified CLI artifact and the
    version-derived standard channel points to it: `beta` for a prerelease or
    `latest` for a stable release. The Hosted image repository has a separate
-   release boundary. An operator supplies the exact `clawdi@<semver>` package
-   spec to the Hosted image workflow, which fails when the exact spec is
-   missing. For `clawdi@0.12.10-beta.57`, first run
-   `hosted-runtime-image-release.yml` with `validate_only=true`,
-   `runtime_image` set to the current digest-pinned image, and
-   `cli_package_spec=clawdi@0.12.10-beta.57`. It verifies registry integrity,
-   signatures, provenance, and the image/CLI pairing without ever resolving an
-   npm dist-tag or publishing an image. Reuse the validated digest. Build a new
-   image only if validate-only fails for a demonstrated image compatibility
-   reason. The Hosted HOME and manifest refactor changes no Dockerfile-copied
-   runtime-image input, so it does not by itself justify image churn. The
-   workflow does not call back into this workflow. The `beta` tag is publication
-   metadata, not an operator gate.
+   artifact-validation boundary. An operator supplies the exact
+   `clawdi@<semver>` package spec to its workflow. The workflow
+   fails when the exact spec is missing, verifies registry integrity,
+   signatures, provenance, and image compatibility, and never resolves an npm
+   dist-tag. It does not select the production desired version.
 
-   Hosted rollout uses that same exact package spec in the Cloud manifest. The
-   runtime never resolves an npm dist-tag.
+   Hosted rollout resolves `agent_v2_cli_package_spec` from its database,
+   persists that exact value in deployment/bootstrap/runtime state, and projects
+   it unchanged into `clawdiCli.packageSpec`. The runtime verifies the trusted
+   bootstrap handoff matches the manifest, installs that exact package, and
+   re-execs before applying the manifest when the CLI changes.
 
    Hosted Codex is a CLI-owned tool-plane dependency pinned by the immutable
-   Clawdi CLI release. For `0.12.10-beta.57`, verify the audited exact package
-   and executable before activating Hosted:
+   Clawdi CLI release. Verify its audited exact package and executable before
+   activating Hosted:
 
    ```bash
    test "$(npm view @openai/codex@0.146.0 version)" = "0.146.0"
@@ -251,17 +246,17 @@ discoverable from account state and should be reconciled separately with
    deliberately sends the public marker can opt in, and resulting usage is
    charged to that deployment user's wallet.
 
-   Agent deployment v2 is not live. Keep creation and runtime-state
-   reconciliation disabled until the Hosted image contract, CLI version
-   `0.12.10-beta.57`, and the Cloud manifest contract are all deployed. Hosted
-   promotion must set `agent_v2_cli_package_spec` to the exact `.57` package
-   while retaining the validated existing `agent_v2_runtime_image` digest; if
-   that database setting is absent, write the already-validated existing
-   digest. Keep `clawdi_v2_enabled=false` and preserve existing environment
-   overrides. Validate
-   one fresh deployment end to end through `/v1/runtime/manifest` and SSE before
-   enabling v2. Do not add compatibility fields, aliases, or fallback package
-   channels.
+   For the current direct-cut release, keep Agent v2 creation disabled until
+   `clawdi@0.13.36` is published and its exact registry identity and provenance
+   are verified, then set and read back the Hosted database AppSetting
+   `agent_v2_cli_package_spec` as exactly `clawdi@0.13.36`. Only after those
+   gates pass may any new Agent deployment be allowed. A missing setting fails
+   closed; if it still contains a previous valid exact spec, keep deployment
+   creation disabled until the operator updates it. There is no code default or
+   fallback to a previous package. Then validate one fresh deployment end to
+   end through persisted deployment state, `/v1/runtime/manifest`, exact CLI
+   handoff, SSE, and runtime services. Do not add version floors, compatibility
+   fields, aliases, or fallback package channels.
 
 4. For app/backend/web releases, run `Release Clawdi` manually with the
    deployed commit SHA, then verify the GitHub release exists and has

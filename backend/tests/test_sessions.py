@@ -273,7 +273,7 @@ async def test_environments_mark_only_agents_with_hosted_runtime_state(
             deployment_id="hdep_test",
             instance_id="instance-test",
             generation=1,
-            cli_package_spec="clawdi@0.12.10-beta.57",
+            cli_package_spec="clawdi@1.2.3-test",
             locale={"language": "en", "timezone": "UTC"},
             system=_TEST_SYSTEM,
             live_sync={"enabled": False, "agents": []},
@@ -433,7 +433,7 @@ async def test_session_batch_clamps_negative_duration_and_logs_user_agent(
     r = await client.post(
         "/v1/sessions/batch",
         json=payload,
-        headers={"user-agent": "clawdi-cli/0.12.9"},
+        headers={"user-agent": "clawdi-cli/1.2.3-test"},
     )
 
     assert r.status_code == 200, r.text
@@ -453,7 +453,7 @@ async def test_session_batch_clamps_negative_duration_and_logs_user_agent(
         and record.getMessage().startswith("session_batch_duration_clamped")
     ]
     assert len(clamp_logs) == 1
-    assert "user_agent='clawdi-cli/0.12.9'" in clamp_logs[0]
+    assert "user_agent='clawdi-cli/1.2.3-test'" in clamp_logs[0]
     assert "count=1" in clamp_logs[0]
     assert "sess-clock-skew" in clamp_logs[0]
 

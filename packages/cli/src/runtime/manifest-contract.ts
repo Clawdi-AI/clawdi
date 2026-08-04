@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { isValidSemver } from "../lib/semver";
 import { egressProfileInputBundleSchema } from "./egress-profiles";
 import { hostedMcpDesiredStateSchema, hostedSkillsDesiredStateSchema } from "./manifest-resources";
 import {
@@ -22,7 +21,6 @@ export const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
 };
 
 const hostedRuntimeChoiceSchema = z.enum(["openclaw", "hermes"]);
-const semverSchema = z.string().min(1).refine(isValidSemver, "must be a semver string");
 
 function cleanHttpsUrl(value: string): URL | null {
 	try {
@@ -230,7 +228,6 @@ const runtimeDesiredStateShape = {
 	instanceId: z.string().min(1),
 	generation: z.number().int().nonnegative(),
 	applyGeneration: z.number().int().positive().safe().optional(),
-	minimumCliVersion: semverSchema.optional(),
 	issuedAt: z.string().min(1),
 	expiresAt: z.string().min(1).optional(),
 	locale: runtimeLocaleSchema.optional(),
@@ -605,7 +602,6 @@ const hostedRuntimeManifestBaseSchema = z
 		environmentId: z.string().min(1),
 		instanceId: z.string().min(1),
 		generation: z.number().int().nonnegative(),
-		minimumCliVersion: semverSchema,
 		issuedAt: z.string().min(1),
 		expiresAt: z.string().min(1).optional(),
 		locale: runtimeLocaleSchema,

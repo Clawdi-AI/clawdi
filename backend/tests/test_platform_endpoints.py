@@ -33,8 +33,8 @@ from tests.hosted_runtime_fixtures import ensure_canonical_codex_tool_provider
 _ADMIN_KEY = "test-platform-admin-secret"
 _CLERK_ISSUER = "https://platform-tests.clerk.example.test"
 _ADMIN_AUTH = {"X-Admin-Key": _ADMIN_KEY}
-_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.57"
-_TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC = "clawdi@0.13.2-test"
+_TEST_CLI_PACKAGE_SPEC = "clawdi@1.2.3-test"
+_TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC = "clawdi@1.2.5-test"
 _TEST_LOCALE = {"language": "en", "timezone": "America/Los_Angeles"}
 _TEST_SYSTEM = {}
 _TEST_SECRET_VALUES = {

@@ -64,9 +64,11 @@ Compatibility surfaces are additive-only:
 - New canonical agent routes may expose agent-shaped responses, but legacy
   environment aliases must preserve their environment-shaped response fields.
 
-Released CLIs from `v0.7.0` onward must keep working against supported servers.
-When in doubt, add a regression test that exercises the old path and payload
-before changing the handler.
+Released wire surfaces must keep working against supported servers. Compatibility
+is defined by the route and payload schema, plus an explicit capability when
+behavior must be negotiated; a CLI product version is not a compatibility
+selector. When in doubt, add a regression test that exercises the old path and
+payload before changing the handler.
 
 ## Generated clients
 
