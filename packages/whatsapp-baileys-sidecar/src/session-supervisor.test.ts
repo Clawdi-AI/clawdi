@@ -67,6 +67,10 @@ class FakeRuntime implements BaileysRuntime {
 		throw new Error("not used");
 	}
 
+	async recoverPairing(): Promise<PairingStatus> {
+		throw new Error("not used");
+	}
+
 	async relayMessage(_request: RelayMessageRequest): Promise<string | undefined> {
 		throw new Error("not used");
 	}

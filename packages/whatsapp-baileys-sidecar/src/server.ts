@@ -35,6 +35,7 @@ const SESSION_RUNTIME_METHODS = new Map([
 	["/v1/pairing/cancel", "POST"],
 	["/v1/pairing/logout", "POST"],
 	["/v1/pairing/retry", "POST"],
+	["/v1/pairing/recover", "POST"],
 	["/v1/relay-message", "POST"],
 	["/v1/raw-node", "POST"],
 	["/v1/query-iq", "POST"],
@@ -104,6 +105,10 @@ export function createSidecarServer(
 			}
 			if (method === "POST" && path === "/v1/pairing/retry") {
 				writeJson(response, 200, await runtime.retryPairing());
+				return;
+			}
+			if (method === "POST" && path === "/v1/pairing/recover") {
+				writeJson(response, 200, await runtime.recoverPairing());
 				return;
 			}
 			if (method === "POST" && path === "/v1/relay-message") {

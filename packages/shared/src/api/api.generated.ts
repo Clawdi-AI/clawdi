@@ -408,6 +408,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/channels/whatsapp/onboarding/accounts/{account_id}/repair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Repair Whatsapp Channel Account */
+        post: operations["repair_whatsapp_channel_account_v1_channels_whatsapp_onboarding_accounts__account_id__repair_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/channels/debug/events": {
         parameters: {
             query?: never;
@@ -8448,6 +8465,37 @@ export interface operations {
             header?: never;
             path: {
                 session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelWhatsAppOnboardingSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    repair_whatsapp_channel_account_v1_channels_whatsapp_onboarding_accounts__account_id__repair_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
             };
             cookie?: never;
         };

@@ -40,13 +40,13 @@ export type PairingStatus = {
 
 export type SidecarCapabilities = {
 	schemaVersion: "clawdi.whatsapp.sidecar-capabilities.v1";
-	pairing: readonly ["qr", "code", "cancel", "logout", "retry"];
+	pairing: readonly ["qr", "code", "cancel", "logout", "retry", "recover"];
 	rawProviderAccess: false;
 };
 
 export const SIDECAR_CAPABILITIES: SidecarCapabilities = {
 	schemaVersion: "clawdi.whatsapp.sidecar-capabilities.v1",
-	pairing: ["qr", "code", "cancel", "logout", "retry"],
+	pairing: ["qr", "code", "cancel", "logout", "retry", "recover"],
 	rawProviderAccess: false,
 };
 
@@ -69,6 +69,7 @@ export type BaileysRuntime = {
 	cancelPairing(): Promise<PairingStatus>;
 	logoutPairing(): Promise<PairingStatus>;
 	retryPairing(): Promise<PairingStatus>;
+	recoverPairing(): Promise<PairingStatus>;
 	relayMessage(request: RelayMessageRequest): Promise<string | undefined>;
 	sendNode(node: BinaryNode): Promise<void>;
 	query(node: BinaryNode, timeoutMs: number): Promise<BinaryNode | null>;

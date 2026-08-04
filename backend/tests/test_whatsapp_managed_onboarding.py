@@ -48,6 +48,7 @@ class FakeManagedSidecar:
         self.stopped = False
         self.cancel_fails = False
         self.qr_starting = False
+        self.last_disconnect_reason: str | None = None
 
     async def refresh_health(self) -> bool:
         return self.connected
@@ -57,7 +58,7 @@ class FakeManagedSidecar:
 
     async def capabilities(self) -> WhatsAppSidecarCapabilities:
         return WhatsAppSidecarCapabilities(
-            pairing=frozenset({"qr", "code", "cancel", "logout", "retry"})
+            pairing=frozenset({"qr", "code", "cancel", "logout", "retry", "recover"})
         )
 
     async def health(self) -> WhatsAppSidecarHealth:
@@ -65,7 +66,11 @@ class FakeManagedSidecar:
             "connected" if self.connected else ("disconnected" if self.registered else "pairing_qr")
         )
         return WhatsAppSidecarHealth(
-            status=status, connected=self.connected, registered=self.registered
+            status=status,
+            connected=self.connected,
+            registered=self.registered,
+            account_jid="15551234567:1@s.whatsapp.net" if self.registered else None,
+            last_disconnect_reason=self.last_disconnect_reason,
         )
 
     async def pairing_qr(self) -> WhatsAppSidecarPairingStatus:
@@ -101,6 +106,15 @@ class FakeManagedSidecar:
     async def pairing_retry(self) -> WhatsAppSidecarPairingStatus:
         self.connected = True
         return await self.pairing_status()
+
+    async def pairing_recover(self) -> WhatsAppSidecarPairingStatus:
+        if self.last_disconnect_reason != "remote_logged_out" or not self.registered:
+            raise WhatsAppSidecarProtocolError("recovery not required")
+        self.registered = False
+        self.connected = False
+        self.stopped = True
+        self.last_disconnect_reason = None
+        return WhatsAppSidecarPairingStatus(status="stopped", registered=False)
 
     async def pairing_logout(self) -> WhatsAppSidecarPairingStatus:
         self.logout_calls += 1
@@ -213,6 +227,8 @@ async def test_multiple_shared_accounts_use_distinct_sessions_on_one_service(
         second_account = await db_session.get(ChannelAccount, second_id)
         assert first_account is not None and first_account.user_id is None
         assert second_account is not None and second_account.user_id is None
+        assert first_account.config["phone_number"] == "15551234567"
+        assert second_account.config["phone_number"] == "15551234567"
     finally:
         await registry.stop()
 
@@ -275,10 +291,48 @@ async def test_existing_shared_account_reauth_preserves_inventory_and_history(
         assert connected.state == "connected"
         assert await db_session.get(ChannelAccount, account_id) is account
         assert registry.managed_is_bound(account_id)
+        await db_session.refresh(account)
+        assert account.config["phone_number"] == "15551234567"
 
         await db_session.refresh(previous)
         assert previous.state == "connected"
         assert previous.channel_account_id == account_id
+    finally:
+        await registry.stop()
+
+
+@pytest.mark.asyncio
+async def test_explicit_reauth_recovers_retained_remote_logout(db_session) -> None:
+    account_id = uuid4()
+    fake = FakeManagedSidecar()
+    registry = _registry(account_id, fake)
+    revision = registry.managed_account_revision(account_id)
+    account = ChannelAccount(
+        id=account_id,
+        user_id=None,
+        provider=CHANNEL_PROVIDER_WHATSAPP,
+        name="Shared",
+        status=CHANNEL_STATUS_ACTIVE,
+        visibility=CHANNEL_VISIBILITY_PUBLIC,
+        webhook_secret_hash="0" * 64,
+        config={
+            "connection_mode": "baileys_managed",
+            "sidecar_config_revision": revision,
+            "phone_number": "15551234567",
+        },
+    )
+    db_session.add(account)
+    await db_session.commit()
+    await registry.start()
+    try:
+        fake.registered = True
+        fake.last_disconnect_reason = "remote_logged_out"
+
+        started = await _start(db_session, registry, account_id, name="Shared")
+
+        assert started.state == "ready"
+        assert fake.registered is False
+        assert fake.last_disconnect_reason is None
     finally:
         await registry.stop()
 

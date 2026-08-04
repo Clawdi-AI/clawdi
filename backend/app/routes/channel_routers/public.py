@@ -151,7 +151,10 @@ from app.services.whatsapp_baileys import (
     mint_whatsapp_agent_credential,
     whatsapp_agent_websocket_url,
 )
-from app.services.whatsapp_device_onboarding import require_whatsapp_logout_for_archive
+from app.services.whatsapp_device_onboarding import (
+    require_whatsapp_custom_link_ready,
+    require_whatsapp_logout_for_archive,
+)
 from app.services.whatsapp_native_transport import (
     WhatsAppSidecarError,
     whatsapp_phone_number_from_pn_jid,
@@ -882,12 +885,15 @@ async def _whatsapp_pair_deep_link(
         configured_revision, str
     ):
         return None
+    stored_phone_number = config.get("phone_number")
+    if isinstance(stored_phone_number, str):
+        trusted_phone_number = whatsapp_phone_number_from_pn_jid(
+            f"{stored_phone_number}@s.whatsapp.net"
+        )
+        if trusted_phone_number is not None:
+            return f"https://wa.me/{trusted_phone_number}?text={quote(pairing_command, safe='')}"
     registry = get_active_whatsapp_sidecar_registry()
-    if (
-        registry is None
-        or not registry.managed_is_bound(account.id)
-        or registry.managed_account_revision(account.id) != configured_revision
-    ):
+    if registry is None or registry.managed_account_revision(account.id) != configured_revision:
         return None
     client = registry.get_managed_client(account.id)
     if client is None:
@@ -896,7 +902,7 @@ async def _whatsapp_pair_deep_link(
         health = await client.health()
     except WhatsAppSidecarError:
         return None
-    if health.status != "connected" or not health.connected or not health.registered:
+    if not health.registered:
         return None
     phone_number = whatsapp_phone_number_from_pn_jid(health.account_jid)
     if phone_number is None:
@@ -912,6 +918,10 @@ async def create_channel_pair_code(
     db: AsyncSession = Depends(get_session),
 ) -> ChannelPairCodeResponse:
     account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    await require_whatsapp_custom_link_ready(
+        account,
+        registry=get_active_whatsapp_sidecar_registry(),
+    )
     if (
         account.provider == CHANNEL_PROVIDER_TELEGRAM
         and account.encrypted_provider_token
@@ -1042,6 +1052,10 @@ async def create_channel_agent_link(
     db: AsyncSession = Depends(get_session),
 ) -> ChannelAgentLinkResponse:
     account = await get_usable_channel_account(db, account_id=account_id, user_id=auth.user_id)
+    await require_whatsapp_custom_link_ready(
+        account,
+        registry=get_active_whatsapp_sidecar_registry(),
+    )
     agent_id = await _resolve_agent_id_for_link(db, auth=auth, requested_agent_id=body.agent_id)
     link, agent_token = await get_or_create_bot_agent_link(
         db,
@@ -1940,7 +1954,12 @@ def _channel_health_item(
         reasons.append("pending_inbox")
     health_status = "ok"
     if any(
-        reason in reasons for reason in ("channel_disabled", "failed_deliveries", "recent_error")
+        reason in reasons
+        for reason in (
+            "channel_disabled",
+            "failed_deliveries",
+            "recent_error",
+        )
     ):
         health_status = "error"
     elif reasons:

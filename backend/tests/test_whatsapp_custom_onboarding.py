@@ -68,7 +68,7 @@ class FakeCustomSidecar:
             status="stopped",
             registered=False,
         )
-        self.pairing_actions = frozenset({"qr", "code", "cancel", "logout", "retry"})
+        self.pairing_actions = frozenset({"qr", "code", "cancel", "logout", "retry", "recover"})
         self.start_calls = 0
         self.cancel_calls = 0
         self.logout_calls = 0
@@ -80,6 +80,9 @@ class FakeCustomSidecar:
         self.acknowledged_sequences: list[int] = []
         self.provider_acknowledged = asyncio.Event()
         self.service_ready_result = True
+        self.health_failures_remaining = 0
+        self.last_disconnect_reason: str | None = None
+        self.pairing_recover_calls = 0
         self.health_entered: asyncio.Event | None = None
         self.health_release: asyncio.Event | None = None
 
@@ -98,10 +101,14 @@ class FakeCustomSidecar:
             self.health_entered.set()
         if self.health_release is not None:
             await self.health_release.wait()
+        if self.health_failures_remaining > 0:
+            self.health_failures_remaining -= 1
+            raise WhatsAppSidecarUnavailableError("fake health unavailable")
         return WhatsAppSidecarHealth(
             status=self.current.status,
             connected=self.current.status == "connected",
             registered=self.current.registered,
+            last_disconnect_reason=self.last_disconnect_reason,
         )
 
     async def capabilities(self) -> WhatsAppSidecarCapabilities:
@@ -145,6 +152,12 @@ class FakeCustomSidecar:
                 status="connected",
                 registered=True,
             )
+        return self.current
+
+    async def pairing_recover(self) -> WhatsAppSidecarPairingStatus:
+        self.pairing_recover_calls += 1
+        self.current = WhatsAppSidecarPairingStatus(status="stopped", registered=False)
+        self.last_disconnect_reason = None
         return self.current
 
     async def relay_message(self, request):
@@ -237,6 +250,24 @@ async def _create_user(db: AsyncSession, label: str) -> User:
     await db.commit()
     await db.refresh(user)
     return user
+
+
+async def _connect_custom_account(
+    client: httpx.AsyncClient,
+    fake: FakeCustomSidecar,
+    *,
+    name: str,
+) -> tuple[UUID, UUID]:
+    created = await client.post(
+        "/v1/channels/whatsapp/onboarding/sessions",
+        json={"request_id": str(uuid4()), "name": name},
+    )
+    assert created.status_code == 201, created.text
+    onboarding_id = UUID(created.json()["id"])
+    fake.current = WhatsAppSidecarPairingStatus(status="connected", registered=True)
+    connected = await client.get(f"/v1/channels/whatsapp/onboarding/sessions/{onboarding_id}")
+    assert connected.status_code == 200, connected.text
+    return onboarding_id, UUID(connected.json()["channel_account_id"])
 
 
 @pytest.mark.asyncio
@@ -355,6 +386,98 @@ async def test_qr_lifecycle_is_idempotent_and_finishes_only_after_connection(
         )
         == 1
     )
+
+
+@pytest.mark.asyncio
+async def test_custom_link_prompts_owner_repair_and_preserves_the_durable_account(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+    custom_sidecar: tuple[UUID, FakeCustomSidecar],
+) -> None:
+    _sidecar_account_id, fake = custom_sidecar
+    original_onboarding_id, account_id = await _connect_custom_account(
+        client,
+        fake,
+        name="Repair phone",
+    )
+    account = await db_session.get(ChannelAccount, account_id)
+    assert account is not None
+    original_config = dict(account.config)
+
+    fake.current = WhatsAppSidecarPairingStatus(status="disconnected", registered=True)
+    fake.last_disconnect_reason = "remote_logged_out"
+    link_attempt = await client.post(
+        f"/v1/channels/{account_id}/agent-links",
+        json={},
+    )
+    assert link_attempt.status_code == 409, link_attempt.text
+    assert link_attempt.json() == {"detail": "whatsapp_repair_required"}
+    pair_attempt = await client.post(
+        f"/v1/channels/{account_id}/pair-codes",
+        json={"agent_link_id": str(uuid4()), "ttl_seconds": 300},
+    )
+    assert pair_attempt.status_code == 409, pair_attempt.text
+    assert pair_attempt.json() == {"detail": "whatsapp_repair_required"}
+
+    other_user = await _create_user(db_session, "whatsapp-repair-other")
+    async with _client_for_user(db_session, other_user) as other_client:
+        hidden = await other_client.post(
+            f"/v1/channels/whatsapp/onboarding/accounts/{account_id}/repair"
+        )
+    assert hidden.status_code == 404
+
+    repair = await client.post(f"/v1/channels/whatsapp/onboarding/accounts/{account_id}/repair")
+    assert repair.status_code == 200, repair.text
+    assert repair.json()["state"] == "ready"
+    assert repair.json()["channel_account_id"] == str(account_id)
+    assert fake.pairing_recover_calls == 1
+    repair_onboarding_id = UUID(repair.json()["id"])
+    assert repair_onboarding_id != original_onboarding_id
+
+    fake.current = WhatsAppSidecarPairingStatus(status="connected", registered=True)
+    repaired = await client.get(f"/v1/channels/whatsapp/onboarding/sessions/{repair_onboarding_id}")
+    assert repaired.status_code == 200, repaired.text
+    assert repaired.json()["state"] == "connected"
+    assert repaired.json()["channel_account_id"] == str(account_id)
+
+    healthy_link_attempt = await client.post(
+        f"/v1/channels/{account_id}/agent-links",
+        json={},
+    )
+    assert healthy_link_attempt.status_code == 400
+    assert healthy_link_attempt.json() == {"detail": "agent_id is required"}
+
+    await db_session.refresh(account)
+    assert account.archived_at is None
+    assert account.config == original_config
+    account_ids = (
+        await db_session.scalars(
+            select(ChannelAccount.id).where(ChannelAccount.user_id == seed_user.id)
+        )
+    ).all()
+    assert account_ids == [account_id]
+
+
+@pytest.mark.asyncio
+async def test_custom_link_does_not_offer_repair_for_a_temporary_sidecar_failure(
+    client: httpx.AsyncClient,
+    custom_sidecar: tuple[UUID, FakeCustomSidecar],
+) -> None:
+    _sidecar_account_id, fake = custom_sidecar
+    _onboarding_id, account_id = await _connect_custom_account(
+        client,
+        fake,
+        name="Temporary outage phone",
+    )
+    fake.health_failures_remaining = 1
+
+    link_attempt = await client.post(
+        f"/v1/channels/{account_id}/agent-links",
+        json={},
+    )
+    assert link_attempt.status_code == 503, link_attempt.text
+    assert link_attempt.json() == {"detail": "whatsapp_connection_temporarily_unavailable"}
 
 
 @pytest.mark.asyncio
@@ -925,6 +1048,7 @@ async def test_expiry_retry_and_confirmed_logout_before_archive(
 
 
 @pytest.mark.asyncio
+@pytest.mark.committed_db
 async def test_failed_physical_logout_never_archives_or_unregisters_transport(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -955,9 +1079,14 @@ async def test_failed_physical_logout_never_archives_or_unregisters_transport(
     assert registry.custom_binding(account_id) == provider_session_id
     assert get_whatsapp_provider_transport(account_id) is not None
 
-    fake.logout_result = WhatsAppSidecarPairingStatus(status="stopped", registered=False)
+    fake.current = WhatsAppSidecarPairingStatus(status="disconnected", registered=True)
+    fake.last_disconnect_reason = "remote_logged_out"
+    await registry.reconcile_custom_ownership()
+    assert registry.custom_session_is_blocked(provider_session_id) is True
+
     deleted = await client.delete(f"/v1/channels/{account_id}")
     assert deleted.status_code == 204
+    assert fake.pairing_recover_calls == 1
     await db_session.refresh(account)
     assert account.archived_at is not None
     assert registry.custom_binding(account_id) is None
@@ -1062,12 +1191,14 @@ async def test_sidecar_client_accepts_only_the_pinned_narrow_pairing_contract() 
                 200,
                 json={
                     "schemaVersion": "clawdi.whatsapp.sidecar-capabilities.v1",
-                    "pairing": ["qr", "code", "cancel", "logout", "retry"],
+                    "pairing": ["qr", "code", "cancel", "logout", "retry", "recover"],
                     "rawProviderAccess": False,
                 },
             )
         if request.url.path == f"{session_prefix}/pairing/retry":
             return httpx.Response(200, json={"status": "starting", "registered": True})
+        if request.url.path == f"{session_prefix}/pairing/recover":
+            return httpx.Response(200, json={"status": "stopped", "registered": False})
         assert request.url.path == f"{session_prefix}/pairing/code"
         assert json.loads(request.content) == {"phoneNumber": phone_number}
         return httpx.Response(
@@ -1096,6 +1227,7 @@ async def test_sidecar_client_accepts_only_the_pinned_narrow_pairing_contract() 
         assert "code" in (await sidecar.capabilities()).pairing
         pairing = await sidecar.pairing_code(phone_number)
         await sidecar.pairing_retry()
+        await sidecar.pairing_recover()
 
     assert pairing.code == "1234-5678"
     assert pairing.method == "code"
@@ -1105,6 +1237,7 @@ async def test_sidecar_client_accepts_only_the_pinned_narrow_pairing_contract() 
         "/v1/capabilities",
         f"{session_prefix}/pairing/code",
         f"{session_prefix}/pairing/retry",
+        f"{session_prefix}/pairing/recover",
     ]
 
 

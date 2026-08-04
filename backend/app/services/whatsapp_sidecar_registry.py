@@ -46,7 +46,6 @@ _UNRELEASED_STATES = (
     "generating",
     "ready",
     "scanned",
-    "connected",
     WHATSAPP_ONBOARDING_STATE_ERROR,
 )
 
@@ -77,6 +76,8 @@ class WhatsAppSidecarClient(WhatsAppNativeUpstreamClient, Protocol):
     async def pairing_logout(self) -> WhatsAppSidecarPairingStatus: ...
 
     async def pairing_retry(self) -> WhatsAppSidecarPairingStatus: ...
+
+    async def pairing_recover(self) -> WhatsAppSidecarPairingStatus: ...
 
 
 SidecarClientFactory = Callable[[WhatsAppBaileysSidecarConfig], WhatsAppSidecarClient]
@@ -130,6 +131,18 @@ class ConfiguredWhatsAppSidecarRegistry:
 
     def get_custom_client(self, session_id: UUID) -> WhatsAppSidecarClient | None:
         if session_id in self._blocked_custom_sessions:
+            return None
+        return self._client(session_id)
+
+    def get_custom_lifecycle_client(
+        self,
+        session_id: UUID,
+        *,
+        config_revision: str,
+    ) -> WhatsAppSidecarClient | None:
+        """Inspect a Custom session even when normal message transport is blocked."""
+
+        if self.custom_session_revision(session_id) != config_revision:
             return None
         return self._client(session_id)
 
@@ -311,6 +324,35 @@ class ConfiguredWhatsAppSidecarRegistry:
                 config_revision=config_revision,
             )
 
+    async def prepare_custom_account_repair(
+        self,
+        *,
+        session_id: UUID,
+        account_id: UUID,
+        config_revision: str,
+    ) -> WhatsAppSidecarClient:
+        """Detach delivery and explicitly admit one validated session for repair."""
+
+        async with self._custom_reconcile_lock:
+            if self.custom_session_revision(session_id) != config_revision:
+                raise WhatsAppSidecarProtocolError("custom Baileys session revision mismatch")
+            existing_account = self._custom_session_to_account.get(session_id)
+            existing_session = self._custom_account_to_session.get(account_id)
+            unbound = existing_account is None and existing_session is None
+            bound_to_account = existing_account == account_id and existing_session == session_id
+            if not unbound and not bound_to_account:
+                raise WhatsAppSidecarProtocolError("custom Baileys session ownership conflict")
+            if bound_to_account:
+                await self._unbind_custom_account_unlocked(
+                    session_id=session_id,
+                    account_id=account_id,
+                )
+            self._blocked_custom_sessions.discard(session_id)
+            client = self._client(session_id)
+            if client is None:
+                raise WhatsAppSidecarProtocolError("custom Baileys session is unavailable")
+            return client
+
     def _bind_custom_account_unlocked(
         self,
         *,
@@ -454,7 +496,10 @@ class ConfiguredWhatsAppSidecarRegistry:
                     log.error("WhatsApp Custom session %s failed identity validation", session_id)
                     continue
                 if owner is not None:
-                    if not pairing.registered:
+                    if (
+                        health.last_disconnect_reason == "remote_logged_out"
+                        or not pairing.registered
+                    ):
                         await self._block_custom_session_unlocked(session_id, current_account)
                         continue
                     self._blocked_custom_sessions.discard(session_id)

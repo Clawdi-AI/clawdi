@@ -25,6 +25,8 @@ Kamal declares one fixed `whatsapp-baileys` accessory in `config/deploy.yml`:
 - app mount: the run directory only, read-only;
 - root filesystem: read-only, all capabilities dropped, no new privileges;
 - network: Docker bridge for provider egress, with no published port;
+- restart policy: Kamal 2.12's `unless-stopped`, so an ordinary host reboot
+  starts the same singleton against the same durable state root;
 - identity: numeric UID/GID `1000:1000` for the Kamal SSH user, backend, and sidecar.
 
 The only sidecar deployment secret is
@@ -58,14 +60,21 @@ run directories.
 
 ## Release order
 
-Kamal 2.12 reboots the exact singleton, verifies its full-SHA image, and
-requires its authenticated UDS healthcheck. Only then does the workflow deploy
-the new backend and channels worker. The singleton uses the clean fixed
-`/home/phala/clawdi-whatsapp/state` root and stores each session directly at
-`/data/<provider-session-id>`.
+Backend- or web-only releases must not restart the WhatsApp singleton. Every
+release publishes a full-SHA sidecar image, but the workflow derives a stable
+deployment revision from the sidecar's effective Docker inputs and Kamal
+accessory configuration. It reboots the singleton only when that revision
+differs from the running container, so a failed or skipped earlier release
+cannot make a later commit miss a pending sidecar change. A real sidecar release
+verifies the full-SHA image, authenticated UDS healthcheck, and every active
+Shared session whose verified phone identity is already durable in PostgreSQL.
+Only then does the workflow deploy the new backend and channels worker. The
+singleton uses the clean fixed `/home/phala/clawdi-whatsapp/state` root and
+stores each session directly at `/data/<provider-session-id>`.
 
-Done: the release job exits 0 only after the exact singleton image and
-authenticated healthcheck pass, then starts `kamal deploy` for the backend.
+Done: an unrelated release preserves the current singleton process; a sidecar
+release exits 0 only after the exact image, global health, and per-session
+recovery gates pass.
 
 ## Rollback boundary
 
@@ -101,6 +110,20 @@ For a paired product account, retirement remains explicit:
    maintenance action.
 
 Never automatically prune unknown directories during deploy.
+
+Baileys rc14 defines `DisconnectReason.loggedOut` as status 401 and its pinned
+example deliberately does not reconnect that state. This differs from an
+ordinary process restart: with valid stored auth, `makeWASocket({ auth })`
+reconnects without a QR. Clawdi therefore quarantines a provider-reported 401,
+retains the complete SQLite auth and Signal state, and requires an authenticated
+explicit recovery action before clearing it for re-pairing. A transport event
+must never silently become credential deletion.
+
+Upstream references for the pinned source commit:
+
+- [disconnect reasons](https://github.com/WhiskeySockets/Baileys/blob/7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a/src/Types/index.ts#L28-L38)
+- [reconnect handling](https://github.com/WhiskeySockets/Baileys/blob/7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a/Example/example.ts#L70-L103)
+- [production auth-state requirements](https://github.com/WhiskeySockets/Baileys/blob/7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a/README.md#saving--restoring-sessions)
 
 ## Monitoring
 

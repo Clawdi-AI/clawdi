@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { checkSidecarHealth } from "./healthcheck.js";
 
 const TOKEN = "test-sidecar-token";
+const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const servers: Server[] = [];
 const temporaryDirectories: string[] = [];
 
@@ -44,6 +45,27 @@ describe("sidecar healthcheck", () => {
 				CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: TOKEN,
 			}),
 		).resolves.toBeUndefined();
+	});
+
+	it("requires every requested durable session to recover", async () => {
+		const recoveredPort = await startTcpHealthServer(true, true);
+		const env = {
+			CLAWDI_WA_SIDECAR_HOST: "127.0.0.1",
+			CLAWDI_WA_SIDECAR_PORT: String(recoveredPort),
+			CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: TOKEN,
+		};
+
+		await expect(checkSidecarHealth(env, [SESSION_ID])).resolves.toBeUndefined();
+
+		const disconnectedPort = await startTcpHealthServer(true, false);
+		await expect(
+			checkSidecarHealth({ ...env, CLAWDI_WA_SIDECAR_PORT: String(disconnectedPort) }, [
+				SESSION_ID,
+			]),
+		).rejects.toThrow("session did not recover");
+		await expect(checkSidecarHealth(env, ["not-a-session"])).rejects.toThrow(
+			"invalid sidecar session id",
+		);
 	});
 
 	it("rejects mixed UDS/TCP endpoints and non-loopback TCP", async () => {
@@ -86,7 +108,7 @@ describe("sidecar healthcheck", () => {
 				CLAWDI_WA_SIDECAR_PORT: String(wrongBearerPort),
 				CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: "wrong-token",
 			}),
-		).rejects.toThrow("identity mismatch");
+		).rejects.toThrow("request failed");
 
 		const wrongIdentityPort = await startTcpHealthServer(false);
 		await expect(
@@ -112,8 +134,11 @@ async function startUnixHealthServer(): Promise<string> {
 	return socketPath;
 }
 
-async function startTcpHealthServer(validIdentity = true): Promise<number> {
-	const server = createHealthServer(validIdentity);
+async function startTcpHealthServer(
+	validIdentity = true,
+	sessionConnected?: boolean,
+): Promise<number> {
+	const server = createHealthServer(validIdentity, sessionConnected);
 	await new Promise<void>((resolve, reject) => {
 		server.once("error", reject);
 		server.listen(0, "127.0.0.1", resolve);
@@ -121,12 +146,28 @@ async function startTcpHealthServer(validIdentity = true): Promise<number> {
 	return (server.address() as AddressInfo).port;
 }
 
-function createHealthServer(validIdentity = true): Server {
+function createHealthServer(validIdentity = true, sessionConnected?: boolean): Server {
 	const server = createServer((request, response) => {
 		response.setHeader("content-type", "application/json");
-		if (request.url !== "/v1/health" || request.headers.authorization !== `Bearer ${TOKEN}`) {
+		if (request.headers.authorization !== `Bearer ${TOKEN}`) {
 			response.statusCode = 401;
 			response.end(JSON.stringify({ error: "unauthorized" }));
+			return;
+		}
+		if (request.url === `/v1/sessions/${SESSION_ID}/health` && sessionConnected !== undefined) {
+			response.end(
+				JSON.stringify({
+					sessionId: SESSION_ID,
+					status: sessionConnected ? "connected" : "disconnected",
+					connected: sessionConnected,
+					registered: true,
+				}),
+			);
+			return;
+		}
+		if (request.url !== "/v1/health") {
+			response.statusCode = 404;
+			response.end(JSON.stringify({ error: "not_found" }));
 			return;
 		}
 		response.end(

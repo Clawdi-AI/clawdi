@@ -110,6 +110,51 @@ describe("physical Baileys runtime", () => {
 		}
 	});
 
+	it("retains quarantined rc14 auth across process restart until explicit recovery", async () => {
+		const sessionDir = mkdtempSync(join(tmpdir(), "clawdi-wa-runtime-logout-"));
+		const config = { ...sidecarConfig(), sessionDir };
+		const firstHarness = createHarness({ registered: false });
+		const first = new BaileysSocketRuntime(config, {
+			socketFactory: firstHarness.dependencies.socketFactory,
+		});
+		let second: BaileysSocketRuntime | undefined;
+		try {
+			await first.startQrPairing();
+			firstHarness.events.emit("creds.update", verifiedQrUpdate());
+			firstHarness.events.emit("connection.update", { connection: "open" });
+			firstHarness.events.emit("connection.update", {
+				connection: "close",
+				lastDisconnect: { error: { output: { statusCode: DisconnectReason.loggedOut } } },
+			});
+			expect(first.health()).toMatchObject({
+				status: "disconnected",
+				registered: true,
+				lastDisconnectReason: "remote_logged_out",
+			});
+			await first.stop();
+
+			const secondHarness = createHarness({ registered: false });
+			second = new BaileysSocketRuntime(config, {
+				socketFactory: secondHarness.dependencies.socketFactory,
+			});
+			await second.start();
+			expect(secondHarness.socketConfigurations).toHaveLength(0);
+			expect(second.health()).toMatchObject({
+				status: "disconnected",
+				registered: true,
+				lastDisconnectReason: "remote_logged_out",
+			});
+			expect(await second.recoverPairing()).toEqual({
+				status: "stopped",
+				registered: false,
+			});
+		} finally {
+			await second?.stop();
+			await first.stop();
+			rmSync(sessionDir, { recursive: true, force: true });
+		}
+	});
+
 	it("supports the pinned rc14 pairing-code method without retaining phone input", async () => {
 		const harness = createHarness({ registered: false });
 		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
@@ -208,7 +253,7 @@ describe("physical Baileys runtime", () => {
 		await runtime.stop();
 	});
 
-	it("clears physical auth when WhatsApp unlinks the device remotely", async () => {
+	it("quarantines unexpected provider logout until explicit recovery", async () => {
 		const harness = createHarness();
 		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
 		await runtime.start();
@@ -219,8 +264,29 @@ describe("physical Baileys runtime", () => {
 			lastDisconnect: { error: { output: { statusCode: DisconnectReason.loggedOut } } },
 		});
 
+		expect(harness.physicalAuthResets).toBe(0);
+		expect(runtime.health()).toMatchObject({
+			status: "disconnected",
+			registered: true,
+			lastDisconnectReason: "remote_logged_out",
+		});
+		await expect(runtime.retryPairing()).rejects.toThrow("physical_auth_recovery_required");
+		expect(harness.physicalAuthResets).toBe(0);
+
+		const recovered = await runtime.recoverPairing();
 		expect(harness.physicalAuthResets).toBe(1);
-		expect(runtime.pairingStatus()).toEqual({ status: "stopped", registered: false });
+		expect(recovered).toEqual({ status: "stopped", registered: false });
+		await runtime.stop();
+	});
+
+	it("rejects recovery unless a retained remote logout requires it", async () => {
+		const harness = createHarness();
+		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
+		await runtime.start();
+		harness.events.emit("connection.update", { connection: "open" });
+
+		await expect(runtime.recoverPairing()).rejects.toThrow("physical_auth_recovery_not_required");
+		expect(harness.physicalAuthResets).toBe(0);
 		await runtime.stop();
 	});
 
@@ -459,6 +525,7 @@ function createHarness(options: HarnessOptions = {}) {
 	let cancelFailuresRemaining = options.cancelFailures ?? 0;
 	let logoutFailuresRemaining = options.logoutFailures ?? 0;
 	let physicalAuthResets = 0;
+	let physicalAuthQuarantineReason: string | undefined;
 	let stateClosed = false;
 	const creds = initAuthCreds();
 	creds.registered = options.registered ?? true;
@@ -489,6 +556,12 @@ function createHarness(options: HarnessOptions = {}) {
 			if (options.failCredsWrite) throw new Error("injected creds write failure");
 			Object.assign(creds, update);
 		},
+		physicalAuthQuarantineReason() {
+			return physicalAuthQuarantineReason;
+		},
+		quarantinePhysicalAuth(reason: string) {
+			physicalAuthQuarantineReason = reason;
+		},
 		storeRetryMessage(remoteJid: string, messageId: string, message: Uint8Array) {
 			retryMessages.push({ remoteJid, messageId, message: Buffer.from(message) });
 			options.onStoreRetryMessage?.();
@@ -508,6 +581,7 @@ function createHarness(options: HarnessOptions = {}) {
 		acknowledgeProviderEvents() {},
 		resetPhysicalAuth() {
 			physicalAuthResets += 1;
+			physicalAuthQuarantineReason = undefined;
 			for (const key of Object.keys(creds)) Reflect.deleteProperty(creds, key);
 			Object.assign(creds, initAuthCreds());
 		},

@@ -73,7 +73,7 @@ class _ManagedOnboardingSidecar:
 
     async def capabilities(self):
         return WhatsAppSidecarCapabilities(
-            pairing=frozenset({"qr", "code", "cancel", "logout", "retry"})
+            pairing=frozenset({"qr", "code", "cancel", "logout", "retry", "recover"})
         )
 
     async def health(self):
@@ -81,6 +81,7 @@ class _ManagedOnboardingSidecar:
             status="connected" if self.connected else "pairing_qr",
             connected=self.connected,
             registered=self.registered,
+            account_jid="15551234567:1@s.whatsapp.net" if self.registered else None,
         )
 
     async def pairing_qr(self):
@@ -119,6 +120,12 @@ class _ManagedOnboardingSidecar:
     async def pairing_retry(self):
         self.connected = True
         return await self.pairing_status()
+
+    async def pairing_recover(self):
+        self.connected = False
+        self.registered = False
+        self.stopped = True
+        return WhatsAppSidecarPairingStatus(status="stopped", registered=False)
 
     async def provider_events(self, *, limit=100):
         return []
@@ -1773,7 +1780,6 @@ async def test_admin_channel_lifecycle_manages_public_bot(
     channel_agent,
     monkeypatch,
 ):
-
     from sqlalchemy import select
 
     from app.models.channel import ChannelAccount, ChannelSecret
@@ -2095,7 +2101,6 @@ async def test_admin_register_env_accepts_explicit_agent_id(
 async def test_admin_register_env_auto_assigns_explicit_default_names(
     admin_client, db_session, seed_user
 ):
-
     from sqlalchemy import select
 
     from app.models.session import AgentEnvironment
@@ -2171,7 +2176,6 @@ async def test_admin_register_env_auto_assigns_explicit_default_names(
 
 @pytest.mark.asyncio
 async def test_admin_register_env_rejects_default_name_request_field(admin_client, seed_user):
-
     response = await admin_client.post(
         "/v1/admin/environments",
         headers=_AUTH,
@@ -2192,7 +2196,6 @@ async def test_admin_register_env_rejects_default_name_request_field(admin_clien
 async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
     admin_client, db_session, seed_user
 ):
-
     from sqlalchemy import select
 
     from app.models.hosted_runtime import HostedRuntimeSecret, HostedRuntimeState
@@ -2536,7 +2539,6 @@ async def test_admin_register_env_explicit_ids_allow_same_machine_metadata(
 async def test_admin_register_env_explicit_id_rejects_cross_tenant_id(
     admin_client, db_session, seed_user
 ):
-
     from sqlalchemy import select
 
     from app.models.session import AgentEnvironment

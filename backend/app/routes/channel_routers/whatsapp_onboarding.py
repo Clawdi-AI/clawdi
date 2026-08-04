@@ -16,6 +16,7 @@ from app.schemas.channel import (
 from app.services.whatsapp_device_onboarding import (
     cancel_whatsapp_onboarding,
     refresh_whatsapp_onboarding,
+    repair_whatsapp_account,
     request_whatsapp_pairing_code,
     retry_whatsapp_onboarding,
     start_whatsapp_onboarding,
@@ -133,5 +134,22 @@ async def retry_whatsapp_onboarding_session(
         db,
         user_id=auth.user_id,
         session_id=session_id,
+        registry=registry,
+    )
+
+
+@router.post("/accounts/{account_id}/repair")
+async def repair_whatsapp_channel_account(
+    account_id: UUID,
+    response: Response,
+    auth: AuthContext = Depends(require_user_auth),
+    db: AsyncSession = Depends(get_session),
+    registry: ConfiguredWhatsAppSidecarRegistry | None = Depends(get_whatsapp_sidecar_registry),
+) -> ChannelWhatsAppOnboardingSessionResponse:
+    _prevent_sensitive_caching(response)
+    return await repair_whatsapp_account(
+        db,
+        user_id=auth.user_id,
+        account_id=account_id,
         registry=registry,
     )
