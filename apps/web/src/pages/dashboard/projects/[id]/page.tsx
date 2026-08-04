@@ -830,9 +830,7 @@ export default function ProjectDetailPage({
 							{isOwner ? (
 								<ProjectVaultActions
 									projectId={project.id}
-									attachedVaultIds={new Set(
-										(vaults.data?.items ?? []).map((vault) => vault.id),
-									)}
+									attachedVaultIds={new Set((vaults.data?.items ?? []).map((vault) => vault.id))}
 									contextLabel={isWorkspace ? "Workspace" : "Project"}
 									onChanged={refresh}
 								/>
@@ -1840,9 +1838,7 @@ function ProjectVaultActions({
 								id={`project-vault-slug-${projectId}`}
 								name="project-vault-slug"
 								value={slug}
-								onChange={(e) =>
-									setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
-								}
+									onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
 								placeholder="github…"
 								autoComplete="off"
 								spellCheck={false}
