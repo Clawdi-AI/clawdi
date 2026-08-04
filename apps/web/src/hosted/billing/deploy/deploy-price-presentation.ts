@@ -48,14 +48,9 @@ export function computePricePresentation(
 		comparisonIsCheaper && undiscountedTermPrice !== null
 			? undiscountedTermPrice - offer.price_cents
 			: 0;
-	const billed =
-		offer.billing_term_months === 12
-			? `Billed ${formatCents(offer.price_cents)}/yr`
-			: `Billed ${formatCents(offer.price_cents)} every ${offer.billing_term_months} months`;
-
 	return {
-		primary: monthlyPrice(offer),
-		secondary: billed,
+		primary: `${formatCents(offer.price_cents)}${billingTermSuffix(offer.billing_term_months)}`,
+		secondary: monthlyPrice(offer),
 		savings: savingsCents > 0 ? `save ${formatCents(savingsCents)}` : null,
 	};
 }

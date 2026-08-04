@@ -463,7 +463,12 @@ export function createBillingClient(
 			unwrapDeploy(await api.POST("/v2/subscription/portal", { body })),
 		resumeSubscription: async (body: ComputeSubscriptionResumeRequest) =>
 			unwrapDeploy(await api.POST("/v2/subscription/resume", { body })),
-		getUsage: async () => unwrapDeploy(await api.GET("/v2/usage")),
+		getUsage: async (days: number | null = null) =>
+			unwrapDeploy(
+				await api.GET("/v2/usage", {
+					params: { query: { days: days ?? undefined } },
+				}),
+			),
 
 		getMe: async () => unwrapDeploy(await api.GET("/v1/me")),
 		getLegacyAgentEnvironments: async () => unwrapDeploy(await api.GET("/v1/agent-environments")),

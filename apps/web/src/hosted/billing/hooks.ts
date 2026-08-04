@@ -309,11 +309,11 @@ export async function refreshCheckoutReturnQueries(
 
 // ── Usage ────────────────────────────────────────────────────────────────────
 
-export function useUsage() {
+export function useUsage(days: number | null) {
 	const client = useBillingClient();
 	return useBillingQuery({
-		queryKey: billingKeys.usage,
-		queryFn: () => client.getUsage(),
+		queryKey: billingKeys.usage(days),
+		queryFn: () => client.getUsage(days),
 	});
 }
 

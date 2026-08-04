@@ -27,16 +27,16 @@ describe("computePricePresentation", () => {
 			savings: null,
 		});
 		expect(computePricePresentation(annual, [monthly, annual])).toEqual({
-			primary: "$16.66/mo",
-			secondary: "Billed $200.00/yr",
+			primary: "$200.00/yr",
+			secondary: "$16.66/mo",
 			savings: "save $40.00",
 		});
 	});
 
 	test("omits savings when a monthly offer is missing", () => {
 		expect(computePricePresentation(annual, [annual])).toEqual({
-			primary: "$16.66/mo",
-			secondary: "Billed $200.00/yr",
+			primary: "$200.00/yr",
+			secondary: "$16.66/mo",
 			savings: null,
 		});
 	});

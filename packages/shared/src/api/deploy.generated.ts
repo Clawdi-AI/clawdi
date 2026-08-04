@@ -3238,7 +3238,9 @@ export interface operations {
     };
     hosted_v2_usage_summary_v2_usage_get: {
         parameters: {
-            query?: never;
+            query?: {
+                days?: number | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3252,6 +3254,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2HostedUsageSummaryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

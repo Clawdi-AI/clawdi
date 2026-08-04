@@ -8,7 +8,6 @@ describe("x402 wallet availability", () => {
 	test("keeps the card visible and labels the unavailable state", () => {
 		expect(pageSource).toContain("<X402Card enabled={w.x402_enabled === true} />");
 		expect(cardSource).toContain("Not available yet");
-		expect(cardSource).toContain("x402 payments are not available yet.");
 		expect(cardSource).toContain("Linked agent wallet");
 		expect(cardSource).not.toContain("deposit address");
 	});

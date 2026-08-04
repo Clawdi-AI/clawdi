@@ -23,7 +23,7 @@ export function X402Card({ enabled }: { enabled: boolean }) {
 						<Badge variant="secondary">Not available yet</Badge>
 					</span>
 				}
-				description="x402 payments are not available yet. When launched, agents will be able to add Wallet funds with USDC."
+				description="Agents will be able to add Wallet funds with USDC."
 			/>
 		);
 	}

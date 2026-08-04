@@ -80,16 +80,9 @@ export function PlanComparison({
 			data-hosted="true"
 			headingLevel={3}
 			title="Compare compute plans"
-			description={
-				sharedPricingUnavailable
-					? "A shared Basic and Performance billing term is not currently available."
-					: undefined
-			}
-		>
-			<div className="space-y-4">
-				{commonOffers.length > 1 && selectedTerm !== null ? (
-					<div className="ml-auto w-full space-y-1.5 sm:w-56">
-						<p className="text-xs font-medium text-muted-foreground">Billing term</p>
+			actions={
+				commonOffers.length > 1 && selectedTerm !== null ? (
+					<div className="w-56">
 						<TermSwitcher
 							offers={commonOffers}
 							value={selectedTerm}
@@ -98,7 +91,15 @@ export function PlanComparison({
 							ariaLabel="Billing term for Basic and Performance"
 						/>
 					</div>
-				) : null}
+				) : null
+			}
+			description={
+				sharedPricingUnavailable
+					? "A shared Basic and Performance billing term is not currently available."
+					: undefined
+			}
+		>
+			<div>
 				<div className="grid gap-3 lg:grid-cols-2">
 					{/* Basic */}
 					<Card size="sm">
