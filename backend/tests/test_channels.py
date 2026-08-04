@@ -370,7 +370,7 @@ async def _create_user_with_channel_agent(
                     deployment_id=deployment_id,
                     instance_id=f"instance-{uuid4().hex}",
                     generation=1,
-                    cli_package_spec="clawdi@0.12.10-beta.57",
+                    cli_package_spec="clawdi@1.2.3-test",
                     locale={"language": "en", "timezone": "UTC"},
                     system={},
                     runtimes={

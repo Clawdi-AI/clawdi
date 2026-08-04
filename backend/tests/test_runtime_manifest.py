@@ -132,8 +132,8 @@ TEST_HERMES_DASHBOARD_AUTH = {
     },
 }
 OPTIONAL_RUNTIME_STATE_FIELDS = ("egress_engine", "egress_profiles", "mcp", "skills")
-TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.57"
-TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC = "clawdi@0.13.2-test"
+TEST_CLI_PACKAGE_SPEC = "clawdi@1.2.3-test"
+TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC = "clawdi@1.2.5-test"
 
 
 @pytest.mark.parametrize(
@@ -661,9 +661,8 @@ async def _runtime_state_audit_count(db: AsyncSession, environment_id) -> int:
 @pytest.mark.parametrize(
     ("cli_package_spec", "accepted"),
     [
-        ("clawdi@0.12.10-beta.52", False),
-        ("clawdi@0.12.10-beta.56", False),
-        ("clawdi@0.12.10-beta.57", True),
+        ("clawdi@0.0.1-test", True),
+        ("clawdi@1.2.3-test.1", True),
         ("clawdi@1.2.3-rc-1.2", True),
         ("clawdi@1.2.3-beta..1", False),
         ("clawdi@1.2.3-beta.", False),
@@ -837,7 +836,6 @@ async def test_admin_runtime_state_requires_only_official_install_source(
 @pytest.mark.parametrize(
     "cli_package_spec",
     [
-        "clawdi@0.12.10-beta.50",
         "clawdi@agent-v2",
         "clawdi@latest",
         "clawdi@beta",
@@ -850,7 +848,7 @@ async def test_admin_runtime_state_requires_only_official_install_source(
         "1.2.3",
     ],
 )
-async def test_admin_runtime_state_rejects_invalid_or_below_floor_cli_package_spec(
+async def test_admin_runtime_state_rejects_non_exact_cli_package_spec(
     admin_client,
     db_session,
     seed_user,
@@ -871,21 +869,21 @@ async def test_admin_runtime_state_rejects_invalid_or_below_floor_cli_package_sp
 
     assert response.status_code == 422, response.text
     assert "cli_package_spec" in response.text
-    assert "exact" in response.text or "minimum" in response.text
+    assert "exact" in response.text
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "cli_package_spec",
     [
-        "clawdi@0.12.10-beta.57",
-        "clawdi@0.12.10-rc.1",
-        "clawdi@0.12.10",
-        "clawdi@0.12.11-beta.0",
-        "clawdi@1.0.0",
+        "clawdi@0.0.1-test",
+        "clawdi@1.2.3-test.1",
+        "clawdi@1.2.3-rc.1",
+        "clawdi@1.2.3",
+        "clawdi@2.0.0",
     ],
 )
-async def test_admin_runtime_state_accepts_cli_package_spec_at_or_above_floor(
+async def test_admin_runtime_state_accepts_exact_cli_package_spec(
     admin_client,
     db_session,
     seed_user,
@@ -964,7 +962,6 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     payload = response.json()
     manifest = payload["manifest"]
     assert manifest["schemaVersion"] == "clawdi.hosted-runtime.manifest.v1"
-    assert manifest["minimumCliVersion"] == "0.12.10-beta.57"
     assert manifest["runtime"] == "openclaw"
     assert set(manifest["runtimes"]) == {"openclaw"}
     assert manifest["locale"] == TEST_LOCALE
@@ -1117,7 +1114,7 @@ async def test_stale_runtime_state_generation_returns_current_generation_without
             json={
                 **body,
                 "generation": 6,
-                "cli_package_spec": "clawdi@0.12.10-beta.57",
+                "cli_package_spec": "clawdi@1.2.3-test",
             },
         )
 
@@ -1156,7 +1153,7 @@ async def test_equal_generation_material_conflict_returns_current_generation_wit
         response = await admin_client.put(
             f"/v1/admin/environments/{environment_id}/runtime-state",
             headers=_AUTH,
-            json={**body, "cli_package_spec": "clawdi@0.12.10-beta.58"},
+            json={**body, "cli_package_spec": "clawdi@1.2.4-test"},
         )
 
         assert response.status_code == 409, response.text
@@ -1252,7 +1249,7 @@ async def test_admin_runtime_state_binds_and_advances_apply_generation_at_same_c
         json={
             **body,
             "generation": 4,
-            "cli_package_spec": "clawdi@0.12.10-beta.58",
+            "cli_package_spec": "clawdi@1.2.4-test",
             "runtimes": checkpoint_runtimes,
             "mcp": {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}},
             "skills": {"entries": {"clawdi": {"enabled": True, "version": 2}}},
@@ -1264,7 +1261,7 @@ async def test_admin_runtime_state_binds_and_advances_apply_generation_at_same_c
     assert state is not None
     assert state.generation == 4
     assert state.apply_generation == 3
-    assert state.cli_package_spec == "clawdi@0.12.10-beta.58"
+    assert state.cli_package_spec == "clawdi@1.2.4-test"
     assert state.runtimes["openclaw"]["primary_model"]["model"] == "gpt-checkpoint-next"
     assert state.mcp == {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}}
     assert state.skills == {"entries": {"clawdi": {"enabled": True, "version": 2}}}
@@ -1290,8 +1287,8 @@ async def test_concurrent_same_generation_runtime_state_updates_allow_one_winner
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     try:
         candidate_specs = (
-            "clawdi@0.12.10-beta.57",
-            "clawdi@0.12.10-beta.58",
+            "clawdi@1.2.3-test",
+            "clawdi@1.2.4-test",
         )
         candidate_bodies = [
             AdminRuntimeStateUpsert.model_validate(
@@ -1395,8 +1392,8 @@ async def test_concurrent_initial_conflicting_runtime_state_upserts_return_gener
     )
     body = _runtime_state_body(str(env.id))
     candidate_specs = (
-        "clawdi@0.12.10-beta.57",
-        "clawdi@0.12.10-beta.58",
+        "clawdi@1.2.3-test",
+        "clawdi@1.2.4-test",
     )
     audit_count = await _runtime_state_audit_count(db_session, env.id)
     queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
@@ -1464,7 +1461,7 @@ async def test_cli_package_spec_change_updates_etag_audit_and_invalidation(
 
     queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
     try:
-        updated_spec = "clawdi@0.12.10-beta.58"
+        updated_spec = "clawdi@1.2.4-test"
         updated = await admin_client.put(
             f"/v1/admin/environments/{env.id}/runtime-state",
             headers=_AUTH,
@@ -1578,7 +1575,7 @@ async def test_environment_delete_invalidates_cascaded_runtime_manifest(
 
 
 @pytest.mark.asyncio
-async def test_agent_v2_manifest_cli_package_and_protocol_are_cloud_owned(
+async def test_agent_v2_manifest_cli_package_is_cloud_owned(
     admin_client,
     db_session,
     seed_user,
@@ -1602,38 +1599,6 @@ async def test_agent_v2_manifest_cli_package_and_protocol_are_cloud_owned(
         "packageSpec": TEST_CLI_PACKAGE_SPEC,
         "registry": "https://registry.npmjs.org",
     }
-    assert response.json()["manifest"]["minimumCliVersion"] == "0.12.10-beta.57"
-
-
-@pytest.mark.asyncio
-async def test_admin_runtime_state_rejects_manifest_protocol_metadata(
-    admin_client,
-    db_session,
-    seed_user,
-):
-    env = await create_env_with_project(
-        db_session,
-        user_id=seed_user.id,
-        machine_id=f"runtime-protocol-metadata-{uuid4().hex[:8]}",
-        machine_name="Runtime protocol metadata",
-        agent_type="openclaw",
-    )
-
-    response = await admin_client.put(
-        f"/v1/admin/environments/{env.id}/runtime-state",
-        headers=_AUTH,
-        json={
-            "deployment_id": "dep-protocol-metadata",
-            "instance_id": "hri-protocol-metadata",
-            "generation": 1,
-            "locale": TEST_LOCALE,
-            "system": TEST_SYSTEM,
-            "runtimes": _runtime_state(),
-            "minimumCliVersion": "0.12.10-beta.57",
-        },
-    )
-
-    assert response.status_code == 422, response.text
 
 
 @pytest.mark.asyncio
@@ -1660,7 +1625,7 @@ async def test_admin_runtime_state_rejects_cli_desired_state_authority(
             "locale": TEST_LOCALE,
             "system": TEST_SYSTEM,
             "runtimes": _runtime_state(),
-            "clawdi_cli": {"packageSpec": "clawdi@0.12.9"},
+            "clawdi_cli": {"packageSpec": "clawdi@1.2.3-test"},
         },
     )
 
@@ -2450,11 +2415,10 @@ async def test_admin_runtime_state_upsert_writes_redacted_audit_event(
     [
         "clawdi@latest",
         "clawdi@beta",
-        "clawdi@0.12.10-beta.50",
         "clawdi@1.2.3+build.1",
     ],
 )
-async def test_runtime_manifest_rejects_invalid_or_below_floor_stored_cli_package_spec(
+async def test_runtime_manifest_rejects_non_exact_stored_cli_package_spec(
     db_session,
     seed_user,
     cli_package_spec,
@@ -2488,9 +2452,7 @@ async def test_runtime_manifest_rejects_invalid_or_below_floor_stored_cli_packag
     app.dependency_overrides.clear()
 
     assert response.status_code == 409, response.text
-    assert response.json() == {
-        "detail": "Hosted runtime CLI package spec is invalid or below the minimum version"
-    }
+    assert response.json() == {"detail": "Hosted runtime CLI package spec is invalid"}
 
 
 @pytest.mark.asyncio

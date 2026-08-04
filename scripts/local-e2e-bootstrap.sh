@@ -19,7 +19,7 @@
 # Prereqs:
 #   - cloud-api dev server up on :8000 with ADMIN_API_KEY=local-dev-admin-secret
 #   - Postgres up on :5433
-#   - clawdi CLI 0.5.6+ installed globally (`which clawdi`)
+#   - clawdi CLI installed globally (`which clawdi`)
 #
 # Usage: bash scripts/local-e2e-bootstrap.sh
 #

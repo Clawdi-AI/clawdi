@@ -480,10 +480,10 @@ describe("update install", () => {
 			kind: "native" as const,
 			prefix,
 			versionsRoot: join(prefix, "share", "clawdi", "versions"),
-			versionDir: join(prefix, "share", "clawdi", "versions", "0.13.11-linux-x64"),
-			version: "0.13.11",
+			versionDir: join(prefix, "share", "clawdi", "versions", "1.2.3-linux-x64"),
+			version: "1.2.3",
 			target: "linux-x64" as const,
-			executable: join(prefix, "share", "clawdi", "versions", "0.13.11-linux-x64", "clawdi"),
+			executable: join(prefix, "share", "clawdi", "versions", "1.2.3-linux-x64", "clawdi"),
 			launcher: join(prefix, "bin", "clawdi"),
 		};
 		const { restore } = mockFetch([
@@ -774,8 +774,8 @@ describe("daemonAutoUpdateOnce", () => {
 	});
 
 	it.each([
-		["rc", "0.12.10-rc.2", "0.12.10-rc.10"],
-		["alpha", "0.12.11-alpha.1", "0.12.11-alpha.2"],
+		["rc", "1.2.3-rc.2", "1.2.3-rc.10"],
+		["alpha", "1.2.4-alpha.1", "1.2.4-alpha.2"],
 	])("routes %s prereleases through the beta dist-tag", async (tag, current, next) => {
 		const calls: { installer: string; args: string[] }[] = [];
 		const { restore } = mockFetch([
@@ -785,7 +785,7 @@ describe("daemonAutoUpdateOnce", () => {
 				response: () =>
 					jsonResponse({
 						"dist-tags": {
-							latest: "0.12.9",
+							latest: "1.2.2",
 							beta: next,
 							[tag]: `99.0.0-${tag}.1`,
 						},
@@ -1358,10 +1358,10 @@ async function runNativeForegroundFailure(
 		kind: "native" as const,
 		prefix,
 		versionsRoot: join(prefix, "share", "clawdi", "versions"),
-		versionDir: join(prefix, "share", "clawdi", "versions", "0.13.11-linux-x64"),
-		version: "0.13.11",
+		versionDir: join(prefix, "share", "clawdi", "versions", "1.2.3-linux-x64"),
+		version: "1.2.3",
 		target: "linux-x64" as const,
-		executable: join(prefix, "share", "clawdi", "versions", "0.13.11-linux-x64", "clawdi"),
+		executable: join(prefix, "share", "clawdi", "versions", "1.2.3-linux-x64", "clawdi"),
 		launcher: join(prefix, "bin", "clawdi"),
 	};
 	const { restore } = mockFetch([

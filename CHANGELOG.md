@@ -10,6 +10,16 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.36
+
+Package: `clawdi@0.13.36`
+
+### Changed
+
+- Hosted runtime manifests now use the exact `clawdiCli.packageSpec` as their
+  sole desired CLI version, with exact installation, verification, atomic
+  activation, and self-re-exec completed before manifest convergence.
+
 ## Clawdi CLI v0.13.13
 
 Package: `clawdi@0.13.13`

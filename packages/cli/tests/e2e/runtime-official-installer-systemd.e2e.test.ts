@@ -136,7 +136,7 @@ test("propagates the real official OpenClaw installer failure and rolls back as 
 				applyReceiptId: "real-systemd-test-receipt",
 				bootNonce: "real-systemd-test-boot",
 			},
-			cliPackageSpec: "clawdi@0.13.30",
+			cliPackageSpec: "clawdi@1.2.3",
 			manifestSource: {
 				type: "http",
 				url: "https://runtime.test/v1/runtime/manifest?environment_id=env_real_openclaw_systemd",

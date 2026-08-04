@@ -9,7 +9,7 @@ const sha512 = "ab".repeat(64);
 const integrity = `sha512-${Buffer.from(sha512, "hex").toString("base64")}`;
 const requiredAssets = ["clawdi-cli-linux-x64.tar.gz", "clawdi-cli-linux-x64.tar.gz.sha256"];
 
-function provenanceStatement(version = "0.13.10") {
+function provenanceStatement(version = "1.2.3") {
 	return {
 		subject: [{ name: `pkg:npm/clawdi@${version}`, digest: { sha512 } }],
 		predicate: {
@@ -31,12 +31,12 @@ function provenanceStatement(version = "0.13.10") {
 	};
 }
 
-function publishedNpm(version = "0.13.10") {
+function publishedNpm(version = "1.2.3") {
 	return {
 		exists: true,
 		distIntegrity: integrity,
 		attestations: {
-			url: "https://registry.npmjs.org/-/npm/v1/attestations/clawdi@0.13.10",
+			url: "https://registry.npmjs.org/-/npm/v1/attestations/clawdi@1.2.3",
 			provenance: { predicateType: "https://slsa.dev/provenance/v1" },
 		},
 		attestationBundle: {
@@ -66,7 +66,7 @@ function planFixture() {
 	return {
 		schemaVersion: "clawdi.cliReleaseRecoveryInput.v1",
 		mode: "plan",
-		package: { name: "clawdi", version: "0.13.10" },
+		package: { name: "clawdi", version: "1.2.3" },
 		repository: {
 			url: "https://github.com/Clawdi-AI/clawdi",
 			workflowPath: ".github/workflows/cli-publish.yml",
@@ -123,8 +123,8 @@ describe("CLI release recovery decision", () => {
 
 	test("derives beta for a prerelease without changing recovery semantics", () => {
 		const fixture = planFixture();
-		fixture.package.version = "0.13.11-beta.1";
-		fixture.npm = publishedNpm("0.13.11-beta.1");
+		fixture.package.version = "1.3.0-test.1";
+		fixture.npm = publishedNpm("1.3.0-test.1");
 		const decision = expectDecision(fixture);
 
 		expect(decision.npmTag).toBe("beta");

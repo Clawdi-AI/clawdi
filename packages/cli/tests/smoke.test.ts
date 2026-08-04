@@ -23,7 +23,7 @@ function writeRuntimeContext(
 				applyReceiptId: "smoke-apply-receipt-0001",
 				bootNonce: "smoke-boot-nonce-000001",
 			},
-			cliPackageSpec: "clawdi@0.13.0-test",
+			cliPackageSpec: "clawdi@1.2.3-test",
 			manifestSource: {
 				type: "http",
 				url: options.manifestUrl ?? "https://runtime.test/v1/runtime/manifest",

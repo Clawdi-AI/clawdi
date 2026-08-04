@@ -440,7 +440,7 @@ async def disconnect(
 async def get_mcp_config(
     auth: AuthContext = Depends(require_user_auth),
 ) -> ConnectorMcpConfigResponse:
-    """Return the deprecated MCP bridge config required by CLI 0.12.7."""
+    """Return the deprecated MCP bridge config required by legacy clients."""
     if not settings.composio_api_key:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
 

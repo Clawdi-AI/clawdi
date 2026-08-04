@@ -69,9 +69,9 @@ workspace deps leaking into `dependencies`, …):
 ```bash
 cd packages/cli
 bun run build
-bun pm pack                                  # → clawdi-0.1.0.tgz
-tar -tzf clawdi-0.1.0.tgz | head   # inspect contents
-bun install -g ./clawdi-0.1.0.tgz
+bun pm pack                                  # → clawdi-<package-version>.tgz
+tar -tzf clawdi-*.tgz | head                 # inspect contents
+bun install -g ./clawdi-*.tgz
 clawdi --version
 bun uninstall -g clawdi
 rm clawdi-*.tgz
@@ -92,7 +92,7 @@ Example with Hermes (`nousresearch/hermes-agent`). Prerequisite:
 # 0. Pack the CLI on the host.
 cd packages/cli
 bun run build
-bun pm pack                # → clawdi-0.1.0.tgz
+bun pm pack                # → clawdi-<package-version>.tgz
 
 # 1. Start the container. The upstream ENTRYPOINT bootstraps
 #    $HERMES_HOME and launches the Hermes TUI as PID 1 — we leave it

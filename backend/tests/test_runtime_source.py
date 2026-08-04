@@ -63,7 +63,7 @@ def _batch(
         instance_id="hri_test",
         generation=generation,
         apply_generation=apply_generation,
-        cli_package_spec="clawdi@0.12.10-beta.57",
+        cli_package_spec="clawdi@1.2.3-test",
         locale={"language": "en", "timezone": "UTC"},
         system={
             "openclawControlUiAllowedOrigins": ["https://agent.example.test"],

@@ -352,7 +352,7 @@ function cliEnv(fixture: Fixture): Record<string, string> {
 				applyReceiptId: "apply-receipt-daemon-rpc",
 				bootNonce: "boot-nonce-daemon-rpc-01",
 			},
-			cliPackageSpec: "clawdi@0.13.0-test",
+			cliPackageSpec: "clawdi@1.2.3-test",
 			manifestSource: {
 				type: "http",
 				url: `${server.url.origin}/v1/runtime/manifest`,

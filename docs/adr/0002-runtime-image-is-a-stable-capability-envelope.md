@@ -71,13 +71,14 @@ For transparent egress:
 
 ## Cloud Hosted Authority
 
-The Hosted rollout writer selects an exact CLI package spec. Cloud validates
-and persists it, enforces the Cloud-owned `0.12.10-beta.57` minimum, fixes the
-package source and official registry, and owns the public manifest projection.
-Remote Hosted state cannot provide a floating package, installer URL, installer
-args, source, or registry. Bootstrap tgz input is fixture-only, while generic
-non-Hosted desired state keeps its existing package, provider, and installer
-behavior.
+Hosted selects an exact CLI package spec from its database-backed setting and
+persists it with the deployment. Cloud validates and persists that value, fixes
+the package source and official registry, and projects it unchanged into the
+public manifest. There is no independent product-version floor. Wire evolution
+uses explicit manifest schemas or capabilities instead. Remote Hosted state
+cannot provide a floating package, installer URL, installer args, source, or
+registry. Bootstrap tgz input is fixture-only, while generic non-Hosted desired
+state keeps its existing package, provider, and installer behavior.
 
 Cloud serializes runtime-state create and update by locking the parent
 `AgentEnvironment` before the optional `HostedRuntimeState`, then applies

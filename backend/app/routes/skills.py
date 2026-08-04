@@ -223,8 +223,7 @@ def _compute_file_tree_hash(tar_bytes: bytes, skill_key: str | None = None) -> s
     install on flat keys) keeps the strip-one behavior.
 
     Used in two places:
-    - `upload_skill` fallback when the client (CLI <= 0.3.3) doesn't send
-      `content_hash`.
+    - `upload_skill` fallback when a legacy client doesn't send `content_hash`.
     - `install_skill` for marketplace tars fetched from GitHub.
     """
     strip_count = len(skill_key.split("/")) if skill_key else 1

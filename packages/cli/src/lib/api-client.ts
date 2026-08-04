@@ -362,7 +362,7 @@ export class ApiClient {
 		contentHash?: string,
 	): Promise<SkillUploadResponse> {
 		assertValidSkillKey(skillKey);
-		// `content_hash` is optional server-side (added 0.3.4). Omit the
+		// `content_hash` is optional server-side for legacy clients. Omit the
 		// field entirely when the caller doesn't have one — server falls
 		// back to computing it from the uploaded tar.
 		const fields: Record<string, string> = { skill_key: skillKey };

@@ -2230,7 +2230,7 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
         "deployment_id": "dep-admin-agent-alias",
         "instance_id": "iid-admin-agent-alias",
         "generation": 7,
-        "cli_package_spec": "clawdi@0.12.10-beta.57",
+        "cli_package_spec": "clawdi@1.2.3-test",
         "locale": {"language": "en", "timezone": "America/Los_Angeles"},
         "system": {},
         "live_sync": {"enabled": False, "agents": []},
@@ -2385,7 +2385,7 @@ async def test_admin_runtime_secret_validation_redacts_plaintext(
             "deployment_id": "invalid-secret",
             "instance_id": "invalid-secret",
             "generation": 1,
-            "cli_package_spec": "clawdi@0.12.10-beta.57",
+            "cli_package_spec": "clawdi@1.2.3-test",
             "locale": {"language": "en", "timezone": "UTC"},
             "system": {},
             "runtimes": {

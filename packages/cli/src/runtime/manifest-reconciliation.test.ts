@@ -72,7 +72,6 @@ const successfulPrerequisiteActivation = () => ({
 const originalEnv = { ...process.env };
 const tempRoots: string[] = [];
 const TEST_HOSTED_LOCALE = { language: "en" as const, timezone: "UTC" };
-const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.57";
 const TEST_HOSTED_HOME = "/home/clawdi";
 const TEST_HOSTED_SECRET_VALUES = {
 	"secret://clawdi/auth-token": "test-auth-token",
@@ -348,7 +347,6 @@ function commitTestRuntimeAuthority(
 function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
 		schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-		minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 		runtime: "openclaw",
 		deploymentId: "hdep_locale",
 		environmentId: "env_locale",
@@ -360,7 +358,7 @@ function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<
 		controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
 		clawdiCli: {
 			source: "npm:clawdi",
-			packageSpec: "clawdi@0.12.10-beta.57",
+			packageSpec: "clawdi@1.2.3-test",
 			registry: "https://registry.npmjs.org",
 		},
 		providers: {
@@ -1380,7 +1378,6 @@ describe("runtime manifest reconciliation invariants", () => {
 			hostedRuntimeManifestResponseSchema.parse({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
 					deploymentId: "hdep_missing_cli_policy",
 					environmentId: "env_missing_cli_policy",
@@ -1416,12 +1413,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(hostedManifestToRuntimeManifest(parsed).environmentId).toBe("env_canonical_identity");
 	});
 
-	test("rejects hosted manifests without a minimum CLI protocol floor", () => {
-		const manifest = hostedManifestFixture();
-		delete manifest.minimumCliVersion;
-		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
-	});
-
 	test.each([
 		["missing cloudApiUrl", {}],
 		[
@@ -1450,19 +1441,19 @@ describe("runtime manifest reconciliation invariants", () => {
 			name: "wrong source",
 			clawdiCli: {
 				source: "npm:other",
-				packageSpec: "clawdi@0.12.10-beta.57",
+				packageSpec: "clawdi@1.2.3-test",
 				registry: "https://registry.npmjs.org",
 			},
 		},
 		{
 			name: "missing registry",
-			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.12.10-beta.57" },
+			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@1.2.3-test" },
 		},
 		{
 			name: "non-official registry",
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@0.12.10-beta.57",
+				packageSpec: "clawdi@1.2.3-test",
 				registry: "https://registry.example.test",
 			},
 		},
@@ -1470,7 +1461,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			name: "dead managed flags",
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@0.12.10-beta.57",
+				packageSpec: "clawdi@1.2.3-test",
 				registry: "https://registry.npmjs.org",
 				managedConfig: true,
 				userEditableConfig: false,
@@ -1481,7 +1472,6 @@ describe("runtime manifest reconciliation invariants", () => {
 			hostedRuntimeManifestResponseSchema.parse({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
 					deploymentId: "hdep_invalid_cli_policy",
 					environmentId: "env_invalid_cli_policy",
@@ -1499,7 +1489,7 @@ describe("runtime manifest reconciliation invariants", () => {
 	});
 
 	test.each([
-		"clawdi@0.12.10-beta.57",
+		"clawdi@1.2.3-test",
 		"clawdi@1.2.3-rc-1.2",
 		"clawdi@1.2.3",
 	])("accepts exact hosted CLI package spec %s", (packageSpec) => {
@@ -1564,7 +1554,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		"clawdi@01.2.3",
 		"./clawdi.tgz",
 		"/tmp/clawdi.tgz",
-		"/usr/local/share/clawdi/bootstrap/clawdi-0.12.10-beta.57.tgz",
+		"/usr/local/share/clawdi/bootstrap/clawdi-1.2.3-test.tgz",
 		"/usr/local/share/clawdi/bootstrap/../clawdi.tgz",
 		"/usr/local/share/clawdi/bootstrap/nested/clawdi.tgz",
 		"/usr/local/share/clawdi/bootstrap/clawdi..tgz",
@@ -1586,7 +1576,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		const hostedResponse = {
 			manifest: {
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 				runtime: "openclaw",
 				deploymentId: "hdep_normalize",
 				environmentId: "env_normalize",
@@ -1600,7 +1589,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@0.12.10-beta.57",
+					packageSpec: "clawdi@1.2.3-test",
 					registry: "https://registry.npmjs.org",
 				},
 				runtimes: {
@@ -1724,7 +1713,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(
 			hostedRuntimeManifestSchema.safeParse({
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 				deploymentId: "hdep_infer_runtime",
 				environmentId: "env_infer_runtime",
 				instanceId: "hri_infer_runtime",
@@ -1737,7 +1725,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@0.12.10-beta.57",
+					packageSpec: "clawdi@1.2.3-test",
 					registry: "https://registry.npmjs.org",
 				},
 				providers: {
@@ -1809,7 +1797,6 @@ describe("runtime manifest reconciliation invariants", () => {
 	])("rejects unknown hosted manifest fields at the %s", (_name, addUnknownField) => {
 		const cleanManifest = {
 			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-			minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 			runtime: "openclaw",
 			deploymentId: "hdep_forward_compat",
 			environmentId: "env_forward_compat",
@@ -1822,7 +1809,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@0.12.10-beta.57",
+				packageSpec: "clawdi@1.2.3-test",
 				registry: "https://registry.npmjs.org",
 			},
 			runtimes: {
@@ -1847,7 +1834,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(() =>
 			hostedRuntimeManifestSchema.parse({
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 				runtime: "openclaw",
 				deploymentId: "hdep_multi",
 				environmentId: "env_multi",
@@ -1861,7 +1847,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@0.12.10-beta.57",
+					packageSpec: "clawdi@1.2.3-test",
 					registry: "https://registry.npmjs.org",
 				},
 				providers: {
@@ -2780,7 +2766,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			commandPath,
 			[
 				"#!/usr/bin/env sh",
-				'if [ "$1" = "--version" ]; then printf "0.13.26\\n"; exit 0; fi',
+				'if [ "$1" = "--version" ]; then printf "1.2.6\\n"; exit 0; fi',
 				'if [ "$1 $2 $3" = "config patch --stdin" ]; then cat >/dev/null; exit 0; fi',
 				'if [ "$1 $2 $3" = "gateway install --force" ]; then',
 				`  mkdir -p ${JSON.stringify(dirname(officialUnitPath))}`,

@@ -439,7 +439,6 @@ export function hostedManifestToRuntimeManifest(
 		instanceId: hosted.instanceId,
 		generation: hosted.generation,
 		...(applyGeneration === undefined ? {} : { applyGeneration }),
-		minimumCliVersion: hosted.minimumCliVersion,
 		issuedAt: hosted.issuedAt,
 		expiresAt: hosted.expiresAt,
 		locale: hosted.locale,
