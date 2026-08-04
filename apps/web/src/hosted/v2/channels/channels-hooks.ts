@@ -238,9 +238,9 @@ export function useDeleteChannel() {
 		onSuccess: async (_data, variables) => {
 			const id = variables.params.path.account_id;
 			await removeDeletedChannelQueries(qc, id);
-			toast.success("Channel removed");
+			toast.success("Custom bot deleted");
 		},
-		onError: toastApiError("Couldn't remove channel"),
+		onError: toastApiError("Couldn't delete Custom bot"),
 	});
 }
 

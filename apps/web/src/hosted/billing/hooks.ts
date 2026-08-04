@@ -147,6 +147,19 @@ export function useWalletLedger(limit = 50) {
 	});
 }
 
+export function useWalletLedgerPages(limit = 50) {
+	const client = useBillingClient();
+	return useInfiniteQuery({
+		queryKey: billingKeys.ledgerPages(limit),
+		queryFn: ({ pageParam }) => client.getLedger(limit, pageParam),
+		initialPageParam: null as string | null,
+		getNextPageParam: (lastPage) =>
+			lastPage.has_more && lastPage.next_cursor ? lastPage.next_cursor : undefined,
+		enabled: isDeployApiConfigured(),
+		retry: billingQueryRetry,
+	});
+}
+
 // ── Subscription / compute ────────────────────────────────────────────────────
 
 export function usePlans() {

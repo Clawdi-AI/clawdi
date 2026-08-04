@@ -1,7 +1,7 @@
 "use client";
 
 import { Link } from "@tanstack/react-router";
-import { MessagesSquare, Plus } from "lucide-react";
+import { MessagesSquare, Plus, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -13,6 +13,8 @@ import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
+import { ConfirmAction } from "@/components/ui/confirm-action";
+import { Spinner } from "@/components/ui/spinner";
 import {
 	CHANNEL_CARD_GRID_CLASS,
 	ChannelCard as SharedChannelCard,
@@ -29,7 +31,12 @@ import {
 	isNormalChannelHealth,
 	isNormalChannelStatus,
 } from "@/hosted/v2/channels/channel-ui";
-import { useBotPool, useChannelHealth, useChannels } from "@/hosted/v2/channels/channels-hooks";
+import {
+	useBotPool,
+	useChannelHealth,
+	useChannels,
+	useDeleteChannel,
+} from "@/hosted/v2/channels/channels-hooks";
 import {
 	type ChannelProviderFilter,
 	orderedChannelsForFilter,
@@ -256,6 +263,7 @@ function SharedBotCard({ bot }: { bot: ChannelBotPoolItem }) {
 }
 
 function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: ChannelHealthItem }) {
+	const del = useDeleteChannel();
 	return (
 		<div data-channel-account-id={channel.id} className="group relative z-0 h-full min-w-0">
 			<SharedChannelCard
@@ -270,6 +278,27 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: Ch
 						<ChannelStatusBadge key="status" status={channel.status} />
 					),
 				]}
+				actions={
+					<ConfirmAction
+						title={`Delete ${channel.name}?`}
+						description="This deletes the Custom bot, its Agent links, and its paired chats. This can't be undone."
+						confirmLabel="Delete custom bot"
+						destructive
+						onConfirm={() => del.mutateAsync({ params: { path: { account_id: channel.id } } })}
+					>
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							className="text-muted-foreground hover:text-destructive"
+							disabled={del.isPending}
+							aria-label={`Delete ${channel.name}`}
+						>
+							{del.isPending ? <Spinner className="size-3.5" /> : <Trash2 className="size-3.5" />}
+							{del.isPending ? "Deleting…" : "Delete"}
+						</Button>
+					</ConfirmAction>
+				}
 			/>
 			<Link to="/channels/$id" params={{ id: channel.id }} className={ENTITY_STRETCHED_LINK_CLASS}>
 				<span className="sr-only">Open {channel.name}</span>

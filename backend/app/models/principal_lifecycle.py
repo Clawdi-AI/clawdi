@@ -105,3 +105,24 @@ class ClerkWebhookEventReceipt(Base, TimestampMixin):
         DateTime(timezone=True),
         nullable=False,
     )
+
+
+class ClerkPrincipalAuthority(Base, TimestampMixin):
+    """Latest authoritative reversible Clerk ban projection for one subject."""
+
+    __tablename__ = "clerk_principal_authorities"
+    __table_args__ = (
+        UniqueConstraint(
+            "issuer",
+            "subject",
+            name="uq_clerk_principal_authorities_external_identity",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    issuer: Mapped[str] = mapped_column(String(255), nullable=False)
+    subject: Mapped[str] = mapped_column(String(200), nullable=False)
+    banned: Mapped[bool] = mapped_column(nullable=False)
+    authority_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    message_id: Mapped[str] = mapped_column(String(191), nullable=False)
+    payload_sha256: Mapped[str] = mapped_column(String(64), nullable=False)

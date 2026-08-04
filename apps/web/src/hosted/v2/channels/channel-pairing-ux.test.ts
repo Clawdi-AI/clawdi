@@ -13,6 +13,8 @@ const pairingDialogUi = source("./pairing-dialog-ui.tsx");
 const pairingSuccess = source("./channel-pairing-success.ts");
 const hooks = source("./channels-hooks.ts");
 const connectDialog = source("./connect-bot-dialog.tsx");
+const connectDialogLogic = source("./connect-bot-dialog.logic.ts");
+const replacementConfirm = source("./provider-link-replacement-confirm.tsx");
 const agentCardsLogic = source("./agent-channel-cards.logic.ts");
 const agentDetail = source("../../agents/hosted-agent-detail.tsx");
 const pairedChatRow = source("./paired-chat-row.tsx");
@@ -50,6 +52,9 @@ describe("channel IA boundary", () => {
 		expect(agentDetail).not.toContain("data-agent-paired-chats");
 		expect(agentDetail).toContain("data-agent-add-custom-bot");
 		expect(agentDetail).toContain('linking ? "Linking…" : "Link"');
+		expect(agentDetail).toContain('state={unavailableReason ?? "Available"}');
+		expect(agentDetail).not.toContain("Replaces current link");
+		expect(agentDetail).toContain('confirmLabel="Delete custom bot"');
 		expect(agentDetail).toContain('creatingPairCode ? "Generating…" : "Pair"');
 		expect(agentDetail).not.toContain("Pair Telegram");
 		expect(agentDetail).not.toContain("Pair Discord");
@@ -73,8 +78,15 @@ describe("channel IA boundary", () => {
 	});
 
 	test("keeps Discord inventory in Console and Add/Pair actions on the Agent", () => {
-		expect(connectDialog).toContain("replace_existing_provider_link: true");
+		expect(connectDialogLogic).toContain("replace_existing_provider_link: true");
 		expect(connectDialog).toContain("<ProviderLinkReplacementConfirm");
+		expect(connectDialog).toContain('onAddWithoutLinking={() => submit("inventory-only")}');
+		expect(connectDialog).toContain('onConfirm={() => submit("replace")}');
+		expect(replacementConfirm).toContain('label: "Add without linking"');
+		expect(replacementConfirm).toContain("? `How should this ");
+		expect(replacementConfirm).toContain("This Agent can link only one");
+		expect(replacementConfirm).toContain(": `Replace this Agent’s ");
+		expect(replacementConfirm).toContain("destructive");
 		expect(connectDialog).toContain("Add custom bot");
 		expect(connectDialog).toContain("onAgentConnected");
 		expect(agentDetail).toContain('linking ? "Linking…" : "Link"');
@@ -243,7 +255,7 @@ describe("channel IA boundary", () => {
 		expect(pairedChatRow).toContain("<ConfirmAction");
 		expect(pairedChatRow).toContain("binding_id: binding.id");
 		expect(pairedChatRow).toContain("unpair.isPending");
-		expect(confirmAction).toContain("void runConfirm().catch");
+		expect(confirmAction).toContain('void runAction("confirm", onConfirm).catch');
 		expect(hooks).toContain("export function useDeleteChannelBinding");
 		expect(hooks).toContain("keys.bindings(accountId)");
 		expect(hooks).toContain('toastApiError("Couldn\'t unpair chat")');

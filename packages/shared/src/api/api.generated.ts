@@ -2835,23 +2835,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/webhooks/clerk": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Clerk User Deleted Webhook */
-        post: operations["clerk_user_deleted_webhook_v1_webhooks_clerk_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v2/runtime/auth/keys": {
         parameters: {
             query?: never;
@@ -4628,15 +4611,6 @@ export interface components {
             expires_at: string;
             /** Completed At */
             completed_at?: string | null;
-        };
-        /** ClerkWebhookResponse */
-        ClerkWebhookResponse: {
-            /**
-             * Status
-             * @default ok
-             * @constant
-             */
-            status: "ok";
         };
         /**
          * ConnectRequest
@@ -13096,26 +13070,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    clerk_user_deleted_webhook_v1_webhooks_clerk_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ClerkWebhookResponse"];
                 };
             };
         };

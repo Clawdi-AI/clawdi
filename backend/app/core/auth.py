@@ -25,6 +25,7 @@ from app.models.principal_lifecycle import PrincipalLifecycle
 from app.models.user import PRINCIPAL_KIND_CLERK, User
 from app.services.app_setting_registry import CLERK_CLI_OAUTH_SPEC
 from app.services.app_settings import AppSettingUnavailable, resolve_app_setting
+from app.services.clerk_backend import clerk_backend_headers, clerk_user_url
 from app.services.clerk_cli_oauth_settings import ClerkCliOAuthSetting
 from app.services.principal_lifecycle import (
     PrincipalIdentityConflictError,
@@ -413,14 +414,11 @@ async def _fetch_clerk_primary_email(clerk_user_id: str) -> str | None:
     primary unverified). This is identity-binding: callers use the result to
     decide which existing user row to take over, so we refuse to guess.
     """
-    url = f"https://api.clerk.com/v1/users/{clerk_user_id}"
+    url = clerk_user_url(clerk_user_id)
     # Clerk's API is fronted by Cloudflare, which serves a 403 (error 1010)
     # for requests lacking a recognizable User-Agent — including httpx's
     # default. Set an explicit one.
-    headers = {
-        "Authorization": f"Bearer {settings.clerk_secret_key}",
-        "User-Agent": "clawdi-backend/1.0",
-    }
+    headers = clerk_backend_headers()
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(url, headers=headers)

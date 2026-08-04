@@ -6,6 +6,7 @@ import {
 	handleTopupStartResult,
 	topUpAmountCentsForUsdShortfall,
 	validTopUpAmountCents,
+	waitForWalletTopupCredit,
 	walletTopupCreditIsApplied,
 } from "@/hosted/billing/wallet/top-up-dialog.logic";
 
@@ -164,6 +165,16 @@ describe("walletTopupCreditIsApplied", () => {
 		expect(
 			walletTopupCreditIsApplied("pi_current", [{ ...entry, payment_reference: "pi_current" }]),
 		).toBe(true);
+	});
+
+	test("reads the paginated Activity cache used by Wallet", async () => {
+		const qc = new QueryClient();
+		qc.setQueryData(billingKeys.ledgerPages(50), {
+			pages: [{ items: [{ ...entry, payment_reference: "pi_current" }] }],
+			pageParams: [null],
+		});
+
+		expect(await waitForWalletTopupCredit(qc, "pi_current")).toBe(true);
 	});
 });
 

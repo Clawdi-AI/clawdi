@@ -11,6 +11,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -91,7 +92,6 @@ export function LedgerTable({
 	entries,
 	isLoading = false,
 	hasMore = false,
-	atCap = false,
 	isFetchingMore = false,
 	onShowMore,
 }: {
@@ -99,8 +99,6 @@ export function LedgerTable({
 	isLoading?: boolean;
 	/** More entries likely exist beyond the current window. */
 	hasMore?: boolean;
-	/** The client-side row cap is reached — stop offering "Show more". */
-	atCap?: boolean;
 	isFetchingMore?: boolean;
 	onShowMore?: () => void;
 }) {
@@ -108,7 +106,7 @@ export function LedgerTable({
 	const headingId = useId();
 
 	const filtered = useMemo(() => filteredLedgerEntries(entries, filter), [entries, filter]);
-	const canLoadMore = !atCap && hasMore && onShowMore != null;
+	const canLoadMore = hasMore && onShowMore != null;
 	const emptyState = ledgerEmptyStateCopy({ entriesCount: entries.length, filter, canLoadMore });
 
 	function handleFilterChange(value: string) {
@@ -128,7 +126,7 @@ export function LedgerTable({
 							<Spinner /> Loading…
 						</>
 					) : (
-						"Show more"
+						"Load more"
 					)}
 				</Button>
 			</div>
@@ -136,9 +134,10 @@ export function LedgerTable({
 	}
 
 	return (
-		<section data-hosted="true" className="space-y-3" aria-labelledby={headingId}>
+		<section data-hosted="true" className="flex flex-col gap-4" aria-labelledby={headingId}>
+			<Separator />
 			<div className="flex items-center justify-between gap-2">
-				<h2 id={headingId} className="text-base font-semibold">
+				<h2 id={headingId} className="text-sm font-semibold">
 					Activity
 				</h2>
 				<Select
@@ -268,13 +267,7 @@ export function LedgerTable({
 						</Table>
 					</div>
 
-					{atCap ? (
-						<p className="text-center text-xs text-muted-foreground">
-							Showing your most recent activity. Older entries are archived.
-						</p>
-					) : (
-						renderLoadMoreControl()
-					)}
+					{renderLoadMoreControl()}
 				</>
 			)}
 		</section>

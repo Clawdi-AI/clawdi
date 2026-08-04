@@ -24,6 +24,7 @@ describe("global Channels inventory", () => {
 		expect(channelsPage).not.toContain("data-pool-account-id");
 		expect(channelsPage).not.toContain("LinkAgentDialog");
 		expect(channelsPage).not.toContain("Link an agent");
+		expect(channelsPage).toContain("Delete custom bot");
 		expect(channelsPage).not.toContain("At capacity");
 		expect(channelsPage).toContain("providersWithBots(counts)");
 		expect(channelsPage).not.toContain("· Shared");
@@ -48,10 +49,17 @@ describe("global Channels inventory", () => {
 
 	test("reuses one Add channel dialog for Console inventory and direct Agent setup", () => {
 		const connectDialog = source("./connect-bot-dialog.tsx");
+		const connectDialogLogic = source("./connect-bot-dialog.logic.ts");
+		const replacementConfirm = source("./provider-link-replacement-confirm.tsx");
 		const agentDetail = source("../../agents/hosted-agent-detail.tsx");
 
-		expect(connectDialog).toContain("replace_existing_provider_link: true");
+		expect(connectDialogLogic).toContain("replace_existing_provider_link: true");
 		expect(connectDialog).toContain("<ProviderLinkReplacementConfirm");
+		expect(connectDialog).toContain('onAddWithoutLinking={() => submit("inventory-only")}');
+		expect(replacementConfirm).toContain('label: "Add without linking"');
+		expect(replacementConfirm).toContain("? `How should this ");
+		expect(replacementConfirm).toContain("This Agent can link only one");
+		expect(replacementConfirm).toContain(": `Replace this Agent’s ");
 		expect(connectDialog).toContain("onAgentConnected");
 		expect(connectDialog).toContain("autoLinkAgentIdForNewCustomBot");
 		expect(agentDetail).not.toContain("<AddChannelDialog");

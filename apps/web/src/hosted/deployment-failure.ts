@@ -135,6 +135,10 @@ export function deploymentOperationLabel(verb: DeploymentOperationVerb | null): 
 			return "Agent deletion";
 		case "plan_change":
 			return "Plan change";
+		case "migrate_image":
+			return "Agent image migration";
+		case "rollback_image":
+			return "Agent image rollback";
 		case null:
 			return "Agent action";
 	}
@@ -257,6 +261,8 @@ export function deploymentFailurePresentation(
 		case "update":
 		case "reset_runtime_ui_access":
 		case "runtime_switch":
+		case "migrate_image":
+		case "rollback_image":
 		case "rename":
 		case null:
 			return {

@@ -1,36 +1,53 @@
 "use client";
 
-import { LifeBuoy, Link2, TriangleAlert } from "lucide-react";
+import { Link2 } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { SettingsSection } from "@/components/settings-section";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { useHostedUser } from "@/hosted/billing/hooks";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
-/**
- * x402 self-funding block. Agents can top up their own wallet on-chain via the
- * x402 protocol; this surfaces the deposit address and a short explainer.
- * WalletPage mounts this only when the wallet snapshot reports x402 enabled.
- */
-export function X402Card() {
+export function X402Card({ enabled }: { enabled: boolean }) {
+	if (!enabled) {
+		return (
+			<SettingsSection
+				data-hosted="true"
+				title={
+					<span className="flex flex-wrap items-center gap-2">
+						<span className="inline-flex items-center gap-2">
+							<Link2 className="size-4" aria-hidden /> USDC via x402
+						</span>
+						<Badge variant="secondary">Not available yet</Badge>
+					</span>
+				}
+				description="x402 payments are not available yet. When launched, agents will be able to add Wallet funds with USDC."
+			/>
+		);
+	}
+
+	return <EnabledX402Card />;
+}
+
+function EnabledX402Card() {
 	const me = useHostedUser();
 	const address = me.data?.evm_wallet_address ?? null;
 
 	return (
-		<Card data-hosted="true">
-			<CardHeader>
-				<CardTitle className="flex items-center gap-2 text-base">
-					<Link2 className="size-4" aria-hidden /> On-chain top-up (x402)
-				</CardTitle>
-				<CardDescription>
-					Your agent can add USD value on-chain via the x402 protocol — no card needed. Deposits
-					land in the same wallet balance.
-				</CardDescription>
-			</CardHeader>
-			<CardContent>
+		<SettingsSection
+			data-hosted="true"
+			title={
+				<span className="flex flex-wrap items-center gap-2">
+					<span className="inline-flex items-center gap-2">
+						<Link2 className="size-4" aria-hidden /> USDC via x402
+					</span>
+					<Badge variant="outline">Available</Badge>
+				</span>
+			}
+			description="Your agent can add Wallet funds from its linked wallet using USDC."
+		>
+			<div className="max-w-2xl">
 				{me.isLoading ? (
 					<Skeleton className="h-9 w-full rounded-md" />
 				) : shouldBlockQueryError(me.error, me.data) ? (
@@ -38,34 +55,20 @@ export function X402Card() {
 						normalizer={billingErrorNormalizer}
 						error={me.error}
 						onRetry={() => me.refetch()}
-						title="Couldn’t load deposit address"
+						title="Couldn’t load linked wallet"
 					/>
 				) : address ? (
-					<Alert variant="destructive">
-						<TriangleAlert aria-hidden />
-						<AlertTitle>Contact support for deposit details</AlertTitle>
-						<AlertDescription className="flex flex-col items-start gap-3">
-							<span>
-								Your account data does not identify the required network or accepted token, so the
-								deposit address is hidden for your safety. Funds sent on the wrong network or as the
-								wrong token are unrecoverable.
-							</span>
-							<Button
-								render={<a href="mailto:support@clawdi.ai" />}
-								nativeButton={false}
-								size="sm"
-								variant="outline"
-							>
-								<LifeBuoy data-icon="inline-start" /> Contact support
-							</Button>
-						</AlertDescription>
-					</Alert>
+					<div className="space-y-1.5">
+						<p className="text-xs text-muted-foreground">Linked agent wallet</p>
+						<p className="break-all font-mono text-sm">{address}</p>
+						<p className="text-xs text-muted-foreground">Top-ups must be signed by this wallet.</p>
+					</div>
 				) : (
 					<p className="text-sm text-muted-foreground">
-						An on-chain deposit address is provisioned with your first Clawdi AI agent.
+						Connect an agent wallet before using x402.
 					</p>
 				)}
-			</CardContent>
-		</Card>
+			</div>
+		</SettingsSection>
 	);
 }

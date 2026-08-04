@@ -88,12 +88,16 @@ async def test_runtime_manifest_has_no_api_alias():
 
 def test_openapi_schema_advertises_only_v1_and_direct_runtime_v2():
     spec = app.openapi()
+    assert "/v1/webhooks/clerk" not in spec["paths"]
+
+    routes = _routes_by_path()
+    assert routes["/v1/webhooks/clerk"] == {"POST"}
+
     non_v1 = {path for path in spec["paths"] if not path.startswith("/v1/") and path != "/health"}
     assert non_v1
     assert all(path.startswith("/v2/runtime/") for path in non_v1)
     assert all(not path.startswith("/api/") for path in spec["paths"])
 
-    routes = _routes_by_path()
     for path in non_v1:
         assert path not in {
             f"/v1{path.removeprefix('/v2')}",

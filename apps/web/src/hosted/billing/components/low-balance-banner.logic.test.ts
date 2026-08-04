@@ -10,6 +10,9 @@ function wallet(over: Partial<WalletState> = {}): WalletState {
 		auto_reload_threshold_usd: "1",
 		auto_reload_amount_cents: 2500,
 		auto_reload_monthly_cap_cents: 0,
+		auto_reload_monthly_spent_cents: 0,
+		auto_reload_period_end: "2026-09-01T00:00:00Z",
+		auto_reload_status: "off",
 		auto_reload_action: null,
 		...over,
 	};

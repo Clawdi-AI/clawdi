@@ -20,23 +20,29 @@ import time
 from datetime import UTC, datetime
 from typing import Literal
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import invalidate_api_key_auth_cache, invalidate_user_api_key_auth_cache
 from app.core.config import settings
 from app.core.database import get_session
+from app.models.principal_lifecycle import PrincipalLifecycle
+from app.models.user import User
+from app.services.clerk_backend import clerk_backend_headers, clerk_user_url
 from app.services.principal_lifecycle import (
     PrincipalLifecycleConfigurationError,
     PrincipalWebhookConflictError,
     complete_principal_cleanup,
     configured_clerk_issuer,
     fence_clerk_user_deleted,
+    project_clerk_user_authority,
     record_principal_cleanup_failure,
 )
 
-router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+router = APIRouter(prefix="/webhooks", tags=["webhooks"], include_in_schema=False)
 
 _MAX_BODY_BYTES = 64 * 1024
 _MAX_SIGNATURE_HEADER_BYTES = 8 * 1024
@@ -47,6 +53,13 @@ _TIMESTAMP_RE = re.compile(r"^[0-9]{1,20}$")
 
 class ClerkWebhookResponse(BaseModel):
     status: Literal["ok"] = "ok"
+
+
+class ClerkAuthorityResponse(BaseModel):
+    object: Literal["user"]
+    id: str
+    banned: bool
+    updated_at: int
 
 
 def _single_header(request: Request, name: str) -> str:
@@ -118,14 +131,15 @@ def verify_clerk_webhook(payload: bytes, request: Request) -> str:
     return message_id
 
 
-def _parse_user_deleted(payload: bytes) -> tuple[str, datetime]:
+def _parse_event(payload: bytes) -> tuple[str, str, datetime]:
     try:
         event = json.loads(payload)
     except (json.JSONDecodeError, UnicodeDecodeError):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Clerk event body") from None
     if not isinstance(event, dict):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Clerk event body")
-    if event.get("object") != "event" or event.get("type") != "user.deleted":
+    event_type = event.get("type")
+    if event.get("object") != "event" or event_type not in {"user.updated", "user.deleted"}:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported Clerk event")
     event_timestamp = event.get("timestamp")
     if (
@@ -141,12 +155,46 @@ def _parse_user_deleted(payload: bytes) -> tuple[str, datetime]:
     data = event.get("data")
     subject = data.get("id") if isinstance(data, dict) else None
     if not isinstance(subject, str) or _SUBJECT_RE.fullmatch(subject) is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Clerk deletion subject")
-    return subject, event_occurred_at
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Clerk user subject")
+    return event_type, subject, event_occurred_at
+
+
+async def _fetch_clerk_authority(subject: str) -> tuple[bool, datetime]:
+    if not settings.clerk_secret_key:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Clerk Backend API is not configured",
+        )
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(
+                clerk_user_url(subject),
+                headers=clerk_backend_headers(),
+            )
+        if response.status_code != 200:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Clerk authority retrieval is pending retry",
+            )
+        authority = ClerkAuthorityResponse.model_validate_json(response.content)
+        if authority.id != subject or authority.updated_at < 0:
+            raise ValueError("Clerk authority subject or timestamp mismatch")
+        authority_updated_at = datetime.fromtimestamp(authority.updated_at / 1000, tz=UTC)
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValidationError, ValueError, OverflowError, OSError):
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Clerk authority retrieval is pending retry",
+        ) from None
+    # Clerk documents `banned` as the durable cannot-sign-in control. `locked`
+    # is intentionally excluded: it can be a temporary failed-attempt lockout.
+    # https://clerk.com/docs/reference/backend-api/tag/Users/operation/GetUser
+    return authority.banned, authority_updated_at
 
 
 @router.post("/clerk", response_model=ClerkWebhookResponse)
-async def clerk_user_deleted_webhook(
+async def clerk_user_lifecycle_webhook(
     request: Request,
     db: AsyncSession = Depends(get_session),
 ) -> ClerkWebhookResponse:
@@ -154,8 +202,55 @@ async def clerk_user_deleted_webhook(
     if len(payload) > _MAX_BODY_BYTES:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Clerk event body too large")
     message_id = verify_clerk_webhook(payload, request)
-    subject, event_occurred_at = _parse_user_deleted(payload)
+    event_type, subject, event_occurred_at = _parse_event(payload)
     payload_sha256 = hashlib.sha256(payload).hexdigest()
+
+    if event_type == "user.updated":
+        try:
+            issuer = configured_clerk_issuer()
+        except PrincipalLifecycleConfigurationError:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Clerk lifecycle receiver is not configured",
+            ) from None
+        # A committed deletion is final and already contains all authority
+        # needed to ACK a stale update. Avoid a doomed Clerk GET after the
+        # provider has removed the user. The locked projection below repeats
+        # this check so a deletion committing during GET still wins.
+        if await db.scalar(
+            select(PrincipalLifecycle.id).where(
+                PrincipalLifecycle.issuer == issuer,
+                PrincipalLifecycle.subject == subject,
+            )
+        ):
+            return ClerkWebhookResponse()
+        banned, authority_updated_at = await _fetch_clerk_authority(subject)
+        try:
+            changed = await project_clerk_user_authority(
+                db,
+                issuer=issuer,
+                subject=subject,
+                banned=banned,
+                authority_updated_at=authority_updated_at,
+                message_id=message_id,
+                payload_sha256=payload_sha256,
+            )
+        except PrincipalLifecycleConfigurationError:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Clerk lifecycle receiver is not configured",
+            ) from None
+        await db.commit()
+        if changed:
+            user_id = await db.scalar(
+                select(User.id).where(
+                    User.clerk_issuer == issuer,
+                    User.clerk_id == subject,
+                )
+            )
+            if user_id is not None:
+                invalidate_user_api_key_auth_cache(user_id)
+        return ClerkWebhookResponse()
 
     try:
         receipt = await fence_clerk_user_deleted(

@@ -273,6 +273,7 @@ import {
 	useBotPool,
 	useChannels,
 	useCreatePairCode,
+	useDeleteChannel,
 	useUnlinkAgentChannel,
 } from "@/hosted/v2/channels/channels-hooks";
 import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
@@ -2286,8 +2287,7 @@ function ChannelsSyncState({
 	);
 }
 
-const AGENT_CHANNEL_PAIR_ACTIONS_CLASS =
-	"grid min-h-8 w-full grid-cols-[minmax(0,1fr)_7rem] items-center gap-1.5 xl:flex xl:w-auto xl:gap-2";
+const AGENT_CHANNEL_PAIR_ACTIONS_CLASS = "flex min-h-8 w-auto items-center gap-1.5 xl:gap-2";
 
 const AGENT_CHANNEL_CARD_HEADER_CLASS =
 	"h-[7.5rem] flex-none grid-rows-[2.75rem_2rem] xl:h-20 xl:grid-rows-1";
@@ -2340,6 +2340,7 @@ function ChannelsTab({
 	const linked = useAgentChannelLinks(environmentId, isCloudEnvId(environmentId), true);
 	const agentLinksQueryKey = agentChannelLinksQueryOptions(openApi, environmentId).queryKey;
 	const unlink = useUnlinkAgentChannel(environmentId);
+	const deleteChannel = useDeleteChannel();
 	const [recentLinks, setRecentLinks] = useState<ReadonlyMap<string, AgentChannelLink>>(
 		() => new Map(),
 	);
@@ -2366,6 +2367,10 @@ function ChannelsTab({
 	const [linkingAccountIds, setLinkingAccountIds] = useState<ReadonlySet<string>>(() => new Set());
 	const unlinkingLinkIdsRef = useRef<Set<string>>(new Set());
 	const [unlinkingLinkIds, setUnlinkingLinkIds] = useState<ReadonlySet<string>>(() => new Set());
+	const deletingAccountIdsRef = useRef<Set<string>>(new Set());
+	const [deletingAccountIds, setDeletingAccountIds] = useState<ReadonlySet<string>>(
+		() => new Set(),
+	);
 	useEffect(() => {
 		if (!linked.data) return;
 		setRecentLinks((current) => {
@@ -2555,6 +2560,27 @@ function ChannelsTab({
 			}
 		})();
 	}
+	async function submitDeleteChannel(accountId: string): Promise<void> {
+		if (deletingAccountIdsRef.current.has(accountId)) return;
+		deletingAccountIdsRef.current.add(accountId);
+		setDeletingAccountIds((current) => new Set(current).add(accountId));
+		try {
+			await deleteChannel.mutateAsync({ params: { path: { account_id: accountId } } });
+			setRecentLinks((current) => {
+				if (!current.has(accountId)) return current;
+				const next = new Map(current);
+				next.delete(accountId);
+				return next;
+			});
+		} finally {
+			deletingAccountIdsRef.current.delete(accountId);
+			setDeletingAccountIds((current) => {
+				const next = new Set(current);
+				next.delete(accountId);
+				return next;
+			});
+		}
+	}
 	function renderBot(bot: AgentChannelCardItem) {
 		const linkForBot = bot.link;
 		return (
@@ -2566,10 +2592,12 @@ function ChannelsTab({
 				linkedProviders={linkedProviders}
 				linking={linkingAccountIds.has(bot.id)}
 				unlinking={Boolean(linkForBot && unlinkingLinkIds.has(linkForBot.id))}
+				deleting={deletingAccountIds.has(bot.id)}
 				onLink={(replaceExistingProviderLink) => submitLink(bot.id, replaceExistingProviderLink)}
 				onUnlink={() => {
 					if (linkForBot) startUnlink(bot.id, linkForBot.id);
 				}}
+				onDelete={() => submitDeleteChannel(bot.id)}
 			/>
 		);
 	}
@@ -2789,8 +2817,10 @@ function AgentChannelBotCard({
 	linkedProviders,
 	linking,
 	unlinking,
+	deleting,
 	onLink,
 	onUnlink,
+	onDelete,
 }: {
 	bot: AgentChannelCardItem;
 	agentId: string;
@@ -2799,8 +2829,10 @@ function AgentChannelBotCard({
 	linkedProviders: ReadonlySet<string> | undefined;
 	linking: boolean;
 	unlinking: boolean;
+	deleting: boolean;
 	onLink: (replaceExistingProviderLink: boolean) => Promise<void>;
 	onUnlink: () => void;
+	onDelete: () => Promise<void>;
 }) {
 	const unavailableReason = agentChannelLinkUnavailableReason({ bot, agentType, linkedProviders });
 	const replacementRequired = agentProviderLinkReplacementRequired(
@@ -2812,7 +2844,7 @@ function AgentChannelBotCard({
 		<Button
 			type="button"
 			size="sm"
-			className="w-full min-w-0 sm:w-28"
+			className="min-w-20"
 			disabled={Boolean(unavailableReason) || linking}
 			onClick={replacementRequired ? undefined : () => void onLink(false).catch(() => undefined)}
 		>
@@ -2820,6 +2852,28 @@ function AgentChannelBotCard({
 			{linking ? "Linking…" : "Link"}
 		</Button>
 	);
+	const deleteAction =
+		bot.visibility === "private" && !bot.link ? (
+			<ConfirmAction
+				title={`Delete ${bot.name}?`}
+				description="This deletes the Custom bot, its Agent links, and its paired chats. This can't be undone."
+				confirmLabel="Delete custom bot"
+				destructive
+				onConfirm={onDelete}
+			>
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					className={cn(CHANNEL_DESTRUCTIVE_ACTION_CLASS, "min-w-20")}
+					disabled={deleting}
+					aria-label={`Delete ${bot.name}`}
+				>
+					{deleting ? <Spinner className="size-3.5" /> : <Trash2 className="size-3.5" />}
+					{deleting ? "Deleting…" : "Delete"}
+				</Button>
+			</ConfirmAction>
+		) : null;
 	return (
 		<div data-agent-channel-account-id={bot.id} className="h-full min-w-0">
 			{bot.link ? (
@@ -2839,19 +2893,22 @@ function AgentChannelBotCard({
 				<AgentChannelCard
 					provider={bot.provider}
 					title={bot.name}
-					state={replacementRequired ? "Replaces current link" : (unavailableReason ?? "Available")}
+					state={unavailableReason ?? "Available"}
 					actions={
-						replacementRequired ? (
-							<ProviderLinkReplacementConfirm
-								provider={bot.provider}
-								targetName={bot.name}
-								onConfirm={() => onLink(true)}
-							>
-								{linkButton}
-							</ProviderLinkReplacementConfirm>
-						) : (
-							linkButton
-						)
+						<div className="flex min-w-0 items-center gap-2">
+							{deleteAction}
+							{replacementRequired ? (
+								<ProviderLinkReplacementConfirm
+									provider={bot.provider}
+									targetName={bot.name}
+									onConfirm={() => onLink(true)}
+								>
+									{linkButton}
+								</ProviderLinkReplacementConfirm>
+							) : (
+								linkButton
+							)}
+						</div>
 					}
 				/>
 			)}
@@ -2995,7 +3052,7 @@ function LinkedChannelRow({
 								type="button"
 								variant="outline"
 								size="sm"
-								className="w-full min-w-0 xl:w-32"
+								className="min-w-20"
 								disabled={!usesPairDialog && creatingPairCode}
 								onClick={() => {
 									if (provider === "telegram") setTelegramPairOpen(true);
@@ -3021,7 +3078,7 @@ function LinkedChannelRow({
 								<Button
 									variant="ghost"
 									size="sm"
-									className={cn(CHANNEL_DESTRUCTIVE_ACTION_CLASS, "w-28 min-w-0")}
+									className={cn(CHANNEL_DESTRUCTIVE_ACTION_CLASS, "min-w-20")}
 									disabled={unlinking}
 									aria-label={`${unlinking ? "Unlinking" : "Unlink"} ${name} from ${agentName}`}
 								>
