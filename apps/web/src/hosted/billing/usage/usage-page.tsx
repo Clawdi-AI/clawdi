@@ -33,7 +33,6 @@ import {
 	providerDisplayLabel,
 } from "@/hosted/v2/ai-providers/model-binding";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
-import { formatShortDate } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
 const USAGE_PAGE_CLASS = "flex flex-col gap-8 px-5 sm:px-6 lg:px-8";
@@ -59,6 +58,11 @@ type UsageAgentIdentity = {
 	defaultName: string | null;
 	machineName: string | null;
 	type: string | null;
+};
+type UsageAgentOption = {
+	id: string;
+	identity: UsageAgentIdentity;
+	deleted: boolean;
 };
 
 function compareStableText(left: string, right: string): number {
@@ -86,15 +90,6 @@ function compareSpendDescending(left: string, right: string): number {
 	);
 }
 
-function sortAgentBreakdown(left: AgentBreakdown, right: AgentBreakdown): number {
-	const spendOrder = compareSpendDescending(left.amount_usd, right.amount_usd);
-	if (spendOrder !== 0) return spendOrder;
-	const leftName = left.agent_name?.toLowerCase() ?? "\uffff";
-	const rightName = right.agent_name?.toLowerCase() ?? "\uffff";
-	const nameOrder = compareStableText(leftName, rightName);
-	return nameOrder !== 0 ? nameOrder : compareStableText(left.agent_id ?? "", right.agent_id ?? "");
-}
-
 function sortModelBreakdown(left: ModelBreakdown, right: ModelBreakdown): number {
 	const spendOrder = compareSpendDescending(left.amount_usd, right.amount_usd);
 	if (spendOrder !== 0) return spendOrder;
@@ -104,23 +99,26 @@ function sortModelBreakdown(left: ModelBreakdown, right: ModelBreakdown): number
 		: compareStableText(left.provider ?? "", right.provider ?? "");
 }
 
-function usageAgentIdentity(
-	agent: AgentBreakdown,
-	agentTiles: readonly AgentTile[],
-): UsageAgentIdentity {
-	const tile = agent.agent_id
-		? agentTiles.find((candidate) => candidate.id === agent.agent_id)
-		: null;
-	const env = tile?.env ?? null;
+function usageAgentIdentity(agent: AgentBreakdown): UsageAgentIdentity {
 	const fallbackName = agent.agent_name
 		? deploymentDisplayName(agent.agent_name, agent.agent_type ?? undefined)
 		: null;
 	return {
-		name: env?.name ?? tile?.name ?? fallbackName,
-		displayName: env?.display_name ?? null,
-		defaultName: env?.default_name ?? null,
-		machineName: env?.machine_name ?? null,
-		type: env?.agent_type ?? tile?.agentType ?? agent.agent_type ?? null,
+		name: fallbackName,
+		displayName: null,
+		defaultName: null,
+		machineName: null,
+		type: agent.agent_type ?? null,
+	};
+}
+
+function usageAgentTileIdentity(tile: AgentTile): UsageAgentIdentity {
+	return {
+		name: tile.env?.name ?? tile.name,
+		displayName: tile.env?.display_name ?? null,
+		defaultName: tile.env?.default_name ?? null,
+		machineName: tile.env?.machine_name ?? null,
+		type: tile.env?.agent_type ?? tile.agentType,
 	};
 }
 
@@ -135,6 +133,49 @@ function usageAgentText(identity: UsageAgentIdentity): string {
 	return label.secondaryLabel
 		? `${label.primaryLabel} · ${label.secondaryLabel}`
 		: label.primaryLabel;
+}
+
+function usageAgentOptions(
+	agents: readonly AgentBreakdown[],
+	agentTiles: readonly AgentTile[],
+): UsageAgentOption[] {
+	const options = new Map<string, UsageAgentOption>();
+	for (const tile of agentTiles) {
+		if (tile.source !== "on-clawdi") continue;
+		options.set(tile.id, {
+			id: tile.id,
+			identity: usageAgentTileIdentity(tile),
+			deleted: false,
+		});
+	}
+
+	for (const agent of agents) {
+		if (!agent.agent_id || options.has(agent.agent_id)) continue;
+		options.set(agent.agent_id, {
+			id: agent.agent_id,
+			identity: usageAgentIdentity(agent),
+			deleted: agent.agent_deleted === true,
+		});
+	}
+
+	return [...options.values()].sort((left, right) => {
+		const labelOrder = compareStableText(
+			usageAgentText(left.identity).toLowerCase(),
+			usageAgentText(right.identity).toLowerCase(),
+		);
+		return labelOrder !== 0 ? labelOrder : compareStableText(left.id, right.id);
+	});
+}
+
+function formatUsageDate(value: string): string {
+	const date = new Date(`${value.slice(0, 10)}T00:00:00Z`);
+	if (Number.isNaN(date.valueOf())) return "—";
+	return date.toLocaleDateString(undefined, {
+		month: "short",
+		day: "numeric",
+		year: "numeric",
+		timeZone: "UTC",
+	});
 }
 
 function unavailableUsageSections(usage: HostedUsageSummary): Set<VisibleUsageSection> {
@@ -200,14 +241,12 @@ function UsageFilters({
 	onAgentChange: (agentId: string) => void;
 	range: UsageRangeSelection;
 }) {
-	const selectableAgents = [...agents]
-		.filter((agent): agent is AgentBreakdown & { agent_id: string } => Boolean(agent.agent_id))
-		.sort(sortAgentBreakdown);
+	const selectableAgents = usageAgentOptions(agents, agentTiles);
 	const agentItems = [
 		{ label: "All agents", value: "all" },
 		...selectableAgents.map((agent) => ({
-			label: usageAgentText(usageAgentIdentity(agent, agentTiles)),
-			value: agent.agent_id,
+			label: usageAgentText(agent.identity),
+			value: agent.id,
 		})),
 	];
 
@@ -224,19 +263,18 @@ function UsageFilters({
 				<SelectContent align="end">
 					<SelectItem value="all">All agents</SelectItem>
 					{selectableAgents.map((agent) => {
-						const identity = usageAgentIdentity(agent, agentTiles);
 						return (
-							<SelectItem key={agent.agent_id} value={agent.agent_id}>
+							<SelectItem key={agent.id} value={agent.id}>
 								<div className="flex min-w-0 flex-1 items-center justify-between gap-3">
 									<AgentInline
-										name={identity.name}
-										displayName={identity.displayName}
-										defaultName={identity.defaultName}
-										machineName={identity.machineName}
-										type={identity.type}
+										name={agent.identity.name}
+										displayName={agent.identity.displayName}
+										defaultName={agent.identity.defaultName}
+										machineName={agent.identity.machineName}
+										type={agent.identity.type}
 										className="min-w-0"
 									/>
-									{agent.agent_deleted ? <Badge variant="outline">Deleted</Badge> : null}
+									{agent.deleted ? <Badge variant="outline">Deleted</Badge> : null}
 								</div>
 							</SelectItem>
 						);
@@ -373,7 +411,7 @@ export function UsageSummaryView({
 			: null;
 	const sortedDays = completeDailyBreakdown(usage.by_day, usage.period_start, usage.period_end);
 	const sortedModels = [...usage.by_model].sort(sortModelBreakdown);
-	const windowLabel = `${formatShortDate(usage.period_start)} – ${formatShortDate(usage.period_end)}`;
+	const windowLabel = `${formatUsageDate(usage.period_start)} – ${formatUsageDate(usage.period_end)} · UTC`;
 	const filters = rangeSelection ? (
 		<UsageFilters
 			agents={agentOptions}
@@ -539,7 +577,7 @@ function DailyUsageChart({ days }: { days: readonly DayBreakdown[] }) {
 	return (
 		<div
 			role="img"
-			aria-label={`Daily spend from ${firstDay ? formatShortDate(firstDay.date) : "the start of the window"} to ${lastDay ? formatShortDate(lastDay.date) : "the end of the window"}: ${formatUsdExact(String(totalAmount))} total.`}
+			aria-label={`Daily spend from ${firstDay ? formatUsageDate(firstDay.date) : "the start of the window"} to ${lastDay ? formatUsageDate(lastDay.date) : "the end of the window"}: ${formatUsdExact(String(totalAmount))} total.`}
 		>
 			<div className="mb-3 flex justify-end text-xs text-muted-foreground">
 				<span className="font-medium tabular-nums text-foreground">
@@ -550,7 +588,7 @@ function DailyUsageChart({ days }: { days: readonly DayBreakdown[] }) {
 				{days.map((day, index) => {
 					const amount = amounts[index] ?? 0;
 					const height = maxAmount > 0 ? (amount / maxAmount) * 100 : 0;
-					const label = `${formatShortDate(day.date)} · ${formatUsdExact(day.amount_usd)}`;
+					const label = `${formatUsageDate(day.date)} · ${formatUsdExact(day.amount_usd)}`;
 					return (
 						<div
 							key={day.date}
@@ -570,9 +608,9 @@ function DailyUsageChart({ days }: { days: readonly DayBreakdown[] }) {
 				})}
 			</div>
 			<div className="mt-2 flex justify-between text-xs text-muted-foreground">
-				<span>{firstDay ? formatShortDate(firstDay.date) : null}</span>
+				<span>{firstDay ? formatUsageDate(firstDay.date) : null}</span>
 				{lastDay && lastDay.date !== firstDay?.date ? (
-					<span>{formatShortDate(lastDay.date)}</span>
+					<span>{formatUsageDate(lastDay.date)}</span>
 				) : null}
 			</div>
 		</div>
