@@ -28,7 +28,6 @@ export function ProjectResourceCard({
 	project,
 	footer,
 	actions,
-	badges,
 	showKind = false,
 	navigationScope = LIBRARY_RESOURCE_SCOPE,
 	className,
@@ -36,7 +35,6 @@ export function ProjectResourceCard({
 	project: ProjectMetadata;
 	footer?: ReactNode | ReactNode[];
 	actions?: ReactNode;
-	badges?: ReactNode;
 	showKind?: boolean;
 	navigationScope?: ResourceNavigationScope;
 	className?: string;
@@ -53,11 +51,10 @@ export function ProjectResourceCard({
 			}
 			title={projectName}
 			badges={
-				showKind || showViewer || badges ? (
+				showKind || showViewer ? (
 					<>
 						{showKind ? <ProjectKindBadge kind={project.kind ?? "workspace"} /> : null}
 						{showViewer ? <Badge variant="outline">Viewer</Badge> : null}
-						{badges}
 					</>
 				) : undefined
 			}

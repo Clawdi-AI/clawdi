@@ -12,7 +12,7 @@ describe("agent Projects presentation", () => {
 		expect(source).toContain("<ProjectResourceCard");
 		expect(source).toContain("<ProjectResourceCardSkeleton");
 		expect(source).toContain("<UnavailableProjectResourceCard");
-		expect(source).toContain('<Badge variant="secondary">Default</Badge>');
+		expect(source).toContain("Default write destination");
 		expect(source).toMatch(/Read order \$\{position \+ 1\}/);
 		expect(source).not.toContain("ProjectKindBadge");
 		expect(source).not.toContain('variant="outline">Viewer');
@@ -56,20 +56,15 @@ describe("agent Projects presentation", () => {
 		expect(tabSource).not.toContain('from: "agent-projects"');
 	});
 
-	test("separates contextual creation from adding an existing Project", () => {
+	test("keeps Project selection behind the compact toolbar dialog", () => {
 		const source = readFileSync(new URL("./agent-projects-tab.tsx", import.meta.url), "utf8");
 
 		expect(source).toContain("<ListToolbar");
-		expect(source).toContain("<ProjectCreateDialog");
-		expect(source).toContain("New Project");
-		expect(source).toContain("<DialogTitle>Add existing Project</DialogTitle>");
+		expect(source).toContain("<DialogTitle>Add Project</DialogTitle>");
 		expect(source).toContain('data-testid="agent-project-add-dialog"');
 		expect(source).toContain("<ProjectCompactPicker");
 		expect(source).toContain('ariaLabel="Project to add"');
 		expect(source).toContain("No Custom or shared Projects are available to add.");
-		expect(source).toContain('api.POST("/v1/projects", { body })');
-		expect(source).toContain("Project created; Agent access still needs attention");
-		expect(source).toContain("Retry adding to Agent");
 		expect(source).not.toContain("<ProjectScopePicker");
 		expect(source).not.toContain('data-testid="agent-project-add"');
 	});

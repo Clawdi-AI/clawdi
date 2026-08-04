@@ -43,14 +43,11 @@ export function SendSkillDialog({
 	skills,
 	children,
 	onDone,
-	allowedProjectIds,
 }: {
 	skills: SkillSummary[];
 	children?: ReactElement;
 	/** Called after a successful send (bulk mode clears its selection). */
 	onDone?: () => void;
-	/** When provided, destinations must remain inside this validated Project scope. */
-	allowedProjectIds?: readonly string[];
 }) {
 	const api = useApi();
 	const $api = useOpenApi();
@@ -75,10 +72,6 @@ export function SendSkillDialog({
 	const destinationLoadError = shouldBlockQueryError(projectsQuery.error, projectsQuery.data)
 		? projectsQuery.error
 		: null;
-	const allowedProjectIdSet = useMemo(
-		() => (allowedProjectIds ? new Set(allowedProjectIds) : null),
-		[allowedProjectIds],
-	);
 
 	// Target value encodes a Cloud-owned destination Project id. Environment
 	// Projects are filesystem projections and are deliberately excluded.
@@ -90,7 +83,6 @@ export function SendSkillDialog({
 			(projects ?? [])
 				.filter(
 					(p) =>
-						(!allowedProjectIdSet || allowedProjectIdSet.has(p.id)) &&
 						p.is_owner !== false &&
 						!skills.every((s) => s.project_id === p.id) &&
 						(p.kind === "workspace" || p.kind === "personal"),
@@ -100,7 +92,7 @@ export function SendSkillDialog({
 					label: displayProjectName(p),
 					emoji: identityFor(displayProjectName(p)).emoji,
 				})),
-		[allowedProjectIdSet, projects, skills],
+		[projects, skills],
 	);
 	const targetItems = useMemo(
 		() =>
@@ -114,9 +106,6 @@ export function SendSkillDialog({
 	const send = useMutation({
 		mutationFn: async () => {
 			if (!target) throw new Error("Choose a destination first");
-			if (!projectTargets.some((project) => project.value === target)) {
-				throw new Error("Choose an available writable Project");
-			}
 			const projectsById = new Map((projects ?? []).map((project) => [project.id, project]));
 			if (
 				skills.some(
@@ -186,10 +175,7 @@ export function SendSkillDialog({
 					: `${copied === 1 ? "Skill" : "Skills"} copied`,
 				{
 					description:
-						`${what} now available to every Agent using ${targetLabel}.` +
-						(removeFromSource && !sourceCleanupFailed
-							? " Every Agent using each source Project loses its source copy."
-							: "") +
+						`${what} now available in ${targetLabel}.` +
 						(sourceCleanupFailed ? ` Source not removed: ${sourceRemoveFailed.join(", ")}.` : "") +
 						(failed.length > 0 ? ` Failed: ${failed.join(", ")}.` : ""),
 				},
@@ -215,9 +201,7 @@ export function SendSkillDialog({
 	return (
 		<Dialog
 			open={open}
-			onOpenChange={(nextOpen) => {
-				if (!send.isPending) setOpen(nextOpen);
-			}}
+			onOpenChange={setOpen}
 			onOpenChangeComplete={(nextOpen) => {
 				if (!nextOpen) {
 					setTarget("");
@@ -245,7 +229,6 @@ export function SendSkillDialog({
 						<Select
 							items={targetItems}
 							value={target}
-							disabled={send.isPending}
 							onValueChange={(value) => {
 								if (value !== null) setTarget(value);
 							}}
@@ -278,7 +261,6 @@ export function SendSkillDialog({
 						<Checkbox
 							id="send-skill-move"
 							checked={removeFromSource}
-							disabled={send.isPending}
 							onCheckedChange={(v) => setRemoveFromSource(v === true)}
 						/>
 						<Label htmlFor="send-skill-move" className="text-sm font-normal">

@@ -4,7 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { useRouter } from "@tanstack/react-router";
 import { Lock, Plus } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
-import { type ReactElement, useMemo, useRef, useState } from "react";
+import { type ReactElement, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -107,6 +107,7 @@ export function VaultsSurface({
 		[projects.data],
 	);
 	const projectNamesUnavailable = shouldBlockQueryError(projects.error, projects.data);
+
 	const items =
 		agentProjectIds === undefined ? (accountVaults.data?.items ?? []) : (agentVaults.data ?? []);
 	const visibleProjectIds = useMemo(
@@ -198,15 +199,6 @@ export function VaultsSurface({
 					)
 				}
 			/>
-			{projectNamesUnavailable ? (
-				<ApiErrorPanel
-					error={projects.error}
-					onRetry={() => {
-						void projects.refetch();
-					}}
-					title="Couldn't load Project names"
-				/>
-			) : null}
 
 			{shouldBlockQueryError(vaultsQuery.error, vaultsQuery.data) ? (
 				<ApiErrorPanel
@@ -229,7 +221,7 @@ export function VaultsSurface({
 						hasActiveFilter
 							? "Try a different search or Project filter."
 							: embedded
-								? "This Agent does not have any Vaults through its Projects yet."
+								? "This agent does not have any Vaults through its Projects yet."
 								: "Create a vault to group API keys for your agents."
 					}
 					action={
@@ -247,6 +239,15 @@ export function VaultsSurface({
 				/>
 			) : (
 				<>
+					{projectNamesUnavailable ? (
+						<ApiErrorPanel
+							error={projects.error}
+							onRetry={() => {
+								void projects.refetch();
+							}}
+							title="Couldn't load Project names"
+						/>
+					) : null}
 					<div className={HERO_GRID_CLASS}>
 						{mine.map((vault) => (
 							<VaultCard
@@ -387,24 +388,13 @@ function VaultCardSkeleton() {
 	);
 }
 
-export function NewVaultDialog({
-	trigger,
-	allowedProjectIds,
-	defaultProjectId,
-	navigationScope = LIBRARY_RESOURCE_SCOPE,
-}: {
-	trigger?: ReactElement;
-	allowedProjectIds?: readonly string[];
-	defaultProjectId?: string;
-	navigationScope?: ResourceNavigationScope;
-}) {
+function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 	const api = useApi();
 	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const router = useRouter();
 	const [open, setOpen] = useState(false);
 	const [name, setName] = useState("");
-	const createInFlightRef = useRef(false);
 
 	const projects = $api.useQuery(
 		"get",
@@ -427,28 +417,11 @@ export function NewVaultDialog({
 	// A vault is created through a project the user can write to; the
 	// personal (Global) project always exists and is the least surprising
 	// default — attachments can be changed afterwards on the vault page.
-	const allowedProjectIdSet = useMemo(
-		() => (allowedProjectIds ? new Set(allowedProjectIds) : null),
-		[allowedProjectIds],
-	);
-	const writableProjects = useMemo(
-		() =>
-			(projects.data ?? []).filter(
-				(project) =>
-					project.is_owner !== false &&
-					(!allowedProjectIdSet || allowedProjectIdSet.has(project.id)),
-			),
-		[allowedProjectIdSet, projects.data],
-	);
-	const defaultProject = useMemo(
-		() =>
-			writableProjects.find((project) => project.id === defaultProjectId) ??
-			(allowedProjectIds === undefined
-				? writableProjects.find((project) => project.kind === "personal")
-				: undefined) ??
-			writableProjects[0],
-		[allowedProjectIds, defaultProjectId, writableProjects],
-	);
+	const defaultProject = useMemo(() => {
+		const rows = projects.data ?? [];
+		return rows.find((p) => p.kind === "personal") ?? rows.find((p) => p.is_owner !== false);
+	}, [projects.data]);
+
 	const slug = slugFromVaultName(name);
 	const slugTaken =
 		slug.length > 0 &&
@@ -477,18 +450,15 @@ export function NewVaultDialog({
 		},
 		onSuccess: (created) => {
 			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
-			qc.invalidateQueries({ queryKey: ["vaults", "agent-projects"] });
 			setOpen(false);
-			toast.success("Vault created", {
-				description:
-					"The selected Project now provides this Vault to every Agent using that Project.",
+			toast.success("Vault created", { description: "Add keys, then share it through a Project." });
+			void router.navigate({
+				to: "/vaults/$slug",
+				params: { slug },
+				search: { vault: created.id },
 			});
-			void router.navigate(vaultDetailLink(navigationScope, slug, created.id));
 		},
 		onError: (e) => toast.error("Couldn't create vault", { description: errorMessage(e) }),
-		onSettled: () => {
-			createInFlightRef.current = false;
-		},
 	});
 	const triggerElement = trigger ?? (
 		<Button size="sm">
@@ -500,14 +470,9 @@ export function NewVaultDialog({
 	return (
 		<Dialog
 			open={open}
-			onOpenChange={(nextOpen) => {
-				if (!create.isPending) setOpen(nextOpen);
-			}}
+			onOpenChange={setOpen}
 			onOpenChangeComplete={(next) => {
-				if (!next) {
-					setName("");
-					createInFlightRef.current = false;
-				}
+				if (!next) setName("");
 			}}
 		>
 			<DialogTrigger render={triggerElement} />
@@ -515,17 +480,14 @@ export function NewVaultDialog({
 				<DialogHeader>
 					<DialogTitle>New vault</DialogTitle>
 					<DialogDescription>
-						Create an account-owned Vault in a Project. Every Agent using that Project can use the
-						Vault.
+						A bundle of API keys your agents can use. Add it to Projects to control who can use it.
 					</DialogDescription>
 				</DialogHeader>
 				<form
 					className="space-y-4"
 					onSubmit={(e) => {
 						e.preventDefault();
-						if (!canCreate || create.isPending || createInFlightRef.current) return;
-						createInFlightRef.current = true;
-						create.mutate();
+						if (canCreate && !create.isPending) create.mutate();
 					}}
 				>
 					<div className="space-y-1.5">
@@ -538,7 +500,6 @@ export function NewVaultDialog({
 							maxLength={200}
 							autoComplete="off"
 							autoFocus
-							disabled={create.isPending}
 						/>
 						{slug ? (
 							<p className="font-mono text-xs text-muted-foreground">vault://{slug}</p>
@@ -549,11 +510,6 @@ export function NewVaultDialog({
 							</p>
 						) : null}
 					</div>
-					{defaultProject ? (
-						<p className="text-xs text-muted-foreground">
-							Created in {defaultProject.name}; every Agent using that Project receives access.
-						</p>
-					) : null}
 					<div className="flex justify-end">
 						<Button type="submit" disabled={!canCreate || create.isPending}>
 							{create.isPending ? <Spinner /> : <Plus className="size-3.5" />}

@@ -219,8 +219,8 @@ export function AddKeysDialog({
 			toast.success(`${changed} ${changed === 1 ? "key" : "keys"} saved`, {
 				description:
 					summary.updated > 0 || summary.skipped > 0
-						? `${summary.created} new, ${summary.updated} updated, ${summary.skipped} skipped in vault://${slug}. Every Agent using an attached Project receives the changes.`
-						: `In vault://${slug}. Every Agent using an attached Project can read them through the CLI at runtime.`,
+						? `${summary.created} new, ${summary.updated} updated, ${summary.skipped} skipped in vault://${slug}.`
+						: `In vault://${slug}. Agents read them through the CLI at runtime.`,
 			});
 			setOpen(false);
 		} catch (error) {

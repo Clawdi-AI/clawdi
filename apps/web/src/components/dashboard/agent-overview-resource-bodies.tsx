@@ -1,30 +1,87 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import {
 	type AgentOverviewModuleContent,
 	OverviewDescriptionSkeleton,
 } from "@/components/dashboard/agent-overview-capabilities";
-import { useOpenApi } from "@/lib/api";
+import { useAgentProjectVaults } from "@/components/vault/agent-vaults-query";
+import { unwrap, useApi } from "@/lib/api";
 import { isActiveConnection, useConnections } from "@/lib/connectors-data";
+
+type SummaryState = {
+	isLoading: boolean;
+	isUnavailable?: boolean;
+	error: unknown;
+};
+
+export function overviewProjectsModule({
+	bindings,
+}: {
+	bindings: SummaryState & { count: number | null };
+}): AgentOverviewModuleContent {
+	if (bindings.isLoading) return { description: <OverviewDescriptionSkeleton label="projects" /> };
+	if (bindings.isUnavailable) return { description: "Unavailable right now" };
+	if (bindings.error) return { description: "Unavailable right now" };
+	const count = bindings.count ?? 0;
+	const primary = count ? `${count} ${count === 1 ? "project" : "projects"}` : "No projects added";
+	return { description: primary };
+}
+
+export function overviewSkillsModule({
+	items,
+	...state
+}: SummaryState & { items: readonly string[] }): AgentOverviewModuleContent {
+	if (state.isLoading) return { description: <OverviewDescriptionSkeleton label="skills" /> };
+	if (state.isUnavailable) return { description: "Unavailable right now" };
+	if (state.error) return { description: "Unavailable right now" };
+	return {
+		description: items.length
+			? `${items.length} ${items.length === 1 ? "skill" : "skills"}`
+			: "No skills available",
+	};
+}
 
 export function useOverviewMemoriesModule({
 	enabled = true,
 }: {
 	enabled?: boolean;
 } = {}): AgentOverviewModuleContent {
-	const api = useOpenApi();
-	const query = api.useQuery(
-		"get",
-		"/v1/memories",
-		{ params: { query: { page: 1, page_size: 1 } } },
-		{ enabled },
-	);
+	const api = useApi();
+	const query = useQuery({
+		queryKey: ["memories", "", "", 0, 1],
+		queryFn: async () =>
+			unwrap(await api.GET("/v1/memories", { params: { query: { page: 1, page_size: 1 } } })),
+		enabled,
+	});
 	if (query.isLoading) return { description: <OverviewDescriptionSkeleton label="memories" /> };
 	if (query.error) return { description: "Unavailable right now" };
 	const total = query.data?.total ?? 0;
 	return {
 		description: total ? `${total} ${total === 1 ? "memory" : "memories"}` : "No memories yet",
+	};
+}
+
+export function useOverviewVaultsModule({
+	projectIds,
+	resolution,
+	enabled = true,
+}: {
+	projectIds: readonly string[];
+	resolution: "loading" | "unavailable" | "ready";
+	enabled?: boolean;
+}): AgentOverviewModuleContent {
+	const query = useAgentProjectVaults(projectIds, { enabled: enabled && resolution === "ready" });
+	if (resolution === "loading" || query.isLoading)
+		return { description: <OverviewDescriptionSkeleton label="vaults" /> };
+	if (resolution === "unavailable") return { description: "Unavailable right now" };
+	if (query.error) return { description: "Unavailable right now" };
+	const vaults = query.data ?? [];
+	return {
+		description: vaults.length
+			? `${vaults.length} ${vaults.length === 1 ? "vault" : "vaults"}`
+			: "No vaults available",
 	};
 }
 

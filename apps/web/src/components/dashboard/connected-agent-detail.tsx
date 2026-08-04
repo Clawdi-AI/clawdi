@@ -3,7 +3,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, ExternalLink, Laptop } from "lucide-react";
-import { AllAgentsAccessBadge } from "@/components/all-agents-access-badge";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
@@ -19,19 +18,23 @@ import {
 	OverviewModuleError,
 } from "@/components/dashboard/agent-overview-capabilities";
 import {
+	overviewProjectsModule,
+	overviewSkillsModule,
 	useOverviewConnectorsModule,
 	useOverviewMemoriesModule,
+	useOverviewVaultsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
-import { AgentProjectResourceRedirect } from "@/components/dashboard/agent-project-resource-redirect";
+import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
+import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
+import { AgentSkillsTab, useAgentProjectSkills } from "@/components/dashboard/agent-skills-tab";
+import { AgentVaultsTab } from "@/components/dashboard/agent-vaults-tab";
 import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { DetailNotFound } from "@/components/detail/layout";
-import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { ProjectResourceCardSkeleton } from "@/components/projects/project-resource-card";
 import {
 	OverviewSessionList,
 	OverviewSessionListSkeleton,
@@ -53,8 +56,7 @@ import {
 import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
-import { AGENT_SECTION_NAVIGATION_ITEMS, isAllAgentsSection } from "@/lib/navigation-model";
-import { PROJECT_RESOURCE_LIST_PATHS } from "@/lib/project-resource-model";
+import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { agentResourceScope } from "@/lib/resource-navigation";
 import { sessionListQueryOptions } from "@/lib/session-queries";
@@ -85,14 +87,6 @@ export function ConnectedAgentDetail({
 	const $api = useOpenApi();
 	const ownership = useAgentOwnership();
 	const activeTab = parseAgentTab(section) ?? "overview";
-	const resourceLibraryHref =
-		activeTab === "projects"
-			? PROJECT_RESOURCE_LIST_PATHS.projects
-			: activeTab === "memories"
-				? PROJECT_RESOURCE_LIST_PATHS.memories
-				: activeTab === "connectors"
-					? PROJECT_RESOURCE_LIST_PATHS.connectors
-					: null;
 
 	const {
 		data: agent,
@@ -104,6 +98,10 @@ export function ConnectedAgentDetail({
 	});
 
 	const overviewEnabled = activeTab === "overview" && Boolean(agent);
+	const overviewProjects = useAgentProjectBindings(id, { enabled: overviewEnabled });
+	const projectBindings = overviewProjects.data;
+	const projectBindingsLoading = overviewProjects.isLoading;
+	const projectBindingsError = overviewProjects.error;
 
 	const {
 		data: overviewSessionsPage,
@@ -125,8 +123,21 @@ export function ConnectedAgentDetail({
 		enabled: activeTab === "sessions" && Boolean(agent),
 	});
 
+	const agentProjectId = agent?.default_project_id;
+	const {
+		skills: skillsForThisEnv,
+		isLoading: skillsLoading,
+		error: skillsError,
+	} = useAgentProjectSkills(id, agentProjectId, id, false, overviewEnabled);
+
 	const blockingAgentError =
 		isApiNotFoundError(error) || shouldBlockQueryError(error, agent) ? error : null;
+	const blockingSkillsError = shouldBlockQueryError(skillsError, skillsForThisEnv)
+		? skillsError
+		: null;
+	const blockingProjectBindingsError = shouldBlockQueryError(projectBindingsError, projectBindings)
+		? projectBindingsError
+		: null;
 	const blockingOverviewSessionsError = shouldBlockQueryError(
 		overviewSessionsError,
 		overviewSessionsPage,
@@ -151,11 +162,9 @@ export function ConnectedAgentDetail({
 	const ownershipKind = agent ? agentOwnershipKindFromId(agent.id, ownership) : "connected";
 	const agentTitle = agent ? agentDisplayName(agent) : null;
 	useSetAgentBreadcrumbTitle({ agentId: id, agentTitle, section: activeTab });
-	const titleAdornment =
+	const headerStatus =
 		activeTab === "overview" && agent && showSourceBadge ? (
 			<AgentSourceBadgeForEnvironment env={agent} ownershipKind={ownershipKind} compact />
-		) : isAllAgentsSection(activeTab) ? (
-			<AllAgentsAccessBadge />
 		) : null;
 	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;
 	const scopedSessionLink = (sessionId: string) => ({
@@ -164,6 +173,15 @@ export function ConnectedAgentDetail({
 	const resourceScope = agentResourceScope(id, routeSearch);
 	const memoriesModule = useOverviewMemoriesModule({ enabled: overviewEnabled });
 	const connectorsModule = useOverviewConnectorsModule({ enabled: overviewEnabled });
+	const vaultsModule = useOverviewVaultsModule({
+		projectIds: effectiveAgentProjectIds(projectBindings ?? []),
+		resolution: projectBindingsLoading
+			? "loading"
+			: blockingProjectBindingsError
+				? "unavailable"
+				: "ready",
+		enabled: overviewEnabled,
+	});
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}>
 			{blockingAgentError ? (
@@ -184,7 +202,7 @@ export function ConnectedAgentDetail({
 				<section className="flex flex-col gap-4">
 					<PageHeader
 						title={activeTabLabel}
-						titleAdornment={titleAdornment}
+						titleAdornment={headerStatus}
 						description={activeTab === "overview" ? undefined : activeTabMeta.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
 						actions={
@@ -204,29 +222,12 @@ export function ConnectedAgentDetail({
 									<ExternalLink />
 									Legacy dashboard
 								</Button>
-							) : resourceLibraryHref ? (
-								<Button
-									render={<Link to={resourceLibraryHref} />}
-									nativeButton={false}
-									variant="ghost"
-									size="sm"
-									className="text-muted-foreground"
-								>
-									<ExternalLink className="size-3.5" />
-									Open resource library
-								</Button>
 							) : null
 						}
 					/>
 
 					{activeTab === "overview" ? (
 						<div className="flex flex-col gap-8">
-							<section aria-labelledby="connected-agent-projects" className="space-y-3">
-								<h2 id="connected-agent-projects" className="text-sm font-semibold">
-									Projects
-								</h2>
-								<AgentProjectsTab agentId={id} routeSearch={routeSearch} />
-							</section>
 							<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
 								<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
 									<div className="flex items-center justify-between">
@@ -290,7 +291,20 @@ export function ConnectedAgentDetail({
 								variant="connected"
 								routeSearch={routeSearch}
 								content={{
+									projects: overviewProjectsModule({
+										bindings: {
+											count: projectBindings?.length ?? null,
+											isLoading: projectBindingsLoading,
+											error: blockingProjectBindingsError,
+										},
+									}),
+									skills: overviewSkillsModule({
+										items: (skillsForThisEnv ?? []).map((skill) => skill.name),
+										isLoading: skillsLoading,
+										error: blockingSkillsError,
+									}),
 									memories: memoriesModule,
+									vaults: vaultsModule,
 									connectors: connectorsModule,
 								}}
 							/>
@@ -320,10 +334,11 @@ export function ConnectedAgentDetail({
 					{activeTab === "memories" ? <MemoriesSurface scope={resourceScope} /> : null}
 
 					{activeTab === "skills" ? (
-						<AgentProjectResourceRedirect
+						<AgentSkillsTab
 							agentId={id}
-							resource="skills"
+							agentProjectId={agentProjectId}
 							routeSearch={routeSearch}
+							isResolvingAgentProject={isLoading}
 						/>
 					) : null}
 
@@ -334,11 +349,7 @@ export function ConnectedAgentDetail({
 					) : null}
 
 					{activeTab === "vaults" ? (
-						<AgentProjectResourceRedirect
-							agentId={id}
-							resource="vaults"
-							routeSearch={routeSearch}
-						/>
+						<AgentVaultsTab agentId={id} routeSearch={routeSearch} />
 					) : null}
 
 					{activeTab === "settings" ? <AgentSettingsPanel environmentId={id} /> : null}
@@ -370,14 +381,6 @@ function AgentDetailContentSkeleton({ variant }: { variant: "connected" | "hoste
 				</div>
 				{variant === "hosted" ? <Skeleton className="h-9 w-48 rounded-md" /> : null}
 			</div>
-			<section className="space-y-3" aria-hidden="true">
-				<Skeleton className="h-5 w-20" />
-				<div className={HERO_GRID_CLASS}>
-					{Array.from({ length: 3 }).map((_, index) => (
-						<ProjectResourceCardSkeleton key={index} />
-					))}
-				</div>
-			</section>
 			<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
 				<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
 					<div className="flex items-center justify-between">

@@ -22,8 +22,6 @@ const COMPLETION_ONLY = [
 	"components/connectors/credentials-dialog.tsx",
 	"components/dashboard/agent-projects-tab.tsx",
 	"components/memories/memories-surface.tsx",
-	"components/projects/project-create-dialog.tsx",
-	"components/skills/agent-skill-add-dialog.tsx",
 	"components/skills/send-skill-dialog.tsx",
 	"components/ui/confirm-action.tsx",
 	"components/vault/add-keys-dialog.tsx",
@@ -32,6 +30,7 @@ const COMPLETION_ONLY = [
 	"hosted/v2/ai-providers/ai-providers-page.tsx",
 	"hosted/v2/ai-providers/provider-connection-test.tsx",
 	"hosted/v2/channels/connect-bot-dialog.tsx",
+	"pages/dashboard/projects/page.tsx",
 	"pages/dashboard/vault/[slug]/page.tsx",
 ] as const;
 

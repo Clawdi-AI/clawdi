@@ -102,9 +102,7 @@ export function ConnectorCredentialsDialog({
 			// initiated the mutation, not whatever the user is doing now.
 			if (gen !== openGenRef.current) return;
 			setValues({});
-			toast.success(`${displayName} connected`, {
-				description: "Approved tools are now available to every Agent in this account.",
-			});
+			toast.success(`${displayName} connected`);
 			onOpenChange(false);
 		} catch {
 			if (gen !== openGenRef.current) return;
@@ -132,8 +130,8 @@ export function ConnectorCredentialsDialog({
 				<DialogHeader>
 					<DialogTitle>Connect {displayName}</DialogTitle>
 					<DialogDescription>
-						Connecting this account makes approved tools available to every agent in this account.
-						The credentials are stored in Composio and used when connector tools run.
+						Enter the credentials this app expects. They are stored in Composio and used when
+						connector tools run.
 					</DialogDescription>
 				</DialogHeader>
 

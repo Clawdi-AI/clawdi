@@ -101,7 +101,7 @@ describe("sidebar navigation model", () => {
 		]);
 	});
 
-	test("keeps Project-scoped and all-agent capabilities in a flat navigation", () => {
+	test("keeps all Agent resources in one navigation group", () => {
 		const connectedGroups = agentNavigationGroups("connected");
 		expect(groupShape(connectedGroups)).toEqual([
 			{
@@ -119,7 +119,9 @@ describe("sidebar navigation model", () => {
 				separated: false,
 				items: [
 					{ id: "projects", label: "Projects" },
+					{ id: "skills", label: "Skills" },
 					{ id: "memories", label: "Memories" },
+					{ id: "vaults", label: "Vaults" },
 					{ id: "connectors", label: "Connectors" },
 				],
 			},
@@ -149,7 +151,9 @@ describe("sidebar navigation model", () => {
 				separated: false,
 				items: [
 					{ id: "projects", label: "Projects" },
+					{ id: "skills", label: "Skills" },
 					{ id: "memories", label: "Memories" },
+					{ id: "vaults", label: "Vaults" },
 					{ id: "connectors", label: "Connectors" },
 				],
 			},
@@ -178,8 +182,8 @@ describe("sidebar navigation model", () => {
 			"sessions",
 			"projects",
 			"skills",
-			"vaults",
 			"memories",
+			"vaults",
 			"connectors",
 			"settings",
 		]);
@@ -188,8 +192,8 @@ describe("sidebar navigation model", () => {
 			"sessions",
 			"projects",
 			"skills",
-			"vaults",
 			"memories",
+			"vaults",
 			"connectors",
 			"console",
 			"terminal",
@@ -232,18 +236,22 @@ describe("sidebar navigation model", () => {
 			"AI provider and primary model used by this agent.",
 		);
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.memories.description).toBe(
-			"Available to every agent in this account. Changes here affect every agent.",
+			"Memories are account-wide and available across all agents.",
 		);
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.settings.icon).toBe(Settings);
 	});
 
-	test("shares Project hubs and all-agent panels without duplicating implementations", () => {
+	test("shares resource panels rather than duplicating agent implementations", () => {
 		const connectedDetail = readFileSync(
 			new URL("../components/dashboard/connected-agent-detail.tsx", import.meta.url),
 			"utf8",
 		);
 		const hostedDetail = readFileSync(
 			new URL("../hosted/agents/hosted-agent-detail.tsx", import.meta.url),
+			"utf8",
+		);
+		const agentVaultsTab = readFileSync(
+			new URL("../components/dashboard/agent-vaults-tab.tsx", import.meta.url),
 			"utf8",
 		);
 		const memoriesPage = readFileSync(
@@ -265,11 +273,13 @@ describe("sidebar navigation model", () => {
 		for (const source of [connectedDetail, hostedDetail]) {
 			expect(source).toContain("AGENT_SECTION_NAVIGATION_ITEMS[activeTab]");
 			expect(source).toContain("<AgentProjectsTab");
-			expect(source).toContain("<AgentProjectResourceRedirect");
+			expect(source).toContain("<AgentVaultsTab");
 			expect(source).toContain("<ConnectorsSurface embedded");
 			expect(source).toContain("<MemoriesSurface");
 			expect(source).not.toContain("@/pages/dashboard");
 		}
+		expect(agentVaultsTab).toContain("@/components/vault/vaults-surface");
+		expect(agentVaultsTab).not.toContain("@/pages/dashboard");
 		expect(connectorsPage).toContain("@/components/connectors/connectors-surface");
 		expect(connectorsPage).not.toContain("useQuery");
 		expect(vaultPage).toContain("@/components/vault/vaults-surface");
@@ -279,11 +289,5 @@ describe("sidebar navigation model", () => {
 		expect(overviewBodies).toContain("useOverviewMemoriesModule");
 		expect(overviewBodies).toContain("useOverviewConnectorsModule");
 		expect(connectedDetail).not.toContain("function AgentProjectsPanel");
-	});
-
-	test("keeps the pure navigation model independent from React components", () => {
-		const source = readFileSync(new URL("./navigation-model.ts", import.meta.url), "utf8");
-		expect(source).toContain("@/lib/agent-resource-access");
-		expect(source).not.toContain("@/components/all-agents-access-badge");
 	});
 });

@@ -3,14 +3,14 @@ import { readFileSync } from "node:fs";
 import { AGENT_SECTION_NAVIGATION_ITEMS, agentNavigationGroups } from "@/lib/navigation-model";
 
 describe("agent Skills resource boundary", () => {
-	test("keeps the retired aggregate implementation read-only while Project hubs own management", () => {
+	test("keeps effective Project rows scoped and platform infrastructure out of inventory", () => {
 		const source = readFileSync(new URL("./agent-skills-tab.tsx", import.meta.url), "utf8");
 
 		expect(source).toContain("resolveAgentProjectScope");
 		expect(source).toContain("fetchAgentProjectSkills");
 		expect(source).toContain("sourceLabelFor");
 		expect(source).not.toContain("cleanupOnly");
-		expect(source).not.toMatch(/api\.DELETE|useMutation|AgentSkillAddDialog/);
+		expect(source).not.toMatch(/api\.DELETE|useMutation/);
 		expect(source).toContain("AGENT_PROJECT_SKILLS_REFRESH_POLICY");
 		expect(source).not.toMatch(/manifest|reservedSkill|leadingCards/i);
 		expect(source).not.toMatch(/managed_resources|mcp_server|MCP servers/i);
@@ -22,19 +22,17 @@ describe("agent Skills resource boundary", () => {
 		expect(source).not.toContain("No Skills are available through");
 	});
 
-	test("keeps Skills and Vaults out of the top-level sidebar while retaining legacy route metadata", () => {
-		const connectedItems = agentNavigationGroups("connected").flatMap((group) => group.items);
-		const hostedItems = agentNavigationGroups("hosted").flatMap((group) => group.items);
+	test("describes both Agent Skill surfaces as effective availability", () => {
+		const connectedSkills = agentNavigationGroups("connected").flatMap((group) => group.items);
+		const hostedSkills = agentNavigationGroups("hosted").flatMap((group) => group.items);
 
-		expect(connectedItems).not.toContain(AGENT_SECTION_NAVIGATION_ITEMS.skills);
-		expect(connectedItems).not.toContain(AGENT_SECTION_NAVIGATION_ITEMS.vaults);
-		expect(hostedItems).not.toContain(AGENT_SECTION_NAVIGATION_ITEMS.skills);
-		expect(hostedItems).not.toContain(AGENT_SECTION_NAVIGATION_ITEMS.vaults);
+		expect(connectedSkills).toContain(AGENT_SECTION_NAVIGATION_ITEMS.skills);
+		expect(hostedSkills).toContain(AGENT_SECTION_NAVIGATION_ITEMS.skills);
 		expect(AGENT_SECTION_NAVIGATION_ITEMS.skills.description).toBe(
-			"Legacy link — choose a Project to manage its Skills.",
+			"Skills available through this agent's Projects.",
 		);
-		expect(AGENT_SECTION_NAVIGATION_ITEMS.vaults.description).toBe(
-			"Legacy link — choose a Project to manage attached Vaults.",
+		expect(AGENT_SECTION_NAVIGATION_ITEMS.skills.description).not.toContain(
+			"Manifest configuration",
 		);
 	});
 });

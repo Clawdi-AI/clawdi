@@ -8,7 +8,6 @@ import {
 	TerminalSquare,
 } from "lucide-react";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
-import { ALL_AGENTS_ACCESS_DESCRIPTION } from "@/lib/agent-resource-access";
 import {
 	getProjectResourceDefinition,
 	projectResourcePathLabel,
@@ -275,7 +274,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "overview",
 		...CANONICAL_NAVIGATION_IDENTITIES.overview,
 		tint: RESOURCE_TINT_CLASSES.overview,
-		description: "Default project, additional Projects, shared capabilities, and recent activity.",
+		description: "Status, resources, and recent activity for this agent.",
 		tooltip: "Agent overview",
 		variants: ["connected", "hosted"],
 	},
@@ -309,16 +308,16 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "memories",
 		...CANONICAL_NAVIGATION_IDENTITIES.memories,
 		tint: RESOURCE_TINT_CLASSES.memories,
-		description: ALL_AGENTS_ACCESS_DESCRIPTION,
-		tooltip: "Memories available to every agent",
+		description: "Memories are account-wide and available across all agents.",
+		tooltip: "Account-wide memories available across all agents",
 		variants: ["connected", "hosted"],
 	},
 	skills: {
 		id: "skills",
 		...CANONICAL_NAVIGATION_IDENTITIES.skills,
 		tint: RESOURCE_TINT_CLASSES.skills,
-		description: "Legacy link — choose a Project to manage its Skills.",
-		tooltip: "Choose a Project to manage Skills",
+		description: "Skills available through this agent's Projects.",
+		tooltip: "Skills available through this agent's Projects",
 		variants: ["connected", "hosted"],
 	},
 	projects: {
@@ -333,16 +332,16 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "vaults",
 		...CANONICAL_NAVIGATION_IDENTITIES.vaults,
 		tint: RESOURCE_TINT_CLASSES.vaults,
-		description: "Legacy link — choose a Project to manage attached Vaults.",
-		tooltip: "Choose a Project to manage Vaults",
+		description: "Vaults available through this agent's Projects.",
+		tooltip: "Vaults available through this agent's Projects",
 		variants: ["connected", "hosted"],
 	},
 	connectors: {
 		id: "connectors",
 		...CANONICAL_NAVIGATION_IDENTITIES.connectors,
 		tint: RESOURCE_TINT_CLASSES.connectors,
-		description: ALL_AGENTS_ACCESS_DESCRIPTION,
-		tooltip: "Connectors available to every agent",
+		description: "Account-wide connectors available across all agents.",
+		tooltip: "Account-wide connectors available across all agents",
 		variants: ["connected", "hosted"],
 	},
 	ai: {
@@ -371,18 +370,13 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	},
 };
 
-export const AGENT_RESOURCE_SECTION_IDS = ["projects"] as const satisfies readonly AgentSectionId[];
-
-export const AGENT_ALL_AGENTS_SECTION_IDS = [
+export const AGENT_RESOURCE_SECTION_IDS = [
+	"projects",
+	"skills",
 	"memories",
+	"vaults",
 	"connectors",
 ] as const satisfies readonly AgentSectionId[];
-
-export function isAllAgentsSection(
-	section: AgentSectionId,
-): section is (typeof AGENT_ALL_AGENTS_SECTION_IDS)[number] {
-	return AGENT_ALL_AGENTS_SECTION_IDS.some((candidate) => candidate === section);
-}
 
 const AGENT_NAVIGATION_GROUPS = [
 	{
@@ -394,7 +388,7 @@ const AGENT_NAVIGATION_GROUPS = [
 	{
 		id: "resources",
 		label: "Resources",
-		itemIds: [...AGENT_RESOURCE_SECTION_IDS, ...AGENT_ALL_AGENTS_SECTION_IDS],
+		itemIds: AGENT_RESOURCE_SECTION_IDS,
 		separated: false,
 	},
 	{
@@ -417,30 +411,10 @@ export function agentNavigationSectionIds(variant: AgentNavigationVariant): Agen
 	);
 }
 
-const AGENT_ROUTE_SECTION_IDS = [
-	"overview",
-	"sessions",
-	"projects",
-	"skills",
-	"vaults",
-	"memories",
-	"connectors",
-	"console",
-	"terminal",
-	"channels",
-	"ai",
-	"settings",
-] as const satisfies readonly AgentSectionId[];
-
-function agentRouteSectionIds(variant: AgentNavigationVariant): AgentSectionId[] {
-	return AGENT_ROUTE_SECTION_IDS.filter((id) =>
-		AGENT_SECTION_NAVIGATION_ITEMS[id].variants.includes(variant),
-	);
-}
-
 export const CONNECTED_AGENT_SECTION_IDS: readonly AgentSectionId[] =
-	agentRouteSectionIds("connected");
-export const HOSTED_AGENT_SECTION_IDS: readonly AgentSectionId[] = agentRouteSectionIds("hosted");
+	agentNavigationSectionIds("connected");
+export const HOSTED_AGENT_SECTION_IDS: readonly AgentSectionId[] =
+	agentNavigationSectionIds("hosted");
 
 export function agentNavigationGroups(
 	variant: AgentNavigationVariant,

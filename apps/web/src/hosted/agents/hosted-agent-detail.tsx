@@ -28,7 +28,6 @@ import {
 } from "lucide-react";
 import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { AllAgentsAccessBadge } from "@/components/all-agents-access-badge";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
@@ -40,12 +39,18 @@ import {
 	OverviewModuleError,
 } from "@/components/dashboard/agent-overview-capabilities";
 import {
+	overviewProjectsModule,
+	overviewSkillsModule,
 	useOverviewConnectorsModule,
 	useOverviewMemoriesModule,
+	useOverviewVaultsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
-import { AgentProjectResourceRedirect } from "@/components/dashboard/agent-project-resource-redirect";
+import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
+import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
+import { AgentSkillsTab, useAgentProjectSkills } from "@/components/dashboard/agent-skills-tab";
+import { AgentVaultsTab } from "@/components/dashboard/agent-vaults-tab";
 import { DetailPanel } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import {
@@ -288,8 +293,7 @@ import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
-import { AGENT_SECTION_NAVIGATION_ITEMS, isAllAgentsSection } from "@/lib/navigation-model";
-import { PROJECT_RESOURCE_LIST_PATHS } from "@/lib/project-resource-model";
+import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { agentResourceScope } from "@/lib/resource-navigation";
 import { sessionListQueryOptions } from "@/lib/session-queries";
@@ -482,14 +486,6 @@ export function HostedAgentDetail({
 	const runtimeLabel = runtimeDisplayName(runtime);
 	const agentTitle = name === runtimeLabel ? name : `${name} · ${runtimeLabel}`;
 	const activeTab = parseHostedAgentTab(section) ?? "overview";
-	const resourceLibraryHref =
-		activeTab === "projects"
-			? PROJECT_RESOURCE_LIST_PATHS.projects
-			: activeTab === "memories"
-				? PROJECT_RESOURCE_LIST_PATHS.memories
-				: activeTab === "connectors"
-					? PROJECT_RESOURCE_LIST_PATHS.connectors
-					: null;
 	useSetAgentBreadcrumbTitle({
 		agentId: environmentId,
 		agentTitle,
@@ -535,39 +531,21 @@ export function HostedAgentDetail({
 					<PageHeader
 						title={activeTabLabel}
 						titleAdornment={
-							activeTab === "overview" ? (
-								<AgentSourceBadge source="hosted" compact />
-							) : isAllAgentsSection(activeTab) ? (
-								<AllAgentsAccessBadge />
-							) : null
+							activeTab === "overview" ? <AgentSourceBadge source="hosted" compact /> : null
 						}
 						description={activeTab === "overview" ? undefined : activeNavItem.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
 						actions={
-							<>
-								{interfaceAvailable ? (
-									<Button
-										render={<Link {...agentSectionLink(environmentId, "console", routeSearch)} />}
-										nativeButton={false}
-										variant="outline"
-									>
-										<MonitorPlay />
-										Open Agent Interface
-									</Button>
-								) : null}
-								{resourceLibraryHref ? (
-									<Button
-										render={<Link to={resourceLibraryHref} />}
-										nativeButton={false}
-										variant="ghost"
-										size="sm"
-										className="text-muted-foreground"
-									>
-										<ExternalLink className="size-3.5" />
-										Open resource library
-									</Button>
-								) : null}
-							</>
+							interfaceAvailable ? (
+								<Button
+									render={<Link {...agentSectionLink(environmentId, "console", routeSearch)} />}
+									nativeButton={false}
+									variant="outline"
+								>
+									<MonitorPlay />
+									Open Agent Interface
+								</Button>
+							) : null
 						}
 					/>
 				)}
@@ -644,10 +622,11 @@ export function HostedAgentDetail({
 					) : null}
 					{activeTab === "skills" ? (
 						projection.status === "resolved" ? (
-							<AgentProjectResourceRedirect
+							<AgentSkillsTab
 								agentId={environmentId}
-								resource="skills"
+								agentProjectId={agent?.default_project_id}
 								routeSearch={routeSearch}
+								projectionFence={deployment.resource.metadata.resourceVersion}
 							/>
 						) : (
 							<ProjectionDependentUnavailable label="Skills" />
@@ -655,11 +634,7 @@ export function HostedAgentDetail({
 					) : null}
 					{activeTab === "vaults" ? (
 						projection.status === "resolved" ? (
-							<AgentProjectResourceRedirect
-								agentId={environmentId}
-								resource="vaults"
-								routeSearch={routeSearch}
-							/>
+							<AgentVaultsTab agentId={environmentId} routeSearch={routeSearch} />
 						) : (
 							<ProjectionDependentUnavailable label="Vaults" />
 						)
@@ -1151,29 +1126,31 @@ function OverviewTab({
 		label: runtimeStatusPresentation.label,
 		tone: runtimeStatusPresentation.tone,
 	};
+	const projectBindings = useAgentProjectBindings(agentId, { enabled: Boolean(agent) });
+	const skills = useAgentProjectSkills(
+		agentId,
+		agent?.default_project_id,
+		agentId,
+		false,
+		Boolean(agent),
+	);
 	const channelLinks = useAgentChannelLinks(agentId, Boolean(agent));
 	const linkedChannelCount = channelLinks.data?.length ?? 0;
 	const projectionLoading = projectionStatus === "loading";
 	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
 	const memoriesModule = useOverviewMemoriesModule();
 	const connectorsModule = useOverviewConnectorsModule();
+	const vaultsModule = useOverviewVaultsModule({
+		projectIds: effectiveAgentProjectIds(projectBindings.data ?? []),
+		resolution:
+			projectionLoading || projectBindings.isLoading
+				? "loading"
+				: projectionUnavailable || projectBindings.error
+					? "unavailable"
+					: "ready",
+	});
 	return (
 		<div className="flex flex-col gap-8">
-			<section aria-labelledby="hosted-agent-projects" className="space-y-3">
-				<h2 id="hosted-agent-projects" className="text-sm font-semibold">
-					Projects
-				</h2>
-				{projectionLoading ? (
-					<div className="flex items-center gap-2 rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-						<Spinner className="size-4" />
-						Loading Projects…
-					</div>
-				) : projectionUnavailable || !agent ? (
-					<ProjectionDependentUnavailable label="Projects" />
-				) : (
-					<AgentProjectsTab agentId={agentId} routeSearch={routeSearch} />
-				)}
-			</section>
 			<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
 				<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
 					<div className="flex items-center justify-between">
@@ -1248,7 +1225,22 @@ function OverviewTab({
 				variant="hosted"
 				routeSearch={routeSearch}
 				content={{
+					projects: overviewProjectsModule({
+						bindings: {
+							count: agent ? (projectBindings.data?.length ?? null) : null,
+							isLoading: projectionLoading || projectBindings.isLoading,
+							isUnavailable: projectionUnavailable,
+							error: projectBindings.error,
+						},
+					}),
+					skills: overviewSkillsModule({
+						items: (skills.skills ?? []).map((skill) => skill.name),
+						isLoading: projectionLoading || skills.isLoading,
+						isUnavailable: projectionUnavailable,
+						error: skills.error,
+					}),
 					memories: memoriesModule,
+					vaults: vaultsModule,
 					connectors: connectorsModule,
 					"model-provider": {
 						description:

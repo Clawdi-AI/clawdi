@@ -138,20 +138,12 @@ export function MemoriesSurface({
 	const total = data?.total ?? 0;
 
 	const deleteMemory = $api.useMutation("delete", "/v1/memories/{memory_id}", {
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
-			toast.success("Memory deleted", {
-				description: "Every Agent in this account stops recalling it.",
-			});
-		},
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] }),
 		onError: (e) => toast.error("Couldn't delete memory", { description: errorMessage(e) }),
 	});
 
 	const requestDeleteMemory = useCallback(
-		(id: string) => {
-			if (deleteMemory.isPending) return;
-			deleteMemory.mutate({ params: { path: { memory_id: id } } });
-		},
+		(id: string) => deleteMemory.mutate({ params: { path: { memory_id: id } } }),
 		[deleteMemory],
 	);
 
@@ -345,15 +337,10 @@ function MemoryNotesGrid({
 							) : null,
 						]}
 					/>
-					<span className="absolute right-2 top-2 z-10 opacity-100 transition-opacity duration-150 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
+					<span className="absolute right-2 top-2 z-10 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
 						<ConfirmAction
 							title="Delete this memory?"
-							description={
-								<p>
-									Deleting it removes this memory from every agent. All agents will stop recalling
-									it within seconds.
-								</p>
-							}
+							description={<p>Your AI will stop recalling it on every agent within seconds.</p>}
 							confirmLabel="Delete memory"
 							destructive
 							onConfirm={() => onDelete(memory.id)}
@@ -443,9 +430,6 @@ function AddMemoryForm() {
 		onSuccess: () => {
 			setOpen(false);
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
-			toast.success("Memory saved", {
-				description: "Every Agent in this account can recall it.",
-			});
 		},
 		onError: (e) => toast.error("Couldn't add memory", { description: errorMessage(e) }),
 	});
